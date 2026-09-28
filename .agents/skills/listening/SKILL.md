@@ -17,12 +17,17 @@ classifies them by horizon, and emits per-section verdicts with evidence.
 
 ## D/P labelling
 
-Question synthesis, evidence search, and the verdict interpretation are P —
-critiqued by the verification step and the operator. The verification is D:
-every cited quote is checked with `lisp_eval` `string-contains` (needle
-first) against its own passage, and the counts are computed, never estimated —
-the model cannot fabricate a citation that survives this check. A quote that
-twice fails verification is dropped, not reinterpreted.
+Chunking is D — a structural split at speaker-turn or paragraph boundaries;
+oracle: the numbered chunk list. Evidence search and citation are P —
+critiqued by step 4's mechanical check. Verification is D: every cited quote
+is checked with `lisp_eval` `string-contains` (needle first) against its own
+passage — or, for educt-stored transcripts, `educt_locate`'s word-aligned
+match; a miss under either oracle counts as a failed verification toward the
+twice-fail drop. The counts are computed, never estimated — the model cannot
+fabricate a citation that survives this check. A quote that twice fails
+verification is dropped, not reinterpreted. Verdict interpretation is P —
+critiqued by the operator and, downstream, `grounding-verify` when the
+verdicts enter a research note.
 
 ## Instructions
 
@@ -30,8 +35,7 @@ The no-fabrication invariant is enforced by the process, not by the prompt:
 
 1. **Chunk** — the transcript is split into numbered chunks (by speaker turns
    or paragraph boundaries).
-2. **Retrieve** — the model searches the chunks for evidence relevant to each
-   section's `listen_for` criteria.
+2. **Retrieve** — render the selected template at this step (`listening/apply-template` for a single earnings call, `listening/apply-template-rag` for the company's own multi-document narrative; context per the Registry Templates table) — the rendered prompt carries the numbered chunks and the per-section `listen_for` criteria — then the model searches the chunks for evidence relevant to each section's criteria.
 3. **Cite** (P — critique: step 4's mechanical check) — the model returns
    the chunk_id and the exact substring it found. No character offset: the
    verifier matches substrings, and a model-estimated offset would be an
@@ -41,20 +45,22 @@ The no-fabrication invariant is enforced by the process, not by the prompt:
    - form: `"(string-contains cited_substring chunk_text)"`
    - env: `{ "cited_substring": <the cited text>, "chunk_text": <the referenced chunk's text> }`
    Fabricated quotes are rejected — the check is mechanical, not
-   model-mediated. On a failed citation, re-retrieve once from the chunks
+   model-mediated. (The template's "the verdict is rejected" line addresses
+   the model reading the rendered prompt; the process bound below governs the
+   pipeline.) On a failed citation, re-retrieve once from the chunks
    (the Act); a citation that fails verification twice is dropped and the
    claim is reported as unverifiable — never delivered as verified. Bound: one
    re-retrieval per cited claim; the overall process stays single-pass
-   (sense→act). For stored transcripts, `educt_locate` is the
-   deterministic word-aligned locator — prefer it when the transcript is
-   educt-stored.
+   (sense→act). For educt-stored transcripts, `educt_locate` is the
+   deterministic word-aligned locator — prefer it there; an `educt_locate`
+   miss is a failed verification and counts toward the twice-fail drop.
 
 The model never "writes" a quote — it "finds" one and points to where it found
 it. The verification is mechanical (substring match), not model-mediated.
 
 5. **Count** (D — `lisp_eval`) — after verification, compute
    `(list verified total (- total verified) sections_without_verified_evidence)`
-   from the step 4 results. Every check is against the citation's OWN chunk:
+   from the step 4 results — env: `{ "verified": <citations that passed>, "total": <citations made>, "sections_without_verified_evidence": <count> }`. Every check is against the citation's OWN chunk:
    a quote found in some other chunk is a misattribution, not a pass.
 
 **Target condition (T2):** every emitted verdict carries at least one
@@ -69,9 +75,14 @@ downstream `grounding-verify` when the verdicts enter a research note).
 
 **Reference model.** The MAIA method — its v3 earnings-call listening
 template (`onto_anchor` → derived `maia_listening`, operator ruling
-2026-09-25). The certainty tiers follow
-`hkask_forecast::certainty_tier`. The retrieve-cite-verify discipline is
-the `grounding-verify` substring-match rule applied to transcripts.
+2026-09-25): the seven sections, horizon model and admissibility rule are
+copied from that template, which this SKILL.md deliberately does not restate.
+The retrieve-cite-verify discipline is part of the `maia_listening`
+definition itself; `grounding-verify` reuses it from here — not the reverse.
+Certainty tiers: `hkask_forecast::certainty_tier` is the single source of
+truth on drift (the template's "guidebook verbatim" label names the text it
+quotes, not a competing authority). The chunk-boundary rule and the count
+form are project operationalizations — unanchored.
 
 ## When to Use
 
@@ -84,11 +95,15 @@ the `grounding-verify` substring-match rule applied to transcripts.
 - When you need to filter short-term-only guidance changes (no strategic-path
   linkage) into `ignored_short_term` so they don't influence verdicts.
 
+## Regression case
+
+From `kask/registry/listening-fixtures/sample_transcript.txt`, chunk the Amy Hood margin passage and the Satya Nadella checkpoint passage, and render `listening/apply-template` with `company_symbol`. Then: (i) ACCEPT probe — verify a verbatim quote from the margin chunk with `(string-contains cited_substring chunk_text)` → true (this pins needle-first order: a reversed-args call silently returns false whenever the quote is shorter than the chunk); (ii) REJECT probe — a fabricated quote returns false, and after the one re-retrieval still fails: the claim is reported unverifiable, never delivered as verified; (iii) COUNT — the step 5 form with its declared env over the probes' results. RAG leg: render `listening/apply-template-rag` with one `corpus_passages` element drawn from `cross_doc_earnings.txt` and verify a verbatim quote against its own passage.
+
 ## Registry Templates
 
 | Template | Purpose |
 |----------|---------|
-| `apply-template.j2` | Apply the MAIA v3 listening template (stance block + 7 sections + horizon model) to an earnings-call transcript. Emits per-section verdicts with verbatim evidence quotes, the checkpoint map, and ignored_short_term entries. The no-fabrication invariant is enforced: every evidence field is a verbatim substring of the source transcript. Context: `transcript_chunks` (array of `{speaker, text}` chunk objects), `prior_transcript_chunks` (array, earlier calls for trend context), `company_symbol` (string). **Cascade-invoked** (call `render_template` with template_ref `listening/apply-template` at step 2). |
+| `apply-template.j2` | Apply the MAIA v3 listening template (stance block + 7 sections + horizon model) to an earnings-call transcript. Emits per-section verdicts with verbatim evidence quotes, the checkpoint map, and ignored_short_term entries. The no-fabrication invariant is enforced: every evidence field is a verbatim substring of the source transcript. Context: `transcript_chunks` (array; each element renders wholesale into the prompt — pass speaker-prefixed strings or readable chunk objects), `prior_transcript_chunks` (same shape, earlier calls for trend context), `company_symbol` (string). **Cascade-invoked** (step 2 renders the selected template). |
 | `apply-template-rag.j2` | Apply the MAIA v3 listening template across the company's own narrative documents. Context: `corpus_passages` (array of `{source, entity_ref, text}` verbatim passages; `source` is the passage's citation key in the calling pipeline's source records), `kg_triples` (array, may be empty), `company_symbol`, `focus_query`. Emits per-section verdicts with cross-source citations, judged against the company's own stated strategy. Same retrieve-cite-verify steps (each quote checked against its OWN passage). Used by the LISTEN step of `company-research-deep` and `company-research-flash`; it filters strategic narrative and is not a materiality check. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `listening/apply-template`) and a context object with the required variables.

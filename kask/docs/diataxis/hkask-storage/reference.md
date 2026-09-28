@@ -1,11 +1,11 @@
 ---
 title: "hkask-storage — Reference"
-audience: [developers, architects]
+audience: [architects, developers]
 last_updated: 2026-09-28
 version: "2.4.0"
 status: "Active"
 domain: "Persistence"
-mds_categories: [domain, trust]
+mds_categories: [domain, trust, lifecycle]
 ---
 
 # hkask-storage — Reference
@@ -13,7 +13,7 @@ mds_categories: [domain, trust]
 `hkask-storage` is the SQLite persistence crate. File-backed `Database` pools use
 SQLCipher page encryption and sqlite-vec; in-memory and `SqliteDriver::file_pool`
 paths are unencrypted SQLite
-(`kask/crates/hkask-storage/src/core/connection.rs:337-466`;
+(`kask/crates/hkask-storage/src/core/connection.rs:420-536`;
 `kask/crates/hkask-storage/src/database/sqlite.rs:112,139`). `DbValue` supplies SQL
 binding types; SQLCipher-backed connections supply encryption.[^sqlcipher]
 SQLite vector search is supplied by sqlite-vec.[^sqlite-vec]
@@ -27,25 +27,24 @@ The crate root declares and exports the current modules at
 |---|---|---|
 | `core` | `Database`, `DatabaseError`, `LeasedSqliteConnection`, `SqliteConnectionManager`, `embedding_dim`, `open_database`, `open_or_repair`, `sanitize_path` | `kask/crates/hkask-storage/src/hkask_storage.rs:20-24` |
 | `database` | `DatabaseDriver`, `SqliteDriver`, `WAL_PRAGMA_BATCH`, `init_wal_pragmas`; typed SQL values. Transactions belong to a leased connection, not the driver | `kask/crates/hkask-storage/src/database.rs:1-14` |
-| `maintenance_inventory` | catalog configuration/read, previews, confirmations, entries, and typed errors | `kask/crates/hkask-storage/src/hkask_storage.rs:12-18` |
-| `rotation` | `rotate_passphrase`, `verify_database_key`, `RotationError` | `kask/crates/hkask-storage/src/hkask_storage.rs:13,27` |
-| `embeddings` | `EmbeddingStore`, `SimilarityResult`, `EmbeddingError` | `kask/crates/hkask-storage/src/hkask_storage.rs:29,34` |
-
-| `hmem` | `HMem`, `HMemStore`, `HMemError` | `kask/crates/hkask-storage/src/hkask_storage.rs:31,36-37` |
-| `regulation_store` | `RegulationArchive` | `kask/crates/hkask-storage/src/hkask_storage.rs:32,38` |
-| `gallery` | gallery index, scan/reconciliation, tags, faces, workflows, generations, OMC graphs, and albums | `kask/crates/hkask-storage/src/hkask_storage.rs:11,40-43`; `kask/crates/hkask-storage/src/gallery.rs:73-135,203-293` |
+| `maintenance_inventory` | catalog configuration/read, previews, confirmations, entries, and typed errors | `kask/crates/hkask-storage/src/hkask_storage.rs:14-18` |
+| `rotation` | `rotate_passphrase`, `verify_database_key`, `RotationError` | `kask/crates/hkask-storage/src/hkask_storage.rs:27` |
+| `embeddings` | `EmbeddingStore`, `SimilarityResult`, `EmbeddingError` | `kask/crates/hkask-storage/src/hkask_storage.rs:34` |
+| `hmem` | `HMem`, `HMemStore`, `HMemError` | `kask/crates/hkask-storage/src/hkask_storage.rs:37` |
+| `regulation_store` | `RegulationArchive` | `kask/crates/hkask-storage/src/hkask_storage.rs:38` |
+| `gallery` | gallery index, scan/reconciliation, tags, faces, workflows, generations, OMC graphs, and albums | `kask/crates/hkask-storage/src/hkask_storage.rs:40-43`; `kask/crates/hkask-storage/src/gallery.rs:75-135,205-293` |
 
 ## Connection and driver surfaces
 
 | Item | Contract | Evidence |
 |---|---|---|
-| `Database::open` | validates path/passphrase and returns a handle without opening SQLite | `kask/crates/hkask-storage/src/core/connection.rs:194-252` |
-| `Database::sqlite_pool` | lazily creates and caches the SQLCipher/in-memory pool | `kask/crates/hkask-storage/src/core/connection.rs:337-366` |
-| Core schema | loaded from `core/sql/schema.sql`, then explicit column migrations run | `kask/crates/hkask-storage/src/core/connection.rs:272-335` |
-| Managed inventory registration | file-backed managed opens record the canonical path before pool creation | `kask/crates/hkask-storage/src/core/connection.rs:417-425` |
-| `DatabaseDriver` | provider-neutral single-operation execute/query boundary; no transaction facade | `/home/mdz-axolotl/Clones/zed-kask/kask/crates/hkask-storage/src/database/driver.rs:15-47` |
+| `Database::open` | validates path/passphrase and returns a handle without opening SQLite | `kask/crates/hkask-storage/src/core/connection.rs:301-345` |
+| `Database::sqlite_pool` | lazily creates and caches the SQLCipher/in-memory pool | `kask/crates/hkask-storage/src/core/connection.rs:420-452` |
+| Core schema | loaded from `core/sql/schema.sql`, then explicit column migrations run | `kask/crates/hkask-storage/src/core/connection.rs:347-392` |
+| Managed inventory registration | file-backed managed opens record the canonical path before pool creation | `kask/crates/hkask-storage/src/core/connection.rs:582` |
+| `DatabaseDriver` | provider-neutral single-operation execute/query boundary; no transaction facade | `kask/crates/hkask-storage/src/database/driver.rs:15-47` |
 | `SqliteDriver` | current driver implementation | `kask/crates/hkask-storage/src/database/sqlite.rs:42-117` |
-| `DbValue` / `DbRow` | typed SQL parameter and row values; not encryption | `kask/crates/hkask-storage/src/database/value.rs:8-70` |
+| `DbValue` / `DbRow` | typed SQL parameter and row values; not encryption | `kask/crates/hkask-storage/src/database/value.rs:7-150` |
 
 ```mermaid
 classDiagram
@@ -89,22 +88,22 @@ classDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-STOR-003
-verified_date: 2026-09-26
-verified_against: kask/crates/hkask-storage/src/core/connection.rs:176-192,337-466; kask/crates/hkask-storage/src/database/driver.rs:15-47; kask/crates/hkask-storage/src/database/sqlite.rs:42-117; kask/crates/hkask-storage/src/maintenance_inventory.rs:168-218,297-375; kask/crates/hkask-storage/src/hmem.rs:135-163; kask/crates/hkask-storage/src/embeddings.rs:64-110; kask/crates/hkask-storage/src/gallery.rs:329; kask/crates/hkask-storage/src/regulation_store.rs:70-104
-status: PARTIAL — retired queue removed; other line citations not rechecked
+verified_date: 2026-09-28
+verified_against: kask/crates/hkask-storage/src/core/connection.rs:166-192,301-452,474-536; kask/crates/hkask-storage/src/database/driver.rs:15-47; kask/crates/hkask-storage/src/database/sqlite.rs:42-117; kask/crates/hkask-storage/src/maintenance_inventory.rs:169-205,294-375; kask/crates/hkask-storage/src/hmem.rs:136-163; kask/crates/hkask-storage/src/embeddings.rs:64-110; kask/crates/hkask-storage/src/gallery.rs:329; kask/crates/hkask-storage/src/regulation_store.rs:30-104
+status: VERIFIED
 -->
 
 ## Maintenance inventory
 
 | Item | Fields or behavior | Evidence |
 |---|---|---|
-| `DATABASE_CATALOG_ENV` | `HKASK_DB_INVENTORY_PATH` | `kask/crates/hkask-storage/src/maintenance_inventory.rs:12-14` |
-| `DATABASE_CATALOG_RELATIVE_PATH` | `maintenance/database-inventory.jsonl` | `kask/crates/hkask-storage/src/maintenance_inventory.rs:13-15` |
-| `InventoryEntry` | path, configured, exists, recovery artifact, private file identity | `kask/crates/hkask-storage/src/maintenance_inventory.rs:168-175` |
-| `DatabaseInventory` | entries and search roots | `kask/crates/hkask-storage/src/maintenance_inventory.rs:177-181` |
-| `ConfirmedInventory` | confirmed preview, selected rotation paths, reasoned exclusions | `kask/crates/hkask-storage/src/maintenance_inventory.rs:183-205` |
-| `preview` | bounded read-only discovery; no DB opens or file creation | `kask/crates/hkask-storage/src/maintenance_inventory.rs:207-295` |
-| `confirm` | freshness, scope attestation, exclusions, recovery, hard-link, and non-empty checks | `kask/crates/hkask-storage/src/maintenance_inventory.rs:297-375` |
+| `DATABASE_CATALOG_ENV` | `HKASK_DB_INVENTORY_PATH` | `kask/crates/hkask-storage/src/maintenance_inventory.rs:13` |
+| `DATABASE_CATALOG_RELATIVE_PATH` | `maintenance/database-inventory.jsonl` | `kask/crates/hkask-storage/src/maintenance_inventory.rs:14` |
+| `InventoryEntry` | path, configured, exists, recovery artifact, private file identity | `kask/crates/hkask-storage/src/maintenance_inventory.rs:169-175` |
+| `DatabaseInventory` | entries and search roots | `kask/crates/hkask-storage/src/maintenance_inventory.rs:178-181` |
+| `ConfirmedInventory` | confirmed preview, selected rotation paths, reasoned exclusions | `kask/crates/hkask-storage/src/maintenance_inventory.rs:186-205` |
+| `preview` | bounded read-only discovery; no DB opens or file creation | `kask/crates/hkask-storage/src/maintenance_inventory.rs:206-293` |
+| `confirm` | freshness, scope attestation, exclusions, recovery, hard-link, and non-empty checks | `kask/crates/hkask-storage/src/maintenance_inventory.rs:294-375` |
 
 A confirmation is an inventory receipt only. Quiescence and key publication are
 separate responsibilities.
@@ -119,18 +118,18 @@ also directly re-exports `GalleryMode`, `GalleryRecord`, `ImageRecord`,
 
 | Entity | Role | Evidence |
 |---|---|---|
-| `GalleryMode` | read-only, copy-on-write, or destructive policy | `kask/crates/hkask-storage/src/gallery.rs:37-71` |
-| `GalleryRecord` | durable canonical root and aggregate view | `kask/crates/hkask-storage/src/gallery.rs:73-83` |
-| `ImageRecord` | stable path identity, content revision, presence, metadata freshness | `kask/crates/hkask-storage/src/gallery.rs:84-101` |
-| `AssetObservation` | one physical observation supplied by a scan request | `kask/crates/hkask-storage/src/gallery.rs:103-113` |
-| `GalleryScan` | request coverage, observations, and errors | `kask/crates/hkask-storage/src/gallery.rs:115-123` |
-| `ReconcileResult` | lifecycle counts plus exact assets requiring analysis | `kask/crates/hkask-storage/src/gallery.rs:125-135` |
-| `TagRecord` | persisted annotation | `kask/crates/hkask-storage/src/gallery.rs:203-213` |
-| `FaceRegistryRecord` | named face reference and status | `kask/crates/hkask-storage/src/gallery.rs:214-227` |
-| `WorkflowRecord` / `WorkflowSummary` | full persisted workflow and bounded list row | `kask/crates/hkask-storage/src/gallery.rs:229-246` |
-| `AlbumRecord` | nested metadata-only grouping | `kask/crates/hkask-storage/src/gallery.rs:248-259` |
-| `GenerationRecord` | provider-independent generation lineage | `kask/crates/hkask-storage/src/gallery.rs:261-285` |
-| `OmcCreationGraphRecord` | canonical MovieLabs OMC graph for one asset | `kask/crates/hkask-storage/src/gallery.rs:287-293` |
+| `GalleryMode` | read-only, copy-on-write, or destructive policy | `kask/crates/hkask-storage/src/gallery.rs:40-71` |
+| `GalleryRecord` | durable canonical root and aggregate view | `kask/crates/hkask-storage/src/gallery.rs:75-83` |
+| `ImageRecord` | stable path identity, content revision, presence, metadata freshness | `kask/crates/hkask-storage/src/gallery.rs:86-101` |
+| `AssetObservation` | one physical observation supplied by a scan request | `kask/crates/hkask-storage/src/gallery.rs:105-113` |
+| `GalleryScan` | request coverage, observations, and errors | `kask/crates/hkask-storage/src/gallery.rs:117-123` |
+| `ReconcileResult` | lifecycle counts plus exact assets requiring analysis | `kask/crates/hkask-storage/src/gallery.rs:126-135` |
+| `TagRecord` | persisted annotation | `kask/crates/hkask-storage/src/gallery.rs:205-213` |
+| `FaceRegistryRecord` | named face reference and status | `kask/crates/hkask-storage/src/gallery.rs:218-227` |
+| `WorkflowRecord` / `WorkflowSummary` | full persisted workflow and bounded list row | `kask/crates/hkask-storage/src/gallery.rs:233-246` |
+| `AlbumRecord` | nested metadata-only grouping | `kask/crates/hkask-storage/src/gallery.rs:252-259` |
+| `GenerationRecord` | provider-independent generation lineage | `kask/crates/hkask-storage/src/gallery.rs:266-285` |
+| `OmcCreationGraphRecord` | canonical MovieLabs OMC graph for one asset | `kask/crates/hkask-storage/src/gallery.rs:289-293` |
 
 ```mermaid
 stateDiagram-v2
@@ -148,18 +147,18 @@ stateDiagram-v2
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-STOR-004
-verified_date: 2026-09-19
-verified_against: kask/crates/hkask-storage/src/gallery.rs:84-135,726-750,754-851,868-940
+verified_date: 2026-09-28
+verified_against: kask/crates/hkask-storage/src/gallery.rs:86-135,737-754,770-870,881-940
 status: VERIFIED
 -->
 
 `GalleryStore::reconcile` commits observations and safe absence transitions in one
-transaction (`kask/crates/hkask-storage/src/gallery.rs:754-851`). Errors in scan
+transaction (`kask/crates/hkask-storage/src/gallery.rs:770-870`). Errors in scan
 coverage suppress absence inference. `persist_analysis_for_tag_types` applies a
 response only while image ID, gallery ID, hash, and non-missing state still match
-(`kask/crates/hkask-storage/src/gallery.rs:887-940`). Active list/count/index
+(`kask/crates/hkask-storage/src/gallery.rs:881-940`). Active list/count/index
 surfaces exclude missing records, while stable-ID inspection can include them
-(`kask/crates/hkask-storage/src/gallery.rs:967-1039`).
+(`kask/crates/hkask-storage/src/gallery.rs:859-986`).
 
 ## Core schema
 
@@ -199,6 +198,14 @@ erDiagram
         INTEGER co_count
         TEXT last_linked
     }
+    audit_log {
+        TEXT id PK
+        TEXT timestamp
+        TEXT actor_webid
+        TEXT action
+        TEXT resource
+        TEXT outcome
+    }
     reg_variety_checkpoint {
         TEXT domain PK
         INTEGER variety_count
@@ -224,16 +231,17 @@ erDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-STOR-008
-verified_date: 2026-09-16
+verified_date: 2026-09-28
 verified_against: kask/crates/hkask-storage/src/core/sql/schema.sql:1-29
 status: VERIFIED
 -->
 
-Store-owned schemas add `reg_records`, `reg_cursors`, `escalations`, and gallery
-lifecycle tables outside the core schema
-(`kask/crates/hkask-storage/src/regulation_store.rs:76-104`;
-`kask/crates/hkask-storage/src/escalation.rs:83-103`;
-`kask/crates/hkask-storage/src/gallery.rs:295-384`).
+Store-owned schemas add `reg_records`, `reg_cursors`, and gallery lifecycle
+tables outside the core schema
+(`kask/crates/hkask-storage/src/regulation_store.rs:38-70`;
+`kask/crates/hkask-storage/src/gallery.rs:329-384`). Alert rows live in the
+core schema as `reg_alerts`
+(`kask/crates/hkask-storage/src/core/sql/schema.sql:12`).
 
 ## Passphrase rotation
 
@@ -265,8 +273,8 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-STOR-002
-verified_date: 2026-09-18
-verified_against: kask/crates/hkask-storage/src/core/store_macros.rs:43-87; kask/crates/hkask-storage/src/core/connection.rs:272-335; kask/crates/hkask-storage/src/database/driver.rs:15-97; kask/crates/hkask-storage/src/hmem.rs:295-352,477-502
+verified_date: 2026-09-28
+verified_against: kask/crates/hkask-storage/src/core/store_macros.rs:44-86; kask/crates/hkask-storage/src/core/connection.rs:347-392; kask/crates/hkask-storage/src/database/driver.rs:15-97; kask/crates/hkask-storage/src/hmem.rs:296-352,784-830
 status: VERIFIED
 -->
 
@@ -274,15 +282,14 @@ status: VERIFIED
 
 Put foundational tables used across stores in
 `kask/crates/hkask-storage/src/core/sql/schema.sql:1-29`. Put a domain-specific
-table in that store's `init_schema`, following Regulation, escalation, or gallery
-(`kask/crates/hkask-storage/src/regulation_store.rs:76-104`;
-`kask/crates/hkask-storage/src/escalation.rs:83-103`;
-`kask/crates/hkask-storage/src/gallery.rs:295-384`).
+table in that store's `init_schema`, following Regulation or gallery
+(`kask/crates/hkask-storage/src/regulation_store.rs:38-70`;
+`kask/crates/hkask-storage/src/gallery.rs:329-384`).
 
 `CREATE TABLE IF NOT EXISTS` does not add columns to an existing table. For a
 column addition, inspect `PRAGMA table_info` and run an explicit migration, as the
 embedding and forgetting-spec migrations do
-(`kask/crates/hkask-storage/src/core/connection.rs:281-335`).
+(`kask/crates/hkask-storage/src/core/connection.rs:359-392`).
 
 #### 2. Define the store
 
@@ -298,20 +305,20 @@ Use `execute`, `execute_batch`, `query`, and `query_optional` from
 `DatabaseDriver`, plus `query_map` and `query_row` for typed mapping
 (`kask/crates/hkask-storage/src/database/driver.rs:15-97`). Do not present
 `DbValue` as encrypted data; it is the typed SQL parameter/result representation
-(`kask/crates/hkask-storage/src/database/value.rs:8-46`). File encryption is
+(`kask/crates/hkask-storage/src/database/value.rs:7-46`). File encryption is
 provided at the SQLCipher connection layer.
 
 For an atomic multi-statement operation, hold one pooled connection and one RAII
 `rusqlite::Transaction`. `HMemStore::insert_batch_atomic` and `HMemStore::update`
 are the reference shapes
-(`kask/crates/hkask-storage/src/hmem.rs:295-352,477-502`). Separate driver calls may use
+(`kask/crates/hkask-storage/src/hmem.rs:296-352,784-830`). Separate driver calls may use
 separate pooled connections and therefore do not form one transaction.
 The unused connectionless driver transaction facade was deleted; do not recreate
 it or issue separate BEGIN/write/COMMIT driver calls. Connection ownership and
 rollback-on-drop are supplied by rusqlite's concrete transaction type.[^rusqlite-transaction]
 
 `atomic_batch_commit_failure_is_rolled_back_before_reuse_and_reopen` in
-`kask/crates/hkask-storage/src/hmem.rs`
+`kask/crates/hkask-storage/src/hmem.rs:1321`
 uses a real file, a two-connection pool, and a deferred foreign-key failure to
 check rollback at COMMIT, subsequent successful reuse, and reopen visibility.
 This is transaction/reopen evidence, not power-loss or multi-resource atomicity.
@@ -322,7 +329,7 @@ Use `SqliteDriver::in_memory_pool()` for store tests
 (`kask/crates/hkask-storage/src/database/sqlite.rs:112`). Verify CRUD behavior,
 constraint failures, transaction rollback, and corrupted-row error propagation.
 The in-memory pool has one connection so tests preserve read-your-writes semantics
-(`kask/crates/hkask-storage/src/core/connection.rs:394-415`).
+(`kask/crates/hkask-storage/src/core/connection.rs:474-483`).
 
 Run from the repository root:
 
@@ -351,8 +358,8 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-STOR-007
-verified_date: 2026-09-16
-verified_against: kask/crates/hkask-storage/src/maintenance_inventory.rs:57-101,168-218,220-295,297-375
+verified_date: 2026-09-28
+verified_against: kask/crates/hkask-storage/src/maintenance_inventory.rs:57-101,169-218,206-293,294-375
 status: VERIFIED
 -->
 
@@ -361,7 +368,7 @@ status: VERIFIED
 The canonical catalog location is configured through
 `DATABASE_CATALOG_ENV` and `DATABASE_CATALOG_RELATIVE_PATH`; both constants and
 the configuration/read functions are public
-(`kask/crates/hkask-storage/src/maintenance_inventory.rs:12-20,37-48,94-101`).
+(`kask/crates/hkask-storage/src/maintenance_inventory.rs:13-20,37-48,96-101`).
 Treat a missing or malformed catalog as an error, not as an empty known set.
 
 #### 2. Build a bounded preview
@@ -370,7 +377,7 @@ Call `DatabaseInventory::preview(configured, roots, additional)`. It combines
 configured paths, explicit historical/external paths, and database paths inferred
 from maintenance markers below bounded search roots. It does not traverse directory
 symlinks and fails rather than returning a partial inventory when the scan cap is
-reached (`kask/crates/hkask-storage/src/maintenance_inventory.rs:207-295`).
+reached (`kask/crates/hkask-storage/src/maintenance_inventory.rs:206-293`).
 
 #### 3. Confirm against a fresh preview
 
@@ -382,7 +389,7 @@ Call `preview` again and pass both snapshots to `DatabaseInventory::confirm` wit
 
 Confirmation rejects changed snapshots, unresolved recovery artifacts, ambiguous
 hard links, and an empty rotation set
-(`kask/crates/hkask-storage/src/maintenance_inventory.rs:297-375`).
+(`kask/crates/hkask-storage/src/maintenance_inventory.rs:294-375`).
 
 #### 4. Rotate the confirmed paths
 
@@ -404,12 +411,12 @@ positional guesses:
 - `ReconcileResult` reports added, changed, restored, missing, and unchanged counts
   and returns exact `analysis_assets`.
 
-These types are defined at `kask/crates/hkask-storage/src/gallery.rs:103-135` and
+These types are defined at `kask/crates/hkask-storage/src/gallery.rs:105-135` and
 consumed atomically by `GalleryStore::reconcile` at
-`kask/crates/hkask-storage/src/gallery.rs:754-851`. Persist an analysis response
-through `persist_analysis` or `persist_analysis_for_tag_types`; both refuse to
+`kask/crates/hkask-storage/src/gallery.rs:770-870`. Persist an analysis response
+through `persist_analysis_for_tag_types`; it refuses to
 apply an old request when image identity, hash, or presence no longer matches
-(`kask/crates/hkask-storage/src/gallery.rs:868-940`).
+(`kask/crates/hkask-storage/src/gallery.rs:881-940`).
 
 ## See also
 

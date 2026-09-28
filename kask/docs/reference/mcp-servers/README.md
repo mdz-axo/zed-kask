@@ -1,8 +1,8 @@
 ---
 title: "MCP Server Registry — Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-09-23
-version: "0.40.0"
+last_updated: 2026-09-28
+version: "0.41.0"
 status: "Active"
 domain: "Composition"
 mds_categories: [composition, domain]
@@ -28,15 +28,15 @@ mds_categories: [composition, domain]
 
 ## Server Catalog
 
-12 built-in MCP servers, **403 registered tools** fleet-wide (reconciled 2026-09-23 against the live routers, generated tool-name sets, and pinning tests below — every server now carries a count pin or a generated-name-set pin). `KaskMcpSettings::default()` sets `load_default: true`, so all twelve auto-load unless the operator disables the fleet or an individual server (`kask/crates/kask_bridge/src/settings.rs:140-165`; `kask/crates/kask_bridge/src/mcp_servers.rs`).
+12 built-in MCP servers, **402 registered tools** fleet-wide (reconciled 2026-09-28 against the live pin tests and generated tool-name sets below — every server carries a count pin or a generated-name-set pin). `KaskMcpSettings::default()` sets `load_default: true`, so all twelve auto-load unless the operator disables the fleet or an individual server (`kask/crates/kask_bridge/src/settings.rs:140-165`; `kask/crates/kask_bridge/src/mcp_servers.rs`).
 
 | Server | Crate | Purpose | Tools |
 |--------|-------|---------|------:|
 | [Companies](companies.md) | `kask/mcp-servers/hkask-mcp-companies` | FIBO-anchored financial forecasting, dual-provider routing, research notes and transcripts (portfolio ledger lives in the portfolio server) | 40 |
 | [Corpus](corpus.md) | `kask/mcp-servers/hkask-mcp-corpus` | Corpus gathering, document processing, QA generation, style replicas | 26 |
-| Curator | `kask/mcp-servers/hkask-mcp-curator` | Curator agent metacognition (escalations, memory, regulation query) | 21 |
+| Curator | `kask/mcp-servers/hkask-mcp-curator` | Curator agent metacognition (memory, regulation query, algedonic signals, skill-use issue reporting) | 15 |
 | Kata Kanban | `kask/mcp-servers/hkask-mcp-kata-kanban` | Toyota Kata task boards and persistent-until-resolved functional goals | 27 |
-| [Media](media.md) | `kask/mcp-servers/hkask-mcp-media` | AI media generation (image, video, audio, gallery, educt transcripts) | 93 |
+| [Media](media.md) | `kask/mcp-servers/hkask-mcp-media` | AI media generation (image, video, audio, gallery, educt transcripts, Reduct cloud) | 98 |
 | [Portfolio](portfolio.md) | `kask/mcp-servers/hkask-mcp-portfolio` | General-purpose transaction-ledger portfolio store (stocks, prediction-event portfolios, CMP indices) with materialized daily holdings and returns views | 18 |
 | [Prediction Markets](prediction-markets.md) | `kask/mcp-servers/hkask-mcp-prediction-markets` | Polymarket/Kalshi base rates, calibration, CMP curves and indices, residuals | 32 |
 | [Research](research.md) | `kask/mcp-servers/hkask-mcp-research` | Web search, extraction, browsing, RSS feeds, evidence scoring, research-run ledger, paper identity | 26 |
@@ -47,16 +47,16 @@ mds_categories: [composition, domain]
 
 ### Count verification methods (per row)
 
-- **Companies = 40** — pinned end-to-end by `tool_surface_is_exactly_40_registered_tools`, which asserts the live nine-router sum (`kask/mcp-servers/hkask-mcp-companies/src/hkask_mcp_companies.rs:277-294,482-492`).
-- **Corpus = 26** — pinned end-to-end by `tool_surface_is_exactly_26_registered_tools` over its seven-router composition (`kask/mcp-servers/hkask-mcp-corpus/src/hkask_mcp_corpus.rs:269-383`).
-- **Media = 93** — pinned end-to-end by `tool_surface_is_exactly_93_registered_tools`; the generated `TOOL_NAMES` set is separately compared with the live ten-router surface (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:475-571`).
-- **Scenarios = 19** — pinned end-to-end by `tool_surface_is_exactly_19_registered_tools` over `scenario_router` (`kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs:266,1900-1916`). The only direct market-record bridge is `scenario_from_markets_set`; CMP indices use `scenario_from_cmp_indices`.
-- **Swarm = 90** — pinned end-to-end by `tool_surface_is_exactly_90_registered_tools`; generated-name equality and the cloud partition are pinned separately (`kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:981-1040`). The live partition is 48 cloud plus 42 non-cloud: 32 local + 3 A2A + 4 knowledge + 3 swarm-scoped thread tools.
-- **Kata Kanban = 27 and Portfolio = 18** — each build generates `TOOL_NAMES` from the declared tool functions and pins name-set equality against the live router (`kask/mcp-servers/hkask-mcp-kata-kanban/src/hkask_mcp_kata_kanban.rs:39-47,1833-1847`; `kask/mcp-servers/hkask-mcp-portfolio/src/server.rs:149-520`; `kask/mcp-servers/hkask-mcp-portfolio/src/hkask_mcp_portfolio.rs:59-77`).
-- **Curator = 21, Prediction Markets = 32, Research = 26, Training = 9** — each pinned end-to-end by its `tool_surface_is_exactly_<n>_registered_tools` test over the live router (`kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.rs:2143-2151`; `kask/mcp-servers/hkask-mcp-prediction-markets/src/hkask_mcp_prediction_markets.rs:1969-1983`; `kask/mcp-servers/hkask-mcp-research/src/hkask_mcp_research.rs:2281-2289`; `kask/mcp-servers/hkask-mcp-training/src/hkask_mcp_training.rs:318-326`).
-- **Spreadsheet = 2** — pinned by `tool_names_match_live_router` comparing the build-generated `TOOL_NAMES` set against the live `spreadsheet_router` surface (`kask/mcp-servers/hkask-mcp-spreadsheet/src/hkask_mcp_spreadsheet.rs:36-55`); the tool-behavior suite additionally drives both tools end-to-end over the real engine actor (`kask/mcp-servers/hkask-mcp-spreadsheet/tests/tool_behavior.rs`).
+- **Companies = 40** — pinned end-to-end by `tool_surface_is_exactly_40_registered_tools`, which asserts the live nine-router sum (`kask/mcp-servers/hkask-mcp-companies/src/hkask_mcp_companies.rs:282-292,499-501`).
+- **Corpus = 26** — pinned end-to-end by `tool_surface_is_exactly_26_registered_tools` over its eight-router composition (`kask/mcp-servers/hkask-mcp-corpus/src/hkask_mcp_corpus.rs:262-272,278-288`).
+- **Media = 98** — pinned end-to-end by `tool_surface_is_exactly_98_registered_tools`; the generated `TOOL_NAMES` set is separately compared with the live ten-router surface (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:427-439,445-475`).
+- **Scenarios = 19** — pinned end-to-end by `tool_surface_is_exactly_19_registered_tools` over `scenario_router` (`kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs:262,1900-1912`). The only direct market-record bridge is `scenario_from_markets_set`; CMP indices use `scenario_from_cmp_indices`.
+- **Swarm = 90** — pinned end-to-end by `tool_surface_is_exactly_90_registered_tools`; generated-name equality and the cloud partition are pinned separately (`kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:1026-1075`). The live partition is 48 cloud plus 42 non-cloud: 32 local + 3 A2A + 4 knowledge + 3 swarm-scoped thread tools.
+- **Kata Kanban = 27 and Portfolio = 18** — each build generates `TOOL_NAMES` from the declared tool functions and pins name-set equality against the live router (`kask/mcp-servers/hkask-mcp-kata-kanban/src/hkask_mcp_kata_kanban.rs:39-47,1768-1778`; `kask/mcp-servers/hkask-mcp-portfolio/src/server.rs:397`; `kask/mcp-servers/hkask-mcp-portfolio/src/hkask_mcp_portfolio.rs:59-77`).
+- **Curator = 15, Prediction Markets = 32, Research = 26, Training = 9** — each pinned end-to-end by its `tool_surface_is_exactly_<n>_registered_tools` test over the live router (`kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.rs:2224-2244`; `kask/mcp-servers/hkask-mcp-prediction-markets/src/hkask_mcp_prediction_markets.rs:2070-2084`; `kask/mcp-servers/hkask-mcp-research/src/hkask_mcp_research.rs:2385-2436`; `kask/mcp-servers/hkask-mcp-training/src/hkask_mcp_training.rs:318-326`). The curator pin additionally asserts the removed escalation/advice-review tools stay unregistered (`curator_escalations`, `curator_escalation_resolve`, `curator_escalation_dismiss`, `curator_escalation_dismiss_by_pattern`, `curator_advice_mark_applied`, `curator_advice_reviews`).
+- **Spreadsheet = 2** — pinned by `tool_names_match_live_router` comparing the build-generated `TOOL_NAMES` set against the live `spreadsheet_router` surface (`kask/mcp-servers/hkask-mcp-spreadsheet/src/hkask_mcp_spreadsheet.rs:32-42`); the tool-behavior suite additionally drives both tools end-to-end over the real engine actor (`kask/mcp-servers/hkask-mcp-spreadsheet/tests/tool_behavior.rs`).
 
-Arithmetic: `40 + 26 + 21 + 27 + 93 + 18 + 32 + 26 + 19 + 2 + 90 + 9 = 403`.
+Arithmetic: `40 + 26 + 15 + 27 + 98 + 18 + 32 + 26 + 19 + 2 + 90 + 9 = 402`.
 
 ## Common Patterns
 
@@ -65,7 +65,7 @@ All servers follow these patterns:
 1. **Bootstrap:** `main.rs` calls `<crate>::run()`, which calls `hkask_mcp_server::run_server(name, version, factory, credentials)`. The `factory: FnOnce(ServerContext) -> Result<S, McpError>` closure receives a `ServerContext` (no ambient authority — all deps injected) and constructs the server struct. There is no separate `bootstrap_mcp_server` / `MCPBootstrap` step; that API was removed along with the `HKASK_MCP_HOST` / userpod identity concept.
 2. **Identity:** `ServerContext.webid: WebID` is the sole agent-identity source, resolved in transport from `HKASK_WEBID` (or an anonymous fallback). The `mcp_server!` macro generates a struct with `pub webid: WebID` plus the caller's custom domain fields — and nothing else (no `userpod`, no `daemon` field; the daemon was deleted in the 2026-07-25 cleanup and `DaemonClient` / `record_via_daemon` / `RealMemoryPort` are no longer part of the server contract).
 3. **Tool dispatch:** wrap each tool body in `execute_tool(self, "tool_name", async { ... })`. It emits the `reg.tool` span and serializes errors; ontology concepts belong in structured tool output, not span tags (`kask/crates/hkask-mcp-server/src/server.rs`). Thread-level memory is the richer narrative path; per-tool debug logging remains available at the call site.
-4. **Tool routing:** use rmcp's `#[tool(description = "...")]` on tool methods and `#[tool_router(...)]` on the impl blocks that generate routers. Servers with multiple tool impls sum those sub-routers and wire the result with `#[tool_handler(router = Self::combined_router())]`; single-router servers may use `#[tool_router(server_handler)]` directly. Current examples are Companies (`kask/mcp-servers/hkask-mcp-companies/src/hkask_mcp_companies.rs:277-294`) and Research (`kask/mcp-servers/hkask-mcp-research/src/hkask_mcp_research.rs:161`).
+4. **Tool routing:** use rmcp's `#[tool(description = "...")]` on tool methods and `#[tool_router(...)]` on the impl blocks that generate routers. Servers with multiple tool impls sum those sub-routers and wire the result with `#[tool_handler(router = Self::combined_router())]`; single-router servers may use `#[tool_router(server_handler)]` directly. Current examples are Companies (`kask/mcp-servers/hkask-mcp-companies/src/hkask_mcp_companies.rs:282-292`) and Research (`kask/mcp-servers/hkask-mcp-research/src/hkask_mcp_research.rs:210`).
 5. **Error type:** `McpToolError` for tool-level errors, domain `Error` enums (via `thiserror`) for computation errors.
 6. **Governance:** `McpRuntime::invoke` (`kask/crates/hkask-mcp/src/runtime.rs`) **meters and dispatches; it does not authorize.** The pipeline is: charge one call against the agent's per-tick runaway ceiling → dispatch → emit the `reg.tool` span. Its fourth argument, `agent: WebID`, is an accounting identity, not a credential, and the only pre-dispatch refusal is `EnergyBudgetExceeded` (the runaway-loop breaker; resets each regulation tick). Tool authority is enforced at boundaries whose list the caller does not choose: the per-request `tool_allowlist` on the inference IPC `tool_invoke` dispatch (`kask/crates/kask_bridge/src/inference_ipc_server.rs`, fail-closed on missing/empty), each swarm agent card's `mcp_tools` allowlist, and the per-server MCP env/credential allowlists. The composition root passes the `Arc<McpRuntime>` directly wherever a `ToolPort` is needed (no adapter).
 
@@ -142,8 +142,8 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-RF-003
-verified_date: 2026-09-16
-verified_against: kask/crates/hkask-forecast/src/hkask_forecast.rs; kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs:17-36,510-723; kask/mcp-servers/hkask-mcp-companies/src/tools/valuation.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/hkask_mcp_prediction_markets.rs:80-88
+verified_date: 2026-09-28
+verified_against: kask/crates/hkask-forecast/src/hkask_forecast.rs; kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs:17-36,507-660; kask/mcp-servers/hkask-mcp-companies/src/tools/valuation.rs:626; kask/mcp-servers/hkask-mcp-prediction-markets/src/hkask_mcp_prediction_markets.rs:80-88
 status: VERIFIED
 -->
 
@@ -310,8 +310,8 @@ classDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-IC-017
-verified_date: 2026-09-16
-verified_against: kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/service.rs:28-60; kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/goals.rs:9-22,271-321; kask/mcp-servers/hkask-mcp-kata-kanban/src/hkask_mcp_kata_kanban.rs:39-78; kask/crates/hkask-types/src/kanban_status.rs:24
+verified_date: 2026-09-28
+verified_against: kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/service.rs:28-60; kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/goals.rs:9-22,242-324; kask/mcp-servers/hkask-mcp-kata-kanban/src/hkask_mcp_kata_kanban.rs:39-78; kask/crates/hkask-types/src/kanban_status.rs:24
 status: VERIFIED
 -->
 

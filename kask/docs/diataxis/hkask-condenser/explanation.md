@@ -2,7 +2,7 @@
 title: "hkask-condenser — Explanation"
 audience: [developers, architects, agents]
 last_updated: 2026-09-28
-version: "1.4.1"
+version: "1.4.2"
 status: "Active"
 domain: "Condensation"
 mds_categories: [trust, curation]
@@ -43,8 +43,8 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-COND-004
-verified_date: 2026-09-16
-verified_against: kask/crates/kask_bridge/src/condenser_bridge.rs:42-125; crates/agent/src/thread.rs:3594-3643; crates/zed/src/main.rs:2190-2202
+verified_date: 2026-09-28
+verified_against: kask/crates/kask_bridge/src/condenser_bridge.rs:42-125; crates/agent/src/thread.rs:3687-3715; crates/zed/src/main.rs:2299-2309
 status: VERIFIED
 -->
 
@@ -54,13 +54,13 @@ It replaces text only when the labelled excerpt is nonempty and smaller than
 the original (`kask/crates/kask_bridge/src/condenser_bridge.rs:80-123`). The
 stored thread remains unchanged because preprocessing happens after the native
 request has been copied to the background task
-(`crates/agent/src/thread.rs:3609-3629`).
+(`crates/agent/src/thread.rs:3697-3707`).
 
 ## Compression dispatch
 
 `CondenserEngine::compress` derives a `ContextCategory`, selects a registered
 algorithm, derives an ontology anchor, runs the algorithm, and calculates line
-and byte reductions (`kask/crates/hkask-condenser/src/engine.rs:48-97`). The
+and byte reductions (`kask/crates/hkask-condenser/src/engine.rs:48-98`). The
 selection is static rather than learned.
 
 - `RtkStyleAlgorithm` handles shell, test, and build output
@@ -81,7 +81,7 @@ Only manual compaction invokes Kask precompression. Automatic compaction skips
 the hook. After preprocessing, the existing compaction path may split a suitable
 history into two chronological halves, summarize them concurrently, and merge
 them; indivisible histories use one summary call
-(`crates/agent/src/thread.rs:3609-3642`). Cancellation, streaming, usage
+(`crates/agent/src/thread.rs:3703-3715`). Cancellation, streaming, usage
 accounting, and summary persistence remain owned by the native thread lifecycle.
 
 ## Protected source-oriented tools

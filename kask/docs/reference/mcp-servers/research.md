@@ -1,8 +1,8 @@
 ---
 title: "Research MCP Server Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-09-19
-version: "0.39.1"
+last_updated: 2026-09-28
+version: "0.39.2"
 status: "Active"
 domain: "Inference"
 mds_categories: [domain, composition, lifecycle]
@@ -108,10 +108,20 @@ but semantically wrong judgments that structural validation cannot catch.
 
 **Decision.** Native rerank protocol: ONE `InferencePort::rerank` call
  carrying all candidates as documents, routed through the inference IPC
- bridge to the provider's rerank endpoint (OpenRouter `/api/v1/rerank`).
-The default model is a dedicated reranker — `OpenRouter/qwen/qwen3-reranker-8b`,
-served via OpenRouter's native rerank endpoint — overridable via
-`HKASK_RERANK_MODEL` or the `kask.models.rerank_model` setting. The zed side
+ bridge to OpenRouter's rerank endpoint (`/api/v1/rerank`). The model must be
+`OpenRouter/`-prefixed to be rerank-eligible — `detect_rerank_provider`
+(`kask/crates/hkask-inference/src/rerank.rs:28-31`) strips only that prefix,
+and the bridge rejects anything else with `InvalidArgument` naming the
+requirement (`kask/crates/kask_bridge/src/inference_ipc_server.rs:1018-1027`).
+The settings-chain default for `kask.models.rerank_model` is
+`DEFAULT_RERANK_MODEL` = `deepinfra/Qwen/Qwen3-Reranker-8B`
+(`kask/crates/hkask-inference/src/model_constants.rs:203`, wired as the
+settings default at `kask/crates/kask_bridge/src/settings.rs:665`) — NOT
+`OpenRouter/`-prefixed, so under the default a deep-strategy rerank fails the
+eligibility check and surfaces as the degraded `mode: "heuristic"` with the
+error as reason; set an `OpenRouter/`-prefixed reranker (e.g.
+`OpenRouter/qwen/qwen3-reranker-8b`) via `kask.models.rerank_model` /
+`HKASK_RERANK_MODEL` to use the native path. The zed side
 of the bridge holds the OpenRouter key (keychain slot at the provider
 `api_url`, `https://openrouter.ai/api/v1` — the ONE location) and calls the
 provider directly; the MCP
@@ -179,7 +189,7 @@ output's `rerank` field — never a silent fallback:
 | `HKASK_DB_PASSPHRASE` | DB encryption passphrase (required for RSS and research-run tools) |
 | `HKASK_WEB_CACHE_TTL_SECS` | Response cache TTL (default 300) |
 | `HKASK_WEB_CACHE_MAX_ENTRIES` | Response cache max entries (default 50) |
-| `HKASK_RERANK_MODEL` | Rerank model override (default `OpenRouter/qwen/qwen3-reranker-8b`) |
+| `HKASK_RERANK_MODEL` | Rerank model (settings default `deepinfra/Qwen/Qwen3-Reranker-8B`; the rerank endpoint requires an `OpenRouter/`-prefixed model — any other value degrades deep-strategy rerank to heuristic mode with the reason surfaced) |
 | `HKASK_EMBEDDING_MODEL` | Embedding model for the semantic duplication tier (emitted unconditionally by the settings chain; unset is a legitimate degraded mode — the deterministic shingle floor runs with a surfaced reason) |
 
 ## One-time data migration — `rss.db` → `research.db`
@@ -222,7 +232,7 @@ artifacts, or all-equal scores) — never a fabricated `stable`.
 
 **Semantic duplication tier (parameter-gated).** `duplication: "semantic"`
 opts into the embedding tier: content-bearing artifacts are clustered by
-cosine ≥ 0.85 (the `corpus_deduplicate` threshold) via one batch
+cosine ≥ 0.85 (the `corpus_dedup_chunks` threshold) via one batch
 `InferencePort::embed` call through the inference bridge. Degradation
 follows the rerank contract — never silent: no model configured, embed
 failure, or a vector-count mismatch runs the deterministic shingle floor

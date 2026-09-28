@@ -1,8 +1,8 @@
 ---
 title: "Text Chunking for RAG — Canonical Design Patterns and Reference Models"
 audience: [architects, developers, agents]
-last_updated: 2026-09-16
-version: "1.0.0"
+last_updated: 2026-09-28
+version: "1.1.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [composition, trust]
@@ -14,7 +14,10 @@ mds_categories: [composition, trust]
 > about the research literature and about the shipping corpus pipeline,
 > each carrying a `file:line` or external citation. Section 7.2 onward is
 > *recommendation* — none of it is implemented, and none of it should be
-> read as a description of the tree as it stands.
+> read as a description of the tree as it stands. **Re-verified 2026-09-28:**
+> every `file:line` below was re-checked against the current tree (several
+> had drifted since 2026-09-16 and were refreshed), and the recommendation
+> status was re-tested — none of §8's six items has been adopted.
 
 ## 1. Purpose and scope
 
@@ -178,24 +181,24 @@ and completeness.[^reconstruct]
 
 ```mermaid
 flowchart TD
-    A[corpus_chunk tool<br/>hkask-mcp-corpus/src/tools/document.rs:328] --> B[chunk_word_bounds<br/>hkask-mcp-corpus/src/helpers.rs:373]
-    B --> C[tokens_to_words<br/>words = tokens / 1.33<br/>hkask-mcp-corpus/src/helpers.rs:336]
+    A[corpus_chunk tool<br/>hkask-mcp-corpus/src/tools/document.rs:355] --> B[chunk_word_bounds<br/>hkask-mcp-corpus/src/helpers.rs:393]
+    B --> C[tokens_to_words<br/>words = tokens / 1.33<br/>hkask-mcp-corpus/src/helpers.rs:356]
     B --> D{multi_tier}
-    D -->|yes| E[coarse 2048 / medium 512 / fine 128 tokens<br/>document.rs:365-369]
+    D -->|yes| E[coarse 2048 / medium 512 / fine 128 tokens<br/>document.rs:395-397]
     D -->|no| F[single tier, default 256 tokens<br/>hkask-services-core/src/standalone_settings.rs:248]
-    E --> G[chunk_structure<br/>helpers.rs:409]
+    E --> G[chunk_structure<br/>helpers.rs:429]
     F --> G
-    G --> H[chunk_text_with_overlap<br/>hkask-memory/src/text_chunking.rs:123]
+    G --> H[chunk_text_with_overlap<br/>hkask-memory/src/text_chunking.rs:211]
     H --> I[sanitize_text<br/>text_chunking.rs:45]
-    I --> J[split_structural - headings, rules, blank lines<br/>text_chunking.rs:230]
-    J --> K[chunk_windows - word window, structural then<br/>sentence boundary preferred<br/>text_chunking.rs:146]
+    I --> J[split_structural - headings, rules, blank lines<br/>text_chunking.rs:311]
+    J --> K[chunk_windows - word window, structural then<br/>sentence boundary preferred<br/>text_chunking.rs:227]
     K --> L[repeat overlap_words of the previous suffix<br/>default 64 tokens, shared by all tiers]
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-RES-CHUNK-002
-verified_date: 2026-09-16
-verified_against: kask/mcp-servers/hkask-mcp-corpus/src/tools/document.rs:328-630; kask/mcp-servers/hkask-mcp-corpus/src/helpers.rs:336-425; kask/crates/hkask-memory/src/text_chunking.rs:45-198; kask/crates/hkask-services-core/src/standalone_settings.rs:248-277
+verified_date: 2026-09-28
+verified_against: kask/mcp-servers/hkask-mcp-corpus/src/tools/document.rs:355-426; kask/mcp-servers/hkask-mcp-corpus/src/helpers.rs:356-429; kask/crates/hkask-memory/src/text_chunking.rs:20-311; kask/crates/hkask-services-core/src/standalone_settings.rs:248-277
 status: VERIFIED
 -->
 
@@ -203,16 +206,16 @@ Traceability of each capability to its canonical pattern:
 
 | Capability | Location | Canonical pattern |
 |---|---|---|
-| Structural + sentence-preferring windows | `kask/crates/hkask-memory/src/text_chunking.rs:146` | Structure-based segmentation |
-| Paragraph/heading/rule split | `kask/crates/hkask-memory/src/text_chunking.rs:230` | Structure-based segmentation |
-| Sentence-end detection | `kask/crates/hkask-memory/src/text_chunking.rs:204` | Sentence-based segmentation |
-| Overlap, in words | `kask/crates/hkask-memory/src/text_chunking.rs:123` | Overlap window |
-| Multi-tier coarse/medium/fine | `kask/mcp-servers/hkask-mcp-corpus/src/tools/document.rs:365` | Hierarchical, delivered as parallel tiers |
+| Structural + sentence-preferring windows | `kask/crates/hkask-memory/src/text_chunking.rs:227` | Structure-based segmentation |
+| Paragraph/heading/rule split | `kask/crates/hkask-memory/src/text_chunking.rs:311` | Structure-based segmentation |
+| Sentence-end detection | `kask/crates/hkask-memory/src/text_chunking.rs:285` | Sentence-based segmentation |
+| Overlap, in words | `kask/crates/hkask-memory/src/text_chunking.rs:211` | Overlap window |
+| Multi-tier coarse/medium/fine | `kask/mcp-servers/hkask-mcp-corpus/src/tools/document.rs:395` | Hierarchical, delivered as parallel tiers |
 | Control-character sanitization | `kask/crates/hkask-memory/src/text_chunking.rs:45` | Ingestion hygiene |
 | Corrupted-encoding detection | `kask/crates/hkask-memory/src/text_chunking.rs:20` | Ingestion hygiene |
 | Boilerplate and front/back-matter filter | `kask/crates/hkask-memory/src/text_chunking.rs:404` | Ingestion hygiene |
-| Deduplication and LLM consolidation | `kask/mcp-servers/hkask-mcp-corpus/src/tools/corpus.rs:43` | Post-processing |
-| Ontology-tag prefix on embedding input | `kask/mcp-servers/hkask-mcp-corpus/src/tools/semantic.rs:296` | Metadata-as-text, partial |
+| Deduplication and LLM consolidation | `kask/mcp-servers/hkask-mcp-corpus/src/tools/corpus.rs:48` | Post-processing |
+| Ontology-tag prefix on embedding input | `kask/mcp-servers/hkask-mcp-corpus/src/tools/semantic.rs:303` | Metadata-as-text, partial |
 
 The structural splitter, the sentence-end fallback, and the boilerplate
 filtering are a well-executed instance of the structure-based family that §5
@@ -231,7 +234,7 @@ hygiene, and multi-tier output that is structurally the hierarchical pattern.
 The deliberate absence of semantic chunking is consistent with §5.[^semcost]
 
 The chunk-size approximation — `floor(tokens / 1.33)` whitespace words
-(`kask/mcp-servers/hkask-mcp-corpus/src/helpers.rs:336`) — deliberately avoids
+(`kask/mcp-servers/hkask-mcp-corpus/src/helpers.rs:356`) — deliberately avoids
 a tokenizer dependency. It is an English-prose heuristic: the ratio is
 calibrated to English text, so the effective budget drifts for
 morphologically richer languages and for code, where a whitespace-delimited
@@ -255,7 +258,9 @@ are unfalsified. This is the highest-value gap.
 
 **One overlap constant across three tiers.** `corpus_chunk` resolves a single
 `overlap_tokens` and passes it to every tier
-(`kask/mcp-servers/hkask-mcp-corpus/src/tools/document.rs:365-369`). At the
+(`kask/mcp-servers/hkask-mcp-corpus/src/tools/document.rs:395-397` — the same
+`overlap_tokens` argument reaches the coarse, medium, and fine
+`chunk_word_bounds` calls). At the
 default 64 tokens the repetition fraction is roughly 3% of a coarse tier,
 13% of a medium tier, and **50% of a fine tier** — the smallest tier carries the
 highest redundancy. Overlap is also known to interact with parser and chunking
@@ -264,7 +269,7 @@ choice rather than being independently optimizable.[^pdfchunk]
 **Metadata prefixing exists, but is narrow and opt-in.** Ontology tags are
 prepended to the embedded text when `tagged_jsonl` is supplied, with a neutral
 `[unclassified] ` prefix for chunks that carry no tags
-(`kask/mcp-servers/hkask-mcp-corpus/src/tools/semantic.rs:296-304`). Two gaps
+(`kask/mcp-servers/hkask-mcp-corpus/src/tools/semantic.rs:303-328`). Two gaps
 remain. First, the prefix carries ontology tags only — not structural
 provenance such as source file or section heading. Second, the chunk-time index
 path behind `corpus_chunk(index: true)` embeds bare passage text
@@ -292,17 +297,20 @@ than recommended.
 ## 8. Recommended adoption sequence
 
 Ordered by value per unit of effort. None of these are implemented; each names
-a `file:line` where the change would land.
+a `file:line` where the change would land. **Re-verified 2026-09-28:** none of
+the six has been adopted — the corpus server carries no chunk-quality metric,
+no per-tier overlap, no structural-provenance prefix, no contextualization
+stage, no tier linking, and no model-derived default budget.
 
 1. **Build the chunk-quality instrument first.** Implement the five label-free
    intrinsic metrics and score the existing defaults against the operator's own
    corpus.[^adaptive] Every subsequent item is unfalsifiable without it. This is
    the change that converts §7.2's unvalidated defaults into measured ones.
 2. **Resolve overlap per tier.** Replace the single constant passed at
-   `kask/mcp-servers/hkask-mcp-corpus/src/tools/document.rs:365-369` with a
+   `kask/mcp-servers/hkask-mcp-corpus/src/tools/document.rs:395-397` with a
    per-tier overlap, or a per-tier fraction, and evaluate it.
 3. **Generalize the metadata prefix and apply it on both embed paths.** Extend
-   the existing tag prefix (`kask/mcp-servers/hkask-mcp-corpus/src/tools/semantic.rs:296-304`)
+   the existing tag prefix (`kask/mcp-servers/hkask-mcp-corpus/src/tools/semantic.rs:303-328`)
    to carry structural provenance — source file and section heading — and apply
    the same composition on the chunk-time index path
    (`kask/mcp-servers/hkask-mcp-corpus/src/services/convert.rs:447`), which

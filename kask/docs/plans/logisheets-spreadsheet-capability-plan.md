@@ -105,8 +105,8 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-ARCH-SPREADSHEET-001
-verified_date: 2026-09-19
-verified_against: kask/crates/hkask-types/src/spreadsheet.rs:110 (AnalyticalTable and SpreadsheetBlock contracts); kask/crates/hkask-spreadsheet/src/service.rs:156 (WorkbookService::publish); kask/crates/hkask-spreadsheet/src/artifact_store.rs (immutable revision publication); crates/hkask-viz-core/src/hkask_viz_core.rs:159-169 (viz-core spreadsheet wiring); crates/hkask-spreadsheet-widget/src/view.rs:23,151 (the widget; shared_tool_invoker import — the governed commit path); crates/hkask-tool-invoker/src/hkask_tool_invoker.rs (Invoker); kask/mcp-servers/hkask-mcp-spreadsheet/src/server.rs (SpreadsheetMcp); kask/mcp-servers/hkask-mcp-portfolio/src/server.rs:95-148 (the portfolio proving-slice producer)
+verified_date: 2026-09-28
+verified_against: kask/crates/hkask-types/src/spreadsheet.rs:113,637 (AnalyticalTable and SpreadsheetBlock contracts); kask/crates/hkask-spreadsheet/src/service.rs:156 (WorkbookService::publish); kask/crates/hkask-spreadsheet/src/artifact_store.rs:115 (write_revision — immutable revision publication); crates/hkask-viz-core/src/hkask_viz_core.rs:159-169 (viz-core spreadsheet wiring); crates/hkask-spreadsheet-widget/src/view.rs:23,151 (the widget; shared_tool_invoker import — the governed commit path); crates/hkask-tool-invoker/src/hkask_tool_invoker.rs:57-70 (Invoker outcome contract); kask/mcp-servers/hkask-mcp-spreadsheet/src/server.rs:94,124 (SpreadsheetMcp — spreadsheet_apply, spreadsheet_operation_get); kask/mcp-servers/hkask-mcp-portfolio/src/server.rs:95-148 (the portfolio proving-slice producer)
 reference_sources: portfolio proving slice live; companies/scenarios/research producers phased per plan §1 (one-domain-at-a-time migration)
 status: VERIFIED
 -->
@@ -121,7 +121,7 @@ Registering generic mutation tools independently in every analytical server woul
 - The widget always dispatches persisted mutations to the same server.
 - Spreadsheet origin metadata still identifies the analytical server and tool that produced the source table.
 
-The new server uses `Some(&[])` for both credential and configuration allowlists.
+The new server uses `Some(&[])` for both credential and configuration allowlists. (Recorded deviation, §10 Phase 3: the shipped config allowlist carries `HKASK_ARTIFACTS_DIR` because the server reads it — `kask/crates/kask_bridge/src/mcp_servers.rs:512`; credentials remain `Some(&[])`.)
 
 ## 5. Deep module design
 

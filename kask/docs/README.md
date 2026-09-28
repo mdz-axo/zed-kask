@@ -169,9 +169,9 @@ The eight tutorial removals landed in `5881f1f406fafe12f4fc65a549dbf1eb0a62ca84`
 
 - [x] Six-field metadata plus `mds_categories` is present on every active or operator-retained Proposed document.
 - [x] Current-state Mermaid alignment and the Proposed conceptual exception satisfy `DOCUMENTATION_STANDARDS.md`.
-- [x] Internal links in the previously blocked hkask-tool-port documents target retained reference/how-to documents.
-- [x] Diagram metadata has unique-ID/location registry parity.
-- [x] Edited citations use full repository-relative paths.
+- [x] Internal links target retained documents; the eight folded how-to documents' links were repointed to their set references (2026-09-28).
+- [x] Diagram metadata has unique-ID/location registry parity (106 records, tree-verified 2026-09-28).
+- [x] Edited citations use full repository-relative paths; 525 sampled citations across the recomposed artifacts resolve (2026-09-28).
 - [x] Document count is 66, under the fewer-than-70 cap (`find kask/docs -type f | wc -l`, measured 2026-09-28).
 
 ## See also

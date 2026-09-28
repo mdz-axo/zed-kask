@@ -1,8 +1,8 @@
 ---
 title: "Artificial Curiosity as Capability-Space Exploration"
 audience: [researchers, architects, agents]
-last_updated: 2026-09-23
-version: "1.1.0"
+last_updated: 2026-09-28
+version: "1.2.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [composition, trust]
@@ -12,7 +12,7 @@ mds_categories: [composition, trust]
 
 > **Status note (2026-09-24):** the skill set analyzed here has since been consolidated: `sequential-inquiry` merged into `metacognition`, `skill-router` merged into `skill-discovery` (its route phase), and `capabilities-reasoner` was deleted. The analysis below is kept as written.
 
-> **IS/OUGHT boundary.** Sections 1–4 summarize inspected literature and the existing skill contracts; sections 5–7 operationalize a *proposed*, unimplemented zed-kask method and experiment. An RL result is not an observation of zed-kask. Confidence numbers below are judgmental degrees of belief about the stated claim, **not** experimentally calibrated frequencies. The operator has not approved or observed a new curiosity capability.
+> **IS/OUGHT boundary.** Sections 1–4 summarize inspected literature and the existing skill contracts; sections 5–7 operationalize a *proposed*, unimplemented zed-kask method and experiment. An RL result is not an observation of zed-kask. Confidence numbers below are judgmental degrees of belief about the stated claim, **not** experimentally calibrated frequencies. The operator has not approved or observed a new curiosity capability. **Verified by search (2026-09-28):** no curiosity-selection capability exists in the tree — a case-insensitive `grep` for `curiosity` over `kask/**/*.rs` returns only the scenarios server's framing-session psychology notes and the swarm server's valence `primary_affect` examples (neither selects probes), no skill or template namespace matches it, and no D-seam in `DIVERGENCE.md` names one. The claim is an absence verified by search, not an untested assertion.
 
 ## 1. Executive verdict
 
@@ -147,6 +147,8 @@ The follow-up inspected six full works and one abstract-only source in a separat
 
 The earlier pilot used `render_template` to test whether four installed skills accepted task-specific handoffs and refused one omitted required field each. **Four of four** positive renders carried the supplied task context; **four of four** negative controls returned a missing-field error naming the omitted input. The oracle was prompt rendering and contract validation, not a selected probe's usefulness or an external capability outcome. The original report's matched `agent` test ran one test and passed; it did not validate a curiosity selector. [^pilot]
 
+**Template survival note (verified 2026-09-28):** of the four pilot templates, three still ship — `falsifiability/falsifiability-admit.j2`, `gradient-hunter/gradient-prior.j2`, and `metacognition/meta-grasp-current.j2` under `kask/registry/templates/`. `capabilities-reasoner/capability-register` was removed with the deleted `capabilities-reasoner` skill (retired template namespaces are pruned from the seeded registry, per the D1 seam record in `DIVERGENCE.md`), so the first table row is recoverable only through the git-history pilot record below. The table is a historical record of what the pilot rendered, not a claim that all four templates resolve today.
+
 | Installed template | Omitted field rejected | What the positive render established |
 |---|---|---|
 | `capabilities-reasoner/capability-register` | `target_system` | Task-specific registry-construction prompt. |
@@ -156,7 +158,7 @@ The earlier pilot used `render_template` to test whether four installed skills a
 
 The pilot eliminates only the claim that these four handoffs cannot be rendered or reject none of the tested omissions. It **does not** establish a comparison among systematic selection (A), human-guided orchestration (B), uncertainty sampling (U), and progress-based selection (C): no common task set, per-probe cost history, before/after competence observations, or held-out oracle was available. That comparison is **blocked, not zero**. The next empirical step is an authorized replayable task family with two functional adjacency rules, independent pass/fail tests, held-out tasks, identical budget and frontier handling across arms, and a separate C-versus-C+R residual-gradient ablation. The full historical pilot is recoverable at `aa7f6ce4eb:kask/docs/research/artificial-curiosity-probe-pilot.md`.
 
-[^pilot]: [The original pilot record in git history](https://github.com/mdz-axo/zed-kask/blob/aa7f6ce4eb6af4f681280b2594a78a96a34f5ff5/kask/docs/research/artificial-curiosity-probe-pilot.md) gives all eight renderer outcomes and their limits; `crates/agent/src/tools/render_template_tool.rs` contains the matched contract test.
+[^pilot]: [The original pilot record in git history](https://github.com/mdz-axo/zed-kask/blob/aa7f6ce4eb6af4f681280b2594a78a96a34f5ff5/kask/docs/research/artificial-curiosity-probe-pilot.md) gives all eight renderer outcomes and their limits; `crates/agent/src/tools/render_template_tool.rs` contains the matched contract test (`contract_validation_rejects_missing_required_render_inputs`, verified at `:401` in the current tree).
 
 ## Sources (ten original substantive works)
 

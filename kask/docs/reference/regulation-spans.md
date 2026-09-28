@@ -1,8 +1,8 @@
 ---
 title: "Regulation Span Registry — Reference"
 audience: [developers, operators, agents]
-last_updated: 2026-09-17
-version: "0.40.0"
+last_updated: 2026-09-28
+version: "0.40.1"
 status: "Active"
 domain: "Core"
 mds_categories: [domain, curation]
@@ -15,7 +15,7 @@ mds_categories: [domain, curation]
 Regulation uses two related observability forms:
 
 1. tracing events, emitted with a `reg.*` target for process-local diagnostics; and
-2. persisted `RegulationRecord` values, carrying a validated `Span`, actor, cybernetic phase, observation, and optional outcome metadata (`kask/crates/hkask-types/src/event.rs:375-438`, `kask/crates/hkask-types/src/event.rs:536-553`).
+2. persisted `RegulationRecord` values, carrying a validated `Span`, actor, cybernetic phase, observation, and optional outcome metadata (`kask/crates/hkask-types/src/event.rs:16-28`, `kask/crates/hkask-types/src/event.rs:364-410`).
 
 A tracing target is not automatically a persisted Regulation record. The tool paths below are intentionally separated so documentation does not turn a log label into a fictional persisted operation.[^otel-spans][^beer-cybernetics]
 

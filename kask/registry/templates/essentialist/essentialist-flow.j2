@@ -63,7 +63,7 @@ You are an eliminative interrogator. Your job is to enforce "always take away, n
 
 ## Loop Configuration
 
-- **Mode**: {{ mode | default("advisory") }} — {% if mode == "autonomous" %}Agent evaluates and reduces without pause{% else %}Agent recommends, human decides{% endif %}
+- **Mode**: {{ mode | default("advisory") }} — {% if mode == "autonomous" %}evaluate and reduce without pause (authorization was verified by the body's mode gate; a template parameter alone cannot authorize edits){% else %}agent recommends, human decides{% endif %}
 - **Max rounds**: {{ max_rounds | default(3) }}
 - **Max retries per gate**: {{ max_retries_per_gate | default(3) }}
 - **Initial scope**: {{ scope | default("auto") }}
@@ -128,31 +128,28 @@ FOR round in 1..max_rounds:
 
 ### Gate 1 — EXIST: Deletion Test
 
-**Delegate:** `deep-module/deep-module-delete`
+**Delegate:** `deep-module/deep-module-delete` (consumes `module_assessment` — produced by the loop-start `deep-module/deep-module-assess` pass; G2 reuses it)
 
-Apply Ousterhout's deletion test in both directions:
+Apply the deletion test in both directions:
 
-1. **Caller perspective:** For each caller of this artifact, inline its logic. Does complexity reappear? If the replacement is trivial (a few lines), the artifact is a pass-through → FAIL.
+1. **Caller perspective:** For each caller of this artifact, inline its logic. Is the inlining trivial (a few lines)? If so, the artifact is a pass-through → FAIL.
 2. **Artifact perspective:** Delete the artifact. Replace with direct calls to its dependency. Does any behavior vanish? If not → FAIL.
 
-**Pass condition:** Behavior IS lost on deletion AND complexity WOULD reappear in callers.
+**Pass condition:** Behavior IS lost on deletion AND inlining WOULD reintroduce complexity in callers.
 **Fail condition:** Trivial replacement possible OR behavior does not vanish.
+**DEEPEN verdict** (behavior stays, surface shrinks): pass-with-reduction — carry it to the G2 reduction.
 
 ### Gate 2 — SURFACE: Interface Count
 
-**Delegate:** `deep-module/deep-module-assess`
+**Delegate:** `deep-module/deep-module-assess` — its counts and thresholds govern (≤ 7 public functions per its Evidence-tier rule; depth score computed by its pinned `lisp_eval` form over every counted public item — a score stated but not computed is not a score). Reuse the loop-start assessment; re-run it only if a reduction changed the surface.
 
-Count every public item (function, type, trait, constant). Apply the 7-function rule:
-
-- ≤ 7 public items → PASS
-- > 7 public items → Each item beyond 7 requires a written justification explaining why it cannot be merged with an existing public item.
-
-Also compute the depth score: `implementation_lines / (public_functions + public_types + public_traits)`.
+- ≤ 7 public functions → PASS
+- Beyond the threshold → each public item requires a written justification explaining why it cannot be merged with an existing public item.
 
 **Challenge question for the actor:** "What if this artifact had exactly one public function? What would it be? Why do the others need to exist separately?"
 
-**Pass condition:** ≤ 7 public items, OR each extra item has a compelling, actionable justification.
-**Fail condition:** > 7 public items with un-mergeable items lacking justification.
+**Pass condition:** Within the delegate's threshold, OR each extra item has a compelling, actionable justification.
+**Fail condition:** Beyond the threshold with un-mergeable items lacking justification.
 
 ### Gate 3 — CONTRACT: Abstraction Trace
 
@@ -259,9 +256,9 @@ When mode is `advisory`, after each gate evaluation, present to the human:
       "item": "Module depth",
       "constraint_force": "Evidence",
       "label": "INFO",
-      "why": "Depth score is 14 (implementation_lines / public_items).",
+      "why": "Depth score is 14 (per the delegate's pinned form).",
       "recommended_action": "RETAIN",
-      "recommendation_detail": "Below adequate threshold (50) but gate-2 pass is contingent on ≤7 public items, not depth. Informational only.",
+      "recommendation_detail": "Below adequate threshold (50) but gate-2 pass is contingent on the delegate's public-function threshold, not depth. Informational only.",
       "human_response": null
     }
   ],
@@ -367,7 +364,7 @@ Score = (items_removed / total_items_initial) * 100
 
 Where:
   items_removed = sum of all deletions across all gates and rounds
-  total_items_initial = public functions + public types + public traits + wrappers + adapters + config structs
+  total_items_initial = the loop-start assessment's counted public items plus the wrappers, adapters and config structs G3 traced (the populations the gates actually count)
 
 Interpretation:
   0%     — Artifact was already minimal (or the loop found nothing)
@@ -387,6 +384,4 @@ Interpretation:
 - In advisory mode, human rejections of REQUIRED (Prohibition) findings cause immediate ESCALATE. Guardrail rejections are allowed with stated reason.
 - After escalation, STOP. Do not continue reducing without human input.
 - Zero-delta detection must be exact: same surviving items, same structure, same interfaces as previous round.
-- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
-- Handle missing variables gracefully (leave as-is or use default if specified).
 

@@ -2,7 +2,7 @@
 title: "Swarm MCP Server Reference"
 audience: [developers, architects, agents]
 last_updated: 2026-09-28
-version: "0.39.3"
+version: "0.39.4"
 status: "Active"
 domain: "Composition"
 mds_categories: [composition, trust, lifecycle, curation]
@@ -53,7 +53,7 @@ the existing implementation, not a shell-based oracle.[^response-regex]
 **Crate:** `kask/mcp-servers/hkask-mcp-swarm`
 **Tools:** 90 — 48 ABW cloud + 42 non-cloud, **both sets always exposed in either mode**.
 Count is pinned end-to-end by `tool_surface_is_exactly_90_registered_tools`
-(`kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:1029-1052`); the canonical list is build-script-generated:
+(`kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:1030-1033`); the canonical list is build-script-generated:
 `kask/mcp-servers/hkask-mcp-swarm/build.rs` scans router-annotated `swarm_*` functions
 (`kask/mcp-servers/hkask-mcp-swarm/build.rs:34-81`) and emits `TOOL_NAMES`, kept in agreement with the live router by
 `tool_names_const_matches_registered_surface`. The 90 functions split into 48 cloud
@@ -102,7 +102,7 @@ substrate. ABW and local tools both fit the same three surfaces.[^reynolds-swarm
 
 > The tables below document 27 core ABW tools; the canonical cloud list contains
 > 48 names and is separately pinned against `cloud_swarm_router`
-> (`kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:781-792`). The 21 untabulated tools are `swarm_update_agent`, the App surface (`swarm_create_app_direct`,
+> (`cloud_swarm_tool_names_match_live_cloud_router`, `kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:1060-1075`; the router is generated at `kask/mcp-servers/hkask-mcp-swarm/src/cloud_swarm_tools.rs:173`). The 21 untabulated tools are `swarm_update_agent`, the App surface (`swarm_create_app_direct`,
 > `swarm_update_app`, `swarm_publish_app`, `swarm_archive_app`, `swarm_get_app`,
 > `swarm_get_app_schema`, `swarm_spawn_app_workspace`, `swarm_list_app_workspaces`,
 > `swarm_fork_workspace_to_app`) and the workspace file/action surface
@@ -167,7 +167,7 @@ substrate. ABW and local tools both fit the same three surfaces.[^reynolds-swarm
 
 ## Tool reference — Non-cloud (42 tools)
 
-> The non-cloud partition is 32 local tools, 3 swarm-scoped thread tools, 4 knowledge tools, and 3 A2A tools. The source partitions are exact: `kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:223-3138`, `kask/mcp-servers/hkask-mcp-swarm/src/knowledge_tools.rs:23-229`, and `kask/mcp-servers/hkask-mcp-swarm/src/a2a_tools.rs:30-172`. Together with the 48 cloud tools they reconcile to the pinned 90-tool router.
+> The non-cloud partition is 32 local tools, 3 swarm-scoped thread tools, 4 knowledge tools, and 3 A2A tools. The source partitions are exact: `kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:354-3366`, `kask/mcp-servers/hkask-mcp-swarm/src/knowledge_tools.rs:23-229`, and `kask/mcp-servers/hkask-mcp-swarm/src/a2a_tools.rs:30-172`. Together with the 48 cloud tools they reconcile to the pinned 90-tool router.
 
 | Partition | Canonical tools |
 |---|---|
@@ -304,8 +304,8 @@ sequenceDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-RF-SWARM-001
-verified_date: 2026-09-16
-verified_against: kask/mcp-servers/hkask-mcp-swarm/src/cloud_swarm_tools.rs; kask/mcp-servers/hkask-mcp-swarm/src/spend_gate.rs; kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:731-792
+verified_date: 2026-09-28
+verified_against: kask/mcp-servers/hkask-mcp-swarm/src/cloud_swarm_tools.rs; kask/mcp-servers/hkask-mcp-swarm/src/spend_gate.rs:130,380,544; kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:1026-1075
 status: VERIFIED
 -->
 
@@ -533,7 +533,7 @@ The server's defense-in-depth coverage (from the kali audit):[^owasp-swarm-secur
 - **Data/instruction separation** — `sanitize_abw_response` wraps all LLM/ABW output in a `{content, source: "abw", trust: "untrusted"}` container and strips injection prefixes.
 - **Capability gating** — single-use consent tokens for ABW spend; local tool reach is bounded by each card's `mcp_tools` allowlist.
 - **Runtime monitoring** — `with_wallet` algedonic channel, `tracing::warn!` on stale signals, `detect_embedded_error`.
-- **Credential scoping** — `credentials: Some(&["HKASK_ABW_API_KEY", "HKASK_DB_PASSPHRASE"])` (never `None`); the server receives its cloud credential and the one shared SQLCipher passphrase, not other servers' secrets (`kask/crates/kask_bridge/src/mcp_servers.rs:356-417,1218-1250`).
+- **Credential scoping** — `credentials: Some(&["HKASK_ABW_API_KEY", "HKASK_DB_PASSPHRASE"])` (never `None`); the server receives its cloud credential and the one shared SQLCipher passphrase, not other servers' secrets (`kask/crates/kask_bridge/src/mcp_servers.rs:357-425`).
 
 **Local mode adds:**
 
@@ -552,11 +552,10 @@ plan's §14.
 
 ## Cross-links
 
-- [Swarm system docs](../../diataxis/swarm_system/reference.md) — ABW semantics, API surface, tool tables
+- [Swarm system reference](../../diataxis/swarm_system/reference.md) — ABW semantics, API surface, tool tables, and the swarm-intelligence skill process and procedures
 - [Swarm system explanation](../../diataxis/swarm_system/explanation.md) — components C0–C8, the cascade, steering modes
-- [Swarm system reference](../../diataxis/swarm_system/reference.md) — the swarm-intelligence skill process and procedures
 - [Swarm diagrams](../../diagrams/swarm.md) — server topology, the observed composition loop, and the advisory-vs-steering boundary (consolidated)
-- [MCP Server Registry](README.md) — fleet-wide patterns and the 11-server catalog
+- [MCP Server Registry](README.md) — fleet-wide patterns and the 12-server catalog
 
 ## Footnotes
 

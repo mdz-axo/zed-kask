@@ -2,7 +2,7 @@
 title: "Deterministic vs Probabilistic Compute: Routing, Entropy, and the Problem Matrix"
 audience: [researchers, architects, agents]
 last_updated: 2026-09-28
-version: "1.0.0"
+version: "1.0.1"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [composition, trust]
@@ -147,4 +147,4 @@ Fits come from the `skill-discovery` route phase. The dimension scores are judgm
 | Skill fit composites | Run (`lisp_eval`) |
 | Axis independence; routing-claim falsifiability | Run inline as judgment (P); `falsifiability` templates not rendered; no external observations |
 | Lean proof of S = k_B ln 2 · H | Not run |
-| Ontology anchors | Run; all five coarse (5W1H core) |
+| Ontology anchors | Run; all five coarse (5W1H core) at first probe — since graduated to the derived rung (all eight terms verified in `kask/crates/hkask-bridge-ontology/src/derived.rs:600-668`, re-checked 2026-09-28) |

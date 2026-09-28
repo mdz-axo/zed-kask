@@ -81,7 +81,7 @@ Eight have retained crate-named sets above; `hkask-bridge-ontology` is covered
 by [`ontology-bridge.md`](../reference/ontology-bridge.md). The remaining small
 support crates are covered by cross-cutting architecture/reference documents
 and crate-local implementation context rather than additional Diataxis sets.
-The workspace membership evidence is `Cargo.toml:273-291`.
+The workspace membership evidence is the repository-root `Cargo.toml:273-291`.
 
 Zed-side crates such as `crates/agent`, `crates/agent_ui`, `crates/zed`, and
 `crates/media_panel` are documented here only where a zed-kask capability or

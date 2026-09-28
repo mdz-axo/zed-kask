@@ -1,8 +1,8 @@
 ---
 title: "Kask Settings Reference"
 audience: [developers, operators, agents]
-last_updated: 2026-09-27
-version: "0.39.3"
+last_updated: 2026-09-28
+version: "0.40.0"
 status: "Active"
 domain: "Composition"
 mds_categories: [composition, domain]
@@ -20,7 +20,7 @@ system deserializes `SettingsContent`, not `KaskSettings`).
 
 ## Top-level struct (`KaskSettings`)
 
-`KaskSettings` has 14 subsections plus two top-level storage-root fields (`kask/crates/kask_bridge/src/settings.rs:35-96`):
+`KaskSettings` has 14 subsections plus two top-level storage-root fields (`kask/crates/kask_bridge/src/settings.rs:35-97`):
 
 | Field | Type | Default source |
 |-------|------|---------------|
@@ -57,7 +57,7 @@ capacity returns `Overloaded` before provider dispatch; full active utilization
 alone is healthy. Expiry returns `Timeout`. Caller/channel closure cancels local
 queued or running work and releases capacity.
 
-`general.inference_circuit_failure_threshold` (default 3) consecutive transient failures opens the local inference circuit. While open, requests return `CircuitOpen` before dispatch. After `general.inference_circuit_open_secs` (default 30), one half-open probe is admitted; success closes and transient failure reopens the circuit. Permanent authorization, configuration, model, and provider failures do not open the transient circuit; Regulation escalates them with typed evidence. Unknown-effect requests are not automatically replayed. The settings/default contract is at `kask/crates/kask_bridge/src/settings.rs:98-137`; the state machine and receipt path are at `kask/crates/kask_bridge/src/inference_resilience.rs:44-160`.
+`general.inference_circuit_failure_threshold` (default 3) consecutive transient failures opens the local inference circuit. While open, requests return `CircuitOpen` before dispatch. After `general.inference_circuit_open_secs` (default 30), one half-open probe is admitted; success closes and transient failure reopens the circuit. Permanent authorization, configuration, model, and provider failures do not open the transient circuit; Regulation escalates them with typed evidence. Unknown-effect requests are not automatically replayed. The settings/default contract is at `kask/crates/kask_bridge/src/settings.rs:109-139`; the state machine and receipt path are at `kask/crates/kask_bridge/src/inference_resilience.rs:44-160`.
 
 ## MCP Servers (`KaskMcpSettings`)
 

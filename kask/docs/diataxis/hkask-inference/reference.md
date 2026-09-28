@@ -2,7 +2,7 @@
 title: "hkask-inference — Reference"
 audience: [developers, architects, agents]
 last_updated: 2026-09-28
-version: "3.2.0"
+version: "3.3.0"
 status: "Active"
 domain: "Inference"
 mds_categories: [domain, composition]
@@ -10,11 +10,11 @@ mds_categories: [domain, composition]
 
 # hkask-inference — Reference
 
-Lookup reference for the current `hkask-inference` surface. Citations use full repository-relative paths and were re-derived from the implementation on 2026-09-15.
+Lookup reference for the current `hkask-inference` surface. Citations use full repository-relative paths and were re-derived from the implementation on 2026-09-28.
 
 ## Crate root and modules
 
-The crate root declares eight public modules and re-exports three public types (`kask/crates/hkask-inference/src/hkask_inference.rs:29-43`).
+The crate root declares nine public modules and re-exports three public types (`kask/crates/hkask-inference/src/hkask_inference.rs:29-42`).
 
 | Module | Purpose | Evidence |
 |---|---|---|
@@ -24,6 +24,7 @@ The crate root declares eight public modules and re-exports three public types (
 | `media_router` | Child-local media dispatcher | `kask/crates/hkask-inference/src/media_router.rs:1-12` |
 | `model_constants` | Environment bindings and QA model validation | `kask/crates/hkask-inference/src/model_constants.rs:1-24` |
 | `openai_compat` | Provider-error body redaction helpers | `kask/crates/hkask-inference/src/openai_compat.rs:1-24` |
+| `passage_tagging` | strict model-facing passage-tagging protocol — deployed-template rendering and response correlation | `kask/crates/hkask-inference/src/passage_tagging.rs:1-8,29-63` |
 | `provider` | Typed media operations and strict provider registry | `kask/crates/hkask-inference/src/provider.rs:1-30` |
 | `rerank` | Rerank HTTP support | `kask/crates/hkask-inference/src/rerank.rs:1-20` |
 
@@ -32,8 +33,8 @@ The crate root declares eight public modules and re-exports three public types (
 | `InferenceConfig`, `ProviderId` | `kask/crates/hkask-inference/src/config.rs:34-89` |
 | `InferenceIpcClient` | `kask/crates/hkask-inference/src/inference_ipc_client.rs:299-313` |
 | `resolve_inference_port()` | `kask/crates/hkask-inference/src/hkask_inference.rs:88-98` |
-| `resolve_tool_dispatch_port()` | `kask/crates/hkask-inference/src/hkask_inference.rs:816-830` |
-| `resolve_worktree_spawn_port()` | `kask/crates/hkask-inference/src/hkask_inference.rs:860-870` |
+| `resolve_tool_dispatch_port()` | `kask/crates/hkask-inference/src/hkask_inference.rs:875-886` |
+| `resolve_worktree_spawn_port()` | `kask/crates/hkask-inference/src/hkask_inference.rs:936-947` |
 
 ## Type relationships
 
@@ -72,6 +73,7 @@ classDiagram
         +generate_with_messages()
         +generate_vision()
         +embed()
+        +embed_with_identity()
         +list_models()
         +rerank()
         +media_generate()
@@ -96,8 +98,8 @@ classDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-INF-REF
-verified_date: 2026-09-16
-verified_against: kask/crates/hkask-inference/src/config.rs:34-135; kask/crates/hkask-inference/src/inference_ipc_client.rs:299-349,425-677; kask/crates/hkask-inference/src/hkask_inference.rs:88-105,155-375,389-490; kask/crates/hkask-inference/src/media_router.rs:9-72
+verified_date: 2026-09-28
+verified_against: kask/crates/hkask-inference/src/config.rs:34-135; kask/crates/hkask-inference/src/inference_ipc_client.rs:299-349,526-750,747-920; kask/crates/hkask-inference/src/hkask_inference.rs:88-105,155-375,411-490; kask/crates/hkask-inference/src/media_router.rs:9-72
 status: VERIFIED
 -->
 
@@ -111,7 +113,7 @@ Defined at `kask/crates/hkask-inference/src/config.rs:34-48`.
 | `OpenRouter` | `OR` | `OpenRouter` |
 | `Ollama` | `OM` | `ollama` |
 
-`as_str(&self) -> &'static str` is the enum's only inherent public method (`kask/crates/hkask-inference/src/config.rs:50-64`). Direct chat/embedding provider selection is performed by `DIRECT_EMBEDDING_PROVIDERS`, not by `ProviderId` (`kask/crates/hkask-inference/src/hkask_inference.rs:409-455`).
+`as_str(&self) -> &'static str` is the enum's only inherent public method (`kask/crates/hkask-inference/src/config.rs:50-64`). Direct chat/embedding provider selection is performed by `DIRECT_EMBEDDING_PROVIDERS`, not by `ProviderId` (`kask/crates/hkask-inference/src/hkask_inference.rs:439-461`).
 
 ## `InferenceConfig`
 
@@ -136,11 +138,12 @@ Provider keys are read from the process environment only (`kask/crates/hkask-inf
 | `generate`, `generate_with_model`, `generate_with_messages` | IPC generation | Direct OpenAI-compatible chat | `kask/crates/hkask-inference/src/hkask_inference.rs:155-169`, `kask/crates/hkask-inference/src/hkask_inference.rs:210-285` |
 | `generate_vision` | IPC vision | `InferenceError::Connection` naming socket | `kask/crates/hkask-inference/src/hkask_inference.rs:172-207` |
 | `embed` | IPC embedding | Direct OpenAI-compatible embedding | `kask/crates/hkask-inference/src/hkask_inference.rs:288-309` |
+| `embed_with_identity` | IPC embedding with provider identity | Direct OpenAI-compatible embedding with identity | `kask/crates/hkask-inference/src/hkask_inference.rs:295-323` |
 | `list_models` | IPC model list | `InferenceError::Connection` naming socket | `kask/crates/hkask-inference/src/hkask_inference.rs:312-330` |
 | `rerank` | IPC rerank | `InferenceError::Connection` naming socket | `kask/crates/hkask-inference/src/hkask_inference.rs:333-355` |
 | `media_generate` | Child-local `MediaRouter` | Same child-local path | `kask/crates/hkask-inference/src/hkask_inference.rs:358-375` |
 
-The direct provider descriptors are DeepInfra, OpenRouter, and Ollama (`kask/crates/hkask-inference/src/hkask_inference.rs:409-437`). `DirectEmbeddingPort::try_new` requires a recognized prefix and any required provider key (`kask/crates/hkask-inference/src/hkask_inference.rs:439-490`).
+The direct provider descriptors are DeepInfra, OpenRouter, and Ollama (`kask/crates/hkask-inference/src/hkask_inference.rs:439-461`). `DirectEmbeddingPort::try_new` requires a recognized prefix and any required provider key (`kask/crates/hkask-inference/src/hkask_inference.rs:467-490`).
 
 ### Direct chat response evidence
 
@@ -152,9 +155,11 @@ nonnegative value), matching the existing D20 compatible-provider precedence.
 Cost and token reporting are independent; cost alone does not imply a measured
 token total, and missing cost is not zero.
 
-Implementation: `ChatUsage`, `usage_from_wire`, and `DirectEmbeddingPort` in
-`kask/crates/hkask-inference/src/hkask_inference.rs`.
-`direct_chat_preserves_model_and_provider_cost` exercises the actual HTTP
+Implementation: `ChatUsage` at `kask/crates/hkask-inference/src/hkask_inference.rs:524-532`,
+`usage_from_wire` at `kask/crates/hkask-inference/src/hkask_inference.rs:542-553`, and the
+cost selection at `kask/crates/hkask-inference/src/hkask_inference.rs:744-748`.
+`direct_chat_preserves_model_and_provider_cost`
+(`kask/crates/hkask-inference/src/hkask_inference.rs:995`) exercises the actual HTTP
 decoder on a loopback-only fixture with no credentials. Reference precedence:
 `crates/language_model_core/src/chat_completion.rs:191-216`.
 These are response metadata, not authenticated model identity or a spend cap.
@@ -163,8 +168,8 @@ These are response metadata, not authenticated model identity or a spend cap.
 
 | Condition | Error | Evidence |
 |---|---|---|
-| No explicit chat model and empty `HKASK_DEFAULT_MODEL` | `InferenceError::NotConfigured` | `kask/crates/hkask-inference/src/hkask_inference.rs:123-143`, `kask/crates/hkask-inference/src/hkask_inference.rs:581-597` |
-| Explicit zed model override cannot be resolved | `InferenceError::Model`; no default substitution | `kask/crates/kask_bridge/src/inference_chat.rs:579-621`, `kask/crates/kask_bridge/src/inference_chat.rs:674-690` |
+| No explicit chat model and empty `HKASK_DEFAULT_MODEL` | `InferenceError::NotConfigured` | `kask/crates/hkask-inference/src/hkask_inference.rs:123-143`, `kask/crates/hkask-inference/src/hkask_inference.rs:645-657` |
+| Explicit zed model override cannot be resolved | `InferenceError::Model`; no default substitution | `kask/crates/kask_bridge/src/inference_chat.rs:579-621`, `kask/crates/kask_bridge/src/inference_chat.rs:700-715` |
 | QA model absent from explicit input and `HKASK_QA_GENERATION_MODEL` | `InferenceError::NotConfigured` | `kask/crates/hkask-inference/src/model_constants.rs` |
 | QA model malformed or not provider-qualified | `InferenceError::Model` | `kask/crates/hkask-inference/src/model_constants.rs` |
 | Direct embedding model has no usable provider/credential | `EmbeddingGenerationError::Connection` | `kask/crates/hkask-inference/src/hkask_inference.rs:296-307` |
@@ -179,10 +184,10 @@ The client is cloneable and stores an `Arc<PathBuf>` socket path plus an `Arc<At
 |---|---|---|
 | `connect(path)` | Tests reachability, then stores the path | `kask/crates/hkask-inference/src/inference_ipc_client.rs:315-330` |
 | `from_env()` | Uses `HKASK_INFERENCE_SOCKET`, then runtime-file fallback | `kask/crates/hkask-inference/src/inference_ipc_client.rs:332-349` |
-| `embed(model, texts)` | Rejects empty input, performs `Embed` roundtrip | `kask/crates/hkask-inference/src/inference_ipc_client.rs:453-506` |
-| `rerank_documents(model, query, documents)` | Rejects empty documents, performs `Rerank` roundtrip | `kask/crates/hkask-inference/src/inference_ipc_client.rs:537-589` |
-| `invoke_tool(server, tool, args, allowed)` | Sends governed tool request and allowlist | `kask/crates/hkask-inference/src/inference_ipc_client.rs:591-634` |
-| `create_worktree_thread(...)` | Requests a zed-side worktree thread | `kask/crates/hkask-inference/src/inference_ipc_client.rs:636-676` |
+| `embed(model, texts)` | Rejects empty input, performs `Embed` roundtrip | `kask/crates/hkask-inference/src/inference_ipc_client.rs:526-580` |
+| `rerank_documents(model, query, documents)` | Rejects empty documents, performs `Rerank` roundtrip | `kask/crates/hkask-inference/src/inference_ipc_client.rs:612-655` |
+| `invoke_tool(server, tool, args, allowed)` | Sends governed tool request and allowlist | `kask/crates/hkask-inference/src/inference_ipc_client.rs:657-700` |
+| `create_worktree_thread(...)` | Requests a zed-side worktree thread | `kask/crates/hkask-inference/src/inference_ipc_client.rs:703-750` |
 
 `ipc_roundtrip` serializes one request line, opens a fresh connection, writes and flushes it, reads one capped response line, deserializes it, and verifies the correlation ID (`kask/crates/hkask-inference/src/inference_ipc_client.rs:351-422`). The line cap is 16 MiB (`kask/crates/hkask-inference/src/inference_ipc_client.rs:68-74`); the read deadline is the configured inference timeout plus 30 seconds or a 600-second fallback (`kask/crates/hkask-inference/src/inference_ipc_client.rs:128-199`).[^cwe400]
 
@@ -204,7 +209,7 @@ The client is cloneable and stores an `Arc<PathBuf>` socket path plus an `Arc<At
 
 ## Procedures
 
-Use these recipes to wire an MCP server to the inference bridge, choose a model without hidden substitution, and configure strict media routing. The crate exposes port resolvers rather than provider-specific chat clients (`kask/crates/hkask-inference/src/hkask_inference.rs:41-43`, `kask/crates/hkask-inference/src/hkask_inference.rs:88-105`, `kask/crates/hkask-inference/src/hkask_inference.rs:816-895`).[^hexagonal]
+Use these recipes to wire an MCP server to the inference bridge, choose a model without hidden substitution, and configure strict media routing. The crate exposes port resolvers rather than provider-specific chat clients (`kask/crates/hkask-inference/src/hkask_inference.rs:41-43`, `kask/crates/hkask-inference/src/hkask_inference.rs:88-105`, `kask/crates/hkask-inference/src/hkask_inference.rs:875-1000`).[^hexagonal]
 
 ### Route an MCP server through the lazy inference port
 
@@ -233,12 +238,12 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-INF-WIRE
-verified_date: 2026-09-16
+verified_date: 2026-09-28
 verified_against: kask/crates/hkask-inference/src/hkask_inference.rs:88-105,155-375,389-490
 status: VERIFIED
 -->
 
-Call the trait method that matches the task. The IPC adapter implements generation, message-preserving generation, vision, embedding, reranking, and model listing (`kask/crates/hkask-inference/src/inference_ipc_client.rs:679-814`). Every request uses a fresh socket connection and a correlated response ID (`kask/crates/hkask-inference/src/inference_ipc_client.rs:351-422`).
+Call the trait method that matches the task. The IPC adapter implements generation, message-preserving generation, vision, embedding (with and without provider identity), reranking, and model listing (`kask/crates/hkask-inference/src/inference_ipc_client.rs:747-920`). Every request uses a fresh socket connection and a correlated response ID (`kask/crates/hkask-inference/src/inference_ipc_client.rs:351-422`).
 
 ### Surface a missing default model
 
@@ -248,7 +253,7 @@ For chat generation without an explicit override, configure the visible default:
 export HKASK_DEFAULT_MODEL='OpenRouter/vendor/model'
 ```
 
-In zed-kask this value normally comes from `kask.models.default_model` and is injected into the child process. `InferenceConfig::from_env()` leaves `default_model` empty when the variable is absent (`kask/crates/hkask-inference/src/config.rs:109-135`). The direct generation path then returns `InferenceError::NotConfigured` with instructions to set the setting or pass an explicit model; it does not select a code constant (`kask/crates/hkask-inference/src/hkask_inference.rs:123-143`, `kask/crates/hkask-inference/src/hkask_inference.rs:572-597`).
+In zed-kask this value normally comes from `kask.models.default_model` and is injected into the child process. `InferenceConfig::from_env()` leaves `default_model` empty when the variable is absent (`kask/crates/hkask-inference/src/config.rs:109-135`). The direct generation path then returns `InferenceError::NotConfigured` with instructions to set the setting or pass an explicit model; it does not select a code constant (`kask/crates/hkask-inference/src/hkask_inference.rs:123-143`, `kask/crates/hkask-inference/src/hkask_inference.rs:645-657`).
 
 When you do pass an explicit model, pass the complete registry name:
 
@@ -258,7 +263,7 @@ let result = inference
     .await?;
 ```
 
-If zed's `LanguageModelRegistry` cannot resolve that override, the bridge returns `InferenceError::Model("model_override '…' not found; no default substitution")` (`kask/crates/kask_bridge/src/inference_chat.rs:579-621`, `kask/crates/kask_bridge/src/inference_chat.rs:674-690`). Fix the provider/model configuration; do not retry without the override unless using the default model is the intended user-visible behavior.
+If zed's `LanguageModelRegistry` cannot resolve that override, the bridge returns `InferenceError::Model("model_override '…' not found; no default substitution")` (`kask/crates/kask_bridge/src/inference_chat.rs:579-621`, `kask/crates/kask_bridge/src/inference_chat.rs:700-715`). Fix the provider/model configuration; do not retry without the override unless using the default model is the intended user-visible behavior.
 
 ### Configure the dedicated QA generation model
 
@@ -292,10 +297,10 @@ as a required `prepared-qa-adjudication-v2` manifest.
 
 Bridge-routed model support belongs in zed's model registry. To add standalone direct fallback for another OpenAI-compatible provider:
 
-1. Add a `DirectEmbeddingProvider { id, api_url, env_var }` entry to `DIRECT_EMBEDDING_PROVIDERS` (`kask/crates/hkask-inference/src/hkask_inference.rs:409-437`).
-2. Keep the provider descriptor aligned with zed's registry integration; the table comment identifies the table as the embedding-capable SUBSET of `kask_bridge::inference_providers` — not a full mirror: RunPod (endpoint discovery) and KiloCode (chat-only, no embeddings endpoint) are deliberately absent (`kask/crates/hkask-inference/src/hkask_inference.rs:426-435`).
+1. Add a `DirectEmbeddingProvider { id, api_url, env_var }` entry to `DIRECT_EMBEDDING_PROVIDERS` (`kask/crates/hkask-inference/src/hkask_inference.rs:439-461`).
+2. Keep the provider descriptor aligned with zed's registry integration; the table comment identifies the table as the embedding-capable SUBSET of `kask_bridge::inference_providers` — not a full mirror: RunPod (endpoint discovery) and KiloCode (chat-only, no embeddings endpoint) are deliberately absent (`kask/crates/hkask-inference/src/hkask_inference.rs:427-437`).
 3. If configuration fields are required by other crate features, add them to `InferenceConfig::default` and `InferenceConfig::from_env` together (`kask/crates/hkask-inference/src/config.rs:66-135`).
-4. Test an explicit provider-qualified model, a missing credential, and an unknown prefix. `DirectEmbeddingPort::try_new` accepts only a recognized prefix and required credentials (`kask/crates/hkask-inference/src/hkask_inference.rs:439-490`).
+4. Test an explicit provider-qualified model, a missing credential, and an unknown prefix. `DirectEmbeddingPort::try_new` accepts only a recognized prefix and required credentials (`kask/crates/hkask-inference/src/hkask_inference.rs:467-490`).
 
 `ProviderId` needs a new variant only if the shared configuration must represent that provider. Its public behavior is the `as_str()` match (`kask/crates/hkask-inference/src/config.rs:34-64`); dispatch parsing remains in the direct-provider table or media registry.
 
@@ -309,8 +314,8 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-INF-PROVIDER
-verified_date: 2026-09-16
-verified_against: kask/crates/hkask-inference/src/config.rs:34-135; kask/crates/hkask-inference/src/hkask_inference.rs:409-490; kask/crates/kask_bridge/src/inference_chat.rs:579-621
+verified_date: 2026-09-28
+verified_against: kask/crates/hkask-inference/src/config.rs:34-135; kask/crates/hkask-inference/src/hkask_inference.rs:421-490; kask/crates/kask_bridge/src/inference_chat.rs:579-621
 status: VERIFIED
 -->
 
@@ -338,7 +343,7 @@ let tools = hkask_inference::resolve_tool_dispatch_port().await;
 let worktrees = hkask_inference::resolve_worktree_spawn_port().await;
 ```
 
-These resolvers connect during resolution. If the bridge is absent, their stubs return `InferenceError::Connection` naming the missing socket; there is no direct HTTP fallback (`kask/crates/hkask-inference/src/hkask_inference.rs:816-895`).
+These resolvers connect during resolution. If the bridge is absent, their stubs return `InferenceError::Connection` naming the missing socket; there is no direct HTTP fallback (`kask/crates/hkask-inference/src/hkask_inference.rs:875-1000`).
 
 ## See also
 

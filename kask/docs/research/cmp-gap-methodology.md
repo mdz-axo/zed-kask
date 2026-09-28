@@ -1,8 +1,8 @@
 ---
 title: "Expectations-Gap Methodology: Prediction Markets vs Traditional Markets"
 audience: [researchers, analysts, agents]
-last_updated: 2026-09-19
-version: "1.0.0"
+last_updated: 2026-09-28
+version: "1.1.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [composition, trust]
@@ -10,7 +10,7 @@ mds_categories: [composition, trust]
 
 # Expectations-Gap Methodology: Prediction Markets vs Traditional Markets
 
-**Status**: v1.0, 2026-09-19. Process-level spec; run 1 (recession family) is the first worked instance (report: `~/Documents/zk-data/companies-mcp/reports/cmp-gap-run1-recession.json`, goal `824c7f78`, judged done 2026-09-19).
+**Status**: v1.1, 2026-09-28 (tool references and the Stage-7 diagram alignment re-verified against the current servers; process unchanged). Process-level spec; run 1 (recession family) is the first worked instance (report: `~/Documents/zk-data/companies-mcp/reports/cmp-gap-run1-recession.json`, goal `824c7f78`, judged done 2026-09-19).
 
 **Scope**: the repeatable process for detecting, measuring, and interpreting gaps between the expectations priced into prediction markets (Polymarket, Kalshi) and those priced into traditional financial markets (rates, FX, equities) and published macro data.
 
@@ -75,7 +75,7 @@ A family is admissible when (i) an active prediction-market contract exists with
 
 - Resolve the market contract (`market_lookup` / `market_match`); record verbatim: question, resolution criteria, deadline, price and price method, spread, volume, liquidity, reliability tier, resolution source.
 - Read the resolution criteria against the traditional analog's event definition **now** — this is the W3 preview. If the definitions cannot be matched within the eventual cost band, route to fix-contract-match-first immediately.
-- Align horizons. Contract-ladder families use the CMP tenor grid (7d/30d/90d/180d/1y/2y) via `market_ladder` / `market_cmp_indices`; the economic context for a CMP family is operator-accepted (`market_cmp_context_suggest` — never silently the curated default); tenors without cohort coverage are reported unknown, never filled. Duration-match equity legs with `equity_duration` (`cmp_tenor_gaps`).
+- Align horizons. Contract-ladder families use the CMP tenor grid (7d/30d/90d/180d/1y/2y) via `market_ladder` / `market_cmp_indices`; the economic context for a CMP family is operator-accepted (`market_cmp_context_suggest` — never silently the curated default); tenors without cohort coverage are reported unknown, never filled. Duration-match equity legs with `equity_duration` (its `cmp_tenor_gaps` output field — the maturity-transformation gap of the equity duration against the fixed CMP tenors, `kask/mcp-servers/hkask-mcp-companies/src/tools/valuation.rs:412`; `cmp_tenor_gaps` is not a standalone tool).
 - CMP tools require the series registered in `HKASK_PREDICTION_MARKETS_BASE_EVENTS`; single-contract families stay on `market_lookup` raw records (run 1 did).
 
 ### Stage 3 — Price the market leg
@@ -124,8 +124,8 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-RES-CMP-001
-verified_date: 2026-09-19
-verified_against: kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs:668 (contract_price_coherence — the Stage-5 divergence gate); kask/crates/hkask-forecast/src/hkask_forecast.rs:844 (the coherence measure); kask/mcp-servers/hkask-mcp-prediction-markets/src/hkask_mcp_prediction_markets.rs:196 (market_calibration — the Stage-6/W2 bucket read); ~/Documents/zk-data/companies-mcp/reports/cmp-gap-run1-recession.json (run 1 — divergent, W3 not dominant, W2 empty → monitoring signal); ~/Documents/zk-data/companies-mcp/reports/cmp-gap-run2-ratepath.json (run 2 — same route, decision-delta ladder)
+verified_date: 2026-09-28
+verified_against: kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs:663 (contract_price_coherence — the Stage-5 divergence gate); kask/crates/hkask-forecast/src/hkask_forecast.rs:630-677 (the coherence measure); kask/mcp-servers/hkask-mcp-prediction-markets/src/hkask_mcp_prediction_markets.rs:189 (market_calibration — the Stage-6/W2 bucket read); ~/Documents/zk-data/companies-mcp/reports/cmp-gap-run1-recession.json (run 1 — divergent, W3 not dominant, W2 empty → monitoring signal); ~/Documents/zk-data/companies-mcp/reports/cmp-gap-run2-ratepath.json (run 2 — same route, decision-delta ladder)
 status: VERIFIED
 -->
 

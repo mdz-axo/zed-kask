@@ -1,8 +1,8 @@
 ---
 title: "hKask Architecture Diagrams — CMP Pipeline, Ontology Bridge, Skill/MCP/Lisp Seam, Credentials, Tool Port, Event Store, Viz-Core, Skill Learning Loop"
 audience: [architects, developers, agents]
-last_updated: 2026-09-26
-version: "1.1.0"
+last_updated: 2026-09-28
+version: "1.2.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle]
@@ -13,7 +13,7 @@ mds_categories: [domain, composition, trust, lifecycle]
 Consolidated reference-quadrant architecture diagrams. Each section folds a
 former standalone diagram file; unique `DIAGRAM_ALIGNMENT` IDs are preserved
 from the originals. Every diagram was re-verified against current code on
-2026-08-28; corrected diagrams carry a "Corrections" note naming what drifted.
+2026-09-28; regenerated diagrams carry a note naming what drifted.
 
 ## CMP-First Research Pipeline
 
@@ -86,8 +86,8 @@ graph TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-CMP-ARCH-001
-verified_date: 2026-09-19
-verified_against: kask/crates/hkask-forecast/src/hkask_forecast.rs (cmp_scenario_risk_measure L733, contract_price_coherence L802); kask/mcp-servers/hkask-mcp-prediction-markets/src/cmp_index_builder.rs (build_cmp_indices_from_lines L498); kask/mcp-servers/hkask-mcp-prediction-markets/src/cmp_portfolio.rs (solve_portfolio_cohort L467); kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs (scenario_from_cmp_indices L626, compose_cmp_tree L653, compose_cmp_tree_with_deps L655); kask/mcp-servers/hkask-mcp-companies/src/tools/analytics.rs (scenario_analysis L686); kask/mcp-servers/hkask-mcp-companies/src/tools/valuation.rs (equity_duration L481); kask/mcp-servers/hkask-mcp-companies/src/superforecast.rs (EventTreeProjection L219)
+verified_date: 2026-09-28
+verified_against: kask/crates/hkask-forecast/src/hkask_forecast.rs (cmp_scenario_risk_measure L612, contract_price_coherence L681, duration_vs_cmp_tenors L741); kask/mcp-servers/hkask-mcp-prediction-markets/src/cmp_index_builder.rs (build_cmp_indices_from_lines L580); kask/mcp-servers/hkask-mcp-prediction-markets/src/cmp_portfolio.rs (solve_portfolio_cohort L477); kask/mcp-servers/hkask-mcp-prediction-markets/src/hkask_mcp_prediction_markets.rs (market_cmp_indices L1298); kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs (scenario_from_cmp_indices L574); kask/mcp-servers/hkask-mcp-scenarios/src/superforecast/compose.rs (compose_cmp_tree L252, compose_cmp_tree_with_deps L311); kask/mcp-servers/hkask-mcp-companies/src/tools/analytics.rs (scenario_analysis L266); kask/mcp-servers/hkask-mcp-companies/src/tools/valuation.rs (equity_duration L414); kask/mcp-servers/hkask-mcp-companies/src/superforecast.rs (EventTreeProjection L220)
 status: VERIFIED
 -->
 
@@ -119,8 +119,8 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-CMP-ARCH-002
-verified_date: 2026-09-19
-verified_against: kask/mcp-servers/hkask-mcp-prediction-markets/src/cmp_index_builder.rs (build_oriented_constituents L324, build_cmp_indices_from_lines L498); kask/mcp-servers/hkask-mcp-prediction-markets/src/cmp_portfolio.rs (select_available_buckets L197, solve_portfolio L383, solve_portfolio_cohort L467)
+verified_date: 2026-09-28
+verified_against: kask/mcp-servers/hkask-mcp-prediction-markets/src/cmp_index_builder.rs (build_oriented_constituents L322, build_cmp_indices_from_lines L580); kask/mcp-servers/hkask-mcp-prediction-markets/src/cmp_portfolio.rs (select_available_buckets L201, solve_portfolio L392, solve_portfolio_cohort L477); kask/mcp-servers/hkask-mcp-prediction-markets/src/hkask_mcp_prediction_markets.rs (market_cmp_indices L1298)
 status: VERIFIED
 -->
 
@@ -145,8 +145,8 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-CMP-ARCH-003
-verified_date: 2026-09-16
-verified_against: kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs (scenario_from_cmp_indices L626-687, convert_cmp_index format L666); kask/mcp-servers/hkask-mcp-scenarios/src/superforecast.rs (compose_cmp_tree, compose_cmp_tree_with_deps, convert_cmp_index — called at hkask_mcp_scenarios.rs L653-655); kask/mcp-servers/hkask-mcp-scenarios/src/requests.rs (CmpDependencySpec L119)
+verified_date: 2026-09-28
+verified_against: kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs (scenario_from_cmp_indices L574-640, convert_cmp_index format L620); kask/mcp-servers/hkask-mcp-scenarios/src/superforecast/compose.rs (compose_cmp_tree L252, compose_cmp_tree_with_deps L311, convert_cmp_index L183 — called at hkask_mcp_scenarios.rs L601-603); kask/mcp-servers/hkask-mcp-scenarios/src/requests.rs (CmpDependencySpecRequest L125)
 status: VERIFIED
 -->
 
@@ -168,8 +168,8 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-CMP-ARCH-004
-verified_date: 2026-09-16
-verified_against: kask/crates/hkask-forecast/src/hkask_forecast.rs (cmp_scenario_risk_measure L733, contract_price_coherence L802); falsification.rs deleted — falsification_log / h2_duration_test / h3_coherence_test no longer exist in kask/crates/hkask-forecast/src/
+verified_date: 2026-09-28
+verified_against: kask/crates/hkask-forecast/src/hkask_forecast.rs (cmp_scenario_risk_measure L612, contract_price_coherence L681); falsification.rs deleted — falsification_log / h2_duration_test / h3_coherence_test no longer exist in kask/crates/hkask-forecast/src/ (only hkask_forecast.rs and property_tests.rs remain)
 status: VERIFIED
 -->
 
@@ -197,82 +197,8 @@ graph TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-CMP-ARCH-005
-verified_date: 2026-09-16
-verified_against: kask/crates/hkask-forecast/Cargo.toml; kask/mcp-servers/hkask-mcp-prediction-markets/Cargo.toml (hkask-forecast L28); kask/mcp-servers/hkask-mcp-scenarios/Cargo.toml (hkask-forecast L28, hkask-mcp-prediction-markets L29); kask/mcp-servers/hkask-mcp-companies/Cargo.toml (hkask-forecast L36)
-status: VERIFIED
--->
-
-## Interdisciplinary Constraint-Forces Skills
-
-The relationship between the two scaffolded skills (GSR, CFR), their delegate
-skills, and the ontology-source providers. Verified current — all seven
-referenced SKILL.md files exist unchanged in role.
-
-```mermaid
-graph TD
-    subgraph "Ontology Sources (multi-provider)"
-        OBO["OBO Foundry\n(no auth, ~200+ ontologies)"]
-        ONTOBEE["OntoBee\n(SPARQL mirror)"]
-        BIOPORTAL["BioPortal\n(apikey, 1288 ontologies)"]
-    end
-
-    subgraph "GSR: gradient-seeded-recombination"
-        GSR_INV["1. Inventory\n(enum + license check)"]
-        GSR_PRIOR["2. Prior\n(K_n complete graph)"]
-        GSR_MAP["3. Map\n(actual recombination field)"]
-        GSR_DETECT["4. Detect\n(8-shape taxonomy)"]
-        GSR_HYP["5. Hypothesize\n(7-class reason taxonomy)"]
-        GSR_PRIO["6. Prioritize\n(reason class ordering)"]
-        GSR_SEED["7. Select Seeds\n(most central concept)"]
-        GSR_CONV["8. Converge\n(Cauchy on field coverage)"]
-        GSR_LOOP["9. Loop\n(feedback to Prior)"]
-
-        GSR_INV --> GSR_PRIOR --> GSR_MAP --> GSR_DETECT --> GSR_HYP --> GSR_PRIO --> GSR_SEED --> GSR_CONV --> GSR_LOOP
-        GSR_LOOP --> GSR_PRIOR
-    end
-
-    subgraph "CFR: constraint-forces-recast"
-        CFR_REP["1. Represent\n(axiom graph)"]
-        CFR_VIOL["2. Violate\n(B's axiom violations)"]
-        CFR_PROJ["3. Project\n(min-sat projection)"]
-        CFR_CTRL["4. Control\n(relabel control)"]
-        CFR_3CRIT["5. Three-Criterion\n(expressible/absent/consistent)"]
-        CFR_CMP["6. Compare\n(mutant delta vs relabel delta)"]
-        CFR_FRON["7. Frontier\n(Pareto on novelty/validity/cost)"]
-        CFR_CONV["8. Converge\n(lisp.eval: frontier stability)"]
-        CFR_LOOP["9. Loop\n(advance seed_index)"]
-
-        CFR_REP --> CFR_VIOL --> CFR_PROJ --> CFR_CTRL --> CFR_3CRIT --> CFR_CMP --> CFR_FRON --> CFR_CONV --> CFR_LOOP
-        CFR_LOOP --> CFR_REP
-    end
-
-    subgraph "Delegate Skills"
-        FALS["falsifiability\n(Popper/Platt/Pearl)"]
-        GHUNT["gradient-hunter\n(8-shape taxonomy)"]
-        GPA["self-improvement GEPA\n(Pareto frontier)"]
-        PCYB["pragmatic-cybernetics\n(variety engineering)"]
-        META["metacognition\n(perspective rotation)"]
-    end
-
-    OBO --> GSR_INV
-    ONTOBEE --> GSR_INV
-    BIOPORTAL --> GSR_INV
-
-    GSR_HYP -.->|delegates| FALS
-    GSR_HYP -.->|delegates| META
-    GSR_PRIOR -.->|delegates| PCYB
-    GSR_DETECT -.->|inherits taxonomy| GHUNT
-
-    GSR_SEED -->|seed_concepts| CFR_REP
-
-    CFR_3CRIT -.->|methodological anchor| FALS
-    CFR_FRON -.->|methodological anchor| GPA
-```
-
-<!-- DIAGRAM_ALIGNMENT
-id: DIAG-SKILL-CFR
-verified_date: 2026-09-16
-verified_against: .agents/skills/gradient-seeded-recombination/SKILL.md; .agents/skills/constraint-forces-recast/SKILL.md; .agents/skills/falsifiability/SKILL.md; .agents/skills/gradient-hunter/SKILL.md; .agents/skills/pragmatic-cybernetics/SKILL.md; .agents/skills/metacognition/SKILL.md
+verified_date: 2026-09-28
+verified_against: kask/crates/hkask-forecast/Cargo.toml (no hkask-mcp deps); kask/mcp-servers/hkask-mcp-prediction-markets/Cargo.toml (hkask-forecast L20); kask/mcp-servers/hkask-mcp-scenarios/Cargo.toml (hkask-forecast L29, hkask-mcp-prediction-markets L30); kask/mcp-servers/hkask-mcp-companies/Cargo.toml (hkask-forecast L40)
 status: VERIFIED
 -->
 
@@ -280,75 +206,93 @@ status: VERIFIED
 
 The ontology bridge is a single shared crate (`hkask-bridge-ontology`) that
 owns all ontology vocabulary and the domain-selection logic. No ontology
-vocabulary lives inside any MCP server; every server that does tagging
-depends on this crate.
+vocabulary lives inside any MCP server; every crate that does tagging or
+anchoring depends on this crate.
 
-**Corrections (2026-08-28):** the crate has expanded from 3 to 10 vocabulary
-modules — `fibo.rs`, `eso.rs`, `golem.rs`, and `omc.rs` exist again (the old
-"Deleted (rip-and-replace)" subgraph is stale), `mlschema.rs` was renamed
-`ml_schema.rs`, and `sdmx.rs` (statistical data) and `sumo.rs` (upper
-ontology) are new. The dependent set grew from 5 to 9 MCP servers plus the
-condenser crate and two widget crates.
+**Regenerated (2026-09-28):** the crate is now organized around the P8.3
+ladder — `eso.rs` and `sdmx.rs` are gone; `data_cube.rs` (RDF Data Cube),
+`derived.rs`, `ontology_graph.rs`, `published.rs`, `rdf.rs`, `schema_org.rs`,
+and `term_resolution.rs` were added (`hkask_bridge_ontology.rs` L94-112 —
+16 `pub mod` entries). The dependent set grew from 12 to 16 crates:
+`hkask-mcp-kata-kanban`, `crates/agent`, `hkask-types`, and `kask_bridge`
+now depend on the crate alongside the previous 12.
 
 ```mermaid
 graph TD
-    subgraph shared["hkask-bridge-ontology (shared crate)"]
+    subgraph shared["hkask-bridge-ontology — shared crate"]
         direction TB
-        axis["axis.rs<br/>domain-selection logic"]
-        dc_bibo["dc_bibo.rs<br/>DC + BIBO + CiTO"]
-        pko["pko.rs<br/>PKO"]
-        fibo["fibo.rs<br/>FIBO"]
-        sepio["sepio.rs<br/>SEPIO"]
-        golem["golem.rs<br/>GOLEM"]
-        ml_schema["ml_schema.rs<br/>ML-Schema"]
-        omc["omc.rs<br/>OMC"]
-        sdmx["sdmx.rs<br/>SDMX"]
-        sumo["sumo.rs<br/>SUMO"]
-        axis --> dc_bibo
-        axis --> pko
-        axis --> fibo
-        axis --> eso
-        axis --> golem
-        axis --> ml_schema
-        axis --> omc
-        axis --> sdmx
-        axis --> sumo
+        axis["axis.rs<br/>domain-selection dispatch"]
+        subgraph vocab["Pinned vocabulary modules"]
+            direction TB
+            data_cube["data_cube.rs<br/>RDF Data Cube"]
+            dc_bibo["dc_bibo.rs<br/>DC + BIBO + CiTO"]
+            fibo["fibo.rs<br/>FIBO"]
+            golem["golem.rs<br/>GOLEM"]
+            ml_schema["ml_schema.rs<br/>ML-Schema"]
+            omc["omc.rs<br/>OMC"]
+            pko["pko.rs<br/>PKO"]
+            schema_org["schema_org.rs<br/>schema.org"]
+            sepio["sepio.rs<br/>SEPIO"]
+            sumo["sumo.rs<br/>SUMO upper"]
+        end
+        subgraph ladder["Ladder and resolution modules"]
+            direction TB
+            derived["derived.rs<br/>derived concepts"]
+            ontology_graph["ontology_graph.rs<br/>graph walk"]
+            published["published.rs<br/>published senses"]
+            rdf["rdf.rs<br/>RDF core"]
+            term_resolution["term_resolution.rs<br/>P8.3 ladder"]
+        end
     end
 
-    subgraph servers["Dependents (functional areas)"
-    ]
-        condenser["hkask-condenser"]
-        corpus["hkask-mcp-corpus<br/>tagging + triples"]
-        companies["hkask-mcp-companies<br/>fibo dispatch + ontology tag"]
-        training["hkask-mcp-training<br/>ml_schema dispatch"]
-        pm["hkask-mcp-prediction-markets<br/>FIBO-anchored CMP"]
-        portfolio["hkask-mcp-portfolio"]
-        research["hkask-mcp-research"]
-        scenarios["hkask-mcp-scenarios"]
-        swarm["hkask-mcp-swarm"]
-        media["hkask-mcp-media"]
-        media_widget["hkask-media-widget"]
-        portfolio_widget["hkask-portfolio-widget"]
+    subgraph deps["Dependents — 16 crates"]
+        direction TB
+        subgraph kask_crates["kask crates"]
+            condenser["hkask-condenser"]
+            types["hkask-types"]
+            bridge["kask_bridge"]
+        end
+        subgraph zed_crates["zed-side crates"]
+            agent["crates/agent"]
+            media_widget["hkask-media-widget"]
+            portfolio_widget["hkask-portfolio-widget"]
+        end
+        subgraph servers["MCP servers"]
+            companies["hkask-mcp-companies"]
+            corpus["hkask-mcp-corpus"]
+            kata_kanban["hkask-mcp-kata-kanban"]
+            media["hkask-mcp-media"]
+            portfolio["hkask-mcp-portfolio"]
+            pm["hkask-mcp-prediction-markets"]
+            research["hkask-mcp-research"]
+            scenarios["hkask-mcp-scenarios"]
+            swarm["hkask-mcp-swarm"]
+            training["hkask-mcp-training"]
+        end
     end
 
     condenser -->|"depends on"| shared
-    corpus -->|"depends on"| shared
+    types -->|"depends on"| shared
+    bridge -->|"depends on"| shared
+    agent -->|"depends on"| shared
+    media_widget -->|"depends on"| shared
+    portfolio_widget -->|"depends on"| shared
     companies -->|"depends on"| shared
-    training -->|"depends on"| shared
-    pm -->|"depends on"| shared
+    corpus -->|"depends on"| shared
+    kata_kanban -->|"depends on"| shared
+    media -->|"depends on"| shared
     portfolio -->|"depends on"| shared
+    pm -->|"depends on"| shared
     research -->|"depends on"| shared
     scenarios -->|"depends on"| shared
     swarm -->|"depends on"| shared
-    media -->|"depends on"| shared
-    media_widget -->|"depends on"| shared
-    portfolio_widget -->|"depends on"| shared
+    training -->|"depends on"| shared
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-ONT-001
-verified_date: 2026-09-16
-verified_against: kask/crates/hkask-bridge-ontology/src/hkask_bridge_ontology.rs (pub mod axis, dc_bibo, eso, fibo, golem, ml_schema, omc, pko, sdmx, sumo L58-67); kask/crates/hkask-bridge-ontology/src/axis.rs; dependent Cargo.tomls (hkask-mcp-companies, hkask-mcp-corpus, hkask-mcp-media, hkask-mcp-portfolio, hkask-mcp-prediction-markets, hkask-mcp-research, hkask-mcp-scenarios, hkask-mcp-swarm, hkask-mcp-training, hkask-condenser, crates/hkask-media-widget, crates/hkask-portfolio-widget)
+verified_date: 2026-09-28
+verified_against: kask/crates/hkask-bridge-ontology/src/hkask_bridge_ontology.rs (pub mod axis L94, data_cube L95, dc_bibo L96, derived L97, fibo L98, golem L99, ml_schema L100, omc L101, ontology_graph L102, pko L103, published L104, rdf L107, schema_org L108, sepio L110, sumo L111, term_resolution L112); dependent Cargo.tomls — kask/crates/hkask-condenser, kask/crates/hkask-types (L19), kask/crates/kask_bridge (L16), crates/agent (L48), crates/hkask-media-widget, crates/hkask-portfolio-widget, kask/mcp-servers/{companies, corpus, kata-kanban (L22), media, portfolio, prediction-markets, research, scenarios, swarm, training}
 status: VERIFIED
 -->
 
@@ -356,34 +300,42 @@ status: VERIFIED
 
 `select_ontology_anchor` matches the domain hint by keyword token (exact,
 prefix, or `_`/space-delimited token — no substring false positives) and
-returns either a `DualAxis` anchor (DC+BIBO or PKO) or a `DomainSupplement`
-anchor (SDMX, FIBO, SEPIO, GOLEM, ML-Schema). Unknown domains fall back to
-SUMO, the universal upper ontology.
+returns a `DualAxis` anchor (DC+BIBO or PKO), a `DomainSupplement` anchor
+(DataCube, FIBO, SEPIO, GOLEM, ML-Schema, OMC), the `Core` interrogative
+ground for an empty hint, or SUMO for unknown domains.
 
-**Corrections (2026-08-28):** SDMX is a new anchor (statistical data — FRED,
-DBnomics, World Bank); the unknown-domain fallback changed from "5W1H Core
-(DC + PKO fallback)" to SUMO; the memory/cognitive → SUMO branch was folded
-into the universal fallback.
+**Regenerated (2026-09-28):** the SDMX anchor is gone — only explicitly
+cube-shaped output (`data_cube` / `data-cube` / `statistical_cube`) takes
+the RDF Data Cube anchor, and other statistics fall through to SUMO; an OMC
+branch (media tool-name tokens) was added; prediction markets route to
+DC+BIBO (a market is a general entity, not a FIBO financial instrument);
+forecast/scenario moved from FIBO to PKO (processes); the FIBO keyword list
+narrowed to FIBO's actual data space; `wallet` was dropped from the
+file/web/registry arm (operator decision 2026-08-29, pinned in `axis.rs`
+tests).
 
 ```mermaid
 flowchart LR
     domain["domain hint<br/>(from server or call)"]
     select["select_ontology_anchor<br/>keyword-token match"]
     domain --> select
-    select -->|"economic / fred / dbnomics /<br/>worldbank / indicator / timeseries"| sdmx_anchor["SDMX + DC dataset"]
-    select -->|"finance / company / portfolio /<br/>forecast / prediction-markets"| fibo_anchor["FIBO + DC dataset"]
-    select -->|"science / research /<br/>hypothesis / evidence"| sepio_anchor["SEPIO + DC text"]
-    select -->|"narrative / literature /<br/>persona / corpus"| golem_anchor["GOLEM + DC text"]
+    select -->|"data_cube / data-cube /<br/>statistical_cube"| dcube_anchor["DataCube<br/>data_cube::DATA_SET"]
+    select -->|"finance / financial / company /<br/>companies / stock / portfolio /<br/>dcf / screener"| fibo_anchor["FIBO + DC dataset"]
+    select -->|"science / scientific / research /<br/>hypothesis / evidence"| sepio_anchor["SEPIO + DC text"]
+    select -->|"narrative / literature / persona /<br/>author / corpus"| golem_anchor["GOLEM + DC text"]
     select -->|"training / ml / adapter /<br/>sweep / lora"| ml_anchor["ML-Schema + DC dataset"]
-    select -->|"kanban / task / skill /<br/>curator / kata / condenser"| pko_anchor["PKO dual-axis procedure"]
-    select -->|"file / web / registry /<br/>wallet"| dc_anchor["DC + BIBO dual-axis text"]
-    select -->|"unknown"| sumo_anchor["SUMO upper ontology<br/>(universal fallback)"]
+    select -->|"media / image / video / audio / gallery /<br/>face / speech / voice / transcribe / meme /<br/>collage / album / gif / upscale"| omc_anchor["OMC<br/>omc::CREATIVE_WORK"]
+    select -->|"kanban / board / task / spec / skill /<br/>docproc / curator / kata / condenser /<br/>forecast / scenario"| pko_anchor["PKO dual-axis procedure"]
+    select -->|"prediction-markets /<br/>prediction_markets /<br/>prediction markets"| pm_anchor["DC+BIBO dual-axis dataset"]
+    select -->|"file / web / registry"| dc_anchor["DC+BIBO dual-axis text"]
+    select -->|"empty hint"| core["Core<br/>5W1H interrogative ground"]
+    select -->|"unknown"| sumo_anchor["SUMO DomainSupplement<br/>sumo::ENTITY fallback"]
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-ONT-002
-verified_date: 2026-09-16
-verified_against: kask/crates/hkask-bridge-ontology/src/axis.rs (select_ontology_anchor L210-340, matches_kw token matching L213-221, SDMX branch, FIBO branch, SEPIO branch, GOLEM branch, ML-Schema branch, PKO DualAxis branch, DC+BIBO DualAxis branch, SUMO universal fallback)
+verified_date: 2026-09-28
+verified_against: kask/crates/hkask-bridge-ontology/src/axis.rs (select_ontology_anchor L207-381, matches_kw token matching L213-221, DataCube branch L222-230, FIBO branch L237-254, SEPIO branch L256-270, GOLEM branch L272-287, ML-Schema branch L288-297, OMC branch L298-327, PKO DualAxis branch L328-349, prediction-markets DC+BIBO branch L350-366, file/web/registry DC+BIBO branch L367-372, empty-hint Core L373-377, SUMO universal fallback L378-381)
 status: VERIFIED
 -->
 
@@ -393,8 +345,11 @@ The three coupled surfaces: the **skill system** (D1, upstream-Zed body
 injection), the **MCP server wiring** (D3), and the **Lisp capabilities
 layer** (the `lisp_eval` tool's deterministic primitive).
 
-**Correction (2026-08-28):** the on-disk MCP server count is 11, not 10 —
-`hkask-mcp-media` was added to `BUILT_IN_MCP_SERVERS`.
+**Correction (2026-09-28):** the widget→agent compose-back seam (D21) was
+retired with commit `fa95c2b8c7` — the `hkask-conversation-injector` crate
+and the "I disagree" affordances are deleted. The surviving widget dispatch
+path is direct tool dispatch through `hkask_tool_invoker::ToolInvoker` (no
+conversation injection).
 
 ```mermaid
 architecture-beta
@@ -438,8 +393,8 @@ architecture-beta
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-ARCH-SKILL-MCP-LISP-001
-verified_date: 2026-09-19
-verified_against: crates/agent/src/tools/skill_tool.rs; crates/agent/src/tools/lisp_eval_tool.rs; crates/agent/src/tools/render_template_tool.rs; crates/agent/src/tool_router.rs; crates/agent/src/thread.rs; kask/crates/hkask-lisp/src/hkask_lisp.rs; kask/crates/hkask-tool-port/src/tool_port.rs; kask/crates/hkask-mcp/src/runtime.rs; kask/crates/hkask-regulation/src/energy.rs; kask/crates/hkask-types/src/tool_response.rs (unwrap_tool_envelope L61); kask/crates/kask_bridge/src/mcp_servers.rs (BUILT_IN_MCP_SERVERS L55 — 12 servers incl. media and spreadsheet)
+verified_date: 2026-09-28
+verified_against: crates/agent/src/tools/skill_tool.rs (SkillTool L127, run L194, render_skill_envelope L48, with_invoker L162); crates/agent_skills/agent_skills.rs (read_skill_body L841); crates/agent/src/tools/lisp_eval_tool.rs (LispEvalTool L103); crates/agent/src/tools/render_template_tool.rs (RenderTemplateTool L63); crates/agent/src/thread.rs (enabled_tools L5156); crates/agent/src/tools/list_mcp_tools_tool.rs (ListMcpToolsTool L58, enumerate_tool_listing L119); kask/crates/hkask-lisp/src/hkask_lisp.rs (eval_sandboxed_with_budget L1737); kask/crates/hkask-tool-port/src/tool_port.rs (ToolPort L89); kask/crates/hkask-mcp/src/runtime.rs (impl ToolPort for McpRuntime L1530); kask/crates/hkask-regulation/src/energy.rs (CallCapManager, DEFAULT_RUNAWAY_CALL_CEILING L26); kask/crates/hkask-types/src/tool_response.rs (unwrap_tool_envelope L61); kask/crates/kask_bridge/src/mcp_servers.rs (BUILT_IN_MCP_SERVERS L55 — 12 servers incl. media and spreadsheet); crates/hkask-tool-invoker/src/hkask_tool_invoker.rs (ToolInvoker trait L121, shared_tool_invoker L148)
 status: VERIFIED
 -->
 
@@ -447,8 +402,8 @@ The two dispatch paths into `ToolPort::invoke`:
 
 | Caller | Entry point | Action | Resolves to |
 | --- | --- | --- | --- |
-| Agent tool-use loop (LLM-decided) | `Thread::enabled_tools` → `apply_router_bypassing_built_ins` | LLM emits a tool_use event | `ToolPort::invoke` under the agent's `WebID` |
-| Widget compose-back (D21) | `hkask_tool_invoker::ToolInvoker` impls | UI gesture | `ToolPort::invoke` under the `swarm-panel` persona |
+| Agent tool-use loop (LLM-decided) | `Thread::enabled_tools` (profile + delegation filters, D44 — no per-turn router) | LLM emits a tool_use event | `ToolPort::invoke` under the agent's `WebID` |
+| Widget direct dispatch | `hkask_tool_invoker::ToolInvoker` impls | UI gesture (kanban move, portfolio scrub, scenarios rung, spreadsheet save) | `ToolPort::invoke` under the `swarm-panel` persona |
 
 Both share the same metering (`CallCapManager::charge_metered`), the same
 `reg.tool.*` span emission, and the same `unwrap_tool_envelope` result seam.
@@ -546,8 +501,8 @@ erDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-ERD-CREDENTIAL-RESOLUTION-001
-verified_date: 2026-09-19
-verified_against: kask/crates/hkask-mcp-server/src/server/credentials.rs (resolve_credential, resolve_db_passphrase); kask/crates/hkask-mcp-server/src/server/context.rs (ServerContext::resolve_db_credential); kask/crates/hkask-keystore/src/keychain.rs (resolve_db_passphrase, resolve_db_passphrase_string); kask/crates/kask_bridge/src/identity.rs (provision_db_passphrase, provision_agent); kask/crates/kask_bridge/src/mcp_servers.rs:886 (launch-path call site); crates/settings_ui/src/pages/kask_page.rs (nudge_mcp_servers, write_credential, delete_credential)
+verified_date: 2026-09-28
+verified_against: kask/crates/hkask-mcp-server/src/server/credentials.rs (resolve_credential L25, resolve_db_passphrase L76); kask/crates/hkask-mcp-server/src/server/context.rs (ServerContext::resolve_db_credential L140); kask/crates/hkask-keystore/src/keychain.rs (resolve_db_passphrase L347, resolve_db_passphrase_string L362); kask/crates/kask_bridge/src/identity.rs (provision_db_passphrase L132, provision_agent L87); kask/crates/kask_bridge/src/mcp_servers.rs (provision_default_passphrase launch path L886); crates/settings_ui/src/pages/kask_page.rs (write_credential L241, nudge_mcp_servers L280, delete_credential L285)
 status: VERIFIED
 -->
 
@@ -622,8 +577,8 @@ classDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-CAP-001
-verified_date: 2026-09-22
-verified_against: kask/crates/hkask-tool-port/src/tool_port.rs (ToolPort trait L89-116, ToolInfo L118-125, ToolPortError variants L8-38, is_retryable L49-53); kask/crates/hkask-tool-port/src/hkask_tool_port.rs; kask/crates/hkask-mcp/src/runtime.rs (impl ToolPort L1455, servers map L468); kask/crates/hkask-regulation/src/energy.rs (CallMeterOutcome L30-40, DEFAULT_RUNAWAY_CALL_CEILING L26)
+verified_date: 2026-09-28
+verified_against: kask/crates/hkask-tool-port/src/tool_port.rs (ToolPort trait L89-116, ToolInfo L121, ToolPortError variants L8-38, is_retryable L50-51); kask/crates/hkask-tool-port/src/hkask_tool_port.rs; kask/crates/hkask-mcp/src/runtime.rs (impl ToolPort for McpRuntime L1530, McpRuntime struct L484, governance L501); kask/crates/hkask-regulation/src/energy.rs (CallMeterOutcome L30-40, DEFAULT_RUNAWAY_CALL_CEILING L26)
 status: VERIFIED
 -->
 
@@ -713,8 +668,8 @@ classDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-ES-001
-verified_date: 2026-09-16
-verified_against: kask/crates/hkask-event-store/src/hkask_event_store.rs (from_driver L62, from_driver_with_clock L71, append L93, query L134, compact L179, strip_bodies L200, cursor L212); kask/crates/hkask-event-store/src/types.rs; kask/crates/kask_bridge/src/rollout_event_bridge.rs; kask/crates/hkask-regulation/src/cybernetics_loop.rs
+verified_date: 2026-09-28
+verified_against: kask/crates/hkask-event-store/src/hkask_event_store.rs (from_driver L62, from_driver_with_clock L71, driver L80, init_schema L86, append L93, query L134, compact L179, strip_bodies L200, cursor L212); kask/crates/hkask-event-store/src/types.rs (VerdictSource L43, RolloutKind L95, EventStoreError L168); kask/crates/kask_bridge/src/rollout_event_bridge.rs; kask/crates/hkask-regulation/src/cybernetics_loop.rs
 status: VERIFIED
 -->
 

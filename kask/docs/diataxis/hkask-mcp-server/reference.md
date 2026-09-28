@@ -2,7 +2,7 @@
 title: "hkask-mcp-server — Reference: API Surface"
 audience: [developers building or extending hKask MCP servers]
 last_updated: 2026-09-28
-version: "2.1.0"
+version: "2.2.0"
 status: "Active"
 domain: "MCP"
 mds_categories: [trust, curation]
@@ -10,11 +10,11 @@ mds_categories: [trust, curation]
 
 # hkask-mcp-server — Reference: API Surface
 
-Lookup reference for the current public types, functions, and macros exported by `hkask-mcp-server`. Citations use full repository-relative paths and were re-derived from the implementation on 2026-09-15.
+Lookup reference for the current public types, functions, and macros exported by `hkask-mcp-server`. Citations use full repository-relative paths and were re-derived from the implementation on 2026-09-28.
 
 ## Module and export map
 
-The crate declares private `security` and public `server` modules (`kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:10-11`). The `server` facade declares seven private implementation modules and re-exports their public APIs (`kask/crates/hkask-mcp-server/src/server.rs:22-48`).
+The crate declares private `security` and public `server` modules (`kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:11-12`). The `server` facade declares seven private implementation modules and re-exports their public APIs (`kask/crates/hkask-mcp-server/src/server.rs:22-49`).
 
 ```mermaid
 classDiagram
@@ -55,8 +55,8 @@ classDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-MCPSRV-020
-verified_date: 2026-09-16
-verified_against: kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:10-35,37-165; kask/crates/hkask-mcp-server/src/server.rs:22-48; kask/crates/hkask-mcp-server/src/server/tool_span.rs:108-170; kask/crates/hkask-mcp-server/src/server/error.rs:44-155
+verified_date: 2026-09-28
+verified_against: kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:11-39,41-165; kask/crates/hkask-mcp-server/src/server.rs:22-49; kask/crates/hkask-mcp-server/src/server/tool_span.rs:108-170; kask/crates/hkask-mcp-server/src/server/error.rs:44-155
 status: VERIFIED
 -->
 
@@ -66,14 +66,14 @@ Defined at `kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:19-35`.
 
 | Export | Implementation |
 |---|---|
-| `CapabilityTier`, `CredentialRequirement`, `ServerContext` | `kask/crates/hkask-mcp-server/src/server/context.rs:9-190` |
+| `CapabilityTier`, `CredentialRequirement`, `ServerContext` | `kask/crates/hkask-mcp-server/src/server/context.rs:9-163` |
 | `McpError` | `kask/crates/hkask-mcp-server/src/server/error.rs:11-42` |
 | `ToolContext`, `execute_tool` | `kask/crates/hkask-mcp-server/src/server/tool_span.rs:123-170` |
 | `parse_env_warn`, `resolve_credential`, `resolve_db_passphrase` | `kask/crates/hkask-mcp-server/src/server/credentials.rs:8-144` |
-| `run_stdio_server` | `kask/crates/hkask-mcp-server/src/server/transport.rs:9-129` |
+| `run_stdio_server` | `kask/crates/hkask-mcp-server/src/server/transport.rs:9-130` |
 | `validate_identifier`, `validate_path` | `kask/crates/hkask-mcp-server/src/server/validation.rs:5-69` |
-| `validate_tool_url_permissive`, `validate_tool_url_with_dns` | `kask/crates/hkask-mcp-server/src/security.rs:341-364` |
-| `MAX_READ_BYTES`, `contain_for_read`, `contain_for_write`, `read_capped` | `kask/crates/hkask-mcp-server/src/server/validation.rs:165-169`, `kask/crates/hkask-mcp-server/src/server/validation.rs:315-328`, `kask/crates/hkask-mcp-server/src/server/validation.rs:472-498` |
+| `validate_tool_url_permissive`, `validate_tool_url_with_dns` | `kask/crates/hkask-mcp-server/src/security.rs:339-366` |
+| `MAX_READ_BYTES`, `contain_for_read`, `contain_for_write`, `read_capped` | `kask/crates/hkask-mcp-server/src/server/validation.rs:165-169`, `kask/crates/hkask-mcp-server/src/server/validation.rs:368-381`, `kask/crates/hkask-mcp-server/src/server/validation.rs:590-611` |
 | `map_infra_error`, `map_io_error`, `map_join_error`, `map_memory_store_error` | `kask/crates/hkask-mcp-server/src/server/validation.rs:71-163` |
 | `AnyJsonValue`, `find_boolean_schema_positions` | `kask/crates/hkask-types/src/tool_schema.rs:55-59`, `kask/crates/hkask-types/src/tool_schema.rs:135-139` |
 
@@ -90,8 +90,8 @@ Defined at `kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:19-35`.
 | `classify_http_error` | `kask/crates/hkask-mcp-server/src/server.rs:39` |
 | `ToolContext`, `execute_tool` | `kask/crates/hkask-mcp-server/src/server.rs:40` |
 | `run_stdio_server` | `kask/crates/hkask-mcp-server/src/server.rs:41` |
-| `MAX_READ_BYTES`, containment/read helpers, `resolve_max_read_bytes` | `kask/crates/hkask-mcp-server/src/server.rs:42-44` |
-| error mappers and input validators | `kask/crates/hkask-mcp-server/src/server.rs:45-48` |
+| `MAX_READ_BYTES`, containment/read helpers, `resolve_max_read_bytes`, `set_artifact_owner` | `kask/crates/hkask-mcp-server/src/server.rs:42-45` |
+| error mappers and input validators | `kask/crates/hkask-mcp-server/src/server.rs:46-49` |
 
 ## Entry points and macros
 
@@ -106,7 +106,7 @@ pub async fn run_server<S, F>(
 ) -> Result<(), McpError>
 ```
 
-Delegates to `run_stdio_server`; generic bounds require an rmcp server service and a one-shot `ServerContext` factory (`kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:37-54`).
+Delegates to `run_stdio_server`; generic bounds require an rmcp server service and a one-shot `ServerContext` factory (`kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:41-54`).
 
 ### `validate_field!`
 
@@ -162,11 +162,11 @@ pub struct ServerContext {
 }
 ```
 
-Definition: `kask/crates/hkask-mcp-server/src/server/context.rs:126-135`.
+Definition: `kask/crates/hkask-mcp-server/src/server/context.rs:126-132`.
 
 | Method | Return | Evidence |
 |---|---|---|
-| `open_database(db_env_var)` | persistent database or in-memory fallback | `kask/crates/hkask-mcp-server/src/server/context.rs:149-164` |
+| `open_database(db_env_var)` | persistent database or in-memory fallback | `kask/crates/hkask-mcp-server/src/server/context.rs:146-161` |
 
 ## Tool execution
 
@@ -252,7 +252,7 @@ Definition and constructors: `kask/crates/hkask-mcp-server/src/server/error.rs:4
 | API | Behavior | Evidence |
 |---|---|---|
 | `resolve_credential(env_var)` | API/config values from env; shared DB passphrase via keystore resolver | `kask/crates/hkask-mcp-server/src/server/credentials.rs:8-59` |
-| `resolve_db_passphrase(credentials)` | credential map, then canonical passphrase chain; typed permission failure | `kask/crates/hkask-mcp-server/src/server/credentials.rs:61-104` |
+| `resolve_db_passphrase(credentials)` | credential map, then canonical passphrase chain; typed permission failure | `kask/crates/hkask-mcp-server/src/server/credentials.rs:79-113` |
 | `parse_env_warn(key, default)` | parse env value; warn and default on malformed value | `kask/crates/hkask-mcp-server/src/server/credentials.rs:106-144` |
 
 ## Validation APIs
@@ -263,24 +263,25 @@ Definition and constructors: `kask/crates/hkask-mcp-server/src/server/error.rs:4
 |---|---|---|
 | `validate_identifier` | non-empty, bounded, alphanumeric plus `_ . - :` | `kask/crates/hkask-mcp-server/src/server/validation.rs:5-34` |
 | `validate_path` | non-empty, bounded, no control chars or parent traversal | `kask/crates/hkask-mcp-server/src/server/validation.rs:36-69` |
-| `contain_for_write` | canonicalize leniently under an allowed root | `kask/crates/hkask-mcp-server/src/server/validation.rs:315-321` |
-| `contain_for_read` | canonicalize existing target under an allowed root | `kask/crates/hkask-mcp-server/src/server/validation.rs:323-328` |
-| `read_capped` | contain, stat, enforce cap, read | `kask/crates/hkask-mcp-server/src/server/validation.rs:472-498` |
+| `contain_for_write` | canonicalize leniently under an allowed root | `kask/crates/hkask-mcp-server/src/server/validation.rs:368-371` |
+| `contain_for_read` | canonicalize existing target under an allowed root | `kask/crates/hkask-mcp-server/src/server/validation.rs:375-378` |
+| `read_capped` | contain, stat, enforce cap, read | `kask/crates/hkask-mcp-server/src/server/validation.rs:590-611` |
+| `set_artifact_owner` | record the running server's artifact owner once at bootstrap | `kask/crates/hkask-mcp-server/src/server/validation.rs:258-274` |
 | `MAX_READ_BYTES` | 32 MiB | `kask/crates/hkask-mcp-server/src/server/validation.rs:165-169` |
 | `resolve_max_read_bytes` | `HKASK_MCP_MAX_READ_BYTES`, warn/default on invalid | `kask/crates/hkask-mcp-server/src/server/validation.rs:171-201` |
 
-Allowed roots are the process current directory, hKask data directory, and hKask artifacts directory (`kask/crates/hkask-mcp-server/src/server/validation.rs:253-313`).[^cwe22]
+Allowed roots are the process current directory, hKask data directory, and hKask artifacts directory. Reads may use the whole artifacts tree; writes are confined to the running server's own `{server}-mcp/` folder through the artifact owner recorded by `set_artifact_owner` at bootstrap (`kask/crates/hkask-mcp-server/src/server/validation.rs:258-299`).[^cwe22]
 
 ### URL safety
 
 | API | Behavior | Evidence |
 |---|---|---|
-| `validate_tool_url_with_dns` | strict syntax/literal checks plus DNS address validation | `kask/crates/hkask-mcp-server/src/security.rs:341-354` |
-| `validate_tool_url_permissive` | allows private and loopback addresses | `kask/crates/hkask-mcp-server/src/security.rs:356-364` |
-| `validate_tool_url_literal` | strict synchronous literal-address checks, no DNS | `kask/crates/hkask-mcp-server/src/security.rs:366-380` |
-| `validate_resolved_addresses` | strict policy over exact connection addresses | `kask/crates/hkask-mcp-server/src/security.rs:382-395` |
+| `validate_tool_url_with_dns` | strict syntax/literal checks plus DNS address validation | `kask/crates/hkask-mcp-server/src/security.rs:339-353` |
+| `validate_tool_url_permissive` | allows private and loopback addresses | `kask/crates/hkask-mcp-server/src/security.rs:356-366` |
+| `validate_tool_url_literal` | strict synchronous literal-address checks, no DNS | `kask/crates/hkask-mcp-server/src/security.rs:371-383` |
+| `validate_resolved_addresses` | strict policy over exact connection addresses | `kask/crates/hkask-mcp-server/src/security.rs:385-397` |
 
-The strict policy rejects non-HTTP(S) schemes, embedded credentials, loopback, private, and unspecified destinations, including mapped/embedded IPv4 forms (`kask/crates/hkask-mcp-server/src/security.rs:65-183`, `kask/crates/hkask-mcp-server/src/security.rs:185-266`).[^cwe918]
+The strict policy rejects non-HTTP(S) schemes, embedded credentials, loopback, private, and unspecified destinations, including mapped/embedded IPv4 forms (`kask/crates/hkask-mcp-server/src/security.rs:65-183`, `kask/crates/hkask-mcp-server/src/security.rs:185-275`).[^cwe918]
 
 ### Error mappers
 
@@ -314,8 +315,8 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-MCPSRV-010
-verified_date: 2026-09-16
-verified_against: kask/crates/hkask-mcp-server/src/server/context.rs:9-53,126-190; kask/crates/hkask-mcp-server/src/server/tool_span.rs:108-170; kask/crates/hkask-mcp-server/src/server/validation.rs:5-169,253-328,472-498; kask/crates/hkask-mcp-server/src/security.rs:334-395
+verified_date: 2026-09-28
+verified_against: kask/crates/hkask-mcp-server/src/server/context.rs:9-53,126-163; kask/crates/hkask-mcp-server/src/server/tool_span.rs:108-170; kask/crates/hkask-mcp-server/src/server/validation.rs:5-169,258-381,590-611; kask/crates/hkask-mcp-server/src/security.rs:334-397
 status: VERIFIED
 -->
 
@@ -330,7 +331,7 @@ let requirements = vec![
 ];
 ```
 
-`required` and `optional` set the `required` field to `true` and `false`, respectively (`kask/crates/hkask-mcp-server/src/server/context.rs:24-53`). Bootstrap resolves every requirement and rejects the complete missing-required set before calling the factory (`kask/crates/hkask-mcp-server/src/server/transport.rs:68-89`).
+`required` and `optional` set the `required` field to `true` and `false`, respectively (`kask/crates/hkask-mcp-server/src/server/context.rs:24-53`). Bootstrap resolves every requirement and rejects the complete missing-required set before calling the factory (`kask/crates/hkask-mcp-server/src/server/transport.rs:70-91`).
 
 API keys resolve from environment variables. `HKASK_DB_PASSPHRASE` alone uses the dedicated hKask keystore resolver (`kask/crates/hkask-mcp-server/src/server/credentials.rs:8-59`).
 
@@ -340,9 +341,9 @@ API keys resolve from environment variables. `HKASK_DB_PASSPHRASE` alone uses th
 let database = ctx.open_database("SERVICE_DB_PATH")?;
 ```
 
-When the named path exists in `ctx.credentials`, the helper resolves the shared passphrase and opens that database. When the path is absent, it opens an in-memory database (`kask/crates/hkask-mcp-server/src/server/context.rs:137-164`).
+When the named path exists in `ctx.credentials`, the helper resolves the shared passphrase and opens that database. When the path is absent, it opens an in-memory database (`kask/crates/hkask-mcp-server/src/server/context.rs:140-161`).
 
-For custom DDL, open with `hkask_storage::Database::open_with_extensions` directly, as the research server does. For tools that resolve the passphrase after startup, call the root-exported `resolve_db_passphrase(&ctx.credentials)`; missing configuration is `McpToolError::permission_denied` and names the env/keychain sources (`kask/crates/hkask-mcp-server/src/server/credentials.rs:61-104`).
+For custom DDL, open with `hkask_storage::Database::open_with_extensions` directly, as the research server does. For tools that resolve the passphrase after startup, call the root-exported `resolve_db_passphrase(&ctx.credentials)`; missing configuration is `McpToolError::permission_denied` and names the env/keychain sources (`kask/crates/hkask-mcp-server/src/server/credentials.rs:79-113`).
 
 ### Execute a tool and preserve typed errors
 
@@ -399,7 +400,7 @@ let destination = contain_for_write(&output_path)?;
 let input = read_capped(&input_path, MAX_READ_BYTES)?;
 ```
 
-`contain_for_read` and `contain_for_write` accept paths only under the process working directory, hKask data directory, or artifact directory after canonicalization (`kask/crates/hkask-mcp-server/src/server/validation.rs:253-328`). Writes may target a not-yet-created path; reads require an existing path. `read_capped` checks metadata length before reading (`kask/crates/hkask-mcp-server/src/server/validation.rs:472-498`). The default cap is 32 MiB (`kask/crates/hkask-mcp-server/src/server/validation.rs:165-169`).[^cwe22]
+`contain_for_read` and `contain_for_write` accept paths only under the process working directory, hKask data directory, or artifact directory after canonicalization (`kask/crates/hkask-mcp-server/src/server/validation.rs:258-381`). Reads may use the whole artifacts tree; writes are confined to the running server's own `{server}-mcp/` folder through the artifact owner recorded at bootstrap. Writes may target a not-yet-created path; reads require an existing path. `read_capped` checks metadata length before reading (`kask/crates/hkask-mcp-server/src/server/validation.rs:590-611`). The default cap is 32 MiB (`kask/crates/hkask-mcp-server/src/server/validation.rs:165-169`).[^cwe22]
 
 If the tool needs the environment-configurable cap, use `hkask_mcp_server::server::resolve_max_read_bytes()` (`kask/crates/hkask-mcp-server/src/server/validation.rs:171-201`). It warns on zero or malformed values and falls back to `MAX_READ_BYTES`.
 
@@ -413,7 +414,7 @@ use hkask_mcp_server::validate_tool_url_with_dns;
 validate_tool_url_with_dns(&url).await?;
 ```
 
-This root-exported helper checks scheme, embedded credentials, literal destination addresses, and all DNS-resolved addresses (`kask/crates/hkask-mcp-server/src/security.rs:217-266`, `kask/crates/hkask-mcp-server/src/security.rs:341-354`).[^cwe918]
+This root-exported helper checks scheme, embedded credentials, literal destination addresses, and all DNS-resolved addresses (`kask/crates/hkask-mcp-server/src/security.rs:185-275`, `kask/crates/hkask-mcp-server/src/security.rs:339-353`).[^cwe918]
 
 For a user-curated local URL, opt into the permissive helper:
 
@@ -423,7 +424,7 @@ use hkask_mcp_server::validate_tool_url_permissive;
 validate_tool_url_permissive(&feed_url)?;
 ```
 
-It permits private and loopback addresses and must not gate arbitrary untrusted input (`kask/crates/hkask-mcp-server/src/security.rs:48-62`, `kask/crates/hkask-mcp-server/src/security.rs:356-364`).
+It permits private and loopback addresses and must not gate arbitrary untrusted input (`kask/crates/hkask-mcp-server/src/security.rs:49-62`, `kask/crates/hkask-mcp-server/src/security.rs:356-366`).
 
 A redirect policy or connect-time validating resolver can use the public `server` module:
 
@@ -432,7 +433,7 @@ hkask_mcp_server::server::validate_tool_url_literal(&redirect_url)?;
 hkask_mcp_server::server::validate_resolved_addresses(hostname, &addresses)?;
 ```
 
-The first performs synchronous strict checks without DNS; the second validates the exact resolved addresses used for connection (`kask/crates/hkask-mcp-server/src/security.rs:366-395`).
+The first performs synchronous strict checks without DNS; the second validates the exact resolved addresses used for connection (`kask/crates/hkask-mcp-server/src/security.rs:371-397`).
 
 ### Classify HTTP and infrastructure errors
 

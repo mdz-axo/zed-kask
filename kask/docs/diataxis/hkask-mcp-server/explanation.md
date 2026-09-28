@@ -2,7 +2,7 @@
 title: "hkask-mcp-server — Explanation: Why the Framework Is Narrow"
 audience: [developers who want the design rationale, not just the API]
 last_updated: 2026-09-28
-version: "2.0.1"
+version: "2.1.0"
 status: "Active"
 domain: "MCP"
 mds_categories: [trust, curation]
@@ -10,11 +10,11 @@ mds_categories: [trust, curation]
 
 # hkask-mcp-server — Explanation: Why the Framework Is Narrow
 
-`hkask-mcp-server` centralizes construction context, typed tool outcomes, input safety, credential resolution, and stdio bootstrap. It intentionally leaves domain behavior in each MCP server. This keeps the common layer small enough to enforce cross-server invariants without becoming a second application runtime (`kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:3-11`, `kask/crates/hkask-mcp-server/src/server.rs:22-48`).
+`hkask-mcp-server` centralizes construction context, typed tool outcomes, input safety, credential resolution, and stdio bootstrap. It intentionally leaves domain behavior in each MCP server. This keeps the common layer small enough to enforce cross-server invariants without becoming a second application runtime (`kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:3-11`, `kask/crates/hkask-mcp-server/src/server.rs:22-49`).
 
 ## Why construction flows through `ServerContext`
 
-`run_stdio_server` resolves declared credentials and identity before it calls the server factory (`kask/crates/hkask-mcp-server/src/server/transport.rs:68-118`). The factory receives `ServerContext { credentials, webid }`; the detected `CapabilityTier` is logged at startup, not passed to the server (`kask/crates/hkask-mcp-server/src/server/context.rs:126-135`). This makes the server's declared dependencies visible and prevents constructors from running before required credentials have been checked.
+`run_stdio_server` resolves declared credentials and identity before it calls the server factory (`kask/crates/hkask-mcp-server/src/server/transport.rs:68-118`). The factory receives `ServerContext { credentials, webid }`; the detected `CapabilityTier` is logged at startup, not passed to the server (`kask/crates/hkask-mcp-server/src/server/context.rs:126-132`). This makes the server's declared dependencies visible and prevents constructors from running before required credentials have been checked.
 
 ```mermaid
 sequenceDiagram
@@ -24,8 +24,10 @@ sequenceDiagram
     participant Factory as server factory
     participant Server as MCP server
 
-    Main->>Bootstrap: run_server(name, version, factory, requirements)
-    Bootstrap->>Bootstrap: configure tracing and database catalog
+    Main->>Bootstrap: run_server(name, version, factory, reqs)
+    Bootstrap->>Bootstrap: init tracing to stderr
+    Bootstrap->>Bootstrap: record artifact owner
+    Bootstrap->>Bootstrap: configure database catalog
     loop each requirement
         Bootstrap->>Resolver: resolve_credential(env_var)
         Resolver-->>Bootstrap: value or missing
@@ -39,8 +41,8 @@ sequenceDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-MCPSRV-030
-verified_date: 2026-09-16
-verified_against: kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:37-54; kask/crates/hkask-mcp-server/src/server/transport.rs:42-129; kask/crates/hkask-mcp-server/src/server/context.rs:126-135
+verified_date: 2026-09-28
+verified_against: kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:41-54; kask/crates/hkask-mcp-server/src/server/transport.rs:42-130; kask/crates/hkask-mcp-server/src/server/context.rs:126-132
 status: VERIFIED
 -->
 
@@ -50,7 +52,7 @@ The boundary is not a claim that no framework code reads environment variables. 
 
 `CapabilityTier::detect` reports three observed startup properties: whether the WebID is non-anonymous, whether the keychain responds, and whether resolved credentials include `HKASK_DB_PASSPHRASE` (`kask/crates/hkask-mcp-server/src/server/context.rs:56-74`, `kask/crates/hkask-mcp-server/src/server/context.rs:76-123`). It does not authorize tools. The fields let a server describe embedded identity, keychain reachability, and persistence configuration without hiding how those conclusions were reached.
 
-Persistence detection uses the shared database passphrase, not a database-path variable (`kask/crates/hkask-mcp-server/src/server/context.rs:97-107`). Database opening remains explicit: `ServerContext::open_database` uses the named path from the credential map or creates an in-memory database when the path is absent (`kask/crates/hkask-mcp-server/src/server/context.rs:137-164`).
+Persistence detection uses the shared database passphrase, not a database-path variable (`kask/crates/hkask-mcp-server/src/server/context.rs:97-107`). Database opening remains explicit: `ServerContext::open_database` uses the named path from the credential map or creates an in-memory database when the path is absent (`kask/crates/hkask-mcp-server/src/server/context.rs:140-161`).
 
 ## Why `mcp_server!` is a macro
 
@@ -110,11 +112,11 @@ Canonical error mappers preserve caller-fixable and transient categories instead
 Caller-controlled files and URLs present the same threat classes in every server. Shared helpers therefore enforce them once:
 
 - path validation rejects control characters and parent traversal (`kask/crates/hkask-mcp-server/src/server/validation.rs:36-69`);
-- containment permits only the process working directory, hKask data directory, or artifact directory after canonicalization (`kask/crates/hkask-mcp-server/src/server/validation.rs:253-328`);
-- capped reads check metadata size before reading (`kask/crates/hkask-mcp-server/src/server/validation.rs:472-498`);
-- strict URL validation checks syntax and literal addresses, then resolves DNS and checks every result (`kask/crates/hkask-mcp-server/src/security.rs:185-266`, `kask/crates/hkask-mcp-server/src/security.rs:334-354`).
+- containment permits reads under the process working directory, hKask data directory, or artifact directory after canonicalization, and confines writes to the running server's own `{server}-mcp/` folder through the artifact owner recorded at bootstrap (`kask/crates/hkask-mcp-server/src/server/validation.rs:258-299,368-381`);
+- capped reads check metadata size before reading (`kask/crates/hkask-mcp-server/src/server/validation.rs:590-611`);
+- strict URL validation checks syntax and literal addresses, then resolves DNS and checks every result (`kask/crates/hkask-mcp-server/src/security.rs:185-275`, `kask/crates/hkask-mcp-server/src/security.rs:339-353`).
 
-These controls address path traversal, arbitrary file access, resource exhaustion, and server-side request forgery.[^cwe22][^cwe918] Connect-time consumers can pair literal URL validation with `validate_resolved_addresses` to close the DNS resolve-to-connect gap (`kask/crates/hkask-mcp-server/src/security.rs:366-395`).
+These controls address path traversal, arbitrary file access, resource exhaustion, and server-side request forgery.[^cwe22][^cwe918] Connect-time consumers can pair literal URL validation with `validate_resolved_addresses` to close the DNS resolve-to-connect gap (`kask/crates/hkask-mcp-server/src/security.rs:371-397`).
 
 ## Why arbitrary JSON has a dedicated type
 

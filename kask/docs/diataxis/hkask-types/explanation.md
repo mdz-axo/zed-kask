@@ -2,7 +2,7 @@
 title: "hkask-types — Explanation"
 audience: [developers, architects, agents]
 last_updated: 2026-09-28
-version: "2.1.1"
+version: "2.1.2"
 status: "Active"
 domain: "Foundation"
 mds_categories: [trust, curation]
@@ -17,8 +17,8 @@ and adapters pattern: consumers depend on stable contracts, while the compositio
 root supplies implementations.[^cockburn]
 
 The crate forbids unsafe code and declares its complete module surface at
-`kask/crates/hkask-types/src/hkask_types.rs:1-44`. Common cross-crate items and all
-ports are re-exported at `kask/crates/hkask-types/src/hkask_types.rs:46-66`.
+`kask/crates/hkask-types/src/hkask_types.rs:1-51`. Common cross-crate items and all
+ports are re-exported at `kask/crates/hkask-types/src/hkask_types.rs:33-74`.
 
 ## Why boundaries are split by failure domain
 
@@ -29,12 +29,12 @@ boundary has a contract shaped by how drift or failure would appear:
   embedding-error, and consolidation contracts
   (`kask/crates/hkask-types/src/ports.rs:7-23`).
 - `event` and `regulation` define the typed observability substrate
-  (`kask/crates/hkask-types/src/event.rs:14-28,298-327,399-511,536-552`;
-  `kask/crates/hkask-types/src/regulation.rs:29-120`).
+  (`kask/crates/hkask-types/src/event.rs:15-28,258-330,359-515`;
+  `kask/crates/hkask-types/src/regulation.rs:25-155`).
 - `inference_ipc` defines the newline-delimited request/response protocol used by
-  MCP child processes (`kask/crates/hkask-types/src/inference_ipc.rs:1-47,53-120,122-237`).
+  MCP child processes (`kask/crates/hkask-types/src/inference_ipc.rs:1-47,53-120,122-250`).
 - `agent_paths` centralizes internal-data and user-artifact path resolution
-  (`kask/crates/hkask-types/src/agent_paths.rs:12-26,63-154`).
+  (`kask/crates/hkask-types/src/agent_paths.rs:12-26,63-265`).
 - `media_limits`, `ocr_health`, `server_env`, and `process_global` encode shared
   resource, cross-process health, child-environment, and hook-slot invariants
   (`kask/crates/hkask-types/src/media_limits.rs:1-24`;
@@ -77,8 +77,8 @@ sequenceDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-TYPES-008
-verified_date: 2026-09-16
-verified_against: kask/crates/hkask-types/src/ocr_health.rs:1-71; kask/crates/hkask-regulation/src/sensor_provider.rs:739-806
+verified_date: 2026-09-28
+verified_against: kask/crates/hkask-types/src/ocr_health.rs:1-71; kask/crates/hkask-regulation/src/sensor_provider.rs:334-346
 status: VERIFIED
 -->
 
@@ -103,10 +103,11 @@ a caller from retaining the mutex across an await. This type is not for set-once
 `RegulationRecord` is the audit event carried across loops and stores. `Span`
 combines a validated `SpanNamespace` with a path; `SpanKind` supplies canonical
 frequently-used pairs; `SpanCategory` supplies a typed dispatch classification;
+`SpanCategory` supplies a typed dispatch classification;
 `CyclePhase` identifies sense, compute, compare, or act
-(`kask/crates/hkask-types/src/event.rs:14-28,298-358,399-511`).
+(`kask/crates/hkask-types/src/event.rs:15-28,258-459`).
 `RegulationSink` is the persistence port at
-`kask/crates/hkask-types/src/event.rs:536-552`.
+`kask/crates/hkask-types/src/event.rs:497-515`.
 
 ```mermaid
 flowchart TD
@@ -119,30 +120,30 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-TYPES-009
-verified_date: 2026-09-16
-verified_against: kask/crates/hkask-types/src/event.rs:14-28,59-75,280-358,399-511,536-552
+verified_date: 2026-09-28
+verified_against: kask/crates/hkask-types/src/event.rs:15-28,60-65,258-330,359-515
 status: VERIFIED
 -->
 
 The canonical namespace registry is private at
-`kask/crates/hkask-types/src/event.rs:67-139`; construction validates names before
+`kask/crates/hkask-types/src/event.rs:75-173`; construction validates names before
 they become spans. The event surface includes inference circuit transition and
-observed-recovery kinds at `kask/crates/hkask-types/src/event.rs:446-499`.
+observed-recovery kinds at `kask/crates/hkask-types/src/event.rs:411-459`.
 
 ## Why IPC uses one request and one response envelope
 
 `InferenceRequest` pairs a correlation ID, `InferenceMethod`, and
 `InferenceParams`; `InferenceResponse` pairs the same ID with an untagged
 `InferenceOutcome`
-(`kask/crates/hkask-types/src/inference_ipc.rs:75-120,122-237`). Current methods
+(`kask/crates/hkask-types/src/inference_ipc.rs:77-120,122-250`). Current methods
 cover generation, messages, vision, embedding, model listing, governed tool
-invocation, worktree-thread creation, and reranking. Current outcomes cover a
-generation result, embeddings, model list, tool result, worktree thread, rerank
-scores, or a typed error.
+invocation and definition, worktree-thread creation, and reranking. Current
+outcomes cover a generation result, embeddings, model list, tool result, tool
+definition, worktree thread, rerank scores, or a typed error.
 
 The protocol uses no separate batch envelope. Embedding already carries multiple
 input texts in `InferenceParams::embed_texts`
-(`kask/crates/hkask-types/src/inference_ipc.rs:131-135`), while each IPC envelope
+(`kask/crates/hkask-types/src/inference_ipc.rs:134-137`), while each IPC envelope
 retains one correlation identity.
 
 ## See also

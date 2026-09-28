@@ -1,8 +1,8 @@
 ---
 title: "Kanban Boards — Reference Models from Established Open-Source Implementations"
 audience: [architects, developers, agents]
-last_updated: 2026-09-22
-version: "1.3.0"
+last_updated: 2026-09-28
+version: "1.4.0"
 status: "Active"
 domain: "Composition"
 mds_categories: [composition, trust]
@@ -23,13 +23,23 @@ The reference models below are the anchor for shaping and testing our kanban
 surfaces. **Implemented 2026-09-18** — §10 records the implementation
 state and evidence.
 
+> **IS/OUGHT boundary.** §5.1 describes the **current tree** (its `file:line`
+> citations re-verified 2026-09-28). §5.2, §6, and §9 are the **pre-implementation
+> problem statement, plan, and test plan** — their file references refer to the
+> 2026-09-18 snapshot and are retained as the historical record of what the
+> implementation changed; nothing in them should be read as the current state.
+> §10 records what actually landed and is verified against the current tree.
+
 Version 1.1.0 is the reviewed revision: the v1.0.0 plan was stress-tested
 through the `metacognition` (measured-vs-inferred audit), `grill-me` (edge-case
 interrogation), `falsifiability` (discriminating tests for every claim), and
 `refactor-architecture` (deletion test on the proposed controls) skills. Two
 gaps were added (G8 identity drift, G9 name-validation), one over-claim was
 corrected (G5), and the identity-surface design was consolidated. §10 records
-the full review deltas.
+the full review deltas. v1.2.0 recorded completed work; v1.3.0 recorded the
+mermaid topology round-trip hardening (explicit `%% kanban column status:`
+metadata, deletion-guard surfacing) and labeled §5.2 historical; v1.4.0
+re-verified the current-state citations against the tree.
 
 ## 1. Purpose and scope
 
@@ -63,9 +73,13 @@ observed on the repo landing pages the same day):
 In-tree facts cite `path:line` at commit `4e421ce9db` (2026-09-18; the
 v1.1.0 review re-verified the load-bearing ones, including the git history of
 the selector hiding, the mermaid round-trip, the service validation code, and
-the refresh cadence). The live board pool was observed via `kanban_board_list`
-the same day. This document is a reconstruction from primary sources — it is
-research, not an operator spec.
+the refresh cadence). The current-state citations in §5.1 and the
+implementation-record claims in §10 were re-verified against the working
+tree on 2026-09-28 and refreshed where lines had drifted; the §5.2/§6/§9
+references stay at the 2026-09-18 snapshot as the historical record. The live
+board pool was observed via `kanban_board_list` on 2026-09-18. This document is
+a reconstruction from primary sources — it is research, not an operator
+spec.
 
 ## 3. The reference implementations
 
@@ -172,29 +186,30 @@ The **concept model and server implementation already satisfy** R1 (partially
 — see G9), R5, R7 (name-first), and R8:
 
 - `Board` carries a required human `name`
-  (`kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/types/board.rs:12-25`),
+  (`kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/types/board.rs:12-24`),
   and `board_create` rejects an empty name, a zero-column board, and a
   name longer than the 128-character cap (`validate_board_name`,
-  `kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/service.rs:117-135`).
+  `kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/service.rs:117-139`).
 - `task_create` verifies the board exists and returns `NotFound` otherwise
   (`service_impl/service.rs`, `task_create`) — R5 is enforced at the service
   seam, not just the schema; `task_create_rejects_unknown_board` pins this.
 - `kanban_task_create` requires a `board_id`
-  (`kask/mcp-servers/hkask-mcp-kata-kanban/src/hkask_mcp_kata_kanban.rs:601`),
+  (`kask/mcp-servers/hkask-mcp-kata-kanban/src/hkask_mcp_kata_kanban.rs:666`),
   and the board index prefix `BOARD_TASKS_PREFIX`
-  (`service_impl/service.rs:49`) ties tasks to their board.
+  (`service_impl/service.rs:52`) ties tasks to their board.
 - The panel's create-board form is name-first (placeholder "Board name",
-  `crates/kanban_panel/src/kanban_panel.rs:1426-1434`; submit refuses an
-  all-whitespace name client-side, `crates/kanban_panel/src/task_actions.rs:638-641`).
+  `crates/kanban_panel/src/kanban_panel.rs:1672`; submit trims and refuses an
+  all-whitespace or over-cap name client-side,
+  `crates/kanban_panel/src/task_actions.rs:726-758`).
 - Board identity and workflow topology round-trip through export/import: the
   current Mermaid format writes `%% kanban board: <name>` plus one explicit
   `%% kanban column status: <wire-status>` before every section. The parser
   requires that metadata rather than inferring statuses from names or order;
   the panel preserves the exported board name when importing.
 - `kanban_board_delete` cascades to the board's tasks
-  (`hkask_mcp_kata_kanban.rs:352-390`) — R8.
+  (`hkask_mcp_kata_kanban.rs:361-395`) — R8.
 - The board h_mem is ontology-anchored as the PKO procedure root
-  (`service_impl/service.rs:139-154`), with tasks carrying step identifiers —
+  (`service_impl/service.rs:167-180`, `board_h_mem`), with tasks carrying step identifiers —
   the in-tree vocabulary for R5. (Note: `onto_anchor("kanban board")` itself
   currently lands on the coarse 5W1H core rung; this document deliberately
   assigns no private definition — the PKO mapping above is the in-tree
@@ -223,7 +238,7 @@ references in this table refer to that pre-implementation snapshot.
 | G9 | **Inconsistent name validation (new in v1.1.0).** The service checks `name.is_empty()` without trimming (`service.rs:126-128`), so an MCP caller can create `"   "` and the panel — which only guards all-whitespace client-side but sends the untrimmed string (`task_actions.rs:638-644`) — can store `"  My Board  "`. Meanwhile the mermaid path trims both task titles (`mermaid.rs:115`) and board names (`mermaid.rs:222-227`). Reference: Planka trims and refuses. Falsifier: `kanban_board_create {"name": "   "}` succeeds today. | R1 | `service.rs:126-128`; `task_actions.rs:638-644` |
 
 The widget does render the board's name in its own header
-(`crates/hkask-kanban-widget/src/view.rs:232-253`), which is why this reads as
+(`crates/hkask-kanban-widget/src/view.rs:225`), which is why this reads as
 a presentation-layer mismatch rather than a model bug.
 
 ## 6. Shaping recommendations
@@ -468,7 +483,9 @@ deferred):
 - **Commit state**: partially harvested into `e3644b2904` (fetch.rs,
   Cargo.toml, part of the panel work, mixed with the spreadsheet stream's
   portfolio change); the remaining panel work (board_picker.rs,
-  kanban_panel.rs, task_actions.rs) was uncommitted at report time.
+  kanban_panel.rs, task_actions.rs) was uncommitted at report time and has
+  since been committed (verified 2026-09-28: `board_picker.rs` is tracked at
+  HEAD).
 
 ### Review deltas (v1.0.0 → v1.1.0)
 

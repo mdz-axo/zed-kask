@@ -1,8 +1,8 @@
 ---
 title: "Prediction Markets MCP Server Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-09-20
-version: "0.40.0"
+last_updated: 2026-09-28
+version: "0.40.1"
 status: "Active"
 domain: "Composition"
 mds_categories: [domain, composition, lifecycle]
@@ -12,13 +12,13 @@ mds_categories: [domain, composition, lifecycle]
 
 **Crate:** `kask/mcp-servers/hkask-mcp-prediction-markets`
 **Tools:** 32 — 17 market tools (`market_lookup`, `market_match`, `market_ontology_map`, `market_calibration`, `market_record_resolution`, `market_subscribe_resolutions`, `market_ladder`, `market_cmp_index`, `market_cmp_indices`, `market_cmp_index_store`, `market_cmp_portfolio_store`, `market_cmp_context_suggest`, `market_volatility`, `market_residual`, `market_check_resolutions`, `market_history`, `prediction_markets_status`) plus 15 economic-data tools in `kask/mcp-servers/hkask-mcp-prediction-markets/src/economic_data_tools.rs` (`fred_search_series`, `fred_get_observations`, `fred_get_series_info`, `fred_list_categories`, `fred_get_release`, `wb_search_indicators`, `wb_get_observations`, `wb_list_countries`, `wb_list_topics`, `wb_get_indicator_info`, `dbnomics_search`, `dbnomics_list_providers`, `dbnomics_get_dataset`, `dbnomics_get_series`, `market_score_rationale`)
-**Auto-start:** Yes by default with the full built-in set; operators can disable the fleet or this server through `kask.mcp` (`kask/crates/kask_bridge/src/settings.rs:140-165`; `kask/crates/kask_bridge/src/mcp_servers.rs:340-354,704`).
+**Auto-start:** Yes by default with the full built-in set; operators can disable the fleet or this server through `kask.mcp` (`kask/crates/kask_bridge/src/settings.rs:140-165`; `kask/crates/kask_bridge/src/mcp_servers.rs:341-356,704`).
 
 > **Tool count note:** the server registers **32 `#[tool]` methods** — 17 in
 > `kask/mcp-servers/hkask-mcp-prediction-markets/src/hkask_mcp_prediction_markets.rs` + 15 in `kask/mcp-servers/hkask-mcp-prediction-markets/src/economic_data_tools.rs`, both
-> merged into `combined_router()` at `kask/mcp-servers/hkask-mcp-prediction-markets/src/hkask_mcp_prediction_markets.rs:80-88`
-> (verified 2026-09-15 by `#[tool`-attribute grep excluding `#[cfg(test)]` regions;
-> the method reproduces the pinned counts on media and scenarios exactly). The
+> merged into `combined_router()` at `kask/mcp-servers/hkask-mcp-prediction-markets/src/hkask_mcp_prediction_markets.rs:80-88`.
+> The count is pinned end-to-end by `tool_surface_is_exactly_32_registered_tools`
+> (`kask/mcp-servers/hkask-mcp-prediction-markets/src/hkask_mcp_prediction_markets.rs:2070-2084`). The
 > operational surface is the set of market tools; the status tool is listed under
 > Independent.
 
@@ -200,12 +200,13 @@ uses the server's inference port for LLM scoring, not an external HTTP API.
 ## Configuration
 
 Settings live in the `kask.prediction_markets` subsection
-(`kask/crates/kask_bridge/src/settings.rs:396-401`,
-`KaskPredictionMarketsSettings`):
+(`kask/crates/kask_bridge/src/settings.rs:396-405`,
+`KaskPredictionMarketsSettings` — no path fields; the data dir is derived from
+the global `KaskSettings::data_dir` as `mcp/prediction-markets/` and read via
+`HKASK_PREDICTION_MARKETS_DATA`):
 
 | Setting | Description |
 |---------|-------------|
-| `data_dir` | Data directory for the calibration journal. When empty, in-memory. |
 | `cache_ttl_secs` | Cache TTL in seconds for market-data responses (0 = server default). |
 | `base_events` | Base-event registry: `"domain:series,..."` pairs for CMP construction. |
 
