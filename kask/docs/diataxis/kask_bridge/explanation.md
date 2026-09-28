@@ -1,8 +1,8 @@
 ---
 title: "kask_bridge — Explanation"
 audience: [developers, architects, agents]
-last_updated: 2026-09-19
-version: "1.3.0"
+last_updated: 2026-09-28
+version: "1.3.1"
 status: "Active"
 domain: "Integration"
 mds_categories: [trust, curation]
@@ -141,5 +141,4 @@ status: VERIFIED
 
 ## Further reading
 
-- [How to add a built-in MCP server](./how-to.md)
-- [Bridge reference](./reference.md)
+- [Bridge reference — API surface and server-addition procedure](./reference.md)

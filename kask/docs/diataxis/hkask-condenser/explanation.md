@@ -1,8 +1,8 @@
 ---
 title: "hkask-condenser — Explanation"
 audience: [developers, architects, agents]
-last_updated: 2026-09-16
-version: "1.4.0"
+last_updated: 2026-09-28
+version: "1.4.1"
 status: "Active"
 domain: "Condensation"
 mds_categories: [trust, curation]
@@ -93,5 +93,4 @@ intentionally eligible because build and test logs are a primary condenser use.
 
 ## Further reading
 
-- [Condenser tuning procedure](./how-to.md)
-- [Condenser reference](./reference.md)
+- [Condenser reference — API surface and tuning procedures](./reference.md)

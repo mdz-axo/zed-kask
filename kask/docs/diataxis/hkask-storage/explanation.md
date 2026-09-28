@@ -1,8 +1,8 @@
 ---
 title: "hkask-storage — Explanation: Boundaries, Maintenance, and Gallery Identity"
 audience: [architects, developers]
-last_updated: 2026-09-19
-version: "2.2.0"
+last_updated: 2026-09-28
+version: "2.2.1"
 status: "Active"
 domain: "Persistence"
 mds_categories: [trust, curation]
@@ -149,8 +149,7 @@ initialization fails (`kask/crates/hkask-storage/src/core/store_macros.rs:44-71`
 
 ## See also
 
-- [How to add a store and review maintenance inventory](./how-to.md)
-- [hkask-storage reference](./reference.md)
+- [hkask-storage reference — API surface and procedures](./reference.md)
 - [Standardized artifact storage](../../architecture/standardized-artifact-storage.md)
 
 ---

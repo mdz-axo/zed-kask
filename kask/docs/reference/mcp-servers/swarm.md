@@ -1,8 +1,8 @@
 ---
 title: "Swarm MCP Server Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-09-23
-version: "0.39.2"
+last_updated: 2026-09-28
+version: "0.39.3"
 status: "Active"
 domain: "Composition"
 mds_categories: [composition, trust, lifecycle, curation]
@@ -554,7 +554,7 @@ plan's §14.
 
 - [Swarm system docs](../../diataxis/swarm_system/reference.md) — ABW semantics, API surface, tool tables
 - [Swarm system explanation](../../diataxis/swarm_system/explanation.md) — components C0–C8, the cascade, steering modes
-- [Swarm system how-to](../../diataxis/swarm_system/how-to.md) — the swarm-intelligence skill process
+- [Swarm system reference](../../diataxis/swarm_system/reference.md) — the swarm-intelligence skill process and procedures
 - [Swarm diagrams](../../diagrams/swarm.md) — server topology, the observed composition loop, and the advisory-vs-steering boundary (consolidated)
 - [MCP Server Registry](README.md) — fleet-wide patterns and the 11-server catalog
 

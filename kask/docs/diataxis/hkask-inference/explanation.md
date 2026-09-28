@@ -1,8 +1,8 @@
 ---
 title: "hkask-inference — Explanation: Bridge-First Inference and Visible Failure"
 audience: [architects, developers]
-last_updated: 2026-09-16
-version: "3.0.0"
+last_updated: 2026-09-28
+version: "3.0.1"
 status: "Active"
 domain: "Inference"
 mds_categories: [trust, curation]
@@ -103,8 +103,7 @@ A response is one newline-terminated line capped at 16 MiB; a missing newline is
 
 ## See also
 
-- [How-to: route and configure inference](./how-to.md)
-- [Reference: current API surface](./reference.md)
+- [Reference: current API surface and procedures](./reference.md)
 - [hkask-types reference](../hkask-types/reference.md)
 
 ---

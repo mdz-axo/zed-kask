@@ -1,8 +1,8 @@
 ---
 title: "hkask-tool-port — Explanation"
 audience: [developers, architects, agents]
-last_updated: 2026-09-22
-version: "2.0.0"
+last_updated: 2026-09-28
+version: "2.0.1"
 status: "Active"
 domain: "Sovereignty"
 mds_categories: [trust, curation]
@@ -144,7 +144,7 @@ without that proof.
 
 - [hkask-tool-port Reference](./reference.md): the current type surfaces and
   the invoke pipeline.
-- [hkask-mcp-server How-to](../hkask-mcp-server/how-to.md): applying the port in an MCP server.
+- [hkask-mcp-server reference](../hkask-mcp-server/reference.md): applying the port in an MCP server (Procedures).
 
 ---
 

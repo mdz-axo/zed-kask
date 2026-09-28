@@ -1,8 +1,8 @@
 ---
 title: "hkask-regulation — Explanation"
 audience: [developers, architects, agents]
-last_updated: 2026-09-16
-version: "2.2.0"
+last_updated: 2026-09-28
+version: "2.2.1"
 status: "Active"
 domain: "Regulation"
 mds_categories: [trust, curation]
@@ -170,8 +170,7 @@ budget from reducing capacity for unrelated agents.
 
 ## See also
 
-- [How to add a Regulation sensor](./how-to.md)
-- [hkask-regulation reference](./reference.md)
+- [hkask-regulation reference — API surface and sensor procedure](./reference.md)
 
 ---
 

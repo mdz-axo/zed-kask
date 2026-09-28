@@ -1,8 +1,8 @@
 ---
 title: "hkask-types — Explanation"
 audience: [developers, architects, agents]
-last_updated: 2026-09-16
-version: "2.1.0"
+last_updated: 2026-09-28
+version: "2.1.1"
 status: "Active"
 domain: "Foundation"
 mds_categories: [trust, curation]
@@ -147,8 +147,7 @@ retains one correlation identity.
 
 ## See also
 
-- [How to extend a foundation boundary](./how-to.md)
-- [hkask-types reference](./reference.md)
+- [hkask-types reference — API surface and procedures](./reference.md)
 - [Architecture principles](../../architecture/core/PRINCIPLES.md)
 
 ---

@@ -1,8 +1,8 @@
 ---
 title: "hkask-mcp-server — Tutorial: Build Your First MCP Server"
 audience: [developers new to hKask MCP servers]
-last_updated: 2026-09-16
-version: "2.0.0"
+last_updated: 2026-09-28
+version: "2.0.1"
 status: "Active"
 domain: "MCP"
 mds_categories: [lifecycle]
@@ -159,8 +159,7 @@ If `HKASK_WEBID` is missing or invalid, startup uses the anonymous persona and w
 
 ## Next steps
 
-- [How-to: common server tasks](./how-to.md)
-- [Reference: current API surface](./reference.md)
+- [Reference: current API surface and procedures](./reference.md)
 - [Explanation: framework design](./explanation.md)
 
 ---

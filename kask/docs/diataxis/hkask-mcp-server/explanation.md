@@ -1,8 +1,8 @@
 ---
 title: "hkask-mcp-server — Explanation: Why the Framework Is Narrow"
 audience: [developers who want the design rationale, not just the API]
-last_updated: 2026-09-16
-version: "2.0.0"
+last_updated: 2026-09-28
+version: "2.0.1"
 status: "Active"
 domain: "MCP"
 mds_categories: [trust, curation]
@@ -123,8 +123,7 @@ The root re-exports `AnyJsonValue` and `find_boolean_schema_positions` from `hka
 ## See also
 
 - [Tutorial: build your first MCP server](./tutorial.md)
-- [How-to: common server tasks](./how-to.md)
-- [Reference: current API surface](./reference.md)
+- [Reference: current API surface and procedures](./reference.md)
 
 ---
 
