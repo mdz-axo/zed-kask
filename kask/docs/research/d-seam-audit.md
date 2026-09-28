@@ -14,7 +14,7 @@ This is a resumable **worklist**, not an assertion that every row below was audi
 | D7 | pending / audit owner | not assessed | not run | unverified | — | uncommitted |
 | D8 | pending / audit owner | not assessed | not run | unverified | — | uncommitted |
 | D9 | pending / audit owner | not assessed | not run | unverified | — | uncommitted |
-| D12 | partial / audit owner; row alignment: D9 editor | upstreaming-candidate (retain; advisory) | `9cfd3a219f`; `api_compatible.rs:25-50`; one named pin passed; no live-fire proof; see D12 below | local `upstream/main@2c4bc2d7b2c5`: not adopted; remote freshness unverified | 2026-09-27 | uncommitted |
+| D12 | partial / audit owner; row alignment: D9 editor | upstreaming-candidate (retain; advisory) | `9cfd3a219f`; `api_compatible.rs:25-50`; one named pin passed; no live-fire proof; see D12 below | local `upstream/main@2c4bc2d7b2c5`: not adopted; remote freshness unverified | 2026-09-27 | `1456547b46` (audit), ledger citation follow-up |
 | D14 | pending / audit owner | not assessed | not run | unverified | — | uncommitted |
 | D16 | pending / audit owner | not assessed | not run | unverified | — | uncommitted |
 | D18 | pending / audit owner | not assessed | not run | unverified | — | uncommitted |
