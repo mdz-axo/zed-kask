@@ -109,9 +109,9 @@ The exact protected source-tool list is at `crates/agent/src/thread.rs:160-185`.
 
 Manual compaction obtains the global condenser and precompresses a background
 request copy. For eligible older non-JSON tool text, exact adjacent repeated
-lines are collapsed with their repetition count when that is shorter; this
-skips the slower algorithm pass. Non-repetitive text still uses the existing
-algorithm. The split planner then sizes model-visible content rather than the
+lines are collapsed with their repetition count when that is shorter. Only
+entirely repeated output skips the algorithm; mixed and non-repetitive text
+still use it, retaining the shorter result. The split planner then sizes model-visible content rather than the
 replay-only raw `output`, and invokes native summary collection and merge.
 Automatic compaction does not obtain the condenser
 (`crates/agent/src/thread.rs:3687-3715`). The composition root installs the

@@ -51,8 +51,9 @@ status: VERIFIED
 Manual precompression preserves user and assistant prose, the newest user-led
 exchange, protected tools, failed tool results, valid JSON, and non-text parts.
 For eligible older non-JSON tool text, exact adjacent repeated lines collapse
-with an explicit count when this shortens the output; this skips the algorithm
-pass. Otherwise the existing algorithm supplies a nonempty, smaller excerpt.
+with an explicit count when this shortens the output. Only an entirely repeated
+result skips the algorithm pass; mixed output still passes through the existing
+algorithm, which can shrink its unique remainder. The shorter excerpt is used.
 The stored thread remains unchanged because preprocessing happens after the
 native request has been copied to the background task
 (`crates/agent/src/thread.rs:3697-3707`).

@@ -142,7 +142,13 @@ impl ThreadCondenser for BridgeThreadCondenser {
                         continue;
                     }
                     let deduplicated = collapse_repeated_lines(text);
-                    if deduplicated.len() < text.len() {
+                    let has_repeats = deduplicated.len() < text.len();
+                    if has_repeats
+                        && text
+                            .lines()
+                            .next()
+                            .is_some_and(|first| text.lines().all(|line| line == first))
+                    {
                         let excerpt = format!(
                             "[Kask exact-repeat excerpt; full tool output remains in the original thread]\n{deduplicated}"
                         );
@@ -153,16 +159,19 @@ impl ThreadCondenser for BridgeThreadCondenser {
                         };
                         continue;
                     }
-                    let compressed = engine.compress(&result.tool_name, text, None);
-                    if compressed.content.trim().is_empty() {
-                        continue;
+                    let compressed = engine.compress(&result.tool_name, &deduplicated, None);
+                    if !compressed.content.trim().is_empty() {
+                        let excerpt = format!(
+                            "[Kask {} excerpt; full tool output remains in the original thread]\n{}",
+                            compressed.algorithm, compressed.content
+                        );
+                        if excerpt.len() < deduplicated.len() {
+                            *text = excerpt.into();
+                            continue;
+                        }
                     }
-                    let excerpt = format!(
-                        "[Kask {} excerpt; full tool output remains in the original thread]\n{}",
-                        compressed.algorithm, compressed.content
-                    );
-                    if excerpt.len() < text.len() {
-                        *text = excerpt.into();
+                    if has_repeats {
+                        *text = deduplicated.into();
                     }
                 }
             }
@@ -189,6 +198,46 @@ mod tests {
             collapse_repeated_lines("progress\nprogress\nprogress\n"),
             "progress\nprogress\nprogress\n"
         );
+    }
+
+    #[test]
+    fn small_repeat_does_not_skip_compression_of_large_unique_remainder() -> Result<()> {
+        use language_model::LanguageModelToolResult;
+
+        let repeated = "build progress: a long but repeated status line\n".repeat(3);
+        let unique = (0..400)
+            .map(|index| format!("build unit {index}: distinct diagnostic details\n"))
+            .collect::<String>();
+        let output = format!("{repeated}{unique}");
+        let tool_result = LanguageModelRequestMessage {
+            role: Role::User,
+            content: vec![MessageContent::ToolResult(LanguageModelToolResult {
+                tool_use_id: "build".into(),
+                tool_name: "terminal".into(),
+                is_error: false,
+                content: vec![output.clone().into()],
+                output: None,
+            })],
+            cache: false,
+            reasoning_details: None,
+        };
+        let mut messages = vec![
+            tool_result,
+            LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec!["latest request".into()],
+                cache: false,
+                reasoning_details: None,
+            },
+        ];
+        BridgeThreadCondenser::new("normal", false).precompress_history(&mut messages, &[])?;
+        let compact = messages.first().expect("tool result").string_contents();
+        assert!(
+            compact.contains("rtk_style"),
+            "large unique remainder must still be compressed"
+        );
+        assert!(compact.len() < output.len() / 2);
+        Ok(())
     }
 
     /// Manual precompression reduces expendable output, not instructions or structure.
