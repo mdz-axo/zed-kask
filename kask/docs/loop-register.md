@@ -2,7 +2,7 @@
 title: "Loop Register — zed-kask canonical loops"
 audience: [developers, architects, agents, operators]
 last_updated: 2026-09-28
-version: "0.22.2"
+version: "0.23.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle]
@@ -34,6 +34,218 @@ each further slice still has its own graph and validation gate.
 (expected defect count / expected impedance count / confidence). These are
 scored in Phase 4 against what the audit actually found; they are priors, not
 findings.
+
+## Pass 2 re-audit — Phase 0 checkpoint (2026-09-28; operator approval pending)
+
+This pass re-runs the audit under the same subtractive principle with six
+focus axes: loose ends, branch efficiency, loop interactions,
+reference-model fidelity, the MCP tool surface, and enforced depth
+(per-slice coverage ledger: every `fn` in the slice mapped or explicitly
+deferred). Phase 1 of this pass begins only after operator approval of
+this checkpoint. Predictions below are pass-2 priors, scored at this
+pass's Phase 4.
+
+### Premise verification — "the MCP tools were never really reviewed"
+
+**Finding (IS, Evidence):** the premise is FALSE as stated. A recorded
+review exists: `kask/docs/plans/hkask-core-mcp-repair-improvement-plan.md`
+(v0.4.0, review dated 2026-09-18, updated 2026-09-28) inventoried all 19
+libraries and 12 servers, inspected the runtime/tool port, shared server
+bootstrap/validation, and delegation IPC deeply, made targeted domain
+inspections (training scripts, corpus output paths, gallery policy,
+kanban attribution, spreadsheet persistence, event store, regulation),
+and skimmed all server responsibilities via delegation. It recorded 8
+prioritized defects (F1–F8) and 4 design risks (R1–R4) with line ranges
+and pinned review HEADs. What the recorded review itself declares
+uncovered (its §7 "Coverage and omissions"): full memory
+retention/consolidation, rotation, email, ontology semantics, condenser
+quality, complete financial workflows, cloud/A2A authorization, media
+parsers, deployed providers — and its tool-test gate is a "token
+heuristic, not complete behavioral coverage". **Conclusion:** the
+per-tool syntax+semantics review of axis 5 is a re-review that builds on
+the recorded one — deepest where the recorded review was shallow — not
+a first review. The review runs regardless.
+
+### Prior-findings reconciliation
+
+The prior register pass did not reconcile against the repair plan; its
+open items enter the loose-ends ledger below, mapped to register rows.
+Verified in the current tree this pass: the P1a delegation-authority code
+is present (`crates/agent/src/delegation_authority.rs` exists; P6a
+re-verified in the plan at `crates/agent/src/agent.rs:4814` on
+2026-09-28).
+
+### Tree staleness assessment (register vs current tree, this pass)
+
+- Crate inventory unchanged: 19 core crates, 12 MCP servers (directory
+  listings, this pass). No new loop family is evident from post-audit
+  commit subjects (INFERRED — each slice re-verifies its row first).
+- Entry-point spot-checks (IS, grep-verified this pass): L1 holds
+  (`run_turn` `thread.rs:2984`, `run_turn_internal` `:3176-3180`,
+  `agent.rs:2472`); L2 holds (`metacognition.rs:346`/`:405`,
+  `cybernetics_loop.rs:780` `tick`); L9 holds
+  (`hkask_mcp_kata_kanban.rs:461` `kanban_goal_create`); L5 entry holds
+  (`inference_ipc_server.rs:388` `UnixListener::bind`).
+- **Drift (IS):** post-audit commits `a7445fa213` ("Add
+  embed_with_dimensions to inference port") and `ac58daba43` ("Fix
+  stream truncation; request MRL embedding dims", HEAD at this Phase 0)
+  moved L3 and L5 citations: L3 `call_tool_inner` now
+  `runtime.rs:1662-1672` (was `:1642`), `dispatch` now `:1725-1729`
+  (was `:1701`); L5's Embed dispatch arm now calls `embed_with_dimensions`
+  at `inference_ipc_server.rs:801-802` (dispatch cite was `:776`). The
+  new arm threads through `hkask-types/src/ports/inference_port.rs:353`
+  (trait), `hkask-inference` (Lazy/Direct/IPC impls), `kask_bridge`
+  (`inference_embedding.rs:241`, IPC server), memory ingest/recall
+  (`memory/ingest.rs:124`,`:507`; `memory.rs:622`,`:817`), and corpus
+  (`compose.rs:281`,`:494`; `services/consolidation.rs:373`). The
+  L5/L10/L6 slice re-maps fold this arm in; the Diataxis reference docs
+  already document it with citations.
+- The kanban-widget syntax break recorded at v0.22.0
+  (`hkask-kanban-widget/src/view.rs:2011`) is resolved in the current
+  tree — rust-analyzer reports the file clean (this pass); the L7
+  `record_render` cite `view.rs:133` also still holds. The widget
+  subtraction's committed-vs-working-tree state is unverified: the
+  terminal tool failed on all git-status-shaped inputs at this Phase 0
+  (5 input-truncation failures; skill-use issue filed,
+  provider_transport). Verify with git before L7 seam-test work.
+
+### Loose-ends ledger (zero silent carry-overs)
+
+From the register's operator-decision queue:
+
+| # | Item | Row | Prior state | This pass |
+| --- | --- | --- | --- | --- |
+| 1 | Memory-receipt functional guarantee (EndTurn precedes detached ingestion; panel stop handler has no receipt) | L1 | deferred, falsifier recorded | re-open in L1 slice — operator decision pending |
+| 2 | Typed-error carry across the L4→L3 seam (string-marshalled kind) | L3 | deferred (net-positive lines) | re-open in L3/E1 slice — re-price after drift re-map |
+| 3 | Measured panel seam test + 2 inferred findings (concurrent update unseen after move; optimistic-mutation repaint) | L7 | deferred behind widget rework | re-open in L7 slice — widget tree now clean; re-map citations first |
+| 4 | Direct-acknowledgment memory-receipt gate (`goals.rs:319-337`) | L9 | operator decision | re-present for decision |
+| 5 | Done-verdict/criteria-passed rejection check | L9 | operator decision | re-present for decision |
+| 6 | Recall failure-signal contract (error-discarding legs `memory.rs:927-967`, `:1067-1085`) | L10 | operator ruling | re-present for decision |
+| 7 | Page-visibility impedance (older running job unobserved behind 20 newer) | L11 | deferred pending panel contract | re-open in L11/E3 slice |
+| 8 | Closable-vs-append-only research runs (no status-transition writer exists) | L12 | operator decision | re-present for decision |
+| 9 | Dispatch-seam ingestion candidate (needs red-green public-seam test) | L13 | deferred | re-open in L13 slice — the seam test is the slice's gate |
+| 10 | Posterior carry-forward boundary | L17 | deferred (caller-controlled contract) | re-defer unless the operator changes the contract |
+| 11 | Nebius status-degradation contract (unobservable jobs read Running) | L18 | operator decision | re-present for decision |
+| 12 | Degraded-status contract (poisoned performance lock silently substitutes zero penalty) | L23 | deferred with falsifier | re-open in L23 slice |
+
+From the repair plan (prior findings record; dispositions at its §9):
+
+| # | Item | Constraint force | Prior state | This pass |
+| --- | --- | --- | --- | --- |
+| 13 | F4 residual TOCTOU race — symlink planted between containment check and write; needs a symlink-resistant atomic open (`O_NOFOLLOW`-class) shared across corpus/gallery call sites | Prohibition (containment), partially enforced | open, deliberately not built | re-open in an L6/L21 edge slice — price the shared primitive |
+| 14 | P2 invocation/identity contract — F6 per-call authorship (repair-plan cites `transport.rs:91-104` anonymous startup fallback; `hkask_mcp_kata_kanban.rs:907-914` `self.webid` claim) and the R4 caller-assertion-vs-host-receipt distinction | Guardrail (authority) | open ("not yet replaced") | re-open as cross-cutting edge slice E6 (L1/L3/L4) |
+| 15 | R3/H1 spreadsheet crash-durability — revision/receipt write gap, no fault-injection or power-loss guarantee; H1 dynamic test outstanding | Guardrail (durability) | upheld, open | folds into L22's existing orphan-revision deferral — same boundary, re-present together |
+| 16 | R1 public default passphrase / first-run onboarding-recovery behavior | Guardrail (confidentiality) | decision-gated | re-present for decision (adjacent to L15) |
+| 17 | Repair-plan §8 open decisions #2–#8 (destructive-deletion override, attribution identities, crash/power-loss guarantees, first-run secrets, external CI for feature-gated tests, filesystem authority roots, cancellation reporting after effects) | mixed | open | operator decision queue — re-present at checkpoint |
+
+Closed since the prior register pass (verified in the register's own
+ledger): L2 accepted-check retry (`a2321f0df2`), L5 Api readback
+(v0.22.1), L5 minimalism (v0.22.2), L9 Steer prompt (`1113d8d85d`);
+repair-plan F2/F3/F5/F7/F8, R2, O1, and the P1a tool-ceiling slice (code
+present in tree).
+
+### Reference-model anchor ledger (axis 4 — anchor or explicit gap per row; no invented anchors)
+
+| Row | Anchor | Record |
+| --- | --- | --- |
+| L1 | GAP | no recorded model for the turn loop |
+| L2 | ANCHOR | `pragmatic-cybernetics` skill `## Reference models` section; Diataxis `hkask-regulation` docs |
+| L3 | GAP | `.rules` traps only |
+| L4 | PARTIAL | repair plan (plan-form: findings + execution program) + `.rules` MCP patterns; no prior-art model |
+| L5 | PARTIAL | Diataxis `hkask-inference` reference docs (internal, evidence-cited); no prior-art model |
+| L6 | PARTIAL | `kask/docs/research/chunking-for-rag-research.md`; `build-corpus-pipeline` skill lacks a `## Reference models` section |
+| L7 | GAP | no recorded model |
+| L8 | GAP | superforecasting methodology named in the skill description; no recorded section |
+| L9 | ANCHOR | `kask/docs/research/kanban-board-reference-models.md` (the exemplar) |
+| L10 | PARTIAL | `kask/docs/architecture/memory-system-specification.md` (internal spec-form) |
+| L11 | GAP | no recorded model |
+| L12 | GAP | no recorded model |
+| L13 | PARTIAL | Diataxis `swarm_system` docs; no recorded model for the thread/memory cycle |
+| L14 | GAP | no recorded model |
+| L15 | GAP | no recorded model |
+| L16 | PARTIAL | pragmatic-cybernetics (VSM S1–S5) applies; `algedonic-review` skill lacks a recorded section |
+| L17 | ANCHOR | `scenario-planning` skill `## Reference models` (Schwartz/Tetlock/Chermack) |
+| L18 | PARTIAL | `kask/docs/reference/lora-training-catalog.md` (reference doc); `lora-training` skill lacks a recorded section |
+| L19 | ANCHOR | `portfolio-review` skill `## Reference models and labels` |
+| L20 | GAP | HTTP conditional GET (RFC 9110) is the implicit, unrecorded model |
+| L21 | GAP | no recorded model |
+| L22 | ANCHOR | `kask/docs/plans/logisheets-spreadsheet-capability-plan.md` (plan-form, chartered 2026-09-18) |
+| L23 | GAP | no recorded model |
+
+Inventory shape: 273 `.j2` templates, 2 with `Reference model:` headers
+(`company-research/thesis-three-pillars.j2` — MAIA;
+`prompt-enhance/enhance-classify.j2` — Liu et al., FCS 2026);
+method-named templates without headers are IS by absence (e.g.
+`wardley-anchor.j2`, `gorilla-4dim.j2`,
+`falstaffian-competitive-rotation.j2`). 15 SKILL.md files carry
+`## Reference models` sections (of 59 catalog skills). Creating missing
+records is a separate operator decision — this pass records gaps,
+assesses alignment where anchors exist, and invents none.
+
+### MCP tool inventory (axis 5 sizing; counts from pin tests and signature greps, this pass)
+
+| Server | Tools | Pin | Per-server doc |
+| --- | --- | --- | --- |
+| companies | 40 | count (`hkask_mcp_companies.rs:497-501`) | yes |
+| corpus | 26 | count (`hkask_mcp_corpus.rs:280-290`) | yes |
+| curator | 15 | count (`hkask_mcp_curator.rs:2237-2251`) | **no** |
+| kata-kanban | 27 | name-set (build.rs + `tool_names_match_live_router`) | **no** |
+| media | 98 | count (`hkask_mcp_media.rs:449-459`) | yes |
+| portfolio | 18 | name-set (`hkask_mcp_portfolio.rs:65-75`) | yes |
+| prediction-markets | 32 | count (`hkask_mcp_prediction_markets.rs:2070-2084`) | yes |
+| research | 26 | count (`hkask_mcp_research.rs:2435-2439`) | yes |
+| scenarios | 19 | count (`hkask_mcp_scenarios.rs:1899-1909`) | yes |
+| spreadsheet | 2 | name-set | yes |
+| swarm | 90 | count (`hkask_mcp_swarm.rs:1026-1036`) | yes |
+| training | 9 | count (`hkask_mcp_training.rs:318-326`) | **no** |
+| **total** | **402** | 9 count / 3 name-set | 9/12 |
+
+### Pass-2 predictions (calibrated down from pass-1's overestimate: MAE 1.22 defects and 1.22 impedances per loop, ~5×/~15× over)
+
+- MCP server slices (12 + framework): ~8–15 `.rules` pattern violations
+  across 402 tools; ~2–4 impedances; per-tool review records absent by
+  definition (the re-review creates them). Confidence 0.55.
+- Loop re-slices (23): ~3–6 branch-efficiency findings (branch maps are
+  new work — pass 1 verified graphs small, not branch inventories);
+  ~2–3 new interaction-edge impedances; 11 hard anchor gaps (ledger
+  above). Confidence 0.50.
+- Loose ends (17): ~3–5 closable with evidence; the rest re-deferred with
+  stated reasons. Confidence 0.50.
+- Net production lines: −50 to −150 if branch consolidation finds real
+  duplication; otherwise ~0 with a no-candidate finding reported with
+  evidence. Confidence 0.45.
+
+### Pass-2 decomposition (INVEST slices; shared gate per slice)
+
+Shared gate: complete branch map + interaction edges + anchor
+assessment; findings with file:line, IS/OUGHT/INFERRED,
+constraint-force label, and a tree-grounded falsifier; coverage ledger
+reconciled (every `fn` in the slice mapped or explicitly deferred);
+consolidation landed (full-repo symbol sweep + build green) or deferred
+with reason; behavioral-bug hypotheses through the diagnose gate first.
+
+- **S13 framework first:** `hkask-mcp`/`hkask-mcp-server` shared cores
+  under the per-tool lens (the L4 re-check) — informs all server slices.
+- **S1–S12, smallest-first:** one slice per server crate (spreadsheet 2,
+  training 9, curator 15, portfolio 18, scenarios 19, corpus 26, research
+  26, kata-kanban 27, prediction-markets 32, companies 40, swarm 90,
+  media 98 — media/swarm sub-slice by tool group). Each maps every
+  tool's syntax (signature, input contract, schema, response envelope)
+  and semantics (behavior, error classification, degradation surfacing,
+  credential handling) against `.rules` patterns and the per-server
+  reference doc where it exists.
+- **Loop re-slices L1–L23:** scoped to branch map, interaction edges,
+  anchor assessment, loose-end status, and the drift re-maps named above
+  (L3/L5 carry post-audit drift; L1 folds in the delegation-authority
+  arm; L7 re-maps against the landed widget state before its seam test).
+- **Edge slices:** E1 L3↔L4 typed-error carry (re-price); E2 L1↔L5
+  stream/embed arm; E3 L7↔L9/L11/L13/L21/L22 panel seams; E4 L6↔L10/L18
+  corpus-DB edges; E5 L12↔L20/L23 research-state edges; E6 the P2
+  invocation/identity contract cross-cut (loose-end #14).
+
+Order is a technical decision (program manager), vetoable on functional
+grounds: S13, then S1–S12 smallest-first, loop re-slices interleaved with
+their endpoint edges, L7's re-map before its seam test.
 
 ## Family coverage (spec minimum list, verified against tree)
 
@@ -448,6 +660,28 @@ technical program manager; approval to resume Phase 1 belongs to the operator.
   2026-09-27).
 
 ## Change log
+
+- 2026-09-28 — v0.23.0 opened the pass-2 re-audit at Phase 0 and stopped
+  at the operator checkpoint. Premise verified FALSE-as-stated: the
+  2026-09-18 core+MCP review exists as
+  `kask/docs/plans/hkask-core-mcp-repair-improvement-plan.md` with pinned
+  dispositions; its open items (F4 TOCTOU race, P2 invocation/identity
+  contract, R3/H1 crash-durability, R1 passphrase onboarding, §8
+  decisions) enter the loose-ends ledger — 17 items total, zero silent
+  carry-overs. Register re-verified against the tree: entry points hold
+  (L1/L2/L9/L5 spot-checked); L3/L5 drifted ~20–25 lines from
+  `a7445fa213`/`ac58daba43`; the `embed_with_dimensions` arm mapped
+  through types/inference/bridge/memory/corpus; the kanban-widget break
+  is resolved (file clean under rust-analyzer). Reference-model anchor
+  ledger added: 5 anchored, 7 partial, 11 gap rows; 2/273 templates and
+  15/59 skills carry recorded sections. MCP tool inventory pinned: 402
+  tools, 12 servers, 9 count-pins, 3 name-pins, 9/12 per-server docs.
+  Pass-2 predictions and the INVEST decomposition (S13 + S1–S12 + 23
+  loop re-slices + E1–E6) recorded above. Terminal tool failed on all
+  git-status-shaped inputs (5 truncations; skill-use issue filed,
+  provider_transport) — working-tree git state unverified at this
+  checkpoint. Doc-only pass; no production lines changed. Operator
+  approval pending before Phase 1.
 
 - 2026-09-28 — v0.22.2 landed the L5 `inference_chat.rs` minimalism pass,
   closing the row's last deferral. Four behavior-preserving consolidations

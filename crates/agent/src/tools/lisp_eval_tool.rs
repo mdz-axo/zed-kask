@@ -324,6 +324,51 @@ mod tests {
     // and symbol keys never match JSON string keys) because nothing ran it.
 
     #[test]
+    fn test_canonical_narrative_mark_form() {
+        // grounding-verify SKILL.md Step 4 item 1 — the any-verified/mark
+        // recursive pair computing narrative blocks' final is_sourced flags
+        // from surviving strength-2 claim IDs. Unpinned until 2026-09-28:
+        // the same verbatim-pinned, agent-executed, nothing-runs-it risk
+        // class that shipped the floor form broken.
+        let form = r#"(define any-verified (lambda (ids verified) (if (is_null ids) nil (or (member (car ids) verified) (any-verified (cdr ids) verified))))) (define mark (lambda (blocks verified) (if (is_null blocks) '() (cons (list (assoc "block_name" (car blocks)) (any-verified (assoc "claim_ids" (car blocks)) verified)) (mark (cdr blocks) verified))))) (mark blocks verified_ids)"#;
+        let marked = hkask_lisp::eval_sandboxed_with_budget(
+            form,
+            &json!({"blocks": [
+                {"block_name": "financial_profile", "claim_ids": ["c1", "c2"]},
+                {"block_name": "management_skill", "claim_ids": ["c3"]},
+                {"block_name": "empty_block", "claim_ids": []}
+            ], "verified_ids": ["c1", "c2"]}),
+            100_000,
+            64,
+        )
+        .expect("mark form must evaluate");
+        assert_eq!(
+            marked,
+            json!([
+                ["financial_profile", true],
+                ["management_skill", false],
+                ["empty_block", false]
+            ]),
+            "a block is sourced iff at least one of its claims survived verification — an empty claim list is never sourced"
+        );
+    }
+
+    #[test]
+    fn test_canonical_prediction_reconciliation_form() {
+        // grounding-verify SKILL.md Step 7 item 0 — the prediction-gap
+        // reconciliation: found minus predicted for both counts.
+        let form = r#"(list (- found_load_bearing predicted_load_bearing) (- found_failures predicted_failures))"#;
+        let gaps = hkask_lisp::eval_sandboxed_with_budget(
+            form,
+            &json!({"found_load_bearing": 12, "predicted_load_bearing": 10, "found_failures": 3, "predicted_failures": 2}),
+            100_000,
+            64,
+        )
+        .expect("reconciliation form must evaluate");
+        assert_eq!(gaps, json!([2, 1]));
+    }
+
+    #[test]
     fn test_canonical_provenance_floor_form() {
         // grounding-verify SKILL.md Step 6 — provenance floor as a recursive
         // min over claim strengths (string keys: JSON objects bind strings).

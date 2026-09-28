@@ -4279,20 +4279,20 @@ impl Thread {
             return None;
         }
 
-        // Tool retry cap — hard enforcement of the agent-loop retry limit.
+        // Tool retry cap — enforcement of the agent-loop retry limit.
         // After 3 failed assistant messages, warn the agent to switch tools.
-        // After 5, hard-refuse. Sibling calls in one message count once in the
-        // per-input and per-tool trackers, preserving a corrected next attempt
-        // while preventing the zero-gain retry death spiral (Ashby variety-deficit).
+        // After 5 failures of the same (tool, input) pair, hard-refuse that
+        // input. Sibling calls in one message count once in the per-input and
+        // per-tool trackers, preserving a corrected next attempt while
+        // preventing the zero-gain retry death spiral (Ashby variety-deficit).
         let tool_name_str = tool_use.name.as_ref();
         // zed-kask: .rules — tool retry death spiral prevention
         let retry_warning: Option<String> = match self.kask.check_tool_retry(tool_name_str, &input)
         {
-            crate::tool_retry_tracker::RetryVerdict::Refuse { attempt, reason } => {
-                let content =
-                    crate::tool_retry_tracker::format_refusal(tool_name_str, attempt, reason);
+            crate::tool_retry_tracker::RetryVerdict::Refuse { attempt } => {
+                let content = crate::tool_retry_tracker::format_refusal(tool_name_str, attempt);
                 log::warn!(
-                    "Tool retry cap reached for '{tool_name_str}' (attempt {attempt}, {reason:?}) — refusing"
+                    "Tool retry cap reached for '{tool_name_str}' (attempt {attempt}) — refusing"
                 );
                 return Some(Task::ready((
                     owning_message_ix,
@@ -12873,16 +12873,8 @@ mod tests {
             thread.kask.check_tool_retry(tool_name, &input)
         });
         match verdict {
-            crate::tool_retry_tracker::RetryVerdict::Refuse { attempt, reason } => {
+            crate::tool_retry_tracker::RetryVerdict::Refuse { attempt } => {
                 assert_eq!(attempt, 5, "attempt should be 5 (per-input count)");
-                assert!(
-                    matches!(
-                        reason,
-                        crate::tool_retry_tracker::RefuseReason::IdenticalInput
-                    ),
-                    "reason should be IdenticalInput, got {:?}",
-                    reason
-                );
             }
             other => panic!("6th check should return Refuse, got {:?}", other),
         }

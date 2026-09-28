@@ -1,20 +1,21 @@
-//! Tool retry tracker — hard enforcement of the agent-loop retry cap.
+//! Tool retry tracker — enforcement of the agent-loop retry cap.
 //!
 //! Prevents the "tool retry death spiral" where an agent retries the same
-//! failing tool call (or the same tool with trivially different inputs) in a
-//! zero-gain loop. Two tracking dimensions:
+//! failing tool call in a zero-gain loop. Two tracking dimensions:
 //!
 //! 1. **Per-input tracker** — `(tool_name, input_hash) → failure_count`. Catches
 //!    identical retries (same tool, same input). Parallel failures from one
 //!    assistant message count once; repeated messages still reach the warning
-//!    and hard cap.
+//!    and hard cap. This is the only refusing dimension.
 //!
 //! 2. **Per-tool consecutive-failure tracker** — `tool_name → consecutive_failure_count`.
-//!    Catches "trivially different" loops where the agent changes the input
-//!    slightly but keeps failing with the same tool. Sibling tool calls in one
-//!    assistant message count as one failed attempt, so one parallel batch
-//!    cannot prevent a corrected request. Repeated failed messages still warn
-//!    and hard-refuse at the existing thresholds.
+//!    Feeds the warning (with Bayesian probability) when the agent keeps
+//!    failing with the same tool across varying inputs. It deliberately does
+//!    NOT refuse: a consecutive-failure refusal locks out the corrected call
+//!    after a run of wrong attempts (observed 2026-09-22, h_mem `fecd1f65`:
+//!    five wrong-shape `render_template` calls hit the cap and the corrected
+//!    call was refused). The identical-input tracker already catches the
+//!    actual pathology — a true death spiral retries the same payload.
 //!
 //! A successful call resets both trackers for that tool/input.
 //!
@@ -51,7 +52,9 @@ pub fn is_authorization_error(output: &AgentToolOutput) -> bool {
 /// Bayesian probability.
 pub const WARN_THRESHOLD: u32 = 3;
 
-/// Hard cap — after this many failures, the tool refuses to run.
+/// Hard cap — after this many failures of the same (tool, input) pair, the
+/// tool refuses that input. Varying inputs never hit the cap; they only
+/// warn (see the module docs for why).
 pub const HARD_CAP: u32 = 5;
 
 /// Per-tool hard-cap overrides. Tools listed here use the override value
@@ -92,17 +95,8 @@ pub enum RetryVerdict {
         probability: f64,
     },
     /// The call is refused. The tool must return an error directing the agent
-    /// to switch tools or stop. `reason` explains which tracker fired.
-    Refuse { attempt: u32, reason: RefuseReason },
-}
-
-/// Why the call was refused.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RefuseReason {
-    /// The same (tool, input) pair has failed `HARD_CAP` times.
-    IdenticalInput,
-    /// The tool has failed `HARD_CAP` consecutive times with any input.
-    ConsecutiveFailures,
+    /// to switch tools or stop. `attempt` is the per-input failure count.
+    Refuse { attempt: u32 },
 }
 
 /// Tracks repeated tool call failures per thread.
@@ -115,6 +109,7 @@ pub struct ToolRetryTracker {
     per_input: Mutex<HashMap<(String, u64), FailureCount>>,
     /// `tool_name → consecutive_failure_count` — per-tool tracker.
     /// Incremented once per failed assistant message, reset on success.
+    /// Warns only; never refuses (see module docs).
     per_tool: Mutex<HashMap<String, FailureCount>>,
 }
 
@@ -139,7 +134,7 @@ impl FailureCount {
 /// `read_file` with varying paths/queries). Entries are removed on success
 /// for the same input, but failed inputs with no subsequent success
 /// accumulate. When the map reaches this cap, the oldest entries are
-/// evicted — the per-tool tracker (`per_tool`) still catches consecutive
+/// evicted — the per-tool tracker (`per_tool`) still warns on consecutive
 /// failure loops regardless of input.
 const MAX_PER_INPUT_ENTRIES: usize = 500;
 
@@ -159,17 +154,13 @@ impl ToolRetryTracker {
 
         let effective_cap = hard_cap_for(tool_name);
 
-        // Hard cap: either tracker hitting the effective cap refuses the call.
+        // Hard cap: the per-input tracker refuses identical retries. The
+        // per-tool consecutive counter deliberately does not refuse — a
+        // corrected call after a run of different failed attempts must
+        // still run (module docs: the 2026-09-22 render_template incident).
         if per_input_count >= effective_cap {
             return RetryVerdict::Refuse {
                 attempt: per_input_count,
-                reason: RefuseReason::IdenticalInput,
-            };
-        }
-        if consecutive_count >= effective_cap {
-            return RetryVerdict::Refuse {
-                attempt: consecutive_count,
-                reason: RefuseReason::ConsecutiveFailures,
             };
         }
 
@@ -289,21 +280,17 @@ pub fn format_warning(
         "WARNING: Tool '{tool_name}' has failed {tracker_label}. \
          Estimated probability of success on the next attempt: {pct}%. \
          Consider switching to a different tool (grep, terminal, find_path, spawn_agent) \
-         or reframing the approach. After {effective_cap} failures, this tool will be hard-refused."
+         or reframing the approach. After {effective_cap} failures with the same input, \
+         that input will be hard-refused."
     )
 }
 
-/// Format the refusal message returned when the hard cap is reached.
-pub fn format_refusal(tool_name: &str, attempt: u32, reason: RefuseReason) -> String {
-    let reason_str = match reason {
-        RefuseReason::IdenticalInput => format!("failed {attempt} times with the same input"),
-        RefuseReason::ConsecutiveFailures => {
-            format!("failed {attempt} consecutive times (with varying inputs)")
-        }
-    };
+/// Format the refusal message returned when the per-input hard cap is reached.
+pub fn format_refusal(tool_name: &str, attempt: u32) -> String {
     format!(
-        "Tool '{tool_name}' has {reason_str}. Hard cap reached — this tool is refused. \
-         Switch to a different tool (grep, terminal, find_path, spawn_agent) or report the \
+        "Tool '{tool_name}' has failed {attempt} times with the same input. \
+         Hard cap reached — this input is refused. Switch to a different tool \
+         (grep, terminal, find_path, spawn_agent) or report the \
          blocker to the user. Do not retry — that is a zero-gain loop."
     )
 }
@@ -354,34 +341,38 @@ mod tests {
             tracker.record_failure("read_file", &input);
         }
         match tracker.check("read_file", &input) {
-            RetryVerdict::Refuse { reason, .. } => {
-                assert_eq!(reason, RefuseReason::IdenticalInput);
-            }
+            RetryVerdict::Refuse { .. } => {}
             other => panic!("expected Refuse, got {other:?}"),
         }
     }
 
+    /// expect: a corrected call after a run of different failed attempts
+    /// must still run — the consecutive tracker warns but never refuses
+    /// (the 2026-09-22 render_template incident: five wrong-shape calls hit
+    /// the consecutive cap and the corrected call was refused).
     #[test]
-    fn consecutive_tracker_catches_trivially_different_inputs() {
+    fn corrected_input_is_allowed_after_cap_of_different_failures() {
         let tracker = ToolRetryTracker::default();
         // Fail with 5 different inputs on the same tool — the per-input tracker
-        // never hits the cap (each input fails once), but the per-tool consecutive
-        // tracker hits HARD_CAP.
+        // never hits the cap (each input fails once).
         for i in 0..HARD_CAP {
             let input = serde_json::json!({"path": format!("file_{i}.rs")});
             tracker.record_failure("read_file", &input);
         }
-        // Now any input should be refused — the consecutive tracker fired.
-        let new_input = serde_json::json!({"path": "totally_new.rs"});
-        match tracker.check("read_file", &new_input) {
-            RetryVerdict::Refuse { reason, .. } => {
-                assert_eq!(
-                    reason,
-                    RefuseReason::ConsecutiveFailures,
-                    "should refuse via consecutive tracker, not per-input"
-                );
-            }
-            other => panic!("expected Refuse via consecutive tracker, got {other:?}"),
+        // A new, different input is allowed (with warning) — not refused.
+        let corrected = serde_json::json!({"path": "totally_new.rs"});
+        match tracker.check("read_file", &corrected) {
+            RetryVerdict::AllowWithWarning { .. } => {}
+            other => panic!("expected AllowWithWarning, got {other:?}"),
+        }
+        // Even well past the cap, varying inputs never refuse.
+        for i in 0..HARD_CAP {
+            let input = serde_json::json!({"path": format!("more_{i}.rs")});
+            tracker.record_failure("read_file", &input);
+        }
+        match tracker.check("read_file", &serde_json::json!({"path": "another.rs"})) {
+            RetryVerdict::AllowWithWarning { .. } => {}
+            other => panic!("expected AllowWithWarning past the cap, got {other:?}"),
         }
     }
 
@@ -410,10 +401,12 @@ mod tests {
         ));
     }
 
-    /// expect: retries across separate assistant messages still warn and stop,
-    /// even when every message fans out many distinct failed tool calls.
+    /// expect: retries across separate assistant messages still warn, and the
+    /// identical input still reaches the hard cap, even when every message
+    /// fans out many distinct failed tool calls — but varying inputs are
+    /// never refused.
     #[test]
-    fn repeated_failed_batches_still_reach_hard_cap() {
+    fn repeated_failed_batches_refuse_only_the_identical_input() {
         let tracker = ToolRetryTracker::default();
         let same_input = serde_json::json!({"query": "same", "strategy": "hybrid"});
         for message_ix in 0..HARD_CAP as usize {
@@ -435,19 +428,16 @@ mod tests {
                 ));
             }
         }
+        // A varying input warns but is allowed — the consecutive tracker no
+        // longer refuses.
         assert!(matches!(
             tracker.check("web_search", &serde_json::json!({"strategy": "deep"})),
-            RetryVerdict::Refuse {
-                reason: RefuseReason::ConsecutiveFailures,
-                ..
-            }
+            RetryVerdict::AllowWithWarning { .. }
         ));
+        // The identical input is refused via the per-input tracker.
         assert!(matches!(
             tracker.check("web_search", &same_input),
-            RetryVerdict::Refuse {
-                reason: RefuseReason::IdenticalInput,
-                ..
-            }
+            RetryVerdict::Refuse { .. }
         ));
         tracker.record_success("web_search", &same_input);
         assert!(matches!(
@@ -457,7 +447,7 @@ mod tests {
     }
 
     #[test]
-    fn consecutive_tracker_warns_before_refusing() {
+    fn consecutive_tracker_warns_without_refusing() {
         let tracker = ToolRetryTracker::default();
         // Fail with 3 different inputs — consecutive tracker hits WARN_THRESHOLD.
         for i in 0..WARN_THRESHOLD {
@@ -544,12 +534,10 @@ mod tests {
         }
 
         // At SKILL_TOOL_HARD_CAP, the skill tool is finally refused.
-        match tracker.check("skill", &input) {
-            RetryVerdict::Refuse { reason, .. } => {
-                assert_eq!(reason, RefuseReason::IdenticalInput);
-            }
-            other => panic!("expected Refuse at SKILL_TOOL_HARD_CAP, got {other:?}"),
-        }
+        assert!(matches!(
+            tracker.check("skill", &input),
+            RetryVerdict::Refuse { .. }
+        ));
     }
 
     #[test]
@@ -631,25 +619,19 @@ mod tests {
     }
 
     #[test]
-    fn format_refusal_includes_reason() {
-        let msg = format_refusal("read_file", 5, RefuseReason::IdenticalInput);
+    fn format_refusal_includes_attempt_count() {
+        let msg = format_refusal("read_file", 5);
         assert!(
             msg.contains("5 times"),
             "refusal should include attempt count: {msg}"
         );
         assert!(
             msg.contains("same input"),
-            "refusal should include reason: {msg}"
+            "refusal should name the identical-input cause: {msg}"
         );
         assert!(
             msg.contains("refused"),
             "refusal should include directive: {msg}"
-        );
-
-        let msg = format_refusal("read_file", 5, RefuseReason::ConsecutiveFailures);
-        assert!(
-            msg.contains("consecutive"),
-            "refusal should include consecutive reason: {msg}"
         );
     }
 
