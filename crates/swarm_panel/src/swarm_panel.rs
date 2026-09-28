@@ -2738,12 +2738,13 @@ mod tests {
         assert_eq!(hkask_types::kanban_wire::KANBAN_SERVER_NAME, "kata-kanban");
 
         // Pin the count so adding or removing a server tool without updating
-        // this pin is caught. 26 since `kanban_goal_memory_acknowledge`
-        // (cc4ff7be79) joined the 25 left after the rJoule budget removal
-        // (e13224d836) deleted `kanban_task_add_rjoules`.
+        // this pin is caught. 27 as of 2026-09-28: the server's own
+        // `tool_names_match_live_router` pin keeps its generated TOOL_NAMES
+        // honest, so a count change here always reflects a real server
+        // change — update this pin in the same pass.
         assert_eq!(
             parse::KANBAN_TOOLS.len(),
-            26,
+            27,
             "tool count changed — update the count pin to match \
              hkask-mcp-kata-kanban #[tool] fns"
         );

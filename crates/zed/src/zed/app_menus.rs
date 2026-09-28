@@ -353,6 +353,15 @@ mod tests {
     #[test]
     fn test_leftmost_menu_name_is_zk() {
         let cx = TestAppContext::single();
+        // `app_menus` reads `DisableAiSettings` (upstream #63580's Agent Panel
+        // gate), so the store must exist before construction — the minimal
+        // setup panicked with "no state of type SettingsStore exists" after
+        // the 2026-09-10 merge carried that read into the menu chain.
+        cx.update(|cx| {
+            let mut store = settings::SettingsStore::new(cx, &settings::default_settings());
+            store.register_setting::<DisableAiSettings>();
+            cx.set_global(store);
+        });
         let menus = cx.update(|cx| app_menus(cx));
         let leftmost = menus
             .first()
@@ -363,6 +372,11 @@ mod tests {
     #[test]
     fn test_leftmost_menu_has_zed_kask_update_item() {
         let cx = TestAppContext::single();
+        cx.update(|cx| {
+            let mut store = settings::SettingsStore::new(cx, &settings::default_settings());
+            store.register_setting::<DisableAiSettings>();
+            cx.set_global(store);
+        });
         let menus = cx.update(|cx| app_menus(cx));
         let leftmost = menus
             .first()
