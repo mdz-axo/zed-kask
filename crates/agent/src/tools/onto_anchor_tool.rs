@@ -21,8 +21,8 @@ use ui::SharedString;
 /// rung 3):
 ///
 /// 1. **Domain supplement** — pinned published sources (FIBO Q2 Release,
-///    OMC, PKO/P-Plan/PROV, SEPIO, GOLEM/CIDOC-CRM/LRMoo, ML-Schema,
-///    RDF/RDFS), plus local SDMX identifiers (not published RDF IRIs).
+///    W3C RDF Data Cube, OMC, PKO/P-Plan/PROV, SEPIO,
+///    GOLEM/CIDOC-CRM/LRMoo, ML-Schema, RDF/RDFS).
 ///    Never force a term into an ontology that has no place for it.
 /// 2. **Derived concepts** — recorded compositions over anchored
 ///    constituents, each carrying its identity and its authority

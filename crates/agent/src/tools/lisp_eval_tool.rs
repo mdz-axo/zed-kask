@@ -324,31 +324,6 @@ mod tests {
     // and symbol keys never match JSON string keys) because nothing ran it.
 
     #[test]
-    fn test_canonical_fact_score_form() {
-        // grounding-verify SKILL.md Step 5 — fact_score with nil-propagation.
-        let form = r#"(if (or (member nil (list sar cvr hfr nlr)) (= claims_checked 0)) 'nil (let ((score (+ (* 0.30 sar) (* 0.25 cvr) (* 0.20 hfr) (* 0.25 nlr)))) score))"#;
-        let ok = hkask_lisp::eval_sandboxed_with_budget(
-            form,
-            &json!({"sar": 0.9, "cvr": 0.8, "hfr": 1.0, "nlr": 0.9, "claims_checked": 10}),
-            100_000,
-            64,
-        )
-        .expect("fact_score form must evaluate");
-        let score = ok.as_f64().expect("happy path returns a number");
-        assert!((score - 0.895).abs() < 1e-9, "got {score}");
-
-        // A nil sub-metric must propagate to nil — never a zero-fallback score.
-        let nil = hkask_lisp::eval_sandboxed_with_budget(
-            form,
-            &json!({"sar": null, "cvr": 0.8, "hfr": 1.0, "nlr": 0.9, "claims_checked": 10}),
-            100_000,
-            64,
-        )
-        .expect("nil-path form must evaluate");
-        assert_eq!(nil, json!(null), "nil sub-metric must yield null, not 0");
-    }
-
-    #[test]
     fn test_canonical_provenance_floor_form() {
         // grounding-verify SKILL.md Step 6 — provenance floor as a recursive
         // min over claim strengths (string keys: JSON objects bind strings).
@@ -490,12 +465,6 @@ mod tests {
             "/../../.agents/skills/grounding-verify/SKILL.md"
         ))
         .expect("grounding-verify SKILL.md must exist in the workspace");
-        assert!(
-            skill_md.contains(
-                "(if (or (member nil (list sar cvr hfr nlr)) (= claims_checked 0)) 'nil (let ((score (+ (* 0.30 sar) (* 0.25 cvr) (* 0.20 hfr) (* 0.25 nlr)))) score))"
-            ),
-            "fact_score form must stay pinned in grounding-verify SKILL.md"
-        );
         assert!(
             skill_md.contains(r#"(define floor-strength (lambda (cs)"#),
             "Step 6 floor form must stay pinned in grounding-verify SKILL.md"

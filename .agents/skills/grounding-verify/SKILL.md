@@ -358,7 +358,7 @@ returns.
    - A conflict is a data note, not a hallucination: neither claim is
      `rejected`, the closed provenance vocabulary is unchanged, and the
      finding surfaces through the confidence band (Step 6) and the
-     error log (Step 7) — never through the fact_score ratios.
+     error log (Step 7) — never through a composite score.
 
 6. Claims classified as `model_inference`, `unavailable`, or
    `tool_no_match` skip mechanical verification — they are not claiming
@@ -435,6 +435,14 @@ weakest claim) — and report it with the `decoupling` field
 is a self-check — say so; the party being monitored cannot be the sole
 monitor. The floor and the decoupling field are facts for the reader, not
 a verdict on the text; the output never says verified.
+
+1. Call `lisp_eval` to compute the floor (a claim record missing
+   `strength` must error loudly — an unfinished classification surfaces,
+   it does not silently floor):
+   - form: `"(define floor-strength (lambda (cs) (if (= (length cs) 1) (assoc "strength" (nth 0 cs)) (let ((rest_min (floor-strength (cdr cs)))) (let ((this (assoc "strength" (car cs)))) (if (< this rest_min) this rest_min)))))) (floor-strength claims)"`
+   - env: `{ "claims": <the Step 2 provenance assignments, each with "strength"> }`
+   - Pass `max_depth` ≥ 8× the claims count (the recursive helper — see
+     Step 1 item 4's depth note).
 
 ### Step 7 — Emit verification report
 
@@ -651,7 +659,7 @@ single-pass by design and verifies against provided sources only.
 - `source_conflicts` are findings, not provenance values. The closed
   vocabulary is unchanged; a conflict rejects neither claim. Conflicts
   cap the confidence band and enter the error log; they never enter
-  the fact_score ratios.
+  a composite score.
 - The `decoupling` field is mandatory in the verification report. An
   `in_thread` run by the report's generator is a self-check — its
   confidence band caps at `medium` no matter how strong the claims
@@ -662,7 +670,7 @@ single-pass by design and verifies against provided sources only.
   the calling pipeline executes corrections — this skill emits
   findings, it does not rewrite the report.
 - Findings with severity high or critical surface immediately,
-  regardless of the fact_score.
+  regardless of the provenance floor.
 - If any tool call fails (`render_template`, `lisp_eval`), call
   `curator_report_skill_use_issue` with `skill_name: "grounding-verify"`,
   the failed tool, and the error — then continue with the best available

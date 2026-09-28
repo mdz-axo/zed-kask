@@ -2,7 +2,7 @@
 title: "Ontology Bridge — API Reference"
 audience: [developers, architects, agents]
 last_updated: 2026-09-27
-version: "0.42.0"
+version: "0.43.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, curation]
@@ -23,7 +23,7 @@ Ontology anchoring is a scope-broadening walk, never a single pick. When a
 concept has no fit in the narrowest applicable ontology, the anchor falls
 to progressively broader scopes until one fits:
 
-1. **Domain supplement** — exact terms from pinned published sources (FIBO Q2 Release, OMC, PKO/P-Plan/PROV, SEPIO, GOLEM/CIDOC-CRM/LRMoo, ML-Schema, RDF/RDFS); SDMX is a separate local class-name identifier registry, not an official published RDF/OWL URI vocabulary.
+1. **Domain supplement** — exact terms from pinned published sources (FIBO Q2 Release, W3C RDF Data Cube, OMC, PKO/P-Plan/PROV, SEPIO, GOLEM/CIDOC-CRM/LRMoo, ML-Schema, RDF/RDFS). No local SDMX identifier registry participates in resolution.
 2. **Derived concept** — a recorded composition with identity and authority; operator rulings become durable here (`kask/crates/hkask-bridge-ontology/src/derived.rs`).
 3. **Upper ontology** — the full pinned SUMO distribution (tier `upper`).
 4. **General vocabulary** — the full schema.org release (tier `general_vocabulary`), after SUMO so a formal category is preferred.
@@ -41,13 +41,13 @@ dispatch form (rungs named in its doc comment);
 
 ## Modules
 
-Declared in `kask/crates/hkask-bridge-ontology/src/hkask_bridge_ontology.rs`: `axis`, `dc_bibo`, `derived`, `fibo`, `golem`, `ml_schema`, `omc`, `ontology_graph`, `pko`, `published`, `rdf`, `schema_org`, `sdmx`, `sepio`, `sumo`, and `term_resolution`.
+Declared in `kask/crates/hkask-bridge-ontology/src/hkask_bridge_ontology.rs`: `axis`, `data_cube`, `dc_bibo`, `derived`, `fibo`, `golem`, `ml_schema`, `omc`, `ontology_graph`, `pko`, `published`, `rdf`, `schema_org`, `sepio`, `sumo`, and `term_resolution`.
 
 ### `published` — full vocabularies compiled from pinned sources
 
-`sources/SOURCES.lock` pins each published source (upstream URL, version, SHA-256, license); `build.rs` verifies the lock and emits the `published` index (concept ID, kind, name/labels, directly stated parents and inverse properties, source, and definition when supplied). Coverage includes the complete pinned SUMO distribution (`tiny*` test subsets excluded), every layer of schema.org 30.1, DCMI terms/types, BIBO, CiTO, PKO, P-Plan, PROV, SEPIO, GOLEM, CIDOC-CRM, LRMoo, OMC, ML-Schema and RDF/RDFS. FIBO indexes the Q2 **Release** maturity selection only (157 modules, 6,443 terms), not Provisional. The FIBO fixture supplies Release module/namespace bindings checked against the pinned sources, not a reduced term menu. The module constants are named consumer selections; the index is the vocabulary. `published::lookup(namespace, term)` returns matching senses by exact concept ID, local name or published label (case/separator-insensitive); `published::get` and `published::contains` look up a concept ID (`build.rs:136-316,319-403`, `src/published_sources.rs:452-567`).
+`sources/SOURCES.lock` pins each published source (upstream URL, version, SHA-256, license); `build.rs` verifies the lock and emits the `published` index (concept ID, kind, name/labels, directly stated parents and inverse properties, source, and definition when supplied). Coverage includes the complete pinned SUMO distribution (`tiny*` test subsets excluded), every layer of schema.org 30.1, DCMI terms/types, BIBO, CiTO, PKO, P-Plan, PROV, SEPIO, GOLEM, CIDOC-CRM, LRMoo, OMC, ML-Schema, RDF/RDFS and W3C RDF Data Cube. FIBO indexes the Q2 **Release** maturity selection only (157 modules, 6,443 terms), not Provisional. `fibo-release-modules.tsv` records Release module/namespace bindings checked against pinned sources, not a reduced term menu. The module constants are named consumer selections; the index is the vocabulary. `published::lookup(namespace, term)` returns matching senses by exact concept ID, local name or published label (case/separator-insensitive); `published::get` and `published::contains` look up a concept ID (`build.rs:136-316,319-403`, `src/published_sources.rs:452-567`).
 
-**Not fully published-source-backed:** SDMX's seven `sdmx:` identifiers map fixture-checked Information Model class names (SDMX publishes UML/XML, not an official RDF/OWL `sdmx:` namespace); the five GOLEM-adjacent `dlp:` constants remain pending a pinned DOLCE-Lite-Plus source with a stated license. Neither has a guaranteed source definition. The full FIBO Provisional set is not in this Release index. Do not equate the local constants or the excluded set with indexed coverage.
+**Coverage boundaries:** Former `sdmx:` Information Model aliases are removed, not represented as published RDF identifiers. `data_cube` selects only three genuinely corresponding `qb:` concepts; a provider name alone does not establish a cube. Five unlicensed DOLCE-Lite-Plus `dlp:` constants and their corpus consumers were removed. FIBO Provisional is excluded. A missing publisher definition stays missing.
 
 ### `ontology_graph` — bounded sourced concept traversal
 
@@ -87,8 +87,8 @@ Full list: `kask/crates/hkask-bridge-ontology/src/dc_bibo.rs`
 ### `pko` — Procedural Knowledge Ontology (process axis, universal)
 
 Canonical URI constants for procedures, steps, executions, and verification,
-from the official PKO v2.0.0 (Carriero et al., <https://w3id.org/pko>),
-fixture-pinned by `fixtures/pko-2.0.0-terms.txt`. The universal "how did
+from the pinned PKO v2.0.0 source (Carriero et al., <https://w3id.org/pko>).
+The universal "how did
 this come to be" axis. PKO reuses P-Plan, PROV-O, and Dublin Core terms;
 reused terms keep their canonical prefixes (`pplan:Step`, `prov:Agent`,
 `dcterms:references`) — never re-prefixed under `pko:`.
@@ -123,8 +123,8 @@ Full list: `kask/crates/hkask-bridge-ontology/src/pko.rs`
 
 Named URIs from the pinned EDM Council FIBO Q2 Release maturity selection
 (<https://spec.edmcouncil.org/fibo/>), indexed from 157 source modules
-(6,443 terms). `fixtures/fibo-verified-terms.txt` selects the Release
-modules and namespace bindings; the named constants below are a consumer menu:
+(6,443 terms). `fibo-release-modules.tsv` records the Release modules and
+namespace bindings; the named constants below are a consumer menu:
 `CORPORATION` (`fibo-be-le-cb:Corporation`), `TICKER_SYMBOL`
 (`fibo-sec-sec-id:TickerSymbol`), `PORTFOLIO` (`fibo-sec-sec-ast:Portfolio`),
 `MARKET_CAPITALIZATION` (`fibo-ind-mkt-bas:MarketCapitalization`),
@@ -171,14 +171,11 @@ Canonical URIs from the official GOLEM v1.1 vocabulary (Pianzola et al.,
 GOLEM Lab 2024, <https://ontology.golemlab.eu/> — IRI
 <https://w3id.org/golem/ontology>, preferred prefix `gc:`). GOLEM extends
 CIDOC-CRM and LRMoo and reuses their terms, so the module also carries
-`crm:`, `dlp:` (DOLCE-Lite-Plus), and `lrmoo:` URIs: `WORK`
-(`lrmoo:F1_Work`), `CHARACTER` (`gc:G1_Character`), `HAS_CHARACTER`
-(`gc:GP1i_has_Character`), `HAS_SETTING` (`dlp:setting`), `REFERS_TO`
-(`crm:P67_refers_to`). GOLEM, CIDOC-CRM and LRMoo resolve from pinned full
-published sources; `all_terms_are_official` checks their named constants against
-the index. The five `dlp:` constants are an explicit exception: the DOLCE-Lite-Plus
-modules state no license, so they are not vendored and are excluded from this
-source-backed check (`src/golem.rs:164-189`).
+`crm:` and `lrmoo:` URIs: `WORK` (`lrmoo:F1_Work`), `CHARACTER`
+(`gc:G1_Character`), `HAS_CHARACTER` (`gc:GP1i_has_Character`) and
+`REFERS_TO` (`crm:P67_refers_to`). All named constants are checked against
+the pinned GOLEM/CIDOC-CRM/LRMoo index. The five `dlp:` constants were
+removed because their DOLCE-Lite-Plus source has no stated license.
 
 Full list: `kask/crates/hkask-bridge-ontology/src/golem.rs`
 
@@ -203,23 +200,18 @@ Canonical concept URIs for machine-learning experiments. The module is
 
 Full list: `kask/crates/hkask-bridge-ontology/src/ml_schema.rs:21-48`
 
-### `sdmx` — SDMX (statistical data domain)
+### `data_cube` — W3C RDF Data Cube (statistical RDF)
 
-Statistical Data and Metadata eXchange — statistical data from FRED,
-DBnomics, World Bank, IMF, OECD, ECB, INSEE
-(`kask/crates/hkask-bridge-ontology/src/hkask_bridge_ontology.rs:29-30`).
+The pinned full `qb:` vocabulary uses the published namespace
+`http://purl.org/linked-data/cube#` and declares PDDL 1.0 in its source.
+Its three named constants are `DATA_SET` (`qb:DataSet`),
+`DATA_STRUCTURE_DEFINITION` (`qb:DataStructureDefinition`), and
+`OBSERVATION` (`qb:Observation`). The latter denote actual cube data,
+not every FRED series or provider response. No `qb:` class is substituted
+for the former local `sdmx:Dataflow`, `sdmx:SeriesKey`, `sdmx:Category`
+or `sdmx:DataProvider` aliases: they have no matching class in this source.
 
-| Constant | URI |
-|----------|-----|
-| `DATASET` | `sdmx:DataSet` |
-| `DATA_FLOW` | `sdmx:Dataflow` |
-| `DATA_STRUCTURE` | `sdmx:DataStructureDefinition` |
-| `TIME_SERIES` | `sdmx:SeriesKey` |
-| `OBSERVATION` | `sdmx:Observation` |
-| `CATEGORY` | `sdmx:Category` |
-| `DATA_PROVIDER` | `sdmx:DataProvider` |
-
-Full list: `kask/crates/hkask-bridge-ontology/src/sdmx.rs:23-40`
+Full named menu: `kask/crates/hkask-bridge-ontology/src/data_cube.rs`.
 
 ### `omc` — MovieLabs OMC (media production domain)
 
@@ -292,7 +284,7 @@ The core of the system: maps a domain hint to its axis anchoring.
 | Type | Description |
 |------|-------------|
 | `OntologyAxis` | `Pko` or `DcBibo` — which axis of the dual-axis framework (`kask/crates/hkask-bridge-ontology/src/axis.rs:35`) |
-| `OntologyNamespace` | `Fibo`, `Sepio`, `Golem`, `MlSchema`, `Sdmx`, `Omc`, `Sumo` — which domain supplement (`kask/crates/hkask-bridge-ontology/src/axis.rs:49-70`) |
+| `OntologyNamespace` | `Fibo`, `Sepio`, `Golem`, `MlSchema`, `DataCube`, `Omc`, `Sumo` — which domain supplement (`kask/crates/hkask-bridge-ontology/src/axis.rs:49-70`) |
 | `OntologyAnchor` | `Core`, `DualAxis { axis, concept }`, or `DomainSupplement { namespace, concept }` — the 3-tier anchoring (`kask/crates/hkask-bridge-ontology/src/axis.rs:140-152`) |
 
 **Functions:**
@@ -310,7 +302,7 @@ Keyword matching is token-aware (`kask/crates/hkask-bridge-ontology/src/axis.rs`
 
 `derived::DERIVED_CONCEPTS` stores reviewed compositions with a canonical term, identity, and authority (`kask/crates/hkask-bridge-ontology/src/derived.rs`). `term_resolution::resolve_term` returns `TermResolution { tier, term, namespace, concept, identity, authority, note, definition, source, alternatives }`: `identity`/`authority` are present on the derived rung, `definition` on published and derived resolutions, `source` on published ones, and `alternatives` lists every other sense found (`TermSense { tier, namespace, concept, definition, source }`).
 
-`TERM_RESOLUTION_PROTOCOL` is `published-term-resolution-v2` (v2 since 2026-09-27: resolution consults full pinned published vocabularies, with the SDMX local-identifier exception; v1 records no longer reconcile and must be re-tagged). `canonicalize_terms` preserves trimmed candidate terms, deduplicates them, and derives grouped ontology tags and concept unions through the same resolver (`kask/crates/hkask-bridge-ontology/src/term_resolution.rs:15-16`, `kask/crates/hkask-bridge-ontology/src/term_resolution.rs:162-200`). The built-in `onto_anchor` tool is the agent-facing wrapper over this authority (`crates/agent/src/tools/onto_anchor_tool.rs`).
+`TERM_RESOLUTION_PROTOCOL` is `published-term-resolution-v2` (v2 since 2026-09-27: resolution consults full pinned published vocabularies, including W3C RDF Data Cube;  v1 records no longer reconcile and must be re-tagged). `canonicalize_terms` preserves trimmed candidate terms, deduplicates them, and derives grouped ontology tags and concept unions through the same resolver (`kask/crates/hkask-bridge-ontology/src/term_resolution.rs:15-16`, `kask/crates/hkask-bridge-ontology/src/term_resolution.rs:162-200`). The built-in `onto_anchor` tool is the agent-facing wrapper over this authority (`crates/agent/src/tools/onto_anchor_tool.rs`).
 
 ## Domain → ontology mapping
 
@@ -318,7 +310,8 @@ Verified against `select_ontology_anchor` (`kask/crates/hkask-bridge-ontology/sr
 
 | Domain hint keywords | Namespace | State axis | Process axis |
 |---------------------|-----------|------------|--------------|
-| `economic`, `fred`, `dbnomics`, `worldbank`, `indicator`, `timeseries` | SDMX | DC | SDMX |
+| `data_cube`, `data-cube`, `statistical_cube` | RDF Data Cube | DC | RDF Data Cube (`qb:DataSet`) |
+| `economic`, `fred`, `dbnomics`, `worldbank`, `indicator`, `timeseries` without an explicit cube shape | SUMO fallback | DC | SUMO (`sumo:Entity`) |
 | `finance`, `company`, `stock`, `portfolio`, `dcf`, `screener` | FIBO | DC | FIBO |
 | `forecast`, `scenario` | (PKO) | DC | PKO |
 | `prediction-markets` | (DC+BIBO) | DC | DC+BIBO |
@@ -418,10 +411,10 @@ Each supplement module is a flat list of `pub const` URI strings — no
 trait, no struct, no runtime state:
 
 ```rust
-use hkask_bridge_ontology::{fibo, sdmx, sepio, golem, ml_schema, sumo, omc};
+use hkask_bridge_ontology::{data_cube, fibo, sepio, golem, ml_schema, sumo, omc};
 
 let mcap = fibo::MARKET_CAPITALIZATION;  // "fibo-ind-mkt-bas:MarketCapitalization"
-let series = sdmx::TIME_SERIES;           // "sdmx:SeriesKey" (local SDMX IM rendering, not an official URI)
+let dataset = data_cube::DATA_SET;       // "qb:DataSet" (only for an RDF cube)
 let ev = sepio::HAS_EVIDENCE;             // "SEPIO:0000189" (published-source-backed)
 let run = ml_schema::RUN;                 // "mls:Run" (module is ml_schema, not mlschema)
 ```
@@ -442,7 +435,7 @@ select_ontology_anchor("some-unknown-domain") // → DomainSupplement { Sumo, "s
 select_ontology_anchor("")                  // → Core (5W1H ground)
 ```
 
-Dispatch order is implemented in `kask/crates/hkask-bridge-ontology/src/axis.rs:264-444`: SDMX → FIBO → SEPIO → GOLEM → ML-Schema → OMC → PKO dual-axis → DC+BIBO dual-axis → SUMO fallback, with `Core` for an empty hint. First matching keyword set wins. **Fallback discipline:** if
+Dispatch order is implemented in `kask/crates/hkask-bridge-ontology/src/axis.rs`: explicit RDF Data Cube → FIBO → SEPIO → GOLEM → ML-Schema → OMC → PKO dual-axis → DC+BIBO dual-axis → SUMO fallback, with `Core` for an empty hint. First matching keyword set wins. **Fallback discipline:** if
 a domain mapping fails or the domain ontology can't place the concept,
 fall back to the generalists (DC + PKO) or SUMO — never force a domain
 ontology where it doesn't fit. An unknown non-empty domain returns SUMO's
@@ -451,7 +444,7 @@ ontology where it doesn't fit. An unknown non-empty domain returns SUMO's
 **Step 4 — read the anchor's tier metadata.** The condenser and other
 regulation-loop consumers read derived fields off the anchor for
 domain-aware saliency weighting — use these instead of re-deriving per
-consumer: `density_factor()` (FIBO 1.3, ML-Schema/SDMX 1.1, others
+consumer: `density_factor()` (FIBO 1.3, ML-Schema/RDF Data Cube 1.1, others
 1.0, `kask/crates/hkask-bridge-ontology/src/axis.rs:182`), `tier_label()` (`kask/crates/hkask-bridge-ontology/src/axis.rs:211`).
 
 **Step 5 — re-export the shared vocabulary in your server.** Keep

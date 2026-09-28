@@ -24,12 +24,10 @@
 /// An OMC concept URI — the canonical identifier for a media-creation concept.
 pub type OmcConcept = &'static str;
 
-// ── OMC concept constants (STAR seed terms) ──────────────────────────────
+// ── Named OMC constants used by media tools ───────────────────────────────
 //
-// These are the top-level OMC concepts most directly entailed by media-tool
-// outputs. OMC is large; we extract only the seed terms the tools actually
-// produce, plus their direct logical entailments (a `Version` is a
-// `CreativeWork`, a `Shot` is part of a `Scene`, etc.).
+// The complete pinned OMC vocabulary resolves through `published`; these
+// constants are consumer selections, not an extracted subset of the source.
 
 /// A distinct intellectual or artistic creation — the root creative artifact.
 /// OMC: `omc:CreativeWork` (analogous to `dcterms:Work`).

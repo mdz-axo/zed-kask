@@ -1,6 +1,6 @@
 ---
 name: onto-anchor
-description: Anchor domain terms via the onto_anchor tool and the P8.3 ladder — pinned domain sources (with SDMX local identifiers), derived, full SUMO, full schema.org, published DC/BIBO/CiTO state-axis senses, 5W1H core. Returns source definitions when supplied and alternative senses; nothing is ever untagged.
+description: Anchor domain terms via the onto_anchor tool and the P8.3 ladder — pinned domain sources (including RDF Data Cube `qb:`), derived, full SUMO, full schema.org, published DC/BIBO/CiTO state-axis senses, 5W1H core. Returns source definitions when supplied and alternative senses; nothing is ever untagged.
 ---
 
 # Onto-Anchor
@@ -49,20 +49,22 @@ The bridge crate is the single source of truth for ontology vocabulary
 (`kask/crates/hkask-bridge-ontology/README.md`). Its published index is
 compiled from SHA-256-pinned sources; named constants are only a consumer
 selection. Current coverage includes SUMO, schema.org, DCMI/BIBO/CiTO,
-PKO/P-Plan/PROV, SEPIO, GOLEM/CIDOC-CRM/LRMoo, OMC, ML-Schema, RDF/RDFS
-and FIBO's Q2 **Release** set (157 modules, 6,443 terms), not Provisional.
-SDMX's local `sdmx:` identifiers are fixture-checked Information Model class
-names, not official RDF/OWL URIs; five `dlp:` constants are pending a licensed
-DOLCE-Lite-Plus source and have no published-source verification. Do not
-invent their definitions or claim these exceptions are fully loaded. No
+PKO/P-Plan/PROV, SEPIO, GOLEM/CIDOC-CRM/LRMoo, OMC, ML-Schema, RDF/RDFS,
+W3C RDF Data Cube (`qb:`) and FIBO's Q2 **Release** set (157 modules, 6,443
+terms), not Provisional. The Cube source is pinned as `sources/rdf-data-cube/cube.ttl`
+with its PDDL 1.0 license; FIBO's selected modules are in `fibo-release-modules.tsv`.
+Former local `sdmx:` class-name aliases and five unlicensed `dlp:` constants
+are removed, not silently translated into published IDs. Never invent a
+publisher definition where the source supplies none. No
 ontology vocabulary lives inside an MCP server.
 
 Anchoring is a **scope-broadening walk, never a single pick** — the fallback
 ladder (P8.3, `axis.rs` and the bridge root docs):
 
 1. **Domain supplement** — exact terms in pinned sources (FIBO Q2 Release,
-   OMC, PKO/P-Plan/PROV, SEPIO, GOLEM/CIDOC-CRM/LRMoo, ML-Schema,
-   RDF/RDFS); SDMX's local class-name registry is an explicit exception.
+   RDF Data Cube, OMC, PKO/P-Plan/PROV, SEPIO, GOLEM/CIDOC-CRM/LRMoo,
+   ML-Schema, RDF/RDFS). A statistical provider hint does not prove its
+   outputs are RDF cubes; unmatched SDMX Information Model names do not resolve here.
    Never force a term into an ontology that has no place for it.
 2. **Derived concepts** — recorded compositions over anchored constituents,
    each carrying its identity and its authority citation
@@ -155,7 +157,7 @@ ruling (recorded in the derived registry) improves it.
 - Operator-ruling compositions land in the derived registry with tests;
   published-source changes require new pinned files and build verification.
   `all_terms_are_official` checks named constants in the crate's test suite,
-  with the explicit SDMX fixture and five pending DLP exceptions.
+  without a local SDMX fixture or DLP exception.
 
 ## Verification
 

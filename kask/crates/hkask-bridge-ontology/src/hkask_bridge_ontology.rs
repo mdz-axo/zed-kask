@@ -3,8 +3,9 @@
 //! Ontology bridge — the single source of truth for ontology vocabulary and
 //! the dual-axis domain-selection logic in hKask.
 //!
-//! Eleven vocabularies: two universal axes, one upper
-//! ontology, six domain supplements, and two pipeline vocabularies.
+//! Full, pinned published vocabularies are compiled into `published` by
+//! `build.rs`; the modules below offer named constants, not term inventories.
+//! FIBO includes the publisher's Q2 Release maturity set, not Provisional.
 //!
 //! Two universal axes (P5.4):
 //! - **State axis** — Dublin Core + BIBO + CiTO (`dc_bibo`): the "what is this"
@@ -22,22 +23,19 @@
 //! specific enough for a domain:
 //! - **FIBO** (`fibo`): financial / company analysis.
 //! - **SEPIO** (`sepio`): scientific evidence and provenance — evidence,
-//!   support, dispute, contradiction, confidence. Official terms pinned by
-//!   `fixtures/sepio-2023-06-13-terms.txt`.
-//! - **GOLEM** (`golem`): literature, narrative, persona. Official v1.1
-//!   vocabulary in `golem` (prefix `gc:`, reusing `crm:`/`dlp:`/`lrmoo:`),
-//!   pinned by `fixtures/golem-v1.1-terms.txt`.
+//!   support, dispute, contradiction, confidence.
+//! - **GOLEM** (`golem`): literature, narrative, persona; includes pinned
+//!   CIDOC-CRM and LRMoo reuse. Unlicensed DLP terms are not emitted.
 //! - **ML-Schema** (`mlschema`): machine-learning experiments.
-//! - **SDMX** (`sdmx`): statistical data exchange (FRED, DBnomics, World Bank).
+//! - **RDF Data Cube** (`data_cube`): published `qb:` terms for cube-shaped
+//!   statistics. The former local `sdmx:` identifiers were removed.
 //! - **MovieLabs OMC** (`omc`): media production workflows (capture → post → distribution).
 //!
 //! Pipeline vocabularies (assertion extraction):
-//! - **schema.org** (`schema_org`): the expository-passage predicate set for
-//!   corpus assertion extraction. Official terms pinned by
-//!   `fixtures/schema-org-terms.txt`.
-//! - **RDF 1.1** (`rdf`): the core `rdf:` vocabulary (the pipeline uses
-//!   `rdf:type`). The complete closed official list is pinned by
-//!   `fixtures/rdf-11-terms.txt`.
+//! - **schema.org** (`schema_org`): named predicates from its complete
+//!   published release for corpus assertion extraction.
+//! - **RDF 1.1** (`rdf`): the pipeline uses `rdf:type`; complete RDF/RDFS
+//!   namespace documents are pinned in `sources/rdf-11/`.
 //!
 //! The domain-selection logic (`axis`) maps a domain hint to its axis
 //! anchoring: state axis is always Dublin Core; process axis is the domain
@@ -62,13 +60,13 @@
 //!    on this rung. Applies when resolving a TERM's meaning (the
 //!    `onto_anchor` tool); artifact anchoring (`select_ontology_anchor`)
 //!    skips this rung.
-//! 3. **Universal axes** — DC+BIBO (state: what the artifact is) and PKO
-//!    (process: how it came to be). Always applicable to artifacts and
-//!    processes (artifact anchoring).
-//! 4. **Upper ontology** — SUMO (Entity, Process, Quantity, Proposition):
-//!    formal categorization when no domain, derived, or axis concept fits
-//!    — e.g. a financial metric with no FIBO term is a `sumo:Quantity`.
-//! 5. **Interrogative ground** — the 5W1H core: the guaranteed final rung.
+//! 3. **Upper ontology** — the full SUMO distribution (tier `upper`).
+//! 4. **General vocabulary** — schema.org, after SUMO.
+//! 5. **State-axis senses** — published Dublin Core, BIBO and CiTO terms,
+//!    after the generalist rungs (artifact-axis dispatch is separate).
+//! 6. **Interrogative ground** — the 5W1H core: the guaranteed final rung.
+//! Published resolutions carry the source's own definition when supplied;
+//! an absent definition is never filled with a private gloss.
 //!
 //! The invariant: **nothing is ever untagged.** SUMO and the 5W1H core
 //! exist precisely so the ladder always terminates on a real anchor.
@@ -91,7 +89,7 @@
 //! - SEPIO: https://github.com/monarch-initiative/SEPIO-ontology
 //! - GOLEM: Pianzola et al. (GOLEM Lab, 2024). <https://ontology.golemlab.eu/>
 //! - ML-Schema: <https://www.w3.org/community/ml-schema/>
-//! - SDMX: <https://sdmx.org/> (ISO 17369)
+//! - RDF Data Cube: <https://www.w3.org/TR/vocab-data-cube/>
 
 pub mod axis;
 pub mod data_cube;
