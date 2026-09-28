@@ -48,6 +48,7 @@ Charter design, crate-model description, probe strategy, oracle classification (
 
 ### bug-hunt-probe
 
+0. **Predict before probing (calibration, P).** From the charter's `crate_model` alone, state the expected number of confirmed findings and the expected top Beizer category, with one sentence of basis. Record them before the first probe; the report reconciles them.
 1. Format probe execution results. Do NOT generate fictional findings — only report what the agent actually discovered through MCP tool usage.
 2. If no `probe_findings` are provided, explore the target with available MCP tools (`file:read`, `code:search`, `terminal`) using the charter's `probe_instructions`.
 3. Run the static baseline pattern search (floor, not ceiling): `.unwrap()`/`.expect()` in library code, public functions without contracts, `unsafe` without documented safety invariants, integer arithmetic without overflow protection, `clone()` hiding ownership confusion, mutable state without synchronization, `panic!`/`todo!()` in non-startup code.
@@ -81,6 +82,7 @@ Charter design, crate-model description, probe strategy, oracle classification (
 
 ### bug-hunt-report
 
+0. **Reconcile the prediction (D).** Report `predicted_findings` / `confirmed_findings` and the predicted vs observed top Beizer category from probe step 0; compute the count gap with `lisp_eval` `(- confirmed_findings predicted_findings)`. The gap is the charter's calibration signal for the next expedition, not a finding.
 1. Compile charter, oracle, and taxonomy results into a structured JSON bug report.
 2. Consolidate findings from oracle + taxonomy into a single `findings` array; each finding includes id, summary, location, verdict, confidence, reproducibility, beizer_category, severity, evidence, pattern_signature, and fix_suggestion.
 3. Compute accurate summary statistics, including `rejected_findings` from the oracle.

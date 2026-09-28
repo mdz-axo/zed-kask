@@ -7,6 +7,10 @@ description: "Composable interaction grammar for hKask agents. Five improv modes
 
 Composable interaction grammar for hKask agents. Five improv modes — Plussing, Yes And, Yes But, Freestyling, and Riffing — provide constructive-by-default communication protocols for dual-presence chat, ensemble sessions, and kata coaching loops. A selector step evaluates conversation context and routes to the appropriate mode; the mode then shapes one reply.
 
+## Reference models
+
+Johnstone, *Impro: Improvisation and the Theatre* (1979) — accepting and building on an offer (`onto_anchor` → derived `yes_and`); Catmull, *Creativity, Inc.* (2014) — plussing as Pixar's constructive-critique rule (`onto_anchor` → derived `plussing`); both operator rulings 2026-09-26. Yes But, Freestyling and Riffing are this skill's own extensions of those two sources — named modes with no independent published definition; their constraints below are the operative spec.
+
 ## Initial and target condition
 
 - **Initial condition:** the current contribution, prior contributions, the active mode (if any), and any kata question in play.

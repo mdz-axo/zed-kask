@@ -20,7 +20,17 @@ Match tasks to the installed skill catalog and acquire NEW skills when nothing f
 - Auditing or maintaining installed skills — `skill-maintenance`.
 - Executing the matched skill — invoke it directly; a recommendation is not a dispatch.
 
-## D/P labelling
+## Reference model and D/P labelling
+
+There is no external reference model. The fit score is a **heuristic
+ranking**: the dimension weights (0.50 / 0.25 / 0.25), the +0.20
+epistemic boost, the 0.30 floor, the 0.8 / 0.4 coverage bands and the
+24-of-32 installable threshold are operator-set constants (rulings
+2026-09-26), not values derived from a published method or from measured
+routing outcomes. Treat a fit score as an ordering aid whose arithmetic is
+reproducible, not as a calibrated probability that the skill fits; the
+constants are open to revision when routing outcomes are recorded against
+them.
 
 The three fit dimensions (capability overlap, description alignment, trigger
 alignment), gap classification, and candidate evaluation are P — judgment,

@@ -38,6 +38,10 @@ env:  { "fork": <fork lines>, "upstream": <upstream lines>, "markers": <marker c
 
 Tested cases: 100/100/5/10 → git-merge; 100/100/4/10 → mapped; 201/100/10/10 → mapped; 50/100/0/0 → git-merge; 250/100/0/0 → mapped.
 
+## Reference model
+
+There is no external reference model. The per-seam retire / simplify / retain decision and the per-file git-merge vs mapped-re-apply rule are this repository's own practice, derived from `DIVERGENCE.md`'s seam ledger and the `// zed-kask:` marker convention; the oracles are `git`, `cargo check`/`cargo test` and the isolation scripts, not a published merge methodology. Treat the strategy table as a house rule that has held across the recorded rebases, open to revision when a rebase falsifies it.
+
 ## Initial and target condition
 
 - **Initial condition:** the merge base, `git diff --name-only <base> upstream/main`, and the live D-rows in `DIVERGENCE.md`.

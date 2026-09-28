@@ -64,6 +64,7 @@ The `skill` tool accepts `name` and `task` only. Read the user's task and gather
 
 ### code-review-perspectives
 
+0. **Predict before detecting (calibration, P).** From the scope model alone, state the expected number of raw findings and the expected number of Blockers, with one sentence of basis (size class, critical paths, prior review). Record both numbers before reading a hunk; the report reconciles them.
 1. Read surrounding code with `read_file` / `grep` for context around each hunk — diffs alone miss issues. Do not opine on regions you did not read.
 2. Walk the diff top-to-bottom across the PERFECT-ordered axes (Purpose → Edge cases → Reliability → Form → Evidence → Clarity → Taste) intersected with the addyosmani five-axis (correctness, readability, architecture, security, performance). If `focus` is non-empty, run only those (plus a basic security pass); if empty, comprehensive.
 3. DETECTION ONLY — do NOT assign verdicts, severity, confidence, or falsifiers (that is the adjudicate phase; Sauer detection/collection separation).
@@ -85,6 +86,7 @@ The `skill` tool accepts `name` and `task` only. Read the user's task and gather
 
 ### code-review-report
 
+0. **Reconcile the prediction (D).** Report `predicted_findings` / `found_findings` and `predicted_blockers` / `found_blockers` from step 0 of perspectives, with the gap computed by `lisp_eval` `(list (- found_findings predicted_findings) (- found_blockers predicted_blockers))`. A gap is not a defect; an unreported gap is — it is the only signal that the reviewer's model of the change was wrong.
 1. **Guardrail waivers (the operator's decision).** Present every waivable Blocker to the operator with the rule it breaks and ask: fix it, or waive it with a reason. Record an accepted waiver in the finding's `waiver` (`{reason, by: "operator", date}`). Never waive on the operator's behalf, and never offer a waiver for a Prohibition. A waived Guardrail is reported under its own heading, not removed.
 2. Produce a verdict driven by open Blockers (unfixed and unwaived), NOT nit count: **Approve** (zero open Blockers AND the change improves overall code health, even if imperfect — don't block because it isn't how you'd write it), **Request changes** (one or more Blockers, or a structural regression that makes the system worse), **Comment** (observations only, nothing blocking).
 3. Group findings by severity (Blocker → Should-fix → Nit → FYI); lead with what matters; never bury a Blocker under nits. If you have one structural problem and ten nits, the structural problem IS the review.

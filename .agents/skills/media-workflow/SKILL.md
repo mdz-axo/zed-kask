@@ -7,6 +7,10 @@ description: "Multi-tool media generation pipelines: product shots, stylized art
 
 Multi-tool media generation pipelines that chain `hkask-mcp-media` server tools in fixed sequences. Each pipeline is a known-good step topology — the agent supplies the subject, style, and parameters; the tool sequence is fixed. The agent coordinates execution by calling each tool in order, passing the previous step's output as the next step's input.
 
+## Reference model
+
+MovieLabs Ontology for Media Creation (OMC) — the creation-graph vocabulary the media server records for every asset (`kask/crates/hkask-bridge-ontology/src/omc.rs`; `gallery_asset_detail` returns the OMC creation graph). The pipeline topologies themselves are house recipes with no published source: known-good tool orderings, each proven by its Verification-loop acceptance property, not by a methodology. The Logo pipeline's five design gates cite Bokhua (see `media/logo-formal-prompt`).
+
 ## Initial and target condition
 
 - **Initial condition:** the chosen pipeline and its inputs — subject, style, brand inputs, or source gallery image.

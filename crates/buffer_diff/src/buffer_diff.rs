@@ -4266,7 +4266,6 @@ mod tests {
         }
 
         for seed in 0..500u64 {
-            eprintln!("probe seed {seed}");
             let rng = &mut StdRng::seed_from_u64(seed);
             let base_line_count = rng.random_range(4..12);
             let base_text = gen_text(rng, base_line_count);

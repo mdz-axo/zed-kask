@@ -126,6 +126,7 @@ floor are facts for the reader, not a verdict.
 
 ### Step 1 — Extract and classify claims
 
+0. **Predict before extracting (calibration, P).** From the target text's length and the number of source outputs alone, state the expected number of load-bearing claims and the expected number that will fail mechanical verification (Step 3), with one sentence of basis. Record both before rendering; Step 7 reconciles them.
 1. Call `render_template` to render the claim extraction template:
    - template_ref: `grounding-verify/extract-claims`
    - context: `{ "target_text": "{{ target_text }}", "source_outputs": {{ source_outputs }} }`
@@ -462,6 +463,7 @@ a verdict on the text; the output never says verified.
 
 ### Step 7 — Emit verification report
 
+0. **Reconcile the prediction (D).** Report `predicted_load_bearing` / `found_load_bearing` and `predicted_failures` / `found_failures` from Step 1 item 0, gaps computed by `lisp_eval` `(list (- found_load_bearing predicted_load_bearing) (- found_failures predicted_failures))`. A large gap on the failure count means the verifier's prior about this source mix is miscalibrated — report it; it is not a finding against the text.
 1. Emit the verification report with:
    - `counts`: claims extracted, load-bearing claims, claims checked, claims
      at each provenance tier, claims rejected — the raw counts from Step 5

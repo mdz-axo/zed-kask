@@ -12,6 +12,18 @@ system prompt from the author's cognition config → inference → centroid
 validation. "In the style of Hemingway" means the output is measured against
 Hemingway's embedded prose — not merely prompted toward him.
 
+## Reference model
+
+The validation is embedding-space stylometry: cosine distance between the
+composed prose's embedding and the author's corpus centroid
+(`hkask-mcp-corpus/src/compose.rs:502`, `helpers.rs:334`), gated by the
+config's `centroid_distance_max`. This is the tool's own instrument, not a
+published authorship-attribution method — it is not Burrows's Delta (2002)
+nor the feature-based stylometry surveyed by Stamatatos (2009), and no
+claim of authorship discrimination is made. The published anchor is the
+author's corpus itself (`kask/registry/styles/<author>/corpus.yaml` lists
+the sources); the threshold is operator-set per style config.
+
 ## When to Use
 
 - A request names a style and a text: "write this in Hemingway's style",

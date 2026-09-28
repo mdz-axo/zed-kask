@@ -95,6 +95,7 @@ The scan's counts, the approved-proposal count, the execution check and the post
 
 ### Phase 2 — Scan
 
+0. **Predict before scanning (calibration, P).** From the target's h_mem count and age profile alone, state the expected number of findings per class (contradiction, fragmentation, miscalibrated confidence, reification candidate) with one sentence of basis. Record them before the first query; Phase 6 reconciles them.
 1. Call `render_template` to render the scan template:
    - template: `therapy/scan.j2`
    - variables: { "target": "<target name>", "target_type": "<curator|corpus|swarm>" }
@@ -266,6 +267,7 @@ the operator approved only partial merges is expected, not a failure.
 
 ### Phase 6 — Report
 
+0. **Reconcile the prediction (D).** Report predicted vs found per finding class from Phase 2 item 0, gaps computed by `lisp_eval` over the two count lists. The gap is the session's calibration signal about this memory store, carried into the report's hygiene summary.
 1. Call `render_template` to render the report template:
    - template: `therapy/report.j2`
    - variables: { "target": "<target name>", "findings": <scan findings>, "proposals": <approved proposals>, "executions": <execution results> }
