@@ -314,11 +314,15 @@ mod test {
                 cx,
             )
         });
-        let output = task
-            .await
-            .unwrap_or_else(|FindPathToolOutput::Error { error }| {
+        let output = match task.await {
+            Ok(output) => output,
+            Err(FindPathToolOutput::Error { error }) => {
                 panic!("find_path failed: {error}")
-            });
+            }
+            Err(FindPathToolOutput::Success { .. }) => {
+                panic!("find_path returned Err(Success)")
+            }
+        };
         match LanguageModelToolResultContent::from(output) {
             LanguageModelToolResultContent::Text(text) => text.to_string(),
             _ => panic!("expected text output"),
