@@ -377,11 +377,10 @@ fn steer_system_prompt(board_name: Option<&str>, board_id: Option<&str>) -> Shar
          \n\
          {tool_section}\
          \n\
-         Goals are the kata target condition: the user's functional requirement \
-         in the user's words, judged against observable criteria, never revised \
-         by the agent. Goals are EPHEMERAL (in-memory, die with the session) — \
-         the curator's memory is the durable record; lessons are learned in \
-         therapy / algedonic reviews, not from a persistent goal store.\n\
+         Goals persist through resolution until their scored outcome is stored in \
+         curator memory and acknowledged. The goal records the user's requirement \
+         in their words; the agent judges observable criteria without revising it, \
+         and the user decides whether it was achieved.\n\
          \n\
          When the operator asks to plan or decompose work, the `kanban-task-management` skill \
          cascade is available. Pass the board id so the cascade writes the durable link on every \
@@ -2246,6 +2245,17 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// The Steer overlay must describe the persistent goal outbox, not the
+    /// retired in-memory-only goal lifecycle.
+    #[test]
+    fn steer_prompt_describes_durable_goal_acknowledgment() {
+        let prompt = steer_system_prompt(None, None);
+        assert!(prompt.contains("Goals persist through resolution until"));
+        assert!(prompt.contains("curator memory"));
+        assert!(prompt.contains("acknowledged"));
+        assert!(!prompt.contains("EPHEMERAL"));
     }
 
     /// The Steer prompt bakes the active board binding in at construction,

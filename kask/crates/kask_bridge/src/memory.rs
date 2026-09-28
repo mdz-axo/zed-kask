@@ -1699,10 +1699,9 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn ingest_turn_stores_zed_goal_events_as_shared_h_mems_only() {
-        // Operator ruling 2026-08-29: zed-agent goals are ephemeral; the
-        // curator's memory is the durable vehicle. A zed turn's goal events
-        // get a SHARED goal h_mem (curator recall) but NO curator-perspective
-        // h_mem — the curator only remembers goals it was involved with.
+        // A zed turn's goal event gets a SHARED h_mem for curator recall,
+        // but no curator-perspective h_mem. Kanban goal rows follow their
+        // own durable lifecycle until scored-outcome acknowledgment.
         let port = in_memory_port_with_embeddings();
         let curator_webid = port.curator_webid;
         let record = TurnRecord {

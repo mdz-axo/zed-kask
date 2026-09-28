@@ -375,6 +375,14 @@ The D7 isolation script no longer greps the deleted updater source: its existing
 initialization checks remain active. Verification: workspace `cargo fmt --check`
 and `kask/scripts/build/check-zed-isolation.sh`.
 
+**D2 Kanban Steer goal-lifecycle correction (2026-09-27):**
+`crates/kanban_panel/src/kanban_panel.rs::steer_system_prompt` no longer
+calls goals ephemeral: the kanban server retains a scored goal until its
+outcome reaches curator memory and is acknowledged. This replaces stale
+Steer guidance without changing goal storage or upstream behavior. Pinned by
+`steer_prompt_describes_durable_goal_acknowledgment` in `kanban_panel` (red
+against the old prompt, green with the corrected one).
+
 **D9/D2 Reduct credential and Media Steer extension (2026-09-23):**
 `crates/settings_ui/src/pages/kask_page/data_services.rs` shows the
 `REDUCT_API_KEY` keychain slot from the shared Data Services descriptor and

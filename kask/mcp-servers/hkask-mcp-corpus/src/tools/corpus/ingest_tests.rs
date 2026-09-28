@@ -240,6 +240,77 @@ async fn write_rows_and_ground_chunks(
     Ok(())
 }
 
+/// expect: A terminal quality skip stays in the generation audit, while only
+/// complete QA candidates enter grounding and dry-run ingestion.
+#[tokio::test]
+async fn mixed_qa_dispositions_project_to_grounded_candidates() -> anyhow::Result<()> {
+    let directory = fixture()?;
+    let server = server();
+    let qa = flat(0, ANSWERS[0]);
+    let skipped = json!({"prompt_id":"qa-0","qa_type":"conceptual","status":"skipped","reason":"conceptual_support_absent"});
+    let original = [qa, skipped];
+    let original_path = directory.path().join("mixed-generated.jsonl");
+    std::fs::write(
+        &original_path,
+        original
+            .iter()
+            .map(Value::to_string)
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )?;
+    let chunks = chunk_rows_from_candidates(&[original[0].to_string()])?;
+    std::fs::write(
+        directory.path().join("chunks.jsonl"),
+        chunks
+            .iter()
+            .map(Value::to_string)
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )?;
+    let error = server
+        .corpus_ground_generated_qa(Parameters(GroundQaRequest {
+            generated_jsonl: original_path.to_string_lossy().into(),
+            source_chunks_jsonl: directory
+                .path()
+                .join("chunks.jsonl")
+                .to_string_lossy()
+                .into(),
+            output_dir: directory
+                .path()
+                .join("mixed-grounding")
+                .to_string_lossy()
+                .into(),
+        }))
+        .await
+        .expect_err("a mixed file must not enter grounding");
+    assert!(error.to_string().contains("skip-or-error rows"));
+
+    let candidates = original
+        .iter()
+        .filter(|row| row.get("status").and_then(Value::as_str) != Some("skipped"))
+        .map(Value::to_string)
+        .collect::<Vec<_>>();
+    assert_eq!(original.len(), candidates.len() + 1);
+    std::fs::write(
+        directory.path().join("generated.jsonl"),
+        candidates.join("\n"),
+    )?;
+    let grounded = ground(&server, directory.path()).await?;
+    assert_eq!(grounded["candidates"], 1);
+    let req = request(directory.path(), true);
+    let output_path = req.output.clone();
+    let summary = content(server.corpus_ingest_qa(Parameters(req)).await?)?;
+    assert_eq!(summary["retained"], 1);
+    assert_eq!(summary["stored"], 0);
+    assert_eq!(summary["status"], "dry_run");
+    assert!(
+        !Path::new(&output_path).exists(),
+        "audit must not construct a training dataset"
+    );
+    assert_eq!(std::fs::read_to_string(original_path)?.lines().count(), 2);
+    Ok(())
+}
+
 /// expect: Clean concise candidates ingest only after complete re-executed
 /// source grounding, and the summary carries the gate's identity.
 #[tokio::test]

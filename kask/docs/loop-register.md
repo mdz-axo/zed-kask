@@ -2,7 +2,7 @@
 title: "Loop Register — zed-kask canonical loops"
 audience: [developers, architects, agents, operators]
 last_updated: 2026-09-27
-version: "0.11.0"
+version: "0.14.0"
 status: "Phase 1–4 partial: L3 validated; L5 Json error fixed, other loops open"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle]
@@ -118,7 +118,7 @@ the spec's minimum list, recorded below rather than narrowed away.
 - **Hands off to:** L5 (embeddings/rerank), L10 (corpus DB), L18 (assembled training datasets)
 - **Prediction:** 3 / 2 / 0.55
 - **Phase 1 scoped graph (IS):** source extraction/chunking (`tools/document.rs:35-72,355-419`) → model classification (`tools/tagging/ops.rs:263-310`) → embedding (`tools/semantic.rs:228-250`, L5) → prepared prompts (`services/prompt_builder.rs:45-91`) → generation (`services/qa_pipeline.rs:1216-1277`) → grounding (`services/qa_grounding.rs:223-269`) → ingestion (`tools/corpus.rs:174-247`, L10 corpus DB) → explicit corpus-DB selection for training assembly (`hkask-mcp-training/src/tools/dataset.rs:86-129`, L18). The skill drives decisions and reconciles results; this is not one automatic server cycle. Five properties: closed conditional on caller reconciliation/retrieval; timely conditional on bounded waves; accurate only at the mechanical-citation gate; complete only after every source/stage count reconciles; actionable through surfaced failures and stop rules.
-- **Phase 2 seam and process correction (IS):** generation can output `status="skipped"` (`services/qa_pipeline.rs:1252-1277`), while `read_grounding_candidates` rejects any skip-or-error row (`services/qa_grounding.rs:223-269`); the old skill Stage 9 passed the mixed generated file directly. Falsifier: show a mixed file accepted by the grounding gate or a prior candidate-only projection. The existing `build-corpus-pipeline` skill now replaces that handoff with a candidate-only projection filtering **only** reconciled skips, retaining the original file and reconciling counts/hashes before grounding and ingestion; no server contract or additional script was introduced. A synthetic `jq` probe kept candidate and error rows and excluded the skip; **no full end-to-end corpus run or next-stage tool invocation was performed**, so the capability is not verified and L6 remains open. Further addition is deferred until a caller-selected corpus exercises the chain. The candidate-only file is the one whose hash the grounding manifest binds.
+- **Phase 2 seam and process correction (IS):** generation can output `status="skipped"` (`services/qa_pipeline.rs:1252-1277`), while `read_grounding_candidates` rejects any skip-or-error row (`services/qa_grounding.rs:223-269`); the old skill Stage 9 passed the mixed generated file directly. Falsifier: show a mixed file accepted by the grounding gate or a prior candidate-only projection. The existing `build-corpus-pipeline` skill now replaces that handoff with a candidate-only projection filtering **only** reconciled skips, retaining the original file and reconciling counts/hashes before grounding and ingestion; no server contract or additional script was introduced. A synthetic `jq` probe kept candidate and error rows and excluded the skip; a public-tool test at `tools/corpus/ingest_tests.rs:mixed_qa_dispositions_project_to_grounded_candidates` then proved mixed input is rejected, candidate-only input grounds, dry-run ingestion retains one QA, and no training output is written (1/1 targeted; 201/201 corpus library tests). No source-complete/paid corpus run occurred, so L6 is seam-verified but not end-to-end complete. Further addition is deferred until a caller-selected corpus exercises the chain. The candidate-only file is the one whose hash the grounding manifest binds.
 
 ### L7 — Agent panel & kask widget update/render loops
 - **Crate/path:** `crates/agent_ui/src/agent_panel.rs` (14,366 ln) + kask widget/panel crates
@@ -146,7 +146,7 @@ the spec's minimum list, recorded below rather than narrowed away.
 - **Hands off to:** L10 (resolved-goal outcome → curator memory), L7 (widget updates), L2 (goal intake predictions are Brier-scored at resolution)
 - **Prediction:** 1 / 1 / 0.50
 - **Phase 1 graph (IS):** `kanban_goal_create` receives a user-owned target (`hkask_mcp_kata_kanban.rs:461-500`) → service stores criteria (`kanban/service_impl/goals.rs:59-107`) → `kanban_goal_judge` validates coverage and appends a verdict (`goals.rs:208-247`) → `goal_score` stores outcome/Brier as a retained outbox row (`goals.rs:264-297`) → turn-end curator ingestion/acknowledgment (`crates/agent/src/thread.rs:332-374`) → `kanban_goal_list` and score readback (`hkask_mcp_kata_kanban.rs:564-658`). Five properties: closed **conditional** on ingestion/ack; timely **partial** (no evidenced automatic retry after failed turn ingestion); accurate **partial**; complete **partial**; actionable **partial** (manual list/readback, no verified automatic recovery).
-- **Phase 2 open findings:** IS — Steer tells agents goals are ephemeral (`crates/kanban_panel/src/kanban_panel.rs:380-384`), but the scored row persists until acknowledgement (`goals.rs:287-297`). **Falsifier:** show that `steer_system_prompt` is not used by live Steer sessions (`kanban_panel.rs:1034-1047` shows its construction). **Deferred:** fixing this zed-side instruction requires a D-seam update and panel-level pin in the same change; concurrent zed-side edits are in progress, so do not edit that seam piecemeal. IS — `goal_acknowledge_memory` checks owner/resolved status and prunes without confirming a memory receipt (`goals.rs:319-337`); INFERRED risk: direct acknowledgment could delete an un-ingested scored row. **Falsifier:** a server-enforced memory receipt gate or a test proving direct acknowledgment cannot prune before ingestion. Receipt enforcement needs a cross-server contract and fails the simple deletion test; defer for operator decision with the risk stated. IS — `Done` does not check `passed` values before append (`goals.rs:208-247`); **falsifier:** a rejection check on the service path. Do not count an unrun runtime test as a confirmed defect.
+- **Phase 2 open findings:** IS — the Steer prompt previously called goals ephemeral (`crates/kanban_panel/src/kanban_panel.rs:380-384` before this change), contradicting the retained scored row (`goals.rs:287-297`). **Consolidated:** replaced five stale prompt lines with four lines describing durable resolution/acknowledgment (`kanban_panel.rs:380-383`), removed the superseded ephemeral test comment (`kask_bridge/src/memory.rs:1702-1705`), and updated D2 in `DIVERGENCE.md` in the same pass. The existing panel seam's `steer_prompt_describes_durable_goal_acknowledgment` failed red then passed green, and the 32-test `kanban_panel` library suite passed. Falsifier: that rendered Steer prompt contains `EPHEMERAL` or fails to say scored goals remain until memory acknowledgment. This current edit is **uncommitted**; `./script/clippy` and `cargo check -p zed` passed after the change. No completion hash exists for this edit. IS — `goal_acknowledge_memory` checks owner/resolved status and prunes without confirming a memory receipt (`goals.rs:319-337`); INFERRED risk: direct acknowledgment could delete an un-ingested scored row. **Falsifier:** a server-enforced memory receipt gate or a test proving direct acknowledgment cannot prune before ingestion. Receipt enforcement needs a cross-server contract and fails the simple deletion test; defer for operator decision with the risk stated. IS — `Done` does not check `passed` values before append (`goals.rs:208-247`); **falsifier:** a rejection check on the service path. Do not count an unrun runtime test as a confirmed defect.
 
 ### L10 — Memory recall/ingest cycle
 - **Crate/path:** `kask/crates/hkask-memory` + `kask/mcp-servers/hkask-mcp-curator`
@@ -363,22 +363,25 @@ technical program manager; approval to resume Phase 1 belongs to the operator.
   (+5/−6 production, +25 test); `b28e893fde` stale runtime comments
   **−14** (0/−14). Deterministic sum: **−85 source lines in Rust files**,
   of which **−71 are non-comment implementation** and −14 are comment-only;
-  test addition is **25 lines** (net +25). These mixed-purpose commits also
+  test additions are **96 lines** (+25 L5 committed, +71 L6 currently uncommitted). The L9 prompt edit adds a further **−1** implementation line and its stale comment cleanup **−1**, plus **11 test lines** (all uncommitted): committed total remains −85 and the present audit working-tree total is **−87 source lines** (−72 non-comment, −15 comment), with **107 test lines** added across the full audit. These mixed-purpose commits also
   carried unrelated work: their hashes prove what landed, not that the
   entire commit belongs to this audit. The `.agents/skills` and register
   text is excluded from the production-line arithmetic. Do not sum unrelated
   ontology, settings, or passphrase changes into this audit's line delta.
 - **Validation actually observed:** L3 21 library and 16 serialized fixture
   tests passed; L5 54 library tests passed after the JSON-error test first
-  failed; L15 6 rotation tests passed. `./script/clippy` (including kask-scoped
+  failed; L15 6 rotation tests passed. L9's panel pin failed red, passed
+  green, and all 32 kanban-panel tests plus the affected memory test passed. `./script/clippy` (including kask-scoped
   machete and buf checks) and `cargo check -p zed` passed on a working-tree
-  snapshot after the L3 comment removal. Concurrent commits may postdate
-  those receipts; they are not an immutable-HEAD CI result. The removed
+  snapshot after the L9 zed-side edit as well; these are working-tree
+  receipts, not an immutable-HEAD CI result. The removed
   `launch_specs` / `cancellation_tokens` identifier sweep across Rust and
   Markdown returned only the explicitly historical former-map description
   in `runtime.rs:462`; the misleading not-yet-restored test comment was
-  deleted. A synthetic jq check filtered a QA skip while keeping candidate
-  and error rows; no actual corpus generation/grounding/ingestion chain ran.
+  deleted. A synthetic jq check filtered a QA skip while keeping candidate and
+  error rows; an offline public-tool fixture exercised grounding and dry-run
+  ingestion (201/201 corpus library tests), without a training output or paid
+  generation. No source-complete corpus run was executed.
 - **Partial count calibration, not Brier:** of L3, L4, L8 and L14's prior
   adjudications plus the offline-tested L15, each recorded zero defects;
   their five Phase 0 predictions have mean absolute count error **1.4
@@ -391,8 +394,8 @@ technical program manager; approval to resume Phase 1 belongs to the operator.
   line-negative proposals; the operator owns experience-changing choices
   (whether to retry transient L2 checks, require a durable receipt before
   L9 acknowledgment, or make L12 runs explicitly closeable). L6's candidate
-  projection is process-corrected but not end-to-end verified under this
-  audit's no-dataset-construction rule; it stays open. L7/L11 panel visibility,
+  projection is tool-seam tested but not source-complete under this audit's
+  no-dataset-construction rule; it stays open. L7/L11 panel visibility,
   L10 recall failure fidelity, L13 scoped memory, L16 cross-turn attribution,
   L18 training completion fidelity and L23 provider fallback have cited
   falsifiers in their rows; none is quietly declared fixed. The earlier
@@ -415,6 +418,23 @@ technical program manager; approval to resume Phase 1 belongs to the operator.
 
 ## Change log
 
+- 2026-09-27 — v0.14.0 operator-approved longer `kanban_panel` run observed
+  the L9 Steer prompt pin fail red and pass green; 32/32 panel tests and the
+  affected memory test passed. Replaced five stale goal-guidance lines with
+  four, removed one stale test-comment line, updated D2 in the same pass and
+  swept exact obsolete phrases. Full `./script/clippy` and `cargo check -p zed`
+  passed. The code, D-seam entry and this register update remain uncommitted.
+- 2026-09-27 — v0.13.0 attempted the existing Kanban Steer test seam
+  for L9's stale ephemeral-goal prompt; `kanban_panel` cold compilation
+  timed out after 180 seconds before the test ran. Removed only the new
+  unrun test, made no zed-side or D-seam edit, and left the L9 finding
+  deferred with the observed blocker. No longer runtime limit was silently
+  selected; other audit rows remain at their recorded states.
+- 2026-09-27 — v0.12.0 offline mixed-QA-to-candidate projection exercised
+  through the real corpus grounding and dry-run ingestion tools (201 library
+  tests green, no training dataset constructed). L6 remains open for a
+  source-complete run outside this audit's no-dataset-construction scope;
+  this register and 71 test lines are uncommitted.
 - 2026-09-27 — v0.11.0 bounded maps and classified impedances added for
   L11–L13 and L15–L23; L15 offline rotation tests 6/6 green after a
   concurrent dependency build failure was repaired. Removed 14 stale L3
