@@ -2,7 +2,7 @@
 title: "Loop Register — zed-kask canonical loops"
 audience: [developers, architects, agents, operators]
 last_updated: 2026-09-27
-version: "0.10.0"
+version: "0.11.0"
 status: "Phase 1–4 partial: L3 validated; L5 Json error fixed, other loops open"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle]
@@ -354,6 +354,51 @@ feedback path may remain after the package-level inventory (coverage risk;
 close only after the final tree-to-register walk). Owner for each is the
 technical program manager; approval to resume Phase 1 belongs to the operator.
 
+## Phase 4 partial ledger — not a global completion record
+
+- **Source-line accounting for audit-related commits only:** `50cba394fd`
+  scenarios Brier wrapper **−13** (+2/−15); `16271e3c60` MCP runtime
+  state map **+38** (+264/−226); `4eaca76874` IPC error payloads **−95**
+  (+114/−209); `e1f1b51cad` embedding JSON error mapping **−1**
+  (+5/−6 production, +25 test); `b28e893fde` stale runtime comments
+  **−14** (0/−14). Deterministic sum: **−85 source lines in Rust files**,
+  of which **−71 are non-comment implementation** and −14 are comment-only;
+  test addition is **25 lines** (net +25). These mixed-purpose commits also
+  carried unrelated work: their hashes prove what landed, not that the
+  entire commit belongs to this audit. The `.agents/skills` and register
+  text is excluded from the production-line arithmetic. Do not sum unrelated
+  ontology, settings, or passphrase changes into this audit's line delta.
+- **Validation actually observed:** L3 21 library and 16 serialized fixture
+  tests passed; L5 54 library tests passed after the JSON-error test first
+  failed; L15 6 rotation tests passed. `./script/clippy` (including kask-scoped
+  machete and buf checks) and `cargo check -p zed` passed on a working-tree
+  snapshot after the L3 comment removal. Concurrent commits may postdate
+  those receipts; they are not an immutable-HEAD CI result. The removed
+  `launch_specs` / `cancellation_tokens` identifier sweep across Rust and
+  Markdown returned only the explicitly historical former-map description
+  in `runtime.rs:462`; the misleading not-yet-restored test comment was
+  deleted. A synthetic jq check filtered a QA skip while keeping candidate
+  and error rows; no actual corpus generation/grounding/ingestion chain ran.
+- **Partial count calibration, not Brier:** of L3, L4, L8 and L14's prior
+  adjudications plus the offline-tested L15, each recorded zero defects;
+  their five Phase 0 predictions have mean absolute count error **1.4
+  defects/loop** and **0.8 impedances/loop** (via `lisp_eval`). L2/L5/L6/L7/
+  L9–L13/L16–L23 are not final-count scored while their findings remain open.
+  The Phase 0 `confidence` values are confidence in count predictions, not
+  stated event probabilities, so converting them to a Brier score would
+  fabricate a forecast contract. Re-score after the rows close.
+- **Open gate owners:** technical program manager owns repro/validation and
+  line-negative proposals; the operator owns experience-changing choices
+  (whether to retry transient L2 checks, require a durable receipt before
+  L9 acknowledgment, or make L12 runs explicitly closeable). L6's candidate
+  projection is process-corrected but not end-to-end verified under this
+  audit's no-dataset-construction rule; it stays open. L7/L11 panel visibility,
+  L10 recall failure fidelity, L13 scoped memory, L16 cross-turn attribution,
+  L18 training completion fidelity and L23 provider fallback have cited
+  falsifiers in their rows; none is quietly declared fixed. The earlier
+  minimalism passes for L4/L8/L14 and this offline L15 rotation path have
+  no further surviving removal candidate under the present evidence.
+
 ## Working rules
 
 - Graphs and findings live in register rows and the final report — no
@@ -370,6 +415,12 @@ technical program manager; approval to resume Phase 1 belongs to the operator.
 
 ## Change log
 
+- 2026-09-27 — v0.11.0 bounded maps and classified impedances added for
+  L11–L13 and L15–L23; L15 offline rotation tests 6/6 green after a
+  concurrent dependency build failure was repaired. Removed 14 stale L3
+  source-comment lines in `b28e893fde` and recorded the partial Phase 4
+  accounting above. This register edit is not a final audit verdict; work
+  remains open at the named gates. No training or paid pipeline ran.
 - 2026-09-27 — v0.10.0 bounded Phase 1–2 maps added for L1, L6, L7,
   L9 and L10. The Stage 7→9 corpus QA seam was source-confirmed: skips in
   generator output fail grounding. The existing `build-corpus-pipeline` skill

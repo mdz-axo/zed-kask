@@ -1027,9 +1027,10 @@ fn main() {
                 runtime: mcp_runtime.clone(),
                 cache: std::sync::Arc::new(std::sync::RwLock::new(Vec::new())),
             });
-            // Event-driven refresh: the runtime signals every tool-surface
-            // membership change (`register_server` / `stop_server` /
-            // `shutdown_all` fire `tool_surface_changes`), so the cache
+            // Event-driven refresh: the runtime signals tool membership and
+            // connection changes (`register_server`, discovery, unexpected
+            // disconnect, stop, shutdown). The settings view uses the same
+            // signal to redraw its liveness-backed status; the cache
             // rebuilds on the signal instead of on a timer — and each rebuild
             // notifies the agent's registries through the process-global
             // surface-change signal. The first iteration runs before the
@@ -3466,6 +3467,10 @@ impl agent::KaskToolSource for ZedKaskToolSource {
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clone()
+    }
+
+    fn running_server_ids_now(&self) -> Option<Vec<String>> {
+        self.runtime.try_running_server_ids()
     }
 
     fn invoke(

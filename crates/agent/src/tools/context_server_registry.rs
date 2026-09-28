@@ -57,6 +57,10 @@ pub trait KaskToolSource: Send + Sync {
     /// registered kask servers. Cache-backed and synchronous — the impl
     /// owns the async refresh.
     fn tools(&self) -> Vec<KaskToolDescriptor>;
+    /// Live connections at the time of the read. `None` means the runtime
+    /// could not be read without blocking the foreground thread; callers must
+    /// not treat that as a running server.
+    fn running_server_ids_now(&self) -> Option<Vec<String>>;
     /// Dispatch a tool call to the governed runtime. `Ok(value)` is the
     /// parsed tool result; `Err(text)` is the operator-facing error text
     /// (kask errors carry the typed kind as a `[kind] message` prefix).
@@ -1629,6 +1633,10 @@ mod tests {
     impl KaskToolSource for FakeKaskToolSource {
         fn tools(&self) -> Vec<KaskToolDescriptor> {
             self.descriptors.clone()
+        }
+
+        fn running_server_ids_now(&self) -> Option<Vec<String>> {
+            Some(Vec::new())
         }
 
         fn invoke(

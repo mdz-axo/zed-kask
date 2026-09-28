@@ -9,7 +9,6 @@ contract:
   output:
     per_section: object
     horizon_summary: object
-    ignored_short_term: array
 visibility: Public
 ---
 {# Design: company-corpus-design.md §B4.1 (cross-source verdict citation) #}
@@ -60,7 +59,7 @@ The key horizon is the **seam between tactical and strategic** — 12 to 36 mont
 - **short_term_only** — no strategic-path linkage → `ignored_short_term`
 - **speculative_far** — >5y event claims → context only
 
-**Admissibility rule:** A claim enters a section verdict only if it is a seam_checkpoint, tactical_event, or strategic_context. The linkage, not the calendar date, is the bar.
+**Admissibility rule:** A claim enters a section verdict only if it is a seam_checkpoint, tactical_event, or strategic_context. The linkage, not the calendar date, is the bar. A checkpoint requires the source to state both the goal and how the event advances that goal; two nearby sentences about an event and a goal do not establish a link. A goal's `horizon_years` requires an explicit source time horizon: do not invent a year count from words such as "longer-term". With no explicit horizon or link, keep the text as unquantified context in the relevant evidence only; leave `strategic_goals`/`checkpoint_map` empty for it. A prior expectation and its delivery may inform management consistency without becoming a strategically linked checkpoint.
 
 **Certainty levels:** `proximate` (≥67%), `probable` (33–66%), `possible` (<33%).
 
@@ -87,95 +86,38 @@ Listen for: strategic goal statements and their movement; INTERMEDIATE EVENTS / 
 ### 7. management_consistency
 Listen for: this-quarter statements vs prior-quarter claims; CHECKPOINT DRIFT (use KG triples to detect); actions whose rationale is opaque given the stated strategy.
 
-## Output schema (emit exactly this JSON)
+## Output schema (emit exactly this JSON shape)
 
-Each evidence item is a retrieval result: the chunk_id where you found it, and the exact substring (quote).
+Use only these enum values: `verdict` = `corroborates`, `neutral`, or `contradicts`; `certainty` = `proximate`, `probable`, or `possible`; `moved_this_call` = `none`, `raised`, `lowered`, `new`, or `withdrawn`; checkpoint `status` = `on_track`, `slipped`, `new`, or `dropped`. Do not emit `mixed`, `positive`, booleans for `moved_this_call`, or a top-level `ignored_short_term`. When evidence is absent, use a neutral verdict with an empty array, not a fabricated citation. The following is a *valid empty-evidence example*; replace it with cited findings only where the passages support them.
 
 ```json
 {
   "per_section": {
-    "margin_trajectory": {
-      "verdict": "corroborates|neutral|contradicts",
-      "evidence": [
-        { "chunk_id": 0, "quote": "exact substring from passage 0" }
-      ],
-      "certainty": "proximate|probable|possible"
-    },
-    "working_capital_power": {
-      "verdict": "...",
-      "evidence": [{ "chunk_id": 0, "quote": "..." }],
-      "certainty": "..."
-    },
-    "moat_evidence": {
-      "verdict": "...",
-      "evidence": [{ "chunk_id": 0, "quote": "..." }],
-      "certainty": "..."
-    },
-    "capital_allocation": {
-      "verdict": "...",
-      "evidence": [{ "chunk_id": 0, "quote": "..." }],
-      "certainty": "..."
-    },
-    "expectations_gap_update": {
-      "verdict": "...",
-      "evidence": [{ "chunk_id": 0, "quote": "..." }],
-      "certainty": "..."
-    },
-    "guidance_vs_expectations": {
-      "verdict": "...",
-      "evidence": [{ "chunk_id": 0, "quote": "..." }],
-      "certainty": "..."
-    },
-    "management_consistency": {
-      "verdict": "...",
-      "evidence": [{ "chunk_id": 0, "quote": "..." }],
-      "certainty": "..."
-    }
+    "margin_trajectory": {"verdict":"neutral","evidence":[],"certainty":"possible"},
+    "working_capital_power": {"verdict":"neutral","evidence":[],"certainty":"possible"},
+    "moat_evidence": {"verdict":"neutral","evidence":[],"certainty":"possible"},
+    "capital_allocation": {"verdict":"neutral","evidence":[],"certainty":"possible"},
+    "expectations_gap_update": {"verdict":"neutral","evidence":[],"certainty":"possible"},
+    "guidance_vs_expectations": {"verdict":"neutral","evidence":[],"certainty":"possible"},
+    "management_consistency": {"verdict":"neutral","evidence":[],"certainty":"possible"}
   },
   "horizon_summary": {
-    "checkpoint_map": [
-      {
-        "checkpoint": "event name",
-        "deadline_or_window": "Q3 fiscal 2025",
-        "strategic_goal_link": { "chunk_id": 0, "quote": "..." },
-        "source_documents": ["entity_ref of the passage"],
-        "certainty": "proximate|probable|possible",
-        "status": "on_track|slipped|new|dropped",
-        "evidence": { "chunk_id": 0, "quote": "..." }
-      }
-    ],
-    "strategic_goals": [
-      {
-        "goal": "goal statement (paraphrase — the evidence field carries the verbatim quote)",
-        "horizon_years": 3,
-        "moved_this_call": "none|raised|lowered|new|withdrawn",
-        "source_document": "entity_ref",
-        "evidence": { "chunk_id": 0, "quote": "..." }
-      }
-    ],
-    "ignored_short_term": [
-      {
-        "claim": "the short-term guidance change (paraphrase)",
-        "reason": "no_strategic_path_linkage",
-        "evidence": { "chunk_id": 0, "quote": "..." }
-      }
-    ],
-    "speculative_far": [
-      {
-        "claim": "...",
-        "role": "context_only",
-        "evidence": { "chunk_id": 0, "quote": "..." }
-      }
-    ]
+    "checkpoint_map": [],
+    "strategic_goals": [],
+    "ignored_short_term": [],
+    "speculative_far": []
   }
 }
 ```
+
+When found, a section evidence item is `{"chunk_id":0,"quote":"exact substring of passage 0"}`. A checkpoint has `checkpoint`, `deadline_or_window`, `strategic_goal_link` (evidence item), `source_documents` (entity-ref strings), `certainty`, `status`, and `evidence` (evidence item). A strategic goal has `goal`, `horizon_years` (number), `moved_this_call` (one of the string values above), `source_document` (entity-ref string), and `evidence` (evidence item). An ignored short-term item has `claim`, `reason:"no_strategic_path_linkage"`, and `evidence`; a speculative far item has `claim`, `role:"context_only"`, and `evidence`. Every cited `chunk_id` must index the supplied passage whose `source` is the citation key; no claim becomes a verdict without its own verbatim evidence.
 
 ## Rules
 
 - Every `quote` field MUST be an exact substring of the passage referenced by its `chunk_id`. The verifier checks this mechanically.
 - If a section has no evidence in any passage, emit `"verdict": "neutral"` with an empty `evidence` array.
 - No verdict or forecast input may be derived from `ignored_short_term` entries.
+- Verbatim quote matching checks attribution, not whether an inferred linkage, chronology or time horizon is stated. Do not infer a numeric `horizon_years`, deadline, or causal linkage from quote proximity; when not explicitly present omit that goal/checkpoint entry rather than fill a plausible value.
 
 ## Input
 

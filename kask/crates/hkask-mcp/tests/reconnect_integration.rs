@@ -745,6 +745,65 @@ async fn killed_server_is_reconnected_on_the_next_call() {
     runtime.shutdown_all().await;
 }
 
+/// expect: "A killed server with retained tool metadata is not reported as callable."
+#[tokio::test(flavor = "multi_thread")]
+async fn discovered_tools_outlive_a_killed_connection_without_claiming_liveness() {
+    let fixture = Fixture::new("discovered-tools-outlive-connection");
+    // Unlink only this test's private binary after its first launch. A later
+    // on-demand reconnect cannot succeed, so the unavailable state is stable.
+    let binary = fixture._tmp.path().join("mcp-test-fixture");
+    std::fs::copy(fixture_binary(), &binary).expect("copy isolated fixture executable");
+    let runtime = McpRuntime::new();
+    runtime
+        .start_server_with_env(
+            "fixture",
+            binary.to_str().expect("fixture path"),
+            hkask_types::ServerEnv::from_canonical(fixture.env.clone()),
+        )
+        .await
+        .expect("fixture starts and advertises its tools");
+    let pid = fixture.wait_for_pid().await;
+    assert_eq!(
+        ping(&runtime, "fixture").await["marker"],
+        fixture.marker,
+        "the child must actually answer before it is killed"
+    );
+    assert_eq!(
+        runtime.try_running_server_ids(),
+        Some(vec!["fixture".to_string()])
+    );
+    assert_eq!(runtime.registered_servers().await[0].1.len(), 1);
+    let mut status_changes = runtime.tool_surface_changes();
+
+    std::fs::remove_file(&binary).expect("prevent isolated fixture restart");
+    Fixture::kill(pid);
+    tokio::time::timeout(Duration::from_secs(5), status_changes.changed())
+        .await
+        .expect("disconnection must wake status subscribers")
+        .expect("runtime status channel must remain open");
+    wait_for(
+        || runtime.try_running_server_ids() == Some(Vec::new()),
+        Duration::from_secs(5),
+        Duration::from_millis(20),
+        "killed fixture to become unavailable",
+    )
+    .await;
+    assert_eq!(runtime.registered_servers().await[0].1.len(), 1);
+    let result = runtime
+        .invoke(
+            "fixture",
+            "ping",
+            serde_json::json!({}),
+            WebID::for_agent_name("disconnected-status-test"),
+        )
+        .await;
+    assert!(
+        matches!(result, Err(ToolPortError::Unavailable(_))),
+        "{result:?}"
+    );
+    runtime.shutdown_all().await;
+}
+
 // ── Mechanism (1): keeper task reaps its own connection ─────────────────────
 
 /// Kill the fixture and assert the dead connection is removed from the

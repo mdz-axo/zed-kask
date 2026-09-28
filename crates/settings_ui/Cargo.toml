@@ -80,6 +80,7 @@ zed_credentials_provider.workspace = true
 
 [dev-dependencies]
 fs = { workspace = true, features = ["test-support"] }
+hkask-mcp.workspace = true
 futures.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 language_models = { workspace = true, features = ["test-support"] }
@@ -88,6 +89,7 @@ pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
 serde_json.workspace = true
 settings = { workspace = true, features = ["test-support"] }
+tokio.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
 
 [package.metadata.cargo-shear]

@@ -490,8 +490,8 @@ pub struct McpRuntime {
     /// Child processes keyed by spawn id — a restart keeps old children
     /// until reaped, so the key is the spawn, not the server.
     children: Arc<Mutex<HashMap<u64, ManagedChild>>>,
-    /// Change signal for tool-surface membership (server registered /
-    /// stopped / shutdown-all). Consumers subscribe via
+    /// Change signal for tool registration and connection liveness (server
+    /// registered / connected / disconnected / stopped / shutdown-all). Consumers subscribe via
     /// [`McpRuntime::tool_surface_changes`] and refresh event-driven instead
     /// of polling — registration is an event, and events are forwarded, not
     /// sampled.
@@ -572,6 +572,28 @@ impl McpRuntime {
             .collect()
     }
 
+    /// Non-blocking counterpart for the GPUI settings render path. A busy
+    /// runtime lock yields unknown, never a fabricated Running status.
+    #[must_use = "an unavailable snapshot must remain unknown"]
+    pub fn try_running_server_ids(&self) -> Option<Vec<String>> {
+        let entries = match self.entries.try_read() {
+            Ok(entries) => entries,
+            Err(_) => return None,
+        };
+        Some(
+            entries
+                .iter()
+                .filter(|(_, entry)| {
+                    entry
+                        .connection
+                        .as_ref()
+                        .is_some_and(|conn| !conn.peer.is_transport_closed())
+                })
+                .map(|(id, _)| id.clone())
+                .collect(),
+        )
+    }
+
     /// The registered tool surface: `(server_id, tools)` for every server
     /// that completed launch and tool discovery. Read-only snapshot for tool
     /// listing — the agent-path `KaskToolSource` reads this so kask tools can
@@ -591,8 +613,8 @@ impl McpRuntime {
             .collect()
     }
 
-    /// A receiver that fires on every tool-surface membership change
-    /// (server registered / stopped / shutdown-all). Executor-agnostic —
+    /// A receiver that fires on tool registration or connection liveness
+    /// changes (including an unexpected disconnect). Executor-agnostic —
     /// `tokio::sync::watch` registers no timers, so it is awaitable from any
     /// executor (the GPUI traps in `.rules` concern the timer wheel, not
     /// this family).
@@ -877,6 +899,7 @@ impl McpRuntime {
         // healthy replacement installed by a reconnect.
         let bg_cancel = cancel.clone();
         let reap_entries = self.entries.clone();
+        let reap_surface_tx = self.tool_surface_tx.clone();
 
         let reap_id = server_id.to_string();
         let reap_lifecycle = self.lifecycle.clone();
@@ -918,6 +941,7 @@ impl McpRuntime {
                     .is_some_and(|current| current.generation == generation)
             {
                 entry.connection = None;
+                reap_surface_tx.send_replace(());
                 // `supervisor_cancel` is retained: the still-running supervisor
                 // must stay owned and cancellable until replacement or stop.
             }
@@ -1050,6 +1074,7 @@ impl McpRuntime {
     fn spawn_health_supervisor(&self, server_id: &str, cancel: CancellationToken) {
         let supervisor_cancel = cancel;
         let supervisor_entries = self.entries.clone();
+        let supervisor_surface_tx = self.tool_surface_tx.clone();
         let supervisor_runtime = self.clone();
         let supervisor_id = server_id.to_string();
         let normal_interval = self.config.health_check_interval;
@@ -1109,6 +1134,7 @@ impl McpRuntime {
                                     .is_some_and(|connection| connection.peer.is_transport_closed())
                             {
                                 entry.connection = None;
+                                supervisor_surface_tx.send_replace(());
                             }
                         }
                     }

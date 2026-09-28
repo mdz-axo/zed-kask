@@ -8738,6 +8738,10 @@ mod tests {
             Vec::new()
         }
 
+        fn running_server_ids_now(&self) -> Option<Vec<String>> {
+            Some(Vec::new())
+        }
+
         fn invoke(
             &self,
             server_id: &str,

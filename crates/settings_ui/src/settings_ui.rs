@@ -943,6 +943,8 @@ pub struct SettingsWindow {
     opening_link: bool,
     search_bar: Entity<Editor>,
     search_task: Option<Task<()>>,
+    /// Stops listening to managed-server liveness when this settings window closes.
+    _kask_server_status_task: Task<()>,
     /// Cached settings file buffers to avoid repeated disk I/O on each settings change
     project_setting_file_buffers: HashMap<ProjectPath, Entity<Buffer>>,
     /// Index into navbar_entries
@@ -1792,6 +1794,15 @@ impl SettingsWindow {
         })
         .detach();
 
+        let mut surface_changes = agent::subscribe_to_kask_tool_surface_changes();
+        let kask_server_status_task = cx.spawn(async move |this, cx| {
+            while surface_changes.changed().await.is_ok() {
+                if this.update(cx, |_, cx| cx.notify()).is_err() {
+                    break;
+                }
+            }
+        });
+
         let mut ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx);
         cx.observe_global_in::<SettingsStore>(window, move |this, window, cx| {
             this.fetch_files(window, cx);
@@ -1975,6 +1986,7 @@ impl SettingsWindow {
             navbar_scroll_handle: UniformListScrollHandle::default(),
             search_bar,
             search_task: None,
+            _kask_server_status_task: kask_server_status_task,
             filter_table: vec![],
             has_query: false,
             content_handles: vec![],
@@ -5327,6 +5339,7 @@ pub mod test {
                 has_query: false,
                 content_handles: Vec::default(),
                 search_task: None,
+                _kask_server_status_task: Task::ready(()),
                 sub_page_stack: Vec::default(),
                 opening_link: false,
                 focus_handle: cx.focus_handle(),
@@ -5467,6 +5480,7 @@ pub mod test {
             has_query: false,
             content_handles: vec![],
             search_task: None,
+            _kask_server_status_task: Task::ready(()),
             focus_handle: cx.focus_handle(),
             navbar_focus_handle: NonFocusableHandle::new(
                 NAVBAR_CONTAINER_TAB_INDEX,

@@ -160,10 +160,10 @@ fn render_server_list(
 // (single spawn authority — they are deliberately NOT in the per-project
 // `ContextServerStore` this page reads for "Configured Servers"), so they
 // render here from `BUILT_IN_MCP_SERVERS` + the `kask.mcp` settings instead.
-// The tool surface is live: the process-global `KaskToolSource` (wired to
-// the runtime in `main.rs`, cache rebuilt on surface changes) reports which
-// servers have registered tools. A zero tool count is not a health verdict. The toggle writes the same `kask.mcp.overrides` key the
-// Kask settings page writes; the `SettingsStore` observer
+// The process-global `KaskToolSource` supplies discovered tools and a
+// non-blocking live-connection snapshot. Discovery alone cannot make a row
+// Running; a missing health reading remains Unknown. The toggle writes the
+// same `kask.mcp.overrides` key the Kask settings page writes; the `SettingsStore` observer
 // (`sync_kask_mcp_runtime_servers`) then starts/stops the governed server
 // through the runtime's own primitives, preserving the self-healing
 // semantics (a stopped server is not resurrected; a started one gets
@@ -176,14 +176,16 @@ fn kask_server_loaded(mcp: &kask_bridge::KaskMcpSettings, server_id: &str) -> bo
     mcp.load_default && *mcp.overrides.get(server_id).unwrap_or(&true)
 }
 
-/// Row status from the load flag and registered tool count: not loaded →
-/// `Stopped`; loaded with tools → `Running`; loaded without tools → `Unknown`.
-/// No runtime health signal reaches this row, so zero tools cannot establish
-/// either startup progress or failure. A neutral state avoids claiming either.
-fn kask_managed_server_status(loaded: bool, live_tool_count: usize) -> AiSettingItemStatus {
+/// `Running` requires both a discovered tool and a live transport. An
+/// unavailable snapshot (e.g. a busy runtime lock) is Unknown, not healthy.
+fn kask_managed_server_status(
+    loaded: bool,
+    live_tool_count: usize,
+    connected: Option<bool>,
+) -> AiSettingItemStatus {
     if !loaded {
         AiSettingItemStatus::Stopped
-    } else if live_tool_count > 0 {
+    } else if live_tool_count > 0 && connected == Some(true) {
         AiSettingItemStatus::Running
     } else {
         AiSettingItemStatus::Unknown
@@ -202,13 +204,16 @@ fn kask_tool_counts_from_descriptors(
     counts
 }
 
-/// The live per-server tool counts from the process-global `KaskToolSource`
-/// (absent in tests and lightweight embedders — kask tools then simply do
-/// not surface, and every loaded server reads as `Unknown`).
-fn kask_live_tool_counts() -> HashMap<String, usize> {
-    agent::kask_tool_source()
-        .map(|source| kask_tool_counts_from_descriptors(source.tools()))
-        .unwrap_or_default()
+/// One source supplies both the discovered surface and the live reading.
+/// Missing source or contended runtime state leaves liveness unknown.
+fn kask_server_snapshot() -> (HashMap<String, usize>, Option<Vec<String>>) {
+    match agent::kask_tool_source() {
+        Some(source) => (
+            kask_tool_counts_from_descriptors(source.tools()),
+            source.running_server_ids_now(),
+        ),
+        None => (HashMap::default(), None),
+    }
 }
 
 fn render_kask_managed_servers_section(cx: &App) -> AnyElement {
@@ -218,14 +223,19 @@ fn render_kask_managed_servers_section(cx: &App) -> AnyElement {
         .and_then(|content| content.mcp)
         .map(Into::into)
         .unwrap_or_default();
-    let live_tool_counts = kask_live_tool_counts();
+    let (live_tool_counts, running_server_ids) = kask_server_snapshot();
 
     let mut server_rows: Vec<AnyElement> = Vec::new();
     for server in kask_bridge::BUILT_IN_MCP_SERVERS {
         let loaded = kask_server_loaded(&mcp, server.id);
         let live_tool_count = live_tool_counts.get(server.id).copied().unwrap_or(0);
-        server_rows
-            .push(render_kask_managed_server(server, loaded, live_tool_count).into_any_element());
+        let connected = running_server_ids
+            .as_ref()
+            .map(|ids| ids.iter().any(|id| id == server.id));
+        server_rows.push(
+            render_kask_managed_server(server, loaded, live_tool_count, connected)
+                .into_any_element(),
+        );
     }
 
     v_flex()
@@ -279,8 +289,9 @@ fn render_kask_managed_server(
     server: &'static kask_bridge::BuiltinMcpServer,
     loaded: bool,
     live_tool_count: usize,
+    connected: Option<bool>,
 ) -> impl IntoElement {
-    let status = kask_managed_server_status(loaded, live_tool_count);
+    let status = kask_managed_server_status(loaded, live_tool_count, connected);
     let tool_label = match status {
         AiSettingItemStatus::Running if live_tool_count == 1 => Some(SharedString::from("1 tool")),
         AiSettingItemStatus::Running => {
@@ -1593,31 +1604,69 @@ mod tests {
 
     // ── zed-kask: Kask Managed Servers pins (D45) ───────────────────────
 
-    /// A loaded server with no registered tools has unknown status: that
-    /// signal alone cannot tell whether it is starting, failed, or unavailable.
-    /// Stopped and registered-tool Running states remain unchanged.
+    /// A loaded server needs both discovered tools and a live connection.
     #[test]
-    fn kask_managed_server_status_maps_load_and_live_tools() {
+    fn kask_managed_server_status_requires_liveness_and_discovery() {
         assert_eq!(
-            kask_managed_server_status(false, 0),
+            kask_managed_server_status(false, 7, Some(true)),
             AiSettingItemStatus::Stopped
         );
         assert_eq!(
-            kask_managed_server_status(false, 7),
-            AiSettingItemStatus::Stopped
-        );
-        assert_eq!(
-            kask_managed_server_status(true, 0),
+            kask_managed_server_status(true, 0, Some(true)),
             AiSettingItemStatus::Unknown
         );
         assert_eq!(
-            kask_managed_server_status(true, 1),
-            AiSettingItemStatus::Running
+            kask_managed_server_status(true, 1, Some(false)),
+            AiSettingItemStatus::Unknown
         );
         assert_eq!(
-            kask_managed_server_status(true, 68),
+            kask_managed_server_status(true, 1, None),
+            AiSettingItemStatus::Unknown
+        );
+        assert_eq!(
+            kask_managed_server_status(true, 1, Some(true)),
             AiSettingItemStatus::Running
         );
+    }
+
+    /// expect: "A managed server with discovered tools but no connection cannot be shown as Running."
+    #[tokio::test]
+    async fn discovered_tools_without_a_live_connection_are_not_running() {
+        let runtime = hkask_mcp::McpRuntime::new();
+        runtime
+            .register_server(hkask_mcp::McpServer {
+                id: "fixture".into(),
+                name: "fixture".into(),
+                tools: vec![hkask_mcp::McpTool {
+                    server_id: "fixture".into(),
+                    name: "ping".into(),
+                    description: "fixture tool".into(),
+                    input_schema: serde_json::json!({"type": "object"}),
+                }],
+            })
+            .await;
+        let discovered = runtime.registered_servers().await;
+        let tool_count = discovered
+            .iter()
+            .find(|(id, _)| id == "fixture")
+            .map(|(_, tools)| tools.len())
+            .expect("fixture registered its tool");
+        assert_eq!(tool_count, 1);
+        assert!(
+            !runtime
+                .running_server_ids()
+                .await
+                .contains(&"fixture".to_string())
+        );
+        let connected = runtime
+            .try_running_server_ids()
+            .map(|ids| ids.contains(&"fixture".to_string()));
+        assert_ne!(
+            kask_managed_server_status(true, tool_count, connected),
+            AiSettingItemStatus::Running,
+            "registered tool metadata must not claim the disconnected service can answer"
+        );
+        runtime.shutdown_all().await;
     }
 
     /// The live tool surface groups by server id — the per-row "N tools"

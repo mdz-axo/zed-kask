@@ -5245,8 +5245,8 @@ async fn test_curator_memory_edit_tools_available_to_plain_threads(cx: &mut Test
 }
 
 /// A `KaskToolSource` whose descriptor set can change after wiring — the
-/// shape of the real source (a cache refreshed by a background poll of the
-/// governed `McpRuntime`), and the fixture for the startup-race pin below.
+/// shape of the real source (a cache refreshed by governed `McpRuntime`
+/// change events), and the fixture for the startup-race pin below.
 struct MutableKaskToolSource(std::sync::Mutex<Vec<KaskToolDescriptor>>);
 
 impl MutableKaskToolSource {
@@ -5264,6 +5264,10 @@ impl KaskToolSource for MutableKaskToolSource {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clone()
+    }
+
+    fn running_server_ids_now(&self) -> Option<Vec<String>> {
+        Some(Vec::new())
     }
 
     fn invoke(
