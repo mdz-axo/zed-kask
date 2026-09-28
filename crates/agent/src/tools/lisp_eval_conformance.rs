@@ -56,7 +56,7 @@ fn success_forms() -> Vec<(&'static str, &'static str, Value, Value)> {
             "extremum above 2^53",
             "(max 9007199254740992 9007199254740993)",
             json!({}),
-            json!(9007199254740993),
+            json!(9007199254740993i64),
         ),
         ("division is always Float", "(/ 6 3)", json!({}), json!(2.0)),
         (
@@ -85,7 +85,7 @@ fn success_forms() -> Vec<(&'static str, &'static str, Value, Value)> {
         ),
         (
             "predicates",
-            "(and (stringp \"x\") (numberp 1) (listp (list)) (not (is_null (list))))",
+            "(and (stringp \"x\") (numberp 1) (listp (list)) (not (is_null (list 1))))",
             json!({}),
             json!(true),
         ),
