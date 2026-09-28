@@ -41,6 +41,16 @@ paths.workspace = true
 project.workspace = true
 prompt_store.workspace = true
 release_channel.workspace = true
+# Feature-propagation-only dep: not `use`d in source. `agent_ui` (a normal
+# dep above) requests `remote_connection` with default features, while a
+# combined selection such as `cargo clippy -p remote_server -p eval_cli ...
+# --all-targets --all-features` turns `remote/test-support` on via
+# remote_server's dev closure — exposing `RemoteConnectionOptions::Mock`
+# to a `remote_connection` unit whose own `test-support` (and with it the
+# Mock match arm) is off: E0004. A dev-dep pairing does not reach this
+# normal-dependency unit (the swarm_panel precedent), so the request rides
+# a NORMAL dep.
+remote_connection = { workspace = true, features = ["test-support"] }
 reqwest_client.workspace = true
 serde.workspace = true
 serde_json.workspace = true

@@ -6350,6 +6350,7 @@ dependencies = [
  "project",
  "prompt_store",
  "release_channel",
+ "remote_connection",
  "reqwest_client",
  "serde",
  "serde_json",
