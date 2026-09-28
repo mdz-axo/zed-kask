@@ -36,6 +36,34 @@ use lora_config::build_lora_config;
 use qa_parsing::{ParsedQa, QaRecordError, parse_qa_record};
 pub(crate) use qa_types::{QaType, parse_type_distribution, qa_type_instruction};
 
+/// Derive one gated candidate's grounding metadata: the prompt_id (required
+/// — a gated candidate cannot have lost it), the bundle row key, and the
+/// re-executed answer provenance the gate recorded for that row. The single
+/// derivation for both `corpus_ingest_qa` loops (training rows and h_mem
+/// values) — previously duplicated verbatim, risking the two views drifting
+/// apart on a shape change.
+fn grounding_fields(
+    qa: &ParsedQa,
+    line: usize,
+    gate: &crate::services::qa_grounding::GroundingGateReport,
+) -> Result<(String, String), McpToolError> {
+    let prompt_id = qa
+        .prompt_id
+        .as_deref()
+        .ok_or_else(|| McpToolError::internal("Gated candidate lost its prompt_id"))?;
+    let row_key = crate::services::qa_grounding::candidate_row_key(prompt_id, &qa.qa_type, line);
+    let answer_provenance = gate
+        .answer_provenance
+        .get(&row_key)
+        .cloned()
+        .ok_or_else(|| {
+            McpToolError::internal(format!(
+                "Gated candidate '{row_key}' has no re-executed answer provenance"
+            ))
+        })?;
+    Ok((row_key, answer_provenance))
+}
+
 // Re-export helpers used by the service layer (services/consolidation.rs,
 // services/prompt_builder.rs) so the services don't depend on the private
 // submodule paths.
@@ -299,23 +327,7 @@ impl CorpusServer {
             // Keep evidence available for downstream audits, outside the training text.
             let mut train = String::new();
             for (line, qa) in &deduped {
-                let prompt_id = qa.prompt_id.as_deref().ok_or_else(|| {
-                    McpToolError::internal("Gated candidate lost its prompt_id")
-                })?;
-                let row_key = crate::services::qa_grounding::candidate_row_key(
-                    prompt_id,
-                    &qa.qa_type,
-                    *line,
-                );
-                let answer_provenance = gate
-                    .answer_provenance
-                    .get(&row_key)
-                    .cloned()
-                    .ok_or_else(|| {
-                        McpToolError::internal(format!(
-                            "Gated candidate '{row_key}' has no re-executed answer provenance"
-                        ))
-                    })?;
+                let (row_key, answer_provenance) = grounding_fields(qa, *line, &gate)?;
                 let row = json!({
                     "instruction": qa.instruction, "input": "", "output": qa.output,
                     "qa_type": qa.qa_type, "type": qa.response_type.as_deref().unwrap_or(&qa.qa_type),
@@ -351,24 +363,7 @@ impl CorpusServer {
 
             for (i, (line, qa)) in deduped.iter().enumerate() {
                 let entity = format!("training:qa:{}:{}:{}", req.dataset, qa.source, i);
-                let prompt_id = qa
-                    .prompt_id
-                    .as_deref()
-                    .ok_or_else(|| McpToolError::internal("Gated candidate lost its prompt_id"))?;
-                let row_key = crate::services::qa_grounding::candidate_row_key(
-                    prompt_id,
-                    &qa.qa_type,
-                    *line,
-                );
-                let answer_provenance = gate
-                    .answer_provenance
-                    .get(&row_key)
-                    .cloned()
-                    .ok_or_else(|| {
-                        McpToolError::internal(format!(
-                            "Gated candidate '{row_key}' has no re-executed answer provenance"
-                        ))
-                    })?;
+                let (row_key, answer_provenance) = grounding_fields(qa, *line, &gate)?;
                 let v = serde_json::json!({
                     "question": qa.instruction,
                     "answer": qa.output,

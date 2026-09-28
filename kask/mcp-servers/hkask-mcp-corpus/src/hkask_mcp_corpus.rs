@@ -459,7 +459,10 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 llm_ocr,
             ))
         },
-        vec![],
+        vec![hkask_mcp_server::CredentialRequirement::optional(
+            "HKASK_DB_PASSPHRASE",
+            "SQLCipher passphrase for the corpus memory DB — DB-backed tools (embed, query, dedup, consolidate, assertions, compose, QA ingest) fail closed with permission_denied without it; document processing (convert/ocr/is_complex/chunk) runs degraded",
+        )],
     )
     .await
 }

@@ -192,7 +192,7 @@ impl CorpusServer {
     }
 
     #[tool(
-        description = "Extract assertions (subject, predicate, object) from corpus chunks using the inference engine. Uses the canonical classifier model (HKASK_CLASSIFIER_MODEL, default GLM-5.2 on OpenRouter) with 3-attempt retry. Reads chunks from chunks_jsonl, processes them concurrently, and stores each assertion as a chunk-anchored h_mem (entity=entity_ref, attribute=predicate, value={subject, object}) in the memory DB. When tagged_jsonl is provided, ontology tags from the tagging step are injected to guide predicate selection (GOLEM for narrative, schema.org for expository). Returns a summary (total_chunks, succeeded, failed, h_mems_stored)."
+        description = "Extract assertions (subject, predicate, object) from corpus chunks using the inference engine. Uses the canonical classifier model (HKASK_CLASSIFIER_MODEL; unset is a typed permission_denied naming the setting — kask never falls back to a hidden code constant) with 3-attempt retry. Reads chunks from chunks_jsonl, processes them concurrently, and stores each assertion as a chunk-anchored h_mem (entity=entity_ref, attribute=predicate, value={subject, object}) in the memory DB. When tagged_jsonl is provided, ontology tags from the tagging step are injected to guide predicate selection (GOLEM for narrative, schema.org for expository). Returns a summary (total_chunks, succeeded, failed, h_mems_stored)."
     )]
     pub async fn corpus_extract_assertions(
         &self,
