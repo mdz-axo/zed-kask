@@ -47,34 +47,73 @@ impl ForecastStore {
     }
 
     /// Load: snapshot first, then replay journal on top (last write wins).
+    /// Every failure arm is surfaced: a corrupt snapshot otherwise presents as
+    /// an empty store, and the calibration feedback loop reads "no history"
+    /// as "no forecasts yet" — a data failure indistinguishable from no data.
     fn load(&mut self) {
         if let Some(ref path) = self.data_path
             && path.exists()
-            && let Ok(data) = fs::read_to_string(path)
-            && let Ok(records) =
-                serde_json::from_str::<HashMap<String, StoredForecastRecord>>(&data)
         {
-            self.records = records;
+            match fs::read_to_string(path) {
+                Ok(data) => {
+                    match serde_json::from_str::<HashMap<String, StoredForecastRecord>>(&data) {
+                        Ok(records) => self.records = records,
+                        Err(error) => tracing::warn!(
+                            target: "hkask.mcp.scenarios",
+                            %error,
+                            "Forecast snapshot is corrupt — replaying the journal only; \
+                             calibration history is degraded this session"
+                        ),
+                    }
+                }
+                Err(error) => tracing::warn!(
+                    target: "hkask.mcp.scenarios",
+                    %error,
+                    "Forecast snapshot is unreadable — replaying the journal only; \
+                     calibration history is degraded this session"
+                ),
+            }
         }
         if let Some(ref jp) = self.journal_path
             && jp.exists()
-            && let Ok(data) = fs::read_to_string(jp)
         {
-            for line in data.lines() {
-                let trimmed = line.trim();
-                if trimmed.is_empty() {
-                    continue;
+            match fs::read_to_string(jp) {
+                Ok(data) => {
+                    let mut skipped_lines = 0usize;
+                    for line in data.lines() {
+                        let trimmed = line.trim();
+                        if trimmed.is_empty() {
+                            continue;
+                        }
+                        if let Ok(entry) = serde_json::from_str::<serde_json::Value>(trimmed)
+                            && let (Some(key), Some(record)) = (
+                                entry.get("key").and_then(|v| v.as_str()),
+                                entry.get("record"),
+                            )
+                            && let Ok(rec) =
+                                serde_json::from_value::<StoredForecastRecord>(record.clone())
+                        {
+                            self.records.insert(key.to_string(), rec);
+                            self.journal_count += 1;
+                        } else {
+                            skipped_lines += 1;
+                        }
+                    }
+                    if skipped_lines > 0 {
+                        tracing::warn!(
+                            target: "hkask.mcp.scenarios",
+                            skipped_lines,
+                            "Journal lines failed to replay and were skipped — those \
+                             records are lost to recall this session"
+                        );
+                    }
                 }
-                if let Ok(entry) = serde_json::from_str::<serde_json::Value>(trimmed)
-                    && let (Some(key), Some(record)) = (
-                        entry.get("key").and_then(|v| v.as_str()),
-                        entry.get("record"),
-                    )
-                    && let Ok(rec) = serde_json::from_value::<StoredForecastRecord>(record.clone())
-                {
-                    self.records.insert(key.to_string(), rec);
-                    self.journal_count += 1;
-                }
+                Err(error) => tracing::warn!(
+                    target: "hkask.mcp.scenarios",
+                    %error,
+                    "Forecast journal is unreadable — snapshot-only state; records \
+                     journaled after the last compaction are lost this session"
+                ),
             }
         }
     }

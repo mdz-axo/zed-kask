@@ -140,7 +140,7 @@ impl ScenariosServer {
             "scenario_score" => Some("scenario_quantify"),
             "scenario_calibration" => Some("scenario_score"),
             "scenario_assess" => Some("scenario_synthesize"),
-            _ => None, // triage, research, update, sensitivity, cross_validate, full, from_companies
+            _ => None, // status, frame, triage, update, cross_validate, full, from_markets_set, from_cmp_indices, contract_price_coherence
         }
     }
 
