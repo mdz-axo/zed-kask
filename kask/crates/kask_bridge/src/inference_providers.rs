@@ -680,4 +680,109 @@ mod tests {
             );
         }
     }
+
+    /// A mock `CredentialsProvider` that returns a canned secret for a
+    /// specific URL and `None` for everything else. Seeding keys for EVERY
+    /// keyed provider `api_url` slot makes the route-level eligibility test
+    /// discriminate against the missing-key failure mode: a rejection under
+    /// this mock is a rejection of the ROUTE, not of an absent credential.
+    struct MockCredentialsProvider {
+        secrets: std::collections::HashMap<String, Vec<u8>>,
+    }
+
+    impl credentials_provider::CredentialsProvider for MockCredentialsProvider {
+        fn read_credentials<'a>(
+            &'a self,
+            url: &'a str,
+            _cx: &'a gpui::AsyncApp,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = anyhow::Result<Option<(String, Vec<u8>)>>> + 'a>,
+        > {
+            let result = self
+                .secrets
+                .get(url)
+                .cloned()
+                .map(|pw| ("user".to_string(), pw));
+            Box::pin(async move { Ok(result) })
+        }
+
+        fn write_credentials<'a>(
+            &'a self,
+            _url: &'a str,
+            _username: &'a str,
+            _password: &'a [u8],
+            _cx: &'a gpui::AsyncApp,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + 'a>> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn delete_credentials<'a>(
+            &'a self,
+            _url: &'a str,
+            _cx: &'a gpui::AsyncApp,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + 'a>> {
+            Box::pin(async { Ok(()) })
+        }
+    }
+
+    /// expect: "An embedding model naming a provider with no /embeddings
+    /// endpoint is rejected at the credential-resolution route — before any
+    /// keychain read — even when every provider's key is present." Under a
+    /// keychain seeded for all providers, a `None` for KiloCode/RunPod is a
+    /// rejection of the route (eligibility), not of an absent credential;
+    /// this pins that `resolve_embedding_credentials` cannot announce a
+    /// binding for a route with no embeddings endpoint. DeepInfra/OpenRouter
+    /// (keyed) and ollama (keyless local) are the positive controls.
+    #[gpui::test]
+    async fn embedding_credentials_reject_ineligible_routes_with_keys_present(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let secrets: std::collections::HashMap<String, Vec<u8>> = INFERENCE_PROVIDERS
+            .iter()
+            .filter(|provider| !provider.env_var.is_empty())
+            .map(|provider| {
+                (
+                    provider.api_url.to_string(),
+                    format!("{}-fixture-key", provider.credential_key).into_bytes(),
+                )
+            })
+            .collect();
+        let credentials = MockCredentialsProvider { secrets };
+        let async_cx = cx.to_async();
+
+        // Ineligible routes: keys ARE present at their slots, so these
+        // rejections are eligibility rejections, not missing-key failures.
+        for model in ["KiloCode/kilo-auto/efficient", "RunPod/serverless-model"] {
+            let resolved =
+                super::resolve_embedding_credentials(model, &credentials, &async_cx).await;
+            assert!(
+                resolved.is_none(),
+                "embedding model '{model}' must not resolve: its provider serves no \
+                 /embeddings endpoint at its api_url, so the route cannot succeed"
+            );
+        }
+
+        for (model, expected_key) in [
+            ("DeepInfra/BAAI/bge-large", "deepinfra-fixture-key"),
+            ("OpenRouter/qwen/qwen3-embedding", "openrouter-fixture-key"),
+        ] {
+            let resolved =
+                super::resolve_embedding_credentials(model, &credentials, &async_cx).await;
+            let resolved = resolved.unwrap_or_else(|| panic!("{model} must resolve"));
+            assert_eq!(resolved.provider.id, model.split_once('/').unwrap().0);
+            assert_eq!(resolved.api_key, expected_key);
+        }
+
+        // ollama is embedding-capable and keyless — resolves with an empty key.
+        let resolved = super::resolve_embedding_credentials(
+            "ollama/nomic-embed-text",
+            &credentials,
+            &async_cx,
+        )
+        .await;
+        assert!(
+            resolved.is_some_and(|r| r.api_key.is_empty()),
+            "keyless local embedding provider must resolve with an empty key"
+        );
+    }
 }
