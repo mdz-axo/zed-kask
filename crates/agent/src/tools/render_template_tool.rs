@@ -350,19 +350,28 @@ fn strip_frontmatter(content: &str) -> String {
 
     // ── Stanza 2: a body-leading [inference] param block ──────────
     // Runs from the `[inference]` line through the first blank line. Leading
-    // blank lines and Jinja `{# comment #}` lines are skipped first — many
-    // templates carry an ontology comment between the header terminator and
-    // the param stanza. Only a stanza at the very start of the body is
-    // stripped; an `[inference]` mention in running prose is left alone.
+    // blank lines and Jinja comments — single- or multi-line — are skipped
+    // first; many templates carry an ontology or design comment between the
+    // header terminator and the param stanza. Only a stanza at the very
+    // start of the body is stripped; an `[inference]` mention in running
+    // prose is left alone.
     let trimmed = working.trim_start_matches('\n');
     let mut scan = trimmed;
     loop {
         let first = scan.lines().next().unwrap_or("").trim();
         if first.is_empty() && !scan.is_empty() {
             scan = scan.strip_prefix('\n').unwrap_or(scan);
-        } else if first.starts_with("{#") && first.contains("#}") {
-            let line_len = scan.find('\n').map(|i| i + 1).unwrap_or(scan.len());
-            scan = &scan[line_len..];
+        } else if first.starts_with("{#") {
+            // A `{#` opening is a comment even when the closing `#}` sits on
+            // a later line — the same multi-line skip the header loop applies.
+            // Skipping only single-line comments stopped the scan at the
+            // opening line, so a param stanza following a multi-line design
+            // comment leaked verbatim into rendered prompts (observed across
+            // 27 shipped templates, 2026-09-27).
+            match scan.find("#}") {
+                Some(close) => scan = &scan[close + 2..],
+                None => break, // unterminated comment — leave the rest alone.
+            }
         } else {
             break;
         }
@@ -665,6 +674,35 @@ mod tests {
         assert!(!rendered.contains("{#"));
     }
 
+    /// The body param keys are tool-execution metadata that `strip_frontmatter`
+    /// removes; a line matching one of them in the stripped output is a param
+    /// stanza the stripper failed to strip, and it leaks verbatim into the
+    /// rendered prompt.
+    fn is_inference_param_line(line: &str) -> bool {
+        let trimmed = line.trim_start();
+        ["temperature", "work_effort", "verbosity", "thinking_budget"]
+            .iter()
+            .any(|key| {
+                trimmed
+                    .strip_prefix(key)
+                    .is_some_and(|rest| rest.starts_with(" =") || rest.starts_with('='))
+            })
+    }
+
+    #[test]
+    fn test_strip_body_inference_stanza_after_multiline_comment() {
+        // Shipped templates carry multi-line design comments between the
+        // header terminator and the body param stanza. The stanza-2 skipper
+        // must skip multi-line comments like the header loop does, or the
+        // stanza's param lines leak into the rendered prompt.
+        let input = "[inference]\ncontract: {}\nvisibility: Public\n---\n{# Phase 1 #}\n{#\n  multi-line design note\n#}\n\n[inference]\ntemperature = 0.3\nwork_effort = \"high\"\n\nYou are a strategist.";
+        let result = strip_frontmatter(input);
+        assert!(result.contains("You are a strategist."), "got: {result:?}");
+        assert!(!result.contains("[inference]"));
+        assert!(!result.contains("temperature"));
+        assert!(!result.contains("work_effort"));
+    }
+
     #[test]
     fn all_registry_templates_conform() {
         fn collect_templates(
@@ -699,6 +737,7 @@ mod tests {
 
         let mut parse_errors = Vec::new();
         let mut python_templates = Vec::new();
+        let mut leaked_param_templates = Vec::new();
         for path in templates {
             let content = match std::fs::read_to_string(&path) {
                 Ok(content) => content,
@@ -709,6 +748,13 @@ mod tests {
                     || (line.starts_with("from ") && line.contains(" import "))
             }) {
                 python_templates.push(path.display().to_string());
+            }
+
+            if strip_frontmatter(&content)
+                .lines()
+                .any(|line| is_inference_param_line(line))
+            {
+                leaked_param_templates.push(path.display().to_string());
             }
 
             let Some(header) = template_metadata_header(&content) else {
@@ -732,6 +778,12 @@ mod tests {
             python_templates.is_empty(),
             "registry contains Python code templates:\n{}",
             python_templates.join("\n")
+        );
+        assert!(
+            leaked_param_templates.is_empty(),
+            "templates whose rendered prompt leaks inference-param lines \
+             (a body [inference] stanza the stripper did not strip):\n{}",
+            leaked_param_templates.join("\n")
         );
     }
 

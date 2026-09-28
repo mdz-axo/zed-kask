@@ -25,7 +25,6 @@ use gpui::{
     StatefulInteractiveElement, Styled, Window, canvas, div, point, prelude::*, px, rgb,
 };
 use theme::ActiveTheme;
-use ui::{Color, Label, LabelCommon, LabelSize};
 
 use crate::block::{EvidenceKind, GraphBlockBody};
 use crate::layout::LayeredLayout;
@@ -75,10 +74,6 @@ pub struct GraphWidget {
     /// (multiply-connected fallback).
     backward_inference_available: bool,
     focus_handle: FocusHandle,
-    /// Surfaced when no conversation injector is active so the composed "I
-    /// disagree" body is still copyable — visible, not a silent no-op (repo
-    /// `.rules`). Cleared after a successful inject.
-    disagree_draft: Option<String>,
 }
 
 impl GraphWidget {
@@ -117,7 +112,6 @@ impl GraphWidget {
             compare_branch: None,
             backward_inference_available,
             focus_handle: cx.focus_handle(),
-            disagree_draft: None,
         }
     }
 
@@ -406,61 +400,6 @@ impl GraphWidget {
             .fold(1.0_f64, |acc, p| acc * p.clamp(0.0, 1.0));
         Some(product)
     }
-
-    /// Compose the "I disagree" body. References the tree's subject and, when a
-    /// node is selected, names it so the agent can correlate the revision
-    /// request to the exact node whose probability or conditional the user
-    /// disputes. The graph widget carries no provenance field (decision 10 —
-    /// it is deliberately local-only), so a static tool label is baked into the
-    /// framing instead of `provenance.tool`. Falls back to "this event tree"
-    /// when the subject is absent (grill-me edge case c) and omits the node
-    /// clause when no node is selected (edge case d — `.get` bounds check, no
-    /// panicking indexing).
-    fn compose_disagree_body(&self) -> String {
-        let subject = self
-            .body
-            .subject
-            .clone()
-            .unwrap_or_else(|| "this event tree".to_string());
-        let node_clause = self
-            .selected
-            .and_then(|index| self.body.nodes.get(index))
-            .map(|node| {
-                format!(
-                    " — specifically node '{}'",
-                    node.name.clone().unwrap_or_else(|| node.id.clone())
-                )
-            })
-            .unwrap_or_default();
-        format!(
-            "Re: the event tree for {subject}{node_clause}.\n\
-             I believe a node's probability or the conditional structure is incorrect. \
-             Please re-check the base rates and conditionals.\n\n\
-             My concern: "
-        )
-    }
-
-    /// The "I disagree" affordance handler (C). Composes the revision request
-    /// and injects it back into the active conversation via the shared
-    /// `compose_back_via_injector` (S10/R2). When no conversation is active,
-    /// surfaces the composed body as a copyable draft instead of a silent
-    /// no-op (repo `.rules`). Never auto-sends — the production injector only
-    /// pre-fills the composer; the user reviews and submits.
-    fn on_disagree_click(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let body = self.compose_disagree_body();
-        let widget = cx.entity().downgrade();
-        let draft = hkask_conversation_injector::compose_back_via_injector(
-            body,
-            window,
-            cx,
-            widget,
-            |this, draft| {
-                this.disagree_draft = draft;
-            },
-        );
-        self.disagree_draft = draft;
-        cx.notify();
-    }
 }
 
 impl Focusable for GraphWidget {
@@ -696,22 +635,6 @@ impl Render for GraphWidget {
                         "   (backward inference unavailable for this graph shape — evidence propagates forward only)",
                     )
                 },
-            )
-            // C: "I disagree" affordance — composes a revision request back
-            // into the active conversation (D21). Board-level (the whole
-            // tree); optionally references the selected node in the body.
-            .child(
-                div()
-                    .id("graph-disagree")
-                    .cursor_pointer()
-                    .on_click(cx.listener(|this, _event, window, cx| {
-                        this.on_disagree_click(window, cx);
-                    }))
-                    .child(
-                        Label::new("I disagree")
-                            .size(LabelSize::XSmall)
-                            .color(Color::Accent),
-                    ),
             );
 
         // What-if branch controls: save/revert + per-branch load/compare/delete.
@@ -839,23 +762,6 @@ impl Render for GraphWidget {
             .flex()
             .flex_col()
             .child(header)
-            // Fallback draft (no active conversation): surface the composed
-            // body so the user can copy it into chat — visible, not a silent
-            // no-op (repo `.rules`).
-            .when_some(self.disagree_draft.clone(), |this, draft| {
-                this.child(
-                    div()
-                        .p_2()
-                        .rounded_md()
-                        .border_1()
-                        .border_color(cx.theme().colors().border)
-                        .child(
-                            Label::new(draft)
-                                .size(LabelSize::XSmall)
-                                .color(Color::Warning),
-                        ),
-                )
-            })
             .child(controls)
             .when_some(compare_panel, |t, panel| t.child(panel))
             .child(
@@ -1186,150 +1092,5 @@ mod tests {
         assert_eq!(widget.read_with(cx, |w, _| w.branches.len()), 0);
         assert_eq!(widget.read_with(cx, |w, _| w.compare_branch), None);
         assert!(widget.read_with(cx, |w, _| w.evidence.is_empty()));
-    }
-
-    // ── "I disagree" compose-back affordance (C, D21) ─────────────────────
-    //
-    // The injector is a per-app GPUI global, so each test's `TestAppContext`
-    // has its own — no cross-test serialization or RAII reset is needed.
-
-    /// Records the body of every `inject` call. `Send + Sync` for the
-    /// `Arc<dyn ConversationInjector>` global.
-    #[derive(Default)]
-    struct MockConversationInjector {
-        bodies: std::sync::Mutex<Vec<String>>,
-    }
-
-    impl hkask_conversation_injector::ConversationInjector for MockConversationInjector {
-        fn inject(
-            &self,
-            body: String,
-            _window: &mut gpui::Window,
-            _cx: &mut gpui::App,
-        ) -> gpui::Task<Result<(), String>> {
-            self.bodies
-                .lock()
-                .unwrap_or_else(|error| error.into_inner())
-                .push(body);
-            gpui::Task::ready(Ok(()))
-        }
-    }
-
-    /// Trivial root view for `add_window_view` so the test can obtain a `Window`
-    /// for `on_disagree_click` without rendering `GraphWidget` (which would
-    /// need a theme global this leaf crate's tests don't initialise). Renders a
-    /// bare `div()`.
-    struct DummyView;
-    impl Render for DummyView {
-        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-            div()
-        }
-    }
-
-    /// `make_body` with a subject set, so the disagree body can reference it.
-    fn body_with_subject() -> GraphBlockBody {
-        let mut body = make_body();
-        body.subject = Some("Q3 launch".into());
-        body
-    }
-
-    #[gpui::test]
-    async fn disagree_routes_through_injector(cx: &mut gpui::TestAppContext) {
-        let mock = std::sync::Arc::new(MockConversationInjector::default());
-        cx.update(|cx| {
-            hkask_conversation_injector::set_active_injector(cx, Some(mock.clone()));
-        });
-
-        let body = body_with_subject();
-        // Use a throwaway window root so we get a `Window` for `on_disagree_click`
-        // without rendering `GraphWidget` (no theme global in these tests).
-        let (_dummy, cx) = cx.add_window_view(|_window, _cx| DummyView);
-        let widget = cx.update(|_window, cx| cx.new(|cx| GraphWidget::new(body, cx)));
-        widget.update_in(cx, |widget, window, cx| {
-            widget.on_disagree_click(window, cx);
-        });
-        cx.run_until_parked();
-
-        let bodies = mock
-            .bodies
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .clone();
-        assert_eq!(bodies.len(), 1, "exactly one inject");
-        assert!(bodies[0].contains("Re:"), "body references the revision");
-        assert!(
-            bodies[0].contains("Q3 launch"),
-            "body references the subject"
-        );
-
-        // A successful inject clears the fallback draft.
-        let draft = widget.read_with(cx, |widget, _cx| widget.disagree_draft.clone());
-        assert!(draft.is_none(), "draft cleared after a successful inject");
-    }
-
-    #[gpui::test]
-    async fn disagree_surfaces_draft_when_no_injector(cx: &mut gpui::TestAppContext) {
-        // Per-app global starts empty — no injector is wired by default.
-
-        let body = body_with_subject();
-        let (_dummy, cx) = cx.add_window_view(|_window, _cx| DummyView);
-        let widget = cx.update(|_window, cx| cx.new(|cx| GraphWidget::new(body, cx)));
-        widget.update_in(cx, |widget, window, cx| {
-            widget.on_disagree_click(window, cx);
-        });
-        cx.run_until_parked();
-
-        // No injector: the composed body is surfaced as a copyable draft
-        // (visible, not a silent no-op — repo `.rules`), and no panic.
-        let draft = widget.read_with(cx, |widget, _cx| widget.disagree_draft.clone());
-        let draft = draft.expect("draft surfaced when no injector is active");
-        assert!(draft.contains("Re:"), "draft carries the revision prefix");
-    }
-
-    #[gpui::test]
-    async fn disagree_body_falls_back_when_subject_absent(cx: &mut gpui::TestAppContext) {
-        // grill-me edge case (c): absent subject → generic "this event tree"
-        // framing. `compose_disagree_body` is pure, so no window is needed.
-
-        let widget = cx.update(|cx| cx.new(|cx| GraphWidget::new(make_body(), cx)));
-        let body = widget.read_with(cx, |widget, _cx| widget.compose_disagree_body());
-        assert!(
-            body.contains("this event tree"),
-            "absent subject falls back to the generic framing"
-        );
-    }
-
-    #[gpui::test]
-    async fn disagree_body_references_selected_node(cx: &mut gpui::TestAppContext) {
-        // grill-me edge case (d): with a selected node → body references the
-        // node name; with no selection → no node clause. Uses `.get` bounds
-        // check, so an out-of-range `selected` is a no-op (no panic).
-        let widget = cx.update(|cx| cx.new(|cx| GraphWidget::new(body_with_subject(), cx)));
-        // No selection: no node clause.
-        let body = widget.read_with(cx, |widget, _cx| widget.compose_disagree_body());
-        assert!(
-            !body.contains("specifically node"),
-            "no node clause when nothing is selected"
-        );
-
-        // Select node 0 ("a"): body references it.
-        widget.update(cx, |widget, _cx| {
-            widget.selected = Some(0);
-        });
-        let body = widget.read_with(cx, |widget, _cx| widget.compose_disagree_body());
-        assert!(
-            body.contains("specifically node 'a'"),
-            "body references the selected node name"
-        );
-
-        // Out-of-range selection: no node clause, no panic.
-        widget.update(cx, |widget, _cx| {
-            widget.selected = Some(99);
-        });
-        let body = widget.read_with(cx, |widget, _cx| widget.compose_disagree_body());
-        assert!(
-            !body.contains("specifically node"),
-            "out-of-range selection adds no clause"
-        );
     }
 }

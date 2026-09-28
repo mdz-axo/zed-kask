@@ -30,8 +30,10 @@ You are building the outside view on an industry's business drivers: the framewo
 ## Company: {{ ticker }}
 ## Industry under study: {{ industry }}
 
-## Company self-view (COMPANY board)
+## Company self-view (the exact accepted COMPANY `company_board` object, not a paraphrased replacement)
 {{ company_board | tojson }}
+
+If this is a shortened reconstruction rather than the predecessor's actual complete object, do not treat the handoff as valid: report the missing board identity and request the original object before synthesizing company fit.
 
 ## Short extracts from outside-view sources
 {{ source_evidence | tojson }}
@@ -50,10 +52,10 @@ You are building the outside view on an industry's business drivers: the framewo
 Never admissible, and never searched: forum posts, Reddit, general web search results, search-engine answer boxes, and consultant or industry-association reports that are not themselves in tier 1–4 or cited by a tier-1–3 source. A source that bears on nothing about this industry's economics is not evidence: drop it without listing, classifying or counting it.
 
 In one bounded pass:
-1. Name the drivers of profitability and growth that the admissible sources identify for this industry: cost structure, capital intensity, pricing power, cyclicality, entry barriers, customer concentration, regulation and standards, technology substitution, working-capital norms. Give each driver its mechanism (how it moves margins, returns on capital or growth) and the source keys that state it. A driver supported by one source is `single_source`; by independent sources, `corroborated`; by sources that disagree, `contested`.
+1. Name only drivers whose mechanism is supported by an admissible source for the specified industry: cost structure, capital intensity, pricing power, cyclicality, entry barriers, customer concentration, regulation and standards, technology substitution, working-capital norms. A study from an adjacent category may supply a **bounded analogy to test**, not a measured driver of this industry or this company; label its source population and limitation in `industry_drivers`. Give each driver or analogy its mechanism and real source keys. A single applicable source is `single_source`; two studies of different populations or mechanisms do not automatically make `corroborated`; source disagreement is `contested`.
 2. List the self-regulatory organizations and standard-setting bodies you found for this industry, with what each governs and why it bears on the industry's economics (licensing, capacity rules, product standards, published industry statistics). Say `none found` when none was found; that is a gap, not a finding about the industry.
-3. For each driver, state whether the company's own statements show it, citing COMPANY board evidence: `shows`, `contradicts`, or `no evidence yet`. Prefer the Financial Signposts: gross margin stability, days payables minus days sales outstanding, and returns on capital against changes in invested capital.
-4. Record `frame_conflicts`: places where the company's self-description, or the market narrative, departs from how the outside sources explain the industry. These feed the Falstaffian rotation.
+3. For each driver, state whether period- and definition-matched company evidence shows the **mechanism itself**, citing the original source keys carried by the COMPANY board: `shows`, `contradicts`, or `no evidence yet`. Product presence, a premium label, 40% wholesale exposure or an overall gross margin does not by itself show brand preference, retailer price pass-through or manufacturer pricing power. If the outside study concerns another category and no corresponding company observation is held, use `no evidence yet` even when the company participates in that channel. Financial Signposts may challenge or support a matched mechanism, but DSO/DPO and a retailer's inventory description are not wholesale price observations.
+4. Record `frame_conflicts` only where a cited, applicable outside source and a cited company claim make incompatible assertions on the same mechanism and scope. Missing mechanism evidence is a question, not a discovered conflict. These conflicts feed the Falstaffian rotation.
 5. State what this outside view changes for the Falstaffian rotation, GORILLA's Obvious Problem and Choke Point, and the thesis's Business Franchise pillar and Risks, or "no supported change".
 
 Cite `source_evidence` by its citation key for every driver, body and conflict. An extract is a lead until checked against the source it was extracted from. Record in `excluded_sources` only admissible-looking candidates you rejected (for example an unresolvable DOI or a Substack below the subscriber floor) with the reason; do not list boilerplate or inadmissible source types. Record provider failures, empty tiers and unresolved identities in `data_gaps`. Never invent a driver, a citation or a subscriber count.

@@ -67,12 +67,19 @@ Use its verified quotes and checkpoint map for Self-View, Management Skill, stat
 {{ sources | default([]) | tojson }}
 ```
 
-Each record carries its citation key, the actual retrieved text or tool
-output, and known URL/date/period/unit/audit-status metadata. Distinguish
-retrieved original passages and audited filings from computed tool results
-and model-written prose by their audit status; tool transport does not make
-an answer a primary source. Cite citation keys and locators in claim_sources for every factual claim,
-including prose outside financial tables. Missing source records are data gaps.
+Each record carries its `citation_key`, the actual retrieved text or tool
+output, and known URL/date/period/unit/audit-status metadata. Before citing
+the fetched IR page or an original transcript, require its own keyed record
+in `sources` — a URL in `fetch_result` or an FMP passage is not a citation
+key. Every `claim_sources[].source_keys` member MUST match a held
+`sources[].citation_key`; otherwise name the missing source record in
+`data_gaps` and do not emit the unsupported claim. Match the cited passage's
+period, unit and qualification; a sentence copied from a combined digest
+is not a verbatim original. Distinguish retrieved original passages and
+audited filings from computed tool results and model-written prose by their
+audit status; tool transport does not make an answer a primary source.
+Cite the matched keys and locators for every factual claim, including prose
+outside financial tables.
 A computed valuation anchors what the tool calculated, not the truth of its
 assumptions. Retain provider warnings and distinguish audited annual statements
 from unaudited 10-Q interim statements. Forecast inputs are assumptions.
@@ -94,13 +101,13 @@ How does the company describe itself? Use the fetched original IR page and the m
 ### Part 3 — Management Skill
 
 - **CEO scorecard (long-term)**: 5-year track record on capital allocation, M&A, strategic direction
-- **CFO scorecard (working capital)**: DSO/DIO/DPO trends, cash conversion, balance sheet discipline
+- **CFO scorecard (working capital)**: DSO/DIO/DPO trends, cash conversion, balance sheet discipline. If the supplied audited, period-aligned revenue/COGS and receivables/inventory/payables permit it, consume the already computed signposts for DSO, DIO, DPO and DSO + DIO − DPO; distinguish audited inputs from the derived ending-balance estimates. Qualify fiscal-year length, seasonal balances and supplier financing in payables. Do not call DIO or the cycle unavailable when those inputs and computations exist; if a required input is absent, name it and leave the measure unknown.
 
-Use verbatim quotes from the transcript where available. If the transcript is empty, score conservatively and note the gap.
+Use verbatim quotes from the company-hosted corrected transcript where available; a provider transcript that differs from its original is not a quote source. If no original transcript is available, score conservatively and note the gap.
 
 ### Part 4 — Financial Profile
 
-- **Signposts**: the 3–5 metrics that matter most for this business (not generic EPS/revenue — the specific unit economics)
+- **Signposts**: the 3–5 metrics that matter most for this business (not generic EPS/revenue — the specific unit economics). Preserve each computed metric's denominator, fiscal period and source key; an available audited-input estimate is not an unavailable signpost or an audited ratio.
 - The valuation synthesis is not part of the board — THESIS consumes the valuation tool outputs directly. Note any valuation-tool failure in `data_gaps` so the THESIS assembly records the skip.
 
 ### Part 5 — Invisible Layer

@@ -114,14 +114,6 @@ impl KanbanMoveController {
         self.pending_move.as_ref()
     }
 
-    /// Take and clear the pending move without dispatching. Used by the
-    /// widget's `evaluate_move` path, which composes an evaluation request
-    /// from the pending move and then clears it so the user can't
-    /// double-evaluate (they re-stage to actually execute).
-    pub(crate) fn take_pending_move(&mut self) -> Option<PendingMove> {
-        self.pending_move.take()
-    }
-
     /// The task_id currently being moved, if a dispatch is in flight.
     pub(crate) fn dispatch_in_flight(&self) -> Option<&str> {
         self.dispatch_in_flight.as_deref()

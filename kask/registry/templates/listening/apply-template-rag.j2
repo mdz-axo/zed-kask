@@ -19,9 +19,8 @@ visibility: Public
 {# GENERATE quotes. A post-processing step verifies each cited substring #}
 {# is actually present in the referenced chunk. #}
 
+
 [inference]
-temperature = 0.2
-work_effort = "high"
 verbosity = "detailed"
 thinking_budget = "full"
 
@@ -59,7 +58,7 @@ The key horizon is the **seam between tactical and strategic** — 12 to 36 mont
 - **short_term_only** — no strategic-path linkage → `ignored_short_term`
 - **speculative_far** — >5y event claims → context only
 
-**Admissibility rule:** A claim enters a section verdict only if it is a seam_checkpoint, tactical_event, or strategic_context. The linkage, not the calendar date, is the bar. A checkpoint requires the source to state both the goal and how the event advances that goal; two nearby sentences about an event and a goal do not establish a link. A goal's `horizon_years` requires an explicit source time horizon: do not invent a year count from words such as "longer-term". With no explicit horizon or link, keep the text as unquantified context in the relevant evidence only; leave `strategic_goals`/`checkpoint_map` empty for it. A prior expectation and its delivery may inform management consistency without becoming a strategically linked checkpoint.
+**Admissibility rule:** A claim enters a section verdict only if it is a seam_checkpoint, tactical_event, or strategic_context. The linkage, not the calendar date, is the bar. A checkpoint requires the source to state both the goal and how the event advances that goal; two nearby sentences about an event and a goal do not establish a link. A current-year revenue guide or year-end count next to a long-term ambition is `short_term_only` when the source does not explicitly say how that event advances a named strategic goal: cite it under `horizon_summary.ignored_short_term`, not as verdict evidence. A five-year endpoint is a strategic goal, not a 12–36-month intermediate checkpoint. A goal's required numeric `horizon_years` needs an explicit source time horizon: do not invent a year count from words such as "longer-term"; omit the goal entry if no numeric horizon is stated. With no explicit horizon or link, keep other text as unquantified context in the relevant evidence only; leave `strategic_goals`/`checkpoint_map` empty for it. A prior expectation and its delivery may inform management consistency without becoming a strategically linked checkpoint.
 
 **Certainty levels:** `proximate` (≥67%), `probable` (33–66%), `possible` (<33%).
 
@@ -110,7 +109,7 @@ Use only these enum values: `verdict` = `corroborates`, `neutral`, or `contradic
 }
 ```
 
-When found, a section evidence item is `{"chunk_id":0,"quote":"exact substring of passage 0"}`. A checkpoint has `checkpoint`, `deadline_or_window`, `strategic_goal_link` (evidence item), `source_documents` (entity-ref strings), `certainty`, `status`, and `evidence` (evidence item). A strategic goal has `goal`, `horizon_years` (number), `moved_this_call` (one of the string values above), `source_document` (entity-ref string), and `evidence` (evidence item). An ignored short-term item has `claim`, `reason:"no_strategic_path_linkage"`, and `evidence`; a speculative far item has `claim`, `role:"context_only"`, and `evidence`. Every cited `chunk_id` must index the supplied passage whose `source` is the citation key; no claim becomes a verdict without its own verbatim evidence.
+When found, a section evidence item is `{"chunk_id":0,"quote":"exact substring of passage 0"}`. A checkpoint has `checkpoint`, `deadline_or_window`, `strategic_goal_link` (evidence item), `source_documents` (entity-ref strings), `certainty`, `status`, and `evidence` (evidence item). A strategic goal has `goal`, `horizon_years` (number), `moved_this_call` (one of the string values above), `source_document` (entity-ref string), and `evidence` (evidence item); do not emit a goal lacking `horizon_years` or substitute a boolean for `moved_this_call`. Every nonempty `ignored_short_term` entry MUST have exactly `{"claim":"source-stated claim","reason":"no_strategic_path_linkage","evidence":{"chunk_id":0,"quote":"verbatim source substring"}}`; every nonempty `speculative_far` entry MUST have exactly `{"claim":"source-stated claim","role":"context_only","evidence":{"chunk_id":0,"quote":"verbatim source substring"}}`. These are shape illustrations, **not** quotations to copy; if a required field or an explicit >5-year event horizon is unavailable, omit the item rather than returning a partial object. An undated ambition is not `speculative_far`. Before emitting a `neutral` section with empty `evidence`, scan all supplied passages against that section's `listen_for` topics; relevant inventory or channel-payment commentary belongs under `working_capital_power` as evidence even when it does not prove bargaining power. Every cited `chunk_id` must index the supplied passage whose `source` is the citation key; no claim becomes a verdict without its own verbatim evidence. A substring match proves only attribution, not the strategic causal link.
 
 ## Rules
 

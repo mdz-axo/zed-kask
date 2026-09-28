@@ -95,10 +95,6 @@ pub(crate) struct KanbanColumn {
 /// absent — never a silent drop) or discards it without any tool call. Only one
 /// move may be pending at a time (chips are disabled while pending).
 ///
-/// S9/R1: the struct lives in `move_controller.rs`; this re-export keeps the
-/// `view.rs` test module's references working.
-pub(crate) use crate::move_controller::PendingMove;
-
 /// The kanban widget view. Renders inline in agent markdown (via the D18 seam
 /// composed by `hkask-viz-core`).
 pub struct KanbanWidget {
@@ -118,12 +114,6 @@ pub struct KanbanWidget {
     /// `dispatch_in_flight`, `dispatch_error`, and `optimistic_move`. The
     /// widget delegates move lifecycle calls to it.
     pub(crate) move_controller: crate::move_controller::KanbanMoveController,
-    /// Composed revision request surfaced as a copyable draft when the
-    /// conversation injector is absent (no active conversation). Lets the user
-    /// still use the "I disagree" body even when it can't be injected. Cleared
-    /// when a successful inject fires (repo `.rules`: visible, not a silent
-    /// no-op).
-    disagree_draft: Option<String>,
     /// Task ids whose description is expanded ("See more" toggled). Per-card
     /// expand state so a long description can be revealed without affecting
     /// other cards.
@@ -164,14 +154,13 @@ impl KanbanWidget {
             provenance,
             focus_handle: cx.focus_handle(),
             move_controller: crate::move_controller::KanbanMoveController::new(),
-            disagree_draft: None,
             expanded_descriptions: HashSet::new(),
             detail_open: None,
         }
     }
 
     /// Update the board data from a new block body, preserving UI state
-    /// (pending moves, expanded descriptions, detail panel, disagree draft).
+    /// (pending moves, expanded descriptions, detail panel).
     ///
     /// When a move is in flight or pending, the columns are NOT updated — the
     /// optimistic move reflects the in-progress dispatch, and the next refresh
@@ -234,26 +223,10 @@ impl KanbanWidget {
             .gap_2()
             .items_center()
             .child(Label::new(self.board_name.clone()).size(LabelSize::Large))
-            // C: "I disagree" affordance — composes a provenance-scoped revision
-            // request back into the active conversation (D21). Board-level (one
-            // chip in the board header), not per-card.
-            .child(
-                div()
-                    .id("kanban-disagree")
-                    .cursor_pointer()
-                    .on_click(cx.listener(|this, _event, window, cx| {
-                        this.on_disagree_click(window, cx);
-                    }))
-                    .child(
-                        Label::new("I disagree")
-                            .size(LabelSize::XSmall)
-                            .color(Color::Accent),
-                    ),
-            )
     }
 
-    /// Render the dispatch-status banner: a Confirm/Cancel/Evaluate pair when
-    /// a move is pending, a Cancel button when a dispatch is in flight, or the
+    /// Render the dispatch-status banner: a Confirm/Cancel pair when a
+    /// move is pending, a Cancel button when a dispatch is in flight, or the
     /// dispatch error when set. Returns `None` when there is no dispatch state
     /// to show. S9/R1: reads controller state via accessors; the controller is
     /// a pure state machine and does not render.
@@ -304,19 +277,6 @@ impl KanbanWidget {
                                 Label::new("Cancel")
                                     .size(LabelSize::XSmall)
                                     .color(Color::Muted),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .id("kanban-evaluate-move")
-                            .cursor_pointer()
-                            .on_click(cx.listener(|this, _event, window, cx| {
-                                this.evaluate_move(window, cx);
-                            }))
-                            .child(
-                                Label::new("Evaluate")
-                                    .size(LabelSize::XSmall)
-                                    .color(Color::Accent),
                             ),
                     )
                     .into_any_element(),
@@ -855,108 +815,6 @@ impl KanbanWidget {
 
         Some(panel.into_any_element())
     }
-
-    /// Compose the provenance-scoped "I disagree" body. References the board's
-    /// name and the tool that produced the block so the agent can correlate the
-    /// revision request to the exact `kanban_task_list` result the widget
-    /// rendered. Falls back to a generic "the kanban board" framing when the
-    /// board name is empty (grill-me edge case c).
-    fn compose_disagree_body(&self) -> String {
-        let board_clause = if self.board_name.is_empty() {
-            String::new()
-        } else {
-            format!(" '{}'", self.board_name)
-        };
-        let tool = self
-            .provenance
-            .tool
-            .as_deref()
-            .unwrap_or("kanban_task_list");
-        // Reference the PKO concept when available so the agent can correlate
-        // the revision request to the ontology-anchored artifact.
-        let pko_clause = self
-            .columns
-            .iter()
-            .flat_map(|col| &col.tasks)
-            .find_map(|t| t.ontology.clone())
-            .map(|pko| format!(" [{pko}]"))
-            .unwrap_or_default();
-        format!(
-            "Re: the kanban board{board_clause} (via {tool}){pko_clause}.\n\
-             I believe a task's status or the board setup is incorrect. Please re-check the task states and ordering.\n\n\
-             My concern: "
-        )
-    }
-
-    /// The "I disagree" affordance handler (C). Composes the provenance-scoped
-    /// revision request and injects it back into the active conversation via
-    /// the kask `shared_injector()` (D21 widget→agent seam). When no
-    /// conversation is active, surfaces the composed body as a copyable draft
-    /// instead of a silent no-op (repo `.rules`). Never auto-sends when the
-    /// injector is absent — the production injector only pre-fills the
-    /// composer; the user reviews and submits.
-    /// The "I disagree" affordance handler (C). Composes the provenance-scoped
-    /// revision request and injects it back into the active conversation via
-    /// the kask `shared_injector()` (D21 widget→agent seam). When no
-    /// conversation is active, surfaces the composed body as a copyable draft
-    /// instead of a silent no-op (repo `.rules`). Never auto-sends when the
-    /// injector is absent — the production injector only pre-fills the
-    /// composer; the user reviews and submits.
-    fn on_disagree_click(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let body = self.compose_disagree_body();
-        self.compose_back(body, window, cx);
-    }
-
-    /// Shared compose-back seam (D21 widget→agent) for both the "I disagree"
-    /// affordance (C) and the "Evaluate" affordance (D — ghost edits). S10/R2:
-    /// delegates to `hkask_conversation_injector::compose_back_via_injector`,
-    /// which emits the `reg.widget.disagree` span, injects `body` into the
-    /// active conversation, and on a no-injector or inject-error path surfaces
-    /// `body` as a copyable `disagree_draft` (visible, not a silent no-op —
-    /// repo `.rules`). Never auto-sends when the injector is absent — the
-    /// production injector only pre-fills the composer; the user reviews and
-    /// submits.
-    fn compose_back(&mut self, body: String, window: &mut Window, cx: &mut Context<Self>) {
-        let widget = cx.entity().downgrade();
-        let draft = hkask_conversation_injector::compose_back_via_injector(
-            body,
-            window,
-            cx,
-            widget,
-            |this, draft| {
-                this.disagree_draft = draft;
-            },
-        );
-        self.disagree_draft = draft;
-        cx.notify();
-    }
-
-    /// Composes the evaluation request body for the ghost-edit affordance (D):
-    /// asks the agent to advise whether a staged move is safe — checking the
-    /// blocker DAG, dependencies, and task constraints — without executing it.
-    fn compose_evaluate_body(&self, pending: &PendingMove) -> String {
-        format!(
-            "Evaluate this proposed move: should task '{}' move from {} to {}?\n\
-             Check the blocker DAG, dependencies, and task constraints.\n\
-             Don't execute — just advise whether this move is safe and consistent.\n\n\
-             My reasoning: ",
-            pending.task_title, pending.from_label, pending.to_label
-        )
-    }
-
-    /// The "Evaluate" affordance handler (D — ghost edits). Composes an
-    /// evaluation request back to the agent via D21 compose-back: the agent
-    /// advises whether the staged move is safe without executing it, after
-    /// which the user re-stages and confirms or cancels. Clears the pending
-    /// move so the user can't double-evaluate; they re-stage if they want to
-    /// actually execute after the agent's evaluation comes back.
-    fn evaluate_move(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(pending) = self.move_controller.take_pending_move() {
-            let body = self.compose_evaluate_body(&pending);
-            self.compose_back(body, window, cx);
-            cx.notify();
-        }
-    }
 }
 
 /// Group tasks into columns by status, preserving the standard order and
@@ -1043,23 +901,6 @@ impl Render for KanbanWidget {
                 }),
             )
             .child(self.render_header(cx))
-            // Fallback draft (no active conversation): surface the composed body
-            // so the user can copy it into chat — visible, not a silent no-op
-            // (repo `.rules`).
-            .when_some(self.disagree_draft.clone(), |this, draft| {
-                this.child(
-                    div()
-                        .p_2()
-                        .rounded_md()
-                        .border_1()
-                        .border_color(border_color)
-                        .child(
-                            Label::new(draft)
-                                .size(LabelSize::XSmall)
-                                .color(Color::Warning),
-                        ),
-                )
-            })
             .children(self.render_dispatch_status(cx))
             .children(self.render_empty_state())
             .child(self.render_columns(cx))
@@ -1876,153 +1717,6 @@ mod tests {
         assert_eq!(pending.to_status, "in_progress");
     }
 
-    // ── "I disagree" compose-back affordance (C, D21) ──────────────────────
-    //
-    // Mirrors `hkask-portfolio-widget`'s disagree tests. These mutate the
-    // per-app `ConversationInjector` global (a separate global from
-    // `TOOL_INVOKER`), so they take `GLOBAL_TEST_LOCK` too. The per-app global
-    // drops with each test's `TestAppContext`, so no RAII reset guard is needed.
-
-    /// Records the body of every `inject` call. `Send + Sync` for the
-    /// `Arc<dyn ConversationInjector>` global.
-    #[derive(Default)]
-    struct MockConversationInjector {
-        bodies: std::sync::Mutex<Vec<String>>,
-    }
-
-    impl hkask_conversation_injector::ConversationInjector for MockConversationInjector {
-        fn inject(
-            &self,
-            body: String,
-            _window: &mut gpui::Window,
-            _cx: &mut gpui::App,
-        ) -> gpui::Task<Result<(), String>> {
-            self.bodies
-                .lock()
-                .unwrap_or_else(|error| error.into_inner())
-                .push(body);
-            gpui::Task::ready(Ok(()))
-        }
-    }
-
-    /// Trivial root view for `add_window_view` so the test can obtain a `Window`
-    /// for `on_disagree_click` without rendering `KanbanWidget` (which would
-    /// need a theme global this leaf crate's tests don't initialise). Renders a
-    /// bare `div()`.
-    struct DummyView;
-    impl Render for DummyView {
-        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-            div()
-        }
-    }
-
-    /// Single-board `KanbanBlockBody` named "Test" with dispatchable provenance
-    /// so `compose_disagree_body` references both the board name and the tool.
-    fn body_with_board_and_provenance() -> KanbanBlockBody {
-        let mut body = kanban_body(Vec::new());
-        body.provenance = dispatchable_provenance();
-        body
-    }
-
-    /// Like `body_with_board_and_provenance` but with tasks populated, for
-    /// move-dispatch tests that need dispatchable provenance.
-    fn body_with_board_and_provenance_with(tasks: Vec<TaskBody>) -> KanbanBlockBody {
-        let mut body = kanban_body(tasks);
-        body.provenance = dispatchable_provenance();
-        body
-    }
-
-    #[gpui::test]
-    async fn disagree_routes_through_injector(cx: &mut gpui::TestAppContext) {
-        let _guard = GLOBAL_TEST_LOCK
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
-        let mock = std::sync::Arc::new(MockConversationInjector::default());
-        cx.update(|cx| {
-            hkask_conversation_injector::set_active_injector(cx, Some(mock.clone()));
-        });
-
-        let body = body_with_board_and_provenance();
-        // Use a throwaway window root so we get a `Window` for `on_disagree_click`
-        // without rendering `KanbanWidget` (no theme global in these tests).
-        let (_dummy, cx) = cx.add_window_view(|_window, _cx| DummyView);
-        let widget = cx.update(|_window, cx| cx.new(|cx| KanbanWidget::new(body, cx)));
-        widget.update_in(cx, |widget, window, cx| {
-            widget.on_disagree_click(window, cx);
-        });
-        cx.run_until_parked();
-
-        let bodies = mock
-            .bodies
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .clone();
-        assert_eq!(bodies.len(), 1, "exactly one inject");
-        assert!(bodies[0].contains("Re:"), "body references the revision");
-        assert!(
-            bodies[0].contains("Test"),
-            "body references the board name from the block"
-        );
-        assert!(
-            bodies[0].contains("kanban_task_list"),
-            "body references the provenance tool"
-        );
-
-        // A successful inject clears the fallback draft.
-        let draft = widget.read_with(cx, |widget, _cx| widget.disagree_draft.clone());
-        assert!(draft.is_none(), "draft cleared after a successful inject");
-    }
-
-    #[gpui::test]
-    async fn disagree_surfaces_draft_when_no_injector(cx: &mut gpui::TestAppContext) {
-        let _guard = GLOBAL_TEST_LOCK
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
-        // Per-app global starts empty — no injector is wired by default.
-
-        let body = body_with_board_and_provenance();
-        let (_dummy, cx) = cx.add_window_view(|_window, _cx| DummyView);
-        let widget = cx.update(|_window, cx| cx.new(|cx| KanbanWidget::new(body, cx)));
-        widget.update_in(cx, |widget, window, cx| {
-            widget.on_disagree_click(window, cx);
-        });
-        cx.run_until_parked();
-
-        // No injector: the composed body is surfaced as a copyable draft
-        // (visible, not a silent no-op — repo `.rules`), and no panic.
-        let draft = widget.read_with(cx, |widget, _cx| widget.disagree_draft.clone());
-        let draft = draft.expect("draft surfaced when no injector is active");
-        assert!(draft.contains("Re:"), "draft carries the revision prefix");
-        assert!(draft.contains("Test"), "draft carries the board name");
-    }
-
-    #[gpui::test]
-    async fn disagree_body_falls_back_when_board_name_empty(cx: &mut gpui::TestAppContext) {
-        // grill-me edge case (c): empty board name → generic "the kanban board"
-        // framing (no empty quotes, no panic). `compose_disagree_body` is pure,
-        // so no window is needed.
-        let _guard = GLOBAL_TEST_LOCK
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
-
-        let empty = KanbanBlockBody {
-            viz: Some("kanban".into()),
-            board_id: Some("b1".into()),
-            board_name: Some(String::new()),
-            tasks: Vec::new(),
-            columns: Vec::new(),
-            provenance: BlockProvenance::default(),
-        };
-        let widget = cx.update(|cx| cx.new(|cx| KanbanWidget::new(empty, cx)));
-        let body = widget.read_with(cx, |widget, _cx| widget.compose_disagree_body());
-        assert!(
-            body.contains("Re: the kanban board (via"),
-            "empty board name falls back to the generic framing"
-        );
-        assert!(
-            !body.contains("''"),
-            "no empty-quoted board name in the fallback framing"
-        );
     }
 
     #[test]
@@ -2314,172 +2008,4 @@ mod tests {
         assert!(task.criteria.is_empty());
     }
 
-    #[gpui::test]
-    async fn disagree_body_includes_ontology_concept_when_present(cx: &mut gpui::TestAppContext) {
-        // When a task carries an ontology tag, the compose-back body references it
-        // so the agent can correlate the revision to the ontology-anchored
-        // artifact.
-        let _guard = GLOBAL_TEST_LOCK
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
-
-        let mut t = task("t1", "Write tests", "backlog");
-        t.ontology = Some("pko:Step".to_string());
-        let body = kanban_body(vec![t]);
-        let widget = cx.update(|cx| cx.new(|cx| KanbanWidget::new(body, cx)));
-        let body = widget.read_with(cx, |widget, _cx| widget.compose_disagree_body());
-        assert!(
-            body.contains("[pko:Step]"),
-            "compose-back body must reference the ontology concept: {body}"
-        );
-    }
-
-    // ── "Evaluate" ghost-edit affordance (D, D21) ──────────────────────────
-    //
-    // The Evaluate button (in the PendingMove confirm banner) composes an
-    // evaluation request back to the agent via the same `compose_back` seam as
-    // the disagree affordance (C), then clears the pending move so the user
-    // re-stages after the agent's advice comes back. Shares
-    // `MockConversationInjector` / `DummyView` with the disagree tests above.
-
-    #[gpui::test]
-    async fn evaluate_move_composes_evaluation_request(cx: &mut gpui::TestAppContext) {
-        let _guard = GLOBAL_TEST_LOCK
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
-        let mock = std::sync::Arc::new(MockConversationInjector::default());
-        cx.update(|cx| {
-            hkask_conversation_injector::set_active_injector(cx, Some(mock.clone()));
-        });
-
-        let body = kanban_body(vec![task("t1", "Write tests", "backlog")]);
-        let (_dummy, cx) = cx.add_window_view(|_window, _cx| DummyView);
-        let widget = cx.update(|_window, cx| cx.new(|cx| KanbanWidget::new(body, cx)));
-        widget.update(cx, |this, cx| {
-            this.stage_move(
-                "t1".into(),
-                "Write tests".into(),
-                "Backlog".into(),
-                "ready".into(),
-                "Ready".into(),
-                cx,
-            );
-        });
-        widget.update_in(cx, |this, window, cx| {
-            this.evaluate_move(window, cx);
-        });
-        cx.run_until_parked();
-
-        let bodies = mock
-            .bodies
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .clone();
-        assert_eq!(bodies.len(), 1, "exactly one inject");
-        assert!(
-            bodies[0].contains("Evaluate this proposed move"),
-            "body carries the evaluation framing"
-        );
-        assert!(
-            bodies[0].contains("Write tests"),
-            "body references the task title"
-        );
-        assert!(
-            bodies[0].contains("Backlog"),
-            "body references the from label"
-        );
-        assert!(bodies[0].contains("Ready"), "body references the to label");
-
-        // evaluate_move clears the pending move (no double-evaluate).
-        let pending_is_none = widget.read_with(cx, |this, _cx| {
-            this.move_controller.pending_move().is_none()
-        });
-        assert!(pending_is_none, "evaluate_move clears the pending move");
-    }
-
-    #[gpui::test]
-    async fn evaluate_move_noop_when_no_pending(cx: &mut gpui::TestAppContext) {
-        let _guard = GLOBAL_TEST_LOCK
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
-        let mock = std::sync::Arc::new(MockConversationInjector::default());
-        cx.update(|cx| {
-            hkask_conversation_injector::set_active_injector(cx, Some(mock.clone()));
-        });
-
-        let body = kanban_body(Vec::new());
-        let (_dummy, cx) = cx.add_window_view(|_window, _cx| DummyView);
-        let widget = cx.update(|_window, cx| cx.new(|cx| KanbanWidget::new(body, cx)));
-        // No stage_move: pending_move is None.
-        widget.update_in(cx, |this, window, cx| {
-            this.evaluate_move(window, cx);
-        });
-        cx.run_until_parked();
-
-        let bodies = mock
-            .bodies
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .clone();
-        assert!(
-            bodies.is_empty(),
-            "no inject when no pending move is staged"
-        );
-        let draft = widget.read_with(cx, |this, _cx| this.disagree_draft.clone());
-        assert!(
-            draft.is_none(),
-            "disagree_draft unchanged when no pending move"
-        );
-        let pending_is_none = widget.read_with(cx, |this, _cx| {
-            this.move_controller.pending_move().is_none()
-        });
-        assert!(pending_is_none, "pending_move remains None");
-    }
-
-    #[gpui::test]
-    async fn evaluate_move_surfaces_draft_when_no_injector(cx: &mut gpui::TestAppContext) {
-        let _guard = GLOBAL_TEST_LOCK
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
-        // Per-app global starts empty — no injector is wired by default.
-
-        let body = kanban_body(vec![task("t1", "Write tests", "backlog")]);
-        let (_dummy, cx) = cx.add_window_view(|_window, _cx| DummyView);
-        let widget = cx.update(|_window, cx| cx.new(|cx| KanbanWidget::new(body, cx)));
-        widget.update(cx, |this, cx| {
-            this.stage_move(
-                "t1".into(),
-                "Write tests".into(),
-                "Backlog".into(),
-                "ready".into(),
-                "Ready".into(),
-                cx,
-            );
-        });
-        widget.update_in(cx, |this, window, cx| {
-            this.evaluate_move(window, cx);
-        });
-        cx.run_until_parked();
-
-        // No injector: the evaluation body is surfaced as a copyable draft
-        // (visible, not a silent no-op — repo `.rules`), and the pending move
-        // is still cleared.
-        let draft = widget.read_with(cx, |this, _cx| this.disagree_draft.clone());
-        let draft = draft.expect("draft surfaced when no injector is active");
-        assert!(
-            draft.contains("Evaluate"),
-            "draft carries the evaluation framing"
-        );
-        assert!(
-            draft.contains("Write tests"),
-            "draft carries the task title"
-        );
-        let pending_is_none = widget.read_with(cx, |this, _cx| {
-            this.move_controller.pending_move().is_none()
-        });
-        assert!(
-            pending_is_none,
-            "evaluate_move clears pending even with no injector"
-        );
-    }
 }
