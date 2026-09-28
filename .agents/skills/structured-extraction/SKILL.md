@@ -80,7 +80,3 @@ To render a template, call the `render_template` tool with the template ref (e.g
 
 ## Constraints
 
-- `extract-relations.j2`: Public.
-- `identify-entities.j2`: Public.
-- `map-to-schema.j2`: Public.
-- This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

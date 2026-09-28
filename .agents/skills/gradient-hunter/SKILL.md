@@ -141,4 +141,3 @@ Template context variables (from each template's [inference] contract):
 - The intake expectation is a one-question checkpoint for consequential uncertainty, not an open-ended research license; when evidence agrees, return to the task rather than looking for a more entertaining anomaly.
 - The fractal recurrence check is mandatory.
 - Do not collapse the eight ontologies into one — each shape implies a different intervention.
-- This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

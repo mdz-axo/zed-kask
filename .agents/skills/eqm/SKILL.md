@@ -196,7 +196,6 @@ Template context variables (from each template's [inference] contract):
 
 ## Constraints
 
-- All flow templates have Public visibility.
 - Maximum 10 bounded measurement requests; the Improve loop stops at 8 re-score/rewrite iterations or sooner on per-marker target attainment or a supported gaming signal.
 - The Improve loop preserves the forecast probability and never fabricates evidence; each prediction names a specific intervention and marker.
 - The convergence decision is deterministic (lisp_eval compute step) — no LLM convergence-check template.

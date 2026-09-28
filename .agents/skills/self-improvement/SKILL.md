@@ -424,19 +424,8 @@ To render a template, call the `render_template` tool with the template ref (e.g
 
 ## Constraints
 
-- `si-select-pathway.j2`: Public.
 - `si-execute-improvement.j2`: Public (router only — delegates to sub-pathway templates).
-- `si-exec-fm-demos.j2`: Public.
-- `si-exec-fm-feedback.j2`: Public.
-- `si-exec-fm-experience.j2`: Public.
-- `si-exec-scaffold-prompt.j2`: Public.
-- `si-exec-scaffold-memory.j2`: Public.
-- `si-exec-scaffold-tool.j2`: Public.
-- `si-exec-scaffold-full.j2`: Public.
-- `si-evaluate-improvement.j2`: Public.
-- `si-propose-or-discard.j2`: Public.
 
-- This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.
 - Default pathway is Scaffolding Improvement (Σ) unless FM fine-tuning is explicitly permitted.
 - No durable change is committed by the executing session. A candidate that passes the deterministic gate becomes a card on **Algedonic review**; only the operator in the gemba walk accepts it. No proposal files or dated review notes.
 - The configuration in use stays unchanged until the operator accepts a proposal, so no rollback of self-applied changes is needed.

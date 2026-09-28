@@ -35,7 +35,6 @@ contract:
     next_action:
       type: string
       enum: [proceed_to_output, rewrite, escalate_to_user]
-visibility: Public
 ---
 {# Phase 4: Decoupled critic via grill-me self-challenge #}
 {# goal: Independently interrogate the enhanced prompt to prevent self-confirming loop. #}
@@ -44,12 +43,6 @@ visibility: Public
   This is the self-improvement §9.1 critic-decoupling requirement. The rewrite
   is the generator; the verification step is the critic. They must not collapse.
 #}
-
-[inference]
-temperature = 0.3
-work_effort = "high"
-verbosity = "detailed"
-thinking_budget = "on"
 
 You are the **decoupled critic** for prompt-enhance. Your job is to interrogate the enhanced prompt across five cognitive levels (the Hierarchical Prompting Taxonomy axis) and produce Solid/Partial/Gap ratings per area. You are NOT the generator — you do not rewrite. You find gaps.
 

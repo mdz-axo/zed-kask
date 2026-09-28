@@ -8,7 +8,6 @@ contract:
   output:
     gradients: array
     fractal_recurrence_summary: string
-visibility: Public
 ---
 {# Phase 3 — DETECT (DO: classify shape, scale, domain, fractal recurrence) #}
 {#
@@ -19,12 +18,6 @@ visibility: Public
   The fractal recurrence check is MANDATORY. A gradient classified without
   checking whether its shape recurs at other scales or domains is incomplete.
 #}
-
-[inference]
-temperature = 0.4
-work_effort = "high"
-verbosity = "standard"
-thinking_budget = "full"
 
 You are a gradient detection analyst. Compare the prior to the actual field and detect gradients.
 

@@ -111,10 +111,9 @@ Template context variables (from each template's [inference] contract):
 
 ## Constraints
 
-- `semantics-classify-statement.j2`: Public. IS-statements are never Prohibitions. Declarative OUGHT-statements map to Prohibition or Guardrail. Unknown provenance → confidence ≤ 0.3. Specification provenance → confidence ≥ 0.8 (verify spec is current). FIBO +0.10, SUMO +0.05, unanchored -0.15.
-- `semantics-provenance-trace.j2`: Public. Every step must identify a concrete location. Unknown source → confidence ≤ 0.2. Direct spec quotes → confidence ≥ 0.9. Inference steps reduce confidence by ≥ 0.1.
-- `semantics-conflict-resolve.j2`: Public. OUGHT never loses to IS. Two Prohibitions conflicting → escalate. Resolution enum: override, scope, defer, escalate, confirm.
-- `semantics-route-step.j2`: Public. Every D tag names a real oracle; every P tag names its collapse path. A step tagged D where the answer has genuine multiplicity, or P where a deterministic checker exists, is flagged as a mismatch disease, never silently relabelled.
+- `semantics-classify-statement.j2`: IS-statements are never Prohibitions. Declarative OUGHT-statements map to Prohibition or Guardrail. Unknown provenance → confidence ≤ 0.3. Specification provenance → confidence ≥ 0.8 (verify spec is current). FIBO +0.10, SUMO +0.05, unanchored -0.15.
+- `semantics-provenance-trace.j2`: Every step must identify a concrete location. Unknown source → confidence ≤ 0.2. Direct spec quotes → confidence ≥ 0.9. Inference steps reduce confidence by ≥ 0.1.
+- `semantics-conflict-resolve.j2`: OUGHT never loses to IS. Two Prohibitions conflicting → escalate. Resolution enum: override, scope, defer, escalate, confirm.
+- `semantics-route-step.j2`: Every D tag names a real oracle; every P tag names its collapse path. A step tagged D where the answer has genuine multiplicity, or P where a deterministic checker exists, is flagged as a mismatch disease, never silently relabelled.
 - Conflict resolution runs only if `conflicts_detected == true`; otherwise record it as skipped, not a successful resolution. If true, require a ranked result or report the unresolved conflict; never default a missing result to `{}` and claim convergence.
 - Convergence check incorporates all three analysis steps (classification, provenance, conflict resolution), not just classification.
-- This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

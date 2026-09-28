@@ -295,7 +295,6 @@ All MCP tool calls are called directly (deterministic, governed, testable). See 
 
 ## Constraints
 
-- This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.
 - Every perspective runs on every report; none is skipped, deferred or bypassed. A perspective that cannot establish its observations records its limitation in the report.
 - Every report carries a stages_run manifest listing each stage as run or skipped-with-reason; a skipped stage is labelled "stage skipped (flagged)" and never reads as a clean result.
 - MCP tool failures must not collapse to None. Templates emit `data_gaps` entries naming the failed tool.

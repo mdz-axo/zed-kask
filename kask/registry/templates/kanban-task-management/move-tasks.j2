@@ -8,14 +8,7 @@ contract:
   output:
     transitions: array
     blocked_moves: array
-visibility: Public
 ---
-
-[inference]
-temperature = 0.1
-work_effort = "medium"
-verbosity = "concise"
-thinking_budget = "off"
 
 {% if triage_phase and triage_phase != 'operate' %}
 This step is not active for the current phase ({{ triage_phase }}). Return:

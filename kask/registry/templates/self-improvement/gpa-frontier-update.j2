@@ -10,7 +10,6 @@ contract:
     dominated: array
     new_members: array
     frontier_notes: string
-visibility: Public
 ---
 {# Step 5: Update Pareto Frontier #}
 {# goal: Keep non-dominated variants, prune dominated members. #}
@@ -22,12 +21,6 @@ visibility: Public
   Frontier size is capped by frontier_size; if exceeded, prune by crowding
   distance (keep the most diverse frontier members).
 #}
-
-[inference]
-temperature = 0.1
-work_effort = "medium"
-verbosity = "terse"
-thinking_budget = "off"
 
 You are a Pareto frontier updater for GEPA evolutionary optimization. Your job: merge the current frontier with newly tested variants, then keep only the non-dominated members.
 

@@ -142,4 +142,3 @@ Template context variables (from each template's [inference] contract):
 
 ## Constraints
 
-- This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

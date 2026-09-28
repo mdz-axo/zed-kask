@@ -17,15 +17,8 @@ contract:
     edges: array
     source_ref: string
     match_notes: string
-visibility: Public
 ---
 {# Replaces the old classify + gather two-step with a single example-anchored match #}
-
-[inference]
-temperature = 0.2
-work_effort = "medium"
-verbosity = "focused"
-thinking_budget = "off"
 
 {% include 'sankey-flow/sankey-examples.j2' %}
 

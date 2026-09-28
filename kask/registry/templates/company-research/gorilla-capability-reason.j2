@@ -12,7 +12,6 @@ contract:
     maturity_blocks: array
     maintained: array
     rationale: string
-visibility: Public
 ---
 {# goal: Test the GORILLA 4-dim scores against capability floor, ceiling and maturity-gate limits. Types each GORILLA dimension (Obvious Problem, Invisible Gorilla, Combinatorial Solution, Choke Point) against a capability registry with floor, ceiling, and maturity-gate limits. The GORILLA score (0–100) is the elicited potential; the capability assessment determines whether that score is credible against the company's observed behavior and maturity. #}
 {# #}
@@ -20,12 +19,6 @@ visibility: Public
 {# the dimensions — the gorilla-4dim template already did that. It #}
 {# evaluates whether the scores are *defensible* given the company's #}
 {# capability maturity, and flags floor/ceiling/maturity violations. #}
-
-[inference]
-temperature = 0.3
-work_effort = "medium"
-verbosity = "standard"
-thinking_budget = "full"
 
 You are evaluating whether the GORILLA scores are defensible against the company's capability maturity and execution track record. Your default posture is skepticism — a high score is a claim that requires evidence, not a default to be maintained.
 

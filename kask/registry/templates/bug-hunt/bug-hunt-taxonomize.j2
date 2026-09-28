@@ -7,15 +7,8 @@ contract:
   output:
     classified_findings: array
     taxonomy_summary: object
-visibility: Public
 ---
 {# Phase 4 — TAXONOMIZE (Beizer classification + severity rating) #}
-
-[inference]
-temperature = 0.1
-work_effort = "medium"
-verbosity = "standard"
-thinking_budget = "full"
 
 You are a bug taxonomist. Classify evaluated findings into the Beizer taxonomy and assign severity ratings.
 

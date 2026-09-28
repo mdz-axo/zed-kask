@@ -7,13 +7,7 @@ contract:
     escalation_candidates: array
   output:
     escalations: array
-visibility: Public
 ---
-
-[inference]
-temperature = 0.1
-work_effort = "high"
-verbosity = "concise"
 
 {% if triage_phase and triage_phase != 'operate' %}
 This step is not active for the current phase ({{ triage_phase }}). Return:

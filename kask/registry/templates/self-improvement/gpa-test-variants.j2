@@ -9,7 +9,6 @@ contract:
   output:
     tested_variants: array
     test_notes: string
-visibility: Public
 ---
 {# Step 4: Test Variants #}
 {# goal: Aggregate the recorded executions of each mutated artifact against the eval set into per-objective scores and cost; never estimate a score for a run that was not recorded. #}
@@ -18,12 +17,6 @@ visibility: Public
   This is the most inference-intensive step — each variant must be executed
   against the full eval set. Only artifact_type "prompt" is implemented in v1.
 #}
-
-[inference]
-temperature = 0.1
-work_effort = "medium"
-verbosity = "terse"
-thinking_budget = "off"
 
 You are a variant tester for GEPA evolutionary optimization. Your job: aggregate the RECORDED runs of each variant (produced by a real executor and scored by the eval set's evaluator) into per-objective scores. You do not run prompts yourself and you never estimate how a prompt would score; a variant with no recorded runs gets no scores and is listed in test_notes as unverified.
 

@@ -615,8 +615,6 @@ single-pass by design and verifies against provided sources only.
 
 ## Constraints
 
-- This SKILL.md body is the authoritative methodology. Jinja2 templates
-  in the registry are structured reference versions of the same content.
 - The provenance vocabulary is a closed set: `tool_verified`,
   `platform_derived`, `model_inference`, `unavailable`, `tool_no_match`,
   `pending_check`, `rejected`. The Step 2 validation call counts

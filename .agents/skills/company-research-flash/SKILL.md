@@ -215,7 +215,6 @@ All MCP tool calls are called directly (deterministic, governed, testable). See 
 
 ## Constraints
 
-- This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.
 - MCP tool failures must not collapse to None. Templates emit `data_gaps` entries naming the failed tool.
 - No `unwrap_or(0)` on regulation signals. Missing LENS verdict surfaces as 1.0 (worst case), not silently converged.
 - Reports are written as markdown files to `~/Documents/zk-data/companies-mcp/reports/` via `terminal` (see persist-report — never the source tree or the hidden internal data dir).

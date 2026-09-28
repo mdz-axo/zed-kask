@@ -9,7 +9,6 @@ contract:
   output:
     trajectories: array
     sampling_notes: string
-visibility: Public
 ---
 {# Step 1: Sample Trajectories #}
 {# goal: Assemble trajectories for the target artifact (or frontier members) from recorded executions against its eval set, with evaluator scores; never simulate an execution. #}
@@ -20,12 +19,6 @@ visibility: Public
   from frontier members (the current non-dominated variants).
   Only artifact_type "prompt" is implemented in v1.
 #}
-
-[inference]
-temperature = 0.1
-work_effort = "medium"
-verbosity = "terse"
-thinking_budget = "off"
 
 You are a trajectory sampler for GEPA evolutionary optimization. Your job: assemble trajectories from recorded_runs - real executions of the target artifact (or frontier members) against its eval set, scored by the eval set's evaluator. Never simulate a completion or estimate a score; an eval input with no recorded run is listed in sampling_notes as missing.
 

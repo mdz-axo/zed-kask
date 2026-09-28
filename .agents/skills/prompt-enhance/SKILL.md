@@ -124,13 +124,11 @@ To render a template, call the `render_template` tool with the template ref (e.g
 
 ## Constraints
 
-- All templates are prompt templates with `Public` visibility.
 - Default effort is `medium`; default output_format is `inline`.
 - First-pass success closes immediately; at most one focused corrective rewrite and recheck. Low effort remains `skipped` by the independent critic.
 - Verify step is decoupled from the rewrite step (self-improvement §9.1).
 - Hypothesis-tier findings are never mutated — always deferred for user verification.
 - Step conditions use a condition check (the step runs when the condition is true).
-- This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.
 
 ## Relationship to Other Skills
 

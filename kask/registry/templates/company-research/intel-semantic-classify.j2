@@ -8,7 +8,6 @@ contract:
     semantic_tags: array
     certainty_drift_risk: string
     rationale: string
-visibility: Public
 ---
 {# goal: Adapt pragmatic-semantics/semantics-classify-statement to the INTEL mosaic. Classify every news_item and hypothesis by ontological mode (IS/OUGHT), epistemic mode (declarative/probabilistic/subjunctive), constraint force, and provenance — BEFORE downstream steps consume the intel. Prevents certainty-level drift: a management quote treated as an ontological fact, a scenario treated as a forecast. #}
 {# #}
@@ -16,12 +15,6 @@ visibility: Public
 {# re-implement the classifier — it batches the intel items into statements #}
 {# and emits per-item tags that downstream templates (forensic, critical- #}
 {# factor, valuation) can consume via intel_bundle.semantic_tags. #}
-
-[inference]
-temperature = 0.2
-work_effort = "medium"
-verbosity = "standard"
-thinking_budget = "off"
 
 You are a pragmatic-semantics classifier applied to an equity-research intel mosaic. Your job is to tag every news item and hypothesis in the intel bundle with its certainty classification, so downstream agents (FORENSIC, CRITICAL FACTOR, VALUATION) do not collapse IS/OUGHT/subjunctive distinctions.
 

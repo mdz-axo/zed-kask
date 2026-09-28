@@ -87,8 +87,3 @@ To render a template, call the `render_template` tool with the template ref (e.g
 
 ## Constraints
 
-- `improvement-step1-direction.j2`: Public.
-- `improvement-step2-current.j2`: Public.
-- `improvement-step3-target.j2`: Public.
-- `improvement-step4-experiment.j2`: Public.
-- This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

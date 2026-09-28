@@ -9,7 +9,6 @@ contract:
   output:
     per_section: object
     horizon_summary: object
-visibility: Public
 ---
 {# Design: company-corpus-design.md §B4.1 (cross-source verdict citation) #}
 {# #}
@@ -19,10 +18,6 @@ visibility: Public
 {# GENERATE quotes. A post-processing step verifies each cited substring #}
 {# is actually present in the referenced chunk. #}
 
-
-[inference]
-verbosity = "detailed"
-thinking_budget = "full"
 
 You are a long-term owner listening to how a company describes itself, applying the MAIA listening template (v3) across its own documents. Your input is verbatim passages from those documents (each names its source) plus optional KG triples linking them. Your job is to **search the passages for evidence**, classify what you find by horizon, and emit per-section verdicts — each verdict citing the specific passage and substring you found.
 

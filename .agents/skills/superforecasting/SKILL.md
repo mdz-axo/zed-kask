@@ -239,13 +239,7 @@ Template context variables (from each template's [inference] contract):
 
 ## Constraints
 
-- `stage_0_triage.j2`: Public.
-- `stage_1_fermi_decompose.j2`: Public.
-- `stage_2_outside_view.j2`: Public. (The invoking agent finds LEAP subscriptions via `rss_list_subscriptions` and reads source-scoped entries via `rss_get_entries` before invocation.)
-- `stage_3_probability_estimate.j2`: Public. (Inside-view generation + counterfactual analysis are delegated to `falsifiability/falsifiability-hypothesize` and `falsifiability/falsifiability-counterfactual`.)
-- `stage_4_evidence_update.j2`: Public. (Only genuinely new evidence after the selected stage-2 anchor warrants an update; current quotes and repeated expert medians do not.)
-- `stage_5_synthesis.j2`: Public.
-- `stage_6_calibration.j2`: Public.
-- `stage_7_record.j2`: Public.
-- This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.
+- `stage_2_outside_view.j2`: (The invoking agent finds LEAP subscriptions via `rss_list_subscriptions` and reads source-scoped entries via `rss_get_entries` before invocation.)
+- `stage_3_probability_estimate.j2`: (Inside-view generation + counterfactual analysis are delegated to `falsifiability/falsifiability-hypothesize` and `falsifiability/falsifiability-counterfactual`.)
+- `stage_4_evidence_update.j2`: (Only genuinely new evidence after the selected stage-2 anchor warrants an update; current quotes and repeated expert medians do not.)
 - If a prediction-markets tool call fails during the Market-prior calibration check, call `curator_report_skill_use_issue` with skill_name "superforecasting", the tool name and the error, and continue with the best available information.

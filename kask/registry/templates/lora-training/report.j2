@@ -18,14 +18,7 @@ contract:
     input_contract_errors: array
     host: string
     source_citations: array
-visibility: Public
 ---
-[inference]
-temperature = 0.1
-work_effort = "high"
-verbosity = "terse"
-thinking_budget = "full"
-
 {# Consume unchanged findings; computed readiness is supplied separately. #}
 
 INPUT: findings = {{ findings | tojson }} (normalized array from audit-config)

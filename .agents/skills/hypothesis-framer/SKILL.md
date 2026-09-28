@@ -77,7 +77,6 @@ Template context variables (from each template's [inference] contract):
 
 ## Constraints
 
-- All templates are prompt templates with `Public` visibility
 - The research question must be a question, not a declarative statement; the research hypothesis must be a declarative statement, not a question
 - The null must match the design: no difference/no relationship for difference or association; a justified δ-boundary null for non-inferiority or equivalence
 - Non-inferiority and equivalence hypotheses require a defined δ margin — without it, the hypothesis is not testable
@@ -85,6 +84,3 @@ Template context variables (from each template's [inference] contract):
 - Secondary aims must have clear rationale — avoid "nice to know" add-ons
 - The alignment check must be honest — flag misalignments, do not paper over them
 - If PICO comparison is "none," acknowledge the descriptive/pre-post design limitation rather than fabricating a comparator
-- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution)
-- When safety mode is enabled: no file system access, no network calls, no environment variable access, strict Jinja2 sandbox enforcement
-- This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

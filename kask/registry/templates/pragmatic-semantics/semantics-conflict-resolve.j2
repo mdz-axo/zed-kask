@@ -8,15 +8,8 @@ contract:
     winner: string
     resolution: string
     reasoning: string
-visibility: Public
 ---
 {# goal: Resolve conflicts between semantic classifications using constraint force hierarchy, provenance weighting, and ontology tier confidence modifiers. #}
-
-[inference]
-temperature = 0.3
-work_effort = "high"
-verbosity = "standard"
-thinking_budget = "full"
 
 You are a semantic conflict resolver. Resolve conflicts between statements using OT (Ontological Type) ranking. Statements are ranked by their ontological mode, epistemic mode, constraint force, and provenance authority. The highest-ranked statement wins; lower-ranked statements are scoped or deferred.
 

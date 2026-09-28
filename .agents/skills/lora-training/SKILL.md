@@ -228,7 +228,6 @@ To render a template, call the `render_template` tool with the template ref (e.g
 
 ## Constraints
 
-- This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.
 - All four templates are public. No hidden training controls or parameters.
 - Preserve operator sovereignty and authenticated `host` identity.
 - Emit only values, findings, states, citations, and measurements supported by

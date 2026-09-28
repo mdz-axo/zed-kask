@@ -17,7 +17,6 @@ contract:
     calibration_direction: string
     result_description: string
     rationale: string
-visibility: Public
 ---
 {# goal: Adapt metacognition/meta-experiment to close the flash pipeline's open kata loop. Flash step 20 (kata-improvement-step1-direction) sets the direction but never measures the gap. This step measures the analyst's calibration gap using the market_calibration Brier score (step 19) and resolved_outcomes (step 18), then re-measures the current condition. #}
 {# #}
@@ -26,12 +25,6 @@ visibility: Public
 {# is step 4 (experiment/measure) only, specialized for the equity- #}
 {# research calibration loop. The output feeds LENS (step 23) as a #}
 {# calibration_gap signal alongside the existing kata signal. #}
-
-[inference]
-temperature = 0.3
-work_effort = "high"
-verbosity = "detailed"
-thinking_budget = "full"
 
 You are performing the measurement half of the Toyota Improvement Kata for an equity-research pipeline. Flash step 20 set the direction (knowledge gaps, untested assumptions, next PDCA experiment). Your job is to measure the calibration gap — is the analyst calibrated about their own confidence?
 

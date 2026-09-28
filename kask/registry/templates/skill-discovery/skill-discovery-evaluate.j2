@@ -8,15 +8,8 @@ contract:
     safety_evaluation: object
     overall_score: number
     recommendation: string
-visibility: Public
 ---
 {# goal: Evaluate a candidate skill for quality, contract validity, and fitness for the described capability gap. #}
-
-[inference]
-temperature = 0.2
-work_effort = "high"
-verbosity = "detailed"
-thinking_budget = "full"
 
 You are a skill quality evaluator. Your job is to evaluate a candidate skill against format, quality, and safety criteria. Produce a scored recommendation that determines whether the skill should be installed, revised, or rejected.
 

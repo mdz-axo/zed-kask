@@ -12,7 +12,6 @@ contract:
     review: object
     lessons_learned: array
     next_review_focus: string
-visibility: Public
 ---
 {# Phase 4 — REPORT (Fagan outputs: verdict + remedies + follow-up signals) #}
 {#
@@ -21,12 +20,6 @@ visibility: Public
   problem). Coverage honesty is mandatory — never a bare "LGTM". Emits
   lessons_learned + next_review_focus to close the feedback loop.
 #}
-
-[inference]
-temperature = 0.1
-work_effort = "medium"
-verbosity = "standard"
-thinking_budget = "full"
 
 You are a code review reporter. Synthesize the adjudicated findings into a
 structured review. The review is REVIEW-FIRST — do not implement changes; that

@@ -81,8 +81,7 @@ Template context variables (from each template's [inference] contract):
 
 ## Constraints
 
-- `cybernetics-analyze-loop.j2`: Public. Every property assessment must be grounded in evidence. Broken/none property → broken loop. Remediation must name specific mechanisms. No external monitoring stacks (Prometheus, Grafana) — hKask is headless.
-- `cybernetics-variety-check.j2`: Public. Every recommendation must reference a concrete hKask mechanism. Algedonic thresholds follow the runtime rule (`RuntimeAlert::new`, `hkask-regulation/src/algedonic.rs`): Warning when deficit > threshold/2, Critical when deficit > threshold; the deficit is counted in distinct classes. Critical status requires explicit escalation directive.
-- `cybernetics-vsm-map.j2`: Public. Every component maps to exactly one primary subsystem. Missing/blocked algedonic channel (S1 → S5) → unviable (non-negotiable). S4 must have spec-drift detection. S5 must reference Magna Carta principles.
+- `cybernetics-analyze-loop.j2`: Every property assessment must be grounded in evidence. Broken/none property → broken loop. Remediation must name specific mechanisms. No external monitoring stacks (Prometheus, Grafana) — hKask is headless.
+- `cybernetics-variety-check.j2`: Every recommendation must reference a concrete hKask mechanism. Algedonic thresholds follow the runtime rule (`RuntimeAlert::new`, `hkask-regulation/src/algedonic.rs`): Warning when deficit > threshold/2, Critical when deficit > threshold; the deficit is counted in distinct classes. Critical status requires explicit escalation directive.
+- `cybernetics-vsm-map.j2`: Every component maps to exactly one primary subsystem. Missing/blocked algedonic channel (S1 → S5) → unviable (non-negotiable). S4 must have spec-drift detection. S5 must reference Magna Carta principles.
 - Convergence check incorporates all three analysis steps (loop analysis, variety assessment, VSM mapping), not just loop analysis alone — defined in the Convergence section above.
-- This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

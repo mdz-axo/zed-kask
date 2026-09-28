@@ -120,8 +120,3 @@ To render a template, call the `render_template` tool with the template ref (e.g
 
 ## Constraints
 
-- `identify-criteria.j2`: Public.
-- `rank-alternatives.j2`: Public.
-- `sensitivity-analysis.j2`: Public.
-- `weight-and-score.j2`: Public.
-- This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

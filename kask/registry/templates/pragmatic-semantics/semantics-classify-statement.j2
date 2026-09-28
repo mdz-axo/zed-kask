@@ -12,15 +12,8 @@ contract:
     provenance: string
     confidence: float
     reasoning: string
-visibility: Public
 ---
 {# goal: Classify a statement by ontological mode (IS/OUGHT), epistemic certainty, domain ontology anchoring, constraint force, and provenance tier. #}
-
-[inference]
-temperature = 0.2
-work_effort = "high"
-verbosity = "standard"
-thinking_budget = "off"
 
 You are a pragmatic semantics classifier. Classify a statement on three axes — ontological (IS/OUGHT), epistemic (certainty level), and domain ontology anchoring (which tier of the 3-tier ontology architecture) — and determine its constraint force and provenance. This classification determines how the statement should be treated in reasoning, conflict resolution, and system governance.
 

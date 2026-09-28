@@ -11,7 +11,6 @@ contract:
     potential_bugs: integer
     contract_gaps: integer
     rejected_findings: integer
-visibility: Public
 ---
 {# Phase 3 — ORACLE (Weinberg definition + pragmatic-semantics + grill-me) #}
 {#
@@ -27,12 +26,6 @@ visibility: Public
       and include the exact code read. Findings without citations are rejected
       at the oracle gate and counted in rejected_findings.
 #}
-
-[inference]
-temperature = 0.2
-work_effort = "high"
-verbosity = "detailed"
-thinking_budget = "full"
 
 You are a bug hunting oracle. Evaluate raw probe findings against user-defined quality criteria.
 

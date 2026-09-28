@@ -119,11 +119,7 @@ Template context variables (from each template's [inference] contract):
 
 ## Constraints
 
-- `idiomatic-rust-inquiry.j2`: Public.
-- `idiomatic-rust-design.j2`: Public.
-- `idiomatic-rust-challenge.j2`: Public.
 - The loop targets step 1 (inquiry), not step 2 (design) — challenge findings must re-inform the assessment.
 - The convergence check (step 5) is mandatory — the loop must not run until iteration or timeout exhaustion.
 - Step 4 uses `lisp_eval` to compute a custom design-quality score (weighted combination of critique score, compiler-confirmed findings, and unresolved issues). This demonstrates inline deterministic compute — no Rust change needed for custom scoring logic. The interpreter supports both prefix (`(+ a b)`) and infix (`a + b`) operator notation — use infix for simple scoring expressions, prefix for complex nested logic.
 - Compiler grounding is preferred but not required — when LSP tools are unavailable (pure skill execution), the skill falls back to intrinsic reasoning with reduced confidence.
-- This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

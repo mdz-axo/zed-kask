@@ -49,10 +49,8 @@ To render a template, call the `render_template` tool with the template ref (e.g
 
 ## Constraints
 
-- `bundler-merge.j2`: Public.
 - The local PDCA corrects the merged report at most once; it does not rerun peer skills or optimize the skill itself. Outcome evaluation and any skill change belong to the operator's algedonic-review gemba walk.
 - Do not invent findings that no skill produced.
 - Do not omit a skill from the summaries — every skill gets a summary, even if it errored.
 - The merged report must reference each skill by name at least once.
 - Keep the merged report under 2000 words.
-- This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

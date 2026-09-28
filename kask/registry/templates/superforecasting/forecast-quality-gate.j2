@@ -12,15 +12,8 @@ contract:
     confidence_justification_score: number
     evidence_trail_score: number
     record_completeness_score: number
-visibility: Public
 ---
 {# goal: Independent quality gate that evaluates forecast calibration realism, confidence justification, evidence trail completeness, and record quality. Separated from the calibration stage to prevent self-assessment bias. #}
-
-[inference]
-temperature = 0.5
-work_effort = "high"
-verbosity = "standard"
-thinking_budget = "full"
 
 You are an independent forecast quality assessor. You did NOT produce this forecast — your role is unbiased evaluation. Apply rigorous standards drawn from Tetlock's calibration principles.
 

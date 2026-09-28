@@ -177,7 +177,6 @@ When the gather step takes Path B (research delegation), follow this protocol:
 - One passing pass closes the local PDCA; on an observed edge-mapping error, at most one ADAPT correction and recheck. Never rerun merely to improve style or hide a true discrepancy.
 - **Delegate, don't transcribe.** When the prompt references an external source, delegate extraction to a specialized skill. Do not ask the user to transcribe data that exists in a source.
 - **Cite canonical references** in the output when relevant (Schmidt 2008, FIBO, PROV-O, PKO).
-- This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.
 - **Visual artifact surfacing** — the `present-sankey.j2` render step (rendering template) must be the process's final output step. It surfaces the fenced ```mermaid block as a raw markdown string so acp_thread's mermaid renderer picks it up. Removing it causes the diagram to stay buried in the adapt step's JSON output — the model must then discover and extract the `markdown` field, which is fragile.
 
 ## Registry Templates

@@ -521,6 +521,7 @@ impl super::CyberneticsLoop {
                     escalated: false,
                     timestamp: chrono::Utc::now(),
                     message: message.clone(),
+                    occurrence_count: 1,
                 };
                 let sent = if let Some(ref tx) = self.alerts_tx {
                     tx.send(CurationInput::Alert(alert.clone())).is_ok()
@@ -606,6 +607,7 @@ impl super::CyberneticsLoop {
             escalated: true,
             timestamp: chrono::Utc::now(),
             message,
+            occurrence_count: 1,
         };
 
         // Deliver the alert to the board. The RegulationArchive remains
@@ -793,6 +795,7 @@ impl super::CyberneticsLoop {
                     check.metric,
                     super::MAX_ROLLOUT_READ_ATTEMPTS,
                 ),
+                occurrence_count: 1,
             };
             self.deliver_alert_to_board(&alert, None).await;
             if let Some(ref tx) = self.alerts_tx
@@ -909,6 +912,7 @@ impl super::CyberneticsLoop {
                         metric.as_str(),
                         action_type,
                     ),
+                    occurrence_count: 1,
                 };
                 let delivery = self.deliver_alert_to_board(&alert, None).await;
                 if !matches!(delivery, Some(crate::AlertDeliveryOutcome::Confirmed(None))) {
@@ -961,6 +965,7 @@ impl super::CyberneticsLoop {
                         worsening * 100.0,
                         block_worsening_ratio * 100.0,
                     ),
+                    occurrence_count: 1,
                 };
                 self.deliver_alert_to_board(&alert, None).await;
                 if let Some(ref tx) = self.alerts_tx

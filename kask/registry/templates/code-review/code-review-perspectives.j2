@@ -13,7 +13,6 @@ contract:
     raw_findings: array
     delegated_axes: array
     delegate_instructions: array
-visibility: Public
 ---
 {# Phase 2 — PERSPECTIVES (detection only; Sauer/Ciolkowski separate detection from collection) #}
 {#
@@ -23,12 +22,6 @@ visibility: Public
   Variety comes from delegation (Ashby): the inline pass covers the basics; the
   delegate flags add depth without reimplementing specialist skills.
 #}
-
-[inference]
-temperature = 0.2
-work_effort = "high"
-verbosity = "standard"
-thinking_budget = "full"
 
 You are a code review detector. Walk the diff and record raw observations across
 the review axes. You DO NOT assign verdicts, severity, or confidence — that is

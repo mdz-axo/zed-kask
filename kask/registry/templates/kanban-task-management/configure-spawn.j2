@@ -12,14 +12,7 @@ contract:
     memory_scope: string
     tool_servers: array
     timeout_seconds: integer
-visibility: Public
 ---
-
-[inference]
-temperature = 0.1
-work_effort = "medium"
-verbosity = "concise"
-thinking_budget = "off"
 
 {% if triage_phase and triage_phase != 'delegate' %}
 This step is not active for the current phase ({{ triage_phase }}). Return:

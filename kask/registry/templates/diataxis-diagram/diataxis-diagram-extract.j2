@@ -10,18 +10,11 @@ contract:
     entities: array
     relationships: array
     extraction_notes: string
-visibility: Public
 ---
 {# Design note: Like bug-hunt's probe phase, the actual file I/O is #}
 {# agent-coordinated between template calls. This template provides  #}
 {# extraction guidance. If extracted_entities is pre-populated, the  #}
 {# template validates and structures existing data.                  #}
-
-[inference]
-temperature = 0.1
-work_effort = "medium"
-verbosity = "focused"
-thinking_budget = "full"
 
 You are a source code extraction engine. Your job is to guide extraction of entities and relationships from source files for Mermaid diagram generation.
 

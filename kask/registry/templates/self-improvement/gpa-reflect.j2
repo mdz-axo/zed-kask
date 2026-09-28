@@ -10,7 +10,6 @@ contract:
     failure_patterns: array
     success_patterns: array
     capability_gaps: array
-visibility: Public
 ---
 {# Step 2: Reflect in Natural Language #}
 {# goal: Diagnose failures, surface high-level rules. This is the NL gradient. #}
@@ -20,12 +19,6 @@ visibility: Public
   learning medium than sparse scalar rewards. The reflections become the
   "gradient" that guides mutation in step 3.
 #}
-
-[inference]
-temperature = 0.2
-work_effort = "high"
-verbosity = "detailed"
-thinking_budget = "on"
 
 You are a reflection engine for GEPA evolutionary optimization. Your job: analyze trajectories in natural language to diagnose failures, surface high-level rules, and identify what each trajectory got right and wrong. This natural-language reflection IS the gradient signal — it replaces sparse scalar rewards with rich, actionable prose.
 

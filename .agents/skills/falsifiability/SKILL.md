@@ -88,11 +88,6 @@ time, system functional at every step.
 
 ## Constraints
 
-- `falsifiability-admit.j2`: Public.
-- `falsifiability-hypothesize.j2`: Public.
-- `falsifiability-counterfactual.j2`: Public.
-- `falsifiability-discriminate.j2`: Public.
-- `falsifiability-eliminate.j2`: Public.
 - Corroborated is not confirmed. Never output "proven", "verified true", or "established." Use "survived", "withstood", "corroborated."
 - Elimination is hard, not probabilistic. A contradicted prediction rules the hypothesis out; do not down-weight and carry it (that is superforecasting's job).
 - A hypothesis with no possible falsifying observation is inadmissible at generation, not "weak" — it leaves the pool, recorded.
@@ -100,6 +95,3 @@ time, system functional at every step.
 - The do-operator must be surgical: remove only the proposed cause, hold confounders fixed. "If things were different" is not a counterfactual.
 - An irreducible hypothesis is flagged, not eliminated — it survives by default but is marked not-counterfactually-testable, which limits corroboration.
 - If every hypothesis is eliminated, the verdict is `none_corroborated` — the framing is wrong and must be restarted from hypothesize, not iterated.
-- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
-- Handle missing variables gracefully (leave as-is or use default if specified).
-- This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

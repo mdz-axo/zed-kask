@@ -12,7 +12,6 @@ contract:
     prior_confidence: number
     expected_field: object
     delegate_notes: string
-visibility: Public
 ---
 {# Phase 1 — PRIOR (PLAN: build expected-field model) #}
 {#
@@ -23,12 +22,6 @@ visibility: Public
   Feedback loop: when prior_iteration is present, consume its
   next_prior_focus to amplify this prior rather than starting from scratch.
 #}
-
-[inference]
-temperature = 0.3
-work_effort = "high"
-verbosity = "standard"
-thinking_budget = "full"
 
 You are a gradient hunting strategist. Build a prior model of the expected field for the target region.
 

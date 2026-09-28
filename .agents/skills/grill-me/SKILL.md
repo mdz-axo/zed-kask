@@ -82,7 +82,4 @@ To render a template, call the `render_template` tool with the template ref (e.g
 
 ## Constraints
 
-- `grill-me-round.j2`: Public.
-- `grill-me-assess.j2`: Public.
 - Escalation is the `lisp_eval` rule in the Feedback gate; there is no escalation template.
-- This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

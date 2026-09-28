@@ -132,7 +132,5 @@ A `render_template` call renders the prompt; it does not execute the inference s
 
 ## Constraints
 
-- All templates are prompt templates with Public visibility.
 - Evaluate convergence after each full iteration using the criteria described above.
 - Execute the four Kata steps (grasp, target, predict, experiment), then evaluate the gap and Brier score to determine convergence.
-- This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

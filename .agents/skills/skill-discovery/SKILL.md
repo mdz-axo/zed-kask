@@ -122,8 +122,7 @@ Template context variables (from each template's [inference] contract):
 
 ## Constraints
 
-- `skill-discovery-route.j2`: Public. Evaluates every skill in the catalog — do not skip seemingly-irrelevant skills without scoring. fit_score and each dimension score are floats in [0.0, 1.0]. If coverage is `full`, `uncovered_capabilities` must be empty; if `none`, recommendations may be empty but `uncovered_capabilities` must be non-empty.
-- `skill-discovery-detect-gap.j2`: Public. Gap categories: coverage, feature, automation, knowledge, governance, quality, epistemic (7 categories). Input `skill_catalog` is the same array passed to route.
-- `skill-discovery-evaluate.j2`: Public. 16 checks scored 0–2; max score 32; min installable 24 (operator ruling 2026-09-26); safety 0 → reject.
+- `skill-discovery-route.j2`: Evaluates every skill in the catalog — do not skip seemingly-irrelevant skills without scoring. fit_score and each dimension score are floats in [0.0, 1.0]. If coverage is `full`, `uncovered_capabilities` must be empty; if `none`, recommendations may be empty but `uncovered_capabilities` must be non-empty.
+- `skill-discovery-detect-gap.j2`: Gap categories: coverage, feature, automation, knowledge, governance, quality, epistemic (7 categories). Input `skill_catalog` is the same array passed to route.
+- `skill-discovery-evaluate.j2`: 16 checks scored 0–2; max score 32; min installable 24 (operator ruling 2026-09-26); safety 0 → reject.
 - `lisp_eval` is available for deterministic scoring formulas (e.g., weighted combinations of quality, safety, and fit scores).
-- This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

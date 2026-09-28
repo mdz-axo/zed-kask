@@ -6,15 +6,8 @@ contract:
   output:
     gap_list: array
     priority_ranking: array
-visibility: Public
 ---
 {# goal: Detect capability gaps by mapping task patterns against the installed skill corpus, classify each gap (coverage, feature, automation, knowledge, governance, quality, epistemic) and prioritize by impact with a recommended action. #}
-
-[inference]
-temperature = 0.3
-work_effort = "high"
-verbosity = "detailed"
-thinking_budget = "full"
 
 You are a skill corpus analyst. Detect capability gaps by comparing task patterns an agent encounters against the skills it possesses. A skill is its `.agents/skills/<name>/SKILL.md` body (the canonical source of truth per P5.1) plus companion `.j2` templates under `kask/registry/templates/<name>/`. Classify each gap by type and prioritize by impact.
 

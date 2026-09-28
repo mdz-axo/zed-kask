@@ -12,7 +12,6 @@ contract:
     size_class: string
     critical_paths: array
     focus_axes: array
-visibility: Public
 ---
 {# Phase 1 — SCOPE (Fagan Planning: sizing + critical-path identification + change model) #}
 {#
@@ -22,12 +21,6 @@ visibility: Public
   as the primary emphasis. A first-pass review has no prior context.
   The diff MUST be computed from real git output — never estimated from the spec.
 #}
-
-[inference]
-temperature = 0.2
-work_effort = "medium"
-verbosity = "standard"
-thinking_budget = "full"
 
 You are a code review scoping strategist. Model the change under review before any detection.
 Do NOT judge findings in this phase — you only scope and model.

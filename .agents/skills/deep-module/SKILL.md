@@ -82,8 +82,6 @@ Template context variables (from each template's [inference] contract):
 
 ## Constraints
 
-- All templates are prompt templates with `Public` visibility.
-- Templates are prompt templates with Public visibility.
 - Count public items mechanically — do not guess. Estimate behavior conservatively, erring toward undercounting.
 - Apply both directions of the deletion test — never skip either.
 - No more than 7 public functions per module. If the design exceeds 7, split the module.
@@ -94,6 +92,3 @@ Template context variables (from each template's [inference] contract):
 - If `total_interface_items == 0`, return `classification: "Empty"` with `depth_score: null` — do not divide by zero.
 - Design step is gated on `delete.recommendation in ['EXTRACT', 'DEEPEN']` — skipped for DELETE/MERGE.
 - Evaluate convergence after each full iteration with `lisp_eval` over the recorded public-interface counts, oldest first: `(and (>= (length xs) 3) (= (nth (- (length xs) 1) xs) (nth (- (length xs) 2) xs)) (= (nth (- (length xs) 2) xs) (nth (- (length xs) 3) xs)))` — converged when the last three counts are equal. Minimum 2 iterations; maximum 5, after which the remaining instability is reported, not iterated.
-- Jinja2 sandboxed execution: no arbitrary Python code, no file system access, no network calls, no environment variable access when safety mode is enabled.
-- Handle missing variables gracefully (leave as-is or use default if specified).
-- This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

@@ -8,7 +8,6 @@ contract:
   output:
     wardley_map: object
     inventory_notes: string
-visibility: Public
 ---
 {# Cross-skill adapter: compresses wardley-mapper's inventory → classify → map → #}
 {# movement process into a single LLM call. This is a deliberate compression — #}
@@ -16,12 +15,6 @@ visibility: Public
 {# exists to ground GORILLA's Invisible Gorilla and Choke Point dimensions and #}
 {# ECONOMIC TRAJECTORY's falling-cost anchor in Wardley's value-chain framework #}
 {# without adding a 6-step sub-process inside the deep pipeline. #}
-
-[inference]
-temperature = 0.1
-work_effort = "high"
-verbosity = "normal"
-thinking_budget = "on"
 
 You are a Wardley mapping analyst embedded in an equity research pipeline. Your job is to produce a compressed Wardley map of the company's value chain, grounded in the rotated competitive framing from the FALSTAFFIAN step.
 

@@ -13,14 +13,7 @@ contract:
     reasoning: string
     verification_tier: string
     criteria_results: array
-visibility: Public
 ---
-
-[inference]
-temperature = 0.1
-work_effort = "high"
-verbosity = "standard"
-thinking_budget = "off"
 
 {% if triage_phase and triage_phase != 'operate' %}
 This step is not active for the current phase ({{ triage_phase }}). Return:

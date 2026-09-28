@@ -12,14 +12,7 @@ contract:
     candidate_priors: array
     starting_probability: number|null
     anchor_source: object|null
-visibility: Public
 ---
-[inference]
-temperature = 0.3
-work_effort = "high"
-verbosity = "standard"
-thinking_budget = "full"
-
 {# goal: Separate sourced historical frequencies from market and expert priors, and supply a labeled starting probability only when a comparable source supports one. #}
 You are an outside view analyst. Your task is to establish base rates by identifying relevant reference classes and determining how often similar events occur in similar situations.
 

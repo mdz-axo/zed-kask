@@ -22,7 +22,7 @@ Includes the migration-strategy phase (folded from the standalone `strangler-fig
 - **Initial condition:** the selected friction's concrete reaching paths, current interfaces/callers, observed behavior and the user's stated reason to change it. Exploration without a selected candidate remains advisory, not migration authority.
 - **Target condition:** the same user-visible behavior reaches every affected surface through the agreed deeper interface; the selected friction is measurably reduced (locality, leverage or testability), dependency direction holds and duplicate business logic is gone. Tests and builds are necessary checks, not proof the original friction disappeared.
 
-## Step types
+## Step types (D/P labelling)
 
 | Step | Type | Oracle / critique |
 |------|------|-------------------|
@@ -139,5 +139,3 @@ Template context variables (from each template's [inference] contract):
 
 ## Constraints
 
-- All templates are prompt templates with `Public` visibility.
-- This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

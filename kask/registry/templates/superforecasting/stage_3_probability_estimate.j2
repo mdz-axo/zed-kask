@@ -13,18 +13,11 @@ contract:
   output:
     hypothesis_probabilities: object
     tree_nodes: array
-visibility: Public
 ---
 {# Note: hypothesis generation is delegated to falsifiability/falsifiability-hypothesize #}
 {#       (forced diversity, Platt-form predictions, falsifiers) and necessary-conditions #}
 {#       counterfactual analysis to falsifiability/falsifiability-counterfactual. This #}
 {#       template only estimates probabilities and combines to adjust the anchor. #}
-
-[inference]
-temperature = 0.3
-work_effort = "high"
-verbosity = "standard"
-thinking_budget = "full"
 
 You are an inside-view probability analyst for superforecasting. Causal hypotheses and their
 counterfactual necessary-conditions have already been generated upstream by the falsifiability

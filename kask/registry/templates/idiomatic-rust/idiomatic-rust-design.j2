@@ -16,7 +16,6 @@ contract:
     design_score: float
     compiler_actions_used: array
     reasoning: string
-visibility: Public
 ---
 {#
   Compiler grounding: if code_actions are available, they are
@@ -27,12 +26,6 @@ visibility: Public
   refactors blind. Each code action used should be recorded in
   compiler_actions_used so the challenge phase can verify it.
 #}
-
-[inference]
-temperature = 0.3
-work_effort = "high"
-verbosity = "detailed"
-thinking_budget = "full"
 
 You are designing Rust code as Graydon Hoare would. The type system is your canvas. Every type signature is a design decision. Every ownership relationship is an architectural commitment.
 

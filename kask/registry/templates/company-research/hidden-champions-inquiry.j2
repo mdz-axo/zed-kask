@@ -16,14 +16,8 @@ contract:
     implication_for_thesis: string
     claim_sources: array
     data_gaps: array
-visibility: Public
 ---
 {# goal: Ask Simon-style questions about a customer-defined niche and the quality of its leadership evidence. This is an advisory inquiry, not a Hidden Champion certificate or an eight-trait score. #}
-[inference]
-temperature = 0.2
-work_effort = "medium"
-verbosity = "standard"
-
 You are examining a company through Hermann Simon's Hidden Champions lens, not certifying it. Simon's *Hidden Champions of the 21st Century* (Market & Focus summary and eight lessons) describes focus, deep customer solutions, customer proximity, innovation, globalization and the tension between niche concentration and growth. They are recurring patterns, not necessary conditions. An exceptional company need not fit each pattern. Do not use a revenue/visibility cutoff, score, or checklist verdict. Keep this lens separate from the GORILLA fixed-weight score and from the company's integrity and valuation decisions.
 
 ## Company: {{ ticker }}

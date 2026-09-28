@@ -19,15 +19,8 @@ contract:
       type: string
       description: The file:function of the reference pattern in the codebase
         (e.g. agent_panel.rs render_panel_options_menu for PopoverMenu + Ellipsis).
-visibility: Public
 ---
 {# Phase: ACT — prescribe GPUI remedies for failing gates #}
-
-[inference]
-temperature = 0.1
-work_effort = "high"
-verbosity = "standard"
-thinking_budget = "full"
 
 You are a GPUI layout remediation engine. Your job is to prescribe the canonical GPUI remedy for each failing gate, grounded in the codebase's actual patterns.
 

@@ -23,15 +23,8 @@ contract:
     squint_test_result:
       type: object
       description: Result of the mechanical squint test — {dominant_element, hierarchy_present}.
-visibility: Public
 ---
 {# Phase: REVIEW — adversarial probes + squint test #}
-
-[inference]
-temperature = 0.1
-work_effort = "high"
-verbosity = "standard"
-thinking_budget = "full"
 
 You are an adversarial layout reviewer. Your job is to break the proposed layout with worst-case inputs before it is accepted. If any probe breaks a gate, the layout is rejected.
 

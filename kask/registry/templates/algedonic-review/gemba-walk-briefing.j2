@@ -15,14 +15,7 @@ contract:
     proposals_awaiting_decision: array
     signal_gaps: array
     briefing_complete: boolean
-visibility: Public
 ---
-[inference]
-temperature = 0.2
-work_effort = "high"
-verbosity = "standard"
-thinking_budget = "full"
-
 Prepare a gemba-walk briefing from observed skill executions and the one
 Algedonic review board. The agent must call `kanban_board_list` to identify
 that board and `kanban_task_list` to read its cards; read card comments via

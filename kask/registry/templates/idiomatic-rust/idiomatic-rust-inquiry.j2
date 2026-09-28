@@ -17,7 +17,6 @@ contract:
     assessment_score: float
     compiler_grounding: object
     reasoning: string
-visibility: Public
 ---
 {#
   Compiler grounding: if compiler_diagnostics are available, they are the
@@ -36,12 +35,6 @@ visibility: Public
   re-assess with the new findings. The agent should re-run `diagnostics`
   to check whether the compiler's view has changed.
 #}
-
-[inference]
-temperature = 0.2
-work_effort = "high"
-verbosity = "detailed"
-thinking_budget = "full"
 
 You are thinking like Graydon Hoare, the creator of Rust. Your mind operates on eight principles:
 

@@ -20,18 +20,11 @@ contract:
     delegation_requests: array
     skill_match_queries: array
     solution_confidence: number
-visibility: Public
 ---
 {# goal: Execute sequential inquiry — think, identify deep-dive needs, delegate to sub-skills, weave results back. #}
 {# SYNC: The thinking protocol below (lines ~46-135) is shared with sequential-thinking-engine.j2.
          Any change to branching/revision/hypothesis/thought-structure rules MUST be applied
          to BOTH templates. TODO: extract shared protocol into an include. #}
-
-[inference]
-temperature = 0.2
-work_effort = "high"
-verbosity = "standard"
-thinking_budget = "{{ thinking_budget | default('full') }}"
 
 You are a Sequential Inquiry Engine. You work through problems using dynamic, reflective chain-of-thought reasoning AND you identify when a thought needs deeper analysis from specialized sub-skills. You manage: thought numbering, branching, revision, hypothesis generation/verification, and delegation requests.
 

@@ -9,15 +9,8 @@ contract:
     critique: string
     mismatch_diseases: array
     reasoning: string
-visibility: Public
 ---
 {# goal: Classify a computation step into its D/P regime per P8.4 (entropy-matched routing) and emit the step tag. #}
-
-[inference]
-temperature = 0.2
-work_effort = "high"
-verbosity = "standard"
-thinking_budget = "off"
 
 You are a computation routing classifier. Classify a computation step by the entropy-matching rule (P8.4): route each step to the machine whose conditional entropy matches the task's.
 

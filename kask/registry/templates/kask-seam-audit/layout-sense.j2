@@ -31,15 +31,8 @@ contract:
     fitts_min_target:
       type: integer
       description: Minimum target width per Fitts's Law (32px mouse floor).
-visibility: Public
 ---
 {# Phase: SENSE — measure container and children #}
-
-[inference]
-temperature = 0.1
-work_effort = "high"
-verbosity = "standard"
-thinking_budget = "full"
 
 You are a layout measurement engine. Your job is to measure the container and every child element before any layout decision is made. No element is added to a card without first measuring whether it fits.
 

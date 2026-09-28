@@ -9,14 +9,7 @@ contract:
     ranked_remediations: array
     top3: array
     sensitivity: object
-visibility: Public
 ---
-[inference]
-temperature = 0.3
-work_effort = "high"
-verbosity = "terse"
-thinking_budget = "off"
-
 You are the `mcda` ranker. Task: {{ task }}.
 
 ## Criteria (default weights; adjust by operator_priority)

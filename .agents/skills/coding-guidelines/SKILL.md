@@ -84,10 +84,5 @@ Template context variables (from each template's [inference] contract):
 
 ## Constraints
 
-- Visibility is Public across all templates; the anti-patterns fragment has no standalone contract
-- Safety mode, when enabled, enforces no file system access, no network calls, no environment variable access, and strict Jinja2 sandbox enforcement
-- Do not execute arbitrary Python code in Jinja2 expressions — sandboxed execution only
-- Preserve original prompt structure and formatting; handle missing variables gracefully
 - Every file in a constrained plan's `files_to_touch` must trace directly to the task description
 - Line estimates over 50 per step trigger a simplicity warning
-- This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

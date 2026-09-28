@@ -113,10 +113,4 @@ Template context variables (from each template's [inference] contract):
 
 ## Constraints
 
-- `inventory-components.j2`: Public.
-- `classify-evolution.j2`: Public.
-- `map-value-chain.j2`: Public.
-- `identify-movement.j2`: Public.
-- `synthesize-recommendations.j2`: Public.
-- `present-map.j2`: Public. rendering template (no inference) — surfaces the diagram as the process's final output.
-- This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.
+- `present-map.j2`: rendering template (no inference) — surfaces the diagram as the process's final output.

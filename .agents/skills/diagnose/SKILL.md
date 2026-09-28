@@ -108,15 +108,10 @@ To render a template, call the `render_template` tool with the template ref (e.g
 
 ## Constraints
 
-- All templates are prompt templates with `Public` visibility
 - Step 3 (hypothesize) is delegated to falsifiability/falsifiability-hypothesize
-- Safety mode (when enabled): no file system access, no network calls, no environment variable access, strict Jinja2 sandbox enforcement
-- Do not execute arbitrary Python code in Jinja2 expressions — sandboxed execution only
-- Preserve original prompt structure and formatting; handle missing variables gracefully
 - Hypothesis count: 3–7 (step 3 delegates to `falsifiability/falsifiability-hypothesize`) — every hypothesis must have a falsifiable prediction
 - Every probe must map to exactly one hypothesis; every diagnostic log must have a unique `[DIAG-xxxx]` tag
 - Write the regression test BEFORE the fix; if no correct seam exists, do not write a shallow test that gives false confidence
 - All `[DIAG-xxxx]` instrumentation tags must be removed before declaring done
 - The commit/PR message must state the confirmed hypothesis
 - Do not fabricate code entities — derive from actual `grep` and `read_file` results or note the structure is unavailable
-- This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

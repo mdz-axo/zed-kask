@@ -18,14 +18,7 @@ contract:
     source_citations: array
     refuse_escalation: array
     rejected_findings: integer
-visibility: Public
 ---
-[inference]
-temperature = 0.1
-work_effort = "high"
-verbosity = "terse"
-thinking_budget = "full"
-
 {# Evidence-backed only; selected method is never silently replaced. #}
 
 INPUT: config_paths = {{ config_paths | default([]) }}

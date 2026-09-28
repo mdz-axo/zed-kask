@@ -10,14 +10,7 @@ contract:
   output:
     tasks: array
     recomposition: object
-visibility: Public
 ---
-
-[inference]
-temperature = 0.3
-work_effort = "high"
-verbosity = "standard"
-thinking_budget = "full"
 
 {% if triage_phase and triage_phase != 'decompose' %}
 This step is not active for the current phase ({{ triage_phase }}). Return:

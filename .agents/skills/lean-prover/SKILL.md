@@ -115,9 +115,7 @@ To render a template, call the `render_template` tool with the template ref (e.g
 
 ## Constraints
 
-- All templates are prompt templates with `Public` visibility.
 - Source basis: *Theorem Proving in Lean 4* (edition targeting Lean 4.33.0), §§3.1–3.3 (proof terms), §3.6 (`sorry`), §4 (quantifiers), §8 (induction), §12 (axioms); Lean repository tag [`v4.34.0/src/Init/Core.lean`](https://github.com/leanprover/lean4/blob/v4.34.0/src/Init/Core.lean) (`Exists`, `Sigma`, `Lean.ofReduceBool`) and [`v4.34.0/src/Init/Tactics.lean`](https://github.com/leanprover/lean4/blob/v4.34.0/src/Init/Tactics.lean) (`decide`, `native_decide`, `sorry`, `induction`). Changes to tactic implementation or trust policy are version-dependent: recheck against the installed toolchain.
 - Only Lean checks Lean propositions; `lean_check` reports Lean's result and trust dependencies, not an independent proof. `lisp_eval` is a sandboxed JSON/Lisp invariant checker, not a Lean kernel or proof checker.
 - No `sorry`/`admit`, replacement axiom, or unexamined transitive axiom dependency in a completed proof. Record the exact Lean command and result.
 - Recursive definitions require termination unless explicitly marked partial; partial computations are not silently treated as total proofs.
-- This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

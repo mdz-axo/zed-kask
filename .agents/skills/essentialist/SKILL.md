@@ -65,7 +65,6 @@ To render a template, call the `render_template` tool with the template ref (e.g
 
 ## Constraints
 
-- Visibility: Public — this skill's templates are shared across agents.
 - The default mode is **advisory** (agent recommends, human decides). Autonomous mode only activates on explicit user intent ("simplify", "strip", "run the essentialist").
 - The G1→G2→G3 order is FIXED. G1 (Exist) must come first.
 - Every finding MUST carry a `constraint_force` label. Only Prohibition and Guardrail cause gate failure in autonomous mode.
@@ -74,6 +73,3 @@ To render a template, call the `render_template` tool with the template ref (e.g
 - In advisory mode, human rejections of REQUIRED (Prohibition) findings cause immediate ESCALATE. Guardrail rejections are allowed with stated reason.
 - After escalation, STOP. Do not continue reducing without human input.
 - Zero-delta detection must be exact: same surviving items, same structure, same interfaces as previous round.
-- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
-- Handle missing variables gracefully (leave as-is or use default if specified).
-- This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

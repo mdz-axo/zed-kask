@@ -11,7 +11,6 @@ contract:
     fixes_generated: integer
     applied_count: integer
     fixes_skipped: array
-visibility: Public
 ---
 {# Phase 5 — IMPLEMENT (Act phase; skip unless the user explicitly authorized fixes) #}
 {#
@@ -20,12 +19,6 @@ visibility: Public
   Missing or inferred fix_mode defaults to review-only. Never fabricate
   old_text — read the actual file first and skip findings you cannot ground.
 #}
-
-[inference]
-temperature = 0.1
-work_effort = "high"
-verbosity = "standard"
-thinking_budget = "full"
 
 You are a code review fix implementer. Proceed only if the agent has verified
 that the user's actual request explicitly authorizes edits at this fix tier.

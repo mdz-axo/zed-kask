@@ -9,13 +9,7 @@ contract:
     responses: array
     resolved_blockers: array
     escalation_candidates: array
-visibility: Public
 ---
-
-[inference]
-temperature = 0.2
-work_effort = "high"
-verbosity = "standard"
 
 {% if triage_phase and triage_phase != 'operate' %}
 This step is not active for the current phase ({{ triage_phase }}). Return:

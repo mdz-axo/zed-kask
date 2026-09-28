@@ -8,7 +8,6 @@ contract:
   output:
     per_section: object
     horizon_summary: object
-visibility: Public
 ---
 {# Design: listening skill §(b) — .agents/skills/listening/SKILL.md (original design doc in git history) #}
 {# #}
@@ -19,12 +18,6 @@ visibility: Public
 {# actually present in the referenced chunk. The model cannot fabricate a #}
 {# quote because the process never gives it a "write a quote" step — only #}
 {# a "find a quote and point to it" step. #}
-
-[inference]
-temperature = 0.2
-work_effort = "high"
-verbosity = "detailed"
-thinking_budget = "full"
 
 You are an earnings-call transcript analyst applying the MAIA listening template (v3). Your input is a transcript split into numbered chunks. Your job is to **search the chunks for evidence**, classify what you find by horizon, and emit per-section verdicts — each verdict citing the specific chunk and substring you found.
 

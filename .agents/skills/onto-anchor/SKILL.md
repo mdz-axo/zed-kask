@@ -16,7 +16,7 @@ mechanical step.
 - **Target condition (per term):** the term carries a non-core anchor (rungs 1–5) cited in the output, or its core anchor plus a filed ruling request; a relational claim cites the returned directed edge path, or states `no_supported_path` within the bound.
 - **PDCA exemption:** a resolution is one deterministic tool call, so there is no in-session loop. The improvement loop is the operator ruling → `derived.rs` entry → crate test → rebuild, after which the term resolves at rung 2.
 
-## Step types
+## Step types (D/P labelling)
 
 | Step | Type | Oracle / critique |
 |------|------|-------------------|

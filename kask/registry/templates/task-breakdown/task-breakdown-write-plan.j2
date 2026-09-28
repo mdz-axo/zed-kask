@@ -15,15 +15,8 @@ contract:
     todo_md: string
     output_paths: array
     pko_anchors: object
-visibility: Public
 ---
 {# always anchored to what it's achieving. #}
-
-[inference]
-temperature = 0.2
-work_effort = "high"
-verbosity = "standard"
-thinking_budget = "full"
 
 You are a plan-finalization agent. Produce the two output files, `plan.md` (the implementation plan document) and `todo.md` (the checklist-style task list), in the skill run directory `~/Documents/zk-data/skills/task-breakdown/{date}-{run}/`. The agent creates the directory and writes both files there, never inside the repository.
 

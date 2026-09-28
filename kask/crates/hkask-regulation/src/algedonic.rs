@@ -504,25 +504,30 @@ impl AlgedonicManager {
     /// the cap. Returns the surviving alert so callers read the condition's
     /// current state, not `alerts.last()`.
     fn push_alert(&mut self, alert: RuntimeAlert) -> &RuntimeAlert {
-        if let Some(existing) =
-            self.alerts.iter_mut().rev().find(|existing| {
-                existing.domain == alert.domain && existing.severity == alert.severity
-            })
-        {
-            existing.occurrence_count = existing.occurrence_count.saturating_add(1);
-            existing.deficit = alert.deficit;
-            existing.threshold = alert.threshold;
-            existing.message = alert.message;
-            existing.timestamp = alert.timestamp;
-            return existing;
-        }
-        if self.alerts.len() >= self.max_alerts {
-            self.alerts.remove(0);
-        }
-        self.alerts.push(alert);
+        let coalesce_index = self.alerts.iter().rposition(|existing| {
+            existing.domain == alert.domain && existing.severity == alert.severity
+        });
+        let target_index = match coalesce_index {
+            Some(index) => {
+                let existing = &mut self.alerts[index];
+                existing.occurrence_count = existing.occurrence_count.saturating_add(1);
+                existing.deficit = alert.deficit;
+                existing.threshold = alert.threshold;
+                existing.message = alert.message;
+                existing.timestamp = alert.timestamp;
+                index
+            }
+            None => {
+                if self.alerts.len() >= self.max_alerts {
+                    self.alerts.remove(0);
+                }
+                self.alerts.push(alert);
+                self.alerts.len().saturating_sub(1)
+            }
+        };
         self.alerts
-            .last()
-            .expect("the just-pushed alert is present")
+            .get(target_index)
+            .expect("the surviving alert is present")
     }
 
     /// Number of alerts currently in the log.
@@ -769,7 +774,7 @@ mod tests {
     /// (or eviction) emits again.
     #[test]
     fn push_alert_evicts_oldest_at_cap_and_recurrence_reemits() {
-        let mut mgr = AlgedonicManager::with_max_alerts(3, DEFAULT_EXPECTED_VARIETY, 200);
+        let mut mgr = AlgedonicManager::with_max_alerts(200, DEFAULT_EXPECTED_VARIETY, 3);
         for domain in ["a", "b", "c"] {
             mgr.push_alert(RuntimeAlert::new(domain, 3, 4).expect("alert"));
         }

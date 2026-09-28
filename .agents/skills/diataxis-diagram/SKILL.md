@@ -13,7 +13,7 @@ Generate Mermaid diagrams from code, using Diátaxis to choose the documentation
 - **Initial condition:** the target, the source files read, and the extracted entity and relationship lists (step 2).
 - **Target condition:** diagram nodes/relationships trace to the extracted sources with no invented entities, syntax parses where a parser exists (otherwise `parse unverified`), and the requester can inspect its quadrant-appropriate voice. A file exists only after a successful write. A `DIAGRAM_ALIGNMENT` block is required only for an explicitly requested `kask/docs/diagrams/` update.
 
-## Step types
+## Step types (D/P labelling)
 
 | Step | Type | Oracle / critique |
 |------|------|-------------------|
@@ -77,5 +77,4 @@ To render a template, call the `render_template` tool with the template ref (e.g
 - Maximum 3 iterations; after the third, deliver with the failed checks listed
 - The six-criterion weighted total is a labelled estimate, computed in `lisp_eval`; it chooses refinements and never gates
 - Only verified existing related documents are cross-linked; no link is fabricated to satisfy a score
-- This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.
 - **Visual artifact surfacing** — the `present-diagram.j2` render step (rendering template) must be the process's final output step. It surfaces the fenced ```mermaid block as a raw markdown string so acp_thread's mermaid renderer picks it up. Removing it causes the diagram to stay buried in the write step's JSON `{file_path, file_content}` object.

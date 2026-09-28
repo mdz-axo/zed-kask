@@ -14,19 +14,12 @@ contract:
     checkpoints: array
     slices: array
     plan_escalation: array
-visibility: Public
 ---
 {# conditions — each task is a sub-target with acceptance criteria framed as #}
 {# "what must be true for this sub-target to be achieved." #}
 {# Merges the former slice + write-tasks steps to fix the grain-mismatch: the loop #}
 {# re-enters here, refinement directives are task-addressable, and re-slicing + #}
 {# re-writing happen in a single step (mirrors diataxis-diagram's single generate). #}
-
-[inference]
-temperature = 0.2
-work_effort = "high"
-verbosity = "standard"
-thinking_budget = "full"
 
 You are a task-decomposition agent. In ONE step you decompose the target condition into component target conditions (sub-tasks) AND write each task with acceptance criteria, verification, dependencies, files, and scope. Each vertical slice delivers one complete, testable feature path end-to-end — not a horizontal layer shared across features.
 

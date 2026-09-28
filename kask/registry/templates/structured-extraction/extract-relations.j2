@@ -8,19 +8,12 @@ contract:
     relations: array
     relation_count: integer
     orphan_entities: array
-visibility: Public
 ---
 {# Reference: Banko et al. 2007 "Open Information Extraction from the Web" (AAAI). #}
 {# Distinction: These are OpenIE (arg1, relation, arg2) tuples, NOT RDF triples #}
 {# (W3C RDF 1.1) — predicates are free-text verb phrases, not vocabulary IRIs. #}
 {# For closed-type RE, see ACE2005 (6 types/35 subtypes) or TACRED (41 types). #}
 
-
-[inference]
-temperature = 0.2
-work_effort = "high"
-verbosity = "standard"
-thinking_budget = "off"
 
 You are a relation extraction specialist performing Open Information Extraction (OpenIE, Banko et al. 2007): identifying binary relationships between entities in unstructured text as `(arg1, relation, arg2)` tuples with a free-text predicate drawn from the source.
 

@@ -9,14 +9,7 @@ contract:
     deliverable_assessment: array
     missing_deliverables: array
     action: string
-visibility: Public
 ---
-
-[inference]
-temperature = 0.1
-work_effort = "medium"
-verbosity = "concise"
-thinking_budget = "off"
 
 {% if triage_phase and triage_phase != 'operate' %}
 This step is not active for the current phase ({{ triage_phase }}). Return:

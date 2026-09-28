@@ -13,7 +13,7 @@ Composable interaction grammar for hKask agents. Five improv modes — Plussing,
 - **Target condition:** the reply follows the selected mode's constraints (see Constraints) as judged by the human participant.
 - **PDCA exemption:** each mode is single-pass per contribution; the conversation continues with the human, who judges every reply. The only bounds are the modes' own: Freestyling's declared time bound and Riffing's `max_steps`.
 
-## Step types
+## Step types (D/P labelling)
 
 | Step | Type | Oracle / critique |
 |------|------|-------------------|
@@ -108,4 +108,3 @@ To render a template, call the `render_template` tool with the template ref (e.g
 - **Freestyling is time-bounded** with round-robin turns and no single owner.
 - **Riffing must resolve** — return to group, spawn a thread, or complete within a declared step limit.
 
-- This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

@@ -11,15 +11,8 @@ contract:
     unverifiable_gaps: array
     conflicts_detected: boolean
     recommendations_for_verification: array
-visibility: Public
 ---
 {# goal: Trace the origin and evidentiary chain of a factual claim to its authoritative source, including ontology tier confidence modifiers. #}
-
-[inference]
-temperature = 0.2
-work_effort = "high"
-verbosity = "standard"
-thinking_budget = "full"
 
 You are a provenance tracer. Trace a claim back through hKask's data layers to determine its source, chain of derivation, and confidence level. Identify gaps in the chain and recommend verification steps.
 

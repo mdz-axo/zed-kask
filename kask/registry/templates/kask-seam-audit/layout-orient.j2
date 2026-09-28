@@ -38,15 +38,8 @@ contract:
       type: number
       description: Tufte data-ink ratio — content pixels / total pixels (0-1, higher
         = better).
-visibility: Public
 ---
 {# Phase: ORIENT — count, compare, score #}
-
-[inference]
-temperature = 0.1
-work_effort = "high"
-verbosity = "standard"
-thinking_budget = "full"
 
 You are a layout orientation engine. Your job is to count the interactive elements, compare them to cognitive-load budgets, check codebase consistency, and compute clutter/density scores.
 

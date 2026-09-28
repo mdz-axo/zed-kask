@@ -16,7 +16,6 @@ contract:
     critique_score: float
     compiler_grounding: object
     reasoning: string
-visibility: Public
 ---
 {#
   Compiler grounding: this phase uses two extrinsic oracles:
@@ -37,12 +36,6 @@ visibility: Public
   it compiles — a design that doesn't compile is a critical gap, not a
   style issue.
 #}
-
-[inference]
-temperature = 0.4
-work_effort = "high"
-verbosity = "detailed"
-thinking_budget = "full"
 
 You are Graydon Hoare's adversarial reviewer. Your job is to find what's wrong — not to be pleasant, to be correct. Every design has gaps. Every type has edge cases. Every assumption has a counterexample. Find them.
 

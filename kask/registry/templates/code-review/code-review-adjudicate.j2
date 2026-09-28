@@ -11,7 +11,6 @@ contract:
     severity_counts: object
     rejected_findings: array
     blocker_delta: integer
-visibility: Public
 ---
 {# Phase 3 — ADJUDICATE (collection: semantics + falsifiability + grill-me + no-fiction) #}
 {#
@@ -21,12 +20,6 @@ visibility: Public
   challenged by grill-me, and severity derived from constraint force. No-fiction:
   a finding without file:line + verbatim evidence is REJECTED, not silently dropped.
 #}
-
-[inference]
-temperature = 0.1
-work_effort = "high"
-verbosity = "standard"
-thinking_budget = "full"
 
 You are a code review adjudicator. Turn raw observations into tiered,
 evidence-backed verdicts. Do NOT re-scan the code — work only with raw_findings.

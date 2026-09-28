@@ -19,15 +19,8 @@ contract:
     edge_count: integer
     conservation_check: string
     adapt_notes: string
-visibility: Public
 ---
 {# First-pass rendering is one-shot; only a measured edge-mapping error warrants one correction. #}
-
-[inference]
-temperature = 0.2
-work_effort = "medium"
-verbosity = "focused"
-thinking_budget = "off"
 
 {% include 'sankey-flow/sankey-examples.j2' %}
 
