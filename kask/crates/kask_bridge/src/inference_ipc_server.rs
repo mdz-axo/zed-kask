@@ -727,6 +727,17 @@ async fn handle_connection(
     }
 }
 
+/// Error outcome from a code and message — the one-line form of the
+/// per-branch failure construction in `dispatch` (29 former 5-6-line sites).
+fn ipc_error(code: &str, message: impl Into<String>) -> InferenceOutcome {
+    InferenceOutcome::Error {
+        error: InferenceErrorPayload {
+            code: code.to_string(),
+            message: message.into(),
+        },
+    }
+}
+
 /// Dispatch a single request to the inference port.
 async fn dispatch(
     port: &Arc<dyn InferencePort>,
@@ -745,15 +756,10 @@ async fn dispatch(
     // `InferenceOutcome::Embeddings`, not `InferenceOutcome::Result`.
     if matches!(request.method, InferenceMethod::Embed) {
         let Some(emb_port) = embedding_port else {
-            return InferenceOutcome::Error {
-                error: InferenceErrorPayload {
-                    code: "Connection".to_string(),
-                    message: "embedding port not configured on the zed side \
-                        — the IPC server was started without an embedding port. \
-                        This indicates a startup wiring bug."
-                        .to_string(),
-                },
-            };
+            return ipc_error(
+                "Connection",
+                "embedding port not configured on the zed side — the IPC server was started without an embedding port. This indicates a startup wiring bug.",
+            );
         };
         let model = params.embed_model.as_deref().unwrap_or("");
         let texts = params.embed_texts.as_deref().unwrap_or(&[]);
@@ -784,12 +790,7 @@ async fn dispatch(
                         format!("dimension mismatch: expected {expected}, got {actual}"),
                     ),
                 };
-                InferenceOutcome::Error {
-                    error: InferenceErrorPayload {
-                        code: code.to_string(),
-                        message,
-                    },
-                }
+                ipc_error(code, message)
             }
         };
     }
@@ -799,52 +800,31 @@ async fn dispatch(
     if matches!(request.method, InferenceMethod::ListModels) {
         let (tx_reply, rx_reply) = oneshot::channel::<Vec<ModelListEntry>>();
         if list_models_tx.send((tx_reply,)).is_err() {
-            return InferenceOutcome::Error {
-                error: InferenceErrorPayload {
-                    code: "Connection".to_string(),
-                    message: "GPUI-side list_models task dropped — channel closed \
-                         (task cancelled or app shutting down)"
-                        .to_string(),
-                },
-            };
+            return ipc_error(
+                "Connection",
+                "GPUI-side list_models task dropped — channel closed (task cancelled or app shutting down)",
+            );
         }
         match rx_reply.await {
             Ok(models) => return InferenceOutcome::ModelList { models },
             Err(e) => {
-                return InferenceOutcome::Error {
-                    error: InferenceErrorPayload {
-                        code: "Connection".to_string(),
-                        message: format!("list_models channel failed: {e}"),
-                    },
-                };
+                return ipc_error("Connection", format!("list_models channel failed: {e}"));
             }
         }
     }
 
     if matches!(request.method, InferenceMethod::ToolDefinition) {
         let Some(tool_port) = tool_port else {
-            return InferenceOutcome::Error {
-                error: InferenceErrorPayload {
-                    code: "Connection".into(),
-                    message: "tool definition lookup not configured on the zed side".into(),
-                },
-            };
+            return ipc_error(
+                "Connection",
+                "tool definition lookup not configured on the zed side",
+            );
         };
         let Some(server) = params.tool_server.as_deref() else {
-            return InferenceOutcome::Error {
-                error: InferenceErrorPayload {
-                    code: "ToolPort".into(),
-                    message: "tool_definition request missing tool_server".into(),
-                },
-            };
+            return ipc_error("ToolPort", "tool_definition request missing tool_server");
         };
         let Some(tool) = params.tool_name.as_deref() else {
-            return InferenceOutcome::Error {
-                error: InferenceErrorPayload {
-                    code: "ToolPort".into(),
-                    message: "tool_definition request missing tool_name".into(),
-                },
-            };
+            return ipc_error("ToolPort", "tool_definition request missing tool_name");
         };
         let qualified = format!("{server}/{tool}");
         if !params
@@ -853,34 +833,26 @@ async fn dispatch(
             .is_some_and(|allowed| allowed.iter().any(|name| name == &qualified))
             || !crate::delegation_grants::parent_allows(params.tool_grant.as_deref(), &qualified)
         {
-            return InferenceOutcome::Error {
-                error: InferenceErrorPayload {
-                    code: "Auth".into(),
-                    message: format!(
-                        "tool definition '{qualified}' is not permitted by the card allowlist and parent grant"
-                    ),
-                },
-            };
+            return ipc_error(
+                "Auth",
+                format!(
+                    "tool definition '{qualified}' is not permitted by the card allowlist and parent grant"
+                ),
+            );
         }
         // Server-scoped lookup: the caller names the server, so a same-named
         // tool on another server can neither answer this request nor shadow it.
         let Some(info) = tool_port.get_tool_info(server, tool).await else {
-            return InferenceOutcome::Error {
-                error: InferenceErrorPayload {
-                    code: "ToolPort".into(),
-                    message: format!(
-                        "tool definition '{qualified}' not found on server '{server}'"
-                    ),
-                },
-            };
+            return ipc_error(
+                "ToolPort",
+                format!("tool definition '{qualified}' not found on server '{server}'"),
+            );
         };
         if !info.input_schema.is_object() {
-            return InferenceOutcome::Error {
-                error: InferenceErrorPayload {
-                    code: "ToolPort".into(),
-                    message: format!("tool definition '{qualified}' has a non-object schema"),
-                },
-            };
+            return ipc_error(
+                "ToolPort",
+                format!("tool definition '{qualified}' has a non-object schema"),
+            );
         }
         let mut input_schema = info.input_schema;
         language_model_core::tool_schema::normalize_tool_schema(&mut input_schema);
@@ -910,30 +882,16 @@ async fn dispatch(
     // real gate because the caller does not choose its contents.
     if matches!(request.method, InferenceMethod::ToolInvoke) {
         let Some(tool_port) = tool_port else {
-            return InferenceOutcome::Error {
-                error: InferenceErrorPayload {
-                    code: "Connection".to_string(),
-                    message: "tool dispatch not configured on the zed side — the IPC server \
-                        was started without a tool port. This indicates a startup wiring bug."
-                        .to_string(),
-                },
-            };
+            return ipc_error(
+                "Connection",
+                "tool dispatch not configured on the zed side — the IPC server was started without a tool port. This indicates a startup wiring bug.",
+            );
         };
         let Some(server) = params.tool_server.clone() else {
-            return InferenceOutcome::Error {
-                error: InferenceErrorPayload {
-                    code: "ToolPort".to_string(),
-                    message: "tool_invoke request missing tool_server".to_string(),
-                },
-            };
+            return ipc_error("ToolPort", "tool_invoke request missing tool_server");
         };
         let Some(tool) = params.tool_name.clone() else {
-            return InferenceOutcome::Error {
-                error: InferenceErrorPayload {
-                    code: "ToolPort".to_string(),
-                    message: "tool_invoke request missing tool_name".to_string(),
-                },
-            };
+            return ipc_error("ToolPort", "tool_invoke request missing tool_name");
         };
         let args = params.tool_args.unwrap_or(serde_json::Value::Null);
         // The child's declared `server/tool` allowlist is enforced HERE, at
@@ -948,48 +906,34 @@ async fn dispatch(
         match &params.tool_allowlist {
             Some(allowlist) if !allowlist.is_empty() => {
                 if !allowlist.iter().any(|a| a == &qualified) {
-                    return InferenceOutcome::Error {
-                        error: InferenceErrorPayload {
-                            code: "ToolPort".to_string(),
-                            message: format!(
-                                "tool '{qualified}' is not in the delegated tool allowlist — \
-                                 refused before minting the panel token"
-                            ),
-                        },
-                    };
+                    return ipc_error(
+                        "ToolPort",
+                        format!(
+                            "tool '{qualified}' is not in the delegated tool allowlist — refused before minting the panel token"
+                        ),
+                    );
                 }
             }
             _ => {
-                return InferenceOutcome::Error {
-                    error: InferenceErrorPayload {
-                        code: "ToolPort".to_string(),
-                        message: "tool_invoke request missing tool_allowlist — the delegated \
-                            tool allowlist must be declared per request (fail closed)"
-                            .to_string(),
-                    },
-                };
+                return ipc_error(
+                    "ToolPort",
+                    "tool_invoke request missing tool_allowlist — the delegated tool allowlist must be declared per request (fail closed)",
+                );
             }
         }
         if !crate::delegation_grants::parent_allows(params.tool_grant.as_deref(), &qualified) {
-            return InferenceOutcome::Error {
-                error: InferenceErrorPayload {
-                    code: "Auth".into(),
-                    message: format!(
-                        "Parent grant does not permit '{qualified}'. Configure kask.mcp.delegated_tools for the calling server; its request list cannot grant authority."
-                    ),
-                },
-            };
+            return ipc_error(
+                "Auth",
+                format!(
+                    "Parent grant does not permit '{qualified}'. Configure kask.mcp.delegated_tools for the calling server; its request list cannot grant authority."
+                ),
+            );
         }
         // Accounting identity for the call meter — not a credential.
         let webid = hkask_types::WebID::from_persona(b"kask-panel");
         return match tool_port.invoke(&server, &tool, args, webid).await {
             Ok(value) => InferenceOutcome::ToolResult { result: value },
-            Err(e) => InferenceOutcome::Error {
-                error: InferenceErrorPayload {
-                    code: "ToolPort".to_string(),
-                    message: e.to_string(),
-                },
-            },
+            Err(e) => ipc_error("ToolPort", e.to_string()),
         };
     }
 
@@ -1002,20 +946,16 @@ async fn dispatch(
             params.tool_grant.as_deref(),
             params.tool_allowlist.as_deref(),
         ) else {
-            return InferenceOutcome::Error { error: InferenceErrorPayload {
-                code: "Auth".into(),
-                message: "Worktree creation requires parent-granted host/create_worktree_thread authority and an explicit tool narrowing".into(),
-            }};
+            return ipc_error(
+                "Auth",
+                "Worktree creation requires parent-granted host/create_worktree_thread authority and an explicit tool narrowing",
+            );
         };
         let Some(ref tx) = worktree_spawn_tx else {
-            return InferenceOutcome::Error {
-                error: InferenceErrorPayload {
-                    code: "Connection".to_string(),
-                    message: "worktree spawn port not configured on the zed side \
-                              (no active workspace or SiblingThreadHost)"
-                        .to_string(),
-                },
-            };
+            return ipc_error(
+                "Connection",
+                "worktree spawn port not configured on the zed side (no active workspace or SiblingThreadHost)",
+            );
         };
         let prompt = params.worktree_prompt.as_deref().unwrap_or("");
         let title = params.worktree_title.as_deref().unwrap_or("Kanban Task");
@@ -1031,22 +971,18 @@ async fn dispatch(
             allowed_tools,
             reply: tx_reply,
         }) {
-            return InferenceOutcome::Error {
-                error: InferenceErrorPayload {
-                    code: "WorktreeSpawn".to_string(),
-                    message: format!("Worktree request not admitted: {error}"),
-                },
-            };
+            return ipc_error(
+                "WorktreeSpawn",
+                format!("Worktree request not admitted: {error}"),
+            );
         }
         return match rx_reply.await {
             Ok(Ok(thread)) => InferenceOutcome::WorktreeThread { thread },
             Ok(Err(error)) => InferenceOutcome::Error { error },
-            Err(_) => InferenceOutcome::Error {
-                error: InferenceErrorPayload {
-                    code: "Connection".to_string(),
-                    message: "GPUI-side worktree_spawn task dropped reply channel".to_string(),
-                },
-            },
+            Err(_) => ipc_error(
+                "Connection",
+                "GPUI-side worktree_spawn task dropped reply channel",
+            ),
         };
     }
 
@@ -1061,30 +997,22 @@ async fn dispatch(
         let documents = params.rerank_documents.as_deref().unwrap_or(&[]);
 
         if query.is_empty() || documents.is_empty() {
-            return InferenceOutcome::Error {
-                error: InferenceErrorPayload {
-                    code: "InvalidArgument".to_string(),
-                    message: "rerank requires rerank_query and at least one \
-                         rerank_document"
-                        .to_string(),
-                },
-            };
+            return ipc_error(
+                "InvalidArgument",
+                "rerank requires rerank_query and at least one rerank_document",
+            );
         }
 
         // Detect the provider from the model prefix. Only OpenRouter has a
         // rerank endpoint among the registered providers.
         let Some((_provider, clean_model)) = hkask_inference::rerank::detect_rerank_provider(model)
         else {
-            return InferenceOutcome::Error {
-                error: InferenceErrorPayload {
-                    code: "InvalidArgument".to_string(),
-                    message: format!(
-                        "rerank model '{model}' is not rerank-eligible — use an \
-                         'OpenRouter/'-prefixed rerank model (e.g. \
-                         OpenRouter/qwen/qwen3-reranker-8b)"
-                    ),
-                },
-            };
+            return ipc_error(
+                "InvalidArgument",
+                format!(
+                    "rerank model '{model}' is not rerank-eligible — use an 'OpenRouter/'-prefixed rerank model (e.g. OpenRouter/qwen/qwen3-reranker-8b)"
+                ),
+            );
         };
 
         // Read the API key from the keychain via the GPUI-side channel. One
@@ -1094,14 +1022,10 @@ async fn dispatch(
         let Some(openrouter_descriptor) =
             crate::inference_providers::provider_by_credential_key("openrouter")
         else {
-            return InferenceOutcome::Error {
-                error: InferenceErrorPayload {
-                    code: "Internal".to_string(),
-                    message: "rerank provider 'openrouter' has no INFERENCE_PROVIDERS \
-                             entry — the descriptor table diverged"
-                        .to_string(),
-                },
-            };
+            return ipc_error(
+                "Internal",
+                "rerank provider 'openrouter' has no INFERENCE_PROVIDERS entry — the descriptor table diverged",
+            );
         };
         let credential_url = openrouter_descriptor.api_url;
         let (tx_reply, rx_reply) = oneshot::channel::<Result<String, String>>();
@@ -1109,36 +1033,24 @@ async fn dispatch(
             .send((credential_url.to_string(), tx_reply))
             .is_err()
         {
-            return InferenceOutcome::Error {
-                error: InferenceErrorPayload {
-                    code: "Connection".to_string(),
-                    message: "GPUI-side credential task dropped — channel closed \
-                         (task cancelled or app shutting down)"
-                        .to_string(),
-                },
-            };
+            return ipc_error(
+                "Connection",
+                "GPUI-side credential task dropped — channel closed (task cancelled or app shutting down)",
+            );
         }
         let api_key = match rx_reply.await {
             Ok(Ok(key)) => key,
             Ok(Err(e)) => {
-                return InferenceOutcome::Error {
-                    error: InferenceErrorPayload {
-                        code: "PermissionDenied".to_string(),
-                        message: format!(
-                            "rerank requires {} (keychain slot {credential_url}): \
-                             {e}. Set the API key via Settings → AI → LLM Providers.",
-                            openrouter_descriptor.env_var
-                        ),
-                    },
-                };
+                return ipc_error(
+                    "PermissionDenied",
+                    format!(
+                        "rerank requires {} (keychain slot {credential_url}): {e}. Set the API key via Settings → AI → LLM Providers.",
+                        openrouter_descriptor.env_var
+                    ),
+                );
             }
             Err(e) => {
-                return InferenceOutcome::Error {
-                    error: InferenceErrorPayload {
-                        code: "Connection".to_string(),
-                        message: format!("credential channel failed: {e}"),
-                    },
-                };
+                return ipc_error("Connection", format!("credential channel failed: {e}"));
             }
         };
 
@@ -1155,12 +1067,7 @@ async fn dispatch(
                 return InferenceOutcome::RerankScores { scores };
             }
             Err(e) => {
-                return InferenceOutcome::Error {
-                    error: InferenceErrorPayload {
-                        code: "Internal".to_string(),
-                        message: format!("rerank API failed: {e}"),
-                    },
-                };
+                return ipc_error("Internal", format!("rerank API failed: {e}"));
             }
         }
     }
@@ -1220,15 +1127,13 @@ async fn dispatch(
                 "dispatch reached the unreachable arm — a new InferenceMethod variant \
                  likely lacks an early-return block"
             );
-            return InferenceOutcome::Error {
-                error: InferenceErrorPayload {
-                    code: "NotImplemented".to_string(),
-                    message: format!(
-                        "inference method {:?} not implemented in dispatch",
-                        request.method
-                    ),
-                },
-            };
+            return ipc_error(
+                "NotImplemented",
+                format!(
+                    "inference method {:?} not implemented in dispatch",
+                    request.method
+                ),
+            );
         }
     };
 
