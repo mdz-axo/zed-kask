@@ -109,6 +109,13 @@ skill's artifacts.
 | **SEPIO** (Scientific Evidence and Provenance Information Ontology) | Evidence, provenance, scientific claims | The skill models evidence lines and assertions |
 | **Domain-specific** | Any | The research phase finds ontologies specific to the skill's domain |
 
+Resolution state (live `onto_anchor`): Dublin Core is a published ladder
+rung; PKO, GOLEM, MovieLabs OMC and SEPIO currently resolve only to the
+core rung — derived-registry rulings pending. A generated skill anchoring
+on a pending ontology accrues `research_findings` in Phase 4 until the
+ruling lands; cite the ontology as the anchor source, and the ruling
+closes the finding.
+
 ### How ontological anchoring shapes the skill
 
 1. **PDCA shape**: the ontology's process structure implies the skill's
@@ -144,6 +151,15 @@ skill's artifacts.
 | 4 Validate — S1–S13 read | P | `skill-maintenance` validate, critiqued by the mechanical counts and the operator |
 | 4 Functional trial | D when the predeclared result is checked by a tool or test; P when the operator judges it | the predeclared expected result for the trial task |
 | 5 Converge | D | the `lisp_eval` gate over the Phase 4 counts; at most 2 re-entries |
+| 3 Scaffold — pre-check scripts | D | `skill-corpus-prescreen.sh` and `skill-corpus-contract-audit.sh` exit counts; bound: two fix-and-rerun cycles |
+| Translation — classify | P | Phase 4 checks; the operator |
+| Translation — reconcile | D | the `lisp_eval` step-count form in the translation entry |
+
+This skill's own provenance: the Phase 0–5 loop copies Deming's PDCA; the
+artifact contract adapts `skill-maintenance`'s S1–S13/T1–T5 criteria;
+Phase 0's routing adapts `skill-discovery`'s route phase; the
+ontology-anchoring procedure and the teaching patterns are project
+machinery (unanchored).
 
 ## PDCA Loop
 
@@ -156,17 +172,8 @@ Plan:   Phase 2 — Describe     → Capture purpose, name, PDCA shape, delegate
 Do:     Phase 3 — Scaffold    → Generate SKILL.md + .j2 templates
 Check:  Phase 4 — Validate    → Count mechanical findings, S1–S13 failures, and run one functional trial
 Check:  Phase 5 — Converge     → lisp_eval gate over the counts
-Act:    Phase 5 — Converge     → Re-enter at the phase that owns the failure (3 for artifact/trial defects, 1 for missing anchors); at most 2 re-entries
+Act:    Phase 5 — Converge     → Re-enter at the phase that owns the failure — anchors first (1: missing anchors; artifact work on missing anchors is wasted, so scaffold findings wait for the next pass), else 3 (artifact/trial defects); at most 2 re-entries
 ```
-
-## Composed Skills
-
-| Skill | Role | When Invoked |
-|-------|------|-------------|
-| `skill-discovery` | Overlap gate (route, then detect-gap) | Phase 0 (discover) |
-| `skill-maintenance` | Validation | Phase 4 (validate) |
-
-`skill-bundler` is not invoked by this skill. It is a candidate component for the skill being designed: when Phase 1 finds the new capability is 3+ existing peer skills run on one task, the design is those skills plus a `skill-bundler` merge, not a new process (Phase 2, step 4).
 
 ## When NOT to Use
 
@@ -187,7 +194,7 @@ Run once, before any research or writing. A new skill that duplicates or belongs
    - `full` (best fit ≥ 0.80): stop. Report the covering skill; the request is routed there, not built. Creating anyway requires the operator's explicit override, recorded with the reason.
    - `partial` (0.40–0.79): run discovery's detect-gap phase on the uncovered capabilities. `extend_skill` or `route_to_existing_skill` → present to the operator the choice between extending (or folding into) that skill and creating a new one, with the fit evidence; extension goes through `skill-maintenance`'s optimize loop, not this skill. Continue to Phase 1 only on a `create_skill` recommendation or the operator's choice to create.
    - `none` (< 0.40): continue to Phase 1, carrying `uncovered_capabilities` as the scope.
-4. Record the verdict (band, best-fitting skill and fit, decision) in the Phase 2 specification. This gate runs once; Phase 5 re-entries never return here. The dimension scores are the model's judgment; only the arithmetic is deterministic, so a borderline band (within 0.05 of 0.40 or 0.80) is presented to the operator rather than acted on automatically.
+4. Record the verdict (band, best-fitting skill and fit, decision) in the Phase 2 specification. This gate runs once; Phase 5 re-entries never return here. The dimension scores are the model's judgment; only the arithmetic is deterministic, so a borderline band (within 0.05 of 0.40 or 0.80) is presented to the operator rather than acted on automatically. The route form is owned by `skill-discovery` — this skill recomputes from its reported dimension scores under the bands above; if the reported band and the recomputed band disagree, treat the case as borderline and present both to the operator rather than acting automatically.
 
 ### Phase 1 — Research (find ontological anchors)
 
@@ -220,6 +227,11 @@ Run once, before any research or writing. A new skill that duplicates or belongs
    `curator_consult`, `kanban_task_list`, `stock_quote`, `web_search`).
 6. Identify which agent tools the skill will call (e.g., `lisp_eval` for
    deterministic computation, `read_file` for template loading).
+7. Select the teaching patterns the new skill instantiates — convergence,
+   composition, persistence-grounded learning, failure surfacing, D/P
+   labelling (the patterns section below) — and record them in the
+   specification; Phase 3's scaffold carries them into the generated
+   artifacts.
 
 ### Phase 3 — Scaffold (generate SKILL.md + templates)
 
@@ -435,6 +447,10 @@ current state is measured), an observable target condition, its bounded PDCA
 loop (or a justified single-pass exemption), and a step-type table labelling
 each step D (naming its oracle) or P (naming its critic and collapse path),
 per the D/P labelling pattern (P8.4).
+
+## Regression case
+
+Render `create-skill/scaffold` with a one-line `skill_description` (e.g. "a chunked-corpus QA skill") and `scope`; render `create-skill/translate` with a small `source_skill` and `target_domain`. Gates: the Phase 5 convergence form over four envs — all-clean `{scaffold 0, research 0, functional 1, reentries 0}` → `done`; exhausted `{2, 0, 0, 2}` → `stop-and-report`; anchors-first `{1, 1, 0, 0}` → `reenter-phase-1`; artifact-only `{1, 0, 0, 0}` → `reenter-phase-3`. The translation reconciliation form over a 3-step source with 1 unresolved concept → `true`. Generated-artifact check (the recorded trial shape for this generative skill): the rendered scaffold's artifact lists carry the same contract markers as Phase 3 step 2 (goal-first line verbatim from the table, one goal block, typed `[inference]` header only, no visibility key, no body stanza) — a divergence between the two texts is a finding. Both forms are pinned by `test_create_skill_skill_md_pins_convergence_forms`.
 
 ## Registry Templates
 

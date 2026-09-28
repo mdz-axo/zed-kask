@@ -571,6 +571,91 @@ mod tests {
     }
 
     #[test]
+    fn test_create_skill_skill_md_pins_convergence_forms() {
+        // create-skill SKILL.md pins the Phase 5 convergence gate and the
+        // translation reconciliation form; if they drift (or the
+        // anchors-first precedence is lost), this fails until skill and
+        // tests are reconciled.
+        let skill_md = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../.agents/skills/create-skill/SKILL.md"
+        ))
+        .expect("create-skill SKILL.md must exist in the workspace");
+        assert!(
+            skill_md.contains("(quote reenter-phase-1)"),
+            "the Phase 5 gate's anchors-first re-entry clause must stay pinned in create-skill SKILL.md"
+        );
+        assert!(
+            skill_md.contains(r#"(= source_steps (+ steps_mapped (length unresolved_concepts)))"#),
+            "the translation reconciliation form must stay pinned in create-skill SKILL.md"
+        );
+
+        let gate = r#"(cond ((and (= scaffold 0) (= research 0) (= functional 1)) (quote done)) ((>= reentries 2) (quote stop-and-report)) ((> research 0) (quote reenter-phase-1)) (t (quote reenter-phase-3)))"#;
+        let clean = hkask_lisp::eval_sandboxed_with_budget(
+            gate,
+            &json!({"scaffold": 0, "research": 0, "functional": 1, "reentries": 0}),
+            100_000,
+            64,
+        )
+        .expect("all-clean gate env must evaluate");
+        assert_eq!(clean, json!("done"));
+
+        let exhausted = hkask_lisp::eval_sandboxed_with_budget(
+            gate,
+            &json!({"scaffold": 2, "research": 0, "functional": 0, "reentries": 2}),
+            100_000,
+            64,
+        )
+        .expect("exhausted gate env must evaluate");
+        assert_eq!(exhausted, json!("stop-and-report"));
+
+        let anchors_first = hkask_lisp::eval_sandboxed_with_budget(
+            gate,
+            &json!({"scaffold": 1, "research": 1, "functional": 0, "reentries": 0}),
+            100_000,
+            64,
+        )
+        .expect("mixed-findings gate env must evaluate");
+        assert_eq!(
+            anchors_first,
+            json!("reenter-phase-1"),
+            "missing anchors fire before artifact defects — artifact work on missing anchors is wasted"
+        );
+
+        let artifact_only = hkask_lisp::eval_sandboxed_with_budget(
+            gate,
+            &json!({"scaffold": 1, "research": 0, "functional": 0, "reentries": 0}),
+            100_000,
+            64,
+        )
+        .expect("artifact-only gate env must evaluate");
+        assert_eq!(artifact_only, json!("reenter-phase-3"));
+
+        let reconcile = r#"(= source_steps (+ steps_mapped (length unresolved_concepts)))"#;
+        let complete = hkask_lisp::eval_sandboxed_with_budget(
+            reconcile,
+            &json!({"source_steps": 3, "steps_mapped": 2, "unresolved_concepts": ["model-scored quality rubric"]}),
+            100_000,
+            64,
+        )
+        .expect("reconciliation form must evaluate");
+        assert_eq!(complete, json!(true));
+
+        let dropped = hkask_lisp::eval_sandboxed_with_budget(
+            reconcile,
+            &json!({"source_steps": 3, "steps_mapped": 1, "unresolved_concepts": ["model-scored quality rubric"]}),
+            100_000,
+            64,
+        )
+        .expect("dropped-step reconciliation must evaluate");
+        assert_eq!(
+            dropped,
+            json!(false),
+            "a silently dropped source step must fail the reconciliation"
+        );
+    }
+
+    #[test]
     fn test_canonical_superforecasting_forms() {
         // superforecasting SKILL.md stage 4 (Bayes) and stage 5 (MCDA-weighted
         // average) — pinned so the pipeline's probability arithmetic is
