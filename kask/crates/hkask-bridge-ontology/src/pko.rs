@@ -4,17 +4,15 @@
 //! processes — procedures, steps, actions, executions, issues, feedback.
 //! Shared by kanban, docproc, and research servers.
 //!
-//! Every URI in this module is verified against the official PKO v2.0.0
-//! OWL artifact (Carriero et al., arXiv:2503.20634,
-//! <https://w3id.org/pko>, version 2.0.0, 2026-06-29) —
-//! `fixtures/pko-2.0.0-terms.txt` pins the term list, and
-//! `all_terms_are_official` fails the build if a term drifts from it. Do
-//! not add a term that is not in that fixture.
+//! The full PKO v2.0.0 ontology (Carriero et al., arXiv:2503.20634,
+//! <https://w3id.org/pko>) and the vocabularies it specializes (P-Plan,
+//! PROV-O, Dublin Core) are loaded from `sources/` and resolved through
+//! `published`. This module names only the concepts hKask code emits;
+//! `all_terms_are_official` fails the build unless each is published by the
+//! vocabulary owning its namespace.
 //!
-//! PKO reuses P-Plan, PROV-O, SPAR, Dublin Core, and DCAT terms; the
-//! reused terms this module carries (`pplan:`, `prov:`, `dcterms:`) are
-//! defined in the PKO artifact itself and keep their canonical namespace
-//! prefixes — never re-prefixed under `pko:`. Verification (2026-08-29)
+//! Reused terms (`pplan:`, `prov:`, `dcterms:`) keep their canonical
+//! namespace prefixes — never re-prefixed under `pko:`. Verification (2026-08-29)
 //! corrected five such mis-prefixed terms and dropped five dead ones
 //! (`ProcedureTarget` does not exist in PKO; `Role`/`RoleInTime` are SPAR
 //! terms with no consumers here; versioning is DCAT's, not PKO's).
@@ -26,15 +24,15 @@
 pub type PkoConcept = &'static str;
 
 /// Defines the vocabulary constants and registers every one in `ALL_TERMS`,
-/// so the fixture test covers each constant by construction.
+/// so the publication guard covers each constant by construction.
 macro_rules! pko_terms {
     ($($(#[$doc:meta])* $name:ident = $uri:literal),* $(,)?) => {
         $($(#[$doc])* pub const $name: PkoConcept = $uri;)*
 
-        /// Every term in this module. The fixture test asserts each appears
-        /// in the official PKO term list — a fabricated URI cannot pass.
-        /// New terms must go through this macro.
-        pub const ALL_TERMS: &[PkoConcept] = &[$($name),*];
+        /// Every term in this module, so the publication guard covers each
+        /// constant by construction. New terms must go through this macro.
+        #[cfg(test)]
+        const ALL_TERMS: &[PkoConcept] = &[$($name),*];
     };
 }
 
@@ -182,30 +180,15 @@ pub fn kanban_status_to_pko_execution(status: &str) -> Option<PkoConcept> {
 mod tests {
     use super::*;
 
-    /// Fabrication guard: every term in this module must appear in the
-    /// official PKO term list checked in as a fixture (source URL and
-    /// fetch date in the fixture header). A term that is not in the
-    /// published ontology fails here — pin tests on the constants alone
-    /// cannot catch a plausible-looking invented URI.
+    /// Fabrication guard: every term in this module is published by the
+    /// loaded vocabulary owning its namespace. A plausible-looking invented
+    /// or mis-prefixed URI fails here.
     #[test]
     fn all_terms_are_official() {
-        let fixture_path = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/pko-2.0.0-terms.txt");
-        let fixture = std::fs::read_to_string(fixture_path)
-            .unwrap_or_else(|e| panic!("failed to read {fixture_path}: {e}"));
-        let official: std::collections::HashSet<&str> = fixture
-            .lines()
-            .map(|line| line.split('\t').next().unwrap_or("").trim())
-            .filter(|term| !term.is_empty() && !term.starts_with('#'))
-            .collect();
-        assert!(
-            !official.is_empty(),
-            "fixture {fixture_path} contains no terms"
-        );
         for term in ALL_TERMS {
             assert!(
-                official.contains(term),
-                "{term} is not in the official PKO v2.0.0 term list ({fixture_path}) — \
-                 it must be verified against https://w3id.org/pko before use"
+                crate::published::contains(term),
+                "{term} is not published by the vocabulary owning its namespace"
             );
         }
     }

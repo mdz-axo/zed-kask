@@ -1077,6 +1077,9 @@ pptx-to-md = "0.1"
 pdf-extract = "0.12"
 feed-rs = "2.4"
 hf-hub = "1.0.0"
+# hkask-bridge-ontology build.rs: reads the vendored RDF ontology sources.
+oxrdf = "0.3"
+oxrdfio = "0.2"
 
 [workspace.dependencies.windows]
 version = "0.62"

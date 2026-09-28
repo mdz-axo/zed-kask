@@ -15,6 +15,7 @@ use sha2::{Digest, Sha256};
 
 struct Pin {
     path: String,
+    url: String,
     version: String,
 }
 
@@ -30,7 +31,7 @@ fn verify_lock(sources: &Path) -> Result<Vec<Pin>, String> {
         .filter(|line| !line.starts_with('#') && !line.trim().is_empty())
     {
         let fields: Vec<&str> = line.split('\t').collect();
-        let [path, _url, version, sha256, license] = fields.as_slice() else {
+        let [path, url, version, sha256, license] = fields.as_slice() else {
             return Err(format!(
                 "SOURCES.lock: expected 5 tab-separated fields: {line}"
             ));
@@ -52,27 +53,78 @@ fn verify_lock(sources: &Path) -> Result<Vec<Pin>, String> {
         }
         pins.push(Pin {
             path: (*path).to_string(),
+            url: (*url).to_string(),
             version: (*version).to_string(),
         });
     }
 
+    // Every file in every source directory must be pinned.
     let pinned: BTreeSet<&str> = pins.iter().map(|pin| pin.path.as_str()).collect();
-    for directory in ["sumo", "schema-org"] {
-        let entries = std::fs::read_dir(sources.join(directory))
-            .map_err(|error| format!("sources/{directory}: {error}"))?;
+    let directories = std::fs::read_dir(sources).map_err(|error| format!("sources: {error}"))?;
+    for directory in directories {
+        let directory = directory.map_err(|error| error.to_string())?;
+        if !directory.path().is_dir() {
+            continue;
+        }
+        let directory_name = directory.file_name().to_string_lossy().into_owned();
+        let entries = std::fs::read_dir(directory.path())
+            .map_err(|error| format!("sources/{directory_name}: {error}"))?;
         for entry in entries {
             let entry = entry.map_err(|error| error.to_string())?;
             let name = entry.file_name().to_string_lossy().into_owned();
             if name == "README.txt" {
                 continue;
             }
-            let relative = format!("{directory}/{name}");
+            let relative = format!("{directory_name}/{name}");
             if !pinned.contains(relative.as_str()) {
                 return Err(format!("sources/{relative} is not pinned in SOURCES.lock"));
             }
         }
     }
     Ok(pins)
+}
+
+/// Parse one pinned RDF file into the reader-neutral triple form.
+fn read_rdf(sources: &Path, pin: &Pin) -> Result<Vec<published_sources::RdfTriple>, String> {
+    use oxrdf::{NamedOrBlankNode, Term};
+    use oxrdfio::{RdfFormat, RdfParser};
+    use published_sources::{RdfObject, RdfTriple};
+
+    let format = match Path::new(&pin.path)
+        .extension()
+        .and_then(|ext| ext.to_str())
+    {
+        Some("ttl") => RdfFormat::Turtle,
+        Some("owl" | "rdf" | "xml") => RdfFormat::RdfXml,
+        other => return Err(format!("{}: unsupported RDF extension {other:?}", pin.path)),
+    };
+    let bytes =
+        std::fs::read(sources.join(&pin.path)).map_err(|error| format!("{}: {error}", pin.path))?;
+    let parser = RdfParser::from_format(format)
+        .with_base_iri(pin.url.as_str())
+        .map_err(|error| format!("{}: base IRI {}: {error}", pin.path, pin.url))?;
+    let mut triples = Vec::new();
+    for quad in parser.for_slice(&bytes) {
+        let quad = quad.map_err(|error| format!("{}: {error}", pin.path))?;
+        let subject = match quad.subject {
+            NamedOrBlankNode::NamedNode(node) => Some(node.into_string()),
+            NamedOrBlankNode::BlankNode(_) => None,
+        };
+        let object = match quad.object {
+            Term::NamedNode(node) => RdfObject::Iri(node.into_string()),
+            Term::Literal(literal) => RdfObject::Literal {
+                value: literal.value().to_string(),
+                language: literal.language().map(str::to_string),
+            },
+            _ => RdfObject::Blank,
+        };
+        triples.push(RdfTriple {
+            subject,
+            predicate: quad.predicate.into_string(),
+            object,
+        });
+    }
+    Ok(triples)
 }
 
 fn build() -> Result<(), String> {
@@ -116,6 +168,40 @@ fn build() -> Result<(), String> {
         &read(&sources.join("schema-org/schemaorg-all-https-properties.csv"))?,
         &schema_version,
     )?);
+
+    // RDF vocabularies: parse each directory once, index each namespace.
+    let mut parsed: std::collections::HashMap<
+        &str,
+        Vec<(String, Vec<published_sources::RdfTriple>)>,
+    > = std::collections::HashMap::new();
+    for vocabulary in published_sources::RDF_VOCABULARIES {
+        let prefix = format!("{}/", vocabulary.directory);
+        let directory_pins: Vec<&Pin> = pins
+            .iter()
+            .filter(|pin| pin.path.starts_with(&prefix))
+            .collect();
+        let version = directory_pins
+            .first()
+            .map(|pin| pin.version.clone())
+            .ok_or_else(|| format!("SOURCES.lock pins no files for {}", vocabulary.namespace))?;
+        if !parsed.contains_key(vocabulary.directory) {
+            let mut files = Vec::new();
+            for pin in &directory_pins {
+                let name = pin.path.trim_start_matches(&prefix).to_string();
+                files.push((name, read_rdf(&sources, pin)?));
+            }
+            parsed.insert(vocabulary.directory, files);
+        }
+        let vocabulary_terms =
+            published_sources::index_rdf(vocabulary, &parsed[vocabulary.directory], &version);
+        if vocabulary_terms.is_empty() {
+            return Err(format!(
+                "{} ({}) indexed no terms",
+                vocabulary.namespace, vocabulary.prefix
+            ));
+        }
+        terms.extend(vocabulary_terms);
+    }
 
     let mut index = String::new();
     for term in &terms {

@@ -13,7 +13,10 @@ serde = { workspace = true, features = ["derive"] }
 schemars = { workspace = true }
 
 [build-dependencies]
-# build.rs verifies every vendored source against its pinned sha256.
+# build.rs verifies every vendored source against its pinned sha256 and reads
+# the RDF (Turtle, RDF/XML) sources.
+oxrdf.workspace = true
+oxrdfio.workspace = true
 sha2.workspace = true
 
 [dev-dependencies]

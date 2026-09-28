@@ -20,9 +20,11 @@
 //! BIBO: <http://purl.org/ontology/bibo/> (v1.3)
 //! CiTO: <http://purl.org/spar/cito> (v2.8.2)
 //!
-//! Every term is verified against those artifacts —
-//! `fixtures/dublincore-bibo-cito-terms.txt` pins the term list, and
-//! `all_terms_are_official` fails the build if a term drifts from it.
+//! The full DCMI Metadata Terms (terms, type vocabulary, elements, abstract
+//! model), BIBO and CiTO are loaded from `sources/` and resolved through
+//! `published` (on the `state_axis` rung, after SUMO and schema.org). This
+//! module names only the concepts hKask code emits; `all_terms_are_official`
+//! fails the build unless each is published.
 
 /// A Dublin Core / BIBO / CiTO concept URI.
 pub type DcConcept = &'static str;
@@ -118,8 +120,8 @@ pub fn mime_to_dc_type(mime: &str) -> Option<DcConcept> {
 mod tests {
     use super::*;
 
-    /// Every URI constant in this module, by construction — the fixture
-    /// test below asserts each appears in the official term list.
+    /// Every URI constant in this module, by construction — the publication
+    /// guard below asserts each is published in the loaded vocabularies.
     const ALL_TERMS: &[DcConcept] = &[
         TITLE,
         CREATOR,
@@ -173,31 +175,18 @@ mod tests {
         CITES_AS_EVIDENCE,
     ];
 
-    /// Fabrication guard: every term in this module must appear in the
-    /// official DCMI / BIBO / CiTO term list checked in as a fixture.
+    /// Fabrication guard: every term in this module is published in the
+    /// loaded DCMI / BIBO / CiTO vocabularies.
     #[test]
     fn all_terms_are_official() {
-        let fixture_path = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/fixtures/dublincore-bibo-cito-terms.txt"
-        );
-        let fixture = std::fs::read_to_string(fixture_path)
-            .unwrap_or_else(|e| panic!("failed to read {fixture_path}: {e}"));
-        let official: std::collections::HashSet<&str> = fixture
-            .lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty() && !line.starts_with('#'))
-            .collect();
-        assert!(
-            !official.is_empty(),
-            "fixture {fixture_path} contains no terms"
-        );
         for term in ALL_TERMS {
             assert!(
-                official.contains(term),
-                "{term} is not in the official DCMI/BIBO/CiTO term list ({fixture_path})"
+                crate::published::contains(term),
+                "{term} is not published in the loaded DCMI/BIBO/CiTO vocabularies"
             );
         }
+        // BIBO 1.3 publishes no Preprint class (2026-08-29 verification).
+        assert!(!crate::published::contains("bibo:Preprint"));
     }
 
     #[test]

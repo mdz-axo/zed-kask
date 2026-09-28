@@ -10,7 +10,7 @@ use std::collections::{HashMap, HashSet};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::{derived, fibo, golem, ml_schema, omc, pko, published, rdf, sdmx, sepio};
+use crate::{derived, fibo, golem, ml_schema, omc, published, rdf, sdmx, sepio};
 
 /// Protocol stamped on records classified through the published term resolver.
 /// v2 (2026-09-27): resolution walks the full published SUMO and schema.org
@@ -37,7 +37,8 @@ pub struct TermSense {
 /// The result of walking the published-ontology fallback ladder for one term.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct TermResolution {
-    /// Ladder rung: domain_supplement, derived, upper, general_vocabulary, or core.
+    /// Ladder rung: domain_supplement, derived, upper, general_vocabulary,
+    /// state_axis, or core.
     pub tier: String,
     /// Candidate term supplied by the caller, trimmed but otherwise preserved.
     pub term: String,
@@ -104,10 +105,11 @@ const NAMED_DOMAIN_REGISTRIES: &[(&str, &[(&str, &str)])] = &[
     ("GOLEM", golem::ALL_NAMED_TERMS),
 ];
 
+/// Domain vocabularies not yet loaded in full (fragment registries, retired
+/// one by one as their full sources land in `published`).
 const DOMAIN_REGISTRIES: &[(&str, &[&str])] = &[
     ("FIBO", fibo::ALL_TERMS),
     ("OMC", omc::ALL_CONCEPTS),
-    ("PKO", pko::ALL_TERMS),
     ("SEPIO", sepio::ALL_TERMS),
     ("GOLEM", golem::ALL_TERMS),
     ("SDMX", sdmx::ALL_CONCEPTS),
@@ -115,11 +117,23 @@ const DOMAIN_REGISTRIES: &[(&str, &[&str])] = &[
     ("RDF", rdf::ALL_TERMS),
 ];
 
-/// Full published vocabularies (`published`), with their ladder rung, after
-/// the domain and derived rungs: SUMO is the formal upper ontology; schema.org
-/// is a general web vocabulary, consulted after the upper ontology so a formal
-/// category is preferred and the web sense is listed as an alternative.
-const PUBLISHED_RUNGS: &[(&str, &str)] = &[("SUMO", "upper"), ("schema.org", "general_vocabulary")];
+/// Full published vocabularies (`published`) consulted as domain supplements:
+/// the process axis (PKO) and the vocabularies PKO specializes (P-Plan,
+/// PROV).
+const PUBLISHED_DOMAIN: &[&str] = &["PKO", "P-Plan", "PROV"];
+
+/// Full published vocabularies consulted after the domain and derived rungs,
+/// in ladder order: SUMO (formal upper ontology) first, then schema.org (a
+/// general web vocabulary), then the state axis (Dublin Core, BIBO, CiTO) —
+/// artifact-typing vocabularies whose senses stay visible as alternatives but
+/// never outrank a formal category (operator rulings 2026-09-10, 2026-09-27).
+const PUBLISHED_RUNGS: &[(&str, &str)] = &[
+    ("SUMO", "upper"),
+    ("schema.org", "general_vocabulary"),
+    ("Dublin Core", "state_axis"),
+    ("BIBO", "state_axis"),
+    ("CiTO", "state_axis"),
+];
 
 struct Sense {
     sense: TermSense,
@@ -142,6 +156,20 @@ fn sense(tier: &str, namespace: &str, concept: &str) -> Sense {
 }
 
 use published::normalize;
+
+fn published_senses(tier: &str, namespace: &str, term: &str) -> Vec<Sense> {
+    published::lookup(namespace, term)
+        .into_iter()
+        .map(|published_term| {
+            let mut found = sense(tier, namespace, published_term.concept);
+            found.sense.definition = Some(published_term.definition)
+                .filter(|text| !text.is_empty())
+                .map(str::to_string);
+            found.sense.source = Some(published_term.source.to_string());
+            found
+        })
+        .collect()
+}
 
 /// Walk the exact fallback ladder. A false specific anchor is worse than the
 /// real but coarse 5W1H ground, so matching is never fuzzy. The first sense
@@ -170,6 +198,10 @@ pub fn resolve_term(term: &str) -> TermResolution {
         }
     }
 
+    for namespace in PUBLISHED_DOMAIN {
+        senses.extend(published_senses("domain_supplement", namespace, trimmed));
+    }
+
     if let Some(concept) = derived::resolve_derived(trimmed) {
         let mut found = sense("derived", "derived", concept.term);
         found.sense.definition = Some(concept.definition.to_string());
@@ -179,14 +211,7 @@ pub fn resolve_term(term: &str) -> TermResolution {
     }
 
     for (namespace, tier) in PUBLISHED_RUNGS {
-        for published_term in published::lookup(namespace, trimmed) {
-            let mut found = sense(tier, namespace, published_term.concept);
-            found.sense.definition = Some(published_term.definition)
-                .filter(|text| !text.is_empty())
-                .map(str::to_string);
-            found.sense.source = Some(published_term.source.to_string());
-            senses.push(found);
-        }
+        senses.extend(published_senses(tier, namespace, trimmed));
     }
 
     let mut seen = HashSet::new();
@@ -353,6 +378,53 @@ mod tests {
         assert_eq!(unique.len(), concepts.len(), "senses are deduplicated");
     }
 
+    /// expect: the process-axis family (PKO, P-Plan, PROV-O) resolves on the
+    /// domain rung from full sources; state-axis vocabularies resolve only
+    /// where nothing formal publishes the word, and otherwise stay visible
+    /// as alternatives.
+    #[test]
+    fn full_axis_vocabularies_resolve_on_their_rungs() {
+        // The PROV source publishes no definition text for wasGeneratedBy
+        // (its meaning is in the PROV-DM prose): none is invented.
+        let generated = resolve_term("wasGeneratedBy");
+        assert_eq!(
+            (generated.tier.as_str(), generated.concept.as_str()),
+            ("domain_supplement", "prov:wasGeneratedBy")
+        );
+        assert_eq!(generated.definition, None);
+        for (term, tier, concept) in [
+            ("Delegation", "domain_supplement", "prov:Delegation"),
+            ("MultiStep", "domain_supplement", "pplan:MultiStep"),
+            (
+                "procedure execution",
+                "domain_supplement",
+                "pko:ProcedureExecution",
+            ),
+            ("academic article", "state_axis", "bibo:AcademicArticle"),
+            ("cites as evidence", "state_axis", "cito:citesAsEvidence"),
+        ] {
+            let resolved = resolve_term(term);
+            assert_eq!(
+                (resolved.tier.as_str(), resolved.concept.as_str()),
+                (tier, concept),
+                "{resolved:?}"
+            );
+            assert!(resolved.definition.is_some(), "{resolved:?}");
+        }
+        let title = resolve_term("title");
+        assert_ne!(
+            title.tier, "state_axis",
+            "a formal sense outranks DC: {title:?}"
+        );
+        assert!(
+            title
+                .alternatives
+                .iter()
+                .any(|sense| sense.concept == "dcterms:title" && sense.tier == "state_axis"),
+            "{title:?}"
+        );
+    }
+
     /// expect: a derived concept carries its recorded definition alongside
     /// its identity and authority.
     #[test]
@@ -369,15 +441,16 @@ mod tests {
 
     #[test]
     fn omc_precedes_pko_within_domain_supplement_resolution() {
-        let omc = DOMAIN_REGISTRIES
-            .iter()
-            .position(|(namespace, _)| *namespace == "OMC")
-            .expect("OMC domain registry");
-        let pko = DOMAIN_REGISTRIES
-            .iter()
-            .position(|(namespace, _)| *namespace == "PKO")
-            .expect("PKO domain registry");
-        assert!(omc < pko, "media terms must try OMC before PKO");
+        // Registries are walked before the published domain vocabularies.
+        assert!(
+            DOMAIN_REGISTRIES
+                .iter()
+                .any(|(namespace, _)| *namespace == "OMC")
+        );
+        assert!(
+            PUBLISHED_DOMAIN.contains(&"PKO"),
+            "media terms must try OMC before PKO"
+        );
     }
 
     #[test]

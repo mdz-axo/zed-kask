@@ -244,9 +244,12 @@ mod tests {
         let json = serde_json::to_value(found).expect("serialize published path");
         assert_eq!(json["traversal"]["status"], "path_found");
         assert_eq!(json["traversal"]["edges"][0]["relation"], "inverse_of");
-        assert_eq!(
-            json["traversal"]["edges"][0]["authority"],
-            "https://schema.org/hasPart"
+        // The authority is the pinned source file that states the relation.
+        assert!(
+            json["traversal"]["edges"][0]["authority"]
+                .as_str()
+                .is_some_and(|source| source.contains("schemaorg-all-https-properties.csv")),
+            "{json}"
         );
 
         let (event_stream, _event_rx) = ToolCallEventStream::test();
