@@ -2148,6 +2148,110 @@ mod tests {
         assert_eq!(result, serde_json::json!(820));
     }
 
+    /// The minimal `max_steps` at which `form` completes against `env` —
+    /// the exact step cost, measured deterministically (doubling then binary
+    /// search; every probe re-runs the same form, so the answer is stable).
+    /// L3's quantification instrument: no clocks, only the budget boundary.
+    fn minimal_steps(form: &str, env: &Value, max_depth: u64) -> u64 {
+        let mut hi = 1u64;
+        while eval_sandboxed_with_budget(form, env, hi, max_depth).is_err() {
+            hi = hi.saturating_mul(2);
+            assert!(hi <= 1 << 24, "{form} did not complete even at 16M steps");
+        }
+        let mut lo = 1u64;
+        while lo + 1 < hi {
+            let mid = lo + (hi - lo) / 2;
+            if eval_sandboxed_with_budget(form, env, mid, max_depth).is_err() {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+        }
+        hi
+    }
+
+    /// lisp-repair L3: the walker's step cost is linear in element count and
+    /// real-scale walks fit the default budget. BEFORE the fix this was
+    /// quadratic — `charge_native_arguments` re-charged every list node on
+    /// each argument pass, so the O(1) `is_null`/`cdr` pair cost O(len) per
+    /// level: 600 elements needed ~365,000 steps against the 100,000
+    /// default (the matrix specimen). The eprintln line is the before/after
+    /// receipt; run with `--nocapture` when re-quantifying.
+    #[test]
+    fn walker_step_cost_is_linear_and_fits_default_budget() {
+        let form = "(define count (lambda (lst) (if (is_null lst) 0 (+ 1 (count (cdr lst)))))) (count items)";
+        let steps_100 = minimal_steps(
+            form,
+            &serde_json::json!({"items": (0..100).collect::<Vec<i64>>()}),
+            8192,
+        );
+        let steps_600 = minimal_steps(
+            form,
+            &serde_json::json!({"items": (0..600).collect::<Vec<i64>>()}),
+            8192,
+        );
+        eprintln!("walker step cost: 100 elements = {steps_100}, 600 elements = {steps_600}");
+        // Linear bound: 6x elements must not cost more than 6x + constant
+        // headroom (the quadratic model costs 36x).
+        assert!(
+            steps_600 <= steps_100 * 6 + 2_000,
+            "walker cost is not linear: 100 -> {steps_100}, 600 -> {steps_600}"
+        );
+        // Real scale fits the default budget with an order of magnitude of
+        // headroom.
+        assert!(
+            steps_600 < 10_000,
+            "600-element walker should fit the 100,000 default easily, costs {steps_600}"
+        );
+    }
+
+    /// Traversal builtins pay one step per node (the L3 cost model): a
+    /// 10,000-element env list (~10,020 steps to load) plus one traversal
+    /// (~10,000) exceeds a 15,000 budget, while the O(1) controls below
+    /// still pass — nodes are charged at creation and at real traversal,
+    /// never for merely passing a list as an argument.
+    #[test]
+    fn traversal_builtins_charge_per_node() {
+        let env = serde_json::json!({"items": (0..10_000i64).collect::<Vec<i64>>()});
+        for form in [
+            "(length items)",
+            "(nth 0 items)",
+            "(reverse items)",
+            "(append items items)",
+        ] {
+            assert!(
+                matches!(
+                    eval_sandboxed_with_budget(form, &env, 15_000, 1024),
+                    Err(LispError::StepLimitExceeded(_))
+                ),
+                "{form} should charge one step per traversed node"
+            );
+        }
+        // Success control at the same scale: 1,000 elements, traversal
+        // included, fits a 25,000 budget.
+        let small = serde_json::json!({"items": (0..1_000i64).collect::<Vec<i64>>()});
+        assert_eq!(
+            eval_sandboxed_with_budget("(length items)", &small, 25_000, 1024)
+                .expect("1,000-element length fits"),
+            serde_json::json!(1_000)
+        );
+    }
+
+    /// The fix receipt (lisp-repair L3): O(1) list operations no longer
+    /// charge per node. Before the fix, `(is_null (cdr items))` on a
+    /// 10,000-element list paid ~10,000 steps for the `cdr` argument pass
+    /// and exceeded a 15,000 budget; now the whole form costs a handful of
+    /// steps after the ~10,020 env load.
+    #[test]
+    fn constant_time_list_ops_do_not_charge_per_node() {
+        let env = serde_json::json!({"items": (0..10_000i64).collect::<Vec<i64>>()});
+        assert_eq!(
+            eval_sandboxed_with_budget("(is_null (cdr items))", &env, 15_000, 1024)
+                .expect("O(1) list ops must not charge per node"),
+            serde_json::json!(false)
+        );
+    }
+
     #[test]
     fn step_budget_counts_across_multiple_top_level_forms() {
         // Two forms share one budget: a cheap first form + runaway second

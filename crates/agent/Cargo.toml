@@ -108,6 +108,7 @@ agent_servers = { workspace = true, "features" = ["test-support"] }
 client = { workspace = true, "features" = ["test-support"] }
 clock = { workspace = true, "features" = ["test-support"] }
 context_server = { workspace = true, "features" = ["test-support"] }
+criterion = { workspace = true }
 ctor.workspace = true
 db = { workspace = true, "features" = ["test-support"] }
 editor = { workspace = true, "features" = ["test-support"] }
@@ -143,6 +144,10 @@ zlog.workspace = true
 
 [package.metadata.cargo-machete]
 ignored = ["remote_connection"]
+
+[[bench]]
+name = "lisp_eval_tool_path"
+harness = false
 
 [package.metadata.cargo-shear]
 ignored = ["editor"]

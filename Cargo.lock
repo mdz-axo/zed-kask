@@ -300,6 +300,7 @@ dependencies = [
  "cloud_llm_client",
  "collections",
  "context_server",
+ "criterion",
  "ctor",
  "db",
  "editor",
@@ -8848,6 +8849,7 @@ dependencies = [
 name = "hkask-lisp"
 version = "0.40.0"
 dependencies = [
+ "criterion",
  "proptest",
  "serde_json",
  "stacksafe",
