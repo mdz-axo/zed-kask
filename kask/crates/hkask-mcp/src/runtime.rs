@@ -458,33 +458,44 @@ enum ConnectionState {
     Missing,
 }
 
+/// Per-server runtime state — one entry replaces the six former per-server
+/// maps (`servers`, `connections`, `cancellation_tokens`, `launch_specs`,
+/// `last_reconnect`, `health_failures`), so per-server coherence is
+/// structural (one lock, one entry) instead of cross-map protocol.
+#[derive(Default)]
+struct ServerEntry {
+    /// Registered metadata with discovered tools; `None` until registered
+    /// or discovery completes.
+    metadata: Option<McpServer>,
+    /// Live connection + its generation; `None` when not connected.
+    connection: Option<Connection>,
+    /// Supervisor/keeper token; retained across connection loss — a dead
+    /// connection's supervisor must stay cancellable until replacement/stop.
+    supervisor_cancel: Option<CancellationToken>,
+    /// How to (re-)spawn; `None` = deliberately stopped (never resurrected).
+    spec: Option<LaunchSpec>,
+    /// Cooldown stamp for the on-demand reconnect path.
+    last_reconnect: Option<Instant>,
+    /// Consecutive health-check failures (circuit-breaker input).
+    health_failures: u32,
+}
+
 #[derive(Clone)]
 pub struct McpRuntime {
     /// Serializes desired-state changes and publication, never handshake/discovery.
     /// The value latches terminal session shutdown, rejecting queued starts.
     lifecycle: Arc<Mutex<bool>>,
+    /// Per-server state — one map, one lock (see [`ServerEntry`]).
+    entries: Arc<RwLock<HashMap<String, ServerEntry>>>,
+    /// Child processes keyed by spawn id — a restart keeps old children
+    /// until reaped, so the key is the spawn, not the server.
     children: Arc<Mutex<HashMap<u64, ManagedChild>>>,
-    /// Registered MCP servers (metadata)
-    servers: Arc<RwLock<HashMap<String, McpServer>>>,
     /// Change signal for tool-surface membership (server registered /
     /// stopped / shutdown-all). Consumers subscribe via
     /// [`McpRuntime::tool_surface_changes`] and refresh event-driven instead
     /// of polling — registration is an event, and events are forwarded, not
     /// sampled.
     tool_surface_tx: Arc<tokio::sync::watch::Sender<()>>,
-    /// Live connections to MCP server processes, keyed by server ID
-    connections: Arc<RwLock<HashMap<String, Connection>>>,
-    /// Cancellation tokens for managed server processes
-    cancellation_tokens: Arc<RwLock<HashMap<String, CancellationToken>>>,
-    /// How each server was launched, so a dead connection can be rebuilt.
-    launch_specs: Arc<RwLock<HashMap<String, LaunchSpec>>>,
-    /// Last reconnect attempt per server, for the reconnect cooldown.
-    last_reconnect: Arc<RwLock<HashMap<String, Instant>>>,
-    /// Consecutive health-check failures per server. After
-    /// `config.max_consecutive_health_failures` the circuit breaker stops
-    /// auto-healing that server (operator-actionable error logged). Reset to
-    /// zero on the first healthy connection seen.
-    health_failures: Arc<RwLock<HashMap<String, u32>>>,
     /// Resolved tuning parameters (env-overridable defaults).
     config: McpRuntimeConfig,
     governance: Option<ToolGovernance>,
@@ -498,14 +509,9 @@ impl McpRuntime {
     pub fn new() -> Self {
         Self {
             lifecycle: Arc::new(Mutex::new(false)),
+            entries: Arc::new(RwLock::new(HashMap::new())),
             children: Arc::new(Mutex::new(HashMap::new())),
-            servers: Arc::new(RwLock::new(HashMap::new())),
             tool_surface_tx: Arc::new(tokio::sync::watch::Sender::new(())),
-            connections: Arc::new(RwLock::new(HashMap::new())),
-            cancellation_tokens: Arc::new(RwLock::new(HashMap::new())),
-            launch_specs: Arc::new(RwLock::new(HashMap::new())),
-            last_reconnect: Arc::new(RwLock::new(HashMap::new())),
-            health_failures: Arc::new(RwLock::new(HashMap::new())),
             config: McpRuntimeConfig::default(),
             governance: None,
         }
@@ -547,15 +553,21 @@ impl McpRuntime {
 
     /// Server IDs that have a live (non-closed) connection.
     ///
-    /// Used by the fleet health poller to count McpRuntime-managed servers
-    /// alongside ContextServerStore-managed servers. A server is "running"
-    /// if it has a connection whose transport is not closed.
+    /// Used by the fleet health poller (`crates/zed/src/reliability.rs`) to
+    /// count McpRuntime-managed servers alongside ContextServerStore-managed
+    /// servers. A server is "running" if it has a connection whose transport
+    /// is not closed.
     #[must_use = "result must be used"]
     pub async fn running_server_ids(&self) -> Vec<String> {
-        let connections = self.connections.read().await;
-        connections
+        let entries = self.entries.read().await;
+        entries
             .iter()
-            .filter(|(_, conn)| !conn.peer.is_transport_closed())
+            .filter(|(_, entry)| {
+                entry
+                    .connection
+                    .as_ref()
+                    .is_some_and(|conn| !conn.peer.is_transport_closed())
+            })
             .map(|(id, _)| id.clone())
             .collect()
     }
@@ -566,11 +578,16 @@ impl McpRuntime {
     /// surface in the agent's tool list without the per-project
     /// `ContextServerStore` (single-spawn-authority invariant I1).
     pub async fn registered_servers(&self) -> Vec<(String, Vec<McpTool>)> {
-        self.servers
+        self.entries
             .read()
             .await
             .values()
-            .map(|server| (server.id.clone(), server.tools.clone()))
+            .filter_map(|entry| {
+                entry
+                    .metadata
+                    .as_ref()
+                    .map(|server| (server.id.clone(), server.tools.clone()))
+            })
             .collect()
     }
 
@@ -586,7 +603,7 @@ impl McpRuntime {
 
     /// Register an MCP server (metadata only, no live connection).
     pub async fn register_server(&self, server: McpServer) {
-        let mut servers = self.servers.write().await;
+        let mut entries = self.entries.write().await;
 
         info!(
             target: "hkask.mcp",
@@ -596,10 +613,11 @@ impl McpRuntime {
             "Registering MCP server"
         );
 
-        servers.insert(server.id.clone(), server);
+        let entry = entries.entry(server.id.clone()).or_default();
+        entry.metadata = Some(server);
         // Registration is an event, not something consumers must poll for.
         // `send_replace` is infallible and wakes subscribers without running
-        // them inline, so it is safe while the `servers` write guard is held.
+        // them inline, so it is safe while the `entries` write guard is held.
         self.tool_surface_tx.send_replace(());
     }
 
@@ -627,12 +645,9 @@ impl McpRuntime {
                 return Ok(());
             }
             let spec = LaunchSpec::new(command.to_string(), env);
-            if let Some(previous) = self
-                .launch_specs
-                .write()
-                .await
-                .insert(server_id.to_string(), spec.clone())
-            {
+            let mut entries = self.entries.write().await;
+            let entry = entries.entry(server_id.to_string()).or_default();
+            if let Some(previous) = entry.spec.replace(spec.clone()) {
                 previous.cancel.cancel();
             }
             spec
@@ -861,7 +876,7 @@ impl McpRuntime {
         // The generation stamp ensures a late-exiting keeper cannot remove a
         // healthy replacement installed by a reconnect.
         let bg_cancel = cancel.clone();
-        let reap_connections = self.connections.clone();
+        let reap_entries = self.entries.clone();
 
         let reap_id = server_id.to_string();
         let reap_lifecycle = self.lifecycle.clone();
@@ -895,14 +910,16 @@ impl McpRuntime {
                 return;
             }
             let _lifecycle = reap_lifecycle.lock().await;
-            let mut connections = reap_connections.write().await;
-            if connections
-                .get(&reap_id)
-                .is_some_and(|current| current.generation == generation)
+            let mut entries = reap_entries.write().await;
+            if let Some(entry) = entries.get_mut(&reap_id)
+                && entry
+                    .connection
+                    .as_ref()
+                    .is_some_and(|current| current.generation == generation)
             {
-                connections.remove(&reap_id);
-                // Retain the token until replacement/stop so the still-running
-                // supervisor remains owned and can be cancelled.
+                entry.connection = None;
+                // `supervisor_cancel` is retained: the still-running supervisor
+                // must stay owned and cancellable until replacement or stop.
             }
         });
 
@@ -922,22 +939,23 @@ impl McpRuntime {
 
         // Stop/replacement and publication share this lock. A reconnect carries
         // the original spec; it cannot manufacture a fresh desired generation.
+        // One `entries` write publishes connection, supervisor token, and
+        // discovered-tool metadata atomically.
         let _lifecycle = self.lifecycle.lock().await;
-        if !self
-            .launch_specs
-            .read()
-            .await
-            .get(server_id)
-            .is_some_and(|current| {
+        {
+            let mut entries = self.entries.write().await;
+            let Some(entry) = entries.get_mut(server_id) else {
+                return Err(ServerStartError::Cancelled(server_id.to_string()));
+            };
+            if !entry.spec.as_ref().is_some_and(|current| {
                 current.generation == spec.generation && !current.cancel.is_cancelled()
-            })
-        {
-            return Err(ServerStartError::Cancelled(server_id.to_string()));
-        }
-        {
-            let mut connections = self.connections.write().await;
-            if let Some(existing) = connections.get(server_id)
-                && !existing.peer.is_transport_closed()
+            }) {
+                return Err(ServerStartError::Cancelled(server_id.to_string()));
+            }
+            if entry
+                .connection
+                .as_ref()
+                .is_some_and(|existing| !existing.peer.is_transport_closed())
             {
                 info!(
                     target: "hkask.mcp",
@@ -951,54 +969,45 @@ impl McpRuntime {
                 cancel.cancel();
                 return Ok(());
             }
-            connections.insert(server_id.to_string(), Connection { peer, generation });
-        }
+            entry.connection = Some(Connection { peer, generation });
 
-        // Cancel the previous supervisor + keeper for this server_id before
-        // inserting the new token. Without this, a `start_server_with_env` call
-        // that replaces an existing connection (e.g. from `try_reconnect` or
-        // the supervisor itself) orphans the old supervisor task: the old
-        // `CancellationToken` is dropped from the map but the old supervisor
-        // still holds a clone, so it never exits and leaks. Cancelling here
-        // fires the old supervisor's `supervisor_cancel.cancelled()` arm and
-        // the old keeper's `bg_cancel.cancelled()` arm, both of which exit
-        // cleanly. The new `cancel` (with the new supervisor + keeper) is then
-        // inserted as the sole live token.
-        //
-        // The old keeper's reap arm does NOT fire (it returns `false` on
-        // cancellation), so it does not remove the new connection we just
-        // inserted above — the generation stamp would also protect against
-        // this, but the cancellation is the primary guard.
-        {
-            let mut tokens = self.cancellation_tokens.write().await;
-            if let Some(previous) = tokens.insert(server_id.to_string(), cancel.clone()) {
+            // Cancel the previous supervisor + keeper before recording the
+            // new token: a replacement start would otherwise orphan the old
+            // supervisor (it holds its own token clone and never exits). The
+            // old keeper's reap arm does NOT fire on cancellation, so it
+            // cannot remove the new connection just installed — the
+            // generation stamp is the second guard.
+            if let Some(previous) = entry.supervisor_cancel.replace(cancel.clone()) {
                 previous.cancel();
             }
+
+            // Publish the discovered tools with the connection — one entry,
+            // one event.
+            let server = McpServer {
+                id: server_id.to_string(),
+                name: server_id.to_string(),
+                tools: tools
+                    .into_iter()
+                    .map(|t| McpTool {
+                        name: t.name.to_string(),
+                        description: t.description.map(|d| d.to_string()).unwrap_or_default(),
+                        input_schema: Value::Object((*t.input_schema).clone()),
+                        server_id: server_id.to_string(),
+                    })
+                    .collect(),
+            };
+
+            info!(
+                target: "hkask.mcp",
+                server_id = %server_id,
+                tools = server.tools.len(),
+                "MCP server started and tools discovered"
+            );
+            entry.metadata = Some(server);
+            // `send_replace` is safe under the write guard (see
+            // `register_server`).
+            self.tool_surface_tx.send_replace(());
         }
-
-        // Register the server and its discovered tools
-        let server = McpServer {
-            id: server_id.to_string(),
-            name: server_id.to_string(),
-            tools: tools
-                .into_iter()
-                .map(|t| McpTool {
-                    name: t.name.to_string(),
-                    description: t.description.map(|d| d.to_string()).unwrap_or_default(),
-                    input_schema: Value::Object((*t.input_schema).clone()),
-                    server_id: server_id.to_string(),
-                })
-                .collect(),
-        };
-
-        info!(
-            target: "hkask.mcp",
-            server_id = %server_id,
-            tools = server.tools.len(),
-            "MCP server started and tools discovered"
-        );
-
-        self.register_server(server).await;
 
         // Spawn a health supervisor for this server. See `spawn_health_supervisor`
         // for the full design — the supervisor is the proactive self-healing
@@ -1040,9 +1049,7 @@ impl McpRuntime {
     /// dying accumulates failures across check intervals.
     fn spawn_health_supervisor(&self, server_id: &str, cancel: CancellationToken) {
         let supervisor_cancel = cancel;
-        let supervisor_connections = self.connections.clone();
-        let supervisor_health_failures = self.health_failures.clone();
-        let supervisor_launch_specs = self.launch_specs.clone();
+        let supervisor_entries = self.entries.clone();
         let supervisor_runtime = self.clone();
         let supervisor_id = server_id.to_string();
         let normal_interval = self.config.health_check_interval;
@@ -1061,8 +1068,11 @@ impl McpRuntime {
                 // as failures, so a server that dies and stays dead
                 // accumulates failures across intervals.
                 let connection_state = {
-                    let connections = supervisor_connections.read().await;
-                    match connections.get(&supervisor_id) {
+                    let entries = supervisor_entries.read().await;
+                    match entries
+                        .get(&supervisor_id)
+                        .and_then(|entry| entry.connection.as_ref())
+                    {
                         Some(conn) if !conn.peer.is_transport_closed() => ConnectionState::Healthy,
                         Some(_) => ConnectionState::TransportClosed,
                         None => ConnectionState::Missing,
@@ -1071,11 +1081,11 @@ impl McpRuntime {
 
                 match connection_state {
                     ConnectionState::Healthy => {
-                        let mut failures = supervisor_health_failures.write().await;
-                        if let Some(count) = failures.get_mut(&supervisor_id)
-                            && *count > 0
+                        let mut entries = supervisor_entries.write().await;
+                        if let Some(entry) = entries.get_mut(&supervisor_id)
+                            && entry.health_failures > 0
                         {
-                            *count = 0;
+                            entry.health_failures = 0;
                         }
                         continue;
                     }
@@ -1091,12 +1101,14 @@ impl McpRuntime {
                         );
                         {
                             let _lifecycle = supervisor_runtime.lifecycle.lock().await;
-                            let mut connections = supervisor_connections.write().await;
-                            if connections
-                                .get(&supervisor_id)
-                                .is_some_and(|connection| connection.peer.is_transport_closed())
+                            let mut entries = supervisor_entries.write().await;
+                            if let Some(entry) = entries.get_mut(&supervisor_id)
+                                && entry
+                                    .connection
+                                    .as_ref()
+                                    .is_some_and(|connection| connection.peer.is_transport_closed())
                             {
-                                connections.remove(&supervisor_id);
+                                entry.connection = None;
                             }
                         }
                     }
@@ -1113,22 +1125,19 @@ impl McpRuntime {
                 // `saturating_add` avoids overflow panics in debug mode after
                 // very long outage periods (the counter is never reset while
                 // the server stays dead).
-                let failures = {
-                    let mut failures = supervisor_health_failures.write().await;
-                    let count = failures.entry(supervisor_id.clone()).or_insert(0);
-                    *count = count.saturating_add(1);
-                    *count
-                };
-
                 // Attempt a restart using the recorded launch spec. This is the
                 // proactive self-healing path — without it, a server that
                 // crashes while no tool call is in flight stays dead forever.
                 // `start_server_with_env` is idempotent per live connection, so
                 // a concurrent `try_reconnect` from `call_tool_inner` is safe:
                 // whichever wins installs the connection, the other no-ops.
-                let spec = {
-                    let specs = supervisor_launch_specs.read().await;
-                    specs.get(&supervisor_id).cloned()
+                // The failure increment and the spec read share one write
+                // lock — the restart decision comes from one coherent entry.
+                let (failures, spec) = {
+                    let mut entries = supervisor_entries.write().await;
+                    let entry = entries.entry(supervisor_id.clone()).or_default();
+                    entry.health_failures = entry.health_failures.saturating_add(1);
+                    (entry.health_failures, entry.spec.clone())
                 };
                 let Some(spec) = spec else {
                     // No launch spec means the server was deliberately stopped
@@ -1215,7 +1224,12 @@ impl McpRuntime {
     /// closes the window where a caller would otherwise dispatch onto a corpse and
     /// get `Transport closed` back.
     pub(crate) async fn get_peer(&self, server_id: &str) -> Option<Peer<RoleClient>> {
-        let connection = self.connections.read().await.get(server_id).cloned()?;
+        let connection = self
+            .entries
+            .read()
+            .await
+            .get(server_id)
+            .and_then(|entry| entry.connection.clone())?;
         if connection.peer.is_transport_closed() {
             return None;
         }
@@ -1250,11 +1264,11 @@ impl McpRuntime {
     /// cannot perturb the supervisor.
     #[doc(hidden)]
     pub async fn health_failure_count(&self, server_id: &str) -> u32 {
-        self.health_failures
+        self.entries
             .read()
             .await
             .get(server_id)
-            .copied()
+            .map(|entry| entry.health_failures)
             .unwrap_or(0)
     }
 
@@ -1266,15 +1280,19 @@ impl McpRuntime {
     /// ever `register_server`'d (metadata, no process) cannot be reconnected, and
     /// reports `false` rather than pretending to recover.
     async fn try_reconnect(&self, server_id: &str) -> bool {
-        let Some(spec) = self.launch_specs.read().await.get(server_id).cloned() else {
-            return false;
-        };
-
-        // Cooldown check and stamp under one write lock so concurrent callers
-        // cannot both pass the gate and spawn duplicate processes.
-        {
-            let mut last = self.last_reconnect.write().await;
-            if let Some(previous) = last.get(server_id)
+        // Spec lookup, cooldown check, and stamp under one write lock so
+        // concurrent callers cannot both pass the gate and spawn duplicate
+        // processes — and so the spec and its cooldown stamp are read from
+        // one coherent entry.
+        let spec = {
+            let mut entries = self.entries.write().await;
+            let Some(entry) = entries.get_mut(server_id) else {
+                return false;
+            };
+            let Some(spec) = entry.spec.clone() else {
+                return false;
+            };
+            if let Some(previous) = entry.last_reconnect
                 && previous.elapsed() < self.config.reconnect_cooldown
             {
                 tracing::debug!(
@@ -1284,8 +1302,9 @@ impl McpRuntime {
                 );
                 return false;
             }
-            last.insert(server_id.to_string(), Instant::now());
-        }
+            entry.last_reconnect = Some(Instant::now());
+            spec
+        };
 
         info!(
             target: "hkask.mcp",
@@ -1349,20 +1368,26 @@ impl McpRuntime {
     pub async fn shutdown_all(&self) {
         let mut shutdown = self.lifecycle.lock().await;
         *shutdown = true;
-        for (_, spec) in self.launch_specs.write().await.drain() {
-            spec.cancel.cancel();
+        // Cancel desired-generation tokens first, then drop every entry —
+        // connections go with the entries, before the supervisor tokens
+        // fire, so a racing keeper finds nothing of its own generation to
+        // reap.
+        let mut supervisor_tokens = Vec::new();
+        {
+            let mut entries = self.entries.write().await;
+            for entry in entries.values_mut() {
+                if let Some(spec) = entry.spec.take() {
+                    spec.cancel.cancel();
+                }
+                if let Some(token) = entry.supervisor_cancel.take() {
+                    supervisor_tokens.push(token);
+                }
+            }
+            entries.clear();
         }
-        self.servers.write().await.clear();
-        // Drop the connections before cancelling so a keeper task racing the
-        // cancellation finds nothing of its own generation to reap.
-        self.connections.write().await.clear();
-        let mut tokens = self.cancellation_tokens.write().await;
-        for (_, cancel) in tokens.drain() {
-            cancel.cancel();
+        for token in supervisor_tokens {
+            token.cancel();
         }
-        drop(tokens);
-        self.last_reconnect.write().await.clear();
-        self.health_failures.write().await.clear();
         self.stop_children(None).await;
         self.tool_surface_tx.send_replace(());
     }
@@ -1402,23 +1427,25 @@ impl McpRuntime {
     /// when it calls `start_server_with_env` again.
     pub async fn stop_server(&self, server_id: &str) {
         let _lifecycle = self.lifecycle.lock().await;
-        if let Some(spec) = self.launch_specs.write().await.remove(server_id) {
+        // Remove the whole entry first — the connection goes with it, before
+        // any token cancellation fires, so the keeper task's cancellation
+        // arm (which does not reap) and this removal cannot race over the
+        // same entry.
+        let removed = self.entries.write().await.remove(server_id);
+        let Some(entry) = removed else {
+            return;
+        };
+        if let Some(spec) = entry.spec {
             spec.cancel.cancel();
         }
-        // Remove the connection first: the keeper task's cancellation arm does not
-        // reap, so removing here (before cancelling) keeps the two paths from
-        // racing over the same entry.
-        self.connections.write().await.remove(server_id);
-        if let Some(cancel) = self.cancellation_tokens.write().await.remove(server_id) {
+        if let Some(cancel) = entry.supervisor_cancel {
             cancel.cancel();
         }
-        self.last_reconnect.write().await.remove(server_id);
-        self.health_failures.write().await.remove(server_id);
         self.stop_children(Some(server_id)).await;
         // Drop the registration so stale tool names do not resolve to a dead
-        // connection.
-        let mut servers = self.servers.write().await;
-        if let Some(server) = servers.remove(server_id) {
+        // connection. Only a registered server surfaces the stop (former
+        // servers-map semantics).
+        if let Some(server) = entry.metadata {
             info!(
                 target: "hkask.mcp",
                 server_id = %server_id,
@@ -1438,8 +1465,8 @@ impl McpRuntime {
     /// delete a surviving server's entry by removing the shared name.)
     #[must_use]
     pub async fn get_tool_info(&self, server: &str, tool_name: &str) -> Option<ToolInfo> {
-        let servers = self.servers.read().await;
-        let server = servers.get(server)?;
+        let entries = self.entries.read().await;
+        let server = entries.get(server)?.metadata.as_ref()?;
         server
             .tools
             .iter()
@@ -1747,11 +1774,10 @@ impl McpRuntime {
         // Server-scoped existence check, mirroring dispatch identity: the
         // same tool name registered on another server must not flip this
         // classification between NotFound and Unavailable.
-        let tool_registered = self
-            .servers
-            .read()
-            .await
-            .get(server)
+        let entries = self.entries.read().await;
+        let entry = entries.get(server);
+        let tool_registered = entry
+            .and_then(|e| e.metadata.as_ref())
             .is_some_and(|s| s.tools.iter().any(|t| t.name == tool));
         if !tool_registered {
             return hkask_tool_port::ToolPortError::NotFound(hkask_types::NotFound {
@@ -1759,7 +1785,7 @@ impl McpRuntime {
                 id: format!("Tool '{tool}' is not registered on server '{server}'"),
             });
         }
-        let known_launch = self.launch_specs.read().await.contains_key(server);
+        let known_launch = entry.is_some_and(|e| e.spec.is_some());
         if known_launch {
             hkask_tool_port::ToolPortError::Unavailable(format!(
                 "Server '{server}' is not connected and could not be restarted — check that the \
@@ -2014,8 +2040,8 @@ mod reconnect_path_tests {
     /// so `try_reconnect` reports `false` rather than pretending to recover.
     ///
     /// This is the metadata-only-server case: `register_server` populates
-    /// `servers` but not `launch_specs`, so a reconnect has nothing to
-    /// rebuild from.
+    /// the entry's metadata but records no launch spec, so a reconnect has
+    /// nothing to rebuild from.
     #[tokio::test]
     async fn metadata_only_server_cannot_be_reconnected() {
         let runtime = McpRuntime::new();
@@ -2029,7 +2055,12 @@ mod reconnect_path_tests {
 
         // No launch spec was ever recorded.
         assert!(
-            runtime.launch_specs.read().await.is_empty(),
+            runtime
+                .entries
+                .read()
+                .await
+                .values()
+                .all(|entry| entry.spec.is_none()),
             "a metadata-only server must not record a launch spec"
         );
 
@@ -2051,30 +2082,29 @@ mod reconnect_path_tests {
     #[tokio::test]
     async fn stop_server_clears_the_reconnect_path() {
         let runtime = McpRuntime::new();
-        // Record a launch spec directly, as `start_server_with_env` would.
-        runtime.launch_specs.write().await.insert(
+        // Record a launch spec and cooldown stamp directly, as
+        // `start_server_with_env` and a first reconnect would.
+        runtime.entries.write().await.insert(
             "fixture".to_string(),
-            LaunchSpec::new(
-                "mcp-test-fixture".to_string(),
-                hkask_types::ServerEnv::default(),
-            ),
+            ServerEntry {
+                spec: Some(LaunchSpec::new(
+                    "mcp-test-fixture".to_string(),
+                    hkask_types::ServerEnv::default(),
+                )),
+                last_reconnect: Some(Instant::now()),
+                ..Default::default()
+            },
         );
-        runtime
-            .last_reconnect
-            .write()
-            .await
-            .insert("fixture".to_string(), Instant::now());
 
         runtime.stop_server("fixture").await;
 
+        // stop_server removes the whole entry: the launch spec and the
+        // cooldown stamp go with it, so the reconnect path cannot resurrect
+        // a deliberately-stopped server.
         assert!(
-            runtime.launch_specs.read().await.get("fixture").is_none(),
-            "stop_server must clear the launch spec so the reconnect path \
+            runtime.entries.read().await.get("fixture").is_none(),
+            "stop_server must remove the server's entry so the reconnect path \
              does not resurrect a deliberately-stopped server"
-        );
-        assert!(
-            runtime.last_reconnect.read().await.get("fixture").is_none(),
-            "stop_server must clear the last_reconnect stamp"
         );
     }
 
@@ -2083,30 +2113,29 @@ mod reconnect_path_tests {
     #[tokio::test]
     async fn shutdown_all_clears_every_reconnect_path() {
         let runtime = McpRuntime::new();
-        let mut specs = runtime.launch_specs.write().await;
-        specs.insert(
-            "a".to_string(),
-            LaunchSpec::new("a".to_string(), hkask_types::ServerEnv::default()),
-        );
-        specs.insert(
-            "b".to_string(),
-            LaunchSpec::new("b".to_string(), hkask_types::ServerEnv::default()),
-        );
-        drop(specs);
-        let mut last = runtime.last_reconnect.write().await;
-        last.insert("a".to_string(), Instant::now());
-        last.insert("b".to_string(), Instant::now());
-        drop(last);
+        let mut entries = runtime.entries.write().await;
+        for id in ["a", "b"] {
+            entries.insert(
+                id.to_string(),
+                ServerEntry {
+                    spec: Some(LaunchSpec::new(
+                        id.to_string(),
+                        hkask_types::ServerEnv::default(),
+                    )),
+                    last_reconnect: Some(Instant::now()),
+                    ..Default::default()
+                },
+            );
+        }
+        drop(entries);
 
         runtime.shutdown_all().await;
 
+        // shutdown_all clears every entry: launch specs and cooldown stamps
+        // go with them, so a deliberate full shutdown is not resurrected.
         assert!(
-            runtime.launch_specs.read().await.is_empty(),
-            "shutdown_all must clear every launch spec"
-        );
-        assert!(
-            runtime.last_reconnect.read().await.is_empty(),
-            "shutdown_all must clear every last_reconnect stamp"
+            runtime.entries.read().await.is_empty(),
+            "shutdown_all must clear every server entry"
         );
     }
 
@@ -2125,12 +2154,15 @@ mod reconnect_path_tests {
         let runtime = McpRuntime::new();
         // Record a launch spec so the first call reaches the cooldown gate
         // rather than the no-spec early return.
-        runtime.launch_specs.write().await.insert(
+        runtime.entries.write().await.insert(
             "fixture".to_string(),
-            LaunchSpec::new(
-                "mcp-test-fixture".to_string(),
-                hkask_types::ServerEnv::default(),
-            ),
+            ServerEntry {
+                spec: Some(LaunchSpec::new(
+                    "mcp-test-fixture".to_string(),
+                    hkask_types::ServerEnv::default(),
+                )),
+                ..Default::default()
+            },
         );
 
         // First call: reaches the cooldown gate, stamps `last_reconnect`,
@@ -2143,11 +2175,11 @@ mod reconnect_path_tests {
             "reconnect against a non-spawning binary reports false"
         );
         let first_stamp = runtime
-            .last_reconnect
+            .entries
             .read()
             .await
             .get("fixture")
-            .copied()
+            .and_then(|entry| entry.last_reconnect)
             .expect("first try_reconnect must stamp last_reconnect");
 
         // Second call immediately after: the cooldown gate fires, the stamp
@@ -2159,11 +2191,11 @@ mod reconnect_path_tests {
             "a second try_reconnect within the cooldown must report false"
         );
         let second_stamp = runtime
-            .last_reconnect
+            .entries
             .read()
             .await
             .get("fixture")
-            .copied()
+            .and_then(|entry| entry.last_reconnect)
             .expect(
                 "last_reconnect stamp must still be present after the \
                      cooldown-suppressed second call",
@@ -2194,18 +2226,24 @@ mod reconnect_path_tests {
             "FIXTURE_MARKER".to_string(),
             "first".to_string(),
         )]));
-        runtime.launch_specs.write().await.insert(
+        runtime.entries.write().await.insert(
             "fixture".to_string(),
-            LaunchSpec::new("mcp-test-fixture".to_string(), fixture_env.clone()),
+            ServerEntry {
+                spec: Some(LaunchSpec::new(
+                    "mcp-test-fixture".to_string(),
+                    fixture_env.clone(),
+                )),
+                ..Default::default()
+            },
         );
 
         // The spec is present and carries the env a reconnect would need.
         let spec = runtime
-            .launch_specs
+            .entries
             .read()
             .await
             .get("fixture")
-            .cloned()
+            .and_then(|entry| entry.spec.clone())
             .expect("launch spec must be recorded even if the spawn fails");
         assert_eq!(spec.command, "mcp-test-fixture");
         assert_eq!(

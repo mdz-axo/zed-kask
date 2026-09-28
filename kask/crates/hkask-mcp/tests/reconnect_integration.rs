@@ -4,8 +4,8 @@
 //! (`src/bin/mcp_test_fixture.rs`, built when `--features test-fixture` is
 //! passed) and assert the runtime's four self-heal mechanisms actually fire
 //! against a real dead transport — something the inline `reconnect_path_tests`
-//! in `runtime.rs` cannot prove, because they assert on the private
-//! `launch_specs` / `last_reconnect` maps without spawning anything.
+//! in `runtime.rs` cannot prove, because they assert on the private `entries`
+//! map without spawning anything.
 //!
 //! ## Why a real child process
 //!
