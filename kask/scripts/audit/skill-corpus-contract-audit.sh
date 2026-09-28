@@ -18,8 +18,14 @@
 # the Jinja `loop` variable are excluded from undeclared consumption;
 # contract fields are read at the 4-space indent only, so nested-schema
 # contracts (type/description sub-keys) do not surface as fields.
-# Known under-detection (advisory, documented): only the first term of a
-# multi-term {% if a and b %} condition is extracted.
+# Condition extraction covers every boolean operand of an and/or/not
+# compound, including parenthesised groups: quoted string literals are
+# dropped, then the leading identifier of each operand fragment is a
+# consumed root (dotted paths contribute their root only, Jinja keywords
+# are not variables). Known under-detection (advisory, documented): the
+# right-hand side of comparisons and membership tests ('x' in y) inside
+# conditions is not extracted, and a condition containing a literal %
+# does not parse.
 #
 # Templates without a contract (server-rendered shadows, pure render
 # templates) are skipped and counted, not flagged.
@@ -101,12 +107,23 @@ for file in "$REG"/*/*.j2; do
     ins="$ins$(contract_fields "$file" server_input | tr '\n' ' ')"
     outs="$(contract_fields "$file" output | tr '\n' ' ')"
 
-    # Consumed context roots: {{ var }}, {% if var %} / {% elif var %}
-    # (optional `not`), and the iterable of {% for x in var %}.
+    # Consumed context roots: {{ var }}, every boolean operand of
+    # {% if %} / {% elif %} conditions (and/or/not compounds, including
+    # parenthesised groups — quoted literals dropped, dotted paths
+    # contribute their root, keywords are not variables), and the
+    # iterable of {% for x in var %}.
     consumed="$(
         {
             printf '%s\n' "$stripped" | grep -oE '\{\{[[:space:]]*[a-zA-Z_][a-zA-Z0-9_]*' | sed 's/{{ *//' || true
-            printf '%s\n' "$stripped" | grep -oE '\{%-?[[:space:]]*(if|elif)[[:space:]]+(not[[:space:]]+)?[a-zA-Z_][a-zA-Z0-9_]*' | sed 's/.*[[:space:]]//' || true
+            printf '%s\n' "$stripped" \
+                | grep -oE '\{%-?[[:space:]]*(if|elif)[[:space:]][^%]*%\}' \
+                | sed -E 's/^\{%-?[[:space:]]*(if|elif)[[:space:]]+//; s/%\}.*$//' \
+                | sed -E "s/'[^']*'//g; s/\"[^\"]*\"//g" \
+                | tr '()' '\n\n' \
+                | sed -E 's/[[:space:]](and|or)[[:space:]]/\n/g' \
+                | sed -nE 's/^[[:space:]]*(not[[:space:]]+)?([a-zA-Z_][a-zA-Z0-9_]*).*$/\2/p' \
+                | grep -vxE 'and|or|not|in|is|true|false|none|True|False|None' \
+                || true
             printf '%s\n' "$stripped" | grep -oE '\{%-?[[:space:]]*for[[:space:]]+[a-zA-Z_][a-zA-Z0-9_]*[[:space:]]+in[[:space:]]+[a-zA-Z_][a-zA-Z0-9_]*' | awk '{print $NF}' || true
         } | sort -u | tr '\n' ' '
     )"
