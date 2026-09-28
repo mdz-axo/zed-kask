@@ -20,6 +20,8 @@ pub struct IndexedTerm {
     pub parents: Vec<String>,
     pub inverse_of: Vec<String>,
     pub definition: String,
+    /// Publisher-stated lifecycle status, separate from definition text.
+    pub status: String,
     pub source: String,
 }
 
@@ -49,6 +51,7 @@ impl IndexedTerm {
             list(&self.parents),
             list(&self.inverse_of),
             clean(&self.definition),
+            clean(&self.status),
             clean(&self.source),
         ]
         .join(&FIELD_SEP.to_string())
@@ -261,6 +264,7 @@ pub fn index_sumo(
             parents: parents.into_iter().chain(instance_of).collect(),
             inverse_of: Vec::new(),
             definition,
+            status: String::new(),
             source: format!("{def_file} ({provenance})"),
         });
     }
@@ -400,11 +404,8 @@ pub fn index_schema_org(
             } else {
                 ("property", schema_list(&cell(record, "subPropertyOf")))
             };
-            let mut definition = strip_html(&cell(record, "comment"));
+            let definition = strip_html(&cell(record, "comment"));
             let superseded = schema_list(&cell(record, "supersededBy"));
-            if !superseded.is_empty() {
-                definition = format!("{definition} [superseded by {}]", superseded.join(", "));
-            }
             let layer = cell(record, "isPartOf");
             let layer = layer
                 .trim()
@@ -429,6 +430,11 @@ pub fn index_schema_org(
                     schema_list(&cell(record, "inverseOf"))
                 },
                 definition,
+                status: if superseded.is_empty() {
+                    String::new()
+                } else {
+                    format!("superseded_by:{}", superseded.join(", "))
+                },
                 source: format!("{file} ({release}, {layer})"),
             });
         }
@@ -790,14 +796,11 @@ pub fn index_rdf_with_prefixes(
             }
             let mut definitions = subject.definitions.clone();
             definitions.sort_by_key(|(rank, _)| *rank);
-            let mut definition = definitions
+            let definition = definitions
                 .into_iter()
                 .next()
                 .map(|(_, text)| text)
                 .unwrap_or_default();
-            if subject.deprecated {
-                definition = format!("{definition} [deprecated]").trim().to_string();
-            }
             let labels = subject
                 .labels
                 .iter()
@@ -813,6 +816,11 @@ pub fn index_rdf_with_prefixes(
                 parents,
                 inverse_of: subject.inverse_of.clone(),
                 definition,
+                status: if subject.deprecated {
+                    "deprecated".to_string()
+                } else {
+                    String::new()
+                },
                 source: format!("{} ({version})", subject.file),
             }
         })
@@ -950,7 +958,8 @@ mod tests {
             (terms[2].kind.as_str(), terms[2].inverse_of.as_slice()),
             ("property", &["pko:isStepOf".to_string()][..])
         );
-        assert_eq!(terms[3].definition, "[deprecated]");
+        assert_eq!(terms[3].definition, "", "source published no definition");
+        assert_eq!(terms[3].status, "deprecated");
         assert_eq!(
             compact_iri("http://example.org/x#Y"),
             "http://example.org/x#Y",
@@ -1055,10 +1064,10 @@ mod tests {
         assert!(terms.iter().all(|term| !term.name.starts_with('?')));
     }
 
-    /// expect: the index line format `published.rs` reads — nine tab fields,
+    /// expect: the index line format `published.rs` reads — ten tab fields,
     /// lists joined by U+001F, embedded whitespace collapsed.
     #[test]
-    fn index_line_has_nine_fields_and_collapses_whitespace() {
+    fn index_line_has_ten_fields_and_collapses_whitespace() {
         let line = IndexedTerm {
             namespace: "SUMO".into(),
             concept: "sumo:Game".into(),
@@ -1068,11 +1077,12 @@ mod tests {
             parents: vec!["sumo:Contest".into(), "sumo:RecreationOrExercise".into()],
             inverse_of: Vec::new(),
             definition: "A\tcontest\n  for fun.".into(),
+            status: String::new(),
             source: "Merge.kif (pin)".into(),
         }
         .to_line();
         let fields: Vec<&str> = line.split(FIELD_SEP).collect();
-        assert_eq!(fields.len(), 9, "{line}");
+        assert_eq!(fields.len(), 10, "{line}");
         assert_eq!(
             fields[5],
             format!("sumo:Contest{LIST_SEP}sumo:RecreationOrExercise")
@@ -1104,7 +1114,8 @@ mod tests {
         assert_eq!(game.definition, "The Game type x.");
         assert_eq!(terms[1].kind, "enumeration_member");
         assert_eq!(terms[2].inverse_of, ["schema:isPartOf"]);
-        assert_eq!(terms[3].definition, "Old. [superseded by schema:new]");
+        assert_eq!(terms[3].definition, "Old.");
+        assert_eq!(terms[3].status, "superseded_by:schema:new");
         assert!(terms[3].source.ends_with("(30.1, pending)"));
     }
 }

@@ -72,7 +72,8 @@ assert_eq!(terms.ontology_tags["fibo"], [fibo::CORPORATION]);
 SHA-256 and license. `build.rs` verifies the pins and compiles an embedded
 `published` index with concept IDs, kinds, names/labels, directly stated
 parents and inverse properties, source files, and the source's definition
-**when one is supplied**. `published::lookup` can return multiple exact senses;
+**when one is supplied**. Publisher-stated deprecation or supersession is
+reported separately as `status`, never inserted into `definition`. `published::lookup` can return multiple exact senses;
 named constants in the bridge modules are consumer menus, not the extent of the
 published index. No OWL/KIF axioms are evaluated.
 

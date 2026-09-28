@@ -160,7 +160,14 @@ mod tests {
         }));
         let omitted_from_production = crate::published::get("fibo-be-corp-corp:BoardAgreement")
             .expect("Release maturity, despite absence from AboutFIBOProd imports");
-        assert!(omitted_from_production.definition.contains("[deprecated]"));
+        assert_eq!(
+            omitted_from_production.definition, "",
+            "no publisher definition"
+        );
+        assert_eq!(omitted_from_production.status, "deprecated");
+        let resolved = crate::term_resolution::resolve_term("fibo-be-corp-corp:BoardAgreement");
+        assert_eq!(resolved.definition, None);
+        assert_eq!(resolved.status.as_deref(), Some("deprecated"));
         assert_eq!(
             omitted_from_production.source.split(" (").next(),
             Some("BE/Corporations/Corporations.rdf")

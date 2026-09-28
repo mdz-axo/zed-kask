@@ -33,6 +33,8 @@ pub struct PublishedTerm {
     pub inverse_of: Vec<&'static str>,
     /// The source's own definition text; empty when the source publishes none.
     pub definition: &'static str,
+    /// Publisher-stated deprecation or supersession; never definition text.
+    pub status: &'static str,
     /// Source file and pinned version.
     pub source: &'static str,
 }
@@ -64,7 +66,7 @@ fn index() -> &'static Index {
         let mut terms = Vec::new();
         for line in INDEX.lines() {
             let fields: Vec<&'static str> = line.split('\t').collect();
-            // build.rs writes exactly nine fields per line; a malformed line
+            // build.rs writes exactly ten fields per line; a malformed line
             // is a build bug, and skipping it would silently drop a term.
             let [
                 namespace,
@@ -75,11 +77,12 @@ fn index() -> &'static Index {
                 parents,
                 inverse,
                 definition,
+                status,
                 source,
             ] = fields.as_slice()
             else {
                 panic!(
-                    "published index line has {} fields, expected 9: {line}",
+                    "published index line has {} fields, expected 10: {line}",
                     fields.len()
                 );
             };
@@ -92,6 +95,7 @@ fn index() -> &'static Index {
                 parents: split_list(parents),
                 inverse_of: split_list(inverse),
                 definition,
+                status,
                 source,
             });
         }

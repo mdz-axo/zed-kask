@@ -2,7 +2,7 @@
 title: "Ontology Bridge — API Reference"
 audience: [developers, architects, agents]
 last_updated: 2026-09-27
-version: "0.43.0"
+version: "0.43.1"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, curation]
@@ -45,9 +45,9 @@ Declared in `kask/crates/hkask-bridge-ontology/src/hkask_bridge_ontology.rs`: `a
 
 ### `published` — full vocabularies compiled from pinned sources
 
-`sources/SOURCES.lock` pins each published source (upstream URL, version, SHA-256, license); `build.rs` verifies the lock and emits the `published` index (concept ID, kind, name/labels, directly stated parents and inverse properties, source, and definition when supplied). Coverage includes the complete pinned SUMO distribution (`tiny*` test subsets excluded), every layer of schema.org 30.1, DCMI terms/types, BIBO, CiTO, PKO, P-Plan, PROV, SEPIO, GOLEM, CIDOC-CRM, LRMoo, OMC, ML-Schema, RDF/RDFS and W3C RDF Data Cube. FIBO indexes the Q2 **Release** maturity selection only (157 modules, 6,443 terms), not Provisional. `fibo-release-modules.tsv` records Release module/namespace bindings checked against pinned sources, not a reduced term menu. The module constants are named consumer selections; the index is the vocabulary. `published::lookup(namespace, term)` returns matching senses by exact concept ID, local name or published label (case/separator-insensitive); `published::get` and `published::contains` look up a concept ID (`build.rs:136-316,319-403`, `src/published_sources.rs:452-567`).
+`sources/SOURCES.lock` pins each published source (upstream URL, version, SHA-256, license); `build.rs` verifies the lock and emits the `published` index (concept ID, kind, name/labels, directly stated parents and inverse properties, source, definition when supplied, and separate publisher-stated `status` for deprecation or supersession). Coverage includes the complete pinned SUMO distribution (`tiny*` test subsets excluded), every layer of schema.org 30.1, DCMI terms/types, BIBO, CiTO, PKO, P-Plan, PROV, SEPIO, GOLEM, CIDOC-CRM, LRMoo, OMC, ML-Schema, RDF/RDFS and W3C RDF Data Cube. FIBO indexes the Q2 **Release** maturity selection only (157 modules, 6,443 terms), not Provisional. `fibo-release-modules.tsv` records Release module/namespace bindings checked against pinned sources, not a reduced term menu. The module constants are named consumer selections; the index is the vocabulary. `published::lookup(namespace, term)` returns matching senses by exact concept ID, local name or published label (case/separator-insensitive); `published::get` and `published::contains` look up a concept ID (`build.rs:136-316,319-403`, `src/published_sources.rs:452-567`).
 
-**Coverage boundaries:** Former `sdmx:` Information Model aliases are removed, not represented as published RDF identifiers. `data_cube` selects only three genuinely corresponding `qb:` concepts; a provider name alone does not establish a cube. Five unlicensed DOLCE-Lite-Plus `dlp:` constants and their corpus consumers were removed. FIBO Provisional is excluded. A missing publisher definition stays missing.
+**Coverage boundaries:** Former `sdmx:` Information Model aliases are removed, not represented as published RDF identifiers. `data_cube` selects only three genuinely corresponding `qb:` concepts; a provider name alone does not establish a cube. Five unlicensed DOLCE-Lite-Plus `dlp:` constants and their corpus consumers were removed. FIBO Provisional is excluded. A missing publisher definition stays missing: e.g. the released but deprecated `fibo-be-corp-corp:BoardAgreement` has `definition: null` and `status: deprecated`, not a fabricated `"[deprecated]"` definition.
 
 ### `ontology_graph` — bounded sourced concept traversal
 
@@ -300,7 +300,7 @@ Keyword matching is token-aware (`kask/crates/hkask-bridge-ontology/src/axis.rs`
 
 ### `derived` and `term_resolution` — exact term anchoring
 
-`derived::DERIVED_CONCEPTS` stores reviewed compositions with a canonical term, identity, and authority (`kask/crates/hkask-bridge-ontology/src/derived.rs`). `term_resolution::resolve_term` returns `TermResolution { tier, term, namespace, concept, identity, authority, note, definition, source, alternatives }`: `identity`/`authority` are present on the derived rung, `definition` on published and derived resolutions, `source` on published ones, and `alternatives` lists every other sense found (`TermSense { tier, namespace, concept, definition, source }`).
+`derived::DERIVED_CONCEPTS` stores reviewed compositions with a canonical term, identity, and authority (`kask/crates/hkask-bridge-ontology/src/derived.rs`). `term_resolution::resolve_term` returns `TermResolution { tier, term, namespace, concept, identity, authority, note, definition, status, source, alternatives }`: `identity`/`authority` are present on the derived rung, `definition` on published and derived resolutions, `source` on published ones, and `alternatives` lists every other sense found (`TermSense { tier, namespace, concept, definition, status, source }`).
 
 `TERM_RESOLUTION_PROTOCOL` is `published-term-resolution-v2` (v2 since 2026-09-27: resolution consults full pinned published vocabularies, including W3C RDF Data Cube;  v1 records no longer reconcile and must be re-tagged). `canonicalize_terms` preserves trimmed candidate terms, deduplicates them, and derives grouped ontology tags and concept unions through the same resolver (`kask/crates/hkask-bridge-ontology/src/term_resolution.rs:15-16`, `kask/crates/hkask-bridge-ontology/src/term_resolution.rs:162-200`). The built-in `onto_anchor` tool is the agent-facing wrapper over this authority (`crates/agent/src/tools/onto_anchor_tool.rs`).
 

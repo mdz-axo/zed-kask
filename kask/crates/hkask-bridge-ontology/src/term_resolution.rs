@@ -31,6 +31,9 @@ pub struct TermSense {
     /// The vocabulary's own definition, when it publishes one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub definition: Option<String>,
+    /// Publisher-stated lifecycle status, separate from definition text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
     /// Source file and pinned version of a published sense.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
@@ -61,6 +64,9 @@ pub struct TermResolution {
     /// concept, the recorded ruling's definition).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub definition: Option<String>,
+    /// Publisher-stated lifecycle status, separate from definition text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
     /// Source file and pinned version of a published concept.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
@@ -84,6 +90,7 @@ impl TermResolution {
             authority: None,
             note: Some(note),
             definition: None,
+            status: None,
             source: None,
             alternatives: Vec::new(),
         }
@@ -145,6 +152,7 @@ fn sense(tier: &str, namespace: &str, concept: &str) -> Sense {
             namespace: namespace.to_string(),
             concept: concept.to_string(),
             definition: None,
+            status: None,
             source: None,
         },
         identity: None,
@@ -161,6 +169,9 @@ fn published_senses(tier: &str, namespace: &str, term: &str) -> Vec<Sense> {
             let mut found = sense(tier, namespace, published_term.concept);
             found.sense.definition = Some(published_term.definition)
                 .filter(|text| !text.is_empty())
+                .map(str::to_string);
+            found.sense.status = Some(published_term.status)
+                .filter(|status| !status.is_empty())
                 .map(str::to_string);
             found.sense.source = Some(published_term.source.to_string());
             found
@@ -216,6 +227,7 @@ pub fn resolve_term(term: &str) -> TermResolution {
         authority: primary.authority,
         note: None,
         definition: primary.sense.definition,
+        status: primary.sense.status,
         source: primary.sense.source,
         alternatives: senses.map(|found| found.sense).collect(),
     }
@@ -321,6 +333,26 @@ mod tests {
         assert!(result.source.as_deref().is_some_and(|source| {
             source.contains("BE/LegalEntities/CorporateBodies.rdf") && source.contains("f59157fe")
         }));
+    }
+
+    /// expect: publisher lifecycle metadata remains distinct from the
+    /// definition, even when the publisher supplies no definition text.
+    #[test]
+    fn publisher_status_does_not_masquerade_as_definition() {
+        let deprecated = resolve_term("fibo-be-corp-corp:BoardAgreement");
+        assert_eq!(deprecated.definition, None);
+        assert_eq!(deprecated.status.as_deref(), Some("deprecated"));
+        let superseded = resolve_term("schema:Code");
+        assert_eq!(
+            superseded.status.as_deref(),
+            Some("superseded_by:schema:SoftwareSourceCode")
+        );
+        assert_eq!(
+            superseded.definition.as_deref(),
+            Some(
+                "Computer programming source code. Example: Full (compile ready) solutions, code snippet samples, scripts, templates."
+            )
+        );
     }
 
     /// expect: terms the fragment lists missed now resolve on the full
