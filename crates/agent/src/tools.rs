@@ -19,6 +19,7 @@ mod go_to_definition_tool;
 mod grep_tool;
 mod lean_check_tool;
 #[cfg(test)]
+mod lisp_eval_conformance;
 mod lisp_eval_emission_matrix;
 mod lisp_eval_tool;
 mod list_agents_and_models_tool;

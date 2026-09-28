@@ -38,6 +38,11 @@ pub struct LispEvalToolInput {
     /// `sqrt`, `max`, `min`, `eq`, `string=`, `string-contains`, `concat`.
     /// Integer arithmetic is checked (overflow errors, never wraps silently)
     /// and all-integer comparisons are exact (never coerced through f64).
+    /// `/` always returns a Float (`(/ 6 3)` → `2.0`); over 3+ args `!=`
+    /// compares adjacent pairs. Bare infix is accepted for the arithmetic
+    /// and comparison operators (`a + b` → `(+ a b)`; same-operator chains
+    /// fold; mixed operators do not associate; a parenthesized `(a + b)`
+    /// is NOT equivalent — it errors).
     #[serde(deserialize_with = "deserialize_form_field")]
     form: String,
     /// JSON object whose keys become top-level Lisp bindings. Values are

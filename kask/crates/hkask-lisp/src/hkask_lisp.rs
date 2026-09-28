@@ -27,12 +27,18 @@
 //!
 //! # Infix Operator Notation
 //!
-//! Binary operators can be written infix: `a + b` is equivalent to `(+ a b)`.
-//! Chained same-operator expressions are supported: `a + b + c` → `(+ a b c)`.
-//! Operator mixing requires explicit parentheses: `(* (+ 1 2) 3)` — `1 + 2 * 3`
-//! is NOT supported (no operator precedence). This makes simple scoring and
-//! threshold expressions more readable in YAML manifests without adding a
-//! parser dependency or sacrificing the sandboxed security model.
+//! Infix is a token-level rewrite BEFORE parsing (all five behaviors
+//! verified live and pinned by `infix_expansion_behavior_is_pinned`):
+//! - Bare `a + b` expands to `(+ a b)`; chained same-operator `a + b + c`
+//!   folds to `(+ a b c)`.
+//! - MIXED operators do NOT associate: `1 + 2 * 3` parses as three
+//!   top-level forms `(+ 1 2)`, `*`, `3` and the last form's value (3)
+//!   wins.
+//! - A PARENTHESIZED `(a + b)` double-wraps to `((+ a b))` and errors
+//!   (expected callable) — NOT equivalent to `(+ a b)`.
+//! - The rewriter also fires inside prefix forms: `(- 5 - 3)` becomes
+//!   `(- (- 5 3))` → -2.
+//! Prefer prefix forms around `let`, `if`, recursion, and nested logic.
 //!
 //! # Security
 //!

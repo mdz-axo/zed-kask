@@ -234,7 +234,10 @@ build_hkask() {
         # the install CPU-burn defect.
         log "Building zed binary in release mode (full LTO)..."
         log "Building with at most $jobs concurrent compile jobs..."
-        if cargo build --jobs "$jobs" --release --package zed; then
+        # mimalloc: glibc per-thread arenas retain their 64MB high-water mark
+        # (measured 2026-09-28: 117 arenas ≈ 7.5GB of the 10.7GB RSS after 8h of
+        # agent work) — the global allocator must stay non-glibc on Linux.
+        if cargo build --jobs "$jobs" --release --package zed --features mimalloc; then
             log "Building MCP servers on the release-mcp profile..."
             local server_args=()
             for server in "${MCP_SERVERS[@]}"; do

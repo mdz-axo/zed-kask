@@ -23,6 +23,14 @@ mds_categories: [composition, trust]
 > labels follow P8.4: test/audit/check receipts are D (oracle named);
 > mappings and circuit claims are P.
 
+> **Update 2026-09-28 (post-rebuild verification).** All five ontology
+> rulings now resolve live at the derived rung (K2 → verified); the
+> embedding port is fixed and curator-memory federated search works, while
+> the john-brooks corpus source is unavailable pending the migration's new
+> sealed run. This pass's work is committed as `ec16add1cd` (landed by the
+> operator's stream during the rebuild); the post-verification updates in
+> this version are uncommitted.
+
 ## 0. What this is, and what it adds
 
 This is the second report in the region-space program. It proceeds from the
@@ -60,26 +68,30 @@ collaboration [U1].
    resolved **not-achieved** (the first-shot predicate did not pass the
    battery); Brier **0.16** recorded system-side by `kanban_goal_score`
    [E1]. The calibration loop from report 1 is closed.
-2. **Five ontology rulings landed** [K2, **partial — honest state**]. The
-   five coarse terms from report 1 §2 — `syntax`, `semantics`,
-   `determinism`, `computation`, `template` — are now
+2. **Five ontology rulings landed and live** [K2, **verified
+   post-rebuild**]. The five coarse terms from report 1 §2 — `syntax`,
+   `semantics`, `determinism`, `computation`, `template` — are
    `DerivedConcept` entries in `kask/crates/hkask-bridge-ontology/src/derived.rs`
    (L675–718), each with identity, definition, constituents, and authority
    (operator ruling 2026-09-28, granted by the proceed-with-follow-ups
    instruction; published groundings: Chomsky/Tarski, Tarski/Wittgenstein,
    Turing, Turing/Newell–Simon, Jinja2/registry) [E3]. The crate is green —
-   57 lib + 4 integration tests, 0 failed [E2]. **Live `onto_anchor`
-   resolution is NOT yet claimed**: post-edit probes of `syntax` and
-   `template` still return the coarse 5W1H core rung [O1], because the
-   serving process runs the pre-edit binary. Live resolution arrives after
-   the next editor rebuild/restart — the same pattern the game-axis terms
-   recorded in [R2].
-3. **Corpus channel re-probed** [K5, verified]. Still blocked with the
-   identical error: the embedding model (`openrouter/qwen/qwen3-embedding-8b`)
-   cannot use the embedding port bound to DeepInfra [E5]. Root cause is the
-   in-flight migration (goal `74cfe8a2`, state continue) — not an
-   unattributed defect. Retry condition: that migration landing. Reported,
-   not dropped.
+   57 lib + 4 integration tests, 0 failed [E2]. **Update (post-rebuild,
+   2026-09-28):** after the operator's rebuild and restart, all five terms
+   resolve live at the derived rung via `onto_anchor` [O1] — the same
+   rebuild-then-live pattern the game-axis terms recorded in [R2].
+3. **Corpus channel re-probed twice** [K5, verified]. Pre-rebuild: blocked
+   on the embedding port (model `openrouter/qwen/qwen3-embedding-8b` vs a
+   DeepInfra-bound port) [E5]. Post-rebuild: the embedding port is FIXED —
+   curator-memory federated search returns records with IDs [O1] — but the
+   john-brooks corpus source is now unavailable with a sharper reason: the
+   v13 calibration run directory (and its `run-identity.json`) is absent
+   from `~/Documents/zk-data/corpus-mcp/calibration/` — collateral of the
+   re-embedding migration (goal `74cfe8a2`). Retry condition: the
+   migration's new sealed run plus a manifest repoint. Reported, not
+   dropped; the curator's own recorded lesson applies — probe instrument
+   validity before reading absence as evidence (curator memory,
+   record `59d5b650`) [O1].
 
 ## 2. The three-party collaboration overlay
 
@@ -231,11 +243,11 @@ could decide; nothing machine-decidable is asked of the human.
 | Capability | Resolution state |
 |---|---|
 | Research MCP server | Resolved — run `2eff88cbbe9f6a30`; 18 sources recorded server-side [R4] |
-| `onto_anchor` | Applied; **live resolution partial** — 5 rulings landed + crate green, live ladder serves the pre-edit binary until rebuild [O1, E2] |
+| `onto_anchor` | Applied; **live resolution verified post-rebuild** — all five terms resolve at the derived rung [O1, E2] |
 | `create-skill` | Resolved; followed — Phase 0 verdict recorded (partial band + operator grant), 2 prescreen fix cycles (within bound), Phase 4 counts + trial executed |
 | `skill-discovery` route phase | **Deviation recorded honestly:** Phase 0 ran by catalog inspection (the installed-skill list) + the operator's explicit create-side grant, not a full route render — context budget; the fit evidence is recorded above |
 | `metacognition` | Resolved — goal `7b0deed5` scored (Brier 0.16, not-achieved) [E1]; calibration closed |
-| John Brooks corpus channel | **Blocked** — re-probed this pass, identical error [E5]; retry condition: migration goal `74cfe8a2` landing |
+| John Brooks corpus channel | **Blocked, reason updated post-rebuild** — embedding port fixed (curator-memory search works [O1]); corpus source unavailable: the v13 calibration run directory is absent (migration collateral) [E5, O1]; retry: new sealed run + manifest repoint |
 | Curator issue reporting | Used — goal-ID truncation filed (`agent_execution`, retried successfully, recorded) [E6] |
 | Lean prover | Not exercised this pass — no new proof obligation; the [R1] pin stands |
 | Curator status | Algedonic log 200/200 (cap approaching) — noted per protocol, not cleared |
@@ -245,7 +257,7 @@ could decide; nothing machine-decidable is asked of the human.
 | Claim | Statement (compressed) | State | Cites |
 |---|---|---|---|
 | K1 | Metacognition goal 7b0deed5 scored not-achieved; Brier 0.16 recorded | verified | E1 |
-| K2 | Five rulings landed in derived.rs; crate green; live anchor resolution pending rebuild | partial | E2, E3, O1 |
+| K2 | Five rulings landed in derived.rs; crate green; live anchor resolution verified post-rebuild | verified | E2, E3, O1 |
 | K3 | hkask-bridge-ontology: 57 lib + 4 integration, 0 failed | verified | E2 |
 | K4 | region-routing skill validated: contract 0 flagged, corpus tests 3/3, prescreen 0 flagged (2 fix cycles), trial 9/9 + invariant true | verified | E4 |
 | K5 | Corpus channel blocked; re-probed; root cause (embedding port/model mismatch, in-flight migration) + retry condition recorded | verified | E5 |
@@ -263,9 +275,9 @@ could decide; nothing machine-decidable is asked of the human.
 
 ## 9. Open questions
 
-1. **Live anchor resolution** — verify `syntax`/`semantics`/`determinism`/
-   `computation`/`template` resolve at the derived rung after the next
-   editor rebuild, then update K2 to verified.
+1. **Live anchor resolution — RESOLVED post-rebuild (2026-09-28):** all
+   five terms resolve at the derived rung via `onto_anchor`; K2 updated to
+   verified. No remaining follow-through for this item.
 2. **Checkpoint cost** (Clark's grounding cost, operationalized): how many
    operator confirmations per task before the collaboration degrades into
    approval theater? The trial asked two; a series of real tasks would
@@ -300,7 +312,7 @@ could decide; nothing machine-decidable is asked of the human.
 | Trial-specific checks | Run, 9/9 true |
 | hkask-bridge-ontology suite | Run, 57 + 4 green |
 | Contract audit / corpus tests / prescreen | Run, 0 flagged / 3 passed / 0 flagged (2 fix cycles) |
-| Not run (reported, not claimed): live derived-rung anchor probes post-rebuild; real-task checkpoint-cost measurement; corpus re-query (channel blocked) | — |
+| Not run (reported, not claimed): real-task checkpoint-cost measurement; corpus re-query (corpus source absent — migration collateral). Live derived-rung anchor probes: RUN post-rebuild, all five resolve [O1] | — |
 
 ## Sources
 

@@ -63,6 +63,12 @@ grep -q -- '--jobs' "$INSTALL_SH" \
     || fail "install.sh lost its cargo --jobs cap — uncapped builds peg every core"
 grep -q -- 'HKASK_BUILD_JOBS' "$INSTALL_SH" \
     || fail "install.sh lost the HKASK_BUILD_JOBS override"
+# 2b. The zed build must carry --features mimalloc: without it the binary
+# falls back to glibc malloc, whose per-thread arenas retain their 64MB
+# high-water mark — RSS ratchets to multi-GB over a working session
+# (measured 2026-09-28: 117 arenas ≈ 7.5GB after 8h).
+grep -q -- '--features mimalloc' "$INSTALL_SH" \
+    || fail "install.sh lost --features mimalloc on the zed build — glibc arena retention returns (2026-09-28 RSS finding)"
 
 # 3. install.sh reads the split output dirs.
 grep -q 'target/release-mcp' "$INSTALL_SH" \

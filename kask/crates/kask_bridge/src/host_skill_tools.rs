@@ -165,6 +165,84 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn lisp_eval_conforms_to_the_editor_evaluator_across_the_canonical_forms() {
+        // lisp-repair L4: the host/lisp_eval dispatch surface must return
+        // byte-identical results to the editor tool path. The full canonical
+        // set (lib-vs-tool) lives in the agent crate's conformance module;
+        // this pins the third surface with representatives covering the
+        // L2 lie-fix behaviors, the L3 walker, assoc, infix, and errors.
+        let (port, _rx) = port();
+        let cases: Vec<(&str, serde_json::Value, &str)> = vec![
+            (
+                "exact comparison above 2^53",
+                serde_json::json!({"form": "(= 9007199254740993 9007199254740992)"}),
+                "false",
+            ),
+            (
+                "walker",
+                serde_json::json!({
+                    "form": "(define count (lambda (lst) (if (is_null lst) 0 (+ 1 (count (cdr lst)))))) (count items)",
+                    "env": {"items": [1, 2, 3, 4, 5]}
+                }),
+                "5",
+            ),
+            (
+                "assoc over object",
+                serde_json::json!({
+                    "form": "(assoc \"b\" data)",
+                    "env": {"data": {"a": 1, "b": "x"}}
+                }),
+                "\"x\"",
+            ),
+            (
+                "bare infix",
+                serde_json::json!({"form": "z + 1", "env": {"z": 41}}),
+                "42",
+            ),
+            (
+                "division is always Float",
+                serde_json::json!({"form": "(/ 6 3)"}),
+                "2.0",
+            ),
+        ];
+        for (name, args, expected) in cases {
+            let host = port
+                .invoke(SERVER, "lisp_eval", args.clone(), webid())
+                .await
+                .unwrap_or_else(|e| panic!("{name}: host surface errored: {e}"));
+            let input: agent::LispEvalToolInput =
+                serde_json::from_value(args).expect("args deserialize");
+            let tool = agent::evaluate_lisp(input)
+                .unwrap_or_else(|e| panic!("{name}: tool surface errored: {e}"));
+            assert_eq!(
+                serde_json::to_string(&host).expect("serialize"),
+                serde_json::to_string(&tool).expect("serialize"),
+                "{name}: host and tool surfaces disagree"
+            );
+            assert_eq!(
+                serde_json::to_string(&host).expect("serialize"),
+                expected,
+                "{name}"
+            );
+        }
+        // The error path: host and tool agree on the teaching message byte
+        // for byte (the host dispatch maps evaluate_lisp's Err into the
+        // port error, which must carry the same text).
+        let overflow = serde_json::json!({"form": "(+ 9223372036854775807 1)"});
+        let host_err = port
+            .invoke(SERVER, "lisp_eval", overflow.clone(), webid())
+            .await
+            .expect_err("host surface should error");
+        let input: agent::LispEvalToolInput =
+            serde_json::from_value(overflow).expect("args deserialize");
+        let tool_err = agent::evaluate_lisp(input).expect_err("tool surface should error");
+        assert!(
+            host_err.to_string().contains(&tool_err),
+            "host error must carry the tool message: host={host_err} tool={tool_err}"
+        );
+    }
+
+    #[tokio::test]
     async fn skill_activation_goes_through_the_catalog_channel() {
         let (port, mut rx) = port();
         let drainer = tokio::spawn(async move {
