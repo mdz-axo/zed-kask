@@ -84,7 +84,8 @@ pub fn is_context_window_exceeded_message(message: &str) -> bool {
         || message.contains("exceeds the context window")
         // OpenRouter may forward only the upstream message, without its code.
         || (message.contains("maximum context length")
-            && message.contains("but the request requires"))
+            && (message.contains("but the request requires")
+                || message.contains("Requested token count exceeds")))
 }
 
 #[cfg(test)]

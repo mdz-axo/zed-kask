@@ -11505,19 +11505,18 @@ impl ThreadView {
     }
 
     fn render_prompt_too_large_error(&self, cx: &mut Context<Self>) -> Callout {
-        const MESSAGE: &str = "This conversation is too long for the model's context window. \
-            Start a new thread or remove some attached files to continue.";
+        let message = prompt_too_large_message(self.compact_control_enabled(cx).is_some());
 
         Callout::new()
             .severity(Severity::Error)
             .icon(IconName::XCircle)
             .title("Context Too Large")
-            .description(MESSAGE)
+            .description(message)
             .actions_slot(
                 h_flex()
                     .gap_0p5()
                     .child(self.new_thread_button(cx))
-                    .child(self.create_copy_button(MESSAGE)),
+                    .child(self.create_copy_button(message)),
             )
             .dismiss_action(self.dismiss_error_button(cx))
     }
@@ -12896,6 +12895,14 @@ fn strip_leading_command(text: &str, command_name: &str) -> String {
         .unwrap_or_else(|| trimmed.to_string())
 }
 
+fn prompt_too_large_message(can_compact: bool) -> &'static str {
+    if can_compact {
+        "The provider rejected this request because its input and reserved output exceed its context window. Use the Compact context control below to summarize earlier conversation, remove attached files, or start a new thread. Retrying unchanged will fail again."
+    } else {
+        "The provider rejected this request because its input and reserved output exceed its context window. Remove attached files or start a new thread. Retrying unchanged will fail again."
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -12942,6 +12949,17 @@ mod tests {
         acp::AvailableCommand::new(name, "").meta(acp_thread::meta_with_command_category(
             acp_thread::CommandCategory::Mcp,
         ))
+    }
+
+    #[test]
+    fn context_overflow_message_names_available_recovery_without_promising_retry() {
+        let with_compact = prompt_too_large_message(true);
+        assert!(with_compact.contains("Compact context"));
+        assert!(with_compact.contains("summarize earlier conversation"));
+        assert!(with_compact.contains("Retrying unchanged will fail again"));
+        let without_compact = prompt_too_large_message(false);
+        assert!(!without_compact.contains("Compact context"));
+        assert!(without_compact.contains("start a new thread"));
     }
 
     #[test]

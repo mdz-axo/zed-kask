@@ -5641,15 +5641,14 @@ impl Thread {
             return None;
         }
 
-        // Compaction is a cost-driven decision: it should fire when the
-        // *billed* input tokens (full-price + cache-write) cross the threshold,
-        // not when the gross input (which includes ~0.1x cache reads) does.
-        // Counting cache reads as full tokens forces premature summarization of
-        // context that is nearly free to retain — the opposite of the goal.
-        let active_tokens = billed_input_tokens(usage).saturating_add(usage.output_tokens);
+        // Preserve the cost-driven threshold for cached context, but never
+        // let its cheaper billing hide a context-window overflow. Cache reads
+        // are still input tokens for the provider's admission limit.
+        let billed_tokens = billed_input_tokens(usage).saturating_add(usage.output_tokens);
+        let gross_tokens = total_input_tokens(usage).saturating_add(usage.output_tokens);
         let compaction_threshold =
             auto_compact_threshold_token_count(auto_compact.threshold, max_input_tokens);
-        if active_tokens < compaction_threshold {
+        if billed_tokens < compaction_threshold && gross_tokens < max_input_tokens {
             return None;
         }
 
@@ -9823,8 +9822,24 @@ mod tests {
                 assert_eq!(
                     thread.compaction_message_target_ix(cx),
                     None,
-                    "cache-read tokens must not count toward compaction"
+                    "cache reads alone should not trigger cost-based compaction"
                 );
+
+                // Cached tokens still consume the model's context window.
+                // Even with the billed cost under 100k, this request cannot
+                // safely reserve any output if the gross input fills it.
+                thread.request_token_usage.insert(
+                    user_message_id.clone(),
+                    language_model::TokenUsage {
+                        input_tokens: 5_000,
+                        cache_read_input_tokens: thread
+                            .model()
+                            .expect("model selected")
+                            .max_token_count(),
+                        ..Default::default()
+                    },
+                );
+                assert_eq!(thread.compaction_message_target_ix(cx), Some(1));
 
                 // Now bump billed tokens (input + cache_creation) over the
                 // threshold while keeping cache reads high. This SHOULD trigger.

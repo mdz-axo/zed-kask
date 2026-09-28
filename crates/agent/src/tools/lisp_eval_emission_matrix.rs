@@ -288,37 +288,69 @@ fn step_cost_anomaly_walker_exceeds_default_steps() {
     );
 }
 
-// ── lie-class specimens (evaluator semantics — L2's fix flips these) ──────
+// ── lie-class fixes landed (L2) — these assertions are the FIXED behavior ─
 // Found by the L0 contract critic (session 1deaa9ab-f425-4a94-bb76-60c1c23928f6),
-// live-falsified. Each assertion pins TODAY's wrong or degraded behavior so
-// the L2 fix has a red-first baseline; the fix flips the assertion to the
-// typed-error (or operator-ruled) expectation. Naming: `lie_specimen_*` =
-// lie-class findings (2, matching the contract's lie count);
-// `degradation_specimen_*` = the defensive-degradation family (grouped for
-// the operator's assoc ruling, NOT counted as lies).
+// pinned as wrong-behavior specimens at L0, flipped to the correct behavior
+// in the same change that landed the fix (lisp-repair L2: checked arithmetic
+// + integer-exact comparison). The pre-fix expectations live in the comments
+// as the before/after receipt. Naming: `lie_fix_*` = the corrected behavior
+// (was lie_specimen_*); `degradation_specimen_*` = the defensive-degradation
+// family (grouped for the operator's assoc ruling, NOT lies).
 
 #[test]
-fn lie_specimen_integer_overflow_wraps_silently() {
-    // DEFECT SPECIMEN (L2 fix target: checked arithmetic → typed error).
-    // Today the engine wraps silently — a wrong answer with no error:
-    //   (+ 9223372036854775807 1) → -9223372036854775808
-    // (wrapping_add hkask_lisp.rs:899, wrapping_sub :944, wrapping_mul :964,
-    // wrapping_abs :1411 — (abs -9223372036854775808) stays negative).
+fn lie_fix_integer_overflow_errors_typed() {
+    // FIXED (L2): i64 overflow in + is a typed Runtime error, not a silent
+    // wrap. Before: (+ 9223372036854775807 1) → -9223372036854775808
+    // (wrapping_add hkask_lisp.rs; also wrapping_sub/wrapping_mul/wrapping_abs,
+    // the unary-negation f64 round-trip, and checked_neg/checked_abs for MIN).
     let out = run(json!({"form": "(+ 9223372036854775807 1)", "env": {}}));
-    assert_eq!(out, Ok(json!(-9223372036854775808i64)));
+    assert_eq!(
+        out,
+        Err(
+            "runtime error: integer overflow in +: 9223372036854775807 + 1 exceeds i64".to_string()
+        )
+    );
+    // The whole family: variadic -, *, abs on i64::MIN, unary - on i64::MIN.
+    // (A bare 9223372036854775808 literal would parse as a Float and miss the
+    // int path — the forms below stay in Int space.)
+    assert!(matches!(
+        run(json!({"form": "(- 0 9223372036854775807 9223372036854775807)", "env": {}})),
+        Err(e) if e.contains("integer overflow in -")
+    ));
+    assert!(matches!(
+        run(json!({"form": "(* 9223372036854775807 2)", "env": {}})),
+        Err(e) if e.contains("integer overflow in *")
+    ));
+    assert!(matches!(
+        run(json!({"form": "(abs -9223372036854775808)", "env": {}})),
+        Err(e) if e.contains("integer overflow in abs")
+    ));
+    assert!(matches!(
+        run(json!({"form": "(- -9223372036854775808)", "env": {}})),
+        Err(e) if e.contains("integer overflow in -")
+    ));
 }
 
 #[test]
-fn lie_specimen_f64_comparison_silently_miscompares_big_ints() {
-    // DEFECT SPECIMEN (L2 fix target: integer-exact comparison).
-    // Comparisons coerce to f64 (as_f64, hkask_lisp.rs:867-876): every
-    // integer above 2^53 compares wrongly, silently:
-    //   (= 9007199254740993 9007199254740992) → true  (the values differ)
-    //   (< 9007199254740992 9007199254740993) → false (the smaller is "not less")
+fn lie_fix_f64_comparison_is_integer_exact() {
+    // FIXED (L2): all-Int comparisons compare as exact i64s. Before (f64
+    // coercion, hkask_lisp.rs as_f64): (= 2^53+1 2^53) → true,
+    // (< 2^53 2^53+1) → false — every integer above 2^53 miscompared
+    // silently. Also covers num_eq's former `.ok()` swallow:
+    // (= 1 "x") was silent false; now a type error (= is numeric-only).
     let eq = run(json!({"form": "(= 9007199254740993 9007199254740992)", "env": {}}));
-    assert_eq!(eq, Ok(json!(true)));
+    assert_eq!(eq, Ok(json!(false)));
     let lt = run(json!({"form": "(< 9007199254740992 9007199254740993)", "env": {}}));
-    assert_eq!(lt, Ok(json!(false)));
+    assert_eq!(lt, Ok(json!(true)));
+    // max/min select the correct argument above 2^53 (extremum previously
+    // compared through f64 and could return the wrong arg).
+    let max = run(json!({"form": "(max 9007199254740993 9007199254740992)", "env": {}}));
+    assert_eq!(max, Ok(json!(9007199254740993i64)));
+    let min = run(json!({"form": "(min 9007199254740992 9007199254740993)", "env": {}}));
+    assert_eq!(min, Ok(json!(9007199254740992i64)));
+    // Type errors propagate: (= 1 "x") is a type error, never silent false.
+    let typed = run(json!({"form": "(= 1 \"x\")", "env": {}}));
+    assert!(matches!(typed, Err(e) if e.contains("type error") && e.contains("expected number")));
 }
 
 #[test]

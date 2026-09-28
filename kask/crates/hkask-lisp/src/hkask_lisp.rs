@@ -12,9 +12,13 @@
 //! The interpreter supports a minimal but practical Lisp subset:
 //!   Special forms: quote, if, let, lambda, define, begin, and, or, not, cond
 //!   Built-in functions: car, cdr, cons, list, length, nth, reverse,
-//!     +, -, *, /, =, !=, <, <=, >, >=, is_null, numberp, listp, assoc,
-//!     append, string=, string-contains, concat, abs, sqrt, max, min, eq,
-//!     member
+//!     +, -, *, /, =, !=, <, <=, >, >=, is_null, numberp, listp, stringp,
+//!     assoc, append, string=, string-contains, concat, abs, sqrt, max, min,
+//!     eq, member
+//!
+//! Integer arithmetic is checked (overflow is a typed `Runtime` error, never
+//! a silent wrap), and all-Int comparisons are exact i64 (never coerced
+//! through f64 — lisp-repair L2).
 //!
 //! `assoc` is defensive: a non-list alist argument returns nil instead of
 //! erroring (see `assoc_fn` — LLM step outputs reach forms as JSON strings,
@@ -816,6 +820,11 @@ fn default_builtins() -> Vec<(&'static str, NativeFn)> {
         ("is_null", is_null),
         ("numberp", numberp),
         ("listp", listp),
+        // String predicate. (stringp x) returns true iff x is a String —
+        // the string counterpart of numberp/listp (added lisp-repair L2;
+        // forms previously guarded string fields with (not (listp x)),
+        // which also passes for numbers and booleans).
+        ("stringp", stringp),
         ("assoc", assoc_fn),
         // List concatenation. (append l1 l2 ...) joins multiple lists.
         // Nil arguments are treated as empty lists. Non-list, non-nil args
@@ -896,7 +905,15 @@ fn add(
     for a in args {
         match a {
             LispValue::Int(i) => {
-                acc_int = acc_int.map(|v| v.wrapping_add(*i));
+                // Checked, not wrapping: a silent i64 wrap is the `lie` failure
+                // class (a wrong answer with no error — lisp-repair L2; the
+                // wrapped specimen is pinned in the agent emission matrix).
+                acc_int = match acc_int {
+                    Some(v) => Some(v.checked_add(*i).ok_or_else(|| {
+                        LispError::Runtime(format!("integer overflow in +: {v} + {i} exceeds i64"))
+                    })?),
+                    None => None,
+                };
                 acc_float += *i as f64;
             }
             LispValue::Float(f) => {
@@ -925,12 +942,18 @@ fn sub(
         return Err(LispError::Arity("- expects at least 1 arg".into()));
     }
     if args.len() == 1 {
-        let f = as_f64(&args[0])?;
-        return Ok(if matches!(&args[0], LispValue::Int(_)) {
-            LispValue::Int(-f as i64)
-        } else {
-            LispValue::Float(-f)
-        });
+        // Unary negation matches the arg directly — no f64 round-trip (the
+        // former `-f as i64` lost precision above 2^53 and wrapped i64::MIN).
+        return match &args[0] {
+            LispValue::Int(i) => Ok(LispValue::Int(i.checked_neg().ok_or_else(|| {
+                LispError::Runtime(format!("integer overflow in -: -{i} exceeds i64"))
+            })?)),
+            LispValue::Float(f) => Ok(LispValue::Float(-f)),
+            other => Err(LispError::TypeError {
+                expected: "number".into(),
+                actual: type_of(other),
+            }),
+        };
     }
     let mut acc_int: Option<i64> = match &args[0] {
         LispValue::Int(i) => Some(*i),
@@ -941,7 +964,9 @@ fn sub(
         let f = as_f64(a)?;
         acc_float -= f;
         if let (Some(i), LispValue::Int(ai)) = (acc_int, a) {
-            acc_int = Some(i.wrapping_sub(*ai));
+            acc_int = Some(i.checked_sub(*ai).ok_or_else(|| {
+                LispError::Runtime(format!("integer overflow in -: {i} - {ai} exceeds i64"))
+            })?);
         } else {
             acc_int = None;
         }
@@ -961,7 +986,12 @@ fn mul(
     for a in args {
         match a {
             LispValue::Int(i) => {
-                acc_int = acc_int.map(|v| v.wrapping_mul(*i));
+                acc_int = match acc_int {
+                    Some(v) => Some(v.checked_mul(*i).ok_or_else(|| {
+                        LispError::Runtime(format!("integer overflow in *: {v} * {i} exceeds i64"))
+                    })?),
+                    None => None,
+                };
                 acc_float *= *i as f64;
             }
             LispValue::Float(f) => {
@@ -1008,10 +1038,30 @@ fn num_eq(
     if args.len() < 2 {
         return Err(LispError::Arity("= expects at least 2 args".into()));
     }
+    // All-Int args compare as exact i64s — the f64 coercion lost every
+    // integer above 2^53 ((= 2^53+1 2^53) silently returned true; lisp-repair
+    // L2, pinned in the agent emission matrix).
+    let ints: Option<Vec<i64>> = args
+        .iter()
+        .map(|a| match a {
+            LispValue::Int(i) => Some(*i),
+            _ => None,
+        })
+        .collect();
+    if let Some(ints) = ints {
+        return Ok(LispValue::Bool(ints.windows(2).all(|w| w[0] == w[1])));
+    }
+    // Mixed numeric args: f64 comparison, with type errors PROPAGATED (the
+    // former `.ok()` swallow made (= 1 "x") silently false — `=` is
+    // numeric-only by the documented contract, so a non-number is a type
+    // error, never a silent false).
     let first = as_f64(&args[0])?;
-    Ok(LispValue::Bool(
-        args[1..].iter().all(|a| as_f64(a).ok() == Some(first)),
-    ))
+    for a in &args[1..] {
+        if as_f64(a)? != first {
+            return Ok(LispValue::Bool(false));
+        }
+    }
+    Ok(LispValue::Bool(true))
 }
 
 fn num_ne(
@@ -1022,10 +1072,50 @@ fn num_ne(
     if args.len() < 2 {
         return Err(LispError::Arity("!= expects at least 2 args".into()));
     }
+    let ints: Option<Vec<i64>> = args
+        .iter()
+        .map(|a| match a {
+            LispValue::Int(i) => Some(*i),
+            _ => None,
+        })
+        .collect();
+    if let Some(ints) = ints {
+        return Ok(LispValue::Bool(ints.windows(2).all(|w| w[0] != w[1])));
+    }
     let first = as_f64(&args[0])?;
-    Ok(LispValue::Bool(
-        args[1..].iter().all(|a| as_f64(a).ok() != Some(first)),
-    ))
+    for a in &args[1..] {
+        if as_f64(a)? == first {
+            return Ok(LispValue::Bool(false));
+        }
+    }
+    Ok(LispValue::Bool(true))
+}
+
+/// Exact-integer comparison helper for the ordered comparators: when every
+/// arg is an Int, compare as i64 (the f64 coercion misordered every integer
+/// above 2^53 — lisp-repair L2); otherwise fall back to f64 with type errors
+/// propagated.
+fn compare_chain(
+    name: &str,
+    args: &[LispValue],
+    ord: fn(i64, i64) -> bool,
+    ford: fn(f64, f64) -> bool,
+) -> Result<LispValue, LispError> {
+    if args.len() < 2 {
+        return Err(LispError::Arity(format!("{name} expects at least 2 args")));
+    }
+    let ints: Option<Vec<i64>> = args
+        .iter()
+        .map(|a| match a {
+            LispValue::Int(i) => Some(*i),
+            _ => None,
+        })
+        .collect();
+    if let Some(ints) = ints {
+        return Ok(LispValue::Bool(ints.windows(2).all(|w| ord(w[0], w[1]))));
+    }
+    let nums: Vec<f64> = args.iter().map(as_f64).collect::<Result<_, _>>()?;
+    Ok(LispValue::Bool(nums.windows(2).all(|w| ford(w[0], w[1]))))
 }
 
 fn lt(
@@ -1033,11 +1123,7 @@ fn lt(
     args: &[LispValue],
     _budget: &mut EvalBudget,
 ) -> Result<LispValue, LispError> {
-    if args.len() < 2 {
-        return Err(LispError::Arity("< expects at least 2 args".into()));
-    }
-    let nums: Vec<f64> = args.iter().map(as_f64).collect::<Result<_, _>>()?;
-    Ok(LispValue::Bool(nums.windows(2).all(|w| w[0] < w[1])))
+    compare_chain("<", args, |a, b| a < b, |a, b| a < b)
 }
 
 fn le(
@@ -1045,11 +1131,7 @@ fn le(
     args: &[LispValue],
     _budget: &mut EvalBudget,
 ) -> Result<LispValue, LispError> {
-    if args.len() < 2 {
-        return Err(LispError::Arity("<= expects at least 2 args".into()));
-    }
-    let nums: Vec<f64> = args.iter().map(as_f64).collect::<Result<_, _>>()?;
-    Ok(LispValue::Bool(nums.windows(2).all(|w| w[0] <= w[1])))
+    compare_chain("<=", args, |a, b| a <= b, |a, b| a <= b)
 }
 
 fn gt(
@@ -1057,11 +1139,7 @@ fn gt(
     args: &[LispValue],
     _budget: &mut EvalBudget,
 ) -> Result<LispValue, LispError> {
-    if args.len() < 2 {
-        return Err(LispError::Arity("> expects at least 2 args".into()));
-    }
-    let nums: Vec<f64> = args.iter().map(as_f64).collect::<Result<_, _>>()?;
-    Ok(LispValue::Bool(nums.windows(2).all(|w| w[0] > w[1])))
+    compare_chain(">", args, |a, b| a > b, |a, b| a > b)
 }
 
 fn ge(
@@ -1069,11 +1147,7 @@ fn ge(
     args: &[LispValue],
     _budget: &mut EvalBudget,
 ) -> Result<LispValue, LispError> {
-    if args.len() < 2 {
-        return Err(LispError::Arity(">= expects at least 2 args".into()));
-    }
-    let nums: Vec<f64> = args.iter().map(as_f64).collect::<Result<_, _>>()?;
-    Ok(LispValue::Bool(nums.windows(2).all(|w| w[0] >= w[1])))
+    compare_chain(">=", args, |a, b| a >= b, |a, b| a >= b)
 }
 
 fn car(
@@ -1213,6 +1287,20 @@ fn numberp(
     )))
 }
 
+/// String predicate: `(stringp x)` returns true if x is a String. The string
+/// counterpart of `numberp`/`listp` — before it existed, forms guarded string
+/// fields with `(not (listp x))`, which also passes for numbers and booleans
+/// (the skill audit hit this; added lisp-repair L2).
+fn stringp(
+    _env: &Rc<RefCell<Env>>,
+    args: &[LispValue],
+    _budget: &mut EvalBudget,
+) -> Result<LispValue, LispError> {
+    if args.len() != 1 {
+        return Err(LispError::Arity("stringp expects 1 arg".into()));
+    }
+    Ok(LispValue::Bool(matches!(args[0], LispValue::String(_))))
+}
 /// List predicate: `(listp x)` returns true if x is a List or Nil.
 /// Used to guard `assoc` against non-list inputs (e.g., when a prior step
 /// returns a boolean instead of a JSON object).
@@ -1408,7 +1496,13 @@ fn abs_fn(
         return Err(LispError::Arity("abs expects 1 arg".into()));
     }
     match &args[0] {
-        LispValue::Int(i) => Ok(LispValue::Int(i.wrapping_abs())),
+        LispValue::Int(i) => Ok(LispValue::Int(
+            // Checked, not wrapping: abs(i64::MIN) wrapped to a negative
+            // value silently (lisp-repair L2).
+            i.checked_abs().ok_or_else(|| {
+                LispError::Runtime(format!("integer overflow in abs: |{i}| exceeds i64"))
+            })?,
+        )),
         LispValue::Float(f) => Ok(LispValue::Float(f.abs())),
         _ => Err(LispError::TypeError {
             expected: "number".into(),
@@ -1437,22 +1531,38 @@ fn sqrt_fn(
 
 /// Numeric extremum over one or more args: keeps the winning argument's own
 /// representation (Int or Float). `prefer` decides whether a candidate
-/// replaces the current best.
+/// replaces the current best. Int-vs-Int comparisons are exact i64 (the
+/// f64 coercion misordered integers above 2^53 — lisp-repair L2); mixed
+/// numeric args compare as f64.
 fn extremum(
     name: &str,
     args: &[LispValue],
     prefer: fn(f64, f64) -> bool,
+    iprefer: fn(i64, i64) -> bool,
 ) -> Result<LispValue, LispError> {
     let Some((first, rest)) = args.split_first() else {
         return Err(LispError::Arity(format!("{name} expects at least 1 arg")));
     };
     let mut best = first;
     let mut best_value = as_f64(first)?;
+    let mut best_int = match first {
+        LispValue::Int(i) => Some(*i),
+        _ => None,
+    };
     for arg in rest {
         let value = as_f64(arg)?;
-        if prefer(value, best_value) {
+        let arg_int = match arg {
+            LispValue::Int(i) => Some(*i),
+            _ => None,
+        };
+        let wins = match (best_int, arg_int) {
+            (Some(b), Some(a)) => iprefer(a, b),
+            _ => prefer(value, best_value),
+        };
+        if wins {
             best = arg;
             best_value = value;
+            best_int = arg_int;
         }
     }
     Ok(best.clone())
@@ -1464,7 +1574,12 @@ fn max_fn(
     args: &[LispValue],
     _budget: &mut EvalBudget,
 ) -> Result<LispValue, LispError> {
-    extremum("max", args, |candidate, best| candidate > best)
+    extremum(
+        "max",
+        args,
+        |candidate, best| candidate > best,
+        |a, b| a > b,
+    )
 }
 
 /// `(min x ...)` returns the smallest numeric argument.
@@ -1473,7 +1588,12 @@ fn min_fn(
     args: &[LispValue],
     _budget: &mut EvalBudget,
 ) -> Result<LispValue, LispError> {
-    extremum("min", args, |candidate, best| candidate < best)
+    extremum(
+        "min",
+        args,
+        |candidate, best| candidate < best,
+        |a, b| a < b,
+    )
 }
 
 /// Generic equality: `(eq a b)` returns true iff a and b are structurally

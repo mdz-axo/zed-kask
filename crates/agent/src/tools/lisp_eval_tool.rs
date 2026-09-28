@@ -34,8 +34,10 @@ pub struct LispEvalToolInput {
     /// `lambda`, `define`, `begin`, `and`, `or`, `not`, `cond`. Builtins:
     /// arithmetic (`+`, `-`, `*`, `/`, `=`, `!=`, `<`, `<=`, `>`, `>=`),
     /// `car`, `cdr`, `cons`, `list`, `length`, `nth`, `reverse`, `is_null`,
-    /// `numberp`, `listp`, `assoc`, `append`, `member`, `abs`, `sqrt`, `max`,
-    /// `min`, `eq`, `string=`, `string-contains`, `concat`.
+    /// `numberp`, `listp`, `stringp`, `assoc`, `append`, `member`, `abs`,
+    /// `sqrt`, `max`, `min`, `eq`, `string=`, `string-contains`, `concat`.
+    /// Integer arithmetic is checked (overflow errors, never wraps silently)
+    /// and all-integer comparisons are exact (never coerced through f64).
     #[serde(deserialize_with = "deserialize_form_field")]
     form: String,
     /// JSON object whose keys become top-level Lisp bindings. Values are
@@ -223,8 +225,19 @@ pub fn evaluate_lisp(input: LispEvalToolInput) -> Result<Value, String> {
         .env
         .get("env")
         .is_some_and(|value| value.as_object().is_some());
-    let env_value =
-        serde_json::Value::Object(input.env.into_iter().map(|(k, v)| (k, v.into())).collect());
+    let env_value = {
+        // Canonical order: env keys are sorted before the object is built, so
+        // the boundary is deterministic across processes (HashMap iteration
+        // order is process-randomized; preserve_order then freezes whatever
+        // order arrives first). No form can observe top-level key order today
+        // (each key becomes an individual binding — proven lisp-repair L0), so
+        // this is defense-in-depth for any future env-introspection surface;
+        // the error path sorts independently (bindings list).
+        let mut pairs: Vec<(String, serde_json::Value)> =
+            input.env.into_iter().map(|(k, v)| (k, v.into())).collect();
+        pairs.sort_by(|a, b| a.0.cmp(&b.0));
+        serde_json::Value::Object(pairs.into_iter().collect())
+    };
     hkask_lisp::eval_sandboxed_with_budget(
         &input.form,
         &env_value,

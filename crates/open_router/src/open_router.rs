@@ -1142,6 +1142,24 @@ mod tests {
     }
 
     #[test]
+    fn cloudflare_wrapped_context_overflow_reaches_compaction_category() {
+        let error: language_model_core::LanguageModelCompletionError = ApiError {
+            status: Some(400),
+            code: 400,
+            message: "Provider returned error\nprovider_name: Cloudflare\nraw: {\"errors\":[{\"message\":\"Requested token count exceeds the model's maximum context length of 1048576 tokens. You requested a total of 1412853 tokens: 818417 tokens from the input messages and 594436 tokens for the completion.\"}]}".into(),
+            retry_after: None,
+        }
+        .into();
+        assert!(matches!(
+            error,
+            language_model_core::LanguageModelCompletionError::ProviderRejection {
+                category: language_model_core::ProviderErrorCategory::PromptTooLarge { .. },
+                ..
+            }
+        ));
+    }
+
+    #[test]
     fn discovered_output_cap_parses_and_promotes() {
         // zed-kask: D83 — the request's `max_tokens` comes from the model's
         // discovered output cap (bounded to half the context). OpenRouter
