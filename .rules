@@ -76,6 +76,7 @@ Use `cx.background_executor().timer(duration).await` in GPUI tests, not `smol::T
 * A skill's missing reference model, D/P label or calibration step is a review finding, never a load-time failure — an incomplete skill must not become a broken skill (operator ruling 2026-09-28). Enforce these in `skill-maintenance` and the corpus audit scripts, not in `agent_skills` loading.
 * `lisp_eval` tool — registered in `add_default_tools`. Do NOT register it again in `register_session` — causes "Duplicate tool name" panic.
 * `render_template` tool — registered in `add_default_tools` (alongside `lisp_eval`). Path traversal protection via `canonicalize` + `starts_with` — do not bypass this check. Template base path wired via `agent::set_template_base_path()` (OnceLock) in `main.rs` at startup; if not wired, the tool errors — it never silently renders from the wrong path.
+* Template goal lines end with terminal punctuation (. ! ?) — the prescreen GOAL WRAP flag is a wrap heuristic, not a length limit (`skill-corpus-prescreen.sh:106-112`); read the checker before the second fix guess.
 * Convention priors from `.rules` must be verified against the codebase before use — rules can be stale.
 
 ## Agent typing system (hkask-mcp-swarm)
