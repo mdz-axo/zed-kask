@@ -1,8 +1,8 @@
 ---
 title: "zed-kask Diataxis Documentation Index"
 audience: [developers, architects, agents, operators]
-last_updated: 2026-09-23
-version: "1.4.0"
+last_updated: 2026-09-28
+version: "1.5.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]
@@ -10,11 +10,12 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 
 # zed-kask Diataxis Documentation Index
 
-This index lists 28 retained artifacts across 10 cross-cutting documentation
-sets. Eight tutorials were folded into their surviving how-to, reference, or
-explanation documents; `hkask-mcp-server/tutorial.md` is the one retained
+This index lists 20 retained artifacts across 10 cross-cutting documentation
+sets. Eight tutorials were folded on 2026-09-16, and on 2026-09-28 the eight
+per-crate how-to documents were folded into their set references (each reference
+gained a Procedures section); `hkask-mcp-server/tutorial.md` is the one retained
 tutorial. The count is the current filesystem result under
-`kask/docs/diataxis/*/*.md` on 2026-09-19, excluding this index.
+`kask/docs/diataxis/*/*.md` on 2026-09-28, excluding this index.
 
 Artifacts are expected to carry repo-relative implementation evidence. This
 index does not claim that every citation in every retained artifact has been
@@ -30,19 +31,23 @@ verification dates.
 | Reference | Look up a fact | domain | class or data model |
 | Explanation | Understand why | trust and curation | state or sequence |
 
-## Retained sets — 28 artifacts
+Since the 2026-09-28 fold, the per-crate task procedures live in each set's
+reference document under a `Procedures` section; no per-crate file carries the
+How-to quadrant alone.
+
+## Retained sets — 20 artifacts
 
 | Set | Tutorial | How-to | Reference | Explanation |
 | --- | --- | --- | --- | --- |
-| [swarm_system](./swarm_system/) | folded | [How-to](./swarm_system/how-to.md) | [Reference](./swarm_system/reference.md) | [Explanation](./swarm_system/explanation.md) |
-| [hkask-types](./hkask-types/) | folded | [How-to](./hkask-types/how-to.md) | [Reference](./hkask-types/reference.md) | [Explanation](./hkask-types/explanation.md) |
+| [swarm_system](./swarm_system/) | folded | folded | [Reference](./swarm_system/reference.md) | [Explanation](./swarm_system/explanation.md) |
+| [hkask-types](./hkask-types/) | folded | folded | [Reference](./hkask-types/reference.md) | [Explanation](./hkask-types/explanation.md) |
 | [hkask-tool-port](./hkask-tool-port/) | folded | — | [Reference](./hkask-tool-port/reference.md) | [Explanation](./hkask-tool-port/explanation.md) |
-| [hkask-storage](./hkask-storage/) | folded | [How-to](./hkask-storage/how-to.md) | [Reference](./hkask-storage/reference.md) | [Explanation](./hkask-storage/explanation.md) |
-| [hkask-regulation](./hkask-regulation/) | folded | [How-to](./hkask-regulation/how-to.md) | [Reference](./hkask-regulation/reference.md) | [Explanation](./hkask-regulation/explanation.md) |
-| [hkask-inference](./hkask-inference/) | folded | [How-to](./hkask-inference/how-to.md) | [Reference](./hkask-inference/reference.md) | [Explanation](./hkask-inference/explanation.md) |
-| [hkask-condenser](./hkask-condenser/) | folded | [How-to](./hkask-condenser/how-to.md) | [Reference](./hkask-condenser/reference.md) | [Explanation](./hkask-condenser/explanation.md) |
-| [hkask-mcp-server](./hkask-mcp-server/) | [Tutorial](./hkask-mcp-server/tutorial.md) | [How-to](./hkask-mcp-server/how-to.md) | [Reference](./hkask-mcp-server/reference.md) | [Explanation](./hkask-mcp-server/explanation.md) |
-| [kask_bridge](./kask_bridge/) | folded | [How-to](./kask_bridge/how-to.md) | [Reference](./kask_bridge/reference.md) | [Explanation](./kask_bridge/explanation.md) |
+| [hkask-storage](./hkask-storage/) | folded | folded | [Reference](./hkask-storage/reference.md) | [Explanation](./hkask-storage/explanation.md) |
+| [hkask-regulation](./hkask-regulation/) | folded | folded | [Reference](./hkask-regulation/reference.md) | [Explanation](./hkask-regulation/explanation.md) |
+| [hkask-inference](./hkask-inference/) | folded | folded | [Reference](./hkask-inference/reference.md) | [Explanation](./hkask-inference/explanation.md) |
+| [hkask-condenser](./hkask-condenser/) | folded | folded | [Reference](./hkask-condenser/reference.md) | [Explanation](./hkask-condenser/explanation.md) |
+| [hkask-mcp-server](./hkask-mcp-server/) | [Tutorial](./hkask-mcp-server/tutorial.md) | folded | [Reference](./hkask-mcp-server/reference.md) | [Explanation](./hkask-mcp-server/explanation.md) |
+| [kask_bridge](./kask_bridge/) | folded | folded | [Reference](./kask_bridge/reference.md) | [Explanation](./kask_bridge/explanation.md) |
 | [media_panel](./media_panel/) | — | — | [Reference](./media_panel/reference.md) | — |
 
 ## Out of scope for additional per-crate sets

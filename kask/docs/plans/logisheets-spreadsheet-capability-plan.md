@@ -1,8 +1,8 @@
 ---
 title: "LogiSheets Spreadsheet Capability — Refactor Architecture Plan"
 audience: [architects, developers, product]
-last_updated: 2026-09-19
-version: "0.2.0"
+last_updated: 2026-09-28
+version: "0.2.1"
 status: "Active"
 domain: "Composition"
 mds_categories: [composition, domain, lifecycle, trust]
@@ -423,8 +423,7 @@ did not author or validate.
 - Implement digest and idempotency validation.
 - Generate server-authoritative display hints.
 
-**Phase 2 record (2026-09-18): COMPLETE in the working tree (uncommitted at
-record time).** The crate ships three modules over `logisheets-rs =1.15.1`:
+**Phase 2 record (2026-09-18): COMPLETE.** (The working-tree state recorded that day has since landed in git history.) The crate ships three modules over `logisheets-rs =1.15.1`:
 
 - `artifact_store` — contained resolution beneath
   `~/Documents/zk-data/spreadsheet-mcp/workbooks/` via `agent_paths`
@@ -474,8 +473,7 @@ Add `kask/mcp-servers/hkask-mcp-spreadsheet` with the minimal tools:
 
 Register it in the built-in MCP server inventory, settings surface, tool-surface checks, and documentation. Credential and configuration allowlists are both empty and explicit.
 
-**Phase 3 record (2026-09-18): COMPLETE in the working tree (uncommitted at
-record time).** `hkask-mcp-spreadsheet` ships both tools over the real
+**Phase 3 record (2026-09-18): COMPLETE.** (The working-tree state recorded that day has since landed in git history.) `hkask-mcp-spreadsheet` ships both tools over the real
 engine actor (`Arc<WorkbookService>` on its dedicated thread, started at
 `run()` with the production artifact root). `spreadsheet_apply` verifies the
 base digest, publishes a NEW immutable revision, and returns the workbook
@@ -518,8 +516,7 @@ clean; docs gates: 65 files (<70), 0 broken links, complete frontmatter.
 - Update D18/D26/D45-related divergence records as required by the actual touched seams.
 - Add interaction, layout, and viewport-performance tests.
 
-**Phase 4 record (2026-09-18): COMPLETE in the working tree (uncommitted at
-record time).** `crates/hkask-spreadsheet-widget` ships three modules over the
+**Phase 4 record (2026-09-18): COMPLETE.** (The working-tree state recorded that day has since landed in git history.) `crates/hkask-spreadsheet-widget` ships three modules over the
 shared wire contract: `block.rs` (two-stage parsing — a tolerant
 `SpreadsheetBlockBody` for the viz discriminator so foreign shapes never
 log as malformed, then the strict `SpreadsheetBlock` contract after the
@@ -575,8 +572,7 @@ The portfolio domain first publishes its specialized reports through the portfol
 
 The spreadsheet capability may subsequently present the hypothetical transaction set and report deltas as a `WorkbookWhatIf`. It consumes these portfolio-authoritative calculations; it does not reimplement them.
 
-**Phase 5 record (2026-09-18): COMPLETE in the working tree (uncommitted at
-record time).** `portfolio_what_if` gained the explicit presentation choice
+**Phase 5 record (2026-09-18): COMPLETE.** (The working-tree state recorded that day has since landed in git history.) `portfolio_what_if` gained the explicit presentation choice
 (`WhatIfPresentation`: `DataOnly` default — the portfolio viewer path — or
 `WorkbookWhatIf`, plan §6's no-hidden-threshold rule). Under
 `WorkbookWhatIf`, the server publishes the hypothetical transaction set

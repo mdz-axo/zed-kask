@@ -2,7 +2,7 @@
 title: "zed-kask Documentation"
 audience: [developers, architects, agents, operators]
 last_updated: 2026-09-28
-version: "2.5.2"
+version: "2.6.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]
@@ -14,9 +14,9 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 
 **Canonical reference:** [`architecture/zed-host-architecture-plan.md`](architecture/zed-host-architecture-plan.md) describes the composition root and current crate inventory. The authoritative integration surface is [`DIVERGENCE.md`](../../DIVERGENCE.md), which lists current and retired numbered seams (retired numbers are never reused).
 
-**Per-crate docs:** [`diataxis/INDEX.md`](diataxis/INDEX.md) lists 28 retained artifacts across 10 cross-cutting sets. Eight tutorials were folded on 2026-09-16; `diataxis/hkask-mcp-server/tutorial.md` is the one retained tutorial (`kask/docs/diataxis/INDEX.md:13-17`).
+**Per-crate docs:** [`diataxis/INDEX.md`](diataxis/INDEX.md) lists 20 retained artifacts across 10 cross-cutting sets. Eight tutorials were folded on 2026-09-16, and on 2026-09-28 the eight per-crate how-to documents were folded into their set references (each reference gained a Procedures section); `diataxis/hkask-mcp-server/tutorial.md` is the one retained tutorial.
 
-**Corpus size (measured 2026-09-28):** 73 Markdown documents and one live YAML inventory, 74 files total (`find kask/docs -type f | wc -l`). The formal **fewer-than-70** count gate in [`DOCUMENTATION_STANDARDS.md`](architecture/DOCUMENTATION_STANDARDS.md) §3 currently fails. Four recently added Markdown files have active roles (the D-seam audit ledger, loop register, operator-retained Aeneas plan, and compute-routing research); this ontology-reference realignment adds no document and does not delete unrelated active work merely to force a green count. A separate role-based condensation pass must remove at least five files with named successors before the all-file gate can pass. [`principle-constraints.yaml`](architecture/principle-constraints.yaml) is a live governance inventory consumed by `kask/scripts/check-principle-constraints.sh`, not a deletion candidate.
+**Corpus size (measured 2026-09-28):** 65 Markdown documents and one live YAML inventory, 66 files total (`find kask/docs -type f | wc -l`), under the formal **fewer-than-70** count gate in [`DOCUMENTATION_STANDARDS.md`](architecture/DOCUMENTATION_STANDARDS.md) §3. The 2026-09-28 condensation folded the eight per-crate how-to documents into their set references (Procedures sections), recorded in the lifecycle ledger below. [`principle-constraints.yaml`](architecture/principle-constraints.yaml) is a live governance inventory consumed by `kask/scripts/check-principle-constraints.sh`, not a deletion candidate.
 
 ## Repair and improvement plans
 
@@ -54,7 +54,8 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 | [`reference/mcp-servers/scenarios.md`](reference/mcp-servers/scenarios.md) | Scenarios server — Schwartz/Tetlock pipeline (19 tools). |
 | [`reference/mcp-servers/spreadsheet.md`](reference/mcp-servers/spreadsheet.md) | Spreadsheet server — LogiSheets-backed workbook surface (2 tools). |
 | [`reference/mcp-servers/swarm.md`](reference/mcp-servers/swarm.md) | Swarm server — Agent Bestiary World and local substrate (90 tools). |
-| [`reference/skills/README.md`](reference/skills/README.md) | Registry of 60 skills, 56 template namespaces, and 286 `.j2` resources. |
+| [`reference/skills/README.md`](reference/skills/README.md) | Registry of 60 skills, 55 template namespaces, and 272 `.j2` resources. |
+| [`loop-register.md`](loop-register.md) | Loop audit register — 23 system loops with audit verdicts, deferred operator decisions, and the INVEST decomposition. |
 | [`reference/kask-settings.md`](reference/kask-settings.md) | Kask settings and environment reference. |
 | [`reference/lisp-eval-dialect.md`](reference/lisp-eval-dialect.md) | Sandboxed `lisp_eval` dialect and `form`/`env` contract. |
 | [`reference/ontology-bridge.md`](reference/ontology-bridge.md) | Published-vocabulary bridge, exact term resolver, and `onto_anchor` ladder. |
@@ -65,7 +66,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 
 | Document | Description |
 | --- | --- |
-| [`DIAGRAMS_INDEX.md`](DIAGRAMS_INDEX.md) | Registry of 105 current `DIAGRAM_ALIGNMENT` records representing 105 unique IDs; 34 records are in the five consolidated files and 71 are inline. |
+| [`DIAGRAMS_INDEX.md`](DIAGRAMS_INDEX.md) | Registry of 106 current `DIAGRAM_ALIGNMENT` records representing 106 unique IDs; 35 records are in the five consolidated files and 71 are inline. |
 | [`diagrams/architecture.md`](diagrams/architecture.md) | Cross-cutting architecture diagrams. |
 | [`diagrams/kanban.md`](diagrams/kanban.md) | Kata-kanban state machines: task status, move controller, and the goal lifecycle (create → judge → score → acknowledge outbox). |
 | [`diagrams/swarm.md`](diagrams/swarm.md) | Swarm architecture and control loops. |
@@ -82,11 +83,27 @@ The LogiSheets plan's future-state block converted to a registered implementatio
 | [`research/chunking-for-rag-research.md`](research/chunking-for-rag-research.md) | Prior-art study of RAG text-chunking patterns and reference models, and the corpus pipeline's alignment and gaps against them. Recommendations only — not implemented. |
 | [`research/kanban-board-reference-models.md`](research/kanban-board-reference-models.md) | Reference models for kanban board naming/navigation (Wekan, Planka, Kan, Kanboard), the kata-kanban's alignment and gaps against them, and the implemented shaping/test plan. |
 | [`research/deterministic-vs-probabilistic-compute-routing.md`](research/deterministic-vs-probabilistic-compute-routing.md) | When deterministic vs probabilistic compute fits: routing claim with falsifiers, Shannon/Gibbs entropy analogy tested (Jaynes, Landauer bridges and breakdowns), and a problem matrix whose game axis splits into recurrence and world closure. Hypotheses only — no routing implemented. Added 2026-09-27. |
+| [`research/d-seam-audit.md`](research/d-seam-audit.md) | D-seam audit ledger — resumable per-seam worklist over the live `DIVERGENCE.md` surface; identity coverage checked by `kask/scripts/check-d-seam-audit-ledger.sh`. |
 | [`research/cmp-gap-methodology.md`](research/cmp-gap-methodology.md) | Process spec for detecting, measuring, and interpreting gaps between prediction-market and traditional-market expectations (CMP term structures vs rates/FX/equities analogs); worked run instances are recorded as companies-mcp reports. Added 2026-09-19 by the operator. |
 
 ## Document lifecycle ledger
 
 Git history is the archive of record. Every removed document names its active successor here. The dated Corpus size measurement above, not this lifecycle ledger, applies the Markdown-document gate and identifies the separate live YAML inventory.
+
+### Deleted 2026-09-28 (doc-update realignment — reference absorbs how-to)
+
+| Artifact | Successor |
+| --- | --- |
+| `diataxis/swarm_system/how-to.md` | `diataxis/swarm_system/reference.md` (Procedures section). |
+| `diataxis/hkask-types/how-to.md` | `diataxis/hkask-types/reference.md` (Procedures section). |
+| `diataxis/hkask-storage/how-to.md` | `diataxis/hkask-storage/reference.md` (Procedures section). |
+| `diataxis/hkask-regulation/how-to.md` | `diataxis/hkask-regulation/reference.md` (Procedures section). |
+| `diataxis/hkask-inference/how-to.md` | `diataxis/hkask-inference/reference.md` (Procedures section). |
+| `diataxis/hkask-condenser/how-to.md` | `diataxis/hkask-condenser/reference.md` (Procedures section). |
+| `diataxis/kask_bridge/how-to.md` | `diataxis/kask_bridge/reference.md` (Procedures section). |
+| `diataxis/hkask-mcp-server/how-to.md` | `diataxis/hkask-mcp-server/reference.md` (Procedures section). |
+| `diataxis/hkask-bridge-ontology/` (empty directory) | Residue of the 2026-09-09 how-to fold; no files. |
+| `reports/` (empty directory) | Residue of the 2026-09-17/19 report deletions; no files. |
 
 ### Folded 2026-09-23 (research and pilot evidence)
 
@@ -155,7 +172,7 @@ The eight tutorial removals landed in `5881f1f406fafe12f4fc65a549dbf1eb0a62ca84`
 - [x] Internal links in the previously blocked hkask-tool-port documents target retained reference/how-to documents.
 - [x] Diagram metadata has unique-ID/location registry parity.
 - [x] Edited citations use full repository-relative paths.
-- [ ] Document count is 72, above the fewer-than-70 cap; condensation remains outstanding.
+- [x] Document count is 66, under the fewer-than-70 cap (`find kask/docs -type f | wc -l`, measured 2026-09-28).
 
 ## See also
 

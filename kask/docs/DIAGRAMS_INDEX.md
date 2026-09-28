@@ -1,8 +1,8 @@
 ---
 title: "hKask Diagram Index — Mermaid Verification Registry"
 audience: [architects, developers, agents]
-last_updated: 2026-09-26
-version: "2.3.0"
+last_updated: 2026-09-28
+version: "2.4.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [curation, composition]
@@ -10,7 +10,7 @@ mds_categories: [curation, composition]
 
 # hKask Diagram Index — Mermaid Verification Registry
 
-This registry is generated from the surviving `DIAGRAM_ALIGNMENT` metadata under `kask/docs/`. On 2026-09-26 the corpus contains **106 active alignment records representing 106 unique IDs**: 35 records in the five consolidated diagram files and 71 inline records.
+This registry is generated from the surviving `DIAGRAM_ALIGNMENT` metadata under `kask/docs/`. On 2026-09-28 the corpus contains **106 active alignment records representing 106 unique IDs**: 35 records in the five consolidated diagram files and 71 inline records. The 2026-09-28 how-to folds moved eleven inline records from the per-crate how-to documents into their set references' Procedures sections; the record count is unchanged.
 
 The corpus contains 106 Mermaid blocks, all current-state and each carrying one immediately adjacent alignment record. On 2026-09-26 the skill learning loop registered as `DIAG-ARCH-LEARNING-LOOP-001` in `diagrams/architecture.md`. The last two conversions landed 2026-09-19: the LogiSheets plan's architecture block registered as `DIAG-ARCH-SPREADSHEET-001` (implementation began 2026-09-18, converting the plan to `Active` per `kask/docs/architecture/DOCUMENTATION_STANDARDS.md` §4.2), and `research/cmp-gap-methodology.md`'s Stage-7 routing block registered as `DIAG-RES-CMP-001` together with the file's frontmatter.
 
@@ -35,7 +35,7 @@ Every row below is an actual `(id, location)` metadata pair. Dates and statuses 
 | `DIAG-ARCH-SKILL-MCP-LISP-001` | [`diagrams/architecture.md`](./diagrams/architecture.md) | 2026-09-19 | VERIFIED |
 | `DIAG-ARCH-SPREADSHEET-001` | [`plans/logisheets-spreadsheet-capability-plan.md`](./plans/logisheets-spreadsheet-capability-plan.md) | 2026-09-19 | VERIFIED |
 | `DIAG-ARTIFACT-001` | [`architecture/standardized-artifact-storage.md`](./architecture/standardized-artifact-storage.md) | 2026-09-19 | VERIFIED |
-| `DIAG-BRIDGE-002` | [`diataxis/kask_bridge/how-to.md`](./diataxis/kask_bridge/how-to.md) | 2026-09-19 | VERIFIED |
+| `DIAG-BRIDGE-002` | [`diataxis/kask_bridge/reference.md`](./diataxis/kask_bridge/reference.md) | 2026-09-19 | VERIFIED |
 | `DIAG-BRIDGE-003` | [`diataxis/kask_bridge/reference.md`](./diataxis/kask_bridge/reference.md) | 2026-09-19 | VERIFIED |
 | `DIAG-BRIDGE-004` | [`diataxis/kask_bridge/reference.md`](./diataxis/kask_bridge/reference.md) | 2026-09-19 | VERIFIED |
 | `DIAG-BRIDGE-006` | [`diataxis/kask_bridge/explanation.md`](./diataxis/kask_bridge/explanation.md) | 2026-09-16 | VERIFIED |
@@ -53,7 +53,7 @@ Every row below is an actual `(id, location)` metadata pair. Dates and statuses 
 | `DIAG-CMP-ARCH-005` | [`diagrams/architecture.md`](./diagrams/architecture.md) | 2026-09-16 | VERIFIED |
 | `DIAG-CMP-FLOW-001` | [`diagrams/mcp-dispatch.md`](./diagrams/mcp-dispatch.md) | 2026-09-19 | VERIFIED |
 | `DIAG-CMP-FLOW-002` | [`diagrams/mcp-dispatch.md`](./diagrams/mcp-dispatch.md) | 2026-09-16 | VERIFIED |
-| `DIAG-COND-002` | [`diataxis/hkask-condenser/how-to.md`](./diataxis/hkask-condenser/how-to.md) | 2026-09-16 | VERIFIED |
+| `DIAG-COND-002` | [`diataxis/hkask-condenser/reference.md`](./diataxis/hkask-condenser/reference.md) | 2026-09-16 | VERIFIED |
 | `DIAG-COND-003` | [`diataxis/hkask-condenser/reference.md`](./diataxis/hkask-condenser/reference.md) | 2026-09-16 | VERIFIED |
 | `DIAG-COND-004` | [`diataxis/hkask-condenser/explanation.md`](./diataxis/hkask-condenser/explanation.md) | 2026-09-16 | VERIFIED |
 | `DIAG-DIA-SWARM-001` | [`diagrams/swarm.md`](./diagrams/swarm.md) | 2026-09-23 | VERIFIED |
@@ -68,11 +68,11 @@ Every row below is an actual `(id, location)` metadata pair. Dates and statuses 
 | `DIAG-IC-017` | [`reference/mcp-servers/README.md`](./reference/mcp-servers/README.md) | 2026-09-16 | VERIFIED |
 | `DIAG-INF-004` | [`diataxis/hkask-inference/explanation.md`](./diataxis/hkask-inference/explanation.md) | 2026-09-16 | VERIFIED |
 | `DIAG-INF-005` | [`diataxis/hkask-inference/explanation.md`](./diataxis/hkask-inference/explanation.md) | 2026-09-16 | VERIFIED |
-| `DIAG-INF-PROVIDER` | [`diataxis/hkask-inference/how-to.md`](./diataxis/hkask-inference/how-to.md) | 2026-09-16 | VERIFIED |
+| `DIAG-INF-PROVIDER` | [`diataxis/hkask-inference/reference.md`](./diataxis/hkask-inference/reference.md) | 2026-09-16 | VERIFIED |
 | `DIAG-INF-REF` | [`diataxis/hkask-inference/reference.md`](./diataxis/hkask-inference/reference.md) | 2026-09-16 | VERIFIED |
-| `DIAG-INF-WIRE` | [`diataxis/hkask-inference/how-to.md`](./diataxis/hkask-inference/how-to.md) | 2026-09-16 | VERIFIED |
+| `DIAG-INF-WIRE` | [`diataxis/hkask-inference/reference.md`](./diataxis/hkask-inference/reference.md) | 2026-09-16 | VERIFIED |
 | `DIAG-MCPSRV-001` | [`diataxis/hkask-mcp-server/tutorial.md`](./diataxis/hkask-mcp-server/tutorial.md) | 2026-09-16 | VERIFIED |
-| `DIAG-MCPSRV-010` | [`diataxis/hkask-mcp-server/how-to.md`](./diataxis/hkask-mcp-server/how-to.md) | 2026-09-16 | VERIFIED |
+| `DIAG-MCPSRV-010` | [`diataxis/hkask-mcp-server/reference.md`](./diataxis/hkask-mcp-server/reference.md) | 2026-09-16 | VERIFIED |
 | `DIAG-MCPSRV-020` | [`diataxis/hkask-mcp-server/reference.md`](./diataxis/hkask-mcp-server/reference.md) | 2026-09-16 | VERIFIED |
 | `DIAG-MCPSRV-030` | [`diataxis/hkask-mcp-server/explanation.md`](./diataxis/hkask-mcp-server/explanation.md) | 2026-09-16 | VERIFIED |
 | `DIAG-MCPSRV-031` | [`diataxis/hkask-mcp-server/explanation.md`](./diataxis/hkask-mcp-server/explanation.md) | 2026-09-16 | VERIFIED |
@@ -88,7 +88,7 @@ Every row below is an actual `(id, location)` metadata pair. Dates and statuses 
 | `DIAG-PL-MEMORY-INGEST` | [`architecture/memory-system-specification.md`](./architecture/memory-system-specification.md) | 2026-09-04 | VERIFIED |
 | `DIAG-PL-MEMORY-RECALL` | [`architecture/memory-system-specification.md`](./architecture/memory-system-specification.md) | 2026-09-04 | VERIFIED |
 | `DIAG-PROMPT-001` | [`architecture/skills-and-composition.md`](./architecture/skills-and-composition.md) | 2026-09-16 | VERIFIED |
-| `DIAG-REG-002` | [`diataxis/hkask-regulation/how-to.md`](./diataxis/hkask-regulation/how-to.md) | 2026-09-16 | VERIFIED |
+| `DIAG-REG-002` | [`diataxis/hkask-regulation/reference.md`](./diataxis/hkask-regulation/reference.md) | 2026-09-16 | VERIFIED |
 | `DIAG-REG-003` | [`diataxis/hkask-regulation/reference.md`](./diataxis/hkask-regulation/reference.md) | 2026-09-16 | VERIFIED |
 | `DIAG-REG-004` | [`diataxis/hkask-regulation/reference.md`](./diataxis/hkask-regulation/reference.md) | 2026-09-16 | VERIFIED |
 | `DIAG-REG-005` | [`diataxis/hkask-regulation/explanation.md`](./diataxis/hkask-regulation/explanation.md) | 2026-09-16 | VERIFIED |
@@ -111,19 +111,19 @@ Every row below is an actual `(id, location)` metadata pair. Dates and statuses 
 | `DIAG-STATE-KANBAN-MOVE` | [`diagrams/kanban.md`](./diagrams/kanban.md) | 2026-08-28 | VERIFIED |
 | `DIAG-STATE-TASK-STATUS` | [`diagrams/kanban.md`](./diagrams/kanban.md) | 2026-09-18 | VERIFIED |
 | `DIAG-STD-001` | [`architecture/DOCUMENTATION_STANDARDS.md`](./architecture/DOCUMENTATION_STANDARDS.md) | 2026-09-19 | VERIFIED |
-| `DIAG-STOR-002` | [`diataxis/hkask-storage/how-to.md`](./diataxis/hkask-storage/how-to.md) | 2026-09-18 | VERIFIED |
+| `DIAG-STOR-002` | [`diataxis/hkask-storage/reference.md`](./diataxis/hkask-storage/reference.md) | 2026-09-18 | VERIFIED |
 | `DIAG-STOR-003` | [`diataxis/hkask-storage/reference.md`](./diataxis/hkask-storage/reference.md) | 2026-09-18 | VERIFIED |
 | `DIAG-STOR-004` | [`diataxis/hkask-storage/reference.md`](./diataxis/hkask-storage/reference.md) | 2026-09-19 | VERIFIED |
 | `DIAG-STOR-005` | [`diataxis/hkask-storage/explanation.md`](./diataxis/hkask-storage/explanation.md) | 2026-09-16 | VERIFIED |
 | `DIAG-STOR-006` | [`diataxis/hkask-storage/explanation.md`](./diataxis/hkask-storage/explanation.md) | 2026-09-19 | VERIFIED |
-| `DIAG-STOR-007` | [`diataxis/hkask-storage/how-to.md`](./diataxis/hkask-storage/how-to.md) | 2026-09-16 | VERIFIED |
+| `DIAG-STOR-007` | [`diataxis/hkask-storage/reference.md`](./diataxis/hkask-storage/reference.md) | 2026-09-16 | VERIFIED |
 | `DIAG-STOR-008` | [`diataxis/hkask-storage/reference.md`](./diataxis/hkask-storage/reference.md) | 2026-09-16 | VERIFIED |
-| `DIAG-SWARM-010` | [`diataxis/swarm_system/how-to.md`](./diataxis/swarm_system/how-to.md) | 2026-09-16 | VERIFIED |
+| `DIAG-SWARM-010` | [`diataxis/swarm_system/reference.md`](./diataxis/swarm_system/reference.md) | 2026-09-16 | VERIFIED |
 | `DIAG-SWARM-020` | [`diataxis/swarm_system/reference.md`](./diataxis/swarm_system/reference.md) | 2026-09-16 | VERIFIED |
 | `DIAG-SWARM-030` | [`diataxis/swarm_system/explanation.md`](./diataxis/swarm_system/explanation.md) | 2026-09-16 | VERIFIED |
 | `DIAG-SWARM-031` | [`diataxis/swarm_system/explanation.md`](./diataxis/swarm_system/explanation.md) | 2026-09-16 | VERIFIED |
-| `DIAG-TYPES-002` | [`diataxis/hkask-types/how-to.md`](./diataxis/hkask-types/how-to.md) | 2026-09-16 | VERIFIED |
-| `DIAG-TYPES-003` | [`diataxis/hkask-types/how-to.md`](./diataxis/hkask-types/how-to.md) | 2026-09-16 | VERIFIED |
+| `DIAG-TYPES-002` | [`diataxis/hkask-types/reference.md`](./diataxis/hkask-types/reference.md) | 2026-09-16 | VERIFIED |
+| `DIAG-TYPES-003` | [`diataxis/hkask-types/reference.md`](./diataxis/hkask-types/reference.md) | 2026-09-16 | VERIFIED |
 | `DIAG-TYPES-004` | [`diataxis/hkask-types/reference.md`](./diataxis/hkask-types/reference.md) | 2026-09-19 | VERIFIED |
 | `DIAG-TYPES-005` | [`diataxis/hkask-types/reference.md`](./diataxis/hkask-types/reference.md) | 2026-09-16 | VERIFIED |
 | `DIAG-TYPES-006` | [`diataxis/hkask-types/reference.md`](./diataxis/hkask-types/reference.md) | 2026-09-16 | VERIFIED |
