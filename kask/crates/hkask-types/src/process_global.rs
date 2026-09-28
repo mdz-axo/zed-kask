@@ -26,8 +26,8 @@
 //! `agent::set_template_base_path`) is deliberately NOT this type: those
 //! are configured once at startup, warn on the `Err` branch of `set`, and
 //! never replace. Leaf crates that cannot depend on `hkask-types`
-//! (`hkask-tool-invoker`, `hkask-conversation-injector`) hand-roll the same
-//! two invariants — their doc comments point here.
+//! (`hkask-tool-invoker`) hand-rolls the same
+//! two invariants — its doc comments point here.
 //!
 //! Per `.rules`: `Mutex` hooks are re-settable and do not need the
 //! `Err`-branch warn that `OnceLock` hooks require.
