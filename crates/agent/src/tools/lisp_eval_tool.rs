@@ -528,6 +528,10 @@ mod tests {
             skill_md.contains(r#"(if (> shape 0) (quote red)"#),
             "shape violations must read red, not green"
         );
+        assert!(
+            skill_md.contains(r#"(member token (car items))"#),
+            "the count-token primitive must stay member-based — assoc/eq compare identity and silently miss env-provided strings (the green-wash this form exists to prevent)"
+        );
 
         // The pinned form, executed three ways: green flat ledger, red
         // flat ledger (abandoned + unowned), and the object-shaped entry

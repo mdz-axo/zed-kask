@@ -281,10 +281,12 @@ insert is D — the returned h_mem id.
    mechanical floor (abandoned, unowned, malformed shape); each
    state's entry conditions are carried by its definition.
    (`member` is the string-equality primitive — `assoc`/`eq` compare
-   identity and silently miss env-provided strings; the form is pinned
-   by `test_program_manager_skill_md_pins_closure_ledger_form` in
-   `lisp_eval_tool.rs`, and validated live in both directions plus the
-   object-shape red case in the regression case below.)
+   identity and silently miss env-provided strings; the pin test holds
+   the member-based count-token, the shape guard, and the red-on-shape
+   branch in `lisp_eval_tool.rs`
+   (`test_program_manager_skill_md_pins_closure_ledger_form`), and the
+   regression case validates the form live in both directions plus the
+   object-shape red case.)
 6. When the operator confirms the outcome, resolve the goal
    (`kanban_goal_score`) so the intake prediction is Brier-scored
    against their ground truth — the kata's gap measurement. An
