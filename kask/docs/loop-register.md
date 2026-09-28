@@ -2,7 +2,7 @@
 title: "Loop Register — zed-kask canonical loops"
 audience: [developers, architects, agents, operators]
 last_updated: 2026-09-27
-version: "0.20.1"
+version: "0.21.0"
 status: "Phase 0 re-verified at the 2026-09-27 checkpoint; Phase 1–4 partial — per-row states and the Phase 4 ledger are authoritative"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle]
@@ -147,7 +147,7 @@ the spec's minimum list, recorded below rather than narrowed away.
 - **Five properties:** closed — IS (market leg), agent-mediated OUGHT (equity leg); timely — IS (staleness surfaced; scan cadence operator-driven, `zero_scan_reason` on empty scans); accurate — IS (earliest-snapshot discipline `calibration.rs:168-177`, identity-based dedup `:144-162`, no-fabrication contracts, tested); complete — IS with stated boundary (equity and market observations use separate stores by reference class); actionable — IS (tier demotion changes lookup annotations, `matcher.rs:7`).
 - **Prediction vs actual:** predicted 1 defect / 1 impedance / conf 0.50 → actual: 0 defects, 1 module-convention inconsistency consolidated (F4, net −13 lines), 1 Phase 0 signal refuted (F1). Brier-scored at Phase 4.
 
-### L9 — Kanban/goal loop
+### L9 — Kanban/goal loop — Steer prompt consolidated; two operator decisions deferred
 - **Crate/path:** `kask/mcp-servers/hkask-mcp-kata-kanban/src`
 - **Entry point:** `hkask_mcp_kata_kanban.rs:461` `kanban_goal_create`, `:517` `kanban_goal_judge`, `:564` `kanban_goal_score`, `:605` `kanban_goal_memory_acknowledge`; `kanban/service_impl.rs` and `idempotency.rs` own the board/task side of the cycle
 - **Trigger:** agent/user MCP actions during work; panels (L7)
@@ -155,8 +155,9 @@ the spec's minimum list, recorded below rather than narrowed away.
 - **Prediction:** 1 / 1 / 0.50
 - **Phase 1 graph (IS):** `kanban_goal_create` receives a user-owned target (`hkask_mcp_kata_kanban.rs:461-500`) → service stores criteria (`kanban/service_impl/goals.rs:59-107`) → `kanban_goal_judge` validates coverage and appends a verdict (`goals.rs:208-247`) → `goal_score` stores outcome/Brier as a retained outbox row (`goals.rs:264-297`) → turn-end curator ingestion/acknowledgment (`crates/agent/src/thread.rs:332-374`) → `kanban_goal_list` and score readback (`hkask_mcp_kata_kanban.rs:564-658`). Five properties: closed **conditional** on ingestion/ack; timely **partial** (no evidenced automatic retry after failed turn ingestion); accurate **partial**; complete **partial**; actionable **partial** (manual list/readback, no verified automatic recovery).
 - **Phase 2 open findings:** IS — the Steer prompt previously called goals ephemeral (`crates/kanban_panel/src/kanban_panel.rs:380-384` before this change), contradicting the retained scored row (`goals.rs:287-297`). **Consolidated:** replaced five stale prompt lines with four lines describing durable resolution/acknowledgment (`kanban_panel.rs:380-383`), removed the superseded ephemeral test comment (`kask_bridge/src/memory.rs:1702-1705`), and updated D2 in `DIVERGENCE.md` in the same pass. The existing panel seam's `steer_prompt_describes_durable_goal_acknowledgment` failed red then passed green, and the 32-test `kanban_panel` library suite passed. Falsifier: that rendered Steer prompt contains `EPHEMERAL` or fails to say scored goals remain until memory acknowledgment. This panel/bridge/D2/test slice landed in pathspec-limited commit `1113d8d85d`; `./script/clippy` and `cargo check -p zed` passed before that commit. IS — `goal_acknowledge_memory` checks owner/resolved status and prunes without confirming a memory receipt (`goals.rs:319-337`); INFERRED risk: direct acknowledgment could delete an un-ingested scored row. **Falsifier:** a server-enforced memory receipt gate or a test proving direct acknowledgment cannot prune before ingestion. Receipt enforcement needs a cross-server contract and fails the simple deletion test; defer for operator decision with the risk stated. IS — `Done` does not check `passed` values before append (`goals.rs:208-247`); **falsifier:** a rejection check on the service path. Do not count an unrun runtime test as a confirmed defect.
+- **Closure (2026-09-27):** one finding consolidated and landed (the Steer durable-goal prompt, `1113d8d85d`, red→green pinned); two items deferred as operator decisions with risks stated — the direct-acknowledgment memory-receipt gate (cross-server contract, fails the simple deletion test) and the Done-verdict/criteria-passed rejection check (a behavior change; falsifier: a rejection check on the service path). **Prediction vs actual:** predicted 1 defect / 1 impedance / conf 0.50 → actual: 1 defect found and fixed, 0 impedances, 2 operator decisions pending. Brier-scored at Phase 4.
 
-### L10 — Memory recall/ingest cycle
+### L10 — Memory recall/ingest cycle — audited; recall failure-signal contract deferred to the operator
 - **Crate/path:** `kask/crates/hkask-memory` + `kask/mcp-servers/hkask-mcp-curator`
 - **Entry point:** `kask/crates/hkask-memory/src/memory_store.rs:288` `store`, `:331` `query_deduped`, `:447` `touch_recall`, `:261` `with_ledger`; consolidation `consolidation_service.rs:38`; curator ingest `kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.rs:1833` `curator_memory_extract` (turn-discovery contract `thread_turns.rs`, cited at `:1557`, `:1730-1751`), `distillation.rs`, `forgetting.rs`
 - **Participants:** `federated_recall.rs`, `recall_dedup.rs`, `salience.rs`, `bayesian.rs`; zed-side injection `kask_bridge/src/memory.rs`, `context_injector.rs`
@@ -165,8 +166,9 @@ the spec's minimum list, recorded below rather than narrowed away.
 - **Prediction:** 2 / 2 / 0.55
 - **Phase 1 scoped graph (IS):** L1 turn completion hands a record to `RealMemoryPort::ingest_turn` (`crates/agent/src/thread.rs:3019-3086`; `kask_bridge/src/memory.rs:520-537`); `memory/ingest.rs:395-442,543-610` writes goal/chunk memories; `kask_bridge/src/memory.rs:795-1049` retrieves/ranks/touches curator memories; `context_injector.rs:292-348` injects them into a later curator turn. L9's scored-goal row is acknowledged only after the turn-ingestion call returns success (`thread.rs:351-373`). Five properties in inspected scope: closed for curator recall after successful ingest, timely conditional on detached turn task, accurate/complete conditional on store reads, actionable for curator via subsequent context or memory tools. Ordinary-agent recall returning empty is **intentional IS** (`memory.rs:540-559` and `:201-205`), not evidence that the curator cycle is broken.
 - **Phase 2 open finding (IS + INFERRED consequence):** keyword recall discards a DB query error via `if let Ok` (`memory.rs:927-967`) and exact-thread recall does likewise (`:1067-1085`), so on these legs a failed store read can produce an empty candidate set rather than a surfaced read failure. **Falsifier:** inject a query failure and observe a distinct caller-visible error. Do not reclassify the deliberate empty-store fallback (`memory.rs:711-745`) without operator agreement. No test of a real store failure has run; changing the result/error contract without it would violate behavior preservation. Defer further L10 consolidation pending this test and an approved failure signal; no net-negative deletion candidate has been established.
+- **Closure (2026-09-27):** the error-discarding legs are IS-confirmed by reading; changing the result/error contract is a behavior change, deferred for an operator ruling on the failure signal (the deliberate empty-store fallback stays untouched per its own note). No deletion candidate exists. **Prediction vs actual:** predicted 2 defects / 2 impedances / conf 0.55 → actual: 1 defect-class finding deferred for operator ruling, 0 impedances, 0 deletion candidates. Brier-scored at Phase 4.
 
-### L11 — Media job queue cycle
+### L11 — Media job queue cycle — audited; page-visibility impedance deferred
 - **Crate/path:** `kask/mcp-servers/hkask-mcp-media/src`
 - **Entry point:** `jobs.rs:167` `admit`, `:210` `mark_running`, `:229` `cancel`, `:477` `finish`, `:304` `active_count`; tools `job_submit`/`job_status`/`job_list`/`job_cancel`
 - **Trigger:** async generation job submit → poll → terminal
@@ -174,8 +176,9 @@ the spec's minimum list, recorded below rather than narrowed away.
 - **Prediction:** 1 / 1 / 0.45
 - **Phase 1 scoped graph (IS):** job submission validates and admits against bounded capacity (`tools/jobs.rs:99-125`; `jobs.rs:166-187`) → transitions to running (`tools/jobs.rs:157-181`) → races generation against cancellation (`:184-228`) → publishes or rolls back terminal status (`:268-320`; `jobs.rs:314-411`) → status/list readback (`tools/jobs.rs:332-408`). L7 media panel reads newest jobs (`crates/media_panel/src/media_viewer.rs:731-760`) and polls when a visible row is nonterminal (`:795-836`). Five properties: closed for a visible job within process lifetime; timely conditional on queue-tab polling; accurate for typed terminal/failure status; complete only within ephemeral capped history (`jobs.rs:511-530`); actionable through cancel/status.
 - **Phase 2 open impedance (IS + INFERRED):** `job_list` sorts newest-first then takes the limit (`tools/jobs.rs:355-368`); L7 asks for 20 rows (`media_viewer.rs:746-750`) and stops polling when none **in that page** is nonterminal (`:795-820`). INFERRED: an older running job behind 20 newer completed jobs loses automatic status observation. Falsifier: a panel test with that ordering still polls and updates the older active job. No runtime reproduction; no behavior-preserving negative-line change admitted. Defer any list-order/visibility change until the panel contract and test are agreed.
+- **Closure (2026-09-27):** the sort-then-limit readback re-verified in the current tree (`tools/jobs.rs:356-359`); the page-visibility impedance stays deferred pending the panel-contract decision, with its falsifier recorded. No deletion candidate. **Prediction vs actual:** predicted 1 defect / 1 impedance / conf 0.45 → actual: 0 confirmed defects, 1 inferred impedance deferred with falsifier. Brier-scored at Phase 4.
 
-### L12 — Research run ledger cycle
+### L12 — Research run ledger cycle — audited; closable-vs-append-only deferred to the operator
 - **Crate/path:** `kask/mcp-servers/hkask-mcp-research/src`
 - **Entry point:** `hkask_mcp_research.rs:1604` `begin_research_run`, `:1658` `annotate_research_run`; run state in `research/runs.rs`
 - **Trigger:** research question → run opened → run-scoped search/extract recorded → evidence evaluation → annotation
@@ -183,8 +186,9 @@ the spec's minimum list, recorded below rather than narrowed away.
 - **Prediction:** 1 / 1 / 0.45
 - **Phase 1 scoped graph (IS):** caller begins an identified question (`hkask_mcp_research.rs:1604-1624`; `research/runs.rs:32-46`) → run-scoped search/extract records server-returned URLs with first observation retained (`hkask_mcp_research.rs:484-503,564-583,710-722`; `runs.rs:60-99`) → annotation checks an observed URL before granting `verified` and updates the declared state/basis (`runs.rs:362-427`; `hkask_mcp_research.rs:1658-1700`) → manifest readback recomputes validation and source evidence (`runs.rs:106-239`; `hkask_mcp_research.rs:1629-1653`). The L4 tool response includes a `run_ledger` append receipt/error (`hkask_mcp_research.rs:1714-1763`); L1 agent supplies the run ID and consumes that receipt. Five properties: source provenance closed by readback, timely per request, accurate for recorded-by distinction, complete conditional on checked append receipts, actionable for agent annotation; **run lifecycle completion is not evidenced**.
 - **Phase 2 open finding (IS + INFERRED):** begin stores `status='planned'` (`runs.rs:32-46`); the inspected source has no `UPDATE research_runs`, while the validator accepts six statuses (`runs.rs:254-302`). INFERRED: a run with sources and annotations can still report `planned` in `get_research_run` (`:231-239`), so the status field may mislead a caller about completion. Falsifier: locate and exercise a production status-transition writer; the repository-wide `UPDATE research_runs` search found none. No automated finish operation is in the tool surface; adding one or removing lifecycle claims changes functional behavior. Defer for operator decision on whether runs should be explicitly closable or remain append-only; do not invent a completion event. No net-negative candidate admitted yet.
+- **Closure (2026-09-27):** the repository-wide `UPDATE research_runs` search re-verified on the current tree — the only match is this register's own record; no status-transition writer exists. The closable-vs-append-only ruling stays with the operator; no completion event invented. **Prediction vs actual:** predicted 1 defect / 1 impedance / conf 0.45 → actual: 1 IS finding deferred as the operator's lifecycle decision, 0 impedances, 0 deletion candidates. Brier-scored at Phase 4.
 
-### L13 — Swarm thread/memory cycle
+### L13 — Swarm thread/memory cycle — audited; dispatch-seam ingestion candidate gated on a seam test
 - **Crate/path:** `kask/mcp-servers/hkask-mcp-swarm/src` + `kask/crates/hkask-event-store`
 - **Entry point:** `local_tools.rs:278` `dispatch_in_thread` / `:354` `swarm_delegate_in_thread_local`; `knowledge_tools.rs:67` `swarm_recall_local`; event store `kask/crates/hkask-event-store/src/hkask_event_store.rs`; zed-side feed `kask_bridge/src/rollout_event_bridge.rs:104` `poll_once`
 - **Trigger:** delegation dispatches; recall queries; ABW sync; task-board updates
@@ -192,6 +196,7 @@ the spec's minimum list, recorded below rather than narrowed away.
 - **Prediction:** 1 / 1 / 0.45
 - **Phase 1 scoped graph (IS):** a scoped delegation checks roster membership (`local_tools.rs:278-307`), reads prior ordered turns (`:309-333`), invokes the member model and commits a turn (`:335-343`), then `swarm_thread_local` returns retained turns even after roster deletion (`:378-405`). Separately, `attach_narrative_memory` embeds a local response (`:161-179`) and `swarm_recall_local` retrieves passages with a surfaced unavailable note (`knowledge_tools.rs:67-116`). L7 swarm panel fetches durable turns (`crates/swarm_panel/src/member_turns.rs:277-309`); L2's rollout bridge is separate. Five properties in this scoped path: closed for ordered thread readback, timely per dispatch, accurate/complete for successful thread append, but shared semantic recall is not shown to cover every scoped dispatch; actionable via thread read and degraded-memory note.
 - **Phase 2 impedance (IS + INFERRED effect):** `dispatch_in_thread` appends to the durable thread without `attach_narrative_memory` (`local_tools.rs:335-343`); direct `swarm_delegate_in_thread_local` returns it without indexing (`:368-375`), and scoped fanout similarly takes the result (`:594-603`), while scoped pipeline does attach after dispatch (`:842-865`). INFERRED: a direct scoped turn may be visible in `swarm_thread_local` but absent from `swarm_recall_local`. Falsifier: a scoped-delegation → semantic-recall integration test retrieves that turn without a separate caller ingest. Potential consolidation: one ingestion at the common dispatch seam, delete per-caller copies to avoid double indexing; **not admitted yet** because moving inference work into every scoped dispatch changes timing/result shape and needs a red-green public-seam test. Defer with this risk rather than bolt on another caller-specific hook.
+- **Closure (2026-09-27):** the dispatch-seam ingestion consolidation is named but NOT admitted — moving embedding into every scoped dispatch changes timing and result shape and needs a red-green public-seam test first; the impedance stays deferred with its falsifier. **Prediction vs actual:** predicted 1 defect / 1 impedance / conf 0.45 → actual: 0 confirmed defects, 1 impedance deferred with a candidate consolidation gated on its seam test. Brier-scored at Phase 4.
 
 ### L14 — Settings → MCP server sync/restart cycle — AUDITED & CLOSED 2026-09-27 (minimal by design)
 - **Crate/path:** `kask/crates/kask_bridge/src` + zed-side wiring (`crates/zed/src/main.rs`, `crates/settings_ui/src/pages/kask_page.rs`)
@@ -202,7 +207,7 @@ the spec's minimum list, recorded below rather than narrowed away.
 - **Prediction vs actual:** predicted 1 defect / 2 impedances / conf 0.50 → actual: 0 defects, 0 impedances. Brier-scored at Phase 4.
 - **Hands off to:** L3 (runtime respawns servers), L5 (socket env injection).
 
-### L15 — Passphrase rotation cycle
+### L15 — Passphrase rotation cycle — AUDITED & CLOSED 2026-09-27 (minimal by design)
 - **Crate/path:** `kask/crates/kask_bridge/src/passphrase_rotation.rs`
 - **Entry point:** `:94` `schedule_db_passphrase_rotation`, `:167` `run_pending_db_passphrase_rotation`, `:212` `apply_db_rotation`; startup hook `crates/zed/src/main.rs:373`
 - **Trigger:** operator rotation request → pending state on disk → applied at next launch (keychain slot written last)
@@ -210,6 +215,7 @@ the spec's minimum list, recorded below rather than narrowed away.
 - **Prediction:** 1 / 1 / 0.50
 - **Phase 1 scoped graph (IS):** operator schedules a pending record and keychain intent without touching the active key (`passphrase_rotation.rs:90-118`); at startup the runner senses pending state (`:167-172`), classifies old/new/neither-opening DBs (`:212-245`), rotates with rollback on failure (`:246-275`), and only after all DBs agree writes the main keychain slot (`:193-197`). The next startup re-reads pending state and DB keys, providing the return path; failure records the last error for operator recovery (`:173-190`). Five properties from code: closed across restart, timely at next launch rather than immediate, accurate through explicit key classification, complete only for confirmed inventory, actionable via surfaced error/pending record; none of these is a live rotation claim.
 - **Phase 2/4 result:** no duplicate implementation or net-negative removal candidate was established: the keychain-last ordering and rollback are distinct load-bearing paths. After the unrelated type edit became buildable, `bash kask/scripts/cargo-test-nonzero.sh -p kask_bridge passphrase_rotation --lib` ran **6/6 tests passing** (pending record, same-key, neither-key, crashed partial, full rotation, rollback). Earlier E0599 compilation failure ran zero tests and is superseded by this targeted result. This is an offline test verdict, not a live rotation claim; close L15 as minimal-by-design after the current-tree full gates.
+- **Closure (2026-09-27):** minimal by design — the keychain-last ordering and rollback are distinct load-bearing paths, no deletion candidate; 6/6 offline rotation tests green, and the current-tree full gates passed at the L2 landing (v0.16.1 receipts: full clippy clean, cargo check -p zed). **Prediction vs actual:** predicted 1 defect / 1 impedance / conf 0.50 → actual: 0 defects, 0 impedances. Brier-scored at Phase 4.
 
 ### L16 — Skill activation → outcome → algedonic review cycle
 - **Crate/path:** `crates/zed/src/main.rs` + `kask/crates/hkask-regulation` + `kask_bridge`
@@ -222,7 +228,7 @@ the spec's minimum list, recorded below rather than narrowed away.
 - **Phase 2 adjudication (closed 2026-09-27):** the row's INFERRED misattribution is confirmed as MECHANISM (IS) but refuted as DEFECT: sticky attribution is D59's documented, pinned design — "`KaskThreadState::active_skill` holds the last skill a thread activated successfully" (`DIVERGENCE.md` D59, 2026-09-26; field doc `kask_thread_state.rs:62-63`; pin `test_tool_failure_under_active_skill_is_recorded`, `tests/mod.rs:10672`) — with the recorded mitigation that tool-failure records are unclassified evidence for the operator+curator algedonic review while `curator_report_skill_use_issue` remains the classified channel. The residual trade-off — a long-lived thread attributes much-later unrelated failures to the skill whose body remains in context — is the documented design, not a consolidation candidate; windowed attribution would be a behavior change requiring an operator ruling. The row's proposed cross-turn falsifier is moot: the existing pin documents attribution-after-activation, and cross-turn persistence follows from the thread-lifetime cell by construction.
 - **Five properties:** closed — IS (activation → span → durable outcome → board/`reg_query` readback); timely — IS (durable at write, restart-hydrated per D59); accurate — partial by documented design (sticky attribution; records are unclassified evidence); complete — IS (activation, failure, and operator-feedback phases all recorded); actionable — IS (board cards + `reg_query`). **Prediction vs actual:** predicted 2 defects / 1 impedance / conf 0.50 → actual: 0 defects (the one inferred risk refuted as documented design), 0 impedances. Brier-scored at Phase 4.
 
-### L17 — Scenario quantification/Brier loop
+### L17 — Scenario quantification/Brier loop — audited; posterior carry-forward boundary deferred
 - **Crate/path:** `kask/mcp-servers/hkask-mcp-scenarios/src`
 - **Entry point:** `hkask_mcp_scenarios.rs:1108` `scenario_quantify`, `:1229` `scenario_update`, `:1281` `scenario_score`, `:1397` `scenario_calibrate`; Tetlock pipeline in `superforecast/`
 - **Trigger:** scenario project events → quantification → Bayesian updates → outcome scoring
@@ -230,8 +236,9 @@ the spec's minimum list, recorded below rather than narrowed away.
 - **Prediction:** 1 / 1 / 0.45
 - **Phase 1 scoped graph (IS):** events are quantified into marginal/joint probabilities and cached (`hkask_mcp_scenarios.rs:1108-1119`); caller-supplied evidence revises a prior to a posterior (`:1229-1273`); resolved outcomes receive Brier scoring (`:1281-1341`) and are journaled to the forecast store (`:1344-1385`); the later `scenario_calibrate` reads resolved forecasts and applies bias/isotonic calibration when available (`:1397-1453`). The L8 shared Brier functions supply the scoring primitive; the caller must pass updated event state between requests. Five properties in this scope: closed through journal→calibrate readback, timely per explicit call, accurate conditional on supplied outcomes, complete for recorded events not unsubmitted histories, actionable through calibrated output; no live forecast resolution checked.
 - **Phase 2 boundary (IS, deferred):** `scenario_update` returns a posterior in a response (`:1253-1272`), not a persisted change to the cached tree; `scenario_score` takes its own events array (`:1285-1298`). INFERRED: a caller that fails to pass the new posterior forward can score an older prior. Falsifier: a test showing the revised event is carried by the same request path to scoring without caller intervention. Automatically mutating cached events would change the caller-controlled scenario contract, not a behavior-preserving deletion; defer any automation until that functional choice is confirmed.
+- **Closure (2026-09-27):** the posterior-carry boundary stays deferred — the caller-controlled scenario contract is documented behavior, and automating the carry would change it; no deletion candidate. **Prediction vs actual:** predicted 1 defect / 1 impedance / conf 0.45 → actual: 0 confirmed defects, 1 inferred boundary deferred with falsifier. Brier-scored at Phase 4.
 
-### L18 — Training job cycle
+### L18 — Training job cycle — audited; Nebius status-degradation contract deferred
 - **Crate/path:** `kask/mcp-servers/hkask-mcp-training/src`
 - **Entry point:** `tools/submit.rs:28` `training_submit`, `tools/status.rs:17` `training_status`, `tools/cancel.rs:13` `training_cancel`; `lora_validation.rs` gates the submission
 - **Trigger:** operator-confirmed training submit → status polling → cancel/complete
@@ -239,15 +246,17 @@ the spec's minimum list, recorded below rather than narrowed away.
 - **Prediction:** 1 / 1 / 0.45
 - **Phase 1 scoped graph (IS):** `training_submit` refuses unconfirmed GPU spending before dataset/model work (`tools/submit.rs:28-61`), checks artifact persistence (`:63-100`) and submits to the configured host; `training_status` reads the host and, for Running, probes the completion manifest (`tools/status.rs:17-35`; `hkask_mcp_training.rs:237-282`), persists the observed status and registers a completed adapter (`tools/status.rs:81-107`); `training_cancel` sends cancellation to the host (`tools/cancel.rs:13-23`). L6 supplies the prepared dataset, and adapter evaluation is a separate L16 feedback handoff (`tools/evaluate.rs:97`). Five properties: closed for Runpod jobs with a readable manifest, timely only at caller polling cadence, accurate/complete conditional on host and manifest access, actionable via status/cancel; **no training was submitted or paid for in this audit**.
 - **Phase 2 finding (IS, deferred):** the Nebius submission branch warns it lacks completion detection (`tools/submit.rs:84-91`), and `check_completion_manifest` converts missing configuration, failed artifact lookup or fetch error to `None` (`hkask_mcp_training.rs:245-281`); the status response then reports Running without a machine-readable degradation (`tools/status.rs:27-41`). INFERRED: a finished or unobservable job can appear indefinitely active. Falsifier: a Nebius or manifest-failure status test emits an explicit non-running/unknown or degraded status to the caller. Altering the result contract would add semantics and likely code; defer for a separate functional decision, not a silent success claim.
+- **Closure (2026-09-27):** the Nebius/manifest-degradation contract stays deferred for a functional decision on the status semantics; no training was submitted or paid for by this audit. **Prediction vs actual:** predicted 1 defect / 1 impedance / conf 0.45 → actual: 1 IS finding (unobservable jobs read Running without machine-readable degradation) deferred for the status-contract decision, 0 impedances. Brier-scored at Phase 4.
 
-### L19 — Portfolio returns/review cycle (classification pending)
+### L19 — Portfolio returns/review cycle — classified: request-boundary recompute cycle, not an automatic controller
 - **Crate/path:** `kask/mcp-servers/hkask-mcp-portfolio/src`
 - **Entry point:** `server.rs:892` `portfolio_seed_price`, `:986` `portfolio_materialize_returns`; `returns.rs`, `analysis.rs`, `store.rs`
 - **Trigger:** ledger append → price seed → returns materialization → review (TWR/MWR, attribution)
 - **Phase 1 classification (IS + INFERRED boundary):** `ledger_apply` writes transaction state (`server.rs:439`), price seeding invalidates materialized views (`:892-963`), `portfolio_materialize_returns` recomputes from ledger and cached prices (`:986-1012`), and `portfolio_returns` reads the result (`:525`). This closes a **cache invalidation/recompute/readback cycle** at request boundaries; deciding whether the return warrants a new allocation is agent/operator mediated, not an automatic controller in this server. Five properties: closed for materialization/readback, timely per caller, accurate conditional on prices, complete conditional on date coverage, actionable to a reviewer; no live portfolio review ran. No evidence supports a separate automatic return→trade feedback arm, so that arm is explicitly outside this row. No deletion candidate established; an automatic rebalance would change behavior and is not admitted.
 - **Prediction:** 1 / 1 / 0.45
+- **Closure (2026-09-27):** classified per the worklist's own instruction — a request-boundary cache invalidation/recompute/readback cycle, a genuine loop, not an automatic controller; the return→trade arm is explicitly outside the row and no rebalance behavior was invented. **Prediction vs actual:** predicted 1 defect / 1 impedance / conf 0.45 → actual: 0 defects, 0 impedances, no deletion candidate. Brier-scored at Phase 4.
 
-### L20 — RSS subscription / conditional feed sync cycle
+### L20 — RSS subscription / conditional feed sync cycle — AUDITED & CLOSED 2026-09-27 (no candidate)
 - **Crate/path:** `kask/mcp-servers/hkask-mcp-research/src`
 - **Entry point:** `hkask_mcp_research.rs:789` `rss_subscribe`, `:875` `rss_fetch`, `:960` `rss_get_entries`; conditional-fetch state and writeback at `:883-944`
 - **Participants:** research DB subscriptions/entries and cached ETag/Last-Modified, `rss_client`, synthetic-feed extraction (`:895-900`), agent tool caller (L1), L4 request envelope
@@ -255,8 +264,9 @@ the spec's minimum list, recorded below rather than narrowed away.
 - **Hands off to:** L4 (tool calls); L12 (research source selection); L1 (readback of stored entries)
 - **Prediction (pre-audit, 2026-09-27):** 1 defect / 1 impedance / confidence 0.35
 - **Phase 1 scoped graph (IS):** subscription writes a feed identity (`hkask_mcp_research.rs:789-835`); `rss_fetch` reads cached ETag/Last-Modified and validates the stored URL (`:875-910`), conditionally fetches (`:913-928`), atomically upserts entries and next cache headers (`:935-954`); `rss_get_entries` reads stored results (`:960-970`). The next explicit fetch reuses those headers; synthetic feeds branch to their own extractor (`:895-900`). Five properties: closed for repeated fetches, timely caller-driven, accurate for 304/new-entry distinction, complete per subscribed feed, actionable via retrieval/mark-read tools. No autonomously timed poll is claimed and no live feed was probed. No measured duplication or negative-line candidate; defer further consolidation rather than merge RSS with research-run evidence state (L12).
+- **Closure (2026-09-27):** graph verified, no deletion candidate; the merge with L12's evidence state is rejected (distinct retained state and contracts). **Prediction vs actual:** predicted 1 defect / 1 impedance / conf 0.35 → actual: 0 defects, 0 impedances. Brier-scored at Phase 4.
 
-### L21 — Gallery scan / metadata reconciliation cycle
+### L21 — Gallery scan / metadata reconciliation cycle — AUDITED & CLOSED 2026-09-27 (no candidate)
 - **Crate/path:** `kask/mcp-servers/hkask-mcp-media/src/tools/gallery.rs`
 - **Entry point:** `gallery_organize` `:159` (scan/reconcile `:189-193`); `gallery_refresh` `:542` (rescan/reconcile `:552-554`, analysis `:579-580`); query surface `gallery_search` `:250`
 - **Participants:** active gallery state, on-disk scan and persisted gallery index/metadata, optional inference analysis (L5), media panel (L7)
@@ -264,8 +274,9 @@ the spec's minimum list, recorded below rather than narrowed away.
 - **Hands off to:** L7 (gallery/panel), L5 (analysis), L11 (media jobs/assets); remains distinct from job admission and completion
 - **Prediction (pre-audit, 2026-09-27):** 1 defect / 1 impedance / confidence 0.35
 - **Phase 1 scoped graph (IS):** organize validates and persists the active gallery after scan/reconcile (`tools/gallery.rs:159-199`); refresh rescans to detect missing/changed assets (`:542-558`), analyzes a bounded set (`:567-581`), and returns explicit scan/analysis/errors and pending counts (`:622-665`). `gallery_search` (`:250`) reads the updated index; the media panel is an L7 consumer, separate from L11 job state. Five properties: closed across a repeated refresh/search, timely explicit-call/bounded-analysis, accurate/complete conditional on scan and analysis status, actionable from returned errors/pending. No full-gallery refresh was executed here and no evidenced deletion candidate survives the behavior-preservation test.
+- **Closure (2026-09-27):** graph verified, no deletion candidate. **Prediction vs actual:** predicted 1 defect / 1 impedance / conf 0.35 → actual: 0 defects, 0 impedances. Brier-scored at Phase 4.
 
-### L22 — Spreadsheet optimistic-revision / interrupted-operation reconciliation cycle
+### L22 — Spreadsheet optimistic-revision / interrupted-operation reconciliation cycle — audited; orphan-revision boundary deliberate and tested
 - **Crate/path:** `kask/crates/hkask-spreadsheet/src/service.rs` + `kask/mcp-servers/hkask-mcp-spreadsheet/src/server.rs`
 - **Entry point:** `server.rs:94` `spreadsheet_apply` → `service.rs:200` `apply`; reconciliation `server.rs:124` `spreadsheet_operation_get` → `service.rs:217` `operation_get`
 - **Participants:** immutable workbook revision and idempotency record, caller-held digest/key, L4 tool envelope, L7 spreadsheet widget
@@ -274,8 +285,9 @@ the spec's minimum list, recorded below rather than narrowed away.
 - **Prediction (pre-audit, 2026-09-27):** 1 defect / 1 impedance / confidence 0.35
 - **Phase 1 scoped graph (IS):** the user/widget submits an edit with base digest and idempotency identity (`server.rs:94-119`); actor checks recorded key, compares the immutable base digest, applies edits, publishes a new revision and operation record (`service.rs:537-615`); after an interrupted call `spreadsheet_operation_get` queries the record (`server.rs:124-140`; `service.rs:213-229`). The recorded result is observable on the next read, while `None` remains explicitly unknown and is not auto-retried. Five properties: closed for recorded operations, timely actor/caller-driven, accurate on digest conflict, complete only for committed records, actionable via reconciliation; no live workbook was mutated by this audit.
 - **Phase 2 boundary (IS, deferred):** revision bytes are written before the operation record (`service.rs:590-604`); an interruption in between can leave an orphan revision and `operation_get=None`, deliberately tested at `property_tests.rs:225-264`. This is a surfaced unknown rather than a falsely reported success; changing crash semantics requires an atomic publish contract and does not pass the simple deletion test. No new implementation proposed.
+- **Closure (2026-09-27):** the orphan-revision window is deliberate, tested (`property_tests.rs:225-264`), and surfaced as an explicit unknown — not a falsely reported success; an atomic publish contract would be a behavior change, not a deletion. **Prediction vs actual:** predicted 1 defect / 1 impedance / conf 0.35 → actual: 0 defects, 0 impedances, 1 deliberate boundary documented. Brier-scored at Phase 4.
 
-### L23 — Research-provider selection / observed-performance cycle
+### L23 — Research-provider selection / observed-performance cycle — audited; degraded-status impedance deferred
 - **Crate/path:** `kask/mcp-servers/hkask-mcp-research/src/research/{providers,performance}.rs`
 - **Entry point:** `providers.rs:683` `score_providers` → `:730-743` live penalty/readback; provider outcome `providers.rs:315-332` → `performance.rs:76` `record_outcome`; next selection from `hkask_mcp_research.rs:313`
 - **Participants:** `ProviderPool`, per-provider bounded recent-outcome samples (`performance.rs:64-81`), search providers, L2 Regulation span archive (`providers.rs:315-322`)
@@ -284,6 +296,7 @@ the spec's minimum list, recorded below rather than narrowed away.
 - **Prediction (pre-audit, 2026-09-27):** 1 defect / 1 impedance / confidence 0.35
 - **Phase 1 scoped graph (IS):** `score_providers` selects from static profiles plus live penalty (`research/providers.rs:683-743`); a provider outcome is spanned and added to a bounded per-provider sample window (`:315-332`; `research/performance.rs:64-81`); after three samples its success/latency measures affect the next selection (`performance.rs:109-171`), and the recommendation carries the snapshot. L2 receives the durable `reg.web.provider` span separately; L12 gets the selected provider's search result. Five properties: closed in one process, timely at next search, accurate conditional on recent samples, complete only for configured/searchable providers, actionable via ranking/rationale.
 - **Phase 2 impedance (IS + INFERRED):** a poisoned performance lock drops the outcome (`providers.rs:323-333`) and readback silently substitutes zero penalty/empty live stats (`performance.rs:138-147,177-186`). INFERRED: the operator cannot distinguish a broken feedback channel from a provider with too few samples. Falsifier: force lock poisoning and observe a surfaced degraded-status/rationale or error. Changing this to an explicit status requires a same-seam test and replacement of the current fallback; defer without treating empty stats as validation.
+- **Closure (2026-09-27):** the poisoned-lock leg re-verified in the current tree (`providers.rs:323-333`, "Best-effort — a poisoned lock skips the live path"); the degraded-status contract stays deferred with its falsifier — replacing the silent fallback is a behavior change, not a deletion. **Prediction vs actual:** predicted 1 defect / 1 impedance / conf 0.35 → actual: 0 confirmed defects, 1 impedance deferred with falsifier. Brier-scored at Phase 4.
 
 ## Boundary notes (sub-cycles folded into rows above, not separate rows)
 
@@ -323,29 +336,29 @@ Each row below is a separate, bounded audit task, not a command to start it.
 
 | Task | Independent slice and observable check | Dependency / local verification |
 | --- | --- | --- |
-| L3 | Reduce or explicitly reject the six-map server-state consolidation without changing delivery semantics. | L4 contract; 22 runtime tests + `reconnect_integration.rs` and unknown-effect retry pin. |
+| L3 | Closed: consolidated in `16271e3c60` (ServerEntry, +38); typed-error impedance deferred (see row). | L4 contract; 22 runtime tests + `reconnect_integration.rs` and unknown-effect retry pin. |
 | L4 | Re-check typed-error handoff to L3; do not merge child processes if isolation would change. | L3 seam; server-framework tests and per-server credential isolation. |
 | L8 | Confirm the already landed scoring consolidation retains outcome readback; close only a newly evidenced gap. | L17 scoring edge; forecast/scenarios tests and existing commit `50cba394fd`. |
 | L14 | Confirm settings and credential changes still restart exactly affected servers. | L3, L5; settings-sync tests + launch-order invariant. |
-| L15 | Trace pending passphrase rotation through every DB to the last keychain write, including recovery on partial failure. | L10, L4; passphrase-rotation tests and keychain-last invariant. |
+| L15 | Closed 2026-09-27: minimal by design; 6/6 offline rotation tests; keychain-last + rollback verified load-bearing (see row). | L10, L4; passphrase-rotation tests and keychain-last invariant. |
 | L2 | Closed 2026-09-27: landed in a2321f0df2, independently verified by this audit (see row). | L16 outcomes; regulation-cycle tests. |
-| L5 | Trace one IPC inference request through response/error to caller. | L3 environment; inference IPC tests. |
+| L5 | Closed: request cycle mapped, `ipc_error` helper consolidated (`4eaca76874`, −95), Json fix landed (`e1f1b51cad`); Api readback impedance deferred (see row). | L3 environment; inference IPC tests. |
 | L16 | Closed 2026-09-27: graph complete, inferred defect refuted as documented D59 design (see row). | L2, L1; skill-outcome tests. |
 | L1 | Closed 2026-09-27 at full scope: single-path loop verified minimal; memory-ingest deferral stands (see row). | L3, L5; agent turn tests. |
 | L7 | Structural audit closed 2026-09-27 (seams single-copy, no deletion candidate); two inferred findings + the measured seam test deferred behind the in-flight widget subtraction (see row). | L1, L9; targeted panel/widget tests. |
 | L6 | Closed 2026-09-27: graph verified, gate re-execution rejected as consolidatable (pinned defense-in-depth), source-complete boundary stated (see row). | L5, L10; corpus pipeline seam tests. |
-| L9 | Trace goal creation to operator-scored outcome and memory acknowledgement. | L10; goal lifecycle tests. |
-| L10 | Trace stored memory through retrieval to context injection and deletion hygiene. | L1, L2; recall/ingest round-trip tests. |
-| L11 | Trace async media submit through cancel/finish to job status. | L7; job state tests. |
-| L12 | Trace a run-scoped search through recorded evidence to a retrievable run. | L4; research-run tests. |
-| L13 | Trace delegation result into swarm recall and the panel/task-board observation. | L7, L10; swarm thread tests. |
-| L17 | Trace quantified event through update and scored resolution into readback. | L8; scenarios scoring tests. |
-| L18 | Trace authorized training job to terminal status without launching a training run for this audit. | L6; offline submit/status/cancel tests only. |
-| L19 | Test whether portfolio returns/review closes a feedback path; if not, reclassify row rather than fabricate a loop. | L7; portfolio materialization tests. |
-| L20 | Trace conditional RSS fetch through cache-header/entry persistence to readback. | L12; RSS 304/new-entry tests. |
-| L21 | Trace scan/reconcile through metadata refresh to gallery query. | L7, L5; gallery reconciliation tests. |
-| L22 | Trace interrupted edit by idempotency key through operation readback. | L7, L4; workbook conflict/recovery tests. |
-| L23 | Trace search outcome into rolling sample and changed next-provider ranking. | L12, L2; provider-ranking tests. |
+| L9 | Closed 2026-09-27: Steer prompt consolidated (`1113d8d85d`); receipt-gate + verdict-check decisions deferred to the operator (see row). | L10; goal lifecycle tests. |
+| L10 | Closed 2026-09-27: error-discarding finding deferred as the operator's failure-signal ruling (see row). | L1, L2; recall/ingest round-trip tests. |
+| L11 | Closed 2026-09-27: page-visibility impedance deferred pending the panel contract (see row). | L7; job state tests. |
+| L12 | Closed 2026-09-27: no status-transition writer exists; closable-vs-append-only is the operator's decision (see row). | L4; research-run tests. |
+| L13 | Closed 2026-09-27: dispatch-seam ingestion candidate named, not admitted (needs a red-green seam test; see row). | L7, L10; swarm thread tests. |
+| L17 | Closed 2026-09-27: posterior carry-forward boundary deferred (caller-controlled contract; see row). | L8; scenarios scoring tests. |
+| L18 | Closed 2026-09-27: Nebius/manifest degradation contract deferred; no training run launched (see row). | L6; offline submit/status/cancel tests only. |
+| L19 | Closed 2026-09-27: classified as a request-boundary recompute cycle; no automatic controller arm fabricated (see row). | L7; portfolio materialization tests. |
+| L20 | Closed 2026-09-27: graph verified, no deletion candidate; merge with L12 rejected (see row). | L12; RSS 304/new-entry tests. |
+| L21 | Closed 2026-09-27: graph verified, no deletion candidate (see row). | L7, L5; gallery reconciliation tests. |
+| L22 | Closed 2026-09-27: orphan-revision boundary deliberate, tested, surfaced as unknown (see row). | L7, L4; workbook conflict/recovery tests. |
+| L23 | Closed 2026-09-27: poisoned-lock degraded-status impedance deferred with falsifier (see row). | L12, L2; provider-ranking tests. |
 
 **Checkpoints:** approval of this register precedes any *new* Phase 1 work;
 verify each slice before starting another touching the same shared contract;
@@ -415,11 +428,15 @@ technical program manager; approval to resume Phase 1 belongs to the operator.
   runs explicitly closeable). L6's candidate
   projection is tool-seam tested; the source-complete run stays outside the
   no-dataset-construction rule, and the row closed 2026-09-27 with that
-  boundary stated. L11 panel visibility,
-  L10 recall failure fidelity, L13 scoped memory, L18 training completion
-  fidelity and L23 provider fallback have cited falsifiers in their rows;
-  none is quietly declared fixed; L16's cross-turn attribution and L7's
-  panel-surface audit closed 2026-09-27 (see rows). The earlier
+  boundary stated. every remaining open item is an operator decision or a deferred
+  contract with a cited falsifier in its row — L9's receipt gate and
+  verdict check, L10's recall failure signal, L11's page visibility,
+  L12's closable runs, L13's dispatch-seam ingestion test, L17's
+  posterior carry, L18's Nebius degradation status, L23's degraded
+  status, L1's memory receipt, L5's Api readback, L3's typed-error
+  carry, and L7's measured seam test behind the widget rework; none is
+  quietly declared fixed. All 23 rows are closed or deferred-with-reason
+  as of 2026-09-27. The earlier
   minimalism passes for L4/L8/L14 and this offline L15 rotation path have
   no further surviving removal candidate under the present evidence.
 
@@ -450,6 +467,19 @@ technical program manager; approval to resume Phase 1 belongs to the operator.
   the concurrent in-flight widget subtraction — the row's citations name
   lines being rewritten, so the scoped graph must be re-mapped against the
   landed widget state first. Doc-only pass; no production lines changed.
+- 2026-09-27 — v0.21.0 Batch D closed: L9–L13 and L15, L17–L23 all
+  carried complete Phase 1 graphs and adjudicated findings from prior
+  passes; this pass re-read every row in its current form (the L7
+  lesson), spot-verified the load-bearing finding citations (L9
+  acknowledge path goals.rs:317, L12 no UPDATE research_runs writer —
+  repo-wide search re-run, L23 poisoned-lock leg providers.rs:323-333,
+  L11 sort-then-limit tools/jobs.rs:356-359), finalized each
+  prediction-vs-actual, and recorded the closures. No deletion
+  candidate survives anywhere in Batch D; every open item is an
+  operator decision or a deferred contract with a falsifier. All 23
+  register rows are now closed or deferred-with-reason; the audit's
+  remaining work is Phase 4 scoring and the operator decision queue.
+  Doc-only pass; no production lines changed.
 - 2026-09-27 — v0.20.1 L7 reconciliation: the v0.20.0 closure missed the
   row's prior Phase 1 scoped graph and Phase 2 bounded observations (a
   kanban-move trace carrying two INFERRED findings: a concurrent
