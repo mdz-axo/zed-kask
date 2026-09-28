@@ -395,7 +395,7 @@ impl AgentTool for GrepTool {
                 if let Some(note) = orphan_note {
                     message.push_str(&format!(". {note}"));
                 }
-                Ok(message.into())
+                Ok(message)
             } else if has_more_matches {
                 Ok(format!(
                     "Showing matches {}-{} (there were more matches found; use offset: {} to see next page):\n{output}",
