@@ -2,7 +2,7 @@
 title: "Loop Register — zed-kask canonical loops"
 audience: [developers, architects, agents, operators]
 last_updated: 2026-09-27
-version: "0.19.1"
+version: "0.20.0"
 status: "Phase 0 re-verified at the 2026-09-27 checkpoint; Phase 1–4 partial — per-row states and the Phase 4 ledger are authoritative"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle]
@@ -132,6 +132,9 @@ the spec's minimum list, recorded below rather than narrowed away.
 - **Trigger:** GPUI entity events from threads/tasks; user interaction
 - **Hands off to:** L1 (prompt submit), L9 (kanban widget ↔ server), L13 (swarm panel ↔ server)
 - **Prediction:** 2 / 2 / 0.45
+- **Phase 1 graph (IS, citations re-verified 2026-09-27):** panel event→render cycle — `observe_new` `agent_panel.rs:374` (panel registration) and subscriptions wiring external entities to state mutation + `cx.notify()` (extension store `:1490`, project worktrees `:1500`, thread metadata `:1512`, terminal items `:2194`, draft editor `:3092`, conversation root-thread `:4685`; `render_title_view` `:5435` — the row's older cites drifted by ≤23 lines and one recorded site (`:2780`) no longer matches a subscription in the current tree). Widget render path — ONE block renderer: `hkask_viz_core::block_renderer()` composes all seven widgets behind the unchanged D18 callback (`render_agent_markdown`, `conversation_view.rs`), each widget recording render provenance via the shared `hkask_tool_invoker::record_render` (kanban `view.rs:133`, media `:269`, portfolio `:90`). Widget action paths — widget→MCP through the ONE `shared_tool_invoker` seam (a missing invoker surfaces as a visible error, pinned); widget→agent through the ONE `compose_back_via_injector` helper (D21 — its doc records the per-widget `compose_back` copies it already replaced), with draft-surfacing on inject error, never a silent no-op. Panel substrate — all four panels share the `hkask-steer` lifecycle (`SteerSurface`/`ensure_steer`/`ThreadPicker`/`VerticalSplitState`; D2 records the 2026-08-27 deletion of the per-panel hand-rolls and the hand-mirrored tool lists), and every Steer prompt renders its tool advertisement from the server's generated `TOOL_NAMES` with `verify_tool_advertisement` plus per-panel prompt-token tests as CI enforcement.
+- **Phase 2 adjudication (closed 2026-09-27):** the duplication this row's prediction anticipated is already consolidated — by history, not by this pass: the per-panel Steer lifecycle (D2, 2026-08-27), the per-widget compose-back copies (D21 helper), the per-widget renderers (D18 viz-core registry), and the hand-mirrored tool lists (generated `TOOL_NAMES`) each landed with pins. The remaining per-panel code is legitimately specific (prompt grouping labels, viewer surfaces). No deletion candidate survives; the ideal-method verdict is that the graph is already the small graph — one renderer, two action seams, one panel lifecycle. The L1-shared memory deferral (panel stop handler has no memory receipt, `conversation_view.rs:1802-1815`) stands with L1's row. Four of the seven widget crates were under live concurrent edit during this pass (kanban, graph, portfolio, scenarios); this slice is doc-only and touched none of them.
+- **Five properties:** closed — IS (action → state → notify → re-render through the GPUI frame loop; widget actions close through the invoker/injector seams and the server display-hint path); timely — IS (per-frame notify batching; D14 pins the 50ms streaming-reveal interval bounding event amplification); accurate — IS (render reads entity state; advertisement verification prevents prompt drift; render provenance spanned); complete — IS for the inspected paths (one renderer composes all seven widgets; all four panels on the shared lifecycle); actionable — IS (missing invoker is a visible error; compose-back surfaces a draft on failure). **Prediction vs actual:** predicted 2 defects / 2 impedances / conf 0.45 → actual: 0 new defects, 0 impedances — the anticipated duplication was already consolidated by the D2/D18/D21 refactors, each with cited pins. Brier-scored at Phase 4.
 - **Phase 1 scoped graph (IS):** `AcpThreadEvent::NewEntry` reaches `conversation_view.rs:1475-1477,1736-1738` → entry/view sync (`:1742-1755`) → active-view change notifies `agent_panel.rs:4662-4677` → render consumes view (`:6641-6648`). For a kanban task move: click stages intent (`crates/hkask-kanban-widget/src/view.rs:662-692`), confirmation dispatches (`:279-289`), `move_controller.rs:194-229` applies optimistic state and invokes L9 tool, then clears/rolls back and notifies (`:230-253`). L1 compose-back is a separate editor prefill (`view.rs:919-931`); no L13 refresh claim follows solely from a swarm badge. Five properties in these two paths: closed conditional on authoritative update; timely unmeasured; accurate conditional on server readback; complete not established for other panels/widgets; actionable via dispatch status/error.
 - **Phase 2 bounded observations:** IS — `set_body` declines an incoming body while a task move is pending/in flight (`view.rs:173-203`); INFERRED — a concurrent authoritative update may remain unseen after completion. Falsifier: prove a fresh authoritative `set_body` is guaranteed after every completion. INFERRED — optimistic mutation without an immediate explicit notify (`move_controller.rs:215-229`) may delay visible feedback; falsifier: a GPUI rendered-frame check showing immediate repaint. No such runtime checks ran; no deletion candidate admitted and no zed-side edits made. Defer pending a measured panel seam test. 2026-09-27 hazard note: that test is additionally deferred behind the concurrent streams' in-flight widget subtraction (large staged removals in the kanban and graph widget sources at observation); this row's citations name lines being rewritten, so the scoped graph must be re-mapped against the landed widget state before any seam test is written.
 
@@ -329,7 +332,7 @@ Each row below is a separate, bounded audit task, not a command to start it.
 | L5 | Trace one IPC inference request through response/error to caller. | L3 environment; inference IPC tests. |
 | L16 | Closed 2026-09-27: graph complete, inferred defect refuted as documented D59 design (see row). | L2, L1; skill-outcome tests. |
 | L1 | Closed 2026-09-27 at full scope: single-path loop verified minimal; memory-ingest deferral stands (see row). | L3, L5; agent turn tests. |
-| L7 | Trace a thread event and one widget action through GPUI update to observable UI. | L1, L9; targeted panel/widget tests. |
+| L7 | Closed 2026-09-27: one renderer + two action seams + one panel lifecycle verified; anticipated duplication already consolidated by D2/D18/D21 (see row). | L1, L9; targeted panel/widget tests. |
 | L6 | Closed 2026-09-27: graph verified, gate re-execution rejected as consolidatable (pinned defense-in-depth), source-complete boundary stated (see row). | L5, L10; corpus pipeline seam tests. |
 | L9 | Trace goal creation to operator-scored outcome and memory acknowledgement. | L10; goal lifecycle tests. |
 | L10 | Trace stored memory through retrieval to context injection and deletion hygiene. | L1, L2; recall/ingest round-trip tests. |
@@ -412,11 +415,11 @@ technical program manager; approval to resume Phase 1 belongs to the operator.
   runs explicitly closeable). L6's candidate
   projection is tool-seam tested; the source-complete run stays outside the
   no-dataset-construction rule, and the row closed 2026-09-27 with that
-  boundary stated. L7/L11 panel visibility,
+  boundary stated. L11 panel visibility,
   L10 recall failure fidelity, L13 scoped memory, L18 training completion
   fidelity and L23 provider fallback have cited falsifiers in their rows;
-  none is quietly declared fixed; L16's cross-turn attribution closed
-  2026-09-27 as documented D59 design (see row). The earlier
+  none is quietly declared fixed; L16's cross-turn attribution and L7's
+  panel-surface audit closed 2026-09-27 (see rows). The earlier
   minimalism passes for L4/L8/L14 and this offline L15 rotation path have
   no further surviving removal candidate under the present evidence.
 
@@ -447,6 +450,17 @@ technical program manager; approval to resume Phase 1 belongs to the operator.
   the concurrent in-flight widget subtraction — the row's citations name
   lines being rewritten, so the scoped graph must be re-mapped against the
   landed widget state first. Doc-only pass; no production lines changed.
+- 2026-09-27 — v0.20.0 L7 closed: the update/render graph verified as
+  already-small — one viz-core block renderer composes all seven widgets
+  behind the unchanged D18 callback, widget actions flow through the two
+  single-copy seams (shared_tool_invoker, compose_back_via_injector), and
+  all four panels share the hkask-steer lifecycle with generated
+  TOOL_NAMES advertisements. The duplication the Phase 0 prediction
+  anticipated was already consolidated by the D2/D18/D21 refactors, each
+  with pins; no deletion candidate survives. Subscription citations
+  re-verified (drift ≤23 lines, one stale site noted). Four widget crates
+  were under live concurrent edit during this pass; the slice is doc-only
+  and touched none of them. Batch C is complete (L1, L6, L7).
 - 2026-09-27 — v0.19.0 L2 verification closed the row: this audit
   independently re-ran the gate on the landed state — the named falsifier
   `accepted_impact_check_retries_a_failed_read_then_verifies_once` green,
