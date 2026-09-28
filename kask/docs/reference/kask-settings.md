@@ -2,7 +2,7 @@
 title: "Kask Settings Reference"
 audience: [developers, operators, agents]
 last_updated: 2026-09-28
-version: "0.40.0"
+version: "0.41.0"
 status: "Active"
 domain: "Composition"
 mds_categories: [composition, domain]
@@ -276,8 +276,8 @@ No `transactions_dir` field — the portfolio transactions dir is derived from t
 
 | Field | Type | Default | Notes |
 |-------|------|---------|-------|
-| `embedding_dim` | `u32` | `1024` | Must match embedding model output |
-| `embedding_model` | `String` | `"ollama/qwen3-embedding:0.6b"` | Corpus-layer default; `models.embedding_model` overrides it |
+| `embedding_dim` | `u32` | `1024` | The width every embed request asks MRL-capable models for via the OpenAI-compatible `dimensions` parameter (the default model, Qwen3-Embedding-8B, truncates its native 4096 to this); must equal the vec0 table width |
+| `embedding_model` | `String` | `"OpenRouter/qwen/qwen3-embedding-8b"` | Corpus-layer default (moved from `ollama/qwen3-embedding:0.6b` on 2026-09-28); `models.embedding_model` overrides it; the OpenRouter route needs `OPENROUTER_API_KEY` |
 | `template_root` | `String` | `"kask/registry"` | Jinja2 registry root; `mcp_env()` publishes the effective root to MCP servers and `KaskSettings::resolved_template_root()` resolves the same rule in-process (curator memory chunk tagging) |
 
 These are the only `KaskCorpusSettings` fields (`kask/crates/kask_bridge/src/settings.rs:362-393`). OCR model selection lives under `KaskModelsSettings`; OCR pipeline thresholds are not Kask settings fields.
@@ -307,7 +307,7 @@ Agent Bestiary World (ABW) swarm integration (added 2026-08-01). See `diataxis/s
 | `curator_consent_default` | `bool` | `false` | `HKASK_ABW_CURATOR_CONSENT_DEFAULT` | When `false`, `swarm_xaman` requires a per-call `consent_token`; `true` = operator globally opted in |
 | `default_agent_model` | `String` | `""` | `HKASK_ABW_DEFAULT_AGENT_MODEL` | New ABW agents and unpinned local agents inherit this model; empty uses ABW's default or the local host session model respectively. Explicit card models win. |
 | `a2a_http_enabled` | `bool` | `false` | server configuration | Opt-in loopback A2A HTTP gateway |
-| `embedding_dim` | `usize` | `1024` | `HKASK_SWARM_EMBEDDING_DIM` | Shared semantic-memory vector dimension (`mcp_env.rs:331-336`; read by the swarm server at `config.rs:277`) |
+| `embedding_dim` | `usize` | `1024` | `HKASK_SWARM_EMBEDDING_DIM` | Shared semantic-memory vector dimension — the width requested from MRL embedding models (`mcp_env.rs:331-336`; read by the swarm server at `config.rs:277`) |
 
 The complete subsection and defaults are at `kask/crates/kask_bridge/src/settings.rs:423-517`.
 
@@ -349,7 +349,7 @@ operator's configured models, verbatim.[^ousterhout-models-settings]
 | Field | Type | Default | Resolution |
 |-------|------|---------|------------|
 | `default_model` | `String` | `"OpenRouter/z-ai/glm-5.3"` | Injected as `HKASK_DEFAULT_MODEL` (`mcp_env.rs`); the zed-side inference stack resolves it from the registry, falling back to the zed default when the provider is not configured |
-| `embedding_model` | `String` | `""` (see note) | `effective_embedding_model()` resolves `models.embedding_model` → `corpus.embedding_model` → empty; the **embedding default lives in `KaskCorpusSettings::default()`** (`"ollama/qwen3-embedding:0.6b"`) so a models-layer default cannot shadow corpus overrides; injected as `HKASK_EMBEDDING_MODEL` |
+| `embedding_model` | `String` | `""` (see note) | `effective_embedding_model()` resolves `models.embedding_model` → `corpus.embedding_model` → empty; the **embedding default lives in `KaskCorpusSettings::default()`** (`"OpenRouter/qwen/qwen3-embedding-8b"` — MRL: every embed request carries `dimensions = embedding_dim`, default 1024, so width-bound vec0 stores keep receiving fitting vectors) so a models-layer default cannot shadow corpus overrides; injected as `HKASK_EMBEDDING_MODEL` |
 | `classifier_model` | `String` | `"OpenRouter/z-ai/glm-5.2"` | Injected as `HKASK_CLASSIFIER_MODEL` (`mcp_env.rs`); consumed by corpus tagging, assertion extraction, and the memory write path's chunk tagging. glm-5.2 because the classifier must be non-thinking (or thinking-disable-able) — glm-5.3-flash cannot disable thinking |
 | `qa_generation_model` | `String` | `""` | Explicit QA tool `model` > this setting (`HKASK_QA_GENERATION_MODEL`, corpus allowlist). Unset/invalid fails visibly; never chat, classifier, or training base model |
 | `ocr_model` | `String` | `"ollama/glm-ocr:latest"` | Injected as `HKASK_OCR_MODEL` |
@@ -390,7 +390,7 @@ installed automatically.
 `classifier_model()`, `embedding_model()`, `ocr_model()`, `rerank_model()` —
 each returning `Option<String>` (`None` = env var not injected; the settings
 layers carry the code defaults and inject these env vars for MCP server
-children). The general/chat, embedding, classifier, QA-generation, and OCR defaults live in the settings `Default` implementations (`kask/crates/kask_bridge/src/settings.rs:596-668`; `kask/crates/hkask-services-core/src/standalone_settings.rs`). Shared constants remain where multiple settings layers consume one ratified value: media STT, media vision, and research reranking are defined in `kask/crates/hkask-inference/src/model_constants.rs:173-203`. TTS, video, and image-generation remain explicitly unconfigured when their media setting is empty.
+children). The general/chat, embedding, classifier, QA-generation, and OCR defaults live in the settings `Default` implementations (`kask/crates/kask_bridge/src/settings.rs:650-718`; `kask/crates/hkask-services-core/src/standalone_settings.rs`). Shared constants remain where multiple settings layers consume one ratified value: media STT, media vision, and research reranking are defined in `kask/crates/hkask-inference/src/model_constants.rs:173-203`. TTS, video, and image-generation remain explicitly unconfigured when their media setting is empty.
 
 ## Keychain Architecture
 

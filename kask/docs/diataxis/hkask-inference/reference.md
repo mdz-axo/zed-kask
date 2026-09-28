@@ -2,7 +2,7 @@
 title: "hkask-inference — Reference"
 audience: [developers, architects, agents]
 last_updated: 2026-09-28
-version: "3.3.0"
+version: "3.4.0"
 status: "Active"
 domain: "Inference"
 mds_categories: [domain, composition]
@@ -64,6 +64,7 @@ classDiagram
         +connect(path) Result
         +from_env() Option~Result~
         +embed(model, texts) Result
+        +embed_with_dimensions(model, texts, dimensions) Result
         +rerank_documents(model, query, documents) Result
         +invoke_tool(server, tool, args, allowed) Result
         +create_worktree_thread(prompt, title, worktree_name, base_ref) Result
@@ -74,6 +75,7 @@ classDiagram
         +generate_vision()
         +embed()
         +embed_with_identity()
+        +embed_with_dimensions()
         +list_models()
         +rerank()
         +media_generate()
@@ -137,11 +139,12 @@ Provider keys are read from the process environment only (`kask/crates/hkask-inf
 |---|---|---|---|
 | `generate`, `generate_with_model`, `generate_with_messages` | IPC generation | Direct OpenAI-compatible chat | `kask/crates/hkask-inference/src/hkask_inference.rs:155-169`, `kask/crates/hkask-inference/src/hkask_inference.rs:210-285` |
 | `generate_vision` | IPC vision | `InferenceError::Connection` naming socket | `kask/crates/hkask-inference/src/hkask_inference.rs:172-207` |
-| `embed` | IPC embedding | Direct OpenAI-compatible embedding | `kask/crates/hkask-inference/src/hkask_inference.rs:288-309` |
-| `embed_with_identity` | IPC embedding with provider identity | Direct OpenAI-compatible embedding with identity | `kask/crates/hkask-inference/src/hkask_inference.rs:295-323` |
-| `list_models` | IPC model list | `InferenceError::Connection` naming socket | `kask/crates/hkask-inference/src/hkask_inference.rs:312-330` |
-| `rerank` | IPC rerank | `InferenceError::Connection` naming socket | `kask/crates/hkask-inference/src/hkask_inference.rs:333-355` |
-| `media_generate` | Child-local `MediaRouter` | Same child-local path | `kask/crates/hkask-inference/src/hkask_inference.rs:358-375` |
+| `embed` | IPC embedding | Direct OpenAI-compatible embedding | `kask/crates/hkask-inference/src/hkask_inference.rs:288-293` |
+| `embed_with_identity` | IPC embedding with provider identity | Direct OpenAI-compatible embedding with identity | `kask/crates/hkask-inference/src/hkask_inference.rs:295-322` |
+| `embed_with_dimensions` | IPC embedding with an explicit output width — the OpenAI-compatible `dimensions` field, MRL truncation (e.g. Qwen3-Embedding-8B at 1024) | Direct embedding with the width requested; the insert-side dimension check fails visibly when a provider ignores it | `kask/crates/hkask-inference/src/hkask_inference.rs:324-351` |
+| `list_models` | IPC model list | `InferenceError::Connection` naming socket | `kask/crates/hkask-inference/src/hkask_inference.rs:353-372` |
+| `rerank` | IPC rerank | `InferenceError::Connection` naming socket | `kask/crates/hkask-inference/src/hkask_inference.rs:374-396` |
+| `media_generate` | Child-local `MediaRouter` | Same child-local path | `kask/crates/hkask-inference/src/hkask_inference.rs:399-416` |
 
 The direct provider descriptors are DeepInfra, OpenRouter, and Ollama (`kask/crates/hkask-inference/src/hkask_inference.rs:439-461`). `DirectEmbeddingPort::try_new` requires a recognized prefix and any required provider key (`kask/crates/hkask-inference/src/hkask_inference.rs:467-490`).
 

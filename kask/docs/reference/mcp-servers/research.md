@@ -2,7 +2,7 @@
 title: "Research MCP Server Reference"
 audience: [developers, architects, agents]
 last_updated: 2026-09-28
-version: "0.39.2"
+version: "0.39.3"
 status: "Active"
 domain: "Inference"
 mds_categories: [domain, composition, lifecycle]
@@ -233,7 +233,10 @@ artifacts, or all-equal scores) — never a fabricated `stable`.
 **Semantic duplication tier (parameter-gated).** `duplication: "semantic"`
 opts into the embedding tier: content-bearing artifacts are clustered by
 cosine ≥ 0.85 (the `corpus_dedup_chunks` threshold) via one batch
-`InferencePort::embed` call through the inference bridge. Degradation
+`InferencePort::embed` call through the inference bridge. The vectors are
+compared within the batch only — never stored — so the call requests the
+model's native width (no `dimensions` parameter; the injected default is
+`OpenRouter/qwen/qwen3-embedding-8b`). Degradation
 follows the rerank contract — never silent: no model configured, embed
 failure, or a vector-count mismatch runs the deterministic shingle floor
 with a surfaced `duplication_reason` naming the cause; the mode is

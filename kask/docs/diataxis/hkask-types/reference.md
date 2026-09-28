@@ -2,7 +2,7 @@
 title: "hkask-types — Reference"
 audience: [developers, architects, agents]
 last_updated: 2026-09-28
-version: "2.3.0"
+version: "2.4.0"
 status: "Active"
 domain: "Foundation"
 mds_categories: [domain, trust]
@@ -156,6 +156,7 @@ classDiagram
         +generate_vision()
         +embed()
         +embed_with_identity()
+        +embed_with_dimensions()
         +rerank()
         +list_models()
         +list_vision_models()
@@ -241,7 +242,7 @@ status: VERIFIED
 | Environment | `INFERENCE_SOCKET_ENV`, `TOOL_GRANT_ENV`, `INFERENCE_TIMEOUT_ENV` | `kask/crates/hkask-types/src/inference_ipc.rs:53-73` |
 | Request envelope | `InferenceRequest { id, method, params }` | `kask/crates/hkask-types/src/inference_ipc.rs:77-87` |
 | Methods | Generate, GenerateWithModel, GenerateWithMessages, GenerateVision, Embed, ListModels, ToolInvoke, ToolDefinition, CreateWorktreeThread, Rerank | `kask/crates/hkask-types/src/inference_ipc.rs:89-120` |
-| Parameters | prompts/messages/images/model/tools, embedding, governed tool, worktree, and rerank fields | `kask/crates/hkask-types/src/inference_ipc.rs:122-179` |
+| Parameters | prompts/messages/images/model/tools, embedding (model, texts, and the MRL `embed_dimensions` width), governed tool, worktree, and rerank fields | `kask/crates/hkask-types/src/inference_ipc.rs:122-186` |
 | Response envelope | `InferenceResponse { id, outcome }` | `kask/crates/hkask-types/src/inference_ipc.rs:185-194` |
 | Outcomes | Result, Embeddings, ModelList, ToolResult, ToolDefinition, WorktreeThread, RerankScores, Error | `kask/crates/hkask-types/src/inference_ipc.rs:196-252` |
 | Auxiliary payloads | `RerankScoreEntry`, `ModelListEntry`, `WorktreeThreadInfo`, `InferenceErrorPayload` | `kask/crates/hkask-types/src/inference_ipc.rs:254-298` |

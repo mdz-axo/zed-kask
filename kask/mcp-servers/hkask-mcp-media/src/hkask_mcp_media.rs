@@ -360,9 +360,13 @@ impl MediaServer {
 
     /// Embed a single text via the inference port's `embed` method.
     ///
-    /// Resolves the embedding model from `HKASK_EMBEDDING_MODEL` (default
-    /// `ollama/nomic-embed-text`) and returns the first (only)
-    /// embedding vector. Used by gallery similarity search.
+    /// Resolves the embedding model from `HKASK_EMBEDDING_MODEL` (injected
+    /// from the kask settings chain; code default
+    /// `OpenRouter/qwen/qwen3-embedding-8b`) and returns the first (only)
+    /// embedding vector. Used by gallery similarity search, which compares
+    /// the query and candidate-caption embeddings within one request —
+    /// width-agnostic, so the model's native width is used (no
+    /// `dimensions` request).
     async fn embed_text(&self, text: &str) -> Result<Vec<f32>, McpToolError> {
         // Fail-visible (the operator's no-hidden-models spec): no configured
         // embedding model is a typed error naming the setting — never a

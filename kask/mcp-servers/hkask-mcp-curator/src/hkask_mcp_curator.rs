@@ -530,12 +530,17 @@ impl CuratorServer {
     ) -> Result<SemanticRecall, SemanticRecallError> {
         let embedding_model =
             curator_embedding_model().ok_or(SemanticRecallError::EmbeddingNotConfigured)?;
-        let vectors = self
+        let batch = self
             .inference_port
-            .embed(&embedding_model, &[query.to_string()])
+            .embed_with_dimensions(
+                &embedding_model,
+                &[query.to_string()],
+                Some(hkask_storage::embedding_dim() as u32),
+            )
             .await
             .map_err(|source| SemanticRecallError::Embed { source })?;
-        let query_vector = vectors
+        let query_vector = batch
+            .vectors
             .into_iter()
             .next()
             .ok_or(SemanticRecallError::NoVector)?;
@@ -654,14 +659,18 @@ impl CuratorServer {
                     "no embedding model configured — set kask.models.embedding_model",
                 )
             })?;
-            let vectors = self
+            let batch = self
                 .inference_port
-                .embed(&embedding_model, std::slice::from_ref(&req.query))
+                .embed_with_dimensions(
+                    &embedding_model,
+                    std::slice::from_ref(&req.query),
+                    Some(hkask_storage::embedding_dim() as u32),
+                )
                 .await
                 .map_err(|error| {
                     McpToolError::unavailable(format!("Federated query embedding failed: {error}"))
                 })?;
-            let query_vector = vectors.into_iter().next().ok_or_else(|| {
+            let query_vector = batch.vectors.into_iter().next().ok_or_else(|| {
                 McpToolError::unavailable("Federated query embedding returned no vector")
             })?;
 
@@ -1951,11 +1960,15 @@ pub(crate) async fn embed_for_semantic_recall(
         return false;
     };
     match inference_port
-        .embed(&embedding_model, std::slice::from_ref(&owned_text))
+        .embed_with_dimensions(
+            &embedding_model,
+            std::slice::from_ref(&owned_text),
+            Some(hkask_storage::embedding_dim() as u32),
+        )
         .await
     {
-        Ok(vectors) if !vectors.is_empty() && !vectors[0].is_empty() => {
-            match memory.store_embedding(entity, &vectors[0], &embedding_model, Some(text)) {
+        Ok(batch) if !batch.vectors.is_empty() && !batch.vectors[0].is_empty() => {
+            match memory.store_embedding(entity, &batch.vectors[0], &embedding_model, Some(text)) {
                 Ok(_) => true,
                 Err(error) => {
                     tracing::warn!(

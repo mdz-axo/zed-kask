@@ -79,6 +79,14 @@ pub struct Model {
     pub name: String,
     pub display_name: Option<String>,
     pub max_tokens: u64,
+    /// zed-kask: D83 — the model's discovered output cap
+    /// (`max_completion_tokens`, with OpenRouter's `top_provider` nesting
+    /// promoted by `model_from_entry`). `None` means the catalog reported
+    /// none and the request omits `max_tokens` — the provider's own
+    /// default output limit then binds, which is what cut agent streams
+    /// mid-tool-call.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_output_tokens: Option<u64>,
     pub supports_tools: Option<bool>,
     pub supports_images: Option<bool>,
     #[serde(default)]
@@ -124,6 +132,7 @@ impl Model {
             name: name.to_owned(),
             display_name: display_name.map(|s| s.to_owned()),
             max_tokens: max_tokens.unwrap_or(2000000),
+            max_output_tokens: None,
             supports_tools,
             supports_images,
             mode: mode.unwrap_or(ModelMode::Default),
@@ -148,7 +157,7 @@ impl Model {
     }
 
     pub fn max_output_tokens(&self) -> Option<u64> {
-        None
+        self.max_output_tokens
     }
 
     pub fn supports_tool_calls(&self) -> bool {
@@ -428,6 +437,12 @@ pub struct ModelEntry {
     pub description: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_length: Option<u64>,
+    /// zed-kask: D83 — the model's output cap. OpenRouter usually nests it
+    /// under `top_provider.max_completion_tokens` rather than here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_completion_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub top_provider: Option<ModelTopProvider>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub supported_parameters: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -440,6 +455,16 @@ pub struct ModelEntry {
 pub struct ModelArchitecture {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub input_modalities: Vec<String>,
+}
+
+/// zed-kask: D83 — OpenRouter nests the per-provider output limit under
+/// `top_provider` rather than at the top level of the model entry; without
+/// promoting it the request sends no `max_tokens` and the provider's own
+/// default output limit binds (the mid-tool-call stream-cut class).
+#[derive(Default, Debug, Clone, PartialEq, Deserialize)]
+pub struct ModelTopProvider {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_completion_tokens: Option<u64>,
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Deserialize)]
@@ -561,6 +586,19 @@ fn model_from_entry(entry: ModelEntry) -> Model {
                 .to_string(),
         ),
         max_tokens: entry.context_length.unwrap_or(2000000),
+        // zed-kask: D83 — promote the discovered output cap: top-level
+        // `max_completion_tokens`, else OpenRouter's `top_provider`
+        // nesting. The same discovery fix the open_ai crate's
+        // `resolve_provider_fallbacks` made for its models; without it the
+        // request omits `max_tokens` and the provider's default output
+        // limit cuts streams mid-tool-call (the 2026-09-27/28
+        // ToolInput::recv warns).
+        max_output_tokens: entry.max_completion_tokens.or_else(|| {
+            entry
+                .top_provider
+                .as_ref()
+                .and_then(|t| t.max_completion_tokens)
+        }),
         supports_tools: Some(entry.supported_parameters.contains(&"tools".to_string())),
         supports_images: Some(
             entry
@@ -1099,6 +1137,34 @@ mod tests {
         assert_eq!(
             completion_error.retry_delay(1),
             Some(Duration::from_secs(5))
+        );
+    }
+
+    #[test]
+    fn discovered_output_cap_parses_and_promotes() {
+        // zed-kask: D83 — the request's `max_tokens` comes from the model's
+        // discovered output cap. OpenRouter nests it under
+        // `top_provider.max_completion_tokens`; a catalog entry without it
+        // leaves the cap None, the request omits `max_tokens`, and the
+        // provider's own default output limit binds — the mid-tool-call
+        // stream-cut class behind the 2026-09-27/28 ToolInput::recv warns.
+        let top_level = model_from_entry(ModelEntry {
+            max_completion_tokens: Some(65_536),
+            ..Default::default()
+        });
+        assert_eq!(top_level.max_output_tokens(), Some(65_536));
+
+        let nested = model_from_entry(ModelEntry {
+            top_provider: Some(ModelTopProvider {
+                max_completion_tokens: Some(131_072),
+            }),
+            ..Default::default()
+        });
+        assert_eq!(nested.max_output_tokens(), Some(131_072));
+
+        assert_eq!(
+            model_from_entry(ModelEntry::default()).max_output_tokens(),
+            None
         );
     }
 }

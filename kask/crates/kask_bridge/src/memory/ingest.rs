@@ -124,6 +124,7 @@ async fn embed_goal_event(
             embedding_port
                 .embed_with_dimensions(&embedding_model, &passages, Some(dimensions))
                 .await
+                .map(|batch| batch.vectors)
         })
         .await
         .map_err(|error| {
@@ -506,6 +507,7 @@ pub(crate) async fn write_turn(
                     embedding_port
                         .embed_with_dimensions(&embedding_model, &texts, Some(dimensions))
                         .await
+                        .map(|batch| batch.vectors)
                 })
                 .await;
             match vectors {

@@ -533,7 +533,7 @@ impl InferenceIpcClient {
         if texts.is_empty() {
             return Err(EmbeddingGenerationError::EmptyResponse);
         }
-        Ok(self.call_embed(model, texts).await?.vectors)
+        Ok(self.call_embed(model, texts, None).await?.vectors)
     }
 
     /// List available models from zed's `LanguageModelRegistry` via the IPC bridge.
@@ -1083,7 +1083,11 @@ mod tests {
             );
             let batch = bridge
                 .client()
-                .call_embed("Provider/requested-alias", &["source text".to_string()])
+                .call_embed(
+                    "Provider/requested-alias",
+                    &["source text".to_string()],
+                    None,
+                )
                 .await
                 .expect("IPC embedding succeeds");
             assert_eq!(batch.requested_model, "Provider/requested-alias");

@@ -24,7 +24,7 @@ use hkask_services_core::{DomainKind, ErrorKind, ServiceError};
 /// Example YAML:
 /// ```yaml
 /// embedding:
-///   model: "Qwen/Qwen3-Embedding-0.6B"
+///   model: "OpenRouter/qwen/qwen3-embedding-8b"
 ///   dim: 1024
 ///   centroid_entity_ref: "style:hemingway:centroid"
 ///   retrieval:

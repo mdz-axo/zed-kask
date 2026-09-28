@@ -385,11 +385,14 @@ impl Default for KaskCorpusSettings {
 }
 
 fn default_embedding_model() -> String {
-    // Code default (operator ruling 2026-09-04): the corpus embedding model
-    // defaults to the operator's configured model so semantic recall works
-    // out of the box; `kask.corpus.embedding_model` / `kask.models.embedding_model`
-    // override it.
-    "ollama/qwen3-embedding:0.6b".to_string()
+    // Code default (operator direction 2026-09-28): Qwen3-Embedding-8B via
+    // OpenRouter — an MRL model, so every embed request carries
+    // `dimensions = embedding_dim` (default 1024) and width-bound vec0
+    // stores keep receiving fitting vectors. Unlike the former ollama
+    // default this needs OPENROUTER_API_KEY; a missing credential surfaces
+    // at the embedding resolver instead of silently skipping embedding.
+    // `kask.corpus.embedding_model` / `kask.models.embedding_model` override it.
+    "OpenRouter/qwen/qwen3-embedding-8b".to_string()
 }
 
 /// Prediction-markets data-service configuration.
@@ -1433,7 +1436,7 @@ mod tests {
         // Nothing configured → the corpus-layer code default.
         assert_eq!(
             settings.effective_embedding_model(),
-            "ollama/qwen3-embedding:0.6b"
+            "OpenRouter/qwen/qwen3-embedding-8b"
         );
         settings.corpus.embedding_model = "OpenAI/text-embedding-3-large".to_string();
         assert_eq!(

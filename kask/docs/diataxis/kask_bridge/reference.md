@@ -2,7 +2,7 @@
 title: "kask_bridge — Reference"
 audience: [developers, architects, agents working at the zed↔hKask seam]
 last_updated: 2026-09-28
-version: "1.5.0"
+version: "1.5.1"
 status: "Active"
 domain: "Integration"
 mds_categories: [domain, composition, trust, lifecycle]
@@ -118,7 +118,7 @@ by `run_pending_db_passphrase_rotation` (`crates/zed/src/main.rs:373`) — see
 | `KaskMemorySettings` | consolidation 300s; confidence 0.3; recall 5 at 0.3; auto-inject; distillation 600s/300s; memory life 180 from `MemoryStore::default_memory_life_days`; forgetting 7 | `kask/crates/kask_bridge/src/settings.rs:284-297`; `kask/crates/hkask-memory/src/memory_store.rs:186` |
 | `KaskCondenserSettings` | normal profile; incoming-result compression off | `kask/crates/kask_bridge/src/settings.rs:320-326` |
 | `KaskCompaniesSettings` | staleness 0; no Fermi override; required return 0.15 | `kask/crates/kask_bridge/src/settings.rs:352-358` |
-| `KaskCorpusSettings` | dimension 1024; configured embedding default; template root `kask/registry` | `kask/crates/kask_bridge/src/settings.rs:377-383` |
+| `KaskCorpusSettings` | dimension 1024; embedding default `OpenRouter/qwen/qwen3-embedding-8b` (MRL — every embed request carries `dimensions = embedding_dim`); template root `kask/registry` | `kask/crates/kask_bridge/src/settings.rs:377-383` |
 | `KaskSwarmSettings` | ABW mode; empty URL; credit ceiling 50; curator consent off; A2A HTTP off; dimension 1024; empty model override | `kask/crates/kask_bridge/src/settings.rs:496-512` |
 | `KaskMediaSettings` | STT and vision use shared constants; TTS/image/video empty | `kask/crates/kask_bridge/src/settings.rs:555-566` |
 | `KaskModelsSettings` | default GLM 5.3; classifier GLM 5.2; QA generator empty; OCR `ollama/glm-ocr:latest`; reranker from `DEFAULT_RERANK_MODEL` | `kask/crates/kask_bridge/src/settings.rs:647-667` |

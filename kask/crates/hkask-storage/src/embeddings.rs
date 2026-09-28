@@ -91,8 +91,8 @@ impl EmbeddingStore {
                 "EmbeddingStore::from_driver called with dim == 0 — \
                  clamping to 1024 to avoid a zero-dimensional store. \
                  Set kask_settings.corpus.embedding_dim (or HKASK_EMBEDDING_DIM) \
-                 to match the embedding model's output (default 1024 for
-                 `DEFAULT_EMBEDDING_MODEL`)."
+                 to the width embed requests should ask MRL-capable models
+                 for via the `dimensions` parameter (default 1024)."
             );
             1024
         } else {

@@ -622,6 +622,7 @@ impl RealMemoryPort {
                 embedding_port
                     .embed_with_dimensions(&model, &[text], Some(dimensions))
                     .await
+                    .map(|batch| batch.vectors)
             })
             .await
             .map_err(|error| format!("External query embedding task failed: {error}"))?
@@ -816,6 +817,7 @@ impl RealMemoryPort {
                 embedding_port
                     .embed_with_dimensions(&embedding_model, &[query_owned], Some(dimensions))
                     .await
+                    .map(|batch| batch.vectors)
             })
             .await;
 

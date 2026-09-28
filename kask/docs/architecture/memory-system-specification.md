@@ -2,7 +2,7 @@
 title: "Memory System Specification"
 audience: [developers, architects, agents, operators]
 last_updated: 2026-09-28
-version: "5.2.1"
+version: "5.2.2"
 status: "Active"
 domain: "Lifecycle"
 mds_categories: [lifecycle, domain, curation, trust]
@@ -172,7 +172,7 @@ flowchart TD
     Injector -->|"recall_context_curator<br/>recall_thread_curator"| RealPort
     RealPort -->|"store / store_embedding"| MemStore
     RealPort -->|"embed(model, [text])"| EmbedPort
-    EmbedPort -->|"HTTP /embeddings"| Provider["the configured embedding model<br/>(kask.models.embedding_model;<br/>1024-dim via HKASK_EMBEDDING_DIM)"]
+    EmbedPort -->|"HTTP /embeddings"| Provider["the configured embedding model<br/>(kask.models.embedding_model — default<br/>OpenRouter/qwen/qwen3-embedding-8b;<br/>MRL width 1024 requested via<br/>HKASK_EMBEDDING_DIM)"]
     MemStore --> HMemStore
     MemStore --> EmbedStore
     Consolidator -->|"background timer"| MemStore
@@ -181,7 +181,7 @@ flowchart TD
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-MEM-ARCH
 verified_date: 2026-09-28
-verified_against: kask/crates/kask_bridge/src/memory.rs:492-560 (MemoryPort impl — ingest only, no-op trait recall), kask/crates/kask_bridge/src/memory.rs:691-735 (recall_context_curator / recall_thread_curator), kask/crates/kask_bridge/src/memory/ingest.rs:271-660 (write path), kask/crates/hkask-memory/src/memory_store.rs:174-266 (MemoryStore), kask/crates/kask_bridge/src/settings.rs:716 (effective_embedding_model — no constant fallback), kask/crates/hkask-storage/src/core/sql/schema.sql:1-6
+verified_against: kask/crates/kask_bridge/src/memory.rs:492-560 (MemoryPort impl — ingest only, no-op trait recall), kask/crates/kask_bridge/src/memory.rs:697-741 (recall_context_curator / recall_thread_curator), kask/crates/kask_bridge/src/memory/ingest.rs:277-666 (write path), kask/crates/hkask-memory/src/memory_store.rs:174-266 (MemoryStore), kask/crates/kask_bridge/src/settings.rs:719 (effective_embedding_model — no constant fallback), kask/crates/hkask-storage/src/core/sql/schema.sql:1-6
 status: VERIFIED
 -->
 
@@ -1245,8 +1245,8 @@ confidence-floor cleanup only.
 | Variable                          | Default                               | Description                            |
 | --------------------------------- | ------------------------------------- | -------------------------------------- |
 | `HKASK_MEMORY_INGEST_CONCURRENCY`  | 1                                     | Ingestion semaphore permits (`memory.rs:380-400`) |
-| `HKASK_EMBEDDING_MODEL`            | (none — must be configured) | Embedding model, injected from `kask.models.embedding_model` / `kask.corpus.embedding_model` (`kask/crates/kask_bridge/src/settings.rs:716`); empty = embedding-dependent calls fail visibly naming the setting — no constant fallback (the operator's no-hidden-models spec) |
-| `HKASK_EMBEDDING_DIM`             | 1024                                  | Embedding vector dimension (`kask/crates/hkask-storage/src/core/connection.rs:105-116`) |
+| `HKASK_EMBEDDING_MODEL`            | (none — must be configured) | Embedding model, injected from `kask.models.embedding_model` / `kask.corpus.embedding_model` (`kask/crates/kask_bridge/src/settings.rs:719`); empty = embedding-dependent calls fail visibly naming the setting — no constant fallback (the operator's no-hidden-models spec) |
+| `HKASK_EMBEDDING_DIM`             | 1024                                  | Embedding vector dimension — the width embed requests ask MRL models for (`kask/crates/hkask-storage/src/core/connection.rs:105-116`) |
 | `HKASK_CURATOR_DB`                | `agents/curator/curator.db` under data dir | Curator DB path override (`curator_stores.rs:20-29`) |
 | `HKASK_DB_PASSPHRASE`             | keychain / `"allostery"`              | SQLCipher passphrase override — the ONE passphrase for every kask SQLCipher DB, swarm memory included (`kask/crates/hkask-keystore/src/keychain.rs:347-352`) |
 

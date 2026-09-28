@@ -2,7 +2,7 @@
 title: "Media MCP Server Reference"
 audience: [developers, architects, agents]
 last_updated: 2026-09-28
-version: "0.41.1"
+version: "0.41.2"
 status: "Active"
 domain: "Composition"
 mds_categories: [composition, domain]
@@ -380,7 +380,7 @@ No routing or layout change is part of this repair.
 |------|-------------|
 | `gallery_organize` | Organize a photo gallery: create the index, scan a folder for images, return status. Run before `gallery_search`. |
 | `gallery_status` | Gallery status: path, mode, image count, total size. |
-| `gallery_search` | Search the gallery by description. Mode `tags` (default): fuzzy-matches AI-generated tags (objects, faces, colors, composition). Mode `semantic`: caption-embedding cosine similarity against the query text or a reference `image_index` (requires `gallery_analyze` first). The former `gallery_find_similar` tool, folded in as the semantic mode. |
+| `gallery_search` | Search the gallery by description. Mode `tags` (default): fuzzy-matches AI-generated tags (objects, faces, colors, composition). Mode `semantic`: caption-embedding cosine similarity against the query text or a reference `image_index` (requires `gallery_analyze` first). The former `gallery_find_similar` tool, folded in as the semantic mode. Query and candidate-caption embeddings are compared within one request — width-agnostic at the model's native width (no `dimensions` parameter). |
 | `gallery_refresh` | Rescan for new/removed images and update all AI metadata; face detection OFF by default, `include_faces=true` also scans the face reference folder and auto-matches against the face registry. |
 | `describe_image` | Describe an image in detail; styles: descriptive, artistic, technical, alt_text. |
 | `gallery_analyze` | Analyze gallery images with AI (faces, objects, colors, composition, scene descriptions); tags are persisted and become searchable. |

@@ -379,8 +379,8 @@ impl ConsolidationService {
                             )
                             .await
                         {
-                            Ok(batch) => {
-                                let vectors = batch.vectors;
+                            Ok(result) => {
+                                let vectors = result.vectors;
                                 if let Err(error) =
                                     crate::index::validate_vectors(&vectors, batch.len())
                                 {

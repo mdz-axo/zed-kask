@@ -517,7 +517,7 @@ mod tests {
         );
         assert_eq!(
             env.get("HKASK_EMBEDDING_MODEL").map(String::as_str),
-            Some("ollama/qwen3-embedding:0.6b"),
+            Some("OpenRouter/qwen/qwen3-embedding-8b"),
             "default settings emit the code-default embedding model"
         );
         // Media model defaults are emitted for the same reason as the

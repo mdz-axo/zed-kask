@@ -273,7 +273,7 @@ pub struct RerankScoreEntry {
 /// server's `ModelInfo` needs.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelListEntry {
-    /// Full model name with provider prefix (e.g. "openrouter/qwen/qwen3-embedding-0.6b").
+    /// Full model name with provider prefix (e.g. "openrouter/qwen/qwen3-embedding-8b").
     pub name: String,
     /// Provider id (e.g. "openrouter", "ollama").
     pub provider: String,

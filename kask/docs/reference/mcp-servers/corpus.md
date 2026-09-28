@@ -2,7 +2,7 @@
 title: "Corpus MCP Server — Reference"
 audience: [developers, operators]
 last_updated: 2026-09-28
-version: "0.41.1"
+version: "0.41.2"
 status: "Active"
 domain: "MCP Servers"
 mds_categories: [domain, composition, trust, lifecycle]
@@ -86,7 +86,7 @@ Schema sources: `kask/mcp-servers/hkask-mcp-corpus/src/tools/document.rs:843-945
 | `corpus_chunk` | `text` or `path`, or `input_dir` with `output`; required `entity_ref_prefix`; optional `max_tokens`, `overlap_tokens`, `strip_gutenberg`, `multi_tier`, tier bounds, `target_pages`; `index=true`. Directory mode reports per-source bounded leading title/publisher/praise pages, contents/index/bibliography/reference sections, newsletter calls to action, distribution watermarks, isolated caption-only pages and inferred-image exclusions in `boilerplate_exclusion_reports`. |
 | `corpus_build_chunk_representations` | Immutable accepted source identities, output directory, namespace and complete current/fine/parent policies. Applies the canonical furniture filter once before every policy and seals source exclusion reports in a schema-v2 manifest; reconstruction targets the retained view. |
 | `corpus_tag_chunks` | `chunks_jsonl`, `output`; `concurrency` from shared ceiling, `tag_batch_size=10`, `dry_run=false` |
-| `corpus_embed` | `chunks_jsonl`, optional `tagged_jsonl`, `db_path`, `passphrase`, optional embedding `model`, `batch_size`; durable rows retain provider-confirmed actual model identity when available |
+| `corpus_embed` | `chunks_jsonl`, optional `tagged_jsonl`, `db_path`, `passphrase`, optional embedding `model`, `batch_size`; durable rows retain provider-confirmed actual model identity when available; every batch requests `dimensions = HKASK_EMBEDDING_DIM` (default 1024) so MRL models (default `OpenRouter/qwen/qwen3-embedding-8b`) emit the store's width, and re-embedding replaces prior vectors per `entity_ref` (idempotent) |
 | `corpus_embedding_inventory` | `chunks_jsonl`, existing `db_path`, `passphrase`, required provider-confirmed `expected_model`; returns exact missing/mismatched/retry refs without writes |
 | `corpus_build_prompts` | `tagged_jsonl`, `output`; `prefix` defaults `corpus:researcher:`, `context_k=0`, `qa_pairs_per_chunk=2`, `type_distribution="1,1,1,1,1"`, `max_pairs=0`; optional `db_path`/`passphrase` are required only for positive context_k |
 

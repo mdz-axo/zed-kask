@@ -234,6 +234,10 @@ impl LanguageModelProvider for OpenRouterLanguageModelProvider {
                 name: model.name.clone(),
                 display_name: model.display_name.clone(),
                 max_tokens: model.max_tokens,
+                // zed-kask: D83 — settings-configured models carry no
+                // discovered output cap; the request omits `max_tokens` for
+                // them exactly as before this seam.
+                max_output_tokens: None,
                 supports_tools: model.supports_tools,
                 supports_images: model.supports_images,
                 mode,
@@ -1249,6 +1253,69 @@ mod tests {
         );
         assert_eq!(reasoning.exclude, None);
         assert_eq!(reasoning.enabled, Some(true));
+    }
+
+    #[test]
+    fn into_open_router_sends_the_discovered_output_cap() {
+        // zed-kask: D83 — a discovered output cap must reach the wire as
+        // `max_tokens`. Without it OpenRouter applies its own default output
+        // limit and cuts agent streams mid-tool-call (four ToolInput::recv
+        // warns on 2026-09-28 with zero truncation-classified finishes —
+        // the stream died with the tool_use input still open). The
+        // serialized request is asserted, not just the struct field: the
+        // wire shape is the fix.
+        let request = || LanguageModelRequest {
+            messages: vec![language_model::LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text("Hello".to_string())],
+                cache: false,
+                reasoning_details: None,
+            }],
+            ..Default::default()
+        };
+
+        let mut capped = open_router::Model::new(
+            "z-ai/glm-5.3",
+            Some("GLM 5.3"),
+            Some(1_048_576),
+            Some(true),
+            Some(false),
+            None,
+            None,
+            None,
+            false,
+            None,
+        );
+        capped.max_output_tokens = Some(131_072);
+        let result = into_open_router(request(), &capped, capped.max_output_tokens()).unwrap();
+        assert_eq!(result.max_tokens, Some(131_072));
+        let wire = serde_json::to_string(&result).unwrap();
+        assert!(
+            wire.contains("\"max_tokens\":131072"),
+            "the discovered cap must reach the wire: {wire}"
+        );
+
+        // No discovered cap → the field is omitted entirely (the pre-fix
+        // wire shape, unchanged for catalogs that report no limit).
+        let uncapped = open_router::Model::new(
+            "z-ai/glm-5.3",
+            Some("GLM 5.3"),
+            Some(1_048_576),
+            Some(true),
+            Some(false),
+            None,
+            None,
+            None,
+            false,
+            None,
+        );
+        let result = into_open_router(request(), &uncapped, uncapped.max_output_tokens()).unwrap();
+        assert_eq!(result.max_tokens, None);
+        let wire = serde_json::to_string(&result).unwrap();
+        assert!(
+            !wire.contains("max_tokens"),
+            "no discovered cap must omit the field, not send null: {wire}"
+        );
     }
 
     #[gpui::test]

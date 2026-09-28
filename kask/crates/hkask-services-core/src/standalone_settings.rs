@@ -82,11 +82,13 @@ pub struct HkaskSettings {
 pub(crate) const DEFAULT_CHUNK_MAX_TOKENS: usize = 256;
 
 fn default_embedding_model() -> String {
-    // Code default (operator ruling 2026-09-04, superseding the
-    // no-hidden-models spec): the operator's configured models are the
-    // defaults so the code works out of the box; settings.json / env vars
-    // override them.
-    "ollama/qwen3-embedding:0.6b".to_string()
+    // Code default (operator direction 2026-09-28): Qwen3-Embedding-8B via
+    // OpenRouter — an MRL model, so embed requests carry
+    // `dimensions = embedding_dim` (default 1024) and width-bound vec0
+    // stores keep receiving fitting vectors. Unlike the former ollama
+    // default this needs OPENROUTER_API_KEY, surfaced visibly when missing.
+    // settings.json / env vars override it.
+    "OpenRouter/qwen/qwen3-embedding-8b".to_string()
 }
 
 fn default_classifier_model() -> String {
@@ -342,7 +344,10 @@ mod tests {
         // Absent fields fall back to the code defaults (operator ruling
         // 2026-09-04: defaults in code so the code works; settings
         // override).
-        assert_eq!(settings.embedding_model, "ollama/qwen3-embedding:0.6b");
+        assert_eq!(
+            settings.embedding_model,
+            "OpenRouter/qwen/qwen3-embedding-8b"
+        );
         assert_eq!(settings.classifier_model, "OpenRouter/z-ai/glm-5.2");
     }
 

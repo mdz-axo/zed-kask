@@ -1908,6 +1908,9 @@ impl ResearchServer {
                             .iter()
                             .map(|&index| artifacts[index].content.clone().unwrap_or_default())
                             .collect();
+                        // Within-batch comparison only — the vectors never
+                        // touch a width-bound store, so the model's native
+                        // width is correct here (no `dimensions` request).
                         match self.inference_port.embed(model, &texts).await {
                             Ok(vectors) if vectors.len() == content_indices.len() => {
                                 Some(content_indices.into_iter().zip(vectors).collect())

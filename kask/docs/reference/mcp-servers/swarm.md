@@ -2,7 +2,7 @@
 title: "Swarm MCP Server Reference"
 audience: [developers, architects, agents]
 last_updated: 2026-09-28
-version: "0.39.5"
+version: "0.39.6"
 status: "Active"
 domain: "Composition"
 mds_categories: [composition, trust, lifecycle, curation]
@@ -481,7 +481,7 @@ injected by the governed `build_mcp_server_env` credential path — it never app
 | `kask.swarm.default_agent_model`      | `HKASK_ABW_DEFAULT_AGENT_MODEL`     | empty                           | Default for new ABW agents and unpinned local agents. When empty, ABW chooses its own default and local execution inherits the host session model; explicit card models win. |
 | `kask.swarm.a2a_http_enabled`         | `HKASK_A2A_HTTP_ENABLE`             | `false`                          | Enable A2A HTTP gateway (loopback JSON-RPC; opens a port)     |
 | —                                     | `HKASK_DB_PASSPHRASE`               | `allostery`                      | The ONE shared SQLCipher passphrase (credential; the swarm memory DB opens with it) |
-| `kask.swarm.embedding_dim`            | `HKASK_SWARM_EMBEDDING_DIM`         | `1024`                           | Embedding vector dimension for semantic-memory store          |
+| `kask.swarm.embedding_dim`            | `HKASK_SWARM_EMBEDDING_DIM`         | `1024`                           | Embedding vector dimension for semantic-memory store — the width requested from MRL embedding models on every embed (`local_knowledge.rs`)          |
 | —                                     | `HKASK_LOCAL_AGENTS_DIR`            | `mcp/swarm/agents/curated`       | Local agent cards directory (derived from global `data_dir`) |
 | —                                     | `HKASK_LOCAL_SWARMS_DIR`            | `mcp/swarm/swarms`               | Local swarms directory (derived from global `data_dir`)      |
 | —                                     | `HKASK_SWARM_MEMORY_DB`             | `mcp/swarm/memory.db`            | Local swarm semantic-memory DB path (derived from global `data_dir`) |
