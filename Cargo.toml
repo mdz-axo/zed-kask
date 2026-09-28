@@ -291,7 +291,6 @@ members = [
     "kask/crates/hkask-steer-core",
     "kask/crates/hkask-spreadsheet",
     "crates/hkask-tool-invoker",
-    "crates/hkask-conversation-injector",
     "crates/hkask-viz-core",
     "crates/hkask-graph-widget",
     "crates/hkask-kanban-widget",
@@ -395,7 +394,6 @@ kanban_panel = { path = "crates/kanban_panel" }
 marketplace_ui_common = { path = "crates/marketplace_ui_common" }
 kask_bridge = { path = "kask/crates/kask_bridge" }
 hkask_tool_invoker = { path = "crates/hkask-tool-invoker", package = "hkask-tool-invoker" }
-hkask_conversation_injector = { path = "crates/hkask-conversation-injector", package = "hkask-conversation-injector" }
 hkask_viz_core = { path = "crates/hkask-viz-core", package = "hkask-viz-core" }
 hkask_graph_widget = { path = "crates/hkask-graph-widget", package = "hkask-graph-widget" }
 hkask_kanban_widget = { path = "crates/hkask-kanban-widget", package = "hkask-kanban-widget" }

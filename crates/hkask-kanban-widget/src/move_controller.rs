@@ -36,7 +36,6 @@ use crate::view::{
 pub(crate) struct PendingMove {
     pub task_id: String,
     pub task_title: String,
-    pub from_label: String,
     /// Wire-format target status (e.g. `"review"`).
     pub to_status: String,
     /// Display label for the target status (e.g. `"Review"`).
@@ -126,14 +125,12 @@ impl KanbanMoveController {
         &mut self,
         task_id: String,
         task_title: String,
-        from_label: String,
         to_status: String,
         to_label: String,
     ) {
         self.pending_move = Some(PendingMove {
             task_id,
             task_title,
-            from_label,
             to_status,
             to_label,
         });

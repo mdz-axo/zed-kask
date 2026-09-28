@@ -218,7 +218,7 @@ impl KanbanWidget {
         self.detail_open.as_deref()
     }
 
-    fn render_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_header(&self, _cx: &mut Context<Self>) -> impl IntoElement {
         h_flex()
             .gap_2()
             .items_center()
@@ -596,7 +596,6 @@ impl KanbanWidget {
         let next_label = status_label(next);
         let task_id = task.task_id.clone();
         let task_title = task.title.clone();
-        let from_label = status_label(current).to_string();
         let to_status = next.as_str().to_string();
         let to_label = next_label.to_string();
         let label_text = format!("Move → {next_label}");
@@ -626,7 +625,6 @@ impl KanbanWidget {
                     this.stage_move(
                         task_id.clone(),
                         task_title.clone(),
-                        from_label.clone(),
                         to_status.clone(),
                         to_label.clone(),
                         cx,
@@ -642,13 +640,12 @@ impl KanbanWidget {
         &mut self,
         task_id: String,
         task_title: String,
-        from_label: String,
         to_status: String,
         to_label: String,
         cx: &mut Context<Self>,
     ) {
         self.move_controller
-            .stage_move(task_id, task_title, from_label, to_status, to_label);
+            .stage_move(task_id, task_title, to_status, to_label);
         cx.notify();
     }
 
@@ -885,8 +882,6 @@ impl Focusable for KanbanWidget {
 
 impl Render for KanbanWidget {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let border_color = cx.theme().colors().border;
-
         v_flex()
             .size_full()
             .p_4()
@@ -1341,7 +1336,6 @@ mod tests {
         assert_eq!(pending.task_id, "t1");
         assert_eq!(pending.to_status, "ready");
         assert_eq!(pending.to_label, "Ready");
-        assert_eq!(pending.from_label, "Backlog");
         assert_eq!(pending.task_title, "Write tests");
     }
 
@@ -1717,8 +1711,6 @@ mod tests {
         assert_eq!(pending.to_status, "in_progress");
     }
 
-    }
-
     #[test]
     fn task_body_parses_ontology_field() {
         // The server emits `"ontology": "pko:Step"` on every TaskInfo. The widget
@@ -2007,5 +1999,4 @@ mod tests {
         assert!(task.labels.is_empty());
         assert!(task.criteria.is_empty());
     }
-
 }

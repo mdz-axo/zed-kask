@@ -586,6 +586,7 @@ impl ScenariosWidget {
         })
         .detach();
     }
+}
 
 impl Focusable for ScenariosWidget {
     fn focus_handle(&self, _cx: &App) -> FocusHandle {
@@ -595,21 +596,17 @@ impl Focusable for ScenariosWidget {
 
 impl Render for ScenariosWidget {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let border_color = cx.theme().colors().border;
-
         v_flex()
             .size_full()
             .p_4()
             .gap_3()
             .track_focus(&self.focus_handle)
             .child(
-                h_flex()
-                    .gap_2()
-                    .child(
-                        Label::new("Scenario Planning")
-                            .size(LabelSize::Large)
-                            .color(Color::Default),
-                    ),
+                h_flex().gap_2().child(
+                    Label::new("Scenario Planning")
+                        .size(LabelSize::Large)
+                        .color(Color::Default),
+                ),
             )
             .child(self.render_scaffolding(cx))
             .when_some(self.render_dispatch_status(cx), |this, status| {
@@ -1085,5 +1082,4 @@ mod tests {
         assert_eq!(calls[0].1, "scenario_frame");
         assert_eq!(calls[0].2, serde_json::json!({}));
     }
-
 }
