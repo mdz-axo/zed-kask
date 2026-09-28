@@ -167,9 +167,11 @@ pub struct InferenceParams {
     #[serde(default)]
     pub worktree_base_ref: Option<String>,
     // ── Rerank fields (for `InferenceMethod::Rerank`) ──
-    /// Rerank model string (provider-prefixed, e.g.
-    /// `OpenRouter/qwen/qwen3-reranker-8b`). The zed side strips the
-    /// provider prefix and routes to that provider's rerank endpoint.
+    /// Rerank model string. Only `OpenRouter/`-prefixed models are
+    /// rerank-eligible: rerank routes to the OpenRouter endpoint only
+    /// (`hkask-inference/src/rerank.rs`); any other prefix (including the
+    /// shipped `deepinfra/Qwen/Qwen3-Reranker-8B` default) degrades to
+    /// heuristic rerank with the reason surfaced.
     #[serde(default)]
     pub rerank_model: Option<String>,
     /// The search query to rerank documents against.

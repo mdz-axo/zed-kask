@@ -10,7 +10,7 @@ and `HKASK_QA_GENERATION_MODEL` is not injected into this server without a consu
 
 Uses internal tool dispatch pattern (not individual `pub async fn` per tool).
 
-## Tools (8)
+## Tools (9)
 
 Simplified from 21 → 15 → 8 across 2026-07-19 cleanups.
 

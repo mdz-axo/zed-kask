@@ -2,7 +2,7 @@
 
 Company-finance MCP server for provider-routed market data, fundamental analysis, valuation, research retrieval, and company-scoped research artifacts.
 
-## Tools (42)
+## Tools (40)
 
 | Group | Tools |
 |---|---:|

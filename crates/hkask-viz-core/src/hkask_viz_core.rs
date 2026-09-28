@@ -245,7 +245,7 @@ type VizFactory = fn(&str, &mut App) -> Option<CachedWidget>;
 /// The ordered registry of `viz`-discriminated widget factories. Order
 /// matters only for bodies whose `viz` tag could match more than one widget;
 /// the tags (`event_tree`, `kanban`, `portfolio`, `scenarios`,
-/// `swarm_delegate_results`) are disjoint, so order is arbitrary.
+/// `spreadsheet`, `swarm_delegate_results`) are disjoint, so order is arbitrary.
 fn viz_factories() -> &'static [VizFactory] {
     &[
         try_create::<GraphWidget>,
@@ -562,7 +562,7 @@ mod tests {
         assert_ne!(cache_key("hello"), cache_key("world"));
     }
 
-    // Pins that the registry covers exactly the five `viz`-discriminated
+    // Pins that the registry covers exactly the six `viz`-discriminated
     // widgets and that their tags are disjoint (a body is claimed by at most
     // one factory).
     #[test]

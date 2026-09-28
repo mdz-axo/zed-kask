@@ -59,7 +59,7 @@ pub struct ColumnBody {
 /// `KanbanBoardView`.
 ///
 /// B3/RU4: carries the full task detail fields (comments, verification,
-/// gas spend log) so the card-detail popover can render them passively from
+/// activity log) so the card-detail popover can render them passively from
 /// the block body (D18 passive-render contract preserved — no `ToolInvoker`
 /// fetch on card click). All extra fields are `#[serde(default)]` so older
 /// blocks parse with empty collections / `None`.

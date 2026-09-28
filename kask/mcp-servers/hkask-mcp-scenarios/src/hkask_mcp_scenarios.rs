@@ -1901,7 +1901,7 @@ mod tests {
 
     /// The scenarios server registers exactly 19 tools. Adding or removing a
     /// tool is an intentional surface change — this pin catches accidental
-    /// drift. Mirrors `hkask-mcp-media::tool_surface_is_exactly_81_registered_tools`.
+    /// drift. Mirrors `hkask-mcp-media::tool_surface_is_exactly_98_registered_tools`.
     #[test]
     fn tool_surface_is_exactly_19_registered_tools() {
         let n = ScenariosServer::scenario_router().list_all().len();

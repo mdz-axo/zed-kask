@@ -73,7 +73,7 @@ pub(crate) const SHINGLE_JACCARD_THRESHOLD: f64 = 0.5;
 const SHINGLE_SIZE: usize = 4;
 
 /// Cosine-similarity threshold for the embedding tier (Commit 6):
-/// `corpus_deduplicate`'s threshold (cosine 0.85), pinned under unit test.
+/// `corpus_dedup_chunks`'s threshold (cosine 0.85), pinned under unit test.
 /// Parameter-gated — the deterministic shingle floor is always available.
 pub(crate) const SEMANTIC_COSINE_THRESHOLD: f64 = 0.85;
 

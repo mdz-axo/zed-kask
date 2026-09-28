@@ -82,7 +82,7 @@ there is no curator-perspective duplicate.
 
 ## Regulation Spans
 
-All tools emit `reg.tool.*` spans through the MCP framework. Kanban service operations additionally emit `reg.kanban` spans from `KanbanService`.
+All tools emit `reg.tool.*` spans through the MCP framework. The server's one registered domain span is `reg.kata` (coaching-prompt generation, `src/kanban/service_impl/kata.rs:44`); no `reg.kanban` namespace exists.
 
 ## Quick Start
 

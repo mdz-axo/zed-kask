@@ -30,7 +30,7 @@ Source identity and derivation use [Dublin Core](https://www.dublincore.org/spec
 and [PROV-O](https://www.w3.org/TR/prov-o/); procedure metadata uses PKO. These
 anchors do not turn generated assertions or exact citations into verified prose.
 
-## Tools (25)
+## Tools (26)
 
 | Group | Registered tools |
 |---|---|

@@ -72,7 +72,7 @@ sweep; it is not a cross-store transaction.
 | Variable                          | Description                            | Default |
 | --------------------------------- | -------------------------------------- | ------- |
 | `HKASK_MEMORY_LIFE_DAYS`          | Memory life S in days                  | 180     |
-| `HKASK_MEMORY_STORAGE_BUDGET`     | Max h_mems before consolidation prunes | 10000   |
+
 | `HKASK_MEMORY_INGEST_CONCURRENCY` | Ingestion semaphore permits            | 1       |
 | `HKASK_EMBEDDING_DIM`             | Embedding vector dimension             | 1024    |
 

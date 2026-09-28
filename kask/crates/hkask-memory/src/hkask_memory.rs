@@ -21,7 +21,7 @@
 //! h_mem representation. See ADR-060 for the rendering decision and rationale.
 
 pub(crate) mod bayesian; // Confidence combination via log-odds pooling
-pub mod consolidation_service; // Memory consolidator (cleanup + budget pruning)
+pub mod consolidation_service; // Memory consolidator (confidence-floor cleanup)
 pub mod federated_recall; // Identity-bound read-only external passage retrieval
 pub mod memory_store; // Unified store (ontology-discriminated)
 pub mod recall_dedup;

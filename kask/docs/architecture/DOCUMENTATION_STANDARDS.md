@@ -344,7 +344,7 @@ Before a document is merged:
 - [ ] Every `##` section has ≥ 1 footnoted citation with URL
 - [ ] Every current-state Mermaid block has implementation `DIAGRAM_ALIGNMENT` metadata; a conceptual block is exempt only when its document satisfies all three `status: "Proposed"` conditions in §4.2
 - [ ] All internal links resolve (broken-link sweep: every relative link in the document resolves to a file in the tree — links to deleted documents fail this gate)
-- [ ] Document-count gate: the tree holds fewer than 70 documents (`find kask/docs -name '*.md' | wc -l`); if this document is new, a fold-or-delete candidate is named to hold the count
+- [ ] Document-count gate: the tree holds fewer than 70 files (`find kask/docs -type f | wc -l`); if this document is new, a fold-or-delete candidate is named to hold the count
 - [ ] No aspirational content is presented as current state; future-state material is confined to an operator-retained Proposed plan and explicitly marked under §4.2
 - [ ] `Last-Updated` date reflects the date of the final edit
 - [ ] Writing Excellence: document passes ≥ 3 of 4 perspective tests (see Appendix A §A.5)
