@@ -123,7 +123,7 @@ src/
 ├── research.rs         Exa, Tavily, and Brave research retrieval
 ├── screener.rs         natural-language screening prompt parser (EODHD)
 ├── fibo.rs             FIBO concept identifiers used by derived outputs
-└── research_store.rs   Company notes, files, forecasts, and saved-screen jobs
+└── screen_store.rs   Company notes, files, forecasts, and saved-screen jobs
 ```
 
 ### Behavioral boundaries

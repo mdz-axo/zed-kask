@@ -15,7 +15,7 @@ FINER — Hulley, Cummings et al., *Designing Clinical Research* (1988; 4th ed. 
 
 - **Initial condition (T1):** the broad topic, domain and research context, measured by step 1's per-dimension FINER scores; on a refinement cycle, the prior cycle's gate inputs (misalignments, weak dimensions, testability, admissibility, feasibility).
 - **Target condition (T2):** the step 13 gate passes.
-- **D/P:** steps 1–12 are P (judgment), critiqued by the `falsifiability-admit` delegation (step 10), the five-link alignment check (step 11), and the operator. Step 13 is D (`lisp_eval`). FINER scores are ordinal judgments; do not average them or treat a 7 as a measured quantity — the gate uses only the count of dimensions below 7.
+- **D/P labelling:** steps 1–12 are P (judgment), critiqued by the `falsifiability-admit` delegation (step 10), the five-link alignment check (step 11), and the operator. Step 13 is D (`lisp_eval`). FINER scores are ordinal judgments; do not average them or treat a 7 as a measured quantity — the gate uses only the count of dimensions below 7.
 
 ## When to Use
 

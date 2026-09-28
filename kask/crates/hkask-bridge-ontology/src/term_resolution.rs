@@ -10,15 +10,34 @@ use std::collections::{HashMap, HashSet};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::{derived, fibo, golem, ml_schema, omc, pko, rdf, schema_org, sdmx, sepio, sumo};
+use crate::{derived, fibo, golem, ml_schema, omc, pko, published, rdf, sdmx, sepio};
 
 /// Protocol stamped on records classified through the published term resolver.
-pub const TERM_RESOLUTION_PROTOCOL: &str = "published-term-resolution-v1";
+/// v2 (2026-09-27): resolution walks the full published SUMO and schema.org
+/// vocabularies, so v1 records no longer reconcile and are re-tagged.
+pub const TERM_RESOLUTION_PROTOCOL: &str = "published-term-resolution-v2";
+
+/// One published or recorded sense of a term.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct TermSense {
+    /// Ladder rung of this sense.
+    pub tier: String,
+    /// Vocabulary that publishes the concept.
+    pub namespace: String,
+    /// Published concept URI or derived term.
+    pub concept: String,
+    /// The vocabulary's own definition, when it publishes one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub definition: Option<String>,
+    /// Source file and pinned version of a published sense.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+}
 
 /// The result of walking the published-ontology fallback ladder for one term.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct TermResolution {
-    /// Ladder rung: domain_supplement, derived, upper, or core.
+    /// Ladder rung: domain_supplement, derived, upper, general_vocabulary, or core.
     pub tier: String,
     /// Candidate term supplied by the caller, trimmed but otherwise preserved.
     pub term: String,
@@ -35,6 +54,37 @@ pub struct TermResolution {
     /// Ruling path when resolution reaches the coarse core rung.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
+    /// The chosen vocabulary's own definition of the concept (for a derived
+    /// concept, the recorded ruling's definition).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub definition: Option<String>,
+    /// Source file and pinned version of a published concept.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    /// Every other sense the ladder found, in ladder order. The same word
+    /// often names different concepts in different vocabularies (schema.org's
+    /// `Game` is a creative work; SUMO's is a contest); all are shown so the
+    /// choice stays visible.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub alternatives: Vec<TermSense>,
+}
+
+impl TermResolution {
+    /// The guaranteed final rung, with the ruling path.
+    pub fn core(term: &str, note: String) -> Self {
+        Self {
+            tier: "core".to_string(),
+            term: term.to_string(),
+            namespace: "core".to_string(),
+            concept: "5w1h_core".to_string(),
+            identity: None,
+            authority: None,
+            note: Some(note),
+            definition: None,
+            source: None,
+            alternatives: Vec::new(),
+        }
+    }
 }
 
 /// Canonical annotation derived from raw candidate terms.
@@ -62,100 +112,109 @@ const DOMAIN_REGISTRIES: &[(&str, &[&str])] = &[
     ("GOLEM", golem::ALL_TERMS),
     ("SDMX", sdmx::ALL_CONCEPTS),
     ("ML-Schema", ml_schema::ALL_CONCEPTS),
-    ("schema.org", schema_org::ALL_TERMS),
     ("RDF", rdf::ALL_TERMS),
 ];
 
-fn normalize(term: &str) -> String {
-    term.chars()
-        .filter(|character| character.is_ascii_alphanumeric())
-        .map(|character| character.to_ascii_lowercase())
-        .collect()
+/// Full published vocabularies (`published`), with their ladder rung, after
+/// the domain and derived rungs: SUMO is the formal upper ontology; schema.org
+/// is a general web vocabulary, consulted after the upper ontology so a formal
+/// category is preferred and the web sense is listed as an alternative.
+const PUBLISHED_RUNGS: &[(&str, &str)] = &[("SUMO", "upper"), ("schema.org", "general_vocabulary")];
+
+struct Sense {
+    sense: TermSense,
+    identity: Option<String>,
+    authority: Option<String>,
 }
 
+fn sense(tier: &str, namespace: &str, concept: &str) -> Sense {
+    Sense {
+        sense: TermSense {
+            tier: tier.to_string(),
+            namespace: namespace.to_string(),
+            concept: concept.to_string(),
+            definition: None,
+            source: None,
+        },
+        identity: None,
+        authority: None,
+    }
+}
+
+use published::normalize;
+
 /// Walk the exact fallback ladder. A false specific anchor is worse than the
-/// real but coarse 5W1H ground, so matching is never fuzzy.
+/// real but coarse 5W1H ground, so matching is never fuzzy. The first sense
+/// in ladder order is the resolution; every other sense found is listed in
+/// `alternatives`.
 pub fn resolve_term(term: &str) -> TermResolution {
     let trimmed = term.trim();
+    let key = normalize(trimmed);
+    let mut senses: Vec<Sense> = Vec::new();
 
     // Some published URI suffixes carry numeric class codes. Their
     // fixture-backed bridge constant names provide exact descriptive labels.
     for (namespace, registry) in NAMED_DOMAIN_REGISTRIES {
-        for (name, uri) in *registry {
-            if normalize(trimmed) == normalize(name) {
-                return TermResolution {
-                    tier: "domain_supplement".to_string(),
-                    term: trimmed.to_string(),
-                    namespace: (*namespace).to_string(),
-                    concept: (*uri).to_string(),
-                    identity: None,
-                    authority: None,
-                    note: None,
-                };
-            }
+        if let Some((_, uri)) = registry.iter().find(|(name, _)| key == normalize(name)) {
+            senses.push(sense("domain_supplement", namespace, uri));
         }
     }
 
     for (namespace, registry) in DOMAIN_REGISTRIES {
-        for uri in *registry {
+        let found = registry.iter().find(|uri| {
             let name = uri.rsplit(':').next().unwrap_or(uri);
-            if trimmed == *uri || (!name.is_empty() && normalize(trimmed) == normalize(name)) {
-                return TermResolution {
-                    tier: "domain_supplement".to_string(),
-                    term: trimmed.to_string(),
-                    namespace: (*namespace).to_string(),
-                    concept: (*uri).to_string(),
-                    identity: None,
-                    authority: None,
-                    note: None,
-                };
-            }
+            trimmed == **uri || (!name.is_empty() && key == normalize(name))
+        });
+        if let Some(uri) = found {
+            senses.push(sense("domain_supplement", namespace, uri));
         }
     }
 
     if let Some(concept) = derived::resolve_derived(trimmed) {
-        return TermResolution {
-            tier: "derived".to_string(),
-            term: trimmed.to_string(),
-            namespace: "derived".to_string(),
-            concept: concept.term.to_string(),
-            identity: Some(concept.identity.to_string()),
-            authority: Some(concept.authority.to_string()),
-            note: None,
-        };
+        let mut found = sense("derived", "derived", concept.term);
+        found.sense.definition = Some(concept.definition.to_string());
+        found.identity = Some(concept.identity.to_string());
+        found.authority = Some(concept.authority.to_string());
+        senses.push(found);
     }
 
-    for uri in sumo::ALL_CONCEPTS {
-        let name = uri.rsplit(':').next().unwrap_or(uri);
-        if trimmed == *uri || (!name.is_empty() && normalize(trimmed) == normalize(name)) {
-            return TermResolution {
-                tier: "upper".to_string(),
-                term: trimmed.to_string(),
-                namespace: "SUMO".to_string(),
-                concept: (*uri).to_string(),
-                identity: None,
-                authority: None,
-                note: None,
-            };
+    for (namespace, tier) in PUBLISHED_RUNGS {
+        for published_term in published::lookup(namespace, trimmed) {
+            let mut found = sense(tier, namespace, published_term.concept);
+            found.sense.definition = Some(published_term.definition)
+                .filter(|text| !text.is_empty())
+                .map(str::to_string);
+            found.sense.source = Some(published_term.source.to_string());
+            senses.push(found);
         }
     }
 
-    TermResolution {
-        tier: "core".to_string(),
-        term: trimmed.to_string(),
-        namespace: "core".to_string(),
-        concept: "5w1h_core".to_string(),
-        identity: None,
-        authority: None,
-        note: Some(
-            "No domain, derived, or upper concept matched. Anchored on the 5W1H \
+    let mut seen = HashSet::new();
+    senses.retain(|found| seen.insert(found.sense.concept.clone()));
+    let mut senses = senses.into_iter();
+    let Some(primary) = senses.next() else {
+        return TermResolution::core(
+            trimmed,
+            "No published or derived concept matched. Anchored on the 5W1H \
              interrogative ground — a real but coarse anchor. Request a ruling from \
              the operator to improve it: the ruling is recorded in the derived \
              registry (hkask-bridge-ontology/src/derived.rs) with its identity and \
              authority, and the term resolves there ever after. Never assign the \
              term a private definition in the meantime."
                 .to_string(),
-        ),
+        );
+    };
+    TermResolution {
+        tier: primary.sense.tier,
+        term: trimmed.to_string(),
+        namespace: primary.sense.namespace,
+        concept: primary.sense.concept,
+        identity: primary.identity,
+        authority: primary.authority,
+        note: None,
+        definition: primary.sense.definition,
+        source: primary.sense.source,
+        alternatives: senses.map(|found| found.sense).collect(),
     }
 }
 
@@ -242,6 +301,72 @@ mod tests {
         }
     }
 
+    /// expect: terms the fragment lists missed now resolve on the full
+    /// published vocabularies, carrying the source's own definition.
+    #[test]
+    fn full_vocabularies_resolve_with_published_definitions() {
+        for (term, tier, concept) in [
+            ("deductive argument", "upper", "sumo:DeductiveArgument"),
+            ("ProbabilityFn", "upper", "sumo:ProbabilityFn"),
+            ("regulatory process", "upper", "sumo:RegulatoryProcess"),
+            ("Recipe", "general_vocabulary", "schema:Recipe"),
+        ] {
+            let resolved = resolve_term(term);
+            assert_eq!(
+                (resolved.tier.as_str(), resolved.concept.as_str()),
+                (tier, concept),
+                "{resolved:?}"
+            );
+            assert!(
+                resolved
+                    .definition
+                    .as_deref()
+                    .is_some_and(|text| !text.is_empty()),
+                "{resolved:?}"
+            );
+            assert!(resolved.source.is_some(), "{resolved:?}");
+        }
+    }
+
+    /// expect: one word, several published senses — the formal upper sense
+    /// is chosen and the web-vocabulary sense is listed, never dropped.
+    #[test]
+    fn every_sense_of_an_ambiguous_word_is_listed() {
+        let game = resolve_term("Game");
+        assert_eq!(game.concept, "sumo:Game", "{game:?}");
+        assert!(
+            game.definition
+                .as_deref()
+                .is_some_and(|text| text.contains("Contest"))
+        );
+        let web = game
+            .alternatives
+            .iter()
+            .find(|sense| sense.concept == "schema:Game")
+            .expect("schema.org sense listed");
+        assert_eq!(web.tier, "general_vocabulary");
+        assert!(web.definition.is_some() && web.source.is_some());
+        let concepts: Vec<_> = std::iter::once(&game.concept)
+            .chain(game.alternatives.iter().map(|sense| &sense.concept))
+            .collect();
+        let unique: HashSet<_> = concepts.iter().collect();
+        assert_eq!(unique.len(), concepts.len(), "senses are deduplicated");
+    }
+
+    /// expect: a derived concept carries its recorded definition alongside
+    /// its identity and authority.
+    #[test]
+    fn derived_resolution_carries_its_recorded_definition() {
+        let resolved = resolve_term("net margin");
+        assert_eq!(resolved.tier, "derived");
+        assert!(
+            resolved
+                .definition
+                .as_deref()
+                .is_some_and(|text| text.contains("post-interest"))
+        );
+    }
+
     #[test]
     fn omc_precedes_pko_within_domain_supplement_resolution() {
         let omc = DOMAIN_REGISTRIES
@@ -294,6 +419,35 @@ mod tests {
             resolved
                 .authority
                 .is_some_and(|value| value.contains("2026-09-10"))
+        );
+    }
+
+    /// P8.4 (entropy-matched computation): the five routing rulings resolve
+    /// on the derived rung through the full ladder — the path onto_anchor
+    /// walks — never falling through to the coarse core ground.
+    #[test]
+    fn p84_routing_terms_resolve_on_the_derived_rung() {
+        for term in [
+            "entropy",
+            "deterministic computation",
+            "probabilistic computation",
+            "verification oracle",
+            "calibrated forecast",
+        ] {
+            let resolved = resolve_term(term);
+            assert_eq!(resolved.tier, "derived", "{term}: {resolved:?}");
+            assert_eq!(resolved.namespace, "derived", "{term}: {resolved:?}");
+            assert!(
+                resolved.identity.is_some() && resolved.authority.is_some(),
+                "{term}: derived rung carries identity and authority"
+            );
+        }
+        let entropy = resolve_term("entropy");
+        assert!(
+            entropy
+                .authority
+                .as_deref()
+                .is_some_and(|value| value.contains("Jaynes (1957)"))
         );
     }
 }

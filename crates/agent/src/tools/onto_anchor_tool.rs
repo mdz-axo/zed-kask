@@ -20,18 +20,26 @@ use ui::SharedString;
 /// term, rung 1; a metric with no FIBO term is a `sumo:Quantity`,
 /// rung 3):
 ///
-/// 1. **Domain supplement** — the fixture-pinned registries (FIBO, PKO,
-///    SEPIO, GOLEM, SDMX, ML-Schema, OMC, schema.org, RDF). Never force a
-///    term into an ontology that has no place for it in its graph.
+/// 1. **Domain supplement** — the domain registries (FIBO, OMC, PKO,
+///    SEPIO, GOLEM, SDMX, ML-Schema, RDF). Never force a term into an
+///    ontology that has no place for it in its graph.
 /// 2. **Derived concepts** — recorded compositions over anchored
 ///    constituents, each carrying its identity and its authority
 ///    citation (`derived::DERIVED_CONCEPTS`). This is where operator
 ///    rulings become durable anchors: "net margin" resolves here with its
 ///    identity (net income / revenue, post-interest) and its authority
 ///    (operator ruling 2026-09-10).
-/// 3. **Upper ontology** — SUMO: formal categorization (Entity, Process,
-///    Quantity, Proposition) when no domain or derived concept fits.
-/// 4. **Interrogative ground** — the 5W1H core: the guaranteed final rung.
+/// 3. **Upper ontology** — the full SUMO distribution (every term of the
+///    pinned release): formal categorization when no domain or derived
+///    concept fits.
+/// 4. **General vocabulary** — the full schema.org release, after SUMO so a
+///    formal category is preferred.
+/// 5. **Interrogative ground** — the 5W1H core: the guaranteed final rung.
+///
+/// A published resolution carries the ontology's own `definition` and its
+/// `source` file. Every other sense found on any rung is listed in
+/// `alternatives` — the same word often names different concepts in
+/// different vocabularies, and the choice stays visible.
 ///
 /// The invariant (`axis.rs` P8.3): **nothing is ever untagged.** The walk
 /// always terminates on a real anchor; there is no "unanchored" verdict. A
@@ -131,15 +139,10 @@ impl AgentTool for OntoAnchorTool {
     ) -> Task<Result<Self::Output, Self::Output>> {
         cx.spawn(async move |_cx| {
             let input = input.recv().await.map_err(|e| {
-                OntoAnchorToolOutput::from(TermResolution {
-                    tier: "core".to_string(),
-                    term: String::new(),
-                    namespace: "core".to_string(),
-                    concept: "5w1h_core".to_string(),
-                    identity: None,
-                    authority: None,
-                    note: Some(format!("failed to receive input: {e}")),
-                })
+                OntoAnchorToolOutput::from(TermResolution::core(
+                    "",
+                    format!("failed to receive input: {e}"),
+                ))
             })?;
             let traversal = input.relation_query.map(|query| {
                 let max_hops = query
@@ -362,7 +365,7 @@ mod tests {
     }
 
     /// expect: [P1] The ladder invariant, walked exhaustively: every
-    /// resolution terminates on a real anchor — tier is one of the four
+    /// resolution terminates on a real anchor — tier is one of the five
     /// rungs and the concept is never empty. Nothing is ever untagged.
     #[test]
     fn the_ladder_always_terminates_on_a_real_anchor() {
@@ -378,7 +381,7 @@ mod tests {
             assert!(
                 matches!(
                     resolved.tier.as_str(),
-                    "domain_supplement" | "derived" | "upper" | "core"
+                    "domain_supplement" | "derived" | "upper" | "general_vocabulary" | "core"
                 ),
                 "{term}: unrecognized tier {resolved:?}"
             );

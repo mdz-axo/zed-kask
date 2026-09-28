@@ -18,13 +18,11 @@
 //! Pease, A. (2010). Ontology: A Practical Guide. Articulate Software Press.
 //! SUMO is actively maintained by Adam Pease and the Ontology Portal project.
 //!
-//! Every term is verified against `Merge.kif` in the official repo —
-//! `fixtures/sumo-terms.txt` pins the term list, and `all_terms_are_official`
-//! fails the build if a term drifts from it.
-//!
-//! This module holds the SUMO seed vocabulary only — the top-level categories
-//! most directly entailed by hKask artifacts. SUMO is large (~20k terms); we
-//! extract only the seed terms the tools actually produce.
+//! The full SUMO distribution is loaded from the pinned sources in
+//! `sources/sumo/` and resolved through `published` (every term, with its
+//! Merge.kif or domain-file documentation). This module only names the
+//! concepts hKask code emits directly; `named_concepts_are_published` fails
+//! the build if one is not in the loaded distribution.
 
 /// A SUMO concept URI — the canonical identifier for an upper-ontology concept.
 pub type SumoConcept = &'static str;
@@ -91,49 +89,32 @@ pub const ATTRIBUTE: SumoConcept = "sumo:attribute";
 /// SUMO: `sumo:causes` (causal dependency; the "why" grounding).
 pub const CAUSES: SumoConcept = "sumo:causes";
 
-/// All SUMO seed concepts, for validation or iteration.
-pub const ALL_CONCEPTS: &[SumoConcept] = &[
-    ENTITY,
-    OBJECT,
-    PROCESS,
-    AUTONOMOUS_AGENT,
-    RELATION,
-    PROPOSITION,
-    TEXT,
-    QUANTITY,
-    TIME_MEASURE,
-    SUBCLASS,
-    PART,
-    ATTRIBUTE,
-    CAUSES,
-];
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// Fabrication guard: every term in this module must appear in the
-    /// official SUMO term list checked in as a fixture (sourced from
-    /// Merge.kif in the official repo).
+    /// Fabrication guard: every concept named here is published in the
+    /// loaded SUMO distribution.
     #[test]
-    fn all_terms_are_official() {
-        let fixture_path = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/sumo-terms.txt");
-        let fixture = std::fs::read_to_string(fixture_path)
-            .unwrap_or_else(|e| panic!("failed to read {fixture_path}: {e}"));
-        let official: std::collections::HashSet<&str> = fixture
-            .lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty() && !line.starts_with('#'))
-            .collect();
-        assert!(
-            !official.is_empty(),
-            "fixture {fixture_path} contains no terms"
-        );
-        for term in ALL_CONCEPTS {
-            assert!(
-                official.contains(term),
-                "{term} is not in the official SUMO term list ({fixture_path})"
-            );
+    fn named_concepts_are_published() {
+        for term in [
+            ENTITY,
+            OBJECT,
+            PROCESS,
+            AUTONOMOUS_AGENT,
+            RELATION,
+            PROPOSITION,
+            TEXT,
+            QUANTITY,
+            TIME_MEASURE,
+            SUBCLASS,
+            PART,
+            ATTRIBUTE,
+            CAUSES,
+        ] {
+            let published = crate::published::get(term)
+                .unwrap_or_else(|| panic!("{term} is not in the loaded SUMO distribution"));
+            assert_eq!(published.namespace, "SUMO", "{term}");
         }
     }
 }

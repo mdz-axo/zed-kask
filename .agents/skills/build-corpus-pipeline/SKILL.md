@@ -387,7 +387,7 @@ credential-safe synchronous transport.
 Each output `TaggedChunk` requires `classification`:
 
 ```json
-{"status":"classified","ontology_protocol":"published-term-resolution-v1"}
+{"status":"classified","ontology_protocol":"published-term-resolution-v2"}
 ```
 
 or `{"status":"failed","reason":"the actual failure"}` or
@@ -626,7 +626,7 @@ evidence and correction findings, not duplicate corpus versions.
 1. Ground the candidates with `corpus_ground_generated_qa(generated_jsonl,
    source_chunks_jsonl, output_dir)`. Deterministic and zero-inference: it
    verifies every evidence quote byte-exactly against the canonical tagged
-   chunks (which must be classified under `published-term-resolution-v1` with
+   chunks (which must be classified under `published-term-resolution-v2` with
    reconciling candidate terms), records byte spans, and recomputes ontology
    resolutions for the preserved candidate terms. The bundle records
    mechanical facts only — no verified/authorized/confidence fields exist in

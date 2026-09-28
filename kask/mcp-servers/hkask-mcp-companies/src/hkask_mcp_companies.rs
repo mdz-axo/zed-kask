@@ -54,7 +54,7 @@ pub(crate) mod fibo;
 pub(crate) mod fibo_cache;
 mod financial_model;
 mod providers;
-pub(crate) mod research_store;
+pub(crate) mod screen_store;
 pub(crate) use providers::{CompanyProfile, KeyMetrics, Provider};
 mod forecast;
 pub(crate) mod learning;
@@ -76,7 +76,7 @@ pub(crate) use forecast::{
 
 pub(crate) mod types;
 
-use research_store::{PersistedForecast, ResearchStore};
+use screen_store::{PersistedForecast, ResearchStore};
 
 pub(crate) mod tools;
 

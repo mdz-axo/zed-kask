@@ -5832,7 +5832,6 @@ async fn test_mcp_tool_timeout_does_not_retry(cx: &mut TestAppContext) {
     fake_model.end_last_completion_stream();
 }
 
-
 struct ThreadTest {
     model: Arc<dyn LanguageModel>,
     thread: Entity<Thread>,
@@ -10724,7 +10723,10 @@ async fn test_tool_failure_under_active_skill_is_recorded(cx: &mut TestAppContex
     )
     .expect("probe skill");
     // Core skills are pre-authorized, so the probe does not wait on a prompt.
-    let skill = agent_skills::Skill { core: true, ..skill };
+    let skill = agent_skills::Skill {
+        core: true,
+        ..skill
+    };
     let skills = Arc::new(vec![skill]);
     let fs_for_body = fs.clone();
     thread.update(cx, |thread, _cx| {
@@ -10762,7 +10764,11 @@ async fn test_tool_failure_under_active_skill_is_recorded(cx: &mut TestAppContex
     cx.run_until_parked();
 
     // A failure before any skill is active is not a skill-use issue.
-    fake_model.send_last_completion_stream_event(tool_use("t0", StreamingFailingEchoTool::NAME, json!({ "text": "x" })));
+    fake_model.send_last_completion_stream_event(tool_use(
+        "t0",
+        StreamingFailingEchoTool::NAME,
+        json!({ "text": "x" }),
+    ));
     fake_model.end_last_completion_stream();
     cx.run_until_parked();
     assert!(recorded.lock().expect("lock").is_empty());
@@ -10774,12 +10780,20 @@ async fn test_tool_failure_under_active_skill_is_recorded(cx: &mut TestAppContex
     ));
     fake_model.end_last_completion_stream();
     cx.run_until_parked();
-    fake_model.send_last_completion_stream_event(tool_use("t2", StreamingFailingEchoTool::NAME, json!({ "text": "x" })));
+    fake_model.send_last_completion_stream_event(tool_use(
+        "t2",
+        StreamingFailingEchoTool::NAME,
+        json!({ "text": "x" }),
+    ));
     fake_model.end_last_completion_stream();
     cx.run_until_parked();
 
     let entries = recorded.lock().expect("lock").clone();
-    assert_eq!(entries.len(), 1, "exactly the post-activation failure: {entries:?}");
+    assert_eq!(
+        entries.len(),
+        1,
+        "exactly the post-activation failure: {entries:?}"
+    );
     let (skill, invoker, tool, error) = &entries[0];
     assert_eq!(skill, "probe-skill");
     assert_eq!(invoker, "Zed Agent");

@@ -90,7 +90,7 @@ Schema sources: `kask/mcp-servers/hkask-mcp-corpus/src/tools/document.rs:843-945
 | `corpus_build_prompts` | `tagged_jsonl`, `output`; `prefix` defaults `corpus:researcher:`, `context_k=0`, `qa_pairs_per_chunk=2`, `type_distribution="1,1,1,1,1"`, `max_pairs=0`; optional `db_path`/`passphrase` are required only for positive context_k |
 
 | `corpus_generate_qa_batch` | `prompts_jsonl`, `quality_adjudications_jsonl`, `output`, `concurrency`, optional QA `model` |
-| `corpus_ground_generated_qa` | `generated_jsonl`, `source_chunks_jsonl` (tagged chunks classified under `published-term-resolution-v1`), `output_dir` — must not already exist |
+| `corpus_ground_generated_qa` | `generated_jsonl`, `source_chunks_jsonl` (tagged chunks classified under `published-term-resolution-v2`), `output_dir` — must not already exist |
 | `corpus_ingest_qa` | `generated_jsonl`, `grounding_manifest` (path to the bundle's `manifest.json`), `source_chunks_jsonl`, `output`, `db_path`, `passphrase`, `dataset`, `owner`, `dry_run=false`; pass dataset/owner explicitly |
 | `corpus_prepare_training_dataset` | `input_jsonl`, `output_jsonl`, operator-approved `base_model`, optional `system_prompt`, `dry_run=false` |
 | `corpus_centroid` | `author`, `db_path`, `passphrase`; optional contained `refs_file`, quality `dimension` |
@@ -171,7 +171,7 @@ same engine (`kask/mcp-servers/hkask-mcp-corpus/src/services/convert.rs:935–11
 ### Classification and prompt context
 
 `TaggedChunk.classification` is required. Classified JSON carries the clean-break
-protocol stamp: `{"status":"classified","ontology_protocol":"published-term-resolution-v1"}`.
+protocol stamp: `{"status":"classified","ontology_protocol":"published-term-resolution-v2"}`.
 Other outcomes are `{"status":"failed","reason":"..."}` and
 `{"status":"unverified"}`. Missing status/protocol and pre-canonical records cannot
 be promoted. Tag responses correlate short batch-local `correlation_id` values;
@@ -304,7 +304,7 @@ evidence or recorded honestly as `model_inference`, and the instruction premise
 recorded `not_applicable` with its unperformed check. No verified/authorized/
 confidence fields exist in the bundle. The gate re-hashes the bundle, checks row
 bijection, requires `source_chunks_jsonl` chunks classified under
-`published-term-resolution-v1` with reconciling terms, recomputes the ontology
+`published-term-resolution-v2` with reconciling terms, recomputes the ontology
 resolutions, re-derives every claim, requires each artifact row to equal its
 re-execution, and admits a row when every citation claim is strength 2 and at
 least one exists. A synthesized answer that is not byte-exact is admitted as

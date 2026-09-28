@@ -186,7 +186,7 @@ pub struct GroundQaRequest {
     /// prompt_id; skip and error rows fail closed.
     pub generated_jsonl: String,
     /// Canonical tagged-chunk JSONL. Every chunk must be classified under the
-    /// current published-ontology protocol (`published-term-resolution-v1`)
+    /// current published-ontology protocol (`published-term-resolution-v2`)
     /// with reconciling candidate terms.
     pub source_chunks_jsonl: String,
     /// Destination directory for the bundle. Must not already exist; the

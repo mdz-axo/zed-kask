@@ -1,6 +1,6 @@
 use crate::{
     CompaniesServer, providers,
-    research_store::{ResearchStore, ScreenJobItemRecord, ScreenJobRecord},
+    screen_store::{ResearchStore, ScreenJobItemRecord, ScreenJobRecord},
     types::{ScreenAction, ScreenTemplateContext, ScreenerRequest},
 };
 
@@ -1402,7 +1402,7 @@ async fn enrich_pending_issuers(
             .unwrap_or_else(|| Err(ScreeningError::BulkResultMissing));
         async move {
             if store.screen_cancel_requested(&job_id)? {
-                return Ok::<(), crate::research_store::PortfolioError>(());
+                return Ok::<(), crate::screen_store::PortfolioError>(());
             }
             let fundamentals = match fundamentals {
                 Ok(fundamentals) => Ok(fundamentals),

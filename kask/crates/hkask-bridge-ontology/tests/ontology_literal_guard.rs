@@ -356,11 +356,15 @@ fn ontology_terms_in_literals(src: &str) -> Vec<(usize, String)> {
         .collect()
 }
 
-/// The set of verified terms across all bridge fixtures (first
-/// whitespace-separated token of each non-comment line).
+/// The set of verified terms: every concept of the full published
+/// vocabularies loaded from `sources/`, plus every bridge fixture's terms
+/// (first whitespace-separated token of each non-comment line).
 fn fixture_terms() -> HashSet<String> {
     let fixtures_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures");
-    let mut terms = HashSet::new();
+    let mut terms: HashSet<String> = hkask_bridge_ontology::published::terms()
+        .iter()
+        .map(|term| term.concept.to_string())
+        .collect();
     let Ok(entries) = std::fs::read_dir(&fixtures_dir) else {
         panic!("fixtures dir not found: {}", fixtures_dir.display());
     };

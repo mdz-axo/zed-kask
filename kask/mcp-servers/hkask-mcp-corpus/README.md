@@ -149,7 +149,7 @@ checked against the retained view, not the pre-filter bytes.
 Every on-disk `TaggedChunk` requires a `classification: ClassificationOutcome`:
 
 ```json
-{"classification":{"status":"classified","ontology_protocol":"published-term-resolution-v1"}}
+{"classification":{"status":"classified","ontology_protocol":"published-term-resolution-v2"}}
 ```
 
 The other outcomes are `{"status":"failed","reason":"actual failure"}` and
@@ -302,7 +302,7 @@ authorizes nothing.
 
 `corpus_ingest_qa` then re-executes everything before dedup, output, or DB
 access: it re-hashes the bundle, checks row bijection against the candidate
-file, requires sources classified under `published-term-resolution-v1` with
+file, requires sources classified under `published-term-resolution-v2` with
 reconciling terms, recomputes the ontology resolutions, re-derives every claim,
 and requires each artifact row to equal its re-execution — self-reported
 strengths, spans, or resolutions cannot open the gate. Admission requires

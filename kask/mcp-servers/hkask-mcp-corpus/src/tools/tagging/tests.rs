@@ -54,7 +54,7 @@ fn tags(correlation_id: &str) -> Value {
     json!([
         correlation_id,
         ["who", "why"],
-        ["procedure", "assertion", "complexity"],
+        ["procedure", "assertion", "zephyr coefficient"],
         null
     ])
 }
@@ -150,7 +150,7 @@ async fn run(
             let candidate_terms = row["candidate_terms"].as_array().expect("candidate terms");
             assert!(
                 candidate_terms.starts_with(
-                    json!(["procedure", "assertion", "complexity"])
+                    json!(["procedure", "assertion", "zephyr coefficient"])
                         .as_array()
                         .expect("expected terms")
                 ),
@@ -318,7 +318,7 @@ async fn public_tagging_identity_contract() {
             .contains("passage-tagging response")
     );
     let mut unicode = tags("item-0");
-    unicode[2] = json!(["procedure", "assertion", "complexity", "界".repeat(50)]);
+    unicode[2] = json!(["procedure", "assertion", "zephyr coefficient", "界".repeat(50)]);
     let (summary, rows, _) = run(&["a"], json!([unicode]).to_string(), 1, false).await;
     assert_eq!(summary["tagged"], 1);
     for term in [&rows[0]["dc_subject"][3], &rows[0]["candidate_terms"][3]] {

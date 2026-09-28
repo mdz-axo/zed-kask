@@ -13,7 +13,6 @@
 //! - `comments` — Task-level comment threads
 //! - `decompose` — Task decomposition operations
 //! - `kata` — Kata cycle execution on tasks
-//! - `phases` — Board phase management
 //! - `spawn` — Agent spawn from task specs
 
 // Imports needed by child submodules via `use super::*`
@@ -28,7 +27,6 @@ use hkask_types::id::TaskId;
 pub(crate) mod comments;
 pub(crate) mod goals;
 pub(crate) mod kata;
-pub(crate) mod phases;
 mod service;
 pub(crate) mod spawn;
 mod types;

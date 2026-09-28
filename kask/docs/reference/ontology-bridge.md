@@ -1,8 +1,8 @@
 ---
 title: "Ontology Bridge — API Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-09-22
-version: "0.40.0"
+last_updated: 2026-09-27
+version: "0.41.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, curation]
@@ -23,13 +23,14 @@ Ontology anchoring is a scope-broadening walk, never a single pick. When a
 concept has no fit in the narrowest applicable ontology, the anchor falls
 to progressively broader scopes until one fits:
 
-1. **Domain supplement** — an exact term in a fixture-pinned published vocabulary.
+1. **Domain supplement** — an exact term in a domain vocabulary (FIBO, OMC, PKO, SEPIO, GOLEM, SDMX, ML-Schema, RDF).
 2. **Derived concept** — a recorded composition with identity and authority; this rung applies to term resolution and is where operator rulings become durable (`kask/crates/hkask-bridge-ontology/src/derived.rs`).
 3. **Universal axes** — Dublin Core/BIBO state and PKO process identities for artifact anchoring. `select_ontology_anchor` uses these axes; term resolution does not force a term into them.
-4. **Upper ontology** — an exact SUMO concept when no domain or derived term matches.
-5. **Interrogative ground** — `5w1h_core`, the guaranteed real but coarse term anchor.
+4. **Upper ontology** — an exact concept of the full SUMO distribution when no domain or derived term matches (tier `upper`).
+5. **General vocabulary** — an exact concept of the full schema.org release (tier `general_vocabulary`), after SUMO so a formal category is preferred.
+6. **Interrogative ground** — `5w1h_core`, the guaranteed real but coarse term anchor.
 
-`term_resolution::resolve_term` implements the term ladder as domain → derived → SUMO → core and never performs fuzzy matching (`kask/crates/hkask-bridge-ontology/src/term_resolution.rs:51-160`). `axis::select_ontology_anchor` is the separate artifact/domain-hint selector (`kask/crates/hkask-bridge-ontology/src/axis.rs`).
+`term_resolution::resolve_term` implements the term ladder as domain → derived → full SUMO → full schema.org → core and never performs fuzzy matching (`kask/crates/hkask-bridge-ontology/src/term_resolution.rs`). The first sense in ladder order is the resolution; every other sense found is returned in `alternatives`. `axis::select_ontology_anchor` is the separate artifact/domain-hint selector (`kask/crates/hkask-bridge-ontology/src/axis.rs`).
 
 The invariant: **nothing is ever untagged.** SUMO and the 5W1H core exist
 precisely so the ladder always terminates on a real anchor. Skipping rungs
@@ -40,11 +41,15 @@ dispatch form (rungs named in its doc comment);
 
 ## Modules
 
-Declared in `kask/crates/hkask-bridge-ontology/src/hkask_bridge_ontology.rs`: `axis`, `dc_bibo`, `derived`, `fibo`, `golem`, `ml_schema`, `omc`, `ontology_graph`, `pko`, `rdf`, `schema_org`, `sdmx`, `sepio`, `sumo`, and `term_resolution`.
+Declared in `kask/crates/hkask-bridge-ontology/src/hkask_bridge_ontology.rs`: `axis`, `dc_bibo`, `derived`, `fibo`, `golem`, `ml_schema`, `omc`, `ontology_graph`, `pko`, `published`, `rdf`, `schema_org`, `sdmx`, `sepio`, `sumo`, and `term_resolution`.
+
+### `published` — full vocabularies compiled from pinned sources
+
+The complete SUMO distribution (every ontology file of the pinned commit, `tiny*` test subsets excluded) and the complete schema.org release (every layer) live under `kask/crates/hkask-bridge-ontology/sources/`, pinned file-by-file in `sources/SOURCES.lock` (upstream URL, version, sha256, license). `build.rs` verifies every pin, rejects unlisted or missing files, and compiles an embedded index: each term's concept id, kind, labels, direct parents, inverse properties, published definition and source file. `published::lookup(namespace, term)` returns every exact sense (concept id, local name or published label, case/separator-insensitive); `published::get` and `published::contains` look up a concept id.
 
 ### `ontology_graph` — bounded sourced concept traversal
 
-`graph().traverse(from_term, to_term, max_hops)` performs deterministic directed BFS. Omit `to_term` with one hop to inspect outgoing edges; supply it for a shortest supported path (up to four hops). Each edge carries `from`, `relation`, `to`, and `authority`; `no_supported_path`, `coarse_anchor`, `invalid_query`, and `budget_exhausted` are distinct states. The graph is intentionally partial: only distinctly resolved constituents of recorded derived concepts and the published schema.org `hasPart`/`isPartOf` inverse-property pair are present. The latter links property concepts, **not** individual creative works. A missing path is never a proof of falsity (`kask/crates/hkask-bridge-ontology/src/ontology_graph.rs`, `fixtures/schema-org-relations.tsv`).
+`graph().traverse(from_term, to_term, max_hops)` performs deterministic directed BFS. Omit `to_term` with one hop to inspect outgoing edges; supply it for a shortest supported path (up to four hops). Each edge carries `from`, `relation`, `to`, and `authority`; `no_supported_path`, `coarse_anchor`, `invalid_query`, and `budget_exhausted` are distinct states. Edges: distinctly resolved constituents of recorded derived concepts (`has_constituent`), and from the full published sources every directly stated parent (`has_parent`: SUMO subclass/instance/subrelation/subAttribute, schema.org subTypeOf/subPropertyOf/enumeration type) and inverse property (`inverse_of`), each citing its source file. No inferred or transitive edge is added; edges link vocabulary terms, **not** individual instances. A missing path is never a proof of falsity (`kask/crates/hkask-bridge-ontology/src/ontology_graph.rs`).
 
 The agent's `onto_anchor` accepts optional `relation_query` (`to`, `max_hops`); omitted queries preserve its resolution-only JSON. Petgraph's [BFS visitor and graph-trait reference](https://docs.rs/petgraph/0.8.3/petgraph/visit/) and [BFS source](https://docs.rs/petgraph/0.8.3/src/petgraph/visit/traversal.rs.html#275-309) informed the non-recursive queue and visited-set design; no dependency was added for this bounded static graph.
 
@@ -242,12 +247,11 @@ was fabricated; the real term is `dcterms:creator`.
 
 ### `schema_org` — schema.org predicate bridge (pipeline)
 
-Canonical predicate URIs for the corpus assertion pipeline's expository
-passages (concepts, analysis, arguments) — the general-purpose vocabulary
-the extraction prompts offer alongside the domain ontologies. Every URI is
-verified against the official machine-readable release:
-`fixtures/schema-org-terms.txt` pins the term list, and `all_terms_are_official`
-fails the build on drift (`kask/crates/hkask-bridge-ontology/src/schema_org.rs:37-42` declares the term macro).
+The curated predicate menu the corpus assertion pipeline offers for
+expository passages — a consumer selection, not the vocabulary (the full
+release resolves through `published`). `all_terms_are_official` fails the
+build unless every menu entry is a published property of the loaded release
+(`kask/crates/hkask-bridge-ontology/src/schema_org.rs`).
 
 ### `sumo` — SUMO upper ontology (universal fallback)
 
@@ -265,7 +269,7 @@ SUMO rather than the bare 5W1H core, so they get formal categorization
 | `AUTONOMOUS_AGENT` | `sumo:AutonomousAgent` |
 | `RELATION` | `sumo:Relation` |
 
-Full list: `kask/crates/hkask-bridge-ontology/src/sumo.rs:32-48`
+These are the concepts hKask code names directly (`kask/crates/hkask-bridge-ontology/src/sumo.rs`); the full distribution resolves through `published`, and `named_concepts_are_published` fails the build if a named concept is not in it.
 
 > **Deleted surface:** there is no `five_w_one_h` module. The 5W1H
 > interrogative survives only as the `Core` anchor tier (label
@@ -299,9 +303,9 @@ Keyword matching is token-aware (`kask/crates/hkask-bridge-ontology/src/axis.rs`
 
 ### `derived` and `term_resolution` — exact term anchoring
 
-`derived::DERIVED_CONCEPTS` stores reviewed compositions with a canonical term, identity, and authority (`kask/crates/hkask-bridge-ontology/src/derived.rs`). `term_resolution::resolve_term` returns `TermResolution { tier, term, namespace, concept, identity, authority, note }`; derived-only fields are absent on other rungs (`kask/crates/hkask-bridge-ontology/src/term_resolution.rs:15-38`).
+`derived::DERIVED_CONCEPTS` stores reviewed compositions with a canonical term, identity, and authority (`kask/crates/hkask-bridge-ontology/src/derived.rs`). `term_resolution::resolve_term` returns `TermResolution { tier, term, namespace, concept, identity, authority, note, definition, source, alternatives }`: `identity`/`authority` are present on the derived rung, `definition` on published and derived resolutions, `source` on published ones, and `alternatives` lists every other sense found (`TermSense { tier, namespace, concept, definition, source }`).
 
-`TERM_RESOLUTION_PROTOCOL` is `published-term-resolution-v1`. `canonicalize_terms` preserves trimmed candidate terms, deduplicates them, and derives grouped ontology tags and concept unions through the same resolver (`kask/crates/hkask-bridge-ontology/src/term_resolution.rs:15-16`, `kask/crates/hkask-bridge-ontology/src/term_resolution.rs:162-200`). The built-in `onto_anchor` tool is the agent-facing wrapper over this authority (`crates/agent/src/tools/onto_anchor_tool.rs`).
+`TERM_RESOLUTION_PROTOCOL` is `published-term-resolution-v2` (v2 since 2026-09-27: resolution walks the full published SUMO and schema.org vocabularies; v1 records no longer reconcile and must be re-tagged). `canonicalize_terms` preserves trimmed candidate terms, deduplicates them, and derives grouped ontology tags and concept unions through the same resolver (`kask/crates/hkask-bridge-ontology/src/term_resolution.rs:15-16`, `kask/crates/hkask-bridge-ontology/src/term_resolution.rs:162-200`). The built-in `onto_anchor` tool is the agent-facing wrapper over this authority (`crates/agent/src/tools/onto_anchor_tool.rs`).
 
 ## Domain → ontology mapping
 
@@ -475,8 +479,10 @@ their own mapping today.
 
 ## Dependencies
 
-The crate is pure vocabulary + selection logic — no reasoners, no OWL
-parsing, no graph databases (`kask/crates/hkask-bridge-ontology/src/hkask_bridge_ontology.rs:41-43` describes the
+The crate is pure vocabulary + selection logic — no reasoners, no graph
+databases; the only build dependency is `sha2`, which pins the vendored
+sources, and the source readers (`src/published_sources.rs`) extract
+vocabulary, never axioms (`kask/crates/hkask-bridge-ontology/src/hkask_bridge_ontology.rs:41-43` describes the
 orthogonality invariant).
 
 ## See also

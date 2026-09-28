@@ -732,7 +732,7 @@ pub struct IngestQaRequest {
     /// as authority, and self-reported verification cannot open the gate.
     pub grounding_manifest: String,
     /// Canonical tagged-chunk JSONL used to re-execute every grounding check.
-    /// Every chunk must be classified under `published-term-resolution-v1` with
+    /// Every chunk must be classified under `published-term-resolution-v2` with
     /// reconciling candidate terms.
     pub source_chunks_jsonl: String,
     /// Output path for training JSONL (instruction/input/output plus QA evidence metadata).

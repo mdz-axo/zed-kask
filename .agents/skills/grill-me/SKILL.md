@@ -38,7 +38,7 @@ Socratic questioning, with a difficulty ladder (Recall → Mechanism → Rationa
 5. Track attempts per question across rounds; the Feedback gate retires a question after 3 failed attempts, and this step explains its answer instead of re-asking it.
 6. Maintain a direct, sharp tone akin to a demanding technical interviewer, using specific challenging phrases without being mean-spirited.
 7. Give minimal hints if requested, without solving the questions for the user.
-8. Output a JSON object containing questions, evaluations, current level; each evaluation carries its Solid/Partial/Gap rating.
+8. Output a JSON object containing questions, evaluations, current level, and the updated running assessment (each area's Solid/Partial/Gap rating accumulated across rounds); each evaluation carries its Solid/Partial/Gap rating.
 
 ### grill-me-assess
 

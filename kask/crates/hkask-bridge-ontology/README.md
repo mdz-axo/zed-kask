@@ -34,6 +34,9 @@ common mapping in process or state space regardless of domain.
 | `sdmx` | Statistical Data and Metadata eXchange | Domain supplement (statistics) |
 | `omc` | MovieLabs Ontology for Media Creation | Domain supplement (media) |
 | `axis` | Domain-selection logic | `OntologyAxis`, `OntologyNamespace`, `OntologyAnchor`, `select_ontology_anchor` |
+| `sumo` | Named SUMO concepts emitted by hKask code | Upper ontology |
+| `schema_org` | Curated schema.org predicate menu for assertion extraction | General vocabulary |
+| `published` | The full SUMO distribution and schema.org release, compiled from `sources/` | `terms`, `get`, `lookup`, `contains` |
 | `term_resolution` | Exact fallback-ladder resolution | `resolve_term`, `canonicalize_terms`, `TERM_RESOLUTION_PROTOCOL` |
 | `ontology_graph` | Bounded, source-backed concept relations | `graph().traverse(from, to, max_hops)` |
 
@@ -61,14 +64,34 @@ let terms = hkask_bridge_ontology::term_resolution::canonicalize_terms([
 assert_eq!(terms.ontology_tags["fibo"], [fibo::CORPORATION]);
 ```
 
+## Full published vocabularies (`sources/`)
+
+The complete SUMO distribution (every ontology file of the pinned commit;
+the `tiny*` test subsets excluded) and the complete schema.org release (every
+layer) are vendored under `sources/` and pinned file-by-file in
+`sources/SOURCES.lock` with upstream URL, version, sha256 and license.
+`build.rs` refuses to build on drift, an unlisted file or a missing file, and
+compiles the sources into an embedded index read by `published`: every term
+with its labels, direct parents, inverse properties, published definition and
+source file. To update a vocabulary, re-vendor the files from the new pinned
+version and regenerate the lock rows — never edit a source by hand. Licenses:
+SUMO is GPL (`Merge.kif` carries the IEEE notice); schema.org is CC BY-SA 3.0
+(https://schema.org/docs/terms.html).
+
+`resolve_term` walks: domain supplements → derived concepts → full SUMO
+(`upper`) → full schema.org (`general_vocabulary`) → 5W1H core. The first
+sense is the resolution, with the source's `definition` and `source`; every
+other sense found is listed in `alternatives`.
+
 ## Thin dependency surface
 
-Pure Rust vocabulary + selection logic with serialization/schema derives. No
-reasoners, OWL parsing or graph databases. The read-only concept graph contains
-only sourced edges: derived-concept constituents that resolve to distinct
-published/derived identities, and schema.org's documented inverse-property
-pair (pinned in `fixtures/schema-org-relations.tsv`). A path connects concepts,
-not instances; an absent path in this partial graph is not a negative fact.
+Pure Rust vocabulary + selection logic with serialization/schema derives; the
+only build dependency is `sha2` for source pinning. No reasoners, OWL
+reasoning or graph databases. The read-only concept graph contains only
+sourced edges: derived-concept constituents that resolve to distinct
+published/derived identities, and the parents and inverse properties each
+published source row states directly. No inferred or transitive edge is added.
+A path connects concepts, not instances; an absent path is not a negative fact.
 Directed BFS discovers at most 256 nodes and 4 hops; neighbor queries return
 at most 256 outgoing edges. Both return an explicit budget status instead of
 silently reporting an incomplete result as absence. Agent calls without

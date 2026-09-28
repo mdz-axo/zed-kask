@@ -533,6 +533,75 @@ mod tests {
     }
 
     #[test]
+    fn thesis_template_requires_valuation_evidence() {
+        // The YETI first pass (2026-09-27) rendered a thesis with zero
+        // valuation tool outputs and no flag — the silent-skip class this
+        // gate closes. The regression context is that run's input set:
+        // every perspective input present, no valuation evidence.
+        let path = registry_template_base().join("company-research/thesis-three-pillars.j2");
+        let template = std::fs::read_to_string(path).expect("shipped thesis template");
+        let yeti_first_pass = std::collections::HashMap::from([
+            (
+                "ticker".to_string(),
+                hkask_types::AnyJsonValue::from(serde_json::json!("YETI")),
+            ),
+            (
+                "as_of_date".to_string(),
+                hkask_types::AnyJsonValue::from(serde_json::json!("2026-09-27")),
+            ),
+            (
+                "company_board".to_string(),
+                hkask_types::AnyJsonValue::from(serde_json::json!({
+                    "self_view": "brand-led platform business"
+                })),
+            ),
+            (
+                "value_gorilla_judgment".to_string(),
+                hkask_types::AnyJsonValue::from(serde_json::json!({
+                    "answer": "contested"
+                })),
+            ),
+            (
+                "imagine_board".to_string(),
+                hkask_types::AnyJsonValue::from(serde_json::json!({
+                    "digital_stage": "MODEL"
+                })),
+            ),
+        ]);
+
+        let error = validate_contract_inputs(&template, &yeti_first_pass)
+            .expect_err("a thesis render without valuation evidence is the silent-skip class");
+        assert!(error.contains("valuation_evidence"), "got: {error}");
+
+        let mut gated = yeti_first_pass;
+        gated.insert(
+            "valuation_evidence".to_string(),
+            hkask_types::AnyJsonValue::from(serde_json::json!({
+                "dcf_result": {"intrinsic_value": 29.20},
+                "comparables_result": {"peers": []},
+                "reverse_dcf_result": {"implied_growth": 0.165},
+                "expectations_gap_result": {"signal": "price_demands_more_than_demonstrated"},
+                "skip": null
+            })),
+        );
+        validate_contract_inputs(&template, &gated)
+            .expect("valuation evidence present admits the render");
+
+        gated.insert(
+            "valuation_evidence".to_string(),
+            hkask_types::AnyJsonValue::from(serde_json::json!({
+                "dcf_result": null,
+                "comparables_result": null,
+                "reverse_dcf_result": null,
+                "expectations_gap_result": null,
+                "skip": {"reason": "tool failure named in the run"}
+            })),
+        );
+        validate_contract_inputs(&template, &gated)
+            .expect("an explicit skip flag admits the render");
+    }
+
+    #[test]
     fn test_strip_inference_header_through_first_lone_terminator() {
         // The dominant convention: [inference]-keyed header terminated by a
         // lone `---` — NOT leading frontmatter. The old stripper matched 0

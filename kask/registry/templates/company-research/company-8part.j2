@@ -3,8 +3,6 @@ contract:
   input:
     ticker: string
     transcript_result: object|null
-    dcf_result: object|null
-    comparables_result: object|null
     web_search_result: object|null
     fetch_result: object|null
     flash_pipeline_output: object|null
@@ -17,7 +15,7 @@ contract:
     rationale: string
 visibility: Public
 ---
-{# goal: Agent 13 COMPANY (DEEPEN) — deep 8-part company analysis. Consumes company_transcript, dcf_valuation, comparable_analysis, web_search, fetch MCP tool outputs. Thinks like an owner. #}
+{# goal: Agent 13 COMPANY (DEEPEN) — deep 8-part company analysis. Consumes company_transcript, web_search, fetch MCP tool outputs; the valuation tool outputs flow to THESIS directly (valuation_evidence), not through the board. Thinks like an owner. #}
 
 [inference]
 temperature = 0.3
@@ -35,16 +33,6 @@ You are the COMPANY agent for an institutional equity research desk. Your job is
 ### Earnings Transcripts (from company_transcript MCP tool)
 ```json
 {{ transcript_result | tojson }}
-```
-
-### DCF Valuation (from dcf_valuation MCP tool)
-```json
-{{ dcf_result | tojson }}
-```
-
-### Comparable Analysis (from comparable_analysis MCP tool)
-```json
-{{ comparables_result | tojson }}
 ```
 
 ### Web Search (from web_search MCP tool — IR pages)
@@ -113,7 +101,7 @@ Use verbatim quotes from the transcript where available. If the transcript is em
 ### Part 4 — Financial Profile
 
 - **Signposts**: the 3–5 metrics that matter most for this business (not generic EPS/revenue — the specific unit economics)
-- **3-stage valuation**: consensus → normalization → terminal. Use the DCF and comparables tool outputs as the consensus and normalization legs; reason about the terminal leg.
+- The valuation synthesis is not part of the board — THESIS consumes the valuation tool outputs directly. Note any valuation-tool failure in `data_gaps` so the THESIS assembly records the skip.
 
 ### Part 5 — Invisible Layer
 
@@ -153,12 +141,7 @@ Per the no-silent-failure rule: if any MCP tool output is empty, null, or errore
       "evidence_quotes": ["verbatim quote 1"]
     },
     "financial_profile": {
-      "signposts": ["...", "..."],
-      "valuation_3stage": {
-        "consensus": 0,
-        "normalization": 0,
-        "terminal": 0
-      }
+      "signposts": ["...", "..."]
     },
     "invisible_layer": {
       "not_on_page": "...",
@@ -182,6 +165,5 @@ Per the no-silent-failure rule: if any MCP tool output is empty, null, or errore
 
 - Think like an owner, not a trader. No trading-pattern language.
 - Every `evidence_quotes` entry must be a verbatim substring of the transcript. If you cannot find a verbatim quote, set the entry to null.
-- Do not recompute the DCF or comparables. The tools did that. Use their outputs.
-- If `flash_pipeline_output` is present, reuse its INTEL/FORENSIC/CRITICAL FACTOR/VALUATION work only with its sources and periods. Recheck stale or changed inputs; prior conclusions are synthesis, not original evidence.
+- If `flash_pipeline_output` is present, reuse its INTEL/FORENSIC/CRITICAL FACTOR work only with its sources and periods. Recheck stale or changed inputs; prior conclusions are synthesis, not original evidence. Its valuation work (price targets, ratings) does not enter the board — deep's valuation evidence flows to THESIS directly.
 - The 8 parts are mandatory. Even if a part has thin evidence, write it and note the gap.

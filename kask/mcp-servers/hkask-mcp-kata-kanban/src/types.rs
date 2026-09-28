@@ -217,6 +217,9 @@ pub(crate) struct GoalListResponse {
 pub(crate) struct GoalInfo {
     pub goal_id: String,
     pub goal_text: String,
+    /// The criteria text in index order — a judge reads what each criterion
+    /// says, not just how many exist.
+    pub criteria: Vec<String>,
     pub criteria_count: usize,
     pub prediction: Option<f64>,
     /// Latest verdict ("done" | "continue" | "blocked"), if any.
@@ -313,6 +316,9 @@ pub struct TaskInfo {
     pub description: Option<String>,
     pub status: String,
     pub assignee: Option<String>,
+    /// The task's acceptance criteria text in index order — a reader sees
+    /// what "done" means, not just how many criteria exist.
+    pub criteria: Vec<String>,
     pub criteria_count: usize,
     /// Number of goal-criterion citations on the task.
     pub advances_count: usize,

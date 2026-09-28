@@ -12,20 +12,17 @@ contract:
     economic_trajectory: object|null
     simon_inquiry: object|null
     industry_outside_view: object|null
+    valuation_evidence: object
   output:
     business_franchise: object
     management_quality: object
     valuation: object
+    falsifiers: array
     thesis_statement: string
     rationale: string
 visibility: Public
 ---
-{# goal: Agent 12 THESIS — three-pillar investment thesis synthesis. Synthesizes the accumulated evidence and states whether it supports a thesis, contradicts it, or is insufficient. Emits no quality verdict — an investment-grade judgment is a separate outcome this pipeline never claims. #}
-{# #}
-{# rotation) and the economic_trajectory (from the trajectory probe). The #}
-{# Business Franchise pillar must reflect the rotated competitive framing. #}
-{# The Valuation terminal stage must be consistent with the economic #}
-{# trajectory's implications for the subject. #}
+{# goal: Agent 12 THESIS — three-pillar investment thesis synthesis, anchored on the Merchant Adventures (MAIA) reference model: business franchise / management quality / valuation as the expectations gap. Synthesizes the accumulated evidence and states whether it supports a thesis, contradicts it, or is insufficient. Emits no quality verdict — an investment-grade judgment is a separate outcome this pipeline never claims. The Business Franchise pillar must reflect the rotated competitive framing; the Valuation gap assessment must be consistent with the economic trajectory's implications. #}
 
 [inference]
 temperature = 0.3
@@ -93,7 +90,7 @@ Use the sourced `supported | contested | undetermined` answer to frame the thesi
 {{ economic_trajectory | tojson }}
 ```
 
-The Valuation terminal stage MUST be consistent with this trajectory. If the subject is fighting the falling cost (its model is displaced), the terminal stage must reflect displacement. If riding the falling cost (positioned for the adjacent possible), the terminal stage must reflect that positioning.
+The Valuation capability assessment MUST be consistent with this trajectory. If the subject is fighting the falling cost (its model is displaced), the capability assessment must reflect displacement. If riding the falling cost (positioned for the adjacent possible), the capability assessment must reflect that positioning.
 {% endif %}
 
 {% if simon_inquiry %}
@@ -112,26 +109,42 @@ In Business Franchise, use only source-supported niche leadership and its custom
 In Business Franchise, explain the company's advantage in terms of the industry's source-supported drivers, and name the drivers the company does not yet show. Carry `contested` drivers and frame conflicts into Risks. Keep only statements that stay true for years; the outside view is not a list of expected events.
 {% endif %}
 
-## The Three Pillars (firm methodology)
+## Valuation Evidence (required input — the render fails without it)
 
-### Pillar 1 — Business Franchise
+```json
+{{ valuation_evidence | tojson }}
+```
 
-- **Moat strength**: source (network / scale / switching cost / intangible / regulatory) and durability. If the Falstaffian rotation is available, the moat MUST reflect the rotated framing — a moat against a market creator is a dependency, not a moat.
-- **Value creation mechanism**: how does the business turn revenue into economic profit?
-- **Durability**: will the moat hold for 10+ years? (cross-reference IMAGINE 10Y scenario). If the economic trajectory is available, durability MUST be assessed against it — a moat depending on the old constraint is not durable if the trajectory removes that constraint.
+This object carries the four valuation tool outputs — `dcf_result`, `comparables_result`, `reverse_dcf_result`, `expectations_gap_result` — or an explicit `skip: {reason}`. Rules:
 
-### Pillar 2 — Management Quality
+- If any tool output is present, the Valuation pillar's price-discounted-expectations and gap assessment consume it directly. The Company Board carries no valuation synthesis — the tool outputs here are the evidence.
+- If `skip` is declared, the Valuation pillar carries `stage_status: "skipped: <reason>"`, states the valuation gap plainly, and the price conclusion reflects the missing evidence — never fill in a valuation the tools did not produce.
+- If the object contains neither tool outputs nor a `skip` declaration, do not synthesize a thesis: return `{"error": "valuation evidence incomplete: no tool outputs and no skip flag"}` as the entire output.
 
-- **Capital allocation verdict**: created / destroyed / mixed (with evidence from COMPANY CEO scorecard)
-- **Leadership assessment**: owner-operator? Long-term orientation? Disclosure quality?
+## The Three Pillars (Merchant Adventures reference model)
 
-### Pillar 3 — Valuation
+The three components combine to form the investment thesis (MAIA: "Perspectives on business franchise, management quality, and valuation combine to form our investment thesis on each company in the portfolio").
 
-3-stage framework:
-- **Consensus**: what the sell-side consensus discounts (use DCF and comparables from COMPANY)
-- **Normalization**: what the business earns through a normalized cycle
-- **Terminal**: what the business earns in steady state (cross-reference IMAGINE 10Y scenario). If the economic trajectory is available, the terminal MUST be set in the world the trajectory creates — not a steady-state continuation of the current model if the trajectory displaces it.
-- **Price conclusion**: at the as-of price, is ownership attractive, unattractive or indeterminate? Explain why in relation to the terminal stage and the IMAGINE 10Y scenario; expose conflicts or missing price evidence rather than inventing a target. This is a valuation judgment, not an add/trim price level.
+### Pillar 1 — Business/Franchise: what the company does to make money, and why it is profitable and growing
+
+- **Money mechanism**: how does the business take one dollar and turn it into two? (MAIA's framing question — the nuts and bolts of the financial model and scaling.)
+- **Why profitable**: the technical skills and advantages the company has — moat source (network / scale / switching cost / intangible / regulatory) with evidence. If the Falstaffian rotation is available, the moat MUST reflect the rotated framing — a moat against a market creator is a dependency, not a moat.
+- **Why growing (or not)**: the scaling model and its engine, at its demonstrated rate.
+- **Durability**: will the advantage hold for 10+ years? (cross-reference IMAGINE 10Y scenario). If the economic trajectory is available, durability MUST be assessed against it — an advantage depending on the old constraint is not durable if the trajectory removes that constraint.
+
+### Pillar 2 — Management: why the people running the company are the right ones to keep it growing and making money
+
+- **Right-people verdict**: the forward judgment, argued from evidence — leadership and culture as the key to reinvestment of capital and organizational resilience (MAIA: "There are no exceptional results without exceptional people doing exceptional work").
+- **Evidence**: the CEO scorecard (5-year capital allocation, M&A, strategic direction) and CFO scorecard (working capital, cash conversion) from COMPANY; owner-operator or hired; disclosure quality. The scorecards are the evidence for the verdict, not the verdict itself.
+
+### Pillar 3 — Valuation: what expectations the current price discounts, and the gap versus what the business is capable of achieving
+
+- **Price-discounted expectations**: reverse-solve what the current price implies (growth, margin, duration) from `valuation_evidence` — the reverse-DCF and expectations-gap outputs; the DCF and comparables outputs anchor the modelled levels.
+- **Business capability**: what the business is capable of achieving — through-cycle, with quality management or with the management it has (state which branch the evidence supports). Characterize the business the MAIA way: invested-capital-driven (book multiple, ROE and book growth) or sales-driven (sales multiple, net margin and sales growth).
+- **The gap**: does the price demand more than the business demonstrates, less, or roughly what it demonstrates? State direction and, where the tools compute it, magnitude.
+- **Price conclusion**: at the as-of price, is ownership attractive, unattractive or indeterminate — and why, in relation to the gap and the IMAGINE 10Y scenario. Expose conflicts or missing price evidence rather than inventing a target. This is a valuation judgment, not an add/trim price level.
+
+Napkin-math discipline (MAIA): the target-multiple frame is Value = Profits / (Target Return − Growth Rate) — with the house target return of 15% and a 10% long-term growth ceiling, target multiple to sales = Normal Net Margin / 0.05 and target multiple to book = Normal ROE / 0.05. Use the tool outputs as the computed evidence; do not rebuild them in prose.
 
 ## Thesis Statement
 
@@ -142,22 +155,26 @@ One paragraph covering all three pillars, in the time-relative present (qualify 
 ```json
 {
   "business_franchise": {
-    "moat_strength": "(source + durability)",
-    "value_creation": "(mechanism)",
+    "money_mechanism": "(how the business takes one dollar and turns it into two)",
+    "why_profitable": "(the technical skills and advantages — moat source and evidence)",
+    "why_growing": "(the scaling model and its demonstrated rate)",
     "durability": "10Y+ | 5-10Y | < 5Y"
   },
   "management_quality": {
-    "capital_allocation": "created | destroyed | mixed",
+    "right_people_verdict": "(why these people are — or are not — the right ones to keep it growing and making money)",
+    "capital_reinvestment": "(reinvestment of capital and organizational resilience, from the CEO/CFO scorecards)",
     "leadership": "owner-operator | hired | unknown",
-    "evidence": "(specific facts from COMPANY CEO scorecard)"
+    "evidence": "(specific facts from the scorecards)"
   },
   "valuation": {
-    "consensus": "(sourced level or unavailable)",
-    "normalization": "(sourced level or unavailable)",
-    "terminal": "(sourced level or unavailable)",
-    "narrative": "(how the 3 stages combine and reconcile with IMAGINE 10Y)",
-    "price_conclusion": "(at as-of price: attractive | unattractive | indeterminate, with reason)"
+    "stage_status": "(run | skipped: <reason>)",
+    "price_discounted_expectations": "(what the current price implies — growth, margin, duration)",
+    "business_capability": "(what the business can achieve through-cycle, with quality management or the management it has; book-driven or sales-driven characterization)",
+    "gap": "(price demands more | less | roughly what the business demonstrates — with magnitude where computed)",
+    "price_conclusion": "(at as-of price: attractive | unattractive | indeterminate, with reason)",
+    "narrative": "(reconciliation with IMAGINE 10Y)"
   },
+  "falsifiers": ["(what observation would confirm or refute the thesis — reference the checkpoint map and IMAGINE predictions; the dated checkpoints themselves live in the report's Outlook)"],
   "thesis_statement": "(one paragraph)",
   "rationale": "(one paragraph)"
 }
@@ -167,8 +184,9 @@ One paragraph covering all three pillars, in the time-relative present (qualify 
 
 - Do not emit a verdict field. State whether the accumulated evidence supports the thesis, contradicts it, or is insufficient.
 - The thesis statement must cover all three pillars. A thesis that only covers valuation is incomplete.
-- The terminal stage must cross-reference the IMAGINE 10Y scenario. If IMAGINE is absent, flag a gap; never invent a terminal scenario or self-assign a quality grade.
+- The Valuation gap assessment must cross-reference the IMAGINE 10Y scenario. If IMAGINE is absent, flag a gap; never invent a capability scenario or self-assign a quality grade.
 - If `rotated_board` is available, the Business Franchise pillar MUST reflect the rotated competitive framing. Do not reproduce corrected framing errors.
-- If `economic_trajectory` is available, the Valuation terminal stage MUST be consistent with the trajectory's implications. Do not project a steady-state terminal that ignores the falling cost's impact.
+- If `economic_trajectory` is available, the Valuation capability assessment MUST be consistent with the trajectory's implications. Do not project a steady-state capability that ignores the falling cost's impact.
 - Do not introduce new analysis. You are synthesizing COMPANY, FALSTAFFIAN, GORILLA, ECONOMIC TRAJECTORY, the pre-draft value-gorilla answer, and IMAGINE outputs. Keep every thesis field in the time-relative present, with current facts qualified by the as-of date. Dated forecasts, management guidance and add/trim or buy-below/sell-above price levels belong in the report's Outlook section only, not THESIS; IMAGINE remains an internal scenario input. The skill checks the thesis for these patterns before it reaches the report.
 - Make the thesis statement specific enough to check against evidence.
+- A skipped valuation stage carries `stage_status: "skipped: <reason>"` and the report's label carries `stage skipped (flagged)` — never a clean result.

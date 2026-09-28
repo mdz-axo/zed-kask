@@ -71,7 +71,7 @@ Generate 2-3 questions at level {{ current_level }}.
 
 ## Output Requirements
 
-Respond with a JSON object:
+Respond with a JSON object containing `questions`, `evaluations`, `current_level`, and the updated running `assessment`:
 
 ```json
 {
@@ -82,9 +82,12 @@ Respond with a JSON object:
   "evaluations": [
     {"answer": "...", "rating": "solid|partial|gap", "note": "..."}
   ],
-  "current_level": 1
+  "current_level": 1,
+  "assessment": {"<area>": "solid|partial|gap"}
 }
 ```
+
+`assessment` is the updated running assessment: each area's Solid/Partial/Gap rating accumulated from all rounds so far, including this one. It feeds the next round's `assessment_so_far` input and the final `grill-me-assess` synthesis.
 
 ## Constraints
 

@@ -18,7 +18,7 @@ Reduct.video — the transcript bundled with its video as one linked artifact: c
 
 - **Initial condition:** a stored transcript with word timings (Phase 1).
 - **Target condition:** the Convergence gate passes and every quote in the summary resolved with `educt_locate`.
-- **D/P:** transcription, correction, paragraph, speaker and highlight passes are P (model passes), critiqued by each pass's validated layer stats and rejection rate, and by the operator's review of the selection. Layer validation, EDL composition, rendering, `educt_locate` and the gate are D.
+- **D/P labelling:** transcription, correction, paragraph, speaker and highlight passes are P (model passes), critiqued by each pass's validated layer stats and rejection rate, and by the operator's review of the selection. Layer validation, EDL composition, rendering, `educt_locate` and the gate are D.
 
 ## When to Use
 

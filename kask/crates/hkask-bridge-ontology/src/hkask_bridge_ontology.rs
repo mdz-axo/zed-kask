@@ -102,6 +102,9 @@ pub mod ml_schema;
 pub mod omc;
 pub mod ontology_graph;
 pub mod pko;
+pub mod published;
+#[cfg(test)]
+mod published_sources;
 pub mod rdf;
 pub mod schema_org;
 pub mod sdmx;

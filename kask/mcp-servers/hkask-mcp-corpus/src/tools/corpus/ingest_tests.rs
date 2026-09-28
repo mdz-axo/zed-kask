@@ -77,7 +77,7 @@ fn tagged_chunk_json(entity_ref: &str, source: &str, text: &str) -> Value {
     let canonical = hkask_bridge_ontology::term_resolution::canonicalize_terms(["test concept"]);
     json!({
         "entity_ref": entity_ref,
-        "classification": {"status":"classified","ontology_protocol":"published-term-resolution-v1"},
+        "classification": {"status":"classified","ontology_protocol":hkask_bridge_ontology::term_resolution::TERM_RESOLUTION_PROTOCOL},
         "source": source,
         "text": text,
         "candidate_terms": canonical.candidate_terms,
@@ -1052,7 +1052,7 @@ async fn exact_source_grounded_qa_round_trips_with_manifest() -> anyhow::Result<
             .ok_or_else(|| anyhow::anyhow!("missing ontology"))?;
         assert_eq!(
             ontology.ontology_protocol.as_deref(),
-            Some("published-term-resolution-v1")
+            Some(hkask_bridge_ontology::term_resolution::TERM_RESOLUTION_PROTOCOL)
         );
         assert_eq!(ontology.candidate_terms, vec!["test concept".to_string()]);
         assert!(ontology.ontology_tags.contains_key("core"));

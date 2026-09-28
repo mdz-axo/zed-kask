@@ -640,6 +640,7 @@ impl KanbanServer {
                         .map(|g| GoalInfo {
                             goal_id: g.id.to_string(),
                             goal_text: g.goal_text,
+                            criteria: g.criteria.iter().map(|c| c.description.clone()).collect(),
                             criteria_count: g.criteria.len(),
                             prediction: g.prediction,
                             latest_verdict: g.verdicts.last().map(|v| v.verdict.to_string()),
@@ -828,6 +829,11 @@ impl KanbanServer {
                                 description: t.description,
                                 status: t.status.to_string(),
                                 assignee: t.assignee.map(|a| a.to_string()),
+                                criteria: t
+                                    .criteria
+                                    .iter()
+                                    .map(|c| c.description.clone())
+                                    .collect(),
                                 criteria_count: t.criteria.len(),
                                 advances_count: t.advances.len(),
                                 swarm_id: t.swarm_id,

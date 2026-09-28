@@ -133,7 +133,7 @@ skill's artifacts.
 - **Initial condition:** a description or a source skill, a Phase 0 discovery verdict that no installed skill already covers it, plus the ontological anchors found in Phase 1.
 - **Target condition:** a SKILL.md and its templates with zero findings from the mechanical checks (prescreen, contract audit, S9/S10 sweep, corpus render tests) and zero unresolved S/T validation failures, plus one recorded functional trial in which a representative task run through the new skill meets its predeclared expected result. Structural validity alone is not the target: a skill can pass every check and still not do its job.
 
-## Step types
+## Step types (D/P labelling)
 
 | Phase | Type | Oracle / critique |
 |-------|------|-------------------|
@@ -357,6 +357,31 @@ If any MCP tool call fails, call `curator_report_skill_use_issue` with:
 Then continue with the best available information — do not abort.
 ```
 
+#### D/P labelling pattern
+
+Every computation-prescribing SKILL.md carries a **D/P labelling** section —
+the convention ratified as P8.4 (entropy-matched computation). For each step
+that prescribes computation:
+
+```
+### Step: Route the computation (example)
+
+Label each step D or P per P8.4:
+- **D** — name the oracle (`lisp_eval`, `lean_check`, `cargo`, a server-side
+  tool). The answer is pinned and verification is cheap.
+- **P** — name the collapse path: propose-verify (P step, D gate), explicit
+  probabilistic compute (D server over P inputs), or calibrated forecast
+  (external ground truth). Name the critique path (the operator, a separate
+  render, resolved outcomes).
+```
+
+Hybrid steps label at sub-step granularity; `render_template` is D
+(deterministic render) feeding P (model consumption). The section is the
+audit floor — presence is checkable by filesystem walk; substance (does each
+D step name a real oracle, does any P step hide a cheap deterministic check)
+is judged in review. A skill that calls `lisp_eval` and labels itself "all P"
+is checkably wrong.
+
 ### Phase 4 — Validate (mechanical counts, S1–S13, functional trial)
 
 1. **Mechanical checks (D).** Run via `terminal` and count the findings
@@ -403,9 +428,10 @@ The trial task and its expected result never change between re-entries;
 changing them to pass is fitting the test to the artifact.
 
 Every scaffolded SKILL.md states: an initial condition (inputs and how the
-current state is measured), an observable target condition, its bounded
-PDCA loop (or a justified single-pass exemption), and a step-type table
-labelling each step D (naming its oracle) or P (naming its critic).
+current state is measured), an observable target condition, its bounded PDCA
+loop (or a justified single-pass exemption), and a step-type table labelling
+each step D (naming its oracle) or P (naming its critic and collapse path),
+per the D/P labelling pattern (P8.4).
 
 ## Registry Templates
 

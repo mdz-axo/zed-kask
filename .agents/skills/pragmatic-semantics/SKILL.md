@@ -1,20 +1,25 @@
 ---
 name: pragmatic-semantics
 core: true
-description: "Epistemic discipline for classifying statements by certainty level, constraint force, and domain ontology anchoring. Distinguish IS from OUGHT, declarative from probabilistic from subjunctive. Resolve conflicts using OT ranking."
+description: "Epistemic discipline for classifying statements by certainty level, constraint force, and domain ontology anchoring. Distinguish IS from OUGHT, declarative from probabilistic from subjunctive. Resolve conflicts using OT ranking. Route computation steps to deterministic or probabilistic machines (D/P labelling, P8.4)."
 ---
 
 # Pragmatic Semantics
 
-Epistemic discipline for classifying statements by certainty level, constraint force, and domain ontology anchoring. Distinguish IS from OUGHT, declarative from probabilistic from subjunctive. Classify provenance of facts and their ontology tier (Core / Dual-Axis / Domain Supplement). Resolve conflicts using OT ranking with ontology anchoring.
+Epistemic discipline for classifying statements by certainty level, constraint force, and domain ontology anchoring. Distinguish IS from OUGHT, declarative from probabilistic from subjunctive. Classify provenance of facts and their ontology tier (Core / Dual-Axis / Domain Supplement). Resolve conflicts using OT ranking with ontology anchoring. Route computation steps to the machine whose conditional entropy matches the task's — D/P labelling per P8.4.
 
 ## Reference models
 
-Hume's is–ought distinction (*A Treatise of Human Nature*, 1739); Optimality Theory's strict-domination ranking (Prince & Smolensky, 1993) for conflict resolution; epistemic modality (Palmer, *Mood and Modality*, 1986) for declarative / probabilistic / subjunctive.
+Hume's is–ought distinction (*A Treatise of Human Nature*, 1739); Optimality Theory's strict-domination ranking (Prince & Smolensky, 1993) for conflict resolution; epistemic modality (Palmer, *Mood and Modality*, 1986) for declarative / probabilistic / subjunctive. Entropy-matched computation (P8.4): Shannon (1948) and Jaynes (1957) for conditional entropy; Turing (1936, 1939) for deterministic computation and oracles; amortized inference (Gershman & Goodman 2014; Hu et al. 2024) for learned computation; Tetlock & Gardner (2015) and Brier (1950) for calibrated forecasts — the five derived-registry rulings.
+
+## D/P labelling
+
+Statement classification (all axes of semantics-classify-statement, the tiers of semantics-conflict-resolve, provenance-trace steps 1–6) and semantics-route-step's regime classification are P — judgment, critiqued by the operator and by the convergence gate's inputs. The confidence computation (classify step 7), the lexicographic ranking (conflict-resolve step 7), the convergence gate, and route-step's mismatch flags over named oracles are D (`lisp_eval`, the forms below). A D tag on a step with no real oracle is checkably wrong; a P tag on a step with a cheap deterministic checker is a precision-improvement candidate.
 
 ## When to Use
 
 - When a statement needs classification on ontological (IS/OUGHT), epistemic (declarative/probabilistic/subjunctive), and domain ontology anchoring axes.
+- When routing a computation step to the machine whose conditional entropy matches the task's — deterministic oracle versus learned model — and labelling its D/P regime (P8.4).
 - When determining the constraint force (Prohibition, Guardrail, Guideline, Evidence, Hypothesis) and provenance of a statement.
 - When tracing the origin and evidentiary chain of a factual claim through hKask's data layers to its authoritative source.
 - When identifying gaps in a claim's derivation chain and recommending verification steps.
@@ -63,6 +68,19 @@ Hume's is–ought distinction (*A Treatise of Human Nature*, 1739); Optimality T
 8. Determine the winning statement and select a resolution strategy (Override, Scope, Defer, Escalate, or Confirm if no conflict exists).
 9. Escalate to human review if two Prohibitions conflict or if the comparison returns `tie`.
 
+### semantics-route-step
+
+Standalone analysis: it classifies computation steps (P8.4), not statements, and is not part of the three-statement convergence gate.
+
+1. Classify the step's regime by the entropy-matching rule:
+   - **D** — the answer is pinned and a deterministic checker exists. Name the oracle (`lisp_eval`, `lean_check`, `cargo`, a server-side oracle).
+   - **P, propose-verify** — knowledge is exhibited only in data; the model proposes and a D gate collapses. Name the gate.
+   - **P, explicit probabilistic compute** — the answer is genuinely a distribution; a D server computes over P inputs. Name the server.
+   - **P, calibrated forecast** — no characterizable posterior and no cheap oracle; judgment scored against external ground truth. Name the resolution mechanism (resolved outcomes, Brier).
+2. Emit the tag: `{ "step": <step id>, "regime": "D" | "P:propose-verify" | "P:probabilistic" | "P:forecast", "oracle": <the named oracle, gate, server or resolution mechanism>, "critique": <what checks this label> }`.
+3. Flag both mismatch diseases: a P step that could be D is a precision-improvement candidate; a D step where the answer has genuine multiplicity is false certainty.
+4. Label hybrid steps at sub-step granularity (precedent: `falsifiability` splits its step 5 into a P call and a D verdict). `render_template` is D (deterministic render) feeding P (model consumption) — label the render and the consumption separately.
+
 ### Convergence
 
 9. Gate — call `lisp_eval` with:
@@ -82,11 +100,13 @@ Hume's is–ought distinction (*A Treatise of Human Nature*, 1739); Optimality T
 | `semantics-classify-statement.j2` | Classify a statement on three axes: ontological (IS/OUGHT), epistemic (declarative/probabilistic/subjunctive), and domain ontology anchoring (core/dual_axis/domain_supplement). Determine its constraint force, provenance, and confidence with tier-specific modifiers. |
 | `semantics-provenance-trace.j2` | Trace the provenance of a claim through hKask's data layers including ontology tier confidence modifiers. Identify evidence sources, confidence level, and verification recommendations. |
 | `semantics-conflict-resolve.j2` | Resolve a conflict between statements using 5-tier OT ranking. Rank by ontological type, epistemic mode, constraint force, evidence provenance, and ontology anchoring (FIBO > SUMO > unanchored). |
+| `semantics-route-step.j2` | Classify a computation step into its D/P regime per P8.4 (entropy-matched routing): D (named oracle), P:propose-verify (named gate), P:probabilistic (named server), P:forecast (named resolution mechanism). Emits the step tag and flags both mismatch diseases. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `pragmatic-semantics/semantics-classify-statement`) and a context object with the required variables.
 
 Template context variables (from each template's [inference] contract):
 - `semantics-conflict-resolve.j2`: `provenance_result`,`classification_result`
+- `semantics-route-step.j2`: `step_description`, `available_oracles`
 
 
 ## Constraints
@@ -94,6 +114,7 @@ Template context variables (from each template's [inference] contract):
 - `semantics-classify-statement.j2`: Public. IS-statements are never Prohibitions. Declarative OUGHT-statements map to Prohibition or Guardrail. Unknown provenance → confidence ≤ 0.3. Specification provenance → confidence ≥ 0.8 (verify spec is current). FIBO +0.10, SUMO +0.05, unanchored -0.15.
 - `semantics-provenance-trace.j2`: Public. Every step must identify a concrete location. Unknown source → confidence ≤ 0.2. Direct spec quotes → confidence ≥ 0.9. Inference steps reduce confidence by ≥ 0.1.
 - `semantics-conflict-resolve.j2`: Public. OUGHT never loses to IS. Two Prohibitions conflicting → escalate. Resolution enum: override, scope, defer, escalate, confirm.
+- `semantics-route-step.j2`: Public. Every D tag names a real oracle; every P tag names its collapse path. A step tagged D where the answer has genuine multiplicity, or P where a deterministic checker exists, is flagged as a mismatch disease, never silently relabelled.
 - Conflict resolution runs only if `conflicts_detected == true`; otherwise record it as skipped, not a successful resolution. If true, require a ranked result or report the unresolved conflict; never default a missing result to `{}` and claim convergence.
 - Convergence check incorporates all three analysis steps (classification, provenance, conflict resolution), not just classification.
 - This SKILL.md body is the authoritative methodology. Jinja2 templates in the registry are structured reference versions of the same content.

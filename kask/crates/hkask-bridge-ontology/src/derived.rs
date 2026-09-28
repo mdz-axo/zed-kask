@@ -538,6 +538,18 @@ pub const DERIVED_CONCEPTS: &[DerivedConcept] = &[
         authority: "operator ruling 2026-09-25; Simon, Hidden Champions of the 21st Century (2009)",
     },
     DerivedConcept {
+        term: "investment_thesis",
+        aliases: &["three pillar thesis", "maia thesis structure"],
+        identity: "business franchise + management quality + valuation (expectations gap) combine into the thesis on a company",
+        definition: "The Merchant Adventures (MAIA) thesis structure: (1) Business/Franchise — what the company does to make money and why it is profitable and growing (how it takes one dollar and turns it into two); (2) Management — why the people running the company are the right ones to keep it growing and making money; (3) Valuation — the expectations the current price discounts, and the gap versus what the business is capable of achieving with quality management or the management it has. The thesis carries its own confirm-or-refute factors (Popper falsifiability).",
+        constituents: &[
+            "business franchise",
+            "management quality",
+            "expectations gap",
+        ],
+        authority: "operator ruling 2026-09-27; Merchant Adventures (John Brooks), Technological Capability and Human Judgment (Substack 138628465)",
+    },
+    DerivedConcept {
         term: "maia_listening",
         aliases: &["maia listening", "maia v3 listening", "maia method"],
         identity: "an earnings call read through a stance block and seven sections, keeping only claims linked to a strategic path, each cited verbatim from the transcript",
@@ -583,6 +595,58 @@ pub const DERIVED_CONCEPTS: &[DerivedConcept] = &[
             "transcript correction",
         ],
         authority: "operator ruling 2026-09-25; Reduct.video product and API (reduct.video)",
+    },
+    DerivedConcept {
+        term: "entropy",
+        aliases: &[
+            "shannon entropy",
+            "information entropy",
+            "conditional entropy",
+        ],
+        identity: "H = -sum p log p, conditional on a knowledge state",
+        definition: "An observer's uncertainty over the distribution consistent with what is known. Jaynes's maximum-entropy reading of Boltzmann: the same formal quantity serves statistical mechanics (multiplicity of microstates) and information theory (an observer's uncertainty), and it is always conditional on a knowledge state. Task entropy is the multiplicity of answers consistent with the specification plus everything the system has compiled.",
+        constituents: &["probability distribution", "knowledge state"],
+        authority: "operator ruling 2026-09-27; Shannon (1948), A Mathematical Theory of Communication; Jaynes (1957), Information Theory and Statistical Mechanics",
+    },
+    DerivedConcept {
+        term: "deterministic_computation",
+        aliases: &["deterministic compute"],
+        identity: "execution with multiplicity 1: same input, one output",
+        definition: "Computation whose output is a function of its input — the program is an executable proof that the answer is pinned. Enforces zero conditional entropy relative to the spec, which is why deterministic machines serve as trust anchors. Spec errors remain upstream epistemic risk no paradigm removes.",
+        constituents: &["program", "input", "specification"],
+        authority: "operator ruling 2026-09-27; Turing (1936), On Computable Numbers, with an Application to the Entscheidungsproblem",
+    },
+    DerivedConcept {
+        term: "probabilistic_computation",
+        aliases: &["probabilistic compute", "learned computation"],
+        identity: "execution with multiplicity > 1: same input, distribution over outputs",
+        definition: "Computation whose output is a sample from a learned approximation of a posterior — the model's knowledge limit, not the world's and not the user's. Indexical: varies with the training distribution. Model confidence is not task probability; calibration against resolved outcomes re-ties the machine's distribution to the world's.",
+        constituents: &[
+            "learned model",
+            "training distribution",
+            "posterior approximation",
+        ],
+        authority: "operator ruling 2026-09-27; Gershman & Goodman (2014), Amortized Inference in Learning; Hu, Jain & Elmoznino (2024), Amortizing intractable inference in large language models, arXiv:2310.04363",
+    },
+    DerivedConcept {
+        term: "verification_oracle",
+        aliases: &["oracle", "deterministic checker"],
+        identity: "a named deterministic procedure that settles a candidate answer at bounded cost",
+        definition: "The collapse path for a probabilistic proposal: verifying a candidate is routinely orders of magnitude cheaper than generating it by search (a P/NP-shaped asymmetry). Every D label names its oracle; a D label with no real oracle is checkably wrong. The set of cheap oracles is the verification-cost frontier, and it moves as tooling improves.",
+        constituents: &[
+            "candidate answer",
+            "cost bound",
+            "verification-cost frontier",
+        ],
+        authority: "operator ruling 2026-09-27; Turing (1939), Systems of Logic Based on Ordinals",
+    },
+    DerivedConcept {
+        term: "calibrated_forecast",
+        aliases: &["calibrated prediction", "calibrated forecasting"],
+        identity: "a probability assignment scored against resolved outcomes",
+        definition: "The collapse path when no characterizable posterior exists and no cheap oracle can settle the question: judgment quantified as probability and re-tied to the world by external ground truth — resolved outcomes, Brier scoring. The discipline that keeps probabilistic computation honest at the knowledge frontier.",
+        constituents: &["probability assignment", "resolved outcome", "brier score"],
+        authority: "operator ruling 2026-09-27; Tetlock & Gardner (2015), Superforecasting; Brier (1950), Verification of forecasts expressed in terms of probability",
     },
 ];
 
@@ -695,6 +759,19 @@ mod tests {
         assert!(resolve_derived("expectation gap").is_none());
     }
 
+    #[test]
+    fn investment_thesis_resolves_with_identity_and_authority() {
+        let concept = resolve_derived("investment thesis").expect("investment thesis is defined");
+        assert_eq!(concept.term, "investment_thesis");
+        assert!(
+            concept
+                .definition
+                .contains("expectations the current price discounts")
+        );
+        assert!(concept.authority.contains("2026-09-27"));
+        assert!(concept.authority.contains("Merchant Adventures"));
+    }
+
     /// expect: [P5] The Lean/Kata vocabulary the skills use resolves to
     /// published anchors (LEI lexicon, Wikidata) with the 2026-09-24 ruling,
     /// and the PDCA identity names all four steps.
@@ -769,6 +846,35 @@ mod tests {
             ("improvisation", "Johnstone"),
         ] {
             let concept = resolve_derived(term).expect("reference model is defined");
+            assert!(
+                concept.authority.contains(marker),
+                "{term}: {}",
+                concept.authority
+            );
+            assert!(
+                concept.authority.starts_with("operator ruling 2026-"),
+                "{term} cites the ruling"
+            );
+        }
+    }
+
+    /// P8.4 (entropy-matched computation): the five routing rulings resolve
+    /// with their published groundings.
+    #[test]
+    fn p84_routing_terms_resolve_with_published_authority() {
+        for (term, marker) in [
+            ("entropy", "Shannon (1948)"),
+            ("entropy", "Jaynes (1957)"),
+            ("conditional entropy", "Jaynes"),
+            ("deterministic computation", "Turing (1936)"),
+            ("probabilistic computation", "Gershman & Goodman (2014)"),
+            ("probabilistic computation", "arXiv:2310.04363"),
+            ("verification oracle", "Turing (1939)"),
+            ("oracle", "Turing (1939)"),
+            ("calibrated forecast", "Tetlock & Gardner (2015)"),
+            ("calibrated forecast", "Brier (1950)"),
+        ] {
+            let concept = resolve_derived(term).expect("P8.4 ruling is defined");
             assert!(
                 concept.authority.contains(marker),
                 "{term}: {}",

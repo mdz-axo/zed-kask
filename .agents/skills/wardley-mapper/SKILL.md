@@ -14,7 +14,7 @@ Wardley, *Wardley Maps* (2016) — `onto_anchor` → derived `wardley_map` (oper
 
 - **Initial condition:** the target system description and any supplied component inventory or previous map.
 - **Target condition:** the Convergence gate passes and the map plus recommendations reach the chat through `present-map`.
-- **D/P:** inventory, evolution classification, coordinates, movement and recommendations are P — judgment, critiqued by the operator and by the requirement that every recommendation trace to a named component and movement. The Convergence gate and `present-map` (pure rendering) are D. An evolution class is a judgment against Wardley's characteristics, not a measurement; say so when data is sparse.
+- **D/P labelling:** inventory, evolution classification, coordinates, movement and recommendations are P — judgment, critiqued by the operator and by the requirement that every recommendation trace to a named component and movement. The Convergence gate and `present-map` (pure rendering) are D. An evolution class is a judgment against Wardley's characteristics, not a measurement; say so when data is sparse.
 
 ## When to Use
 
@@ -108,6 +108,7 @@ Template context variables (from each template's [inference] contract):
 - `inventory-components.j2`: `target_system`,`component_inventory`
 - `map-value-chain.j2`: `classified_components`
 - `synthesize-recommendations.j2`: `movement_analysis`,`current_map`
+- `present-map.j2` (pure render — no `[inference]` contract): `map_diagram` (string — the mermaid quadrant chart text), `recommendations` (array of objects, each `{category, component, recommendation, priority, confidence, rationale}` — all plain strings; passing an array of strings renders N/A rows), `rationale` (string — the assessment paragraph)
 
 
 ## Constraints

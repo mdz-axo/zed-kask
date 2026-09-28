@@ -1,7 +1,7 @@
 //! Company-research notes and file attachments.
 use crate::{
     CompaniesServer, map_portfolio_error,
-    research_store::{PortfolioError, ResearchStore},
+    screen_store::{PortfolioError, ResearchStore},
     types::{
         FileAttachRequest, FileDeleteRequest, FileListRequest, NoteAddRequest, NoteDeleteRequest,
         NoteListRequest,

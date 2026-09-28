@@ -419,11 +419,18 @@ fn task_list_unfiltered() {
     let (svc, board, owner) = make_service_with_board();
     svc.task_create(board.id, TaskSpec::new("T1".into()), owner)
         .unwrap();
-    svc.task_create(board.id, TaskSpec::new("T2".into()), owner)
-        .unwrap();
+    let spec = TaskSpec::new("T2".into())
+        .with_criteria(vec![VerificationCriterion::new("compile".into())]);
+    svc.task_create(board.id, spec, owner).unwrap();
 
     let tasks = svc.task_list(board.id, TaskFilter::all()).unwrap();
     assert_eq!(tasks.len(), 2);
+    // The criteria text round-trips through the list — a reader sees what
+    // "done" means, not just how many criteria exist. The TaskInfo wire
+    // projection maps this text 1:1.
+    let t2 = tasks.iter().find(|t| t.title == "T2").unwrap();
+    assert_eq!(t2.criteria.len(), 1);
+    assert_eq!(t2.criteria[0].description, "compile");
 }
 
 #[test]

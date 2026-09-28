@@ -57,7 +57,7 @@ Structured data extraction from unstructured text. Identifies entities, extracts
 
 Before mapping, check every entity's `entity_text` and every relation trigger against the source with `lisp_eval` `(string-contains entity_text source_text)`. Drop anything that fails and list it as `rejected_extractions`; a model-produced string that is not in the source is a fabrication, not an entity. Offsets are not checked (the interpreter has no substring-at-offset builtin), so they stay approximate — a consumer that needs an exact offset (e.g. `grounding-verify`) must locate the verified text itself.
 
-**D/P.** Entity identification, typing, relation extraction, confidence and field inference are P, critiqued by this substring check and by the operator; the substring check and the Convergence gate are D. Reference models: OpenIE (Banko et al. 2007), ACE2005 standoff annotation, CoNLL-2012 coreference.
+**D/P labelling.** Entity identification, typing, relation extraction, confidence and field inference are P, critiqued by this substring check and by the operator; the substring check and the Convergence gate are D. Reference models: OpenIE (Banko et al. 2007), ACE2005 standoff annotation, CoNLL-2012 coreference.
 
 ### Convergence
 

@@ -5,11 +5,11 @@
 //! vocabulary the extraction prompts offer alongside the domain ontologies
 //! (GOLEM for narrative, SEPIO for epistemic, FIBO for financial).
 //!
-//! Every URI in this module is verified against the official machine-readable
-//! release — `fixtures/schema-org-terms.txt` pins the term list (source URL
-//! and fetch date in the fixture header), and `all_terms_are_official` fails
-//! the build if a term drifts from it. Do not add a term that is not in that
-//! fixture.
+//! The full schema.org release (every layer of the pinned version) is loaded
+//! from `sources/schema-org/` and resolved through `published`. This module is
+//! the curated predicate menu the extraction prompts offer, not the
+//! vocabulary: `all_terms_are_official` fails the build if a menu entry is
+//! not a published property of the loaded release.
 //!
 //! The fabricated predicates this module replaces were emitted by the corpus
 //! pipeline for years before verification: `schema:causes`, `schema:resultOf`,
@@ -21,8 +21,8 @@
 //! `schema:subject`'s real counterpart is `SUBJECT_OF` (the inverse of
 //! `about`).
 //!
-//! Reference: https://schema.org/docs/developers.html (release v30.0,
-//! verified 2026-08-30 against schemaorg-all-https.jsonld).
+//! Reference: https://schema.org/docs/developers.html (release pinned in
+//! `sources/SOURCES.lock`).
 //!
 //! Pattern: thin mapping layer — canonical URI constants, no dependencies.
 //! Mirrors the sepio and dc_bibo modules in this crate.
@@ -98,47 +98,23 @@ schema_org_terms! {
 mod tests {
     use super::*;
 
-    /// Fabrication guard: every term in this module must appear in the
-    /// official schema.org term list checked in as a fixture (source URL
-    /// and fetch date in the fixture header). A term that is not in the
-    /// published vocabulary fails here — pin tests on the constants alone
-    /// cannot catch a plausible-looking invented URI.
+    /// Fabrication guard: every menu predicate is a published property of the
+    /// loaded schema.org release. A plausible-looking invented URI fails here.
     #[test]
     fn all_terms_are_official() {
-        let fixture_path = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/schema-org-terms.txt");
-        let fixture = std::fs::read_to_string(fixture_path)
-            .unwrap_or_else(|e| panic!("failed to read {fixture_path}: {e}"));
-        let official: std::collections::HashSet<&str> = fixture
-            .lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty() && !line.starts_with('#'))
-            .collect();
-        assert!(
-            !official.is_empty(),
-            "fixture {fixture_path} contains no terms"
-        );
         for term in ALL_TERMS {
-            assert!(
-                official.contains(term),
-                "{term} is not in the official schema.org term list ({fixture_path}) — \
-                 it must be verified against the schema.org release before use"
-            );
+            let published = crate::published::get(term).unwrap_or_else(|| {
+                panic!("{term} is not published in the loaded schema.org release")
+            });
+            assert_eq!(published.kind, "property", "{term} must be a property");
         }
     }
 
     /// The fabricated predicates this module replaced must stay absent —
-    /// if a future schema.org release adds one of them, re-verify and move
-    /// it into the fixture deliberately.
+    /// if a future schema.org release adds one of them, re-verify before
+    /// admitting it to the menu.
     #[test]
     fn fabricated_predicates_stay_absent() {
-        let fixture_path = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/schema-org-terms.txt");
-        let fixture = std::fs::read_to_string(fixture_path)
-            .unwrap_or_else(|e| panic!("failed to read {fixture_path}: {e}"));
-        let official: std::collections::HashSet<&str> = fixture
-            .lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty() && !line.starts_with('#'))
-            .collect();
         for fabricated in [
             "schema:causes",
             "schema:resultOf",
@@ -147,10 +123,9 @@ mod tests {
             "schema:subject",
         ] {
             assert!(
-                !official.contains(fabricated),
-                "{fabricated} was added to the fixture — it was fabricated at the \
-                 2026-08-30 verification; re-verify against the current schema.org \
-                 release before admitting it"
+                !crate::published::contains(fabricated),
+                "{fabricated} is now published — it was fabricated at the 2026-08-30 \
+                 verification; re-verify against the release before using it"
             );
         }
     }

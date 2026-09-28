@@ -1,16 +1,17 @@
-//! Small, read-only relation graph over resolved ontology concepts.
+//! Read-only relation graph over resolved ontology concepts.
 //!
 //! Edges carry their authority: derived constituent edges come from the
-//! recorded operator rulings; published inverse-property edges are pinned to
-//! official schema.org pages. This is not an instance-fact graph or an OWL
-//! reasoner. A path proves only the stated relations between concept IDs.
+//! recorded operator rulings; published edges (direct parents and inverse
+//! properties) come from the pinned source file that states them. This is not
+//! an instance-fact graph or an OWL reasoner: no transitive or inferred edge is
+//! ever added. A path proves only the stated relations between concept IDs.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::OnceLock;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{derived, schema_org, term_resolution::resolve_term};
+use crate::{derived, published, term_resolution::resolve_term};
 
 pub const MAX_HOPS: u8 = 4;
 const MAX_VISITS: usize = 256;
@@ -20,6 +21,10 @@ const MAX_VISITS: usize = 256;
 pub enum Relation {
     HasConstituent,
     InverseOf,
+    /// The source directly states the parent: SUMO `subclass`, `instance`,
+    /// `subrelation`, `subAttribute`; schema.org `subTypeOf`, `subPropertyOf`,
+    /// or an enumeration member's type.
+    HasParent,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -99,22 +104,23 @@ impl OntologyGraph {
                 });
             }
         }
-        // These are relations BETWEEN published property concepts, not facts
-        // about any CreativeWork. Each direction is asserted on its source page.
-        edges.extend([
-            RelationEdge {
-                from: schema_org::HAS_PART.to_string(),
-                relation: Relation::InverseOf,
-                to: schema_org::IS_PART_OF.to_string(),
-                authority: "https://schema.org/hasPart".to_string(),
-            },
-            RelationEdge {
-                from: schema_org::IS_PART_OF.to_string(),
-                relation: Relation::InverseOf,
-                to: schema_org::HAS_PART.to_string(),
-                authority: "https://schema.org/isPartOf".to_string(),
-            },
-        ]);
+        // Relations BETWEEN published vocabulary terms, never instance facts.
+        // Each edge is asserted by the source row of its `from` term.
+        for term in published::terms() {
+            for (relation, targets) in [
+                (Relation::HasParent, &term.parents),
+                (Relation::InverseOf, &term.inverse_of),
+            ] {
+                for target in targets {
+                    edges.push(RelationEdge {
+                        from: term.concept.to_string(),
+                        relation,
+                        to: (*target).to_string(),
+                        authority: term.source.to_string(),
+                    });
+                }
+            }
+        }
         Self::from_edges(edges)
     }
 
@@ -258,31 +264,67 @@ mod tests {
         }
     }
 
+    /// expect: every published edge is stated by its source row and cites
+    /// that source; inverse properties run in both published directions.
     #[test]
     fn published_relation_is_source_pinned_and_directional() {
-        let fixture = include_str!("../fixtures/schema-org-relations.tsv");
-        let official_terms = include_str!("../fixtures/schema-org-terms.txt");
         let forward = graph().traverse("schema:hasPart", None, 1);
         assert_eq!(forward.status, TraversalStatus::Neighbors);
-        assert_eq!(forward.edges.len(), 1);
-        for edge in forward.edges {
-            assert_eq!(edge.relation, Relation::InverseOf);
-            assert!(official_terms.lines().any(|line| line == edge.from));
-            assert!(official_terms.lines().any(|line| line == edge.to));
-            let row = format!("{}\tinverse_of\t{}\t{}", edge.from, edge.to, edge.authority);
-            assert!(
-                fixture.lines().any(|line| line == row),
-                "unverified relation: {row}"
-            );
+        let inverse: Vec<_> = forward
+            .edges
+            .iter()
+            .filter(|edge| edge.relation == Relation::InverseOf)
+            .collect();
+        assert_eq!(inverse.len(), 1, "{:?}", forward.edges);
+        assert_eq!(inverse[0].to, "schema:isPartOf");
+        for edge in &forward.edges {
+            let source = published::get(&edge.from).expect("edge source is published");
+            assert_eq!(edge.authority, source.source);
+            let stated = match edge.relation {
+                Relation::InverseOf => &source.inverse_of,
+                Relation::HasParent => &source.parents,
+                Relation::HasConstituent => panic!("no ruling edge on a published term"),
+            };
+            assert!(stated.contains(&edge.to.as_str()), "unstated edge {edge:?}");
         }
         let reverse = graph().traverse("schema:isPartOf", Some("schema:hasPart"), 1);
         assert_eq!(reverse.status, TraversalStatus::PathFound);
-        assert_eq!(reverse.edges[0].authority, "https://schema.org/isPartOf");
-        let row = format!(
-            "{}\tinverse_of\t{}\t{}",
-            reverse.edges[0].from, reverse.edges[0].to, reverse.edges[0].authority
+        assert!(
+            reverse.edges[0]
+                .authority
+                .contains("schemaorg-all-https-properties.csv")
         );
-        assert!(fixture.lines().any(|line| line == row));
+    }
+
+    /// expect: published parents are traversable, one stated hop at a time,
+    /// never as an inferred shortcut.
+    #[test]
+    fn published_parents_are_traversable_without_inferred_edges() {
+        let neighbors = graph().traverse("Game", None, 1);
+        let parents: Vec<_> = neighbors
+            .edges
+            .iter()
+            .map(|edge| edge.to.as_str())
+            .collect();
+        assert!(parents.contains(&"sumo:Contest"), "{parents:?}");
+        assert!(
+            neighbors
+                .edges
+                .iter()
+                .all(|edge| edge.relation == Relation::HasParent)
+        );
+        let path = graph().traverse("Game", Some("SocialInteraction"), 2);
+        assert_eq!(path.status, TraversalStatus::PathFound, "{path:?}");
+        assert_eq!(
+            path.edges.len(),
+            2,
+            "Game -> Contest -> SocialInteraction, no shortcut"
+        );
+        assert!(
+            path.edges
+                .iter()
+                .all(|edge| edge.authority.starts_with("Merge.kif"))
+        );
     }
 
     #[test]

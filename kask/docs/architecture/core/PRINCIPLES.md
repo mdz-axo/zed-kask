@@ -1,7 +1,7 @@
 ---
 title: "hKask Architecture Principles"
 audience: [architects, developers, agents]
-last_updated: 2026-09-19
+last_updated: 2026-09-27
 version: "0.42.0"
 status: "Active"
 domain: "Cross-cutting"
@@ -152,8 +152,8 @@ System claims must be grounded in traceable, provenance-aware representations.
 
 1. **Concept URI constants** — `pub const CONCEPT_NAME: OntologyConcept = "namespace:LocalName"` — in the shared `hkask-bridge-ontology` crate's domain submodule.
 2. **Field-to-concept mapping functions** — `pub fn internal_field_to_ontology(field: &str) -> Option<OntologyConcept>` — server-specific dispatch stays in the server; the vocabulary it references lives in the shared crate.
-3. **No dependencies** — the shared crate is pure Rust with zero external crates (vocabulary only); servers depend on it but it depends on nothing.
-4. **No reasoners, no OWL parsing, no graph databases** — bridges are thin vocabulary layers, not ontology engines.
+3. **No runtime dependencies** — the shared crate is pure Rust vocabulary; its only build dependency pins the vendored sources (`sha2`).
+4. **No reasoners, no graph databases** — bridges are vocabulary layers, not ontology engines. The full vocabularies are read from pinned sources for their terms, labels, direct parents and published definitions; axioms are never evaluated.
 
 **Bridge hierarchy (v0.33.0 — single shared crate):**
 - **Universal anchors + domain supplements:** `crates/hkask-bridge-ontology/` — the single shared vocabulary crate. Owns DC+BIBO+CiTO (state axis), PKO (process axis), and all domain supplements (FIBO, SEPIO, GOLEM, ML-Schema, OMC, SDMX, SUMO, schema.org) as submodules. Also owns the domain-selection logic (`axis` module: `OntologyAxis`, `OntologyNamespace`, `OntologyAnchor`, `select_ontology_anchor`). Every server that does tagging depends on this crate.
@@ -161,7 +161,7 @@ System claims must be grounded in traceable, provenance-aware representations.
 
 Bridges use the STAR extraction pattern (seed terms + direct logical entailments, no intermediate hierarchy) from Norouzi et al. (2025). Each bridge module is typically ≤150 lines.
 
-The architectural invariant: **hKask never requires knowledge of a full domain ontology.** All interaction with domain ontologies flows through thin bridges. The dual-axis core (PKO + DC+BIBO) provides the minimum viable ontology for any server; domain bridges are opt-in specificity.
+The architectural invariant (revised 2026-09-27, operator directive "all of the ontologies — not fragments"): **every bridged ontology is loaded in full from pinned published sources, never as a hand-picked fragment**, so any term the ontology publishes resolves with the ontology's own definition. Servers still interact through the bridge's thin API (named constants, `resolve_term`, `canonicalize_terms`); the dual-axis core (PKO + DC+BIBO) remains the minimum viable ontology for any server. Loaded in full today: SUMO and schema.org (`kask/crates/hkask-bridge-ontology/sources/`); FIBO, OMC and the remaining bridged vocabularies follow.
 
 **P8.2 — Agent Output Grounding (v0.38.0):** LLM-produced agent output is grounded against a field → tool contract per invocation. The contract declares which output fields must be sourced from successful tool calls vs. inferred by the LLM. Unsourced fields are nulled before the response persists; narrative is scanned for leaked removed values. The six-valued provenance vocabulary (Sourced / Inferred / Derived / UncommissionedInference / Narrative / Unsourced) distinguishes commissioned judgment from uncommissioned inference and platform derivations — do not collapse the latter into Unsourced.
 
@@ -170,9 +170,16 @@ The architectural invariant: **hKask never requires knowledge of a full domain o
 1. **Domain supplement** — the domain's specific ontology (FIBO, SEPIO, GOLEM, ML-Schema, SDMX), when the concept exists in that ontology's *published* vocabulary. Never force a concept into an ontology that has no place for it in its graph.
 2. **Universal axes** — Dublin Core + BIBO (the state axis: what the artifact *is*) and PKO (the process axis: how it came to be). Always applicable to artifacts and processes.
 3. **Upper ontology** — SUMO (Entity, Process, Quantity, Proposition): formal categorization when no domain or axis concept fits — e.g. a financial metric with no FIBO term is a `sumo:Quantity`.
-4. **Interrogative ground** — the 5W1H core (P5.2): the guaranteed final rung.
+4. **General vocabulary** — schema.org, consulted after SUMO for term resolution, so a formal category is preferred and the web-vocabulary sense is listed as an alternative.
+5. **Interrogative ground** — the 5W1H core (P5.2): the guaranteed final rung.
+
+When several rungs publish the same word, the first is the resolution and every other sense is returned alongside it — the ambiguity stays visible, never silently resolved.
 
 The invariant: **nothing is ever untagged.** SUMO and the 5W1H core exist precisely so the ladder always terminates on a real anchor. Skipping rungs to force a fit, or stopping above a rung that fits (emitting no tag), both violate the ladder.
+
+**P8.4 — Entropy-Matched Computation (D/P Routing) (v0.42.0, operator-ratified 2026-09-27):** Every computation step routes to the machine whose conditional entropy matches the task's. Where the answer is pinned and verification is cheap, the step is **D** (deterministic oracle — `lisp_eval`, `lean_check`, `cargo`, server-side oracles such as the `scenario_*` tools). Where knowledge is exhibited only in data, the step is **P** (learned model), split by its collapse path: propose-verify (P step, D gate), explicit probabilistic compute (D server over P inputs), or calibrated forecast (P judgment scored against external ground truth). The boundary is the verification-cost frontier, and it moves: a P step that could be D is a precision-improvement candidate; a D step where the answer has genuine multiplicity is false certainty. A step's regime is part of its provenance — the ex-ante routing face of P8.2's ex-post lattice (`tool_verified > model_inference`). The ruling vocabulary lives in the derived registry (`entropy`, `deterministic_computation`, `probabilistic_computation`, `verification_oracle`, `calibrated_forecast`); the frontier itself (which oracles exist, at what price) lives in prose here and drifts acceptably — the vocabulary must not freeze it.
+
+**Enforcement status (honest, per the advertised-invariants rule):** the D/P labelling convention is adopted forward-looking — every computation-prescribing SKILL.md authored or materially revised carries a D/P labelling section naming each step's regime and oracle. Baseline at adoption (audited 2026-09-27 by filesystem walk): 12 of 55 computation-prescribing skills carried a D/P section; convergence is via skill-maintenance passes, with no mass migration. Structural presence is the audit floor, not the ceiling: a section that labels a `lisp_eval`-calling skill "all P" is checkably wrong, and the routing correctness of any given label is P — critiqued by the operator and by the oracle it names.
 
 #### P9 — Homeostatic Self-Regulation
 The system must remain observable and self-correcting through cybernetic feedback loops.

@@ -19,7 +19,7 @@ Rother, *Toyota Kata* (2010) and the Lean Enterprise Institute lexicon — `onto
 - **Initial condition (T1):** the learner's current storyboard (`kata-improvement` step outputs: target, `metric_before`, obstacles, last experiment and its result).
 - **Target condition (T2):** after Q5, the learner has stated in their own words a measurable target, a data-grounded actual condition, one focus obstacle, a next step with a testable prediction, and a committed check point — each coach assessment `clear` / `data-driven` / `focused` / `testable` / `tight-loop`.
 - **Loop (T3):** each question runs ASK (render without `learner_answer`) then ASSESS (render with it). A non-passing assessment asks one follow-up (max 2 per question); still failing, record the gap and move on — the gap is coaching data, not a reason to answer for the learner. One pass of Q1–Q5 per learner experiment. The next session starts at Q1 with the check result the learner reported at Q5.
-- **D/P:** the questions are fixed text (D). The learner's answers are the learner's (human or agent). The coach's assessments are P, critiqued by the next session's observed result: an assessment of `testable` whose prediction could not be checked is the calibration signal.
+- **D/P labelling:** the questions are fixed text (D). The learner's answers are the learner's (human or agent). The coach's assessments are P, critiqued by the next session's observed result: an assessment of `testable` whose prediction could not be checked is the calibration signal.
 
 ## When to Use
 

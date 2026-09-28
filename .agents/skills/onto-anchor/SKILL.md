@@ -1,6 +1,6 @@
 ---
 name: onto-anchor
-description: Anchor domain terms on published ontology concepts by walking the canonical fallback ladder (P8.3) — domain supplement, derived concepts, SUMO upper, 5W1H core — via the onto_anchor tool. Nothing is ever untagged. Use before naming, categorizing, or computing any domain concept.
+description: Anchor domain terms on published ontology concepts by walking the canonical fallback ladder (P8.3) — domain supplement, derived concepts, full SUMO upper, full schema.org, 5W1H core — via the onto_anchor tool, which returns each ontology's own definition and every published sense. Nothing is ever untagged. Use before naming, categorizing, or computing any domain concept.
 ---
 
 # Onto-Anchor
@@ -56,16 +56,24 @@ Anchoring is a **scope-broadening walk, never a single pick** — the fallback
 ladder (P8.3, `axis.rs` and the bridge root docs):
 
 1. **Domain supplement** — the domain's published ontology (FIBO, PKO, SEPIO,
-   GOLEM, SDMX, ML-Schema, OMC, schema.org, RDF). Never force a term into an
+   GOLEM, SDMX, ML-Schema, OMC, RDF). Never force a term into an
    ontology that has no place for it in its graph.
 2. **Derived concepts** — recorded compositions over anchored constituents,
    each carrying its identity and its authority citation
    (`derived::DERIVED_CONCEPTS`). This is where operator rulings become
    durable anchors.
-3. **Upper ontology** — SUMO: formal categorization when no domain or
-   derived concept fits. A financial metric with no FIBO term is a
-   `sumo:Quantity`.
-4. **Interrogative ground** — the 5W1H core: the guaranteed final rung.
+3. **Upper ontology** — the full SUMO distribution: formal categorization
+   when no domain or derived concept fits. A financial metric with no FIBO
+   term is a `sumo:Quantity`.
+4. **General vocabulary** — the full schema.org release, after SUMO so a
+   formal category is preferred.
+5. **Interrogative ground** — the 5W1H core: the guaranteed final rung.
+
+A published resolution returns the ontology's own `definition` and `source`
+file. When several vocabularies publish the same word, every other sense is
+listed in `alternatives` (schema.org's `Game` is a creative work; SUMO's is a
+contest) — read them before relying on the chosen sense, and use the
+published definition rather than a paraphrase.
 
 **The invariant: nothing is ever untagged.** The walk always terminates on a
 real anchor. There is no "unanchored" verdict — a term that lands on the core
@@ -90,9 +98,10 @@ ruling (recorded in the derived registry) improves it.
   resolves any term as before. An optional `relation_query` asks for outgoing
   neighbors (no `to`; `max_hops` must be 1, its default) or a bounded directed
   path (`to` term; `max_hops` 1–4, default 2). Each edge states its relation and authority. The graph
-  currently includes resolved derived-concept constituents and the published
-  schema.org `hasPart`/`isPartOf` inverse-property relation. It is deliberately
-  incomplete; it contains no facts about particular instances.
+  includes resolved derived-concept constituents and, from the full SUMO and
+  schema.org sources, every directly stated parent (`has_parent`) and inverse
+  property (`inverse_of`). It adds no inferred or transitive edges and
+  contains no facts about particular instances.
 
 ## Process
 
