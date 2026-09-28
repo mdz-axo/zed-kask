@@ -2,7 +2,7 @@
 title: "Loop Register — zed-kask canonical loops"
 audience: [developers, architects, agents, operators]
 last_updated: 2026-09-27
-version: "0.17.0"
+version: "0.18.0"
 status: "Phase 0 re-verified at the 2026-09-27 checkpoint; Phase 1–4 partial — per-row states and the Phase 4 ledger are authoritative"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle]
@@ -118,6 +118,10 @@ the spec's minimum list, recorded below rather than narrowed away.
 - **Trigger:** per-tool requests chained by skills (convert → triage/OCR → chunk → tag → embed → prompts → QA → ground → ingest → assemble)
 - **Hands off to:** L5 (embeddings/rerank), L10 (corpus DB), L18 (assembled training datasets)
 - **Prediction:** 3 / 2 / 0.55
+- **Phase 1 graph (IS, all citations re-verified 2026-09-27):** convert (`document.rs:35`, OCR staging + quality-gated resume) → chunk (`document.rs:353`, ONE bounded structural/sentence engine for all modes) → tag (`tagging/ops.rs:259`) → embed (`semantic.rs:226`, ontology-anchored via the L5 router, requested/actual model identity surfaced) → calibration (`calibration.rs:161` `corpus_build_chunk_representations`, fails closed on provenance/fidelity mismatch) → prompts (`corpus.rs:136` `corpus_build_prompts`) → QA generation (`semantic.rs:166`, admitted ONLY through the identity-bound prepared-qa-adjudication-v2 contract; one bounded generator-owned correction per failure class; generation never authorizes ingestion) → grounding (`corpus.rs:445`, deterministic zero-inference bundle, authorizes nothing) → ingestion (`corpus.rs:172`, the gate re-executes every mechanical check — the artifact is never authority; `model_inference` answers are never relabelled verified) → retrieval feedback (`storage.rs:81` `corpus_query`, KNN over stored passages; `answer_error` reports why grounding was unavailable), closing the calibration cycle against the build-corpus-pipeline skill's verification stages.
+- **Phase 2 adjudication (closed 2026-09-27):** the one ideal-method candidate — the ingest gate's re-execution of the grounding checks — is NOT consolidatable duplication: its independence from the artifact is the pinned fails-closed invariant (a mixed batch with an earlier valid candidate and a later ungrounded citation cannot produce training output or a DB, on dry-run and real ingestion alike). Merging the gates would weaken that contract — REJECTED on behavior grounds. The known trap set (tag_batch_size array parsing, max_pairs default semantics, training_assemble_dataset db_path bridging) is fixed and pinned by prior landed slices.
+- **Five properties:** closed — IS for the mechanical chain (every gate fails closed; the correction loop is bounded at one per failure class and terminal); the policy-feedback arm is agent/operator-mediated by design (Stage 8 semantic acceptance belongs to the operator); timely — IS (per-request, no background cycles); accurate — IS (deterministic zero-inference grounding; ingest re-execution; provenance lattice enforced); complete — IS for the inspected chain with the stated boundary: a source-complete end-to-end run requires training-dataset construction, which this audit's Phase 4 rules exclude — the tool-seam evidence stands instead (201/201 corpus library tests green on the current tree, 2026-09-27; Stage 7→9 seam confirmed: generator skips fail grounding); actionable — IS (typed per-stage errors naming identity, bijection, citation, provenance).
+- **Prediction vs actual:** predicted 3 defects / 2 impedances / conf 0.55 → actual: 0 new defects, 0 impedances, 1 consolidation candidate examined and rejected on behavior grounds, 1 boundary stated with reason — another overestimate on an incident-hardened surface, a Phase 4 calibration finding. Brier-scored at Phase 4.
 - **Phase 1 scoped graph (IS):** source extraction/chunking (`tools/document.rs:35-72,355-419`) → model classification (`tools/tagging/ops.rs:263-310`) → embedding (`tools/semantic.rs:228-250`, L5) → prepared prompts (`services/prompt_builder.rs:45-91`) → generation (`services/qa_pipeline.rs:1216-1277`) → grounding (`services/qa_grounding.rs:223-269`) → ingestion (`tools/corpus.rs:174-247`, L10 corpus DB) → explicit corpus-DB selection for training assembly (`hkask-mcp-training/src/tools/dataset.rs:86-129`, L18). The skill drives decisions and reconciles results; this is not one automatic server cycle. Five properties: closed conditional on caller reconciliation/retrieval; timely conditional on bounded waves; accurate only at the mechanical-citation gate; complete only after every source/stage count reconciles; actionable through surfaced failures and stop rules.
 - **Phase 2 seam and process correction (IS):** generation can output `status="skipped"` (`services/qa_pipeline.rs:1252-1277`), while `read_grounding_candidates` rejects any skip-or-error row (`services/qa_grounding.rs:223-269`); the old skill Stage 9 passed the mixed generated file directly. Falsifier: show a mixed file accepted by the grounding gate or a prior candidate-only projection. The existing `build-corpus-pipeline` skill now replaces that handoff with a candidate-only projection filtering **only** reconciled skips, retaining the original file and reconciling counts/hashes before grounding and ingestion; no server contract or additional script was introduced. A synthetic `jq` probe kept candidate and error rows and excluded the skip; a public-tool test at `tools/corpus/ingest_tests.rs:mixed_qa_dispositions_project_to_grounded_candidates` then proved mixed input is rejected, candidate-only input grounds, dry-run ingestion retains one QA, and no training output is written (1/1 targeted; 201/201 corpus library tests). No source-complete/paid corpus run occurred, so L6 is seam-verified but not end-to-end complete. Further addition is deferred until a caller-selected corpus exercises the chain. The candidate-only file is the one whose hash the grounding manifest binds.
 
@@ -326,7 +330,7 @@ Each row below is a separate, bounded audit task, not a command to start it.
 | L16 | Closed 2026-09-27: graph complete, inferred defect refuted as documented D59 design (see row). | L2, L1; skill-outcome tests. |
 | L1 | Closed 2026-09-27 at full scope: single-path loop verified minimal; memory-ingest deferral stands (see row). | L3, L5; agent turn tests. |
 | L7 | Trace a thread event and one widget action through GPUI update to observable UI. | L1, L9; targeted panel/widget tests. |
-| L6 | Trace source conversion to grounded QA ingestion with counts reconciled across stages. | L5, L10; corpus pipeline seam tests. |
+| L6 | Closed 2026-09-27: graph verified, gate re-execution rejected as consolidatable (pinned defense-in-depth), source-complete boundary stated (see row). | L5, L10; corpus pipeline seam tests. |
 | L9 | Trace goal creation to operator-scored outcome and memory acknowledgement. | L10; goal lifecycle tests. |
 | L10 | Trace stored memory through retrieval to context injection and deletion hygiene. | L1, L2; recall/ingest round-trip tests. |
 | L11 | Trace async media submit through cancel/finish to job status. | L7; job state tests. |
@@ -398,8 +402,9 @@ technical program manager; approval to resume Phase 1 belongs to the operator.
   (whether to permit L2's net-positive bounded retry despite the deletion
   gate, require a durable receipt before L9 acknowledgment, or make L12
   runs explicitly closeable). L6's candidate
-  projection is tool-seam tested but not source-complete under this audit's
-  no-dataset-construction rule; it stays open. L7/L11 panel visibility,
+  projection is tool-seam tested; the source-complete run stays outside the
+  no-dataset-construction rule, and the row closed 2026-09-27 with that
+  boundary stated. L7/L11 panel visibility,
   L10 recall failure fidelity, L13 scoped memory, L18 training completion
   fidelity and L23 provider fallback have cited falsifiers in their rows;
   none is quietly declared fixed; L16's cross-turn attribution closed
@@ -437,6 +442,16 @@ technical program manager; approval to resume Phase 1 belongs to the operator.
   `cargo check -p zed` passed. This register update landed with the
   concurrent L1-row pass in `6d1e441a43`; the code and the swarm comment
   fix land in the slice's own pathspec-limited commit.
+- 2026-09-27 — v0.18.0 L6 closed: all pipeline nodes re-verified in the
+  current tree (convert, chunk, tag, embed, calibration, prompts, QA
+  generation, grounding, ingestion, plus the corpus_query retrieval
+  feedback node at storage.rs:81); the ingest gate's re-execution of the
+  grounding checks examined and REJECTED as a consolidation target — its
+  independence from the artifact is the pinned fails-closed invariant.
+  201/201 corpus library tests green on the current tree. The
+  source-complete run stays outside the audit's no-dataset-construction
+  rule; the boundary is stated in the row. Doc-only slice; no production
+  lines changed.
 - 2026-09-27 — v0.17.0 L1 closed at full scope: the three submission
   routes are thin closures over one run_turn entry, the loop tail is a
   single path, and the ideal-method verdict is that the graph is already
