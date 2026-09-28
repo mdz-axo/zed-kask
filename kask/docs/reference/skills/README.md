@@ -111,7 +111,6 @@ annual. The embedded seed payload equals the authored tree (pinned in
 | `therapy` | Memory therapy session — scan a memory DB (curator, replica/corpus, or swarm) for contradictions, fragmentation, and miscalibrated confidence; resolve, then reify lessons as skills/templates/rules |
 | `adhd-mode` | Session-scoped output mode shaping responses for a reader with ADHD: next-action-first, numbered steps, state restated across turns, capped lists, deterministic pre-send gate (render_template + lisp_eval), optional caveman compression variant (absorbed 2026-09-09) |
 | `grill-me` | Socratic questioning to stress-test understanding |
-| `kata-coaching` | 5-question Coaching Kata dialogue |
 | `product-manager` | The operator's side of the Division of Responsibilities: requirements as falsifiable outcome claims, spec provenance, acceptance criteria that can fail, ground-truth confirmation |
 | `task-breakdown` | Convergent planning: vertical task slicing with acceptance criteria, checkpoints, and skill_match_query routing |
 | `kanban-task-management` | Unified kanban task management across the full task lifecycle |
@@ -146,7 +145,7 @@ annual. The embedded seed payload equals the authored tree (pinned in
 | `lean-prover` | Machine-checked proof construction through Curry-Howard/de Bruijn/Carneiro lens. Sibling to falsifiability |
 | `onto-anchor` | Resolve domain terms through the published-ontology fallback ladder before naming, classifying, or computing with them |
 | `program-manager` | The agent's side of the Division of Responsibilities: recover the spec before building, design before coding, execute surgically, verify against a real definition of done |
-| `kata-improvement` | 4-step Improvement Kata PDCA pattern (includes beginner_mode drills) |
+| `kata-improvement` | 4-step Improvement Kata PDCA pattern, the five-question Coaching Kata (coach role), and beginner_mode drills |
 | `verification-compression` | Compress a verification workflow without losing expectation coverage, falsifiers, failure visibility, provenance, or fault-detection signal; Lean-checked graph preservation |
 
 ### Skill authoring and zed-kask development

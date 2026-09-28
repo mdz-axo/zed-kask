@@ -1,18 +1,18 @@
 ---
 name: kata-improvement
-description: "4-step Improvement Kata templates for scientific capability development: Understand Direction, Grasp Current Condition, Establish Target Condition, Experiment (PDCA). Includes beginner_mode drills for foundational scientific thinking habit-building."
+description: "4-step Improvement Kata templates for scientific capability development: Understand Direction, Grasp Current Condition, Establish Target Condition, Experiment (PDCA). Includes the Coaching Kata (the five coach questions, a separate coach role) and beginner_mode drills for foundational scientific thinking habit-building."
 ---
 
 # Kata Improvement
 
-4-step Improvement Kata templates for scientific capability development. Step 1: Understand Direction. Step 2: Grasp Current Condition. Step 3: Establish Target Condition. Step 4: Experiment (PDCA). Each step references prior outputs. The cycle closes with before/after measurement. Includes beginner_mode drills (folded from kata-starter): Five Questions, PDCA Cycle, and Observation Drill for foundational scientific thinking habit-building; agents graduate when automaticity > 0.5.
+4-step Improvement Kata templates for scientific capability development. Step 1: Understand Direction. Step 2: Grasp Current Condition. Step 3: Establish Target Condition. Step 4: Experiment (PDCA). Each step references prior outputs. The cycle closes with before/after measurement. Includes beginner_mode drills (folded from kata-starter): Five Questions, PDCA Cycle, and Observation Drill for foundational scientific thinking habit-building; agents graduate when automaticity > 0.5. The Coaching Kata (folded from `kata-coaching`, 2026-09-28) is the coach role that runs the five questions against a learner's storyboard — the same kata seen from the other chair.
 
 
 ## Reference model
 
-Rother, *Toyota Kata* (2010) and the Lean Enterprise Institute lexicon — `onto_anchor` → derived `improvement_kata` and `pdca_cycle` (operator ruling 2026-09-24).
+Rother, *Toyota Kata* (2010) and the Lean Enterprise Institute lexicon — `onto_anchor` → derived `improvement_kata`, `pdca_cycle` and `coaching_kata` (operator rulings 2026-09-24). The Coaching Kata's five questions are Rother's, asked by a coach who gives procedural guidance rather than solutions; **the coach is a separate role from the learner** — one session never plays both.
 
-**D/P labelling.** Steps 1–3 and step 4's Plan are P (the practitioner's judgment; critique: the operator, or `kata-coaching` as a separate coach role). Step 2's measurements are D when taken from a tool or test — name it in `metrics[].method`. Step 4's Check is D: compute `(- metrics_target metric_after)` and `(- metric_after metric_before)` with `lisp_eval` over the observed values, and never from a plan.
+**D/P labelling.** Steps 1–3 and step 4's Plan are P (the practitioner's judgment; critique: the operator, or the Coaching Kata below run by a separate coach). Step 2's measurements are D when taken from a tool or test — name it in `metrics[].method`. Step 4's Check is D: compute `(- metrics_target metric_after)` and `(- metric_after metric_before)` with `lisp_eval` over the observed values, and never from a plan.
 
 ## When to Use
 
@@ -21,12 +21,12 @@ Rother, *Toyota Kata* (2010) and the Lean Enterprise Institute lexicon — `onto
 - When grasping the current condition by gathering facts and data to establish a baseline.
 - When establishing a measurable next target condition reachable within this session's bounded experiments.
 - When designing rapid PDCA experiments with testable predictions toward the target.
+- When coaching a human or agent learner through their kata with the five coach questions (Coaching Kata) — the learner's storyboard is the input, the learner's own words are the output.
 - When computing a normalized convergence metric to evaluate the coherence of a PDCA cycle.
 - When an agent needs to build foundational scientific thinking habits through beginner_mode drills (folded from kata-starter): Five Questions, PDCA Cycle on a trivial process, or Observation Drill separating facts (IS) from interpretations (OUGHT).
 
 ## When NOT to Use
 
-- Coaching a human learner through the kata — use `kata-coaching` (the five questions); this skill is the practitioner's own loop.
 - Executing a specific improvement task — the kata is the practice method for developing capability, not a task executor; run the task through its own skill.
 - One-shot problems with no iteration — a single experiment with no target condition to converge toward needs a plan, not a kata.
 
@@ -70,6 +70,20 @@ Rother, *Toyota Kata* (2010) and the Lean Enterprise Institute lexicon — `onto
 7. Determine how quickly you can go and see the result.
 8. Respond with a JSON object containing `obstacle`, `next_experiment`, `prediction`, `measurement_method`, `success_criterion`, `learning_commitment`, `when_to_check`, and (only after observation) `metric_after`, `prediction_result`, and `next_step`. Never fill `metric_after` from a plan.
 
+### Coaching Kata — the five questions (coach role)
+
+- **Learner:** named by `learner_bot` — the operator, or a local agent reached with `swarm_delegate_local`. The learner's own words come back as `learner_answer`. Reading the learner's storyboard is context for the coach's questions, not a substitute for the learner answering.
+- **Initial condition:** the learner's current storyboard (step 1–4 outputs above: target, `metric_before`, obstacles, last experiment and its result).
+- **Target condition:** after Q5, the learner has stated in their own words a measurable target, a data-grounded actual condition, one focus obstacle, a next step with a testable prediction, and a committed check point — each coach assessment `clear` / `data-grounded` / `prioritized` / `testable` / `committed`.
+- **Loop:** each question runs ASK (render without `learner_answer`) then ASSESS (render with it). A non-passing assessment asks one follow-up (max 2 per question); still failing, record the gap and move on — the gap is coaching data, not a reason to answer for the learner.
+- **D/P:** the questions are fixed text (D). The learner's answers are the learner's. The coach's assessments are P, critiqued by the next session's observed result: an assessment of `testable` whose prediction could not be checked is a coaching miss to record.
+
+1. **Q1 — target** (`kata-improvement/coaching-q1-target`): ask what the target condition is; the learner states the measurable target, experiment bound and success criteria, never the coach. If vague, ask for specific, measurable, verifiable.
+2. **Q2 — actual** (`coaching-q2-actual`): ask what the actual condition is now; probe whether statements rest on measured data or assumptions; challenge interpretations stated as facts by asking what was observed.
+3. **Q3 — obstacles** (`coaching-q3-obstacles`): ask what obstacles block the target and which single one is being addressed now; require the learner to justify the priority; if several are listed unprioritized, force the selection of one.
+4. **Q4 — experiment** (`coaching-q4-experiment`): ask the next step and the expected result; require exactly what will be done and what is predicted; an action without a prediction is sent back for one.
+5. **Q5 — learn** (`coaching-q5-learn`): ask how quickly the learner can go and see; require the check point, the metric, and what would prove the theory wrong.
+
 ## Registry Templates
 
 | Template | Purpose |
@@ -78,6 +92,11 @@ Rother, *Toyota Kata* (2010) and the Lean Enterprise Institute lexicon — `onto
 | `beginner-five-questions.j2` | Five Questions Drill — exercise asking the 5 coaching questions in order on a trivial process (making toast, brewing coffee). |
 | `beginner-pdca-cycle.j2` | PDCA Cycle Drill — practice Plan-Do-Check-Act on a trivial, measurable process. |
 | `beginner-observation-drill.j2` | Observation Drill — practice separating observed facts (IS) from interpretations (OUGHT). |
+| `coaching-q1-target.j2` | Coaching Kata Q1 — What is the Target Condition? Ground the learner in their goal. |
+| `coaching-q2-actual.j2` | Coaching Kata Q2 — What is the Actual Condition now? Ground the learner in data. |
+| `coaching-q3-obstacles.j2` | Coaching Kata Q3 — What obstacles? Which ONE now? Force prioritization. |
+| `coaching-q4-experiment.j2` | Coaching Kata Q4 — Next step? Expected result? Drive action with a prediction. |
+| `coaching-q5-learn.j2` | Coaching Kata Q5 — How quickly can we go and see? Close the feedback loop. |
 | `improvement-step1-direction.j2` | Step 1 of the Improvement Kata — understand the strategic direction and challenge from the level above. |
 | `improvement-step2-current.j2` | Step 2 of the Improvement Kata — grasp the current condition by gathering facts and data to establish a baseline. |
 | `improvement-step3-target.j2` | Step 3 of the Improvement Kata — establish a measurable next target condition bounded in experiments, not calendar time. |

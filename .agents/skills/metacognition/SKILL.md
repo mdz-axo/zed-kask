@@ -41,7 +41,7 @@ is the knowledge needed to see it).
 
 ## When NOT to Use
 
-- Coaching a human or agent through the kata — use `kata-coaching`; this skill is the practitioner's own reflection loop.
+- Coaching a human or agent through the kata — use `kata-improvement`'s Coaching Kata section (the five coach questions); this skill is the practitioner's own reflection loop.
 - Executing a specific improvement — `kata-improvement` owns the act; this skill measures the gap and scores the prediction.
 - Forecast-calibration tracking in the prediction-market domain — `superforecasting` owns that loop (its Market-prior calibration check and stage 6).
 

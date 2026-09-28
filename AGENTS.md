@@ -63,7 +63,7 @@ hKask ships **12 MCP servers** launched by zed's `context_server` as child proce
 - `skill-discovery` — Route tasks to installed skills, detect capability gaps, evaluate candidates before installation.
 
 ### Ensemble / Coaching (Multi-agent interaction)
-- `kata-coaching`, `kata-improvement`, `improv` — Toyota Kata dialogues.
+- `kata-improvement` (Improvement + Coaching Kata), `improv` — Toyota Kata dialogues.
 
 For the current skill catalog, see `.agents/skills/` (project-local) and `~/.local/share/zed-kask/skills/` (global).
 
@@ -123,7 +123,7 @@ Only #1 partially CI-gated; #2–#4 enforced by review.
 | Self-improvement / prompt evolution | `metacognition` | `self-improvement` GEPA sub-loop (post-convergence) |
 | Skill matching for a task | `skill-discovery` (route) | `task-breakdown` (decompose) first; detect-gap if coverage is partial |
 | Capability gap detection | `skill-discovery` | `skill-maintenance` (install/validate the new skill) |
-| Multi-agent coaching | `kata-coaching` | `improv` (interaction grammar) |
+| Multi-agent coaching | `kata-improvement` (Coaching Kata section) | `improv` (interaction grammar) |
 | Deterministic computation needed | `lisp_eval` tool | (call directly — no skill activation needed) |
 | Structured prompt scaffolding needed | `render_template` tool | (call directly — no skill activation needed) |
 

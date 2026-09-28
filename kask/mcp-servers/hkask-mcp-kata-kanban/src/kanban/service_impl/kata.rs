@@ -2,9 +2,9 @@
 //!
 //! These methods produce a human-readable summary of the task's current state
 //! for display in the chat stream. They are **not** the authoritative kata
-//! methodology — that lives in the `kata-coaching` and `kata-improvement`
-//! skills (`.agents/skills/kata-*/SKILL.md`) and their registry templates
-//! (`kask/registry/templates/kata-*/`), which execute via skill execution
+//! methodology — that lives in the `kata-improvement` skill
+//! (`.agents/skills/kata-improvement/SKILL.md`, Coaching Kata section) and its registry templates
+//! (`kask/registry/templates/kata-improvement/`), which execute via skill execution
 //! the inference port with structured JSON output.
 //!
 //! The split is deliberate: the MCP tools return a sync `String` for immediate
@@ -24,7 +24,7 @@ impl KanbanService {
     ///
     /// Gathers the task's target (criteria or title) and actual condition
     /// (status, assignee, deliverables, comments), then references the
-    /// `kata-coaching` skill for the 5-question methodology.
+    /// `kata-improvement` skill's Coaching Kata section for the 5-question methodology.
     pub(crate) fn task_coaching_prompt(&self, task_id: TaskId) -> Result<String, KanbanError> {
         let task = self.require_task(task_id)?;
 
@@ -58,8 +58,8 @@ Actual Condition:
 {actual}
 
 The 5-question Coaching Kata methodology (Q1 Target → Q2 Actual → Q3 Obstacles \
-→ Q4 Next Step → Q5 Feedback) is defined in the `kata-coaching` skill. Invoke \
-`skill kata-coaching` with this task as context for the full guided cycle.",
+→ Q4 Next Step → Q5 Feedback) is defined in the `kata-improvement` skill's Coaching Kata \
+section. Invoke `skill kata-improvement` with this task as context for the full guided cycle.",
             title = task.title,
         ))
     }
