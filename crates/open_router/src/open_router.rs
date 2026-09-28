@@ -81,10 +81,10 @@ pub struct Model {
     pub max_tokens: u64,
     /// zed-kask: D83 — the model's discovered output cap
     /// (`max_completion_tokens`, with OpenRouter's `top_provider` nesting
-    /// promoted by `model_from_entry`). `None` means the catalog reported
-    /// none and the request omits `max_tokens` — the provider's own
-    /// default output limit then binds, which is what cut agent streams
-    /// mid-tool-call.
+    /// promoted by `model_from_entry`), capped at half the context window
+    /// to leave room for input. `None` means the catalog reported none and
+    /// the request omits `max_tokens` — the provider's own default output
+    /// limit then binds, which can cut agent streams mid-tool-call.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_output_tokens: Option<u64>,
     pub supports_tools: Option<bool>,
@@ -569,6 +569,7 @@ pub async fn parse_models_response_for_test(
 }
 
 fn model_from_entry(entry: ModelEntry) -> Model {
+    let context_length = entry.context_length.unwrap_or(2_000_000);
     Model {
         name: entry.id,
         // OpenRouter returns display names in the format "provider_name: model_name".
@@ -585,20 +586,20 @@ fn model_from_entry(entry: ModelEntry) -> Model {
                 .trim()
                 .to_string(),
         ),
-        max_tokens: entry.context_length.unwrap_or(2000000),
-        // zed-kask: D83 — promote the discovered output cap: top-level
-        // `max_completion_tokens`, else OpenRouter's `top_provider`
-        // nesting. The same discovery fix the open_ai crate's
-        // `resolve_provider_fallbacks` made for its models; without it the
-        // request omits `max_tokens` and the provider's default output
-        // limit cuts streams mid-tool-call (the 2026-09-27/28
-        // ToolInput::recv warns).
-        max_output_tokens: entry.max_completion_tokens.or_else(|| {
-            entry
-                .top_provider
-                .as_ref()
-                .and_then(|t| t.max_completion_tokens)
-        }),
+        max_tokens: context_length,
+        // zed-kask: D83 — use the discovered cap, but never reserve more
+        // than half the context for output. Some providers advertise nearly
+        // the whole context as max_completion_tokens; forwarding it makes
+        // non-empty requests fail before the model can stream a response.
+        max_output_tokens: entry
+            .max_completion_tokens
+            .or_else(|| {
+                entry
+                    .top_provider
+                    .as_ref()
+                    .and_then(|t| t.max_completion_tokens)
+            })
+            .map(|tokens| tokens.min(context_length / 2)),
         supports_tools: Some(entry.supported_parameters.contains(&"tools".to_string())),
         supports_images: Some(
             entry
@@ -1143,8 +1144,8 @@ mod tests {
     #[test]
     fn discovered_output_cap_parses_and_promotes() {
         // zed-kask: D83 — the request's `max_tokens` comes from the model's
-        // discovered output cap. OpenRouter nests it under
-        // `top_provider.max_completion_tokens`; a catalog entry without it
+        // discovered output cap (bounded to half the context). OpenRouter
+        // nests it under `top_provider.max_completion_tokens`; an entry without it
         // leaves the cap None, the request omits `max_tokens`, and the
         // provider's own default output limit binds — the mid-tool-call
         // stream-cut class behind the 2026-09-27/28 ToolInput::recv warns.
@@ -1161,6 +1162,24 @@ mod tests {
             ..Default::default()
         });
         assert_eq!(nested.max_output_tokens(), Some(131_072));
+
+        // A provider can advertise a completion budget near or equal to the
+        // whole context window. Reserve at least half for the prompt instead
+        // of sending a request the provider will reject before streaming.
+        let oversized = model_from_entry(ModelEntry {
+            context_length: Some(1_310_720),
+            top_provider: Some(ModelTopProvider {
+                max_completion_tokens: Some(943_718),
+            }),
+            ..Default::default()
+        });
+        assert_eq!(oversized.max_output_tokens(), Some(655_360));
+        let equal_to_context = model_from_entry(ModelEntry {
+            context_length: Some(1_048_576),
+            max_completion_tokens: Some(1_048_576),
+            ..Default::default()
+        });
+        assert_eq!(equal_to_context.max_output_tokens(), Some(524_288));
 
         assert_eq!(
             model_from_entry(ModelEntry::default()).max_output_tokens(),

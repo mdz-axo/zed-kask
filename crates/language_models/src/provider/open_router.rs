@@ -1319,6 +1319,35 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn discovered_oversized_cap_is_bounded_on_the_wire() {
+        let models = open_router::parse_models_response_for_test(open_router::ModelEntry {
+            id: "z-ai/glm-5.3".into(),
+            context_length: Some(1_310_720),
+            top_provider: Some(open_router::ModelTopProvider {
+                max_completion_tokens: Some(943_718),
+            }),
+            ..Default::default()
+        })
+        .await
+        .expect("catalog entry parses");
+        let model = &models[0];
+        let request = LanguageModelRequest {
+            messages: vec![language_model::LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text("Hello".into())],
+                cache: false,
+                reasoning_details: None,
+            }],
+            ..Default::default()
+        };
+        let wire = serde_json::to_value(
+            into_open_router(request, model, model.max_output_tokens()).expect("request converts"),
+        )
+        .expect("request serializes");
+        assert_eq!(wire["max_tokens"], 655_360);
+    }
+
+    #[gpui::test]
     async fn test_into_open_router_disables_reasoning_when_thinking_not_allowed() {
         let model = open_router::Model::new(
             "z-ai/glm-5.2",
