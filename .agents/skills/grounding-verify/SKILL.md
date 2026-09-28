@@ -106,6 +106,22 @@ cited.
   source support the claim?), not logic (are the causal conclusions
   correct?).
 
+## D/P labelling
+
+Claim extraction and classification (Step 1), provenance-tier assignment
+(Step 2 — the lattice is fixed, the assignment is judgment), leak-rule
+interpretation (Step 4), omission materiality (Step 4.5), and finding
+severity (Step 7) are P — critiqued by the operator, by the mandatory
+`decoupling` field (an `in_thread` run is flagged as a self-check), and by
+the append-only error log. The mechanical verification is D: every
+`lisp_eval` form (structural invariants, citation substring checks,
+numeric matches, the batch drivers, the provenance floor in Step 6)
+executes in the sandbox — a claim's verification status comes from the
+form's output, never the model's assertion. `render_template` renders are
+D (deterministic render) feeding P (the assignment judgment over the
+rendered output). The output never says verified: the counts and the
+floor are facts for the reader, not a verdict.
+
 ## Instructions
 
 ### Step 1 — Extract and classify claims

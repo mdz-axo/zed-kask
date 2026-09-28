@@ -100,6 +100,21 @@ The paper's formalism (`𝒜_{t+1} = 𝒰(𝒜_{1:t}, ℰ(...))`) is inherently 
 
 This separation is critical because the paper identifies a key tension: "self-improvement unfolds over time and naturally exhibits plateaus or regressions" (Section 8.1.1). The Kata outer loop provides the long-horizon direction that prevents the inner PDCA cycles from optimizing locally without global progress. The Kata convergence check measures whether the overall trajectory is converging toward the target condition, while the PDCA convergence check measures whether a single improvement iteration is stable enough to commit.
 
+## D/P labelling
+
+Pathway and signal selection, plan generation, GEPA reflection and mutation
+proposals, and the Act-gate decision are P — judgment, critiqued by the
+measured Check results and by the operator in the algedonic review (the
+executing session never commits its own improvements). The gates are D:
+the propose-or-discard acceptance predicate, the regression count, the GEPA
+dominance and convergence computations, the noise-floor standard error,
+and the PDCA convergence form all run in `lisp_eval` over measured
+harness reports (`swarm_eval_agent_local`, `training_evaluate`) — a
+candidate that fails the gate is discarded regardless of the model's
+assessment. Harness evaluation is D (deterministic
+contains/not_contains/regex evaluators); filing a proposal is P, gated by
+the D verdict.
+
 ## Instructions
 
 ### Outer Kata Steps 1–3 (rendered from `kata-improvement`)

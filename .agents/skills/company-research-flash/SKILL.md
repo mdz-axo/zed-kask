@@ -21,6 +21,21 @@ Equity research flash pipeline converted from EFRA-AI (Replicant-Partners). Gove
 - No companies/prediction-markets MCP access — the pipeline's substrate is those tools' outputs; without them the early-exit gates fire and nothing downstream runs.
 - Post-thesis monitoring — a published flash note's lifecycle is PERSIST/CONDENSE; monitoring belongs to the portfolio-review loop.
 
+## D/P labelling
+
+SCOUT component scoring, INTEL synthesis, LISTEN reading, FORENSIC and
+CRITICAL FACTOR judgment, COMMUNICATION drafting, and the LENS audit are
+P — critiqued by the author-side evidence review, the DROP/HALT/BLOCK gate
+inputs, and the operator. The gates and computations are D: the alpha
+score, the pt_12m blend, the rr/rating/DROP gate, and the ENTER gate
+dispatch run in `lisp_eval` (fixed forms — publication requires the ENTER
+gate's literal output and adjusted confidence ≥ 0.50, never the model's
+assessment); the valuation tools (`dcf_valuation`, `comparable_analysis`,
+`expectations_gap`, `scenario_impact_valuation`) are server oracles over
+model-supplied inputs; quote verification runs `lisp_eval`
+`string-contains` against its own passage. The KATA check closes
+deterministically: `market_check_resolutions` → `market_calibration`.
+
 ## Instructions
 
 Execution order: collection setup and SCOUT → candidate note check → remaining collection → INTEL →

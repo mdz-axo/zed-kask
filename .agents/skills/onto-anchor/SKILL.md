@@ -81,8 +81,11 @@ ladder (P8.3, `axis.rs` and the bridge root docs):
 
 `published-term-resolution-v2` marks the current canonicalization; older
 records require re-tagging. A published resolution carries the source file
-and its own `definition` **if supplied** (absence is not permission to make
-one up). When several vocabularies publish the same word, every other sense
+and its own `definition` **if supplied** (an absent definition is omitted,
+not emitted as `null` or inferred). Publisher deprecation/supersession is
+reported in a separate `status` field: `"[deprecated]"` must never be treated
+as a definition. Read `status` before relying on a published sense. When
+several vocabularies publish the same word, every other sense
 is listed in `alternatives` (schema.org's `Game` is a creative work; SUMO's
 is a contest) — read them before relying on the chosen sense.
 

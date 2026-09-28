@@ -1,8 +1,8 @@
 ---
 title: "zed-kask Documentation"
 audience: [developers, architects, agents, operators]
-last_updated: 2026-09-24
-version: "2.5.1"
+last_updated: 2026-09-28
+version: "2.5.2"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]
@@ -16,7 +16,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 
 **Per-crate docs:** [`diataxis/INDEX.md`](diataxis/INDEX.md) lists 28 retained artifacts across 10 cross-cutting sets. Eight tutorials were folded on 2026-09-16; `diataxis/hkask-mcp-server/tutorial.md` is the one retained tutorial (`kask/docs/diataxis/INDEX.md:13-17`).
 
-**Corpus size:** 69 Markdown documents under `kask/docs/` on 2026-09-24, satisfying the formal fewer-than-70 document gate (`find kask/docs -name '*.md' | wc -l`). The 70th file is the active [`principle-constraints.yaml`](architecture/principle-constraints.yaml) governance inventory, consumed by `kask/scripts/check-principle-constraints.sh`; it is not a Markdown document. Do not delete that live inventory to lower the all-file count.
+**Corpus size (measured 2026-09-28):** 73 Markdown documents and one live YAML inventory, 74 files total (`find kask/docs -type f | wc -l`). The formal **fewer-than-70** count gate in [`DOCUMENTATION_STANDARDS.md`](architecture/DOCUMENTATION_STANDARDS.md) §3 currently fails. Four recently added Markdown files have active roles (the D-seam audit ledger, loop register, operator-retained Aeneas plan, and compute-routing research); this ontology-reference realignment adds no document and does not delete unrelated active work merely to force a green count. A separate role-based condensation pass must remove at least five files with named successors before the all-file gate can pass. [`principle-constraints.yaml`](architecture/principle-constraints.yaml) is a live governance inventory consumed by `kask/scripts/check-principle-constraints.sh`, not a deletion candidate.
 
 ## Repair and improvement plans
 

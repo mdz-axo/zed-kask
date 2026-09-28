@@ -12,6 +12,19 @@ Superforecasting pipeline following Tetlock's Good Judgment Project methodology.
 
 Tetlock & Gardner, *Superforecasting: The Art and Science of Prediction* (2015) — `onto_anchor` → derived `superforecasting` (operator ruling 2026-09-25). Brier (1950) → derived `brier_score`. Each stage below is labelled **D** (deterministic, oracle named) or **P** (probabilistic, calibration or critique named).
 
+## D/P labelling
+
+Every stage heading below carries its label. **D**: `lisp_eval` arithmetic
+checks on base rates and probabilities, the `scenario_*` server oracles
+(triage classification, quantify rejection, calibration, Bayes,
+synthesis), `forecast_persist`, and Brier at resolution. **P**: triage,
+Fermi decomposition, outside-view comparability, and dragonfly-eye
+synthesis — each names its critique (`scenario_triage` cross-check,
+falsifiability delegation, `scenario_cross_validate` divergence > 0.15 →
+grill-me, the operator). The forecast probability itself is P — calibrated
+judgment, scored only by Brier over resolved forecasts, never falsified by
+one outcome.
+
 ## Initial and target condition
 
 - **Initial condition (T1):** the admitted question, its resolution criteria and deadline, any sourced historical observations, `market_context` / `expert_prior`, and — when resolved forecasts exist — the `scenario_calibration` curve for the bucket. A historical base rate is not presumed to exist.

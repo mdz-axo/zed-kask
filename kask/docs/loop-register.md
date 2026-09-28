@@ -3,7 +3,7 @@ title: "Loop Register — zed-kask canonical loops"
 audience: [developers, architects, agents, operators]
 last_updated: 2026-09-28
 version: "0.22.2"
-status: "Phase 1–4 complete: all 23 rows closed or deferred-with-reason — per-row states and the Phase 4 ledger are authoritative"
+status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle]
 ---

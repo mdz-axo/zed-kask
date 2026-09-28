@@ -3,7 +3,7 @@ title: "Artificial Curiosity as Capability-Space Exploration"
 audience: [researchers, architects, agents]
 last_updated: 2026-09-23
 version: "1.1.0"
-status: "Research decision — orchestration proposed, not implemented"
+status: "Active"
 domain: "Cross-cutting"
 mds_categories: [composition, trust]
 ---

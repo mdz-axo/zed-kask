@@ -1,3 +1,13 @@
+---
+title: "D-seam audit ledger"
+audience: [developers, architects, agents]
+last_updated: 2026-09-28
+version: "1.0.0"
+status: "Active"
+domain: "Cross-cutting"
+mds_categories: [trust, lifecycle]
+---
+
 # D-seam audit ledger
 
 This is a resumable **worklist**, not an assertion that every row below was audited. The live set comes only from the `## The divergence surface` table in `DIVERGENCE.md`; `bash kask/scripts/check-d-seam-audit-ledger.sh` checks identity coverage, not evidence quality. A seam may contain multiple behaviors with different verdicts. `pending` means no current-session verdict, `partial` means some behavior/record/verification remains open, and `audited` requires every behavior in the row to have evidence, verified pins, checked upstream status and aligned record. Do not promote `pending` from inherited row claims.

@@ -53,7 +53,18 @@ skill's decision rule encodes this asymmetry:
   positive endorsement, not a "strong rationale" claim. Reserve "strong" for
   forecasters whose EQM composite correlates with accuracy on realized outcomes.
 
-## Instructions
+  ## D/P labelling
+
+  Marker identification over a rationale, red-flag interpretation, and
+  Improve-phase rationale revision are P — judgment, critiqued by the
+  alignment check against the stated forecast probability and by gaming
+  detection on realized outcomes. The scoring is D: `market_score_rationale`
+  computes the 12-marker scores server-side, and every mean, Brier and
+  correlation runs in `lisp_eval` over the scorer's returned values and the
+  recorded outcomes (the deterministic helpers below). The instrument
+  measures the written rationale; it does not vouch for the forecast.
+
+  ## Instructions
 
 ### Deterministic helpers (D — `lisp_eval`)
 

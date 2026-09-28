@@ -43,7 +43,7 @@ Tested cases: 100/100/5/10 → git-merge; 100/100/4/10 → mapped; 201/100/10/10
 - **Initial condition:** the merge base, `git diff --name-only <base> upstream/main`, and the live D-rows in `DIVERGENCE.md`.
 - **Target condition:** a merge commit on which Verification gate items 0–5 pass and every live D-row has a recorded retire / simplify / retain / needs-operator-decision decision.
 
-## Step types
+## Step types (D/P labelling)
 
 | Step | Type | Oracle / critique |
 |------|------|-------------------|
