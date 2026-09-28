@@ -2929,7 +2929,7 @@ mod tests {
             },
             "claude-sonnet-4-5".to_string(),
             1.0,
-            4096,
+            Some(4096),
             BedrockModelMode::Default,
             true,
             true,
@@ -3728,7 +3728,7 @@ mod tests {
             }],
             ..Default::default()
         };
-        let mode = BedrockModelMode::AdaptiveThinking {
+        let mode = || BedrockModelMode::AdaptiveThinking {
             effort: bedrock::BedrockAdaptiveReasoningEffort::High,
         };
 
@@ -3737,7 +3737,7 @@ mod tests {
             "custom-model".to_string(),
             1.0,
             None,
-            mode,
+            mode(),
             true,
             true,
             None,
@@ -3754,7 +3754,7 @@ mod tests {
                 "custom-model".to_string(),
                 1.0,
                 None,
-                mode,
+                mode(),
                 true,
                 true,
                 None,
@@ -3771,7 +3771,7 @@ mod tests {
                 "custom-model".to_string(),
                 1.0,
                 Some(50_000),
-                mode,
+                mode(),
                 true,
                 true,
                 None,
@@ -3790,7 +3790,7 @@ mod tests {
                 "custom-model".to_string(),
                 1.0,
                 Some(50_000),
-                mode,
+                mode(),
                 true,
                 true,
                 None,

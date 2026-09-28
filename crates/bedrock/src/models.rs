@@ -513,7 +513,7 @@ impl ConverseModel {
             // limit binds.
             Self::Custom {
                 max_output_tokens, ..
-            } => max_output_tokens,
+            } => *max_output_tokens,
         }
     }
 
@@ -985,7 +985,7 @@ impl MantleModel {
             // limit binds.
             Self::Custom {
                 max_output_tokens, ..
-            } => max_output_tokens,
+            } => *max_output_tokens,
         }
     }
 
