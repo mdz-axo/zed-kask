@@ -529,19 +529,7 @@ impl LanguageModelInferencePort {
                                 },
                                 result = work => result,
                             };
-                            let transient_failure = result
-                                .as_ref()
-                                .err()
-                                .is_some_and(is_transient_inference_failure);
-                            let permanent_failure = result
-                                .as_ref()
-                                .err()
-                                .and_then(permanent_inference_failure);
-                            circuit.complete(
-                                result.is_ok(),
-                                transient_failure,
-                                permanent_failure,
-                            );
+                            Self::complete_circuit(circuit, &result);
                             if reply.send(result.map(StreamAccumulator::into_result)).is_err() {
                                 tracing::trace!(target: "hkask.inference", "inference caller cancelled");
                             }
@@ -569,19 +557,7 @@ impl LanguageModelInferencePort {
                                 },
                                 result = work => result,
                             };
-                            let transient_failure = result
-                                .as_ref()
-                                .err()
-                                .is_some_and(is_transient_inference_failure);
-                            let permanent_failure = result
-                                .as_ref()
-                                .err()
-                                .and_then(permanent_inference_failure);
-                            circuit.complete(
-                                result.is_ok(),
-                                transient_failure,
-                                permanent_failure,
-                            );
+                            Self::complete_circuit(circuit, &result);
                             if reply.send(result.map(StreamAccumulator::into_final_chunk)).is_err() {
                                 tracing::trace!(target: "hkask.inference", "streaming caller cancelled");
                             }
@@ -704,6 +680,21 @@ impl LanguageModelInferencePort {
         }
     }
 
+    /// Feed one request's outcome to the resilience circuit — the shared
+    /// classification tail of both receiver arms. Consumes the permit, as
+    /// `InferenceCircuitPermit::complete` records one completion per permit.
+    fn complete_circuit(
+        circuit: InferenceCircuitPermit,
+        result: &Result<StreamAccumulator, InferenceError>,
+    ) {
+        let transient_failure = result
+            .as_ref()
+            .err()
+            .is_some_and(is_transient_inference_failure);
+        let permanent_failure = result.as_ref().err().and_then(permanent_inference_failure);
+        circuit.complete(result.is_ok(), transient_failure, permanent_failure);
+    }
+
     async fn collect_completion(
         request: LanguageModelRequest,
         model_override: Option<String>,
@@ -792,6 +783,33 @@ impl LanguageModelInferencePort {
             receiver,
             |mut receiver| async move { receiver.recv().await.map(|chunk| (chunk, receiver)) },
         ))
+    }
+
+    /// Dispatch a built request through the completion channel and await the
+    /// reply — the shared tail of `generate_with_messages` and
+    /// `generate_vision`.
+    fn dispatch_completion(
+        &self,
+        request: LanguageModelRequest,
+        model_override: Option<String>,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>,
+    > {
+        let (tx_reply, rx_reply) = oneshot::channel();
+        async move {
+            self.tx
+                .send(InferenceRequest {
+                    lifetime: self.admit()?,
+                    request,
+                    model_override,
+                    reply: tx_reply,
+                })
+                .map_err(|e| InferenceError::Connection(e.to_string()))?;
+            rx_reply
+                .await
+                .map_err(|e| InferenceError::Connection(e.to_string()))?
+        }
+        .boxed()
     }
 
     fn build_request(
@@ -886,6 +904,19 @@ impl LanguageModelInferencePort {
     }
 }
 
+/// The rendered template is a system prompt (role definition, output
+/// format, constraints) — not a user message. Sending it as `system`
+/// gives it the semantic weight providers reserve for system-level
+/// directives (stronger instruction adherence, better tool-call
+/// compliance). The minimal user message triggers generation — some
+/// providers require at least one user message to produce output.
+fn prompt_messages(prompt: &str) -> Vec<ChatMessage> {
+    vec![
+        ChatMessage::system(prompt.to_string()),
+        ChatMessage::user("Execute the instructions above.".to_string()),
+    ]
+}
+
 impl InferencePort for LanguageModelInferencePort {
     fn generate(
         &self,
@@ -895,17 +926,7 @@ impl InferencePort for LanguageModelInferencePort {
     ) -> std::pin::Pin<
         Box<dyn std::future::Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>,
     > {
-        // The rendered template is a system prompt (role definition, output
-        // format, constraints) — not a user message. Sending it as `system`
-        // gives it the semantic weight providers reserve for system-level
-        // directives (stronger instruction adherence, better tool-call
-        // compliance). The minimal user message triggers generation — some
-        // providers require at least one user message to produce output.
-        let messages = vec![
-            ChatMessage::system(prompt.to_string()),
-            ChatMessage::user("Execute the instructions above.".to_string()),
-        ];
-        self.generate_with_messages(&messages, parameters, None, tools)
+        self.generate_with_model(prompt, parameters, None, tools)
     }
 
     fn generate_with_model(
@@ -917,10 +938,7 @@ impl InferencePort for LanguageModelInferencePort {
     ) -> std::pin::Pin<
         Box<dyn std::future::Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>,
     > {
-        let messages = vec![
-            ChatMessage::system(prompt.to_string()),
-            ChatMessage::user("Execute the instructions above.".to_string()),
-        ];
+        let messages = prompt_messages(prompt);
         self.generate_with_messages(&messages, parameters, model_override, tools)
     }
 
@@ -934,22 +952,7 @@ impl InferencePort for LanguageModelInferencePort {
         Box<dyn std::future::Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>,
     > {
         let request = self.build_request(messages, parameters, tools);
-        let model_override = model_override.map(|s| s.to_string());
-        let (tx_reply, rx_reply) = oneshot::channel();
-        async move {
-            self.tx
-                .send(InferenceRequest {
-                    lifetime: self.admit()?,
-                    request,
-                    model_override,
-                    reply: tx_reply,
-                })
-                .map_err(|e| InferenceError::Connection(e.to_string()))?;
-            rx_reply
-                .await
-                .map_err(|e| InferenceError::Connection(e.to_string()))?
-        }
-        .boxed()
+        self.dispatch_completion(request, model_override.map(|s| s.to_string()))
     }
 
     /// Vision inference — send base64-encoded images to a multimodal model.
@@ -971,22 +974,7 @@ impl InferencePort for LanguageModelInferencePort {
         // user-message contract rather than relying on a separate system instruction.
         let messages = vec![ChatMessage::user(prompt.to_string())];
         let request = self.build_request_with_images(&messages, images, parameters, None);
-        let model_override = model_override.map(|s| s.to_string());
-        let (tx_reply, rx_reply) = oneshot::channel();
-        async move {
-            self.tx
-                .send(InferenceRequest {
-                    lifetime: self.admit()?,
-                    request,
-                    model_override,
-                    reply: tx_reply,
-                })
-                .map_err(|e| InferenceError::Connection(e.to_string()))?;
-            rx_reply
-                .await
-                .map_err(|e| InferenceError::Connection(e.to_string()))?
-        }
-        .boxed()
+        self.dispatch_completion(request, model_override.map(|s| s.to_string()))
     }
 
     /// Streaming override — forwards `InferenceStreamChunk`s as they arrive
@@ -1011,11 +999,7 @@ impl InferencePort for LanguageModelInferencePort {
                 + '_,
         >,
     > {
-        let messages = vec![
-            ChatMessage::system(prompt.to_string()),
-            ChatMessage::user("Execute the instructions above.".to_string()),
-        ];
-        let request = self.build_request(&messages, parameters, tools);
+        let request = self.build_request(&prompt_messages(prompt), parameters, tools);
         self.stream_request(request, None)
     }
 
@@ -1043,13 +1027,8 @@ impl InferencePort for LanguageModelInferencePort {
         let Some(model_override) = model_override else {
             return self.generate_stream(prompt, parameters, tools);
         };
-        let messages = vec![
-            ChatMessage::system(prompt.to_string()),
-            ChatMessage::user("Execute the instructions above.".to_string()),
-        ];
-        let request = self.build_request(&messages, parameters, tools);
-        let model_override = model_override.to_string();
-        self.stream_request(request, Some(model_override))
+        let request = self.build_request(&prompt_messages(prompt), parameters, tools);
+        self.stream_request(request, Some(model_override.to_string()))
     }
 
     /// F11: Streaming variant of `generate_with_messages`.
