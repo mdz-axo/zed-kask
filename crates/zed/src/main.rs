@@ -2109,7 +2109,7 @@ fn main() {
                     }
                 }
 
-                // D1/D3/D4/D10/D12: Model-dependent kask wiring.
+                // D1/D3: Model-dependent kask wiring.
                 //
                 // This block was originally in the synchronous startup, but
                 // moved here because LanguageModelRegistry::default_model()
@@ -2799,7 +2799,7 @@ fn main() {
         media_panel::init(cx);
         zed::watch_user_agents_md(app_state.fs.clone(), cx);
 
-        // D1/D3/D4/D12: Model-dependent kask wiring is split across two tasks:
+        // D1/D3: Model-dependent kask wiring is split across two tasks:
         //
         // 1. The skill execution (D1) is wired by the model-dependent task
         //    (above), which fires as soon as `LanguageModelRegistry::
