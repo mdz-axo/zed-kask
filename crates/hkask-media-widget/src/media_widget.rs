@@ -1185,7 +1185,7 @@ fn truncate_explain_result(result: &str) -> String {
 mod tests {
     use super::*;
     use crate::media_ref::MediaBlockBody;
-    use gpui::{AppContext, TestAppContext, Window};
+    use gpui::{AppContext, TestAppContext};
     use std::sync::{Arc, Mutex};
 
     /// expect: Remote media redirects are rejected before an unvalidated destination is loaded.
@@ -1208,10 +1208,8 @@ mod tests {
         Ok(())
     }
 
-    /// Serializes tests that mutate the process-global `ToolInvoker`
-    /// (the `ConversationInjector` is now per-app — it drops with each
-    /// `TestAppContext` — but this lock is still shared with the invoker
-    /// tests). Without this lock, parallel invoker tests observe each other's
+    /// Serializes tests that mutate the process-global `ToolInvoker`.
+    /// Without this lock, parallel invoker tests observe each other's
     /// invoker and intermittently fail with "invoker not wired" even when the
     /// test wired a mock.
     static GLOBAL_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());

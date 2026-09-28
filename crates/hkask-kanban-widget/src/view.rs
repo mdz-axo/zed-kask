@@ -1313,6 +1313,14 @@ mod tests {
         }
     }
 
+    /// `kanban_body` with dispatchable provenance — for move-dispatch tests
+    /// whose invoker script needs a server/tool to dispatch to.
+    fn body_with_board_and_provenance_with(tasks: Vec<TaskBody>) -> KanbanBlockBody {
+        let mut body = kanban_body(tasks);
+        body.provenance = dispatchable_provenance();
+        body
+    }
+
     #[gpui::test]
     async fn stage_move_sets_pending(cx: &mut TestAppContext) {
         let _lock = GLOBAL_TEST_LOCK.lock().expect("test lock poisoned");
@@ -1324,7 +1332,6 @@ mod tests {
             this.stage_move(
                 "t1".into(),
                 "Write tests".into(),
-                "Backlog".into(),
                 "ready".into(),
                 "Ready".into(),
                 cx,
@@ -1355,7 +1362,6 @@ mod tests {
             this.stage_move(
                 "t1".into(),
                 "Write tests".into(),
-                "Backlog".into(),
                 "ready".into(),
                 "Ready".into(),
                 cx,
@@ -1400,7 +1406,6 @@ mod tests {
             this.stage_move(
                 "t1".into(),
                 "Write tests".into(),
-                "Backlog".into(),
                 "ready".into(),
                 "Ready".into(),
                 cx,
@@ -1448,7 +1453,6 @@ mod tests {
             this.stage_move(
                 "t1".into(),
                 "Write tests".into(),
-                "Backlog".into(),
                 "ready".into(),
                 "Ready".into(),
                 cx,
@@ -1482,7 +1486,6 @@ mod tests {
             this.stage_move(
                 "t1".into(),
                 "Write tests".into(),
-                "Backlog".into(),
                 "ready".into(),
                 "Ready".into(),
                 cx,
@@ -1561,7 +1564,6 @@ mod tests {
                 this.stage_move(
                     "t1".into(),
                     "Card".into(),
-                    "Backlog".into(),
                     "ready".into(),
                     "Ready".into(),
                     cx,
@@ -1599,7 +1601,6 @@ mod tests {
             this.stage_move(
                 "t1".into(),
                 "Card".into(),
-                "Backlog".into(),
                 "ready".into(),
                 "Ready".into(),
                 cx,
@@ -1615,7 +1616,6 @@ mod tests {
             this.stage_move(
                 "t1".into(),
                 "Card".into(),
-                "Backlog".into(),
                 "ready".into(),
                 "Ready".into(),
                 cx,
@@ -1650,7 +1650,6 @@ mod tests {
             this.stage_move(
                 "t1".into(),
                 "Write tests".into(),
-                "Backlog".into(),
                 "ready".into(),
                 "Ready".into(),
                 cx,
@@ -1685,7 +1684,6 @@ mod tests {
             this.stage_move(
                 "t1".into(),
                 "First".into(),
-                "Backlog".into(),
                 "ready".into(),
                 "Ready".into(),
                 cx,
@@ -1695,7 +1693,6 @@ mod tests {
             this.stage_move(
                 "t2".into(),
                 "Second".into(),
-                "Backlog".into(),
                 "in_progress".into(),
                 "In Progress".into(),
                 cx,

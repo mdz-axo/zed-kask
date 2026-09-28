@@ -505,8 +505,7 @@ struct CommentsResponse {
 /// kanban tabs stay recognizable while distinguishing panels on different
 /// boards. The panel headline that repeated the board name was removed
 /// (operator decision 2026-09-18) — it duplicated the widget's load-bearing
-/// header, which carries the "I disagree" provenance chip and renders in
-/// chat blocks.
+/// header, which renders in chat blocks.
 fn panel_tab_title(board_name: Option<&str>) -> SharedString {
     match board_name {
         Some(name) if !name.is_empty() => SharedString::from(format!("Kanban — {name}")),

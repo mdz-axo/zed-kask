@@ -339,9 +339,9 @@ fn ipv6_is_public(address: Ipv6Addr) -> bool {
 /// field grants filesystem or network authority.
 ///
 /// `ontology` and `provenance` are `#[serde(default)]` so existing blocks without
-/// them still parse and render — just without the ontology-driven "Explain" and
-/// "I disagree" affordances. This is the additive contract: the media widget
-/// gains affordances when the block carries ontology + provenance, and falls back
+/// them still parse and render — just without the ontology-driven "Explain"
+/// affordance. This is the additive contract: the media widget gains the
+/// affordance when the block carries ontology + provenance, and falls back
 /// to transport-only display when it doesn't.
 #[derive(Debug, Clone, Deserialize)]
 pub struct MediaBlockBody {
@@ -360,9 +360,8 @@ pub struct MediaBlockBody {
     #[serde(default)]
     pub ontology: Option<String>,
     /// Model-visible provenance metadata for re-issuing the originating tool
-    /// (Explain) or composing a revision request (I disagree). `None` on
-    /// older blocks → the widget renders without dispatch/compose-back
-    /// affordances.
+    /// (Explain). `None` on older blocks → the widget renders without the
+    /// dispatch affordance.
     #[serde(default)]
     pub provenance: BlockProvenance,
 }

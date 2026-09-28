@@ -747,7 +747,7 @@ fn build_dispatch_args(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::block::{CalibrationSummary, PipelineOverview, parse_scenarios_body};
+    use crate::block::{CalibrationSummary, PipelineOverview};
 
     #[test]
     fn scaffolding_empty_pipeline_suggests_frame() {
