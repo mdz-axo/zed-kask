@@ -1,7 +1,7 @@
 ---
 title: "Deterministic vs Probabilistic Compute: Routing, Entropy, and the Problem Matrix"
 audience: [researchers, architects, agents]
-last_updated: 2026-09-27
+last_updated: 2026-09-28
 version: "1.0.0"
 status: "Active"
 domain: "Cross-cutting"
@@ -10,7 +10,7 @@ mds_categories: [composition, trust]
 
 # Deterministic vs Probabilistic Compute: Routing, Entropy, and the Problem Matrix
 
-> **IS/OUGHT boundary.** Sections 2–4 report established literature, corpus passages, and checks that were actually run. Sections 1, 3 (matrix placement), and 6 are the author's synthesis: hypotheses to test, not observed behavior of zed-kask. No routing mechanism described here is implemented.
+> **IS/OUGHT boundary.** Sections 2–4 report established literature, corpus passages, and checks that were actually run. Sections 1, 3 (matrix placement), and 6 are the author's synthesis: hypotheses to test, not observed behavior of zed-kask. Update 2026-09-28: the routing claim (section 1) was ratified as P8.4 and is implemented — the D/P labelling convention is universal across the computation-prescribing skills with a mechanical presence check, and the `semantics-route-step` routing analysis ships in `pragmatic-semantics`. The problem matrix (section 6) remains hypothesis.
 
 **Claim labels.** **[Lit]** established literature · **[Corpus]** John Brooks corpus (`john-brooks-clean-sealed-v13-reference`, record_id given) · **[Synth]** this report's own synthesis.
 

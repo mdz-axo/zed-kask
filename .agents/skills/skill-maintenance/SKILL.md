@@ -115,8 +115,9 @@ The agent reads the SKILL.md, follows its instructions, and calls tools
      logic-load-goal step parses; a comment header in any other form is a
      fail (an unparseable goal is unauditable). Mechanical enforcement
      point: `kask/scripts/audit/skill-corpus-prescreen.sh` (goal presence,
-     length, and content-overlap pre-screen over the whole corpus; flagged
-     templates get read-triage under this check).
+     length, content-overlap and goal-wrap pre-screen over the whole
+     corpus, plus the body-side D/P labelling presence check — P8.4's audit
+     floor; flagged items get read-triage under this check).
    - **T3**: Each `.j2` template defines expected output fields (as comments
      or schema description)
    - **T4**: a `.j2` template carries at most one `[inference]` block — the
@@ -142,11 +143,12 @@ The agent reads the SKILL.md, follows its instructions, and calls tools
 
 ### skill-maintenance-audit
 
+0. **Predict before auditing (calibration, P).** From the skill's size, age of last edit (`git log -1 --format=%cs -- .agents/skills/<name>/SKILL.md`) and template count alone, state the expected number of distinct verified defects per severity and the expected band, with one sentence of basis. Record before reading the body; step 5 reconciles.
 1. Read `.agents/skills/<name>/SKILL.md` as the canonical process; if it is missing, report that as a critical loss of the skill. Inspect only the `.j2` templates the body references under `kask/registry/templates/<name>/`. Manifests do not dispatch skills and must not supply health penalties, retirements, or a substitute for a missing SKILL.md.
 2. Confirm each signal against the actual tree and live tool surface, citing file:line (or the expected path and directory listing for a missing file): missing SKILL.md; removed/nonexistent tool references; referenced templates that are missing or unreachable; removed manifest-dispatch vocabulary used as instructions (not historical quotations or live `render_template` parameters); missing Constraints; vague instructions with no actionable tool steps; malformed `[inference]` headers or more than two `[inference]` blocks; a skill that creates temporary state (local agent cards or swarms, kanban boards, scratch or `/tmp` files, jobs) with no step that deletes it or lists what it deliberately keeps (medium; `kask/docs/architecture/standardized-artifact-storage.md` Cleanup rule); a skill that names an artifacts folder after a UUID, hash or random run id instead of a readable `{YYYY-MM-DD}-{subject}` name (medium; same document, Readable names rule); or a concrete contradiction with the runtime or project constraints. Do not penalize speculative or unverified claims. Keep real broken references and malformed templates as findings.
 3. Score each **distinct verified defect** once from 1.0, floor at 0.0: critical −0.50 (missing SKILL.md, nonexistent tool, missing/unreachable referenced template); high −0.15 (contradictory instructions or malformed template contract); medium −0.10 (removed vocabulary used as operative dispatch, missing Constraints, vague instructions); low −0.05 (verified minor staleness with a specific behavioral impact). Do not double-count the same root cause. Include evidence per penalty and compute the score with `lisp_eval` (always registered): form `(max 0 (- 1 (+ (* 0.50 critical) (* 0.15 high) (* 0.10 medium) (* 0.05 low))))`, env the counts of distinct verified defects per severity. No verified defects → 1.0.
 4. Classify 0.00–0.19 as retirement candidate, 0.20–0.49 as critical revision, 0.50–0.79 as stale warning, 0.80–1.00 as active. A score is advisory: propose repair first and never delete or mark a skill deprecated without explicit operator approval. Explain when a low score is caused by multiple repairable faults.
-5. Respond with staleness report, health score and traceable penalties, coverage limitations (checks not performed), and recommendations. For any unverified signal report `unverified` separately without a penalty. A score of 1.0 establishes only the absence of verified staleness defects, not skill effectiveness; route requests to improve behavior to `skill-maintenance-optimize`.
+5. Respond with staleness report, health score and traceable penalties, coverage limitations (checks not performed), the predicted-vs-verified defect counts from step 0 with the gap (`lisp_eval` over the two count vectors) and the predicted vs computed band, and recommendations. For any unverified signal report `unverified` separately without a penalty. A score of 1.0 establishes only the absence of verified staleness defects, not skill effectiveness; route requests to improve behavior to `skill-maintenance-optimize`.
 
 ### Proposal card handoff (all proposal-producing phases)
 
