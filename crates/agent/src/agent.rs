@@ -3283,20 +3283,15 @@ pub(crate) fn context_injector_for(
 /// the call site — see `NO_COMPRESS_TOOLS` in `thread.rs`. The condenser is
 /// intended for verbose terminal/build/test output, not source code.
 pub trait ThreadCondenser: Send + Sync {
-    /// Compress a tool result's text output.
+    /// Compress a tool result's text output at ingestion time.
     ///
     /// Returns the compressed text. If compression is disabled or the output
     /// is already within budget, returns the original text unchanged.
+    ///
+    /// This is the ingestion policy only. Compaction planning applies its
+    /// own deterministic pre-shrink to the summarizer's request copy
+    /// (`kask_compaction`), with no tool-name exemptions.
     fn compress_tool_result(&self, tool_name: &str, output: &str) -> String;
-
-    /// Precompress eligible older tool output, independently of ingestion settings.
-    /// The caller excludes the summarization instruction. Preserve user/assistant
-    /// prose, the latest user-led exchange, and the named protected tools.
-    fn precompress_history(
-        &self,
-        messages: &mut [language_model::LanguageModelRequestMessage],
-        protected_tools: &[&str],
-    ) -> Result<()>;
 }
 
 /// Global hook for the thread condenser (D8).
@@ -3375,14 +3370,6 @@ mod thread_condenser_test_isolation {
     impl ThreadCondenser for MarkerCondenser {
         fn compress_tool_result(&self, _tool_name: &str, output: &str) -> String {
             format!("{output} [COMPRESSED]")
-        }
-
-        fn precompress_history(
-            &self,
-            _messages: &mut [language_model::LanguageModelRequestMessage],
-            _protected_tools: &[&str],
-        ) -> Result<()> {
-            Ok(())
         }
     }
 
@@ -7953,6 +7940,30 @@ mod internal_tests {
             b"---\nname: invoker-skill\ndescription: Invoker probe\n---\n\nbody".to_vec(),
         )
         .await;
+
+        // The registered SkillTool authorizes non-core skills through the
+        // settings-driven permission flow; `invoker-skill` is not a core
+        // skill, and with no matching rule the authorization loop waits on
+        // a prompt that never arrives in a standalone run (observed: the
+        // test spun at 100% CPU awaiting the authorization response).
+        // Allow this skill by rule so the run reaches the load → body →
+        // activate → record path the invoker stamp lives on.
+        cx.update(|cx| {
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.tool_permissions.tools.insert(
+                crate::SkillTool::NAME.into(),
+                agent_settings::ToolRules {
+                    default: Some(settings::ToolPermissionMode::Confirm),
+                    always_allow: vec![
+                        agent_settings::CompiledRegex::new(r"invoker-skill", false).unwrap(),
+                    ],
+                    always_deny: vec![],
+                    always_confirm: vec![],
+                    invalid_patterns: vec![],
+                },
+            );
+            agent_settings::AgentSettings::override_global(settings, cx);
+        });
 
         let project = Project::test(fs.clone(), [], cx).await;
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
