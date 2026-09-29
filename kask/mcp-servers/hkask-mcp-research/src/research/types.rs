@@ -213,7 +213,8 @@ pub struct SearchRequest {
     pub strategy: Option<String>,
     /// Deliberate provider selection without an explicit `provider`: when
     /// `provider` is None and `intent` is set (news, academic, semantic,
-    /// freshness, general, transcript), the tool scores the configured
+    /// research, freshness, general, transcript — a closed vocabulary;
+    /// unknown values are rejected), the tool scores the configured
     /// providers against (query, intent) — cost, latency, strengths,
     /// capability match — and queries the top recommendation as a
     /// single-provider call. The ranking is surfaced in the output's

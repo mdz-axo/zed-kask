@@ -192,13 +192,19 @@ pub(crate) fn map_db_error(e: anyhow::Error) -> McpToolError {
 }
 
 /// Require the research database, returning an Err if not configured.
+/// The message names the actual causes: the DB opens at its DEFAULT path
+/// when `HKASK_RESEARCH_DB` is unset, so an unconfigured DB is almost always
+/// a missing `HKASK_DB_PASSPHRASE` or an open failure — not a missing
+/// `HKASK_RESEARCH_DB` (the var only selects a custom location).
 macro_rules! require_research_db {
     ($self:expr) => {
         match &$self.research_db {
             Some(db) => db.clone(),
             None => {
                 return Err(McpToolError::permission_denied(
-                    "Research database not configured. Set HKASK_RESEARCH_DB and HKASK_DB_PASSPHRASE.",
+                    "Research database not available — set HKASK_DB_PASSPHRASE \
+                     (the DB opens at its default path; set HKASK_RESEARCH_DB only for a \
+                     custom location) and check the server log for an open failure.",
                 ));
             }
         }
@@ -238,7 +244,7 @@ impl ResearchServer {
     #[tool(description = "Search the web with RRF fusion across providers. \
          Set `provider` to query a single named provider (tavily, brave, exa, \
          firecrawl, serpapi) — no fusion, no fallback. Or set `intent` (news, \
-         academic, semantic, freshness, general, transcript) to have the tool \
+         academic, semantic, research, freshness, general, transcript) to have the tool \
          score the configured providers against the query and pick the top \
          recommendation for you — the ranking is surfaced in \
          provider_recommendations. When both are None, `strategy` selects: \
@@ -258,6 +264,28 @@ impl ResearchServer {
                 return Err(McpToolError::invalid_argument(format!(
                     "query exceeds maximum length of {} characters",
                     MAX_QUERY_LENGTH
+                )));
+            }
+            // Intent is a closed vocabulary, not a free string: the scorer
+            // silently maps an unrecognized intent to no-bonus generic
+            // ranking, so a typo would read as a successful request routed
+            // under the intended lens. Reject unknown values up front (same
+            // class as `format` and `duplication`).
+            if let Some(intent) = req.intent.as_deref()
+                && !matches!(
+                    intent,
+                    "news"
+                        | "academic"
+                        | "semantic"
+                        | "research"
+                        | "freshness"
+                        | "general"
+                        | "transcript"
+                )
+            {
+                return Err(McpToolError::invalid_argument(format!(
+                    "intent must be one of news, academic, semantic, research, freshness, \
+                     general, transcript — got '{intent}'"
                 )));
             }
 
@@ -1725,8 +1753,8 @@ impl ResearchServer {
         let Some(database) = self.research_db.clone() else {
             return serde_json::json!({
                 "recorded": 0,
-                "error": "research database not configured — set HKASK_RESEARCH_DB and \
-                          HKASK_DB_PASSPHRASE to record runs",
+                "error": "research database not available — set HKASK_DB_PASSPHRASE \
+                          to record runs (HKASK_RESEARCH_DB only for a custom location)",
             });
         };
         let run_id_for_task = run_id.to_string();
@@ -2381,7 +2409,7 @@ pub(crate) fn credential_requirements() -> Vec<CredentialRequirement> {
         opt("HKASK_EXA_API_KEY", "Exa API key"),
         opt(
             "HKASK_DB_PASSPHRASE",
-            "Passphrase for SQLCipher encryption (required if HKASK_RESEARCH_DB is set)",
+            "SQLCipher passphrase for the research DB — RSS and research-run tools are unavailable without it (the DB opens at its default path; HKASK_RESEARCH_DB only overrides the location)",
         ),
     ]
 }
