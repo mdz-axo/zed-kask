@@ -178,12 +178,12 @@ impl TrainingServer {
             let mut written = serde_json::Map::new();
             if mode == "sft" || mode == "both" {
                 let sft_path = output.with_extension("sft.jsonl");
-                std::fs::write(&sft_path, sft_lines.join("\n") + "\n").map_err(|e| {
-                    hkask_mcp_server::map_io_error(
-                        e,
-                        &format!("Failed to write SFT dataset '{}'", sft_path.display()),
-                    )
-                })?;
+                // O_NOFOLLOW open: a symlink at the destination is refused,
+                // not followed (F4).
+                hkask_mcp_server::write_contained(
+                    &sft_path.to_string_lossy(),
+                    (sft_lines.join("\n") + "\n").as_bytes(),
+                )?;
                 written.insert(
                     "sft_path".into(),
                     serde_json::json!(sft_path.display().to_string()),
@@ -192,15 +192,10 @@ impl TrainingServer {
             }
             if mode == "preference" || mode == "both" {
                 let pref_path = output.with_extension("preference.jsonl");
-                std::fs::write(&pref_path, preference_lines.join("\n") + "\n").map_err(|e| {
-                    hkask_mcp_server::map_io_error(
-                        e,
-                        &format!(
-                            "Failed to write preference dataset '{}'",
-                            pref_path.display()
-                        ),
-                    )
-                })?;
+                hkask_mcp_server::write_contained(
+                    &pref_path.to_string_lossy(),
+                    (preference_lines.join("\n") + "\n").as_bytes(),
+                )?;
                 written.insert(
                     "preference_path".into(),
                     serde_json::json!(pref_path.display().to_string()),

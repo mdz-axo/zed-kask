@@ -102,12 +102,12 @@ impl CorpusServer {
                             )
                         })?;
                     }
-                    std::fs::write(&destination, &text).map_err(|e| {
-                        map_corpus_io_error(
-                            e,
-                            &format!("Failed to write '{}'", destination.display()),
-                        )
-                    })?;
+                    // O_NOFOLLOW open: a symlink at the destination is
+                    // refused, not followed (F4).
+                    hkask_mcp_server::server::write_contained(
+                        &destination.to_string_lossy(),
+                        text.as_bytes(),
+                    )?;
                 }
                 // Ground the artifact's state identity at ingest: the DC type
                 // from the source file's extension (canonical MIME mapping),
@@ -891,7 +891,12 @@ impl CorpusServer {
                             output_path
                         };
                         let destination = crate::path_safety::contain_for_write(&destination.to_string_lossy())?;
-                        if let Err(e) = std::fs::write(&destination, text) {
+                        // O_NOFOLLOW open: a symlink at the destination is
+                        // refused, not followed (F4).
+                        if let Err(e) = hkask_mcp_server::server::write_contained(
+                            &destination.to_string_lossy(),
+                            text.as_bytes(),
+                        ) {
                             failures.push(json!({
                                 "path": source,
                                 "error": format!("Failed to write '{}': {}", destination.display(), e),
@@ -902,7 +907,10 @@ impl CorpusServer {
                             let result = content.as_ref().ok_or_else(|| McpToolError::internal("Missing parsed conversion result"))?;
                             let serialized = serde_json::to_vec(result)
                                 .map_err(|e| McpToolError::internal(format!("Cannot serialize OCR verification report: {e}")))?;
-                            if let Err(e) = std::fs::write(&report_path, serialized) {
+                            if let Err(e) = hkask_mcp_server::server::write_contained(
+                                &report_path.to_string_lossy(),
+                                &serialized,
+                            ) {
                                 failures.push(json!({"path":source,"error":format!("Cannot persist OCR verification report '{}': {e}", report_path.display())}));
                                 continue;
                             }

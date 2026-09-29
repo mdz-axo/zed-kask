@@ -208,9 +208,11 @@ pub(crate) fn open_memory_store(
 /// `PromptBuilderService::build_prompts`. An escaping path is rejected with
 /// `invalid_argument` before any write reaches disk.
 pub(crate) fn write_contained(output: &str, content: &str) -> Result<(), McpToolError> {
-    let path = crate::path_safety::contain_for_write(output)?;
-    std::fs::write(&path, content)
-        .map_err(|e| map_corpus_io_error(e, &format!("Cannot write output '{output}'")))
+    // The shared primitive re-runs containment and opens the final component
+    // with O_NOFOLLOW — a symlink planted between check and open is refused
+    // (repair-plan F4), never silently followed.
+    hkask_mcp_server::server::write_contained(output, content.as_bytes())?;
+    Ok(())
 }
 
 /// Stream a JSONL file line-by-line, parsing each non-empty line into `T`.

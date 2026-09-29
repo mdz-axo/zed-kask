@@ -369,6 +369,54 @@ pub fn contain_for_write(path: &str) -> Result<std::path::PathBuf, McpToolError>
     contain(std::path::Path::new(path), true)
 }
 
+/// Write `bytes` to a caller-supplied path under containment, closing the
+/// check-to-open symlink race on the final component (repair-plan F4's
+/// `O_NOFOLLOW`-class ask). `contain_for_write` resolves and checks the
+/// path first; this open then REFUSES to follow a symlink planted on the
+/// final component between the check and the open — the leaf is opened
+/// with `O_NOFOLLOW` (Unix), so the swap surfaces as `ELOOP` and is
+/// classified `invalid_argument` naming the refusal, never a silent
+/// escape. Non-symlink IO failures classify through [`map_io_error`].
+/// Residual window, documented: an intermediate DIRECTORY component
+/// swapped for a symlink after the check is still followed — full
+/// protection needs an `openat(2)` component walk, which this
+/// deliberately is not. Returns the contained path written.
+pub fn write_contained(path: &str, bytes: &[u8]) -> Result<std::path::PathBuf, McpToolError> {
+    let contained = contain_for_write(path)?;
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(&contained)
+            .map_err(|error| {
+                if error.raw_os_error() == Some(libc::ELOOP) {
+                    McpToolError::invalid_argument(format!(
+                        "refusing to write '{}': the destination is a symlink — \
+                         write to its target or remove the link",
+                        contained.display()
+                    ))
+                } else {
+                    map_io_error(error, &format!("Cannot write '{}'", contained.display()))
+                }
+            })?;
+        file.write_all(bytes).map_err(|error| {
+            map_io_error(error, &format!("Cannot write '{}'", contained.display()))
+        })?;
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::write(&contained, bytes).map_err(|error| {
+            map_io_error(error, &format!("Cannot write '{}'", contained.display()))
+        })?;
+    }
+    Ok(contained)
+}
+
 /// Resolve a caller-supplied read path, rejecting anything outside the
 /// project root (CWE-22/CWE-200). The target must exist.
 #[must_use = "result must be used"]
@@ -379,6 +427,54 @@ pub fn contain_for_read(path: &str) -> Result<std::path::PathBuf, McpToolError> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// expect: "A symlink planted on the write destination between the
+    /// containment check and the open is refused, not followed" [P4]
+    /// (repair-plan F4's O_NOFOLLOW-class ask: the check-to-open race on the
+    /// final component closes here — the write surfaces ELOOP as
+    /// invalid_argument naming the refusal).
+    #[test]
+    #[cfg(unix)]
+    fn write_contained_refuses_a_final_component_symlink() -> Result<(), Box<dyn std::error::Error>>
+    {
+        // Fixtures must live inside an allowed root (the crate dir for tests);
+        // the symlink TARGET may be anywhere — the refusal happens at open.
+        let dir = tempfile::tempdir_in(env!("CARGO_MANIFEST_DIR"))?;
+        let outside = tempfile::tempdir()?;
+        let real_target = outside.path().join("escaped.txt");
+        // The destination inside the contained root is a symlink pointing out.
+        let symlinked = dir.path().join("output.txt");
+        std::os::unix::fs::symlink(&real_target, &symlinked)?;
+
+        let contained_root = dir.path().to_string_lossy().to_string();
+        let destination = format!("{contained_root}/output.txt");
+        let error = write_contained(&destination, b"payload").expect_err("symlink refused");
+        assert_eq!(
+            error.kind,
+            hkask_types::McpErrorKind::InvalidArgument,
+            "the refusal is a caller-input problem: {error}"
+        );
+        assert!(
+            error.to_string().contains("symlink"),
+            "message names the refusal: {error}"
+        );
+        // The escape never happened: the outside target was not created.
+        assert!(
+            !real_target.exists(),
+            "the symlinked write must not have reached the outside target"
+        );
+        Ok(())
+    }
+
+    /// expect: "A normal contained write still lands" [P4]
+    #[test]
+    fn write_contained_writes_a_plain_destination() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir_in(env!("CARGO_MANIFEST_DIR"))?;
+        let destination = dir.path().join("output.txt");
+        let written = write_contained(&destination.to_string_lossy(), b"payload")?;
+        assert_eq!(std::fs::read(&written)?, b"payload");
+        Ok(())
+    }
 
     /// expect: "New relative outputs work without weakening path containment" [P4]
     #[test]

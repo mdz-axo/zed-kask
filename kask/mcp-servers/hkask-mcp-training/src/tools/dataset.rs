@@ -2,7 +2,7 @@ use crate::TrainingServer;
 use crate::dataset::DatasetPipeline;
 use crate::tools::error_mapping::map_dataset_error;
 use crate::types::{AssembleDatasetRequest, IngestQaRequest, TrainIngestDatasetRequest};
-use hkask_mcp_server::server::{McpToolError, execute_tool, map_io_error, map_memory_store_error};
+use hkask_mcp_server::server::{McpToolError, execute_tool, map_memory_store_error};
 use hkask_storage::HMem;
 use hkask_types::{HMemOntology, Visibility};
 use rmcp::handler::server::wrapper::Parameters;
@@ -157,18 +157,22 @@ impl TrainingServer {
                 let split = split.clamp(0.0, 1.0);
                 (limit as f64 * split) as usize
             } else { limit };
-            let write_jsonl = |path: &std::path::Path, items: &[serde_json::Value]| -> Result<usize, std::io::Error> {
-                let mut output = String::new();
-                for item in items {
-                    output.push_str(
-                        &serde_json::to_string(item)
-                            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?,
-                    );
-                    output.push('\n');
-                }
-                std::fs::write(path, output)?;
-                Ok(items.len())
-            };
+            let write_jsonl =
+                |path: &std::path::Path, items: &[serde_json::Value]| -> Result<usize, McpToolError> {
+                    let mut output = String::new();
+                    for item in items {
+                        output.push_str(
+                            &serde_json::to_string(item).map_err(|e| {
+                                McpToolError::internal(format!("Cannot serialize dataset row: {e}"))
+                            })?,
+                        );
+                        output.push('\n');
+                    }
+                    // O_NOFOLLOW open: a symlink at the destination is refused,
+                    // not followed (F4).
+                    hkask_mcp_server::write_contained(&path.to_string_lossy(), output.as_bytes())?;
+                    Ok(items.len())
+                };
             // Contain the LLM-supplied output path (CWE-73): a write to
             // ~/.ssh/authorized_keys or /etc/cron.d/... must be rejected.
             let train_path = hkask_mcp_server::contain_for_write(&output_path)?;
@@ -186,7 +190,7 @@ impl TrainingServer {
                     }
                     Ok(result)
                 }
-                Err(e) => Err(map_io_error(e, "Failed to write dataset file")),
+                Err(e) => Err(e),
             }
         })
         .await
