@@ -290,6 +290,19 @@ pub struct GetResearchRunRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct FinishResearchRunRequest {
+    /// The run identifier returned by `begin_research_run`.
+    pub run_id: String,
+    /// The terminal status: completed, partial, blocked, or failed.
+    /// `completed`/`partial` require at least one server-recorded source
+    /// (a run-scoped web_search/web_extract/web_find_similar/resolve_paper
+    /// call); finish as `blocked` or `failed` when no source was recorded.
+    pub status: String,
+    /// Optional closing note (why the run ended in this state).
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct AnnotateResearchRunRequest {
     /// The run identifier returned by `begin_research_run`.
     pub run_id: String,

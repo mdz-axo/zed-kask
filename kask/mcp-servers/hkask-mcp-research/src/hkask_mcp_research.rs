@@ -26,12 +26,12 @@ use crate::research::{
     DEFAULT_CACHE_TTL_SECS, DEFAULT_PROFILE, DeleteSyntheticRequest, DiscoverRequest,
     EditTagRequest, EvaluateEvidenceRequest, EvidenceReport, ExtractOptions, ExtractOutput,
     ExtractRequest, FetchRequest, FindSimilarOutput, FindSimilarRequest, FindSimilarResultOutput,
-    GetEntriesRequest, GetResearchRunRequest, ImportOpmlRequest, ListSubscriptionsRequest,
-    MAX_CACHE_MAX_ENTRIES, MAX_CACHE_TTL_SECS, MAX_INSTRUCTION_LENGTH, MAX_JSON_PROMPT_LENGTH,
-    MAX_JSON_SCHEMA_BYTES, MAX_QUERY_LENGTH, MAX_URL_LENGTH, MarkReadRequest, NewResearchRun,
-    PingOutput, ProviderProfileOutput, ProviderRecommendation, RateLimiter, RerankInfo,
-    RerankOutcome, ResolvePaperRequest, ResponseCache, RunSourceRecord, SearchMetadata,
-    SearchOutput, SearchQuery, SearchRequest, SearchResultOutput, SearchStrategy,
+    FinishResearchRunRequest, GetEntriesRequest, GetResearchRunRequest, ImportOpmlRequest,
+    ListSubscriptionsRequest, MAX_CACHE_MAX_ENTRIES, MAX_CACHE_TTL_SECS, MAX_INSTRUCTION_LENGTH,
+    MAX_JSON_PROMPT_LENGTH, MAX_JSON_SCHEMA_BYTES, MAX_QUERY_LENGTH, MAX_URL_LENGTH,
+    MarkReadRequest, NewResearchRun, PingOutput, ProviderProfileOutput, ProviderRecommendation,
+    RateLimiter, RerankInfo, RerankOutcome, ResolvePaperRequest, ResponseCache, RunSourceRecord,
+    SearchMetadata, SearchOutput, SearchQuery, SearchRequest, SearchResultOutput, SearchStrategy,
     SensitivityStatus, SubscribeRequest, SynthesizeRequest, UnreadCountRequest, UnsubscribeRequest,
     WebSearchPort, build_provider_pool, cache_key, discover_feeds, fetch_feed, llm_rerank,
     provider_profile, score_evidence_set, validated_fetch_client,
@@ -1681,6 +1681,55 @@ impl ResearchServer {
     }
 
     #[tool(
+        description = "Mark a research run finished with a terminal status (completed, partial, blocked, or failed). The sources ledger is never mutated: the transition appends to the run's status history (the audit trail) and updates the run's latest status. completed/partial require at least one server-recorded source — finish as blocked or failed when no run-scoped search/extract recorded anything."
+    )]
+    pub async fn finish_research_run(
+        &self,
+        Parameters(req): Parameters<FinishResearchRunRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "finish_research_run", async {
+            if req.run_id.trim().is_empty() {
+                return Err(McpToolError::invalid_argument("run_id must not be empty"));
+            }
+            if req.status.trim().is_empty() {
+                return Err(McpToolError::invalid_argument("status must not be empty"));
+            }
+            let database = require_research_db!(self);
+            let run_id_for_task = req.run_id.clone();
+            let status_for_task = req.status.clone();
+            let note_for_task = req.note.clone();
+            let result = spawn_db(database, move |connection| {
+                Ok(crate::research::runs::finish_research_run(
+                    connection,
+                    &run_id_for_task,
+                    &status_for_task,
+                    note_for_task.as_deref(),
+                ))
+            })
+            .await;
+            match result {
+                Ok(Ok(Ok(Some(summary)))) => Ok(summary),
+                Ok(Ok(Ok(None))) => Err(McpToolError::not_found(format!(
+                    "research run '{}' not found",
+                    req.run_id
+                ))),
+                Ok(Ok(Err(error @ crate::research::runs::FinishRunError::InvalidStatus(_)))) => {
+                    Err(McpToolError::invalid_argument(error.to_string()))
+                }
+                Ok(Ok(Err(
+                    error @ crate::research::runs::FinishRunError::RequiresServerSource(_),
+                ))) => Err(McpToolError::failed_precondition(error.to_string())),
+                Ok(Ok(Err(crate::research::runs::FinishRunError::Db(error)))) => {
+                    Err(map_db_error(error))
+                }
+                Ok(Err(error)) => Err(map_db_error(error)),
+                Err(error) => Err(map_join_error(error, "db task failed")),
+            }
+        })
+        .await
+    }
+
+    #[tool(
         description = "Annotate a research run's source with an agent-declared verification state (not_checked, inferred, partial, verified, blocked, failed). `verified` is accepted ONLY for sources the server itself recorded under this run (pass run_id to web_search/web_extract/web_find_similar) and requires a basis — the server refuses verification claims about sources it never served. Annotations are upsert-idempotent; annotating an unseen URL records it as an agent-declared row."
     )]
     pub async fn annotate_research_run(
@@ -2467,8 +2516,8 @@ mod tool_surface_tests {
     }
 
     #[test]
-    fn tool_surface_is_exactly_26_registered_tools() {
+    fn tool_surface_is_exactly_27_registered_tools() {
         let n = ResearchServer::tool_router().list_all().len();
-        assert_eq!(n, 26, "research registered tool surface changed; got {n}");
+        assert_eq!(n, 27, "research registered tool surface changed; got {n}");
     }
 }

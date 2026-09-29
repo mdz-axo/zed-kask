@@ -118,6 +118,19 @@ pub const RESEARCH_SCHEMA_DDL: &str = "
         updated_at TEXT NOT NULL
     );
 
+    -- run_status_history: one append-only row per status transition. The
+    -- sources ledger is never mutated; the run row carries the LATEST
+    -- status while this table preserves the full transition audit trail
+    -- (operator ruling 2026-09-29, D6: runs are markable finished).
+    CREATE TABLE IF NOT EXISTS research_run_status_history (
+        run_id      TEXT NOT NULL REFERENCES research_runs(run_id) ON DELETE CASCADE,
+        from_status TEXT NOT NULL,
+        to_status   TEXT NOT NULL,    -- completed|partial|blocked|failed
+        note        TEXT,
+        at          TEXT NOT NULL,    -- RFC 3339
+        PRIMARY KEY (run_id, at)
+    );
+
     -- run_sources: one row per (run, url). `excerpt` is the audit copy of
     -- what the server actually returned (capped); `corpus_ref` is the
     -- agent's entity_ref for the durable recall copy ingested via the

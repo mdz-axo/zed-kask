@@ -32,9 +32,10 @@ use hkask_mcp_research::research::rss_types::{
 use hkask_mcp_research::research::types::{
     AnnotateResearchRunRequest, BeginResearchRunRequest, BrowseRequest, BrowseResult,
     CompoundSearchResult, EvaluateArtifact, EvaluateEvidenceRequest, ExtractOptions,
-    ExtractRequest, ExtractedContent, FindSimilarRequest, GetResearchRunRequest, LatencyTier,
-    ProviderFailureRecord, ProviderHealthEntry, ProviderInfo, ProviderRecommendation, RankedResult,
-    RateLimiter, ResolvePaperRequest, SearchQuery, SearchRequest, SearchStrategy, WebError,
+    ExtractRequest, ExtractedContent, FindSimilarRequest, FinishResearchRunRequest,
+    GetResearchRunRequest, LatencyTier, ProviderFailureRecord, ProviderHealthEntry, ProviderInfo,
+    ProviderRecommendation, RankedResult, RateLimiter, ResolvePaperRequest, SearchQuery,
+    SearchRequest, SearchStrategy, WebError,
 };
 use hkask_mcp_server::server::McpToolError;
 use hkask_types::InferenceError;
@@ -2314,5 +2315,90 @@ async fn evaluate_evidence_rejects_unknown_duplication_mode() {
         error.message.contains("duplication"),
         "message names the field: {}",
         error.message
+    );
+}
+
+#[tokio::test]
+async fn finish_research_run_transitions_and_preserves_the_sources_ledger() {
+    let server = make_server_with_research_db();
+    let begun = parse(&ok(server
+        .begin_research_run(Parameters(BeginResearchRunRequest {
+            question: "is the wire story corroborated?".to_string(),
+        }))
+        .await));
+    let run_id = begun["run_id"].as_str().expect("run_id").to_string();
+
+    // completed/partial require a server-recorded source — a fresh run has none.
+    let refused = err(server
+        .finish_research_run(Parameters(FinishResearchRunRequest {
+            run_id: run_id.clone(),
+            status: "completed".to_string(),
+            note: None,
+        }))
+        .await);
+    assert_error_kind(&refused, McpErrorKind::FailedPrecondition);
+    assert!(
+        refused.message.contains("server-recorded source"),
+        "message names the rule: {}",
+        refused.message
+    );
+
+    // blocked is a legitimate finish without sources.
+    let finished = parse(&ok(server
+        .finish_research_run(Parameters(FinishResearchRunRequest {
+            run_id: run_id.clone(),
+            status: "blocked".to_string(),
+            note: Some("no sources reachable".to_string()),
+        }))
+        .await));
+    assert_eq!(finished["status"].as_str(), Some("blocked"));
+    assert_eq!(finished["from_status"].as_str(), Some("planned"));
+    assert_eq!(finished["note"].as_str(), Some("no sources reachable"));
+
+    // The manifest reflects the terminal status; the sources ledger is untouched.
+    let manifest = parse(&ok(server
+        .get_research_run(Parameters(GetResearchRunRequest {
+            run_id: run_id.clone(),
+        }))
+        .await));
+    assert_eq!(manifest["status"].as_str(), Some("blocked"));
+    assert!(
+        manifest["sources"].as_array().is_some_and(|s| s.is_empty()),
+        "finishing never appends or mutates sources: {manifest}"
+    );
+}
+
+#[tokio::test]
+async fn finish_research_run_rejects_unknown_run_and_nonterminal_status() {
+    let server = make_server_with_research_db();
+    let missing = err(server
+        .finish_research_run(Parameters(FinishResearchRunRequest {
+            run_id: "deadbeefdeadbeef".to_string(),
+            status: "completed".to_string(),
+            note: None,
+        }))
+        .await);
+    assert_error_kind(&missing, McpErrorKind::NotFound);
+
+    let begun = parse(&ok(server
+        .begin_research_run(Parameters(BeginResearchRunRequest {
+            question: "another question".to_string(),
+        }))
+        .await));
+    let run_id = begun["run_id"].as_str().expect("run_id").to_string();
+    let nonterminal = err(server
+        .finish_research_run(Parameters(FinishResearchRunRequest {
+            run_id,
+            status: "running".to_string(),
+            note: None,
+        }))
+        .await);
+    assert_error_kind(&nonterminal, McpErrorKind::InvalidArgument);
+    assert!(
+        nonterminal
+            .message
+            .contains("completed|partial|blocked|failed"),
+        "message names the terminal vocabulary: {}",
+        nonterminal.message
     );
 }

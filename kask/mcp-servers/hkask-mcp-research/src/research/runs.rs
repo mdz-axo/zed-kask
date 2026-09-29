@@ -99,6 +99,91 @@ pub(crate) fn append_run_sources(
     Ok(inserted)
 }
 
+/// The terminal statuses a run can be finished with. `planned`/`running`
+/// are not finishes — they are the states a finish moves FROM.
+pub(crate) const FINISH_STATUSES: &[&str] = &["completed", "partial", "blocked", "failed"];
+
+/// Mark a research run finished (operator ruling 2026-09-29, D6). The
+/// sources ledger is never touched — the transition appends one row to
+/// `research_run_status_history` (the audit trail) and updates the run
+/// row's latest-status fields. Enforces the record-level rule already
+/// pinned by `validate_research_run`: `completed`/`partial` require at
+/// least one server-recorded source. `None` when the run does not exist.
+pub(crate) fn finish_research_run(
+    connection: &Connection,
+    run_id: &str,
+    status: &str,
+    note: Option<&str>,
+) -> Result<Option<serde_json::Value>, FinishRunError> {
+    if !FINISH_STATUSES.contains(&status) {
+        return Err(FinishRunError::InvalidStatus(status.to_string()));
+    }
+    let Some((question, from_status, began_at)) = connection
+        .query_row(
+            "SELECT question, status, began_at FROM research_runs WHERE run_id = ?1",
+            [run_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|e| FinishRunError::Db(e.into()))?
+    else {
+        return Ok(None);
+    };
+    let has_server_recorded: bool = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM run_sources WHERE run_id = ?1 \
+             AND recorded_by = 'server')",
+            [run_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| FinishRunError::Db(e.into()))?;
+    if (status == "completed" || status == "partial") && !has_server_recorded {
+        return Err(FinishRunError::RequiresServerSource(status.to_string()));
+    }
+    let at = now_rfc3339();
+    connection
+        .execute(
+            "INSERT INTO research_run_status_history \
+             (run_id, from_status, to_status, note, at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![run_id, from_status, status, note, at],
+        )
+        .map_err(|e| FinishRunError::Db(e.into()))?;
+    connection
+        .execute(
+            "UPDATE research_runs SET status = ?2, updated_at = ?3 WHERE run_id = ?1",
+            rusqlite::params![run_id, status, at],
+        )
+        .map_err(|e| FinishRunError::Db(e.into()))?;
+    Ok(Some(serde_json::json!({
+        "run_id": run_id,
+        "question": question,
+        "status": status,
+        "from_status": from_status,
+        "began_at": began_at,
+        "finished_at": at,
+        "note": note,
+    })))
+}
+
+/// Errors from [`finish_research_run`], classified per variant.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum FinishRunError {
+    #[error("invalid finish status '{0}' — must be one of completed|partial|blocked|failed")]
+    InvalidStatus(String),
+    #[error(
+        "status '{0}' requires at least one server-recorded source — finish as blocked or failed instead"
+    )]
+    RequiresServerSource(String),
+    #[error("research run store failure: {0}")]
+    Db(#[from] anyhow::Error),
+}
+
 /// The run manifest: question, status, timestamps, every source row (the
 /// audit trail), and per-source confidence recomputed server-side from the
 /// ledger's own excerpt copies (Commit 1's scorer — deterministic, G3
