@@ -1,11 +1,13 @@
-# EQM Catalog — Full 60 Explanation Quality Markers
+# EQM Catalog — Full 64 Explanation Quality Markers
 # Reference document (RenderAct) for the eqm skill (measure and improve phases).
 #
 # Source: Karvetski, Huang, Kučinskas et al. (2026), "Measuring Judgment
 # Quality in Natural-Language Explanations: Evidence from Forecasting
 # Tournaments" — Forecasting Research Institute.
 #
-# The paper defined 60 EQMs across four categories. The 12 most predictive
+# The paper defines the EQM instrument; this catalog carries 64 marker
+# definitions across two implemented categories (good_habits,
+# warning_signs). The 12 most predictive
 # (highlighted in the paper's key findings) are marked `predictive: true`
 # and are the default subset implemented in the market_score_rationale
 # MCP tool (hkask-mcp-prediction-markets/src/eqm.rs::KEY_EQMS).
@@ -22,7 +24,7 @@
 # Composite = Σ(helps scores) − Σ(hurts scores), range [-N_hurts×2, +N_helps×2].
 #
 # This catalog is the single source of truth for EQM definitions. The MCP
-# tool's KEY_EQMS const carries the predictive 12; this file carries all 60
+# tool's KEY_EQMS const carries the predictive 12; this file carries all 64
 # for skills that need the full catalog (research, validation, domain-tuning).
 
 categories:
