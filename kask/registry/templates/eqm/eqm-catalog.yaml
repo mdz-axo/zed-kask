@@ -1,20 +1,22 @@
-# EQM Catalog — Full 64 Explanation Quality Markers
-# Reference document (RenderAct) for the eqm skill (measure and improve phases).
+# EQM Catalog — the paper's 60 Explanation Quality Markers
+# Reference document for the eqm skill (measure and improve phases).
 #
 # Source: Karvetski, Huang, Kučinskas et al. (2026), "Measuring Judgment
 # Quality in Natural-Language Explanations: Evidence from Forecasting
-# Tournaments" — Forecasting Research Institute.
+# Tournaments" — Forecasting Research Institute. arXiv:2606.30987.
+# Appendix A.4, Tables A1-A6: the full 60-pattern set, verbatim.
 #
-# The paper defines the EQM instrument; this catalog carries 64 marker
-# definitions across two implemented categories (good_habits,
-# warning_signs). The 12 most predictive
-# (highlighted in the paper's key findings) are marked `predictive: true`
-# and are the default subset implemented in the market_score_rationale
-# MCP tool (hkask-mcp-prediction-markets/src/eqm.rs::KEY_EQMS).
+# The 60 patterns are organized into the paper's six theory-informed
+# families. Each pattern carries the paper's verbatim description and
+# directional hypothesis (the association with forecasting accuracy).
+# The 12 most predictive are marked `predictive: true` and are the
+# default subset implemented in the market_score_rationale MCP tool
+# (hkask-mcp-prediction-markets/src/eqm.rs::KEY_EQMS).
 #
 # Directional hypothesis:
 #   helps — positively correlated with forecasting accuracy (a "good habit")
 #   hurts — negatively correlated with forecasting accuracy (a "warning sign")
+#   neutral — no directional hypothesis (the paper assigned it neutral)
 #
 # The paper's key asymmetry finding: EQMs flag bad forecasts more reliably
 # than they identify excellent ones. Red-flag screening is the strong signal;
@@ -23,571 +25,530 @@
 # Scoring: 0/1/2 per marker (0 = absent, 1 = partial, 2 = clearly present).
 # Composite = Σ(helps scores) − Σ(hurts scores), range [-N_hurts×2, +N_helps×2].
 #
-# This catalog is the single source of truth for EQM definitions. The MCP
-# tool's KEY_EQMS const carries the predictive 12; this file carries all 64
+# NOTE: the MCP tool's KEY_EQMS const carries the OPERATIONAL scoring
+# descriptions for the predictive 12 — adapted from the paper's definitions
+# for the kask context (scoring rubric language, "rationale" instead of
+# "forecaster"). This catalog carries the paper's RESEARCH definitions
+# verbatim. Both are honest: the catalog is the reference model; the tool
+# is the operational instrument. The ID sets match exactly (B.9).
+#
+# This catalog is the single source of truth for EQM definitions as
+# published. The MCP tool's KEY_EQMS const carries the predictive 12's
+# operational descriptions; this file carries all 60 research definitions
 # for skills that need the full catalog (research, validation, domain-tuning).
 
 categories:
-  - id: good_habits
-    name: "Good Habits (positively correlated with accuracy)"
-    direction: helps
+  - id: bias_and_emotion
+    name: "Bias and Emotion"
     markers:
-      - id: statistical_reasoning
-        name: "Statistical Reasoning"
-        predictive: true
-        description: >
-          The rationale explicitly uses statistical concepts such as base
-          rates, probability distributions, sample sizes, confidence
-          intervals, or quantitative comparisons. A score of 2 means the
-          rationale clearly applies statistical thinking (e.g., citing a
-          base rate or computing a probability). A score of 0 means no
-          statistical reasoning is present.
-
-      - id: fact_based
-        name: "Fact Based"
-        predictive: true
-        description: >
-          The rationale cites specific, verifiable facts, data, or evidence
-          rather than opinions or speculation. A score of 2 means the
-          rationale is grounded in concrete facts. A score of 0 means the
-          rationale relies on opinion or assertion without evidence.
-
-      - id: concrete_reasoning
-        name: "Concrete Reasoning"
-        predictive: true
-        description: >
-          The rationale uses specific, concrete details rather than abstract
-          or vague generalizations. A score of 2 means the reasoning is
-          grounded in specific examples, numbers, or events. A score of 0
-          means the reasoning is abstract and non-specific.
-
-      - id: forecast_rationale_align
-        name: "Forecast and Rationale Align"
-        predictive: true
-        description: >
-          The rationale's stated reasoning is consistent with the forecast
-          probability. A score of 2 means the attitude expressed in the
-          rationale clearly matches the quantitative forecast. A score of 0
-          means the rationale contradicts the forecast (e.g., bullish
-          reasoning with a low probability).
-
-      - id: best_practices
-        name: "Best Practices"
-        predictive: true
-        description: >
-          The rationale follows forecasting best practices: considering
-          multiple hypotheses, seeking disconfirming evidence, using
-          structured decomposition, or applying probabilistic thinking. A
-          score of 2 means the rationale clearly follows best practices. A
-          score of 0 means no best practices are evident.
-
-      - id: statistical_causal_blend
-        name: "Statistical Causal Blend"
-        predictive: true
-        description: >
-          The rationale combines statistical reasoning with causal analysis,
-          using data to support causal claims or using causal models to
-          interpret statistics. A score of 2 means both statistical and
-          causal reasoning are present and integrated. A score of 0 means
-          neither is present or they are not integrated.
-
-      - id: considers_alternatives
-        name: "Considers Alternatives"
+      - id: clustering_illusion
+        name: "Clustering Illusion"
         predictive: false
+        direction: hurts
         description: >
-          The rationale explicitly considers alternative outcomes,
-          explanations, or scenarios rather than fixating on a single
-          narrative. A score of 2 means multiple alternatives are weighed.
-          A score of 0 means no alternatives are considered.
-
-      - id: reference_class_reasoning
-        name: "Reference Class Reasoning"
-        predictive: false
-        description: >
-          The rationale identifies a relevant reference class and uses its
-          historical frequency as an anchor. A score of 2 means a specific
-          reference class is named and its base rate cited. A score of 0
-          means no reference class is identified.
-
-      - id: decomposition
-        name: "Decomposition"
-        predictive: false
-        description: >
-          The rationale breaks the question into sub-components and reasons
-          about each separately. A score of 2 means a clear decomposition is
-          present and each part is addressed. A score of 0 means the
-          rationale treats the question as monolithic.
-
-      - id: uncertainty_acknowledgment
-        name: "Uncertainty Acknowledgment"
-        predictive: false
-        description: >
-          The rationale explicitly acknowledges uncertainty in the forecast,
-          citing sources of uncertainty and their magnitude. A score of 2
-          means uncertainty is quantified or clearly characterized. A score
-          of 0 means uncertainty is ignored or dismissed.
-
-      - id: evidence_weighting
-        name: "Evidence Weighting"
-        predictive: false
-        description: >
-          The rationale weighs different pieces of evidence by strength or
-          relevance rather than treating all evidence equally. A score of 2
-          means evidence is explicitly weighted. A score of 0 means evidence
-          is undifferentiated.
-
-      - id: temporal_reasoning
-        name: "Temporal Reasoning"
-        predictive: false
-        description: >
-          The rationale considers time dynamics — trends, rates of change,
-          or time lags between cause and effect. A score of 2 means temporal
-          dynamics are explicitly modeled. A score of 0 means time is
-          ignored.
-
-      - id: counterfactual_reasoning
-        name: "Counterfactual Reasoning"
-        predictive: false
-        description: >
-          The rationale considers what would happen under different
-          conditions (the do-operator). A score of 2 means explicit
-          counterfactuals are constructed. A score of 0 means no
-          counterfactual reasoning.
-
-      - id: base_rate_anchoring
-        name: "Base Rate Anchoring"
-        predictive: false
-        description: >
-          The rationale starts from a base rate and adjusts from there,
-          rather than reasoning from a single case. A score of 2 means a
-          base rate is cited and the adjustment is justified. A score of 0
-          means no base rate is used.
-
-      - id: precision_appropriate
-        name: "Precision Appropriate"
-        predictive: false
-        description: >
-          The rationale's precision (specificity of the probability) matches
-          the evidence quality — not false precision, not false vagueness.
-          A score of 2 means precision is well-matched. A score of 0 means
-          precision is mismatched (too precise or too vague).
-
-      - id: multiple_data_sources
-        name: "Multiple Data Sources"
-        predictive: false
-        description: >
-          The rationale draws on more than one independent data source.
-          A score of 2 means multiple independent sources are cited and
-          their agreement or disagreement is noted. A score of 0 means a
-          single source or no source.
-
-      - id: causal_mechanism
-        name: "Causal Mechanism"
-        predictive: false
-        description: >
-          The rationale identifies a specific causal mechanism connecting
-          cause to effect, not just a correlation. A score of 2 means a
-          mechanism is articulated. A score of 0 means only correlation is
-          asserted.
-
-      - id: disconfirming_evidence
-        name: "Disconfirming Evidence Sought"
-        predictive: false
-        description: >
-          The rationale actively seeks evidence that would disconfirm the
-          forecast, not just evidence that supports it. A score of 2 means
-          disconfirming evidence is explicitly sought and addressed. A score
-          of 0 means only confirming evidence is considered.
-
-      - id: structured_framework
-        name: "Structured Framework"
-        predictive: false
-        description: >
-          The rationale applies a named structured framework (Bayesian,
-          Fermi, decision tree, scenario analysis). A score of 2 means a
-          framework is explicitly applied. A score of 0 means ad hoc
-          reasoning.
-
-      - id: calibration_awareness
-        name: "Calibration Awareness"
-        predictive: false
-        description: >
-          The rationale references past calibration performance or known
-          calibration biases. A score of 2 means calibration is explicitly
-          considered. A score of 0 means no calibration awareness.
-
-      - id: question_decomposition
-        name: "Question Decomposition"
-        predictive: false
-        description: >
-          The rationale decomposes the forecasting question itself into
-          sub-questions before answering. A score of 2 means the question
-          is decomposed. A score of 0 means the question is answered
-          directly.
-
-      - id: probability_calibration
-        name: "Probability Calibration"
-        predictive: false
-        description: >
-          The rationale's probability reflects appropriate calibration — not
-          overconfident, not underconfident. A score of 2 means calibration
-          is well-justified. A score of 0 means calibration is poor or
-          unjustified.
-
-      - id: meta_reasoning
-        name: "Meta-Reasoning"
-        predictive: false
-        description: >
-          The rationale reflects on its own reasoning process — noting
-          assumptions, gaps, or limitations. A score of 2 means the reasoning
-          process itself is examined. A score of 0 means no meta-reflection.
-
-      - id: external_validity
-        name: "External Validity"
-        predictive: false
-        description: >
-          The rationale considers whether its reasoning generalizes beyond
-          the specific case. A score of 2 means external validity is
-          explicitly addressed. A score of 0 means generalization is
-          assumed without examination.
-
-      - id: source_quality
-        name: "Source Quality Assessment"
-        predictive: false
-        description: >
-          The rationale assesses the quality of its sources (methodology,
-          sample size, potential bias) rather than citing them uncritically.
-          A score of 2 means source quality is assessed. A score of 0 means
-          sources are cited without assessment.
-
-      - id: aggregation_reasoning
-        name: "Aggregation Reasoning"
-        predictive: false
-        description: >
-          The rationale considers how to aggregate multiple estimates or
-          viewpoints (mean, median, weighted). A score of 2 means an
-          aggregation method is chosen and justified. A score of 0 means
-          no aggregation reasoning.
-
-      - id: sensitivity_analysis
-        name: "Sensitivity Analysis"
-        predictive: false
-        description: >
-          The rationale tests how sensitive the forecast is to changes in
-          key assumptions. A score of 2 means sensitivity is explicitly
-          tested. A score of 0 means no sensitivity analysis.
-
-      - id: scenario_planning
-        name: "Scenario Planning"
-        predictive: false
-        description: >
-          The rationale constructs multiple scenarios (best case, worst
-          case, base case) and assigns probabilities to each. A score of 2
-          means scenarios are constructed and weighted. A score of 0 means
-          no scenario planning.
-
-      - id: information_foraging
-        name: "Information Foraging"
-        predictive: false
-        description: >
-          The rationale describes what information was sought, what was
-          found, and what remains unknown. A score of 2 means the
-          information search is documented. A score of 0 means no
-          information search is described.
-
-      - id: model_awareness
-        name: "Model Awareness"
-        predictive: false
-        description: >
-          The rationale identifies the mental model or framework being used
-          and acknowledges it is a model, not reality. A score of 2 means
-          the model is named and its limitations acknowledged. A score of 0
-          means no model awareness.
-
-  - id: warning_signs
-    name: "Warning Signs (negatively correlated with accuracy)"
-    direction: hurts
-    markers:
-      - id: gut_based
-        name: "Gut Based"
-        predictive: true
-        description: >
-          The rationale relies on intuition, gut feeling, or personal
-          conviction rather than evidence or analysis. A score of 2 means
-          the rationale is primarily gut-based. A score of 0 means no
-          gut-based reasoning is present.
-
-      - id: simplification_bias
-        name: "Simplification Bias"
-        predictive: true
-        description: >
-          The rationale oversimplifies a complex situation, ignoring
-          important nuances, uncertainties, or alternative explanations.
-          A score of 2 means the rationale is notably oversimplified. A
-          score of 0 means the rationale adequately captures complexity.
-
+          The forecaster finds patterns in data using either minimal data
+          points or suggests a pattern without reasonably testing for the
+          pattern. Examples include assuming that recent or isolated events
+          are part of a larger trend, using just a few data points to make a
+          robust statistical argument, or eyeballing graphs without digging
+          into the data to confirm.
       - id: confirmation_bias
         name: "Confirmation Bias"
         predictive: true
+        direction: hurts
         description: >
-          The rationale primarily seeks or cites evidence that supports
-          the forecast while ignoring or dismissing disconfirming evidence.
-          A score of 2 means clear confirmation bias. A score of 0 means
-          the rationale considers evidence on both sides.
-
+          The forecaster seems to favor a hypothesis or outcome, and then
+          presents some piece of evidence (e.g., news story, data point)
+          that confirms the hypothesis or outcome without searching for
+          evidence for other hypotheses or outcomes.
       - id: extreme_confidence
         name: "Extreme Confidence"
         predictive: true
+        direction: hurts
         description: >
-          The rationale expresses unwarranted certainty, using language
-          like 'certainly', 'definitely', 'guaranteed', or assigning very
-          high/low probabilities without adequate justification. A score of
-          2 means extreme confidence is clearly present. A score of 0 means
-          the confidence level is appropriately calibrated.
-
-      - id: forecast_rationale_misalign
-        name: "Forecast and Rationale Misalign"
-        predictive: true
-        description: >
-          The rationale's stated reasoning contradicts or does not support
-          the forecast probability. A score of 2 means clear misalignment
-          between reasoning and forecast. A score of 0 means the rationale
-          and forecast are aligned.
-
+          The forecaster expresses a high degree of confidence in his
+          forecast, stating the events "will" happen or "will not" happen,
+          or that the outcome is nearly certain.
       - id: speculative_terms
         name: "Speculative Terms"
         predictive: true
+        direction: hurts
         description: >
-          The rationale uses speculative language ('maybe', 'could',
-          'might', 'possibly') without grounding in evidence or analysis.
-          A score of 2 means the rationale is primarily speculative. A
-          score of 0 means the rationale is grounded in evidence.
-
-      - id: anecdotal_evidence
-        name: "Anecdotal Evidence"
+          The forecaster speculates on what might happen using terms like
+          "could" or "might".
+      - id: gut_based
+        name: "Gut Based"
+        predictive: true
+        direction: hurts
+        description: >
+          The forecaster relies on instinctive or intuitive reasoning
+          without citing evidence or data to support their conclusion. This
+          includes statements like "I feel," "I sense," or "it seems to me,"
+          which suggest a forecast based on personal instinct rather than
+          analysis or factual support.
+      - id: inside_view
+        name: "Inside View"
         predictive: false
+        direction: hurts
         description: >
-          The rationale relies on a single anecdote or isolated example
-          rather than systematic evidence. A score of 2 means the rationale
-          is primarily anecdotal. A score of 0 means no anecdotal reliance.
-
-      - id: authority_reliance
-        name: "Authority Reliance"
+          The forecaster analyzes only the dynamics of the current question,
+          without taking an outside view and considering how past events or
+          precedent could provide additional insight.
+      - id: personal_anecdote
+        name: "Personal Anecdote"
         predictive: false
+        direction: hurts
         description: >
-          The rationale cites authority figures or institutions without
-          examining the underlying evidence. A score of 2 means the
-          rationale is primarily authority-based. A score of 0 means
-          authority is not the basis.
-
-      - id: recency_bias
-        name: "Recency Bias"
+          The forecaster uses a personal anecdote to help inform his
+          forecast.
+      - id: simplification_bias
+        name: "Simplification Bias"
+        predictive: true
+        direction: hurts
+        description: >
+          The forecaster is over-simplifying a complex forecasting dynamic
+          into a simplistic viewpoint.
+      - id: positive_emotion
+        name: "Positive Emotion"
         predictive: false
+        direction: hurts
         description: >
-          The rationale overweights recent events relative to historical
-          base rates. A score of 2 means recency dominates. A score of 0
-          means recency is appropriately weighted.
-
-      - id: availability_bias
-        name: "Availability Bias"
+          The forecaster expresses positive emotion (e.g., excitement) with
+          regard to the topic, question, or a particular outcome.
+      - id: negative_emotion
+        name: "Negative Emotion"
         predictive: false
+        direction: hurts
         description: >
-          The rationale overweights easily-recalled or vivid examples.
-          A score of 2 means availability dominates. A score of 0 means
-          availability is appropriately weighted.
-
-      - id: anchoring_bias
-        name: "Anchoring Bias"
+          The forecaster expresses negative emotion (e.g., dread) with
+          regard to the topic, question, or a particular outcome.
+      - id: political_preference
+        name: "Political Preference"
         predictive: false
+        direction: hurts
         description: >
-          The rationale is anchored to an initial value and insufficiently
-          adjusts. A score of 2 means anchoring is evident. A score of 0
-          means adjustment is adequate.
+          The forecaster expresses a political preference that relates to
+          one of the question outcomes.
 
-      - id: overconfidence_quantification
-        name: "Overconfidence in Quantification"
+  - id: analytical_reasoning
+    name: "Analytical Reasoning"
+    markers:
+      - id: analogies
+        name: "Analogies"
         predictive: false
+        direction: helps
         description: >
-          The rationale assigns overly precise probabilities (e.g., 73.2%)
-          without sufficient evidence for that precision. A score of 2
-          means false precision is evident. A score of 0 means precision is
-          appropriate.
+          The forecaster uses an analogy to another event or forecasting
+          question to form his forecast.
+      - id: best_practices
+        name: "Best Practices"
+        predictive: true
+        direction: helps
+        description: >
+          The forecaster applies one of the following strategies: 1)
+          analyzing past data trends, averages, or variations when
+          predicting upcoming values, 2) considering the last occurrence of
+          an event in cases where timing matters, or 3) using historical
+          precedents while balancing arguments for potential differences in
+          the current context.
+      - id: causal_reasoning
+        name: "Causal Reasoning"
+        predictive: false
+        direction: neutral
+        description: >
+          The forecaster identifies at least one current or future key
+          driver that he believes will have an influence on the outcome of
+          the question and clearly integrates the driver(s) into his
+          forecast. Note, this is not speculative reasoning, but clear
+          cause-and-effect type reasoning including detailed knowledge of
+          system dynamics or known limits/boundaries on what is feasible
+          given the question at hand.
+      - id: domain_expertise
+        name: "Domain Expertise"
+        predictive: false
+        direction: helps
+        description: >
+          The forecaster demonstrates advanced domain or technical expertise
+          that relates to the question.
+      - id: historic_expertise
+        name: "Historic Expertise"
+        predictive: false
+        direction: helps
+        description: >
+          The forecaster demonstrates advanced historical knowledge that
+          relates to the question.
+      - id: fermi_breakdown
+        name: "Fermi Breakdown"
+        predictive: false
+        direction: helps
+        description: >
+          The forecaster breaks the main forecasting problem down into sub-
+          problems, then solves each subproblem, and aggregates to reach a
+          final forecast.
+      - id: scenario_reasoning
+        name: "Scenario Reasoning"
+        predictive: false
+        direction: helps
+        description: >
+          The forecaster presents multiple potential future outcomes,
+          considering different scenarios that could impact the question's
+          resolution, indicating detailed, structured exploration of more
+          than one plausible path.
+      - id: second_level_reasoning
+        name: "Second Level Reasoning"
+        predictive: false
+        direction: helps
+        description: >
+          The forecaster tries to reason beyond the most immediate or nearer
+          term actions, and considers second-order effects such as the
+          response to a potential action, or the response to the response of
+          a potential action.
+      - id: statistical_causal_blend
+        name: "Statistical Causal Blend"
+        predictive: true
+        direction: helps
+        description: >
+          The forecaster evaluates the forecast from a statistical
+          perspective AND also considers at least one current or future
+          causal driver when forming his forecast.
+      - id: statistical_polling
+        name: "Statistical Polling"
+        predictive: false
+        direction: helps
+        description: >
+          The forecaster incorporates insights from statistical polling or
+          surveys to form his forecast.
+      - id: statistical_reasoning
+        name: "Statistical Reasoning"
+        predictive: true
+        direction: helps
+        description: >
+          The forecaster looks to past occurrences or data and uses
+          logical/statistical reasoning to inform his forecast. This could
+          be looking at past occurrences, forming a comparison class and
+          deriving a baserate, using basic statistics, or building a
+          statistical model.
+      - id: statistical_sensitivity_analysis
+        name: "Statistical Sensitivity Analysis"
+        predictive: false
+        direction: helps
+        description: >
+          The forecaster includes some form of sensitivity analysis within
+          his statistical reasoning.
+      - id: wildcards
+        name: "Wildcards"
+        predictive: false
+        direction: helps
+        description: >
+          The forecaster explicitly mentions rare but consequential events
+          that would greatly change the expected outcome of the question.
 
-      - id: narrative_fallacy
-        name: "Narrative Fallacy"
-        predictive: false
+  - id: alignment_and_discipline
+    name: "Alignment and Discipline"
+    markers:
+      - id: forecast_rationale_align
+        name: "Forecast and Rationale Align"
+        predictive: true
+        direction: helps
         description: >
-          The rationale constructs a compelling story that imposes causal
-          structure on random events. A score of 2 means narrative
-          construction dominates. A score of 0 means no narrative
-          imposition.
+          The expressed forecast and the forecaster's rationale align in two
+          ways: 1) the outcome expressed in the rationale as most likely has
+          the highest forecast probability, and 2) the level of uncertainty
+          expressed in the rationale matches the magnitude of the forecast.
+      - id: forecast_rationale_misalign
+        name: "Forecast and Rationale Misalign"
+        predictive: true
+        direction: hurts
+        description: >
+          The expressed forecast and the forecaster's rationale are
+          misaligned in that 1) the outcome expressed in the rationale as
+          most likely does not have the highest forecast probability, or 2)
+          the level of uncertainty expressed in the rationale differs from
+          the magnitude of the forecast.
+      - id: forecaster_error
+        name: "Forecaster Error"
+        predictive: false
+        direction: hurts
+        description: >
+          The forecaster commits an error in translating his rationale into
+          a forecast (e.g., says small chance of event occurring, then gives
+          large forecast, or vice versa).
+      - id: levels_of_confidence
+        name: "Levels of Confidence"
+        predictive: false
+        direction: helps
+        description: >
+          The forecaster makes an elaborate argument and expresses a level
+          of confidence within each structural point of the argument,
+          possibly describing features or assumptions of the argument where
+          the forecaster is less certain.
+      - id: resolution_criteria_deep_dive
+        name: "Resolution Criteria Deep Dive"
+        predictive: false
+        direction: helps
+        description: >
+          The forecaster takes a deep dive into the resolution criteria of
+          the question, as a lawyer might, to determine exactly what may and
+          may not count towards an affirmative resolution.
+      - id: timing
+        name: "Timing"
+        predictive: false
+        direction: helps
+        description: >
+          The forecaster mentions the question's resolution timeframe or the
+          time left for the question to resolve, and integrates this timing
+          into his forecast or decision to adjust his forecast.
+      - id: conditions_to_update
+        name: "Conditions to Update"
+        predictive: false
+        direction: helps
+        description: >
+          The forecaster outlines future conditions that will trigger an
+          update to his forecast.
+      - id: updating
+        name: "Updating"
+        predictive: false
+        direction: helps
+        description: >
+          The forecaster is updating or affirming a previous forecast.
+      - id: adjusting_down
+        name: "Adjusting Down"
+        predictive: false
+        direction: helps
+        description: >
+          The forecaster acknowledges a baseline probability (either derived
+          from a data point, statistical means, or a forecast from a
+          teammate) but chooses to adjust (for a factor OTHER than time)
+          this baseline probability DOWN for his forecast to reflect a
+          LESSER likelihood of the event.
+      - id: adjusting_up
+        name: "Adjusting Up"
+        predictive: false
+        direction: hurts
+        description: >
+          The forecaster acknowledges a baseline probability (either derived
+          from a data point, statistical means, or a forecast from a
+          teammate) but chooses to adjust (for a factor OTHER than time)
+          this baseline probability UP for his forecast to reflect a GREATER
+          likelihood of the event.
 
-      - id: hindsight_bias
-        name: "Hindsight Bias"
+  - id: evidential_sourcing
+    name: "Evidential Sourcing"
+    markers:
+      - id: authority_based
+        name: "Authority Based"
         predictive: false
+        direction: helps
         description: >
-          The rationale treats past outcomes as having been more
-          predictable than they were. A score of 2 means hindsight is
-          evident. A score of 0 means no hindsight bias.
+          The forecaster bases his forecast on a statement from a perceived
+          expert or authority.
+      - id: news_data_easily_accessible
+        name: "News or Data Easily Accessible"
+        predictive: false
+        direction: helps
+        description: >
+          The forecaster derives insight from a news story or data source
+          that would likely appear on page 1 of a search engine (e.g., from
+          the major news sources like NYTimes, abcnews, NPR, Reuters, etc.).
+      - id: news_data_remote
+        name: "News or Data Remote"
+        predictive: false
+        direction: helps
+        description: >
+          The forecaster derives insight from a news story or data source
+          that would NOT appear on page 1 of a search engine, but rather
+          requires some advanced searching/curation.
+      - id: source_at_face_value
+        name: "Source at Face Value"
+        predictive: false
+        direction: helps
+        description: >
+          The forecaster uses information or data from a source without
+          critical analysis, immediately incorporating it into their
+          forecast. This includes uncritical references to news articles or
+          data points followed by accepting it as true without questioning
+          its reliability or potential biases.
+      - id: source_credibility_reliability
+        name: "Source Credibility and Reliability"
+        predictive: false
+        direction: helps
+        description: >
+          The forecaster presents information or data from a source/news
+          story and analyzes the source and conclusions in terms of
+          reliability and credibility.
+      - id: teaming_agree
+        name: "Teaming Agree"
+        predictive: false
+        direction: helps
+        description: >
+          The forecaster is expressing agreement with a point made by a
+          teammate forecaster.
+      - id: teaming_disagree
+        name: "Teaming Disagree"
+        predictive: false
+        direction: helps
+        description: >
+          The forecaster is disagreeing with, expressing doubt or
+          uncertainty about, or otherwise correcting a point made by a
+          teammate forecaster.
+      - id: teaming_insight
+        name: "Teaming Insight"
+        predictive: false
+        direction: helps
+        description: >
+          The forecaster is drawing the majority of his insight from a
+          teammate and using this as a basis for his forecast.
 
-      - id: status_quo_bias
-        name: "Status Quo Bias"
+  - id: integrative_reasoning_and_cognitive_framing
+    name: "Integrative Reasoning and Cognitive Framing"
+    markers:
+      - id: abstract_reasoning
+        name: "Abstract Reasoning"
         predictive: false
+        direction: hurts
         description: >
-          The rationale assumes the future will resemble the present
-          without justification. A score of 2 means status quo is assumed.
-          A score of 0 means change is considered.
+          The forecaster's reasoning is more abstract, concerned with the
+          "why", is goal-oriented, distal, or transcends the particularities
+          of the given situation.
+      - id: concrete_reasoning
+        name: "Concrete Reasoning"
+        predictive: true
+        direction: helps
+        description: >
+          The forecaster's reasoning is more concrete, concerned with the
+          "how", is proximal, or contextualizes the situation.
+      - id: descriptive_action_verbs
+        name: "Descriptive Action Verbs"
+        predictive: false
+        direction: helps
+        description: >
+          The forecaster uses descriptive action verbs (physical or
+          observable action performed by the subject) when describing the
+          actions of key actors.
+      - id: interpretive_action_verbs
+        name: "Interpretive Action Verbs"
+        predictive: false
+        direction: neutral
+        description: >
+          The forecaster uses interpretive action verbs (verbs convey
+          subjective or inferred meaning rather than purely describing
+          physical action) when describing the actions of key actors.
+      - id: state_verbs
+        name: "State Verbs"
+        predictive: false
+        direction: hurts
+        description: >
+          The forecaster uses state verbs (a condition, state of being,
+          emotion, or perception) when describing the actions or state of
+          key actors.
+      - id: situational_factors
+        name: "Situational Factors"
+        predictive: false
+        direction: helps
+        description: >
+          The forecaster focuses on situational factors that make the event
+          more or less likely.
+      - id: dispositional_factors
+        name: "Dispositional Factors"
+        predictive: false
+        direction: hurts
+        description: >
+          The forecaster focuses on dispositional factors of key actors that
+          make the event more or less likely.
+      - id: fact_based
+        name: "Fact Based"
+        predictive: true
+        direction: helps
+        description: >
+          The majority of the forecaster's rationale consists of fact-based
+          statements, where each fact has verifiable details, references to
+          actions or events, measurable data or outcomes, historical facts
+          or timelines, or cited sources or reports.
+      - id: fog_based
+        name: "FOG Based"
+        predictive: false
+        direction: hurts
+        description: >
+          The majority of the forecaster's rationale consists of fact-
+          deficient, obfuscating generalities (FOG), where each FOG
+          statement consists of emotional or evocative language, broad
+          generalizations, vague attributions of intent or behavior,
+          speculative language without supporting evidence, or unspecified
+          references to urgency or importance.
+      - id: dialectical_reasoning
+        name: "Dialectical Reasoning"
+        predictive: false
+        direction: helps
+        description: >
+          The forecaster acknowledges multiple viewpoints or factors that
+          conflict in terms of their conclusion (using terms like "however",
+          "but", "nevertheless", "although", "on the other hand", etc.).
+      - id: elaborative_reasoning
+        name: "Elaborative Reasoning"
+        predictive: false
+        direction: helps
+        description: >
+          The forecaster acknowledges multiple viewpoints or factors that
+          align to the same conclusion (using terms like "therefore",
+          "moreover", etc.).
+      - id: first_person
+        name: "First Person"
+        predictive: false
+        direction: helps
+        description: >
+          The forecaster writes at least some of his rationale in a first-
+          person perspective, describing an action he is taking, expressing
+          or implying the views as his own, or otherwise using first-person
+          pronouns like "I", "I'll", "I'm", "me", "my", etc.
+      - id: third_person
+        name: "Third Person"
+        predictive: false
+        direction: hurts
+        description: >
+          The forecaster reasons about the relevant political parties,
+          organizations, individuals, or other entities using third-person
+          pronouns (e.g., "he will", "she did", "they might", "because of
+          them", "their intention", "it", "this group", "these people",
+          "those in power").
 
-      - id: optimism_bias
-        name: "Optimism Bias"
+  - id: attitude_and_uncertainty_management
+    name: "Attitude and Uncertainty Management"
+    markers:
+      - id: actively_open_minded
+        name: "Actively Open Minded"
         predictive: false
+        direction: helps
         description: >
-          The rationale is systematically optimistic relative to evidence.
-          A score of 2 means optimism is evident. A score of 0 means the
-          rationale is evidence-calibrated.
+          The forecaster shows a willingness to seek out and reflect on
+          contrary evidence and an openness to changing his mind in the face
+          of contrary evidence.
+      - id: grit
+        name: "Grit"
+        predictive: false
+        direction: helps
+        description: >
+          The forecaster demonstrates either a passion for forecasting,
+          persistence with a difficult task, or perseverance in the face of
+          extreme uncertainty or shortcoming.
+      - id: guessing
+        name: "Guessing"
+        predictive: false
+        direction: hurts
+        description: >
+          The forecaster states that his forecast is primarily based on a
+          guess.
+      - id: inevitable_impossible
+        name: "Inevitable or Impossible"
+        predictive: false
+        direction: neutral
+        description: >
+          The forecaster expresses either inevitability or impossibility
+          with regards to the outcome of the question.
+      - id: wallowing_in_uncertainty
+        name: "Wallowing in Uncertainty"
+        predictive: false
+        direction: hurts
+        description: >
+          The forecaster laments that the situation is too complex to give
+          an accurate forecast.
 
-      - id: pessimism_bias
-        name: "Pessimism Bias"
-        predictive: false
-        description: >
-          The rationale is systematically pessimistic relative to evidence.
-          A score of 2 means pessimism is evident. A score of 0 means the
-          rationale is evidence-calibrated.
-
-      - id: framing_effect
-        name: "Framing Effect"
-        predictive: false
-        description: >
-          The rationale is influenced by how the question is framed rather
-          than its substance. A score of 2 means framing dominates. A score
-          of 0 means the rationale looks past framing.
-
-      - id: sunk_cost
-        name: "Sunk Cost Reasoning"
-        predictive: false
-        description: >
-          The rationale is influenced by prior investment in a position.
-          A score of 2 means sunk cost is evident. A score of 0 means no
-          sunk cost influence.
-
-      - id: groupthink
-        name: "Groupthink"
-        predictive: false
-        description: >
-          The rationale conforms to a consensus without independent
-          analysis. A score of 2 means groupthink is evident. A score of 0
-          means independent analysis.
-
-      - id: false_dichotomy
-        name: "False Dichotomy"
-        predictive: false
-        description: >
-          The rationale presents only two options when more exist. A score
-          of 2 means a false dichotomy is evident. A score of 0 means the
-          option space is appropriately broad.
-
-      - id: strawman
-        name: "Strawman Argument"
-        predictive: false
-        description: >
-          The rationale attacks a weak version of an opposing view. A score
-          of 2 means strawman is evident. A score of 0 means opposing views
-          are steelmanned.
-
-      - id: ad_hominem
-        name: "Ad Hominem"
-        predictive: false
-        description: >
-          The rationale attacks the source rather than the argument. A score
-          of 2 means ad hominem is evident. A score of 0 means arguments are
-          addressed on merits.
-
-      - id: circular_reasoning
-        name: "Circular Reasoning"
-        predictive: false
-        description: >
-          The rationale's conclusion is assumed in its premises. A score of
-          2 means circularity is evident. A score of 0 means reasoning is
-          non-circular.
-
-      - id: false_analogy
-        name: "False Analogy"
-        predictive: false
-        description: >
-          The rationale relies on an analogy that breaks down in relevant
-          ways. A score of 2 means a false analogy is central. A score of 0
-          means no false analogy.
-
-      - id: hasty_generalization
-        name: "Hasty Generalization"
-        predictive: false
-        description: >
-          The rationale generalizes from an insufficient sample. A score of
-          2 means hasty generalization is evident. A score of 0 means
-          generalization is appropriately scoped.
-
-      - id: slippery_slope
-        name: "Slippery Slope"
-        predictive: false
-        description: >
-          The rationale claims a chain of events without establishing each
-          link. A score of 2 means slippery slope is evident. A score of 0
-          means causal chains are established.
-
-      - id: appeal_to_nature
-        name: "Appeal to Nature"
-        predictive: false
-        description: >
-          The rationale assumes natural = good or unnatural = bad. A score
-          of 2 means appeal to nature is evident. A score of 0 means no
-          such appeal.
-
-      - id: correlation_causation
-        name: "Correlation as Causation"
-        predictive: false
-        description: >
-          The rationale infers causation from correlation without
-          establishing mechanism. A score of 2 means the conflation is
-          evident. A score of 0 means correlation and causation are
-          distinguished.
-
-      - id: unsupported_assertion
-        name: "Unsupported Assertion"
-        predictive: false
-        description: >
-          The rationale makes claims without evidence or reasoning. A score
-          of 2 means assertions are unsupported. A score of 0 means claims
-          are supported.
-
-      - id: vague_language
-        name: "Vague Language"
-        predictive: false
-        description: >
-          The rationale uses vague terms ('a lot', 'many', 'significant')
-          without quantification. A score of 2 means vagueness dominates.
-          A score of 0 means terms are quantified.
-
-      - id: irrelevant_evidence
-        name: "Irrelevant Evidence"
-        predictive: false
-        description: >
-          The rationale cites evidence that does not bear on the question.
-          A score of 2 means irrelevance is evident. A score of 0 means
-          evidence is relevant.
-
-      - id: emotional_language
-        name: "Emotional Language"
-        predictive: false
-        description: >
-          The rationale uses emotionally charged language in place of
-          evidence. A score of 2 means emotion dominates. A score of 0
-          means language is neutral.
-
-      - id: length_substitution
-        name: "Length Substitution"
-        predictive: false
-        description: >
-          The rationale substitutes verbosity for substance. The paper found
-          human raters reward length, but length does not correlate with
-          accuracy. A score of 2 means length substitutes for substance.
-          A score of 0 means length is proportionate to substance.

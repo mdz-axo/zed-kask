@@ -1,6 +1,6 @@
 ---
 name: eqm
-description: "Explanation Quality Markers: score the predictive 12 with market_score_rationale, retain the 64-marker reference catalog, aggregate complete results, validate against realized outcomes, and improve a rationale through a bounded evidence-grounded loop."
+description: "Explanation Quality Markers: score the predictive 12 with market_score_rationale, retain the 60-marker reference catalog (the paper's verbatim pattern set), aggregate complete results, validate against realized outcomes, and improve a rationale through a bounded evidence-grounded loop."
 ---
 
 # EQM — Explanation Quality Markers (Measure and Improve)
@@ -8,7 +8,7 @@ description: "Explanation Quality Markers: score the predictive 12 with market_s
 Measurement instrument for forecast-rationale quality, grounded in Karvetski,
 Huang, Kučinskas et al. (2026), "Measuring Judgment Quality in Natural-Language
 Explanations: Evidence from Forecasting Tournaments" — Forecasting Research
-Institute. The paper defines the EQM instrument; the reference catalog carries 64 theory-guided marker definitions; the live `market_score_rationale` tool scores the predictive 12 using an LLM. Aggregate only complete tool results to forecast- and forecaster-level composites,
+Institute. The paper defines the EQM instrument — 60 theory-guided marker patterns across six families; the reference catalog carries all 60 verbatim from Appendix A.4; the live `market_score_rationale` tool scores the predictive 12 using an LLM. Aggregate only complete tool results to forecast- and forecaster-level composites,
 validates against realized outcomes, and emits calibration feedback.
 
 ## Initial and target condition
@@ -84,7 +84,7 @@ Correlation requires ≥5 pairs; below that report `Undetermined` (matches the s
 
 ### eqm-select (P — subset choice; critique: operator)
 
-1. Admit only `predictive_12`, the MCP tool's fixed KEY_EQMS set. The 64-marker catalog is reference material, not a 64-marker scorer; a `full_60` or `domain_tuned` request returns `unsupported_subset` and stops before paid tool calls.
+1. Admit only `predictive_12`, the MCP tool's fixed KEY_EQMS set. The 60-marker catalog is reference material (the paper's verbatim pattern set), not a 60-marker scorer; a `full_60` or `domain_tuned` request returns `unsupported_subset` and stops before paid tool calls.
 2. Gather the rationale corpus: array of {rationale, forecast_probability,
    question, forecaster_id?, timestamp} objects (the timestamp orders the
    corpus — the Dublin Core metadata row and the gaming rule's
@@ -190,7 +190,7 @@ An empty result closes only when every selected marker has a fresh score and the
 | `eqm-imp-target.j2` | Improve step 3: marker-level targets from EQM descriptions, red flags first. |
 | `eqm-imp-predict.j2` | Improve step 4: a specific intervention-to-marker prediction with confidence. |
 | `eqm-imp-experiment.j2` | Improve step 5: rewrite the rationale for each failing marker with real evidence, preserving the probability. |
-| `eqm-catalog.yaml` | Reference: the full 60 EQM definitions from Karvetski et al. (2026), organized by category (good_habits / warning_signs). The 12 most predictive are marked predictive: true. Single source of truth for EQM definitions; the MCP tool's KEY_EQMS const carries the predictive 12. |
+| `eqm-catalog.yaml` | Reference: the paper's full 60 EQM definitions from Karvetski et al. (2026) Appendix A.4, verbatim, organized by the paper's six theory-informed families. The 12 most predictive are marked `predictive: true`. Single source of truth for EQM definitions as published; the MCP tool's KEY_EQMS const carries the predictive 12's operational scoring descriptions. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `eqm/eqm-select`) and a context object with the required variables.
 
