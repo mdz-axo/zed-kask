@@ -385,7 +385,11 @@ impl KanbanServer {
                 .map_err(map_kanban_error)?
                 .ok_or_else(|| McpToolError::not_found(format!("board {bid} not found")))?;
             if board.owner != self.webid {
-                return Err(McpToolError::invalid_argument(format!(
+                // Same classification as `kanban_board_update`/`export`: a
+                // non-owner is an authorization failure, not a bad argument —
+                // and the service layer's own mapper classifies the identical
+                // case as PermissionDenied.
+                return Err(McpToolError::permission_denied(format!(
                     "board {bid} is not owned by caller — cannot delete"
                 )));
             }
