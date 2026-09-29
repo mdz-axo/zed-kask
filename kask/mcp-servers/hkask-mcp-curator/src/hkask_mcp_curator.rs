@@ -2058,6 +2058,11 @@ fn swarm_memory_db_path() -> std::path::PathBuf {
 /// Open the shared swarm memory DB for the sweep. The passphrase resolves
 /// through the canonical env chain — a missing or empty key is
 /// `permission_denied` naming the env var, never a silent empty-key open.
+/// Orphaned vec0 shadow rows (metadata deleted without vec access, e.g.
+/// the 2026-09-28 SQL pass) collide on re-insert at the reused rowid and
+/// fail every backfill write with a UNIQUE constraint error, so the
+/// store is swept at open. A sweep failure fails closed: the backfill
+/// writes would fail on the same lock anyway.
 fn open_swarm_memory_store() -> Result<Arc<hkask_memory::MemoryStore>, McpToolError> {
     let passphrase =
         hkask_mcp_server::resolve_credential("HKASK_DB_PASSPHRASE").map_err(|error| {
@@ -2088,6 +2093,19 @@ fn open_swarm_memory_store() -> Result<Arc<hkask_memory::MemoryStore>, McpToolEr
             path.display()
         ))
     })?;
+    let removed = store.delete_orphaned_embeddings().map_err(|error| {
+        McpToolError::internal(format!(
+            "orphaned-embedding sweep failed on swarm memory DB {}: {error}",
+            path.display()
+        ))
+    })?;
+    if removed > 0 {
+        tracing::warn!(
+            target: "hkask.mcp.curator",
+            removed,
+            "swarm memory DB carried orphaned embedding rows — swept at open"
+        );
+    }
     Ok(Arc::new(store))
 }
 

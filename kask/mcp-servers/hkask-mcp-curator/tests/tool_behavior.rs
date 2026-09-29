@@ -1575,15 +1575,23 @@ async fn model_mismatch_sweep_accepts_the_provider_actual_form() {
     );
 }
 
+/// `HKASK_SWARM_MEMORY_DB` and `HKASK_DB_PASSPHRASE` are process-global —
+/// every test that repoints the tool's swarm path must hold this lock for
+/// its full seeded-DB lifetime (across the awaited tool calls) or the env
+/// writes race. The tokio mutex is safe to hold across await points.
+static SWARM_DB_ENV_LOCK: std::sync::LazyLock<tokio::sync::Mutex<()>> =
+    std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
+
 /// Over the swarm store, missing-mode eligibility mirrors the swarm
 /// server's own embed path — delegation response chunks only — and the
 /// model-mismatch sweep reaches the swarm DB through the same tool.
 #[tokio::test]
 async fn backfill_reaches_the_swarm_store_with_response_chunk_eligibility() {
     let (server, _curator_memory) = make_server_with_embeddings();
+    let _env_guard = SWARM_DB_ENV_LOCK.lock().await;
 
     // Route the tool's swarm path at a throwaway DB. The env writes are
-    // test-only and single-writer (no other test reads these vars); the
+    // test-only and serialized on SWARM_DB_ENV_LOCK; the
     // ensure_embedding_model_env precedent allows the unsafe set_var.
     let dir = std::env::temp_dir().join(format!("curator-swarm-sweep-{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("tempdir");
@@ -1616,7 +1624,17 @@ async fn backfill_reaches_the_swarm_store_with_response_chunk_eligibility() {
         WebID::new(),
     );
     swarm_memory.store(other).expect("seed non-chunk row");
-    // A stale-model row the mismatch sweep must retire.
+    // A stale-model row the mismatch sweep must retire. Its h_mem exists —
+    // the swarm write path stores the chunk before embedding it, and an
+    // embedding whose entity has no h_mem is an orphan the open-time
+    // sweep retires first.
+    let second_chunk = hkask_storage::HMem::new(
+        "agent:probe:turn:t1:chunk:1",
+        "delegation:response_chunk",
+        serde_json::json!({"text": "second chunk passage"}),
+        WebID::new(),
+    );
+    swarm_memory.store(second_chunk).expect("seed second chunk");
     swarm_memory
         .store_embedding(
             "agent:probe:turn:t1:chunk:1",
@@ -1667,6 +1685,83 @@ async fn backfill_reaches_the_swarm_store_with_response_chunk_eligibility() {
         after.results.len(),
         2,
         "the chunk and the swept row both rank"
+    );
+
+    std::fs::remove_dir_all(&dir).expect("cleanup tempdir");
+}
+
+/// Orphaned vec0 shadow rows — metadata deleted without vec access, e.g.
+/// a therapy-style SQL pass — collide on re-insert at the reused rowid
+/// (the 2026-09-28 swarm backfill failed 53/53 on exactly this). The
+/// swarm open sweeps them first, so the backfill writes succeed.
+#[tokio::test]
+async fn swarm_backfill_sweeps_orphaned_vec_rows_at_open() {
+    let (server, _curator_memory) = make_server_with_embeddings();
+    let _env_guard = SWARM_DB_ENV_LOCK.lock().await;
+
+    let dir = std::env::temp_dir().join(format!("curator-swarm-orphan-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("tempdir");
+    let db_path = dir.join("swarm-orphan-test.db");
+    unsafe {
+        std::env::set_var("HKASK_SWARM_MEMORY_DB", &db_path);
+        std::env::set_var("HKASK_DB_PASSPHRASE", "test-passphrase");
+    }
+
+    // Seed a live response chunk with its embedding, then delete the
+    // metadata row via raw SQL — the vec shadow row stays behind.
+    let swarm_memory = hkask_memory::MemoryStore::open(
+        &db_path.to_string_lossy(),
+        "test-passphrase",
+        hkask_storage::embedding_dim(),
+    )
+    .expect("open swarm test DB");
+    let chunk = hkask_storage::HMem::new(
+        "agent:probe:turn:t3:chunk:0",
+        "delegation:response_chunk",
+        serde_json::json!({"text": "orphan collision passage"}),
+        WebID::new(),
+    );
+    swarm_memory.store(chunk).expect("seed response chunk");
+    swarm_memory
+        .store_embedding(
+            "agent:probe:turn:t3:chunk:0",
+            &unit_vector(),
+            "legacy-model",
+            Some("orphan collision passage"),
+        )
+        .expect("seed embedding");
+    drop(swarm_memory);
+
+    {
+        let database = hkask_storage::open_or_repair(&db_path.to_string_lossy(), "test-passphrase")
+            .expect("open raw handle");
+        let conn = database
+            .sqlite_pool()
+            .expect("pool")
+            .get()
+            .expect("connection");
+        conn.execute("DELETE FROM embeddings", ())
+            .expect("delete metadata rows, orphaning the vec shadow row");
+    }
+
+    // Without the open-time sweep this fails on the vec_embeddings
+    // UNIQUE constraint: the fresh metadata insert reuses rowid 1, which
+    // the orphaned shadow row still holds.
+    let result = parse(
+        &server
+            .curator_memory_backfill_embeddings(Parameters(BackfillEmbeddingsRequest {
+                mode: None,
+                store: Some("swarm".to_string()),
+                dry_run: Some(false),
+            }))
+            .await
+            .expect("swarm backfill over an orphaned store ok"),
+    );
+    assert_eq!(result["store"].as_str(), Some("swarm"));
+    assert_eq!(
+        result["backfilled"].as_u64(),
+        Some(1),
+        "the orphaned vec row was swept at open, so the write lands"
     );
 
     std::fs::remove_dir_all(&dir).expect("cleanup tempdir");
