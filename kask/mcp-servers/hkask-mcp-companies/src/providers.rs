@@ -385,7 +385,19 @@ pub async fn companies_get(
                 })
             }
         }
-        Err(_primary_err) => {
+        Err(primary_err) => {
+            // Surface the primary failure before falling back: when the
+            // secondary also fails, only its error reaches the caller — the
+            // primary's classification (bad key vs provider down vs timeout)
+            // would otherwise be lost, leaving the operator half-blind.
+            tracing::warn!(
+                target: "hkask.mcp.companies",
+                tool,
+                symbol,
+                primary = ?primary,
+                error = %primary_err,
+                "primary provider failed — falling back"
+            );
             // Fall back to secondary provider
             let secondary = match primary {
                 Provider::Fmp => Provider::Eodhd,
