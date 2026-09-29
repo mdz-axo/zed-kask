@@ -547,7 +547,7 @@ pub const DERIVED_CONCEPTS: &[DerivedConcept] = &[
             "management quality",
             "expectations gap",
         ],
-        authority: "operator ruling 2026-09-27; Merchant Adventures, Technological Capability and Human Judgment (Substack 138628465)",
+        authority: "operator ruling 2026-09-27; Merchant Adventures (John Brooks), Technological Capability and Human Judgment (Substack 138628465)",
     },
     DerivedConcept {
         term: "maia_listening",

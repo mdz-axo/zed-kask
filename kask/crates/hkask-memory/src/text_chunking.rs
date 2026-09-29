@@ -1675,7 +1675,7 @@ mod tests {
 
     #[test]
     fn detects_corrupted_font_encoding() {
-        // 6.3% of chunks in the capabilities-reasoner corpus had this pattern
+        // 6.3% of chunks in the John Brooks corpus had this pattern
         let corrupted = "th\x0e quick brown fox jumps over th\x0e lazy dog";
         assert!(has_corrupted_font_encoding(corrupted));
     }

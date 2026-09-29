@@ -86,10 +86,10 @@ the owning MCP tool or `terminal`, because the built-in file tools are confined
 to the project.
 
 **Existing folders.** `~/Documents/zk-data/INDEX.md` indexes every folder with
-its producer. Corpus runs created before this ruling stay where they are
-(operator decision 2026-09-24, option A): their manifests embed absolute paths
-under SHA-256 seals, and the sealed v13 reference is the Curator's federated
-search source, so moving them would break the seal or the references.
+its producer. The pre-ruling corpus runs and their sealed reference were
+deleted 2026-09-29 under the operator's replan: the capabilities-reasoner
+corpus is rebuilt fresh from the 88-file Researcher library, and its runs
+follow this ruling from the start.
 `INDEX-moves-2026-09-24.log` records every move that was made.
 
 The classification test for any new artifact: **would the user ever want
