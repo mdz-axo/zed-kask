@@ -2274,6 +2274,11 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 // artifacts dir under {server}-mcp/{artifact-type}/). Default
                 // DB path is `{kask_data_dir}/mcp/research/research.db`, resolved
                 // via `resolve_under_data_dir`. Override via `HKASK_RESEARCH_DB`.
+                // The DB is plaintext SQLite by recorded design decision
+                // (operator ruling 2026-09-29, F-P1): MCP-server data stays
+                // unencrypted so this server runs in an independent
+                // MCP-server pattern without the zed keychain or
+                // HKASK_DB_PASSPHRASE.
                 let research_db_path = std::env::var("HKASK_RESEARCH_DB").ok().unwrap_or_else(|| {
                     let default_path = hkask_types::agent_paths::resolve_under_data_dir(
                         &hkask_types::agent_paths::mcp_server_db("research", "research"),

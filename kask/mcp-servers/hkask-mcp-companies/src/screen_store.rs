@@ -258,6 +258,12 @@ fn row_to_persisted_forecast(row: &rusqlite::Row<'_>) -> rusqlite::Result<Persis
 /// the shared SQLite DB and its general schema) and adds the
 /// companies-specific research artifacts: notes, files, and DCF forecast
 /// snapshots.
+///
+/// The shared DB is plaintext by recorded design decision (operator
+/// ruling 2026-09-29, F-P1): MCP-server data stays unencrypted so this
+/// server runs in an independent MCP-server pattern without the zed
+/// keychain or HKASK_DB_PASSPHRASE. Same rationale as the media gallery
+/// DB's site note.
 #[derive(Clone)]
 pub(crate) struct ResearchStore {
     /// Path to the shared owner database for companies-specific research artifacts.

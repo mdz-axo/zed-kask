@@ -2,7 +2,7 @@
 title: "Loop Register — zed-kask canonical loops"
 audience: [developers, architects, agents, operators]
 last_updated: 2026-09-28
-version: "0.23.18"
+version: "0.23.19"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle]
@@ -826,25 +826,39 @@ exactly that lag), not evidence of absence.)
 10. Phase 0 checkpoint blocked until approval — ✓ (observed; the operator
     approved twice: the register, then the queued issues).
 
-### Pass-2 operator decision queue (evidence-backed option pairs; rule with A/B per item)
+### Pass-2 operator decision queue — DISPOSITIONS (operator rulings 2026-09-29)
 
-| # | Decision | Option A | Option B | Recommendation |
-| --- | --- | --- | --- | --- |
-| D1 | **F-P1 plaintext DBs** (portfolio master.db, companies tables + fibo_cache, research rusqlite) | Migrate to SQLCipher — one passphrase regime; on-disk format change + migration; passphrase becomes required for the family | Record per-server reasoned decisions like media's ("gallery metadata is not a secret") — zero format change; the decision becomes visible; encryption foregone | **Split ruling:** portfolio's financial ledgers warrant A; research's run ledgers and fibo_cache (cached API responses) plausibly B. Media's recorded note is the template either way |
-| D2 | **Reference-model records** (9 skills + kata-kanban per-server doc) | Create them — each a small `## Reference models` section; makes anchor assessments re-runnable | Accept the gaps as recorded | **A** — cheap, and the audit's axis-4 work becomes repeatable instead of one-shot |
-| D3 | **#1/#4 memory receipts** (L1/L9) | Turn-end carries a memory-ingest receipt; panel stop handler gains one; latency cost on every turn | Keep detached ingestion (a completed turn does not guarantee recall — documented, falsifier recorded) | **B** unless a workflow depends on guaranteed recall |
-| D4 | **#5 Done-verdict check** (L9) | `goal_judge` rejects `done` when criteria passed = false | Keep evidence-over-criteria (the tool's documented contract: the evidence text is the pass signal) | **B** — the contract is deliberate |
-| D5 | **#6 recall failure-signal** (L10) | Surface failures on the error-discarding recall legs | Keep the current in-band error/unavailable shapes | **A** — matches the pass's degradation-surfacing pattern; small fix |
-| D6 | **#8 closable research runs** (L12) | Add a status-transition writer; runs become closable | Keep append-only (the ledger's non-repudiation foundation) | **B** unless run accumulation is a practical problem |
-| D7 | **#11 Nebius status contract** (L18) | Unobservable jobs read a distinct state (Unknown-class) | Keep Running | **A** — Running for an unobservable job is the lie-of-omission class this pass kept fixing |
-| D8 | **#13 F4 TOCTOU** (symlink-resistant atomic open) | Build the shared primitive across corpus/gallery call sites | Accept the documented residual race | **Price first:** one `O_NOFOLLOW`-class open helper + N call-site swaps; decide on the price |
-| D9 | **#14 P2/E6 invocation-identity** | Carry invocation identity end-to-end; unblocks the ambient MCP route | Keep the create_thread/spawn_agent delegation requirement (documented at the block site) | **B** short-term (the block is deliberate); A when ambient delegation becomes a product need |
-| D10 | **#15 R3/H1 spreadsheet crash-durability** | Fault-injection/power-loss testing + revision/receipt write hardening | Keep the tested orphan-revision boundary as the documented limit | **B** unless workbook data loss is observed in practice |
-| D11 | **#16 R1 passphrase onboarding** | First-run onboarding-recovery flow for the default passphrase | Keep the current bootstrap (default provisioned; rotation managed) | **A** if non-technical users are a target; B otherwise |
-| D12 | **#17 repair-plan §8 #2–#8** (destructive-deletion override, attribution identities, crash guarantees, first-run secrets, external CI, filesystem authority roots, cancellation reporting) | Rule per item against the plan's §8 text | Defer as a batch | Needs the plan's own context; the seven items are listed at `kask/docs/plans/hkask-core-mcp-repair-improvement-plan.md` §8 |
+| # | Decision | Ruling | Disposition |
+| --- | --- | --- | --- |
+| D1 | F-P1 plaintext DBs | **RESOLVED — split is the design:** encryption on core-crate activities; MCP-server data stays plaintext so servers can be broken off and run in an independent MCP-server pattern (no zed keychain, no HKASK_DB_PASSPHRASE) | Rationale recorded at the three sites (portfolio `store.rs`, companies `screen_store.rs`, research `hkask_mcp_research.rs`); F-P1 CLOSED |
+| D2 | Reference-model records | **A** | Work pending: draft the 9 skill sections + kata-kanban per-server doc |
+| D3 | Memory receipts | **B** — the loose coupling was a deliberate resilience decision; tight coupling and receipts make rigid failure-prone code | Deferral stands with the rationale recorded |
+| D4 | Done-verdict check | **B** — deliberate loose coupling for resilience | Stands |
+| D5 | Recall failure-signal | **A** | **DONE:** the keyword leg warns naming the failure (partial results stand); the thread leg propagates — a failed read is an error, not "no memories"; kask_bridge 253/253 green |
+| D6 | Closable research runs | **PENDING** — explanation delivered (what runs are, the append-only property); awaiting the operator's functional ruling |
+| D7 | Nebius status contract | **A, implementation deferred** to a later follow-up (not a current worry) | Ruling recorded; no code yet |
+| D8 | F4 TOCTOU | **A by stated principle** — no race conditions; shared, reused canonical paths | Explanation delivered (what plants the symlink, what it does); pricing the shared `O_NOFOLLOW`-class primitive is the next step |
+| D9 | Invocation-identity | **B** | Stands (the block is deliberate and documented) |
+| D10 | Spreadsheet crash-durability | **B** | Stands |
+| D11 | Passphrase onboarding | **B, wontfix-by-design** — the current behavior is the design: default provisioned on install, the user rotates when they want; R1 CLOSED (the audit's option A was over-engineering) | Stands |
+| D12 | Repair-plan §8 #2–#8 | Deferred as a batch (not addressed this round) | Stands |
 
 ## Change log
 
+- 2026-09-29 — v0.23.19 recorded the operator's D1–D12 rulings and executed
+  the decidable ones. **D1 RESOLVED — the split is the design:**
+  encryption on core-crate activities; MCP-server data stays plaintext so
+  servers run in an independent MCP-server pattern — rationale recorded at
+  the three sites, F-P1 closed. **D5 DONE:** the recall failure-signal
+  legs fixed (keyword leg warns with partial results standing; thread leg
+  propagates — a failed read is an error, not "no memories"; kask_bridge
+  253/253). **D11 B, wontfix-by-design** — the current passphrase
+  bootstrap is the design; R1 closed. D3/D4/D9/D10 stand as deliberate
+  contracts with the resilience rationale recorded. D7 ruled A,
+  implementation deferred. D8 ruled A by the operator's stated principle
+  (no races; shared canonical paths) — pricing next. D6 pending the
+  operator's ruling after the delivered explanation. D2 (the reference
+  records) is the remaining work item.
 - 2026-09-29 — v0.23.18 packaged the operator decision queue as a durable
   register artifact: twelve evidence-backed option pairs (D1–D12) with
   consequences and recommendations, so each ruling is a one-word decision.

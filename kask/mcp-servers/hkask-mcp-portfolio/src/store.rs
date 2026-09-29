@@ -70,6 +70,14 @@ const SCHEMA_DDL: &str = "CREATE TABLE IF NOT EXISTS portfolios (
 /// mechanics (SQLite, schema, FK cascades). Callers apply transactions,
 /// read the ledger, and query materialized projections.
 ///
+/// The store is a PLAINTEXT SQLite database by recorded design decision
+/// (operator ruling 2026-09-29, the F-P1 audit finding): MCP-server data
+/// stays unencrypted so servers like this one can be broken off and run
+/// in an independent MCP-server pattern — no zed keychain, no
+/// HKASK_DB_PASSPHRASE dependency. Core-crate activities (curator memory,
+/// kata-kanban, corpus, training) use SQLCipher; this store deliberately
+/// does not, for standalone usability.
+///
 /// The store is `Clone` (it holds only a path), so an MCP server can clone
 /// it into a `spawn_blocking` task per request.
 #[derive(Clone)]

@@ -941,34 +941,44 @@ impl RealMemoryPort {
             // reasonable pool to filter from without unbounded loading.
             let entity_prefix = "curator:thread:".to_string();
             let recall_budget = limit.saturating_mul(10).max(50);
-            if let Ok(h_mems) =
-                store.query_deduped_untouched_by_prefix(&entity_prefix, recall_budget)
-            {
-                for h_mem in h_mems {
-                    let text = h_mem.value.as_str().unwrap_or("").to_string();
-                    if text.is_empty() {
-                        continue;
+            match store.query_deduped_untouched_by_prefix(&entity_prefix, recall_budget) {
+                Ok(h_mems) => {
+                    for h_mem in h_mems {
+                        let text = h_mem.value.as_str().unwrap_or("").to_string();
+                        if text.is_empty() {
+                            continue;
+                        }
+                        let overlap =
+                            hkask_memory::salience::keyword_overlap_score(&query_words, &text);
+                        if overlap == 0 {
+                            continue;
+                        }
+                        // Skip if already in candidates (dedup by text)
+                        if candidates.iter().any(|c| c.snippet.text == text) {
+                            continue;
+                        }
+                        candidates.push(Candidate {
+                            snippet: MemorySnippet {
+                                text,
+                                entity: h_mem.entity.clone(),
+                                confidence: h_mem.confidence.value(),
+                                // Keep the keyword leg's ceiling below a strong KNN
+                                // match, but distinguish full-query from incidental hits.
+                                relevance_score: 0.5 * overlap as f64 / query_words.len() as f64,
+                            },
+                            h_mem_id: h_mem.id,
+                        });
                     }
-                    let overlap =
-                        hkask_memory::salience::keyword_overlap_score(&query_words, &text);
-                    if overlap == 0 {
-                        continue;
-                    }
-                    // Skip if already in candidates (dedup by text)
-                    if candidates.iter().any(|c| c.snippet.text == text) {
-                        continue;
-                    }
-                    candidates.push(Candidate {
-                        snippet: MemorySnippet {
-                            text,
-                            entity: h_mem.entity.clone(),
-                            confidence: h_mem.confidence.value(),
-                            // Keep the keyword leg's ceiling below a strong KNN
-                            // match, but distinguish full-query from incidental hits.
-                            relevance_score: 0.5 * overlap as f64 / query_words.len() as f64,
-                        },
-                        h_mem_id: h_mem.id,
-                    });
+                }
+                Err(error) => {
+                    // A failed store read must not read as "no keyword hits" —
+                    // the semantic leg's partial results stand, and the failure
+                    // is surfaced for the operator (the unwrap_or(0) trap).
+                    tracing::warn!(
+                        target: "hkask.bridge.memory",
+                        %error,
+                        "keyword recall leg failed — returning semantic-leg results only"
+                    );
                 }
             }
         }
@@ -1071,24 +1081,31 @@ impl RealMemoryPort {
     ) -> Result<Vec<MemorySnippet>, MemoryError> {
         let mut candidates: Vec<(MemorySnippet, hkask_storage::HMemId)> = Vec::new();
 
-        // Exact entity match — every chunk of the thread.
+        // Exact entity match — every chunk of the thread. A failed read is an
+        // error, not "the thread has no memories" (the unwrap_or(0) trap):
+        // this query is the function's only source, so propagate.
         let thread_entity = format!("curator:thread:{thread_id}");
-        if let Ok(h_mems) = store.query_deduped_untouched(&thread_entity) {
-            for h_mem in h_mems {
-                let text = h_mem.value.as_str().unwrap_or("").to_string();
-                if text.is_empty() {
-                    continue;
-                }
-                candidates.push((
-                    MemorySnippet {
-                        text,
-                        entity: h_mem.entity.clone(),
-                        confidence: h_mem.confidence.value(),
-                        relevance_score: 1.0,
-                    },
-                    h_mem.id,
-                ));
+        let h_mems = store
+            .query_deduped_untouched(&thread_entity)
+            .map_err(|error| {
+                MemoryError::Recall(format!(
+                    "thread recall read failed for '{thread_entity}': {error}"
+                ))
+            })?;
+        for h_mem in h_mems {
+            let text = h_mem.value.as_str().unwrap_or("").to_string();
+            if text.is_empty() {
+                continue;
             }
+            candidates.push((
+                MemorySnippet {
+                    text,
+                    entity: h_mem.entity.clone(),
+                    confidence: h_mem.confidence.value(),
+                    relevance_score: 1.0,
+                },
+                h_mem.id,
+            ));
         }
 
         // Truncate to limit. The query returns most-recent-first, so the
