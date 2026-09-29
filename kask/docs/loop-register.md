@@ -2,7 +2,7 @@
 title: "Loop Register — zed-kask canonical loops"
 audience: [developers, architects, agents, operators]
 last_updated: 2026-09-28
-version: "0.23.20"
+version: "0.23.21"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle]
@@ -837,7 +837,7 @@ exactly that lag), not evidence of absence.)
 | D5 | Recall failure-signal | **A** | **DONE:** the keyword leg warns naming the failure (partial results stand); the thread leg propagates — a failed read is an error, not "no memories"; kask_bridge 253/253 green |
 | D6 | Closable research runs | **A — IMPLEMENTED** (`220ef6e394`) | `finish_research_run` landed: terminal statuses completed\|partial\|blocked\|failed; the sources ledger never mutates — transitions append to `research_run_status_history` (the audit trail) and update the run's latest status; completed/partial enforce the server-recorded-source rule as `failed_precondition`; surface pin 26→27; two contract tests; 143 green |
 | D7 | Nebius status contract | **A, implementation deferred** to a later follow-up (not a current worry) | Ruling recorded; no code yet |
-| D8 | F4 TOCTOU | **A by stated principle — PRICED** | Price: one final-component `O_NOFOLLOW`-class open + `write_contained` pair in `hkask-mcp-server/src/server/validation.rs` (~40-60 lines + ~80 test lines incl. a symlink-swap rejection test), then ~7-10 call-site swaps (corpus `helpers.write_contained`, `document.rs`, `services/convert.rs`, media `gallery.rs`). Estimate ~+120-160 production / ~+80 test, one focused session. Behavior change: a symlinked final component previously followed silently now errors — the fix itself. Ready to build on go |
+| D8 | F4 TOCTOU | **A — IMPLEMENTED** (`971185a553`) | The shared `write_contained` primitive landed in `hkask-mcp-server`: containment check then an `O_NOFOLLOW` final-component open (libc, unix) — a symlink planted between check and open is refused as ELOOP, classified `invalid_argument` naming the refusal; non-symlink IO classifies through `map_io_error`; the residual intermediate-directory window documented at the primitive. Seven call sites swapped (corpus helpers/document×3, training rollout-bridge×2/dataset); **media had no caller-supplied write paths** — the priced gallery site was wrong on inspection (gallery writes are server-computed). Pinned by the symlink-swap rejection test (outside target never created) + the plain-write test; 274 tests green, scoped clippy clean; the full-repo gate was blocked by a concurrent actor's uncommitted agent-crate work at landing (not this change) |
 | D9 | Invocation-identity | **B** | Stands (the block is deliberate and documented) |
 | D10 | Spreadsheet crash-durability | **B** | Stands |
 | D11 | Passphrase onboarding | **B, wontfix-by-design** — the current behavior is the design: default provisioned on install, the user rotates when they want; R1 CLOSED (the audit's option A was over-engineering) | Stands |
@@ -845,6 +845,16 @@ exactly that lag), not evidence of absence.)
 
 ## Change log
 
+- 2026-09-29 — v0.23.21 **D8 IMPLEMENTED** (`971185a553`): the shared
+  `O_NOFOLLOW` write primitive closed the F4 check-to-open symlink race —
+  seven call sites swapped across corpus and training; the pinned
+  symlink-swap rejection test proves the outside target is never created.
+  Media's priced site was wrong on inspection (no caller-supplied write
+  paths) — recorded. **All twelve operator decisions now carry EXECUTED
+  dispositions; the pass-2 decision queue is empty.** The full-repo gate
+  was blocked at landing by a concurrent actor's uncommitted agent-crate
+  work (documented, not this change's breakage); the three touched crates
+  are scoped-clippy clean with 274 tests green.
 - 2026-09-29 — v0.23.20 executed the operator's final rulings. **D6
   IMPLEMENTED** (`220ef6e394`): `finish_research_run` — terminal statuses,
   journaled transitions (`research_run_status_history`), the sources
