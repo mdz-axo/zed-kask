@@ -2,7 +2,7 @@
 title: "Loop Register — zed-kask canonical loops"
 audience: [developers, architects, agents, operators]
 last_updated: 2026-09-28
-version: "0.23.14"
+version: "0.23.15"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle]
@@ -117,16 +117,16 @@ From the register's operator-decision queue:
 | --- | --- | --- | --- | --- |
 | 1 | Memory-receipt functional guarantee (EndTurn precedes detached ingestion; panel stop handler has no receipt) | L1 | deferred, falsifier recorded | re-open in L1 slice — operator decision pending |
 | 2 | Typed-error carry across the L4→L3 seam (string-marshalled kind) | L3 | deferred (net-positive lines) | **CLOSED (pass 2):** resolved-by-drift — the kind crosses the wire structurally (`runtime.rs:1785-1791`), display round-trip enum-validated and pinned (see L3 row) |
-| 3 | Measured panel seam test + 2 inferred findings (concurrent update unseen after move; optimistic-mutation repaint) | L7 | deferred behind widget rework | re-open in L7 slice — widget tree now clean; re-map citations first |
+| 3 | Measured panel seam test + 2 inferred findings (concurrent update unseen after move; optimistic-mutation repaint) | L7 | deferred behind widget rework | **CLOSED (pass 2, `9142f4f03e`):** citations re-mapped against the landed widget state; the seam test ran red-first — the optimistic-move notify bug confirmed and fixed (one notify, symmetric with the error paths); the authoritative-refresh half pinned healthy (post-completion `set_body` lands); residual conversation-side dependency recorded as a design note (see L7 row) |
 | 4 | Direct-acknowledgment memory-receipt gate (`goals.rs:319-337`) | L9 | operator decision | re-present for decision |
 | 5 | Done-verdict/criteria-passed rejection check | L9 | operator decision | re-present for decision |
 | 6 | Recall failure-signal contract (error-discarding legs `memory.rs:927-967`, `:1067-1085`) | L10 | operator ruling | re-present for decision |
-| 7 | Page-visibility impedance (older running job unobserved behind 20 newer) | L11 | deferred pending panel contract | re-open in L11/E3 slice |
+| 7 | Page-visibility impedance (older running job unobserved behind 20 newer) | L11 | deferred pending panel contract | **RE-DEFERRED (reason):** what surfaces for an older running job is a panel-contract product question; no evidence from this pass changes it — folded into the operator batch below should the operator wish to decide now |
 | 8 | Closable-vs-append-only research runs (no status-transition writer exists) | L12 | operator decision | re-present for decision |
 | 9 | Dispatch-seam ingestion candidate (needs red-green public-seam test) | L13 | deferred | **CLOSED (pass 2):** the seam test ran red-green; the red exposed the pinned design boundary (`thread_tests.rs:220-223`); seam consolidation REJECTED as contradicting the pin; the `delegate_and_ingest` consolidation for unscoped sites landed in `57c2bdea7a` (see L13 row) |
-| 10 | Posterior carry-forward boundary | L17 | deferred (caller-controlled contract) | re-defer unless the operator changes the contract |
+| 10 | Posterior carry-forward boundary | L17 | deferred (caller-controlled contract) | **RE-DEFERRED (reason):** the boundary is the documented caller-controlled contract; changing it is a behavior change requiring an operator ruling — stands unless the operator changes the contract |
 | 11 | Nebius status-degradation contract (unobservable jobs read Running) | L18 | operator decision | re-present for decision |
-| 12 | Degraded-status contract (poisoned performance lock silently substitutes zero penalty) | L23 | deferred with falsifier | re-open in L23 slice |
+| 12 | Degraded-status contract (poisoned performance lock silently substitutes zero penalty) | L23 | deferred with falsifier | **CLOSED (pass 2, `c98e29aa36`):** the poisoned-lock arm now returns a rationale naming the degradation ("live performance unavailable (state poisoned) — static profile only") so a static-only ranking cannot read as live endorsement; 141 research tests green |
 
 From the repair plan (prior findings record; dispositions at its §9):
 
@@ -732,6 +732,16 @@ supersession notes.
 
 ## Change log
 
+- 2026-09-28 — v0.23.15 closed the loose-end disposition stage (Stage 2).
+  Two items closed with evidence: #3 (L7 seam test — `9142f4f03e`) and
+  #12 (L23 poisoned-lock degradation surfaced — `c98e29aa36`, +8/−2).
+  Two re-deferred with stated reasons: #7 (L11 page-visibility — a
+  panel-contract product question, folded into the operator batch) and
+  #10 (L17 posterior carry-forward — the documented caller-controlled
+  contract). Eleven items remain operator decisions, packaged in Stage 3
+  with the server phase's additions (F-P1, the reference-model-record
+  proposals). Zero silent carry-overs — every ledger row now carries a
+  closure, a re-deferral reason, or an operator-decision status.
 - 2026-09-28 — v0.23.14 closed the loop re-slice stage (Stage 1 of the
   completion plan). The four spec-named rows re-mapped in v0.23.13; the
   remaining 19 delta-verified in one pass — every citation drift
