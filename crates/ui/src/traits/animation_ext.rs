@@ -72,7 +72,7 @@ mod tests {
             *self.render_count.borrow_mut() += 1;
             Icon::new(IconName::LoadCircle)
                 .size(IconSize::Small)
-                .use_keyed_rotate_animation("capped-spinner-test", 2)
+                .with_keyed_rotate_animation("capped-spinner-test", 2)
         }
     }
 
@@ -84,6 +84,11 @@ mod tests {
     /// after the cap interval.
     #[gpui::test]
     fn rotate_animation_redraw_rate_is_capped(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = settings::SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+        });
         let render_count = Rc::new(RefCell::new(0));
         let window: WindowHandle<CappedSpinnerTestView> =
             cx.open_window(size(px(100.), px(100.)), {

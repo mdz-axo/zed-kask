@@ -464,6 +464,8 @@ The self-sustaining loops are gone: with no thread running the editor no longer 
 
 **Next (P7e):** measure whether bounding the spinner's frame rate (the existing `Animation::max_fps` facility) reduces running-thread draw cost, before changing upstream code; decompose the remaining 635 ms load for the largest thread under P7d.
 
+**P7e applied (2026-09-28, D84):** before the A/B measurement, the live reproduction was strengthened — the GPUI main thread measured 100% of a core over a 5 s jiffy sample during an active turn (500/500), including tool-execution gaps with no tokens streaming, on the user's release build. The cap is now in the tree: every `with_rotate_animation`/`use_keyed_rotate_animation` spinner runs at 20 fps (`ROTATE_ANIMATION_MAX_FPS`, `crates/ui/src/traits/animation_ext.rs`), timer-driven via upstream's `Animation::with_max_fps`; `thread_item.rs` stays byte-identical to upstream. Alongside it, `MaxIdleRetainedThreads` is raised 5 → 16 via the GPUI global in `crates/zed/src/main.rs` (upstream's own override point), so switching among recent idle threads no longer re-pays the DB load + per-entry replay (the 635 ms P7c reading). Pins: `rotate_animation_redraw_rate_is_capped` (ui), `kask_idle_thread_retention_override_is_set_after_agent_ui_init` (zed). **Still open:** the before/after main-thread measurement under the same multi-agent workload (needs the rebuilt binary), the P7d load decomposition for first-open of a large thread (retention only removes re-loads, not first loads), and the per-frame cost decomposition via the built-in profiler (`instrumentation.performance_profiler.enabled`) if the capped build still feels slow.
+
 ### Kata experiment table
 
 | Order | Current condition | Target | Next experiment | Success criterion |

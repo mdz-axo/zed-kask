@@ -5188,6 +5188,23 @@ mod tests {
         );
     }
 
+    // zed-kask: MaxIdleRetainedThreads override — the idle-thread retention
+    // cap must be raised after agent_ui::init installs the panel machinery, so
+    // switching between recent threads stays in-memory instead of re-loading
+    // from the DB and replaying every entry on the foreground.
+    #[test]
+    fn kask_idle_thread_retention_override_is_set_after_agent_ui_init() {
+        let source = include_str!("main.rs");
+        let init = source.find("agent_ui::init(").expect("agent_ui::init call");
+        let retention = source
+            .find("MaxIdleRetainedThreads(")
+            .expect("idle-thread retention override");
+        assert!(
+            init < retention,
+            "retention override must be set after agent_ui::init"
+        );
+    }
+
     #[test]
     fn kask_wiring_symbols_exist() {
         let _ = wire_kask_mcp_shutdown as fn(std::sync::Arc<hkask_mcp::McpRuntime>, &mut gpui::App);
