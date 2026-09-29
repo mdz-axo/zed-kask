@@ -2,7 +2,7 @@
 //! Xaman Ek curator, hire/delegate/fanout spend tools, lifecycle (fire/delete),
 //! knowledge search, publish, fork. Split from `hkask_mcp_swarm.rs` (M2).
 //!
-//! All 27 tools here talk to the ABW REST API (`agent-bestiary.world`); none
+//! All 48 tools here talk to the ABW REST API (`agent-bestiary.world`); none
 //! touch the local registry.
 use crate::SwarmServer;
 use crate::abw_util::{
