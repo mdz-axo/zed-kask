@@ -11,7 +11,7 @@ Domain-agnostic eliminative inference engine anchored to Popper (falsifiability)
 
 Popper, *The Logic of Scientific Discovery* (1959); Platt, "Strong Inference", *Science* 146 (1964); Chamberlin, "The Method of Multiple Working Hypotheses", *Science* 15 (1890); Pearl, *Causality* (2009) and Halpern & Pearl (2005) for the do-operator. `onto_anchor` → derived `falsifiability` (operator ruling 2026-09-25).
 
-**D/P labelling.** Steps 1–4 are P: admission, hypotheses, counterfactuals and tests are judgment, critiqued by the user's review (steps 2 and 4 present for it) and by the observations themselves. Step 5's per-hypothesis eliminate/corroborate call is P (does this observation contradict this prediction?), recorded in the auditable `falsification_log`. Step 5's verdict and step 6's materiality guard are D (`lisp_eval`, forms below) over the counts step 5 recorded.
+**D/P labelling.** Steps 1–4 are P: admission, hypotheses, counterfactuals and tests are judgment, critiqued by the user's review (steps 2 and 4 present for it) and by the observations themselves. Step 5's per-hypothesis eliminate/corroborate call is P (does this observation contradict this prediction?), recorded in the auditable `falsification_log`. Step 5's verdict, step 6's materiality guard, and step 6's convergence composite (the 0.50 verdict / 0.30 alternatives-eliminated / 0.20 remainder weights, computed over the cumulative eliminated set) are D (`lisp_eval`, forms below) over the counts step 5 recorded.
 
 ## When to Use
 
@@ -42,9 +42,9 @@ Popper, *The Logic of Scientific Discovery* (1959); Platt, "Strong Inference", *
 
 4. **Design discriminating tests (Platt).** Design tests whose outcome rules out at least one hypothesis. The cardinal error is one-test-per-hypothesis — a test that can only confirm your favorite is a comfort blanket, not a discriminating test. A test is discriminating only if at least two hypotheses predict different outcomes for it. Prefer tests that falsify multiple hypotheses in one observation (maximize elimination power). Build a coverage matrix mapping each test × hypothesis to `falsifies` / `corroborates` / `neutral`. Every hypothesis must be falsifiable by at least one designed test; if not, add a test or flag the hypothesis untestable-by-available-means. Flag hypothesis pairs that predict identical outcomes for every testable design as irreducible — they survive together and the user must be told the evidence cannot choose between them. Rank tests by elimination power, not ease of running. Present for user review.
 
-5. **Eliminate and corroborate.** Apply the observations. A hypothesis whose falsifiable prediction is contradicted is eliminated — hard, not probabilistic. Record each elimination with the test, the prediction, the observation, and the contradiction (auditable falsification log). A hypothesis that predicted the observed outcome is corroborated — it withstood a test that could have falsified it. Corroborated is not confirmed: surviving does not make a hypothesis more likely in any absolute sense, only more resilient. Hypotheses flagged irreducible or not falsifiable by any available test survive by default — record them as survived_by_default with the reason; the user must understand these were not tested, only that nothing could test them. Choose the verdict in this order: with no observations this cycle, `nothing_eliminated` (corroborated stays empty); if all hypotheses were eliminated, `none_corroborated`; if any survivor is only survived-by-default, `untested_remainder` (including one corroborated plus one untested, even when no hypothesis was eliminated); if none was eliminated this cycle, `nothing_eliminated`; if exactly one was corroborated and all alternatives eliminated, `one_corroborated_survivor`; otherwise, with two or more tested survivors, `multiple_corroborated`. Report default survivors even in a no-observation cycle; never promote an untested survivor to corroborated. Compute the verdict with `lisp_eval` (the two `nothing_eliminated` branches are distinct cases — no observations, versus observations that eliminated nothing — and their order is load-bearing):
+5. **Eliminate and corroborate.** Apply the observations. A hypothesis whose falsifiable prediction is contradicted is eliminated — hard, not probabilistic. Record each elimination with the test, the prediction, the observation, and the contradiction (auditable falsification log). A hypothesis that predicted the observed outcome is corroborated — it withstood a test that could have falsified it. Corroborated is not confirmed: surviving does not make a hypothesis more likely in any absolute sense, only more resilient. A falsifiable hypothesis this cycle's observations were NEUTRAL toward — neither matched nor contradicted — is neither corroborated nor eliminated; count it with the untested. Hypotheses flagged irreducible or not falsifiable by any available test survive by default — record them as survived_by_default with the reason; the user must understand these were not tested, only that nothing could test them. Choose the verdict in this order: with no observations this cycle, `nothing_eliminated` (corroborated stays empty); if all hypotheses were eliminated, `none_corroborated`; if any survivor lacks a corroborating observation this cycle — survived-by-default or neutral — `untested_remainder` (including one corroborated plus one untested, even when no hypothesis was eliminated); if none was eliminated this cycle, `nothing_eliminated`; if exactly one was corroborated and all alternatives eliminated, `one_corroborated_survivor`; otherwise, with two or more corroborated survivors, `multiple_corroborated`. Report default survivors even in a no-observation cycle; never promote an untested survivor to corroborated. Compute the verdict with `lisp_eval` (the two `nothing_eliminated` branches are distinct cases — no observations, versus observations that eliminated nothing — and their order is load-bearing):
    - form: `(cond ((= observations 0) "nothing_eliminated") ((= eliminated total) "none_corroborated") ((> untested 0) "untested_remainder") ((= eliminated 0) "nothing_eliminated") ((and (= corroborated 1) (= eliminated (- total 1))) "one_corroborated_survivor") (t "multiple_corroborated"))`
-   - env: `{ "observations": <observations applied this cycle>, "total": <hypotheses carried into the cycle>, "eliminated": <eliminated>, "corroborated": <corroborated>, "untested": <survived_by_default> }`
+   - env (all five counts are THIS CYCLE's): `{ "observations": <observations applied this cycle>, "total": <hypotheses carried into the cycle>, "eliminated": <eliminated this cycle>, "corroborated": <corroborated this cycle>, "untested": <survivors without a corroborating observation this cycle — survived_by_default plus neutral-toward-this-cycle> }`. Convergence (step 6) consumes the CUMULATIVE eliminated set (`prior_eliminated` from `falsifiability-eliminate` plus this cycle) for its alternatives-eliminated proportion; the verdict itself is this-cycle.
 
 6. **Check convergence.** Measure whether the elimination has pared the hypothesis space to one corroborated survivor with all alternatives eliminated (convergence 0) or nothing has been ruled out (convergence 1). The verdict dimension carries weight 0.50; the alternatives-eliminated proportion 0.30; the irreducible remainder 0.20. Apply the materiality guard with `lisp_eval` `(and (= eliminated 0) (not new_test_available) (< (abs (- metric metric_prior)) 0.02))` — `new_test_available` is a judgment (P) supplied to the form, not computed by it. If it holds, force convergence — the residual gap is irreducible, not a fixable defect, and the honest answer is the bounded remainder, not infinite iteration. Blockers: `untested_remainder` cannot converge to a unique survivor; report the untested hypotheses and the missing discriminating test. A no-observation `nothing_eliminated` verdict also carries the untested set and cannot claim a unique survivor. `none_corroborated` is a hard block (restart, do not iterate); `nothing_eliminated` with no new test available is a stall; `multiple_corroborated` with no new discriminating test is an irreducible remainder to report, not iterate past.
 
@@ -71,16 +71,23 @@ Template context variables (from each template's [inference] contract):
 
 Run the verdict form through `lisp_eval` across its six branches: no
 observations → `nothing_eliminated`; all eliminated → `none_corroborated`;
-any survived-by-default present → `untested_remainder` (the load-bearing
-precedence — one corroborated plus one untested still reports
-`untested_remainder`, never `one_corroborated_survivor`); observations but
+any survivor without a corroborating observation this cycle (survived-by-
+default or neutral) → `untested_remainder` — the load-bearing precedence:
+for one corroborated plus one untested, the clause order blocks
+`nothing_eliminated` and `multiple_corroborated` (the clause-4 and
+default branches land after clause 3), while `one_corroborated_survivor`
+is blocked arithmetically (it requires `eliminated = total − 1`, which
+forces `untested = 0` under the disjoint accounting); a no-observation
+cycle WITH default survivors also reports `nothing_eliminated` (branch 1
+precedes branch 3 — the second load-bearing cross-case); observations but
 zero eliminated → `nothing_eliminated`; exactly one corroborated with all
-alternatives eliminated → `one_corroborated_survivor`; two or more tested
-survivors → `multiple_corroborated`. Run the materiality guard both ways:
-all conditions met with no new test available and a metric delta under
-0.02 → true (force convergence — the remainder is irreducible); the same
-env with `new_test_available` true → false (a test exists; iteration is
-not done). All branch receipts executed through the live tool 2026-09-29.
+alternatives eliminated → `one_corroborated_survivor`; two or more
+corroborated → `multiple_corroborated`. Run the materiality guard both
+ways: all conditions met with no new test available and a metric delta
+strictly under 0.02 → true (force convergence — the remainder is
+irreducible); the same env with `new_test_available` true → false. The
+boundary is strict `<`: a delta of exactly 0.02 → false. All branch
+receipts executed through the live tool 2026-09-29.
 
 ## Composition
 
@@ -89,9 +96,11 @@ role of `mcda` and `diagnose`:
 
 - **metacognition** (inquiry experiment) has `falsifiability` as one of its
   four delegation targets, for counterfactual branches.
-- **diagnose** step 3 (generate 3–5 falsifiable hypotheses) and its elimination
-  logic delegate to `falsifiability-hypothesize` + `falsifiability-discriminate`
-+ `falsifiability-eliminate`, keeping its bug-specific ontological anchoring (Dublin Core + PKO).
+- **diagnose** step 3 (generate 3–7 falsifiable root-cause hypotheses)
+  delegates to `falsifiability-hypothesize` (its own admission gate stays —
+  a reproduced bug is already admitted). Diagnose's steps 5–7 (probe,
+  fix, convergence) apply the elimination method through their own probe
+  design; only the hypothesize seam is wired today.
 - **hypothesis-framer** step 10 (testability assessment) delegates to
   `falsifiability-admit`.
 - **superforecasting** inside view is split: hypothesis generation delegates
@@ -104,9 +113,12 @@ role of `mcda` and `diagnose`:
   out) and down-weighted there (made unlikely); the former is terminal, the
   latter revisable.
 
-Refactoring the three consumers to delegate here (rather than each
-reimplementing the method) follows the strangler-fig pattern: one domain at a
-time, system functional at every step.
+Refactoring the four consumers above to delegate here (rather than each
+reimplementing the method) follows the strangler-fig pattern: one domain at
+a time, system functional at every step. Three further skills already
+delegate here — `gradient-hunter` (gradient-detect), `eqm` (evidence
+grounding for confirmation_bias), and `verification-compression`
+(experiment design) — their seams are recorded in their own SKILL.mds.
 
 ## Constraints
 
