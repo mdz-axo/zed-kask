@@ -2,7 +2,7 @@
 title: "Loop Register — zed-kask canonical loops"
 audience: [developers, architects, agents, operators]
 last_updated: 2026-09-28
-version: "0.23.19"
+version: "0.23.20"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle]
@@ -831,13 +831,13 @@ exactly that lag), not evidence of absence.)
 | # | Decision | Ruling | Disposition |
 | --- | --- | --- | --- |
 | D1 | F-P1 plaintext DBs | **RESOLVED — split is the design:** encryption on core-crate activities; MCP-server data stays plaintext so servers can be broken off and run in an independent MCP-server pattern (no zed keychain, no HKASK_DB_PASSPHRASE) | Rationale recorded at the three sites (portfolio `store.rs`, companies `screen_store.rs`, research `hkask_mcp_research.rs`); F-P1 CLOSED |
-| D2 | Reference-model records | **A** | Work pending: draft the 9 skill sections + kata-kanban per-server doc |
+| D2 | Reference-model records | **A, executed honestly-narrowed** | Of the 9 recorded skill gaps, **8 were false gaps** — the skills carry recorded reference models in other forms the plural-heading grep missed (cmp-term-structure/listening prose `**Reference model.**`; media-workflow `## Reference model`; transcript-reel `## Reference model and labels`; eqm's opening paper citation; local-research-swarm's `## Anchors and boundary`; build-corpus-pipeline's `## Anchors and contract`; swarm-intelligence's inline author-year citations) — the spec's "or another recorded form" clause covers them, and the instrument lesson (probe validity before reading absence) is recorded. **Fixed:** lora-training's true gap (a `## Reference models` section citing LoRA arXiv:2106.09685, QLoRA arXiv:2305.14314, the method-init catalog, and the gate contracts) and the kata-kanban per-server doc (created with its reference models, storage/credentials, surfaces, and testing standard). SKILL.md pin suite re-run green (28/28) |
 | D3 | Memory receipts | **B** — the loose coupling was a deliberate resilience decision; tight coupling and receipts make rigid failure-prone code | Deferral stands with the rationale recorded |
 | D4 | Done-verdict check | **B** — deliberate loose coupling for resilience | Stands |
 | D5 | Recall failure-signal | **A** | **DONE:** the keyword leg warns naming the failure (partial results stand); the thread leg propagates — a failed read is an error, not "no memories"; kask_bridge 253/253 green |
-| D6 | Closable research runs | **PENDING** — explanation delivered (what runs are, the append-only property); awaiting the operator's functional ruling |
+| D6 | Closable research runs | **A — IMPLEMENTED** (`220ef6e394`) | `finish_research_run` landed: terminal statuses completed\|partial\|blocked\|failed; the sources ledger never mutates — transitions append to `research_run_status_history` (the audit trail) and update the run's latest status; completed/partial enforce the server-recorded-source rule as `failed_precondition`; surface pin 26→27; two contract tests; 143 green |
 | D7 | Nebius status contract | **A, implementation deferred** to a later follow-up (not a current worry) | Ruling recorded; no code yet |
-| D8 | F4 TOCTOU | **A by stated principle** — no race conditions; shared, reused canonical paths | Explanation delivered (what plants the symlink, what it does); pricing the shared `O_NOFOLLOW`-class primitive is the next step |
+| D8 | F4 TOCTOU | **A by stated principle — PRICED** | Price: one final-component `O_NOFOLLOW`-class open + `write_contained` pair in `hkask-mcp-server/src/server/validation.rs` (~40-60 lines + ~80 test lines incl. a symlink-swap rejection test), then ~7-10 call-site swaps (corpus `helpers.write_contained`, `document.rs`, `services/convert.rs`, media `gallery.rs`). Estimate ~+120-160 production / ~+80 test, one focused session. Behavior change: a symlinked final component previously followed silently now errors — the fix itself. Ready to build on go |
 | D9 | Invocation-identity | **B** | Stands (the block is deliberate and documented) |
 | D10 | Spreadsheet crash-durability | **B** | Stands |
 | D11 | Passphrase onboarding | **B, wontfix-by-design** — the current behavior is the design: default provisioned on install, the user rotates when they want; R1 CLOSED (the audit's option A was over-engineering) | Stands |
@@ -845,6 +845,19 @@ exactly that lag), not evidence of absence.)
 
 ## Change log
 
+- 2026-09-29 — v0.23.20 executed the operator's final rulings. **D6
+  IMPLEMENTED** (`220ef6e394`): `finish_research_run` — terminal statuses,
+  journaled transitions (`research_run_status_history`), the sources
+  ledger untouched, completed/partial gated on server-recorded sources,
+  pin 26→27, 143 tests green. **D2 executed honestly-narrowed:** 8 of the
+  9 recorded skill gaps were false — recorded reference models exist in
+  other forms the plural-heading grep missed (the probe-instrument-validity
+  lesson applied to the audit's own ledger); the true gaps fixed: the
+  lora-training `## Reference models` section and the kata-kanban
+  per-server doc; SKILL.md pin suite green (28/28). **D8 priced:** one
+  `O_NOFOLLOW`-class primitive + ~7-10 call-site swaps, ~+120-160
+  production / ~+80 test, one session — ready to build on go. All twelve
+  decisions now carry executed dispositions.
 - 2026-09-29 — v0.23.19 recorded the operator's D1–D12 rulings and executed
   the decidable ones. **D1 RESOLVED — the split is the design:**
   encryption on core-crate activities; MCP-server data stays plaintext so

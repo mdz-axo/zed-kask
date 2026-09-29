@@ -10,6 +10,25 @@ operator-selected configuration without replacing it, report normalized
 findings losslessly, and compute phase-aware training-readiness convergence.
 This skill does not train, load, initialize, merge, or evaluate models.
 
+## Reference models
+
+- **LoRA** — Hu et al., "LoRA: Low-Rank Adaptation of Large Language Models"
+  (arXiv:2106.09685): the low-rank `ΔW = BA` adaptation this skill
+  configures.
+- **QLoRA** — Dettmers et al., "QLoRA: 4-bit Quantization for LLM
+  Fine-Tuning" (arXiv:2305.14314): the NF4 base + LoRA-adapter pattern
+  behind the memory-bound G2 path.
+- **The method-init catalog** — `kask/docs/reference/lora-training-catalog.md`
+  carries the full per-method table (rsLoRA arXiv:2312.03732, DoRA
+  arXiv:2402.09353, PiSSA arXiv:2404.02948, LoRA-GA arXiv:2407.05000, and
+  the rest) with each method's gate routing and merge-equivalence notes;
+  the audit template cites the arXiv paper sections and PEFT v0.19.0 doc
+  sections per finding.
+- **The hKask gate contracts** — G1–G5, G-D1, G-M1–M4, G-Q1/Q2/Q4/Q5,
+  G-H1: the fixed-order evidence gates this skill enforces (the catalog is
+  the recorded gate reference; the runtime validators in
+  `kask/mcp-servers/hkask-mcp-training` are the enforcement).
+
 ## Initial and target condition
 
 - **Initial condition:** declared operator requirements, host, base model/config inputs and dataset-format hint; after operator selection, the concrete training parameters, optional dataset path, and any observed runtime/post-training evidence. An absent dataset validation is not a zero-risk dataset.
