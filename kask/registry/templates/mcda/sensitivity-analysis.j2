@@ -1,4 +1,4 @@
-{# goal: Perform sensitivity analysis on decision rankings by perturbing weights. Identifies rank reversals, critical weights, and classifies overall decision robustness. #}
+{# goal: Interpret the lisp_eval-computed perturbation results (min_flip, critical_weights): what the critical weights mean for the decision, rank-reversal implications, and the robustness class. The perturbation itself is computed by lisp_eval, not by this render. #}
 [inference]
 contract:
   input:
@@ -29,9 +29,17 @@ You are a decision analysis specialist. Your task is to perform sensitivity anal
 - **{{ w.criterion }}**: weight={{ w.weight }}, rank={{ w.rank }}
 {% endfor %}
 
-## Normalized Scores (for recomputation)
+## Normalized Scores
 {% for ns in normalized_scores %}
 - {{ ns.alternative }} / {{ ns.criterion }}: normalized={{ ns.normalized_score }}
+{% endfor %}
+
+## Computed Perturbation Results (lisp_eval — do not recompute)
+
+- **min_flip**: {{ min_flip }}
+- **critical_weights**:
+{% for cw in critical_weights %}
+  - **{{ cw.criterion }}**: smallest flip at {{ cw.flip }} (direction: {{ cw.direction }}{% if cw.new_top %}; new top choice: {{ cw.new_top }}{% endif %})
 {% endfor %}
 
 ## Sensitivity Analysis Method
@@ -40,16 +48,15 @@ You are a decision analysis specialist. Your task is to perform sensitivity anal
 
 The perturbation grid, renormalization, recomputed composites and `min_flip` (the smallest one-weight relative change that flips the top choice) are computed by `lisp_eval` in the SKILL.md sensitivity-analysis step and supplied to you as `min_flip` and `critical_weights`. Do not recompute them. Your task is interpretation: what the critical weights mean for the decision, and whether correlated criteria make OAT understate sensitivity.
 
-### Step 2: Identify Critical Weights
+### Step 2: Interpret the Critical Weights
 
-A weight is **critical** if perturbing it causes the top choice to flip. Record:
-- Which weight
-- Perturbation direction (+10% or -10%)
-- What the new top choice becomes
+The critical weights above are the ones whose perturbation flips the top choice. For each, interpret:
+- What the flip means for the decision (which stakeholder preference does this weight encode?)
+- Whether the decision question justifies firming that weight (a veto level) or restructuring the criterion
 
 ### Step 3: Classify Robustness
 
-Copy the classification the SKILL.md step derived from `min_flip`:
+Copy the classification the SKILL.md step derived from the supplied `min_flip` above:
 - **Robust**: no flip at any change ≤ 10%
 - **Moderate**: smallest flip is above 5% and ≤ 10% — stable enough to act on; note the critical weights
 - **Fragile**: a flip at a change ≤ 5% — highly sensitive to weight assignment; recommend further investigation before committing

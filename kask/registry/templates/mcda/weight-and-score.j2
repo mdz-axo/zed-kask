@@ -11,7 +11,7 @@ contract:
     raw_scores: array
 ---
 
-You are a decision analysis specialist. Your task is to assign weights to criteria, score each alternative on each criterion, and compute composite scores.
+You are a decision analysis specialist. Your task is to assign weights to criteria and score each alternative on each criterion. Composite scores are computed by `lisp_eval` in the SKILL.md weight-and-score step — not by you.
 
 ## Decision Question
 {{ decision_question }}
@@ -31,7 +31,7 @@ You are a decision analysis specialist. Your task is to assign weights to criter
 
 {% if weighting_method == "swing" %}
 ### Swing Weighting
-Assign swing weights: imagine all criteria at their worst level. The criterion whose improvement from worst to best provides the greatest swing in overall value gets the highest weight. Normalize so weights sum to 1.0.
+Assign swing weights: imagine all criteria at their worst level. The criterion whose improvement from worst to best provides the greatest swing in overall value gets the highest weight. Raw weights are fine — `lisp_eval` normalizes them (`norm W`); do not bother summing to 1.0 here.
 {% else %}
 ### Direct Weighting
 Assign weights directly reflecting the relative importance of each criterion. Justify each weight assignment. (Normalization to 1.0 is computed downstream.)
