@@ -46,7 +46,6 @@ classDiagram
     class FlashrankAlgorithm
     class BridgeThreadCondenser {
         +compress_tool_result(tool, output)
-        +precompress_history(messages, protected_tools)
     }
     class NativeCompaction {
         +stream_compaction()
@@ -56,7 +55,6 @@ classDiagram
     AlgorithmRegistry --> WordRankAlgorithm
     AlgorithmRegistry --> FlashrankAlgorithm
     BridgeThreadCondenser --> CondenserEngine
-    NativeCompaction --> BridgeThreadCondenser : manual request copy only
 ```
 
 <!-- DIAGRAM_ALIGNMENT
@@ -92,31 +90,25 @@ an ontology anchor from the tool name before invoking the selected algorithm
 
 `BridgeThreadCondenser` owns a mutex-protected engine and the incoming-result
 auto-compression flag
-(`kask/crates/kask_bridge/src/condenser_bridge.rs:19-39`). Its two methods have
-different gates:
+(`kask/crates/kask_bridge/src/condenser_bridge.rs:19-39`). Its single method's
+gate:
 
 | Method | Gate | Mutation target | Evidence |
 | --- | --- | --- | --- |
 | `compress_tool_result` | `auto_compress_tool_results` must be true | incoming stored result text | `kask/crates/kask_bridge/src/condenser_bridge.rs:42-73` |
-| `precompress_history` | manual compaction invokes it regardless of that flag | copied summary request only | `kask/crates/kask_bridge/src/condenser_bridge.rs:75-125`; `crates/agent/src/thread.rs:3687-3707` |
 
-Manual precompression protects the latest exchange, prose, named source tools,
-errors, JSON, and non-text results. It installs only a nonempty excerpt that is
-smaller than the original (`kask/crates/kask_bridge/src/condenser_bridge.rs:80-123`).
-The exact protected source-tool list is at `crates/agent/src/thread.rs:160-185`.
+The exact protected source-tool list is at `crates/agent/src/thread.rs`
+(`NO_COMPRESS_TOOLS`) — an ingestion policy.
 
-## Native manual-compaction lifecycle
+## Compaction
 
-Manual compaction obtains the global condenser and precompresses a background
-request copy. For eligible older non-JSON tool text, exact adjacent repeated
-lines are collapsed with their repetition count when that is shorter. Only
-entirely repeated output skips the algorithm; mixed and non-repetitive text
-still use it, retaining the shorter result. The split planner then sizes model-visible content rather than the
-replay-only raw `output`, and invokes native summary collection and merge.
-Automatic compaction does not obtain the condenser
-(`crates/agent/src/thread.rs:3687-3715`). The composition root installs the
-bridge even when incoming-result compression is off
-(`crates/zed/src/main.rs:2299-2309`).
+Compaction does not use this package. The deterministic pre-shrink
+(run-length collapse + head+tail windowing) is owned by
+`crates/agent/src/kask_compaction.rs`, runs in-process on the summarizer's
+request copy for both manual and automatic compaction, and is specified in
+`kask/docs/architecture/compaction-pipeline-spec.md`. The composition root
+installs the bridge for ingestion only
+(`crates/zed/src/main.rs`).
 
 ## Diagnostics
 
@@ -128,18 +120,17 @@ compression failures (`kask/crates/hkask-condenser/src/types.rs:141-169`).
 
 ## Procedures
 
-### Tune compression and manual precompression
+### Tune compression
 
-Use this procedure to change compression aggressiveness and verify both runtime
-entry points without changing native summary persistence.
+Use this procedure to change compression aggressiveness and verify the runtime
+entry point without changing native summary persistence.
 
 ```mermaid
 flowchart TD
     A[Choose profile] --> B[Verify category-to-algorithm route]
     B --> C[Test incoming-result behavior]
-    C --> D[Test manual-compaction precompression]
-    D --> E[Verify protected content remains unchanged]
-    E --> F[Run focused tests]
+    C --> D[Verify protected content remains unchanged]
+    D --> E[Run focused tests]
 ```
 
 <!-- DIAGRAM_ALIGNMENT
@@ -162,9 +153,10 @@ Set `kask.condenser.profile` to one of the four values parsed by `Profile`
 | `light` | 95% | none |
 
 The bridge defaults to `normal`; incoming-result compression defaults off
-(`kask/crates/kask_bridge/src/settings.rs:301-327`). The composition root still
-installs the condenser when that flag is false so manual precompression remains
-available (`crates/zed/src/main.rs:2299-2309`).
+(`kask/crates/kask_bridge/src/settings.rs:301-327`). The composition root
+installs the condenser even when that flag is false so enabling it later needs
+no restart beyond the settings observer
+(`crates/zed/src/main.rs`).
 
 #### 2. Verify algorithm selection
 
@@ -188,43 +180,23 @@ the result is no larger than the source. The gate and dispatch are at
 `kask/crates/kask_bridge/src/condenser_bridge.rs:42-73`; focused tests are at
 `kask/crates/kask_bridge/src/condenser_bridge.rs:202-249`.
 
-#### 4. Test manual-compaction precompression
+#### 4. Verify preservation boundaries
 
-Invoke native manual compaction through `/compact` or the compact control. The
-thread copies the request, excludes the final summarization instruction, and
-calls `precompress_history` before native summary generation
-(`crates/agent/src/thread.rs:3687-3715`).
+Confirm the following remain byte-for-byte unchanged at ingestion:
 
-This path is independent of incoming-result compression. Test it with that
-setting disabled and confirm eligible older terminal/build output is replaced
-by a smaller labelled excerpt
-(`kask/crates/kask_bridge/src/condenser_bridge.rs:75-125,132-199`).
+- user and assistant prose (never routed through the condenser);
+- tools in `NO_COMPRESS_TOOLS` (`crates/agent/src/thread.rs`);
+- non-text content.
 
-#### 5. Verify preservation boundaries
+#### 5. Validate
 
-Confirm the following remain byte-for-byte unchanged in the request copy:
-
-- user and assistant prose;
-- the latest user-led exchange;
-- tools in `NO_COMPRESS_TOOLS`;
-- failed results;
-- valid JSON;
-- non-text content and reasoning metadata.
-
-The preservation logic is enforced at
-`kask/crates/kask_bridge/src/condenser_bridge.rs:80-123`, and the protected tool
-list is `crates/agent/src/thread.rs:160-185`. Also verify an error from
-precompression prevents model dispatch and leaves history unchanged; the
-regression test is
-`crates/agent/src/thread.rs:10331-10360`.
-
-#### 6. Validate
-
-Run focused tests for `hkask-condenser`, `kask_bridge` condenser behavior, and
-the agent manual-compaction path. Inspect `CompressedOutput.reduction_pct` and
+Run focused tests for `hkask-condenser` and `kask_bridge` condenser behavior.
+Inspect `CompressedOutput.reduction_pct` and
 `health_signals`, defined at
 `kask/crates/hkask-condenser/src/types.rs:129-169`. A smaller line-level output
 is evidence of reduction, not proof that the provider's token ceiling is met.
+For the compaction pipeline's own validation, see
+`kask/docs/architecture/compaction-pipeline-spec.md`.
 
 ## Further reading
 

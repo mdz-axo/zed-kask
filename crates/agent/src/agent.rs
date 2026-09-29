@@ -3272,8 +3272,7 @@ pub(crate) fn context_injector_for(
     context_injector()
 }
 
-/// Thread condenser — compresses incoming tool results and precompresses a
-/// copy of historical output for manual native summarization (D8).
+/// Thread condenser — compresses incoming tool results at ingestion time (D8).
 ///
 /// Called from the tool-result handling path in `run_turn_internal`.
 /// When set, tool output text is compressed before being stored in the
@@ -3282,6 +3281,8 @@ pub(crate) fn context_injector_for(
 /// Code-reading tools (read_file, grep, list_directory, etc.) are bypassed at
 /// the call site — see `NO_COMPRESS_TOOLS` in `thread.rs`. The condenser is
 /// intended for verbose terminal/build/test output, not source code.
+/// Compaction planning does not use this hook: the deterministic pre-shrink
+/// is owned by `kask_compaction` and runs on the summarizer's request copy.
 pub trait ThreadCondenser: Send + Sync {
     /// Compress a tool result's text output at ingestion time.
     ///

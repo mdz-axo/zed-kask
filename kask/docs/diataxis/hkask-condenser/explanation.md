@@ -15,30 +15,25 @@ selects one of three line-oriented algorithms, applies a profile budget and
 ontology-aware saliency, and returns a `CompressedOutput`. It has no MCP, HTTP,
 or async dependency (`kask/crates/hkask-condenser/src/hkask_condenser.rs:3-7,40-44`).
 
-## One engine, two integration paths
+## One engine, one integration path
 
-The same `CondenserEngine` serves two distinct user-visible paths:
+The `CondenserEngine` serves one user-visible path:
 
 1. **Incoming tool-result compression.** `compress_tool_result` runs before a
    result is stored only when `auto_compress_tool_results` is enabled
    (`kask/crates/kask_bridge/src/condenser_bridge.rs:42-73`).
-2. **Manual-compaction precompression.** `precompress_history` runs regardless
-   of that setting. It changes only eligible older tool-result text in the
-   summarizer request copy; the native model still writes the summary
-   (`kask/crates/kask_bridge/src/condenser_bridge.rs:75-125`).
+
+Compaction no longer routes through the condenser — see
+[Native compaction remains native](#native-compaction-remains-native) below
+and `kask/docs/architecture/compaction-pipeline-spec.md`.
 
 ```mermaid
 flowchart TD
-    A[Tool output] --> B{Path}
-    B -->|Incoming result| C{auto compression enabled?}
-    C -->|No| D[Store original]
-    C -->|Yes| E[CondenserEngine.compress]
-    B -->|Manual compact| F[Copy native compaction request]
-    F --> G[Precompress eligible older tool results]
-    G --> H[Native summary calls]
-    E --> I[CompressedOutput]
-    I --> J[Store result text]
-    H --> K[Store only final native summary]
+    A[Tool output] --> B{auto compression enabled?}
+    B -->|No| C[Store original]
+    B -->|Yes| D[CondenserEngine.compress]
+    D --> E[CompressedOutput]
+    E --> F[Store result text]
 ```
 
 <!-- DIAGRAM_ALIGNMENT
@@ -48,15 +43,10 @@ verified_against: kask/crates/kask_bridge/src/condenser_bridge.rs:42-125; crates
 status: VERIFIED
 -->
 
-Manual precompression preserves user and assistant prose, the newest user-led
-exchange, protected tools, failed tool results, valid JSON, and non-text parts.
-For eligible older non-JSON tool text, exact adjacent repeated lines collapse
-with an explicit count when this shortens the output. Only an entirely repeated
-result skips the algorithm pass; mixed output still passes through the existing
-algorithm, which can shrink its unique remainder. The shorter excerpt is used.
-The stored thread remains unchanged because preprocessing happens after the
-native request has been copied to the background task
-(`crates/agent/src/thread.rs:3697-3707`).
+Incoming compression preserves user and assistant prose (it never touches
+them), and `NO_COMPRESS_TOOLS` exempts source-reading tools at the call site
+(`crates/agent/src/thread.rs`). The stored thread is what the condenser
+writes; there is no second request-copy path through this package.
 
 ## Compression dispatch
 
@@ -79,18 +69,26 @@ a guarantee that a provider token limit will be met.
 
 ## Native compaction remains native
 
-Only manual compaction invokes Kask precompression. Automatic compaction skips
-the hook. After preprocessing, the compaction path plans against the compaction
-model's input capacity, calibrated per thread from the last completed
-request's reported input tokens (`kask_compaction.rs::plan_compaction`): a
-fitting splittable history splits into two chronological halves; an
-over-budget history packs into balanced budget-fitting segments (each closing
-at the first safe boundary past an even share of the remainder, never past
-the budget) summarized concurrently in batches of at most 8 and merged
-chronologically; an indivisible history larger than the budget is head+tail
-elided on the summarizer's request copy only — the stored thread history is
-never modified. Cancellation, streaming, usage accounting, and summary
-persistence remain owned by the native thread lifecycle.
+Compaction no longer routes through the condenser. The deterministic stage is
+owned by `kask_compaction::pre_shrink` and runs in-process on the
+summarizer's request copy for BOTH manual and automatic compaction:
+run-length collapse of repeated lines, then head+tail windowing of any
+tool-result text over a budget-derived per-result cap — no protected-tool,
+JSON, error, or positional exemptions (windowing cannot corrupt structure
+the way the condenser's mid-content ellipsis can, and the stored history
+keeps the full text). The condenser package serves ingestion-time
+tool-result compression only (`run_tool` + `NO_COMPRESS_TOOLS`). After the
+pre-shrink, the compaction path plans against the compaction model's input
+capacity, calibrated per thread from the last completed request's reported
+input tokens (`kask_compaction.rs::plan_compaction`): a fitting splittable
+history splits into two chronological halves; an over-budget history packs
+into balanced budget-fitting segments summarized concurrently in batches
+of at most 8 and merged chronologically; an indivisible history larger
+than the budget is head+tail elided on the summarizer's request copy only
+— the stored thread history is never modified. Cancellation, streaming,
+usage accounting, and summary persistence remain owned by the native
+thread lifecycle. Full specification with diagrams and reference models:
+`kask/docs/architecture/compaction-pipeline-spec.md`.
 
 ## Protected source-oriented tools
 
