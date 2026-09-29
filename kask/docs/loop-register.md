@@ -2,7 +2,7 @@
 title: "Loop Register — zed-kask canonical loops"
 audience: [developers, architects, agents, operators]
 last_updated: 2026-09-28
-version: "0.23.13"
+version: "0.23.14"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle]
@@ -695,8 +695,50 @@ technical program manager; approval to resume Phase 1 belongs to the operator.
   graph, and the critical path the short path (operator correction,
   2026-09-27).
 
+### Pass-2 loop re-slice delta verification (2026-09-28 — closes the re-slice stage)
+
+Delta-first triage per the approved plan: the four spec-named rows got full
+re-maps (L1/L3/L5/L7, recorded in their rows above); the remaining rows —
+which already carry pass-1/early-pass-2 Phase 1–2 content — were verified
+against the current tree (entry-point citations, mechanism intact, anchor
+status per the ledger, loose-end status unchanged). Every citation drift
+found is attributable; no row's mechanism changed.
+
+| Row | Verdict | Drift (current lines) |
+| --- | --- | --- |
+| L2 | HOLDS | `metacognition.rs:346/:405`, `cybernetics_loop.rs:780` all exact |
+| L4 | HOLDS | S13 framework re-check (2026-09-28) at current lines |
+| L6 | holds, cites drifted | `corpus_ingest_qa` `:174→:202`, `ground_generated_qa` `:447→:442` (the S6 `grounding_fields` fix); convert `:35`/chunk `:355` exact |
+| L8 | HOLDS | `calibrate_forecast :874`, `forecast_record :1219` exact (S10 verified; S10's fix touched providers.rs only) |
+| L9 | holds, cites drifted | `kanban_goal_create` `:461→:465` (the S8 classification fix) |
+| L10 | HOLDS | `memory_store.rs:288/:331/:447` all exact |
+| L11 | HOLDS | `jobs.rs:167/:210/:229/:304` all exact |
+| L12 | holds, cites drifted | `begin_research_run` `:1604→:1632` (the S7 intent-validation fix) |
+| L13 | closed pass 2 | prior-pass closure stands (`57c2bdea7a`) |
+| L14, L15 | closed | minimal-by-design closures stand |
+| L16 | holds, cites drifted | `agent.rs:4853→:4860`, `:4860→:4867`; `thread.rs:4431→:4468`, `:4503-4518→:4542+` (concurrent streams); `main.rs:996` holds; the Phase 2 adjudication (sticky attribution = D59 pinned design) unaffected |
+| L17 | HOLDS | `scenario_score :1281` exact (S5 verified) |
+| L18 | HOLDS | `training_submit :28` exact (S2 verified) |
+| L19 | HOLDS | S4 review-only — no line changes |
+| L20 | holds, cites drifted | `rss_subscribe :789→:817`, `rss_fetch :875→:903`, `rss_get_entries :960→:988` (the S7 fix) |
+| L21 | HOLDS | `gallery_organize :159`, `gallery_refresh :542` exact (S12 review-only) |
+| L22 | HOLDS | S1 review-only — no line changes |
+| L23 | HOLDS | `score_providers :683/:1029` (S7 verified; the intent vocabulary fix is in the handler, not the scorer) |
+
+No new findings from the delta pass: the drift is line-shift only. The
+re-slice stage is closed; the register's rows now describe the current tree
+at the cited lines, with the four re-mapped rows carrying their own
+supersession notes.
+
 ## Change log
 
+- 2026-09-28 — v0.23.14 closed the loop re-slice stage (Stage 1 of the
+  completion plan). The four spec-named rows re-mapped in v0.23.13; the
+  remaining 19 delta-verified in one pass — every citation drift
+  attributable (the pass's own fixes: S6/S7/S8 line shifts; concurrent
+  streams in agent.rs/thread.rs for L16), no mechanism changed, no new
+  findings. All 23 register rows now describe the current tree. Next:
+  Stage 2 (loose-end disposition).
 - 2026-09-28 — v0.23.13 opened the loop re-slice stage (delta-first
   triage) and closed all four spec-named drift re-maps. **L7's measured
   seam test landed (`9142f4f03e`)**: finding 2 (optimistic-move repaint)
