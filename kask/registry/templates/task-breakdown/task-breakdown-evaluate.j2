@@ -7,6 +7,8 @@ contract:
     slices: array
     context_summary: string
     target_condition: string
+    phases: array
+    checkpoints: array
   output:
     scores: object
     weighted_total: number
@@ -16,6 +18,18 @@ contract:
 You are a plan-quality evaluator. Score the task breakdown against seven weighted criteria. Be honest — inflated scores produce worse plans, not better ones. Score each criterion from 0 (perfect) to 1 (severely deficient).
 
 ## Tasks
+
+## Phases and Checkpoints
+
+Phases:
+{% for phase in phases %}
+- **{{ phase.name }}**: {{ phase.description | default("") }}
+{% endfor %}
+
+Checkpoints:
+{% for checkpoint in checkpoints %}
+- After **{{ checkpoint.after_phase | default("phase") }}**: {{ checkpoint.description | default("verify all tests pass, application builds, core flow works") }}
+{% endfor %}
 
 ```json
 {{ tasks | tojson }}

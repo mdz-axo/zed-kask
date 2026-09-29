@@ -32,7 +32,6 @@ of counting as zero.
 - When a plan needs an independent quality gate to detect self-assessment bias and compensation masking distinct from the producer-coupled evaluation step.
 - When the deliverable is `plan.md` + `todo.md` with PKO process-axis anchors (Procedure, Step, StepVerification, etc.) and DC+BIBO document metadata, plus a Refinement History section making the PDCA loop visible.
 - When the installed `skill_catalog` is available and each task should carry a `skill_match_query` for skill-discovery (route) consumption.
-- When you need to distinguish this skill from kanban-task-management (single-pass board populate) or tdd (consumes the plan one vertical slice at a time).
 
 ## When NOT to Use
 
@@ -44,7 +43,7 @@ of counting as zero.
 
 ### task-breakdown-plan
 
-1. Validate the spec first: if `spec_or_intent` is empty, whitespace-only, or shorter than 10 characters, emit `context_summary: "ERROR: empty or trivial spec — cannot decompose"`, empty `dependency_graph`, a high-impact "empty spec" risk, and an `open_questions` entry asking what should be decomposed. Do NOT produce a dependency graph or attempt decomposition — this prevents silent convergence on an empty plan.
+1. Validate the spec first: if `target_condition` is empty, whitespace-only, or shorter than 10 characters, emit `context_summary: "ERROR: empty or trivial target condition — cannot decompose"`, empty `dependency_graph`, a high-impact "empty target condition" risk, and an `open_questions` entry asking what should be decomposed. Do NOT produce a dependency graph or attempt decomposition — this prevents silent convergence on an empty plan.
 2. Read the spec and relevant codebase sections in read-only mode — do NOT write or propose code.
 3. Identify existing patterns and conventions by reading the project before planning.
 4. Map dependencies between components to build the dependency graph; implementation order follows bottom-up (build foundations first).
@@ -58,8 +57,8 @@ of counting as zero.
 1. Slice the work vertically AND write each task in ONE step — each vertical slice delivers one complete, testable feature path end-to-end, not a horizontal layer shared across features.
 2. Apply refinement directives from the previous evaluation when present; each directive names a criterion that scored above threshold and is addressed to a specific task — re-slice and re-write accordingly. The PDCA loop re-enters here so re-slicing and re-writing happen together.
 3. Schedule high-risk slices early (fail fast).
-4. Give each task a title (no "and"), slice_id/feature_path, description, acceptance_criteria (specific, testable, ≤3 bullets), verification, dependencies (or "None"), files_likely_touched, and estimated_scope (XS/S/M/L/XL).
-5. Break down any task that is L or larger; break down tasks that would take more than one focused session, touch two or more independent subsystems, or whose title contains "and".
+4. Give each task a title (no "and"), slice_id/feature_path, description, acceptance_criteria (specific, testable, ≤3 bullets), verification, dependencies (or "None"), files_likely_touched, and estimated_scope (XS/S/M/L — no XL; break down any task that would be L or larger).
+5. Break down any task that is L or larger; break down tasks that would take more than one focused session, touch two or more independent subsystems, or whose title contains "and". No task may be XL.
 6. Arrange tasks so dependencies are satisfied, each task leaves the system in a working state, and verification checkpoints occur after every 2–3 tasks.
 7. Group tasks into phases (Foundation, Core Features, Polish) and place checkpoints between phases; a checkpoint verifies all tests pass, the application builds, the core user flow works end-to-end, and the human has reviewed before proceeding.
 8. When parallelizing: safely parallelize independent feature slices; keep migrations, shared state changes, and dependency chains sequential; coordinate features that share a trait contract by defining the contract first.
@@ -71,9 +70,9 @@ of counting as zero.
 
 1. Score the task breakdown against the seven criteria in `task-breakdown-evaluate.j2`: target-condition coverage (0.20), task sizing (0.20), vertical-slice integrity (0.15), acceptance-criteria specificity (0.15), dependency ordering (0.10), checkpoint presence (0.10), red-flag absence (0.10). These local weights sum to 1; the published Improvement Kata does not prescribe them.
 2. Score each criterion from 0 (perfect) to 1 (severely deficient); be honest — inflated scores produce worse plans.
-3. Task-count awareness: in the sizing criterion, add +0.10 if task count > 20 (too granular) or < 3 (too coarse); no adjustment in the 3–20 healthy range. This is in addition to existing XL/L checks.
+3. Task-count awareness: in the sizing criterion, add +0.10 if task count > 20 (too granular) or < 3 (too coarse), clamped so the sizing score stays in [0,1]; no adjustment in the 3–20 healthy range. This is in addition to existing XL/L checks.
 4. Use the `context_summary` (Good Regulator) to check project-specific conventions — testing patterns, file-path consistency with module structure, and crate dependency ordering — not just generic criteria.
-5. Check for red flags: implementation begins without a written task list; a task says "implement the feature" without acceptance criteria; no verification steps; all tasks XL-sized; no checkpoints; dependency order not considered; "and" in a task title; a task touches more than ~5 files.
+5. Check for red flags: implementation begins without a written task list; a task says "implement the feature" without acceptance criteria; no verification steps; all tasks XL-sized; no checkpoints; dependency order not considered; "and" in a task title; a task touches more than ~5 files without stated justification (cross-crate Rust features legitimately touch 5–7 files with justification).
 6. After the template returns all seven raw scores, require each to be numeric in [0,1] and call `lisp_eval` to compute `weighted_total` from those scores, never from the model's stated total: `(+ (* 0.20 target_condition_coverage) (* 0.20 task_sizing) (* 0.15 vertical_slice_integrity) (* 0.15 ac_specificity) (* 0.10 dependency_ordering) (* 0.10 checkpoint_presence) (* 0.10 red_flag_absence))`. Missing or invalid dimensions stop evaluation; compare the template's reported total and surface a mismatch rather than trusting it.
 7. For each criterion scored above 0.00, emit a specific, actionable, task-addressable refinement directive that names the criterion, states what is wrong, and describes the expected fix; do not emit directives for criteria scored at 0.00.
 8. Produce a JSON object with `scores`, `weighted_total`, `refinement_directives`, and `red_flags`.
@@ -95,28 +94,49 @@ of counting as zero.
 2. Write `plan.md` there with: overview, architecture decisions, phased task list with checkpoints, risks table, and open questions.
 3. Include a Refinement History section in `plan.md` (PDCA loop visibility): when `refinement_directives` were applied across PDCA iterations, document what criterion scored above threshold, what was wrong, and what fix was applied. Omit the section if no refinement was needed.
 4. Write `todo.md` there as a flat checklist grouped by phase with checkboxes for each task and its acceptance criteria — scannable, not verbose.
-5. Emit `pko_anchors`: map the plan to `pko:Procedure` targeting a `pko:ProcedureTarget`; each task to `pko:Step` with `pko:StepVerification`; phases to `pko:MultiStep`; risks to `pko:IssueOccurrence`; open questions to `pko:UserQuestionOccurrence`; checkpoints to `pko:UserFeedbackOccurrence`.
+5. Emit `pko_anchors`: map the plan to `pko:Procedure` with `pko:StepVerification`; each task to `pplan:Step` with `pko:StepVerification`; phases to `pplan:MultiStep`; risks to `pko:IssueOccurrence`; open questions to `pko:UserQuestionOccurrence`; checkpoints to `pko:UserFeedbackOccurrence`. (The `pplan:` namespace terms resolve at the derived tier; the former `pko:ProcedureTarget`, `pko:Step`, and `pko:MultiStep` did not resolve and are replaced.)
 6. Attach DC+BIBO state metadata (title/creator/date, `bibo:Document`) to the `plan.md` document itself — PKO grounds the structure, DC+BIBO grounds the document.
 7. Do not invent tasks not present in the input `tasks` array.
 8. Produce a JSON object with `plan_md`, `todo_md`, `output_paths`, and `pko_anchors`.
 
-### loop (step 8)
+### Convergence loop
 
-1. If convergence is not met (metric > 0.15) and refinement directives exist, loop back to DECOMPOSE (step 2) with directives as focused, task-addressable improvement targets.
-2. `refinement_directives` are explicitly routed back to decompose (was implicit, depended on cross-iteration step result preservation — now mechanical and documented).
-3. Carry `prior_metric` forward so you can detect a stable-but-unconverged plan. Each iteration narrows the gap.
+After the quality gate, before write-plan:
+
+1. If the gate's `gate_weighted_total` exceeds 0.15 and refinement directives exist, loop back to DECOMPOSE with directives as focused, task-addressable improvement targets. The gate's total is the convergence metric — not the producer-coupled evaluate step's total.
+2. `refinement_directives` are explicitly routed back to decompose (mechanical and documented).
+3. Carry `prior_gate_weighted_total` forward so you can detect a stable-but-unconverged plan. Each iteration narrows the gap.
+4. On convergence (gate_weighted_total <= 0.15 and gate_pass true), proceed to write-plan.
 
 ## Registry Templates
 
 | Template | Purpose |
 |----------|---------|
 | `task-breakdown-plan.j2` | PLAN phase — read-only mode. Grasp the current condition relative to the target condition: identify what exists now (patterns, conventions, existing modules), build the dependency graph, and note risks/unknowns. Anchored on target_condition (mapped from {{ task }}). Validates empty target_condition to prevent silent convergence on an empty plan. No code is written. Produces context summary, dependency graph, and risk register. |
-| `task-breakdown-decompose.j2` | DO phase — single producer: decompose the target condition into component target conditions (sub-tasks) AND write each task in one step. Each task is a sub-target with acceptance criteria framed as "what must be true for this sub-target to be achieved." emits plan_escalation for catastrophic plans (all XL, no deps in multi-task plan, no ACs, empty decomposition) as algedonic short-circuit. Each task carries slice_id/feature_path, acceptance criteria, verification, dependencies, files, scope (XS/S/M/L/XL), and skill_match_query (a natural-language capability description consumed by skill-discovery (route) when the skill_catalog input is provided). The PDCA loop re-enters here so refinement directives are task-addressable and re-slicing + re-writing happen together. |
+| `task-breakdown-decompose.j2` | DO phase — single producer: decompose the target condition into component target conditions (sub-tasks) AND write each task in one step. Each task is a sub-target with acceptance criteria framed as "what must be true for this sub-target to be achieved." emits plan_escalation for catastrophic plans (all XL, no deps in multi-task plan, no ACs, empty decomposition) as algedonic short-circuit. Each task carries slice_id/feature_path, acceptance criteria, verification, dependencies, files, scope (XS/S/M/L — no XL), and skill_match_query (a natural-language capability description consumed by skill-discovery (route) when the skill_catalog input is provided). The PDCA loop re-enters here so refinement directives are task-addressable and re-slicing + re-writing happen together. |
 | `task-breakdown-evaluate.j2` | CHECK phase — score the plan against seven weighted criteria: target condition coverage (0.20 — do the tasks collectively achieve the target?), task sizing (0.20, now includes task-count awareness — >20 or <3 tasks penalized), vertical-slice integrity (0.15), acceptance-criteria specificity (0.15), dependency ordering (0.10), checkpoint presence (0.10), red-flag absence (0.10). Receives context_summary for project-specific convention checking (Good Regulator). Emits specific refinement_directives for criteria above threshold — directives are task-addressable (consumed by decompose). |
 | `task-breakdown-quality-gate.j2` | Independent quality gate — evaluates the plan WITHOUT self-assessment bias, distinct from the producer-coupled evaluate step. Scores seven criteria including target_condition_coverage. Receives context_summary for independent project-specific convention checking. Scores the seven criteria independently, flags compensation masking, and detects bias deltas vs the producer's self-assessment. |
 | `task-breakdown-write-plan.j2` | ACT phase — finalize the plan into plan.md (target condition, overview, architecture decisions, phased task list with checkpoints, risks, open questions) and todo.md (checklist-style task list), with a pko_anchors map giving each element a PKO process-axis identity. Includes the target condition at the top of plan.md so the plan is always anchored to what it's achieving. Includes Refinement History section in plan.md documenting what was refined across PDCA iterations, making the loop visible in the artifact. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `task-breakdown/task-breakdown-plan`) and a context object with the required variables.
+
+Template context variables (from each template's [inference] contract):
+- `task-breakdown-plan.j2`: `target_condition`, `crate_scope`, `code_context`, `task`
+- `task-breakdown-decompose.j2`: `context_summary`, `dependency_graph`, `risks`, `refinement_directives`, `parallelization_hint`, `skill_catalog`
+- `task-breakdown-evaluate.j2`: `tasks`, `dependency_graph`, `slices`, `context_summary`, `target_condition`, `phases`, `checkpoints`
+- `task-breakdown-quality-gate.j2`: `tasks`, `slices`, `dependency_graph`, `evaluation_result`, `context_summary`, `target_condition`, `phases`, `checkpoints`
+- `task-breakdown-write-plan.j2`: `context_summary`, `target_condition`, `dependency_graph`, `tasks`, `slices`, `risks`, `evaluation_result`, `refinement_directives`, `phases`, `checkpoints`
+
+## Regression case
+
+Run the weighted-total form through `lisp_eval` with representative scores
+(all seven in [0,1]): the result must equal the hand-computed weighted sum.
+Run the gate form both ways: with all scores under the thresholds
+(gate_weighted_total <= 0.15 AND max score <= 0.30) -> true; with any
+single score above 0.30 (e.g. ac_specificity=0.4) -> false (compensation
+masking — the gate fails regardless of the weighted total). Also verify
+the weighted total exceeds 0.15 with inflated scores -> gate false. All
+receipts executed through the live tool 2026-09-29.
 
 ## Constraints
 

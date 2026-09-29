@@ -8,6 +8,8 @@ contract:
     evaluation_result: object
     context_summary: string
     target_condition: string
+    phases: array
+    checkpoints: array
   output:
     gate_scores: object
     gate_weighted_total: number
@@ -126,3 +128,12 @@ Respond with a JSON object:
 - Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
 - Handle missing variables gracefully (leave as-is or use default if specified).
 
+
+## Phases and Checkpoints
+
+{% for phase in phases %}
+- {{ phase.name }}
+{% endfor %}
+{% for checkpoint in checkpoints %}
+- {{ checkpoint.description | default("checkpoint") }}
+{% endfor %}

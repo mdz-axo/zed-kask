@@ -10,6 +10,8 @@ contract:
     risks: array
     evaluation_result: object
     refinement_directives: array
+    phases: array
+    checkpoints: array
   output:
     plan_md: string
     todo_md: string
@@ -165,7 +167,7 @@ Respond with a JSON object:
   "output_paths": ["~/Documents/zk-data/skills/task-breakdown/{date}-{run}/plan.md", "~/Documents/zk-data/skills/task-breakdown/{date}-{run}/todo.md"],
   "pko_anchors": {
     "procedure": "pko:Procedure",
-    "procedure_target": "pplan:Step",
+    "procedure": "pko:Procedure",
     "tasks": [{"task_id": "t1", "concept": "pplan:Step", "verification": "pko:StepVerification"}],
     "phases": [{"concept": "pplan:MultiStep"}],
     "risks": [{"concept": "pko:IssueOccurrence"}],
