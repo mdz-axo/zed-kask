@@ -15,9 +15,9 @@ Tetlock & Gardner, *Superforecasting: The Art and Science of Prediction* (2015) 
 ## D/P labelling
 
 Every stage heading below carries its label. **D**: `lisp_eval` arithmetic
-checks on base rates and probabilities, the `scenario_*` server oracles
-(triage classification, quantify rejection, calibration, Bayes,
-synthesis), `forecast_persist`, and Brier at resolution. **P**: triage,
+checks on base rates, posteriors, and the synthesis weighted average; the
+`scenario_*` server oracles (triage classification, quantify rejection,
+calibration); `forecast_persist`; and Brier at resolution. **P**: triage,
 Fermi decomposition, outside-view comparability, and dragonfly-eye
 synthesis — each names its critique (`scenario_triage` cross-check,
 falsifiability delegation, `scenario_cross_validate` divergence > 0.15 →
@@ -27,7 +27,7 @@ one outcome.
 
 ## Initial and target condition
 
-- **Initial condition (T1):** the admitted question, its resolution criteria and deadline, any sourced historical observations, `market_context` / `expert_prior`, and — when resolved forecasts exist — the `scenario_calibration` curve for the bucket. A historical base rate is not presumed to exist.
+- **Initial condition (T1):** the admitted question, its resolution criteria and deadline, any sourced historical observations, `market_context` / `expert_prior`, the optional EQM-derived `overconfidence_bias`, and — when resolved forecasts exist — the `scenario_calibration` curve for the bucket. A historical base rate is not presumed to exist.
 - **Target condition (T2):** either a sourced starting anchor followed by a probability with a defensible range and a record preserving the stage-0 resolution criteria/deadline, or an explicit evidence-gap exit with no numeric forecast. For a produced forecast, `forecast-quality-gate` `gate_pass = true` is the local target; accuracy is judged only by Brier over resolved forecasts, never by one outcome.
 
 ## When to Use
@@ -83,7 +83,7 @@ The former single inside-view step is split into three steps. Generation and cou
 
 1. **Generate causal hypotheses (delegate to falsifiability).** Invoke `falsifiability/falsifiability-hypothesize` with `admitted_target` = the resolvable event question admitted at stage 0, `domain` = "forecasting", `context` = the sub-questions, outside-view output, resolution criteria, and deadline. Apply falsifying observations to specific causal hypotheses; do not demand that one outcome falsify a probabilistic forecast or add a second Popper gate. Produces 3–7 ranked candidate causal pathways with forced diversity (≥1 primary, ≥1 alternative, ≥1 contamination/false-positive, ≥1 opposing-outcome), each with a Platt-form prediction and a falsifier; discards vibes at generation.
 2. **Construct counterfactuals / necessary conditions (delegate to falsifiability).** Invoke `falsifiability/falsifiability-counterfactual` with the generated `hypotheses`, `admitted_target`, `domain`. For each hypothesis construct the minimal do(not X) counterfactual, hold confounders fixed, and derive the testable consequence that distinguishes the counterfactual world from the factual one. Flag irreducible causes.
-3. **Estimate probabilities and emit the tree (superforecasting).** Invoke `superforecasting/stage_3_probability_estimate` with the `hypotheses`, `counterfactuals`, `starting_probability` (the verified, source-labeled anchor), `outside_view_output`, and the conditional probability tree from stage 1 (`sub_question_tree`, `topological_order`, `outcome_node_id`). For each hypothesis weigh evidence pro/con against its counterfactual's testable consequence, assign an individual probability, and enforce internal consistency. For each tree node estimate a marginal (roots) or a conditional table (dependents) — the combinator (AND/OR/mixture) is encoded structurally in the conditional values, not as a separate field. The invoking agent then calls `scenario_quantify` (hkask-mcp-scenarios) with the tree's nodes as ScenarioEvent objects — it topologically sorts the dependency graph and marginalizes via the shared `hkask_forecast::marginalize`, returning each node's `marginal_probability` plus the `joint_probability`. The outcome node's `marginal_probability` is `tree_combined_probability` — the exact inside-view posterior fed to stage 4 as the prior. The LLM no longer estimates `combined_probability`; the Rust tool owns that.
+3. **Estimate probabilities and emit the tree (superforecasting).** Invoke `superforecasting/stage_3_probability_estimate` with the `hypotheses`, `counterfactuals`, `starting_probability` (the verified, source-labeled anchor), and `outside_view_output`. For each hypothesis weigh evidence pro/con against its counterfactual's testable consequence, assign an individual probability, and enforce internal consistency. For each tree node estimate a marginal (roots) or a conditional table (dependents) — the combinator (AND/OR/mixture) is encoded structurally in the conditional values, not as a separate field. The invoking agent then calls `scenario_quantify` (hkask-mcp-scenarios) with the tree's nodes as ScenarioEvent objects — it topologically sorts the dependency graph and marginalizes via the shared `hkask_forecast::marginalize`, returning each node's `marginal_probability` plus the `joint_probability`. The outcome node's `marginal_probability` is `tree_combined_probability` — the exact inside-view posterior fed to stage 4 as the prior. The LLM no longer estimates `combined_probability`; the Rust tool owns that.
 
 > **MCP tool step (after stage 3, call `scenario_quantify` directly — no template):** map the `sub_question_tree` nodes into ScenarioEvent objects (id, name, question, deadline, time_horizon, scenario_type, subject, probability, depends_on with parent_event_ids + conditionals, sub_questions, update_count) and call `scenario_quantify`. The outcome node's `marginal_probability` is `tree_combined_probability`, stage 4's prior. The server's sequence advisory expects `scenario_build` first — the advisory warn is expected noise when superforecasting brings its own tree.
 
@@ -108,6 +108,11 @@ The former single inside-view step is split into three steps. Generation and cou
 6. Synthesize an integrated probability using the MCDA-weighted average of model probabilities via `lisp_eval` — one `(* m_i c_i)` term per model, normalized by the composite-score sum. Each `c_i` is the sum of that model's four criterion scores from the template output. The result is the `synthesized_probability` passed to stage 6; the template's `synthesized_probability_judgment` is a cross-check only:
    - form: "(/ (+ (* m1 c1) (* m2 c2) (* m3 c3)) (+ c1 c2 c3))"
    - env: `{ "m1": <model 1 probability>, "c1": <model 1 composite score>, "m2": ..., "c2": ..., "m3": ..., "c3": ... }`
+
+   The pinned form is the 3-model case; a 4- or 5-model synthesis (step 4's
+   3-5 range) extends both sums with the additional `(* mN cN)` numerator term
+   and its `cN` denominator term, and the env gains the matching `mN`/`cN`
+   bindings.
 7. Aggregate the judgments of different models, noting where they agree and diverge.
 
 ### stage_6_calibration (P — calibration: `scenario_calibrate`, which applies the learned overconfidence bias when ≥5 resolved forecasts exist)
@@ -154,7 +159,7 @@ Why it is two-phase: `market_check_resolutions` (1) snapshots every OPEN market'
 2. **Read the signal.** Call `market_calibration` for the market prior's bucket (a domain such as "politics" or a series ticker) and any other bucket of interest. `stale: true` means no resolved data — report it as unknown, never as well calibrated. For a non-stale bucket report Brier with its band (excellent < 0.05, good < 0.10, fair < 0.20, poor < 0.33) and the sample size; a small sample is weak evidence.
 3. **Record resolutions honestly.** A `market_subscribe_resolutions` notification carries NO pre-resolution probability. To record one, take the probability-at-observation from the scan's snapshot or the operator's own recorded pre-resolution observation, then call `market_record_resolution` (bucket, probability, outcome). Never pass the terminal price as the probability.
 4. **Verify the demotion rule (when testable).** `reliability_tier` (`hkask-mcp-prediction-markets/src/types.rs`) lowers High to Medium only when the bucket is not stale, has ≥ 5 resolved markets and Brier > 0.25; Medium and Low are unchanged. If a bucket from step 2 meets all three, call `market_lookup` for a market in it with volume ≥ 50,000 and spread ≤ 0.04: it should read Medium, and High is a discrepancy to report. A Medium or Low record is not evidence either way. If no bucket qualifies, report the demotion rule untested this run.
-5. **Gate.** Call `lisp_eval` with form `(and (eq stale_buckets 0) (< without_snapshot_rate 0.2))`, env `{ "stale_buckets": <buckets of interest reporting stale>, "without_snapshot_rate": <resolved_without_snapshot / (recorded + resolved_without_snapshot)> }`. True: calibration evidence is current. False: recommend a more frequent scan cadence to the operator and re-run step 1 once; if the rate is still ≥ 0.2, report the cadence problem instead of re-running. When a bucket stays stale, a market prior from it may still anchor stage 2, but its tier is volume/spread-only and the rationale must say so.
+5. **Gate.** Call `lisp_eval` with form `(and (= stale_buckets 0) (< without_snapshot_rate 0.2))`, env `{ "stale_buckets": <buckets of interest reporting stale>, "without_snapshot_rate": <resolved_without_snapshot / (recorded + resolved_without_snapshot)> }`. True: calibration evidence is current. False: recommend a more frequent scan cadence to the operator and re-run step 1 once; if the rate is still ≥ 0.2, report the cadence problem instead of re-running. When a bucket stays stale, a market prior from it may still anchor stage 2, but its tier is volume/spread-only and the rationale must say so.
 
 Never record a post-resolution price as the probability-at-observation, and never retry an ambiguous (50-50) resolution hoping for a different result. This check scores market buckets; scoring your own forecasts is the Brier loop below.
 
@@ -213,6 +218,19 @@ score it against each marker, identify which red flags dominate, and rewrite
 the rationale to raise its EQM passage rate while preserving the forecast
 probability (alignment invariant) — before re-invoking superforecasting.
 
+## Regression case
+
+Render `superforecasting/stage_0_triage` twice — once with a representative
+goldilocks-zone question carrying resolution criteria and a deadline (pass),
+once with the deadline omitted (the triage must refuse to proceed rather
+than invent one). Run the six pinned `lisp_eval` forms with representative
+envs: the stage-2 rate check returns `invalid` on a zero sample and the
+computed rate otherwise; the anchor check bounds `p` to [0, 1]; the stage-4
+posterior form updates a prior; the stage-5 weighted average synthesizes the
+3-model case (extend the sums for more models); the gate form passes only
+when all four scores are >= 0.60; the market-prior gate requires
+`stale_buckets = 0` and `without_snapshot_rate < 0.2`.
+
 ## Registry Templates
 
 | Template | Purpose |
@@ -230,16 +248,18 @@ probability (alignment invariant) — before re-invoking superforecasting.
 To render a template, call the `render_template` tool with the template ref (e.g., `superforecasting/stage_0_triage`) and a context object with the required variables.
 
 Template context variables (from each template's [inference] contract):
-- `forecast-quality-gate.j2`: `forecasting_question`,`calibration_result` `record_result`,`synthesis_output`
-- `stage_1_fermi_decompose.j2`: `forecasting_question`,`triage_output`
-- `stage_5_synthesis.j2`: `forecasting_question`,`updated_probability` `hypothesis_analysis`
-- `stage_6_calibration.j2`: `forecasting_question`,`synthesized_probability` `synthesis_output`
-- `stage_7_record.j2`: `forecasting_question`,`final_probability` `confidence_level`,`pipeline_summary` `resolution_criteria`,`expiration_date`
+- `stage_0_triage.j2`: `forecasting_question`, `domain`, `time_horizon`
+- `stage_1_fermi_decompose.j2`: `forecasting_question`, `triage_output`
+- `stage_2_outside_view.j2`: `forecasting_question`, `sub_questions`, `knowns`, `market_context`, `expert_prior`
+- `stage_3_probability_estimate.j2`: `forecasting_question`, `hypotheses`, `counterfactuals`, `starting_probability`, `outside_view_output`
+- `stage_4_evidence_update.j2`: `forecasting_question`, `prior_probability`, `hypothesis_analysis`, `new_evidence`, `market_context`, `expert_prior`
+- `stage_5_synthesis.j2`: `forecasting_question`, `updated_probability`, `hypothesis_analysis`
+- `stage_6_calibration.j2`: `forecasting_question`, `synthesized_probability`, `synthesis_output`
+- `stage_7_record.j2`: `forecasting_question`, `final_probability`, `confidence_level`, `pipeline_summary`, `resolution_criteria`, `expiration_date`
+- `forecast-quality-gate.j2`: `forecasting_question`, `calibration_result`, `record_result`, `synthesis_output`
 
 
 ## Constraints
 
-- `stage_2_outside_view.j2`: (The invoking agent finds LEAP subscriptions via `rss_list_subscriptions` and reads source-scoped entries via `rss_get_entries` before invocation.)
-- `stage_3_probability_estimate.j2`: (Inside-view generation + counterfactual analysis are delegated to `falsifiability/falsifiability-hypothesize` and `falsifiability/falsifiability-counterfactual`.)
 - `stage_4_evidence_update.j2`: (Only genuinely new evidence after the selected stage-2 anchor warrants an update; current quotes and repeated expert medians do not.)
 - If a prediction-markets tool call fails during the Market-prior calibration check, call `curator_report_skill_use_issue` with skill_name "superforecasting", the tool name and the error, and continue with the best available information.
