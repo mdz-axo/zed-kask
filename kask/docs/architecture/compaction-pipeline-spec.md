@@ -23,9 +23,30 @@ the history — this is what accelerates everything downstream.
 
 ## Pipeline
 
+Three entry points trigger the same pipeline:
+
+1. **Manual** — the operator invokes `/compact` (`Thread::compact`, the
+   unconditional target).
+2. **Automatic** — the threshold check before each request in a turn
+   (`perform_compaction_if_needed`, keyed off the last completed request's
+   usage vs the effective input ceiling).
+3. **PromptTooLarge rescue** (`perform_prompt_too_large_rescue`, 2026-09-29)
+   — the provider rejected a turn request because input + output reserve
+   exceeded the context window. The threshold check is discrete (it sees the
+   *previous* request's usage), so one round whose growth exceeds the
+   remaining headroom sails past it; the rescue runs one forced compaction
+   and the turn retries against the compacted history. Bounded to one rescue
+   per turn; gated on auto-compaction being enabled; the turn's
+   not-yet-answered prompt stays verbatim after the summary. The rescue does
+   NOT mark token-limit-exceeded — the synthesized usage would re-fire the
+   threshold check on the next loop iteration, and a successful rescue
+   refreshes the usage indicator with the retry's real report. Every
+   fall-through path (disabled, nothing to summarize, rescue compaction
+   failed) keeps the old fatal behavior, including the marking.
+
 ```mermaid
 flowchart TD
-    A[Compaction requested<br/>manual or automatic] --> B[Build request:<br/>system prefix + history + summarization instruction]
+    A[Compaction requested<br/>manual, automatic, or PromptTooLarge rescue] --> B[Build request:<br/>system prefix + history + summarization instruction]
     B --> C[Calibrate byte budget<br/>capacity x last-reported-tokens ratio]
     C --> D[Deterministic pre-shrink<br/>on the request COPY only]
     D --> D1[Pass 1: run-length collapse<br/>3+ identical adjacent lines -> 1 + count]
@@ -223,3 +244,11 @@ compressor — a separate consumer with its own protected-tools policy,
   `test_two_half_compaction_failure_or_cancellation_saves_nothing`,
   `test_manual_compact_forces_summary` (now also proves compaction no
   longer consults the condenser).
+- `thread.rs` PromptTooLarge rescue (real `run_turn_internal` path):
+  `test_prompt_too_large_rescue_compacts_and_retries` (the rescue fires, the
+  turn retries against the compacted history, the turn's prompt stays
+  verbatim), `test_prompt_too_large_rescue_is_bound_to_once_per_turn`,
+  `test_prompt_too_large_rescue_respects_disabled_auto_compact`.
+- `tests/mod.rs` dead-turn marking (fall-through path, auto-compact
+  disabled): `test_prompt_too_large_marks_token_usage_exceeded`,
+  `test_prompt_too_large_uses_reported_token_count`.

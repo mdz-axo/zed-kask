@@ -132,6 +132,15 @@ impl LanguageModelRegistry {
         cx.global::<GlobalLanguageModelRegistry>().0.read(cx)
     }
 
+    // zed-kask: D8 — read the global registry when it has been wired;
+    // `None` otherwise. Callers that can fall back (e.g. to the thread's
+    // own model, like the PromptTooLarge rescue compaction) must not panic
+    // in harnesses that never set the global.
+    pub fn try_read_global(cx: &App) -> Option<&Self> {
+        cx.try_global::<GlobalLanguageModelRegistry>()
+            .map(|registry| registry.0.read(cx))
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     pub fn test(cx: &mut App) -> Arc<crate::fake_provider::FakeLanguageModelProvider> {
         let fake_provider = Arc::new(crate::fake_provider::FakeLanguageModelProvider::default());
