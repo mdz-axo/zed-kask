@@ -602,6 +602,20 @@ impl MemoryStore {
         Ok(self.embedding.delete_by_id(id)?)
     }
 
+    /// Delete the exact embedding row for one (entity_ref, passage) pair,
+    /// preserving sibling passages under the same entity_ref — the surgical
+    /// delete the model-mismatch re-embed uses to retire a stale-model row
+    /// before storing its replacement. Returns how many rows were deleted.
+    pub fn delete_embedding_by_entity_ref_and_passage(
+        &self,
+        entity_ref: &str,
+        passage_text: &str,
+    ) -> Result<usize, MemoryStoreError> {
+        Ok(self
+            .embedding
+            .delete_by_entity_ref_and_passages(entity_ref, &[passage_text.to_string()])?)
+    }
+
     /// KNN search gated on model identity: rows whose recorded model matches
     /// neither the query's requested model nor its provider-confirmed actual
     /// model are excluded and counted in the outcome — an embedding-model

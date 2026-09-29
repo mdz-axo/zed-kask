@@ -22,7 +22,7 @@ MCP server exposing Regulation history, memory search and per-store liveness (`c
 | `memory_resolve_contradiction` | Resolve contradictory memories by forgetting or lowering confidence. |
 | `curator_memory_prune` | Prune old memories under the requested retention policy. |
 | `curator_memory_dedup` | Deterministically deduplicate normalized string memories. |
-| `curator_memory_backfill_embeddings` | Backfill missing semantic embeddings for knowledge-layer memories. |
+| `curator_memory_backfill_embeddings` | Backfill semantic embeddings: missing passages (curator or swarm store) or model-mismatch re-embed — the write side of the search model gate. |
 | `curator_memory_extract` | Extract candidate memories from a thread's turn history. |
 
 `curator_report_skill_use_issue` stores one controlled ownership value:

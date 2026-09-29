@@ -1823,108 +1823,57 @@ impl CuratorServer {
     /// modified, or deleted. Turns (embedded at ingest), distillation
     /// watermarks and goal rows are excluded.
     #[tool(
-        description = "Backfill missing semantic passages for knowledge-layer h_mems. Eligibility is exact (entity + canonical passage), not entity-level. Excludes turns, distillation watermarks, and goal rows; invalid goal publication is never repaired by backfill. dry_run lists candidates without embedding."
+        description = "Backfill semantic embeddings across the memory stores. mode=missing (default) embeds h_mems whose exact canonical passage has no embedding row — eligibility is exact (entity + canonical passage), not entity-level; over the curator store it excludes turns, distillation watermarks, and goal rows; over the swarm store (store=swarm) eligibility mirrors the swarm server's own embed path: delegation response chunks only. mode=model_mismatch re-embeds stored rows whose recorded model matches neither the current requested embedding model nor its provider-confirmed actual form — the same two-form predicate the search gate excludes on, so a model migration's gated-out rows are restored rather than silently invisible. store=curator (default) or store=swarm (the shared swarm memory DB). dry_run lists candidates without embedding."
     )]
     pub async fn curator_memory_backfill_embeddings(
         &self,
         Parameters(req): Parameters<BackfillEmbeddingsRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "curator_memory_backfill_embeddings", async {
-            let stores = self.db.get();
-            let memory = stores.memory()?;
-
-            // Every h_mem (empty prefix matches all entities — all rows
-            // are current; forgotten rows are deleted, not filtered out).
-            let active = memory
-                .h_mems_by_entity_prefix("")
-                .map_err(|e| map_memory_store_error(e, "Failed to scan active h_mems"))?;
-
-            let is_excluded = |entity: &str| {
-                entity.starts_with(thread_turns::SHARED_TURN_PREFIX)
-                    || entity.starts_with(distillation::WATERMARK_PREFIX)
-                    || entity.starts_with("curator:goal:")
+            let mode = match req.mode.as_deref().map(str::trim) {
+                None | Some("") | Some("missing") => BackfillMode::Missing,
+                Some("model_mismatch") => BackfillMode::ModelMismatch,
+                Some(other) => {
+                    return Err(McpToolError::invalid_argument(format!(
+                        "mode must be \"missing\" or \"model_mismatch\", got \"{other}\""
+                    )));
+                }
+            };
+            let store_target = match req.store.as_deref().map(str::trim) {
+                None | Some("") | Some("curator") => BackfillStore::Curator,
+                Some("swarm") => BackfillStore::Swarm,
+                Some(other) => {
+                    return Err(McpToolError::invalid_argument(format!(
+                        "store must be \"curator\" or \"swarm\", got \"{other}\""
+                    )));
+                }
             };
 
-            // Knowledge-layer candidates are passage-scoped: one successful
-            // vector under an entity never hides a failed sibling h_mem.
-            let mut candidates: Vec<(&hkask_storage::HMem, String)> = Vec::new();
-            // Rows with no embeddable text are named, not just counted, so an
-            // operator can see which memories stay invisible to semantic recall.
-            let mut unsupported: Vec<serde_json::Value> = Vec::new();
-            for h_mem in active.iter().filter(|h_mem| !is_excluded(&h_mem.entity)) {
-                let Some(passage) = hkask_memory::semantic_passage_for_h_mem(h_mem) else {
-                    unsupported.push(json!({
-                        "h_mem_id": h_mem.id.to_string(),
-                        "entity": h_mem.entity,
-                        "attribute": h_mem.attribute,
-                        "reason": "value has no string, recall_text or text field",
-                    }));
-                    continue;
-                };
-                let already_embedded = memory
-                    .has_embedding_for_passage(&h_mem.entity, &passage)
-                    .map_err(|error| {
-                        map_memory_store_error(
-                            error,
-                            "Failed to inspect passage-level embedding coverage",
-                        )
-                    })?;
-                if !already_embedded {
-                    candidates.push((h_mem, passage));
+            let stores = self.db.get();
+            let memory: Arc<hkask_memory::MemoryStore> = match store_target {
+                BackfillStore::Curator => stores.memory()?.clone(),
+                BackfillStore::Swarm => open_swarm_memory_store()?,
+            };
+
+            match mode {
+                BackfillMode::Missing => {
+                    backfill_missing_passages(
+                        self.inference_port.as_ref(),
+                        &memory,
+                        store_target,
+                        req.dry_run.unwrap_or(false),
+                    )
+                    .await
+                }
+                BackfillMode::ModelMismatch => {
+                    backfill_model_mismatched_rows(
+                        self.inference_port.as_ref(),
+                        &memory,
+                        req.dry_run.unwrap_or(false),
+                    )
+                    .await
                 }
             }
-
-            if req.dry_run.unwrap_or(false) {
-                return Ok(json!({
-                    "dry_run": true,
-                    "candidate_count": candidates.len(),
-                    "unsupported_count": unsupported.len(),
-                    "unsupported": unsupported,
-                    "candidates": candidates.iter().map(|(h_mem, _passage)| json!({
-                        "h_mem_id": h_mem.id.to_string(),
-                        "entity": h_mem.entity,
-                        "attribute": h_mem.attribute,
-                    })).collect::<Vec<_>>(),
-                    "guidance": "Dry run — nothing embedded. Re-run without dry_run to backfill."
-                }));
-            }
-
-            let candidate_count = candidates.len();
-            let mut results = Vec::with_capacity(candidate_count);
-            let mut embedded_count = 0usize;
-            let mut failed_count = 0usize;
-            for (h_mem, embed_text) in candidates {
-                let embedded = embed_for_semantic_recall(
-                    self.inference_port.as_ref(),
-                    memory,
-                    &h_mem.entity,
-                    &embed_text,
-                )
-                .await;
-                if embedded {
-                    embedded_count += 1;
-                } else {
-                    failed_count += 1;
-                }
-                results.push(json!({
-                    "h_mem_id": h_mem.id.to_string(),
-                    "entity": h_mem.entity,
-                    "attribute": h_mem.attribute,
-                    "embedded": embedded,
-                }));
-            }
-
-            RegulationSpan::Curation.emit("memory_embeddings_backfilled");
-
-            Ok(json!({
-                "candidate_count": candidate_count,
-                "backfilled": embedded_count,
-                "failed": failed_count,
-                "unsupported_count": unsupported.len(),
-                "unsupported": unsupported,
-                "results": results,
-                "guidance": "Embeddings are backfilled per exact canonical passage. Goal rows are excluded and never repaired here. Failed candidates remain passage-level candidates on re-run."
-            }))
         })
         .await
     }
@@ -2065,6 +2014,332 @@ pub(crate) async fn embed_for_semantic_recall(
             false
         }
     }
+}
+
+// ── Memory backfill sweep helpers ─────────────────────────────────────────
+
+/// The sweep's two modes: restore missing passages, or re-embed rows the
+/// search model gate excludes.
+enum BackfillMode {
+    Missing,
+    ModelMismatch,
+}
+
+/// The sweep's two store targets: the curator's own memory DB, or the
+/// shared swarm memory DB.
+enum BackfillStore {
+    Curator,
+    Swarm,
+}
+
+/// The swarm server's sole embed path stores delegation response chunks
+/// (`hkask-mcp-swarm/src/local_knowledge.rs`); the swarm-store missing-mode
+/// backfill mirrors that eligibility exactly rather than guessing a
+/// knowledge-layer shape the swarm store does not have.
+const SWARM_RESPONSE_CHUNK_ATTRIBUTE: &str = "delegation:response_chunk";
+
+/// Resolve the shared swarm memory DB path. Mirrors
+/// `kask_bridge::identity::resolve_swarm_memory_db_path`: an absolute
+/// `HKASK_SWARM_MEMORY_DB` wins; anything else resolves under the shared
+/// kask data dir (the swarm server's own default, `mcp/swarm/memory.db`).
+fn swarm_memory_db_path() -> std::path::PathBuf {
+    match std::env::var("HKASK_SWARM_MEMORY_DB")
+        .ok()
+        .filter(|raw| !raw.trim().is_empty())
+    {
+        Some(raw) if std::path::Path::new(&raw).is_absolute() => raw.into(),
+        Some(raw) => hkask_types::agent_paths::resolve_under_data_dir(std::path::Path::new(&raw)),
+        None => hkask_types::agent_paths::resolve_under_data_dir(std::path::Path::new(
+            "mcp/swarm/memory.db",
+        )),
+    }
+}
+
+/// Open the shared swarm memory DB for the sweep. The passphrase resolves
+/// through the canonical env chain — a missing or empty key is
+/// `permission_denied` naming the env var, never a silent empty-key open.
+fn open_swarm_memory_store() -> Result<Arc<hkask_memory::MemoryStore>, McpToolError> {
+    let passphrase =
+        hkask_mcp_server::resolve_credential("HKASK_DB_PASSPHRASE").map_err(|error| {
+            tracing::warn!(
+                target: "hkask.mcp.curator",
+                %error,
+                "HKASK_DB_PASSPHRASE resolution failed — the swarm store sweep is permission_denied"
+            );
+            McpToolError::permission_denied(
+                "HKASK_DB_PASSPHRASE is not resolvable — the swarm store sweep is unavailable \
+                 (relaunch with HKASK_DB_PASSPHRASE in the server env)",
+            )
+        })?;
+    if passphrase.is_empty() {
+        return Err(McpToolError::permission_denied(
+            "HKASK_DB_PASSPHRASE resolved empty — the swarm store sweep is unavailable",
+        ));
+    }
+    let path = swarm_memory_db_path();
+    let store = hkask_memory::MemoryStore::open(
+        &path.to_string_lossy(),
+        &passphrase,
+        hkask_storage::embedding_dim(),
+    )
+    .map_err(|error| {
+        McpToolError::internal(format!(
+            "cannot open swarm memory DB {}: {error}",
+            path.display()
+        ))
+    })?;
+    Ok(Arc::new(store))
+}
+
+/// The gate's two-form predicate: a stored row is mismatched when its
+/// recorded model matches neither the requested form nor the provider-
+/// confirmed actual form — the same comparison `EmbeddingStore::search`
+/// excludes on. A row with no recorded model can never match either form.
+fn model_is_mismatched(stored: Option<&str>, requested: &str, actual: Option<&str>) -> bool {
+    match stored {
+        None => true,
+        Some(stored) => stored != requested && actual != Some(stored),
+    }
+}
+
+/// Missing-passage backfill: h_mems whose exact canonical passage has no
+/// embedding row. Over the curator store this is the knowledge-layer sweep
+/// (turns, distillation watermarks, and goal rows excluded); over the swarm
+/// store eligibility mirrors the swarm server's own embed path —
+/// delegation response chunks only.
+async fn backfill_missing_passages(
+    inference_port: &dyn hkask_types::InferencePort,
+    memory: &hkask_memory::MemoryStore,
+    store_target: BackfillStore,
+    dry_run: bool,
+) -> Result<serde_json::Value, McpToolError> {
+    // Every h_mem (empty prefix matches all entities — all rows are
+    // current; forgotten rows are deleted, not filtered out).
+    let active = memory
+        .h_mems_by_entity_prefix("")
+        .map_err(|e| map_memory_store_error(e, "Failed to scan active h_mems"))?;
+
+    let is_excluded = |entity: &str| {
+        entity.starts_with(thread_turns::SHARED_TURN_PREFIX)
+            || entity.starts_with(distillation::WATERMARK_PREFIX)
+            || entity.starts_with("curator:goal:")
+    };
+    let eligible = |h_mem: &hkask_storage::HMem| match store_target {
+        BackfillStore::Curator => !is_excluded(&h_mem.entity),
+        BackfillStore::Swarm => h_mem.attribute == SWARM_RESPONSE_CHUNK_ATTRIBUTE,
+    };
+
+    // Candidates are passage-scoped: one successful vector under an entity
+    // never hides a failed sibling h_mem.
+    let mut candidates: Vec<(&hkask_storage::HMem, String)> = Vec::new();
+    // Rows with no embeddable text are named, not just counted, so an
+    // operator can see which memories stay invisible to semantic recall.
+    let mut unsupported: Vec<serde_json::Value> = Vec::new();
+    for h_mem in active.iter().filter(|h_mem| eligible(h_mem)) {
+        let Some(passage) = hkask_memory::semantic_passage_for_h_mem(h_mem) else {
+            unsupported.push(json!({
+                "h_mem_id": h_mem.id.to_string(),
+                "entity": h_mem.entity,
+                "attribute": h_mem.attribute,
+                "reason": "value has no string, recall_text or text field",
+            }));
+            continue;
+        };
+        let already_embedded = memory
+            .has_embedding_for_passage(&h_mem.entity, &passage)
+            .map_err(|error| {
+                map_memory_store_error(error, "Failed to inspect passage-level embedding coverage")
+            })?;
+        if !already_embedded {
+            candidates.push((h_mem, passage));
+        }
+    }
+
+    if dry_run {
+        return Ok(json!({
+            "dry_run": true,
+            "mode": "missing",
+            "store": match store_target { BackfillStore::Curator => "curator", BackfillStore::Swarm => "swarm" },
+            "candidate_count": candidates.len(),
+            "unsupported_count": unsupported.len(),
+            "unsupported": unsupported,
+            "candidates": candidates.iter().map(|(h_mem, _passage)| json!({
+                "h_mem_id": h_mem.id.to_string(),
+                "entity": h_mem.entity,
+                "attribute": h_mem.attribute,
+            })).collect::<Vec<_>>(),
+            "guidance": "Dry run — nothing embedded. Re-run without dry_run to backfill."
+        }));
+    }
+
+    let candidate_count = candidates.len();
+    let mut results = Vec::with_capacity(candidate_count);
+    let mut embedded_count = 0usize;
+    let mut failed_count = 0usize;
+    for (h_mem, embed_text) in candidates {
+        let embedded =
+            embed_for_semantic_recall(inference_port, memory, &h_mem.entity, &embed_text).await;
+        if embedded {
+            embedded_count += 1;
+        } else {
+            failed_count += 1;
+        }
+        results.push(json!({
+            "h_mem_id": h_mem.id.to_string(),
+            "entity": h_mem.entity,
+            "attribute": h_mem.attribute,
+            "embedded": embedded,
+        }));
+    }
+
+    RegulationSpan::Curation.emit("memory_embeddings_backfilled");
+
+    Ok(json!({
+        "mode": "missing",
+        "store": match store_target { BackfillStore::Curator => "curator", BackfillStore::Swarm => "swarm" },
+        "candidate_count": candidate_count,
+        "backfilled": embedded_count,
+        "failed": failed_count,
+        "unsupported_count": unsupported.len(),
+        "unsupported": unsupported,
+        "results": results,
+        "guidance": "Embeddings are backfilled per exact canonical passage. Goal rows are excluded and never repaired here. Failed candidates remain passage-level candidates on re-run."
+    }))
+}
+
+/// Model-mismatch sweep — the write side of the search model gate
+/// (a4174ed658): stored rows whose recorded model matches neither the
+/// current requested embedding model nor its provider-confirmed actual
+/// form are re-embedded under the current model, so recall stops excluding
+/// them. Each stale row is deleted by exact (entity, passage) before its
+/// replacement is stored — siblings under the same entity survive; a
+/// failure between delete and store leaves a missing passage the
+/// missing-mode backfill recovers by design.
+async fn backfill_model_mismatched_rows(
+    inference_port: &dyn hkask_types::InferencePort,
+    memory: &hkask_memory::MemoryStore,
+    dry_run: bool,
+) -> Result<serde_json::Value, McpToolError> {
+    let Some(requested_model) = curator_embedding_model() else {
+        return Err(McpToolError::failed_precondition(
+            "no embedding model configured — set kask.models.embedding_model \
+             (injected as HKASK_EMBEDDING_MODEL); the model-mismatch sweep \
+             cannot run without the model to re-embed under",
+        ));
+    };
+
+    // Probe once to learn the provider-confirmed actual form — the second
+    // identity the search gate accepts. A failed probe degrades to the
+    // requested-form-only comparison, surfaced here rather than silent.
+    let probe = inference_port
+        .embed_with_dimensions(
+            &requested_model,
+            std::slice::from_ref(&"model-mismatch sweep identity probe".to_string()),
+            Some(hkask_storage::embedding_dim() as u32),
+        )
+        .await;
+    let actual_model = match &probe {
+        Ok(batch) => batch.actual_model.clone(),
+        Err(error) => {
+            tracing::warn!(
+                target: "hkask.mcp.curator",
+                %error,
+                "identity probe failed — model-mismatch selection compares \
+                 against the requested form only"
+            );
+            None
+        }
+    };
+
+    let rows = memory
+        .all_embeddings_with_text()
+        .map_err(|e| map_memory_store_error(e, "Failed to scan stored embeddings"))?;
+
+    // `all_with_text` yields (entity_ref, vector, passage_text, model) —
+    // the passage is nullable, the model is not.
+    let mut candidates: Vec<(String, String, String)> = Vec::new();
+    let mut unsupported: Vec<serde_json::Value> = Vec::new();
+    for (entity, _vector, passage, stored_model) in rows {
+        if !model_is_mismatched(
+            Some(stored_model.as_str()),
+            &requested_model,
+            actual_model.as_deref(),
+        ) {
+            continue;
+        }
+        let Some(passage) = passage.filter(|p| !p.trim().is_empty()) else {
+            unsupported.push(json!({
+                "entity": entity,
+                "stored_model": stored_model,
+                "reason": "no stored passage text — the row cannot be re-embedded \
+                           from its source; delete it and re-ingest the source passage",
+            }));
+            continue;
+        };
+        candidates.push((entity, passage, stored_model));
+    }
+
+    if dry_run {
+        return Ok(json!({
+            "dry_run": true,
+            "mode": "model_mismatch",
+            "requested_model": requested_model,
+            "actual_model": actual_model,
+            "candidate_count": candidates.len(),
+            "unsupported_count": unsupported.len(),
+            "unsupported": unsupported,
+            "candidates": candidates.iter().map(|(entity, _passage, stored_model)| json!({
+                "entity": entity,
+                "stored_model": stored_model,
+            })).collect::<Vec<_>>(),
+            "guidance": "Dry run — nothing re-embedded. Re-run without dry_run to sweep."
+        }));
+    }
+
+    let candidate_count = candidates.len();
+    let mut results = Vec::with_capacity(candidate_count);
+    let mut re_embedded = 0usize;
+    let mut failed = 0usize;
+    for (entity, passage, stored_model) in candidates {
+        let retired = memory
+            .delete_embedding_by_entity_ref_and_passage(&entity, &passage)
+            .map_err(|e| map_memory_store_error(e, "Failed to retire the stale-model row"))?;
+        let embedded = if retired == 0 {
+            // The row vanished between scan and sweep — surfaced as a
+            // failure below, never silently skipped.
+            false
+        } else {
+            embed_for_semantic_recall(inference_port, memory, &entity, &passage).await
+        };
+        if embedded {
+            re_embedded += 1;
+        } else {
+            failed += 1;
+        }
+        results.push(json!({
+            "entity": entity,
+            "stored_model": stored_model,
+            "re_embedded": embedded,
+        }));
+    }
+
+    RegulationSpan::Curation.emit("memory_embeddings_backfilled");
+
+    Ok(json!({
+        "mode": "model_mismatch",
+        "requested_model": requested_model,
+        "actual_model": actual_model,
+        "candidate_count": candidate_count,
+        "re_embedded": re_embedded,
+        "failed": failed,
+        "unsupported_count": unsupported.len(),
+        "unsupported": unsupported,
+        "results": results,
+        "guidance": "Stale-model rows are re-embedded under the current model \
+                     (delete-then-store per exact passage; siblings survive). A row \
+                     that fails between delete and store becomes a missing passage \
+                     the missing-mode backfill recovers."
+    }))
 }
 
 pub async fn run() -> Result<(), hkask_mcp_server::McpError> {

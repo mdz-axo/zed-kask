@@ -12,6 +12,19 @@ pub struct BackfillEmbeddingsRequest {
     /// List the candidates that would be embedded, without embedding
     /// anything. Default false.
     pub dry_run: Option<bool>,
+    /// Sweep mode. "missing" (default): embed h_mems whose exact canonical
+    /// passage has no embedding row. "model_mismatch": re-embed stored
+    /// rows whose recorded model matches neither the current requested
+    /// embedding model nor its provider-confirmed actual form — the same
+    /// two-form predicate the search gate excludes on, so a model
+    /// migration's gated-out rows are restored rather than silently
+    /// invisible.
+    pub mode: Option<String>,
+    /// Memory store to sweep. "curator" (default): the curator's own memory
+    /// DB. "swarm": the shared swarm memory DB (missing-mode eligibility
+    /// mirrors the swarm server's own embed path — delegation response
+    /// chunks only).
+    pub store: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

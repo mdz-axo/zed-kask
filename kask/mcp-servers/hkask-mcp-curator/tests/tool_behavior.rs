@@ -91,6 +91,63 @@ impl hkask_types::InferencePort for ConstantEmbedPort {
     }
 }
 
+/// A port whose `embed_with_dimensions` reports a provider-confirmed actual
+/// model — the shape the model-mismatch sweep's identity probe reads, used
+/// to pin the gate's two-form acceptance (a row stored under the actual form
+/// is NOT swept).
+struct ActualFormEmbedPort;
+
+impl hkask_types::InferencePort for ActualFormEmbedPort {
+    fn generate(
+        &self,
+        _prompt: &str,
+        _parameters: &hkask_types::LLMParameters,
+        _tools: Option<&[hkask_types::ChatToolDefinition]>,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>>
+                + Send
+                + '_,
+        >,
+    > {
+        Box::pin(async { Err(hkask_types::InferenceError::Connection("stub".to_string())) })
+    }
+
+    fn embed_with_dimensions<'a>(
+        &'a self,
+        model: &str,
+        texts: &[String],
+        _dimensions: Option<u32>,
+    ) -> hkask_types::EmbedWithIdentityFuture<'a> {
+        // Capture owned values so the future borrows nothing — the
+        // ConstantEmbedPort pattern.
+        let count = texts.len();
+        let dim = test_dim();
+        let requested_model = model.to_string();
+        Box::pin(async move {
+            Ok(hkask_types::EmbeddingBatch {
+                vectors: (0..count)
+                    .map(|_| {
+                        let mut vector = vec![0.0f32; dim];
+                        vector[0] = 1.0;
+                        vector
+                    })
+                    .collect(),
+                requested_model,
+                actual_model: Some("provider/actual-form".to_string()),
+            })
+        })
+    }
+}
+
+/// The unit vector `ConstantEmbedPort` embeds every text to — the query
+/// vector the sweep tests search with.
+fn unit_vector() -> Vec<f32> {
+    let mut vector = vec![0.0f32; test_dim()];
+    vector[0] = 1.0;
+    vector
+}
+
 fn failing_inference_port() -> Arc<dyn hkask_types::InferencePort> {
     Arc::new(FailingEmbedPort)
 }
@@ -151,6 +208,15 @@ fn make_server_with_regulation_archive() -> (CuratorServer, Arc<RegulationArchiv
 /// the semantic recall path needs. Returns the server plus its memory
 /// store handle so tests can seed h_mems and embeddings directly.
 fn make_server_with_embeddings() -> (CuratorServer, Arc<hkask_memory::MemoryStore>) {
+    make_server_with_embedding_port(Arc::new(ConstantEmbedPort))
+}
+
+/// Like [`make_server_with_embeddings`], with a caller-supplied inference
+/// port — the seam the model-mismatch sweep tests use to pin the
+/// provider-actual-form acceptance.
+fn make_server_with_embedding_port(
+    port: Arc<dyn hkask_types::InferencePort>,
+) -> (CuratorServer, Arc<hkask_memory::MemoryStore>) {
     ensure_embedding_model_env();
     let driver = SqliteDriver::in_memory_driver();
     let h_mem_store = HMemStore::from_driver(driver.clone()).expect("hmem store init");
@@ -165,11 +231,7 @@ fn make_server_with_embeddings() -> (CuratorServer, Arc<hkask_memory::MemoryStor
         memory: Some(memory.clone()),
     };
     let database = Arc::new(CuratorDb::from_stores(stores));
-    let server = CuratorServer::new(
-        WebID::new(),
-        database,
-        Arc::new(ConstantEmbedPort) as Arc<dyn hkask_types::InferencePort>,
-    );
+    let server = CuratorServer::new(WebID::new(), database, port);
     (server, memory)
 }
 
@@ -1161,6 +1223,8 @@ async fn backfill_names_unsupported_rows() {
     let dry = parse(
         &server
             .curator_memory_backfill_embeddings(Parameters(BackfillEmbeddingsRequest {
+                mode: None,
+                store: None,
                 dry_run: Some(true),
             }))
             .await
@@ -1233,6 +1297,8 @@ async fn backfill_embeddings_covers_knowledge_layer_and_excludes_turns() {
     let dry = parse(
         &server
             .curator_memory_backfill_embeddings(Parameters(BackfillEmbeddingsRequest {
+                mode: None,
+                store: None,
                 dry_run: Some(true),
             }))
             .await
@@ -1254,6 +1320,8 @@ async fn backfill_embeddings_covers_knowledge_layer_and_excludes_turns() {
     let run = parse(
         &server
             .curator_memory_backfill_embeddings(Parameters(BackfillEmbeddingsRequest {
+                mode: None,
+                store: None,
                 dry_run: Some(false),
             }))
             .await
@@ -1287,6 +1355,8 @@ async fn backfill_embeddings_covers_knowledge_layer_and_excludes_turns() {
     let second = parse(
         &server
             .curator_memory_backfill_embeddings(Parameters(BackfillEmbeddingsRequest {
+                mode: None,
+                store: None,
                 dry_run: None,
             }))
             .await
@@ -1340,6 +1410,8 @@ async fn backfill_is_passage_scoped_and_excludes_goals() {
     let dry = parse(
         &server
             .curator_memory_backfill_embeddings(Parameters(BackfillEmbeddingsRequest {
+                mode: None,
+                store: None,
                 dry_run: Some(true),
             }))
             .await
@@ -1355,6 +1427,8 @@ async fn backfill_is_passage_scoped_and_excludes_goals() {
     let run = parse(
         &server
             .curator_memory_backfill_embeddings(Parameters(BackfillEmbeddingsRequest {
+                mode: None,
+                store: None,
                 dry_run: Some(false),
             }))
             .await
@@ -1375,6 +1449,259 @@ async fn backfill_is_passage_scoped_and_excludes_goals() {
             .iter()
             .all(|(entity, _vector, _passage, _model)| entity != "curator:goal:invalid-publication"),
         "backfill must never heal an invalid goal publication"
+    )
+}
+
+// ── Memory backfill: model-mismatch sweep (the search gate's write side) ──
+
+/// The card 9c17dd5f pin: a row stored under a model the search gate
+/// excludes is re-embedded under the current model, and the same search
+/// that excluded it before reports zero exclusions after (mixed store →
+/// excluded count drops to 0).
+#[tokio::test]
+async fn model_mismatch_sweep_restores_gated_rows_until_search_excludes_nothing() {
+    let (server, memory) = make_server_with_embeddings();
+    let current_model =
+        std::env::var("HKASK_EMBEDDING_MODEL").unwrap_or_else(|_| "test-model".to_string());
+
+    memory
+        .store_embedding(
+            "sweep/stale",
+            &unit_vector(),
+            "legacy-model",
+            Some("stale passage"),
+        )
+        .expect("seed stale-model row");
+    memory
+        .store_embedding(
+            "sweep/current",
+            &unit_vector(),
+            &current_model,
+            Some("current passage"),
+        )
+        .expect("seed current-model row");
+
+    // BEFORE: the gate excludes the legacy row from the KNN window.
+    let before = memory
+        .search_similar(&unit_vector(), 10, &current_model, None)
+        .expect("search before sweep");
+    assert_eq!(
+        before.excluded_model_mismatch, 1,
+        "the legacy-model row is gated out before the sweep"
+    );
+
+    // The dry run names exactly the stale row.
+    let dry = parse(
+        &server
+            .curator_memory_backfill_embeddings(Parameters(BackfillEmbeddingsRequest {
+                mode: Some("model_mismatch".to_string()),
+                store: None,
+                dry_run: Some(true),
+            }))
+            .await
+            .expect("dry run ok"),
+    );
+    assert_eq!(dry["candidate_count"].as_u64(), Some(1));
+    assert_eq!(dry["candidates"][0]["entity"].as_str(), Some("sweep/stale"));
+
+    // The sweep re-embeds it under the current model.
+    let swept = parse(
+        &server
+            .curator_memory_backfill_embeddings(Parameters(BackfillEmbeddingsRequest {
+                mode: Some("model_mismatch".to_string()),
+                store: None,
+                dry_run: Some(false),
+            }))
+            .await
+            .expect("sweep ok"),
+    );
+    assert_eq!(swept["re_embedded"].as_u64(), Some(1));
+
+    // AFTER: the same search excludes nothing and both rows rank.
+    let after = memory
+        .search_similar(&unit_vector(), 10, &current_model, None)
+        .expect("search after sweep");
+    assert_eq!(
+        after.excluded_model_mismatch, 0,
+        "the swept row is recallable under the current model"
+    );
+    assert_eq!(after.results.len(), 2, "both rows rank after the sweep");
+}
+
+/// The gate accepts a row stored under the provider-confirmed actual form
+/// (actual == stored); the sweep must accept it too — only rows matching
+/// neither form are swept.
+#[tokio::test]
+async fn model_mismatch_sweep_accepts_the_provider_actual_form() {
+    let (server, memory) = make_server_with_embedding_port(Arc::new(ActualFormEmbedPort));
+
+    memory
+        .store_embedding(
+            "sweep/actual-form",
+            &unit_vector(),
+            "provider/actual-form",
+            Some("actual-form passage"),
+        )
+        .expect("seed actual-form row");
+    memory
+        .store_embedding(
+            "sweep/legacy",
+            &unit_vector(),
+            "legacy-model",
+            Some("legacy passage"),
+        )
+        .expect("seed legacy row");
+
+    let dry = parse(
+        &server
+            .curator_memory_backfill_embeddings(Parameters(BackfillEmbeddingsRequest {
+                mode: Some("model_mismatch".to_string()),
+                store: None,
+                dry_run: Some(true),
+            }))
+            .await
+            .expect("dry run ok"),
+    );
+    assert_eq!(
+        dry["actual_model"].as_str(),
+        Some("provider/actual-form"),
+        "the identity probe surfaces the provider-confirmed actual form"
+    );
+    assert_eq!(dry["candidate_count"].as_u64(), Some(1));
+    assert_eq!(
+        dry["candidates"][0]["entity"].as_str(),
+        Some("sweep/legacy"),
+        "the actual-form row is NOT swept — the gate accepts it, so the sweep must too"
+    );
+}
+
+/// Over the swarm store, missing-mode eligibility mirrors the swarm
+/// server's own embed path — delegation response chunks only — and the
+/// model-mismatch sweep reaches the swarm DB through the same tool.
+#[tokio::test]
+async fn backfill_reaches_the_swarm_store_with_response_chunk_eligibility() {
+    let (server, _curator_memory) = make_server_with_embeddings();
+
+    // Route the tool's swarm path at a throwaway DB. The env writes are
+    // test-only and single-writer (no other test reads these vars); the
+    // ensure_embedding_model_env precedent allows the unsafe set_var.
+    let dir = std::env::temp_dir().join(format!("curator-swarm-sweep-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("tempdir");
+    let db_path = dir.join("swarm-test.db");
+    unsafe {
+        std::env::set_var("HKASK_SWARM_MEMORY_DB", &db_path);
+        std::env::set_var("HKASK_DB_PASSPHRASE", "test-passphrase");
+    }
+
+    let swarm_memory = hkask_memory::MemoryStore::open(
+        &db_path.to_string_lossy(),
+        "test-passphrase",
+        hkask_storage::embedding_dim(),
+    )
+    .expect("open swarm test DB");
+
+    // A delegation response chunk (the swarm's recall surface) and a
+    // non-chunk row its write path never embeds.
+    let chunk = hkask_storage::HMem::new(
+        "agent:probe:turn:t1:chunk:0",
+        "delegation:response_chunk",
+        serde_json::json!({"text": "swarm response chunk passage"}),
+        WebID::new(),
+    );
+    swarm_memory.store(chunk).expect("seed response chunk");
+    let other = hkask_storage::HMem::new(
+        "agent:probe:knowledge",
+        "note",
+        serde_json::json!({"text": "never embedded by the swarm write path"}),
+        WebID::new(),
+    );
+    swarm_memory.store(other).expect("seed non-chunk row");
+    // A stale-model row the mismatch sweep must retire.
+    swarm_memory
+        .store_embedding(
+            "agent:probe:turn:t1:chunk:1",
+            &unit_vector(),
+            "legacy-model",
+            Some("second chunk passage"),
+        )
+        .expect("seed stale-model row");
+
+    // Missing mode: only the response chunk is eligible.
+    let missing = parse(
+        &server
+            .curator_memory_backfill_embeddings(Parameters(BackfillEmbeddingsRequest {
+                mode: None,
+                store: Some("swarm".to_string()),
+                dry_run: Some(false),
+            }))
+            .await
+            .expect("swarm missing backfill ok"),
+    );
+    assert_eq!(missing["store"].as_str(), Some("swarm"));
+    assert_eq!(
+        missing["backfilled"].as_u64(),
+        Some(1),
+        "only the delegation response chunk is eligible over the swarm store"
+    );
+
+    // Mismatch mode: the stale row is re-embedded under the current model.
+    let current_model =
+        std::env::var("HKASK_EMBEDDING_MODEL").unwrap_or_else(|_| "test-model".to_string());
+    let swept = parse(
+        &server
+            .curator_memory_backfill_embeddings(Parameters(BackfillEmbeddingsRequest {
+                mode: Some("model_mismatch".to_string()),
+                store: Some("swarm".to_string()),
+                dry_run: Some(false),
+            }))
+            .await
+            .expect("swarm sweep ok"),
+    );
+    assert_eq!(swept["re_embedded"].as_u64(), Some(1));
+
+    let after = swarm_memory
+        .search_similar(&unit_vector(), 10, &current_model, None)
+        .expect("search after swarm sweep");
+    assert_eq!(after.excluded_model_mismatch, 0);
+    assert_eq!(
+        after.results.len(),
+        2,
+        "the chunk and the swept row both rank"
+    );
+
+    std::fs::remove_dir_all(&dir).expect("cleanup tempdir");
+}
+
+/// Unknown mode or store values are rejected as invalid_argument — the
+/// closed vocabulary never silently defaults a typo.
+#[tokio::test]
+async fn backfill_rejects_unknown_mode_and_store() {
+    let (server, _memory) = make_server_with_embeddings();
+
+    let mode_error = server
+        .curator_memory_backfill_embeddings(Parameters(BackfillEmbeddingsRequest {
+            mode: Some("sideways".to_string()),
+            store: None,
+            dry_run: Some(true),
+        }))
+        .await
+        .expect_err("unknown mode must be rejected");
+    assert!(
+        matches!(mode_error.kind, hkask_types::McpErrorKind::InvalidArgument),
+        "unknown mode is invalid_argument — got: {mode_error:?}"
+    );
+
+    let store_error = server
+        .curator_memory_backfill_embeddings(Parameters(BackfillEmbeddingsRequest {
+            mode: None,
+            store: Some("elsewhere".to_string()),
+            dry_run: Some(true),
+        }))
+        .await
+        .expect_err("unknown store must be rejected");
+    assert!(
+        matches!(store_error.kind, hkask_types::McpErrorKind::InvalidArgument),
+        "unknown store is invalid_argument — got: {store_error:?}"
     );
 }
 
