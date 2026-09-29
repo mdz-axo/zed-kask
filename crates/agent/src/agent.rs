@@ -971,7 +971,6 @@ impl NativeAgent {
         } else {
             ZED_AGENT_ID.clone()
         };
-        let skill_invoker = agent_id.0.clone();
         let connection = Rc::new(NativeAgentConnection(cx.entity(), agent_id));
 
         let thread = thread_handle.read(cx);
@@ -1020,8 +1019,13 @@ impl NativeAgent {
             // The resolver closure reads `state.skills` at invocation
             // time, so skills added or removed by the SKILL.md watcher
             // after the thread is constructed are still visible to the
-            // model — without this, the catalog and tool would drift out
-            // of sync until the session was reopened.
+            // model — without this, the catalog and tool would drift out of
+            // sync until the session was reopened.
+            // The invoker is single-sourced from the thread's own agent
+            // identity (`Thread::skill_invoker`) — the same source
+            // `run_tool`'s failure-recording path reads — so the SkillTool
+            // stamp and skill-failure attribution can never diverge
+            // (subagent inheritance included).
             // zed-kask: D1 — use upstream's project-aware body resolver while
             // retaining the skill outcome hook. The operator's evaluation tool
             // is Curator-only (see `new_session`).
@@ -1030,7 +1034,7 @@ impl NativeAgent {
                     skills_resolver_for_project(weak.clone(), project_id),
                     skill_body_resolver_for_project(project.clone(), self.fs.clone()),
                 )
-                .with_invoker(skill_invoker),
+                .with_invoker(thread.skill_invoker()),
             );
             // `lisp_eval` and `render_template` are already registered via
             // `add_default_tools` — they are stateless tools available to all
@@ -7928,6 +7932,99 @@ mod internal_tests {
             assert_eq!(disk.len(), 1);
             assert_eq!(disk[0].name, "shared-skill");
         });
+    }
+
+    /// The SkillTool that `register_session` wires onto a session must stamp
+    /// its outcomes with the thread's own agent identity — the same source
+    /// `run_tool`'s failure-recording path reads — so skill attribution can
+    /// never split between the tool stamp and the failure record. Runs the
+    /// REGISTERED tool instance (not a hand-constructed one) and observes the
+    /// invoker through the outcome recorder; a re-derived invoker that
+    /// diverges from the thread's identity fails here.
+    #[gpui::test]
+    async fn test_skill_tool_invoker_is_thread_agent_identity(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let skills_dir = global_skills_dir();
+        let skill_dir = skills_dir.join("invoker-skill");
+        fs.create_dir(&skill_dir).await.unwrap();
+        fs.insert_file(
+            &skill_dir.join("SKILL.md"),
+            b"---\nname: invoker-skill\ndescription: Invoker probe\n---\n\nbody".to_vec(),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [], cx).await;
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let agent =
+            cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs.clone(), cx));
+
+        let connection = NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone());
+        let _acp = cx
+            .update(|cx| {
+                Rc::new(connection).new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new("/")]),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        let recorded = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let captured = recorded.clone();
+        let _recorder = crate::SKILL_OUTCOME_RECORDER.scoped_for_test(std::sync::Arc::new(
+            move |skill_id, invoker, success, error| {
+                if let Ok(mut entries) = captured.lock() {
+                    entries.push((
+                        skill_id.to_string(),
+                        invoker.to_string(),
+                        success,
+                        error.map(str::to_string),
+                    ));
+                }
+            },
+        ));
+
+        let thread = agent.read_with(cx, |agent, _cx| {
+            agent
+                .sessions
+                .values()
+                .next()
+                .expect("session should exist")
+                .thread
+                .clone()
+        });
+        let expected_invoker = thread.read_with(cx, |thread, _| thread.skill_invoker());
+
+        // Run the REGISTERED SkillTool — the instance register_session
+        // wired — and observe the invoker it stamps on the outcome.
+        let tool = thread.read_with(cx, |thread, _| {
+            thread
+                .tools
+                .get(crate::SkillTool::NAME)
+                .expect("SkillTool registered by register_session")
+                .clone()
+        });
+        let (mut sender, input) = crate::ToolInput::<serde_json::Value>::test();
+        sender.send_full(json!({ "name": "invoker-skill" }));
+        let (event_stream, _rx) = crate::ToolCallEventStream::test();
+        let task = cx.update(|cx| tool.run(input, event_stream, cx));
+        let _ = task.await;
+        cx.run_until_parked();
+
+        let entries = recorded.lock().expect("lock").clone();
+        assert_eq!(
+            entries,
+            vec![(
+                "invoker-skill".to_string(),
+                expected_invoker.to_string(),
+                true,
+                None
+            )],
+            "the registered SkillTool stamps the thread's own agent identity"
+        );
     }
 
     #[gpui::test]

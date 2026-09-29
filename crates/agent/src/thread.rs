@@ -154,6 +154,11 @@ pub enum SandboxStatusRefresh {
 /// the user instead.
 pub const MIN_COMPACTION_CONTEXT_WINDOW: u64 = 80_000;
 
+/// Upper bound on concurrently in-flight segment summarization calls during
+/// one compaction. Later segments wait for an earlier batch; ordering is
+/// preserved by collecting each batch's summaries in dispatch order.
+const MAX_CONCURRENT_SEGMENT_SUMMARIES: usize = 8;
+
 // Using the heuristic that 1 token is about 4 bytes, keep the last 80K bytes of user-message content (~20k tokens).
 const COMPACTION_RETAINED_USER_MESSAGES_BYTE_BUDGET: usize = 80_000;
 
@@ -2328,6 +2333,17 @@ impl Thread {
         self.kask.agent_id()
     }
 
+    /// The invoker stamped on skill outcomes and skill-failure records.
+    ///
+    /// Single-sourced from the thread's own agent identity so the SkillTool
+    /// registration (`register_session`) and the failure-recording path
+    /// (`run_tool`) can never attribute to different invokers — including
+    /// subagent threads whose identity is inherited rather than re-derivable
+    /// from the owning agent's context. Do not add a second derivation.
+    pub fn skill_invoker(&self) -> SharedString {
+        self.kask.agent_id().0.clone()
+    }
+
     /// The agent-set static context (e.g., the curator overlay's combined
     /// base + per-tab prompt), if any. Distinct from the memory-injected
     /// `static_context` — this is the agent's own contribution.
@@ -3695,27 +3711,48 @@ impl Thread {
             };
             let summary = futures::select! {
                 result = async {
-                    let (request, halves) = cx.background_spawn(async move {
+                    // The compaction model serves every summarization request,
+                    // so its limits define the per-request budget the planner
+                    // fits segments into.
+                    let input_capacity = compaction_input_capacity(
+                        model.max_input_tokens(),
+                        model.max_total_tokens(),
+                        model.max_output_tokens(),
+                    );
+                    let (request, plan) = cx.background_spawn(async move {
                         let mut request = request;
                         if let Some(condenser) = condenser {
                             let end = request.messages.len().saturating_sub(1);
                             condenser.precompress_history(&mut request.messages[..end], NO_COMPRESS_TOOLS)?;
                         }
-                        let halves = crate::kask_compaction::plan_halves(&request)?;
-                        anyhow::Ok((request, halves))
+                        let plan = crate::kask_compaction::plan_compaction(&request, input_capacity)?;
+                        anyhow::Ok((request, plan))
                     }).await?;
-                    let request = match halves {
-                        Some((earlier, later)) => {
-                            log::info!("Compacting two chronological halves concurrently, then merging");
-                            let (earlier, later) = futures::try_join!(
-                                Self::collect_compaction_summary(this, &model, earlier, None, cx.clone()),
-                                Self::collect_compaction_summary(this, &model, later, None, cx.clone()),
-                            )?;
-                            crate::kask_compaction::merge_request(request, &earlier, &later)
+                    match plan {
+                        crate::kask_compaction::CompactionPlan::Single(request) => {
+                            Self::collect_compaction_summary(this, &model, request, Some((event_stream, &compaction_id)), cx.clone()).await
                         }
-                        None => request,
-                    };
-                    Self::collect_compaction_summary(this, &model, request, Some((event_stream, &compaction_id)), cx.clone()).await
+                        crate::kask_compaction::CompactionPlan::Segments(mut segments) => {
+                            log::info!(
+                                "Compacting {} chronological segments concurrently, then merging",
+                                segments.len()
+                            );
+                            let mut summaries = Vec::with_capacity(segments.len());
+                            while !segments.is_empty() {
+                                let batch_len = segments.len().min(MAX_CONCURRENT_SEGMENT_SUMMARIES);
+                                let batch: Vec<_> = segments.drain(..batch_len).collect();
+                                let batch_summaries = futures::future::try_join_all(
+                                    batch.into_iter().map(|segment| {
+                                        Self::collect_compaction_summary(this, &model, segment, None, cx.clone())
+                                    }),
+                                )
+                                .await?;
+                                summaries.extend(batch_summaries);
+                            }
+                            let request = crate::kask_compaction::merge_request(request, &summaries);
+                            Self::collect_compaction_summary(this, &model, request, Some((event_stream, &compaction_id)), cx.clone()).await
+                        }
+                    }
                 }.fuse() => result,
                 _ = cancellation_rx.changed().fuse() => {
                     if *cancellation_rx.borrow() {
@@ -4429,7 +4466,7 @@ impl Thread {
         // zed-kask: D59 — mechanical skill-use issue capture (observe stage of
         // the skill learning loop, DIAG-ARCH-LEARNING-LOOP-001).
         let active_skill = self.kask.active_skill_handle();
-        let skill_invoker: SharedString = self.kask.agent_id().0.clone();
+        let skill_invoker = self.skill_invoker();
         let activated_skill = (tool_name.as_ref() == crate::SkillTool::NAME)
             .then(|| {
                 input_for_tracking
@@ -10345,6 +10382,201 @@ mod tests {
                 assert!(saw_error, "failure must be surfaced: {outcome}");
             }
         }
+    }
+
+    fn compaction_evidence_message(id: &str, result_text: &str) -> Arc<Message> {
+        let mut call = tool_use(id, "terminal");
+        if let AgentMessageContent::ToolUse(call) = &mut call {
+            call.thought_signature = Some(id.to_string());
+        }
+        Arc::new(Message::Agent(AgentMessage {
+            content: vec![call],
+            tool_results: IndexMap::from_iter([(
+                id.into(),
+                LanguageModelToolResult {
+                    tool_use_id: id.into(),
+                    tool_name: "terminal".into(),
+                    is_error: false,
+                    content: vec![result_text.to_string().into()],
+                    output: None,
+                },
+            )]),
+            reasoning_details: None,
+        }))
+    }
+
+    fn segmented_compaction_history(result_bytes: usize) -> Vec<Arc<Message>> {
+        let mut messages = Vec::new();
+        for (index, id) in ["first", "second", "third"].into_iter().enumerate() {
+            messages.push(user_text_message(
+                ClientUserMessageId::new(),
+                &format!("Exchange {index}: keep it."),
+            ));
+            messages.push(compaction_evidence_message(id, &"x".repeat(result_bytes)));
+        }
+        messages
+    }
+
+    #[gpui::test]
+    async fn test_segmented_compaction_over_budget_history(cx: &mut TestAppContext) {
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+        let model = Arc::new(FakeLanguageModel::default());
+        // 80,000 tokens is the compaction floor; the derived byte budget
+        // fits one ~110 KiB exchange per segment request but not two.
+        model.set_max_token_count(80_000);
+        let original = segmented_compaction_history(110_000);
+        thread.update(cx, |thread, cx| {
+            thread.set_model(model.clone(), cx);
+            thread.messages = original.clone();
+        });
+        let _events = thread
+            .update(cx, |thread, cx| {
+                thread.compact(ClientUserMessageId::new(), cx)
+            })
+            .expect("compact");
+        cx.run_until_parked();
+        let requests = model.pending_completions();
+        assert_eq!(
+            requests.len(),
+            3,
+            "one summarization request per budget-fitting segment"
+        );
+        for (request, id) in requests.iter().zip(["first", "second", "third"]) {
+            let parts: Vec<_> = request.messages.iter().flat_map(|m| &m.content).collect();
+            assert!(
+                parts.iter().any(
+                    |p| matches!(p, MessageContent::ToolUse(call) if call.id.to_string() == id)
+                ),
+                "segment carries exchange {id}'s tool call"
+            );
+            assert!(
+                parts.iter().any(|p| matches!(p, MessageContent::ToolResult(result) if result.tool_use_id.to_string() == id)),
+                "segment carries exchange {id}'s tool result"
+            );
+            assert_eq!(
+                parts
+                    .iter()
+                    .filter(|p| matches!(p, MessageContent::ToolResult(_)))
+                    .count(),
+                1,
+                "exactly one exchange per segment"
+            );
+            assert!(
+                !request
+                    .messages
+                    .iter()
+                    .any(|m| m.string_contents().contains("compaction elided")),
+                "a fitting segment is never elided"
+            );
+        }
+        // Complete the segments in reverse order; the merge must follow
+        // summary chronology, not completion order.
+        for (request, summary) in requests
+            .iter()
+            .zip(["First summary.", "Second summary.", "Third summary."])
+            .rev()
+        {
+            model.send_completion_stream_text_chunk(request, summary);
+            model.send_completion_stream_event(
+                request,
+                LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
+                    input_tokens: 10,
+                    output_tokens: 2,
+                    ..Default::default()
+                }),
+            );
+            model.end_completion_stream(request);
+        }
+        cx.run_until_parked();
+        let merge = model.pending_completions().pop().expect("merge request");
+        let text = merge
+            .messages
+            .iter()
+            .map(|m| m.string_contents())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let first = text.find("First summary.").expect("first summary");
+        let second = text.find("Second summary.").expect("second summary");
+        let third = text.find("Third summary.").expect("third summary");
+        assert!(first < second && second < third);
+        assert!(text.contains("later corrections"));
+        model.send_completion_stream_text_chunk(&merge, "All three exchanges kept.");
+        model.send_completion_stream_event(
+            &merge,
+            LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
+                input_tokens: 9,
+                output_tokens: 2,
+                ..Default::default()
+            }),
+        );
+        model.end_completion_stream(&merge);
+        cx.run_until_parked();
+        assert!(model.pending_completions().is_empty());
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(&thread.messages[..original.len()], &original);
+            assert_eq!(thread.messages.len(), original.len() + 2);
+            assert!(matches!(thread.messages.last().map(|m| &**m), Some(Message::Compaction(CompactionInfo::Summary(summary))) if summary.as_ref() == "All three exchanges kept."));
+            assert_eq!(thread.cumulative_token_usage().input_tokens, 39);
+            assert_eq!(thread.cumulative_token_usage().output_tokens, 8);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_oversized_indivisible_history_compacts_via_elision(cx: &mut TestAppContext) {
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+        let model = Arc::new(FakeLanguageModel::default());
+        model.set_max_token_count(80_000);
+        let transcript = format!("TRANSCRIPT-START{}TRANSCRIPT-END", "x".repeat(500_000));
+        let original = vec![
+            user_text_message(ClientUserMessageId::new(), "Summarize this transcript."),
+            compaction_evidence_message("bulk", &transcript),
+        ];
+        thread.update(cx, |thread, cx| {
+            thread.set_model(model.clone(), cx);
+            thread.messages = original.clone();
+        });
+        let _events = thread
+            .update(cx, |thread, cx| {
+                thread.compact(ClientUserMessageId::new(), cx)
+            })
+            .expect("compact");
+        cx.run_until_parked();
+        let requests = model.pending_completions();
+        assert_eq!(
+            requests.len(),
+            1,
+            "an indivisible history summarizes in one elided call"
+        );
+        let request = requests.first().expect("elided request");
+        let text = request
+            .messages
+            .iter()
+            .map(|m| m.string_contents())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(text.contains("compaction elided"));
+        assert!(text.contains("TRANSCRIPT-START"), "the head is kept");
+        assert!(text.contains("TRANSCRIPT-END"), "the tail is kept");
+        // Elision touches only the summarizer's request copy.
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(thread.messages, original);
+        });
+        model.send_completion_stream_text_chunk(request, "Transcript summarized.");
+        model.send_completion_stream_event(
+            request,
+            LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
+                input_tokens: 11,
+                output_tokens: 3,
+                ..Default::default()
+            }),
+        );
+        model.end_completion_stream(request);
+        cx.run_until_parked();
+        assert!(model.pending_completions().is_empty());
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(&thread.messages[..original.len()], &original);
+            assert!(matches!(thread.messages.last().map(|m| &**m), Some(Message::Compaction(CompactionInfo::Summary(summary))) if summary.as_ref() == "Transcript summarized."));
+        });
     }
 
     #[test]

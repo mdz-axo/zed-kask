@@ -2779,6 +2779,14 @@ fn main() {
             false,
             cx,
         );
+        // zed-kask: raise the agent panel's idle-thread retention cap (upstream
+        // default 5) via upstream's GPUI-global override point. Kask workflows
+        // switch between many long-lived agent threads; every switch past the
+        // cap re-loads the thread from the DB and replays every entry on the
+        // foreground (measured 635 ms for a 963-entry thread), which the user
+        // experiences as a UI freeze on thread switch. Running threads are
+        // retained regardless of this cap; it only bounds idle eviction.
+        cx.set_global(agent_ui::MaxIdleRetainedThreads(16));
         // Wire the worktree spawner when an AgentPanel is created. The
         // spawner is process-global (Mutex-based, re-settable) so the IPC
         // server's GPUI-side task can read it when a `CreateWorktreeThread`
