@@ -60,6 +60,28 @@ Popper, *The Logic of Scientific Discovery* (1959); Platt, "Strong Inference", *
 
 To render a template, call the `render_template` tool with the template ref (e.g., `falsifiability/falsifiability-admit`) and a context object with the required variables.
 
+Template context variables (from each template's [inference] contract):
+- `falsifiability-admit.j2`: `target`, `domain`, `context`
+- `falsifiability-hypothesize.j2`: `admitted_target`, `domain`, `context`
+- `falsifiability-counterfactual.j2`: `hypotheses`, `admitted_target`, `domain`
+- `falsifiability-discriminate.j2`: `hypotheses`, `counterfactuals`, `domain`
+- `falsifiability-eliminate.j2`: `hypotheses`, `discriminating_tests`, `observations`, `prior_eliminated`
+
+## Regression case
+
+Run the verdict form through `lisp_eval` across its six branches: no
+observations → `nothing_eliminated`; all eliminated → `none_corroborated`;
+any survived-by-default present → `untested_remainder` (the load-bearing
+precedence — one corroborated plus one untested still reports
+`untested_remainder`, never `one_corroborated_survivor`); observations but
+zero eliminated → `nothing_eliminated`; exactly one corroborated with all
+alternatives eliminated → `one_corroborated_survivor`; two or more tested
+survivors → `multiple_corroborated`. Run the materiality guard both ways:
+all conditions met with no new test available and a metric delta under
+0.02 → true (force convergence — the remainder is irreducible); the same
+env with `new_test_available` true → false (a test exists; iteration is
+not done). All branch receipts executed through the live tool 2026-09-29.
+
 ## Composition
 
 This skill is designed as a **delegation target**, mirroring the architectural

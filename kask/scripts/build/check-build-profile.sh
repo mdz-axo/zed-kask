@@ -105,6 +105,14 @@ for sccache_consumer in "$ROOT/script/setup-sccache" "$ROOT/script/clippy" "$INS
     fi
 done
 
+# 8. The zed crate's DEFAULT features must include mimalloc. The install.sh
+# flag alone (check 2b) was bypassed by a manual `cargo build --release -p
+# zed` + copy (2026-09-29: a glibc binary landed in ~/.local/bin and the
+# arena ratchet restarted). The default lives in the manifest so every
+# build path — scripted or manual — resolves the allocator.
+grep -A8 '^\[features\]' "$ROOT/crates/zed/Cargo.toml" | grep -q 'default = \["mimalloc"\]' \
+    || fail "zed crate lost default = [\"mimalloc\"] — manual builds fall back to glibc malloc and RSS ratchets (2026-09-29 bypass finding)"
+
 # Exercise the wrapper without Cargo: profile selection must not silently
 # trigger a release dependency rebuild or weaken the lint coverage.
 python3 - "$ROOT/script/clippy" <<'PY'
