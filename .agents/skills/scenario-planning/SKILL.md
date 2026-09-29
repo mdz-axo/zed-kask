@@ -23,7 +23,7 @@ this skill is the operating procedure for that pipeline.
 - **Initial condition (T1):** the `scenario_triage` classification, the FramingDocument, and — when prior projects exist — `scenario_calibration` (resolved count, Brier, bias) passed as `prior_calibration`; on a first run it is null.
 - **Target condition (T2):** the Convergence gate below passes and the Chermack assessment is reported.
 
-**D/P labelling.** Every `scenario_*` tool call is D (the server is the oracle: it rejects bad probabilities, conditional lengths and cycles, and computes marginals, Bayes, synthesis and Brier). Framing answers are the operator's (human decision). Brainstorm events, conditionals, forces and narratives are P, critiqued by the separate `scenario-quality-gate` render, `scenario_cross_validate` (divergence > 0.15 → `grill-me`), and, at resolution, Brier.
+**D/P labelling.** Every `scenario_*` tool call is D (the server is the oracle: it rejects bad probabilities, conditional lengths and cycles, and computes marginals, Bayes, synthesis and Brier). Framing answers are the operator's (human decision). Brainstorm events, conditionals, forces and narratives are P, critiqued by the separate `scenario-quality-gate` render (scenarios), `scenario_cross_validate` (divergence > 0.15 → `grill-me`, probability estimates), and, at resolution, Brier (events). Force selection is critiqued by `driving-forces.j2`'s internal independence rule plus the gate's axis-span criterion.
 
 ## When to Use
 
@@ -90,9 +90,9 @@ quantified backbone.
    gate revises the narratives its fix notes name and re-runs once (max 2
    cycles); a second failure delivers the scenarios with the fix notes shown.
 9. Render `scenario-planning/implications-indicators` for robust and
-   contingent strategies and observable early-warning indicators. Carry the
-   indicator count into Phase 5's `scenario_assess`
-   (`has_early_warning_indicators`).
+   contingent strategies and observable early-warning indicators. Carry
+   whether indicators were defined into Phase 5's `scenario_assess`
+   (`has_early_warning_indicators`, a boolean).
 
 ### Phase 3 — Quantify and update (Tetlock)
 
@@ -103,8 +103,11 @@ quantified backbone.
    probability it returns.
 11. On new evidence for a single event, call `scenario_update` (Bayes)
    and then `scenario_propagate` with the full event list and the
-   event's new prior to recompute descendants and the joint. The
-   propagation journal is the audit record — report the deltas.
+   event's new prior to recompute descendants and the joint. Both take
+   a `forecast_id` — mint one project-wide `forecast_id` at first use
+   and reuse it for every update, score and calibration call (the
+   journal is keyed by it). The propagation journal is the audit
+   record — report the deltas.
 12. When multiple independent perspectives exist, collect them and call
    `scenario_synthesize` (dragonfly-eye, inverse-Brier weighting).
 13. Call `scenario_cross_validate` comparing your estimate against
@@ -121,7 +124,9 @@ quantified backbone.
     journal — persistence happens here, not at build time. Report the
     Brier score and its interpretation.
 15. Call `scenario_calibration` to compute the calibration curve over
-    resolved forecasts. Report bias direction (too high / too low).
+    resolved forecasts. Report bias direction (too high / too low);
+    below 10 resolved forecasts, say the curve is thin — the server
+    itself recommends at least 10.
 
 ### Phase 5 — Assess (Chermack)
 
@@ -133,13 +138,28 @@ quantified backbone.
 ### Convergence
 
 17. Gate — call `lisp_eval` with:
-    - form: `(and (> resolved_forecasts 0) (eq unresolved_critical 0))`
+    - form: `(and (> resolved_forecasts 0) (= unresolved_critical 0))`
     - env: `{ "resolved_forecasts": <count from scenario_score>,
               "unresolved_critical": <events past deadline without outcomes> }`
     A project is complete when every event with a passed deadline has a
     recorded outcome and the assessment is reported. Calibration signal
     is only claimed at ≥10 resolved forecasts — below that, say the
     curve is thin.
+
+## Regression case
+
+Render `scenario-planning/scenario-quality-gate` with a FOUR-scenario
+divergent set (one per quadrant — the exactly-four threshold is part of
+what the gate enforces; it must score divergence, consistency and
+coverage) and with a near-duplicate pair (the divergence score must fall
+and the parametric-variation flag must fire). Run the Convergence gate
+form through `lisp_eval` three ways: `{resolved_forecasts: 12,
+unresolved_critical: 0}` passes; `{resolved_forecasts: 12,
+unresolved_critical: 0.0}` (a float zero — the binding that broke the
+former type-strict `eq` form) must ALSO pass — this is the pin for the
+`=` fix; and a nonzero `unresolved_critical` fails. The `scenario_*`
+MCP seams need live server state; they are a recorded scope boundary, not
+run here.
 
 ## Registry Templates
 
@@ -168,8 +188,9 @@ To render a template, call `render_template` with the ref (e.g. `scenario-planni
 - Probabilities outside [0,1], conditionals whose length is not
   2^parents, and cycles are rejected by the server — fix the input,
   never work around the rejection.
-- Withhold is honest: if a market-derived base rate is low-reliability,
-  the bridge withholds it. Report withheld inputs as unknowns.
+- Withhold is honest: a market-derived base rate from a low-confidence
+  `market_match` is an unknown, not a base rate. Report withheld
+  inputs as unknowns.
 - If any MCP tool call fails, call `curator_report_skill_use_issue`
   with skill_name "scenario-planning", the tool name, and the error;
   continue with the best available information.
