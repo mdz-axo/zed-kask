@@ -1,0 +1,225 @@
+# Compaction Pipeline Specification
+
+Status: ratified 2026-09-29 (operator direction: the deterministic
+pre-screening stage must do real work — "use basic logic to create
+deterministic steps to clean up… the deterministic linguistic capabilities
+are underutilized"). Supersedes the `ThreadCondenser` manual-precompression
+hook (D8, `46f9c476a2`), which measurably shrank nothing on real coding
+threads: the incident thread's manual compaction request carried 3,187,749
+of the turn's 3,247,298 text-input tokens (a 1.8% reduction), because every
+deterministic policy exempted exactly the content a coding thread is made
+of (protected code-reading tools, JSON, error results, the latest
+exchange), and automatic compaction skipped the deterministic stage
+entirely.
+
+## Purpose
+
+Compaction replaces a thread's history with an LLM-written summary so the
+thread can continue inside the model's context window. The pipeline's job
+is to make that rescue **always succeed** (any history size) and **cheap**
+(the deterministic stage, not the LLM, removes the bulk). After a
+successful compaction, subsequent requests carry the summary instead of
+the history — this is what accelerates everything downstream.
+
+## Pipeline
+
+```mermaid
+flowchart TD
+    A[Compaction requested<br/>manual or automatic] --> B[Build request:<br/>system prefix + history + summarization instruction]
+    B --> C[Calibrate byte budget<br/>capacity x last-reported-tokens ratio]
+    C --> D[Deterministic pre-shrink<br/>on the request COPY only]
+    D --> D1[Pass 1: run-length collapse<br/>3+ identical adjacent lines -> 1 + count]
+    D1 --> D2[Pass 2: head+tail windowing<br/>any tool-result text over cap -> head + marker + tail]
+    D2 --> E{Shrunk history<br/>fits budget?}
+    E -->|yes| F[Two-half plan<br/>ratified split, 2 concurrent calls]
+    E -->|no, splittable| G[Balanced N segments<br/>batches of 8, each fits budget]
+    E -->|no, indivisible| H[Last-resort elision<br/>whole history copy to budget]
+    F --> I[Summaries]
+    G --> I
+    H --> J[Single summary call]
+    I --> K[Merge call:<br/>chronological, preserves later corrections]
+    K --> L[Summary inserted into thread]
+    J --> L
+    L --> M[Stored history NEVER modified<br/>markers name what was elided]
+```
+
+## Stage specification
+
+### Stage 0 — Request construction (native, `thread.rs`)
+
+`build_compaction_request` renders the system prefix, the history, and
+`COMPACTION_PROMPT` (`crates/agent_settings/src/prompts/compaction_prompt.txt`).
+No tools are attached. `thinking_allowed` follows the compaction model's
+`supports_thinking` (D38).
+
+### Stage 1 — Budget calibration (`kask_compaction` §2)
+
+- Input capacity: `compaction_input_capacity(max_input_tokens,
+  max_total_tokens, max_output_tokens)` of the compaction model.
+- Bytes-per-token: the current history's model-visible bytes over the last
+  completed request's reported input tokens (cache reads included) — the
+  provider's own count of roughly the same content. Trusted only within
+  **[1.0, 4.0] bytes/token**; outside that window the denominator is stale
+  (e.g. a thread rescued after growing past its window) and the measured
+  fallback **2.0** applies (live zed-kask tool output measured 2.0; prose
+  runs ~4).
+- Budget: `capacity x ratio x 0.85` (safety factor), minus the measured
+  per-request overhead (system prefix + instruction + segment-context
+  allowance).
+- Property: the ratio cancels out of the fit decision — a history is
+  segmented exactly when its token count exceeds ~85% of capacity,
+  independent of content density. The asymmetry that picks the dense end
+  for the fallback: an over-large budget produces a request the provider
+  rejects (the failure this pipeline exists to prevent); an over-small
+  budget only adds concurrent segments (cheap wall time).
+- A capacity below `MIN_COMPACTION_CONTEXT_WINDOW` (80,000 tokens) is not
+  a usable budget: no shrink, legacy two-half split, no fit guarantee.
+
+### Stage 2 — Deterministic pre-shrink (`kask_compaction` §1)
+
+Runs on the **request copy only** — the stored thread history is never
+modified. Two passes, in order, over every tool-result text between the
+system prefix and the instruction:
+
+| Pass | Transform | Policy | Marker |
+|------|-----------|--------|--------|
+| 1. Run-length collapse | 3+ identical adjacent non-blank lines → one line + exact count | threshold 3; blank runs and unique lines verbatim | `[preceding line repeated N more times]` |
+| 2. Head+tail windowing | text over the per-result cap → head half + marker + tail half | cap = `clamp(budget/32, 8 KiB, 64 KiB)`; **no exemptions** — tool name, JSON shape, error state, and position do not change the policy | `[… compaction elided N bytes to fit the context budget; the full text remains in the thread history …]` |
+
+Why windowing and not the condenser's line-selection algorithms: the
+flashrank-style mid-content `...` elision corrupts structured output (the
+reason `NO_COMPRESS_TOOLS` exists for ingestion), while head+tail
+windowing cannot corrupt structure — it is the bounded-display idiom, and
+the marker states exactly what was removed and where the full text
+remains. The summarizer needs the gist of a 500-line `read_file`, not
+every line.
+
+Why no exemptions: the previous policy exempted protected tools, JSON,
+errors, and the latest exchange — and thereby exempted ~everything a
+coding thread contains, which is why it shrank 1.8% on the incident
+thread. On a copy with honest markers, uniform windowing is safe; the
+stored original is the ground truth.
+
+### Stage 3 — Planning (`kask_compaction` §3–§5)
+
+Against the **shrunken** layout, at safe boundaries only (a tool call is
+never separated from its result; no outstanding tool use at a cut):
+
+- Fits budget → the ratified **two-half** split (byte-midpoint cut).
+- Over budget, splittable → **balanced N segments**: with
+  `n = ceil(remaining/budget)` segments left, a segment closes at the
+  first safe boundary past `remaining/n` bytes, never past budget — no
+  single request is near-window when boundaries allow a finer split.
+- Over budget, indivisible → **last-resort elision** of the whole history
+  copy to budget (the same head+tail primitive).
+
+### Stage 4 — Dispatch and merge (native lifecycle, `thread.rs`)
+
+Segments summarize concurrently in batches of ≤ 8
+(`MAX_CONCURRENT_SEGMENT_SUMMARIES`); summaries merge chronologically
+through one merge request regardless of completion order. Per-call
+high-water usage accounting prevents concurrent streams from being
+conflated. Truncation (`StopReason::MaxTokens`) drains final usage but
+rejects the summary; empty/failed/cancelled phases never commit a marker.
+
+## Invariants
+
+1. The stored thread history is never modified by planning, shrinking, or
+   elision — every transform applies to a request copy.
+2. Every elision carries an in-band marker naming the elided byte count
+   and where the full text remains.
+3. A tool call is never separated from its result.
+4. Summaries merge chronologically, preserving later corrections and
+   unresolved conflicts (the merge instruction).
+5. Failure, cancellation, or truncation at any phase commits nothing.
+6. Below the 80K-token compaction floor, behavior is the documented
+   legacy two-half split (bytes balance, no token-fit guarantee).
+
+## Observability
+
+`stream_compaction` logs the shrink outcome when it reduced anything:
+
+```
+Compaction deterministic pre-shrink: 6_412_331 -> 1_204_882 bytes (81% reduction; 23 results windowed, 4 repeat runs collapsed)
+```
+
+A near-zero reduction on a large history is a policy smell an operator
+can see directly — the failure mode that hid the previous no-op stage.
+
+## Failure modes
+
+| Mode | Behavior |
+|------|----------|
+| No usable budget (capacity < 80K tokens) | Legacy two-half split; may exceed the provider limit (documented) |
+| Stale calibration denominator | Ratio outside trust window → discarded → 2.0 fallback |
+| Content-mix drift after calibration | 0.85 safety factor absorbs it; a segment 400 would surface as a compaction error |
+| Segment cannot fit even fully elided | Typed error, surfaced; compaction fails without committing |
+| Indivisible history | Single elided call (last resort) |
+
+## Reference models
+
+The pipeline is a composition of published techniques; each stage names
+its analytical basis:
+
+- **Run-length encoding (RLE)** — the adjacent-repeat collapse is RLE over
+  lines: a run of identical symbols becomes one symbol plus a count. The
+  count marker preserves the exact repetition magnitude, unlike lossy
+  deduplication.
+- **Head/tail windowing (bounded-display truncation)** — the per-result
+  cap is the standard `head`/`tail` composition used for bounded display
+  of bulk text (logs, streams). Chosen over mid-content extractive
+  selection because it cannot corrupt structure; the marker carries the
+  provenance.
+- **Extractive-before-abstractive staging** — the deterministic passes are
+  lossy-extractive (they select what the summarizer will see); the LLM
+  pass is abstractive (it writes the summary). The staging principle —
+  cheap deterministic selection before expensive semantic compression —
+  follows the classic extractive-summarization line (Luhn, 1958, "The
+  Automatic Creation of Literature Abstracts"), with windowing replacing
+  word-frequency saliency because the content is structured, not prose.
+- **Map-reduce hierarchical summarization** — segments summarize
+  independently (map) and merge chronologically (reduce): the
+  divide-and-conquer summarization pattern for documents exceeding a
+  model's window (the map-reduce computation pattern: Dean & Ghemawat,
+  2004; hierarchical/recursive summarization as used by LLM chaining
+  frameworks for long documents).
+- **Balanced partitioning / LPT scheduling** — balanced segment packing
+  minimizes the largest request (wall time is bounded by the largest
+  concurrent call), in the spirit of list-scheduling bounds for
+  multiprocessor scheduling (Graham's LPT analysis).
+- **Empirical ratio calibration** — the bytes-per-token ratio is fitted
+  from the provider's own usage reports rather than assumed, with a
+  trust window to reject stale measurements: constant-fitting against
+  the authoritative oracle (the provider's tokenizer) instead of a
+  guessed constant.
+
+Internal references: `DIVERGENCE.md` D8 (the seam record and its
+supersession history), `MIN_COMPACTION_CONTEXT_WINDOW` (the native
+auto-compaction floor), the upstream Zed compaction lifecycle
+(`stream_compaction` keeps streaming, usage accounting, cancellation,
+and summary insertion native), and `hkask-condenser` (the ingestion-time
+compressor — a separate consumer with its own protected-tools policy,
+`NO_COMPRESS_TOOLS`; it no longer participates in compaction).
+
+## Pins
+
+- `kask_compaction.rs` planner suite: `pre_shrink_windows_oversized_results_and_keeps_small_ones`,
+  `pre_shrink_collapses_adjacent_repeats_with_counts`,
+  `pre_shrink_has_no_exemptions_on_the_summarizer_copy`,
+  `calibration_decides_segmentation_in_tokens_not_bytes`,
+  `below_floor_capacity_keeps_legacy_two_half_plan`,
+  `replay_only_raw_output_does_not_distort_planning`,
+  `two_half_plan_balances_bytes_and_keeps_indivisible_history_single_pass`,
+  `sub_cap_over_budget_history_plans_budget_fitting_segments`,
+  `oversized_tool_result_is_windowed_not_split`,
+  `oversized_indivisible_prose_elides_for_summarizer_only`,
+  `balanced_packing_keeps_the_largest_segment_small`,
+  `merge_request_lists_summaries_in_chronological_order`.
+- `thread.rs` integration (real `Thread::compact` path):
+  `test_compaction_pre_shrinks_oversized_tool_results`,
+  `test_segmented_compaction_over_budget_history`,
+  `test_oversized_indivisible_history_compacts_via_elision`,
+  `test_two_half_compaction_runs_concurrently_then_merges_in_order`,
+  `test_two_half_compaction_failure_or_cancellation_saves_nothing`,
+  `test_manual_compact_forces_summary` (now also proves compaction no
+  longer consults the condenser).

@@ -81,14 +81,16 @@ a guarantee that a provider token limit will be met.
 
 Only manual compaction invokes Kask precompression. Automatic compaction skips
 the hook. After preprocessing, the compaction path plans against the compaction
-model's input capacity (`kask_compaction.rs::plan_compaction`): a fitting
-splittable history splits into two chronological halves; an over-budget
-history packs into budget-fitting segments summarized concurrently (batches
-of at most 8) and merged chronologically; an indivisible history larger than
-the budget is head+tail elided on the summarizer's request copy only — the
-stored thread history is never modified. Cancellation, streaming, usage
-accounting, and summary persistence remain owned by the native thread
-lifecycle.
+model's input capacity, calibrated per thread from the last completed
+request's reported input tokens (`kask_compaction.rs::plan_compaction`): a
+fitting splittable history splits into two chronological halves; an
+over-budget history packs into balanced budget-fitting segments (each closing
+at the first safe boundary past an even share of the remainder, never past
+the budget) summarized concurrently in batches of at most 8 and merged
+chronologically; an indivisible history larger than the budget is head+tail
+elided on the summarizer's request copy only — the stored thread history is
+never modified. Cancellation, streaming, usage accounting, and summary
+persistence remain owned by the native thread lifecycle.
 
 ## Protected source-oriented tools
 

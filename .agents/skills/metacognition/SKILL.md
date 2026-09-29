@@ -18,7 +18,7 @@ arrives only after the operator resolves the recorded prediction.
 - Improvement Kata — Rother, *Toyota Kata* (2010); `onto_anchor` → derived `improvement_kata`.
 - PDCA — Shewhart (1939), Deming; `onto_anchor` → derived `pdca_cycle`.
 - Brier score — Brier (1950); `onto_anchor` → derived `brier_score`.
-- Metacognition — David Dunning (Kruger & Dunning 1999; Dunning 2011); `onto_anchor` → derived `metacognition` (operator ruling 2026-09-25). Dunning's double curse is why this skill never grades its own prediction: the knowledge needed to close the gap is the knowledge needed to see it, so the check comes from outside the self-assessment — the operator's `kanban_goal_score` and its Brier score. Sources: the john-brooks replica corpus ("The Trouble of Not Knowing What You Don't Know") and the Dunning talks in the curator's `dunning-video-catalog`.
+- Metacognition — David Dunning (Kruger & Dunning 1999; Dunning 2011); `onto_anchor` → derived `metacognition` (operator ruling 2026-09-25). Dunning's double curse is why this skill never grades its own prediction: the knowledge needed to close the gap is the knowledge needed to see it, so the check comes from outside the self-assessment — the operator's `kanban_goal_score` and its Brier score. Sources: the capabilities-reasoner replica corpus ("The Trouble of Not Knowing What You Don't Know") and the Dunning talks in the curator's `dunning-video-catalog`.
 
 ## D/P labelling
 

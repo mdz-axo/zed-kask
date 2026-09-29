@@ -1,19 +1,17 @@
-//! Thread condenser — ingestion compression and manual-compaction precompression
-//! over the existing local algorithms (D8).
+//! Thread condenser — ingestion compression over the existing local
+//! algorithms (D8).
 //!
-//! `BridgeThreadCondenser` delegates to `CondenserEngine`. Ingestion compression
-//! honors `auto_compress_tool_results`; explicit manual precompression does not.
-//! Manual precompression changes only eligible older tool-result text in the
-//! summarizer's request copy. The existing native LLM still produces the summary.
-//! The composition root installs the hook via `agent::set_thread_condenser`.
+//! `BridgeThreadCondenser` delegates to `CondenserEngine` for tool-result
+//! compression at ingestion (`run_tool`), honoring `auto_compress_tool_results`.
+//! Compaction planning no longer routes through this bridge: the
+//! deterministic pre-shrink (run-length collapse + head+tail windowing) is
+//! owned by `kask_compaction` and runs on the summarizer's request copy for
+//! both manual and automatic compaction. The composition root installs the
+//! hook via `agent::set_thread_condenser`.
 
 use agent::ThreadCondenser;
-use anyhow::{Result, anyhow};
 use hkask_condenser::engine::CondenserEngine;
 use hkask_condenser::types::Profile;
-use language_model::{
-    LanguageModelRequestMessage, LanguageModelToolResultContent, MessageContent, Role,
-};
 use std::sync::Mutex;
 
 /// Bridge thread condenser — wraps `CondenserEngine` for use in zed's agent threads.
@@ -36,40 +34,6 @@ impl BridgeThreadCondenser {
             engine: Mutex::new(engine),
             auto_compress,
         }
-    }
-}
-
-// Collapse only adjacent identical nonempty lines: unlike semantic deduplication,
-// this preserves ordering and the exact repetition count without guessing intent.
-fn collapse_repeated_lines(input: &str) -> String {
-    let mut output = String::with_capacity(input.len());
-    let mut collapsed = false;
-    let mut lines = input.lines().peekable();
-    while let Some(line) = lines.next() {
-        let mut count = 1usize;
-        while lines.peek() == Some(&line) {
-            lines.next();
-            count += 1;
-        }
-        output.push_str(line);
-        output.push('\n');
-        if count >= 3 && !line.trim().is_empty() {
-            collapsed = true;
-            output.push_str(&format!(
-                "[preceding line repeated {} more times]\n",
-                count - 1
-            ));
-        } else {
-            for _ in 1..count {
-                output.push_str(line);
-                output.push('\n');
-            }
-        }
-    }
-    if collapsed && output.len() < input.len() {
-        output
-    } else {
-        input.to_string()
     }
 }
 
@@ -105,228 +69,11 @@ impl ThreadCondenser for BridgeThreadCondenser {
 
         result.content
     }
-
-    fn precompress_history(
-        &self,
-        messages: &mut [LanguageModelRequestMessage],
-        protected_tools: &[&str],
-    ) -> Result<()> {
-        let protected_start = messages
-            .iter()
-            .rposition(|message| {
-                message.role == Role::User
-                    && message
-                        .content
-                        .iter()
-                        .any(|part| !matches!(part, MessageContent::ToolResult(_)))
-            })
-            .unwrap_or(0);
-        let mut engine = self
-            .engine
-            .lock()
-            .map_err(|error| anyhow!("Kask precompression unavailable: {error}"))?;
-        for message in messages.iter_mut().take(protected_start) {
-            for part in &mut message.content {
-                let MessageContent::ToolResult(result) = part else {
-                    continue;
-                };
-                if result.is_error || protected_tools.contains(&result.tool_name.as_ref()) {
-                    continue;
-                }
-                for part in &mut result.content {
-                    let LanguageModelToolResultContent::Text(text) = part else {
-                        continue;
-                    };
-                    // JSON must remain parseable, not become a set of disconnected lines.
-                    if serde_json::from_str::<serde_json::Value>(text).is_ok() {
-                        continue;
-                    }
-                    let deduplicated = collapse_repeated_lines(text);
-                    let has_repeats = deduplicated.len() < text.len();
-                    if has_repeats
-                        && text
-                            .lines()
-                            .next()
-                            .is_some_and(|first| text.lines().all(|line| line == first))
-                    {
-                        let excerpt = format!(
-                            "[Kask exact-repeat excerpt; full tool output remains in the original thread]\n{deduplicated}"
-                        );
-                        *text = if excerpt.len() < text.len() {
-                            excerpt.into()
-                        } else {
-                            deduplicated.into()
-                        };
-                        continue;
-                    }
-                    let compressed = engine.compress(&result.tool_name, &deduplicated, None);
-                    if !compressed.content.trim().is_empty() {
-                        let excerpt = format!(
-                            "[Kask {} excerpt; full tool output remains in the original thread]\n{}",
-                            compressed.algorithm, compressed.content
-                        );
-                        if excerpt.len() < deduplicated.len() {
-                            *text = excerpt.into();
-                            continue;
-                        }
-                    }
-                    if has_repeats {
-                        *text = deduplicated.into();
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn exact_repeat_pass_preserves_unique_lines_and_counts() {
-        let source = "progress: compiling the same module again\n".repeat(3);
-        let compact = collapse_repeated_lines(&source);
-        assert_eq!(
-            compact,
-            "progress: compiling the same module again\n[preceding line repeated 2 more times]\n"
-        );
-        assert_eq!(collapse_repeated_lines("one\ntwo\n"), "one\ntwo\n");
-        assert_eq!(collapse_repeated_lines("one\ntwo\n\n"), "one\ntwo\n\n");
-        assert_eq!(
-            collapse_repeated_lines("progress\nprogress\nprogress\n"),
-            "progress\nprogress\nprogress\n"
-        );
-    }
-
-    #[test]
-    fn small_repeat_does_not_skip_compression_of_large_unique_remainder() -> Result<()> {
-        use language_model::LanguageModelToolResult;
-
-        let repeated = "build progress: a long but repeated status line\n".repeat(3);
-        let unique = (0..400)
-            .map(|index| format!("build unit {index}: distinct diagnostic details\n"))
-            .collect::<String>();
-        let output = format!("{repeated}{unique}");
-        let tool_result = LanguageModelRequestMessage {
-            role: Role::User,
-            content: vec![MessageContent::ToolResult(LanguageModelToolResult {
-                tool_use_id: "build".into(),
-                tool_name: "terminal".into(),
-                is_error: false,
-                content: vec![output.clone().into()],
-                output: None,
-            })],
-            cache: false,
-            reasoning_details: None,
-        };
-        let mut messages = vec![
-            tool_result,
-            LanguageModelRequestMessage {
-                role: Role::User,
-                content: vec!["latest request".into()],
-                cache: false,
-                reasoning_details: None,
-            },
-        ];
-        BridgeThreadCondenser::new("normal", false).precompress_history(&mut messages, &[])?;
-        let compact = messages.first().expect("tool result").string_contents();
-        assert!(
-            compact.contains("rtk_style"),
-            "large unique remainder must still be compressed"
-        );
-        assert!(compact.len() < output.len() / 2);
-        Ok(())
-    }
-
-    /// Manual precompression reduces expendable output, not instructions or structure.
-    #[test]
-    fn history_precompression_preserves_protected_content_and_routes_algorithms() -> Result<()> {
-        use language_model::LanguageModelToolResult;
-        let user = |text: &str| LanguageModelRequestMessage {
-            role: Role::User,
-            content: vec![text.into()],
-            cache: false,
-            reasoning_details: None,
-        };
-        let tool = |name: &str, text: &str, is_error| LanguageModelRequestMessage {
-            role: Role::User,
-            content: vec![MessageContent::ToolResult(LanguageModelToolResult {
-                tool_use_id: name.into(),
-                tool_name: name.into(),
-                is_error,
-                content: vec![text.to_string().into()],
-                output: Some(serde_json::json!({"original": text})),
-            })],
-            cache: true,
-            reasoning_details: None,
-        };
-        let output = "repeated progress: build is processing a compilation unit\n".repeat(300);
-        let mut assistant = user("Decision: keep the public API unchanged.");
-        assistant.role = Role::Assistant;
-        assistant.reasoning_details = Some(std::sync::Arc::new(
-            serde_json::json!([{"signature": "keep"}]),
-        ));
-        let mut history = vec![
-            user("Never remove the authentication check."),
-            assistant,
-            tool("terminal", &output, false),
-            tool("conversation_history", &output, false),
-            tool("web_fetch", &output, false),
-            tool("read_file", &output, false),
-            tool(
-                "terminal",
-                &serde_json::to_string_pretty(&vec!["entry"; 300])?,
-                false,
-            ),
-            tool("terminal", &output, true),
-            tool("terminal", "short output", false),
-            user("Correction: preserve the error type too."),
-            tool("terminal", &output, false),
-        ];
-        let mut expected = history.clone();
-        let condenser = BridgeThreadCondenser::new("normal", false);
-        assert_eq!(condenser.compress_tool_result("terminal", &output), output);
-        condenser.precompress_history(&mut history, &["read_file"])?;
-        for index in [2, 3, 4] {
-            let changed = history
-                .get(index)
-                .expect("fixture message")
-                .string_contents();
-            assert!(changed.len() < output.len());
-            assert!(changed.contains("exact-repeat"));
-            assert!(changed.contains("repeated 299 more times"));
-            assert!(changed.contains("full tool output remains in the original thread"));
-            let Some(MessageContent::ToolResult(result)) =
-                expected.get_mut(index).and_then(|m| m.content.first_mut())
-            else {
-                panic!("expected tool result")
-            };
-            result.content = vec![changed.into()];
-        }
-        // Includes role/order, call IDs, cache flags, reasoning, debug output,
-        // valid JSON, failed results, all prose, and the latest exchange.
-        assert_eq!(history, expected);
-
-        // Non-repetitive output still reaches the original algorithm route.
-        let unique = (0..100)
-            .map(|index| format!("build unit {index}: distinct diagnostic details\n"))
-            .collect::<String>();
-        let mut distinct_history = vec![
-            user("old request"),
-            tool("terminal", &unique, false),
-            user("latest request"),
-        ];
-        condenser.precompress_history(&mut distinct_history, &[])?;
-        let distinct = distinct_history
-            .get(1)
-            .expect("tool result")
-            .string_contents();
-        assert!(distinct.contains("rtk_style"));
-        assert!(distinct.len() < unique.len());
-        Ok(())
-    }
 
     #[test]
     fn compress_tool_result_returns_compressed_text() {

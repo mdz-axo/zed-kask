@@ -793,10 +793,16 @@ this pass.
    missing-notify bug failed red before the one-line fix. Evidence:
    `9142f4f03e`.
 
-(Insertion as curator h_mems requires an episodic evidence citation the
-detached turn-ingestion path owns — the L1 deferral, live here. The
-operator can promote these in algedonic review; the register citation
-above is the durable record either way.)
+(Recording note, corrected per operator 2026-09-29: this audit ran in a
+**curator thread** — the turns themselves are the episodic record, chunked
+by the normal ingestion path (`curator:thread:{id}`), and the distillation
+pass extracts the durable lessons from those chunks through the same
+evidence + 0.5-floor invariants as any memory. No separate "promotion"
+step exists or is needed; the earlier algedonic-review framing here was
+wrong. A mid-thread semantic-search probe for this thread's chunks
+returned none — the instrument's own recorded limitation (unembedded
+chunks are invisible; `curator_memory_backfill_embeddings` exists for
+exactly that lag), not evidence of absence.)
 
 ### Acceptance criteria — final check
 
@@ -822,6 +828,12 @@ above is the durable record either way.)
 
 ## Change log
 
+- 2026-09-29 — v0.23.17 corrected the Phase 4 lesson-recording note per
+  operator: this audit ran in a curator thread — the turns are the
+  episodic record, the chunking path owns them, and distillation
+  extracts the lessons; no separate promotion step exists (the
+  algedonic-review framing was wrong). Pass 2 otherwise stands complete
+  as recorded at v0.23.16.
 - 2026-09-28 — v0.23.16 closed Phase 4 (pass-2 closure): prediction
   scoring (the family reading is the honest one — the class was
   anticipated, the count was mildly overconfident, the net-lines

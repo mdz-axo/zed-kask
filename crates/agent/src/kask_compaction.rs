@@ -1,21 +1,33 @@
-//! Kask-owned compaction planning (D8): split a compaction request into
-//! chronological segment-requests that each fit the compaction model's
-//! input budget, and recombine their summaries into one merge request.
-//! Pure request algebra — no `Thread`, no `App`, no model — so the planning
-//! is testable where the behavioral contract lives, in this crate. The
-//! streaming, per-call usage accounting, cancellation, and summary
-//! insertion stay native in `thread.rs` (`stream_compaction`), which keeps
-//! the upstream-shaped lifecycle in the upstream file and the fork's
-//! planning policy in this kask-owned one.
+//! Kask-owned compaction planning (D8): shrink a compaction request
+//! deterministically, then plan how the LLM summarizes what remains.
 //!
-//! Planning is budget-aware. With a usable input capacity (at least
-//! [`crate::thread::MIN_COMPACTION_CONTEXT_WINDOW`] tokens) the history is
-//! packed into segments whose model-visible bytes fit that capacity; a
-//! history that cannot be cut at a safe boundary (one exchange larger than
-//! the whole budget) is head+tail elided on the summarizer's request copy
-//! only — the stored thread history is never modified. Without a usable
-//! capacity the planner falls back to the two-half split, which balances
-//! bytes but does not certify token fit.
+//! The pipeline, in order:
+//!
+//! 1. **Deterministic pre-shrink** (§2) on the summarizer's *request copy*:
+//!    run-length collapse of repeated lines, then head+tail windowing of any
+//!    tool-result text over a per-result cap. No tool-name, JSON, error, or
+//!    positional exemptions — the stored thread history is never modified,
+//!    and every elision carries an in-band marker naming what was removed.
+//!    This is the stage that makes the rest cheap: coding threads are
+//!    dominated by large code-reading tool results that every previous
+//!    deterministic policy exempted.
+//! 2. **Budget calibration** (§3): the compaction model's input capacity,
+//!    translated to a per-thread byte budget via the provider's own last
+//!    reported token count.
+//! 3. **Planning** (§4–§5): a history that fits keeps the ratified two-half
+//!    split; an over-budget history packs into balanced segments; an
+//!    indivisible history is elided as a last resort.
+//!
+//! Pure request algebra — no `Thread`, no `App`, no model — so the pipeline
+//! is testable where the behavioral contract lives, in this crate. The
+//! streaming, per-call usage accounting, cancellation, and summary insertion
+//! stay native in `thread.rs` (`stream_compaction`), which keeps the
+//! upstream-shaped lifecycle in the upstream file and the fork's planning
+//! policy in this kask-owned one.
+//!
+//! The full specification — stages, policies, invariants, diagrams, and the
+//! reference models the pipeline is based on — lives in
+//! `kask/docs/architecture/compaction-pipeline-spec.md`.
 
 use std::ops::Range;
 use std::sync::Arc;
@@ -28,28 +40,7 @@ use language_model::{
     MessageContent, Role,
 };
 
-/// Conservative bytes-per-token used to turn the model's input capacity
-/// into a byte budget. The crate-wide convention estimates
-/// `tokens = bytes / 3`; inverting it over-estimates the token cost of
-/// planned segments, which is the safe direction for fitting.
-const BYTES_PER_TOKEN: usize = 3;
-
-/// Fraction of the estimated byte budget assigned to history content; the
-/// remainder absorbs estimation error and provider-side counting
-/// differences.
-const BUDGET_SAFETY_FACTOR: f64 = 0.85;
-
-/// Smallest head+tail (in bytes) kept when a text part is elided.
-const ELISION_FLOOR_BYTES: usize = 256;
-
-/// Byte allowance reserved for the per-segment context message when
-/// computing the per-request overhead.
-const SEGMENT_CONTEXT_OVERHEAD_BYTES: usize = 256;
-
-/// Byte allowance reserved for the elision marker inserted into an elided
-/// text part (the marker's elided-byte count has few enough digits that
-/// this always covers it).
-const ELISION_MARKER_ALLOWANCE: usize = 192;
+// ─────────────────────────────── Public API ───────────────────────────────
 
 /// How a compaction request is summarized.
 pub(crate) enum CompactionPlan {
@@ -63,17 +54,60 @@ pub(crate) enum CompactionPlan {
     Segments(Vec<LanguageModelRequest>),
 }
 
+/// What the deterministic pre-shrink did, for observability. A near-zero
+/// reduction on a large history is a policy smell the operator can see in
+/// the log line `stream_compaction` emits.
+pub(crate) struct ShrinkStats {
+    /// Model-visible history bytes before the pre-shrink.
+    pub(crate) original_bytes: usize,
+    /// Model-visible history bytes after the pre-shrink.
+    pub(crate) shrunk_bytes: usize,
+    /// Tool-result texts windowed head+tail to the per-result cap.
+    pub(crate) windowed_results: usize,
+    /// Runs of identical adjacent lines collapsed to one line + count.
+    pub(crate) collapsed_runs: usize,
+}
+
+impl ShrinkStats {
+    fn zero(total: usize) -> Self {
+        Self {
+            original_bytes: total,
+            shrunk_bytes: total,
+            windowed_results: 0,
+            collapsed_runs: 0,
+        }
+    }
+
+    pub(crate) fn reduction_pct(&self) -> f64 {
+        if self.original_bytes == 0 {
+            0.0
+        } else {
+            (1.0 - (self.shrunk_bytes as f64 / self.original_bytes as f64)) * 100.0
+        }
+    }
+}
+
+/// The result of planning one compaction: how to summarize, and what the
+/// deterministic stage did first.
+pub(crate) struct PlannedCompaction {
+    pub(crate) plan: CompactionPlan,
+    pub(crate) shrink: ShrinkStats,
+}
+
 /// Plan how to summarize `request`'s history under `input_capacity_tokens`
 /// (the compaction model's input capacity, output allowance already
-/// reserved). Histories that fit keep the ratified two-half split; larger
-/// histories are packed into budget-fitting segments; an indivisible
-/// history that exceeds the budget is elided on the summarizer's copy. A
-/// capacity below `MIN_COMPACTION_CONTEXT_WINDOW` is not a usable budget,
-/// so planning falls back to the two-half split.
+/// reserved), calibrated by `last_input_tokens` (the last completed
+/// request's reported input tokens, cache reads included — the provider's
+/// own count of roughly this same history). The deterministic pre-shrink
+/// runs first on the request copy; the plan is then made against the
+/// shrunken layout. A capacity below
+/// [`crate::thread::MIN_COMPACTION_CONTEXT_WINDOW`] is not a usable
+/// budget: no shrink runs and the legacy two-half split applies.
 pub(crate) fn plan_compaction(
     request: &LanguageModelRequest,
     input_capacity_tokens: u64,
-) -> Result<CompactionPlan> {
+    last_input_tokens: Option<u64>,
+) -> Result<PlannedCompaction> {
     let prefix_len = request
         .messages
         .iter()
@@ -81,45 +115,291 @@ pub(crate) fn plan_compaction(
         .count();
     let end = request.messages.len().saturating_sub(1); // final summarization instruction
     if prefix_len >= end {
-        return Ok(CompactionPlan::Single(request.clone()));
+        return Ok(PlannedCompaction {
+            plan: CompactionPlan::Single(request.clone()),
+            shrink: ShrinkStats::zero(0),
+        });
     }
     let instruction = request
         .messages
         .last()
         .context("Missing compaction instruction")?;
     let history = &request.messages[prefix_len..end];
+    let original_total = history_bytes(history)?;
     let layout = history_layout(history)?;
-    let total: usize = layout.sizes.iter().sum();
 
-    let history_budget = if input_capacity_tokens >= crate::thread::MIN_COMPACTION_CONTEXT_WINDOW {
-        usable_history_budget(request, prefix_len, instruction, input_capacity_tokens)?
-    } else {
-        None
+    let Some(budget) = (input_capacity_tokens >= crate::thread::MIN_COMPACTION_CONTEXT_WINDOW)
+        .then(|| {
+            usable_history_budget(
+                request,
+                prefix_len,
+                instruction,
+                input_capacity_tokens,
+                calibrated_bytes_per_token(original_total, last_input_tokens),
+            )
+        })
+        .transpose()?
+        .flatten()
+    else {
+        // No usable budget: legacy behavior — no shrink, no fit guarantee.
+        let plan = two_half_plan(request, &layout, prefix_len, instruction)
+            .map(|(earlier, later)| CompactionPlan::Segments(vec![earlier, later]))
+            .unwrap_or_else(|| CompactionPlan::Single(request.clone()));
+        return Ok(PlannedCompaction {
+            plan,
+            shrink: ShrinkStats::zero(original_total),
+        });
     };
 
-    let plan = match history_budget {
-        Some(budget) if layout.cuts.is_empty() && total > budget => {
-            // One unbreakable exchange larger than the budget: summarize it
-            // from an elided copy. The stored history is never modified.
-            let mut elided = request.clone();
-            elide_history_to_budget(&mut elided.messages[prefix_len..end], budget)?;
-            CompactionPlan::Single(elided)
-        }
-        Some(budget) if total > budget => CompactionPlan::Segments(segment_requests(
-            request,
+    let (mut shrunk, mut shrink) = pre_shrink(request, prefix_len, end, budget);
+    let shrunk_total = shrink.shrunk_bytes;
+    let layout = history_layout(&shrunk.messages[prefix_len..end])?;
+    let plan = if layout.cuts.is_empty() && shrunk_total > budget {
+        // Indivisible even after windowing (e.g. one prose message larger
+        // than the budget): last resort, elide the whole history copy.
+        elide_history_to_budget(&mut shrunk.messages[prefix_len..end], budget)?;
+        shrink.shrunk_bytes = history_bytes(&shrunk.messages[prefix_len..end])?;
+        CompactionPlan::Single(shrunk)
+    } else if shrunk_total > budget {
+        CompactionPlan::Segments(segment_requests(
+            &shrunk,
             &layout,
             prefix_len,
             instruction,
             budget,
-        )?),
-        // No usable budget, or the history fits: keep the ratified two-half
-        // split for splittable histories, single pass for the rest.
-        _ => two_half_plan(request, &layout, prefix_len, instruction)
+        )?)
+    } else {
+        // Fits after the shrink: the ratified two-half split for splittable
+        // histories, single pass for the rest.
+        two_half_plan(&shrunk, &layout, prefix_len, instruction)
             .map(|(earlier, later)| CompactionPlan::Segments(vec![earlier, later]))
-            .unwrap_or_else(|| CompactionPlan::Single(request.clone())),
+            .unwrap_or_else(|| CompactionPlan::Single(shrunk))
     };
-    Ok(plan)
+    Ok(PlannedCompaction { plan, shrink })
 }
+
+/// Build the final merge request from completed segment summaries, in
+/// chronological order. Consumes the base request, keeping its scalar
+/// fields and system prefix; the merge instruction preserves later
+/// corrections and unresolved conflicts.
+pub(crate) fn merge_request(
+    mut base: LanguageModelRequest,
+    summaries: &[String],
+) -> LanguageModelRequest {
+    let prefix_len = base
+        .messages
+        .iter()
+        .take_while(|message| message.role == Role::System)
+        .count();
+    base.messages.truncate(prefix_len);
+    let mut text = String::from(
+        "Merge these chronological summaries. Preserve later corrections and unresolved conflicts.",
+    );
+    for (index, summary) in summaries.iter().enumerate() {
+        text.push_str(&format!("\n\nSegment {}:\n{}", index + 1, summary));
+    }
+    base.messages.push(context_message(text));
+    base.messages
+        .push(context_message(COMPACTION_PROMPT.into()));
+    base
+}
+
+// ─────────────────────── §1 Deterministic pre-shrink ──────────────────────
+//
+// Two passes over tool-result text, in order, on the summarizer's request
+// copy only:
+//
+//   1. Run-length collapse: 3+ identical adjacent non-blank lines become one
+//      line plus an exact count marker (run-length encoding — the honest
+//      deterministic transform for repetition).
+//   2. Head+tail windowing: any remaining text over the per-result cap is
+//      cut to head+tail with an in-band marker naming the elided byte count
+//      (bounded-display truncation — the honest deterministic transform for
+//      bulk: it cannot corrupt structure the way mid-content ellipsis can).
+//
+// No exemptions: tool name, JSON shape, error state, and position in the
+// thread do not change the policy. The stored thread history is never
+// modified, and each marker states where the full text remains.
+
+/// The per-result window cap is a fraction of the history budget so no
+/// single tool result can dominate a summarization request.
+const RESULT_WINDOW_BUDGET_DIVISOR: usize = 32;
+const MIN_RESULT_WINDOW_BYTES: usize = 8 * 1024;
+const MAX_RESULT_WINDOW_BYTES: usize = 64 * 1024;
+
+/// Runs of fewer than this many identical adjacent lines are kept verbatim.
+const REPEAT_RUN_THRESHOLD: usize = 3;
+
+fn result_window_cap(budget: usize) -> usize {
+    (budget / RESULT_WINDOW_BUDGET_DIVISOR).clamp(MIN_RESULT_WINDOW_BYTES, MAX_RESULT_WINDOW_BYTES)
+}
+
+/// Apply both deterministic passes to every tool-result text between the
+/// system prefix and the summarization instruction. Returns the shrunk
+/// request copy and what the passes did.
+fn pre_shrink(
+    request: &LanguageModelRequest,
+    prefix_len: usize,
+    end: usize,
+    budget: usize,
+) -> (LanguageModelRequest, ShrinkStats) {
+    let cap = result_window_cap(budget);
+    let mut shrunk = request.clone();
+    let mut stats = ShrinkStats {
+        original_bytes: 0,
+        shrunk_bytes: 0,
+        windowed_results: 0,
+        collapsed_runs: 0,
+    };
+    for message in &mut shrunk.messages[prefix_len..end] {
+        for part in &mut message.content {
+            let MessageContent::ToolResult(result) = part else {
+                continue;
+            };
+            for content in &mut result.content {
+                let LanguageModelToolResultContent::Text(text) = content else {
+                    continue;
+                };
+                let original = text.to_string();
+                let (collapsed, runs) = collapse_repeated_lines(&original);
+                let mut current = collapsed;
+                stats.collapsed_runs += runs;
+                if current.len() > cap {
+                    let elided = current.len() - cap;
+                    current = elide_string(&current, cap, elided);
+                    stats.windowed_results += 1;
+                }
+                if current.len() != original.len() {
+                    *text = Arc::from(current);
+                }
+            }
+        }
+    }
+    // Sizing may fail only on malformed message content; the shrink passes
+    // themselves cannot. Fall back to the original measurement rather than
+    // dropping the compaction on a sizing error.
+    stats.original_bytes =
+        history_bytes(&request.messages[prefix_len..end]).unwrap_or(stats.original_bytes);
+    stats.shrunk_bytes =
+        history_bytes(&shrunk.messages[prefix_len..end]).unwrap_or(stats.original_bytes);
+    (shrunk, stats)
+}
+
+/// Collapse runs of `REPEAT_RUN_THRESHOLD`+ identical adjacent non-blank
+/// lines into one line plus an exact count marker. Ordering, unique lines,
+/// and blank runs are preserved verbatim. Returns the text and the number
+/// of runs collapsed. (Run-length encoding over lines; moved from the
+/// retired `BridgeThreadCondenser` precompression with identical marker
+/// semantics.)
+fn collapse_repeated_lines(input: &str) -> (String, usize) {
+    let mut output = String::with_capacity(input.len());
+    let mut collapsed_runs = 0usize;
+    let mut lines = input.lines().peekable();
+    while let Some(line) = lines.next() {
+        let mut count = 1usize;
+        while lines.peek() == Some(&line) {
+            lines.next();
+            count += 1;
+        }
+        if count >= REPEAT_RUN_THRESHOLD && !line.trim().is_empty() {
+            collapsed_runs += 1;
+            output.push_str(line);
+            output.push('\n');
+            output.push_str(&format!(
+                "[preceding line repeated {} more times]\n",
+                count - 1
+            ));
+        } else {
+            for _ in 0..count {
+                output.push_str(line);
+                output.push('\n');
+            }
+        }
+    }
+    if collapsed_runs > 0 && output.len() < input.len() {
+        (output, collapsed_runs)
+    } else {
+        (input.to_string(), 0)
+    }
+}
+
+// ─────────────────────── §2 Budget calibration ───────────────────────────
+
+/// Fallback bytes-per-token used when the thread has no reported usage to
+/// calibrate against, or the calibration is untrustworthy. Live zed-kask
+/// tool output measured ~2.0 bytes/token (D8: 160,157 bytes accepted as
+/// 80,119 input tokens); English prose runs ~4. The asymmetry that picks
+/// the dense end: an over-large budget produces a request the provider
+/// rejects (the failure this planner exists to prevent), while an
+/// over-small budget only adds concurrent segments — cheap wall time.
+const FALLBACK_BYTES_PER_TOKEN: f64 = 2.0;
+
+/// Trust window for the calibrated bytes-per-token ratio. Real content for
+/// this workload lives roughly in [1.5, 4.5] bytes/token; a ratio outside
+/// the window signals a stale denominator (the last completed request was
+/// much smaller than the current history, e.g. a thread rescued after
+/// growing past its window) rather than denser content, so it is discarded
+/// in favor of the fallback rather than clamped to a dangerous edge.
+const MIN_TRUSTED_BYTES_PER_TOKEN: f64 = 1.0;
+const MAX_TRUSTED_BYTES_PER_TOKEN: f64 = 4.0;
+
+/// Fraction of the estimated byte budget assigned to history content; the
+/// remainder absorbs estimation error and provider-side counting
+/// differences.
+const BUDGET_SAFETY_FACTOR: f64 = 0.85;
+
+/// Byte allowance reserved for the per-segment context message when
+/// computing the per-request overhead.
+const SEGMENT_CONTEXT_OVERHEAD_BYTES: usize = 256;
+
+/// Bytes-per-token for this thread's content, calibrated from the last
+/// completed request's reported input tokens: the same history that is
+/// about to be summarized, measured by the provider's own tokenizer. A
+/// fixed constant fails in both directions — too high and a planned segment
+/// exceeds the window and is rejected (token-dense content), too low and
+/// fitting histories are over-segmented into multi-call plans (byte-heavy
+/// content). Calibration removes both when the denominator is current:
+/// the ratio cancels out of the fit decision, so a history is segmented
+/// exactly when its token count exceeds ~85% of the input capacity. A
+/// ratio outside the trust window is a stale denominator, not denser
+/// content — it is discarded in favor of the fallback.
+fn calibrated_bytes_per_token(total_history_bytes: usize, last_input_tokens: Option<u64>) -> f64 {
+    last_input_tokens
+        .filter(|tokens| *tokens > 0)
+        .map(|tokens| total_history_bytes as f64 / tokens as f64)
+        .filter(|ratio| {
+            ratio.is_finite()
+                && *ratio >= MIN_TRUSTED_BYTES_PER_TOKEN
+                && *ratio <= MAX_TRUSTED_BYTES_PER_TOKEN
+        })
+        .unwrap_or(FALLBACK_BYTES_PER_TOKEN)
+}
+
+/// Per-request byte budget for history content: the model's input capacity
+/// translated to bytes at the calibrated ratio with a safety factor, minus
+/// the request's own system prefix, summarization instruction, and
+/// segment-context overhead. Returns `None` when nothing is left for
+/// history.
+fn usable_history_budget(
+    request: &LanguageModelRequest,
+    prefix_len: usize,
+    instruction: &LanguageModelRequestMessage,
+    input_capacity_tokens: u64,
+    bytes_per_token: f64,
+) -> Result<Option<usize>> {
+    let capacity_bytes = (input_capacity_tokens as f64 * bytes_per_token * BUDGET_SAFETY_FACTOR)
+        .floor()
+        .max(0.0) as usize;
+    let mut overhead = SEGMENT_CONTEXT_OVERHEAD_BYTES;
+    for message in &request.messages[..prefix_len] {
+        overhead = overhead.saturating_add(message_size(message)?);
+    }
+    overhead = overhead.saturating_add(message_size(instruction)?);
+    let budget = capacity_bytes.saturating_sub(overhead);
+    Ok((budget > 0).then_some(budget))
+}
+
+// ─────────────────────── §3 History layout ────────────────────────────────
 
 /// Byte sizes and safe segment boundaries for the history between the
 /// system prefix and the final summarization instruction.
@@ -129,10 +409,10 @@ struct HistoryLayout {
     /// result; it is not the text the model summarizes and is not sized.
     sizes: Vec<usize>,
     /// History indices after which a segment may end: no tool use is
-    /// outstanding and the boundary message completed an assistant
-    /// response or a tool exchange. Empty when the history cannot be
-    /// cleanly ordered or ends with an outstanding tool use — such
-    /// histories have no safe internal split.
+    /// outstanding and the boundary message completed an assistant response
+    /// or a tool exchange. Empty when the history cannot be cleanly ordered
+    /// or ends with an outstanding tool use — such histories have no safe
+    /// internal split.
     cuts: Vec<usize>,
 }
 
@@ -177,26 +457,7 @@ fn history_layout(history: &[LanguageModelRequestMessage]) -> Result<HistoryLayo
     Ok(HistoryLayout { sizes, cuts })
 }
 
-/// Per-request byte budget for history content: the model's input capacity
-/// translated to bytes with a safety factor, minus the request's own system
-/// prefix, summarization instruction, and segment-context overhead.
-/// Returns `None` when nothing is left for history.
-fn usable_history_budget(
-    request: &LanguageModelRequest,
-    prefix_len: usize,
-    instruction: &LanguageModelRequestMessage,
-    input_capacity_tokens: u64,
-) -> Result<Option<usize>> {
-    let capacity_bytes = (input_capacity_tokens as usize).saturating_mul(BYTES_PER_TOKEN);
-    let usable = (capacity_bytes as f64 * BUDGET_SAFETY_FACTOR).floor() as usize;
-    let mut overhead = SEGMENT_CONTEXT_OVERHEAD_BYTES;
-    for message in &request.messages[..prefix_len] {
-        overhead = overhead.saturating_add(message_size(message)?);
-    }
-    overhead = overhead.saturating_add(message_size(instruction)?);
-    let budget = usable.saturating_sub(overhead);
-    Ok((budget > 0).then_some(budget))
-}
+// ─────────────────────── §4 Planning ──────────────────────────────────────
 
 /// The ratified two-half plan: split at the safe boundary closest to the
 /// byte midpoint. Balances bytes; does not certify token fit.
@@ -227,9 +488,13 @@ fn two_half_plan(
 }
 
 /// Pack the history into chronological segments at safe boundaries so each
-/// segment's model-visible bytes fit `budget`; a segment that cannot be
-/// cut small enough (an exchange larger than the budget) is elided on its
-/// request copy.
+/// segment's model-visible bytes fit `budget`, balancing rather than
+/// greedily filling: with `n = ceil(remaining/budget)` segments left to
+/// place, a segment closes at the first safe boundary past `remaining/n`
+/// bytes (never past `budget`), so no single request is near-window when
+/// the boundaries allow a finer split. A segment that still cannot be cut
+/// within budget (an exchange larger than the budget) runs to its next safe
+/// boundary and is elided on its request copy.
 fn segment_requests(
     request: &LanguageModelRequest,
     layout: &HistoryLayout,
@@ -245,25 +510,52 @@ fn segment_requests(
         cumulative = cumulative.saturating_add(*size);
         prefix_sums.push(cumulative);
     }
+    let total = prefix_sums[history_len];
 
+    let is_cut = |index: usize| layout.cuts.binary_search(&index).is_ok();
     let mut ranges: Vec<Range<usize>> = Vec::new();
     let mut seg_start = 0usize;
-    let mut last_cut: Option<usize> = None;
-    for index in 0..history_len {
-        let current = prefix_sums[index].saturating_sub(prefix_sums[seg_start]);
-        if index > seg_start && current.saturating_add(layout.sizes[index]) > budget {
-            if let Some(cut) = last_cut.filter(|cut| *cut + 1 > seg_start) {
-                ranges.push(seg_start..cut + 1);
-                seg_start = cut + 1;
+    while seg_start < history_len {
+        let remaining = total.saturating_sub(prefix_sums[seg_start]);
+        if remaining <= budget {
+            ranges.push(seg_start..history_len);
+            break;
+        }
+        let segment_count = remaining.div_ceil(budget).max(1);
+        let target = remaining / segment_count; // ≤ budget by construction
+        let mut first_cut_any: Option<usize> = None;
+        let mut last_cut_within: Option<usize> = None;
+        let mut chosen: Option<usize> = None;
+        for index in seg_start..history_len {
+            if !is_cut(index) {
+                continue;
             }
-            // No safe boundary since this segment started: keep packing; the
-            // over-budget segment is elided on its request copy below.
+            if index + 1 >= history_len {
+                break; // a segment must leave at least one message behind
+            }
+            first_cut_any.get_or_insert(index);
+            let size = prefix_sums[index + 1].saturating_sub(prefix_sums[seg_start]);
+            if size > budget {
+                break; // later cuts only add bytes
+            }
+            last_cut_within = Some(index);
+            if size >= target {
+                chosen = Some(index);
+                break;
+            }
         }
-        if layout.cuts.binary_search(&index).is_ok() {
-            last_cut = Some(index);
-        }
+        // First boundary past the balance target within budget, else the
+        // last boundary within budget, else the next boundary at all (an
+        // over-budget segment, elided below), else the history end.
+        let end = chosen
+            .or(last_cut_within)
+            .or(first_cut_any)
+            .map(|cut| cut + 1)
+            .unwrap_or(history_len);
+        anyhow::ensure!(end > seg_start, "segment packing made no progress");
+        ranges.push(seg_start..end);
+        seg_start = end;
     }
-    ranges.push(seg_start..history_len);
 
     let count = ranges.len();
     let mut requests = Vec::with_capacity(count);
@@ -314,32 +606,6 @@ fn segment_request(
     segment
 }
 
-/// Build the final merge request from completed segment summaries, in
-/// chronological order. Consumes the base request, keeping its scalar
-/// fields and system prefix; the merge instruction preserves later
-/// corrections and unresolved conflicts.
-pub(crate) fn merge_request(
-    mut base: LanguageModelRequest,
-    summaries: &[String],
-) -> LanguageModelRequest {
-    let prefix_len = base
-        .messages
-        .iter()
-        .take_while(|message| message.role == Role::System)
-        .count();
-    base.messages.truncate(prefix_len);
-    let mut text = String::from(
-        "Merge these chronological summaries. Preserve later corrections and unresolved conflicts.",
-    );
-    for (index, summary) in summaries.iter().enumerate() {
-        text.push_str(&format!("\n\nSegment {}:\n{}", index + 1, summary));
-    }
-    base.messages.push(context_message(text));
-    base.messages
-        .push(context_message(COMPACTION_PROMPT.into()));
-    base
-}
-
 fn context_message(text: String) -> LanguageModelRequestMessage {
     LanguageModelRequestMessage {
         role: Role::User,
@@ -349,24 +615,15 @@ fn context_message(text: String) -> LanguageModelRequestMessage {
     }
 }
 
-/// Model-visible byte size of one message's content. The replay-only raw
-/// tool `output` may hold a second, uncompressed copy of a tool result; it
-/// is not the text the model summarizes, so only `content` is sized.
-fn message_size(message: &LanguageModelRequestMessage) -> Result<usize> {
-    message.content.iter().try_fold(0usize, |total, part| {
-        let size = match part {
-            MessageContent::ToolResult(result) => serde_json::to_vec(&result.content)?.len(),
-            _ => serde_json::to_vec(part)?.len(),
-        };
-        Ok::<_, anyhow::Error>(total.saturating_add(size))
-    })
-}
+// ─────────────────────── §5 Elision primitive ──────────────────────────────
 
-fn history_bytes(messages: &[LanguageModelRequestMessage]) -> Result<usize> {
-    messages.iter().try_fold(0usize, |total, message| {
-        message_size(message).map(|size| total.saturating_add(size))
-    })
-}
+/// Smallest head+tail (in bytes) kept when a text part is elided.
+const ELISION_FLOOR_BYTES: usize = 256;
+
+/// Byte allowance reserved for the elision marker inserted into an elided
+/// text part (the marker's elided-byte count has few enough digits that
+/// this always covers it).
+const ELISION_MARKER_ALLOWANCE: usize = 192;
 
 /// Head+tail elide the largest text parts of `messages` (the summarizer's
 /// copy of one segment) until its model-visible bytes fit `budget`.
@@ -489,6 +746,8 @@ fn replace_elidable_text(
 
 /// Keep the head and tail of `text` (roughly `keep_bytes` total) and mark
 /// the elided middle honestly. Cuts land on UTF-8 character boundaries.
+/// One primitive for both elision granularities: proactive per-result
+/// windowing (§1) and last-resort whole-segment elision.
 fn elide_string(text: &str, keep_bytes: usize, elided_bytes: usize) -> String {
     let head = floor_char_boundary(text, keep_bytes / 2);
     let tail = floor_char_boundary(text, keep_bytes - head);
@@ -498,6 +757,27 @@ fn elide_string(text: &str, keep_bytes: usize, elided_bytes: usize) -> String {
         &text[..head],
         &text[tail_start..],
     )
+}
+
+// ─────────────────────── §6 Sizing ───────────────────────────────────────
+
+/// Model-visible byte size of one message's content. The replay-only raw
+/// tool `output` may hold a second, uncompressed copy of a tool result; it
+/// is not the text the model summarizes, so only `content` is sized.
+fn message_size(message: &LanguageModelRequestMessage) -> Result<usize> {
+    message.content.iter().try_fold(0usize, |total, part| {
+        let size = match part {
+            MessageContent::ToolResult(result) => serde_json::to_vec(&result.content)?.len(),
+            _ => serde_json::to_vec(part)?.len(),
+        };
+        Ok::<_, anyhow::Error>(total.saturating_add(size))
+    })
+}
+
+fn history_bytes(messages: &[LanguageModelRequestMessage]) -> Result<usize> {
+    messages.iter().try_fold(0usize, |total, message| {
+        message_size(message).map(|size| total.saturating_add(size))
+    })
 }
 
 /// JSON-serialized length of a string, matching how `message_size` counts
@@ -523,12 +803,13 @@ fn ceil_char_boundary(text: &str, mut index: usize) -> usize {
     index
 }
 
+// ─────────────────────── §7 Tests ─────────────────────────────────────────
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use language_model::{
-        LanguageModelToolResult, LanguageModelToolResultContent, LanguageModelToolUse,
-        LanguageModelToolUseInput,
+        LanguageModelToolResult, LanguageModelToolUse, LanguageModelToolUseInput,
     };
 
     fn text_message(role: Role, text: &str) -> LanguageModelRequestMessage {
@@ -561,12 +842,21 @@ mod tests {
     }
 
     fn tool_result_message_with_text(id: &str, text: &str) -> LanguageModelRequestMessage {
+        tool_result_from(id, "terminal", text, false)
+    }
+
+    fn tool_result_from(
+        id: &str,
+        tool_name: &str,
+        text: &str,
+        is_error: bool,
+    ) -> LanguageModelRequestMessage {
         LanguageModelRequestMessage {
             role: Role::User,
             content: vec![MessageContent::ToolResult(LanguageModelToolResult {
                 tool_use_id: id.into(),
-                tool_name: "terminal".into(),
-                is_error: false,
+                tool_name: tool_name.into(),
+                is_error,
                 content: vec![LanguageModelToolResultContent::Text(text.into())],
                 output: None,
             })],
@@ -583,9 +873,9 @@ mod tests {
     }
 
     /// The exact per-request history budget `plan_compaction` derives from a
-    /// capacity of 80,000 tokens for `request`, mirroring the planner's
-    /// formula so the tests pin it.
-    fn planned_budget(request: &LanguageModelRequest) -> Result<usize> {
+    /// capacity of 80,000 tokens for `request` at `bytes_per_token`,
+    /// mirroring the planner's formula so the tests pin it.
+    fn planned_budget(request: &LanguageModelRequest, bytes_per_token: f64) -> Result<usize> {
         let prefix_len = request
             .messages
             .iter()
@@ -595,7 +885,8 @@ mod tests {
             .messages
             .last()
             .context("Missing compaction instruction")?;
-        usable_history_budget(request, prefix_len, instruction, 80_000)?.context("no usable budget")
+        usable_history_budget(request, prefix_len, instruction, 80_000, bytes_per_token)?
+            .context("no usable budget")
     }
 
     fn segment_history_slice(
@@ -616,6 +907,211 @@ mod tests {
             .join("\n")
     }
 
+    fn history_total_bytes(request: &LanguageModelRequest) -> Result<usize> {
+        let prefix_len = request
+            .messages
+            .iter()
+            .take_while(|message| message.role == Role::System)
+            .count();
+        let end = request.messages.len().saturating_sub(1);
+        history_bytes(&request.messages[prefix_len..end])
+    }
+
+    fn single_plan_request(planned: &PlannedCompaction) -> &LanguageModelRequest {
+        match &planned.plan {
+            CompactionPlan::Single(request) => request,
+            CompactionPlan::Segments(_) => panic!("expected a single-request plan"),
+        }
+    }
+
+    // ── §1 deterministic pre-shrink ──
+
+    #[test]
+    fn pre_shrink_windows_oversized_results_and_keeps_small_ones() -> Result<()> {
+        let large = format!("LARGE-{}-END", "x".repeat(200_000));
+        let mut messages = vec![text_message(Role::System, "system")];
+        messages.push(text_message(Role::User, "request"));
+        messages.push(tool_result_message_with_text("bulk", &large));
+        messages.push(tool_result_message_with_text("small", "compact output"));
+        messages.push(text_message(Role::User, COMPACTION_PROMPT));
+        let request = request_with_messages(messages.clone());
+        let budget = planned_budget(&request, FALLBACK_BYTES_PER_TOKEN)?;
+        let cap = result_window_cap(budget);
+        let planned = plan_compaction(&request, 80_000, None)?;
+        assert_eq!(planned.shrink.windowed_results, 1);
+        assert!(planned.shrink.original_bytes > planned.shrink.shrunk_bytes);
+        assert!(
+            planned.shrink.reduction_pct() > 80.0,
+            "a 200KB result over a {cap}-byte cap must shrink hard ({}%)",
+            planned.shrink.reduction_pct()
+        );
+        let plan_text = request_text(single_plan_request(&planned));
+        assert!(plan_text.contains("compaction elided"), "honest marker");
+        assert!(plan_text.contains("LARGE-"), "the head is kept");
+        assert!(plan_text.contains("-END"), "the tail is kept");
+        assert!(
+            plan_text.contains("compact output"),
+            "sub-cap results pass through verbatim"
+        );
+        // The caller's request — and therefore the stored history — is
+        // never modified by planning.
+        assert_eq!(request.messages, messages);
+        Ok(())
+    }
+
+    #[test]
+    fn pre_shrink_collapses_adjacent_repeats_with_counts() -> Result<()> {
+        let repeated_line = "progress: compiling the same module again";
+        let bulk: String = std::iter::repeat(repeated_line)
+            .take(100)
+            .map(|line| format!("{line}\n"))
+            .collect();
+        // Total under the window cap so only the RLE pass fires.
+        assert!(bulk.len() < MIN_RESULT_WINDOW_BYTES);
+        let mut messages = vec![text_message(Role::System, "system")];
+        messages.push(tool_result_message_with_text("build", &bulk));
+        messages.push(text_message(Role::User, COMPACTION_PROMPT));
+        let request = request_with_messages(messages);
+        let planned = plan_compaction(&request, 80_000, None)?;
+        assert_eq!(planned.shrink.collapsed_runs, 1);
+        assert_eq!(planned.shrink.windowed_results, 0);
+        let text = request_text(single_plan_request(&planned));
+        assert!(text.contains("[preceding line repeated 99 more times]"));
+        assert_eq!(
+            text.matches(repeated_line).count(),
+            1,
+            "one kept line plus the count marker"
+        );
+        // Unique lines and sub-threshold runs are kept verbatim.
+        let (kept, runs) = collapse_repeated_lines("one\ntwo\n\n\nprogress\nprogress\n");
+        assert_eq!(runs, 0);
+        assert_eq!(kept, "one\ntwo\n\n\nprogress\nprogress\n");
+        Ok(())
+    }
+
+    #[test]
+    fn pre_shrink_has_no_exemptions_on_the_summarizer_copy() -> Result<()> {
+        // The previous deterministic policy exempted protected tools, JSON
+        // results, and error results — which is why it shrank nothing on
+        // real coding threads. On the summarizer's copy, everything
+        // oversized is windowed.
+        let json = serde_json::to_string_pretty(
+            &(0..20_000)
+                .map(|index| format!("entry-{index}"))
+                .collect::<Vec<_>>(),
+        )?;
+        let bulk = "y".repeat(100_000);
+        let mut messages = vec![text_message(Role::System, "system")];
+        messages.push(tool_result_from("read", "read_file", &bulk, false));
+        messages.push(tool_result_from("data", "terminal", &json, false));
+        messages.push(tool_result_from("fail", "terminal", &bulk, true));
+        messages.push(text_message(Role::User, COMPACTION_PROMPT));
+        let request = request_with_messages(messages);
+        let planned = plan_compaction(&request, 80_000, None)?;
+        assert_eq!(
+            planned.shrink.windowed_results, 3,
+            "protected-tool, JSON, and error results are all windowed on the copy"
+        );
+        let text = request_text(single_plan_request(&planned));
+        assert_eq!(text.matches("compaction elided").count(), 3);
+        Ok(())
+    }
+
+    // ── §2 budget calibration ──
+
+    #[test]
+    fn calibration_decides_segmentation_in_tokens_not_bytes() -> Result<()> {
+        // The calibrated ratio must cancel out of the fit decision: the same
+        // history is segmented or not based on its token count relative to
+        // capacity, not on how byte-heavy the content is. A dense thread
+        // (~2 bytes/token, tool-output heavy) and a prose thread (~4
+        // bytes/token) of the same TOKEN count get the same plan shape.
+        // Assistant prose is not touched by the pre-shrink, so these
+        // fixtures exercise the segmentation decision alone.
+        let mut dense = vec![text_message(Role::System, "system")];
+        let mut prose = vec![text_message(Role::System, "system")];
+        for index in 0..3 {
+            dense.push(text_message(Role::User, &format!("request {index}")));
+            dense.push(text_message(Role::Assistant, &"d".repeat(60_000)));
+            prose.push(text_message(Role::User, &format!("request {index}")));
+            prose.push(text_message(Role::Assistant, &"p".repeat(120_000)));
+        }
+        dense.push(text_message(Role::User, COMPACTION_PROMPT));
+        prose.push(text_message(Role::User, COMPACTION_PROMPT));
+        let dense = request_with_messages(dense);
+        let prose = request_with_messages(prose);
+        // ~180K dense bytes ≈ 90K tokens at 2.0; ~360K prose bytes ≈ 90K
+        // tokens at 4.0: both histories sit at ~90% of the 80K-token
+        // capacity, so both must be segmented — and the segment COUNT must
+        // match, because the ratio cancels.
+        let count = |request: &LanguageModelRequest, ratio: f64| -> Result<usize> {
+            let plan = plan_compaction(
+                request,
+                80_000,
+                Some(((history_total_bytes(request)? as f64 / ratio).ceil()) as u64),
+            )?;
+            match plan.plan {
+                CompactionPlan::Segments(segments) => Ok(segments.len()),
+                CompactionPlan::Single(_) => Ok(1),
+            }
+        };
+        let dense_count = count(&dense, 2.0)?;
+        let prose_count = count(&prose, 4.0)?;
+        assert_eq!(dense_count, prose_count);
+        assert!(dense_count >= 2, "histories over 85% of capacity segment");
+        // Growing the token count at the same ratio grows the segment count
+        // proportionally — never exploding the way a fixed byte constant
+        // did for dense content (a 2-segment dense history planning 4-6).
+        let mut wide = vec![text_message(Role::System, "system")];
+        for index in 0..6 {
+            wide.push(text_message(Role::User, &format!("request {index}")));
+            wide.push(text_message(Role::Assistant, &"d".repeat(60_000)));
+        }
+        wide.push(text_message(Role::User, COMPACTION_PROMPT));
+        let wide = request_with_messages(wide);
+        let wide_count = count(&wide, 2.0)?;
+        assert!(
+            wide_count > dense_count && wide_count <= dense_count * 2,
+            "segment count must track tokens, not bytes (dense {dense_count}, wide {wide_count})"
+        );
+        // A stale denominator (last completed request far smaller than the
+        // current history) yields an out-of-window ratio, which must be
+        // discarded in favor of the fallback rather than trusted: the
+        // stuck-thread shape.
+        let stale = calibrated_bytes_per_token(history_total_bytes(&dense)?, Some(1));
+        assert_eq!(stale, FALLBACK_BYTES_PER_TOKEN);
+        Ok(())
+    }
+
+    #[test]
+    fn below_floor_capacity_keeps_legacy_two_half_plan() -> Result<()> {
+        // 79,999 tokens is below MIN_COMPACTION_CONTEXT_WINDOW: no usable
+        // budget, so no pre-shrink and the two-half split applies regardless
+        // of size — the documented legacy behavior (bytes balance, no
+        // token-fit guarantee, no elision).
+        let mut messages = vec![text_message(Role::System, "system")];
+        for index in 0..2 {
+            messages.push(text_message(Role::User, &format!("request {index}")));
+            messages.push(text_message(Role::Assistant, &"x".repeat(150_000)));
+        }
+        messages.push(text_message(Role::User, COMPACTION_PROMPT));
+        let planned = plan_compaction(&request_with_messages(messages), 79_999, None)?;
+        let CompactionPlan::Segments(segments) = planned.plan else {
+            anyhow::bail!("expected the legacy two-half plan");
+        };
+        assert_eq!(segments.len(), 2);
+        assert_eq!(planned.shrink.windowed_results, 0);
+        assert_eq!(planned.shrink.collapsed_runs, 0);
+        for segment in &segments {
+            let text = request_text(segment);
+            assert!(!text.contains("compaction elided"));
+            assert!(text.contains('x'));
+        }
+        Ok(())
+    }
+
+    // ── §3–§4 layout and planning ──
+
     #[test]
     fn replay_only_raw_output_does_not_distort_planning() -> Result<()> {
         let mut messages = vec![
@@ -628,7 +1124,7 @@ mod tests {
             text_message(Role::Assistant, "result 3"),
             text_message(Role::User, COMPACTION_PROMPT),
         ];
-        let before = plan_compaction(&request_with_messages(messages.clone()), 0)?;
+        let before = plan_compaction(&request_with_messages(messages.clone()), 0, None)?;
         let Some(MessageContent::ToolResult(result)) = messages
             .get_mut(2)
             .and_then(|message| message.content.first_mut())
@@ -636,8 +1132,8 @@ mod tests {
             anyhow::bail!("missing tool result fixture");
         };
         result.output = Some(serde_json::json!({"raw": "x".repeat(1_000_000)}));
-        let after = plan_compaction(&request_with_messages(messages), 0)?;
-        let segment_texts = |plan: &CompactionPlan| match plan {
+        let after = plan_compaction(&request_with_messages(messages), 0, None)?;
+        let segment_texts = |planned: &PlannedCompaction| match &planned.plan {
             CompactionPlan::Segments(segments) => Some(
                 segments
                     .iter()
@@ -663,8 +1159,8 @@ mod tests {
         }
         messages.push(text_message(Role::User, COMPACTION_PROMPT));
         let request = request_with_messages(messages);
-        let plan = plan_compaction(&request, 0)?;
-        let CompactionPlan::Segments(segments) = plan else {
+        let planned = plan_compaction(&request, 0, None)?;
+        let CompactionPlan::Segments(segments) = planned.plan else {
             anyhow::bail!("expected the ratified two-half plan");
         };
         assert_eq!(segments.len(), 2);
@@ -679,8 +1175,8 @@ mod tests {
             text_message(Role::Assistant, &"x".repeat(2000)),
             text_message(Role::User, COMPACTION_PROMPT),
         ];
-        let plan = plan_compaction(&request_with_messages(messages), 0)?;
-        assert!(matches!(plan, CompactionPlan::Single(_)));
+        let planned = plan_compaction(&request_with_messages(messages), 0, None)?;
+        assert!(matches!(planned.plan, CompactionPlan::Single(_)));
 
         // A tool call and its result must never land in different segments.
         let messages = vec![
@@ -689,90 +1185,58 @@ mod tests {
             tool_result_message("earlier"),
             text_message(Role::User, COMPACTION_PROMPT),
         ];
-        let plan = plan_compaction(&request_with_messages(messages), 0)?;
+        let planned = plan_compaction(&request_with_messages(messages), 0, None)?;
         assert!(
-            matches!(plan, CompactionPlan::Single(_)),
+            matches!(planned.plan, CompactionPlan::Single(_)),
             "cannot split one tool exchange"
         );
         Ok(())
     }
 
     #[test]
-    fn below_floor_capacity_keeps_legacy_two_half_plan() -> Result<()> {
-        // 79,999 tokens is below MIN_COMPACTION_CONTEXT_WINDOW: no usable
-        // budget, so the two-half split applies regardless of size — the
-        // documented legacy behavior (bytes balance, no token-fit
-        // guarantee, no elision).
+    fn sub_cap_over_budget_history_plans_budget_fitting_segments() -> Result<()> {
+        // Forty paired 6KB tool exchanges: each result under the per-result
+        // window cap (so the deterministic shrink passes them through), but
+        // ~250KB total against the ~135KB budget — segmentation must engage
+        // and every segment must fit.
         let mut messages = vec![text_message(Role::System, "system")];
-        for index in 0..2 {
+        for index in 0..40 {
+            let id = format!("e{index}");
             messages.push(text_message(Role::User, &format!("request {index}")));
-            messages.push(text_message(Role::Assistant, &"x".repeat(150_000)));
-        }
-        messages.push(text_message(Role::User, COMPACTION_PROMPT));
-        let plan = plan_compaction(&request_with_messages(messages), 79_999)?;
-        let CompactionPlan::Segments(segments) = plan else {
-            anyhow::bail!("expected the legacy two-half plan");
-        };
-        assert_eq!(segments.len(), 2);
-        for segment in &segments {
-            let text = request_text(segment);
-            assert!(!text.contains("compaction elided"));
-            assert!(text.contains('x'));
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn over_budget_history_plans_budget_fitting_segments() -> Result<()> {
-        let mut messages = vec![text_message(Role::System, "system")];
-        for index in 0..3 {
-            messages.push(text_message(Role::User, &format!("request {index}")));
-            messages.push(text_message(Role::Assistant, &"x".repeat(110_000)));
+            messages.push(tool_use_message(&id));
+            messages.push(tool_result_message_with_text(&id, &"z".repeat(6_000)));
         }
         messages.push(text_message(Role::User, COMPACTION_PROMPT));
         let request = request_with_messages(messages);
-        let budget = planned_budget(&request)?;
-        let plan = plan_compaction(&request, 80_000)?;
-        let CompactionPlan::Segments(segments) = plan else {
+        let budget = planned_budget(&request, FALLBACK_BYTES_PER_TOKEN)?;
+        let planned = plan_compaction(&request, 80_000, None)?;
+        assert_eq!(
+            planned.shrink.windowed_results, 0,
+            "sub-cap results pass through"
+        );
+        let CompactionPlan::Segments(segments) = planned.plan else {
             anyhow::bail!("expected a segmented plan for an over-budget history");
         };
-        assert_eq!(segments.len(), 3, "one exchange per budget-fitting segment");
-        for (ordinal, segment) in segments.iter().enumerate() {
-            assert_eq!(
-                segment.messages.first().map(|message| message.role),
-                Some(Role::System),
-                "every segment carries the system prefix"
-            );
+        assert!(segments.len() >= 2, "over-budget history segments");
+        for segment in &segments {
+            let bytes = history_bytes(segment_history_slice(segment, 1))?;
             assert!(
-                request_text(segment).contains(&format!("segment {} of 3", ordinal + 1)),
-                "segment {ordinal} must be labeled"
-            );
-            assert!(
-                segment
-                    .messages
-                    .last()
-                    .is_some_and(|message| message.string_contents() == COMPACTION_PROMPT),
-                "every segment carries the summarization instruction"
-            );
-            assert!(
-                request_text(segment).contains(&format!("request {ordinal}")),
-                "segment {ordinal} must carry exchange {ordinal}"
+                bytes <= budget,
+                "segment history ({bytes} bytes) must fit the budget ({budget} bytes)"
             );
             assert!(
                 !request_text(segment).contains("compaction elided"),
-                "a fitting segment is never elided"
-            );
-            let history_bytes = history_bytes(segment_history_slice(segment, 1))?;
-            assert!(
-                history_bytes <= budget,
-                "segment {ordinal} history ({history_bytes} bytes) must fit the budget ({budget} bytes)"
+                "fitting segments are never elided"
             );
         }
         Ok(())
     }
 
     #[test]
-    fn over_budget_tool_exchange_never_splits_and_elides() -> Result<()> {
+    fn oversized_tool_result_is_windowed_not_split() -> Result<()> {
+        // One tool exchange larger than the whole budget: the deterministic
+        // shrink windows it, the call and its result stay together in one
+        // segment, and the stored history is never modified.
         let mut messages = vec![text_message(Role::System, "system")];
         messages.push(text_message(Role::User, "Keep authentication."));
         messages.push(tool_use_message("earlier"));
@@ -783,60 +1247,69 @@ mod tests {
         messages.push(text_message(Role::Assistant, "done"));
         messages.push(text_message(Role::User, COMPACTION_PROMPT));
         let request = request_with_messages(messages);
-        let budget = planned_budget(&request)?;
-        let plan = plan_compaction(&request, 80_000)?;
-        let CompactionPlan::Segments(segments) = plan else {
-            anyhow::bail!("expected a segmented plan");
+        let budget = planned_budget(&request, FALLBACK_BYTES_PER_TOKEN)?;
+        let planned = plan_compaction(&request, 80_000, None)?;
+        assert_eq!(planned.shrink.windowed_results, 1);
+        let CompactionPlan::Segments(segments) = &planned.plan else {
+            anyhow::bail!("expected the windowed history to plan as segments");
         };
-        assert_eq!(segments.len(), 2);
         let first = segments.first().context("first segment")?;
         let parts: Vec<_> = first.messages.iter().flat_map(|m| &m.content).collect();
         assert!(
-            parts
-                .iter()
-                .any(|part| matches!(part, MessageContent::ToolUse(call) if call.id.to_string() == "earlier")),
+            parts.iter().any(
+                |p| matches!(p, MessageContent::ToolUse(call) if call.id.to_string() == "earlier")
+            ),
             "the tool call stays with its result"
         );
         assert!(
             parts
                 .iter()
-                .any(|part| matches!(part, MessageContent::ToolResult(result) if result.tool_use_id.to_string() == "earlier")),
+                .any(|p| matches!(p, MessageContent::ToolResult(result) if result.tool_use_id.to_string() == "earlier")),
             "the tool result stays with its call"
         );
         assert!(
             request_text(first).contains("compaction elided"),
-            "the over-budget segment is elided on the summarizer's copy"
+            "the oversized result is windowed on the summarizer's copy"
         );
-        let history_bytes = history_bytes(segment_history_slice(first, 1))?;
+        let bytes = history_bytes(segment_history_slice(first, 1))?;
         assert!(
-            history_bytes <= budget,
-            "elided segment ({history_bytes} bytes) must fit the budget ({budget} bytes)"
+            bytes <= budget,
+            "windowed segment ({bytes} bytes) must fit the budget ({budget} bytes)"
         );
         assert!(request_text(segments.last().context("last segment")?).contains("done"));
+        // The caller's request — the stored history — is untouched.
+        assert!(
+            request
+                .messages
+                .get(3)
+                .is_some_and(|message| message.string_contents().contains(&"x".repeat(250_000))),
+            "the stored history is never modified"
+        );
         Ok(())
     }
 
     #[test]
-    fn oversized_indivisible_history_elides_for_summarizer_only() -> Result<()> {
+    fn oversized_indivisible_prose_elides_for_summarizer_only() -> Result<()> {
+        // Assistant prose is never touched by the pre-shrink (only tool
+        // results are), so an indivisible prose history larger than the
+        // budget exercises the last-resort whole-history elision.
         let giant = format!("HEAD-{}-TAIL", "x".repeat(300_000));
         let mut messages = vec![text_message(Role::System, "system")];
         messages.push(text_message(Role::User, "Keep authentication."));
         messages.push(text_message(Role::Assistant, &giant));
         messages.push(text_message(Role::User, COMPACTION_PROMPT));
         let request = request_with_messages(messages);
-        let budget = planned_budget(&request)?;
-        let plan = plan_compaction(&request, 80_000)?;
-        let CompactionPlan::Single(elided) = plan else {
-            anyhow::bail!("expected a single elided request for an indivisible history");
-        };
-        let text = request_text(&elided);
-        assert!(text.contains("compaction elided"));
-        assert!(text.contains("HEAD-"), "the head is kept");
-        assert!(text.contains("-TAIL"), "the tail is kept");
-        let history_bytes = history_bytes(segment_history_slice(&elided, 1))?;
+        let budget = planned_budget(&request, FALLBACK_BYTES_PER_TOKEN)?;
+        let planned = plan_compaction(&request, 80_000, None)?;
+        assert_eq!(planned.shrink.windowed_results, 0);
+        let plan_text = request_text(single_plan_request(&planned));
+        assert!(plan_text.contains("compaction elided"));
+        assert!(plan_text.contains("HEAD-"), "the head is kept");
+        assert!(plan_text.contains("-TAIL"), "the tail is kept");
+        let bytes = history_bytes(segment_history_slice(single_plan_request(&planned), 1))?;
         assert!(
-            history_bytes <= budget,
-            "elided history ({history_bytes} bytes) must fit the budget ({budget} bytes)"
+            bytes <= budget,
+            "elided history ({bytes} bytes) must fit the budget ({budget} bytes)"
         );
         // Elision touches only the summarizer's copy: the caller's request
         // is unchanged.
@@ -846,6 +1319,43 @@ mod tests {
                 .get(2)
                 .is_some_and(|message| message.string_contents() == giant),
             "the stored history is never modified"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn balanced_packing_keeps_the_largest_segment_small() -> Result<()> {
+        // Dense safe boundaries: six exchanges of 40K bytes. Greedy packing
+        // to budget would fill the first segment near-budget (the slowest
+        // possible single request); balanced packing closes at the first
+        // boundary past remaining/n, so no request is near-window when the
+        // boundaries allow a finer split.
+        let mut messages = vec![text_message(Role::System, "system")];
+        for index in 0..6 {
+            messages.push(text_message(Role::User, &format!("request {index}")));
+            messages.push(text_message(Role::Assistant, &"x".repeat(40_000)));
+        }
+        messages.push(text_message(Role::User, COMPACTION_PROMPT));
+        let request = request_with_messages(messages);
+        let budget = planned_budget(&request, FALLBACK_BYTES_PER_TOKEN)?;
+        let planned = plan_compaction(&request, 80_000, None)?;
+        let CompactionPlan::Segments(segments) = planned.plan else {
+            anyhow::bail!("expected a segmented plan");
+        };
+        assert!(segments.len() >= 2);
+        let mut sizes = Vec::with_capacity(segments.len());
+        for segment in &segments {
+            sizes.push(history_bytes(segment_history_slice(segment, 1))?);
+        }
+        let largest = sizes.iter().copied().max().context("sizes")?;
+        let smallest = sizes.iter().copied().min().context("sizes")?;
+        assert!(
+            largest <= budget,
+            "largest segment ({largest} bytes) must fit the budget ({budget} bytes)"
+        );
+        assert!(
+            largest <= smallest * 2,
+            "segments must be balanced, not greedily filled (largest {largest} vs smallest {smallest})"
         );
         Ok(())
     }

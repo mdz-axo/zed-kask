@@ -1,7 +1,7 @@
 ---
 title: "Skill Registry — Reference"
 audience: [developers, skill-authors, agents]
-last_updated: 2026-09-28
+last_updated: 2026-09-29
 version: "0.40.0"
 status: "Active"
 domain: "Core"
@@ -30,7 +30,7 @@ mds_categories: [domain, composition]
 >
 > **Layout:** A skill is a directory under `.agents/skills/<name>/` (repo root, not under `kask/`)
 > containing a `SKILL.md` file with YAML frontmatter (`name`, `description`, and optional metadata)
-> plus a markdown body of process instructions. **59 skills** are authored here and available in every zed-kask install. **272 Jinja2 templates across 54
+> plus a markdown body of process instructions. **60 skills** are authored here and available in every zed-kask install. **273 Jinja2 templates across 55
 > template namespaces** remain under `kask/registry/templates/` for use by `render_template`; these
 > are companion resources, not the source of truth for skill execution.
 
@@ -48,12 +48,12 @@ carrier of the loop itself.
 
 ---
 
-## Registry counts (verified 2026-09-28)
+## Registry counts (verified 2026-09-29)
 
 | Surface | Count | Notes |
 |---------|-------|-------|
-| `SKILL.md` directories (`.agents/skills/*/`, repo root) | **59** | filesystem count: `find .agents/skills -mindepth 2 -maxdepth 2 -name SKILL.md` |
-| Template namespaces (`kask/registry/templates/*/`) | **54** (**272** `.j2` templates) | Companion Jinja2 resources for `render_template`; counts come directly from the current tree |
+| `SKILL.md` directories (`.agents/skills/*/`, repo root) | **60** | filesystem count: `find .agents/skills -mindepth 2 -maxdepth 2 -name SKILL.md` |
+| Template namespaces (`kask/registry/templates/*/`) | **55** (**273** `.j2` templates) | Companion Jinja2 resources for `render_template`; counts come directly from the current tree |
 
 **The SKILL.md is the source of truth.** A skill is its `SKILL.md`. Template crates are
 read-only resources the skill body may reference via `render_template`.
@@ -67,7 +67,7 @@ annual. The embedded seed payload equals the authored tree (pinned in
 
 ---
 
-## Skills (59)
+## Skills (60)
 
 ### Research, markets and forecasting
 
@@ -113,6 +113,7 @@ annual. The embedded seed payload equals the authored tree (pinned in
 | `grill-me` | Socratic questioning to stress-test understanding |
 | `product-manager` | The operator's side of the Division of Responsibilities: requirements as falsifiable outcome claims, spec provenance, acceptance criteria that can fail, ground-truth confirmation |
 | `task-breakdown` | Convergent planning: vertical task slicing with acceptance criteria, checkpoints, and skill_match_query routing |
+| `region-routing` | Route task steps across the syntax-semantic x deterministic-probabilistic 2x2 regions: named tools per step, a deterministic gate per generating step, role checkpoints at semantic and dependency boundaries |
 | `kanban-task-management` | Unified kanban task management across the full task lifecycle |
 | `prompt-enhance` | General-purpose prompt enhancement: 7-type taxonomy routing with 3-tier effort knob |
 | `local-research-swarm` | Coordinate a project-sized, source-grounded research effort across a local agent roster, with a kanban board for work state and scoped A2A handoffs |
@@ -178,5 +179,5 @@ annual. The embedded seed payload equals the authored tree (pinned in
 > `superforecasting` (Market-prior calibration check). Folded 2026-09-28
 > (commit `ebcd901c80`): `kata-coaching` into `kata-improvement` — the five
 > coaching templates moved to `kask/registry/templates/kata-improvement/`.
-> `kask/registry/templates/` contains 54
-> template namespaces holding 272 `.j2` and 2 `.jinja` files.
+> `kask/registry/templates/` contains 55
+> template namespaces holding 273 `.j2` and 2 `.jinja` files.

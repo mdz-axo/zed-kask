@@ -306,7 +306,7 @@ model change the children requested the new model against a port still
 bound to the old provider.
 
 Artifacts built for the 0.6B model were deleted 2026-09-28: the sealed
-calibration corpus (`zk-data/corpus-mcp/calibration/john-brooks-*`), the
+calibration corpus under `zk-data/corpus-mcp/calibration/`, the
 `gentle-lovelace` style DB (rebuilt from
 `zk-data/corpus-mcp/styles/gentle-rebuild/chunks.jsonl` with the new model),
 and every stale embedding row in the curator and swarm memory DBs

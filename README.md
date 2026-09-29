@@ -12,15 +12,15 @@
 
 - **Local and single-user.** Not a cloud platform, not a hosted agent framework. There is no autonomous agent loop by default: the human is in the loop, and skills escalate _to the user_.
 - **Sovereign data.** Memory, ledgers, and galleries live in local SQLCipher databases under a single passphrase held in your keychain; rotating it re-keys every database, with rollback on partial failure. External services — the Agent Bestiary World swarm catalog, RunPod inference endpoints, web research providers — are integrations you configure with your own credentials, not a host.
-- **Minimal divergence.** Everything Kask lives under [`kask/`](./kask/) (additive — `git merge upstream/main` never touches it). Everything outside `kask/` is upstream Zed except the named seam edits documented in [`DIVERGENCE.md`](./DIVERGENCE.md) (D1–D52; D4, D10, D17, D19, and D30 retired), each pinned by a test.
+- **Minimal divergence.** Everything Kask lives under [`kask/`](./kask/) (additive — `git merge upstream/main` never touches it). Everything outside `kask/` is upstream Zed except the named seam edits documented in [`DIVERGENCE.md`](./DIVERGENCE.md) (D1–D85; 66 active, 19 retired), each pinned by a test. The current release is **0.40.0**, based on upstream Zed **1.23.0**.
 
 ## What you get
 
 ### Skills
 
-**77 agent-facing skills** execute inside the agent panel. A skill is a _process_, not a prompt: its `SKILL.md` body is injected into the conversation, and the model — the executor — self-iterates against the convergence criteria the body describes, using two built-in tools: `lisp_eval` (a sandboxed Lisp interpreter — no I/O, no network, bounded steps and depth) for deterministic checks, and `render_template` (324 seeded Jinja2 templates across 67 crates) for structured prompt scaffolding.
+**60 agent-facing skills** execute inside the agent panel. A skill is a _process_, not a prompt: its `SKILL.md` body is injected into the conversation, and the model — the executor — self-iterates against the convergence criteria the body describes, using two built-in tools: `lisp_eval` (a sandboxed Lisp interpreter — no I/O, no network, bounded steps and depth) for deterministic checks, and `render_template` (273 Jinja2 templates across 55 namespaces under [`kask/registry/templates/`](./kask/registry/templates/)) for structured prompt scaffolding.
 
-Shipped skills are seeded **once** to the global skills directory (`~/.local/share/zed-kask/skills/`); the disk copy is the runtime source of truth, and your edits take effect immediately without recompilation. The 23 **core skills** (quality gates, curator methodologies, skill authoring) are the exception: always-on, re-seeded on every startup, and locked against editing — a hand edit can never silently weaken a gate. See [`kask/docs/reference/skills/README.md`](./kask/docs/reference/skills/README.md) for the registry and [`kask/docs/diataxis/`](./kask/docs/diataxis/) for per-crate explanations.
+Skills are authored in-repo under [`.agents/skills/`](./.agents/skills/) and seeded **once** to the global skills directory (`~/.local/share/zed-kask/skills/`); the disk copy is the runtime source of truth, and your edits take effect immediately without recompilation. The 14 **core skills** (quality gates, curator methodologies, task coordination) are the exception: always-on, re-seeded on every startup, locked against editing, and unshadowable by a project-local skill of the same name — a hand edit can never silently weaken a gate. See [`kask/docs/reference/skills/README.md`](./kask/docs/reference/skills/README.md) for the registry and [`kask/docs/diataxis/`](./kask/docs/diataxis/) for per-crate explanations.
 
 ### The Curator
 
@@ -32,28 +32,28 @@ Four native panels extend the steering surface. The **swarm panel** composes and
 
 ### Media generation
 
-The `media` MCP server is the fleet's second largest (81 tools): image and video generation, voice synthesis, transcription, face recognition, and a persistent gallery. The **media panel** is a Steer-only surface — no browse forms — where the operator asks a scoped curator conversation to generate, search, organize, or transform media, and generated images and videos render **inline in the conversation** via the editor's media block renderer.
+The `media` MCP server is the fleet's largest (98 tools): image and video generation, voice synthesis, transcription, face recognition, a persistent gallery, and the educt transcript and Reduct cloud surfaces. The **media panel** is a Steer-only surface — no browse forms — where the operator asks a scoped curator conversation to generate, search, organize, or transform media, and generated images and videos render **inline in the conversation** via the editor's media block renderer.
 
 ### MCP servers
 
-**12 built-in MCP servers** (**387 registered tools** fleet-wide) are launched by zed's `context_server` host as child processes over stdio and exposed as agent tools through `rmcp`. Each is a thin surface over in-process domain crates — the binary entrypoint is a one-line wrapper around a library `run()`. The fleet:
+**12 built-in MCP servers** (**402 registered tools** fleet-wide, every count pinned by a test) are launched by the in-process governed `McpRuntime` (D3 — single spawn authority) as child processes over stdio and exposed as agent tools through `rmcp`. Each is a thin surface over in-process domain crates — the binary entrypoint is a one-line wrapper around a library `run()`. The fleet:
 
-| Server                 | Surface                                                       |
-| ---------------------- | ------------------------------------------------------------- |
-| `companies`            | FIBO-anchored financial data, valuation, forecasting, transcripts, screener |
-| `corpus`               | Gather→process→output document pipeline                        |
-| `curator`              | Curator-scoped memory and regulation surfaces                 |
-| `kata-kanban`          | Kata-driven task kanban with idempotent creates               |
-| `media`                | AI media generation (image, video, audio, gallery)             |
-| `portfolio`            | Transaction-ledger portfolio store with holdings/returns views |
-| `prediction-markets`   | Polymarket/Kalshi base rates, calibration, residuals          |
-| `research`             | Web search, extraction, browsing, RSS feeds, evidence scoring, research-run ledger |
-| `scenarios`            | Event-tree forecasting (Tetlock/Schwartz/Chermack)            |
-| `spreadsheet`          | LogiSheets-backed spreadsheet edits and reconciliation over immutable workbook revisions |
-| `swarm`                | ABW cloud swarms + local swarm substrate + Xaman Ek curator   |
-| `training`             | LoRA/QLoRA training pipeline (dataset, submit, validate)      |
+| Server               | Surface                                                       | Tools |
+| -------------------- | ------------------------------------------------------------- | ----: |
+| `companies`          | FIBO-anchored financial forecasting, dual-provider routing, research notes, transcripts, screener | 40 |
+| `corpus`             | Gather→process→output document pipeline, QA generation, style replicas | 26 |
+| `curator`            | Curator memory, regulation query, algedonic signals, skill-use reporting | 15 |
+| `kata-kanban`        | Toyota-Kata task boards and persistent functional goals        | 27 |
+| `media`              | AI media generation (image, video, audio, gallery, educt transcripts, Reduct cloud) | 98 |
+| `portfolio`          | Transaction-ledger portfolio store (stocks, prediction-event portfolios, CMP indices) with holdings/returns views | 18 |
+| `prediction-markets` | Polymarket/Kalshi base rates, calibration, CMP curves and indices, residuals | 32 |
+| `research`           | Web search, extraction, browsing, RSS feeds, evidence scoring, research-run ledger, paper identity | 26 |
+| `scenarios`          | Event-tree forecasting (Tetlock/Schwartz/Chermack)             | 19 |
+| `spreadsheet`        | LogiSheets-backed spreadsheet edits and reconciliation over immutable workbook revisions | 2 |
+| `swarm`              | ABW cloud swarms + local swarm substrate + Xaman Ek curator     | 90 |
+| `training`           | LoRA/QLoRA training pipeline (dataset, submit, validate, evaluate) | 9 |
 
-Companies, scenarios, and prediction-markets form a three-layer forecasting stack (see [`kask/docs/reference/mcp-servers/README.md`](./kask/docs/reference/mcp-servers/README.md) for the full registry and architecture). The `curator` server may be unloaded by default — the Curator ships as a native agent.
+Companies, scenarios, and prediction-markets form a three-layer forecasting stack (see [`kask/docs/reference/mcp-servers/README.md`](./kask/docs/reference/mcp-servers/README.md) for the full registry, architecture, and per-server count pins). All twelve servers auto-load by default (`load_default: true`) unless the operator disables the fleet or an individual server; the Curator additionally ships as a native in-process agent.
 
 ## Installation
 

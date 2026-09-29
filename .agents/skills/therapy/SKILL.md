@@ -88,7 +88,7 @@ The scan's counts, the approved-proposal count, the execution check and the post
 
 1. Ask the user which memory database to run therapy on:
    - **Curator memory** (`curator.db`) — the curator's own memory of conversations and observations.
-   - **Replica/corpus memory** — a corpus chunk database (e.g., `john-brooks.db`).
+   - **Replica/corpus memory** — a corpus chunk database (e.g., `capabilities-reasoner.db`).
    - **Swarm memory** — a swarm's shared memory database.
 
 2. Record the target. For curator memory, the MCP tools are `curator_memory_recall`, `curator_semantic_search`, `memory_insert`, `memory_update`, `memory_resolve_contradiction`. For corpus memory, the tools are `corpus_query` and corpus-specific tools. For swarm memory, the tools are `swarm_recall_local` and swarm-specific tools.

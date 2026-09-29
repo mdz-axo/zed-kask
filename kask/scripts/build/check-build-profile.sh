@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# CI gate: pin the build-profile seams (DIVERGENCE.md D46, D50, D52).
+# CI gate: pin the build-profile seams (DIVERGENCE.md D46, D52, D85).
 #
 # The install CPU-burn defect: install.sh built the zed binary AND all 11
 # MCP servers on the `release` profile (thin LTO + codegen-units=1), so
@@ -42,7 +42,8 @@ grep -A5 '^\[profile\.release-mcp\]' "$CARGO_TOML" | grep -q 'lto = false' \
 grep -A5 '^\[profile\.release-mcp\]' "$CARGO_TOML" | grep -q 'codegen-units = 16' \
     || fail "[profile.release-mcp] must set codegen-units = 16 (D46)"
 
-# External dependencies must not inherit single-unit release codegen (D50).
+# External dependencies must not inherit single-unit release codegen (D46;
+# absorbs the retired D50, which explicitly extended D46).
 python3 - "$CARGO_TOML" <<'PY'
 import sys
 import tomllib
@@ -51,9 +52,9 @@ with open(sys.argv[1], "rb") as source:
     release = tomllib.load(source)["profile"]["release"]
 packages = release.get("package", {})
 if packages.get("*", {}).get("codegen-units") != 16:
-    sys.exit("[FAIL] release external dependencies must use codegen-units = 16 (D50)")
+    sys.exit("[FAIL] release external dependencies must use codegen-units = 16 (D46)")
 if packages.get("zed", {}).get("codegen-units") != 16 or release.get("lto") != "thin":
-    sys.exit("[FAIL] D50 must preserve zed's explicit codegen setting and thin LTO")
+    sys.exit("[FAIL] D46 must preserve zed's explicit codegen setting and thin LTO")
 PY
 
 # 2. install.sh uses the split build with a jobs cap.

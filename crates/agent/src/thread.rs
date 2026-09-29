@@ -162,7 +162,8 @@ const MAX_CONCURRENT_SEGMENT_SUMMARIES: usize = 8;
 // Using the heuristic that 1 token is about 4 bytes, keep the last 80K bytes of user-message content (~20k tokens).
 const COMPACTION_RETAINED_USER_MESSAGES_BYTE_BUDGET: usize = 80_000;
 
-/// Tools whose output must never be passed through the `ThreadCondenser`.
+/// Tools whose output must never be passed through the `ThreadCondenser`'s
+/// **ingestion** compression (`run_tool`).
 ///
 /// These tools return structured content (source code, search results,
 /// directory listings, diagnostics, diffs) where every line is structurally
@@ -172,6 +173,12 @@ const COMPACTION_RETAINED_USER_MESSAGES_BYTE_BUDGET: usize = 80_000;
 /// (use statements, closing braces, method chains) are dropped because they
 /// score low on word-frequency saliency. The condenser is intended for
 /// verbose terminal/build/test output, not source code.
+///
+/// This list governs only what is stored at ingestion. Compaction planning
+/// (`kask_compaction`) applies its own deterministic pre-shrink to the
+/// summarizer's request copy with NO exemptions — head+tail windowing with
+/// an honest marker cannot corrupt structure the way mid-content ellipsis
+/// can, and the stored history keeps the full text.
 ///
 /// `terminal` is intentionally NOT in this list — terminal output (build
 /// logs, test output) is the condenser's intended use case. The condenser's
@@ -3698,17 +3705,6 @@ impl Thread {
             acp_thread::ContextCompactionStatus::InProgress,
         );
         let result: Result<ControlFlow<()>> = async {
-            // zed-kask: D8 — preprocess only the manual summarizer's request copy.
-            // Keep automatic compaction, history storage, and the summary lifecycle native.
-            let condenser = if matches!(insertion, CompactionInsertion::Manual { .. }) {
-                let condenser = crate::thread_condenser();
-                if condenser.is_none() {
-                    log::warn!("Kask precompression unavailable; using native summarization unchanged");
-                }
-                condenser
-            } else {
-                None
-            };
             let summary = futures::select! {
                 result = async {
                     // The compaction model serves every summarization request,
@@ -3719,16 +3715,34 @@ impl Thread {
                         model.max_total_tokens(),
                         model.max_output_tokens(),
                     );
-                    let (request, plan) = cx.background_spawn(async move {
-                        let mut request = request;
-                        if let Some(condenser) = condenser {
-                            let end = request.messages.len().saturating_sub(1);
-                            condenser.precompress_history(&mut request.messages[..end], NO_COMPRESS_TOOLS)?;
-                        }
-                        let plan = crate::kask_compaction::plan_compaction(&request, input_capacity)?;
-                        anyhow::Ok((request, plan))
+                    // Calibrate the byte budget with the provider's own count
+                    // of roughly this same history: the last completed
+                    // request's input tokens (cache reads included).
+                    let last_input_tokens = this.update(cx, |thread, _| {
+                        thread
+                            .latest_request_token_usage()
+                            .map(total_input_tokens)
+                    })?;
+                    let (request, planned) = cx.background_spawn(async move {
+                        let planned = crate::kask_compaction::plan_compaction(
+                            &request,
+                            input_capacity,
+                            last_input_tokens,
+                        )?;
+                        anyhow::Ok((request, planned))
                     }).await?;
-                    match plan {
+                    let shrink = &planned.shrink;
+                    if shrink.original_bytes > shrink.shrunk_bytes {
+                        log::info!(
+                            "Compaction deterministic pre-shrink: {} -> {} bytes ({:.0}% reduction; {} results windowed, {} repeat runs collapsed)",
+                            shrink.original_bytes,
+                            shrink.shrunk_bytes,
+                            shrink.reduction_pct(),
+                            shrink.windowed_results,
+                            shrink.collapsed_runs,
+                        );
+                    }
+                    match planned.plan {
                         crate::kask_compaction::CompactionPlan::Single(request) => {
                             Self::collect_compaction_summary(this, &model, request, Some((event_stream, &compaction_id)), cx.clone()).await
                         }
@@ -10053,7 +10067,9 @@ mod tests {
         let compaction_texts = request_texts_after_system(&compaction_request.messages);
         assert_eq!(compaction_texts.len(), 3);
         assert_eq!(compaction_texts[0], "old user");
-        assert_eq!(compaction_texts[1], "precompressed assistant fixture");
+        // The condenser override is wired to prove compaction no longer
+        // consults it: the summarizer's request carries the original text.
+        assert_eq!(compaction_texts[1], "old assistant");
         assert_eq!(compaction_texts[2], COMPACTION_PROMPT);
         thread.read_with(cx, |thread, _| {
             assert_eq!(thread.messages[1].to_markdown(), "old assistant\n");
@@ -10405,26 +10421,31 @@ mod tests {
         }))
     }
 
-    fn segmented_compaction_history(result_bytes: usize) -> Vec<Arc<Message>> {
+    fn segmented_compaction_history(count: usize, result_bytes: usize) -> Vec<Arc<Message>> {
         let mut messages = Vec::new();
-        for (index, id) in ["first", "second", "third"].into_iter().enumerate() {
+        for index in 0..count {
             messages.push(user_text_message(
                 ClientUserMessageId::new(),
                 &format!("Exchange {index}: keep it."),
             ));
-            messages.push(compaction_evidence_message(id, &"x".repeat(result_bytes)));
+            messages.push(compaction_evidence_message(
+                &format!("exchange-{index}"),
+                &"x".repeat(result_bytes),
+            ));
         }
         messages
     }
 
     #[gpui::test]
-    async fn test_segmented_compaction_over_budget_history(cx: &mut TestAppContext) {
+    async fn test_compaction_pre_shrinks_oversized_tool_results(cx: &mut TestAppContext) {
         let (thread, _event_stream) = setup_thread_for_test(cx).await;
         let model = Arc::new(FakeLanguageModel::default());
-        // 80,000 tokens is the compaction floor; the derived byte budget
-        // fits one ~110 KiB exchange per segment request but not two.
+        // 80,000 tokens is the compaction floor; the derived byte budget is
+        // ~136 KiB and the per-result window cap ~8 KiB, so three 110 KiB
+        // tool results are deterministically windowed down to a fitting
+        // history — the LLM never sees the bulk.
         model.set_max_token_count(80_000);
-        let original = segmented_compaction_history(110_000);
+        let original = segmented_compaction_history(3, 110_000);
         thread.update(cx, |thread, cx| {
             thread.set_model(model.clone(), cx);
             thread.messages = original.clone();
@@ -10438,43 +10459,33 @@ mod tests {
         let requests = model.pending_completions();
         assert_eq!(
             requests.len(),
-            3,
-            "one summarization request per budget-fitting segment"
+            2,
+            "the windowed history fits, so the ratified two-half plan applies"
         );
-        for (request, id) in requests.iter().zip(["first", "second", "third"]) {
-            let parts: Vec<_> = request.messages.iter().flat_map(|m| &m.content).collect();
+        for request in &requests {
+            let text = request
+                .messages
+                .iter()
+                .map(|m| m.string_contents())
+                .collect::<Vec<_>>()
+                .join("\n");
             assert!(
-                parts.iter().any(
-                    |p| matches!(p, MessageContent::ToolUse(call) if call.id.to_string() == id)
-                ),
-                "segment carries exchange {id}'s tool call"
+                text.contains("compaction elided"),
+                "each oversized result carries the honest window marker"
             );
             assert!(
-                parts.iter().any(|p| matches!(p, MessageContent::ToolResult(result) if result.tool_use_id.to_string() == id)),
-                "segment carries exchange {id}'s tool result"
-            );
-            assert_eq!(
-                parts
-                    .iter()
-                    .filter(|p| matches!(p, MessageContent::ToolResult(_)))
-                    .count(),
-                1,
-                "exactly one exchange per segment"
-            );
-            assert!(
-                !request
-                    .messages
-                    .iter()
-                    .any(|m| m.string_contents().contains("compaction elided")),
-                "a fitting segment is never elided"
+                text.len() < 100_000,
+                "the deterministic shrink, not the LLM, removes the bulk ({} bytes)",
+                text.len()
             );
         }
-        // Complete the segments in reverse order; the merge must follow
-        // summary chronology, not completion order.
+        // The stored history keeps every byte of the original results.
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(thread.messages, original);
+        });
         for (request, summary) in requests
             .iter()
-            .zip(["First summary.", "Second summary.", "Third summary."])
-            .rev()
+            .zip(["Earlier half summary.", "Later half summary."])
         {
             model.send_completion_stream_text_chunk(request, summary);
             model.send_completion_stream_event(
@@ -10495,11 +10506,10 @@ mod tests {
             .map(|m| m.string_contents())
             .collect::<Vec<_>>()
             .join("\n");
-        let first = text.find("First summary.").expect("first summary");
-        let second = text.find("Second summary.").expect("second summary");
-        let third = text.find("Third summary.").expect("third summary");
-        assert!(first < second && second < third);
-        assert!(text.contains("later corrections"));
+        assert!(
+            text.find("Earlier half summary.").expect("earlier")
+                < text.find("Later half summary.").expect("later")
+        );
         model.send_completion_stream_text_chunk(&merge, "All three exchanges kept.");
         model.send_completion_stream_event(
             &merge,
@@ -10514,10 +10524,115 @@ mod tests {
         assert!(model.pending_completions().is_empty());
         thread.read_with(cx, |thread, _| {
             assert_eq!(&thread.messages[..original.len()], &original);
-            assert_eq!(thread.messages.len(), original.len() + 2);
             assert!(matches!(thread.messages.last().map(|m| &**m), Some(Message::Compaction(CompactionInfo::Summary(summary))) if summary.as_ref() == "All three exchanges kept."));
-            assert_eq!(thread.cumulative_token_usage().input_tokens, 39);
-            assert_eq!(thread.cumulative_token_usage().output_tokens, 8);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_segmented_compaction_over_budget_history(cx: &mut TestAppContext) {
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+        let model = Arc::new(FakeLanguageModel::default());
+        // Forty 6 KiB results: each under the per-result window cap (the
+        // deterministic shrink passes them through), but ~240 KiB total
+        // against the ~136 KiB budget — segmentation must engage.
+        model.set_max_token_count(80_000);
+        let original = segmented_compaction_history(40, 6_000);
+        thread.update(cx, |thread, cx| {
+            thread.set_model(model.clone(), cx);
+            thread.messages = original.clone();
+        });
+        let _events = thread
+            .update(cx, |thread, cx| {
+                thread.compact(ClientUserMessageId::new(), cx)
+            })
+            .expect("compact");
+        cx.run_until_parked();
+        let requests = model.pending_completions();
+        assert!(
+            requests.len() >= 2,
+            "an over-budget history plans multiple segments (got {})",
+            requests.len()
+        );
+        for request in &requests {
+            let text = request
+                .messages
+                .iter()
+                .map(|m| m.string_contents())
+                .collect::<Vec<_>>()
+                .join("\n");
+            assert!(
+                !text.contains("compaction elided"),
+                "sub-cap results are never windowed"
+            );
+            assert!(
+                text.len() < 200_000,
+                "every segment fits the budget ({} bytes)",
+                text.len()
+            );
+            let parts: Vec<_> = request.messages.iter().flat_map(|m| &m.content).collect();
+            assert!(
+                parts
+                    .iter()
+                    .any(|p| matches!(p, MessageContent::ToolResult(_))),
+                "each segment carries whole exchanges"
+            );
+        }
+        // Complete the segments in reverse order; the merge must follow
+        // summary chronology, not completion order.
+        let summaries: Vec<String> = (0..requests.len())
+            .map(|index| format!("Segment {index} summary."))
+            .collect();
+        for (request, summary) in requests.iter().zip(&summaries).rev() {
+            model.send_completion_stream_text_chunk(request, summary);
+            model.send_completion_stream_event(
+                request,
+                LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
+                    input_tokens: 10,
+                    output_tokens: 2,
+                    ..Default::default()
+                }),
+            );
+            model.end_completion_stream(request);
+        }
+        cx.run_until_parked();
+        let merge = model.pending_completions().pop().expect("merge request");
+        let text = merge
+            .messages
+            .iter()
+            .map(|m| m.string_contents())
+            .collect::<Vec<_>>()
+            .join("\n");
+        for pair in summaries.windows(2) {
+            let earlier = text.find(pair[0].as_str()).expect("earlier summary");
+            let later = text.find(pair[1].as_str()).expect("later summary");
+            assert!(earlier < later, "summaries merge in chronological order");
+        }
+        assert!(text.contains("later corrections"));
+        model.send_completion_stream_text_chunk(&merge, "All forty exchanges kept.");
+        model.send_completion_stream_event(
+            &merge,
+            LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
+                input_tokens: 9,
+                output_tokens: 2,
+                ..Default::default()
+            }),
+        );
+        model.end_completion_stream(&merge);
+        cx.run_until_parked();
+        assert!(model.pending_completions().is_empty());
+        let segments = requests.len() as u64;
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(&thread.messages[..original.len()], &original);
+            assert_eq!(thread.messages.len(), original.len() + 2);
+            assert!(matches!(thread.messages.last().map(|m| &**m), Some(Message::Compaction(CompactionInfo::Summary(summary))) if summary.as_ref() == "All forty exchanges kept."));
+            assert_eq!(
+                thread.cumulative_token_usage().input_tokens,
+                segments * 10 + 9
+            );
+            assert_eq!(
+                thread.cumulative_token_usage().output_tokens,
+                segments * 2 + 2
+            );
         });
     }
 
@@ -10592,42 +10707,6 @@ mod tests {
         );
     }
 
-    #[gpui::test]
-    async fn test_manual_compact_precompression_failure_leaves_history_unchanged(
-        cx: &mut TestAppContext,
-    ) {
-        let (thread, _event_stream) = setup_thread_for_test(cx).await;
-        let model = Arc::new(FakeLanguageModel::default());
-        let original = vec![user_text_message(
-            ClientUserMessageId::new(),
-            "reject precompression",
-        )];
-        thread.update(cx, |thread, cx| {
-            thread.set_model(model.clone(), cx);
-            thread.messages = original.clone();
-        });
-        let _condenser_override =
-            crate::scoped_thread_condenser_for_test(Arc::new(MarkerCondenser));
-        let mut events = thread
-            .update(cx, |thread, cx| {
-                thread.compact(ClientUserMessageId::new(), cx)
-            })
-            .expect("manual compaction");
-        cx.run_until_parked();
-        assert!(model.pending_completions().is_empty());
-        let mut saw_error = false;
-        while let Some(event) = events.next().await {
-            if let Err(error) = event {
-                assert!(error.to_string().contains("precompression fixture failed"));
-                saw_error = true;
-            }
-        }
-        assert!(saw_error);
-        thread.read_with(cx, |thread, _| assert_eq!(thread.messages, original));
-    }
-
-    /// Cancelling an in-flight manual compaction must not leave the zero-content
-    /// rewind marker (or a partial summary) dangling at the end of the thread.
     #[gpui::test]
     async fn test_manual_compact_cancelled_leaves_no_marker(cx: &mut TestAppContext) {
         let (thread, _event_stream) = setup_thread_for_test(cx).await;
@@ -12763,35 +12842,6 @@ mod tests {
     impl crate::ThreadCondenser for MarkerCondenser {
         fn compress_tool_result(&self, _tool_name: &str, output: &str) -> String {
             format!("{output} [COMPRESSED]")
-        }
-
-        fn precompress_history(
-            &self,
-            messages: &mut [LanguageModelRequestMessage],
-            protected_tools: &[&str],
-        ) -> Result<()> {
-            if messages
-                .iter()
-                .any(|message| message.string_contents() == "reject precompression")
-            {
-                anyhow::bail!("precompression fixture failed");
-            }
-            assert_eq!(protected_tools, NO_COMPRESS_TOOLS);
-            assert!(
-                !messages
-                    .iter()
-                    .any(|message| message.string_contents() == COMPACTION_PROMPT)
-            );
-            for message in messages {
-                for part in &mut message.content {
-                    if let language_model::MessageContent::Text(text) = part
-                        && text == "old assistant"
-                    {
-                        *text = "precompressed assistant fixture".into();
-                    }
-                }
-            }
-            Ok(())
         }
     }
 

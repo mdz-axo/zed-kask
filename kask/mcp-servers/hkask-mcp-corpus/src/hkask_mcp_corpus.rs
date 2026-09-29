@@ -170,7 +170,7 @@ pub(crate) fn owner_webid(owner: &str) -> hkask_types::WebID {
 pub(crate) const OCR_FALLBACK_WORD_THRESHOLD: usize = 100;
 
 /// Default owner persona for h_mems stored by corpus pipeline tools.
-const DEFAULT_OWNER: &str = "john-brooks";
+const DEFAULT_OWNER: &str = "capabilities-reasoner";
 
 /// Resolve the process-wide concurrency ceiling from HKASK_MAX_CONCURRENCY,
 /// which is injected from KaskGeneralSettings.max_concurrency (default 96,
@@ -682,7 +682,7 @@ mod smoke {
     /// single-tier JSONL (the tag/QA substrate), and an agent that passed
     /// multi_tier=true believing the output was tiered would carry a false
     /// expectation into every downstream stage. Pinned after the
-    /// silent-ignore defect surfaced in the interrupted john-brooks run.
+    /// silent-ignore defect surfaced in the interrupted 2026-09-28 calibration embed run.
     #[tokio::test]
     async fn chunk_directory_rejects_multi_tier_loudly() {
         use crate::tools::document::ChunkRequest;

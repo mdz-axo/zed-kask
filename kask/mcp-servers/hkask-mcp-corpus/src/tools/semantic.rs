@@ -593,7 +593,7 @@ pub(crate) struct ExtractAssertionsRequest {
     /// Maximum h_mems to extract per chunk (default 15).
     #[serde(default = "default_max_assertions")]
     pub max_assertions: usize,
-    /// Owner persona for stored h_mems (e.g. "john-brooks").
+    /// Owner persona for stored h_mems (e.g. "capabilities-reasoner").
     #[serde(default = "default_owner")]
     pub owner: String,
     /// Max concurrent LLM calls for batch processing (default 64).

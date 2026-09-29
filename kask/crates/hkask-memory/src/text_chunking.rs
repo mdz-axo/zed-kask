@@ -720,7 +720,6 @@ pub fn filter_boilerplate_pages_with_report(text: &str) -> BoilerplateFilterResu
     }
 }
 
-
 fn filter_page_delimited_boilerplate(text: &str) -> (String, Vec<BoilerplateExclusion>) {
     let pages = text.split(FORM_FEED).collect::<Vec<_>>();
     let front_end = bounded_front_page_end(&pages);
@@ -1676,7 +1675,7 @@ mod tests {
 
     #[test]
     fn detects_corrupted_font_encoding() {
-        // 6.3% of chunks in the John Brooks corpus had this pattern
+        // 6.3% of chunks in the capabilities-reasoner corpus had this pattern
         let corrupted = "th\x0e quick brown fox jumps over th\x0e lazy dog";
         assert!(has_corrupted_font_encoding(corrupted));
     }

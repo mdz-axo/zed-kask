@@ -2307,8 +2307,10 @@ fn main() {
                          (swarm panel ABW calls route through the governed MCP runtime)"
                     );
 
-                    // D8: local precompression is available to manual compaction even
-                    // when ingestion-time tool-result compression is disabled.
+                    // D8: the condenser serves ingestion-time tool-result
+                    // compression only. Compaction planning runs its own
+                    // deterministic pre-shrink in-process (`kask_compaction`)
+                    // and does not consult this hook.
                     let condenser_settings = &kask_settings.condenser;
                     let condenser = std::sync::Arc::new(kask_bridge::BridgeThreadCondenser::new(
                         &condenser_settings.profile,
@@ -2316,7 +2318,7 @@ fn main() {
                     ));
                     agent::set_thread_condenser(Some(condenser));
                     log::info!(
-                        "hKask manual-compaction precompression wired (profile: {}, automatic tool-result compression: {})",
+                        "hKask tool-result ingestion compression wired (profile: {}, automatic: {})",
                         condenser_settings.profile,
                         condenser_settings.auto_compress_tool_results
                     );

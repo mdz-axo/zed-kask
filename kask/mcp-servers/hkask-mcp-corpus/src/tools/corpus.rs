@@ -740,7 +740,7 @@ pub struct IngestQaRequest {
     /// Dataset name for training_qa_pair h_mems.
     #[serde(default = "default_dataset")]
     pub dataset: String,
-    /// Owner persona for stored h_mems (e.g. "john-brooks").
+    /// Owner persona for stored h_mems (e.g. "capabilities-reasoner").
     #[serde(default = "default_owner")]
     pub owner: String,
 }
