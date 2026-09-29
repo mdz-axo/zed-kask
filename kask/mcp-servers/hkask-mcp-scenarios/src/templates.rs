@@ -262,7 +262,7 @@ pub(crate) fn generate_brainstorm_protocol(
 /// - Cialdini (2006): Influence — foot-in-the-door, social proof
 /// - Ryan & Deci (2000): Self-determination theory
 /// - hKask improv skill: Plussing, Yes And, Yes But postures
-/// - hKask kata-starter: coaching posture, 20-minute practice window
+/// - hKask kata-improvement: coaching posture, 20-minute practice window
 pub(crate) fn generate_framing_session(subject: &str) -> serde_json::Value {
     serde_json::json!({
         "session_type": "Conversational Scenario Framing",
@@ -447,7 +447,7 @@ pub(crate) fn generate_framing_session(subject: &str) -> serde_json::Value {
             "cialdini_2006": "Influence: The Psychology of Persuasion — foot-in-the-door, social proof",
             "ryan_deci_2000": "Self-Determination Theory — autonomy, competence, relatedness",
             "hkask_improv": "Improv skill — Plussing, Yes And, Yes But postures",
-            "hkask_kata": "Kata-Starter skill — coaching posture, 5 Questions Drill pattern"
+            "hkask_kata": "kata-improvement skill — coaching posture, 5 Questions Drill pattern"
         }
     })
 }

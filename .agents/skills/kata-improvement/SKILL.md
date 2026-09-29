@@ -22,8 +22,12 @@ Rother, *Toyota Kata* (2010) and the Lean Enterprise Institute lexicon — `onto
 - When establishing a measurable next target condition reachable within this session's bounded experiments.
 - When designing rapid PDCA experiments with testable predictions toward the target.
 - When coaching a human or agent learner through their kata with the five coach questions (Coaching Kata) — the learner's storyboard is the input, the learner's own words are the output.
-- When computing a normalized convergence metric to evaluate the coherence of a PDCA cycle.
+- When computing a convergence metric from the step-4 Check forms to evaluate PDCA cycle coherence.
 - When an agent needs to build foundational scientific thinking habits through beginner_mode drills (folded from kata-starter): Five Questions, PDCA Cycle on a trivial process, or Observation Drill separating facts (IS) from interpretations (OUGHT).
+
+## Beginner-mode drills
+
+The three drills build the kata's foundational habits before the four-step practice. Selection: render `kata-improvement/beginner-selector` with the learner's practice history; it routes to the appropriate drill (Observation Drill for a first session or >7 days since last practice; the lowest-automaticity drill otherwise). Each drill runs one session, produces its declared output, and self-assesses automaticity on a 0–1 scale (the learner's own honest rating, not a test score). Graduate when automaticity exceeds 0.5 across two consecutive sessions on the same drill; the selector's `< 0.3` threshold routes a struggling learner back to the same drill rather than advancing.
 
 ## When NOT to Use
 
@@ -78,7 +82,7 @@ Rother, *Toyota Kata* (2010) and the Lean Enterprise Institute lexicon — `onto
 
 - **Learner:** named by `learner_bot` — the operator, or a local agent reached with `swarm_delegate_local`. The learner's own words come back as `learner_answer`. Reading the learner's storyboard is context for the coach's questions, not a substitute for the learner answering.
 - **Initial condition:** the learner's current storyboard (step 1–4 outputs above: target, `metric_before`, obstacles, last experiment and its result).
-- **Target condition:** after Q5, the learner has stated in their own words a measurable target, a data-grounded actual condition, one focus obstacle, a next step with a testable prediction, and a committed check point — each coach assessment `clear` / `data-grounded` / `prioritized` / `testable` / `committed`.
+- **Target condition:** after Q5, the learner has stated in their own words a measurable target, a data-grounded actual condition, one focus obstacle, a next step with a testable prediction, and a committed check point — each coach assessment names what the template emits: Q1 `clear`, Q2 `data-driven`, Q3 `focused`, Q4 `testable`, Q5 `tight-loop`.
 - **Loop:** each question runs ASK (render without `learner_answer`) then ASSESS (render with it). A non-passing assessment asks one follow-up (max 2 per question); still failing, record the gap and move on — the gap is coaching data, not a reason to answer for the learner.
 - **D/P:** the questions are fixed text (D). The learner's answers are the learner's. The coach's assessments are P, critiqued by the next session's observed result: an assessment of `testable` whose prediction could not be checked is a coaching miss to record.
 
