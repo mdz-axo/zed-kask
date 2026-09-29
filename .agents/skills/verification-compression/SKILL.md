@@ -33,9 +33,8 @@ retained check and representative harmful changes remain detectable.
   good oracle.
 - **Improvement loop:** Rother's Toyota Improvement Kata supplies direction,
   current condition, target condition, and one-change experiments.
-- **Ontology:** PKO models the procedure and step verification; SEPIO grounds
-  evidence and provenance. Project term resolution currently falls back to
-  `5w1h_core`; do not invent a private ontology meaning.
+- Ontology: SEPIO grounds evidence and provenance (`provenance_tier` is a
+  signal-key field; `downgraded_provenance` a preservation-gate field).
 
 ## D/P labelling
 
@@ -235,8 +234,13 @@ verification code.
 ### ACT — Converge, retain, or revert
 
 12. Accept a candidate only when the preservation gate is true and at least one
-    caller-selected target is met. If preservation passes but targets miss,
-    retain the result only with operator approval; otherwise revert.
+    caller-selected target is met (`compressed_preserved`). If preservation
+    passes but targets miss, retain the result only with operator approval
+    (`retained_targets_missed`); otherwise revert (`reverted`). If the
+    contract, falsifier, Lean binary, or empirical oracle was unavailable
+    this cycle, report `blocked` — do not route an unavailable oracle through
+    the revert path; `blocked` names the missing prerequisite, `reverted`
+    names a candidate that was tested and failed.
 13. Re-enter at step 4 for the next candidate, bounded by `max_cycles`. Stop
     early on zero delta, no discriminating test, or no safe candidate; report
     `essential_no_safe_reduction` rather than manufacturing work.
@@ -252,9 +256,13 @@ verification code.
 A cycle converges as one of:
 
 - `compressed_preserved`: preservation gate true and a target met;
+- `retained_targets_missed`: preservation passed but no target met; retained
+  only with operator approval;
 - `essential_no_safe_reduction`: no candidate survives all gates;
-- `blocked`: contract, falsifier, Lean, or empirical oracle unavailable;
-- `reverted`: a candidate lost signal.
+- `blocked`: contract, falsifier, Lean, or empirical oracle unavailable —
+  the missing prerequisite is named, not routed through revert;
+- `reverted`: a candidate was tested and failed (lost signal, or targets
+  missed without operator approval to retain).
 
 Maximum three cycles. A third non-convergent result halts and returns the
 measured remainder to the operator.
@@ -275,12 +283,61 @@ measured remainder to the operator.
 - Do not add compatibility shims for retired verification paths; delete them.
 - All modifications require the program-manager definition of done and the
   canonical project gates.
+- The context/samples gate's toolchain and environment equality checks are
+  model-recorded identities (P-supplied to the D form — the receipt checker
+  does not re-derive them); the preservation gate's seven counts are
+  model-tallied from the experiment template's preservation block (the
+  checker validates graph/proof/timing/diff but re-derives none of the
+  seven). Both are honest soft spots in the D chain, disclosed here rather
+  than hidden.
 
 ## Registry Templates
 
 | Template | Purpose |
-|---|---|
+|----------|---------|
 | `verification-compression/inventory.j2` | Build the expectation-to-oracle verification graph and measured baseline. |
 | `verification-compression/elimination.j2` | Synthesize falsifiability, architecture, and essentialist outputs into one safe reduction candidate. |
 | `verification-compression/proof.j2` | Convert the removed→retained signal mapping into explicit Lean preservation obligations. |
 | `verification-compression/experiment.j2` | Compare fixed-oracle before/after observations and issue the non-compensable verdict. |
+
+To render a template, call the `render_template` tool with the template ref and a context object with the required variables.
+
+Template context variables (from each template's [inference] contract):
+- `inventory.j2`: `target`, `authorized_contract`, `required_expectations`, `artifact_inventory`, `timing_observations`
+- `elimination.j2`: `inventory`, `falsification_result`, `architecture_result`, `essentialist_result`, `mode`
+- `proof.j2`: `baseline_graph`, `candidate_graph`, `lean_binary`
+- `experiment.j2`: `baseline`, `candidate`, `lean_result`, `before_observations`, `after_observations`, `targets`, `mode`, `receipt`
+
+## Regression case
+
+Run the four pinned `lisp_eval` forms through the live tool with representative
+stub envs, BOTH directions per gate:
+
+- **Inventory gate**: true when `missing_expectations` and
+  `unfalsifiable_expectations` are both 0; FALSE when either is nonzero.
+- **Preservation gate**: true when all seven count fields are 0 and
+  `lean_proof_passed` is true; FALSE when any count is nonzero (e.g.
+  `lost_falsifiers=1`).
+- **Context/samples gate**: true for an execute-mode env with matching
+  toolchain/environment/oracle/contract hashes,
+  `authorized_diff_verified=true`, `source_changed=true`,
+  `hashes_verified=true`, a measured cold block with >=2 positive samples,
+  an idle warm block, and a measured code-graph block
+  (`code_graph_status="measured"` with nonzero code node/edge counts).
+  Also true for an ANALYZE-mode env with identical source hashes and
+  unchanged code-graph counts. FALSE when: analyze mode with DIFFERENT
+  source hashes; execute mode with `source_changed=false` and a measured
+  code graph; a cold after-sample containing 0 (per-sample positivity);
+  or `hashes_verified=false`.
+- **Deltas form**: `workflow_graph_compression`, `code_graph_compression`,
+  `cold_speedup` from the sample means, `warm_speedup` null when not_run;
+  `code_graph_compression` is null when `code_graph_status="not_run"`
+  (a no-edit pilot cannot claim code-graph compression).
+
+The Lean proof pipeline (`generate-verification-preservation-proof.sh` +
+the pinned Lean binary) and the receipt checker are separate script-level
+regression surfaces: `test-generate-verification-preservation-proof.sh`
+(valid + missing-signal proof cases) and
+`check-verification-compression-receipt-selftest.sh` (receipt controls).
+They need the pinned toolchain and are a recorded scope boundary, not run
+here.
