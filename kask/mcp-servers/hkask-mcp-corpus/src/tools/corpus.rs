@@ -746,7 +746,7 @@ pub struct IngestQaRequest {
 }
 
 fn default_dataset() -> String {
-    "capabilities-researcher".to_string()
+    "capabilities-reasoner".to_string()
 }
 
 // ── Training dataset preparation ───────────────────────────────────────────
