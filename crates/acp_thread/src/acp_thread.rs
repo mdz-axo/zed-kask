@@ -2569,6 +2569,32 @@ struct StreamingTextBuffer {
     _reveal_task: Task<()>,
 }
 
+// zed-kask: D14 extension (2026-09-29) — the reveal timers are per-thread, so
+// N concurrent streaming threads fired N independent 20fps redraw triggers
+// (4 threads ≈ up to 80 full-window redraws/sec; measured main thread 60–92%
+// under 3–4 concurrent turns). All reveal timers instead align to one shared
+// interval grid: every thread sleeps until the next grid boundary, so their
+// reveals land in the same foreground wake and GPUI coalesces them into one
+// redraw per boundary regardless of how many threads stream.
+static REVEAL_GRID_EPOCH: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+
+/// The delay from `now` until the next grid boundary strictly after `now`.
+/// Pure over `(now, epoch, interval)` so the alignment math is unit-testable.
+fn reveal_grid_delay(
+    now: std::time::Instant,
+    epoch: std::time::Instant,
+    interval: std::time::Duration,
+) -> std::time::Duration {
+    let interval_ms = interval.as_millis().max(1);
+    let elapsed_ms = now.saturating_duration_since(epoch).as_millis();
+    let next_boundary_ms = (elapsed_ms / interval_ms + 1) * interval_ms;
+    let next_boundary = u64::try_from(next_boundary_ms).unwrap_or(u64::MAX);
+    match epoch.checked_add(std::time::Duration::from_millis(next_boundary)) {
+        Some(target) => target.saturating_duration_since(now),
+        None => interval,
+    }
+}
+
 impl StreamingTextBuffer {
     /// The number of milliseconds between each timer tick, controlling how quickly
     /// text is revealed.
@@ -3499,8 +3525,14 @@ impl AcpThread {
     fn start_streaming_reveal(&self, cx: &mut Context<Self>) -> Task<()> {
         cx.spawn(async move |this, cx| {
             loop {
+                // zed-kask: D14 extension — sleep until the next shared grid
+                // boundary instead of a fixed 50ms, so concurrent streaming
+                // threads coalesce their reveals into one redraw per boundary.
+                let interval = Duration::from_millis(StreamingTextBuffer::TASK_UPDATE_MS);
+                let now = cx.background_executor().now();
+                let epoch = *REVEAL_GRID_EPOCH.get_or_init(std::time::Instant::now);
                 cx.background_executor()
-                    .timer(Duration::from_millis(StreamingTextBuffer::TASK_UPDATE_MS))
+                    .timer(reveal_grid_delay(now, epoch, interval))
                     .await;
 
                 let should_continue = this
@@ -12733,6 +12765,54 @@ mod tests {
             50,
             "D14: TASK_UPDATE_MS must be 50ms (20fps), not upstream's 16ms (60fps). \
              See DIVERGENCE.md D14."
+        );
+    }
+
+    /// D14 extension: the reveal-grid delay must land every caller on the same
+    /// interval grid strictly after `now` — concurrent streaming threads then
+    /// coalesce into one redraw per boundary instead of N independent triggers.
+    #[test]
+    fn reveal_grid_delay_lands_on_shared_boundaries() {
+        use std::time::{Duration, Instant};
+
+        let epoch = Instant::now();
+        let interval = Duration::from_millis(StreamingTextBuffer::TASK_UPDATE_MS);
+
+        // Mid-interval: the next boundary is the remainder away.
+        let now = epoch + Duration::from_millis(17);
+        assert_eq!(
+            reveal_grid_delay(now, epoch, interval),
+            Duration::from_millis(33)
+        );
+
+        // Exactly on a boundary: strictly after, so a full interval.
+        let now = epoch + Duration::from_millis(50);
+        assert_eq!(
+            reveal_grid_delay(now, epoch, interval),
+            Duration::from_millis(50)
+        );
+
+        // Just past a boundary: nearly a full interval.
+        let now = epoch + Duration::from_millis(51);
+        assert_eq!(
+            reveal_grid_delay(now, epoch, interval),
+            Duration::from_millis(49)
+        );
+
+        // Two threads at different phases converge on the same boundary: their
+        // target instants (now + delay) agree.
+        let a = epoch + Duration::from_millis(17);
+        let b = epoch + Duration::from_millis(41);
+        let target_a = a + reveal_grid_delay(a, epoch, interval);
+        let target_b = b + reveal_grid_delay(b, epoch, interval);
+        assert_eq!(target_a, target_b);
+
+        // `now` before the epoch (test clocks) still sleeps to the next real
+        // boundary: epoch+50ms is 55ms after `epoch-5ms`.
+        let before = epoch - Duration::from_millis(5);
+        assert_eq!(
+            reveal_grid_delay(before, epoch, interval),
+            Duration::from_millis(55)
         );
     }
 

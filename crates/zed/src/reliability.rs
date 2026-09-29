@@ -140,6 +140,21 @@ fn start_memory_usage_logging(
         let mut last_logged_resident: Option<u64> = None;
         let mut last_logged_at = Instant::now();
         loop {
+            // zed-kask: D84 follow-up — frame health alongside memory health:
+            // draw count, total and max draw time since the last poll, read with
+            // take semantics. This decomposes UI sluggishness into draw rate vs
+            // draw cost from the operational log (draws ≈ 0 while idle is the
+            // idle-floor reading; high draws with low max = rate-driven lag;
+            // low draws with high max = cost-driven lag).
+            {
+                let (draws, draw_nanos, max_draw_nanos) = gpui::profiler::take_draw_stats();
+                const MS: f64 = 1_000_000.0;
+                log::info!(
+                    "ui frame health: draws {draws}, draw_ms {:.1}, max_draw_ms {:.1}",
+                    draw_nanos as f64 / MS,
+                    max_draw_nanos as f64 / MS,
+                );
+            }
             let refreshed = system.refresh_processes_specifics(
                 ProcessesToUpdate::Some(&[pid]),
                 false,

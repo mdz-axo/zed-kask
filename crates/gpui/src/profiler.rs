@@ -29,6 +29,41 @@ use serde::{Deserialize, Serialize};
 use crate::{Action, App, WindowId};
 use crate::{SharedString, TasksIncluded};
 
+// zed-kask: D84 follow-up — cumulative window-draw counters for the
+// reliability monitor's frame-health line. The UI-lag diagnosis (2026-09-29)
+// needed draw rate and draw cost decomposed from the operational log instead
+// of user-operated profiling; these counters are recorded from `Window::draw`
+// (where the profiler feature already computes the draw duration) and read
+// with take semantics by the zed reliability monitor every 30 s.
+#[cfg(feature = "profiler")]
+static DRAW_COUNT: AtomicU64 = AtomicU64::new(0);
+#[cfg(feature = "profiler")]
+static DRAW_TOTAL_NANOS: AtomicU64 = AtomicU64::new(0);
+#[cfg(feature = "profiler")]
+static DRAW_MAX_NANOS: AtomicU64 = AtomicU64::new(0);
+
+/// Record one completed window draw. Called from `Window::draw` under the
+/// profiler feature, which already measures the draw duration there.
+#[cfg(feature = "profiler")]
+pub fn record_draw_duration(duration: Duration) {
+    DRAW_COUNT.fetch_add(1, Ordering::Relaxed);
+    let nanos = duration.as_nanos() as u64;
+    DRAW_TOTAL_NANOS.fetch_add(nanos, Ordering::Relaxed);
+    DRAW_MAX_NANOS.fetch_max(nanos, Ordering::Relaxed);
+}
+
+/// Take the draw counters accumulated since the last read: `(count, total
+/// nanos, max nanos)`. Reads reset the counters, so each report covers exactly
+/// the interval between reads.
+#[cfg(feature = "profiler")]
+pub fn take_draw_stats() -> (u64, u64, u64) {
+    (
+        DRAW_COUNT.swap(0, Ordering::Relaxed),
+        DRAW_TOTAL_NANOS.swap(0, Ordering::Relaxed),
+        DRAW_MAX_NANOS.swap(0, Ordering::Relaxed),
+    )
+}
+
 #[cfg(feature = "profiler")]
 #[doc(hidden)]
 pub fn get_all_timings(included: gpui::TasksIncluded) -> Vec<gpui::ThreadTaskTimings> {

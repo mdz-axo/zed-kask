@@ -3403,6 +3403,9 @@ impl Window {
                 .window_profiler
                 .end_draw(frame_dirty.dirty_at, frame_dirty.invalidations);
             self.debug_frame_overlay.record_frame(draw_duration);
+            // zed-kask: D84 follow-up — feed the reliability monitor's frame-health
+            // counters (see `profiler::record_draw_duration`).
+            crate::profiler::record_draw_duration(draw_duration);
         }
 
         // Exit the scope to obtain the arena-clear token this draw owes; the

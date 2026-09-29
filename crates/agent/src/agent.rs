@@ -2503,8 +2503,21 @@ impl NativeAgentConnection {
         cx: &App,
     ) -> Task<Result<acp::PromptResponse>> {
         cx.spawn(async move |cx| {
+            // [DIAG-anr] temporary probe (2026-09-29): per-event timing in the
+            // forwarding loop, discriminating the force-quit stall hypotheses —
+            // H1 burst-drain (a queued backlog of cheap events drains in one
+            // foreground poll), H2 single-event hog (one arm costs seconds),
+            // H3 observer amplification (uniformly expensive events). The hang
+            // detector supplies the poll duration at this spawn site; this
+            // probe supplies the event count and per-event cost for the same
+            // window. Remove with the fix (grep DIAG-anr).
+            let mut diag_events: u64 = 0;
+            let mut diag_busy = std::time::Duration::ZERO;
+            let mut diag_max = std::time::Duration::ZERO;
+            let mut diag_window = std::time::Instant::now();
             // Handle response stream and forward to session.acp_thread
             while let Some(result) = events.next().await {
+                let diag_started = std::time::Instant::now();
                 match result {
                     Ok(event) => {
                         log::trace!("Received completion event: {:?}", event);
@@ -2670,6 +2683,32 @@ impl NativeAgentConnection {
                         log::error!("Error in model response stream: {:?}", e);
                         return Err(e);
                     }
+                }
+                // [DIAG-anr] accumulate per-event cost: a single slow event
+                // (>=100ms, the hang detector's own threshold) marks H2; the
+                // 60s window summary marks H1 (high busy, low max) or H3
+                // (high avg, low max) when read against the hang log.
+                let diag_dt = diag_started.elapsed();
+                diag_events += 1;
+                diag_busy += diag_dt;
+                if diag_dt > diag_max {
+                    diag_max = diag_dt;
+                }
+                if diag_dt >= std::time::Duration::from_millis(100) {
+                    log::warn!("[DIAG-anr] slow event {diag_dt:?}");
+                }
+                if diag_events > 0 && diag_window.elapsed() >= std::time::Duration::from_secs(60) {
+                    log::info!(
+                        "[DIAG-anr] window: events={} busy={:?} max={:?} avg={:?}",
+                        diag_events,
+                        diag_busy,
+                        diag_max,
+                        diag_busy / diag_events as u32
+                    );
+                    diag_events = 0;
+                    diag_busy = std::time::Duration::ZERO;
+                    diag_max = std::time::Duration::ZERO;
+                    diag_window = std::time::Instant::now();
                 }
             }
 

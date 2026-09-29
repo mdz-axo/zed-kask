@@ -66,7 +66,11 @@ Rother, *Toyota Kata* (2010) and the Lean Enterprise Institute lexicon — `onto
 3. Plan your expectation: state your prediction and why (the theory you're testing).
 4. Do: define how you will execute (tool, parameter, configuration).
 5. Check: define how you will measure and what confirms or refutes your prediction.
-6. Act after observing the result: compare the measured outcome to `metric_before`, the prediction, and `metrics_target`. If no post-experiment observation is available, report `pending_check` rather than an improvement. If wrong, revise the theory and re-enter step 2; if correct but below target, select the next obstacle and re-enter step 3. Stop after three experiments or on target attainment; report the remaining gap.
+6. Act after observing the result: compare the measured outcome to `metric_before`, the prediction, and `metrics_target` via `lisp_eval`:
+   - gap-to-target form: `(- metrics_target metric_after)`
+   - improvement form: `(- metric_after metric_before)`
+   - env: `{ "metrics_target": <the step-3 target>, "metric_after": <the observed post-experiment value>, "metric_before": <the step-2 baseline> }`
+   If no post-experiment observation is available, report `pending_check` rather than an improvement. If wrong, revise the theory and re-enter step 2; if correct but below target, select the next obstacle and re-enter step 3. Stop after three experiments or on target attainment; report the remaining gap.
 7. Determine how quickly you can go and see the result.
 8. Respond with a JSON object containing `obstacle`, `next_experiment`, `prediction`, `measurement_method`, `success_criterion`, `learning_commitment`, `when_to_check`, and (only after observation) `metric_after`, `prediction_result`, and `next_step`. Never fill `metric_after` from a plan.
 
@@ -104,5 +108,41 @@ Rother, *Toyota Kata* (2010) and the Lean Enterprise Institute lexicon — `onto
 
 To render a template, call the `render_template` tool with the template ref (e.g., `kata-improvement/beginner-selector`) and a context object with the required variables.
 
+Template context variables (from each template's [inference] contract — the 13 templates share a uniform shape):
+- All templates: `context` (object), `learner_bot` (string), `previous_steps` (array|null)
+- Coaching templates (q1–q5) additionally: `learner_answer` (string|null — present for the ASSESS render, absent for the ASK render)
+- `improvement-step1-direction.j2` additionally: `prior_kanban` (object|null), `prior_boards` (object|null)
+
+## Regression case
+
+Run the step-4 Check forms through `lisp_eval` with representative values:
+`{ "metrics_target": 10, "metric_after": 7, "metric_before": 5 }` →
+gap-to-target `(- metrics_target metric_after)` = 3 and improvement
+`(- metric_after metric_before)` = 2. Verify the gap-to-target is 0 when
+the target is met (metric_after = metrics_target) and the improvement is
+negative when the metric regressed (metric_after < metric_before).
+Render one coaching template (e.g., `kata-improvement/coaching-q1-target`)
+with a contract-conformant context — the ASK render (no `learner_answer`)
+and the ASSESS render (with it) both execute. All receipts through the
+live tool 2026-09-29.
+
 ## Constraints
+
+- The kata is the practice method for developing capability, not a task
+  executor; run improvement tasks through their own skills.
+- The coach is a separate role from the learner — one session never
+  plays both. The coach asks; the learner answers in their own words.
+- The target horizon is counted in bounded experiments (at most three
+  per session), not calendar time.
+- Never fill `metric_after` from a plan — only from an observed
+  post-experiment measurement. No observation → `pending_check`, never
+  a fabricated improvement.
+- A non-passing coaching assessment asks one follow-up (max 2 per
+  question); still failing, record the gap and move on — the gap is
+  coaching data, not a reason to answer for the learner.
+- Step 2's measurements are D only when taken from a named tool or
+  test (`metrics[].method`); assumed numbers are P and must be marked
+  as assumptions.
+- The five coach questions are fixed text (D) — do not rephrase,
+  reorder, or add questions.
 
