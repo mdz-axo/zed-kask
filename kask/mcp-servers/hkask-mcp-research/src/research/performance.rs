@@ -139,8 +139,14 @@ pub(crate) fn live_performance_penalty(
         Ok(a) => a,
         Err(_) => {
             // Poisoned lock — skip live data, fall back to static. Don't
-            // panic: provider selection is not a correctness path.
-            return (0.0, Vec::new());
+            // panic: provider selection is not a correctness path. But say
+            // so: a silent zero penalty reads as "live data says this provider
+            // is fine" when the live channel is actually broken — the
+            // rationale surfaces the degradation in provider_recommendations.
+            return (
+                0.0,
+                vec!["live performance unavailable (state poisoned) — static profile only"],
+            );
         }
     };
     if !agg.has_enough_samples(kind) {
