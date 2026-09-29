@@ -2,7 +2,7 @@
 title: "Loop Register — zed-kask canonical loops"
 audience: [developers, architects, agents, operators]
 last_updated: 2026-09-28
-version: "0.23.15"
+version: "0.23.16"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle]
@@ -730,8 +730,108 @@ re-slice stage is closed; the register's rows now describe the current tree
 at the cited lines, with the four re-mapped rows carrying their own
 supersession notes.
 
+## Phase 4 — pass-2 closure (2026-09-28)
+
+### Prediction vs actual (Phase 0 predictions, scored)
+
+| Prediction | Conf | Actual | Verdict |
+| --- | --- | --- | --- |
+| MCP server slices: ~8–15 `.rules` violations across 402 tools; ~2–4 impedances | 0.55 | 14 findings fixed (12 server-phase + 2 loop-phase); ~4 direct `.rules`-pattern violations (curator credential, corpus declaration, kata-kanban misclassification, companies error-discard), the rest the same discipline family (false claims, silent degradations, stale docs); **0 new impedances** (the one historical impedance closed by drift) | Violations: below range read strictly (4), in range read as the discipline family (14); impedances: below range. The family reading is the honest one — the prediction anticipated the *class*, and the class is what was found. Calibration: mildly overconfident on count, correct on character. |
+| Loop re-slices: ~3–6 branch-efficiency findings; ~2–3 new impedances; 11 anchor gaps | 0.50 | 1 branch/timing finding (the L7 notify bug — a real behavioral defect); 0 impedances; 11 row-level gaps confirmed + 9 skill-level gaps added by the server phase | Findings below range; impedances below range; gaps as predicted. The re-slices confirmed pass-1's consolidation had already shrunk the graphs — the remaining defects were timing/honesty, not structure. |
+| Loose ends: ~3–5 closable with evidence | 0.50 | 4 closed (#2, #3, #9, #12) | In range. |
+| Net lines: −50 to −150, or ~0 with a no-candidate finding | 0.45 | **+100 net production** (see AC6 below) | Worse than both branches — the pass's fixes were honesty wording, which costs lines by nature. The prediction missed that the remaining defect population was additive-by-nature. |
+
+### AC6 adjudication — the no-candidate finding, with evidence
+
+Net production across the pass: **+215 insertions / −115 deletions = +100**
+(hash-verified per-fix receipts: L13 +1, S3 +4, S5 +39, S6 −2, S7 +29, S8 +4,
+S10 +12, S11 0, L7 +7, L23 +6). Test additions are exempt and reported
+separately: ~+160 lines (S3's source-pin, S5's none — the store fix carried
+no test, L7's two seam tests + the never-resolving invoker harness).
+
+**No consolidation candidate beyond L13's (pre-phase) and S6's
+`grounding_fields` dedup survived the deletion test.** Evidence: (a) the
+loop re-slices verified all 23 rows' graphs already minimal — L1's
+"ideal-method verdict: the graph is already the small graph" stands, and
+the delta pass found zero structural duplication; (b) the server phase's
+12 fixes decompose as ~4 direct `.rules` violations and 8
+honesty/degradation findings — each a warn arm, a corrected message, an
+honest declaration, or a stale-doc fix, all additive by nature (deleting
+a lie costs the lines the truth occupies); (c) the one dedup found (S6)
+landed net ~0 (helper ≈ the duplication it replaced). The +100 is the
+price of 14 truths that were previously silent or false. Per AC6's own
+terms this is the no-candidate finding, stated with its evidence.
+
+### Reference-model gap ledger (final)
+
+Rows: 5 ANCHORED (L2, L9, L17, L19, L22), 7 PARTIAL (L4, L5, L6, L10, L13,
+L16, L18, L20 — eight by count, L20's RFC 9110 implicit model recorded as
+a gap-with-name), 11 GAP (L1, L3, L7, L8, L11, L12, L14, L15, L21, L23 —
+and L20 if the implicit model is not counted). Skills: 15/59 carry
+`## Reference models` sections; this pass recorded 9 additional skill-level
+gaps (lora-training, build-corpus-pipeline, cmp-term-structure, eqm,
+listening, swarm-intelligence, local-research-swarm, media-workflow,
+transcript-reel) and one per-server-doc gap (kata-kanban). Creating the
+missing records is the packaged operator decision — no anchor was invented
+this pass.
+
+### Lessons (written down; promotion to curator memory via algedonic review)
+
+1. **The defect population of a mature codebase is lies of omission, not
+   broken machinery.** 13 of 14 pass-2 findings were a false fallback claim,
+   a discarded error, a silently-degrading input, a stale doc advertising a
+   default that no longer exists, or a misclassification — each machinery
+   intact, each truth missing. The fix pattern that held every time: surface
+   with classification + consequence (what failed, what the operator now
+   cannot see). Evidence: S3–S12 rows, L23.
+2. **Decisions must be visible where they're made.** Media's gallery DB
+   carries its reasoned unencrypted-by-choice rationale at the site; the
+   portfolio family's identical-looking silence is a finding. The absence
+   of a recorded decision is itself the defect. Evidence: F-P1 vs S12.
+3. **GPUI notify behavior is measurable red-first.** An observer on the
+   entity + a never-resolving task isolates the synchronous path; the
+   missing-notify bug failed red before the one-line fix. Evidence:
+   `9142f4f03e`.
+
+(Insertion as curator h_mems requires an episodic evidence citation the
+detached turn-ingestion path owns — the L1 deferral, live here. The
+operator can promote these in algedonic review; the register citation
+above is the durable record either way.)
+
+### Acceptance criteria — final check
+
+1. Register tree-derived, covers every family found — ✓ (23 rows + the
+   delta-verification table; auditable by walking the tree).
+2. Zero silent carry-overs — ✓ (ledger: 4 closed, 2 re-deferred with
+   reasons, 11 operator decisions packaged).
+3. Every finding cites file:line, IS/OUGHT/INFERRED, constraint-force — ✓
+   (per-row and per-slice records).
+4. Every segment anchored or gap-recorded, no invented anchors — ✓ (gap
+   ledger above).
+5. MCP coverage ledger reconciles for all 12 servers — ✓ (402/402 tools;
+   per-slice rows).
+6. Net lines — the no-candidate finding stated with evidence (above).
+7. Duplicates/impedances consolidated or deferred with reason — ✓ (L13
+   landed; S6 dedup landed; the rest verified absent or re-deferred).
+8. Gates — ✓ at every landing (per-slice receipts; the full clippy gate
+   green at each slice's close; `cargo check -p zed` green for the
+   widget-touching fix).
+9. Completion claims cite hashes — ✓ (every one).
+10. Phase 0 checkpoint blocked until approval — ✓ (observed; the operator
+    approved twice: the register, then the queued issues).
+
 ## Change log
 
+- 2026-09-28 — v0.23.16 closed Phase 4 (pass-2 closure): prediction
+  scoring (the family reading is the honest one — the class was
+  anticipated, the count was mildly overconfident, the net-lines
+  prediction missed that the remaining defects were additive-by-nature);
+  the AC6 no-candidate finding stated with evidence (+100 net production
+  = the price of 14 truths previously silent or false; no consolidation
+  candidate beyond L13/S6 survived the deletion test); the final gap
+  ledger; three lessons written down (promotion to curator memory via
+  algedonic review — the episodic-citation path is the L1 deferral, live);
+  the 10 acceptance criteria checked. **Pass 2 is complete.**
 - 2026-09-28 — v0.23.15 closed the loose-end disposition stage (Stage 2).
   Two items closed with evidence: #3 (L7 seam test — `9142f4f03e`) and
   #12 (L23 poisoned-lock degradation surfaced — `c98e29aa36`, +8/−2).
