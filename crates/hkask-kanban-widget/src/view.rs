@@ -1548,6 +1548,142 @@ mod tests {
         );
     }
 
+    /// L7 seam measurement (loop-register pass 2): the confirm path must
+    /// schedule a frame for the optimistic move. `dispatch_move` applies the
+    /// optimistic state synchronously and its error paths notify, but the
+    /// success path relied on the completion callback's notify — so the
+    /// moved card and the disappearing pending banner did not render until
+    /// the tool call resolved, defeating the documented intent ("the UI
+    /// reflects the move while the dispatch is in flight"). The dispatch
+    /// never resolves here, so any notify observed after confirm comes from
+    /// the synchronous path alone.
+    #[gpui::test]
+    async fn confirm_move_notifies_before_the_dispatch_resolves(cx: &mut TestAppContext) {
+        let _lock = GLOBAL_TEST_LOCK.lock().expect("test lock poisoned");
+        let never: Task<Result<String, InvokeError>> =
+            cx.spawn(|_| async { std::future::pending().await });
+        let invoker: Arc<dyn ToolInvoker> = Arc::new(PendingInvoker {
+            never: std::sync::Mutex::new(Some(never)),
+        });
+        set_tool_invoker(Some(invoker));
+        let _guard = InvokerGuard;
+
+        let body = body_with_board_and_provenance_with(vec![task("t1", "Write tests", "backlog")]);
+        let widget = cx.new(|cx| KanbanWidget::new(body, cx));
+
+        let notified = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag = Arc::clone(&notified);
+        cx.update(|cx| {
+            cx.observe(&widget, move |_, _| {
+                flag.store(true, std::sync::atomic::Ordering::SeqCst);
+            })
+            .detach();
+        });
+
+        widget.update(cx, |this, cx| {
+            this.stage_move(
+                "t1".into(),
+                "Write tests".into(),
+                "ready".into(),
+                "Ready".into(),
+                cx,
+            );
+        });
+        // stage_move's view wrapper notifies; reset so only the confirm path
+        // is measured.
+        notified.store(false, std::sync::atomic::Ordering::SeqCst);
+
+        widget.update(cx, |this, cx| {
+            this.move_controller.confirm_move(
+                &mut this.columns,
+                &this.column_meta,
+                &this.provenance,
+                cx,
+            );
+        });
+        // Drain effects. The dispatch never resolves, so the completion
+        // callback's notify cannot fire — any observer hit is the
+        // synchronous path's.
+        cx.run_until_parked();
+
+        assert!(
+            notified.load(std::sync::atomic::Ordering::SeqCst),
+            "confirm_move must notify so the optimistic move and the pending-banner \
+             removal render before the dispatch resolves"
+        );
+    }
+
+    /// L7 seam measurement (pass 2, the authoritative-refresh half): after a
+    /// dispatch completes, a fresh authoritative `set_body` must be accepted
+    /// — the in-flight guard declines bodies only while a dispatch is
+    /// pending, so the conversation's next block render lands.
+    #[gpui::test]
+    async fn authoritative_body_lands_after_dispatch_completes(cx: &mut TestAppContext) {
+        let _lock = GLOBAL_TEST_LOCK.lock().expect("test lock poisoned");
+        let mock = Arc::new(MockToolInvoker::default());
+        let invoker: Arc<dyn ToolInvoker> = mock;
+        set_tool_invoker(Some(invoker));
+        let _guard = InvokerGuard;
+
+        let body = body_with_board_and_provenance_with(vec![task("t1", "Write tests", "backlog")]);
+        let widget = cx.new(|cx| KanbanWidget::new(body, cx));
+
+        widget.update(cx, |this, cx| {
+            this.stage_move(
+                "t1".into(),
+                "Write tests".into(),
+                "ready".into(),
+                "Ready".into(),
+                cx,
+            );
+        });
+        widget.update(cx, |this, cx| {
+            this.move_controller.confirm_move(
+                &mut this.columns,
+                &this.column_meta,
+                &this.provenance,
+                cx,
+            );
+        });
+        // The mock resolves immediately; the completion callback clears the
+        // in-flight marker.
+        cx.run_until_parked();
+
+        let authoritative =
+            body_with_board_and_provenance_with(vec![task("t1", "Write tests", "done")]);
+        widget.update(cx, |this, cx| {
+            this.set_body(authoritative, cx);
+        });
+        let status = widget.read_with(cx, |this, _| this.find_task_status("t1"));
+        assert_eq!(
+            status.as_deref(),
+            Some("done"),
+            "a post-completion authoritative set_body must replace the optimistic state"
+        );
+    }
+
+    /// Hands over one never-resolving task: the completion callback cannot
+    /// run, isolating the synchronous dispatch path for the notify
+    /// measurement above.
+    struct PendingInvoker {
+        never: std::sync::Mutex<Option<Task<Result<String, InvokeError>>>>,
+    }
+
+    impl ToolInvoker for PendingInvoker {
+        fn invoke_tool(
+            &self,
+            _server: &str,
+            _tool: &str,
+            _args: serde_json::Value,
+        ) -> Task<Result<String, InvokeError>> {
+            self.never
+                .lock()
+                .expect("pending invoker lock")
+                .take()
+                .expect("invoke_tool called more than once")
+        }
+    }
+
     #[gpui::test]
     async fn server_refusal_envelopes_roll_back_and_surface_error(cx: &mut TestAppContext) {
         let _lock = GLOBAL_TEST_LOCK.lock().expect("test lock poisoned");

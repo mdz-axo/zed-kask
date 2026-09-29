@@ -214,6 +214,12 @@ impl KanbanMoveController {
             task_id: task_id.clone(),
             original_status: original_status.unwrap_or_default(),
         });
+        // Schedule the frame now: the optimistic move and the pending banner's
+        // removal must render while the dispatch is in flight (the error
+        // paths notify; the success path is symmetric with them — the
+        // completion callback's notify alone leaves the stale frame up until
+        // the tool call resolves).
+        cx.notify();
         let task = invoker.invoke_tool(&server, &tool, args);
         cx.spawn(async move |this, cx| {
             let outcome = task.await;
