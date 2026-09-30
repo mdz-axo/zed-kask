@@ -47,8 +47,9 @@ methodology instructs.
 Audit findings, per-behavior adjudication, and remediation choice are P —
 critiqued by the file:line citation enforcement (a finding without a location
 is rejected), the essentialist gates, and the operator's ratification. The
-gates are D: Gate A/B/C and the Convergence count run as pinned `lisp_eval`
-forms over the template outputs — the convergence score is passed to
+gates are D: Gate A/B/C, the Convergence count,
+and the measured-layout gate (the five-gate + probe form in the layout loop)
+run as pinned `lisp_eval` forms over the template outputs — the convergence score is passed to
 final-report, never supplied by the model. Layout measurements are D when
 taken from the code (widths, counts); the remedy choice is P, critiqued by
 the adversarial probes. Caller-count sweeps (grep) are D.
@@ -66,7 +67,8 @@ Final: commit the ledger per completed batch; report remaining rows explicitly a
 
 The Gate A, B, C and Converge forms are pinned in
 `kask/registry/templates/kask-seam-audit/gates.md` (read it with `read_file`);
-run them with `lisp_eval` over the template outputs. The Converge count is
+the measured-layout gate form is pinned in this SKILL.md (the layout loop,
+step 3). Run them with `lisp_eval` over the template outputs. The Converge count is
 passed to `final-report` as `convergence_score`; the model never supplies it.
 
 - **Initial condition:** the live and retired seams in `DIVERGENCE.md`, the operator's `prior_rules`, the audited commit, and `kask/docs/research/d-seam-audit.md` (if present).
@@ -99,7 +101,7 @@ The row-by-row ledger is deliberately compact; detailed evidence and upstream is
 | Skill | Role | When |
 |-------|------|------|
 | `refactor-architecture` | executor | architecture track (Do) |
-
+| `coding-guidelines` | lens | adjudicate (Check) — run with essentialist per step 4 |
 | `pragmatic-semantics` | lens | adjudicate (Check) |
 | `pragmatic-cybernetics` | lens | adjudicate (Check) |
 | `essentialist` | lens | adjudicate (Check) + remediation gate (Act) |
@@ -122,9 +124,9 @@ remedy choice is P, critiqued by the adversarial probes.
 
 1. **Measure** (`kask-seam-audit/layout-sense`) — container width (dock ~300–400px, center ~600px+), each child's minimum width, the text column's residual width.
 2. **Count** (`kask-seam-audit/layout-orient`) — interactive elements against the ≤5 primary budget (Hick's Law); sibling card conventions. The Rosenholtz congestion score is a model estimate reported for context; no gate reads it.
-3. **Gate** (`kask-seam-audit/layout-decide`) — five yes/no gates: no overflow, primary action visible, text column ≥ min width, on-grid spacing, action count ≤ budget. Call `lisp_eval` with form `(and (= (length failed_gates) 0) (= (length probe_failures) 0))`, env `{ "failed_gates": <failing gate names>, "probe_failures": <broken probes from step 5> }`.
+3. **Gate** (`kask-seam-audit/layout-decide`) — five yes/no gates: no overflow, primary action visible, text column ≥ min width, on-grid spacing, action count ≤ budget. Call `lisp_eval` with form `(and (= (length failed_gates) 0) (= (length probe_failures) 0))`, env `{ "failed_gates": <layout-decide's `failing_gates`>, "probe_failures": <layout-review's `failing_gates` — the gates broken under probes> }` (the templates output `failing_gates`; the form env binds `failed_gates`/`probe_failures` — pass the mapped names).
 4. **Remedy** (`kask-seam-audit/layout-act`) — for each failing gate, the canonical GPUI remedy: secondary actions behind `PopoverMenu` with an `IconName::Ellipsis` trigger, `.truncate()` on labels, `flex_shrink_0()` on fixed elements, `min_w_0()` on flexible text columns, or hide-secondary.
-5. **Probe** (`kask-seam-audit/layout-review`) — a 40-character button label, a German string (~30% longer), a 320px container, 7 actions. Any broken probe rejects the layout and re-enters step 4. Bound: max 2 remedy rounds; a third failing gate set rejects the change — hide the secondary actions or defer, and say so.
+5. **Probe** (`kask-seam-audit/layout-review`) — a 40-character button label, a German string (~30% longer), a 300px container (the agent panel's minimum dock width, `MIN_PANEL_WIDTH` at `crates/agent_ui/src/agent_panel.rs:108`), 7 actions, and an empty description. Any broken probe rejects the layout and re-enters step 4. Bound: max 2 remedy rounds; a third failing gate set rejects the change — hide the secondary actions or defer, and say so.
 
 Patterns checked: `min_w_0()` on flexible text columns; `flex_shrink_0()` on fixed-width elements; `.truncate()` on labels; `PopoverMenu::new(id).trigger_with_tooltip(IconButton::new(id, IconName::Ellipsis), Tooltip::text(...))` for overflow; `ContextMenu::build(...)` for menu items; `gap_1()`/`gap_2()` on the 4px/8px grid.
 

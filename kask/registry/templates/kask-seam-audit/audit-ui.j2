@@ -80,10 +80,10 @@ If you cannot open a file, set `deferred: true` with a `deferred_reason`.
 ## Gate B repair
 
 If `gate_defects` is present in context (Gate B found structural defects —
-empty track, bad severity, missing citation), re-run this template with
+bad severity, missing citation), re-run this template with
 `gate_defects` in context and re-emit the corrected `findings` and
 `pattern_gap_summary`. Never fabricate a `file_line`; if you cannot cite a
 real line, mark the finding `deferred: true` with a `deferred_reason`. If the
-surface genuinely has no findings, emit a single `id: "UI-00"`, `axis:
-"measured-layout"`, `severity: "low"`, `file_line: "<scope root>:0"` finding
-so the track is non-empty.
+surface genuinely has no findings, emit `findings: []` and state the examined
+boundary in `pattern_gap_summary`; Gate B accepts the empty list. Never
+fabricate a line-zero citation to make a track non-empty.

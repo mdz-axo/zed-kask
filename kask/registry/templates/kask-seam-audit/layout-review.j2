@@ -1,4 +1,4 @@
-{# goal: Run adversarial probes against the proposed layout: a 40-character button label, a localized German string (~30% longer), a 320px container, 7 actions. If any probe breaks a gate, the layout is rejected and the remedy phase re-enters. Grounded in Klein's premortem and the squint test for visual hierarchy. #}
+{# goal: Run adversarial probes against the proposed layout: a 40-character button label, a localized German string (~30% longer), a 300px container (the agent panel's minimum dock width), 7 actions, an empty description. If any probe breaks a gate, the layout is rejected and the remedy phase re-enters. Grounded in Klein's premortem and the squint test for visual hierarchy. #}
 [inference]
 contract:
   input:
@@ -53,7 +53,7 @@ Run each probe against the revised layout. For each, re-evaluate all 5 gates.
 - **Check**: Does the 30% length increase break any gate?
 
 ### Probe 3: Narrow Container
-- **Input**: Set container width to 280px (the minimum dock panel width).
+- **Input**: Set container width to 300px (the agent panel's minimum dock width, `MIN_PANEL_WIDTH` at crates/agent_ui/src/agent_panel.rs:108).
 - **Check**: Does the layout still fit? Is the primary action still visible? Is the text column still ≥160px?
 
 ### Probe 4: High Action Count

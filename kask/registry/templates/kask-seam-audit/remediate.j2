@@ -52,7 +52,7 @@ You are the remediation executor. Task: {{ task }}.
       "id": "KS-NN|RA-NN|UI-NN",
       "remediation": "what was done",
       "touched_files": [ { "path": "kask/crates/...", "within_kask": true } ],
-      "test_added": true,
+      "test_added": "true",
       "test_description": "what the test asserts"
     }
   ],
@@ -75,8 +75,8 @@ recommended remediation with a test-pinning plan. Do not fabricate applied work.
 
 If `gate_defects` is present in context (Gate C found defects — missing test,
 out-of-seam touch, or a prior hard-stop), re-run this template with
-`gate_defects` in context. For `remediation_missing_test`, either add the test
-(and re-emit the remediation with `test_added: true`) or roll the remediation
+gate_defects in context. For `remediation_missing_test`, either add the test
+(and re-emit the remediation with `test_added: "true"`) or roll the remediation
 back. For `touched_file_outside_seam`, roll the remediation back and emit the
 hard-stop with the offending file and a proposed D-seam entry — do NOT edit the
 file.

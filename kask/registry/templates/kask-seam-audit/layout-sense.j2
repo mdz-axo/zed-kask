@@ -31,6 +31,9 @@ contract:
     fitts_min_target:
       type: integer
       description: Minimum target width per Fitts's Law (32px mouse floor).
+    fitts_violations:
+      type: array
+      description: Elements below the Fitts floor (empty if none).
 ---
 {# Phase: SENSE — measure container and children #}
 
@@ -43,7 +46,7 @@ You are a layout measurement engine. Your job is to measure the container and ev
 ## Container Context
 
 - **Container width**: {{ container_width | default("dock") }}
-  {% if container_width == "dock" %}— Dock panel: assume 300-400px available (the narrowest common case). Use 320px as the adversarial floor.{% endif %}
+  {% if container_width == "dock" %}— Dock panel: assume 300-400px available (the narrowest common case). Use 300px as the adversarial floor (the agent panel's minimum dock width, `MIN_PANEL_WIDTH` at crates/agent_ui/src/agent_panel.rs:108).{% endif %}
   {% if container_width == "center" %}— Center pane: assume 600px+ available.{% endif %}
 
 ## Measurement Steps

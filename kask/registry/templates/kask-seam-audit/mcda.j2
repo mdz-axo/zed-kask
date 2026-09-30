@@ -32,8 +32,12 @@ weight vector in the output.
 3. Apply the **essentialist deletion test** as a gate: a candidate whose
    `deletion_test == "complexity_vanishes"` survives; one whose
    `deletion_test == "complexity_reappears"` survives only if it deepens a
-   module (complexity reappears because the module deserves to exist). Mark
-   `essentialist_survives: true|false`.
+   module (complexity reappears because the module deserves to exist). A
+   candidate whose `deletion_test == "unclear"` does not survive — verify the
+   caller count or defer it. A candidate whose `deletion_test == "n/a"` (not a
+   deletion — e.g. a security or UI-consistency remediation) is not gated by
+   the deletion test; mark `essentialist_survives: true` with the `n/a` noted.
+   Mark `essentialist_survives: true|false`.
 4. Run a ±20% sensitivity analysis: for each single-axis weight emphasis
    (security, codebase, ui, cost), recompute the top 3 and record whether the
    top-3 membership flipped. `stable_under_perturbation` = true iff the top-3

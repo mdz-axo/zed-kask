@@ -49,6 +49,7 @@ loop could read as a measurement.
     {
       "id": "RA-NN",
       "kind": "trait-one-impl|helper-test-only|folded-dead-surface|unwrap_or_zero_signal|shallowness",
+      "severity": "critical|high|medium|low|info",
       "crate": "crate name",
       "symbol": "trait/fn/module name",
       "file_line": "path:line",
@@ -75,10 +76,10 @@ counts.
 ## Gate B repair
 
 If `gate_defects` is present in context (Gate B found structural defects —
-empty track, bad severity, missing citation), re-run this template with
+bad severity, missing citation), re-run this template with
 `gate_defects` in context and re-emit the corrected `findings` and
 `dead_surface_summary`. Never fabricate a `file_line`; if you cannot cite a
 real line, mark the finding `deferred: true` with a `deferred_reason`. If the
-surface genuinely has no findings, emit a single `id: "RA-00"`, `kind:
-"shallowness"`, `severity: "info"`, `file_line: "<scope root>:0"` finding so
-the track is non-empty.
+surface genuinely has no findings, emit `findings: []` and state the examined
+boundary in `dead_surface_summary`; Gate B accepts the empty list. Never
+fabricate a line-zero citation to make a track non-empty.
