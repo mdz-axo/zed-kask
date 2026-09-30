@@ -223,8 +223,19 @@ pub async fn get_series_info(
     let key = require_api_key(api_key)?;
     let url = fred_url("series", key, &[("series_id", req.series_id.as_str())]);
     let body = client.fetch(FRED_PROVIDER, &url).await?;
+    series_info_from_body(&body, &req.series_id)
+}
 
-    let s = &body;
+/// Shape FRED's `/fred/series` response into the tool output. The API wraps
+/// the metadata in `{"seriess": [ {...} ]}` — the fields are NOT at the top
+/// level. An empty `seriess` array (unknown series id) or a missing key is
+/// surfaced as an error, never shaped into an all-empty success.
+fn series_info_from_body(body: &Value, series_id: &str) -> Result<Value, EconomicDataError> {
+    let s = body
+        .get("seriess")
+        .and_then(|v| v.as_array())
+        .and_then(|arr| arr.first())
+        .ok_or_else(|| EconomicDataError::InvalidParam(format!("series {series_id} not found")))?;
     Ok(serde_json::json!({
         "id": s.get("id").and_then(|v| v.as_str()).unwrap_or(""),
         "title": s.get("title").and_then(|v| v.as_str()).unwrap_or(""),
@@ -337,3 +348,65 @@ pub async fn get_release(
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regression pin: the fields live under `seriess[0]`, not the top-level
+    /// body. The pre-fix shaping read the top level and emitted all-empty
+    /// fields on every successful fetch.
+    #[test]
+    fn series_info_reads_seriess_array() {
+        let body = serde_json::json!({
+            "seriess": [{
+                "id": "CPIAUCSL",
+                "title": "Consumer Price Index for All Urban Consumers: All Items in U.S. City Average",
+                "units": "Index 1982-1984=100",
+                "frequency": "Monthly",
+                "frequency_short": "M",
+                "seasonal_adjustment": "Seasonally Adjusted",
+                "seasonal_adjustment_short": "SA",
+                "observation_start": "1947-01-01",
+                "observation_end": "2026-08-01",
+                "last_updated": "2026-09-11 07:37:15-05",
+                "popularity": 90,
+                "notes": "The Consumer Price Index..."
+            }]
+        });
+        let out =
+            series_info_from_body(&body, "CPIAUCSL").expect("shaping must succeed on real shape");
+        assert_eq!(out["id"], "CPIAUCSL");
+        assert_eq!(out["units"], "Index 1982-1984=100");
+        assert_eq!(out["frequency"], "Monthly");
+        assert_eq!(out["popularity"], 90);
+        assert!(
+            out["title"]
+                .as_str()
+                .expect("title is a string")
+                .contains("Consumer Price Index")
+        );
+    }
+
+    /// An unknown series id makes FRED return `{"seriess": []}` — that must
+    /// surface as an error naming the id, not an all-empty success.
+    #[test]
+    fn unknown_series_id_is_surfaced_not_empty_success() {
+        let body = serde_json::json!({ "seriess": [] });
+        let err = series_info_from_body(&body, "NOT_A_SERIES")
+            .err()
+            .expect("empty seriess must error");
+        assert!(
+            err.to_string().contains("NOT_A_SERIES"),
+            "error must name the series id, got: {err}"
+        );
+    }
+
+    /// A body without the `seriess` key (shape drift, upstream error page
+    /// parsed as JSON) must error — the pre-fix code returned an all-empty
+    /// success for it.
+    #[test]
+    fn missing_seriess_key_is_surfaced_not_empty_success() {
+        let body = serde_json::json!({ "some_other_shape": true });
+        assert!(series_info_from_body(&body, "X").is_err());
+    }
+}
