@@ -1,7 +1,6 @@
 ---
 name: grill-me
-description: "Socratic interrogation skill. Tests deep understanding through escalating difficulty (Recall → Mechanism → Rationale → Edge Cases → Synthesis). Probes gaps, challenges assumptions, produces gap analysis.
-"
+description: "Socratic interrogation skill. Tests deep understanding through escalating difficulty (Recall → Mechanism → Rationale → Edge Cases → Synthesis). Probes gaps, challenges assumptions, produces gap analysis."
 ---
 
 # Grill Me
@@ -11,7 +10,7 @@ Socratic interrogation skill. Tests deep understanding through escalating diffic
 
 ## Reference model
 
-Socratic questioning, with a difficulty ladder (Recall → Mechanism → Rationale → Edge cases → Synthesis) in the manner of Bloom's taxonomy (Bloom et al., 1956). Initial condition: calibrate mode's baseline. Target condition: level-5 completion or round 5, then an assessment built only from actual answers.
+Socratic questioning, with a difficulty ladder (Recall → Mechanism → Rationale → Edge cases → Synthesis) in the manner of Bloom's taxonomy (Bloom et al., 1956) — `onto_anchor` → core 5w1h (coarse anchor; an operator ruling could derive a finer one). Initial condition: calibrate mode's baseline. Target condition: level-5 completion or round 5, then an assessment built only from actual answers.
 
 ## D/P labelling
 
@@ -36,7 +35,7 @@ reported as unassessed.
 
 - Teaching new material — grill-me tests understanding that exists; it does not deliver a lesson.
 - Reviewing a code change — use `code-review`.
-- Adversarial self-review of one's own reasoning — use `falsifiability`'s challenge stage; grill-me interrogates a learner about a topic, decoupled from authorship.
+- Adversarial self-review of one's own reasoning — use `falsifiability`'s eliminative inference (the admissibility gate and the discriminating tests challenge your own hypotheses); grill-me interrogates a learner about a topic, decoupled from authorship.
 
 ## Instructions
 
@@ -46,13 +45,14 @@ reported as unassessed.
 2. Generate 2-3 questions at the current difficulty level, adhering to the question taxonomy (Recall, Mechanism, Rationale, Edge Cases, Synthesis).
 3. If mode is "calibrate", assess the user's baseline knowledge directly and precisely.
 4. If mode is "interrogate", grade each previous answer Solid, Partial or Gap (P). The level and the hold/reprobe direction come from the Feedback gate below, not from this step.
-5. Track attempts per question across rounds; the Feedback gate retires a question after 3 failed attempts, and this step explains its answer instead of re-asking it.
+5. Track attempts per question across rounds: each question carries a stable `id`; the round output's `attempt_counts` accumulates failed attempts per question id across rounds (`[[id, count], ...]`); the Feedback gate retires a question at 3 failed attempts, and the next render explains its answer instead of re-asking it. The agent constructs `previous_answers` by joining the prior round's `questions` and `evaluations` by position: each entry carries `{question, answer, rating, note}` — the question text, the answer text, the prior rating when already graded, and the note.
 6. Maintain a direct, sharp tone akin to a demanding technical interviewer, using specific challenging phrases without being mean-spirited.
 7. Give minimal hints if requested, without solving the questions for the user.
 8. Output a JSON object containing questions, evaluations, current level, and the updated running assessment (each area's Solid/Partial/Gap rating accumulated across rounds); each evaluation carries its Solid/Partial/Gap rating.
 
 ### grill-me-assess
 
+0. Reconcile the calibration: state where the final ratings confirm or correct the calibrate round's baseline expectation (the calibrate output is part of `all_answers`).
 1. Synthesize a comprehensive final knowledge assessment for the specified topic.
 2. Rate each knowledge area as Solid, Partial, or Gap based on all answers and running assessment.
 3. Formulate specific study recommendations, prioritized by impact with the most critical gaps first.
@@ -63,12 +63,12 @@ reported as unassessed.
 
 Grading each answer Solid / Partial / Gap is P (the round render's judgment, critiqued by the learner's next answer and by the operator). The escalation decision over those grades is a fixed rule, computed with `lisp_eval`, never judged:
 
-1. After each answer, compute `solid_ratio` = Solid answers / answered questions this round (0 answered → hold), then call `lisp_eval`:
+1. After each round's grades are recorded (the round render grades in batch; the gate runs between rounds), compute `solid_ratio` = Solid answers / answered questions this round (0 answered → hold), then call `lisp_eval`:
    - form: `(cond ((= answered 0) (list level "hold")) ((>= round 5) (list level "complete")) ((>= solid_ratio 0.8) (if (>= level 5) (list 5 "complete") (list (+ level 1) "escalate"))) ((>= solid_ratio 0.4) (list level "hold")) (t (list level "reprobe")))`
    - env: `{ "level": <current level 1–5>, "solid_ratio": <ratio>, "answered": <answered questions this round>, "round": <round number> }`
-   Wait for the answer before counting it; rendering a question is not evaluation.
-2. Retire questions after 3 failed attempts with `lisp_eval` over the per-question attempt counts: `(begin (define retire (lambda (a) (if (is_null a) (quote ()) (if (>= (car (cdr (car a))) 3) (cons (car (car a)) (retire (cdr a))) (retire (cdr a)))))) (retire attempts))`, env `{ "attempts": [[<question id>, <failed attempts>], ...] }`. Pass the retired ids to the next round render so they are explained, not re-asked.
-2. Stop at level-5 completion or round 5, whichever comes first, and run `grill-me-assess` on actual answers. Never invent a rating for unanswered questions; report gaps as unassessed where evidence is absent.
+   Wait for the answer before counting it; rendering a question is not evaluation. The first interrogate round's level comes from the calibrate render's `calibrated_level` output (P — stated as such); the gate governs every level thereafter.
+2. Retire questions after 3 failed attempts with `lisp_eval` over the accumulated `attempt_counts` from the round outputs: `(begin (define retire (lambda (a) (if (is_null a) (quote ()) (if (>= (car (cdr (car a))) 3) (cons (car (car a)) (retire (cdr a))) (retire (cdr a)))))) (retire attempts))`, env `{ "attempts": <the accumulated attempt_counts> }`. Pass the retired ids and the gate's direction to the next round render (`retired_ids`, `gate_direction`) so they are explained, not re-asked.
+3. Stop at level-5 completion or round 5, whichever comes first, and run `grill-me-assess` on actual answers. Never invent a rating for unanswered questions; report gaps as unassessed where evidence is absent.
 
 ## Registry Templates
 

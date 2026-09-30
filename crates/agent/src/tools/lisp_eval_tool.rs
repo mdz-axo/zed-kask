@@ -2503,4 +2503,111 @@ mod tests {
             "0.212 < 0.356 — the predeclared reduction was not met"
         );
     }
+
+    #[test]
+    fn test_grill_me_skill_md_pins_forms() {
+        // grill-me — the audit's own critic instrument — pins its two
+        // Feedback-gate forms: the escalation decision and the question
+        // retirement. The D/P section claims they run as pinned forms;
+        // before this test nothing pinned them. The retirement form in
+        // the SKILL.md had ONE EXTRA closing paren (21 opens / 22 closes;
+        // begin closed before (retire attempts), leaving the final paren
+        // unmatched) and never parsed — found by the pass, briefly
+        // "refuted" by the critic on a total-count argument (21/21 was
+        // the critic's miscount; its live run used the corrected string
+        // from the pass's brief), then re-confirmed by this test's engine
+        // run. The form below is the corrected 21/21 version, verified
+        // live: ["q1","q3"].
+        let skill_md = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../.agents/skills/grill-me/SKILL.md"
+        ))
+        .expect("grill-me SKILL.md must exist in the workspace");
+
+        // 1. The escalation gate form.
+        let escalation = r#"(cond ((= answered 0) (list level "hold")) ((>= round 5) (list level "complete")) ((>= solid_ratio 0.8) (if (>= level 5) (list 5 "complete") (list (+ level 1) "escalate"))) ((>= solid_ratio 0.4) (list level "hold")) (t (list level "reprobe")))"#;
+        assert!(
+            skill_md.contains(escalation),
+            "escalation gate form must stay pinned in grill-me SKILL.md"
+        );
+        let escalate = hkask_lisp::eval_sandboxed_with_budget(
+            escalation,
+            &json!({"level": 2, "solid_ratio": 0.9, "answered": 3, "round": 3}),
+            100_000,
+            64,
+        )
+        .expect("escalation form must evaluate");
+        assert_eq!(
+            escalate,
+            json!([3, "escalate"]),
+            "solid_ratio >= 0.8 below level 5 escalates one level"
+        );
+        let complete_at_five = hkask_lisp::eval_sandboxed_with_budget(
+            escalation,
+            &json!({"level": 5, "solid_ratio": 0.9, "answered": 3, "round": 3}),
+            100_000,
+            64,
+        )
+        .expect("escalation form must evaluate at level 5");
+        assert_eq!(
+            complete_at_five,
+            json!([5, "complete"]),
+            "solid_ratio >= 0.8 at level 5 completes"
+        );
+        let hold = hkask_lisp::eval_sandboxed_with_budget(
+            escalation,
+            &json!({"level": 2, "solid_ratio": 0.5, "answered": 3, "round": 3}),
+            100_000,
+            64,
+        )
+        .expect("escalation form must evaluate on a hold");
+        assert_eq!(
+            hold,
+            json!([2, "hold"]),
+            "0.4 <= solid_ratio < 0.8 holds the level"
+        );
+        let reprobe = hkask_lisp::eval_sandboxed_with_budget(
+            escalation,
+            &json!({"level": 2, "solid_ratio": 0.2, "answered": 3, "round": 3}),
+            100_000,
+            64,
+        )
+        .expect("escalation form must evaluate on a reprobe");
+        assert_eq!(
+            reprobe,
+            json!([2, "reprobe"]),
+            "solid_ratio < 0.4 reprobes the same area from a different angle"
+        );
+        let no_answers = hkask_lisp::eval_sandboxed_with_budget(
+            escalation,
+            &json!({"level": 3, "solid_ratio": 0.0, "answered": 0, "round": 2}),
+            100_000,
+            64,
+        )
+        .expect("escalation form must evaluate with no answers");
+        assert_eq!(
+            no_answers,
+            json!([3, "hold"]),
+            "0 answered holds — rendering a question is not evaluation"
+        );
+
+        // 2. The question-retirement form (corrected: one paren removed).
+        let retirement = r#"(begin (define retire (lambda (a) (if (is_null a) (quote ()) (if (>= (car (cdr (car a))) 3) (cons (car (car a)) (retire (cdr a))) (retire (cdr a)))))) (retire attempts))"#;
+        assert!(
+            skill_md.contains(retirement),
+            "question-retirement form must stay pinned in grill-me SKILL.md"
+        );
+        let retired = hkask_lisp::eval_sandboxed_with_budget(
+            retirement,
+            &json!({"attempts": [["q1", 3], ["q2", 1], ["q3", 3]]}),
+            100_000,
+            64,
+        )
+        .expect("retirement form must evaluate");
+        assert_eq!(
+            retired,
+            json!(["q1", "q3"]),
+            "questions with >= 3 failed attempts retire; q2 (1 attempt) continues"
+        );
+    }
 }
