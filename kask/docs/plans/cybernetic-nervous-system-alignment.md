@@ -409,6 +409,32 @@ not verdict (operator calibration, 2026-09-30).
   files removed (`git rm`), the README lifecycle ledger carries the
   tombstone with successors, `DOCUMENTATION_STANDARDS` §258's example
   row updated, corpus 74 → **71**. The gates re-run green.
+
+### Execution record — fourth slice (2026-09-30: CU-7 continuation, the zed-side settings sweep — CU-7 COMPLETE)
+
+- **The instrument:** the 72 `pub` fields of
+  `kask_bridge/src/settings.rs` (`KaskSettings` + its subsections)
+  counted against a fresh repo-wide word corpus (rebuilt after the
+  evolution server landed — the tree moved mid-sweep, per the
+  operator's calibration).
+- **No-candidate, with evidence:** zero fields at ≤2 occurrences (both
+  definition sites, no readers) and zero at 3 — every knob has ≥4
+  occurrences (the settings-struct definition, the Content mirror, and
+  readers across `mcp_env()`, the settings UI, and the consumers).
+- **The mirror is drift-free:** the 72 `Content` fields in
+  `crates/settings_content/src/settings_content.rs:1650+` correspond
+  1:1 with the settings fields — zero orphaned deserialization knobs,
+  zero unsettable settings.
+- **CU-7 is complete:** all named candidate classes verified — the
+  standalone subscriber (a test fixture in a live module), the
+  `HKASK_USE_*` opt-ins (one, a removal guard), and the settings knobs
+  (both surfaces: `HkaskSettings` swept in the first slice,
+  `KaskSettings` here). No dead knob exists in either settings
+  surface.
+- **Observed, not acted:** the concurrent stream's evolution server
+  landed with its registry row (6 tools, pinned) — its per-server
+  detail doc does not exist yet (the kata-kanban precedent: a recorded
+  gap proposal, their stream's business).
 - **CU-5(b) probe artifacts: clean** (no probe/scratch/tmp/bak files
   in production trees).
 - **Gates:** count 74 (< the 75 cap; the 60-file target remains the
