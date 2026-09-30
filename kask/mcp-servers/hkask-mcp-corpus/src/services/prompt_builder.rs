@@ -43,7 +43,13 @@ impl PromptBuilderService {
         &self,
         request: BuildPromptsRequest,
     ) -> Result<serde_json::Value, McpToolError> {
-        let chunks = read_tagged_chunks(&request.tagged_jsonl)?;
+        let (chunks, dropped_malformed) = read_tagged_chunks(&request.tagged_jsonl)?;
+        if dropped_malformed > 0 {
+            tracing::warn!(
+                dropped = dropped_malformed,
+                "tagged_jsonl contained malformed lines; building prompts from the parseable subset"
+            );
+        }
         if chunks.is_empty() {
             return Err(McpToolError::invalid_argument("tagged_jsonl is empty"));
         }
@@ -89,7 +95,8 @@ impl PromptBuilderService {
         } else {
             request.max_pairs.min(requested_pairs)
         };
-        let rotation = parse_type_distribution(&request.type_distribution);
+        let rotation = parse_type_distribution(&request.type_distribution)
+            .map_err(McpToolError::invalid_argument)?;
 
         let mut passages = HashMap::new();
         if request.context_k > 0 {

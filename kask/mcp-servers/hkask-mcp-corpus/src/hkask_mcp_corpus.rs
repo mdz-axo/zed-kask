@@ -1053,7 +1053,7 @@ mod smoke {
                 prefix: Some("corpus:custom:".to_string()),
                 context_k: 3,
                 qa_pairs_per_chunk: 1,
-                type_distribution: "1".to_string(),
+                type_distribution: "1,0,0,0,0".to_string(),
                 max_pairs: 0,
             }))
             .await
@@ -1083,7 +1083,7 @@ mod smoke {
                 prefix: None,
                 context_k: 3,
                 qa_pairs_per_chunk: 1,
-                type_distribution: "1".to_string(),
+                type_distribution: "1,0,0,0,0".to_string(),
                 max_pairs: 0,
             }))
             .await

@@ -85,6 +85,12 @@ impl CorpusServer {
                 &passphrase,
                 &req.prefix,
             )?;
+            if input.dropped_malformed > 0 {
+                tracing::warn!(
+                    dropped = input.dropped_malformed,
+                    "tagged_jsonl contained malformed lines; deduplicating the parseable subset"
+                );
+            }
             let threshold = req.threshold as f32;
             let all_clusters = input.cluster_by_source(threshold, usize::MAX);
             let chunks = input.chunks;
@@ -108,6 +114,7 @@ impl CorpusServer {
                 "removed": chunks.len() - keep_indices.len(),
                 "clusters": all_clusters.len(),
                 "sources": sources,
+                "dropped_malformed_lines": input.dropped_malformed,
                 "reduction_pct": (1.0 - keep_indices.len() as f64 / chunks.len().max(1) as f64) * 100.0,
             });
 
@@ -217,6 +224,8 @@ impl CorpusServer {
             let mut generator_errors = 0usize;
             let mut malformed = 0usize;
             let mut qas: Vec<(usize, ParsedQa)> = Vec::new();
+            let mut malformed_lines: Vec<usize> = Vec::new();
+            let mut first_malformed_detail: Option<String> = None;
             for (index, line) in content.lines().enumerate() {
                 if line.trim().is_empty() {
                     continue;
@@ -225,7 +234,15 @@ impl CorpusServer {
                 match parse_qa_record(line) {
                     Ok(qa) => qas.push((index + 1, qa)),
                     Err(QaRecordError::GeneratorError) => generator_errors += 1,
-                    Err(QaRecordError::Malformed) => malformed += 1,
+                    Err(QaRecordError::Malformed(detail)) => {
+                        malformed += 1;
+                        if malformed_lines.len() < 10 {
+                            malformed_lines.push(index + 1);
+                        }
+                        if first_malformed_detail.is_none() {
+                            first_malformed_detail = Some(detail);
+                        }
+                    }
                 }
             }
             tracing::info!(
@@ -235,9 +252,23 @@ impl CorpusServer {
                 "Parsed QA input"
             );
             if malformed > 0 || generator_errors > 0 {
-                return Err(McpToolError::invalid_argument(format!(
+                let mut message = format!(
                     "Grounding-gated ingestion rejects partial input: {malformed} malformed and {generator_errors} non-QA rows"
-                )));
+                );
+                if malformed > 0 {
+                    message.push_str(&format!(
+                        "; malformed lines (first 10): {}",
+                        malformed_lines
+                            .iter()
+                            .map(usize::to_string)
+                            .collect::<Vec<String>>()
+                            .join(", ")
+                    ));
+                    if let Some(detail) = first_malformed_detail {
+                        message.push_str(&format!("; first malformed detail: {detail}"));
+                    }
+                }
+                return Err(McpToolError::invalid_argument(message));
             }
 
             // Structural admission only: concise answers are not low-quality answers.

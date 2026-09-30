@@ -18,6 +18,10 @@ use crate::tools::corpus::clustering::cluster_within_source;
 pub(crate) struct ClusterInput {
     pub chunks: Vec<TaggedChunk>,
     pub norm_map: std::collections::HashMap<String, Vec<f32>>,
+    /// Malformed tagged-jsonl lines dropped during the read — the clustering
+    /// operated on the parseable subset, and the tool responses report this
+    /// so "no clusters" is distinguishable from "half the file failed to parse".
+    pub dropped_malformed: usize,
 }
 
 /// Load tagged chunks and their stored embeddings, pre-normalized.
@@ -31,7 +35,8 @@ pub(crate) fn load_clusters(
     passphrase: &str,
     prefix: &str,
 ) -> Result<ClusterInput, McpToolError> {
-    let chunks = crate::tools::corpus::clustering::read_tagged_chunks(tagged_jsonl)?;
+    let (chunks, dropped_malformed) =
+        crate::tools::corpus::clustering::read_tagged_chunks(tagged_jsonl)?;
     if chunks.is_empty() {
         return Err(McpToolError::invalid_argument("tagged_jsonl is empty"));
     }
@@ -49,7 +54,11 @@ pub(crate) fn load_clusters(
         })
         .collect();
 
-    Ok(ClusterInput { chunks, norm_map })
+    Ok(ClusterInput {
+        chunks,
+        norm_map,
+        dropped_malformed,
+    })
 }
 
 impl ClusterInput {
@@ -111,7 +120,7 @@ mod tests {
             .into_iter()
             .map(|(entity_ref, vector)| (entity_ref.to_string(), vector))
             .collect();
-        ClusterInput { chunks, norm_map }
+        ClusterInput { chunks, norm_map, dropped_malformed: 0 }
     }
 
     #[test]

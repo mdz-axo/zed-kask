@@ -103,6 +103,12 @@ impl ConsolidationService {
         )?;
         let input =
             crate::services::cluster::load_clusters(&tagged_jsonl, &db_path, &passphrase, &prefix)?;
+        if input.dropped_malformed > 0 {
+            tracing::warn!(
+                dropped = input.dropped_malformed,
+                "tagged_jsonl contained malformed lines; consolidating the parseable subset"
+            );
+        }
         #[cfg(test)]
         if let Some(pause) = &self.after_snapshot {
             pause.0.notify_one();
@@ -124,6 +130,7 @@ impl ConsolidationService {
             "singletons": singletons,
             "multi_chunk": multi,
             "absorbed": absorbed,
+            "dropped_malformed_lines": input.dropped_malformed,
             "reduction_pct": (absorbed as f64 / chunks.len().max(1) as f64) * 100.0,
         });
 

@@ -28,12 +28,34 @@ impl QaType {
 
 /// Parse a type distribution spec like "1,1,2,1,0" into a list of QaType
 /// values. The 5 numbers correspond to Factual, Conceptual, Analyze,
-/// Evaluate, Create. Empty or invalid specs default to [Factual].
-pub(crate) fn parse_type_distribution(spec: &str) -> Vec<QaType> {
-    let nums: Vec<usize> = spec
-        .split(',')
-        .filter_map(|s| s.trim().parse().ok())
-        .collect();
+/// Evaluate, Create. The spec must be exactly 5 comma-separated nonnegative
+/// integers with at least one nonzero weight: a shifted or truncated spec
+/// silently corrupts the positional Bloom mapping (a typo in entry 3 turns
+/// every later level into its predecessor), so partial parsing must reject
+/// rather than drop entries.
+pub(crate) fn parse_type_distribution(spec: &str) -> Result<Vec<QaType>, String> {
+    let parts: Vec<&str> = spec.split(',').map(str::trim).collect();
+    if parts.len() != 5 {
+        return Err(format!(
+            "type_distribution must be exactly 5 comma-separated weights (factual, conceptual, analyze, evaluate, create); got {}",
+            parts.len()
+        ));
+    }
+    let mut nums = [0usize; 5];
+    for (i, part) in parts.iter().enumerate() {
+        nums[i] = part.parse().map_err(|_| {
+            format!(
+                "type_distribution weight {} is not a nonnegative integer: {part:?}",
+                i + 1
+            )
+        })?;
+    }
+    if nums.iter().all(|&count| count == 0) {
+        return Err(
+            "type_distribution must request at least one QA type (all weights are zero)"
+                .to_string(),
+        );
+    }
     let types = [
         QaType::Factual,
         QaType::Conceptual,
@@ -44,15 +66,50 @@ pub(crate) fn parse_type_distribution(spec: &str) -> Vec<QaType> {
     let mut result = Vec::new();
     for (i, &count) in nums.iter().enumerate() {
         for _ in 0..count {
-            if i < types.len() {
-                result.push(types[i]);
-            }
+            result.push(types[i]);
         }
     }
-    if result.is_empty() {
-        vec![QaType::Factual]
-    } else {
-        result
+    Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn valid_distribution_maps_positionally() {
+        let rotation = parse_type_distribution("1,1,2,1,0").expect("valid spec parses");
+        assert_eq!(
+            rotation,
+            vec![
+                QaType::Factual,
+                QaType::Conceptual,
+                QaType::Analyze,
+                QaType::Analyze,
+                QaType::Evaluate
+            ]
+        );
+    }
+
+    #[test]
+    fn non_integer_entry_is_rejected_not_shifted() {
+        // The silent-corruption case: a typo in one entry previously dropped
+        // it and shifted every later Bloom level into its predecessor.
+        let err = parse_type_distribution("1,1,x,1,1").expect_err("typo rejected");
+        assert!(err.contains("weight 3"), "names the bad entry: {err}");
+    }
+
+    #[test]
+    fn wrong_entry_count_is_rejected() {
+        assert!(parse_type_distribution("1").is_err());
+        assert!(parse_type_distribution("1,1,1,1").is_err());
+        assert!(parse_type_distribution("1,1,1,1,1,1").is_err());
+        assert!(parse_type_distribution("").is_err());
+    }
+
+    #[test]
+    fn all_zero_distribution_is_rejected() {
+        assert!(parse_type_distribution("0,0,0,0,0").is_err());
     }
 }
 

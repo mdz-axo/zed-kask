@@ -257,7 +257,7 @@ pub(crate) fn read_grounding_candidates(
                 }
             }
             Err(crate::tools::corpus::qa_parsing::QaRecordError::GeneratorError) => non_qa += 1,
-            Err(crate::tools::corpus::qa_parsing::QaRecordError::Malformed) => malformed += 1,
+            Err(crate::tools::corpus::qa_parsing::QaRecordError::Malformed(_)) => malformed += 1,
         }
     }
     if malformed > 0 || non_qa > 0 || incomplete > 0 {
@@ -275,7 +275,13 @@ pub(crate) fn read_grounding_candidates(
 pub(crate) fn read_grounding_chunks(
     path: &str,
 ) -> Result<Vec<hkask_types::corpus::TaggedChunk>, McpToolError> {
-    let chunks = read_tagged_chunks(path)?;
+    let (chunks, dropped_malformed) = read_tagged_chunks(path)?;
+    if dropped_malformed > 0 {
+        tracing::warn!(
+            dropped = dropped_malformed,
+            "tagged_jsonl contained malformed lines; grounding checks run on the parseable subset"
+        );
+    }
     let mut seen = std::collections::HashSet::new();
     for chunk in &chunks {
         if !chunk.has_current_canonical_terms() {

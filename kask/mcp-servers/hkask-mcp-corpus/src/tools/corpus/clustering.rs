@@ -7,14 +7,17 @@
 use crate::{McpToolError, read_jsonl_lenient};
 use hkask_types::corpus::TaggedChunk;
 
-/// Read tagged chunks from a JSONL file. Malformed lines are silently dropped.
+/// Read tagged chunks from a JSONL file. Malformed lines are dropped and
+/// the dropped count is returned so callers can surface the degradation
+/// (dedup/consolidate report it; prompt-builder and grounding consumers
+/// warn — their own reconciliation gates surface the subset downstream).
 /// Sanitizes control characters from PDF extraction in the text field.
-pub(crate) fn read_tagged_chunks(path: &str) -> Result<Vec<TaggedChunk>, McpToolError> {
-    let (mut chunks, _dropped) = read_jsonl_lenient::<TaggedChunk>(path, "tagged_jsonl")?;
+pub(crate) fn read_tagged_chunks(path: &str) -> Result<(Vec<TaggedChunk>, usize), McpToolError> {
+    let (mut chunks, dropped) = read_jsonl_lenient::<TaggedChunk>(path, "tagged_jsonl")?;
     for chunk in &mut chunks {
         chunk.text = hkask_memory::text_chunking::sanitize_text(&chunk.text);
     }
-    Ok(chunks)
+    Ok((chunks, dropped))
 }
 
 /// Greedy clustering within a source file.

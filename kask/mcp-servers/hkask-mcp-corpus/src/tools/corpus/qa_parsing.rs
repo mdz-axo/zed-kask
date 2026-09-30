@@ -23,7 +23,9 @@ pub(crate) struct ParsedQa {
 #[derive(Debug, PartialEq)]
 pub(crate) enum QaRecordError {
     GeneratorError,
-    Malformed,
+    /// Carries the parse/validation detail so the ingest gate can name the
+    /// first failure instead of forcing manual bisection of a large file.
+    Malformed(String),
 }
 
 #[derive(Deserialize)]
@@ -56,9 +58,11 @@ struct Metadata {
 /// validation. Ingest checks structure only; audit verifies against sources.
 pub(crate) fn parse_qa_record(line: &str) -> Result<ParsedQa, QaRecordError> {
     let value: serde_json::Value =
-        serde_json::from_str(line).map_err(|_| QaRecordError::Malformed)?;
+        serde_json::from_str(line).map_err(|e| QaRecordError::Malformed(e.to_string()))?;
     if !value.is_object() {
-        return Err(QaRecordError::Malformed);
+        return Err(QaRecordError::Malformed(
+            "record is not a JSON object".to_string(),
+        ));
     }
     let body = value.get("response").unwrap_or(&value);
     if value.get("status").and_then(serde_json::Value::as_str) == Some("skipped")
@@ -69,8 +73,10 @@ pub(crate) fn parse_qa_record(line: &str) -> Result<ParsedQa, QaRecordError> {
     {
         return Err(QaRecordError::GeneratorError);
     }
-    let body: Body = serde_json::from_value(body.clone()).map_err(|_| QaRecordError::Malformed)?;
-    let metadata: Metadata = serde_json::from_value(value).map_err(|_| QaRecordError::Malformed)?;
+    let body: Body = serde_json::from_value(body.clone())
+        .map_err(|e| QaRecordError::Malformed(e.to_string()))?;
+    let metadata: Metadata =
+        serde_json::from_value(value).map_err(|e| QaRecordError::Malformed(e.to_string()))?;
     if body
         .evidence_quotes
         .iter()
@@ -88,7 +94,10 @@ pub(crate) fn parse_qa_record(line: &str) -> Result<ParsedQa, QaRecordError> {
             .as_ref()
             .is_some_and(|value| !value.is_object())
     {
-        return Err(QaRecordError::Malformed);
+        return Err(QaRecordError::Malformed(
+            "citation or metadata validation failed (incomplete citation, empty concept, blank prompt_id, or non-object provenance)"
+                .to_string(),
+        ));
     }
     Ok(ParsedQa {
         instruction: body.instruction,
@@ -235,7 +244,7 @@ mod tests {
                 "chunk_ref":"c", "source":"s", "evidence_quotes":quotes});
             assert!(matches!(
                 parse_qa_record(&row.to_string()),
-                Err(QaRecordError::Malformed)
+                Err(QaRecordError::Malformed(_))
             ));
         }
     }

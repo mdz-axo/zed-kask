@@ -284,7 +284,10 @@ async fn extract_per_page_images(
 /// visible image (not a soft-mask). Returns `None` for headers/unparsable rows.
 fn parse_image_row(line: &str, config: &TriageConfig) -> Option<(usize, PageImageSignal)> {
     let cols: Vec<&str> = line.split_whitespace().collect();
-    if cols.len() < 13 {
+    // The pdfimages -list row carries 14 columns (indices 0-13, ending with
+    // x-ppi and y-ppi); a row with fewer is a header or unparsable, and
+    // indexing cols[13] under a `< 13` guard panicked on exactly-13 rows.
+    if cols.len() < 14 {
         return None;
     }
     let page: usize = cols[0].parse().ok()?;
@@ -317,4 +320,21 @@ fn parse_image_row(line: &str, config: &TriageConfig) -> Option<(usize, PageImag
         signal.has_substantial = true;
     }
     Some((page, signal))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A 13-column `pdfimages -list` row must be skipped, not panic: the
+    /// guard previously allowed exactly-13 rows through and then indexed
+    /// `cols[13]` (the y-ppi column of a 14-column row).
+    #[test]
+    fn thirteen_column_image_row_is_skipped_not_panicked() {
+        let config = TriageConfig::default();
+        let thirteen_columns = "1 17 image 100 200 rgb 3 8 jpeg no 17 0 72".to_string();
+        assert!(parse_image_row(&thirteen_columns, &config).is_none());
+        let fourteen_columns = "1 17 image 100 200 rgb 3 8 jpeg no 17 0 72 72".to_string();
+        assert!(parse_image_row(&fourteen_columns, &config).is_some());
+    }
 }
