@@ -421,5 +421,5 @@ apply an old request when image identity, hash, or presence no longer matches
 
 [^fowler-poeaa]: Fowler, M. (2002). *Patterns of Enterprise Application Architecture.* Addison-Wesley. <https://martinfowler.com/books/eaa.html>.
 [^sqlcipher]: Zetetic LLC. (2024). *SQLCipher — Transparent SQLite Encryption.* <https://www.zetetic.net/sqlcipher/>.
-[^sqlite-vec]: Aslett, A. (2024). *sqlite-vec: A vector search extension for SQLite.* <https://github.com/asg0171/sqlite-vec>.
+[^sqlite-vec]: Garcia, A. (2024). *sqlite-vec: A vector search extension for SQLite.* <https://github.com/asg017/sqlite-vec>.
 [^rusqlite-transaction]: rusqlite contributors. *Transaction*. https://docs.rs/rusqlite/latest/rusqlite/struct.Transaction.html. The transaction borrows one connection and rolls back on drop unless committed.
