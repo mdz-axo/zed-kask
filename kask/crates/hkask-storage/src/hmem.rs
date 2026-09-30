@@ -804,8 +804,18 @@ impl HMemStore {
         let mut conn = pool
             .get()
             .map_err(|e| HMemError::Infra(InfrastructureError::database(e.to_string())))?;
+        // BEGIN IMMEDIATE, not the DEFERRED default: the metadata SELECT below
+        // opens a WAL read snapshot, and under DEFERRED behavior the following
+        // DELETE upgrades that snapshot to a write lock — any sibling commit in
+        // the window returns SQLITE_BUSY_SNAPSHOT immediately, which
+        // busy_timeout cannot retry (a stale snapshot never becomes fresh).
+        // That was the live "h_mem update failed: database is locked" class
+        // under concurrent kanban writers (parallel card writes, the
+        // regulation connector, concurrent sessions). IMMEDIATE takes the
+        // write lock at BEGIN and waits under the pool's busy_timeout, the
+        // same discipline as insert_batch_with_controls / update_value_atomic.
         let tx = conn
-            .transaction()
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
             .map_err(|e| HMemError::Infra(InfrastructureError::database(e.to_string())))?;
         // Read the old version's metadata to carry into the replacement —
         // before the delete, because the row is gone afterwards.
@@ -1454,6 +1464,76 @@ mod tests {
         assert_eq!(retained.confidence, original.confidence);
         assert_eq!(retained.observed_at, original.observed_at);
         assert_eq!(retained.recalled_at, original.recalled_at);
+        Ok(())
+    }
+
+    /// `HMemStore::update` must hold the write lock before its metadata read.
+    /// Under DEFERRED behavior the SELECT opens a WAL read snapshot and the
+    /// DELETE then upgrades it; any sibling commit in that window returns
+    /// SQLITE_BUSY_SNAPSHOT immediately — busy_timeout cannot retry a stale
+    /// snapshot. That was the live "h_mem update failed: database(other):
+    /// database is locked" failure class on the kanban board (parallel card
+    /// writes, the regulation connector, concurrent sessions). The trap needs
+    /// real WAL semantics across pooled connections, so this runs against a
+    /// file-backed pool, not the in-memory driver.
+    #[test]
+    fn concurrent_updates_on_a_wal_pool_do_not_fail_with_stale_snapshot_busy() -> anyhow::Result<()>
+    {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("concurrent-update.sqlite");
+        {
+            let mut conn = rusqlite::Connection::open(&path)?;
+            crate::init_wal_pragmas(&mut conn)?;
+            crate::core::connection::init_sqlite_vec_on(&conn)?;
+            conn.execute_batch(
+                &include_str!("core/sql/schema.sql")
+                    .replace("$DIM", &crate::embedding_dim().to_string()),
+            )?;
+        }
+        let pool = r2d2::Pool::builder().max_size(8).build(
+            crate::SqliteConnectionManager::file(&path).with_init(crate::init_wal_pragmas),
+        )?;
+        let store = HMemStore::from_driver(Arc::new(SqliteDriver::new(pool)))?;
+
+        const WRITERS: usize = 8;
+        const ROUNDS: usize = 25;
+        let owner = WebID::new();
+        let failures: Vec<String> = std::thread::scope(|scope| {
+            let store = &store;
+            let owner = &owner;
+            let mut handles = Vec::new();
+            for writer in 0..WRITERS {
+                handles.push(scope.spawn(move || {
+                    let mut failures = Vec::new();
+                    for round in 0..ROUNDS {
+                        let record = HMem::new(
+                            &format!("concurrent:{writer}"),
+                            "fact",
+                            serde_json::json!(round),
+                            *owner,
+                        );
+                        if let Err(error) = store.insert(&record) {
+                            failures.push(format!("insert {writer}/{round}: {error}"));
+                            continue;
+                        }
+                        if let Err(error) =
+                            store.update(&record.id, serde_json::json!(round + 1000), 0.7)
+                        {
+                            failures.push(format!("update {writer}/{round}: {error}"));
+                        }
+                    }
+                    failures
+                }));
+            }
+            handles
+                .into_iter()
+                .flat_map(|handle| handle.join().expect("writer thread panicked"))
+                .collect()
+        });
+        assert!(
+            failures.is_empty(),
+            "concurrent updates must not fail under WAL contention: {failures:#?}"
+        );
         Ok(())
     }
 
