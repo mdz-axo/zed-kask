@@ -78,7 +78,7 @@ annual. The embedded seed payload equals the authored tree (pinned in
 | `portfolio-review` | Transaction-ledger portfolio performance review: seed prices from live quotes, TWR/MWR returns, Brinson-style attribution, durable review note |
 | `superforecasting` | Calibrated probability forecasting (Tetlock's Good Judgment Project) |
 | `scenario-planning` | Complete scenario project: Schwartz framing, forces and divergent 2x2 narratives with a quality gate and early-warning indicators, Tetlock quantification and propagation, Brier-scored resolution, Chermack assessment |
-| `eqm` | Explanation Quality Markers: score forecast rationales against 60 EQMs via `market_score_rationale`, validate against realized outcomes (Brier), and improve a rationale in-session without changing its probability |
+| `eqm` | Explanation Quality Markers: score forecast rationales against the predictive 12 of the 60 EQMs via `market_score_rationale`, validate against realized outcomes (Brier), and improve a rationale in-session without changing its probability |
 | `cmp-term-structure` | Constant-Maturity Prediction term structures: ladder, context, provenance-carrying indices, event-tree composition, contract-price coherence, equity-duration matching |
 | `listening` | Apply the MAIA v3 listening template to an earnings-call transcript using a retrieve-cite-verify process |
 

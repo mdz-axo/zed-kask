@@ -97,7 +97,7 @@ Write the improved rationale. It should:
 - Address the failing markers guided by the EQM descriptions.
 - Preserve the forecast probability.
 - Be grounded in real evidence (or honestly note gaps).
-- Be no longer than necessary (the paper found human raters reward length, but length does not correlate with accuracy — do not pad).
+- Be no longer than necessary (the paper found human raters reward length, but length correlates only weakly with accuracy at the forecaster level, r=.24 — do not pad).
 
 ## Output
 
@@ -135,6 +135,6 @@ Respond with a JSON object:
 - NEVER fabricate evidence. If evidence is needed, delegate to a real source. If no source is available, note the gap honestly.
 - The forecast probability MUST be preserved (alignment invariant).
 - The improved rationale must address the failing markers guided by the EQM descriptions (the specs).
-- Do not pad the rationale with length — the paper found length does not correlate with accuracy.
+- Do not pad the rationale with length — the paper found length correlates only weakly with accuracy (forecaster-level r=.24).
 - The fabrication_check must verify that all evidence is sourced (not fabricated).
 - For `confirmation_bias`, the opposing case must be steelmanned (not strawmanned) — delegate to falsifiability for genuine alternatives.

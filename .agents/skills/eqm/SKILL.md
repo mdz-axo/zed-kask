@@ -60,7 +60,7 @@ skill's decision rule encodes this asymmetry:
   alignment check against the stated forecast probability and by gaming
   detection on realized outcomes. The scoring call is P too, executed by a
   tool-owned LLM (`market_score_rationale`) and calibrated by eqm-validate
-  against outcomes; every mean, Brier and
+  against outcomes; the ID-reconciliation check and every mean, Brier and
   correlation runs in `lisp_eval` over the scorer's returned values and the
   recorded outcomes (the deterministic helpers below). The instrument
   measures the written rationale; it does not vouch for the forecast.
@@ -84,7 +84,7 @@ Correlation requires ≥5 pairs; below that report `Undetermined` (matches the s
 
 ### eqm-select (P — subset choice; critique: operator)
 
-1. Admit only `predictive_12`, the MCP tool's fixed KEY_EQMS set. The 60-marker catalog is reference material (the paper's verbatim pattern set), not a 60-marker scorer; a `full_60` or `domain_tuned` request returns `unsupported_subset` and stops before paid tool calls.
+1. Admit only `predictive_12`, the MCP tool's fixed KEY_EQMS set. The 60-marker catalog is reference material (the paper's verbatim pattern set), not a 60-marker scorer; a `full_60` or `domain_tuned` request returns `selected_subset: "unsupported"` with an `unsupported_reason` and stops before paid tool calls.
 2. Gather the rationale corpus: array of {rationale, forecast_probability,
    question, forecaster_id?, timestamp} objects (the timestamp orders the
    corpus — the Dublin Core metadata row and the gaming rule's
@@ -110,7 +110,13 @@ Correlation requires ≥5 pairs; below that report `Undetermined` (matches the s
    sums: `(/ (- (+ ec frm) (+ sr bp)) (* 2 n))`, env the sums of
    `extreme_confidence`, `forecast_rationale_misalign`,
    `statistical_reasoning`, `best_practices` and `n` rationales. Positive =
-   overconfident, negative = underconfident.
+   overconfident, negative = underconfident. **Domain note:** this bias is
+   marker-domain [-2, 2] and skill-authored (the paper defines no such
+   measure); the consumer (`hkask_forecast::apply_calibration_adjustment`)
+   expects probability-domain. Until a validated conversion exists, the
+   superforecasting stage-6 departure applies the DIRECTION (positive →
+   widen, negative → sharpen) with the magnitude as a qualitative guide —
+   never as a direct probability adjustment.
 
 ### eqm-validate (D — `lisp_eval` Brier and Pearson; ground truth: realized outcomes)
 
@@ -190,7 +196,7 @@ An empty result closes only when every selected marker has a fresh score and the
 | `eqm-imp-target.j2` | Improve step 3: marker-level targets from EQM descriptions, red flags first. |
 | `eqm-imp-predict.j2` | Improve step 4: a specific intervention-to-marker prediction with confidence. |
 | `eqm-imp-experiment.j2` | Improve step 5: rewrite the rationale for each failing marker with real evidence, preserving the probability. |
-| `eqm-catalog.yaml` | Reference: the paper's full 60 EQM definitions from Karvetski et al. (2026) Appendix A.4, verbatim, organized by the paper's six theory-informed families. The 12 most predictive are marked `predictive: true`. Single source of truth for EQM definitions as published; the MCP tool's KEY_EQMS const carries the predictive 12's operational scoring descriptions. |
+| `eqm-catalog.yaml` | Reference: the paper's full 60 EQM definitions from Karvetski et al. (2026) Appendix A.4, verbatim, organized by the paper's six theory-informed families. The 12 markers selected for the live scorer are marked `predictive: true` — a hypothesis-faithful curation (the paper's Appendix C training experiment supports the helps-picks; the directional hypotheses are the paper's), NOT a paper-licensed top-12 ranking: the paper's LASSO tables (A.7/A.9) weight several of the chosen 12 near zero while excluding stronger patterns. The equal-weight composite (Σhelps − Σhurts) is likewise a skill-side simplification of the paper's LASSO-weighted composite — disclosed here, not presented under the paper's umbrella. Single source of truth for EQM definitions as published; the MCP tool's KEY_EQMS const carries the predictive 12's operational scoring descriptions. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `eqm/eqm-select`) and a context object with the required variables.
 

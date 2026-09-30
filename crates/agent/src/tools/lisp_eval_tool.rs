@@ -1169,6 +1169,119 @@ mod tests {
     }
 
     #[test]
+    fn test_eqm_skill_md_pins_forms() {
+        // eqm — the operator-grounded EQM instrument (Karvetski et al. 2026,
+        // arXiv:2606.30987) — pins its deterministic helpers block and the
+        // five inline forms. The regression case claimed "any drift in the
+        // helper definitions fails these" while nothing executed them;
+        // this test executes them. The helpers are prepended to every form
+        // per the SKILL.md's instruction, so the pin asserts the block and
+        // executes it with the documented receipts.
+        let skill_md = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../.agents/skills/eqm/SKILL.md"
+        ))
+        .expect("eqm SKILL.md must exist in the workspace");
+
+        // 1. The deterministic helpers block.
+        let helpers = r#"(define sum (lambda (l) (if (is_null l) 0 (+ (car l) (sum (cdr l))))))
+(define mean (lambda (l) (/ (sum l) (length l))))
+(define zip* (lambda (a b) (if (is_null a) (quote ()) (cons (* (car a) (car b)) (zip* (cdr a) (cdr b))))))
+(define dev (lambda (l m) (if (is_null l) (quote ()) (cons (- (car l) m) (dev (cdr l) m)))))
+(define brier (lambda (p o) (if (is_null p) (quote ()) (cons (* (- (car p) (car o)) (- (car p) (car o))) (brier (cdr p) (cdr o))))))
+(define pearson (lambda (x y) (let ((dx (dev x (mean x))) (dy (dev y (mean y)))) (/ (sum (zip* dx dy)) (sqrt (* (sum (zip* dx dx)) (sum (zip* dy dy))))))))"#;
+        assert!(
+            skill_md.contains(helpers),
+            "the deterministic helpers block must stay pinned in eqm SKILL.md"
+        );
+        let receipts = hkask_lisp::eval_sandboxed_with_budget(
+            &format!("(begin {} (list (mean (list 1 2 3)) (car (brier (list 0.7) (list 1))) (pearson (list 1 2 3 4 5) (list 2 4 6 8 10))))", helpers),
+            &json!({}),
+            100_000,
+            1024,
+        )
+        .expect("helpers must evaluate");
+        assert_eq!(
+            receipts,
+            json!([2.0, 0.09000000000000002, 1.0]),
+            "the regression case's documented receipts: mean 2.0, brier 0.09, pearson 1.0 over a linear pair"
+        );
+
+        // 2. The ID-reconciliation form.
+        let id_check = r#"(begin (define all-present (lambda (xs ys) (if (is_null xs) t (and (member (car xs) ys) (all-present (cdr xs) ys))))) (and (= (length expected_ids) 12) (= (length expected_ids) (length observed_ids)) (all-present expected_ids observed_ids) (all-present observed_ids expected_ids)))"#;
+        assert!(
+            skill_md.contains(id_check),
+            "ID-reconciliation form must stay pinned in eqm SKILL.md"
+        );
+        let twelve = hkask_lisp::eval_sandboxed_with_budget(
+            id_check,
+            &json!({"expected_ids": ["a","b","c","d","e","f","g","h","i","j","k","l"], "observed_ids": ["a","b","c","d","e","f","g","h","i","j","k","l"]}),
+            100_000,
+            1024,
+        )
+        .expect("ID-reconciliation must evaluate");
+        assert_eq!(twelve, json!(true), "twelve identical ID sets reconcile");
+        let empty = hkask_lisp::eval_sandboxed_with_budget(
+            id_check,
+            &json!({"expected_ids": [], "observed_ids": []}),
+            100_000,
+            1024,
+        )
+        .expect("ID-reconciliation must evaluate on empty");
+        assert_eq!(
+            empty,
+            json!(false),
+            "an empty pair fails the length assertion"
+        );
+
+        // 3. The overconfidence_bias form.
+        let bias = r#"(/ (- (+ ec frm) (+ sr bp)) (* 2 n))"#;
+        assert!(
+            skill_md.contains(bias),
+            "overconfidence_bias form must stay pinned in eqm SKILL.md"
+        );
+        let zero = hkask_lisp::eval_sandboxed_with_budget(
+            bias,
+            &json!({"ec": 0, "frm": 0, "sr": 0, "bp": 0, "n": 1}),
+            100_000,
+            64,
+        )
+        .expect("bias form must evaluate");
+        assert_eq!(zero, json!(0.0), "all-zero sums and n=1 -> 0.0");
+
+        // 4. The misses/convergence form.
+        let misses = r#"(begin (define misses (lambda (items) (if (is_null items) (list) (let ((item (car items))) (cond ((string= (assoc "direction" item) "hurts") (if (<= (assoc "current_score" item) (assoc "target_score" item)) (misses (cdr items)) (cons (assoc "id" item) (misses (cdr items))))) ((string= (assoc "direction" item) "helps") (if (>= (assoc "current_score" item) (assoc "target_score" item)) (misses (cdr items)) (cons (assoc "id" item) (misses (cdr items))))) (t (cons (assoc "id" item) (misses (cdr items))))))))) (misses marker_targets))"#;
+        assert!(
+            skill_md.contains(misses),
+            "misses/convergence form must stay pinned in eqm SKILL.md"
+        );
+        let closes = hkask_lisp::eval_sandboxed_with_budget(
+            misses,
+            &json!({"marker_targets": []}),
+            100_000,
+            1024,
+        )
+        .expect("misses form must evaluate on empty");
+        assert_eq!(closes, json!([]), "an empty target list closes");
+        let named = hkask_lisp::eval_sandboxed_with_budget(
+            misses,
+            &json!({"marker_targets": [
+                {"id": "fact_based", "direction": "helps", "current_score": 1, "target_score": 2},
+                {"id": "best_practices", "direction": "helps", "current_score": 2, "target_score": 2},
+                {"id": "mystery", "direction": "unknown", "current_score": 1, "target_score": 1}
+            ]}),
+            100_000,
+            1024,
+        )
+        .expect("misses form must evaluate on a mixed set");
+        assert_eq!(
+            named,
+            json!(["fact_based", "mystery"]),
+            "a helps-target below its target is named; a met one passes; an unknown direction is NAMED via the t clause (the hardening note: never silently passed)"
+        );
+    }
+
+    #[test]
     fn test_flash_skill_md_pins_forms() {
         let skill_md = std::fs::read_to_string(concat!(
             env!("CARGO_MANIFEST_DIR"),

@@ -10,7 +10,7 @@ contract:
     red_flag_screen: array
     green_flag_endorsement: array
     overconfidence_bias: number
-    improvement_target_profile: array
+    failing_marker_summary: array
 ---
 {# Phase 3 — AGGREGATE (DO: aggregate scores, apply asymmetric decision rule) #}
 {#
@@ -19,7 +19,7 @@ contract:
   Red-flag screening is the strong signal; green-flag endorsement is weak.
 #}
 
-You are an EQM aggregation analyst. Run only after the invoking agent reconciles one successful tool result per requested rationale and the complete predictive-12 ID set for each. A failed call or nonempty `missing_eqms` is an incomplete batch, not a numeric input to this template. Group the complete scores, apply the asymmetric decision rule, and prepare the improvement-target profile.
+You are an EQM aggregation analyst. Run only after the invoking agent reconciles one successful tool result per requested rationale and the complete predictive-12 ID set for each. A failed call or nonempty `missing_eqms` is an incomplete batch, not a numeric input to this template. Group the complete scores, apply the asymmetric decision rule, and prepare the failing-marker summary.
 
 ## Per-Rationale Scores
 
@@ -86,9 +86,9 @@ Formula: `overconfidence_bias = (extreme_confidence_score + forecast_rationale_m
 
 This signal is passed to superforecasting as `overconfidence_bias` (see that skill's EQM Feedback Integration; the scenarios server does not yet accept it as an input).
 
-## Step 5 — Improvement-Target Profile
+## Step 5 — Failing-Marker Summary (operator-facing)
 
-For each rationale, produce the improvement-target profile that the Improve phase consumes:
+For each rationale, summarize the failing markers with their EQM descriptions (the operator's view; the Improve phase consumes a FRESH `market_score_rationale` result via eqm-imp-current, not this profile):
 
 ```json
 {
@@ -158,7 +158,7 @@ Respond with a JSON object:
     }
   ],
   "overconfidence_bias": 0.25,
-  "improvement_target_profile": [
+  "failing_marker_summary": [
     {
       "forecaster_id": "...",
       "question": "...",
@@ -177,6 +177,6 @@ Respond with a JSON object:
 - The asymmetric decision rule is mandatory: red flags weighted as "high" confidence, green flags as "weak". Do not reverse or equalize.
 - Never label a rationale "strong" based on EQM scores alone.
 - The overconfidence_bias must be signed, range [-2, 2].
-- The improvement_target_profile must include the EQM description for each failing marker (the Improve phase uses it as the spec for what a 2 looks like).
+- The failing_marker_summary must include the EQM description for each failing marker (the operator's reference for what a 2 looks like; the Improve phase re-derives its targets from a fresh score).
 - Do not fabricate scores — only aggregate what was measured.
 - If any rationale had `missing_eqms` (non-empty), exclude it from the forecaster-level composite and note it in the output — an incomplete assessment should not pull the forecaster-level signal toward 0.

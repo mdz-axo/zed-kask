@@ -215,9 +215,10 @@ other skills mid-process (per the existing `market_context` and
 bias value.
 
 For rationale-level improvement (not just calibration feedback), have the
-invoking agent apply the EQM definitions directly to the prior rationale —
-score it against each marker, identify which red flags dominate, and rewrite
-the rationale to raise its EQM passage rate while preserving the forecast
+invoking agent run the `eqm` skill's Improve loop on the prior rationale —
+`market_score_rationale` (the single source of truth for EQM scoring, never
+re-implemented by the agent) identifies which red flags dominate, and the
+bounded rewrite raises the EQM passage rate while preserving the forecast
 probability (alignment invariant) — before re-invoking superforecasting.
 
 ## Regression case

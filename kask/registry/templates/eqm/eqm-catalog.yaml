@@ -30,7 +30,8 @@
 # for the kask context (scoring rubric language, "rationale" instead of
 # "forecaster"). This catalog carries the paper's RESEARCH definitions
 # verbatim. Both are honest: the catalog is the reference model; the tool
-# is the operational instrument. The ID sets match exactly (B.9).
+# is the operational instrument. The ID sets match exactly (verified
+# set-wise against KEY_EQMS).
 #
 # This catalog is the single source of truth for EQM definitions as
 # published. The MCP tool's KEY_EQMS const carries the predictive 12's

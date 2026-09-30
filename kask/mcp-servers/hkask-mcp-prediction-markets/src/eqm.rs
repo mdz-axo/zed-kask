@@ -326,8 +326,9 @@ pub async fn score_rationale(
                         target: "hkask.mcp.prediction_markets.eqm",
                         eqm = eqm.id,
                         value = %v,
-                        "LLM returned non-integer EQM score — treating as 0"
+                        "LLM returned unparseable EQM score — recording as missing, not zero-filling"
                     );
+                    missing_eqms.push(eqm.id.to_string());
                     0
                 }
             },
@@ -395,7 +396,14 @@ fn build_interpretation(composite: &f64, red_flags: &[String], green_flags: &[St
     let mut parts = Vec::new();
 
     if *composite >= 6.0 {
-        parts.push("Strong rationale".to_string());
+        // The skill's asymmetric-signal rule (Karvetski et al. 2026): EQMs flag
+        // bad forecasts more reliably than they identify excellent ones. A
+        // high composite with no red flags is a WEAK positive endorsement —
+        // "strong" is reserved for forecasters whose EQM composite correlates
+        // with accuracy on realized outcomes (outcome-validated, never
+        // score-alone). The pre-repair label violated the rule the tool
+        // itself carries in its caveat.
+        parts.push("High composite — weak positive endorsement (EQMs are a red-flag screen, not a green-flag detector; 'strong' requires outcome validation)".to_string());
     } else if *composite >= 2.0 {
         parts.push("Adequate rationale".to_string());
     } else if *composite >= -2.0 {
