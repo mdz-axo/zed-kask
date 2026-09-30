@@ -9,7 +9,7 @@ Dynamic, example-anchored Sankey diagramming. Given a prompt, match it against a
 
 ## Ontological Grounding
 
-A Sankey is a weighted-flow diagram, not inherently a financial entity or a procedure. Keep the user's actual unit and flow vocabulary: widget counts, energy, currency, requests, and other flows all qualify. `onto_anchor` currently gives “Sankey diagram” only a coarse core anchor; do not invent a more specific identity. For a real procedure, `pko:Procedure` may describe the depicted process; for a financial line item, use FIBO only when that *term* resolves there. Neither ontology applies to every diagram or edge. Record sourced quantities using PROV-O provenance (`prov:wasDerivedFrom`); DC+BIBO describes the output document, not its conservation rule.
+A Sankey is a weighted-flow diagram, not inherently a financial entity or a procedure. Keep the user's actual unit and flow vocabulary: widget counts, energy, currency, requests, and other flows all qualify. `onto_anchor` resolves “Sankey diagram” to the derived-tier `sankey_diagram` anchor (operator ruling 2026-09-26, grounded in Schmidt 2008, whose definition encodes the per-domain conservation modes); do not invent a more specific identity beyond it. For a real procedure, `pko:Procedure` may describe the depicted process; for a financial line item, use FIBO only when that *term* resolves there. Neither ontology applies to every diagram or edge. Record sourced quantities using PROV-O provenance (`prov:wasDerivedFrom`); DC+BIBO describes the output document, not its conservation rule.
 
 Domain vocabulary is conditional: resolve financial terms individually before using FIBO; use PKO only for a flow that actually describes a procedure; retain the user's stage names and sourced units for widget, energy, data-pipeline, journey, and other flows. A coarse result stays coarse pending an operator ontology ruling.
 
@@ -144,11 +144,11 @@ The first pass is example-anchored MATCH → ADAPT → deterministic Check → r
 
    Check its `node_rows` with `lisp_eval` form `(begin (define balanced (lambda (rows epsilon) (if (= (length rows) 0) t (and (<= (abs (- (nth 1 (car rows)) (nth 2 (car rows)))) epsilon) (balanced (cdr rows) epsilon))))) (balanced node_rows epsilon))`, with `epsilon: 0.01`. Duplicate rows for a node are harmless; report its discrepancy once. An empty `node_rows` means no internal node was checked: mark `unverified`, not vacuously balanced. A false result is `discrepancy` with node-level values; true over nonempty rows is `observed_balanced`. In `asserted` mode, check measured values and flag discrepancies, but only enforce conservation if the user claims it. In `none` mode return `skipped`, never `verified: true`. Arithmetic on supplied edges does not prove extraction accuracy.
 
-4. **ACT / surface.** On a reconciled first pass, render `present-sankey.j2` immediately, with match's `subject`, the `domain`, `weight_unit`, `conservation_mode`, the observed `conservation_check` (overriding ADAPT's proposal), the `node_count`/`edge_count`, `edges`, ADAPT's `mermaid_source`, and `adapt_notes`. Override ADAPT's proposed `conservation_check` with the observed node-level result or the explicit `discrepancy`, `unverified`, or `skipped` status. A real discrepancy is reported, never balanced by inventing a branch. On an edge-mapping error, the one ADAPT correction in step 2 is the only re-entry. Surface the fenced ```mermaid block directly rather than burying it in JSON.
+4. **ACT / surface.** On a reconciled first pass, render `present-sankey.j2` immediately, with match's `subject`, the `domain`, `weight_unit`, `conservation_mode`, the observed `conservation_check` (overriding ADAPT's proposal), the `node_count`/`edge_count`, `edges`, ADAPT's `mermaid_source`, `adapt_notes`, and ADAPT's `output_path`. Override ADAPT's proposed `conservation_check` with the observed node-level result or the explicit `discrepancy`, `unverified`, or `skipped` status. A real discrepancy is reported, never balanced by inventing a branch. On an edge-mapping error, the one ADAPT correction in step 2 is the only re-entry. Surface the fenced ```mermaid block directly rather than burying it in JSON.
 
 ## Research Delegation — Detailed Protocol
 
-When the gather step takes Path B (research delegation), follow this protocol:
+When the MATCH step routes to research delegation (the prompt references an external source), follow this protocol:
 
 1. **Identify the source type**: URL (`web_extract`), file in project (`read_file` or `structured-extraction`), codebase (`grep` + manual analysis), ambiguous/multi-step (`metacognition`'s inquiry experiment).
 
@@ -193,7 +193,7 @@ When the gather step takes Path B (research delegation), follow this protocol:
 
 | Template | Purpose |
 |----------|---------|
-| `sankey-examples.j2` | Include | Library of canonical Sankey structural templates (income statement, budget, data pipeline, funnel, balance sheet, process flow) with match triggers, node patterns, edge patterns, conservation modes, and filled instances. Included by the match and adapt templates as few-shot context. |
+| `sankey-examples.j2` | Include | Library of canonical Sankey structural templates (income statement, budget, data pipeline, funnel, balance sheet, process flow) with match triggers, node patterns, edge patterns, conservation modes, and filled instances. Included by the match template as few-shot context. |
 | `sankey-match.j2` | Classify the prompt's domain, match it against the canonical example library by trigger phrases and structural similarity, and extract the user's actual nodes, edges, and weights in a single pass. Does NOT interrogate — missing data is marked as placeholder (value=1). For income statements with losses, negative profits flow into Total Revenue as sources (Revenue + |Loss| = Total Expenses). |
 | `sankey-adapt.j2` | Render sourced edges as Mermaid CSV, with one bounded correction for an observed mapping error; its proposed conservation note is replaced by the invoking agent's deterministic node check. |
 | `present-sankey.j2` | Rendering template — surfaces the finalized Sankey markdown (containing the fenced ```mermaid block) as the process's final output string. Flattens the adapt step's JSON object to a raw markdown string. Deterministic (no LLM call). |
@@ -298,7 +298,7 @@ Demos,Closed,10
 
 **Classification**: domain = `cost-breakdown` (financial; conservation = mandatory). Source: Apple 10-K (URL needed). Resolve actual extracted financial terms before applying FIBO to any node.
 
-**Gather — Path B (delegation)**:
+**Research delegation**:
 1. Source type: URL (SEC EDGAR or Apple investor relations).
 2. Call `web_extract` with a structured schema for the authorized source URL:
    ```json

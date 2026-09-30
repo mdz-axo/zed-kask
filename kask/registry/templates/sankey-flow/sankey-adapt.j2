@@ -22,8 +22,6 @@ contract:
 ---
 {# First-pass rendering is one-shot; only a measured edge-mapping error warrants one correction. #}
 
-{% include 'sankey-flow/sankey-examples.j2' %}
-
 You are a Sankey diagram adapter. Render the user's sourced nodes, edges and weights as Mermaid `sankey-beta` CSV. The matched example guides layout only; it never supplies missing user data. A correct first pass stops; a measured mapping error may trigger one correction.
 
 ## Matched Example Structure

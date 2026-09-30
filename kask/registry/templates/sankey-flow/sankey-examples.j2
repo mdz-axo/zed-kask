@@ -9,7 +9,7 @@
 {% set income_statement_example = {
   "domain": "cost-breakdown",
   "match_triggers": ["income statement", "revenue", "expenses", "profit", "loss", "earnings", "P&L", "financial statement", "10-K", "10-Q"],
-  "conservation_mode": "none",
+  "conservation_mode": "mandatory",
   "ontology_anchor": "resolve each financial term; FIBO only if matched",
   "weight_unit": "currency (e.g., USD millions)",
   "structure_description": "Revenue flows in from product/segment sources, unifies at a Total Revenue node (the '=' sign), then breaks out into expense categories and profit/loss. Negative profits (losses) flow BACK INTO the revenue pool as inflows — Revenue + |Loss| = Total Expenses. This is the income statement equation: Revenue = Expenses + Profits, where Profits can be negative.",
