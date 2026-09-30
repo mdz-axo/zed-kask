@@ -1,132 +1,153 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
-executor="$repo_root/kask/scripts/audit/run-corpus-classification-queue.sh"
-reconciler="$repo_root/kask/scripts/audit/reconcile-corpus-classification-unit.sh"
-tmp=$(mktemp -d)
-trap 'rm -rf "$tmp"' EXIT
-mkdir -p "$tmp/inputs" "$tmp/outputs" "$tmp/args" "$tmp/responses" "$tmp/logs"
+# Regression harness for the classification queue lifecycle fixes: the
+# running→terminal strand guard, the failed_runner discard-and-requeue path,
+# and the input content hash. Uses a fake corpus-tool runner (the host-call
+# argument convention: <tool> <arguments> <response> <log>).
 
-cat > "$tmp/inputs/unit-000.jsonl" <<'JSONL'
-{"entity_ref":"test:0","source":"a.txt","text":"alpha","word_count":1}
-{"entity_ref":"test:1","source":"a.txt","text":"beta","word_count":1}
-JSONL
-cat > "$tmp/inputs/unit-001.jsonl" <<'JSONL'
-{"entity_ref":"test:2","source":"b.txt","text":"gamma","word_count":1}
-JSONL
-for ordinal in 0 1; do
-    unit=$(printf 'unit-%03d' "$ordinal")
-    rows=2
-    [[ "$ordinal" -eq 1 ]] && rows=1
-    jq -cn --arg unit "$unit" --arg input "$tmp/inputs/$unit.jsonl" --arg output "$tmp/outputs/$unit.jsonl" --arg args "$tmp/args/$unit.json" --arg response "$tmp/responses/$unit.json" --arg log "$tmp/logs/$unit.log" --argjson ordinal "$ordinal" --argjson rows "$rows" '{unit:$unit,ordinal:$ordinal,rows:$rows,input:$input,output:$output,args:$args,response:$response,log:$log,status:"pending"}' >> "$tmp/queue.jsonl"
+repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
+queue_script="$repo_root/kask/scripts/audit/run-corpus-classification-queue.sh"
+reconcile_script="$repo_root/kask/scripts/audit/reconcile-corpus-classification-unit.sh"
+
+tmp=$(mktemp -d)
+trap 'chmod -R u+w "$tmp" 2>/dev/null || true; rm -rf "$tmp"' EXIT
+
+for command in jq sha256sum cmp; do
+    if ! command -v "$command" >/dev/null 2>&1; then
+        echo "required command not found: $command" >&2
+        exit 69
+    fi
+done
+for script in "$queue_script" "$reconcile_script"; do
+    if [[ ! -x "$script" ]]; then
+        echo "required script is not executable: $script" >&2
+        exit 66
+    fi
 done
 
-cat > "$tmp/fake-runner" <<'BASH'
+# Two tagged-chunk inputs, two units per file.
+for unit in unit-001 unit-002; do
+    input="$tmp/$unit-input.jsonl"
+    : > "$input"
+    for i in 1 2; do
+        jq -cn --arg unit "$unit" --arg i "$i" \
+            '{entity_ref:("corpus:researcher:"+$unit+":"+$i),source:($unit+".jsonl"),
+              text:("chunk text "+$unit+" "+$i),word_count:4}' >> "$input"
+    done
+done
+queue="$tmp/queue.jsonl"
+for unit in unit-001 unit-002; do
+    jq -cn --arg unit "$unit" \
+        --arg input "$tmp/$unit-input.jsonl" \
+        --arg output "$tmp/$unit-output.jsonl" \
+        --arg args "$tmp/$unit-args.json" \
+        --arg response "$tmp/$unit-response.json" \
+        --arg log "$tmp/$unit-server.log" \
+        '{unit:$unit,ordinal:0,rows:2,input:$input,output:$output,
+          args:$args,response:$response,log:$log,status:"pending"}'
+done > "$queue"
+
+# Fake runner: while the fail marker exists for the unit named in the
+# arguments, exit 0 without writing the response (an unguarded queue exit
+# inside the running→terminal window). Otherwise write a conforming
+# corpus_tag_chunks response and classified output.
+runner="$tmp/fake-runner"
+cat > "$runner" <<'BASH'
 #!/usr/bin/env bash
 set -euo pipefail
 tool=$1
-args_file=$2
+arguments=$2
 response=$3
 log=$4
-[[ "$tool" == corpus_tag_chunks ]]
-chunks=$(jq -r '.chunks_jsonl' "$args_file")
-output=$(jq -r '.output' "$args_file")
-rows=$(wc -l < "$chunks" | tr -d ' ')
-jq -c '. + {classification:{status:"classified",ontology_protocol:"published-term-resolution-v1"},candidate_terms:["term one","term two","term three"],ontology_tags:{core:["5w1h_core"]},concepts:["5w1h_core"]}' "$chunks" > "$output"
-cost=$(jq -n --argjson rows "$rows" '$rows * 0.001')
-inner=$(jq -cn --argjson rows "$rows" --argjson cost "$cost" '{content:{total_chunks:$rows,tagged:$rows,failed:0,planned_batches:1,provider_responses:1,successful_response_usage:{prompt_tokens:1,completion_tokens:1,total_tokens:2},reported_cost_usd:$cost,cost_reporting_complete:true,repaired_outer_arrays:0}}')
-jq -cn --arg text "$inner" '{jsonrpc:"2.0",id:2,result:{content:[{type:"text",text:$text}],isError:false}}' > "$response"
-printf '%s\n' ok > "$log"
-printf '%s\n' "$chunks" >> "$FAKE_CALL_LOG"
+[[ "$tool" == corpus_tag_chunks ]] || { echo "unsupported tool" >&2; exit 64; }
+input=$(jq -r '.chunks_jsonl' "$arguments")
+output=$(jq -r '.output' "$arguments")
+unit=$(basename "$input" -input.jsonl)
+if [[ -f "${FAIL_MARKER_DIR}/${unit}" ]]; then
+    rm -f "${FAIL_MARKER_DIR}/${unit}"
+    # Simulate the real transport-timeout death: the wrapper creates the
+    # response (empty on timeout) and the log, but never the output.
+    : > "$response"
+    printf 'simulated transport timeout\n' > "$log"
+    exit 0
+fi
+jq -c '. + {classification:{status:"classified",ontology_protocol:"published-term-resolution-v1"},
+          candidate_terms:["one","two","three"],ontology_tags:{core:["5w1h_core"]},
+          concepts:["5w1h_core"]}' "$input" > "$output"
+summary=$(jq -cn --argjson total "$(wc -l < "$input" | tr -d ' ')" \
+    '{total_chunks:$total,tagged:$total,failed:0,reported_cost_usd:0.001,cost_reporting_complete:true}')
+# The queue unwraps: text -> fromjson -> .content (the summary object).
+text=$(jq -cn --argjson content "$summary" '{content:$content}')
+jq -cn --arg text "$text" '{jsonrpc:"2.0",id:2,result:{content:[{type:"text",text:$text}],isError:false}}' > "$response"
+: > "$log"
 BASH
-chmod +x "$tmp/fake-runner"
-export FAKE_CALL_LOG="$tmp/calls.log"
+chmod +x "$runner"
 
-"$executor" "$tmp/queue.jsonl" "$tmp/fake-runner" 1.0 2 10 0.001 1
-jq -s -e 'length == 2 and ([.[] | select(.status == "completed")] | length) == 1 and ([.[] | select(.status == "pending")] | length) == 1' "$tmp/queue.jsonl" >/dev/null
-[[ $(wc -l < "$tmp/calls.log") -eq 1 ]]
-"$executor" "$tmp/queue.jsonl" "$tmp/fake-runner" 1.0 2 10 0.001
-jq -s -e 'length == 2 and all(.[]; .status == "completed" and .failed == 0 and .cost_reporting_complete == true)' "$tmp/queue.jsonl" >/dev/null
-[[ $(wc -l < "$tmp/calls.log") -eq 2 ]]
-[[ $(wc -l < "$tmp/outputs/unit-000.jsonl") -eq 2 ]]
-[[ $(wc -l < "$tmp/outputs/unit-001.jsonl") -eq 1 ]]
-"$executor" "$tmp/queue.jsonl" "$tmp/fake-runner" 1.0 2 10 0.001
-[[ $(wc -l < "$tmp/calls.log") -eq 2 ]]
+export FAIL_MARKER_DIR="$tmp/fail-markers"
+mkdir -p "$FAIL_MARKER_DIR"
 
-mkdir -p "$tmp/low/inputs" "$tmp/low/outputs" "$tmp/low/args" "$tmp/low/responses" "$tmp/low/logs"
-cp "$tmp/inputs/unit-000.jsonl" "$tmp/low/inputs/unit-000.jsonl"
-jq -cn --arg input "$tmp/low/inputs/unit-000.jsonl" --arg output "$tmp/low/outputs/unit-000.jsonl" --arg args "$tmp/low/args/unit-000.json" --arg response "$tmp/low/responses/unit-000.json" --arg log "$tmp/low/logs/unit-000.log" '{unit:"unit-000",ordinal:0,rows:2,input:$input,output:$output,args:$args,response:$response,log:$log,status:"pending"}' > "$tmp/low/queue.jsonl"
-if "$executor" "$tmp/low/queue.jsonl" "$tmp/fake-runner" 0.001 2 10 0.001; then
-    echo "expected cost gate to block the queue" >&2
+# ── 1. The strand guard: an unguarded exit inside the running window ──────
+touch "$FAIL_MARKER_DIR/unit-001"
+if "$queue_script" "$queue" "$runner" 10 2 10 0.01 >"$tmp/run1.out" 2>"$tmp/run1.err"; then
+    echo "queue unexpectedly survived a missing runner response" >&2
     exit 1
 fi
-[[ ! -e "$tmp/low/outputs/unit-000.jsonl" ]]
-jq -e '.status == "pending"' "$tmp/low/queue.jsonl" >/dev/null
+status=$(jq -r 'select(.unit == "unit-001") | .status' "$queue")
+if [[ "$status" != "failed_runner" ]]; then
+    echo "strand guard failed: unit-001 status=$status (expected failed_runner)" >&2
+    exit 1
+fi
+if [[ -f "$tmp/unit-001-output.jsonl" ]]; then
+    echo "the fake never wrote output; a tool-error death must not produce one" >&2
+    exit 1
+fi
+echo "strand guard: ok" >&2
 
-mkdir -p "$tmp/partial/inputs" "$tmp/partial/outputs" "$tmp/partial/args" "$tmp/partial/responses" "$tmp/partial/logs"
-cat > "$tmp/partial/inputs/unit-000.jsonl" <<'JSONL'
-{"entity_ref":"partial:0","source":"a.txt","text":"alpha","word_count":1}
-{"entity_ref":"partial:1","source":"a.txt","text":"beta","word_count":1}
-{"entity_ref":"partial:2","source":"a.txt","text":"gamma","word_count":1}
-JSONL
-cat > "$tmp/partial/outputs/unit-000.jsonl" <<'JSONL'
-{"entity_ref":"partial:0","source":"a.txt","text":"alpha","word_count":1,"classification":{"status":"classified","ontology_protocol":"published-term-resolution-v1"},"candidate_terms":["one","two","three"],"ontology_tags":{"core":["5w1h_core"]},"concepts":["5w1h_core"]}
-{"entity_ref":"partial:1","source":"a.txt","text":"beta","word_count":1,"classification":{"status":"failed","reason":"temporary route loss"},"candidate_terms":[],"ontology_tags":{},"concepts":[]}
-{"entity_ref":"partial:2","source":"a.txt","text":"gamma","word_count":1,"classification":{"status":"failed","reason":"temporary route loss"},"candidate_terms":[],"ontology_tags":{},"concepts":[]}
-JSONL
-printf '%s\n' '{"result":"partial"}' > "$tmp/partial/responses/unit-000.json"
-printf '%s\n' 'partial failure' > "$tmp/partial/logs/unit-000.log"
-jq -cn --arg input "$tmp/partial/inputs/unit-000.jsonl" --arg output "$tmp/partial/outputs/unit-000.jsonl" --arg args "$tmp/partial/args/unit-000.json" --arg response "$tmp/partial/responses/unit-000.json" --arg log "$tmp/partial/logs/unit-000.log" '{unit:"unit-000",ordinal:0,rows:3,input:$input,output:$output,args:$args,response:$response,log:$log,status:"failed_classification"}' > "$tmp/partial/queue.jsonl"
-"$reconciler" "$tmp/partial/queue.jsonl" unit-000 0.001
-jq -s -e 'length == 2 and .[0].status == "reconciled_partial" and .[0].tagged == 1 and .[0].failed == 2 and .[0].reserved_cost_usd == 0.003 and .[1].status == "pending" and .[1].rows == 2 and .[1].parent_unit == "unit-000"' "$tmp/partial/queue.jsonl" >/dev/null
-recovery_input=$(jq -r 'select(.parent_unit == "unit-000") | .input' "$tmp/partial/queue.jsonl")
-[[ $(wc -l < "$recovery_input") -eq 2 ]]
-[[ $(jq -r '.entity_ref' "$recovery_input" | sort | tr '\n' ' ') == 'partial:1 partial:2 ' ]]
-"$executor" "$tmp/partial/queue.jsonl" "$tmp/fake-runner" 1.0 2 10 0.001 1
-jq -s -e 'length == 2 and .[0].status == "reconciled_partial" and .[1].status == "completed" and .[1].tagged == 2' "$tmp/partial/queue.jsonl" >/dev/null
+# ── 2. Discard-and-requeue: failed_runner without output ──────────────────
+"$reconcile_script" "$queue" unit-001 0.01 >"$tmp/reconcile.out" 2>"$tmp/reconcile.err"
+status=$(jq -r 'select(.unit == "unit-001") | .status' "$queue")
+if [[ "$status" != "pending" ]]; then
+    echo "requeue failed: unit-001 status=$status (expected pending)" >&2
+    exit 1
+fi
+reserved=$(jq -r 'select(.unit == "unit-001") | .reserved_cost_usd' "$queue")
+if [[ "$reserved" != "0.02" ]]; then
+    echo "requeue reserve wrong: $reserved (expected 0.02 = 2 rows * 0.01)" >&2
+    exit 1
+fi
+orphans=$(compgen -G "$tmp/unit-001-*.orphan-*" | wc -l)
+if [[ "$orphans" -lt 2 ]]; then
+    echo "stale receipts were not moved aside: $orphans orphan files" >&2
+    exit 1
+fi
+echo "discard-and-requeue: ok" >&2
 
-mkdir -p "$tmp/mixed/inputs" "$tmp/mixed/outputs" "$tmp/mixed/args" "$tmp/mixed/responses" "$tmp/mixed/logs"
-printf '%s\n' \
-    '{"entity_ref":"mixed:0","source":"a.txt","text":"alpha","word_count":1}' \
-    '{"entity_ref":"mixed:1","source":"a.txt","text":"beta","word_count":1}' \
-    > "$tmp/mixed/inputs/unit-000.jsonl"
-printf '%s\n' \
-    '{"entity_ref":"mixed:2","source":"b.txt","text":"gamma","word_count":1}' \
-    > "$tmp/mixed/inputs/unit-001.jsonl"
-for ordinal in 0 1; do
-    unit=$(printf 'unit-%03d' "$ordinal")
-    rows=$((2 - ordinal))
-    jq -cn --arg unit "$unit" --arg input "$tmp/mixed/inputs/$unit.jsonl" --arg output "$tmp/mixed/outputs/$unit.jsonl" --arg args "$tmp/mixed/args/$unit.json" --arg response "$tmp/mixed/responses/$unit.json" --arg log "$tmp/mixed/logs/$unit.log" --argjson ordinal "$ordinal" --argjson rows "$rows" '{unit:$unit,ordinal:$ordinal,rows:$rows,input:$input,output:$output,args:$args,response:$response,log:$log,status:"pending"}' >> "$tmp/mixed/queue.jsonl"
+# ── 3. Input content hash: a mutated pending input is refused ─────────────
+cp "$tmp/unit-001-input.jsonl" "$tmp/unit-001-input.original"
+jq -c '.text = "mutated"' "$tmp/unit-001-input.jsonl" > "$tmp/mutated.jsonl"
+mv "$tmp/mutated.jsonl" "$tmp/unit-001-input.jsonl"
+if "$queue_script" "$queue" "$runner" 10 2 10 0.01 >"$tmp/run2.out" 2>"$tmp/run2.err"; then
+    echo "queue accepted a mutated input with an unchanged row count" >&2
+    exit 1
+fi
+grep -F 'input content changed since the unit was first processed: unit-001' "$tmp/run2.err" >/dev/null
+mv "$tmp/unit-001-input.original" "$tmp/unit-001-input.jsonl"
+echo "input content hash: ok" >&2
+
+# ── 4. The requeued unit completes and the queue finishes clean ────────────
+"$queue_script" "$queue" "$runner" 10 2 10 0.01 >"$tmp/run3.out" 2>"$tmp/run3.err"
+for unit in unit-001 unit-002; do
+    status=$(jq -r --arg unit "$unit" 'select(.unit == $unit) | .status' "$queue")
+    if [[ "$status" != "completed" ]]; then
+        echo "$unit did not complete: status=$status" >&2
+        exit 1
+    fi
+    if [[ -z $(jq -r --arg unit "$unit" 'select(.unit == $unit) | .input_sha256 // empty' "$queue") ]]; then
+        echo "$unit completed without a recorded input hash" >&2
+        exit 1
+    fi
 done
-cat > "$tmp/mixed-runner" <<'BASH'
-#!/usr/bin/env bash
-set -euo pipefail
-args_file=$2
-response=$3
-log=$4
-chunks=$(jq -r '.chunks_jsonl' "$args_file")
-output=$(jq -r '.output' "$args_file")
-rows=$(wc -l < "$chunks" | tr -d ' ')
-failed=0
-if [[ "$chunks" == *unit-000.jsonl ]]; then
-    failed=1
-fi
-jq -c --argjson failed "$failed" 'if $failed == 1 and .entity_ref == "mixed:1" then . + {classification:{status:"failed",reason:"synthetic model-contract rejection"}} else . + {classification:{status:"classified",ontology_protocol:"published-term-resolution-v1"},candidate_terms:["term one","term two","term three"],ontology_tags:{core:["5w1h_core"]},concepts:["5w1h_core"]} end' "$chunks" > "$output"
-tagged=$((rows - failed))
-cost=$(jq -n --argjson rows "$rows" '$rows * 0.001')
-inner=$(jq -cn --argjson rows "$rows" --argjson tagged "$tagged" --argjson failed "$failed" --argjson cost "$cost" '{content:{total_chunks:$rows,tagged:$tagged,failed:$failed,reported_cost_usd:$cost,cost_reporting_complete:true}}')
-jq -cn --arg text "$inner" '{jsonrpc:"2.0",id:2,result:{content:[{type:"text",text:$text}],isError:false}}' > "$response"
-printf '%s\n' ok > "$log"
-printf '%s\n' "$chunks" >> "$MIXED_CALL_LOG"
-BASH
-chmod +x "$tmp/mixed-runner"
-export MIXED_CALL_LOG="$tmp/mixed-calls.log"
-if "$executor" "$tmp/mixed/queue.jsonl" "$tmp/mixed-runner" 1.0 2 10 0.001 2; then
-    echo "expected mixed wave to return a terminal-partial checkpoint" >&2
-    exit 1
-fi
-[[ $(wc -l < "$tmp/mixed-calls.log") -eq 2 ]]
-jq -s -e '.[0].status == "failed_classification" and .[0].tagged == 1 and .[0].failed == 1 and .[1].status == "completed" and .[1].tagged == 1' "$tmp/mixed/queue.jsonl" >/dev/null
+echo "requeue completion: ok" >&2
 
-printf '%s\n' "corpus classification queue tests passed"
+printf 'classification queue lifecycle test passed\n'

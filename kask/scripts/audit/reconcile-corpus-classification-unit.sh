@@ -40,6 +40,50 @@ input=$(jq -r '.input' <<<"$row")
 output=$(jq -r '.output' <<<"$row")
 response=$(jq -r '.response' <<<"$row")
 log=$(jq -r '.log' <<<"$row")
+
+# A failed_runner tool-error death wrote response+log but never output (only
+# success produces it), so the partial-result path below cannot run and the
+# queue's pending-unit artifact gate would refuse the re-run. Discard and
+# requeue: move the stale receipts aside, reset the unit to pending, and
+# conservatively reserve the failed attempt's cost (the queue's spent sum
+# counts pending units with a reserve).
+if [[ "$status" == "failed_runner" && ! -f "$output" ]]; then
+    for path in "$response" "$log"; do
+        if [[ ! -f "$path" ]]; then
+            echo "failed_runner unit is missing its durable receipt: $path" >&2
+            exit 66
+        fi
+    done
+    if [[ -f "$input" ]]; then
+        actual_input_sha256=$(sha256sum "$input" | cut -d' ' -f1)
+        recorded_input_sha256=$(jq -r '.input_sha256 // empty' <<<"$row")
+        if [[ -n "$recorded_input_sha256" && "$actual_input_sha256" != "$recorded_input_sha256" ]]; then
+            echo "input content changed since the unit was first processed: $unit" >&2
+            exit 65
+        fi
+    fi
+    orphan_suffix="orphan-$(date -u +%Y%m%dT%H%M%S)-$$"
+    for path in "$response" "$log"; do
+        mv "$path" "${path}.${orphan_suffix}"
+    done
+    reserved_cost=$(jq -n --argjson rows "$rows" --argjson rate "$estimated_cost_per_chunk" '$rows * $rate')
+    requeued_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    queue_tmp=$(mktemp "${queue}.tmp.XXXXXX")
+    jq -c --arg unit "$unit" --arg requeued_at "$requeued_at" --arg orphan_suffix "$orphan_suffix" \
+        --argjson reserved_cost "$reserved_cost" '
+        if .unit == $unit then
+            . + {status:"pending",requeued_at:$requeued_at,reserved_cost_usd:$reserved_cost,
+                 orphaned_receipts_suffix:$orphan_suffix,
+                 error:("tool-error death discarded and requeued; stale receipts at *." + $orphan_suffix + "; reserve is conservative — the true cost of the failed attempt is unknown")}
+        else . end
+    ' "$queue" > "$queue_tmp"
+    chmod --reference="$queue" "$queue_tmp"
+    mv -f "$queue_tmp" "$queue"
+    printf 'unit=%s status=pending requeued reserved_cost_usd=%s stale_receipts=*.%s\n' \
+        "$unit" "$reserved_cost" "$orphan_suffix" >&2
+    exit 0
+fi
+
 for path in "$input" "$output" "$response" "$log"; do
     if [[ ! -f "$path" ]]; then
         echo "failed unit is missing durable artifact: $path" >&2
@@ -52,6 +96,18 @@ output_rows=$(wc -l < "$output" | tr -d ' ')
 if (( input_rows != rows || output_rows != rows )); then
     echo "failed unit row reconciliation failed: expected=$rows input=$input_rows output=$output_rows" >&2
     exit 65
+fi
+
+# The recovery split re-reads the input: verify the recorded content hash so
+# a mutated input (unchanged row count) cannot silently re-tag different
+# content into the recovery unit.
+recorded_input_sha256=$(jq -r '.input_sha256 // empty' <<<"$row")
+if [[ -n "$recorded_input_sha256" ]]; then
+    actual_input_sha256=$(sha256sum "$input" | cut -d' ' -f1)
+    if [[ "$actual_input_sha256" != "$recorded_input_sha256" ]]; then
+        echo "input content changed since the unit was first processed: $unit" >&2
+        exit 65
+    fi
 fi
 
 input_refs=$(mktemp)

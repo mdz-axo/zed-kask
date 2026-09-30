@@ -65,7 +65,20 @@ update_unit() {
     mv -f "$tmp" "$queue"
 }
 
-spent=$(jq -s '[.[] | if (.status == "completed" or (.status | startswith("failed")) or .status == "reconciled_partial") and .cost_reporting_complete == true then .reported_cost_usd elif (.status | startswith("failed")) or .status == "reconciled_partial" then .reserved_cost_usd else empty end] | add // 0' "$queue")
+# Between a unit's running patch and its first terminal patch, an unguarded
+# set -e exit (envelope parse, row count) stranded the unit in running — a
+# state the re-run rejects with no reset path. The guard patches failed_runner
+# on any exit from that window; each terminal patch sets unit_terminal first
+# so the guard never overwrites a landed terminal state.
+strand_guard() {
+    if [[ "${unit_terminal:-}" != true ]]; then
+        local failed_at
+        failed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+        update_unit "$unit" "$(jq -cn --arg failed_at "$failed_at" '{status:"failed_runner",failed_at:$failed_at,error:"queue exited between the running patch and a terminal patch; inspect durable response/log, then requeue via reconcile-corpus-classification-unit.sh"}')" || true
+    fi
+}
+
+spent=$(jq -s '[.[] | if (.status == "completed" or (.status | startswith("failed")) or .status == "reconciled_partial") and .cost_reporting_complete == true then .reported_cost_usd elif (.status | startswith("failed")) or .status == "reconciled_partial" then .reserved_cost_usd elif .status == "pending" and .reserved_cost_usd != null then .reserved_cost_usd else empty end] | add // 0' "$queue")
 mapfile -t units < "$queue"
 planned=${#units[@]}
 completed=$(jq -s '[.[] | select(.status == "completed")] | length' "$queue")
@@ -83,9 +96,19 @@ for row in "${units[@]}"; do
     log=$(jq -r '.log' <<<"$row")
 
     if [[ "$status" == completed || "$status" == reconciled_partial || "$status" == failed* ]]; then
-        if [[ ! -f "$output" || ! -f "$response" || ! -f "$log" ]]; then
-            echo "terminal unit is missing durable artifacts: $unit" >&2
-            exit 65
+        # A failed_runner death never wrote output (only tool success produces
+        # it), so demanding it here made every tool-error unit unrecoverable;
+        # its durable receipts are the response and log.
+        if [[ "$status" == "failed_runner" ]]; then
+            if [[ ! -f "$response" || ! -f "$log" ]]; then
+                echo "failed_runner unit is missing durable receipts: $unit" >&2
+                exit 65
+            fi
+        else
+            if [[ ! -f "$output" || ! -f "$response" || ! -f "$log" ]]; then
+                echo "terminal unit is missing durable artifacts: $unit" >&2
+                exit 65
+            fi
         fi
         if [[ "$status" == failed* ]]; then
             unresolved_failed=$((unresolved_failed + 1))
@@ -106,6 +129,15 @@ for row in "${units[@]}"; do
     actual_input_rows=$(wc -l < "$input" | tr -d ' ')
     if (( actual_input_rows != rows )); then
         echo "queue/input row mismatch for $unit: queue=$rows actual=$actual_input_rows" >&2
+        exit 65
+    fi
+    # Row counts alone cannot prove input identity: a mutated input with an
+    # unchanged row count would silently re-tag different content. Record the
+    # content hash on first processing; every later run verifies it.
+    actual_input_sha256=$(sha256sum "$input" | cut -d' ' -f1)
+    recorded_input_sha256=$(jq -r '.input_sha256 // empty' <<<"$row")
+    if [[ -n "$recorded_input_sha256" && "$actual_input_sha256" != "$recorded_input_sha256" ]]; then
+        echo "input content changed since the unit was first processed: $unit" >&2
         exit 65
     fi
 
@@ -137,10 +169,13 @@ for row in "${units[@]}"; do
     fi
 
     started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-    update_unit "$unit" "$(jq -cn --arg started_at "$started_at" '{status:"running",started_at:$started_at}')"
+    update_unit "$unit" "$(jq -cn --arg started_at "$started_at" --arg input_sha256 "$actual_input_sha256" '{status:"running",started_at:$started_at,input_sha256:$input_sha256}')"
+    unit_terminal=false
+    trap 'strand_guard' EXIT
     if ! "$runner" corpus_tag_chunks "$args" "$response" "$log"; then
         failed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-        update_unit "$unit" "$(jq -cn --arg failed_at "$failed_at" '{status:"failed_runner",failed_at:$failed_at,error:"corpus tool runner failed; inspect durable response/log/output before retry"}')"
+        update_unit "$unit" "$(jq -cn --arg failed_at "$failed_at" '{status:"failed_runner",failed_at:$failed_at,error:"corpus tool runner failed; inspect the durable response and log (output is only written on success), then requeue via reconcile-corpus-classification-unit.sh"}')"
+        unit_terminal=true
         echo "classification runner failed for $unit" >&2
         exit 1
     fi
@@ -160,6 +195,7 @@ for row in "${units[@]}"; do
     if (( total != rows || tagged + failed != total || output_rows != rows )); then
         failed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
         update_unit "$unit" "$(jq -cn --arg failed_at "$failed_at" --argjson total "$total" --argjson tagged "$tagged" --argjson failed "$failed" --argjson output_rows "$output_rows" '{status:"failed_reconciliation",failed_at:$failed_at,total:$total,tagged:$tagged,failed:$failed,output_rows:$output_rows}')"
+        unit_terminal=true
         echo "classification count reconciliation failed for $unit" >&2
         exit 65
     fi
@@ -193,13 +229,16 @@ for row in "${units[@]}"; do
     ' "$output" >/dev/null; then
         rm -f "$input_refs" "$output_refs"
         trap - EXIT
+        trap 'strand_guard' EXIT
         failed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
         update_unit "$unit" "$(jq -cn --arg failed_at "$failed_at" '{status:"failed_identity_or_protocol",failed_at:$failed_at,error:"identity, uniqueness, protocol, or canonical-anchor shape check failed"}')"
+        unit_terminal=true
         echo "classification identity/protocol reconciliation failed for $unit" >&2
         exit 65
     fi
     rm -f "$input_refs" "$output_refs"
     trap - EXIT
+    trap 'strand_guard' EXIT
 
     spent=$(jq -n --argjson spent "$spent" --argjson cost "$accounted_cost" '$spent + $cost')
     processed_this_run=$((processed_this_run + 1))
@@ -215,6 +254,7 @@ for row in "${units[@]}"; do
               reserved_cost_usd:$reserved_cost,cumulative_accounted_cost_usd:$cumulative_cost,
               output_sha256:$output_sha256}')
         update_unit "$unit" "$patch"
+        unit_terminal=true
         unresolved_failed=$((unresolved_failed + 1))
         printf 'unit=%s terminal_partial tagged=%d failed=%d cumulative_accounted_cost_usd=%s\n' \
             "$unit" "$tagged" "$failed" "$spent" >&2
@@ -230,6 +270,7 @@ for row in "${units[@]}"; do
               cumulative_accounted_cost_usd:$cumulative_cost,output_sha256:$output_sha256,
               error:"provider cost reporting incomplete"}')
         update_unit "$unit" "$patch"
+        unit_terminal=true
         unresolved_failed=$((unresolved_failed + 1))
         printf 'unit=%s terminal_cost_unknown rows=%d reserved_cost_usd=%s\n' "$unit" "$rows" "$reserved_cost" >&2
         continue
@@ -243,6 +284,7 @@ for row in "${units[@]}"; do
           reported_cost_usd:$cost,cost_reporting_complete:true,
           cumulative_reported_cost_usd:$cumulative_cost,output_sha256:$output_sha256}')
     update_unit "$unit" "$patch"
+    unit_terminal=true
     printf 'unit=%s completed=%d/%d rows=%d cumulative_cost_usd=%s\n' "$unit" "$completed" "$planned" "$rows" "$spent" >&2
 
     if ! jq -en --argjson spent "$spent" --argjson cap "$max_cost" '$spent <= $cap' >/dev/null; then
@@ -250,6 +292,7 @@ for row in "${units[@]}"; do
         exit 75
     fi
 done
+trap - EXIT
 
 pending=$(jq -s '[.[] | select(.status == "pending")] | length' "$queue")
 if (( pending == 0 )); then
