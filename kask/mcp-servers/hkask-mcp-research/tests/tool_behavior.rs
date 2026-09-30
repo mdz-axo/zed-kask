@@ -1299,6 +1299,7 @@ impl WebSearchPort for IntentSelectionPool {
                 live_success_rate: None,
                 live_p50_latency_ms: None,
                 live_sample_count: None,
+                live_stats_degraded: false,
             },
             ProviderRecommendation {
                 kind: "tavily".to_string(),
@@ -1313,6 +1314,7 @@ impl WebSearchPort for IntentSelectionPool {
                 live_success_rate: None,
                 live_p50_latency_ms: None,
                 live_sample_count: None,
+                live_stats_degraded: false,
             },
         ]
     }
