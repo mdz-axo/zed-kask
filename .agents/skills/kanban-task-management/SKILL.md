@@ -133,8 +133,8 @@ is asserted; the pasted command and exit code are ran-and-pasted.
 | `triage.j2` | Triage step. Examines available inputs (project_description, task_to_delegate, board_id) and determines which phase to run: decompose, delegate, or operate. |
 | `gather-context.j2` | Extract structured project context: project name, goals, constraints, resources, and target task size. Phase: decompose. |
 | `decompose-tasks.j2` | Decompose a project into INVEST-compliant tasks with vertical slicing, dependencies, recomposition strategy, and acceptance criteria. Phase: decompose. |
-| `review-tasks.j2` | Review decomposed tasks for INVEST compliance, completeness, and recomposition viability. Phase: decompose. |
-| `populate-board.j2` | Convert accepted tasks into board-ready format. Includes post-step instructions for the agent to call kanban_board_create and kanban_task_create. Phase: decompose. |
+| `review-tasks.j2` | Review decomposed tasks for INVEST compliance, completeness, and recomposition viability. Phase: decompose. Tasks in `modified` carry specific change recommendations — apply the changes and include the revised tasks in the accepted pool before populate-board (a structural change re-enters review). |
+| `populate-board.j2` | Convert accepted tasks into board-ready format. Includes post-step instructions for the agent to call kanban_board_create and kanban_task_create. Phase: decompose. Consumes review-tasks' `accepted` array (plus the applied `modified` revisions) as its `accepted_tasks` input. |
 | `configure-spawn.j2` | Configure spawn parameters: delegation level, skills, memory scope. Includes post-step instructions for the agent to call kanban_task_spawn. Phase: delegate. |
 | `monitor-board.j2` | Monitor board state, identify blockers, flag overdue tasks. Includes pre-step instructions for the agent to fetch board data via kanban_board_list and kanban_task_list. Phase: operate. |
 | `coordinate-agents.j2` | Read active-task comment threads and prepare actionable replies. Includes post-step instructions for the agent to call kanban_task_comment. Phase: operate. |
