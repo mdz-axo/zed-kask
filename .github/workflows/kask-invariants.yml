@@ -57,6 +57,11 @@
 # - check-no-mod-rs.sh and check-no-smol-timer.sh: the fork layout stays
 #   mod.rs-free and the GPUI-side surface stays free of smol timers
 #   (both .rules conventions, machine-enforced).
+# - check-docs-count-gate.sh: the docs tree stays under the §3 cap with a
+#   working condensation target, the README's recorded corpus size matches
+#   the real count, and every gate reference carries the canonical numbers
+#   — the 2026-09-30 drift (67 recorded against a 73-file tree) landed
+#   undetected while the gate was documentation-enforced only.
 # - Gate selftests: the loop step below runs every
 #   kask/scripts/check-*-selftest.sh — see its comment for scope.
 #
@@ -170,6 +175,8 @@ jobs:
         run: |
           bash kask/scripts/check-no-mod-rs.sh
           bash kask/scripts/check-no-smol-timer.sh
+      - name: Docs count gate — §3 cap, recorded-measurement parity, reference agreement
+        run: bash kask/scripts/check-docs-count-gate.sh
       - name: Gate selftests — every kask/scripts/check-*-selftest.sh fails on a violation
         run: |
           # The glob covers every gate selftest in kask/scripts: the

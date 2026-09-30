@@ -140,20 +140,33 @@ fn start_memory_usage_logging(
         let mut last_logged_resident: Option<u64> = None;
         let mut last_logged_at = Instant::now();
         loop {
-            // zed-kask: D84 follow-up — frame health alongside memory health:
-            // draw count, total and max draw time since the last poll, read with
-            // take semantics. This decomposes UI sluggishness into draw rate vs
-            // draw cost from the operational log (draws ≈ 0 while idle is the
-            // idle-floor reading; high draws with low max = rate-driven lag;
-            // low draws with high max = cost-driven lag).
+            // zed-kask: D84 follow-up — frame health alongside memory health,
+            // per window: draw count, average and max draw time since the last
+            // poll, read with take semantics. This decomposes UI sluggishness
+            // into draw rate vs draw cost per window from the operational log
+            // (draws ≈ 0 while idle is the idle-floor reading; high draws with
+            // low max = rate-driven lag; low draws with high max = cost-driven
+            // lag). Per-window because the operator runs several agent windows
+            // concurrently and process-wide aggregates cannot attribute cost.
             {
-                let (draws, draw_nanos, max_draw_nanos) = gpui::profiler::take_draw_stats();
+                let windows = gpui::profiler::take_draw_stats();
                 const MS: f64 = 1_000_000.0;
-                log::info!(
-                    "ui frame health: draws {draws}, draw_ms {:.1}, max_draw_ms {:.1}",
-                    draw_nanos as f64 / MS,
-                    max_draw_nanos as f64 / MS,
-                );
+                if windows.is_empty() {
+                    log::info!("ui frame health: draws 0 (no window drew since the last poll)");
+                } else {
+                    let summary = windows
+                        .iter()
+                        .map(|(id, draws, nanos, max_nanos)| {
+                            format!(
+                                "w{id:?} draws={draws} avg_ms={:.1} max_ms={:.1}",
+                                *nanos as f64 / MS / *draws as f64,
+                                *max_nanos as f64 / MS,
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" | ");
+                    log::info!("ui frame health: {summary}");
+                }
             }
             let refreshed = system.refresh_processes_specifics(
                 ProcessesToUpdate::Some(&[pid]),

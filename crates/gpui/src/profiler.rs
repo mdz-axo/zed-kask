@@ -29,39 +29,56 @@ use serde::{Deserialize, Serialize};
 use crate::{Action, App, WindowId};
 use crate::{SharedString, TasksIncluded};
 
-// zed-kask: D84 follow-up — cumulative window-draw counters for the
-// reliability monitor's frame-health line. The UI-lag diagnosis (2026-09-29)
-// needed draw rate and draw cost decomposed from the operational log instead
-// of user-operated profiling; these counters are recorded from `Window::draw`
-// (where the profiler feature already computes the draw duration) and read
-// with take semantics by the zed reliability monitor every 30 s.
+// zed-kask: D84 follow-up — per-window draw counters for the reliability
+// monitor's frame-health line. The UI-lag diagnosis (2026-09-29/30) needed draw
+// rate and draw cost decomposed from the operational log instead of
+// user-operated profiling; with multiple editor windows open (the operator
+// runs several agent windows concurrently), process-wide aggregates cannot
+// attribute cost to a window, so the counters are keyed by `WindowId`.
+// Recorded from `Window::draw` (where the profiler feature already computes
+// the draw duration) and read with take semantics by the zed reliability
+// monitor every 30 s.
 #[cfg(feature = "profiler")]
-static DRAW_COUNT: AtomicU64 = AtomicU64::new(0);
+static DRAW_STATS: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<crate::WindowId, DrawCounters>>,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+
 #[cfg(feature = "profiler")]
-static DRAW_TOTAL_NANOS: AtomicU64 = AtomicU64::new(0);
-#[cfg(feature = "profiler")]
-static DRAW_MAX_NANOS: AtomicU64 = AtomicU64::new(0);
+#[derive(Default)]
+struct DrawCounters {
+    count: u64,
+    total_nanos: u64,
+    max_nanos: u64,
+}
 
 /// Record one completed window draw. Called from `Window::draw` under the
 /// profiler feature, which already measures the draw duration there.
 #[cfg(feature = "profiler")]
-pub fn record_draw_duration(duration: Duration) {
-    DRAW_COUNT.fetch_add(1, Ordering::Relaxed);
+pub fn record_draw_duration(window_id: crate::WindowId, duration: Duration) {
+    let mut stats = DRAW_STATS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let counters = stats.entry(window_id).or_default();
+    counters.count += 1;
     let nanos = duration.as_nanos() as u64;
-    DRAW_TOTAL_NANOS.fetch_add(nanos, Ordering::Relaxed);
-    DRAW_MAX_NANOS.fetch_max(nanos, Ordering::Relaxed);
+    counters.total_nanos += nanos;
+    counters.max_nanos = counters.max_nanos.max(nanos);
 }
 
-/// Take the draw counters accumulated since the last read: `(count, total
-/// nanos, max nanos)`. Reads reset the counters, so each report covers exactly
-/// the interval between reads.
+/// Take the per-window draw counters accumulated since the last read, sorted
+/// by window id: `(window id, count, total nanos, max nanos)`. Reads reset the
+/// counters, so each report covers exactly the interval between reads.
 #[cfg(feature = "profiler")]
-pub fn take_draw_stats() -> (u64, u64, u64) {
-    (
-        DRAW_COUNT.swap(0, Ordering::Relaxed),
-        DRAW_TOTAL_NANOS.swap(0, Ordering::Relaxed),
-        DRAW_MAX_NANOS.swap(0, Ordering::Relaxed),
-    )
+pub fn take_draw_stats() -> Vec<(crate::WindowId, u64, u64, u64)> {
+    let mut stats = DRAW_STATS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut windows = stats.drain().collect::<Vec<_>>();
+    windows.sort_unstable_by_key(|(id, _)| *id);
+    windows
+        .into_iter()
+        .map(|(id, counters)| (id, counters.count, counters.total_nanos, counters.max_nanos))
+        .collect()
 }
 
 #[cfg(feature = "profiler")]
@@ -1310,6 +1327,34 @@ impl FrameTimingCollector {
 mod tests {
     use super::*;
     use std::sync::MutexGuard;
+
+    /// zed-kask pin (D84 follow-up): draw counters accumulate per window and
+    /// reset on take, so each reliability report attributes cost to exactly
+    /// one window and one interval.
+    #[cfg(feature = "profiler")]
+    #[test]
+    fn draw_stats_accumulate_per_window_and_reset_on_take() {
+        let first = WindowId::from(0xD1A6_0001);
+        let second = WindowId::from(0xD1A6_0002);
+
+        record_draw_duration(first, Duration::from_millis(10));
+        record_draw_duration(first, Duration::from_millis(30));
+        record_draw_duration(second, Duration::from_millis(5));
+
+        let mut stats = take_draw_stats();
+        stats.sort_unstable_by_key(|(id, _, _, _)| *id);
+        assert_eq!(stats.len(), 2);
+        assert_eq!(stats[0].0, first);
+        assert_eq!(stats[0].1, 2, "first window draw count");
+        assert_eq!(stats[0].2, 40_000_000, "first window total nanos");
+        assert_eq!(stats[0].3, 30_000_000, "first window max nanos");
+        assert_eq!(stats[1].0, second);
+        assert_eq!(stats[1].1, 1, "second window draw count");
+        assert_eq!(stats[1].3, 5_000_000, "second window max nanos");
+
+        // Take semantics: the counters reset between reports.
+        assert!(take_draw_stats().is_empty());
+    }
 
     #[test]
     fn interruptions_drop_latency_samples_but_hiding_keeps_draw_work() {
