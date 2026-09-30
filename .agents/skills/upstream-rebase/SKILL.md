@@ -54,7 +54,8 @@ There is no external reference model. The per-seam retire / simplify / retain de
 | 0 Survival, 2 Constraint force, 3 Dependency graph | P | the operator on NEEDS OPERATOR DECISION; each record's counterexample |
 | 1 Inventory, 4 Insertion points, strategy rule | D | `git`, `grep`, `lisp_eval` |
 | 5 Re-apply | P | the Verification gate |
-| 6 Pins, 7 DIVERGENCE.md, 8 Cleanup, Verification gate | D | `cargo check`/`cargo test`, the isolation scripts |
+| 6 Pins, 8 Cleanup, Verification gate | D | `cargo check`/`cargo test`, the isolation scripts |
+| 7 DIVERGENCE.md update | D | grep: the row's named file paths and pin tests exist in the tree |
 | 9 Reflect | P | the operator accepts or rejects each amendment |
 
 ## Instructions
@@ -161,7 +162,7 @@ Update the D-seam row to reflect the re-applied file: list the file, document ev
 `git merge upstream/main` can restore files zed-kask deliberately deleted under
 D7/D16 (icons, `.desktop` templates, `script/bundle-mac`, Flatpak/Snap resources,
 release workflows). `kask/scripts/build/check-zed-isolation.sh` is the enforcement
-point — it enumerates every forbidden path (L24–89) and is wired into CI
+point — it enumerates every forbidden path and is wired into CI
 (`.github/workflows/kask-invariants.yml`). Running it locally
 closes a fast loop (seconds) instead of waiting for the CI round-trip.
 
@@ -238,14 +239,14 @@ The full process, with the `main.rs` functional inventory (28 units), DAG, and c
 |----------|---------|
 | `assess.j2` | Assess a D-seam file against the strategy decision rule. Extract line counts, kask call site count, marker count. Recommend merge vs. mapped re-application. |
 | `map.j2` | Extract the functional inventory (F1, F2, ...), classify each unit by constraint force, and build the dependency DAG. |
-| `decide.j2` | Consolidate the per-file seam survival decisions (retire / simplify / retain / needs-operator-decision) and apply the essentialist deletion test (G1): is full re-application necessary, or is surgical marking + pinning sufficient? Consumes assess's and map's outputs.
+| `decide.j2` | Reconcile the file's seams against Step 0's survival records (deciding fresh only when Step 0 was skipped) and apply the essentialist deletion test (G1): is full re-application necessary, or is surgical marking + pinning sufficient? Consumes Step 0's records plus assess's and map's outputs.
 | `execute.j2` | Execute the chosen strategy: add markers + pinning tests (surgical), or re-apply onto clean upstream in topological order (full re-application). |
 | `document.j2` | Update DIVERGENCE.md and produce the final report. |
 | `reflect.j2` | After the merge commit: compare what happened against this skill, and propose amendments each tied to a falsifiable held-out case. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `upstream-rebase/assess`) and a context object with the required variables.
 
-Run verification gates (cargo check/test, isolation script) with `terminal`; use `lisp_eval` only for arithmetic such as marker density. Template order: Step 0's all-rows survival review and Step 4's insertion-point mapping (per unit, the upstream landmark line — no template renders either) are direct agent work; then, per surviving seam file, `assess` → `map` → `decide` → `execute` → `document`, then `reflect` after the merge commit. The templates carry their own internal pipeline numbering — bind each `step_N_result` input to the named artifact, not to the SKILL.md's step numbers: `decide.j2`'s `step_1_result` = assess's output (the assessment) and `step_2_result` = map's output (the functional inventory); `execute.j2`'s `step_2_result` = map's output and `step_3_result` = decide's output (the strategy decision); `document.j2`'s `step_2_result` through `step_5_result` = map's, decide's, execute's, and the verification gate's outputs respectively.
+Run verification gates (cargo check/test, isolation script) with `terminal`; use `lisp_eval` only for arithmetic such as marker density. Template order: Step 0's all-rows survival review and Step 4's insertion-point mapping (per unit, the upstream landmark line — no template renders either) are direct agent work; then, per surviving seam file, `assess` → `map` → `decide` → `execute` → `document`, then `reflect` after the merge commit. The templates carry their own internal pipeline numbering — bind each `step_N_result` input to the named artifact, not to the SKILL.md's step numbers: `decide.j2`'s `step_0_records` = Step 0's all-rows survival records (null when Step 0 was skipped), `step_1_result` = assess's output (the assessment) and `step_2_result` = map's output (the functional inventory); `execute.j2`'s `step_2_result` = map's output and `step_3_result` = decide's output (the strategy decision); `document.j2`'s `step_2_result` through `step_5_result` = map's, decide's, execute's, and the verification gate's outputs respectively.
 
 ## Constraints
 
