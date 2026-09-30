@@ -2,7 +2,7 @@
 title: "Cybernetic Nervous System — Alignment Plan"
 audience: [architects, developers, operators, agents]
 last_updated: 2026-09-30
-version: "0.3.2"
+version: "0.3.3"
 status: "Active — operator ruling 2026-09-30 ('proceed as proposed — confirmed'): reference model admitted; S2 and S3 approved and landed"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle]
@@ -435,6 +435,27 @@ not verdict (operator calibration, 2026-09-30).
   landed with its registry row (6 tools, pinned) — its per-server
   detail doc does not exist yet (the kata-kanban precedent: a recorded
   gap proposal, their stream's business).
+
+### Code-facing naming proposal (the expectation-signal category; closes the reference model §6/§7-4 cross-reference)
+
+The admitted model's expectation-signal category needs code-facing
+names chosen against the Phase 1 surveyed vocabulary — no new
+coinages. Proposal:
+
+- **The expectation carrier**: reuse the surveyed `set_point` name
+  (`hkask-regulation/src/loops/signals.rs` — `Signal { value, set_point }`)
+  as the canonical field name for a stored expectation on any record
+  that carries one; the delta remains `Deviation` where the regulation
+  vocabulary already applies, and `expected`/`observed` as plain field
+  names elsewhere (the L23 repair's `live_stats_degraded` pattern:
+  plain, self-describing fields over new types).
+- **The surprise gate**: no new name — a pathway is surprise-gated when
+  its report carries the delta and coalesces steady state (the R10
+  precedent, `cybernetics_loop.rs:895-968`).
+- **No new types**: the category is a naming convention over the
+  existing vocabulary (`set_point`, `Deviation`, `expected`,
+  `observed`, `degraded`), not a new abstraction — the deletion test
+  holds by construction (nothing is added).
 - **CU-5(b) probe artifacts: clean** (no probe/scratch/tmp/bak files
   in production trees).
 - **Gates:** count 74 (< the 75 cap; the 60-file target remains the
