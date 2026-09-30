@@ -56,7 +56,7 @@ requested tier; the agent applies them via edit_file after generation.
 ## Step 2 — For each in-tier finding WITH a concrete remedy, produce ONE surgical edit
 
 For each finding at/above the tier that has a concrete remedy (reuse the
-report's `structural_remedies`), produce ONE edit:
+report's per-finding `remedy` fields and `top_fixes`), produce ONE edit:
 
 1. **Read the actual file first** (the agent uses `read_file` on `location.file`
    before emitting `old_text`). NEVER guess `old_text` — a fabricated old_text
@@ -95,7 +95,8 @@ For other languages, follow the surrounding code's idioms.
 - If you cannot read the file or cannot locate exact `old_text` → skip, reason
   `"cannot_locate"`. NEVER fabricate `old_text`.
 - Skip pure taste/FYI findings with no concrete remedy EVEN under fix_mode
-  "all" — they are not actionable.
+  "all" — they are not actionable; record the skip with reason
+  `taste_no_remedy`.
 - Do NOT bundle unrelated refactors into a requested fix. One finding → one
   surgical edit (plus its directly-required sibling, e.g., updating a call
   site the edit forces).

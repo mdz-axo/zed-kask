@@ -13,6 +13,8 @@ contract:
     raw_findings: array
     delegated_axes: array
     delegate_instructions: array
+    predicted_findings: integer
+    predicted_blockers: integer
 ---
 {# Phase 2 — PERSPECTIVES (detection only; Sauer/Ciolkowski separate detection from collection) #}
 {#
@@ -47,12 +49,26 @@ the adjudicate phase (detection/collection separation, Sauer).
 
 {% if probe_findings %}
 ## Delegate Results (Agent-Executed)
-The agent invoked specialist skills between the previous scope step and this
-one. Fold these returned findings into raw_findings with `source` set to the
-delegate name.
+These delegate results were produced after this step's delegation instructions
+were emitted (the delegates run between perspectives and adjudicate: on the
+skill path their findings are passed back into this step's render; in Zed
+sessions the agent folds them between perspectives and adjudicate — one
+owner per path, never both). Fold them into raw_findings with `source` set to
+the delegate name; do not double-count or re-verdict them.
 
 {{ probe_findings }}
 {% endif %}
+
+## Step 0 — Predict before detecting (calibration)
+
+From the change model alone — BEFORE reading any hunk — state:
+- `predicted_findings`: the expected number of raw findings
+- `predicted_blockers`: the expected number of Blockers
+- one sentence of basis (size class, critical paths, prior review)
+
+Record both numbers before detection begins; the report step 0 reconciles
+them against the found counts. A wrong prediction is not a defect — an
+unrecorded one is.
 
 ## Step 1 — Read surrounding code, not just the diff
 
@@ -61,9 +77,13 @@ hunk. Do not opine on regions you did not read.
 
 ## Step 2 — Walk the PERFECT-ordered axes (descending importance)
 
-Walk top-to-bottom. If `focus` is non-empty, run only the axes in focus (plus
-a basic security pass). If comprehensive (focus empty), run all. For each axis,
-intersect with the addyosmani five-axis where relevant.
+Walk top-to-bottom through the scope-resolved `focus_axes`. If the user's
+`focus` was non-empty, these are restricted to it (plus a basic security
+pass). If comprehensive (focus empty), run all — and when a prior pass's
+`next_review_focus` was merged into `focus_axes`, walk that emphasis FIRST
+and give it the deepest pass (scope put it there as the primary emphasis; do
+not demote it to a passive header). For each axis, intersect with the
+addyosmani five-axis where relevant.
 
 ### P — Purpose (correctness axis)
 - Does the code do what `change_spec` claims? (intent_vs_spec from the model)
@@ -167,10 +187,12 @@ Respond with a JSON object:
       "source": "inline | bug-hunt | refactor-architecture"
     }
   ],
-  "delegated_axes": ["bug-hunt", "architecture"],
+  "delegated_axes": ["bug-hunt", "refactor-architecture"],
   "delegate_instructions": [
-    {"delegate": "bug-hunt", "inputs": {"target": "...", "quality_criteria": "..."}, "axes": ["P/E-correctness"]}
-  ]
+    {"delegate": "bug-hunt", "inputs": {"target": "...", "quality_criteria": "...", "probe_depth": "static"}, "axes": ["P/E-correctness"]}
+  ],
+  "predicted_findings": 0,
+  "predicted_blockers": 0
 }
 ```
 
@@ -183,7 +205,8 @@ Respond with a JSON object:
 - Lead with leverage: purpose/security/structural before cosmetic nits.
 - Do not opine on regions you did not read.
 - Respect `focus` (security always gets a basic pass). Comprehensive when
-  focus is empty.
+  focus is empty. A prior pass's merged `next_review_focus` emphasis is
+  walked first and deepest — never demoted to a passive header.
 - Delegation adds depth but does not remove the inline basics pass.
 - When probe_findings is present, fold them into raw_findings with source set;
   do not double-count or re-verdict them.

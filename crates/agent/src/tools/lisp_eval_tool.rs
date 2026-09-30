@@ -2017,4 +2017,105 @@ mod tests {
             "root cause ambiguous alone = 0.25/0.85 — above the 0.25 convergence threshold"
         );
     }
+
+    #[test]
+    fn test_code_review_skill_md_pins_forms() {
+        // code-review pins two lisp_eval forms — the constraint-force
+        // severity derivation (base tier → confidence downgrade →
+        // provenance ceiling → taste ceiling) and the report's
+        // prediction-reconciliation gap. The severity form's critical-path
+        // exemption is Prohibition-only (both doc surfaces say "a Prohibition
+        // there stays Blocker even at lower confidence"; the pre-repair form
+        // keyed the exemption on the base tier, which silently kept a
+        // low-confidence Guardrail on a critical path at Blocker). If either
+        // form drifts, this fails until skill and tests are reconciled.
+        let skill_md = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../.agents/skills/code-review/SKILL.md"
+        ))
+        .expect("code-review SKILL.md must exist in the workspace");
+
+        // 1. The severity form.
+        let severity = r#"(begin (define tiers (list "FYI" "Nit" "Should-fix" "Blocker")) (define base (lambda (f v) (cond ((string= f "Prohibition") 3) ((string= f "Guardrail") 3) ((string= f "Guideline") 2) ((or (string= f "Evidence") (string= f "Hypothesis")) (base v "none")) ((string= f "Preference") 1) (t 0)))) (let ((b (base force violated))) (let ((d (if (and (< conf 0.6) (not (and crit (string= force "Prohibition")))) (max 0 (- b 1)) b))) (let ((c (if (or capped (string= force "Hypothesis")) (min d 2) d))) (nth (if taste (min c 1) c) tiers)))))"#;
+        assert!(
+            skill_md.contains(severity),
+            "severity form must stay pinned in code-review SKILL.md"
+        );
+        let guardrail_crit = hkask_lisp::eval_sandboxed_with_budget(
+            severity,
+            &json!({"force": "Guardrail", "violated": "none", "conf": 0.5, "crit": true, "capped": false, "taste": false}),
+            100_000,
+            64,
+        )
+        .expect("severity form must evaluate");
+        assert_eq!(
+            guardrail_crit,
+            json!("Should-fix"),
+            "a low-confidence Guardrail on a critical path downgrades — the exemption is Prohibition-only"
+        );
+        let prohibition_crit = hkask_lisp::eval_sandboxed_with_budget(
+            severity,
+            &json!({"force": "Prohibition", "violated": "none", "conf": 0.5, "crit": true, "capped": false, "taste": false}),
+            100_000,
+            64,
+        )
+        .expect("severity form must evaluate on a critical-path Prohibition");
+        assert_eq!(
+            prohibition_crit,
+            json!("Blocker"),
+            "a Prohibition on a critical path stays Blocker even at lower confidence"
+        );
+        let worked_example = hkask_lisp::eval_sandboxed_with_budget(
+            severity,
+            &json!({"force": "Prohibition", "violated": "none", "conf": 0.55, "crit": false, "capped": true, "taste": false}),
+            100_000,
+            64,
+        )
+        .expect("severity form must evaluate on the template's worked example");
+        assert_eq!(
+            worked_example,
+            json!("Should-fix"),
+            "the adjudicate template's worked example: 0.55-confidence Prohibition with assessment provenance"
+        );
+        let evidence_of_prohibition = hkask_lisp::eval_sandboxed_with_budget(
+            severity,
+            &json!({"force": "Evidence", "violated": "Prohibition", "conf": 0.5, "crit": true, "capped": false, "taste": false}),
+            100_000,
+            64,
+        )
+        .expect("severity form must evaluate on an Evidence finding");
+        assert_eq!(
+            evidence_of_prohibition,
+            json!("Should-fix"),
+            "an Evidence finding is not a Prohibition — the docs-literal reading downgrades it on a critical path at low confidence"
+        );
+        let preference = hkask_lisp::eval_sandboxed_with_budget(
+            severity,
+            &json!({"force": "Preference", "violated": "none", "conf": 0.9, "crit": false, "capped": false, "taste": true}),
+            100_000,
+            64,
+        )
+        .expect("severity form must evaluate on a Preference");
+        assert_eq!(preference, json!("Nit"), "a taste Preference is a Nit");
+
+        // 2. The prediction-reconciliation gap form.
+        let gap =
+            r#"(list (- found_findings predicted_findings) (- found_blockers predicted_blockers))"#;
+        assert!(
+            skill_md.contains(gap),
+            "prediction-reconciliation gap form must stay pinned in code-review SKILL.md"
+        );
+        let reconciled = hkask_lisp::eval_sandboxed_with_budget(
+            gap,
+            &json!({"found_findings": 7, "predicted_findings": 5, "found_blockers": 2, "predicted_blockers": 1}),
+            100_000,
+            64,
+        )
+        .expect("gap form must evaluate");
+        assert_eq!(
+            reconciled,
+            json!([2, 1]),
+            "the gap is [findings gap, blockers gap] — the report's unreported-gap signal"
+        );
+    }
 }

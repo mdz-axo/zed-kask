@@ -40,8 +40,9 @@ evidence-backed verdicts. Do NOT re-scan the code — work only with raw_finding
 ```json
 {{ prior_review | tojson }}
 ```
-prior_review.blockers = {{ prior_review.blockers | default(0) }} (the baseline
-this pass's blocker count is compared against).
+prior_review.blockers = {{ prior_review.blockers | default(0) }} (the integer
+baseline this pass's blocker count is compared against — the prior pass's
+`prior_review_handoff.blockers`; 0 on a first pass).
 {% else %}
 ## Prior Review
 No prior review — first pass. prior_review.blockers = 0.

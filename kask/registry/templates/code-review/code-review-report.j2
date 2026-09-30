@@ -8,10 +8,13 @@ contract:
     rejected_findings: array
     severity_counts: object
     blocker_delta: integer
+    predicted_findings: integer
+    predicted_blockers: integer
   output:
     review: object
     lessons_learned: array
     next_review_focus: string
+    prior_review_handoff: object
 ---
 {# Phase 4 — REPORT (Fagan outputs: verdict + remedies + follow-up signals) #}
 {#
@@ -51,6 +54,24 @@ is the separate, user-gated implement phase.
 {{ rejected_findings | default([]) | tojson }}
 ```
 
+## Prediction (from perspectives step 0)
+predicted_findings: {{ predicted_findings | default(0) }}
+predicted_blockers: {{ predicted_blockers | default(0) }}
+
+## Step 0 — Reconcile the prediction (D)
+
+The perspectives step 0 recorded `predicted_findings` / `predicted_blockers`
+before detection. Reconcile them against the found counts:
+- `found_findings` = adjudicated findings + rejected findings (all detected)
+- `found_blockers` = severity_counts.blockers
+
+Compute the gap with `lisp_eval` (D):
+`(list (- found_findings predicted_findings) (- found_blockers predicted_blockers))`
+
+Report all four numbers plus the gap in `review.prediction_reconciliation`.
+A gap is not a defect; an unreported gap is — it is the only signal that the
+reviewer's model of the change was wrong.
+
 ## Step 1 — Verdict (driven by Blocker presence, not nit count)
 
 | condition | verdict |
@@ -59,7 +80,7 @@ is the separate, user-gated implement phase.
 | one or more open Blockers, OR a structural regression that makes the system worse | **Request changes** |
 | observations only, nothing blocking | **Comment** |
 
-An open Blocker is one that is neither fixed nor waived. Only a Guardrail Blocker (`waivable: true`) can be waived, and only by the operator with a recorded `waiver.reason`; a Prohibition Blocker stays open until fixed. List every waivable Blocker with the rule it breaks so the operator can choose to fix or waive it.
+An open Blocker is one that is neither fixed nor waived. Only a Guardrail Blocker (`waivable: true`) can be waived, and only by the operator with a recorded `waiver.reason`; a Prohibition Blocker stays open until fixed. List every waivable Blocker with the rule it breaks so the operator can choose to fix or waive it. The `waived` array fills only AFTER the operator decides: present the waivable Blockers, record the operator's accepted waivers in the findings' `waiver` fields, then list them under `waived` — on the first render (before the operator has decided) it is empty.
 
 The approval standard: approve when it definitely improves overall code health,
 even if it isn't perfect. Never block because it isn't exactly how you would
@@ -125,6 +146,7 @@ Respond with a JSON object:
   "review": {
     "verdict": "Approve | Request changes | Comment",
     "summary": "one-line: N findings (B blockers, S should-fix, N nit, F fyi), verdict",
+    "prediction_reconciliation": {"predicted_findings": 0, "found_findings": 0, "predicted_blockers": 0, "found_blockers": 0, "gap": [0, 0]},
     "findings_by_severity": {
       "blockers": [{"id": "CR-001", "file": "...", "line": "...", "title": "...", "evidence": "...", "remedy": "named structural remedy", "falsifier": "...", "waivable": false}],
       "waived": [{"id": "CR-...", "rule": "the Guardrail it breaks", "waiver": {"reason": "...", "by": "operator", "date": "..."}}],
@@ -140,8 +162,14 @@ Respond with a JSON object:
   "lessons_learned": [
     "concrete, actionable lesson derived from this review's findings"
   ],
-  "next_review_focus": "what the next pass should concentrate on, or empty if converged clean"
+  "next_review_focus": "what the next pass should concentrate on, or empty if converged clean",
+  "prior_review_handoff": {"next_review_focus": "...", "lessons_learned": ["..."], "blockers": 0}
 }
+```
+
+`prior_review_handoff` is the exact object to pass as `prior_review` on the
+next pass — `blockers` is an INTEGER count (not the findings array), so
+adjudicate's `blocker_delta` baseline is typed and emitted, never inferred.
 ```
 
 ## Constraints
@@ -154,6 +182,8 @@ Respond with a JSON object:
   generic platitudes.
 - next_review_focus is empty when the review converged clean (zero open
   Blockers).
+- Emit prior_review_handoff: blockers as an integer count — the typed
+  baseline adjudicate's blocker_delta consumes on the next pass.
 - Never record a waiver the operator did not give; a Prohibition is never waivable.
 - If size_class == "too_large", the top recommendation is to split before
   merging, with a concrete split plan.

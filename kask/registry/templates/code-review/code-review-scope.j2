@@ -12,6 +12,7 @@ contract:
     size_class: string
     critical_paths: array
     focus_axes: array
+    prior_feedback_consumed: string
 ---
 {# Phase 1 — SCOPE (Fagan Planning: sizing + critical-path identification + change model) #}
 {#
@@ -115,8 +116,9 @@ Describe:
   shared module / cross-crate surfaces?
 - **observed_characteristics**: async, unsafe, trait objects, concurrency,
   FFI, macros — these drive which PERFECT/addyosmani axes deserve emphasis.
-- **prior_blockers**: `prior_review.blockers` if present, else 0 (adjudicate
-  computes blocker_delta against this).
+- **prior_blockers**: `prior_review.blockers` if present, else 0 (the
+  scope-side record for the change model; adjudicate computes blocker_delta
+  against `prior_review.blockers` directly — it does not read this field).
 
 ## Step 5 — Resolve focus
 
