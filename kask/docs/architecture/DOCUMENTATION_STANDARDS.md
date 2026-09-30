@@ -164,6 +164,8 @@ Such a block is marked conceptual by the `Proposed` frontmatter plus that explic
 
 This convention follows the Peripheral project's Mermaid-alignment practice[^peripheral-diagrams] while preserving an explicit IS/OUGHT boundary for operator-retained plans.
 
+**Self-illustration exemption (added 2026-09-30).** The standards document's own illustrative diagrams — which depict the standard's definitions rather than the tree's structure — are exempt from `DIAGRAM_ALIGNMENT` registration; the diagram registry names them as the exception. `architecture/DOCUMENTATION_STANDARDS.md` §3's lifecycle diagram is the one current instance.
+
 ### 4.3 Styling conventions
 
 - Prefer `TD` (top-down) for component graphs, `LR` (left-right) for

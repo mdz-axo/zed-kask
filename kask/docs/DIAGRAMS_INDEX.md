@@ -2,7 +2,7 @@
 title: "hKask Diagram Index — Mermaid Verification Registry"
 audience: [architects, developers, agents]
 last_updated: 2026-09-30
-version: "2.5.0"
+version: "2.6.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [curation, composition]
@@ -12,7 +12,7 @@ mds_categories: [curation, composition]
 
 This registry is generated from the surviving `DIAGRAM_ALIGNMENT` metadata under `kask/docs/`. On 2026-09-30 the corpus contains **107 active alignment records representing 107 unique IDs**: 34 records in the five consolidated diagram files and 73 inline records. The 2026-09-28 how-to folds moved eleven inline records from the per-crate how-to documents into their set references' Procedures sections (count unchanged by the folds); the deleted `DIAG-SKILL-CFR` (subject removed with the GSR/CFR skills, commit `5eed0134bf`) reduced the count from 106 to 105.
 
-The corpus contains 109 Mermaid blocks; 108 carry one immediately adjacent alignment record — the one exception is `architecture/DOCUMENTATION_STANDARDS.md` §3's own lifecycle diagram (the standards document illustrating its own lifecycle; registering it or exempting it by rule is a recorded housekeeping item, not silently absorbed). On 2026-09-26 the skill learning loop registered as `DIAG-ARCH-LEARNING-LOOP-001` in `diagrams/architecture.md`. The last two conversions landed 2026-09-19: the LogiSheets plan's architecture block registered as `DIAG-ARCH-SPREADSHEET-001` (implementation began 2026-09-18, converting the plan to `Active` per `kask/docs/architecture/DOCUMENTATION_STANDARDS.md` §4.2), and `research/cmp-gap-methodology.md`'s Stage-7 routing block registered as `DIAG-RES-CMP-001` together with the file's frontmatter. On 2026-09-30 the three-layer review registered two model diagrams in `research/cybernetic-nervous-system-reference-model.md`: `DIAG-RES-CNS-001` (the abstract tiered feedback structure, verified against the external canonical sources) and `DIAG-RES-CNS-002` (the A/B/C pathway mapping, verified against the layer pathway code sites).
+The corpus contains 109 Mermaid blocks; 108 carry one immediately adjacent alignment record — the one exception is `architecture/DOCUMENTATION_STANDARDS.md` §3's own lifecycle diagram, exempt by the self-illustration rule (DOCUMENTATION_STANDARDS §4.2, added 2026-09-30: the standards document's own illustrative diagrams depict the standard's definitions rather than the tree's structure). On 2026-09-26 the skill learning loop registered as `DIAG-ARCH-LEARNING-LOOP-001` in `diagrams/architecture.md`. The last two conversions landed 2026-09-19: the LogiSheets plan's architecture block registered as `DIAG-ARCH-SPREADSHEET-001` (implementation began 2026-09-18, converting the plan to `Active` per `kask/docs/architecture/DOCUMENTATION_STANDARDS.md` §4.2), and `research/cmp-gap-methodology.md`'s Stage-7 routing block registered as `DIAG-RES-CMP-001` together with the file's frontmatter. On 2026-09-30 the three-layer review registered two model diagrams in `research/cybernetic-nervous-system-reference-model.md`: `DIAG-RES-CNS-001` (the abstract tiered feedback structure, verified against the external canonical sources) and `DIAG-RES-CNS-002` (the A/B/C pathway mapping, verified against the layer pathway code sites).
 
 ## Consolidated files
 

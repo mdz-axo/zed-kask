@@ -2,7 +2,7 @@
 title: "Cybernetic Nervous System — Alignment Plan"
 audience: [architects, developers, operators, agents]
 last_updated: 2026-09-30
-version: "0.2.0"
+version: "0.3.0"
 status: "Active — operator ruling 2026-09-30 ('proceed as proposed — confirmed'): reference model admitted; S2 and S3 approved and landed"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle]
@@ -74,7 +74,7 @@ system confirms it.
 | O2 | Surprise-gated reporting governs 1 of 12 pathways; the rest log raw activity | INV3 | The core gap; **S3 landed** (the raw duplicate deleted, net −14); the count changes only with S6 |
 | O3 | Expectation carriage absent outside L2 + stored priors | INV2 | Direction only; no code step admitted this pass |
 | O4 | B→C handoff receipt deferrals (L1/L7 memory receipt, L9 ack gate) | INV5 | **Ruled design** (operator D3/D4: deliberate loose coupling) — parked, not obstacles |
-| O5 | L23 poisoned-lock silent fallback | INV4 | Standing operator deferral; S4 priced |
+| O5 | L23 poisoned-lock silent fallback | INV4 | **S4 landed** (2026-09-30: `live_stats_degraded` + the rationale surfacing, red-first) |
 | O6 | Scoping 12 pathways into 3 canonical ones | INV1 | Multi-slice program; not this session's unit |
 
 **Focus obstacle: O2.** It is the target condition's core (clause 3),
@@ -131,6 +131,20 @@ the deletion test, preserve behavior, and validate (`./script/clippy`,
   change):** surface the poisoned-lock leg (INV4 repair) — priced in
   L23's standing deferral with its falsifier; not admitted without the
   ruling.
+  **DONE (2026-09-30, the operator's proceed instruction; red-first, two
+  tdd cycles):** `score_providers` no longer drops zero-penalty
+  rationales (the poisoned arm's message now reaches every
+  recommendation), and `ProviderRecommendation.live_stats_degraded`
+  (serialized only when `true`, so healthy responses are unchanged)
+  distinguishes a broken channel from thin samples. Pins:
+  `poisoned_performance_channel_surfaces_the_degradation_in_every_recommendation`
+  (observed RED: the rationale carried only "not configured (no API
+  key)" — the exact falsifier) and
+  `live_stats_degraded_distinguishes_poisoned_channel_from_thin_samples`.
+  Receipts: 145/145 crate tests, rustfmt clean, scoped clippy clean.
+  Source landed in the concurrent stream's `49b5f1518a`; the test-file
+  half (two stub initializers) landed as `dfc2f292d0` after `49b5f1518a`
+  left the `tool_behavior` target uncompilable at HEAD.
 - **S5 — ruled design, no step:** the O4 receipt deferrals stand per
   operator rulings D3/D4 (2026-09-29).
 - **S6 — pathway scoping (direction, multi-slice):** classify R1–R12
@@ -221,3 +235,71 @@ reference model is ADMITTED as-is; S2 and S3 approved and landed the
 same session (receipts in §4–§5); S4 stays priced behind its standing
 deferral; the goal's ground truth was confirmed by the operator — the
 0.75 intake prediction Brier-scored at 0.0625.
+
+*(Superseded later the same day: the operator's proceed instruction
+executed S4 — see §4 — and directed the §8 cleanup program below.)*
+
+## 8. Legacy and orphan cleanup — strangler-fig removal (operator direction 2026-09-30)
+
+**No backward-compatibility requirement** (operator, 2026-09-30,
+reaffirming the repair plan's standing rule): deletions are outright —
+no compatibility shims, no `#[deprecated]` attributes, no
+kept-for-compatibility states, no migration paths. Wire formats (the
+12 MCP servers' tool schemas) may change. Where a deletion changes a
+persisted shape, the slice names the consequence and the operator
+rules on migrate-vs-recreate before it lands.
+
+**Governing discipline** (existing rules): deletions clean up what they
+orphan in the same change — the dep line, the h_mem's embeddings and
+memory_links, the settings knobs, the doc sections; every removal
+ends with a full-repo symbol sweep over code AND docs plus a full
+build before any green claim; MCP servers are leaf crates (only truly
+unused items — zero references anywhere including `tests/` — are dead;
+test seams are alive; `pub`→`pub(crate)` tightening is churn); stale
+comments describing deleted behavior are updated in the same change.
+
+Tasks (each code-touching slice: deletion test, existing-suite
+behavior preservation, `./script/clippy` + crate tests + `cargo check
+-p zed` where zed-side, net-lines accounting):
+
+- **CU-1 — Dead-surface sweep.** One-impl traits and convention
+  helpers: grep `self.<field>`/call sites; constructor-only matches are
+  unwired → delete trait + impl + its tests together. Deliverable: a
+  findings ledger (file:line, IS), each candidate deleted or rejected
+  with reason; net production lines decrease or the no-candidate
+  finding stated with evidence.
+- **CU-2 — Dependency sweep.** `cargo machete` (kask-scoped) plus the
+  deps orphaned by CU-1: zero `use <dep>` hits in `src/` AND `tests/`
+  → remove the dep line.
+- **CU-3 — Advertised-invariant sweep.** Doc comments claiming gates,
+  audits, or migrations must point to their enforcement line or say
+  "not yet enforced"; "kept for compatibility" wording dies with its
+  dead claim.
+- **CU-4 — Stale-comment sweep.** Rides every slice: grep comments
+  naming the deleted behavior; update or delete in the same change.
+- **CU-5 — Orphaned-artifact sweep.** (a) run
+  `delete_orphaned_embeddings` after memory-touching slices; (b) probe
+  and test artifacts out of production trees; (c) the docs corpus at
+  74 files vs the 60-file target — a doc-update realignment pass over
+  the condensation candidates (the register's superseded historical
+  ledger sections first), under the fewer-than-75 gate.
+- **CU-6 — Strangler-fig completion.** Where the S6 scoping shows a
+  canonical pathway carrying a diagnostics-only duplicate's load,
+  delete the old form only after the canonical path verifiably carries
+  it; one pathway per slice; no compat state survives. S3 was the
+  first instance; the S6 table names the rest (currently: none — the
+  no-candidate finding stands until a pathway is displaced).
+- **CU-7 — Legacy-mode verification.** Named candidates — cite the
+  production consumer or delete the mode: the standalone-launch
+  tracing subscriber
+  (`hkask-services-core/src/standalone_settings.rs:391`); any
+  `HKASK_USE_*` opt-in without a recorded consumer; settings knobs
+  whose capability was deleted.
+- **CU-8 — Specification and doc updates ride with every slice.** The
+  owning reference/per-server doc, DIVERGENCE.md (a zed-side deletion
+  retires or amends its D-seam entry), the register's inventory, the
+  docs README, and the diagram registry — in the same change.
+
+Sequencing: CU-1 → CU-2 (deps orphaned by CU-1); CU-3/CU-4/CU-8 ride
+every slice; CU-5 after memory- and doc-touching slices; CU-6 gated on
+an actual displacement; CU-7 independent, smallest first.

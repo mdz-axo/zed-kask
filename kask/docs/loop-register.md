@@ -358,6 +358,39 @@ operator directives → inbox → `process_inbox` (`cybernetics_loop.rs:672-687`
 tool `crates/agent/src/tools/curator_tools.rs:807-830` `curator_directive`);
 backpressure (`main.rs:1256-1300`).
 
+### Pathway scoping (S6, 2026-09-30; operator-approved) — canonical vs diagnostics roles
+
+Target-condition clause 2: one canonical report pathway per layer,
+every other pathway explicitly scoped. The twelve pathways classify
+as:
+
+| Pathway | Role | Deletion-test verdict |
+| --- | --- | --- |
+| R5 RegulationRecord archive | **canonical Layer A** — the durable report, read via `reg_query` | keeps (the load-bearer) |
+| R10 loop-quality telemetry | **canonical Layer A producer** — the surprise-gated emitter into R5's archive (`emit_regulation_span`) | keeps (INV3's exemplar; its raw duplicate was S3-deleted) |
+| R6 algedonic events → board/email | **canonical Layer A escalation arm** — the A→C bridge (INV4) | keeps (rides R12's board substrate) |
+| R7 alert channel → toasts | **canonical Layer B** — the in-process human alert surface | keeps |
+| R11 `cx.notify()` render signal | **canonical Layer B substrate** — the panels' refresh mechanism, not a feedback report | keeps (the surface itself) |
+| R8 curator memory h_mems | **canonical Layer C** — the slow-tier model substrate | keeps |
+| R12 kanban board/cards/comments | **canonical B/C work-state** — the durable work record both layers act on | keeps |
+| R1 zed `log` macros | diagnostics (zed-side process logs) | keeps — distinct role; deleting re-spawns inline error prints at 100+ sites |
+| R2 `.log_err()` | diagnostics (zed-side Result idiom) | keeps — one idiom, 250 sites; deleting re-spawns the boilerplate |
+| R3 kask `tracing` macros | diagnostics (child stderr + the recorded in-host fallback, S2) | keeps — recorded as designed in `regulation-spans.md` §1 |
+| R4 child stderr → host forward | diagnostics carrier (feeds R3's in-host arm) | keeps — the child-diagnostics bridge |
+| R9 tool traces | diagnostics (per-session tool-call traces, artifacts `agent-traces`) | keeps — eval/debug consumer |
+
+**No-candidate finding, with evidence:** no pathway is a duplicate of
+another — the one true duplication (R10's raw per-tick copy of the
+coalesced span) was deleted as S3 (net −14). Each diagnostics pathway
+has a distinct role and consumer; the deletion test re-spawns
+complexity at every call site. The scoping closes target-condition
+clause 2: three canonical pathways (A: the R5 archive with R10's
+producer and R6's escalation arm; B: the tool envelope plus R7's
+toasts on R11's substrate; C: R8's memory with R12's work-state),
+eight diagnostics pathways each carrying an explicit role, one
+substrate. CU-6 in the alignment plan §8 owns the strangler-fig
+execution if a diagnostics pathway is later displaced.
+
 ### Premise verdict — "logging and actuation are not unified and canonical": IS (confirmed), with per-loop nuance
 
 1. **Two logging frameworks split exactly at the D-seam — and they ARE
@@ -458,7 +491,7 @@ named invariants from the Phase 2 model, file:line, verdict):
 | INV1 — one canonical pathway per layer | within-loop single-copy: L4's one `execute_tool` span (`tool_span.rs:162`), L2's one alert fan-out (`cycle.rs:568+`), L10's one store (`memory_store.rs:288`), L14's one sync funnel (`main.rs:3585`) | **PARTIAL** — canonical within loops; cross-cutting, twelve report pathways serve three layers (Pass 3 inventory R1–R12) |
 | INV2 — expectation carriage | `Signal.set_point` + `Deviation` (`loops/signals.rs:332-343`); alert deficit/threshold (`cycle.rs:600-611`); goal intake prediction (Brier at resolution); forecast probability (`forecast_persist`); L22's base digest | **PARTIAL** — held in L2 (exemplar), L8/L9/L17 (stored priors), L22 (digest); absent from R1–R4, R9, R12 |
 | INV3 — surprise-gated reporting | loop-quality telemetry coalescer (`cybernetics_loop.rs:895-968`); algedonic binary threshold (`algedonic.rs:247+`); L20's conditional GET (protocol level) | **GAP** — one in-process pathway of twelve; the rest log raw activity. S3 (2026-09-30, operator-approved) deleted the per-tick raw duplicate of the coalesced span (net −14) — the direction held; the count changes only with S6 pathway scoping |
-| INV4 — escalation, never silent drop | exhaustion escalation (`cycle.rs:781-804`); circuit breaker (`runtime.rs:1155-1177`); L18's `RunningUnknown` (the F1 repair); L22's explicit unknown | **PARTIAL** — strong in L2/L3/L18/L22; violated by L23's poisoned-lock silent fallback (`providers.rs:323-333`, standing deferral); the suspected in-host tracing drop was REFUTED by the Pass 4 experiment (the log-feature fallback delivers those lines) |
+| INV4 — escalation, never silent drop | exhaustion escalation (`cycle.rs:781-804`); circuit breaker (`runtime.rs:1155-1177`); L18's `RunningUnknown` (the F1 repair); L22's explicit unknown; L23's `live_stats_degraded` (the S4 repair, 2026-09-30) | **HELD at the audited sites** — both named violations resolved (L23 repaired by S4; the suspected in-host tracing drop refuted by the Pass 4 experiment); a full per-row INV4 sweep rides the §8 cleanup (alignment plan) |
 | INV5 — model revision at the top | curator distillation/consolidation (`consolidation_service.rs:38`); set-point loading (`set_points.rs:439`); skill verdicts (algedonic review); calibration readback (L8/L17) | **PARTIAL** — the C-tier machinery exists; the B→C handoffs carry standing receipt deferrals (L1/L7 memory receipt, L9 acknowledgment gate) |
 | INV6 — afferent/efferent direction discipline | directive inbox (`cybernetics_loop.rs:672-687`, efferent); alert channel (`main.rs:632-641`, afferent); L10 inject-down/ingest-up | **PARTIAL** — the channels exist and are clean; the log/tracing framework split (R1 vs R3) is bridged only by an incidental feature flag (`crates/rpc/Cargo.toml:35`) — functional but undocumented (the L2/L3 corrected finding) |
 
@@ -763,7 +796,7 @@ the spec's minimum list, recorded below rather than narrowed away.
 
 - **Pass 3 layer classification (2026-09-30):** primary **A** (idempotency, digest conflict, reconciliation — deterministic); secondary B (widget edits; the caller's retry decision). Sense→report→actuate: sense edit + base digest (`server.rs:94-119`) → report new revision or conflict/unknown (`service.rs:200`, `:213-229`) → actuate apply/publish. Five properties stand; no open impedance (the orphan-revision window is deliberate and tested). Grill: primary-B fails — the caller decides retry, but the cycle's feedback is deterministic. Alignment: INV2 held (the base digest is the caller's expectation of the base state — optimistic concurrency is expectation-carriage by construction); INV4 held (`None` stays explicitly unknown).
 
-### L23 — Research-provider selection / observed-performance cycle — audited; degraded-status impedance deferred
+### L23 — Research-provider selection / observed-performance cycle — degraded-status contract landed (S4, 2026-09-30)
 - **Crate/path:** `kask/mcp-servers/hkask-mcp-research/src/research/{providers,performance}.rs`
 - **Entry point:** `providers.rs:683` `score_providers` → `:730-743` live penalty/readback; provider outcome `providers.rs:315-332` → `performance.rs:76` `record_outcome`; next selection from `hkask_mcp_research.rs:313`
 - **Participants:** `ProviderPool`, per-provider bounded recent-outcome samples (`performance.rs:64-81`), search providers, L2 Regulation span archive (`providers.rs:315-322`)
@@ -775,6 +808,7 @@ the spec's minimum list, recorded below rather than narrowed away.
 - **Closure (2026-09-27):** the poisoned-lock leg re-verified in the current tree (`providers.rs:323-333`, "Best-effort — a poisoned lock skips the live path"); the degraded-status contract stays deferred with its falsifier — replacing the silent fallback is a behavior change, not a deletion. **Prediction vs actual:** predicted 1 defect / 1 impedance / conf 0.35 → actual: 0 confirmed defects, 1 impedance deferred with falsifier. Brier-scored at Phase 4.
 
 - **Pass 3 layer classification (2026-09-30):** primary **A** (in-process penalty, bounded samples — deterministic); secondary B (surfaced ranking/rationale). Sense→report→actuate: sense provider outcomes (`providers.rs:315-332`) → report ranking/rationale + live stats (`performance.rs:76`) → actuate penalty/selection (`providers.rs:683-743`). Five properties stand. Impedance (standing): poisoned-lock silent fallback — endpoints outcome drop (`providers.rs:323-333`) × zero-penalty readback (`performance.rs:138-147`) — dimension: degradation surfacing (a broken feedback channel reads as "few samples"). Grill: primary-B fails — the rationale is surfaced but the selection loop is in-process and deterministic. Reclassification falsifier: operator-managed provider choice. Alignment: INV4 violated on the poisoned-lock leg (the standing deferral is an INV4 repair candidate); INV2 partial (success/latency expectations form over bounded samples).
+- **S4 landed (2026-09-30, operator "proceed" instruction; red-first, two tdd cycles):** the degraded-status contract is implemented — `score_providers` no longer drops zero-penalty rationales (the poisoned arm's message now reaches every recommendation), and `ProviderRecommendation.live_stats_degraded` (serialized only when `true`, so healthy responses are unchanged) distinguishes a broken channel from thin samples; the write-leg comment now states the read side surfaces the skip. Pins: `poisoned_performance_channel_surfaces_the_degradation_in_every_recommendation` (observed RED: the rationale carried only "not configured (no API key)" — the exact falsifier) and `live_stats_degraded_distinguishes_poisoned_channel_from_thin_samples`. Receipts: 145/145 crate tests, rustfmt clean, scoped clippy clean. Source landed in the concurrent stream's `49b5f1518a`; the test-file half (two stub initializers) landed as `dfc2f292d0` after `49b5f1518a` left the `tool_behavior` target uncompilable at HEAD. The standing deferral is discharged; the row's Phase 2 impedance is repaired.
 
 ## Boundary notes (sub-cycles folded into rows above, not separate rows)
 
@@ -1100,6 +1134,28 @@ exactly that lag), not evidence of absence.)
    generally.
 
 ## Change log
+
+- 2026-09-30 — v0.24.2 executed the remaining open items under the
+  operator's proceed instruction and recorded the cleanup program.
+  **S4 landed** (L23's degraded-status contract): red-first, two tdd
+  cycles — `score_providers` no longer drops zero-penalty rationales
+  and `ProviderRecommendation.live_stats_degraded` (serialized only
+  when true) distinguishes a broken channel from thin samples; 145/145
+  crate tests, rustfmt clean, scoped clippy clean; source in the
+  concurrent stream's `49b5f1518a`, the test-file half in `dfc2f292d0`
+  (repairing `49b5f1518a`'s uncompilable `tool_behavior` target at
+  HEAD). **S6 recorded** (pathway scoping): the R1–R12 role table —
+  three canonical pathways (A: the R5 archive with R10's producer and
+  R6's escalation arm; B: the envelope + R7 toasts on R11's substrate;
+  C: R8 memory with R12 work-state), eight diagnostics pathways with
+  explicit roles, one substrate; the no-candidate finding stands (the
+  one true duplication was S3). **C decided** (standards diagram):
+  the self-illustration exemption added to DOCUMENTATION_STANDARDS
+  §4.2 and the registry note updated to cite the rule. **§8 added to
+  the alignment plan** (operator direction): the legacy/orphan cleanup
+  and strangler-fig removal program (CU-1–CU-8) under the
+  no-backward-compatibility rule — deletions are outright; no compat
+  shims, no deprecated attributes, no kept-for-compatibility states.
 
 - 2026-09-30 — v0.24.1 executed the operator's checkpoint rulings ("proceed
   as proposed — confirmed"). **Reference model ADMITTED** —
