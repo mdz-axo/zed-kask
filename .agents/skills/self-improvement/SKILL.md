@@ -103,15 +103,20 @@ This separation is critical because the paper identifies a key tension: "self-im
 ## D/P labelling
 
 Pathway and signal selection, plan generation, GEPA reflection and mutation
-proposals, and the Act-gate decision are P — judgment, critiqued by the
+proposals, and the Act step's judgment work (failure-mode naming, `next_step`,
+proposal-card content) are P — judgment, critiqued by the
 measured Check results and by the operator in the algedonic review (the
-executing session never commits its own improvements). The gates are D:
+executing session never commits its own improvements). The propose/discard
+bit itself is D: a pure function of the gate result that the rendered
+template cannot override. The gates are D:
 the propose-or-discard acceptance predicate, the regression count, the GEPA
 dominance and convergence computations, the noise-floor standard error,
 and the PDCA convergence form all run in `lisp_eval` over measured
 harness reports (`swarm_eval_agent_local`, `training_evaluate`) — a
 candidate that fails the gate is discarded regardless of the model's
-assessment. Harness evaluation is D (deterministic
+assessment. (The `safety_violations` gate term is model-judged input:
+the gate is deterministic over its inputs, but that one input is P —
+goal-drift indicators are not harness-measurable.) Harness evaluation is D (deterministic
 contains/not_contains/regex evaluators); filing a proposal is P, gated by
 the D verdict.
 
@@ -141,7 +146,7 @@ The outer Kata uses the `kata-improvement` step templates directly; this skill s
    - Intrinsic Feedback: when the agent can judge candidate behavior through rubrics, consistency, or critique.
    - Extrinsic Experience: when the environment provides grounded feedback (unit tests, task success, rewards).
 4. Generate a concrete improvement plan: what operator 𝒰 will be applied, what signal 𝒮_t will drive it, what experiment scope and explicitly authorized resource constraints apply, and what acceptance criteria will gate the update. Do not invent token quotas; token usage is measured, not budgeted.
-5. Respond with a JSON object containing `pathway` (θ or Σ), `scaffold_component` (if Σ: p, m, 𝒯, or Σ), `signal_type` (𝒟_t, e_t, or τ_t), `improvement_plan`, `budget`, and `acceptance_criteria`.
+5. Respond with a JSON object containing `pathway` (θ or Σ), `scaffold_component` (if Σ: p, m, 𝒯, or Σ), `signal_type` (𝒟_t, e_t, or τ_t), `improvement_plan`, `budget`, `acceptance_criteria`, and `variety_check` (on PDCA iteration 2+: the pathway+signal combinations already attempted and the justification for the current selection).
 
 ### si-execute-improvement (PDCA Do)
 
@@ -436,7 +441,7 @@ To render a template, call the `render_template` tool with the template ref (e.g
 - Scaffold-side updates (p, m, 𝒯, Σ) require a before/after measurement through a deterministic harness (`swarm_eval_agent_local` supports pure contains/not_contains/regex response checks, not shell/file evaluators) and a `lisp_eval` gate — improved pass rate at zero regressions — before `si-propose-or-discard` may file a proposal. Deterministic response scoring alone is not ground truth, which is why the operator decides. When no suitable deterministic harness exists, `evaluation_method: "none_available"` makes the gate false and the candidate is discarded (si-evaluate-improvement step 1).
 - Max iterations: 10 (outer Kata), 5 (inner PDCA per Kata step).
 - Evaluate convergence after each full iteration: the iterates have stopped moving. Converged when stable across 3 iterations. Minimum 2 iterations.
-- `decision` field must be exactly "propose" or "discard" (lowercase).
+- `decision` field must be exactly "propose", "discard", or "blocked" (lowercase). "blocked" is only for a candidate whose gate passed but whose proposal card could not be filed — never for a gate failure, which is "discard".
 - `next_step` field must be exactly "re-enter", "exit", or "refine" (lowercase).
 - `signal_type` may be a single value or an array for multi-signal support.
 - Variety engineering: PDCA iteration 2+ must check for repeated pathway/signal combinations and justify or diversify.

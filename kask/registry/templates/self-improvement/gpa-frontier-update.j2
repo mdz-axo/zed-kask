@@ -31,7 +31,14 @@ Variant A dominates variant B if:
 - A is strictly better than B on at least ONE objective
 
 For maximize: true objectives, "better" = higher score.
-For maximize: false objectives, "better" = lower score.
+For maximize: false objectives, "better" = lower score — but a cost objective
+(total_tokens, mean_latency_ms) counts as strictly better ONLY when it is more
+than 10% lower; a smaller gap is a tie, not a strict win (paired same-set runs
+differ by 6-7% in tokens on noise alone).
+
+The authoritative dominance computation is the invoking agent's `lisp_eval`
+form over (pass_rate total_tokens) pairs; your sort is verified against it,
+and a disagreement resolves to the form's result.
 
 ## Algorithm
 

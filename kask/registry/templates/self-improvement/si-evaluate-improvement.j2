@@ -52,7 +52,7 @@ Does the improvement generalize to held-out tasks? Use:
 
 ### 4. Track Regressions
 
-Did the update break previously solved tasks? Count `regressions` as the number of tasks whose after-run `tasks[].pass_rate` is below the same task's baseline `tasks[].pass_rate`, on the identical `swarm_eval_agent_local` task set; the invoking agent computes this count with `lisp_eval` from both recorded reports. The paper requires: "Iterative self-modification can induce goal drift, reward hacking, and compounding errors... evaluation should track regression rates on previously solved tasks" (Section 8.1.1).
+Did the update break previously solved tasks? `regressions` is the number of tasks whose after-run `tasks[].pass_rate` is below the same task's baseline `tasks[].pass_rate`, on the identical `swarm_eval_agent_local` task set. The invoking agent computes this count with `lisp_eval` from both recorded reports — emit `regressions: null` in your response; do not count it yourself. The paper requires: "Iterative self-modification can induce goal drift, reward hacking, and compounding errors... evaluation should track regression rates on previously solved tasks" (Section 8.1.1).
 
 ### 5. Account for Resource Efficiency
 
@@ -76,4 +76,4 @@ If using a judge-based evaluator (Φ_judge), ensure evaluator independence: use 
 
 The Act gate reads `baseline_pass_rate` and `pass_rate` as the `overall_pass_rate` fields of the recorded before and after `swarm_eval_agent_local` reports (same agent task set, evaluators and repeats), plus `regressions` and `(length safety_violations)`. Copy those values from the actual reports; if either report is missing, set all three to null and `evaluation_method: "none_available"`. Never estimate them.
 
-Respond with a JSON object containing `performance_trajectory`, `baseline_pass_rate`, `pass_rate`, `regressions`, `transfer_score`, `cost_summary`, `safety_violations`, and `evaluation_method` (exactly `metric-based`, `judge-based`, or `none_available`). Report measured values only; you do not decide whether the update is kept.
+Respond with a JSON object containing `performance_trajectory`, `baseline_pass_rate`, `pass_rate`, `regressions` (null — the invoking agent computes it with `lisp_eval`), `transfer_score`, `cost_summary`, `safety_violations`, and `evaluation_method` (exactly `metric-based`, `judge-based`, or `none_available`). Report measured values only; you do not decide whether the update is kept.
