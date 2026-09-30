@@ -148,7 +148,36 @@ text and presence of a boolean verification verdict, then returns its report.
 Missing/mismatched reports block that source without silently paying for OCR again.
 `document_reports` omits bulky text/structure; `verification_failed` counts failed
 OCR verdicts separately from `failed` conversion/I/O operations. Neither `staged`
-nor `skipped_staged` admits a document to the accepted extraction directory.
+Neither `staged` nor `skipped_staged` admits a document to the accepted extraction directory.
+
+### Long-call timeouts and receipt recovery
+
+MCP client calls carry a 300-second reply window. Selective-OCR conversions
+and large embed batches routinely exceed it, so a client-side "did not reply
+within 300s" outcome is an UNKNOWN, not a failure: the server-side call
+continues and completes (observed 2026-09-29: a 405s conversion and a 348s
+embed both completed server-side after the client disconnect). Never re-fire
+on that outcome — reconcile the durable receipts first (`.report.json`
+companions for conversions; response summaries and per-shard checkpoint or
+index state for embeds) and resume only what the receipts show unresolved.
+Operator-driven waves use
+`kask/scripts/audit/call-corpus-tool-via-host.sh`, which invokes the corpus
+binary directly with its own per-call response window
+(`HKASK_CALIBRATION_RESPONSE_TIMEOUT_SECS`; 630s default for inference tools,
+120s otherwise).
+
+### Database lease locks
+
+Every SQLCipher database the corpus server opens is accompanied by a
+zero-byte `<db>.maintenance-lock` file, created on first open and
+deliberately never unlinked: mutual exclusion is carried by the OS flock on
+that stable inode (which must survive renames — rotation acquires the lease
+exclusively), not by the file's existence
+(`kask/crates/hkask-storage/src/core/connection.rs`). A lock file beside a
+database in active use is therefore normal at any age — its mtime is its
+creation time — and unlinking or sweeping lock files breaks the lease
+protocol (`kask/crates/hkask-storage/README.md`). A lock without an
+adjacent database file is the only orphan signal.
 
 ### Chunk bounds and source identity
 
