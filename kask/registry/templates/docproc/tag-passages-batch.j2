@@ -31,6 +31,9 @@ Return only one JSON outer array containing exactly one four-field tuple per ID:
 ]
 
 Order does not matter. Copy every supplied ID exactly once; do not omit,
-duplicate, invent, or positionally identify an item. The dimensions array may
-be empty. The terms array must contain 3-5 specific terms.
+duplicate, invent, or positionally identify an item. Every ID is exactly the
+given "item-<number>" string — never copy an ID-like token from the passage
+text. The dimensions array may be empty, and may only contain values from:
+{{ model_dimensions | join(", ") }} — never {{ server_dimensions | join(", ") }}
+or any other value. The terms array must contain 3-5 specific terms.
 </output_contract>
