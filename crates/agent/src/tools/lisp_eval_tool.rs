@@ -1806,4 +1806,93 @@ mod tests {
             "all-zero criteria weigh 0 — no refinement directives"
         );
     }
+
+    #[test]
+    fn test_sankey_flow_skill_md_pins_forms() {
+        // sankey-flow pins two lisp_eval forms — the per-node inflow/outflow
+        // extraction and the balance check over its rows. The empty-rows
+        // case returns true from the form; the SKILL's guard (empty means
+        // unverified, never vacuously balanced) is the interpretation
+        // discipline. If either form drifts, this fails until skill and
+        // tests are reconciled.
+        let skill_md = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../.agents/skills/sankey-flow/SKILL.md"
+        ))
+        .expect("sankey-flow SKILL.md must exist in the workspace");
+
+        // 1. The node-rows form: [node, inflow, outflow] per internal node.
+        let node_rows_form = r#"(begin
+     (define sum-for (lambda (node es field) (if (= (length es) 0) 0 (+ (if (string= (assoc field (car es)) node) (assoc "weight" (car es)) 0) (sum-for node (cdr es) field)))))
+     (define has-out (lambda (node es) (if (= (length es) 0) nil (or (string= node (assoc "source" (car es))) (has-out node (cdr es))))))
+     (define rows (lambda (rest all) (if (= (length rest) 0) (list) (let ((node (assoc "target" (car rest)))) (if (has-out node all) (cons (list node (sum-for node all "target") (sum-for node all "source")) (rows (cdr rest) all)) (rows (cdr rest) all))))))
+     (rows edges edges))"#;
+        assert!(
+            skill_md.contains(node_rows_form),
+            "node-rows form must stay pinned in sankey-flow SKILL.md"
+        );
+        let pipeline = json!([
+            {"source": "Raw Events", "target": "Kafka", "weight": 1200},
+            {"source": "Kafka", "target": "Stream Validator", "weight": 1200},
+            {"source": "Stream Validator", "target": "Dead Letter Queue", "weight": 80},
+            {"source": "Stream Validator", "target": "Enricher", "weight": 1120},
+            {"source": "Enricher", "target": "Warehouse", "weight": 1100},
+            {"source": "Enricher", "target": "Quarantine", "weight": 20}
+        ]);
+        let rows = hkask_lisp::eval_sandboxed_with_budget(
+            node_rows_form,
+            &json!({"edges": pipeline}),
+            100_000,
+            64,
+        )
+        .expect("node-rows form must evaluate");
+        assert_eq!(
+            rows,
+            json!([
+                ["Kafka", 1200, 1200],
+                ["Stream Validator", 1200, 1200],
+                ["Enricher", 1120, 1120]
+            ]),
+            "internal nodes emit [node, inflow, outflow]; terminal nodes are excluded"
+        );
+
+        // 2. The balance check over the extracted rows.
+        let balanced_form = r#"(begin (define balanced (lambda (rows epsilon) (if (= (length rows) 0) t (and (<= (abs (- (nth 1 (car rows)) (nth 2 (car rows)))) epsilon) (balanced (cdr rows) epsilon))))) (balanced node_rows epsilon))"#;
+        assert!(
+            skill_md.contains(balanced_form),
+            "balance-check form must stay pinned in sankey-flow SKILL.md"
+        );
+        let balanced = hkask_lisp::eval_sandboxed_with_budget(
+            balanced_form,
+            &json!({"node_rows": [["Kafka", 1200, 1200], ["Stream Validator", 1200, 1200], ["Enricher", 1120, 1120]], "epsilon": 0.01}),
+            100_000,
+            64,
+        )
+        .expect("balance form must evaluate");
+        assert_eq!(balanced, json!(true), "balanced rows pass within epsilon");
+        let discrepancy = hkask_lisp::eval_sandboxed_with_budget(
+            balanced_form,
+            &json!({"node_rows": [["Kafka", 1200, 1200], ["Enricher", 1120, 1020]], "epsilon": 0.01}),
+            100_000,
+            64,
+        )
+        .expect("balance form must evaluate on a discrepancy");
+        assert_eq!(
+            discrepancy,
+            json!(false),
+            "a 100-unit inflow/outflow gap is a discrepancy with node-level values"
+        );
+        let vacuous = hkask_lisp::eval_sandboxed_with_budget(
+            balanced_form,
+            &json!({"node_rows": [], "epsilon": 0.01}),
+            100_000,
+            64,
+        )
+        .expect("balance form must evaluate on empty rows");
+        assert_eq!(
+            vacuous,
+            json!(true),
+            "the form returns true on empty; the SKILL's guard marks it unverified, never vacuously balanced"
+        );
+    }
 }
