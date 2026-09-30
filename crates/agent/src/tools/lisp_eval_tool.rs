@@ -1672,4 +1672,41 @@ mod tests {
             "partial receipt coverage halves loop_closure"
         );
     }
+
+    #[test]
+    fn test_wardley_mapper_skill_md_pins_forms() {
+        // wardley-mapper pins one lisp_eval form — the Convergence gate
+        // over unclassified components and unresolved dependencies. If it
+        // drifts, this fails until skill and tests are reconciled.
+        let skill_md = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../.agents/skills/wardley-mapper/SKILL.md"
+        ))
+        .expect("wardley-mapper SKILL.md must exist in the workspace");
+        let gate = r#"(and (eq (length unclassified_components) 0) (eq (length unresolved_dependencies) 0))"#;
+        assert!(
+            skill_md.contains(gate),
+            "Convergence gate form must stay pinned in wardley-mapper SKILL.md"
+        );
+        let converged = hkask_lisp::eval_sandboxed_with_budget(
+            gate,
+            &json!({"unclassified_components": [], "unresolved_dependencies": []}),
+            100_000,
+            64,
+        )
+        .expect("Convergence gate must evaluate");
+        assert_eq!(converged, json!(true), "an empty gap list converges");
+        let gaps = hkask_lisp::eval_sandboxed_with_budget(
+            gate,
+            &json!({"unclassified_components": ["kafka-broker"], "unresolved_dependencies": []}),
+            100_000,
+            64,
+        )
+        .expect("Convergence gate must evaluate on an unclassified component");
+        assert_eq!(
+            gaps,
+            json!(false),
+            "one unclassified component blocks convergence and names the re-entry"
+        );
+    }
 }

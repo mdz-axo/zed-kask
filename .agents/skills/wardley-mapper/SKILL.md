@@ -104,13 +104,17 @@ Wardley, *Wardley Maps* (2016) — `onto_anchor` → derived `wardley_map` (oper
 To render a template, call the `render_template` tool with the template ref (e.g., `wardley-mapper/inventory-components`) and a context object with the required variables.
 
 Template context variables (from each template's [inference] contract):
-- `identify-movement.j2`: `current_map`,`previous_map`
-- `inventory-components.j2`: `target_system`,`component_inventory`
+- `classify-evolution.j2`: `components`
+- `identify-movement.j2`: `current_map`, `previous_map`
+- `inventory-components.j2`: `target_system`, `component_inventory`
 - `map-value-chain.j2`: `classified_components`
-- `synthesize-recommendations.j2`: `movement_analysis`,`current_map`
+- `synthesize-recommendations.j2`: `movement_analysis`, `current_map`
 - `present-map.j2` (pure render; its `[inference]` header declares inputs only, no model call): `map_diagram` (string — the mermaid quadrant chart text), `recommendations` (array of objects, each `{category, component, recommendation, priority, confidence, rationale}` — all plain strings; passing an array of strings renders N/A rows), `rationale` (string — the assessment paragraph)
 
 
 ## Constraints
 
 - `present-map.j2`: rendering template (no inference) — surfaces the diagram as the process's final output.
+- The Convergence gate's re-entry is bounded to one pass; a second pass with gaps notes them as assumptions in the map instead of iterating.
+- An evolution class is a judgment against Wardley's characteristics, not a measurement — say so when data is sparse.
+- Every recommendation traces to a named component and movement; untraceable recommendations are flagged, not emitted.
