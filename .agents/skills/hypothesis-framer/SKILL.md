@@ -70,10 +70,22 @@ FINER — Hulley, Cummings et al., *Designing Clinical Research* (1988; 4th ed. 
 To render a template, call the `render_template` tool with the template ref (e.g., `hypothesis-framer/finer-evaluate`) and a context object with the required variables.
 
 Template context variables (from each template's [inference] contract):
-- `finer-evaluate.j2`: `broad_topic`,`domain` `research_context`,`question_hint`
-- `hypothesis-operationalize.j2`: `structured_question`,`pico_elements` `domain`,`finer_result`
-- `pico-structure.j2`: `research_question`,`domain` `finer_result`,`population_hints`
+- `finer-evaluate.j2`: `broad_topic`, `domain`, `research_context`, `question_hint`
+- `hypothesis-operationalize.j2`: `structured_question`, `pico_elements`, `domain`, `finer_result`
+- `pico-structure.j2`: `research_question`, `domain`, `finer_result`, `population_hints`
 
+## Regression case
+
+Run the convergence gate form through `lisp_eval` with representative envs,
+both directions: all clean (misalignment_count=0, weak_finer=[],
+testable=true, admissible=true, feasible=true) → true; any single
+condition failing → false. Verify all five distinct failure paths:
+misalignment_count=1 (a five-link misalignment), weak_finer=["Ethical"]
+(a FINER dimension still below 7), testable=false (the falsifiability
+admission or the delta-margin requirement failed), admissible=false
+(the falsifiability-admit result rejected the H₁), and feasible=false
+(the feasibility recheck failed). All receipts executed through the
+live tool 2026-09-29.
 
 ## Constraints
 
