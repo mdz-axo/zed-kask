@@ -1093,3 +1093,17 @@ mod smoke {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod name_ruling_pins {
+    use super::*;
+
+    /// Operator ruling 2026-09-29: the skill and the database share one name —
+    /// capabilities-reasoner. Pins the owner constant and its resolver so a
+    /// future rename must touch this test.
+    #[test]
+    fn default_owner_pins_the_capabilities_reasoner_name() {
+        assert_eq!(DEFAULT_OWNER, "capabilities-reasoner");
+        assert_eq!(default_owner(), "capabilities-reasoner");
+    }
+}

@@ -1,4 +1,4 @@
-//! Brooks ingestion requirements exercised at the public tool boundary, offline.
+//! Corpus ingestion requirements exercised at the public tool boundary, offline.
 use super::{GroundQaRequest, IngestQaRequest};
 use crate::CorpusServer;
 use hkask_types::template::LLMParameters;
@@ -1188,4 +1188,25 @@ async fn exact_source_grounded_qa_round_trips_with_manifest() -> anyhow::Result<
     assert_eq!(flat_report["quality_evidence"]["fact_score"], Value::Null);
     assert_eq!(flat_report["launch_authorized"], false);
     Ok(())
+}
+
+/// Operator ruling 2026-09-29: the skill and the database share one name —
+/// capabilities-reasoner. Pins the dataset serde default so a future rename
+/// must touch this test.
+#[test]
+fn default_dataset_pins_the_capabilities_reasoner_name() {
+    assert_eq!(super::default_dataset(), "capabilities-reasoner");
+}
+
+/// The ingest admission defaults flow through the name ruling when the model
+/// omits both fields: dataset and owner resolve through their serde defaults.
+#[test]
+fn ingest_request_defaults_pin_the_capabilities_reasoner_name() {
+    let request: IngestQaRequest = serde_json::from_str(
+        "{\"generated_jsonl\":\"/tmp/c.jsonl\",\"grounding_manifest\":\"/tmp/m.json\",\
+\"source_chunks_jsonl\":\"/tmp/s.jsonl\",\"output\":\"/tmp/out.jsonl\",\"db_path\":\"/tmp/db\"}",
+    )
+    .expect("request with only the required paths");
+    assert_eq!(request.dataset, "capabilities-reasoner");
+    assert_eq!(request.owner, "capabilities-reasoner");
 }
