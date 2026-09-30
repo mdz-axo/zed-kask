@@ -57,6 +57,7 @@ fn parse_v2_search_results(parsed: &serde_json::Value) -> Vec<SearchResult> {
                             .map(|s| s.to_string()),
                         source: None,
                         published: None,
+                        oa_pdf_url: None,
                         provider: None,
                     })
                 })

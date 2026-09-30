@@ -89,6 +89,7 @@ impl WebSearchProvider for TavilyProvider {
                                 .map(|s| s.to_string()),
                             source: None,
                             published: item["published_date"].as_str().map(|s| s.to_string()),
+                            oa_pdf_url: None,
                             provider: None,
                         })
                     })

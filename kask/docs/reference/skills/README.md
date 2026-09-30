@@ -30,7 +30,7 @@ mds_categories: [domain, composition]
 >
 > **Layout:** A skill is a directory under `.agents/skills/<name>/` (repo root, not under `kask/`)
 > containing a `SKILL.md` file with YAML frontmatter (`name`, `description`, and optional metadata)
-> plus a markdown body of process instructions. **60 skills** are authored here and available in every zed-kask install. **273 Jinja2 templates across 55
+> plus a markdown body of process instructions. **60 skills** are authored here and available in every zed-kask install. **274 Jinja2 templates across 56
 > template namespaces** remain under `kask/registry/templates/` for use by `render_template`; these
 > are companion resources, not the source of truth for skill execution.
 
@@ -48,12 +48,12 @@ carrier of the loop itself.
 
 ---
 
-## Registry counts (verified 2026-09-29)
+## Registry counts (verified 2026-09-30)
 
 | Surface | Count | Notes |
 |---------|-------|-------|
 | `SKILL.md` directories (`.agents/skills/*/`, repo root) | **60** | filesystem count: `find .agents/skills -mindepth 2 -maxdepth 2 -name SKILL.md` |
-| Template namespaces (`kask/registry/templates/*/`) | **55** (**273** `.j2` templates) | Companion Jinja2 resources for `render_template`; counts come directly from the current tree |
+| Template namespaces (`kask/registry/templates/*/`) | **56** (**274** `.j2` templates) | Companion Jinja2 resources for `render_template`; counts come directly from the current tree |
 
 **The SKILL.md is the source of truth.** A skill is its `SKILL.md`. Template crates are
 read-only resources the skill body may reference via `render_template`.
@@ -179,5 +179,5 @@ annual. The embedded seed payload equals the authored tree (pinned in
 > `superforecasting` (Market-prior calibration check). Folded 2026-09-28
 > (commit `ebcd901c80`): `kata-coaching` into `kata-improvement` — the five
 > coaching templates moved to `kask/registry/templates/kata-improvement/`.
-> `kask/registry/templates/` contains 55
-> template namespaces holding 273 `.j2` and 2 `.jinja` files.
+> `kask/registry/templates/` contains 56
+> template namespaces holding 274 `.j2` and 2 `.jinja` files.

@@ -77,7 +77,7 @@ below is retained: the admitted reference model (Pass 3) cites it.
 | L22 | ANCHOR | `kask/docs/plans/logisheets-spreadsheet-capability-plan.md` (plan-form, chartered 2026-09-18) |
 | L23 | GAP | no recorded model |
 
-Inventory shape: 273 `.j2` templates, 2 with `Reference model:` headers
+Inventory shape: 274 `.j2` templates, 2 with `Reference model:` headers
 (`company-research/thesis-three-pillars.j2` — MAIA;
 `prompt-enhance/enhance-classify.j2` — Liu et al., FCS 2026);
 method-named templates without headers are IS by absence (e.g.

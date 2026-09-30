@@ -1,0 +1,53 @@
+{# goal: Render the five-step evolution experiment protocol for one artifact layer, assembling the experiment_propose declaration and the per-step tool routing. #}
+[inference]
+contract:
+  input:
+    layer: string
+    genotype_refs: array
+    hypothesis: string|null
+  output:
+    declare_args: object
+    protocol: object
+    guardrails: array
+---
+{# The experiment protocol (repair plan §P8.3) — the single record path for
+   artifact-variant experiments. The evolution server (hkask-mcp-evolution)
+   is the record of record; there are no parallel record paths (§P8.7-Q5). #}
+
+You are preparing one evolution experiment on the **{{ layer }}** layer.
+
+## Genotype under experiment
+
+{{ genotype_refs | tojson }}
+
+{% if layer == 'skill' %}
+The skill genotype is COMPOSITE (§P8.7-Q2): the SKILL.md process text and its companion `.j2` templates evolve together as one variant — a variant that changes templates without the process text (or vice versa) is not a valid skill variant. Pin suites re-run in the same change as any skill variant.
+{% elif layer == 'agent_card' %}
+An agent-card variant is the full card configuration (system_prompt, model_params, evaluators). Fitness comes from `swarm_eval_agent_local` on a fixed task set with declared evaluators; the 10% cost band (the GEPA precedent) treats smaller token gaps as ties.
+{% elif layer == 'prompt_template' %}
+A prompt/template variant is the rendered artifact content. Fitness comes from a runnable eval set with disjoint feedback/selection splits; dominance uses the GEPA forms over (pass_rate, total_tokens) pairs.
+{% elif layer == 'tool_schema' %}
+A tool-schema variant is the MCP tool's input schema. Fitness comes from skill-use reports over a window (issue counts, resolution outcomes); the curator directive ledger records the change.
+{% elif layer == 'regulation_scalar' %}
+A regulation-scalar variant is a threshold or energy-budget value. Fitness comes from calibration readings and Brier records over a window.
+{% elif layer == 'lora_adapter' %}
+A LoRA-adapter variant is a trained adapter. Fitness comes from `training_evaluate` on a held-out task set; the lora-training gates G-M1..G-Q5 apply.
+{% else %}
+UNKNOWN LAYER: `layer` must be one of skill, agent_card, prompt_template, tool_schema, regulation_scalar, lora_adapter. Return declare_args with a layer_error field naming the six valid layers and do not propose an experiment.
+{% endif %}
+
+## The five steps (every experiment)
+
+1. **Declare** — `experiment_propose`: hypothesis, layer, genotype_refs, eval_set, fitness_fn, noise_band, prediction `{claim, confidence in [0,1]}`, budget, experiment_key (a stable key converges retried calls onto the existing record). The pre-registered prediction is the tiny controller: it is scored against the measured outcome, never edited after measurement begins.
+2. **Vary** — `variant_register` per variant: genotype_config (the full variant content or its descriptor), parent_variant_id for lineage, variant_key.
+3. **Test** — `fitness_record` per variant: runs are RECORDED report references only — never simulated; scores are the per-objective aggregates computed from those runs.
+4. **Select** — deterministic pre-selection only within the declared noise band; the final selection is the algedonic review (§P8.7-Q4). Deterministic-fitness experiments auto-run within the declared budget (§P8.7-Q1); human-judged-fitness experiments route through the operator before running.
+5. **Retain** — `selection_record` when the verdict is known: verdict `selected` with the winning variant, or `rejected` with at least one reason; algedonic_reference the review record. Both outcomes persist as fossils — a rejected variant's reasons are retained so it is never blindly re-mutated. Selected variants land in git through the proposal → delegation → verification path: the session proposes, never commits. Consult `lineage_read` before re-mutating.
+
+## Output
+
+Return JSON only:
+
+- declare_args: the prepared `experiment_propose` arguments object — layer and genotype_refs filled from this render, hypothesis from the input or drafted, and eval_set, fitness_fn, noise_band, prediction and budget prepared per the layer requirements above
+- protocol: an object with `vary`, `test`, `select` and `retain` keys — one string each, the layer-specific instruction for that step
+- guardrails: an array of strings — grounded fitness only (never LLM-only); recorded runs only; algedonic selection, nothing auto-adopts; proposes-never-commits; and the composite-genotype rule when the layer is skill

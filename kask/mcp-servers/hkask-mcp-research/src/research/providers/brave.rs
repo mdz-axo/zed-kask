@@ -77,6 +77,7 @@ impl WebSearchProvider for BraveProvider {
                             description: item["description"].as_str().map(|s| s.to_string()),
                             source: item["source"].as_str().map(|s| s.to_string()),
                             published: item["age"].as_str().map(|s| s.to_string()),
+                            oa_pdf_url: None,
                             provider: None,
                         })
                     })

@@ -5,8 +5,8 @@ mod ranking;
 mod rate_limiter;
 mod validation;
 
-use hkask_types::AnyJsonValue;
 use hkask_mcp_server::server::McpToolError;
+use hkask_types::AnyJsonValue;
 use hkask_types::McpErrorKind;
 use schemars::{JsonSchema, json_schema};
 use serde::{Deserialize, Serialize};
@@ -327,8 +327,17 @@ pub struct AnnotateResearchRunRequest {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ResolvePaperRequest {
     /// A paper reference in any supported form: DOI (bare, `doi:`, or
-    /// doi.org URL), arXiv ID, PMID, PMCID, or OpenAlex work ID.
-    pub query: String,
+    /// doi.org URL), arXiv ID, PMID, PMCID, or OpenAlex work ID. Provide
+    /// EITHER `query` (an identifier) OR `title` (bibliographic lookup) —
+    /// passing both is rejected.
+    pub query: Option<String>,
+    /// A bibliographic title to resolve: Crossref's bibliographic search
+    /// returns up to 3 candidate works (DOI, title, year, venue); the top
+    /// candidate is resolved to the typed identity and enriched via
+    /// OpenAlex, and every candidate is surfaced so the caller can verify
+    /// the match (a title search can hit a different work than intended —
+    /// check the candidates before trusting the resolution).
+    pub title: Option<String>,
     /// Optional research-run identifier: when set, the resolved canonical
     /// URL is recorded into that run's ledger (recorded_by='server') with
     /// the OpenAlex metadata as the audit copy.
@@ -346,6 +355,11 @@ pub struct PaperMetadata {
     pub publication_year: Option<u64>,
     pub authors: Vec<String>,
     pub venue: Option<String>,
+    /// Candidate open-access copy URL from the OpenAlex record
+    /// (`best_oa_location.pdf_url`, falling back to `open_access.oa_url`).
+    /// A candidate, not a verified document — the copy can be a different
+    /// version than the cited work, so the consumer verifies identity.
+    pub oa_pdf_url: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -411,6 +425,13 @@ pub struct SearchResult {
     pub description: Option<String>,
     pub source: Option<String>,
     pub published: Option<String>,
+    /// Candidate open-access copy URL (a direct PDF or repository copy)
+    /// when the provider holds one — OpenAlex `best_oa_location.pdf_url`,"
+    /// Semantic Scholar `openAccessPdf.url`. A CANDIDATE, not a verified
+    /// document: the copy can be a different version than the cited work,
+    /// so the consumer still verifies identity (the no-substitution rule).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oa_pdf_url: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider: Option<String>,
 }
@@ -510,6 +531,10 @@ pub struct RankedResult {
     pub description: Option<String>,
     pub source: Option<String>,
     pub published: Option<String>,
+    /// Candidate open-access copy URL carried through the merge from the
+    /// first provider that reported one (see `SearchResult::oa_pdf_url`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oa_pdf_url: Option<String>,
     pub rrf_score: f64,
     pub provider_count: usize,
     pub providers: Vec<String>,
@@ -624,6 +649,12 @@ pub(crate) struct SearchResultOutput {
     pub source: Option<String>,
     pub published: Option<String>,
     pub content_preview: Option<String>,
+    /// Candidate open-access copy URL when a scholarly provider holds one
+    /// (OpenAlex `best_oa_location.pdf_url`, Semantic Scholar
+    /// `openAccessPdf.url`). A candidate, not a verified document — the
+    /// consumer verifies the copy matches the cited work before use.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oa_pdf_url: Option<String>,
     /// Search providers that returned this result (for source classification).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub providers: Vec<String>,
@@ -638,6 +669,7 @@ impl From<&RankedResult> for SearchResultOutput {
             source: r.source.clone(),
             published: r.published.clone(),
             content_preview: r.content_preview.clone(),
+            oa_pdf_url: r.oa_pdf_url.clone(),
             providers: r.providers.clone(),
         }
     }
@@ -664,11 +696,6 @@ pub(crate) struct SearchOutput {
     /// strategies (web/news/deep fan out across multiple).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub selected_provider: Option<String>,
-    /// Static profiles of all configured providers, for metacognitive
-    /// surfacing — the model reads this to pick deliberately next time.
-    /// Empty when no profiles are registered (e.g. only free providers).
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub provider_profiles: Vec<ProviderProfileOutput>,
     /// The provider ranking computed when `intent`-driven selection ran
     /// (provider unset, intent set): every configured/unconfigured provider
     /// with score, rationale, and profile. Empty for explicit `provider`
@@ -773,6 +800,13 @@ pub(crate) struct ExtractOutput {
     pub content: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<serde_json::Value>,
+    /// Degradation note, present when the extraction succeeded HTTP-wise
+    /// but the captured body is suspiciously small — the origin likely
+    /// served a JS shell, a bot-block page, or an empty body. Never a bare
+    /// success: the caller learns the content may be incomplete and can
+    /// route to another path (e.g. the Wayback Machine) with the cause named.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -799,6 +833,15 @@ pub(crate) struct PingOutput {
     pub status: String,
     pub version: String,
     pub providers: Vec<ProviderHealthEntry>,
+    /// Static profiles of all configured providers (cost, latency tier,
+    /// strengths/weaknesses, best-for intents) — the metacognitive lookup
+    /// table for deliberate provider choice. Lives here, not on every
+    /// web_search response: the table is static per server version, and
+    /// repeating it per call spent ~1KB of identical context per response
+    /// (observed 2026-09-30 zk-reference sweep). web_search keeps the
+    /// per-call `provider_recommendations` audit of intent-driven picks.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub provider_profiles: Vec<ProviderProfileOutput>,
 }
 
 // ── Capability context ──
