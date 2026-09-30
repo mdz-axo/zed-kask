@@ -136,7 +136,7 @@ Let `s = task_success.score` if present, else `1.0` if `task_success.pass` is
 true else `0.0`. `s` is a deterministic evaluator's verdict (test pass/fail,
 schema validation, exit code, regex/reference match) — NOT an LLM judgement
 (the determinism constraint). When `s` is present, `d` includes the
-task-success axis: the Go See gap from the cybernetic plan §5 — a healthy
+task-success axis: the Go See gap (component C2) — a healthy
 swarm that fails the task must NOT converge.
 
 ```
@@ -149,7 +149,7 @@ d = sqrt( (1 - variety_coverage)^2
 No deterministic task-success signal was supplied (`task_success` is null).
 This is an open task with no oracle — `d` uses the three swarm-health axes
 only; the irreducible task-success check is the human Go See loop
-(cybernetic plan §5, component C2), NOT an LLM judge. Do NOT fabricate `s`.
+(component C2), NOT an LLM judge. Do NOT fabricate `s`.
 
 ```
 d = sqrt( (1 - variety_coverage)^2

@@ -1469,4 +1469,207 @@ mod tests {
             "a maturity-blocked dimension binds to 0 and drops the verdict from GORILLA to SMALL_ANIMAL"
         );
     }
+
+    #[test]
+    fn test_swarm_intelligence_skill_md_pins_forms() {
+        // swarm-intelligence pins five SKILL.md lisp_eval forms plus the
+        // loop_closure ratio pinned in the check template body — the
+        // convergence arithmetic the model never supplies. If any drifts,
+        // this fails until skill and tests are reconciled.
+        let skill_md = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../.agents/skills/swarm-intelligence/SKILL.md"
+        ))
+        .expect("swarm-intelligence SKILL.md must exist in the workspace");
+
+        // 1. The swarm-state distance form: three health axes, plus the
+        // task-success fourth axis when an oracle exists.
+        let distance = r#"(let ((base (+ (* (- 1 vc) (- 1 vc)) (let ((g (max 0 (- 0.25 div)))) (* g g)) (* (- 1 lc) (- 1 lc))))) (sqrt (if (is_null s) base (+ base (* (- 1 s) (- 1 s))))))"#;
+        assert!(
+            skill_md.contains(distance),
+            "swarm-state distance form must stay pinned in swarm-intelligence SKILL.md"
+        );
+        let on_target = hkask_lisp::eval_sandboxed_with_budget(
+            distance,
+            &json!({"vc": 0.95, "div": 0.4, "lc": 1.0, "s": null}),
+            100_000,
+            64,
+        )
+        .expect("distance form must evaluate");
+        assert_eq!(
+            on_target,
+            json!(0.050000000000000044),
+            "on-target three-axis distance is 0.05"
+        );
+        let task_failed = hkask_lisp::eval_sandboxed_with_budget(
+            distance,
+            &json!({"vc": 0.95, "div": 0.4, "lc": 1.0, "s": 0.0}),
+            100_000,
+            64,
+        )
+        .expect("distance form must evaluate on a task failure");
+        assert_eq!(
+            task_failed,
+            json!(1.0012492197250393),
+            "a healthy swarm that fails the task must NOT converge — the fourth axis dominates"
+        );
+
+        // 2. The target-plus-stability gate: the algedonic override and the
+        // task-success requirement each block convergence independently.
+        let gate = r#"(and (= (length ds) 4) (< (abs (- (nth 1 ds) (nth 0 ds))) 0.03) (< (abs (- (nth 2 ds) (nth 1 ds))) 0.03) (< (abs (- (nth 3 ds) (nth 2 ds))) 0.03) (>= vc 0.9) (>= div 0.25) (= lc 1) coherence_non_decreasing no_algedonic_alert (or (not task_success_required) (and (numberp s) (= s 1))))"#;
+        assert!(
+            skill_md.contains(gate),
+            "target-plus-stability gate must stay pinned in swarm-intelligence SKILL.md"
+        );
+        let converged = hkask_lisp::eval_sandboxed_with_budget(
+            gate,
+            &json!({"ds": [0.05, 0.05, 0.05, 0.05], "vc": 0.95, "div": 0.4, "lc": 1, "coherence_non_decreasing": true, "no_algedonic_alert": true, "task_success_required": true, "s": 1}),
+            100_000,
+            64,
+        )
+        .expect("gate form must evaluate");
+        assert_eq!(converged, json!(true));
+        let algedonic = hkask_lisp::eval_sandboxed_with_budget(
+            gate,
+            &json!({"ds": [0.05, 0.05, 0.05, 0.05], "vc": 0.95, "div": 0.4, "lc": 1, "coherence_non_decreasing": true, "no_algedonic_alert": false, "task_success_required": true, "s": 1}),
+            100_000,
+            64,
+        )
+        .expect("gate form must evaluate on an algedonic alert");
+        assert_eq!(
+            algedonic,
+            json!(false),
+            "a broken algedonic channel is never read as no deviation — the override"
+        );
+
+        // 3. The receipt-coverage (same-names) form: order and identity of
+        // returned results against the submitted delegations, 1-10 entries.
+        let receipts = r#"(begin (define same-names (lambda (a b) (if (= (length a) 0) (= (length b) 0) (if (= (length b) 0) nil (and (string= (car a) (car b)) (same-names (cdr a) (cdr b))))))) (and (> (length expected_names) 0) (<= (length expected_names) 10) (same-names expected_names observed_names)))"#;
+        assert!(
+            skill_md.contains(receipts),
+            "receipt-coverage form must stay pinned in swarm-intelligence SKILL.md"
+        );
+        let matched = hkask_lisp::eval_sandboxed_with_budget(
+            receipts,
+            &json!({"expected_names": ["alpha", "beta", "gamma"], "observed_names": ["alpha", "beta", "gamma"]}),
+            100_000,
+            64,
+        )
+        .expect("receipt form must evaluate");
+        assert_eq!(matched, json!(true));
+        let mismatched = hkask_lisp::eval_sandboxed_with_budget(
+            receipts,
+            &json!({"expected_names": ["alpha", "beta", "gamma"], "observed_names": ["alpha", "delta", "gamma"]}),
+            100_000,
+            64,
+        )
+        .expect("receipt form must evaluate on a mismatch");
+        assert_eq!(
+            mismatched,
+            json!(false),
+            "a count/order mismatch blocks feedback"
+        );
+
+        // 4. The C3 failed-signature comparison: a prior failure blocks an
+        // identical repeat; an empty history does not clear the move.
+        let c3 = r#"(not (member proposed_signature failed_signatures))"#;
+        assert!(
+            skill_md.contains(c3),
+            "C3 failed-signature form must stay pinned in swarm-intelligence SKILL.md"
+        );
+        let blocked = hkask_lisp::eval_sandboxed_with_budget(
+            c3,
+            &json!({"proposed_signature": "hire:analyst|variety_deficit|analyst,researcher", "failed_signatures": ["hire:analyst|variety_deficit|analyst,researcher", "reconfigure:analyst|coherence_deficit|analyst"]}),
+            100_000,
+            64,
+        )
+        .expect("C3 form must evaluate");
+        assert_eq!(
+            blocked,
+            json!(false),
+            "an identical repeat of a failed signature is blocked"
+        );
+        let novel = hkask_lisp::eval_sandboxed_with_budget(
+            c3,
+            &json!({"proposed_signature": "hire:writer|variety_deficit|analyst,researcher", "failed_signatures": ["hire:analyst|variety_deficit|analyst,researcher"]}),
+            100_000,
+            64,
+        )
+        .expect("C3 form must evaluate on a novel move");
+        assert_eq!(
+            novel,
+            json!(true),
+            "a novel signature is not blocked by C3 (not proof of safety)"
+        );
+
+        // 4b. The C7 influence guard: measured negative influence rejects
+        // the hire; an absent score is not deterministic rejection.
+        let c7 = r#"(or (not (assoc agent_type influence_scores)) (> (assoc agent_type influence_scores) 0))"#;
+        assert!(
+            skill_md.contains(c7),
+            "C7 influence guard form must stay pinned in swarm-intelligence SKILL.md"
+        );
+        let degraded = hkask_lisp::eval_sandboxed_with_budget(
+            c7,
+            &json!({"agent_type": "researcher", "influence_scores": {"researcher": -0.2, "writer": 0.5}}),
+            100_000,
+            64,
+        )
+        .expect("C7 form must evaluate");
+        assert_eq!(
+            degraded,
+            json!(false),
+            "a measured negative influence score rejects the hire"
+        );
+        let unknown = hkask_lisp::eval_sandboxed_with_budget(
+            c7,
+            &json!({"agent_type": "novel_agent", "influence_scores": {"researcher": -0.2, "writer": 0.5}}),
+            100_000,
+            64,
+        )
+        .expect("C7 form must evaluate on an absent score");
+        assert_eq!(
+            unknown,
+            json!(true),
+            "an absent influence score is unknown history, not deterministic rejection"
+        );
+
+        // 5. The loop_closure ratio — pinned in the check template body
+        // (swarm-check.j2), asserted here so the pin is durable.
+        let check_tpl = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../kask/registry/templates/swarm-intelligence/swarm-check.j2"
+        ))
+        .expect("swarm-check.j2 must exist in the workspace");
+        let loop_closure =
+            r#"(if (= attempted_delegations 0) 1 (/ ordered_receipts attempted_delegations))"#;
+        assert!(
+            check_tpl.contains(loop_closure),
+            "loop_closure ratio must stay pinned in swarm-check.j2"
+        );
+        let vacuous = hkask_lisp::eval_sandboxed_with_budget(
+            loop_closure,
+            &json!({"attempted_delegations": 0, "ordered_receipts": 0}),
+            100_000,
+            64,
+        )
+        .expect("loop_closure form must evaluate");
+        assert_eq!(
+            vacuous,
+            json!(1),
+            "zero actual delegations is vacuously closed"
+        );
+        let partial = hkask_lisp::eval_sandboxed_with_budget(
+            loop_closure,
+            &json!({"attempted_delegations": 4, "ordered_receipts": 2}),
+            100_000,
+            64,
+        )
+        .expect("loop_closure form must evaluate on partial receipts");
+        assert_eq!(
+            partial,
+            json!(0.5),
+            "partial receipt coverage halves loop_closure"
+        );
+    }
 }

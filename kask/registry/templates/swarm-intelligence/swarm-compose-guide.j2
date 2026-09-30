@@ -76,7 +76,7 @@ When composing a **swarm**, the following fields are defined:
 - Agents live on the local filesystem under `agents/local/curated/<id>/agent_card.json`; local delegation has no cloud-credit or consent gate.
 - Agent ids are filesystem-safe slugs (alphanumeric + dash + underscore + dot).
 - Prompts may be memory-seeded (the local registry can inject prior knowledge into the system prompt).
-- Authoring an agent: the process authors the `system_prompt` directly (no ABW generation endpoint); the card is created via `swarm_create_local_agent` and is immediately delegable. There is no `swarm_hire_local` tool (§15.1.1 rejected — the team is emergent from the call pattern).
+- Authoring an agent: the process authors the `system_prompt` directly (no ABW generation endpoint); the card is created via `swarm_create_local_agent` and is immediately delegable. There is no `swarm_hire_local` tool (rejected — the team is emergent from the call pattern).
 {% endif %}
 
 ## Composition guidance (both modes)

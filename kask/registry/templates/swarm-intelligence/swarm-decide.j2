@@ -54,7 +54,7 @@ under the same deficit and the same roster shape that already failed to improve
 ```
 Per-agent_type running sum of `d_delta` after hiring/firing that type. A sum
 <= 0 means the agent type has been measured to DEGRADE the swarm over the
-recent window (S7 §2.2: some agent types fail to improve or even degrade).
+recent window (some agent types fail to improve or even degrade).
 **Guard**: reject a `hire` move of an agent_type whose influence score is
 <= 0 — prune before searching (S7's deterministic "prune before search").
 Record the rejection in the move's rationale (`rejected_by: influence_guard`).
@@ -180,7 +180,7 @@ first, then speed).
 ### If orientation.agent_at_fault is non-null (Cybernetic Swarm Plan C6)
 ORIENT attributed fault to a specific agent. A historical `fault_count` may be used only if the invoking agent reconciled actual prior receipts or `swarm_task_board` entries and carried the counted agent IDs forward. No registered automatic accumulator produces this map. Without observed history, use the current `agent_at_fault` as one incident and do not call it the most-consistently-blamed agent. Before firing the
 blamed agent, consider **reconfiguring** it in place — the Modify-Block action
-(S5 §3.2.2) and the MASS prompt axis (S7 Stages 1+3):
+and the MASS prompt axis:
 
 Propose a `reconfigure_agent` move (local mode) that:
 1. Calls `swarm_generate_prompt` seeded with the blamed agent's current

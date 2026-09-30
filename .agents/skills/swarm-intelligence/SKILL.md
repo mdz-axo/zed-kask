@@ -43,8 +43,9 @@ hasHeading, hasEnergy, hasDistanceToGoal }`, `Formation`. The measurable
 SENSE, ORIENT and DECIDE judgments (deficit classification, composition moves,
 tuning choices) are P — critiqued by the Go See loop (human observation) and
 by the observed receipts in CHECK. The pinned arithmetic is D: the
-convergence distance and target gate, the receipt-coverage check, and the
-failed-signature comparison run in `lisp_eval` over sensed state and actual
+convergence distance and target gate, the receipt-coverage check, the
+loop_closure ratio, the failed-signature comparison, and the C7 influence
+guard run in `lisp_eval` over sensed state and actual
 receipts — the model never supplies the convergence score. ACT renders
 intents, never executed receipts; execution comes only from the live tools
 (consent-gated ABW spend; local no-credit dispatch), and a rendered plan is
@@ -84,12 +85,12 @@ Do NOT use for:
 ## Instructions
 
 ```
-Check: Phase 1  — SENSE            → Measure current swarm state against Onto4MAT + backend workspace/wallet
+Check: Phase 1  — SENSE            → Measure current swarm state against Onto4MAT + backend workspace/wallet. Optionally pass `kanban_board_id` when a kanban board is this swarm's durable coordination surface — SENSE grounds its sensing in the board's persisted task state via `kanban_task_list`. Pass the already-read roster/wallet as `fetched_swarm_state` when the live-process roster read has run — SENSE then does not re-fetch.
 Plan:  Phase 2  — ORIENT           → Classify the gap + deterministic fault attribution (C5). When a `swarm_id` is available, call `swarm_task_board` for durable task progress. Detect reasoning loops from the iteration log (C1), not from fields absent in local results.
 Plan:  Phase 3  — DECIDE           → Propose composition adjustments isomorphic to PSO/ACO/Reynolds tuning
 Det:   Phase 4  — FILTER           → Deterministically enforce C3 failed-edit + C7 influence guards (no LLM)
 Do:    Phase 5  — ACT              → Emit consent-gated ABW calls or shared-thread local-swarm calls
-Check: Phase 6  — CHECK             → Re-measure, compute swarm-state distance d, emit next_focus + algedonic
+Check: Phase 6  — CHECK             → Re-measure, compute swarm-state distance d, emit next_focus + algedonic. Pass the pre-Act sensed state as `pre_act_state` and the post-Act re-read as `fetched_post_act_state` (CHECK re-reads through them rather than re-fetching).
 Check: Phase 7  — CONVERGE (check)  → evaluate d (swarm-state distance)
 Check: Phase 8  — CONVERGE (accum) → Deterministic accumulator: iteration_log, failed_edits, influence_scores (C1/C3/C7)
 Check: Phase 9  — CONVERGE (monitor)→ Second-order monitor: reasoning-loop + sensor-truth-divergence + Go See cadence (C1/C2)
@@ -157,11 +158,11 @@ sets/sums must be tracked consistently across loop iterations.
 | **C0** task-success `s`             | Deterministic evaluator verdict → fourth axis of `d`                                                                                                                                                            | CHECK inputs from an observed evaluator/operator `task_success` receipt                                                                                                                                                                                                                                                                                                  |
 | **C1** second-order monitor | Inspect actual `reasoning_steps` when enabled and iteration/Go See observations; missing traces stay unavailable | Human/Curator review of recorded evidence; no registered second-order monitor tool. |
 | **C2** Go See cadence | Human review after a task failure, missing oracle or operator-chosen cadence | Surface a Go See request; no automatic `cadence_every` monitor is registered. |
-| **C3** failed-edit memory | Prior failed signatures block an identical repeat | Caller compares proposed signatures to recorded failures with `lisp_eval` before ACT; an absent history is not proof of safety. |
+| **C3** failed-edit memory | Prior failed signatures block an identical repeat | Caller compares proposed signatures to recorded failures with `lisp_eval` before ACT; an absent history is not proof of safety. Pinned form: `(not (member proposed_signature failed_signatures))`, env `{ "proposed_signature": <the proposed move's signature: decision_action + "|" + swarm_state_signature, where swarm_state_signature is deficit_class + "|" + sorted(roster agent_types) — the same key scheme failed_edits records>, "failed_signatures": <derived from failed_edits: each entry's decision_action + "|" + its swarm_state_signature> }` — `false` blocks the move; an empty history returns `true` (not blocked by C3) but is not proof of safety. |
 | **C4** latency `T_q`                | End-to-end delegation latency measurement → ORIENT surfaces latency outliers → DECIDE reconfigures slow agents                                                                                                  | `LocalDelegateResult.latency_ms` → ORIENT `latency_outliers` → DECIDE `reconfigure_agent` (regulated, audit 2026-08-03; previously sensed but not acted on)                                                                                                                                                                                     |
 | **C5** fault attribution            | Deterministic priority rule over the delegate trace — per-delegation `task_success` (highest fidelity) → whole-task terminal failure → `tool_calls[].ok`; fault-count aggregation | ORIENT template (rules 1–3 plus array-order tie-break) plus fault counts reconciled from actual receipts or `swarm_task_board`; no accumulator tool. `task_success` is the Loop B fidelity fix (audit 2026-08-03); `llm_judged` provenance is downgraded (Gap S3). Fires only when `delegate_results` execution telemetry is supplied (the planning process emits intents, not executed results). See Steering modes below. |
 | **C6** reconfigure_agent            | Re-prompt a blamed agent in place (Modify-Block / MASS prompt axis)                                                                                                                                             | `swarm_reconfigure_local_agent` tool + DECIDE move type. Active only when C5 has fault telemetry (steering mode).                                                                                                                                                                                                                               |
-| **C7** influence-weighted rejection | Reject re-hire only when observed outcomes establish negative influence | Caller checks measured influence; unknown history cannot be reported as deterministic rejection. |
+| **C7** influence-weighted rejection | Reject re-hire only when observed outcomes establish negative influence | Caller checks measured influence with `lisp_eval` before ACT. Pinned form: `(or (not (assoc agent_type influence_scores)) (> (assoc agent_type influence_scores) 0))`, env `{ "agent_type": <the proposed hire's agent_type>, "influence_scores": <the measured influence scores keyed by agent_type> }` — `false` rejects the hire (measured negative influence); an absent score returns `true` (unknown history is not deterministic rejection). |
 | **C8** task-gated alignment         | Task-conditional edge relevance in SENSE (OFA-MAS TAGSE port)                                                                                                                                                   | SENSE template `alignment` definition                                                                                                                                                                                                                                                                                                           |
 
 ## Composed Skills
@@ -260,8 +261,11 @@ execution.
 
 `delegate_results` is the `results` array from `swarm_execute_plan_local`.
 Successful entries are `LocalDelegateResult`-shaped: `agent_id`, `response`, `model`, `tokens_used`,
-`latency_ms`, `tool_calls[]` (each `{tool, ok, error?}`), and `task_success`
-(optional deterministic verdict). ORIENT attributes fault from
+`latency_ms`, `tool_calls[]` (each `{tool, ok, error?}`), `task_success`
+(optional deterministic verdict), and the evaluator-contract fields when an
+output contract was declared (`bind_matched`, `rollout_id`, `reasoning_steps`,
+`input_contract_check`, `output_contract_check`, `grounding`, `completeness`,
+`reliance`, `memory`). ORIENT attributes fault from
 `delegate_results[].task_success.pass` (highest fidelity, when present) and
 `delegate_results[].tool_calls[].ok`; `fault_count` accumulates; C6
 reconfigures the most-blamed agent. Absent `delegate_results`, C5/C6 are inert.
@@ -282,8 +286,8 @@ attribution context, not a DECIDE input for convergence.
 
 ## Known limitations (audit 2026-08-03)
 
-The [Swarm Cybernetics/Semantics Audit](../../../kask/docs/audits/swarm-cybernetics-semantics-audit.md)
-found structural gaps; the two High-severity ones are now mitigated in the
+The 2026-08-03 Swarm Cybernetics/Semantics Audit found structural gaps; the
+two High-severity ones are now mitigated in the
 registry + code (2026-08-03), with one residual:
 
 - **Loop B fidelity — MITIGATED.** C5/C6 fault attribution now reads a
@@ -299,11 +303,13 @@ registry + code (2026-08-03), with one residual:
   for outlier agents. The sense-without-act sub-loop is closed.
 - **Loop A closure requires execution evidence.** Advisory is the safe default: the plan is the output and the operator may execute it. When the caller explicitly chooses `steering`, the Curator/human calls the local execution tool once, reconciles its returned `results` to the plan, and feeds that array into the next iteration. A rendered directive or former manifest description is not an execution receipt. A tool-level error leaves execution state unknown; do not automatically replay.
 
-Full per-property evidence and the VSM/Ashby analysis are in the audit.
+Full per-property evidence and the VSM/Ashby analysis were recorded in the
+2026-08-03 audit (the audit document has since been retired; this section is
+the surviving record).
 
 ## Registry
 
-- Templates: `kask/registry/templates/swarm-intelligence/swarm-{sense,orient,decide,act,check,compose-guide}.j2`
+- Templates: `kask/registry/templates/swarm-intelligence/swarm-{sense,orient,decide,act,check,steer-direct,compose-guide}.j2`
 - Live process: read the selected ABW or local roster → SENSE → ORIENT → DECIDE → check proposed moves against observed failed signatures and actual consent/permissions → ACT emits intents → execute only in explicitly selected steering mode → CHECK re-reads state and receipts → compute receipt coverage, distance and target gate with `lisp_eval` → carry observed iteration history into a bounded next cycle. A rendered phase alone does not call an MCP tool.
 - No registered `swarm.*` filter, accumulator or second-order monitor primitives exist. Record failed edits and task-board/receipt fault evidence explicitly; `lisp_eval` handles only the pinned arithmetic and exact-signature checks, while Go See is human observation. Do not report a nonexistent compute step as executed.
 - MCP tool surface (consult current registration rather than a fixed count):
@@ -366,7 +372,7 @@ Full per-property evidence and the VSM/Ashby analysis are in the audit.
 | Template | Purpose |
 |----------|---------|
 | `swarm-sense.j2` | Measure the current swarm state. In `abw` mode, fetch the ABW workspace roster and wallet; in `local` mode, read the member roster and local agent registry. Optionally probe an agent's consolidated knowledge graph via `swarm_search_knowledge` (fermi v0.10.26 — the embedder was broken platform-wide for 6 weeks and is now fixed) when the roster's accepts/produces is ambiguous about whether an agent covers a required transform. Compute Onto4MAT team properties: alignment (delegation-graph density from produces/accepts overlap), cohesion (fraction of required dependencies satisfied), separation (distinct (agent_type, model, temperature) tuples / agent count). Derive required_transforms from the task. Consumes prior_iteration.next_focus when present (feedback loop closure). Vacuous-truth defaults: empty required_transforms → variety_coverage 1.0 + trivial_task flag; empty swarm → diversity 0.0, variety 0.0. |
-| `swarm-orient.j2` | Classify the gap between sensed state and target condition into one of three deficit classes (or on-target): (a) variety deficit — required_transforms not covered; (b) coherence deficit — Thagard coherence flat/declining OR diversity below floor (premature convergence, the PSO/ACO failure mode); (c) loop-break — un-reconciled dispatches or un-acknowledged curator data-sharing. Mode-agnostic (v2 §15): operates on the state shape from SENSE, not the data source. Delegates to pragmatic-cybernetics for the 5-property assessment (polarity, delay, gain, closure, fidelity) when the deficit is a loop-break. Classifies the coordination problem (Axelrod): cooperation (repeated, shadow of the future) vs division-of-labor (one-shot, complementary capabilities). |
+| `swarm-orient.j2` | Classify the gap between sensed state and target condition into one of three deficit classes (or on-target): (a) variety deficit — required_transforms not covered; (b) coherence deficit — Thagard coherence flat/declining OR diversity below floor (premature convergence, the PSO/ACO failure mode); (c) loop-break — un-reconciled dispatches or un-acknowledged curator data-sharing. Mode-agnostic: operates on the state shape from SENSE, not the data source. Delegates to pragmatic-cybernetics for the 5-property assessment (polarity, delay, gain, closure, fidelity) when the deficit is a loop-break. Classifies the coordination problem (Axelrod): cooperation (repeated, shadow of the future) vs division-of-labor (one-shot, complementary capabilities). |
 | `swarm-decide.j2` | Propose measured-deficit responses using PSO/ACO/Reynolds as analogies, not executed numerical algorithms. Local composition uses named-swarm roster add/remove without deleting saved cards; ABW removal uses `swarm_fire` under the workspace contract. The one-level delegation invariant still applies. |
 | `swarm-act.j2` | Prepare ABW consent-gated or local no-credit action intents. Rendering emits a plan, never an executed-call receipt; the invoking Curator/human runs the selected live tools and retains their results. |
 | `swarm-check.j2` | Re-read post-Act state and observed receipts; local `loop_closure` covers both successful and explicit error entries in order, while a dispatch error remains an independent alert. Supply measured axes for the caller's `lisp_eval` distance/target gate. Zero actual delegations are vacuously receipted, but unexecuted plans are not. |

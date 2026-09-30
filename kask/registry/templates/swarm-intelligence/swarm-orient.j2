@@ -1,4 +1,4 @@
-{# goal: Classify the gap between sensed state and target condition into one of three deficit classes (or on-target): (a) variety deficit — required_transforms not covered; (b) coherence deficit — Thagard coherence flat/declining OR diversity below floor (premature convergence, the PSO/ACO failure mode); (c) loop-break — un-reconciled dispatches or un-acknowledged curator data-sharing. Mode-agnostic (v2 §15): operates on the state shape from SENSE, not the data source. #}
+{# goal: Classify the gap between sensed state and target condition into one of three deficit classes (or on-target): (a) variety deficit — required_transforms not covered; (b) coherence deficit — Thagard coherence flat/declining OR diversity below floor (premature convergence, the PSO/ACO failure mode); (c) loop-break — un-reconciled dispatches or un-acknowledged curator data-sharing. Mode-agnostic: operates on the state shape from SENSE, not the data source. #}
 [inference]
 contract:
   input:
@@ -73,7 +73,7 @@ Classify the gap into exactly one of:
 `variety_coverage < target`. The swarm's hired agents do not cover the task's
 required_transforms. This is an Ashby requisite-variety failure: the swarm's
 response repertoire does not span the disturbance set. (Anchor: Ashby's Law of
-Requisite Variety; ABW plan §4.2.)
+Requisite Variety.)
 
 Record which required_transforms are uncovered.
 
@@ -94,7 +94,7 @@ For ABW only: un-reconciled cloud dispatches (estimated_credits not matching
 actual spend in wallet/transactions) OR un-acknowledged curator data-sharing.
 For local swarms: an attempted delegation without an observed result or a
 surfaced execution failure is a loop-break; there is no local wallet. This is a cybernetic
-closure failure — the feedback loop is open. (Anchor: ABW plan §4.1; .rules
+closure failure — the feedback loop is open. (Anchor: .rules
 "unwrap_or(0) on regulation-loop sense inputs" trap.)
 
 ### (d) On-target

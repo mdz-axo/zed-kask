@@ -1,4 +1,4 @@
-{# goal: Measure the current swarm state. Mode-aware (v2 §15): in `abw` mode, fetch the ABW workspace roster (agents[], accepts[], produces[], capabilities, dependencies) and the wallet balance/transactions via hkask-mcp-swarm's `swarm_get_swarm`; in `local` mode, read the local swarm's member roster and agent cards. #}
+{# goal: Measure the current swarm state. Mode-aware: in `abw` mode, fetch the ABW workspace roster (agents[], accepts[], produces[], capabilities, dependencies) and the wallet balance/transactions via hkask-mcp-swarm's `swarm_get_swarm`; in `local` mode, read the local swarm's member roster and agent cards. #}
 [inference]
 contract:
   input:
@@ -79,7 +79,7 @@ This is iteration N+1. The previous iteration produced:
   verdict (Cybernetic Swarm Plan C1). If `recommendation = "go_see"`, the
   sensor `s` is filtering truth (`d` improving while `s` declines) — surface a
   Go See directive in next_focus_hint (component C2: the operator should descend
-  the Steer ConversationView with the §5 checklist: is `s` filtering
+  the Steer ConversationView with the loop-closure checklist: is `s` filtering
   task-failure truth? are `.rules` priors still verified? are the Steer guides
   having the intended effect?). If `recommendation = "diversify_action"`, the
   swarm is stuck on one `(deficit_class, decision_action)` — note it so DECIDE
@@ -143,10 +143,10 @@ in the output — one entry per roster agent that has a non-empty trail. Agents
 with empty trails are omitted (not fabricated with zeros).
 {% endif %}
 
-## Step 1 — Swarm State (pre-fetched by execute step)
+## Step 1 — Swarm State (pre-fetched by the invoking agent)
 
-The swarm state has been pre-fetched by the skill's execute step (step 1 for
-ABW mode, step 2 for local mode) and is provided as `fetched_swarm_state`.
+The swarm state has been pre-fetched by the invoking agent (the live-process
+roster read before SENSE renders) and is provided as `fetched_swarm_state`.
 Do NOT call swarm_get_swarm or swarm_list_local_agents — the state is already
 here. Parse it and proceed to Step 2.
 
@@ -159,7 +159,7 @@ here. Parse it and proceed to Step 2.
 {% if mode == "local" %}
 The `fetched_swarm_state` contains the local swarm's member roster
 (`{ swarm_id, name, mission, members[] }`). To get the full agent cards,
-the execute step also fetched the local agent registry — but only the
+the invoking agent also fetched the local agent registry — but only the
 roster is passed here. Use the `members[]` list as the team scope.
 
 Local mode has no wallet. Set `wallet_state = null`; do not fetch or
@@ -175,8 +175,9 @@ Record the raw workspace_roster and wallet_state from the pre-fetched data.
 {% else %}
 ### No pre-fetched state — fetch via tool calls
 
-The execute step did not provide `fetched_swarm_state` (it may have been
-skipped due to a condition gate or the MCP server was unavailable). Fall
+The invoking agent did not provide `fetched_swarm_state` (the pre-fetch
+may have been skipped due to a condition gate or the MCP server was
+unavailable). Fall
 back to fetching via tool calls:
 
 {% if mode == "local" %}

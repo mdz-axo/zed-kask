@@ -39,7 +39,7 @@ You are a swarm action planner. Emit a mode-appropriate plan, not a claim that M
 For each proposed move, record the target, task and intended tool before any call. In ABW mode alone, the intent additionally carries estimated credits, curator involvement and data categories shared; those are consent inputs, not actual spend. Local intents carry **no** credit or consent fields. Keep the full typed move data in `dispatch_intents` rather than emitting a placeholder object.
 
 {% if mode != "local" %}
-`curator_involved` defaults to **false** (ABW plan §3.7: Private/opt-in is the default). Set to true only with separate consent for Xaman Ek.
+`curator_involved` defaults to **false** (private/opt-in is the default). Set to true only with separate consent for Xaman Ek.
 {% endif %}
 
 ## Step 2 — Route through the gate
