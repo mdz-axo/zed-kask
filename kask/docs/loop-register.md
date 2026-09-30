@@ -2,7 +2,7 @@
 title: "Loop Register — zed-kask canonical loops"
 audience: [developers, architects, agents, operators]
 last_updated: 2026-09-30
-version: "0.24.0"
+version: "0.24.5"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle]
@@ -35,115 +35,20 @@ each further slice still has its own graph and validation gate.
 scored in Phase 4 against what the audit actually found; they are priors, not
 findings.
 
-## Pass 2 re-audit — Phase 0 checkpoint (2026-09-28; operator approval pending)
+## Pass 2 re-audit — closed 2026-09-28; dispositions ruled 2026-09-29
 
-This pass re-runs the audit under the same subtractive principle with six
-focus axes: loose ends, branch efficiency, loop interactions,
-reference-model fidelity, the MCP tool surface, and enforced depth
-(per-slice coverage ledger: every `fn` in the slice mapped or explicitly
-deferred). Phase 1 of this pass begins only after operator approval of
-this checkpoint. Predictions below are pass-2 priors, scored at this
-pass's Phase 4.
-
-### Premise verification — "the MCP tools were never really reviewed"
-
-**Finding (IS, Evidence):** the premise is FALSE as stated. A recorded
-review exists: `kask/docs/plans/hkask-core-mcp-repair-improvement-plan.md`
-(v0.4.0, review dated 2026-09-18, updated 2026-09-28) inventoried all 19
-libraries and 12 servers, inspected the runtime/tool port, shared server
-bootstrap/validation, and delegation IPC deeply, made targeted domain
-inspections (training scripts, corpus output paths, gallery policy,
-kanban attribution, spreadsheet persistence, event store, regulation),
-and skimmed all server responsibilities via delegation. It recorded 8
-prioritized defects (F1–F8) and 4 design risks (R1–R4) with line ranges
-and pinned review HEADs. What the recorded review itself declares
-uncovered (its §7 "Coverage and omissions"): full memory
-retention/consolidation, rotation, email, ontology semantics, condenser
-quality, complete financial workflows, cloud/A2A authorization, media
-parsers, deployed providers — and its tool-test gate is a "token
-heuristic, not complete behavioral coverage". **Conclusion:** the
-per-tool syntax+semantics review of axis 5 is a re-review that builds on
-the recorded one — deepest where the recorded review was shallow — not
-a first review. The review runs regardless.
-
-### Prior-findings reconciliation
-
-The prior register pass did not reconcile against the repair plan; its
-open items enter the loose-ends ledger below, mapped to register rows.
-Verified in the current tree this pass: the P1a delegation-authority code
-is present (`crates/agent/src/delegation_authority.rs` exists; P6a
-re-verified in the plan at `crates/agent/src/agent.rs:4814` on
-2026-09-28).
-
-### Tree staleness assessment (register vs current tree, this pass)
-
-- Crate inventory unchanged: 19 core crates, 12 MCP servers (directory
-  listings, this pass). No new loop family is evident from post-audit
-  commit subjects (INFERRED — each slice re-verifies its row first).
-- Entry-point spot-checks (IS, grep-verified this pass): L1 holds
-  (`run_turn` `thread.rs:2984`, `run_turn_internal` `:3176-3180`,
-  `agent.rs:2472`); L2 holds (`metacognition.rs:346`/`:405`,
-  `cybernetics_loop.rs:780` `tick`); L9 holds
-  (`hkask_mcp_kata_kanban.rs:461` `kanban_goal_create`); L5 entry holds
-  (`inference_ipc_server.rs:388` `UnixListener::bind`).
-- **Drift (IS):** post-audit commits `a7445fa213` ("Add
-  embed_with_dimensions to inference port") and `ac58daba43` ("Fix
-  stream truncation; request MRL embedding dims", HEAD at this Phase 0)
-  moved L3 and L5 citations: L3 `call_tool_inner` now
-  `runtime.rs:1662-1672` (was `:1642`), `dispatch` now `:1725-1729`
-  (was `:1701`); L5's Embed dispatch arm now calls `embed_with_dimensions`
-  at `inference_ipc_server.rs:801-802` (dispatch cite was `:776`). The
-  new arm threads through `hkask-types/src/ports/inference_port.rs:353`
-  (trait), `hkask-inference` (Lazy/Direct/IPC impls), `kask_bridge`
-  (`inference_embedding.rs:241`, IPC server), memory ingest/recall
-  (`memory/ingest.rs:124`,`:507`; `memory.rs:622`,`:817`), and corpus
-  (`compose.rs:281`,`:494`; `services/consolidation.rs:373`). The
-  L5/L10/L6 slice re-maps fold this arm in; the Diataxis reference docs
-  already document it with citations.
-- The kanban-widget syntax break recorded at v0.22.0
-  (`hkask-kanban-widget/src/view.rs:2011`) is resolved in the current
-  tree — rust-analyzer reports the file clean (this pass); the L7
-  `record_render` cite `view.rs:133` also still holds. The widget
-  subtraction's committed-vs-working-tree state is unverified: the
-  terminal tool failed on all git-status-shaped inputs at this Phase 0
-  (5 input-truncation failures; skill-use issue filed,
-  provider_transport). Verify with git before L7 seam-test work.
-
-### Loose-ends ledger (zero silent carry-overs)
-
-From the register's operator-decision queue:
-
-| # | Item | Row | Prior state | This pass |
-| --- | --- | --- | --- | --- |
-| 1 | Memory-receipt functional guarantee (EndTurn precedes detached ingestion; panel stop handler has no receipt) | L1 | deferred, falsifier recorded | re-open in L1 slice — operator decision pending |
-| 2 | Typed-error carry across the L4→L3 seam (string-marshalled kind) | L3 | deferred (net-positive lines) | **CLOSED (pass 2):** resolved-by-drift — the kind crosses the wire structurally (`runtime.rs:1785-1791`), display round-trip enum-validated and pinned (see L3 row) |
-| 3 | Measured panel seam test + 2 inferred findings (concurrent update unseen after move; optimistic-mutation repaint) | L7 | deferred behind widget rework | **CLOSED (pass 2, `9142f4f03e`):** citations re-mapped against the landed widget state; the seam test ran red-first — the optimistic-move notify bug confirmed and fixed (one notify, symmetric with the error paths); the authoritative-refresh half pinned healthy (post-completion `set_body` lands); residual conversation-side dependency recorded as a design note (see L7 row) |
-| 4 | Direct-acknowledgment memory-receipt gate (`goals.rs:319-337`) | L9 | operator decision | re-present for decision |
-| 5 | Done-verdict/criteria-passed rejection check | L9 | operator decision | re-present for decision |
-| 6 | Recall failure-signal contract (error-discarding legs `memory.rs:927-967`, `:1067-1085`) | L10 | operator ruling | re-present for decision |
-| 7 | Page-visibility impedance (older running job unobserved behind 20 newer) | L11 | deferred pending panel contract | **RE-DEFERRED (reason):** what surfaces for an older running job is a panel-contract product question; no evidence from this pass changes it — folded into the operator batch below should the operator wish to decide now |
-| 8 | Closable-vs-append-only research runs (no status-transition writer exists) | L12 | operator decision | re-present for decision |
-| 9 | Dispatch-seam ingestion candidate (needs red-green public-seam test) | L13 | deferred | **CLOSED (pass 2):** the seam test ran red-green; the red exposed the pinned design boundary (`thread_tests.rs:220-223`); seam consolidation REJECTED as contradicting the pin; the `delegate_and_ingest` consolidation for unscoped sites landed in `57c2bdea7a` (see L13 row) |
-| 10 | Posterior carry-forward boundary | L17 | deferred (caller-controlled contract) | **RE-DEFERRED (reason):** the boundary is the documented caller-controlled contract; changing it is a behavior change requiring an operator ruling — stands unless the operator changes the contract |
-| 11 | Nebius status-degradation contract (unobservable jobs read Running) | L18 | operator decision | re-present for decision |
-| 12 | Degraded-status contract (poisoned performance lock silently substitutes zero penalty) | L23 | deferred with falsifier | **CLOSED (pass 2, `c98e29aa36`):** the poisoned-lock arm now returns a rationale naming the degradation ("live performance unavailable (state poisoned) — static profile only") so a static-only ranking cannot read as live endorsement; 141 research tests green |
-
-From the repair plan (prior findings record; dispositions at its §9):
-
-| # | Item | Constraint force | Prior state | This pass |
-| --- | --- | --- | --- | --- |
-| 13 | F4 residual TOCTOU race — symlink planted between containment check and write; needs a symlink-resistant atomic open (`O_NOFOLLOW`-class) shared across corpus/gallery call sites | Prohibition (containment), partially enforced | open, deliberately not built | re-open in an L6/L21 edge slice — price the shared primitive |
-| 14 | P2 invocation/identity contract — F6 per-call authorship (repair-plan cites `transport.rs:91-104` anonymous startup fallback; `hkask_mcp_kata_kanban.rs:907-914` `self.webid` claim) and the R4 caller-assertion-vs-host-receipt distinction | Guardrail (authority) | open ("not yet replaced") | re-open as cross-cutting edge slice E6 (L1/L3/L4) |
-| 15 | R3/H1 spreadsheet crash-durability — revision/receipt write gap, no fault-injection or power-loss guarantee; H1 dynamic test outstanding | Guardrail (durability) | upheld, open | folds into L22's existing orphan-revision deferral — same boundary, re-present together |
-| 16 | R1 public default passphrase / first-run onboarding-recovery behavior | Guardrail (confidentiality) | decision-gated | re-present for decision (adjacent to L15) |
-| 17 | Repair-plan §8 open decisions #2–#8 (destructive-deletion override, attribution identities, crash/power-loss guarantees, first-run secrets, external CI for feature-gated tests, filesystem authority roots, cancellation reporting after effects) | mixed | open | operator decision queue — re-present at checkpoint |
-
-Closed since the prior register pass (verified in the register's own
-ledger): L2 accepted-check retry (`a2321f0df2`), L5 Api readback
-(v0.22.1), L5 minimalism (v0.22.2), L9 Steer prompt (`1113d8d85d`);
-repair-plan F2/F3/F5/F7/F8, R2, O1, and the P1a tool-ceiling slice (code
-present in tree).
-
+Pass 2 (2026-09-28) reviewed the full MCP tool surface — 403 tools across
+12 servers plus the shared framework (S1–S12, smallest-first) and the 23
+loop re-slices; 14 findings were fixed, each with its commit hash in the
+change log's v0.23.x entries, and every operator decision was ruled
+(2026-09-29) and executed (the D1–D12 dispositions and F1–F6 follow-ups
+below). The durable records live in the register rows, the per-server
+reference docs, and the change log; the process narrative (premise
+verification, prior-findings reconciliation, tree staleness, the
+loose-ends ledger, the tool inventory, the per-server review tables, the
+predictions, and the INVEST decomposition) is condensed here per the
+alignment plan §8 CU-5 — git history is the archive. The anchor ledger
+below is retained: the admitted reference model (Pass 3) cites it.
 ### Reference-model anchor ledger (axis 4 — anchor or explicit gap per row; no invented anchors)
 
 | Row | Anchor | Record |
@@ -181,102 +86,6 @@ method-named templates without headers are IS by absence (e.g.
 `## Reference models` sections (of 59 catalog skills). Creating missing
 records is a separate operator decision — this pass records gaps,
 assesses alignment where anchors exist, and invents none.
-
-### MCP tool inventory (axis 5 sizing; counts from pin tests and signature greps, this pass)
-
-| Server | Tools | Pin | Per-server doc |
-| --- | --- | --- | --- |
-| companies | 40 | count (`hkask_mcp_companies.rs:499-503`) | yes |
-| corpus | 26 | count (`hkask_mcp_corpus.rs:289-299`) | yes |
-| curator | 15 | count (`hkask_mcp_curator.rs:2256-2262`) | **no** |
-| kata-kanban | 27 | name-set (build.rs + `tool_names_match_live_router`) | **no** |
-| media | 98 | count (`hkask_mcp_media.rs:470-480`) | yes |
-| portfolio | 18 | name-set (`hkask_mcp_portfolio.rs:65-75`) | yes |
-| prediction-markets | 32 | count (`hkask_mcp_prediction_markets.rs:2070-2084`) | yes |
-| research | 27 | count (`hkask_mcp_research.rs:2519-2521`) | yes |
-| scenarios | 19 | count (`hkask_mcp_scenarios.rs:1906-1916`) | yes |
-| spreadsheet | 2 | name-set | yes |
-| swarm | 90 | count (`hkask_mcp_swarm.rs:1030-1040`) | yes |
-| training | 9 | count (`hkask_mcp_training.rs:322-330`) | **no** |
-| **total** | **403** | 9 count / 3 name-set | 9/12 |
-
-### Per-server tool-review ledger (S1–S12; the pass-2 per-tool surface review)
-
-Unit per the spec: each TOOL function mapped (syntax: signature/input
-contract/schema/envelope; semantics: behavior, error classification,
-degradation surfacing, credential handling) against the recorded `.rules`
-MCP patterns, plus the S13-extracted credential-declaration check.
-Support-module fns are verified at the seams they serve; deep per-fn map
-is noted where deferred with reason.
-
-| Slice | Server (tools) | Result | Notables |
-| --- | --- | --- | --- |
-| S1 | spreadsheet (2) | **CLEAN — closed 2026-09-28.** 2/2 tools mapped; 6 production fns (+1 macro ctor). Zero `.rules` violations. | `map_spreadsheet_error` is the exemplar per-variant mapper (`Conflict`→`failed_precondition` optimistic concurrency; `PathEscape`→`invalid_argument` pre-filesystem; non_exhaustive arm visible). `operation_get` None → explicit `status: unknown` + do-not-retry note (the §7/L22 contract). Credentials `vec![]` — correct: file-based server, no DB, no keys. Anchor: L22's `logisheets-spreadsheet-capability-plan.md` (per-server doc exists). |
-| S2 | training (9) | **CLEAN — closed 2026-09-28.** 9/9 tools mapped (submit, cancel, status, evaluate, ingest_dataset, ingest_qa, assemble_dataset, validate_config, bridge_rollouts); ~180 support fns seam-verified, deep map deferred to continuation (pinned beneath by the 95-test smoke suite). Zero `.rules` violations. | P2 consent gate first (`permission_denied`, operator-facing); F3 ordering verified (model provenance before effects, pinned by `f3_submit_rejects_invalid_model_before_effects`); G-P1 names the Nebius degradation verbatim at submit (the L18 status contract stays the operator decision); `error_mapping.rs` is the canonical per-variant classifier; the corpus→training `db_path` bridge trap fixed and pinned (`permission_denied "db_path provided but passphrase is empty"` + PassphraseMismatch/KeyDerivation naming `HKASK_DB_PASSPHRASE`); containment on every caller path; degraded store → `permission_denied` naming env vars. Anchor: `lora-training` skill lacks a recorded `## Reference models` section (gap recorded; `lora-training-catalog.md` is the reference doc). |
-| S3 | curator (15) | **CLOSED 2026-09-28 — 2 findings, both fixed (landed in `2135f1591d`).** 15/15 tools mapped (ping, semantic_search, federated_search, memory_recall, consult, algedonic_log, reg_query, report_skill_use_issue, memory_insert, memory_update, memory_resolve_contradiction, memory_prune, memory_dedup, memory_backfill_embeddings, memory_extract). Coverage ledger: 50/73 non-test fns fully mapped (main 37, federated 10, thread_turns 2, main.rs 1); 23 deferred with reason (distillation 18 + forgetting 5 — background loops with their own register rows and 43 in-file tests; S2-precedent seam deferral). | F-C1 (Guardrail, IS): `HKASK_DB_PASSPHRASE` declared `optional` (`hkask_mcp_curator.rs:2023`) with no in-memory fallback — `open_curator_stores` returns `CuratorStores::empty()` on missing passphrase (`:2081-2084`), 14/15 tools dead, and two log messages claimed an in-memory mode that does not exist (`from_context` warn `:208`; framework optional-branch `info!` `transport.rs:83`). Fixed: `required` per the kata-kanban reference (`kanban_startup_requires_durable_storage`), false wording replaced with the actual consequence, stale late-arriving-passphrase heal motivation dropped, comment-only pin module upgraded to a real source-pin test. F-C2 (Guideline, IS): federated-search embedding-model error named the setting but not the env var (`:657-661`) — aligned with sibling paths' naming (`:79-83`, `:1954-1957`). Exemplars: `federated.rs` per-variant `classify_error` (`:285-301`) + file-stamp identity watching; semantic degradation notes distinguishing degraded-vs-empty (`resolution_failure_note`); `reg_query` scopeless-argument rejection (`:1171-1176`, pinned). Anchors: memory tools cite `kask/docs/architecture/memory-system-specification.md` in-file (§3 entity_ref `:1936`, §7 decay `:2066`); distillation/forgetting cite operator rulings 2026-09-04 in-file; the tool-surface layer has no reference-model record beyond `.rules` (partial — gap stands). Production +11/−7 (net +4 — message/comment honesty, no new path); tests +24/−13 (exempt). Landing receipt: `2135f1591d` (concurrent mixed commit; content verified by hash). |
-| S4 | portfolio (18) | **CLOSED 2026-09-28 — review-only, zero production changes.** 18/18 tools mapped (create, delete, list, ledger_apply, ledger_read, snapshot, returns, contribution, characteristics, attribution, what_if, historical_what_if, ledger_import, ledger_export, seed_price, rebuild_views, materialize_returns, daily_returns). Coverage: 27/98 production fns fully mapped (server.rs 26 + main 1); 71 seam-verified, deep map deferred (store 20, types 22, analysis 18, returns 11 — every public method exercised through a tool call site; pinned beneath by 64 green tests incl. 8 integration + 3 smoke + 6 property). | F-P1 (Guardrail, IS — **operator decision, not implemented**): the portfolio store is a plaintext rusqlite SQLite (`store.rs:169` `new` — no `hkask_storage`, no passphrase, grep-verified) holding financial ledgers/holdings/price-cache at `{data_dir}/mcp/portfolio/{owner}/master.db`; cross-server extent: companies embeds `PortfolioStore` (`screen_store.rs:272`) + own rusqlite (3 files), research has own rusqlite (3 files) — vs SQLCipher (`hkask_storage::open_or_repair` + `HKASK_DB_PASSPHRASE`) for corpus/curator/kata-kanban/training. No recorded decision found (per-server doc `kask/docs/reference/mcp-servers/portfolio.md` is silent on storage). Proposal: operator ruling on migrating the three-server family to SQLCipher (on-disk format change + migration + passphrase dependency). Credentials `vec![]` is correct GIVEN the plaintext design — flips to `required` only if F-P1 is accepted (S13 per-server item resolved on that basis). Verified-sound, not findings: date-validation placement asymmetry (4 tools up-front, 5 analysis paths internal at `analysis.rs:174/343/702/753/791-792` — consistent InvalidArgument semantics, no SF-4 epoch-substitution survives, pinned `returns_tool_rejects_malformed_dates`); `expect` at `server.rs:175` (AnalyticalTable invariants by construction, checked against `hkask-types/src/spreadsheet.rs:125-160` validation list); `span_id: Null` is the shared provenance schema (scenarios emits it, widget reads it). Zero `.rules` violations: envelopes on all 18, per-variant mappers (`map_portfolio_error`; `map_spreadsheet_error` mirrors S1's exemplar), `map_join_error` on spawn_blocking, missing-price degradation errors naming every missing (date,symbol) pair with remediation while `NoPrices` resolvers legitimately value at zero (`returns.rs:73-105`, pinned `returns_tool_errors_naming_missing_prices`), what-if ledger immutability pinned. Anchor: `portfolio-review` skill carries `## Reference models and labels` (SKILL.md:14); what-if presentation cites the spreadsheet plan §6 in-file. |
-| S5 | scenarios (19) | **CLOSED 2026-09-28 — 2 findings, both fixed (landed in `4aca2cbc56`).** 19/19 tools mapped (status, full, from_markets_set, from_cmp_indices, contract_price_coherence, cross_validate, frame, frame_document, brainstorm, build, quantify, propagate, update, score, calibrate, synthesize, calibration, triage, assess). Coverage: 32/77 production fns fully mapped (main file 31: 19 handlers + 12 helpers; main.rs 1); 45 seam-verified, deep map deferred (superforecast 38, templates 2, types 5 — exercised through tool call sites; 27 tests green incl. 10 property + 2 pins). | F-S1 (Guardrail, IS): `ForecastStore::load` silently swallowed every failure arm — unreadable snapshot, corrupt snapshot, unparseable journal lines (`superforecast/store.rs:47-73` pre-fix) — so a corrupt history presented as an empty store and the calibration feedback loop read "no history" as "no forecasts yet" (the unwrap_or(0) trap, data-layer instance). Fixed: every arm warns with classification + session consequence; skipped journal lines counted and reported. F-S2 (Guideline, IS): stale predecessor-comment named three tools that don't exist on this server (research, sensitivity, from_companies) and omitted four that do (`hkask_mcp_scenarios.rs:143`) — updated to the actual None-arm set. Verified-sound, not findings: three `unwrap_or(false/0.0)` sites are unreachable-defensive (engine filters unknown outcome-ids with warn at `math.rs:371-380`; `resolved()` filters `outcome.is_some()` at `store.rs:171-175`); single-slot `tree_cache` is the documented design with the explicit `tree_implied` param for callers who need scoping; lenient horizon/type parse is self-describing (effective value surfaces in the output; the quantify path uses the typed enum); credentials `vec![]` correct (JSON journal/snapshot store, no DB). Zero `.rules` violations: per-variant `map_scenario_error`; exemplary degradation surfacing (isotonic withheld "never fabricated" + fit knots emitted; per-bin hit-rate withheld below `MIN_N_FOR_HEADLINE` with Wilson CI; score persistence errors name partial-failure state honestly). Production +59/−20 (net +39 — warn arms in restructured match); pass-wide AC6 running total now positive, tracked to Phase 4. Anchor: `scenario-planning` skill `## Reference models` (SKILL.md:14); in-file Tetlock/Schwartz/Chermack/arXiv:2604.20421/arXiv:2211.03244 citations; CMP provenance shape pinned cross-crate (`cmp_provenance_round_trips_real_scenarios_emitter` in companies). |
-| S6 | corpus (26) | **CLOSED 2026-09-28 — 3 findings, all fixed (landed in `5cc9ad34c9`).** 26/26 tools mapped (gather: discover, cache_work, discover_company; process: convert, ocr, is_complex, chunk, build_chunk_representations, embedding_inventory, tag_chunks, embed, extract_assertions, dedup_chunks, consolidate_chunks; QA: build_prompts, generate_qa_batch, ground_generated_qa, ingest_qa, prepare_training_dataset, purge_qa; compose: compose, rewrite, centroid; manage: cache, query, clear_index). Coverage: 26 handlers + helper seam fully mapped; 325 production fns inventoried, deep map deferred per S2 precedent (services/index/ocr/compose layers exercised through tool call sites; 202 lib tests green). | F-K1 (Guideline, IS): `run()` declared `vec![]` credentials on a SQLCipher-DB-backed server — behavior unchanged in governed launches (zed allowlist injects `HKASK_DB_PASSPHRASE` regardless, `kask_bridge/src/mcp_servers.rs:115` entry verified) and standalone launches already failed closed per-call with `permission_denied` naming the var (`helpers.rs:71-103`, the canonical pattern) — but the framework seam never learned the DB dependency. Fixed: `optional` declaration with an honest degraded-mode description (document processing runs without it; DB-backed tools fail closed). Distinct from curator's S3 case (no false in-memory claim, no limp-mode). F-K2 (Guideline, IS): `corpus_extract_assertions` description claimed "default GLM-5.2 on OpenRouter" while the chain is env-only → None → fail-visible (`services/assertions.rs:148-151`, `model_constants.rs:80-84`) — stale doc advertising a default that does not exist; description now states the fail-visible truth. F-K3 (Guideline, IS): `corpus_ingest_qa` derived per-candidate grounding metadata (prompt_id → row_key → answer_provenance) verbatim in two loops (`:301-318`, `:352-371` pre-fix) — extracted one `grounding_fields` helper so the training-row and h_mem views cannot drift. Verified-sound, not findings: `corpus_query` degradation exemplar (empty-index note, missing_text + dimension_mismatch counts with remediation, fail-visible model resolution); SerpAPI absence surfaced in `excluded` naming the env var (gather.rs:454-463); path containment single enforcement points (`read_text_capped`, `write_contained`, `open_memory_store` fail-closed before any SQLCipher open); per-variant mappers (`map_triage/map_database/map_service/map_qa_inference_error`); `prepare_training_dataset`'s non-helper parse loop is documented-intentional (multi-error report is the API); the two `to_string().unwrap_or_default()` sites are serialize-cannot-fail. Zero `.rules` violations on the tool surface. Production +35/−37 (**net −2 — first net-negative slice**; pass-wide running total +42). Anchor: per-server doc `kask/docs/reference/mcp-servers/corpus.md` exists; `build-corpus-pipeline` skill has NO `## Reference models` section (gap recorded — the skill's process steps are its own reference; creating the record is a separate operator decision). |
-| S7 | research (26) | **CLOSED 2026-09-28 — 2 findings, both fixed (landed in `bfd1b57e1b`).** 26/26 tools mapped (web: ping, search, find_similar, extract, browse; rss: subscribe, unsubscribe, list_subscriptions, fetch, get_entries, mark_all_read, get_unread_count, search, export_opml, import_opml, discover_feeds, edit_tag, synthesize, list_synthetic, delete_synthetic; runs: begin, get, annotate; resolve_paper; evaluate_evidence; cite_sources). Coverage: handlers + run()/credential_requirements/macro-error surface fully mapped; 251 production fns inventoried, deep map deferred per S2 precedent (providers/rss/evidence/scoring internals exercised through tool call sites; 141 tests green). | F-R1 (Guideline, IS): the DB-unavailability messages told the operator to set `HKASK_RESEARCH_DB`, but the DB opens at its DEFAULT path when that var is unset (`hkask_mcp_research.rs:2249-2270`) — an unconfigured DB is almost always a missing `HKASK_DB_PASSPHRASE` or an open failure. Three sites fixed: the `require_research_db!` macro, `append_run_ledger`'s no-DB note, the credential declaration (`:2382-2385` "required if HKASK_RESEARCH_DB is set" → actual semantics). The `begin_research_run_requires_db` pin survives (the var is still named, as the custom-location override). F-R2 (Guideline, IS): `web_search`'s `intent` was a free string — the scorer silently maps unrecognized intents to no-bonus generic ranking (`providers.rs:699-724`), so a typo'd intent returned plausible output under no lens with no flag; the same silent-mapping class `web_extract`'s format validation (`:633-646`) and `evaluate_evidence`'s duplication validation already reject. Fixed: closed vocabulary (news, academic, semantic, research, freshness, general, transcript); `research` was recognized by the dispatch but undocumented — docs now match dispatch. Verified-sound, not findings: the run-ledger non-repudiation path matches `.rules` verbatim (run-scoped requests bypass the cache read; best-effort append surfaced as `run_ledger`; first-observation-wins named as `already_recorded`); cache-only-clean-responses (a provider failure never replays as a successful empty result); rerank + duplication-tier degradation naming the setting and the fallback; `resolve_paper` best-effort enrichment surfaced both ways; `map_db_error` per-SQLite-code classifier; provider keys honestly optional (pool builds with what's configured, health surfaced via `web_ping`); find_similar/browse no-cache rationales documented. Zero `.rules` violations. Production +35/−6 (net +29; running total +71). Anchor: per-server doc `kask/docs/reference/mcp-servers/research.md` accurate (default path documented `:188`; the 2026-09-03 `web_recommend_provider` fold-in recorded `:14`). |
-| S8 | kata-kanban (27) | **CLOSED 2026-09-28 — 1 finding, fixed (landed in `2787f8c71e`).** 27/27 tools mapped (board: create, list, delete, update, export, import; goal: create, judge, score, memory_acknowledge, list; task: create, update, list, move, assign, unassign, delete, verify, comment, comments_since, add_deliverable, reopen, kata_prompt, spawn, delegate_result; contract_propose_expect). Coverage: all 27 handlers + with_idempotency/build_task_agent_card/derive_task_activity/parse helpers/map_kanban_error/run fully mapped; 130 production fns inventoried, deep map deferred per S2 precedent (service_impl internals exercised through the 105-test contract suite — the README's named exemplar pattern; 105 tests green). | F-KK1 (Guardrail, IS): `kanban_board_delete`'s non-owner arm returned `invalid_argument` (`:388-390` pre-fix) while its two siblings with identical ownership semantics — `board_update` (`:434-436`), `board_export` (`:1486-1488`) — return `permission_denied`, AND the service's own mapper classifies the same non-owner case (goal scoring, `goals.rs:262-265`) as `PermissionDenied`. A non-owner is an authorization failure, not a bad argument — the reference server misclassified its own reference discipline. Fixed: `permission_denied` + comment naming the siblings; the rename-path pin (`board_rename.rs:156` asserts the message, not the kind) survives. Verified-sound, not findings: `with_idempotency`'s spawn special-case is the documented uncertain-outcome contract (an Unavailable spawn may have landed; retaining the pending claim prevents a same-key retry creating a second child — `:184-193` with the post-effect rule spelled out at `:90-96`); `goal_score`'s `.expect` is a true service invariant (resolution set on every Ok path, `goals.rs:258-295`); replay-safe vs convergent mutation classes correctly split (identity-minting carries keys; rename re-applies idempotently by construction, `:406-409`); closed-vocabulary discipline everywhere (delegation_level, memory_scope, stage, verdict, priority); no-prediction Brier surfaced as null-with-note, never a synthetic 0 (the calibration.rs lesson, pinned `goal_score_brier_and_surfaced_missing_prediction`); `required` passphrase + SQLCipher via the canonical chain (`run()` `:1727+`); goal outbox retry semantics pinned (`goal_score_failure_preserves_open_outbox_for_retry`). Zero other `.rules` violations. Production +5/−1 (net +4 — the fix line + naming comment; running total +75). Anchor: the richest in the audit — `kask/docs/research/kanban-board-reference-models.md` (the spec's own exemplar), inline R-citations (R6 at `:404-405`), README testing-standard exemplar (`:74`); **gap**: no per-server doc under `kask/docs/reference/mcp-servers/` (README table row only) — proposal recorded: creating it is a separate operator decision. |
-| S9 | prediction-markets (32) | **CLEAN — closed 2026-09-28, review-only, zero production changes.** 32/32 tools mapped (status, lookup, match, ontology_map, calibration, record_resolution, subscribe_resolutions, ladder, residual, check_resolutions, history, cmp_index, volatility, cmp_index_store, cmp_portfolio_store, cmp_indices, cmp_context_suggest, score_rationale; fred×5; wb×5; dbnomics×4). Coverage: all 32 handlers + run() + the shared `EconomicDataError` classifier + provider seams fully mapped; 163 production fns inventoried, deep map deferred per S2 precedent (providers/cmp/calibration internals exercised through tool call sites; 74 tests green). | Zero findings, zero `.rules` violations. Exemplars recorded: the §7 followup discipline — a zero-recording scan attributes the zero with full disposition counts (`zero_scan_reason`, `:664-683`) and the series filter's scope is surfaced per-provider because Gamma has no series parameter (`:537-548`); the honest probability-at-observation snapshot design — pre-fix behavior scored post-resolution prices, guaranteeing Brier≈0 and making the reliability-tier demotion gate unreachable (documented at `:559-565`); `market_subscribe_resolutions` refuses to write calibration observations from the stream because the wire carries no pre-resolution probability — fabricating one is the reinforcing-loop trap (documented at the site); §8 orientation-separated curves (decision-family marginals never blend); FRED `MissingApiKey → permission_denied` naming the env var (`economic_data.rs:26,57`); one shared per-variant `EconomicDataError` for all economic-data providers (deep-module classifier); `combined_router` merge with the 32-count pin catching a silently-dropped router (`:80-85`); curated-defaults degrade for the absent FRED key documented in the declaration. S13 credential item resolves: FRED optional-honest; no DB credential (calibration is a JSONL journal — plaintext JSON at rest, folds into the F-P1 family extent, low sensitivity). Anchors: per-server doc exists; in-file arXiv:2607.08199 (DR-AS) citations; **gaps recorded**: `cmp-term-structure` and `eqm` skills lack `## Reference models` sections (proposals: separate operator decisions). |
-| S10 | companies (40) | **CLOSED 2026-09-28 — 1 finding, fixed (landed in `47f7bb2e5c`).** 40/40 tools mapped (financial data: stock_quote, income_statement, balance_sheet, cash_flow_statement, key_metrics, historical_price, company_profile, resolve_symbol, symbol_search; valuation: dcf_valuation, ep_valuation, monte_carlo_dcf, reverse_dcf, comparable_analysis, sensitivity_analysis, equity_duration, calibrate_forecast, forecast_persist, forecast_get, forecast_list, forecast_record; analysis: moat_check, management_scorecard, working_capital_cycle, expectations_gap, scenario_analysis, scenario_impact_valuation; research: company_research_search, company_transcript; screener; notes/files/reports: note_add/delete/list, file_attach/delete/list, report_list/load/save; result_feedback). Coverage: all 40 handlers + run()/credentials/companies_get provider-fallback seam fully mapped; 351 production fns inventoried, deep map deferred per S2 precedent (providers/financial_model/screening internals exercised through tool call sites; 171 tests green). | F-C1 (Guideline, IS): `companies_get` discarded the primary provider's error at the fallback arm (`providers.rs:388` `Err(_primary_err)`) — when BOTH providers fail, only the secondary's error reached the caller and the primary's classification (bad key vs provider down vs timeout) was lost with no log. Fixed: the primary failure warns with tool/symbol/provider/error before the fallback runs. Verified-sound, not findings: credentials exemplary (2 required core-provider keys, 4 optional research keys with degraded modes, the SERPAPI spelling fix documented at the read site, `HKASK_INVESTOR_REQUIRED_RETURN` validated finite/0-1 with typed errors); the H7 fix documented at `forecast_record` (the forecast's own probability, not a hardcoded 0.7; the 0.7 fallback warns and `forecast_persist`'s output note names the consequence before it happens); screener no-criteria warning with remediation + FX conversion with honest row semantics (unconverted rows named, strict USD-cap screens refused rather than approximated); valuation per-variant mappers + finite/interval validation; fibo_cache degrade surfaced; HTTP timeouts documented with the expectations_gap fan-out rationale. F-P1 extent confirmed: `ResearchStore` shares the portfolio `master.db` (plaintext rusqlite) + adds companies tables; `fibo_cache` is a second plaintext SQLite (raw API responses + FIBO-tagged points) — folds into the F-P1 operator decision. Zero other `.rules` violations. Production +13/−1 (net +12; running total +87). Anchors: per-server doc exists; `company-research-deep` and `company-research-flash` carry `## Reference models` sections; **gap**: `listening` skill lacks one (proposal: separate operator decision); FIBO ontology anchoring in-file (fibo.rs, enrich_with_ontology on data tools). |
-| S11 | swarm (90) | **CLOSED 2026-09-28 — 1 finding, fixed (landed in `85b17dcd72`).** 90/90 tools mapped across four files (cloud_swarm_tools 48: catalogue, agents, swarms, apps, workspace actions with ask/auto/force_ask confirmation, spend tools with consent gates, lifecycle, publish/fork, Xaman; local_tools 35: delegation execution (delegate/fanout/pipeline/execute_plan), agent store, swarm membership, eval harnesses, task board, fleet digest, typing queries, threads; a2a_tools 3; knowledge_tools 4). Coverage: all 90 handler signatures + the require_auth/spend-gate/consent/sanitize seams fully mapped, with prior-pass deep knowledge of the delegation/thread/local-knowledge machinery (the L13 slice: `delegate_and_ingest` consolidation `57c2bdea7a`, the scoped-dispatch refutation, `thread_tests.rs:220-223` pin); 311 production fns inventoried, deep map deferred per S2 precedent (local_runtime/agent_executor/abw_client internals; 210 tests green). | F-S1 (Guideline, IS): the cloud module doc said "All 27 tools here" while the file registers 48 (`cloud_swarm_tools.rs:7` pre-fix) — a reader auditing the ABW surface from the doc would mis-scope by 21 tools. Fixed: count matches the registered surface. Verified-sound, not findings: `require_auth` is the `.rules` canonical reference (permission_denied naming `HKASK_ABW_API_KEY`, `abw_client.rs:44-53`); the spend gate's hold/release settlement semantics (`spend_gate.rs`); the execute route's consent gate documented as identical to @mention delegation's; workspace ask/auto/force_ask confirmation flow; the KA-01 sanitization surface (agent ids, ABW responses plain+structured, workspace payloads, run-status messages — `sanitize.rs`); catalogue keyless with `is_authenticated` surfaced in the envelope; the default-passphrase bootstrap surfaced with warns on empty/too-short (the platform's recorded first-run design — the bridge provisions the default into the keychain, rotation managed by `run_pending_db_passphrase_rotation`); `delegate_and_ingest` consolidation verified in place; the scoped-thread non-ingestion pin standing. Zero `.rules` violations. Production +1/−1 (net 0; running total +87). Anchors: per-server doc exists; **gaps recorded**: `swarm-intelligence` and `local-research-swarm` skills lack `## Reference models` sections (proposals: separate operator decisions); the port-registry typing discipline is `.rules`-recorded. |
-| S12 | media (98) | **CLEAN — closed 2026-09-28, review-only, zero production changes. The final server slice; all 12 per-server reviews now closed.** 98/98 tools mapped (gallery 26 incl. faces; generation 6; processing 15; audio 8; educt 15; reduct 17; jobs 4; models 2; workflows 4; youtube 1). Coverage: all 98 handler signatures + run()/credentials/gallery-mode/educt-layer/jobs/display-hint seams fully mapped; 361 production fns inventoried, deep map deferred per S2 precedent (gallery/ffmpeg/educt internals exercised through tool call sites; **432 tests green — the largest suite in the audit**). | Zero findings, zero `.rules` violations. Exemplars recorded: **the gallery DB decision is the F-P1 contrast** — unencrypted by recorded, reasoned choice at the site ("gallery metadata is not a secret" + not leaking the global SQLCipher key to this child process), exactly the recorded rationale the portfolio family lacks; **no in-memory fallback** — startup refuses on DB open failure with the broken-feedback-loop rationale documented (an ephemeral gallery would read as "gallery empty" and re-organizing against it would lose tag/face/lineage metadata); gallery mode enforcement (delete_file requires destructive mode, invalid modes rejected, `:170-175, :1409`); 3 optional keys with honest degraded modes (OPENROUTER vision, SERPAPI YouTube, REDUCT cloud with "local educt works without it"); REDUCT key → `permission_denied` naming the key + HTTP header-character validation (`reduct.rs:317-319`); fail-visible model resolution at 5 sites (STT, embedding, vision, educt passes); the educt layer reject-with-named-reason invariant (a failing layer is never partially applied, `transcript_layers.rs:122,172`); jobs cancellation-token lifecycle; the `display_hint` ```media block contract; the OMC dead-surface pin (advertised invariants need enforcement points); `describe_image`'s style param is self-describing (effective value echoed in output). Anchors: per-server doc exists; **gaps recorded**: `media-workflow` and `transcript-reel` skills lack `## Reference models` sections (proposals: separate operator decisions). |
-
-**Framework note (S13 addendum):** all 12 servers bootstrap via
-`hkask_mcp_server::run_server` (`hkask_mcp_server.rs:42`), a one-line
-delegate to `run_stdio_server` (`transport.rs:32`) — the framework stays
-single-copy; the L4 row's entry-point citation now names the wrapper
-(the public name every server calls). Swarm's `a2a_http.rs:80` `run_server`
-is an unrelated local tiny_http fn (name collision, not duplication).
-
-### Pass-2 predictions (calibrated down from pass-1's overestimate: MAE 1.22 defects and 1.22 impedances per loop, ~5×/~15× over)
-
-- MCP server slices (12 + framework): ~8–15 `.rules` pattern violations
-  across 402 tools; ~2–4 impedances; per-tool review records absent by
-  definition (the re-review creates them). Confidence 0.55.
-- Loop re-slices (23): ~3–6 branch-efficiency findings (branch maps are
-  new work — pass 1 verified graphs small, not branch inventories);
-  ~2–3 new interaction-edge impedances; 11 hard anchor gaps (ledger
-  above). Confidence 0.50.
-- Loose ends (17): ~3–5 closable with evidence; the rest re-deferred with
-  stated reasons. Confidence 0.50.
-- Net production lines: −50 to −150 if branch consolidation finds real
-  duplication; otherwise ~0 with a no-candidate finding reported with
-  evidence. Confidence 0.45.
-
-### Pass-2 decomposition (INVEST slices; shared gate per slice)
-
-Shared gate: complete branch map + interaction edges + anchor
-assessment; findings with file:line, IS/OUGHT/INFERRED,
-constraint-force label, and a tree-grounded falsifier; coverage ledger
-reconciled (every `fn` in the slice mapped or explicitly deferred);
-consolidation landed (full-repo symbol sweep + build green) or deferred
-with reason; behavioral-bug hypotheses through the diagnose gate first.
-
-- **S13 framework first:** `hkask-mcp`/`hkask-mcp-server` shared cores
-  under the per-tool lens (the L4 re-check) — informs all server slices.
-- **S1–S12, smallest-first:** one slice per server crate (spreadsheet 2,
-  training 9, curator 15, portfolio 18, scenarios 19, corpus 26, research
-  26, kata-kanban 27, prediction-markets 32, companies 40, swarm 90,
-  media 98 — media/swarm sub-slice by tool group). Each maps every
-  tool's syntax (signature, input contract, schema, response envelope)
-  and semantics (behavior, error classification, degradation surfacing,
-  credential handling) against `.rules` patterns and the per-server
-  reference doc where it exists.
-- **Loop re-slices L1–L23:** scoped to branch map, interaction edges,
-  anchor assessment, loose-end status, and the drift re-maps named above
-  (L3/L5 carry post-audit drift; L1 folds in the delegation-authority
-  arm; L7 re-maps against the landed widget state before its seam test).
-- **Edge slices:** E1 L3↔L4 typed-error carry (re-price); E2 L1↔L5
-  stream/embed arm; E3 L7↔L9/L11/L13/L21/L22 panel seams; E4 L6↔L10/L18
-  corpus-DB edges; E5 L12↔L20/L23 research-state edges; E6 the P2
-  invocation/identity contract cross-cut (loose-end #14).
-
-Order is a technical decision (program manager), vetoable on functional
-grounds: S13, then S1–S12 smallest-first, loop re-slices interleaved with
-their endpoint edges, L7's re-map before its seam test.
 
 ## Pass 3 — Three-layer cybernetic nervous system review (2026-09-30; operator spec 2026-09-30)
 
@@ -819,131 +628,14 @@ the spec's minimum list, recorded below rather than narrowed away.
 - Ordinary spreadsheet cell calculation is request-driven; interrupted-operation reconciliation and persistent revision identity form L22.
 - Market health/`web_ping` style probes — legs inside L3/L4.
 
-## Decomposition into audit slices (INVEST)
+## Decomposition into audit slices (INVEST) — executed
 
-One slice = one register row through Phase 1 → 4 (map → detect → consolidate →
-verify), sized so each slice lands or defers independently. Slice order is a
-technical decision (program manager's per the Division of Responsibilities),
-vetoable on functional grounds:
-
-1. **Batch A (early deletion candidates, known duplication signals):** L8
-   (closed 2026-09-27 — Brier signal refuted; real finding was the scenarios
-   wrapper, consolidated), L3+L4 (closed 2026-09-27 under the duplication
-   rubric; L3 REOPENED for the minimalism pass — six per-server maps → one),
-   L14 (closed 2026-09-27 — minimal by design). Next: L3-minimalism, then
-   Batch B.
-2. **Batch B (control core, highest connectivity):** L2, L5, L16.
-3. **Batch C (large surfaces):** L1, L7, L6.
-4. **Batch D (bounded server loops):** L9, L10, L11, L12, L13, L17, L18, L19, L20, L21, L22, L23.
-
-Rationale: bank consolidation wins on small, duplicated surfaces first; audit
-the high-connectivity control core before the largest surfaces, so impedances
-found there inform the big-surface audits. A functional priority (a loop whose
-behavior matters most to the operator) overrides this order on request.
-
-### Per-loop INVEST worklist (pending approval)
-
-Each row below is a separate, bounded audit task, not a command to start it.
-**Shared acceptance gate for each open slice:** (1) cite every sense/orient/decide/act/observe node and cross-loop edge from the current tree; (2) classify the five feedback properties, each finding as IS/OUGHT/INFERRED with file:line and a falsifier; (3) either remove the redundant path with behavior-preserving tests, full-repo identifier sweep and build, or name the rejected candidate and a risk-priced deferral. Any behavioral-bug hypothesis must first pass the diagnose/reproduction gate; any zed-side edit needs its D-seam and test in the same pass. The local verifier below is additional to these shared gates. L3/L4/L8/L14 have historical results above: re-check only their reopened or new-edge scope; do not treat their earlier audit as authorization for further work.
-
-| Task | Independent slice and observable check | Dependency / local verification |
-| --- | --- | --- |
-| L3 | Closed: consolidated in `16271e3c60` (ServerEntry, +38); typed-error impedance closed pass 2 as resolved-by-drift (see row). | L4 contract; 22 runtime tests + `reconnect_integration.rs` and unknown-effect retry pin. |
-| L4 | Re-check typed-error handoff to L3; do not merge child processes if isolation would change. | L3 seam; server-framework tests and per-server credential isolation. |
-| L8 | Confirm the already landed scoring consolidation retains outcome readback; close only a newly evidenced gap. | L17 scoring edge; forecast/scenarios tests and existing commit `50cba394fd`. |
-| L14 | Confirm settings and credential changes still restart exactly affected servers. | L3, L5; settings-sync tests + launch-order invariant. |
-| L15 | Closed 2026-09-27: minimal by design; 6/6 offline rotation tests; keychain-last + rollback verified load-bearing (see row). | L10, L4; passphrase-rotation tests and keychain-last invariant. |
-| L2 | Closed 2026-09-27: landed in a2321f0df2, independently verified by this audit (see row). | L16 outcomes; regulation-cycle tests. |
-| L5 | Closed: request cycle mapped, `ipc_error` helper consolidated (`4eaca76874`, −95), Json fix landed (`e1f1b51cad`), Api status readback landed with a wire-optional protocol field, minimalism pass landed (−21; see row). | L3 environment; inference IPC tests. |
-| L16 | Closed 2026-09-27: graph complete, inferred defect refuted as documented D59 design (see row). | L2, L1; skill-outcome tests. |
-| L1 | Closed 2026-09-27 at full scope: single-path loop verified minimal; memory-ingest deferral stands (see row). | L3, L5; agent turn tests. |
-| L7 | Structural audit closed 2026-09-27 (seams single-copy, no deletion candidate); two inferred findings + the measured seam test deferred behind the in-flight widget subtraction (see row). | L1, L9; targeted panel/widget tests. |
-| L6 | Closed 2026-09-27: graph verified, gate re-execution rejected as consolidatable (pinned defense-in-depth), source-complete boundary stated (see row). | L5, L10; corpus pipeline seam tests. |
-| L9 | Closed 2026-09-27: Steer prompt consolidated (`1113d8d85d`); receipt-gate + verdict-check decisions deferred to the operator (see row). | L10; goal lifecycle tests. |
-| L10 | Closed 2026-09-27: error-discarding finding deferred as the operator's failure-signal ruling (see row). | L1, L2; recall/ingest round-trip tests. |
-| L11 | Closed 2026-09-27: page-visibility impedance deferred pending the panel contract (see row). | L7; job state tests. |
-| L12 | Closed 2026-09-27: no status-transition writer exists; closable-vs-append-only is the operator's decision (see row). | L4; research-run tests. |
-| L13 | Closed pass 2 (2026-09-28): seam test ran; the pinned design boundary (`thread_tests.rs:220-223`) refutes the seam consolidation; `delegate_and_ingest` landed in `57c2bdea7a` (see row). | L7, L10; swarm thread tests. |
-| L17 | Closed 2026-09-27: posterior carry-forward boundary deferred (caller-controlled contract; see row). | L8; scenarios scoring tests. |
-| L18 | Closed 2026-09-27: Nebius/manifest degradation contract deferred; no training run launched (see row). | L6; offline submit/status/cancel tests only. |
-| L19 | Closed 2026-09-27: classified as a request-boundary recompute cycle; no automatic controller arm fabricated (see row). | L7; portfolio materialization tests. |
-| L20 | Closed 2026-09-27: graph verified, no deletion candidate; merge with L12 rejected (see row). | L12; RSS 304/new-entry tests. |
-| L21 | Closed 2026-09-27: graph verified, no deletion candidate (see row). | L7, L5; gallery reconciliation tests. |
-| L22 | Closed 2026-09-27: orphan-revision boundary deliberate, tested, surfaced as unknown (see row). | L7, L4; workbook conflict/recovery tests. |
-| L23 | Closed 2026-09-27: poisoned-lock degraded-status impedance deferred with falsifier (see row). | L12, L2; provider-ranking tests. |
-
-**Checkpoints:** approval of this register precedes any *new* Phase 1 work;
-verify each slice before starting another touching the same shared contract;
-review cross-loop edges L3↔L4, L1↔L5, L7↔L9/L13/L21/L22,
-L6↔L10/L18 and L12↔L20/L23 after their endpoint slices; do a final
-register-to-tree coverage walk before declaring global completion. Tasks may
-run independently only where their write scopes and contracts do not overlap.
-The worklist has 23 tasks because the acceptance criterion requires a slice
-per loop, not because 23 independent implementations are proposed.
-
-**Open risks at checkpoint:** L3 state-map rewrite is cross-contract and
-could change retry/stop behavior (high impact; revert the atomic slice if its
-existing or targeted tests fail); L19 may be a pipeline rather than a loop
-(low impact; reclassify on Phase 1 evidence); an undocumented additional
-feedback path may remain after the package-level inventory (coverage risk;
-close only after the final tree-to-register walk). Owner for each is the
-technical program manager; approval to resume Phase 1 belongs to the operator.
-
-## Phase 4 partial ledger — not a global completion record
-
-- **Source-line accounting for audit-related commits only:** `50cba394fd`
-  scenarios Brier wrapper **−13** (+2/−15); `16271e3c60` MCP runtime
-  state map **+38** (+264/−226); `4eaca76874` IPC error payloads **−95**
-  (+114/−209); `e1f1b51cad` embedding JSON error mapping **−1**
-  (+5/−6 production, +25 test); `b28e893fde` stale runtime comments
-  **−14** (0/−14). Deterministic sum: **−85 source lines in Rust files**,
-  of which **−71 are non-comment implementation** and −14 are comment-only;
-  L9 and L6 were committed together in `1113d8d85d`: the L9 prompt change removed **1** implementation line, the stale comment removed **1** source-comment line, and the L6/L9 pins added **82** test lines (+71/+11). Across the audited committed changes, the total is **−87 Rust source lines** (−72 non-comment implementation, −15 comment-only) and **107 test lines added** (+25 L5 and +82 L6/L9). These mixed-purpose commits also
-  carried unrelated work: their hashes prove what landed, not that the
-  entire commit belongs to this audit. The `.agents/skills` and register
-  text is excluded from the production-line arithmetic. Do not sum unrelated
-  ontology, settings, or passphrase changes into this audit's line delta.
-  The L2 bounded-retry slice landed in `a2321f0df2`: **+57 production
-  lines** (+164/−131 implementation = +33; +48/−24 comment-only = +24)
-  and +105 net test lines (+166/−61), bringing the audit total to
-  **−30 Rust source lines** (−39 implementation, +9 comment-only) and
-  212 test lines — the operator's negative-program-total condition
-  holds. Independently re-verified on the landed state by this audit:
-  the named falsifier plus both bound tests green, hkask-regulation
-  --lib 96/96, kask_bridge rollout-filtered 19/19.
-- **Validation actually observed:** L3 21 library and 16 serialized fixture
-  tests passed; L5 54 library tests passed after the JSON-error test first
-  failed; L15 6 rotation tests passed. L9's panel pin failed red, passed
-  green, and all 32 kanban-panel tests plus the affected memory test passed. `./script/clippy` (including kask-scoped
-  machete and buf checks) and `cargo check -p zed` passed on a working-tree
-  snapshot after the L9 zed-side edit as well; these are working-tree
-  receipts, not an immutable-HEAD CI result. The removed
-  `launch_specs` / `cancellation_tokens` identifier sweep across Rust and
-  Markdown returned only the explicitly historical former-map description
-  in `runtime.rs:462`; the misleading not-yet-restored test comment was
-  deleted. A synthetic jq check filtered a QA skip while keeping candidate and
-  error rows; an offline public-tool fixture exercised grounding and dry-run
-  ingestion (201/201 corpus library tests), without a training output or paid
-  generation. No source-complete corpus run was executed. The 2026-09-27 Phase 4 closeout re-ran the full gates on the current tree: both `./script/clippy` and `cargo check -p zed` FAIL on `hkask-kanban-widget` (unexpected closing delimiter, `view.rs:2011` — an unclosed block from the concurrent widget-rework stream's landed subtraction state, whose worktree is clean, i.e. committed). This is not an audit change — the audit's own production changes carry their landing receipts above; the current-tree full-green claim is blocked by that external breakage and flagged to the operator as a release blocker per the .rules concurrent-edit trap. Update (same day): the owning widget-rework stream repaired the break in its live worktree — braces balanced (251/251) and `cargo check -p hkask-kanban-widget` green on the uncommitted state; this audit did not touch their in-flight files, and the fresh full-tree gate receipt follows their landing.
-- **Final count calibration (all rows closed, via `lisp_eval`):** across all 23 rows the Phase 0 predictions have mean absolute count error **1.22 defects/loop and 1.22 impedances/loop** (both error sums 28/23). Predicted totals: 34 defects / 30 impedances; confirmed actuals: 6 defect-class findings (3 fixed — L2, L5, L9; 3 deferred for operator rulings — L10, L12, L18) and 2 confirmed impedances (L3, L5, both deferred with reasons); 6 further inferred findings stay deferred with falsifiers (L7 ×2, L11, L13, L17, L23). The predictions systematically overestimated — ~5× on defects, ~15× on impedances — quantifying the incident-hardened-surface pattern noted row by row. The Phase 0 `confidence` values are confidence in count predictions, not stated event probabilities, so converting them to a Brier score would fabricate a forecast contract; the count-error MAE is the honest calibration record. L5's Phase 0 prior (2/2/0.50) was recovered from the earliest register (`3f7175bb26`) for this scoring.
-- **Open gate owners:** technical program manager owns repro/validation and
-  line-negative proposals; the operator owns experience-changing choices
-  (whether to permit L2's net-positive bounded retry despite the deletion
-  gate, require a durable receipt before L9 acknowledgment, or make L12
-  runs explicitly closeable). L6's candidate
-  projection is tool-seam tested; the source-complete run stays outside the
-  no-dataset-construction rule, and the row closed 2026-09-27 with that
-  boundary stated. every remaining open item is an operator decision or a deferred
-  contract with a cited falsifier in its row — L9's receipt gate and
-  verdict check, L10's recall failure signal, L11's page visibility,
-  L12's closable runs, L13's dispatch-seam ingestion test, L17's
-  posterior carry, L18's Nebius degradation status, L23's degraded
-  status, L1's memory receipt, L5's Api readback, L3's typed-error
-  carry, and L7's measured seam test behind the widget rework; none is
-  quietly declared fixed. All 23 rows are closed or deferred-with-reason
-  as of 2026-09-27. The earlier
-  minimalism passes for L4/L8/L14 and this offline L15 rotation path have
-  no further surviving removal candidate under the present evidence.
+The pass-1 INVEST worklist (one slice per register row, Batches A–D)
+was approved and executed 2026-09-27/28: every row's outcome — closed,
+consolidated, or deferred with falsifier — is recorded in the row
+itself, with commit hashes in the change log. The per-loop worklist
+table, the checkpoint rules, and the open-risk notes are condensed here
+per the alignment plan §8 CU-5; git history is the archive.
 
 ## Working rules
 
@@ -996,49 +688,6 @@ supersession notes.
 
 ## Phase 4 — pass-2 closure (2026-09-28)
 
-### Prediction vs actual (Phase 0 predictions, scored)
-
-| Prediction | Conf | Actual | Verdict |
-| --- | --- | --- | --- |
-| MCP server slices: ~8–15 `.rules` violations across 402 tools; ~2–4 impedances | 0.55 | 14 findings fixed (12 server-phase + 2 loop-phase); ~4 direct `.rules`-pattern violations (curator credential, corpus declaration, kata-kanban misclassification, companies error-discard), the rest the same discipline family (false claims, silent degradations, stale docs); **0 new impedances** (the one historical impedance closed by drift) | Violations: below range read strictly (4), in range read as the discipline family (14); impedances: below range. The family reading is the honest one — the prediction anticipated the *class*, and the class is what was found. Calibration: mildly overconfident on count, correct on character. |
-| Loop re-slices: ~3–6 branch-efficiency findings; ~2–3 new impedances; 11 anchor gaps | 0.50 | 1 branch/timing finding (the L7 notify bug — a real behavioral defect); 0 impedances; 11 row-level gaps confirmed + 9 skill-level gaps added by the server phase | Findings below range; impedances below range; gaps as predicted. The re-slices confirmed pass-1's consolidation had already shrunk the graphs — the remaining defects were timing/honesty, not structure. |
-| Loose ends: ~3–5 closable with evidence | 0.50 | 4 closed (#2, #3, #9, #12) | In range. |
-| Net lines: −50 to −150, or ~0 with a no-candidate finding | 0.45 | **+100 net production** (see AC6 below) | Worse than both branches — the pass's fixes were honesty wording, which costs lines by nature. The prediction missed that the remaining defect population was additive-by-nature. |
-
-### AC6 adjudication — the no-candidate finding, with evidence
-
-Net production across the pass: **+215 insertions / −115 deletions = +100**
-(hash-verified per-fix receipts: L13 +1, S3 +4, S5 +39, S6 −2, S7 +29, S8 +4,
-S10 +12, S11 0, L7 +7, L23 +6). Test additions are exempt and reported
-separately: ~+160 lines (S3's source-pin, S5's none — the store fix carried
-no test, L7's two seam tests + the never-resolving invoker harness).
-
-**No consolidation candidate beyond L13's (pre-phase) and S6's
-`grounding_fields` dedup survived the deletion test.** Evidence: (a) the
-loop re-slices verified all 23 rows' graphs already minimal — L1's
-"ideal-method verdict: the graph is already the small graph" stands, and
-the delta pass found zero structural duplication; (b) the server phase's
-12 fixes decompose as ~4 direct `.rules` violations and 8
-honesty/degradation findings — each a warn arm, a corrected message, an
-honest declaration, or a stale-doc fix, all additive by nature (deleting
-a lie costs the lines the truth occupies); (c) the one dedup found (S6)
-landed net ~0 (helper ≈ the duplication it replaced). The +100 is the
-price of 14 truths that were previously silent or false. Per AC6's own
-terms this is the no-candidate finding, stated with its evidence.
-
-### Reference-model gap ledger (final)
-
-Rows: 5 ANCHORED (L2, L9, L17, L19, L22), 7 PARTIAL (L4, L5, L6, L10, L13,
-L16, L18, L20 — eight by count, L20's RFC 9110 implicit model recorded as
-a gap-with-name), 11 GAP (L1, L3, L7, L8, L11, L12, L14, L15, L21, L23 —
-and L20 if the implicit model is not counted). Skills: 15/59 carry
-`## Reference models` sections; this pass recorded 9 additional skill-level
-gaps (lora-training, build-corpus-pipeline, cmp-term-structure, eqm,
-listening, swarm-intelligence, local-research-swarm, media-workflow,
-transcript-reel) and one per-server-doc gap (kata-kanban). Creating the
-missing records is the packaged operator decision — no anchor was invented
-this pass.
-
 ### Lessons (written down; promotion to curator memory via algedonic review)
 
 1. **The defect population of a mature codebase is lies of omission, not
@@ -1067,28 +716,6 @@ wrong. A mid-thread semantic-search probe for this thread's chunks
 returned none — the instrument's own recorded limitation (unembedded
 chunks are invisible; `curator_memory_backfill_embeddings` exists for
 exactly that lag), not evidence of absence.)
-
-### Acceptance criteria — final check
-
-1. Register tree-derived, covers every family found — ✓ (23 rows + the
-   delta-verification table; auditable by walking the tree).
-2. Zero silent carry-overs — ✓ (ledger: 4 closed, 2 re-deferred with
-   reasons, 11 operator decisions packaged).
-3. Every finding cites file:line, IS/OUGHT/INFERRED, constraint-force — ✓
-   (per-row and per-slice records).
-4. Every segment anchored or gap-recorded, no invented anchors — ✓ (gap
-   ledger above).
-5. MCP coverage ledger reconciles for all 12 servers — ✓ (402/402 tools;
-   per-slice rows).
-6. Net lines — the no-candidate finding stated with evidence (above).
-7. Duplicates/impedances consolidated or deferred with reason — ✓ (L13
-   landed; S6 dedup landed; the rest verified absent or re-deferred).
-8. Gates — ✓ at every landing (per-slice receipts; the full clippy gate
-   green at each slice's close; `cargo check -p zed` green for the
-   widget-touching fix).
-9. Completion claims cite hashes — ✓ (every one).
-10. Phase 0 checkpoint blocked until approval — ✓ (observed; the operator
-    approved twice: the register, then the queued issues).
 
 ### Pass-2 operator decision queue — DISPOSITIONS (operator rulings 2026-09-29)
 
@@ -1134,6 +761,27 @@ exactly that lag), not evidence of absence.)
    generally.
 
 ## Change log
+
+- 2026-09-30 — v0.24.5 executed the alignment plan §8 CU-5's first
+  condensation pass over this register (the named first candidate).
+  The superseded pass-1/pass-2 process narrative is condensed with
+  successors named: the pass-2 checkpoint's process subsections
+  (premise verification, prior-findings reconciliation, tree staleness,
+  loose-ends ledger, MCP tool inventory, the S1–S12 per-server
+  tool-review ledger, predictions, INVEST decomposition) → the
+  register rows, the per-server reference docs, and the change log's
+  v0.23.x entries; the Phase 4 partial ledger → the change log's
+  per-commit ledgers; the closure's scored-predictions/AC6/gap-ledger/
+  acceptance subsections → the change log and Pass 3's INV gap table;
+  the executed pass-1 INVEST worklist → the rows. **Retained:** the
+  reference-model anchor ledger (the admitted model cites it), the
+  lessons with the operator's recording-note correction, the D1–D12
+  dispositions, and the F1–F6 follow-up records. Net **−373 lines**
+  (1,882 → 1,509); git history is the archive. The corpus count is
+  unchanged (in-file condensation); the whole-file candidates are
+  priced separately (the aeneas trio — operator-retained Proposed,
+  blocked upstream; the LogiSheets plan — Active with open phases
+  6–7, kept).
 
 - 2026-09-30 — v0.24.4 executed the alignment plan §8's second cleanup
   slice (CU-3/CU-4, the advertised-invariant sweep), verified against

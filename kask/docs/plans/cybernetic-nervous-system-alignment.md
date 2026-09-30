@@ -383,3 +383,32 @@ not verdict (operator calibration, 2026-09-30).
   `./script/clippy` clean (machete + buf included); `cargo check -p
   zed` passed; residue grep for the re-export path clean. Running §8
   production ledger: **−18** (−8 first slice, −10 this slice).
+
+### Execution record — third slice (2026-09-30: CU-5, the docs condensation, register leg)
+
+- **The register (the named first candidate) condensed: 1,882 → 1,509
+  lines (−373).** The superseded pass-1/pass-2 process narrative (the
+  pass-2 checkpoint's process subsections, the Phase 4 partial
+  ledger, the closure's scored-predictions/AC6/gap-ledger/acceptance
+  subsections, and the executed pass-1 INVEST worklist) is deleted
+  with successors named (the rows, the per-server reference docs, the
+  change log, Pass 3's INV gap table; git history the archive).
+  **Retained:** the reference-model anchor ledger (the admitted model
+  cites it), the lessons with the operator's recording-note
+  correction, the D1–D12 dispositions, the F1–F6 records, and every
+  current row.
+- **Whole-file candidates adjudicated:** the LogiSheets plan — KEPT
+  (Active with open phases 6–7; verified, not assumed); the repair
+  plan — EXCLUDED (the concurrent stream is actively editing it); the
+  aeneas trio (the Proposed plan + two evidence files) — **operator
+  proposal:** a blocked upstream program (Aeneas issue #838) whose
+  records are retained-for-decision; deleting all three (−3 files,
+  74 → 71) is a one-word ruling — the plan's own summary paragraph
+  carries the durable facts, git history the detail.
+- **CU-5(b) probe artifacts: clean** (no probe/scratch/tmp/bak files
+  in production trees).
+- **Gates:** count 74 (< the 75 cap; the 60-file target remains the
+  direction — the file-count work needs the whole-file rulings);
+  links, citations, frontmatter, and no-deleted-surfaces re-checked
+  (the README's register row updated to drop the stale INVEST
+  emphasis).
