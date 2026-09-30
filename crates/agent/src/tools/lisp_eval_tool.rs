@@ -1357,4 +1357,116 @@ mod tests {
         .expect("Improvement Measure form must evaluate on a drifting sequence");
         assert_eq!(drifting, json!(false), "a 0.18 jump is not convergence");
     }
+
+    #[test]
+    fn test_company_research_deep_skill_md_pins_forms() {
+        // company-research-deep SKILL.md pins three agent-executed lisp_eval
+        // forms with nothing else running them. If any drifts, this fails
+        // until skill and tests are reconciled.
+        let skill_md = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../.agents/skills/company-research-deep/SKILL.md"
+        ))
+        .expect("company-research-deep SKILL.md must exist in the workspace");
+
+        // 1. The claim-source key-closure form: the empty list passes; a
+        // nonempty list names unregistered keys.
+        let key_closure = r#"(let ((missing_one (lambda (keys known) (if (is_null keys) (list) (if (member (car keys) known) (missing_one (cdr keys) known) (cons (car keys) (missing_one (cdr keys) known))))))) (let ((missing_all (lambda (claims known) (if (is_null claims) (list) (append (missing_one (car claims) known) (missing_all (cdr claims) known)))))) (missing_all claim_source_keys source_keys)))"#;
+        assert!(
+            skill_md.contains(key_closure),
+            "claim-source key-closure form must stay pinned in company-research-deep SKILL.md"
+        );
+        let clean = hkask_lisp::eval_sandboxed_with_budget(
+            key_closure,
+            &json!({"claim_source_keys": [["s1", "s2"], ["s2"]], "source_keys": ["s1", "s2"]}),
+            100_000,
+            64,
+        )
+        .expect("key-closure form must evaluate");
+        assert_eq!(clean, json!([]), "registered keys pass");
+        let unregistered = hkask_lisp::eval_sandboxed_with_budget(
+            key_closure,
+            &json!({"claim_source_keys": [["s1", "s9"]], "source_keys": ["s1", "s2"]}),
+            100_000,
+            64,
+        )
+        .expect("key-closure form must evaluate on an unregistered key");
+        assert_eq!(
+            unregistered,
+            json!(["s9"]),
+            "an unregistered key is named, never silently passed"
+        );
+
+        // 2. The industry-outside-view field check: all ten fields present
+        // passes; a missing field is named.
+        let field_check = r#"(let ((has (lambda (k entries) (if (is_null entries) false (if (string= k (car (car entries))) true (has k (cdr entries)))))) (missing (lambda (keys) (if (is_null keys) (list) (if (has (car keys) view) (missing (cdr keys)) (cons (car keys) (missing (cdr keys)))))))) (missing (list "industry_drivers" "self_regulatory_bodies" "company_fit" "frame_conflicts" "implication_for_falstaffian" "implication_for_gorilla" "implication_for_thesis" "claim_sources" "excluded_sources" "data_gaps")))"#;
+        assert!(
+            skill_md.contains(field_check),
+            "industry-outside-view field check must stay pinned in company-research-deep SKILL.md"
+        );
+        let complete = hkask_lisp::eval_sandboxed_with_budget(
+            field_check,
+            &json!({"view": {"industry_drivers": [], "self_regulatory_bodies": [], "company_fit": [], "frame_conflicts": [], "implication_for_falstaffian": "", "implication_for_gorilla": "", "implication_for_thesis": "", "claim_sources": [], "excluded_sources": [], "data_gaps": []}}),
+            100_000,
+            64,
+        )
+        .expect("field check must evaluate");
+        assert_eq!(complete, json!([]), "all ten fields present passes");
+        let incomplete = hkask_lisp::eval_sandboxed_with_budget(
+            field_check,
+            &json!({"view": {"industry_drivers": [], "self_regulatory_bodies": [], "frame_conflicts": [], "implication_for_falstaffian": "", "implication_for_gorilla": "", "implication_for_thesis": "", "claim_sources": [], "excluded_sources": [], "data_gaps": []}}),
+            100_000,
+            64,
+        )
+        .expect("field check must evaluate on a missing field");
+        assert_eq!(
+            incomplete,
+            json!(["company_fit"]),
+            "a missing field is named for re-render"
+        );
+
+        // 3. The GORILLA fixed-weight scoring form: three verdict bands plus
+        // the maturity-block case (a blocked dimension binds to 0).
+        let gorilla = r#"(let ((score (+ (* 0.25 obvious_problem) (* 0.30 invisible_gorilla) (* 0.25 combinatorial_solution) (* 0.20 choke_point)))) (cond ((>= score 75) 'GORILLA) ((>= score 50) 'SMALL_ANIMAL) (t 'PEDESTRIAN)))"#;
+        assert!(
+            skill_md.contains(gorilla),
+            "GORILLA fixed-weight scoring form must stay pinned in company-research-deep SKILL.md"
+        );
+        let top = hkask_lisp::eval_sandboxed_with_budget(
+            gorilla,
+            &json!({"obvious_problem": 80, "invisible_gorilla": 85, "combinatorial_solution": 75, "choke_point": 80}),
+            100_000,
+            64,
+        )
+        .expect("GORILLA form must evaluate");
+        assert_eq!(top, json!("GORILLA"), "80.25 is a GORILLA");
+        let mid = hkask_lisp::eval_sandboxed_with_budget(
+            gorilla,
+            &json!({"obvious_problem": 60, "invisible_gorilla": 55, "combinatorial_solution": 50, "choke_point": 60}),
+            100_000,
+            64,
+        )
+        .expect("GORILLA form must evaluate on a mid case");
+        assert_eq!(mid, json!("SMALL_ANIMAL"), "56 is a SMALL_ANIMAL");
+        let low = hkask_lisp::eval_sandboxed_with_budget(
+            gorilla,
+            &json!({"obvious_problem": 30, "invisible_gorilla": 40, "combinatorial_solution": 35, "choke_point": 30}),
+            100_000,
+            64,
+        )
+        .expect("GORILLA form must evaluate on a low case");
+        assert_eq!(low, json!("PEDESTRIAN"), "34.25 is a PEDESTRIAN");
+        let blocked = hkask_lisp::eval_sandboxed_with_budget(
+            gorilla,
+            &json!({"obvious_problem": 80, "invisible_gorilla": 0, "combinatorial_solution": 75, "choke_point": 80}),
+            100_000,
+            64,
+        )
+        .expect("GORILLA form must evaluate on a maturity-blocked dimension");
+        assert_eq!(
+            blocked,
+            json!("SMALL_ANIMAL"),
+            "a maturity-blocked dimension binds to 0 and drops the verdict from GORILLA to SMALL_ANIMAL"
+        );
+    }
 }

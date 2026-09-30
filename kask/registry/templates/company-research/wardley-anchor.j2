@@ -1,4 +1,4 @@
-{# goal: Cross-skill adapter. Compresses wardley-mapper's 6-step process (inventory → classify → map → movement → recommendations → present) into a single LLM call over the rotated Company Board. Emits wardley_map with components, evolution classifications, movements, commoditization candidates, choke_points, and invisible_gorillas. Feeds GORILLA's Invisible Gorilla and Choke Point dimensions (step 5) and ECONOMIC TRAJECTORY's falling-cost anchor (step 9). #}
+{# goal: Cross-skill adapter. Compresses wardley-mapper's 6-step process (inventory → classify → map → movement → recommendations → present) into a single LLM call over the rotated Company Board. Emits wardley_map with components, evolution classifications, movements, commoditization candidates, choke_points, and invisible_gorillas. Feeds GORILLA's Invisible Gorilla and Choke Point dimensions and ECONOMIC TRAJECTORY's falling-cost anchor. #}
 [inference]
 contract:
   input:
@@ -47,7 +47,7 @@ The FALSTAFFIAN step has already rotated the competitive framing to correct pers
 {{ rotated_board | tojson }}
 ```
 
-## Input — Business Franchise (from Company Board)
+## Business Franchise (from the raw Company Board — the claimed markets this inventory must check against incumbents; the map's framing reflects the rotated board)
 
 ```json
 {{ business_franchise | tojson }}
@@ -60,8 +60,8 @@ The FALSTAFFIAN step has already rotated the competitive framing to correct pers
 
 Produce a compressed Wardley map in a single pass. This compresses the full wardley-mapper's 6-step process (inventory → classify → map → movement → recommendations → present) into one call. The output feeds two downstream steps:
 
-1. **GORILLA** (step 5): the `invisible_gorilla` and `choke_point` dimensions use the Wardley map to ground their assessment — what's invisible in the value chain, and where is the strategic choke point?
-2. **ECONOMIC TRAJECTORY** (step 9): the `falling_cost` and `commoditization_candidates` fields use the Wardley map's evolution classifications to identify what's becoming commodity (the falling-cost trajectory) and what the company should stop building.
+1. **GORILLA**: the `invisible_gorilla` and `choke_point` dimensions use the Wardley map to ground their assessment — what's invisible in the value chain, and where is the strategic choke point?
+2. **ECONOMIC TRAJECTORY**: the `falling_cost` and `commoditization_candidates` fields use the Wardley map's evolution classifications to identify what's becoming commodity (the falling-cost trajectory) and what the company should stop building.
 
 ### Steps to perform (internally, in one response):
 

@@ -3,9 +3,10 @@
 contract:
   input:
     ticker: string
-    company_board: object
+    rotated_board: object
     wardley_map: object
     industry_outside_view: object|null
+    economic_trajectory: object|null
   output:
     obvious_problem: number
     invisible_gorilla: number
@@ -23,11 +24,19 @@ You are evaluating whether a company's strategic position meets the GORILLA crit
 ## Ticker
 {{ ticker }}
 
-## Company Board (from COMPANY agent)
+## Rotated Company Board (from FALSTAFFIAN — score against the ROTATED board, never the raw Company Board)
 
 ```json
-{{ company_board | tojson }}
+{{ rotated_board | tojson }}
 ```
+
+{% if economic_trajectory %}
+## Economic Trajectory (from ECONOMIC TRAJECTORY — the falling-cost anchor for the opportunity's realism)
+
+```json
+{{ economic_trajectory | tojson }}
+```
+{% endif %}
 
 {% if industry_outside_view %}
 ## Industry outside view (advisory context, not an input to the fixed weights)
