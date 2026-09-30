@@ -49,7 +49,7 @@ jq -s -e --argjson requested "$chunks_per_source" '
     ((.text | type) != "string") or
     ((.text | length) == 0) or
     (.classification.status != "classified") or
-    (.classification.ontology_protocol != "published-term-resolution-v1")) then
+    (.classification.ontology_protocol != "published-term-resolution-v2")) then
     error("every row must be a nonblank current-protocol classified chunk with an ordinal entity_ref")
   elif ([.[].entity_ref] | length) != ([.[].entity_ref] | unique | length) then
     error("duplicate entity_ref in tagged chunks JSONL")

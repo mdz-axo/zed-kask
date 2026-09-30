@@ -131,7 +131,7 @@ if ! jq -s -e --argjson rows "$rows" '
     ([.[].entity_ref] | length == (unique | length)) and
     all(.[];
       if .classification.status == "classified" then
-        .classification.ontology_protocol == "published-term-resolution-v1" and
+        .classification.ontology_protocol == "published-term-resolution-v2" and
         (.candidate_terms | type == "array" and length >= 3 and length <= 5) and
         (.ontology_tags | type == "object") and
         (.concepts | type == "array")

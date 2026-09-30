@@ -6,7 +6,7 @@ SELECTOR="$SCRIPT_DIR/select-position-diverse-chunks.sh"
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
-classified='{"status":"classified","ontology_protocol":"published-term-resolution-v1"}'
+classified='{"status":"classified","ontology_protocol":"published-term-resolution-v2"}'
 input="$WORK/tagged.jsonl"
 for ordinal in 0 1 2 3 4; do
     jq -nc --arg ref "corpus:test:a:$ordinal" --argjson classification "$classified" \
