@@ -278,7 +278,7 @@ line numbers, when the doc evolves:
 | --- | --- |
 | **D-seam modify/modify** | Follow the decision rule (`SKILL.md` decision rule + Step 1 scope note). Git-merge if well-marked; mapped re-application if under-marked. |
 | **Kask-additive no-conflict** | No action (runbook step 3: everything under `kask/` is additive). |
-| **Workspace `Cargo.toml` arrays** | Hand-merge: keep both sides' entries. Never drop a kask member. |
+| **Workspace `Cargo.toml` arrays** | Hand-merge: keep both sides' kask members; take upstream's crate renames (a stale old-name member fails loudly at the next cargo run). Covers root `Cargo.toml` and `crates/zed/Cargo.toml`. Never drop a kask member. |
 | **`Cargo.lock`** | Regenerate from the merged manifests (`cargo check --workspace` rewrites it) — never hand-merge. |
 | **`kask/deny.toml` `allow-git`** | Add upstream's new git source URLs; verify with `cargo deny --config kask/deny.toml check`. |
 | **`typos.toml`** | Deleted under D46 — resolve delete/modify conflicts by re-deleting. |
@@ -311,8 +311,9 @@ invariants first, then compile, then tests.
 1. `bash kask/scripts/build/check-zed-isolation.sh` — Zed-isolation + desktop
    no-collision (one script; `check-desktop-no-collision.sh` is a one-line alias
    per its L6, so do not run both).
-2. `bash kask/scripts/check-hkask-no-zed-deps.sh` — §13.1 invariant (the
-   DIVERGENCE.md architecture section's hkask-no-zed-deps rule).
+2. `bash kask/scripts/check-hkask-no-zed-deps.sh` — §13.1 invariant (DIVERGENCE.md's
+   Governing invariant (§13.1) section; the rule itself is architecture plan
+   §13.1).
 3. `./script/clippy` — `.rules` build guidelines: "Use `./script/clippy` instead
    of `cargo clippy`." Runs under `--deny warnings`.
 4. `cargo check -p kask_bridge -p hkask-types -p hkask-mcp-server` — `DIV`
