@@ -47,8 +47,16 @@ fi
 [ ! -e "$ELAN_HOME/bin/elan" ]
 
 bash -n "$here/install-common.sh" "$here/install.sh" "$here/install-binary.sh"
-[ "$(grep -c '^[[:space:]]*install_lean_toolchain || return 1$' "$here/install.sh")" -eq 2 ]
-[ "$(grep -c '^[[:space:]]*install_lean_toolchain || return 1$' "$here/install-binary.sh")" -eq 1 ]
+# The guarded call-site counts fail with a named message (a bare `[ -eq ]`
+# under set -e exits silently, leaving a selftest nothing to assert).
+# `|| true` because grep -c exits 1 on zero matches — the count is the
+# signal, not grep's status.
+install_sh_calls="$(grep -c '^[[:space:]]*install_lean_toolchain || return 1$' "$here/install.sh" || true)"
+install_binary_calls="$(grep -c '^[[:space:]]*install_lean_toolchain || return 1$' "$here/install-binary.sh" || true)"
+if [ "$install_sh_calls" -ne 2 ] || [ "$install_binary_calls" -ne 1 ]; then
+    echo "FAIL: guarded install_lean_toolchain call sites moved — install.sh carries $install_sh_calls (expected 2), install-binary.sh carries $install_binary_calls (expected 1)." >&2
+    exit 1
+fi
 
 # Call the binary installer's real main with a failed provisioning stage.
 # A failed dependency must leave the already-installed editor untouched even

@@ -263,32 +263,45 @@ fn decode_data_uri(source: &str, kind: MediaKind) -> anyhow::Result<Vec<u8>> {
     Ok(bytes)
 }
 
+/// The typed rejection vocabulary of the remote-media SSRF guard. Every
+/// variant is a distinct rejection reason; the Display strings are
+/// user-facing (the streaming resolver surfaces them through StreamError).
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum MediaUrlError {
+    #[error("invalid media URL: {0}")]
+    InvalidUrl(#[from] url::ParseError),
+    #[error("media URL scheme must be http or https")]
+    UnsupportedScheme,
+    #[error("media URL must not contain embedded credentials")]
+    EmbeddedCredentials,
+    #[error("media URL must include a host")]
+    MissingHost,
+    #[error("media URL targets a non-public IPv4 address")]
+    NonPublicIpv4,
+    #[error("media URL targets a non-public IPv6 address")]
+    NonPublicIpv6,
+    #[error("media URL DNS resolved to a non-public address")]
+    NonPublicResolvedAddress,
+}
+
 pub(crate) fn validate_remote_url_with_addresses(
     source: &str,
     resolved_addresses: &[IpAddr],
-) -> anyhow::Result<Url> {
-    let url = Url::parse(source).map_err(|error| anyhow::anyhow!("invalid media URL: {error}"))?;
+) -> Result<Url, MediaUrlError> {
+    let url = Url::parse(source)?;
     if !matches!(url.scheme(), "http" | "https") {
-        return Err(anyhow::anyhow!("media URL scheme must be http or https"));
+        return Err(MediaUrlError::UnsupportedScheme);
     }
     if !url.username().is_empty() || url.password().is_some() {
-        return Err(anyhow::anyhow!(
-            "media URL must not contain embedded credentials"
-        ));
+        return Err(MediaUrlError::EmbeddedCredentials);
     }
-    let host = url
-        .host()
-        .ok_or_else(|| anyhow::anyhow!("media URL must include a host"))?;
+    let host = url.host().ok_or(MediaUrlError::MissingHost)?;
     match host {
         Host::Ipv4(address) if !ipv4_is_public(address) => {
-            return Err(anyhow::anyhow!(
-                "media URL targets a non-public IPv4 address"
-            ));
+            return Err(MediaUrlError::NonPublicIpv4);
         }
         Host::Ipv6(address) if !ipv6_is_public(address) => {
-            return Err(anyhow::anyhow!(
-                "media URL targets a non-public IPv6 address"
-            ));
+            return Err(MediaUrlError::NonPublicIpv6);
         }
         _ => {}
     }
@@ -296,9 +309,7 @@ pub(crate) fn validate_remote_url_with_addresses(
         IpAddr::V4(address) => !ipv4_is_public(*address),
         IpAddr::V6(address) => !ipv6_is_public(*address),
     }) {
-        return Err(anyhow::anyhow!(
-            "media URL DNS resolved to a non-public address"
-        ));
+        return Err(MediaUrlError::NonPublicResolvedAddress);
     }
     Ok(url)
 }

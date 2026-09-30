@@ -154,6 +154,20 @@ assert_no_match "$repo_root/nix/modules/packages.nix" 'packages\s*=\s*\{' \
 assert_no_match "$repo_root/flake.nix" 'zed\.cachix' \
     "flake.nix references upstream Zed's cachix"
 
+# Selftest seam: the installer-confinement suite below is exercised by the
+# gate's own CI step on every run; the selftests set this to skip the
+# redundant re-run. The fixture checks above have already run and their
+# verdict is honored here — a violating fixture still fails. Loud by
+# design: the skip is announced, never silent.
+if [ -n "${ZED_ISOLATION_SKIP_INSTALLER_SUITE:-}" ]; then
+    if [ "$errors" -gt 0 ]; then
+        echo "REGRESSION: $errors Zed isolation violation(s) detected." >&2
+        exit 1
+    fi
+    echo "SKIP: installer-confinement suite skipped (ZED_ISOLATION_SKIP_INSTALLER_SUITE set — selftest mode)"
+    exit 0
+fi
+
 sandbox="$(mktemp -d)"
 trap 'rm -rf "$sandbox"' EXIT
 fake_home="$sandbox/home"

@@ -38,7 +38,7 @@ failures=0
 mkdir -p "$fixture/crates/zed/resources"
 touch "$fixture/crates/zed/resources/zed.desktop.in"
 set +e
-out="$(REPO_ROOT="$fixture" bash "$GATE" 2>&1)"
+out="$(REPO_ROOT="$fixture" ZED_ISOLATION_SKIP_INSTALLER_SUITE=1 bash "$GATE" 2>&1)"
 rc=$?
 set -e
 if [ "$rc" -eq 0 ]; then
@@ -55,15 +55,15 @@ fi
 # Case 2: the clean fixture passes.
 rm -rf "$fixture/crates"
 set +e
-out="$(REPO_ROOT="$fixture" bash "$GATE" 2>&1)"
+out="$(REPO_ROOT="$fixture" ZED_ISOLATION_SKIP_INSTALLER_SUITE=1 bash "$GATE" 2>&1)"
 rc=$?
 set -e
-if [ "$rc" -ne 0 ]; then
-  echo "FAIL (case 2 — clean fixture): expected exit 0, got $rc"
+if [ "$rc" -ne 0 ] || ! printf '%s\n' "$out" | grep -q "SKIP: installer-confinement suite skipped"; then
+  echo "FAIL (case 2 — clean fixture): rc=$rc, expected exit 0 with an announced skip"
   printf '%s\n' "$out" | tail -5
   failures=$((failures + 1))
 else
-  echo "OK (case 2 — clean fixture): gate exited 0"
+  echo "OK (case 2 — clean fixture): gate exited 0 with the skip announced"
 fi
 
 if [ "$failures" -eq 0 ]; then

@@ -39,6 +39,13 @@ git -C "$REPO_ROOT" rev-parse --verify --quiet "${head}^{commit}" >/dev/null 2>&
 }
 
 missing=0
+# Fail-closed input capture: the deletion list is captured under set -e so
+# a git failure propagates — a process substitution would discard the exit
+# status, and an empty read would be indistinguishable from "no
+# retirements" (the vacuous-pass class this gate exists to prevent). An
+# empty capture here is a true zero, never a failure.
+retired_names="$(git -C "$REPO_ROOT" diff --name-only --diff-filter=D "$base" "$head" -- '.agents/skills/*/SKILL.md' \
+  | sed -e 's|^\.agents/skills/||' -e 's|/SKILL\.md$||')"
 while IFS= read -r name; do
   [ -n "$name" ] || continue
   # A skill restored by HEAD is not retired — the record holds only names
@@ -49,8 +56,7 @@ while IFS= read -r name; do
     echo "      The retirement change must append the name in the same commit (DIVERGENCE.md D1)." >&2
     missing=1
   fi
-done < <(git -C "$REPO_ROOT" diff --name-only --diff-filter=D "$base" "$head" -- '.agents/skills/*/SKILL.md' \
-  | sed -e 's|^\.agents/skills/||' -e 's|/SKILL\.md$||')
+done <<< "$retired_names"
 
 if [ "$missing" -ne 0 ]; then
   exit 1

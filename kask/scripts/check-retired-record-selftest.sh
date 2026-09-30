@@ -70,6 +70,22 @@ else
   echo "OK (case 2 — recorded retirement + restored skill): gate exited 0"
 fi
 
+# Case 2b: a deletion-free range is a true zero, not a failure — the
+# fail-closed capture must not conflate empty with error.
+git -C "$fixture" commit -q --allow-empty -m empty
+head3="$(git -C "$fixture" rev-parse HEAD)"
+set +e
+out="$(REPO_ROOT="$fixture" bash "$GATE" --range "$head2" "$head3" 2>&1)"
+rc=$?
+set -e
+if [ "$rc" -ne 0 ]; then
+  echo "FAIL (case 2b — deletion-free range): expected 0, got $rc"
+  printf '%s\n' "$out" | tail -4
+  failures=$((failures + 1))
+else
+  echo "OK (case 2b — deletion-free range): a true zero passes"
+fi
+
 # Case 3: an unresolvable base skips with a surfaced warning, never a
 # silent pass.
 set +e
@@ -85,7 +101,7 @@ else
 fi
 
 if [ "$failures" -eq 0 ]; then
-  echo "SELFTEST OK: retired-record gate is alive (unrecorded/recorded/restored/unresolvable all pinned)"
+  echo "SELFTEST OK: retired-record gate is alive (unrecorded/recorded/deletion-free/unresolvable all pinned)"
   exit 0
 fi
 echo "SELFTEST FAIL: $failures case(s) did not behave as expected"

@@ -47,10 +47,10 @@ pub struct StreamUrls {
 #[derive(Debug, thiserror::Error)]
 pub enum StreamError {
     /// The URL failed the shared media-URL safety validation (scheme,
-    /// credentials, host, SSRF guard). The underlying validator is
-    /// anyhow-based; it is carried as the source so the reason survives.
+    /// credentials, host, SSRF guard) — the typed MediaUrlError carries
+    /// the rejection reason.
     #[error("unsafe media URL: {0}")]
-    UnsafeUrl(#[source] anyhow::Error),
+    UnsafeUrl(#[source] crate::media_ref::MediaUrlError),
     /// The URL parsed but carries no host.
     #[error("unsafe media URL: missing host")]
     MissingHost,

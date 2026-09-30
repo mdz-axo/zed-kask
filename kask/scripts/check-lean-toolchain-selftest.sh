@@ -37,11 +37,12 @@ set +e
 out="$(bash "$fixture/check-lean-toolchain.sh" 2>&1)"
 rc=$?
 set -e
-if [ "$rc" -eq 0 ]; then
-  echo "FAIL (case 2 — broken call sites): gate exited 0 on an install.sh with no guarded Lean provisioning"
+if [ "$rc" -eq 0 ] || ! printf '%s\n' "$out" | grep -q "guarded install_lean_toolchain call sites moved"; then
+  echo "FAIL (case 2 — broken call sites): rc=$rc, expected a named call-site failure"
+  printf '%s\n' "$out" | tail -4
   failures=$((failures + 1))
 else
-  echo "OK (case 2 — broken call sites): gate failed on the missing call sites"
+  echo "OK (case 2 — broken call sites): gate failed naming the moved call sites"
 fi
 
 if [ "$failures" -eq 0 ]; then
