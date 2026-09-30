@@ -10,7 +10,7 @@
 # dependency direction would invert and hKask would no longer compile
 # standalone — a P5/P7 violation and a fork-coupling smell.
 #
-# Per zed-host-architecture-plan.md §13.1 (line 640), the invariant applies to
+# Per zed-host-architecture-plan.md §13.1, the invariant applies to
 # hKask crates — i.e. those under `kask/crates/hkask-*` and
 # `kask/mcp-servers/hkask-*`. The bridge crate `kask_bridge` lives under
 # `kask/crates/` too but is zed-kask-side (D8), NOT hKask — it is the
@@ -43,7 +43,7 @@ ZED_CRATES='gpui|gpui_tokio|gpui_platform|gpui_macros|language_model|language_mo
 # hKask crates only — those under kask/crates/hkask-* and kask/mcp-servers/hkask-*.
 # The bridge (kask_bridge) lives under kask/crates/ but is zed-kask-side
 # (D8), not hKask — scanning it would false-positive on the very
-# bidirectional seam §13.1 exempts. See zed-host-architecture-plan.md:640.
+# bidirectional seam §13.1 exempts (zed-host-architecture-plan.md §13.1).
 # Overridable via env var so the self-test can point at a temp tree; the
 # default preserves the production behavior exactly.
 if [ -n "${MANIFEST_PATHS+x}" ]; then

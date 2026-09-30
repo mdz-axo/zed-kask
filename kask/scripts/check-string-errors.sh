@@ -39,7 +39,7 @@ trap 'rm -f "$TMPFILE"' EXIT
 # ../crates/hkask-* (widened 2026-09-30: the hkask-* hygiene standard is
 # uniform across both trees, matching check-unsafe-forbid.sh's coverage).
 # Only the kask_bridge seam (D8) stays out — String errors are accepted at
-# the GPUI/tokio boundary. See zed-host-architecture-plan.md:640.
+# the GPUI/tokio boundary. See zed-host-architecture-plan.md §13.1.
 grep -rn -- 'Result<' "${SCAN_DIRS[@]}" \
     --include='*.rs' \
     --exclude-dir=target \

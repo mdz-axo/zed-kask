@@ -22,5 +22,5 @@ pub mod block;
 pub mod logic;
 pub mod view;
 
-pub use block::{SpreadsheetBlockBody, parse_spreadsheet_body};
-pub use view::{SpreadsheetWidget, shared_spreadsheet_service};
+pub use block::{BlockError, SpreadsheetBlockBody, parse_spreadsheet_body};
+pub use view::{EngineStartError, SpreadsheetWidget, shared_spreadsheet_service};
