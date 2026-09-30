@@ -2,7 +2,7 @@
 title: "Loop Register — zed-kask canonical loops"
 audience: [developers, architects, agents, operators]
 last_updated: 2026-09-30
-version: "0.24.6"
+version: "0.24.7"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle]
@@ -317,7 +317,7 @@ named invariants from the Phase 2 model, file:line, verdict):
 | Forecast/calibration loop | present | L8 |
 | Kanban/goal loop | present | L9 |
 | Memory recall/ingest cycle | present | L10 |
-| Extensions found in tree | recorded | L11–L23 |
+| Extensions found in tree | recorded | L11–L24 |
 
 No expected family was absent; the tree shows additional loop families beyond
 the spec's minimum list, recorded below rather than narrowed away.
@@ -619,6 +619,14 @@ the spec's minimum list, recorded below rather than narrowed away.
 - **Pass 3 layer classification (2026-09-30):** primary **A** (in-process penalty, bounded samples — deterministic); secondary B (surfaced ranking/rationale). Sense→report→actuate: sense provider outcomes (`providers.rs:315-332`) → report ranking/rationale + live stats (`performance.rs:76`) → actuate penalty/selection (`providers.rs:683-743`). Five properties stand. Impedance (standing): poisoned-lock silent fallback — endpoints outcome drop (`providers.rs:323-333`) × zero-penalty readback (`performance.rs:138-147`) — dimension: degradation surfacing (a broken feedback channel reads as "few samples"). Grill: primary-B fails — the rationale is surfaced but the selection loop is in-process and deterministic. Reclassification falsifier: operator-managed provider choice. Alignment: INV4 violated on the poisoned-lock leg (the standing deferral is an INV4 repair candidate); INV2 partial (success/latency expectations form over bounded samples).
 - **S4 landed (2026-09-30, operator "proceed" instruction; red-first, two tdd cycles):** the degraded-status contract is implemented — `score_providers` no longer drops zero-penalty rationales (the poisoned arm's message now reaches every recommendation), and `ProviderRecommendation.live_stats_degraded` (serialized only when `true`, so healthy responses are unchanged) distinguishes a broken channel from thin samples; the write-leg comment now states the read side surfaces the skip. Pins: `poisoned_performance_channel_surfaces_the_degradation_in_every_recommendation` (observed RED: the rationale carried only "not configured (no API key)" — the exact falsifier) and `live_stats_degraded_distinguishes_poisoned_channel_from_thin_samples`. Receipts: 145/145 crate tests, rustfmt clean, scoped clippy clean. Source landed in the concurrent stream's `49b5f1518a`; the test-file half (two stub initializers) landed as `dfc2f292d0` after `49b5f1518a` left the `tool_behavior` target uncompilable at HEAD. The standing deferral is discharged; the row's Phase 2 impedance is repaired.
 
+### L24 — Evolution experiment-registry cycle (added 2026-09-30; the server landed in the concurrent stream's `184d828c25`)
+- **Crate/path:** `kask/mcp-servers/hkask-mcp-evolution`
+- **Entry point:** `server.rs:160` `experiment_propose`, `:211` `variant_register`, `:239` `fitness_record`, `:266` `selection_record`, `:301` `lineage_read`, `:367` `population_query`; store `store.rs:93` `EvolutionStore`
+- **Trigger:** agent/operator tool calls through the four-step protocol (Declare → Vary → Test → Select); no autonomous polling
+- **Functional graph (IS):** propose (with the pre-registered `Prediction`, `types.rs:28-38`) → register variants (lineage via parent ids) → record grounded fitness (report references only, never simulated) → record the selection verdict (fossils retain selected AND rejected; the first selection resolves; a further selection is `failed_precondition`) → lineage/population readback (the fossil record; the population view serves the algedonic agenda and the curator's ORIENT)
+- **Hands off to:** L9 (the linked kanban goal scores the prediction — the Brier edge), L16 (the `algedonic_reference` names the review record chairing the selection)
+- **Pass 3 layer classification (2026-09-30):** primary **B** (agent-driven in-thread tool calls; the selection decision is agent/operator-mediated); secondary **C** (the durable registry is the fossil record — the reflection substrate; `population_query` is the curator's ORIENT view). Sense→report→actuate: sense = the grounded fitness records; report = the lineage/population readback + the registry; actuate = the selection verdict. Five properties: closed for the protocol lifecycle (propose→select resolves; the readback returns the fossils); timely per explicit call; accurate (grounded fitness — report refs only); complete (selected and rejected both retained); actionable (the fossils prevent blindly retrying rejected mutations). Grill: primary-A fails — no autonomous actuation; an autonomous selection controller would force reclassification. Alignment: **INV2 held by design** (the pre-registered `Prediction` with confidence is the stored expectation, scored via the linked kanban goal — the fleet's second INV2-exemplary loop after L2); INV4 held (the double-selection conflict is surfaced; nothing is dropped); INV5 partial (the registry feeds the algedonic agenda — the C-tier consumption is review-mediated).
+
 ## Boundary notes (sub-cycles folded into rows above, not separate rows)
 
 - Email alert delivery — sensor leg inside L2 (`hkask-email`, `main.rs:656`).
@@ -761,6 +769,26 @@ exactly that lag), not evidence of absence.)
    generally.
 
 ## Change log
+
+- 2026-09-30 — v0.24.7 closed the evolution server's recorded gaps (the
+  session review's next focus). **L24 added** (the evolution
+  experiment-registry cycle — the server landed in the concurrent
+  stream's `184d828c25`): primary B, secondary C, **INV2 held by
+  design** (the pre-registered `Prediction` scored via the linked
+  kanban goal — the fleet's second INV2-exemplary loop after L2).
+  **The per-server doc created**
+  (`reference/mcp-servers/evolution.md`), and the docs README gained
+  its row plus the previously missing kata-kanban row (a D2 loose end
+  the review's grounding surfaced). **One repair in the stream's new
+  code, per the fleet's adjudicated pattern:** the server declared
+  `vec![]` credentials while consuming `HKASK_DB_PASSPHRASE` and
+  refusing to start without it — the F-K1 class; fixed to the
+  kata-kanban `required` declaration (the honest form for a
+  startup-refusing durable-storage server) with a source-pin test
+  mirroring the corpus/kata-kanban pins. The S4 re-verification: the
+  concurrent stream's provider refactor is still in flight; its diff
+  does not touch the S4 regions (verified), and the full test re-run
+  waits for their landing.
 
 - 2026-09-30 — v0.24.6 executed the operator's aeneas ruling ("delete"):
   the three-file Aeneas record set removed (the Proposed plan, the

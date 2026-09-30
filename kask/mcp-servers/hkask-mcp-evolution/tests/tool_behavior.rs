@@ -321,3 +321,17 @@ async fn replay_keys_converge_retried_calls_through_the_tool_seam() {
         "a retried propose with the same key must converge, not duplicate"
     );
 }
+
+#[test]
+fn evolution_declares_its_db_passphrase_as_required() {
+    let source = include_str!("../src/server.rs");
+    let declaration = [
+        "CredentialRequirement::required(",
+        "\n            \"HKASK_DB_PASSPHRASE\"",
+    ]
+    .concat();
+    assert!(
+        source.contains(&declaration),
+        "the evolution server must declare HKASK_DB_PASSPHRASE required — its run() \n         refuses to start without it, so an undeclared (vec![]) or optional form \n         misdescribes the startup contract"
+    );
+}

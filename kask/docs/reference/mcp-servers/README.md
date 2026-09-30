@@ -35,7 +35,7 @@ mds_categories: [composition, domain]
 | [Companies](companies.md) | `kask/mcp-servers/hkask-mcp-companies` | FIBO-anchored financial forecasting, dual-provider routing, research notes and transcripts (portfolio ledger lives in the portfolio server) | 40 |
 | [Corpus](corpus.md) | `kask/mcp-servers/hkask-mcp-corpus` | Corpus gathering, document processing, QA generation, style replicas | 26 |
 | Curator | `kask/mcp-servers/hkask-mcp-curator` | Curator agent metacognition (memory, regulation query, algedonic signals, skill-use issue reporting) | 15 |
-| Evolution | `kask/mcp-servers/hkask-mcp-evolution` | Experiment registry for the sharded evolution program: registered experiments with pre-registered predictions, variant lineages, grounded fitness records, selection fossils | 6 |
+| [Evolution](evolution.md) | `kask/mcp-servers/hkask-mcp-evolution` | Experiment registry for the sharded evolution program: registered experiments with pre-registered predictions, variant lineages, grounded fitness records, selection fossils | 6 |
 | Kata Kanban | `kask/mcp-servers/hkask-mcp-kata-kanban` | Toyota Kata task boards and persistent-until-resolved functional goals | 27 |
 | [Media](media.md) | `kask/mcp-servers/hkask-mcp-media` | AI media generation (image, video, audio, gallery, educt transcripts, Reduct cloud) | 98 |
 | [Portfolio](portfolio.md) | `kask/mcp-servers/hkask-mcp-portfolio` | General-purpose transaction-ledger portfolio store (stocks, prediction-event portfolios, CMP indices) with materialized daily holdings and returns views | 18 |

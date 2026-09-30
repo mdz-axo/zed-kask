@@ -16,7 +16,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 
 **Per-crate docs:** [`diataxis/INDEX.md`](diataxis/INDEX.md) lists 19 retained artifacts across 10 cross-cutting sets. Eight tutorials were folded on 2026-09-16; on 2026-09-28 the eight per-crate how-to documents were folded into their set references (each reference gained a Procedures section) and the hkask-tool-port explanation was folded into its reference; `diataxis/hkask-mcp-server/tutorial.md` is the one retained tutorial.
 
-**Corpus size (measured 2026-09-30):** 70 Markdown documents and one live YAML inventory, 71 files total (`find kask/docs -type f | wc -l`) — under the formal **fewer-than-75** count gate, with a working **60-file target** as the condensation direction (cap and target set by operator ruling 2026-09-30, [`DOCUMENTATION_STANDARDS.md`](architecture/DOCUMENTATION_STANDARDS.md) §3). The 2026-09-30 three-layer review added two documents (the admitted cybernetic-nervous-system reference model and the alignment plan); the same day's CU-5 condensation deleted the Aeneas record set (three files — tombstone below). The 2026-09-28 condensation folded the eight per-crate how-to documents into their set references (Procedures sections), recorded in the lifecycle ledger below. [`principle-constraints.yaml`](architecture/principle-constraints.yaml) is a live governance inventory consumed by `kask/scripts/check-principle-constraints.sh`, not a deletion candidate.
+**Corpus size (measured 2026-09-30):** 71 Markdown documents and one live YAML inventory, 72 files total (`find kask/docs -type f | wc -l`) — under the formal **fewer-than-75** count gate, with a working **60-file target** as the condensation direction (cap and target set by operator ruling 2026-09-30, [`DOCUMENTATION_STANDARDS.md`](architecture/DOCUMENTATION_STANDARDS.md) §3). The 2026-09-30 three-layer review added two documents (the admitted cybernetic-nervous-system reference model and the alignment plan); the same day's CU-5 condensation deleted the Aeneas record set (three files — tombstone below). The 2026-09-28 condensation folded the eight per-crate how-to documents into their set references (Procedures sections), recorded in the lifecycle ledger below. [`principle-constraints.yaml`](architecture/principle-constraints.yaml) is a live governance inventory consumed by `kask/scripts/check-principle-constraints.sh`, not a deletion candidate.
 
 ## Repair and improvement plans
 
@@ -48,6 +48,8 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 | [`reference/mcp-servers/README.md`](reference/mcp-servers/README.md) | MCP server registry — 13 built-in servers and the fleet tool surface. |
 | [`reference/mcp-servers/companies.md`](reference/mcp-servers/companies.md) | Companies server — valuation, forecasting, and portfolio analysis. |
 | [`reference/mcp-servers/corpus.md`](reference/mcp-servers/corpus.md) | Corpus server — gather → process → output pipeline. |
+| [`reference/mcp-servers/evolution.md`](reference/mcp-servers/evolution.md) | Evolution server — experiment registry for the sharded evolution program (6 tools). |
+| [`reference/mcp-servers/kata-kanban.md`](reference/mcp-servers/kata-kanban.md) | Kata-kanban server — Toyota Kata task boards and persistent-until-resolved functional goals (27 tools). |
 | [`reference/mcp-servers/media.md`](reference/mcp-servers/media.md) | Media server — gallery, generation, transcription, jobs, and workflows. |
 | [`reference/mcp-servers/portfolio.md`](reference/mcp-servers/portfolio.md) | Portfolio server — transaction-ledger portfolio store. |
 | [`reference/mcp-servers/prediction-markets.md`](reference/mcp-servers/prediction-markets.md) | Prediction-markets server — Polymarket/Kalshi calibration and economic data. |
@@ -184,7 +186,7 @@ The eight tutorial removals landed in `5881f1f406fafe12f4fc65a549dbf1eb0a62ca84`
 - [x] Internal links target retained documents; the eight folded how-to documents' links were repointed to their set references (2026-09-28).
 - [x] Diagram metadata has unique-ID/location registry parity (106 records, tree-verified 2026-09-28).
 - [x] Edited citations use full repository-relative paths; 525 sampled citations across the recomposed artifacts resolve (2026-09-28).
-- [x] Document count is 71, under the fewer-than-75 cap with a working 60-file target (`find kask/docs -type f | wc -l`, measured 2026-09-30).
+- [x] Document count is 72, under the fewer-than-75 cap with a working 60-file target (`find kask/docs -type f | wc -l`, measured 2026-09-30).
 
 ## See also
 

@@ -468,7 +468,10 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
             );
             Ok(EvolutionServer::new(ctx.webid, store))
         },
-        vec![],
+        vec![hkask_mcp_server::CredentialRequirement::required(
+            "HKASK_DB_PASSPHRASE",
+            "SQLCipher encryption passphrase for the evolution experiment registry — the server refuses to start without it (the registry is the record of record from day one; no legacy-import path)",
+        )],
     )
     .await
 }
