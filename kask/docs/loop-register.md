@@ -2,7 +2,7 @@
 title: "Loop Register — zed-kask canonical loops"
 audience: [developers, architects, agents, operators]
 last_updated: 2026-09-28
-version: "0.23.22"
+version: "0.23.23"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle]
@@ -843,8 +843,45 @@ exactly that lag), not evidence of absence.)
 | D11 | Passphrase onboarding | **B, wontfix-by-design** — the current behavior is the design: default provisioned on install, the user rotates when they want; R1 CLOSED (the audit's option A was over-engineering) | Stands |
 | D12 | Repair-plan §8 #2–#8 | Deferred as a batch (not addressed this round) | Stands |
 
+### Follow-up plan execution (2026-09-29, operator-approved order F3→F2→F1→F4)
+
+| # | Follow-up | Disposition |
+| --- | --- | --- |
+| F3 | Register pin-citation freshness sweep | **DONE** (`cfb89021f8`): six drifted inventory citations refreshed (scenarios +7, training +4, companies +2, corpus +9, swarm +4, media +21) — all eleven now match the tree |
+| F2 | Legitimate-boundary pin sweep | **DONE** (`8f60b45efa`): the corpus credential declaration pinned in the kata-kanban source-pin form; the intent-validation and thread-recall legitimate sides verified pinned; the D5 propagation arm recorded as source-verified (unreachable through the public seam without disproportionate harness); the corpus tagging-tests fmt drift fixed |
+| F1 | D7 Nebius status contract | **DONE** (`83c5f27b95`): `RunningUnknown` + `completion_check_unavailable` — a failed completion check no longer claims Running; the legitimate short-circuit (unconfigured HF) keeps Running, pinned; the failed-check path source-verified (a live HF fetch is the only in-test route; injection seam disproportionate); 45 training tests green |
+| F4 | finish_research_run polish | **DONE** (`bbac2563f9`): the manifest surfaces `status_history` (from/to/note/at per transition), pinned by the extended contract test; the one-second PK edge needs no code — `now_rfc3339` carries sub-second precision, accepted and documented |
+| F5 | `.rules` proposals | **PACKAGED** (below, for operator ruling — never edited inline per `.rules` hygiene) |
+| F6 | D12 repair-plan §8 walk-through | Pending on request |
+
+**F5 — proposed `.rules` additions (operator ruling requested):**
+
+1. *A security fix's legitimate-use boundary is pinned in the same change
+   as the attack it closes.* Non-obvious (the refusal test alone stays
+   green while a legitimate use regresses — observed: the O_NOFOLLOW
+   primitive's inside-root-symlink boundary was reasoned but unpinned
+   until the review caught it); specific enough to act on; encountered
+   once expensively.
+2. *Probe instrument validity before reading absence as evidence — a
+   too-narrow sweep reports false gaps.* Non-obvious (the plural-heading
+   grep produced 8 false gap records; the same class recurred as the
+   register's own inventory drift); repeatedly encountered; the curator
+   already carries it as a memory — the `.rule` would bind audit work
+   generally.
+
 ## Change log
 
+- 2026-09-29 — v0.23.23 executed the approved follow-up plan in order.
+  F3 (`cfb89021f8`): six drifted pin citations refreshed. F2
+  (`8f60b45efa`): the corpus credential declaration pinned; the
+  legitimate boundaries verified; the D5 propagation arm recorded
+  source-verified. F1 (`83c5f27b95`): **D7 landed** — `RunningUnknown`
+  + the surfaced reason; the short-circuit boundary pinned; the
+  failed-check path source-verified. F4 (`bbac2563f9`): the manifest
+  surfaces the status history; the PK edge needs no code (sub-second
+  timestamps). F5 packaged: two proposed `.rules` additions awaiting
+  the operator's ruling. F6 pending on request. Full gate green at
+  every landing.
 - 2026-09-29 — v0.23.22 the four-lens post-landing review (refactor-
   architecture, essentialist, hypothesis-framer, grill-me) over the
   pass's 14 code commits. Findings fixed: the register's tool inventory
