@@ -62,7 +62,7 @@ Statement classification (all axes of semantics-classify-statement, the tiers an
 2. Apply the rule that OUGHT (prescriptive) overrides IS (descriptive) in conflicts.
 3. Break ties within the same ontological mode by epistemic certainty (Declarative > Probabilistic > Subjunctive).
 4. Break ties within the same epistemic mode by constraint force (Prohibition > Guardrail > Guideline > Evidence > Hypothesis).
-5. Break ties within the same constraint force by provenance authority (Specification > Design > Implementation > Runtime > Memory > Inference > Unknown).
+5. Break ties within the same constraint force by provenance authority (Specification > Design > Implementation > Runtime > Memory > External > Inference > Unknown — External ranks below every hKask layer and above inference; its domain authority flows through the Tier-5 anchoring, operator ruling 2026-09-30).
 6. Use ontology anchoring as the final tiebreaker, prioritizing the Tier-5 anchoring rank (FIBO over SUMO, unanchored as lowest priority — the rank is adoption-based, not the confidence modifier).
 7. (D) Once each statement's five classifications are fixed, the ranking is a lexicographic comparison — compute it with `lisp_eval`, never judge it. Encode each statement as its rank on each tier (0 = strongest, in the orders of steps 2–6) and compare: `(begin (define cmp (lambda (a b) (cond ((is_null a) "tie") ((< (car a) (car b)) "first") ((> (car a) (car b)) "second") (t (cmp (cdr a) (cdr b)))))) (cmp a b))`, env `{ "a": [<5 tier ranks>], "b": [<5 tier ranks>] }`. The classifications themselves remain P.
 8. Determine the winning statement and select a resolution strategy (Override, Scope, Defer, Escalate, or Confirm if no conflict exists).

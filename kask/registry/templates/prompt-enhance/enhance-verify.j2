@@ -35,6 +35,15 @@ contract:
     next_action:
       type: string
       enum: [proceed_to_output, rewrite, escalate_to_user]
+    acceptance_criteria_check:
+      type: array
+      description: Per-criterion check results from the acceptance-criteria pass
+    proxy_eval_simulation:
+      type: array
+      description: Simulated proxy-eval questions and answers
+    decoupling_attestation:
+      type: string
+      description: The decoupled critic's attestation of independence
 ---
 {# Phase 4: Decoupled critic via grill-me self-challenge #}
 {# goal: Independently interrogate the enhanced prompt to prevent self-confirming loop. #}

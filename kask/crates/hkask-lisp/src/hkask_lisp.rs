@@ -25,6 +25,22 @@
 //! and 36 call sites rely on graceful degradation — lisp-repair L0 count:
 //! 21 in `.agents/skills/`, 15 in `kask/`).
 //!
+//! # Absent-key convention (form-authoring idiom)
+//!
+//! `assoc` on a MISSING key returns nil; `string=` on that nil returns false
+//! SILENTLY (the vacuity trap), while numeric comparisons on it error
+//! loudly — a form that reads a key its producer never emits either computes
+//! a vacuous result or fails without naming the missing key (observed live
+//! 2026-09-30: the bug-hunt convergence form's defect channel read `tier`
+//! where the oracle emits `verdict`, and was vacuously true until the
+//! batch-7 repair). The idiom: GUARD with `is_null` before comparing —
+//! `(if (is_null (assoc "k" obj)) <absent-branch> (string= (assoc "k" obj) "x"))`.
+//! An engine-level refuse on unguarded absent-key access is proposed to the
+//! lisp-repair program as a follow-up (operator-approved direction
+//! 2026-09-30); until it lands, the guard is the form author's
+//! responsibility, and the healthy pinned forms (diagnose's walk-check,
+//! bug-hunt's contract check) already follow it.
+//!
 //! # Infix Operator Notation
 //!
 //! Infix is a token-level rewrite BEFORE parsing (all five behaviors

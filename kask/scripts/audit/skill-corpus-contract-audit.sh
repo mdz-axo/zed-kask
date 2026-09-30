@@ -10,6 +10,14 @@
 #      (the contract line is the only occurrence in the file).
 #   3. UNDECLARED CONSUMPTION — a context variable the body consumes
 #      that the contract does not declare.
+#   4. UNDECLARED EXAMPLE OUTPUT — a top-level key the body's output
+#      example emits that neither contract list declares (the BH4/M5
+#      class: body-emitted outputs missing from the contract are
+#      invisible to checks 1-3; found 3x by hand in batch 7 — charter's
+#      probe_instructions/prior_feedback_consumed, report's
+#      charter/probes_executed). Extraction: 2-space-indent keys inside
+#      fenced blocks after the first Output heading; input-list keys
+#      are excluded (an echoed input is not a finding).
 #
 # False-positive classes excluded by construction (verified against the
 # pass-5 corpus audit): {% raw %} spans are stripped before extraction
@@ -76,6 +84,19 @@ contract_fields() {
 # never count as body usage.
 body_after_contract() {
     awk 'seen { print } /^---$/ { seen = 1 }' "$1"
+}
+
+# Top-level keys of the body's output example: 2-space-indent quoted
+# keys inside fenced blocks that appear after the first Output heading.
+# Deeper-indented keys are nested schema, not contract-level fields.
+output_example_keys() {
+    awk '
+        /^#+ .*[Oo]utput/ { inoutput = 1 }
+        /^```/ { infence = !infence; next }
+        inoutput && infence && /^  "[a-zA-Z_][a-zA-Z0-9_]*":/ {
+            line = $0; sub(/^  "/, "", line); sub(/".*/, "", line); print line
+        }
+    ' "$1" | sort -u
 }
 
 checked=0
@@ -166,6 +187,18 @@ for file in "$REG"/*/*.j2; do
             *" $var "*) ;;
             *)
                 echo "  $rel: undeclared: $var"
+                found=1
+                ;;
+        esac
+    done
+
+    # 4. Undeclared example output: a top-level key the body's output
+    #    example emits that neither contract list declares.
+    for key in $(output_example_keys "$body_file"); do
+        case " $ins $outs " in
+            *" $key "*) ;;
+            *)
+                echo "  $rel: undeclared-example-output: $key"
                 found=1
                 ;;
         esac
