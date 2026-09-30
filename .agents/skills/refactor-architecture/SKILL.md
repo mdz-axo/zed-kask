@@ -1,7 +1,7 @@
 ---
 name: refactor-architecture
 core: true
-description: "End-to-end architecture refactoring: discover friction, rank deepening candidates, walk the design tree, audit duplication, plan strangler-fig migration, and verify integrity. Composes tdd, coding-guidelines, deep-module, essentialist."
+description: "End-to-end architecture refactoring: discover friction, rank deepening candidates, walk the design tree, audit duplication, plan strangler-fig migration, and verify integrity. Composes tdd, coding-guidelines, pragmatic-semantics, deep-module."
 ---
 
 # Refactor Architecture
@@ -13,9 +13,16 @@ End-to-end architecture refactoring skill. Merges the discovery phase (formerly 
 3. **Deepen** — Walk the design tree for the selected candidate: define the deepened module shape, identify seams and adapters, confirm the test surface.
 4. **Audit** — Audit cross-surface duplication (CLI, API, MCP) and classify each operation as Identical, Divergent, Surface-only, or Pass-through. Apply the deletion test.
 5. **Strangle** — Plan and execute the strangler-fig migration for the selected domain: write failing tests, implement the service, wire adapters, delete duplicate logic. One domain per commit.
-6. **Verify** — Verify surgical completeness: dependency direction, depth test, P6/P7/P8 compliance, clippy, test suite, surface adapter thinness.
+6. **Verify** — Verify surgical completeness: dependency direction, depth test, code-hygiene compliance (no stubs, no deprecation attributes, behavioral tests), clippy, test suite, surface adapter thinness.
 
-Includes the migration-strategy phase (folded from the standalone `strangler-fig` skill). Composes `tdd`, `coding-guidelines`, `pragmatic-semantics`, `deep-module`, `essentialist`, and `pragmatic-cybernetics` as methodological guidance.
+Includes the migration-strategy phase (folded from the standalone `strangler-fig` skill). Composes `tdd` (ra-strangle's failing-then-passing seam tests), `coding-guidelines` (surgical change scope), `pragmatic-semantics` (the five-force constraint classification in ra-audit/ra-strangle), and `deep-module` (the design tree, the depth test, and the deletion test applied throughout) as methodological guidance.
+
+## Reference models
+
+- **Ousterhout, *A Philosophy of Software Design*** (via `deep-module`) — deep modules (small interface, large implementation), the deletion test (delete the module: does complexity vanish or reappear across callers), and shallow-module diagnosis.
+- **Fowler, "StranglerFigApplication"** (2004, martinfowler.com; cited at `kask/docs/architecture/core/MDS.md`'s fowler-strangler footnote) — introduce new alongside old, migrate one domain at a time, delete duplication only after both surfaces delegate.
+- **The five-force hierarchy** (via `pragmatic-semantics`) — Prohibition / Guardrail / Guideline / Evidence / Hypothesis constraint-force classification for design decisions.
+- **The Magna Carta principles** (the project's first four architecture principles, `kask/docs/architecture/core/PRINCIPLES.md`) — the mapping target for classified decisions.
 
 ## Initial and target condition
 
@@ -38,7 +45,7 @@ Includes the migration-strategy phase (folded from the standalone `strangler-fig
 - When a candidate has been selected and you need to walk the design tree to define the deepened module shape, identify seams and adapters, and confirm the test surface.
 - When duplicated domain operations exist across multiple surfaces (CLI, API, MCP) and need to be audited, classified, and assessed for extraction.
 - When planning a strangler-fig migration to extract a shared service layer from duplicated surface logic for a specific domain.
-- When verifying surgical completeness after a domain migration or full extraction to ensure dependency direction, module depth, and P6/P7/P8 compliance.
+- When verifying surgical completeness after a domain migration or full extraction to ensure dependency direction, module depth, and code-hygiene compliance (no stubs, no deprecation attributes, behavioral tests).
 
 ## When NOT to Use
 
@@ -108,7 +115,7 @@ Includes the migration-strategy phase (folded from the standalone `strangler-fig
 
 1. Verify dependency direction to ensure CLI/API route to services, services route to domain crates, and no circular dependencies exist.
 2. Apply the depth test to each module in the service crate by deleting it mentally and checking if complexity vanishes or reappears across callers.
-3. Check P6/P7/P8 compliance by ensuring no stubs, no deprecation attributes, and that all tests verify stated behavioral properties.
+3. Check code-hygiene compliance: no `todo!()`/`unimplemented!()` stubs, no new `#[deprecated]` attributes (prefer deletion over deprecation), and all tests at the selected seam verify stated behavioral properties, not implementation structure.
 4. Run clippy and the test suite across the service, CLI, API, and workspace crates.
 5. Verify surface adapter thinness by ensuring CLI and API adapters contain only service calls, formatting, and error mapping.
 6. Produce a structured `pass|fail|partial` report with observed command outputs and file:line evidence. Missing evidence is `unmeasured`, not a pass.
@@ -124,18 +131,25 @@ Includes the migration-strategy phase (folded from the standalone `strangler-fig
 | `ra-route.j2` | Route a deepened architecture design to the appropriate follow-up action (proceed_to_refactor, need_more_data, defer_or_reject). |
 | `ra-audit.j2` | Audit and classify all duplicated operations across CLI, API, and MCP surfaces. Apply the deletion test to each candidate. Produce RDF triples, classification table, and mermaid entity-relationship diagram of the duplication landscape. |
 | `ra-strangle.j2` | Plan the strangler-fig migration for a selected domain: define the new service operation, design CLI/API adapters, identify duplication to delete, and list verification steps. Enforces one-domain-per-commit discipline, dependency direction checks, and surgical change scope. |
-| `ra-verify.j2` | Verify surgical completeness after a domain migration or full extraction: dependency direction, depth test, P6/P7/P8 compliance, clippy, test suite, deletion test on service modules. Produces a structured pass/fail report. |
+| `ra-verify.j2` | Verify surgical completeness after a domain migration or full extraction: dependency direction, depth test, code-hygiene compliance (no stubs, no deprecation attributes, behavioral tests), clippy, test suite, deletion test on service modules. Produces a structured pass/fail report. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `refactor-architecture/ra-explore`) and a context object with the required variables.
 
 Template context variables (from each template's [inference] contract):
-- `ra-audit.j2`: `focus_area`,`code_context` `known_adrs`,`constraint_forces`
-- `ra-candidates.j2`: `friction_points`,`shallow_modules` `focus_area`,`known_adrs`
-- `ra-deepen.j2`: `selected_candidate`,`focus_area` `known_adrs`,`glossary_terms`
-- `ra-explore.j2`: `focus_area`,`code_context`,`known_adrs`
-- `ra-route.j2`: `decision`,`deepened_design`
-- `ra-strangle.j2`: `domain`,`target_condition`,`service_module_name`,`current_cli_path`,`current_api_path`,`known_adrs`,`constraint_forces`
-- `ra-verify.j2`: `domain`,`migration_phase`,`initial_condition`,`target_condition`,`code_context`,`known_adrs`
+- `ra-audit.j2`: `focus_area`, `code_context`, `known_adrs`, `constraint_forces`
+- `ra-candidates.j2`: `friction_points`, `shallow_modules`, `focus_area`, `known_adrs`
+- `ra-deepen.j2`: `selected_candidate`, `focus_area`, `known_adrs`, `glossary_terms`
+- `ra-explore.j2`: `focus_area`, `code_context`, `known_adrs`
+- `ra-route.j2`: `decision`, `deepened_design`
+- `ra-strangle.j2`: `domain`, `target_condition`, `service_module_name`, `current_cli_path`, `current_api_path`, `known_adrs`, `constraint_forces`
+- `ra-verify.j2`: `domain`, `migration_phase`, `initial_condition`, `target_condition`, `code_context`, `known_adrs`
 
 ## Constraints
+
+- Exploration without a selected candidate remains advisory, never migration authority; the user's explicit signal (ra-route) gates any refactor.
+- One domain per commit, surgical change scope: every changed line traces to the extraction; no cross-domain refactors, no style changes.
+- Dependency direction is inviolable: CLI/API route to services, services route to domain crates, no circular dependencies.
+- Duplicate business logic is deleted only after both adapters pass their behavioral checks — never while the previous logic is still the verified path.
+- Verification is evidence-based: missing command output is `unmeasured`, never a pass; a passing build with persistent friction is `continue`, not `done`. Re-verify at most twice per domain; a third failure stops with its evidence.
+- Real package names from the tree, never presumed CLI/API/service crates; the deletion test decides whether a module earns its keep.
 

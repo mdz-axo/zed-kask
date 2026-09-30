@@ -7,15 +7,14 @@ contract:
     routing_decision: string
     rationale: string
     next_skill: string|null
-    migration_plan: object|null
     measurements_needed: array|null
     adr_recommendation: object|null
 ---
 {# Architecture Decision Routing — Route a deepened design to the appropriate
-   follow-up action. Three outcomes: proceed to refactor (
-   refactor-architecture), need more data (diagnose), or defer/reject (record
-   ADR). It receives an explicit user decision; an unknown signal cannot be
-   treated as a rejection. #}
+   follow-up action. Three outcomes: proceed to refactor (continue inside
+   this skill's ra-audit phase), need more data (diagnose), or defer/reject
+   (record ADR). It receives an explicit user decision; an unknown signal
+   cannot be treated as a rejection. #}
 {# goal: Route a deepened architecture design decision to the appropriate follow-up action. #}
 
 You are an architecture decision router. A deepened design has been produced
@@ -37,9 +36,10 @@ Based on the decision signal:
 
 {% if decision == "proceed_to_refactor" %}
 - **Proceed to refactor.** The design is clear and the user wants changes.
-- Recommended next skill: 
-`refactor-architecture` (for extracting shared logic).
-- Produce: migration plan, order of operations, tests that must pass at each step.
+- Next phase: the audit phase (ra-audit) — classify duplication across the
+  surfaces, then plan the strangler-fig migration (ra-strangle) for the
+  audited domain. The migration plan is ra-strangle's output, produced from
+  the audit's classification — not here.
 {% elif decision == "need_more_data" %}
 - **Need more data.** The candidate depends on runtime behavior not yet measured.
 - Recommended next skill: `diagnose` — build a feedback loop first.
@@ -59,7 +59,6 @@ Based on the decision signal:
 JSON object:
 - routing_decision: "proceed_to_refactor" | "need_more_data" | "defer_or_reject" | "invalid"
 - rationale: why this routing was chosen
-- next_skill: recommended hKask skill to activate (refactor-architecture, diagnose, or null)
-- migration_plan: if proceed_to_refactor, ordered steps for the migration
+- next_skill: recommended hKask skill to activate (diagnose, or null — the proceed path continues inside this skill's ra-audit phase)
 - measurements_needed: if need_more_data, what to measure and how
 - adr_recommendation: if defer_or_reject with load-bearing reason, suggested ADR title and body

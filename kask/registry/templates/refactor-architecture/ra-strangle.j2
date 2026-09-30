@@ -127,7 +127,7 @@ Respond with one JSON object containing `migration_plan` (the *only* top-level f
 - No surface types in service signatures (no `Json<T>`, no `println!`).
 - Every test must check a stated behavioral expectation through an independent oracle.
 - Dependency direction is inviolable: no circular dependencies.
-- P6: No `todo!()` or `unimplemented!()` stubs.
+- No `todo!()` or `unimplemented!()` stubs.
 - Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
 - Preserve the original prompt structure and formatting.
 - Handle missing variables gracefully (leave as-is or use default if specified).

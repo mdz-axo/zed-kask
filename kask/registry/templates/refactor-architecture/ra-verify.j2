@@ -1,4 +1,4 @@
-{# goal: Verify surgical completeness after a domain migration or full extraction: dependency direction, depth test, P6/P7/P8 compliance, clippy, test suite, deletion test on service modules. Produces a structured pass/fail report. #}
+{# goal: Verify surgical completeness after a domain migration or full extraction: dependency direction, depth test, code-hygiene compliance (no stubs, no deprecation attributes, behavioral tests), clippy, test suite, deletion test on service modules. Produces a structured pass/fail report. #}
 [inference]
 contract:
   input:
@@ -12,13 +12,13 @@ contract:
     verification_report: object
     depth_test_results: array
     dependency_check: object
-    p6_p7_p8_compliance: object
+    code_hygiene_compliance: object
     clippy_result: string
     test_result: string
     checklist: array
 ---
 
-You are a service layer verification agent. After a domain migration or full extraction, verify surgical completeness: dependency direction, depth, P6/P7/P8 compliance, clippy, test suite, deletion test.
+You are a service layer verification agent. After a domain migration or full extraction, verify surgical completeness: dependency direction, depth, code-hygiene compliance, clippy, test suite, deletion test.
 
 ## Domain
 
@@ -63,11 +63,11 @@ Verify the actual selected surfaces depend on the shared service and the service
 
 For each touched module in the actual selected service crate, apply the deletion test: would removing it lose behavior and force complexity into callers, or merely remove a pass-through? Count public surface items as a review signal; more than seven is a prompt to inspect depth, **not** a mechanical shallow verdict. State behavior hidden and caller benefit before judging depth.
 
-### 3. P6/P7/P8 Compliance
+### 3. Code-Hygiene Compliance (the skill's own three checks — not the PRINCIPLES.md P6/P7/P8, which are per-user data directories, evolutionary architecture, and semantic grounding)
 
-- **P6 (Delete stubs):** inspect the touched crate for `todo!()` and `unimplemented!()`; cite the searched paths and any hits.
-- **P7 (Prefer deletion over deprecation):** inspect for new `#[deprecated]` attributes rather than leaving a compatibility path.
-- **P8 (Test with invariants):** tests at the selected service seam verify the user's stated behavioral property, not merely current implementation structure.
+- **Delete stubs:** inspect the touched crate for `todo!()` and `unimplemented!()`; cite the searched paths and any hits.
+- **Prefer deletion over deprecation:** inspect for new `#[deprecated]` attributes rather than leaving a compatibility path.
+- **Test with invariants:** tests at the selected service seam verify the user's stated behavioral property, not merely current implementation structure.
 
 ### 4. Clippy
 
@@ -94,9 +94,9 @@ Inspect each actual surface adapter: it should call the selected service and tra
 
 ## Output Requirements
 
-Respond with a JSON object carrying **exactly** the contract's top-level fields: `verification_report`, `depth_test_results`, `dependency_check`, `p6_p7_p8_compliance`, `clippy_result`, `test_result`, and `checklist`.
+Respond with a JSON object carrying **exactly** the contract's top-level fields: `verification_report`, `depth_test_results`, `dependency_check`, `code_hygiene_compliance`, `clippy_result`, `test_result`, and `checklist`.
 
-`verification_report` contains `domain`, `phase`, `overall_status` (`pass|fail|partial`), `target_condition_status` (`met|unmet|unmeasured`), and file:line or run-output evidence comparing initial and target conditions. A build-only pass leaves the target unmeasured and overall status partial. The depth list records touched modules, actual public-item counts, behavior hidden, deletion-test reasoning, and evidence; counts do not set a verdict by themselves. The dependency and P6/P7/P8 objects record observed status and violations. `clippy_result` and `test_result` cite commands and their real outputs or say not run. Every checklist item (red seam test, green behavior, both adapters, deletion, dependency direction, target friction, and tests) carries `done|not_done|unmeasured` plus evidence; no Boolean defaults to true.
+`verification_report` contains `domain`, `phase`, `overall_status` (`pass|fail|partial`), `target_condition_status` (`met|unmet|unmeasured`), and file:line or run-output evidence comparing initial and target conditions. A build-only pass leaves the target unmeasured and overall status partial. The depth list records touched modules, actual public-item counts, behavior hidden, deletion-test reasoning, and evidence; counts do not set a verdict by themselves. The dependency and code-hygiene objects record observed status and violations. `clippy_result` and `test_result` cite commands and their real outputs or say not run. Every checklist item (red seam test, green behavior, both adapters, deletion, dependency direction, target friction, and tests) carries `done|not_done|unmeasured` plus evidence; no Boolean defaults to true.
 
 ## Constraints
 
