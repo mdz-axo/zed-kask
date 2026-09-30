@@ -57,9 +57,9 @@ pub enum LatencyTier {
 
 /// Static profile of a web search provider: cost, latency, strengths,
 /// weaknesses, and the query intents it's best for. This is the
-/// metacognitive lookup table — the model reads it (via
-/// `web_recommend_provider` or the `provider_profiles` field on `web_search`)
-/// to pick a provider deliberately rather than relying on blind fallback.
+/// metacognitive lookup table — the model reads it (via the
+/// `provider_profiles` field on `web_ping`) to pick a provider deliberately
+/// rather than relying on blind fallback.
 ///
 /// The static table is merged with live performance data (success rate,
 /// p50 latency from `reg.web.provider` spans) at runtime to produce a scored
@@ -81,8 +81,12 @@ pub struct ProviderProfile {
 }
 
 /// The canonical provider profile table. Single source of truth consumed by:
-/// - `web_recommend_provider` (scores providers against a query)
-/// - `web_search` output (`provider_profiles` field for metacognitive surfacing)
+/// - the intent-driven provider selection inside `web_search` (scores
+///   providers against a query; the ranking surfaces as
+///   `provider_recommendations`)
+/// - `web_ping` output (`provider_profiles` field for metacognitive
+///   surfacing — moved off the per-call `web_search` response 2026-09-30:
+///   the static table repeated ~1KB of identical context on every call)
 /// - `score_providers` (merges static profile with live performance)
 ///
 /// Keep entries aligned with the providers registered in `build_provider_pool`.

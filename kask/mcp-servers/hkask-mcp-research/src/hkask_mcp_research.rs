@@ -230,10 +230,22 @@ impl ResearchServer {
             }
 
             let providers = self.pool.health_check().await;
+            // Static provider profiles live here (2026-09-30, zk-reference
+            // lesson L5): the table is per-server-version constant, so it is
+            // served once per ping instead of ~1KB on every web_search
+            // response. web_search keeps the per-call
+            // `provider_recommendations` audit of intent-driven picks.
+            let provider_profiles: Vec<ProviderProfileOutput> = self
+                .pool
+                .provider_kinds()
+                .iter()
+                .filter_map(|kind| provider_profile(kind).map(ProviderProfileOutput::from))
+                .collect();
             let output = PingOutput {
                 status: "ok".to_string(),
                 version: SERVER_VERSION.to_string(),
                 providers,
+                provider_profiles,
             };
             Ok(serde_json::to_value(&output)
                 .unwrap_or_else(|_| serde_json::json!({"error": "serialization failed"})))
@@ -249,7 +261,12 @@ impl ResearchServer {
          recommendation for you — the ranking is surfaced in \
          provider_recommendations. When both are None, `strategy` selects: \
          quick (best-scored single keyword provider), web (all, RRF fusion), \
-         news (news-capable), deep (all + 2x results + content extraction).")]
+         news (news-capable), deep (all + 2x results + content extraction). \
+         The google_scholar and google_books engines need operator-qualified \
+         queries for exact-title lookups (e.g. intitle:\"The Logic of Scientific \
+         Discovery\") — plain titles return generic web noise; their results do \
+         not expose Google Books view status (full view vs preview). For an \
+         exact-title paper lookup, prefer resolve_paper's `title` mode.")]
     pub async fn web_search(
         &self,
         Parameters(req): Parameters<SearchRequest>,
@@ -453,15 +470,6 @@ impl ResearchServer {
                 None
             };
 
-            // Surface the static profiles of all configured providers so
-            // the model has metacognitive context for its next call.
-            let provider_profiles: Vec<ProviderProfileOutput> = self
-                .pool
-                .provider_kinds()
-                .iter()
-                .filter_map(|kind| provider_profile(kind).map(ProviderProfileOutput::from))
-                .collect();
-
             let metadata = SearchMetadata::from(&compound);
             tracing::info!(
                 target: "hkask.web",
@@ -490,7 +498,6 @@ impl ResearchServer {
                 providers_failed: compound.providers_failed.clone(),
                 domain_filter_removed,
                 selected_provider,
-                provider_profiles,
                 provider_recommendations,
                 rerank,
             };
@@ -725,15 +732,46 @@ impl ResearchServer {
                 Some(&extracted.format),
                 Some(&extracted.content),
             )?;
+            // Degradation surfacing (2026-09-30, zk-reference lesson L1): an
+            // extraction can succeed HTTP-wise yet capture only page chrome —
+            // the origin served a JS shell, a bot-block page, or an empty
+            // body (observed: a Cloudflare-gated publisher article extracted
+            // as nav chrome + metadata with statusCode 200 and was cached as
+            // a valid extraction). A near-empty body on a successful fetch is
+            // surfaced as a note, never a bare success — and a degraded
+            // extraction is NOT cached, so a retry re-fetches the origin
+            // instead of replaying the shell.
+            const MIN_SUBSTANTIVE_CONTENT_CHARS: usize = 500;
+            let content_chars = extracted.content.trim().chars().count();
+            let degraded = content_chars < MIN_SUBSTANTIVE_CONTENT_CHARS;
+            let note = degraded.then(|| {
+                format!(
+                    "extraction captured only {content_chars} chars — the origin \
+                     likely served a JS shell, a bot-block page, or an empty body; \
+                     the content may be incomplete (consider the Wayback Machine \
+                     or a headless-browser route for this URL)"
+                )
+            });
+            if degraded {
+                tracing::warn!(
+                    target: "hkask.web",
+                    url = %url,
+                    content_chars,
+                    "web_extract captured a near-empty body; surfacing degradation note"
+                );
+            }
             let extract_output = ExtractOutput {
                 url: extracted.url,
                 format: extracted.format,
                 content: extracted.content,
                 metadata: extracted.metadata,
+                note,
             };
             let mut output = serde_json::to_value(&extract_output)
                 .unwrap_or_else(|_| serde_json::json!({ "error": "serialization failed" }));
-            self.cache.insert(ckey, output.clone()).await;
+            if !degraded {
+                self.cache.insert(ckey, output.clone()).await;
+            }
 
             // Server-side ledger append (see web_search.run_id): the audit
             // copy is the extracted content, capped by the ledger.
@@ -1627,7 +1665,7 @@ impl ResearchServer {
     // ═══════════════════ Research-run ledger ═══════════════════
 
     #[tool(
-        description = "Begin a research run: opens a server-side ledger that records what the research tools actually return under this run. Returns {run_id, status}. Pass the run_id to web_search / web_extract / web_find_similar to record their results non-repudiably (recorded_by='server'); read the manifest via get_research_run."
+        description = "Begin a research run: opens a server-side ledger that records what the research tools actually return under this run. Returns {run_id, status}. Pass the run_id to web_search / web_extract / web_find_similar to record their results non-repudiably (recorded_by='server'); read the manifest via get_research_run. Use this for bulk-retrieval sweeps too: begin the run first and pass run_id on every search/extract, and the sweep's claims are backed by a server-recorded manifest instead of agent assertion (observed 2026-09-30: a 46-upgrade reference sweep ran without a run and its evidence stayed agent-asserted)."
     )]
     pub async fn begin_research_run(
         &self,
@@ -1841,17 +1879,67 @@ impl ResearchServer {
     }
 
     #[tool(
-        description = "Resolve a paper reference to a typed identity: parses any supported form (DOI, arXiv ID, PMID, PMCID, OpenAlex work ID — bare, prefixed, or registry URL), normalizes it, returns the identifier kind/value, canonical URL, and stable ledger key, and enriches with OpenAlex metadata (title, authors, year, venue) when a record exists — the identity is always returned even when the metadata lookup degrades. Pass run_id to record the resolution into a research run's ledger. Every rejection names what was expected."
+        description = "Resolve a paper reference to a typed identity. Two modes: (1) identifier — pass `query` with any supported form (DOI, arXiv ID, PMID, PMCID, OpenAlex work ID — bare, prefixed, or registry URL) to parse, normalize, and enrich it; (2) bibliographic — pass `title` with a work's title for Crossref's bibliographic search: up to 3 candidates (DOI, title, year, venue, first author) are surfaced, the top candidate is resolved to the typed identity and enriched via OpenAlex — check the candidates before trusting the resolution (a title search can hit a different work than intended). Both modes return the identifier kind/value, canonical URL, stable ledger key, and OpenAlex metadata (title, authors, year, venue, and the candidate open-access copy URL `oa_pdf_url` when the record holds one — a candidate, not a verified document) — the identity is always returned even when the metadata lookup degrades. Pass run_id to record the resolution into a research run's ledger. Every rejection names what was expected."
     )]
     pub async fn resolve_paper(
         &self,
-        Parameters(ResolvePaperRequest { query, run_id }): Parameters<ResolvePaperRequest>,
+        Parameters(ResolvePaperRequest {
+            query,
+            title,
+            run_id,
+        }): Parameters<ResolvePaperRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "resolve_paper", async {
-            if query.trim().is_empty() {
-                return Err(McpToolError::invalid_argument("query must not be empty"));
-            }
-            let parsed = crate::research::paper_id::parse_paper_id(&query)?;
+            // Exactly one of query (identifier) / title (bibliographic) —
+            // passing both is ambiguous, neither is empty input. Both
+            // rejections name what was expected.
+            let (parsed, candidates) = match (query, title) {
+                (Some(query), None) => {
+                    let query = query.trim().to_string();
+                    if query.is_empty() {
+                        return Err(McpToolError::invalid_argument(
+                            "query must not be empty (pass either query — an identifier — or title — a bibliographic lookup)",
+                        ));
+                    }
+                    (crate::research::paper_id::parse_paper_id(&query)?, None)
+                }
+                (None, Some(title)) => {
+                    let title = title.trim().to_string();
+                    if title.is_empty() {
+                        return Err(McpToolError::invalid_argument(
+                            "title must not be empty (pass either query — an identifier — or title — a bibliographic lookup)",
+                        ));
+                    }
+                    // Crossref bibliographic resolution: candidates are
+                    // surfaced in full so the caller can verify the match
+                    // (the no-substitution rule) before trusting the top
+                    // candidate's resolution.
+                    let candidates = self.pool.resolve_title(&title, 3).await.map_err(|e| {
+                        McpToolError::failed_precondition(format!(
+                            "Crossref bibliographic search failed: {e}"
+                        ))
+                    })?;
+                    let Some(top) = candidates.first() else {
+                        return Ok(serde_json::json!({
+                            "mode": "bibliographic",
+                            "query_title": title,
+                            "note": "no Crossref candidates for this title — the work may be unregistered, or the title may not match any registered bibliographic record",
+                        }));
+                    };
+                    let parsed = crate::research::paper_id::parse_paper_id(&top.doi)?;
+                    (parsed, Some(candidates))
+                }
+                (Some(_), Some(_)) => {
+                    return Err(McpToolError::invalid_argument(
+                        "pass either query (an identifier) or title (a bibliographic lookup), not both",
+                    ));
+                }
+                (None, None) => {
+                    return Err(McpToolError::invalid_argument(
+                        "pass either query (an identifier: DOI, arXiv ID, PMID, PMCID, or OpenAlex work ID) or title (a bibliographic lookup)",
+                    ));
+                }
+            };
             let mut result = serde_json::json!({
                 "identifier": {
                     "kind": parsed.kind(),
@@ -1860,6 +1948,11 @@ impl ResearchServer {
                 "canonical_url": parsed.canonical_url(),
                 "stable_key": crate::research::paper_id::stable_paper_key(&parsed),
             });
+            if let Some(candidates) = candidates {
+                result["mode"] = serde_json::json!("bibliographic");
+                result["candidates"] = serde_json::to_value(&candidates)
+                    .unwrap_or_else(|_| serde_json::json!("serialization failed"));
+            }
 
             // OpenAlex enrichment — best-effort, surfaced either way: the
             // identity is the deterministic floor and never blocked by the
@@ -1874,6 +1967,7 @@ impl ResearchServer {
                         "publication_year": metadata.publication_year,
                         "authors": metadata.authors,
                         "venue": metadata.venue,
+                        "oa_pdf_url": metadata.oa_pdf_url,
                     });
                     Some(metadata)
                 }

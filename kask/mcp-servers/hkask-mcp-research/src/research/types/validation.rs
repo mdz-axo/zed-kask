@@ -1,7 +1,13 @@
 //! Request validation and health error sanitization.
 
 // --- Task 6: Compound provider timeout (shorter than client timeout) ---
-pub(crate) const COMPOUND_PROVIDER_TIMEOUT_SECS: u64 = 10;
+/// 20s: raised from 10s (2026-09-30) because SerpAPI — the slowest compound
+/// participant — consistently exceeded the 10s bound in live use (observed:
+/// "Provider timed out after 10s" on most fusion calls of the zk-reference
+/// retrieval sweep, so the provider never participated at all). The bound
+/// stays below the 30s client timeout so a hung provider still fails the
+/// fusion rather than hanging it.
+pub(crate) const COMPOUND_PROVIDER_TIMEOUT_SECS: u64 = 20;
 
 /// Sanitize a provider error to prevent credential leakage.
 ///

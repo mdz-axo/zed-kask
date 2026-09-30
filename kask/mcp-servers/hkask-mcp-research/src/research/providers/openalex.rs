@@ -101,6 +101,7 @@ fn parse_openalex_work(body: &str) -> Option<PaperMetadata> {
     let venue = value["primary_location"]["source"]["display_name"]
         .as_str()
         .map(str::to_string);
+    let oa_pdf_url = work_oa_pdf_url(&value);
     Some(PaperMetadata {
         openalex_id,
         doi,
@@ -108,6 +109,7 @@ fn parse_openalex_work(body: &str) -> Option<PaperMetadata> {
         publication_year,
         authors,
         venue,
+        oa_pdf_url,
     })
 }
 
@@ -162,10 +164,23 @@ fn parse_openalex_works(body: &str) -> Vec<SearchResult> {
                 description: (!description_parts.is_empty()).then(|| description_parts.join(" — ")),
                 source: venue,
                 published: publication_year.map(|year| year.to_string()),
+                oa_pdf_url: work_oa_pdf_url(work),
                 provider: Some("openalex".to_string()),
             })
         })
         .collect()
+}
+
+/// Candidate open-access copy URL from an OpenAlex work record:
+/// `best_oa_location.pdf_url` (the direct PDF) falling back to
+/// `open_access.oa_url` (a landing page for the OA copy). A candidate, not
+/// a verified document — the copy can be a different version than the
+/// cited work, so the consumer verifies identity before use.
+fn work_oa_pdf_url(work: &serde_json::Value) -> Option<String> {
+    work["best_oa_location"]["pdf_url"]
+        .as_str()
+        .or_else(|| work["open_access"]["oa_url"].as_str())
+        .map(str::to_string)
 }
 
 fn value_venue(work: &serde_json::Value) -> Option<String> {

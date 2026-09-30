@@ -434,6 +434,7 @@ mod rerank_tests {
             description: None,
             source: None,
             published: None,
+            oa_pdf_url: None,
             rrf_score: 1.0,
             provider_count: 1,
             providers: vec!["stub".to_string()],

@@ -120,6 +120,7 @@ impl SerapiProvider {
             description,
             source,
             published,
+            oa_pdf_url: None,
             provider: None,
         })
     }
@@ -228,6 +229,7 @@ impl SerapiProvider {
                     description: Some("No transcript available for this video".to_string()),
                     source: Some("youtube".to_string()),
                     published: None,
+                    oa_pdf_url: None,
                     provider: Some("serpapi_transcript".to_string()),
                 }],
                 ..Default::default()
@@ -247,6 +249,7 @@ impl SerapiProvider {
                 description,
                 source: Some("youtube".to_string()),
                 published: None,
+                oa_pdf_url: None,
                 provider: Some("serpapi_transcript".to_string()),
             }],
             // Store full transcript in content_previews for downstream extraction
@@ -356,6 +359,7 @@ impl WebSearchProvider for SerapiProvider {
                             description: item["snippet"].as_str().map(|s| s.to_string()),
                             source: item["source"].as_str().map(|s| s.to_string()),
                             published: item["date"].as_str().map(|s| s.to_string()),
+                            oa_pdf_url: None,
                             provider: None,
                         })
                     })

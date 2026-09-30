@@ -20,9 +20,9 @@ pub mod types;
 use std::collections::HashMap;
 
 use providers::{
-    ArxivProvider, BraveProvider, FirecrawlProvider, OpenAlexProvider, RawFetchProvider,
-    SemanticScholarProvider, SerapiProvider, SerpEngine, TavilyProvider, WebBrowseProvider,
-    WebExtractProvider, WebSearchProvider,
+    ArxivProvider, BraveProvider, CrossrefProvider, FirecrawlProvider, OpenAlexProvider,
+    RawFetchProvider, SemanticScholarProvider, SerapiProvider, SerpEngine, TavilyProvider,
+    WebBrowseProvider, WebExtractProvider, WebSearchProvider,
 };
 
 // ── Re-exports ──
@@ -116,11 +116,18 @@ pub(crate) fn build_provider_pool(
 
     extract_providers.push(Box::new(RawFetchProvider::new()?));
 
+    // Crossref — free bibliographic title resolution (no API key); held
+    // typed for `resolve_paper`'s title mode, not registered as a search
+    // provider (its relevance search is a resolution instrument, not a
+    // discovery surface).
+    let crossref_provider = CrossrefProvider::new()?;
+
     Ok(ProviderPool::new(
         search_providers,
         extract_providers,
         browse_providers,
         exa_provider,
         Some(openalex_provider),
+        Some(crossref_provider),
     ))
 }

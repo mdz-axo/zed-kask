@@ -8,6 +8,7 @@ use hkask_mcp_server::server::validate_tool_url_with_dns;
 
 mod arxiv;
 mod brave;
+mod crossref;
 mod exa;
 mod firecrawl;
 mod openalex;
@@ -18,6 +19,7 @@ mod tavily;
 
 pub(crate) use arxiv::ArxivProvider;
 pub(crate) use brave::BraveProvider;
+pub(crate) use crossref::{CrossrefCandidate, CrossrefProvider};
 pub(crate) use exa::ExaProvider;
 pub(crate) use firecrawl::FirecrawlProvider;
 pub(crate) use openalex::OpenAlexProvider;
@@ -190,6 +192,18 @@ pub trait WebSearchPort: Send + Sync {
     ) -> Result<Option<PaperMetadata>, WebError> {
         Err(WebError::NoProvider)
     }
+    /// Bibliographic title resolution: Crossref's `query.bibliographic`
+    /// search returns up to `rows` candidate works (DOI, title, year,
+    /// venue, first author), most relevant first. Default: this port does
+    /// not resolve titles (surfaced by the caller — never silent).
+    /// `Ok(vec![])` = no registered work matches the title.
+    async fn resolve_title(
+        &self,
+        _title: &str,
+        _rows: u32,
+    ) -> Result<Vec<CrossrefCandidate>, WebError> {
+        Err(WebError::NoProvider)
+    }
 }
 
 #[async_trait]
@@ -220,6 +234,11 @@ pub(crate) struct ProviderPool {
     /// The OpenAlex provider, held typed (the `exa` pattern) for paper-id
     /// resolution — a direct lookup, not a pool search.
     pub(crate) openalex: Option<OpenAlexProvider>,
+    /// The Crossref provider, held typed (the `exa`/`openalex` pattern) for
+    /// bibliographic title resolution — `resolve_paper`'s title mode, not a
+    /// pool search (Crossref's relevance search is a resolution instrument,
+    /// not a discovery provider).
+    pub(crate) crossref: Option<CrossrefProvider>,
     /// In-process rolling performance aggregator for the cybernetic feedback
     /// loop. Updated inline at each `reg.web.provider` span emission site;
     /// read by `score_providers` to apply live success-rate and p50-latency
@@ -256,6 +275,7 @@ impl ProviderPool {
         browse_providers: Vec<Box<dyn WebBrowseProvider>>,
         exa: Option<ExaProvider>,
         openalex: Option<OpenAlexProvider>,
+        crossref: Option<CrossrefProvider>,
     ) -> Self {
         Self {
             search_providers,
@@ -263,6 +283,7 @@ impl ProviderPool {
             browse_providers,
             exa,
             openalex,
+            crossref,
             performance: std::sync::Mutex::new(
                 crate::research::performance::ProviderPerformanceAggregator::new(),
             ),
@@ -360,6 +381,7 @@ impl ProviderPool {
                         description: r.description,
                         source: r.source,
                         published: r.published,
+                        oa_pdf_url: r.oa_pdf_url,
                     })
                     .collect();
                 Ok(CompoundSearchResult {
@@ -537,6 +559,7 @@ impl ProviderPool {
             description: Option<String>,
             source: Option<String>,
             published: Option<String>,
+            oa_pdf_url: Option<String>,
             providers: Vec<String>,
             ranks: Vec<usize>,
         }
@@ -557,6 +580,11 @@ impl ProviderPool {
                     if is_academic && result.source.is_some() {
                         entry.source = result.source.clone();
                     }
+                    // First provider to report a candidate OA copy wins; a
+                    // later provider's None never clears it.
+                    if entry.oa_pdf_url.is_none() {
+                        entry.oa_pdf_url = result.oa_pdf_url;
+                    }
                 }
                 None => {
                     url_map.insert(
@@ -567,6 +595,7 @@ impl ProviderPool {
                             description: result.description,
                             source: result.source,
                             published: result.published,
+                            oa_pdf_url: result.oa_pdf_url,
                             providers: vec![provider],
                             ranks: vec![rank],
                         },
@@ -590,6 +619,7 @@ impl ProviderPool {
                     description: entry.description,
                     source: entry.source,
                     published: entry.published,
+                    oa_pdf_url: entry.oa_pdf_url,
                     rrf_score,
                     provider_count,
                     providers: entry.providers,
@@ -1025,6 +1055,23 @@ impl WebSearchPort for ProviderPool {
         }
     }
 
+    /// Bibliographic title resolution: Crossref's `query.bibliographic`
+    /// search returns up to `rows` candidate works (DOI, title, year,
+    /// venue, first author), most relevant first. Every candidate is
+    /// surfaced — a title search can hit a different work than intended,
+    /// so the caller verifies the match before trusting the resolution.
+    /// `Ok(vec![])` is a legitimate outcome (no registered work matches).
+    async fn resolve_title(
+        &self,
+        title: &str,
+        rows: u32,
+    ) -> Result<Vec<CrossrefCandidate>, WebError> {
+        match &self.crossref {
+            Some(provider) => provider.search_bibliographic(title, rows).await,
+            None => Err(WebError::NoProvider),
+        }
+    }
+
     async fn health_check(&self) -> Vec<ProviderHealthEntry> {
         self.health_check_all().await
     }
@@ -1125,7 +1172,14 @@ mod tests {
     fn score_providers_ranks_configured_above_unconfigured() {
         // Build a pool with only Brave configured (no API keys for others).
         let brave = StubProvider { kind: "brave" };
-        let pool = ProviderPool::new(vec![Box::new(brave)], Vec::new(), Vec::new(), None, None);
+        let pool = ProviderPool::new(
+            vec![Box::new(brave)],
+            Vec::new(),
+            Vec::new(),
+            None,
+            None,
+            None,
+        );
         let recs = pool.score_providers("test query", None);
         // Brave (configured) should rank first; others get the +10 unconfigured penalty.
         assert_eq!(recs[0].kind, "brave");
@@ -1154,6 +1208,7 @@ mod tests {
             Vec::new(),
             None,
             None,
+            None,
         );
         let recs = pool.score_providers("latest AI news", Some("news"));
         // Brave (best_for includes "news") should rank above Tavily.
@@ -1175,6 +1230,7 @@ mod tests {
             vec![Box::new(brave), Box::new(tavily)],
             Vec::new(),
             Vec::new(),
+            None,
             None,
             None,
         );
@@ -1221,7 +1277,14 @@ mod tests {
     #[test]
     fn score_providers_no_live_penalty_below_sample_threshold() {
         let brave = StubProvider { kind: "brave" };
-        let pool = ProviderPool::new(vec![Box::new(brave)], Vec::new(), Vec::new(), None, None);
+        let pool = ProviderPool::new(
+            vec![Box::new(brave)],
+            Vec::new(),
+            Vec::new(),
+            None,
+            None,
+            None,
+        );
         // Record 2 failures (below the 3-sample threshold).
         {
             let mut agg = pool.performance.lock().unwrap();
@@ -1293,6 +1356,7 @@ mod tests {
             Vec::new(),
             None,
             None,
+            None,
         );
         let query = SearchQuery {
             query: "industry economics".to_string(),
@@ -1332,7 +1396,7 @@ mod tests {
     /// recommendation.
     #[test]
     fn poisoned_performance_channel_surfaces_the_degradation_in_every_recommendation() {
-        let pool = ProviderPool::new(vec![], vec![], vec![], None, None);
+        let pool = ProviderPool::new(vec![], vec![], vec![], None, None, None);
         // Poison the channel: a panic while holding the lock poisons the
         // std Mutex permanently — the exact degraded state under test.
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -1359,7 +1423,7 @@ mod tests {
     /// the two states were indistinguishable before.
     #[test]
     fn live_stats_degraded_distinguishes_poisoned_channel_from_thin_samples() {
-        let pool = ProviderPool::new(vec![], vec![], vec![], None, None);
+        let pool = ProviderPool::new(vec![], vec![], vec![], None, None, None);
         // Healthy, below MIN_SAMPLES_FOR_LIVE: not degraded, live fields None.
         let healthy = pool.score_providers("query", None);
         assert!(

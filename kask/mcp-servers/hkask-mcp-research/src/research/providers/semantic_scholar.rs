@@ -40,28 +40,58 @@ impl WebSearchProvider for SemanticScholarProvider {
             ),
         ];
 
-        let resp = self
-            .client
-            .get(format!("{SEMANTIC_SCHOLAR_API_BASE}/paper/search"))
-            .query(&params)
-            .send()
-            .await
-            .map_err(|e| {
-                WebError::ProviderUnavailable(format!("Semantic Scholar request failed: {e}"))
-            })?;
+        // 429 retry with backoff. Semantic Scholar's free tier rate-limits
+        // under bulk use (observed 2026-09-30: ~half of a retrieval sweep's
+        // fusion calls 429'd, and the agent routed around the provider with
+        // direct curl — a retry-policy gap, not agent ingenuity). Two retries
+        // with 1s/2s backoff absorb the transient bursts; a persistent 429
+        // surfaces with the attempt count so the caller knows it was not a
+        // single-shot failure.
+        const MAX_429_RETRIES: u32 = 2;
+        let (status, body) = {
+            let mut attempt: u32 = 0;
+            loop {
+                let resp = self
+                    .client
+                    .get(format!("{SEMANTIC_SCHOLAR_API_BASE}/paper/search"))
+                    .query(&params)
+                    .send()
+                    .await
+                    .map_err(|e| {
+                        WebError::ProviderUnavailable(format!(
+                            "Semantic Scholar request failed: {e}"
+                        ))
+                    })?;
+                let status = resp.status();
+                let body = resp.text().await.map_err(|e| {
+                    WebError::ProviderUnavailable(format!("Semantic Scholar body read failed: {e}"))
+                })?;
+                if status.as_u16() == 429 && attempt < MAX_429_RETRIES {
+                    attempt += 1;
+                    let backoff_secs = u64::from(attempt);
+                    tracing::warn!(
+                        provider = "semantic_scholar",
+                        attempt,
+                        backoff_secs,
+                        "Semantic Scholar rate limited; retrying with backoff"
+                    );
+                    tokio::time::sleep(std::time::Duration::from_secs(backoff_secs)).await;
+                    continue;
+                }
+                if status.as_u16() == 429 {
+                    return Err(WebError::RateLimited(format!(
+                        "Semantic Scholar rate limited after {attempt} backoff retries: {status}"
+                    )));
+                }
+                break (status, body);
+            }
+        };
 
-        let status = resp.status();
-        let body = resp.text().await.map_err(|e| {
-            WebError::ProviderUnavailable(format!("Semantic Scholar body read failed: {e}"))
-        })?;
         if !status.is_success() {
-            return Err(match status.as_u16() {
-                429 => WebError::RateLimited(format!("Semantic Scholar rate limited: {status}")),
-                _ => WebError::ProviderError(format!(
-                    "Semantic Scholar error {status}: {}",
-                    hkask_inference::openai_compat::sanitize_error_body(&body)
-                )),
-            });
+            return Err(WebError::ProviderError(format!(
+                "Semantic Scholar error {status}: {}",
+                hkask_inference::openai_compat::sanitize_error_body(&body)
+            )));
         }
 
         let parsed: serde_json::Value = serde_json::from_str(&body).map_err(|e| {
@@ -138,6 +168,7 @@ impl WebSearchProvider for SemanticScholarProvider {
                             description,
                             source,
                             published: year,
+                            oa_pdf_url: paper["openAccessPdf"]["url"].as_str().map(str::to_string),
                             provider: Some("semantic_scholar".to_string()),
                         })
                     })

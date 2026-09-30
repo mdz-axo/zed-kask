@@ -794,6 +794,7 @@ impl WebSearchPort for FixedResultsPool {
             url: url.to_string(),
             description: None,
             source: None,
+            oa_pdf_url: None,
             published: None,
             rrf_score: 1.0,
             provider_count: 1,
@@ -1084,6 +1085,7 @@ impl WebSearchPort for FailThenSucceedPool {
                     title: "Recovered".to_string(),
                     url: "https://example.com/recovered".to_string(),
                     description: None,
+                    oa_pdf_url: None,
                     source: None,
                     published: None,
                     rrf_score: 1.0,
@@ -2074,7 +2076,8 @@ async fn resolve_paper_canonicalizes_any_identifier_form() {
     let server = make_server_without_db();
     let out = ok(server
         .resolve_paper(Parameters(ResolvePaperRequest {
-            query: "https://doi.org/10.1038/s41586-024-00000-x".to_string(),
+            query: Some("https://doi.org/10.1038/s41586-024-00000-x".to_string()),
+            title: None,
             run_id: None,
         }))
         .await);
@@ -2099,7 +2102,8 @@ async fn resolve_paper_rejects_garbage_with_typed_error() {
     let server = make_server_without_db();
     let error = err(server
         .resolve_paper(Parameters(ResolvePaperRequest {
-            query: "not a paper".to_string(),
+            query: Some("not a paper".to_string()),
+            title: None,
             run_id: None,
         }))
         .await);
@@ -2127,7 +2131,8 @@ async fn resolve_paper_with_run_id_records_the_canonical_url() {
 
     let json = parse(&ok(server
         .resolve_paper(Parameters(ResolvePaperRequest {
-            query: "doi:10.1038/s41586-024-00000-x".to_string(),
+            query: Some("doi:10.1038/s41586-024-00000-x".to_string()),
+            title: None,
             run_id: Some(run_id.clone()),
         }))
         .await));
