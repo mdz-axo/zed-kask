@@ -60,39 +60,37 @@ FAIL=0
 # concept we care about, nothing flags. The enforceable direction is:
 #   every `<skill>/<file>.j2` template ref resolves (check 2), and
 #   every backtick token that exactly equals a *former* skill name fails.
-# Former names are discovered from git history once and pinned here.
-
-FORMER_SKILL_NAMES=(
-  'harness-optimize'
-  'harness-evolve-cycle'
-  'proptest'
-  'eqm'
-  'eqm-improvement'
-  'gemba-walk'
-  'sequential-inquiry'
-  'swarm-compose-guide'
-  'scenario-builder'
-  'idiomatic-lisp'
-  'constraint-forces-recast'
-  'gradient-seeded-recombination'
-  'capabilities-reasoner'
-  'principle-constraints'
-  'goal-analysis'
-  'skill-router'
-  'kali-audit'
-  'adversarial-red-team'
-  'graph-audit'
-  'runtime-posture-monitor'
-  'supply-chain-sentinel'
-  'web-deep-research'
+# Former names are derived at run time from the curated retirement record
+# RETIRED_SKILL_NAMES (crates/agent_skills/agent_skills.rs) — the same
+# single source of truth the installed-copy sweep uses: a shipped skill's
+# retirement appends its name there in the same commit, so this list
+# cannot silently miss one (the kata-coaching gap, found 2026-09-30, was a
+# stale hand-pinned copy of this array). If the record cannot be read or
+# parses to zero names, FAIL loudly — a missing record must not silently
+# shrink the list to nothing (a vacuous pass).
+RETIRED_RECORD="${RETIRED_RECORD:-$REPO_ROOT/crates/agent_skills/agent_skills.rs}"
+[ -f "$RETIRED_RECORD" ] || {
+  echo "FAIL: retired-skill record not found at $RETIRED_RECORD — the gate cannot derive its name list."
+  exit 1
+}
+mapfile -t FORMER_SKILL_NAMES < <(
+  awk '/^const RETIRED_SKILL_NAMES/{f=1;next} f&&/^\];/{f=0} f' "$RETIRED_RECORD" \
+    | grep -oE '"[a-z0-9-]+"' | tr -d '"'
 )
+[ "${#FORMER_SKILL_NAMES[@]}" -gt 0 ] || {
+  echo "FAIL: parsed zero names from $RETIRED_RECORD — the record moved or changed shape."
+  exit 1
+}
 
 # One grep per former name over all SKILL.md files (not one fork per line ×
 # name — that took ~45s and timed out agent gates at 30s).
 for former in "${FORMER_SKILL_NAMES[@]}"; do
   # A former name that has since been restored is no longer deleted —
-  # references to it resolve, so it must not flag (eqm/eqm-improvement
-  # were deleted in 9bcfe558a0 and restored in 9ec1df0ca0).
+  # references to it resolve, so it must not flag. The record holds only
+  # names absent from HEAD, so a restored skill drops out of the derived
+  # list automatically; this existence check is defense-in-depth against
+  # a record that lags a restoration (eqm was deleted in 9bcfe558a0 and
+  # restored in 9ec1df0ca0).
   [ -f "$SKILLS_DIR/$former/SKILL.md" ] && continue
   while IFS=: read -r skill_md line_no _; do
     echo "UNRESOLVED: $skill_md:$line_no references deleted skill \`$former\`"

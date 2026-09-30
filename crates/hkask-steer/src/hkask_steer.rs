@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! hkask-steer — the shared Steer-mode surface for kask panels.
 //!
 //! Steer mode embeds a curator `ConversationView` in a panel with the full

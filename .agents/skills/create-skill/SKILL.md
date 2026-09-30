@@ -186,7 +186,7 @@ Act:    Phase 5 — Converge     → Re-enter at the phase that owns the failure
 
 ### Phase 0 — Discover (does an installed skill already cover this?)
 
-Run once, before any research or writing. A new skill that duplicates or belongs inside an existing one is the failure this gate prevents (observed: `adapter-lifecycle` was authored standalone and later folded into `self-improvement`, 2026-09-26).
+Run once, before any research or writing. A new skill that duplicates or belongs inside an existing one is the failure this gate prevents (observed: adapter-lifecycle was authored standalone and later folded into `self-improvement`, 2026-09-26).
 
 1. Call the `skill` tool with name `skill-discovery` and the proposed skill's purpose as `task`; run its route phase against the installed catalog.
 2. Recompute the best fit and coverage band with route's `lisp_eval` form, from its reported dimension scores.

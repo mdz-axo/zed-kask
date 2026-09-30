@@ -5,7 +5,7 @@ description: "4-step Improvement Kata templates for scientific capability develo
 
 # Kata Improvement
 
-4-step Improvement Kata templates for scientific capability development. Step 1: Understand Direction. Step 2: Grasp Current Condition. Step 3: Establish Target Condition. Step 4: Experiment (PDCA). Each step references prior outputs. The cycle closes with before/after measurement. Includes beginner_mode drills (folded from kata-starter): Five Questions, PDCA Cycle, and Observation Drill for foundational scientific thinking habit-building; agents graduate when automaticity > 0.5. The Coaching Kata (folded from `kata-coaching`, 2026-09-28) is the coach role that runs the five questions against a learner's storyboard — the same kata seen from the other chair.
+4-step Improvement Kata templates for scientific capability development. Step 1: Understand Direction. Step 2: Grasp Current Condition. Step 3: Establish Target Condition. Step 4: Experiment (PDCA). Each step references prior outputs. The cycle closes with before/after measurement. Includes beginner_mode drills (folded from kata-starter): Five Questions, PDCA Cycle, and Observation Drill for foundational scientific thinking habit-building; agents graduate when automaticity > 0.5. The Coaching Kata (folded from kata-coaching, 2026-09-28) is the coach role that runs the five questions against a learner's storyboard — the same kata seen from the other chair.
 
 
 ## Reference model

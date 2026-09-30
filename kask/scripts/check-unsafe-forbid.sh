@@ -25,12 +25,13 @@ if [ -n "${SCAN_DIRS+x}" ]; then
   # shellcheck disable=SC2206
   scan_dirs=($SCAN_DIRS)
 else
+  # The zed-path hkask-* glob covers every editor-side widget/adapter
+  # crate — they live in the zed tree precisely because they depend on GPUI,
+  # which the kask tree forbids (§13.1) — so a new widget crate is scanned
+  # automatically; there is no list to drift.
   scan_dirs=(
     crates/*/ mcp-servers/*/
-    ../crates/swarm_panel/ ../crates/hkask-viz-core/
-    ../crates/marketplace_ui_common/
-    ../crates/hkask-scenarios-widget/ ../crates/hkask-portfolio-widget/
-    ../crates/hkask-kanban-widget/
+    ../crates/hkask-*/ ../crates/swarm_panel/ ../crates/marketplace_ui_common/
   )
 fi
 

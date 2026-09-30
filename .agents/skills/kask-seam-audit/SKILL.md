@@ -113,7 +113,7 @@ delegate to a separate skill. The UI track uses this skill's own layout loop
 (below), which also runs standalone before adding elements to any GPUI
 card or panel.
 
-## Measured-layout loop (UI track; formerly `ui-layout-discipline`)
+## Measured-layout loop (UI track; formerly ui-layout-discipline)
 
 Layout failures share one root cause: adding elements without measuring. Use
 it before adding elements to a card/panel renderer, when a card has more than

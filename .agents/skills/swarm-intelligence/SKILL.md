@@ -213,7 +213,7 @@ capture is Xaman Ek's built-in capability, then `delegate_results` flow back.
 
 Locally, the Kask Curator (or a human) steers by running the loop below on
 the plan this skill emitted. It is this skill's execute-and-feed-back step
-(formerly the separate `swarm-steering` skill, folded in 2026-09-25): it
+(formerly the separate swarm-steering skill, folded in 2026-09-25): it
 sequences and collects, it never re-plans — DECIDE owns composition.
 
 ### Steering a local swarm — directive and receipt (PDCA)

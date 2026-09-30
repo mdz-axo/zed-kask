@@ -9,9 +9,11 @@
 # via `Parameters<T>`) catch this class. See:
 #   docs/reference/mcp-servers/README.md  (Testing standard)
 #
-# This gate is RATCHETED: servers not yet covered are listed in ALLOWLIST below.
-# As each server gains a tool-behavior test, remove it from ALLOWLIST. When
-# ALLOWLIST is empty, the standard is fully enforced and cannot regress.
+# The ratchet COMPLETED 2026-08-26 (471943ad0e): every mcp-servers/hkask-*
+# server now carries tool-behavior contract tests, the allowlist is empty,
+# and the standard is fully enforced — an untested server now fails instead
+# of being allowlisted. The ratchet machinery below (allowlist + quota +
+# staleness warnings) stays for any future ramp-up.
 #
 # Limitation: the gate keys on the literal `Parameters(` token, a heuristic —
 # a helper that happens to use `Parameters(` would satisfy the gate without a
@@ -35,15 +37,10 @@ set -euo pipefail
 # The self-test already documented this cd as the gate's contract.
 cd "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/.."
 
-# Servers known to lack tool-behavior contract tests today. Shrink over time.
-# Remove a name the moment its tests/ contains a `Parameters(` call.
-#
-# Each entry is `name|added-date|reason`. The date is a real field (not a
-# comment) so the staleness check below can parse it. Entries older than
-# STALE_DAYS emit a non-failing warning in CI output — making a stalled
-# ratchet visible without forcing a deadline that may not be resourced.
-# (Follow-up issue #3: the quota prevents growth but doesn't force shrinkage;
-# visibility is the smallest honest fix.)
+# Allowlist entries: `name|added-date|reason` (empty today — the ratchet
+# completed 2026-08-26). The date is a real field (not a comment) so the
+# staleness check below can parse it; entries older than STALE_DAYS emit a
+# non-failing warning, making a stalled ramp-up visible in CI output.
 STALE_DAYS=${STALE_DAYS:-90}
 ALLOWLIST_MAX=9
 

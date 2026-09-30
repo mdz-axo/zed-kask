@@ -149,7 +149,7 @@ The former single inside-view step is split into three steps. Generation and cou
 - **Check (D):** re-render the gate; pass iff all four scores ≥ 0.60, checked with `lisp_eval` `(and (>= s1 0.6) (>= s2 0.6) (>= s3 0.6) (>= s4 0.6))`.
 - **Act:** stop on pass, or after 2 gate cycles. On a second failure, deliver the forecast with the failing dimensions and their scores recorded as the remaining gap.
 
-### Market-prior calibration check (formerly `calibration-stewardship`)
+### Market-prior calibration check (formerly calibration-stewardship)
 
 The prediction-markets server annotates every market record with a reliability tier derived from per-bucket Brier scores (Brier 1950, `onto_anchor` → derived `brier_score`; calibration in Tetlock & Gardner's sense → derived `forecast_calibration`). That tier is only as good as the observations feeding it, and the honest observation is the price a scan FIRST saw, never the post-resolution price. Run this check before a market prior anchors stage 2, or on its own when the operator asks for a calibration health check. Every tool call and the gate are D (the server computes snapshots, Brier and tiers; `lisp_eval` evaluates the gate); the cadence recommendation is P and the operator's decision.
 

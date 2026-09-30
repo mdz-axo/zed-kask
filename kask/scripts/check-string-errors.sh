@@ -16,8 +16,11 @@
 # - An Ok type ending in a nested `String>` (e.g. `Result<(String, String),
 #   TypedError>`) false-positives. Zero instances today; a loud false
 #   positive is recoverable, a silent miss is not.
-# - kask_bridge is out of scope (SCAN_DIRS covers `hkask-*` only): the
-#   bridge crosses the GPUI/tokio boundary where String errors are accepted.
+# - Scope is the kask subtree's `hkask-*` crates (SCAN_DIRS below). The
+#   zed-kask-side adapters — `kask_bridge` and the zed-path widget crates
+#   (`crates/hkask-*`, which live in the zed tree precisely because they
+#   depend on GPUI) — legitimately carry `String` errors across the editor
+#   boundary and are out of scope.
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -32,10 +35,10 @@ TMPFILE=$(mktemp)
 trap 'rm -f "$TMPFILE"' EXIT
 
 # Collect all lines containing 'Result<' from hKask library code (exclude tests
-# and main.rs). Only `hkask-*` crates are scanned — the bridge crate
-# `kask_bridge` and panel `kask_panel` are zed-kask-side adapters (D8/D10)
-# that legitimately use `String` errors to cross the GPUI/tokio boundary,
-# not hKask library code. See zed-host-architecture-plan.md:640.
+# and main.rs). Scan roots are the kask subtree's `hkask-*` crates — the
+# zed-kask-side adapters (`kask_bridge`, D8, and the zed-path widget crates
+# `crates/hkask-*`) legitimately use `String` errors to cross the GPUI
+# boundary and are out of scope. See zed-host-architecture-plan.md:640.
 grep -rn -- 'Result<' "${SCAN_DIRS[@]}" \
     --include='*.rs' \
     --exclude-dir=target \

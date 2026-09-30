@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! GPUI media widget for viewing images, video, and audio from the hkask
 //! media storage (gallery, generated assets, ffmpeg outputs).
 //!

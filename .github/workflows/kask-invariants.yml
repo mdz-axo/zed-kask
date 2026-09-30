@@ -39,7 +39,8 @@
 #   the surrounding doc comment). Wired 2026-09-10 after clearing the
 #   7-violation backlog that accumulated while the gate sat unwired.
 # - check-mcp-tool-tests.sh: every MCP server carries tool-behavior contract
-#   tests through the public `Parameters<T>` seam (ratcheted allowlist).
+#   tests through the public `Parameters<T>` seam (ratchet completed
+#   2026-08-26 — an untested server now fails instead of being allowlisted).
 # - check-mcp-servers.sh: the installer inventory matches the runtime set.
 # - check-reg-canonical.sh: every `reg.*` tracing target is a canonical
 #   namespace (registered in CANONICAL_NAMESPACES).
@@ -57,11 +58,15 @@
 #   execution per the .rules live-mutation trap: deterministic beats fast.
 #   Catches kask-side breakage before it lands.
 #
-# zed-check (minutes, main pushes only): the full workspace build. zed
-#   depends on every panel and the bridge, so this is the gate that catches
-#   zed-side breakage — the kanban_panel class (a removed field still
-#   constructed at a panel call site) that kask-scoped checks cannot see.
-#   PRs skip it to bound minutes; a red main run is the fix-forward signal.
+# zed-check (minutes, main pushes only): the full workspace build, plus
+#   the kask-side lib tests that live in zed-path crates (`agent` — the
+#   skill/lisp_eval/template seam pins; `settings_ui` — the skill-creator
+#   pins), which the kask-tests job's kask-subtree selection cannot
+#   reach. zed depends on every panel and the bridge, so cargo check -p
+#   zed is the gate that catches zed-side breakage — the kanban_panel
+#   class (a removed field still constructed at a panel call site) that
+#   kask-scoped checks cannot see. PRs skip this job to bound minutes; a
+#   red main run is the fix-forward signal.
 #
 # Both build jobs install mold first: .cargo/config.toml forces
 # -fuse-ld=mold for x86_64-unknown-linux-gnu (dev-box link-speed seam, see
@@ -200,3 +205,5 @@ jobs:
           sudo apt-get install -y mold
       - name: Full workspace — cargo check -p zed
         run: cargo check -p zed
+      - name: Zed-path kask seam tests — agent + settings_ui lib pins
+        run: cargo test -p agent -p settings_ui --lib

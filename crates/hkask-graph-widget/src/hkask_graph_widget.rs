@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! GPUI graph widget for rendering ```` ```graph ```` fenced blocks inline in
 //! agent markdown. The first viz type is the MAIA event-tree DAG, which
 //! consumes the `scenario_quantify` output shape produced by

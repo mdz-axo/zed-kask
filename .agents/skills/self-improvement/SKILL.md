@@ -192,7 +192,7 @@ The executing session never commits a durable change to a skill, prompt, memory,
 5. Judge the registered goal (`kanban_goal_judge`) with the measured results; the operator's score comes later.
 6. Respond with `decision` ("propose", "discard", or "blocked"), `proposal_card_id` (only after card creation succeeds), `failure_mode` (if discarded or blocked), and `next_step` ("re-enter", "exit", or "refine").
 
-### Prompt evolution (GEPA) — a scaffolding sub-loop (formerly `gpa-evolution`)
+### Prompt evolution (GEPA) — a scaffolding sub-loop (formerly gpa-evolution)
 
 For a prompt artifact with a runnable eval set, when natural-language reflection on real trajectories should drive the change (Agrawal et al., GEPA, arXiv:2507.19457; NSGA-II non-dominated sorting, Deb et al. 2002 — `onto_anchor` → derived `reflective_prompt_evolution`). Prompts only (v1). Reflection and mutation are P, critiqued by recorded eval-set scores; dominance, frontier membership and the convergence form are D.
 
@@ -210,7 +210,7 @@ Reflect and Propose are P steps executed by an agent: send the rendered template
 6. **Check (D)** — no tool computes hypervolume, so report it `unverified`; call `lisp_eval` with `(and (>= iteration 2) (= new_members 0))` over the measured count of variants that entered the frontier this iteration; converged only when an iteration adds no new non-dominated member (a single arrival means the frontier is still moving). Minimum 2, maximum 5 iterations per session.
 7. **Act** — never adopt. Follow the Proposal card handoff above with a title naming the target and a description containing the proposed prompt diff, frontier content, measured scores, cost, lineage, eval-set identity, evidence and verification criteria. Report a blocked filing if the board or card cannot be created; never use a file fallback. The operator chooses on that card in the gemba walk.
 
-### Fine-tuning run — the θ pathway executor (formerly `adapter-lifecycle`)
+### Fine-tuning run — the θ pathway executor (formerly adapter-lifecycle)
 
 When `si-select-pathway` selects Foundation Model Improvement (θ), the `si-exec-fm-*` templates plan the signal and this procedure executes it: measure, build a dataset from verdict-labeled rollouts, train under the `lora-training` math-contract gates, evaluate against the baseline, file a proposal. Use it only after a scaffold fix (prompt, skill body, tool schema) has been ruled out, a deterministic evaluator exists, and the operator has accepted a PEFT configuration from `lora-training`.
 

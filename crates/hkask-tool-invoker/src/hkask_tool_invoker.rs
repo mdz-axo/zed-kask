@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! Governed widget→MCP dispatch, in a leaf crate.
 //!
 //! This crate holds two things:
