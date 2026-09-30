@@ -869,7 +869,10 @@ mod tests {
             "error should mention 'reserved', got: {err}"
         );
         // Nothing should have been written.
-        assert!(!fs.is_file(Path::new("/skills/metacognition/SKILL.md")).await);
+        assert!(
+            !fs.is_file(Path::new("/skills/metacognition/SKILL.md"))
+                .await
+        );
     }
 
     #[gpui::test]

@@ -159,5 +159,4 @@ impl ServerContext {
             None => Ok(hkask_storage::Database::in_memory()?),
         }
     }
-
 }

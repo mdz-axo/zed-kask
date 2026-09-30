@@ -6,7 +6,13 @@
 # Every cargo invocation resolves the pinned toolchain from
 # rust-toolchain.toml on first use (rustup auto-install).
 #
-# check (seconds, every push + PR):
+# goal-traceability-advisory (seconds, every push + PR, continue-on-error):
+#   exercises the goal-traceability selftest fixtures and reports skill goal
+#   trailers over the push/PR range — syntax checking only, never approval;
+#   a red run never blocks.
+#
+# check (seconds, every push + PR) — every step below is an independently
+# failing gate:
 # - check-hkask-no-zed-deps.sh: the §13.1 governing invariant (no hKask
 #   crate depends on a zed-kask crate). DIVERGENCE.md advertises this as
 #   "wired into CI" — this workflow is that wiring.
@@ -16,6 +22,10 @@
 # - check-desktop-no-collision.sh: execs check-zed-isolation.sh; kept as an
 #   explicit step so the .desktop collision guard named in .rules is a
 #   visible, independently-failing CI step.
+# - check-build-profile.sh: MCP servers stay cheap to build; installs are
+#   capped and traced.
+# - check-lean-toolchain.sh: the pinned-toolchain install is offline-tested
+#   and failure-gated.
 # - cargo fmt --all -- --check: the workspace stays formatting-clean —
 #   14 hunks of drift landed on main undetected before this gate (2026-09-08).
 # - check-no-new-dead-code-allows.sh: no net-new #[allow(dead_code)] beyond
@@ -24,13 +34,23 @@
 #   struct-level allow even masked never-read fields). Adding an allow
 #   requires bumping the baseline in the same commit, which makes the
 #   addition a visible, reviewable act.
-# - check-string-errors.sh: no `Result<_, String>` in hkask library code.
-#   Wired 2026-09-10 after clearing the 7-violation backlog that
-#   accumulated while the gate sat unwired.
+# - check-string-errors.sh: no `Result<_, String>` in hkask library code
+#   (justified sites carry a `string-error-ok` marker with the reason in
+#   the surrounding doc comment). Wired 2026-09-10 after clearing the
+#   7-violation backlog that accumulated while the gate sat unwired.
 # - check-mcp-tool-tests.sh: every MCP server carries tool-behavior contract
 #   tests through the public `Parameters<T>` seam (ratcheted allowlist).
+# - check-mcp-servers.sh: the installer inventory matches the runtime set.
 # - check-reg-canonical.sh: every `reg.*` tracing target is a canonical
 #   namespace (registered in CANONICAL_NAMESPACES).
+# - check-skill-crossrefs.sh, check-forecast-conformance.sh and
+#   check-template-contracts.sh: skill cross-references resolve, the
+#   forecasting contract matches its primitives, and template contracts
+#   match template bodies.
+# - check-unsafe-forbid.sh and check-version-sync.sh: unsafe code stays
+#   gated, crate versions stay in sync.
+# - Gate selftests: the loop step below runs every
+#   kask/scripts/check-*-selftest.sh — see its comment for scope.
 #
 # kask-tests (minutes, every push + PR): the runbook's verification gate —
 #   cargo test over every hkask-* crate plus the kask_bridge seam. Serial
@@ -123,8 +143,19 @@ jobs:
         run: |
           bash kask/scripts/check-unsafe-forbid.sh
           bash kask/scripts/check-version-sync.sh
-      - name: Gate selftests — every gate above still fails on a violation
+      - name: Gate selftests — every kask/scripts/check-*-selftest.sh fails on a violation
         run: |
+          # The glob is broader than the gates wired above: it also proves
+          # LOCAL-only gates still fail on a synthetic violation, so a local
+          # gate cannot silently go vacuous without CI noticing —
+          # check-reg-creep.sh (the pre-commit anti-creep guard), the
+          # commit-msg git hook (kask/githooks/commit-msg) and the audit
+          # receipt checker under kask/scripts/audit/.
+          # Known gap: the build/ gates (check-zed-isolation.sh,
+          # check-desktop-no-collision.sh, check-build-profile.sh,
+          # check-lean-toolchain.sh) have no selftests; desktop-collision
+          # execs zed-isolation, so only that script's checks are
+          # transitively exercised.
           for selftest in kask/scripts/check-*-selftest.sh; do
             # Advisory: runs in goal-traceability-advisory, never blocking.
             [ "$selftest" = kask/scripts/check-goal-traceability-selftest.sh ] && continue

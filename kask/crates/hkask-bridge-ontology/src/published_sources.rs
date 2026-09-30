@@ -8,6 +8,56 @@
 //! reasoning here — a parent is only what the source states directly.
 
 use std::collections::{BTreeMap, HashMap};
+use std::fmt;
+
+/// A malformed published-source document — the typed error for every reader
+/// in this module. Hand-written (`Display` + `std::error::Error`, no
+/// thiserror) because this file is `#[path]`-included into `build.rs`, which
+/// may only depend on `std` (see the module doc). Variants carry the byte
+/// offset or file so a caller can point at the defect.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SourceError {
+    /// A `)` with no matching `(`, at byte `offset` of the KIF document.
+    UnbalancedClose { offset: usize },
+    /// A KIF string literal that never closed; it starts at byte `offset`.
+    UnterminatedString { offset: usize },
+    /// `count` `(` forms left open at the end of the KIF document.
+    UnclosedForms { count: usize },
+    /// A CSV quoted field that never closed.
+    UnterminatedQuote,
+    /// A schema.org CSV with no header row.
+    EmptyCsv { file: String },
+    /// A schema.org CSV row carrying no parseable `https://schema.org/` id.
+    RowWithoutId { file: String, row: Vec<String> },
+    /// A reader failure inside `file`, annotated by the indexer that knows
+    /// which source was being read.
+    InFile { file: String, source: Box<Self> },
+    /// Defensive: the reader stack emptied mid-document. Construction keeps
+    /// at least one frame, so this is unreachable by design; it exists so the
+    /// impossible state is a typed value, not a panic.
+    EmptyStack { offset: usize },
+}
+
+impl fmt::Display for SourceError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnbalancedClose { offset } => write!(f, "unbalanced ')' at byte {offset}"),
+            Self::UnterminatedString { offset } => {
+                write!(f, "unterminated string starting at byte {offset}")
+            }
+            Self::UnclosedForms { count } => write!(f, "{count} unclosed '('"),
+            Self::UnterminatedQuote => write!(f, "unterminated quoted field"),
+            Self::EmptyCsv { file } => write!(f, "{file}: empty"),
+            Self::RowWithoutId { file, row } => {
+                write!(f, "{file}: row without a schema.org id: {row:?}")
+            }
+            Self::InFile { file, source } => write!(f, "{file}: {source}"),
+            Self::EmptyStack { offset } => write!(f, "reader stack empty at byte {offset}"),
+        }
+    }
+}
+
+impl std::error::Error for SourceError {}
 
 /// One indexed term, ready to serialize as an index line.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -69,7 +119,7 @@ pub enum Sexp {
 
 /// Read every top-level form of a SUO-KIF document. `;` starts a comment only
 /// outside a string; strings honour backslash escapes.
-pub fn read_kif(source: &str) -> Result<Vec<Sexp>, String> {
+pub fn read_kif(source: &str) -> Result<Vec<Sexp>, SourceError> {
     let mut stack: Vec<Vec<Sexp>> = vec![Vec::new()];
     let mut chars = source.char_indices().peekable();
     while let Some((offset, c)) = chars.next() {
@@ -86,10 +136,10 @@ pub fn read_kif(source: &str) -> Result<Vec<Sexp>, String> {
                 let list = stack
                     .pop()
                     .filter(|_| !stack.is_empty())
-                    .ok_or_else(|| format!("unbalanced ')' at byte {offset}"))?;
+                    .ok_or(SourceError::UnbalancedClose { offset })?;
                 stack
                     .last_mut()
-                    .ok_or_else(|| format!("unbalanced ')' at byte {offset}"))?
+                    .ok_or(SourceError::UnbalancedClose { offset })?
                     .push(Sexp::List(list));
             }
             '"' => {
@@ -110,7 +160,7 @@ pub fn read_kif(source: &str) -> Result<Vec<Sexp>, String> {
                     }
                 }
                 if !closed {
-                    return Err(format!("unterminated string starting at byte {offset}"));
+                    return Err(SourceError::UnterminatedString { offset });
                 }
                 push_item(&mut stack, Sexp::Str(text), offset)?;
             }
@@ -129,16 +179,20 @@ pub fn read_kif(source: &str) -> Result<Vec<Sexp>, String> {
         }
     }
     if stack.len() != 1 {
-        return Err(format!("{} unclosed '('", stack.len() - 1));
+        return Err(SourceError::UnclosedForms {
+            count: stack.len() - 1,
+        });
     }
-    stack.pop().ok_or_else(|| "empty reader stack".to_string())
+    stack.pop().ok_or(SourceError::EmptyStack {
+        offset: source.len(),
+    })
 }
 
-fn push_item(stack: &mut [Vec<Sexp>], item: Sexp, offset: usize) -> Result<(), String> {
+fn push_item(stack: &mut [Vec<Sexp>], item: Sexp, offset: usize) -> Result<(), SourceError> {
     stack
         .last_mut()
         .map(|top| top.push(item))
-        .ok_or_else(|| format!("reader stack empty at byte {offset}"))
+        .ok_or(SourceError::EmptyStack { offset })
 }
 
 fn is_term_atom(atom: &str) -> bool {
@@ -188,10 +242,13 @@ impl SumoAccumulator {
 pub fn index_sumo(
     files: &[(String, String)],
     provenance: &str,
-) -> Result<Vec<IndexedTerm>, String> {
+) -> Result<Vec<IndexedTerm>, SourceError> {
     let mut acc = SumoAccumulator::default();
     for (file, text) in files {
-        let forms = read_kif(text).map_err(|error| format!("{file}: {error}"))?;
+        let forms = read_kif(text).map_err(|error| SourceError::InFile {
+            file: file.clone(),
+            source: Box::new(error),
+        })?;
         for form in &forms {
             let Sexp::List(items) = form else { continue };
             let [Sexp::Atom(head), rest @ ..] = items.as_slice() else {
@@ -274,7 +331,7 @@ pub fn index_sumo(
 // ── CSV (schema.org) ─────────────────────────────────────────────────────────
 
 /// RFC 4180 reader: quoted fields may contain commas, newlines and `""`.
-pub fn read_csv(text: &str) -> Result<Vec<Vec<String>>, String> {
+pub fn read_csv(text: &str) -> Result<Vec<Vec<String>>, SourceError> {
     let mut rows = Vec::new();
     let mut row = Vec::new();
     let mut field = String::new();
@@ -304,7 +361,7 @@ pub fn read_csv(text: &str) -> Result<Vec<Vec<String>>, String> {
         }
     }
     if in_quotes {
-        return Err("unterminated quoted field".to_string());
+        return Err(SourceError::UnterminatedQuote);
     }
     if !field.is_empty() || !row.is_empty() {
         row.push(field);
@@ -362,15 +419,20 @@ pub fn index_schema_org(
     types_csv: &str,
     properties_csv: &str,
     release: &str,
-) -> Result<Vec<IndexedTerm>, String> {
+) -> Result<Vec<IndexedTerm>, SourceError> {
     let mut out = Vec::new();
     for (csv, file, is_types) in [
         (types_csv, "schemaorg-all-https-types.csv", true),
         (properties_csv, "schemaorg-all-https-properties.csv", false),
     ] {
-        let rows = read_csv(csv).map_err(|error| format!("{file}: {error}"))?;
+        let rows = read_csv(csv).map_err(|error| SourceError::InFile {
+            file: file.to_string(),
+            source: Box::new(error),
+        })?;
         let Some((header, records)) = rows.split_first() else {
-            return Err(format!("{file}: empty"));
+            return Err(SourceError::EmptyCsv {
+                file: file.to_string(),
+            });
         };
         let column: BTreeMap<&str, usize> = header
             .iter()
@@ -389,7 +451,10 @@ pub fn index_schema_org(
                 continue;
             }
             let Some(concept) = schema_id(&cell(record, "id")) else {
-                return Err(format!("{file}: row without a schema.org id: {record:?}"));
+                return Err(SourceError::RowWithoutId {
+                    file: file.to_string(),
+                    row: record.clone(),
+                });
             };
             let name = concept.trim_start_matches("schema:").to_string();
             let (kind, parents) = if is_types {
@@ -1031,8 +1096,18 @@ mod tests {
                 Sexp::Str("A &%Contest; for fun \"x\"".into()),
             ])
         );
-        assert!(read_kif("(a (b)").is_err());
-        assert!(read_kif("(a))").is_err());
+        assert_eq!(
+            read_kif("(a (b)").unwrap_err(),
+            SourceError::UnclosedForms { count: 1 }
+        );
+        assert_eq!(
+            read_kif("(a))").unwrap_err(),
+            SourceError::UnbalancedClose { offset: 3 }
+        );
+        assert_eq!(
+            read_kif("\"open").unwrap_err(),
+            SourceError::UnterminatedString { offset: 0 }
+        );
     }
 
     #[test]
@@ -1094,6 +1169,10 @@ mod tests {
     fn csv_reader_handles_quotes_commas_and_newlines() {
         let rows = read_csv("\"id\",\"comment\"\n\"a\",\"x, \"\"y\"\"\nz\"\n").expect("csv");
         assert_eq!(rows, [vec!["id", "comment"], vec!["a", "x, \"y\"\nz"]]);
+        assert_eq!(
+            read_csv("\"unterminated").unwrap_err(),
+            SourceError::UnterminatedQuote
+        );
     }
 
     #[test]

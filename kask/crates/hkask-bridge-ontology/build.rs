@@ -13,6 +13,13 @@ use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
+// Build-script errors are plain text by design: cargo renders the `Display`
+// value of whatever `main` returns and nothing matches on variants, so the
+// plumbing below keeps `Result<_, String>` (each signature marked
+// `string-error-ok` for the CI gate). The shared readers in
+// `src/published_sources.rs` return the typed `SourceError`; the call sites
+// map it through `Display` so the rendered diagnostics are unchanged.
+
 struct Pin {
     path: String,
     url: String,
@@ -20,10 +27,12 @@ struct Pin {
 }
 
 fn read(path: &Path) -> Result<String, String> {
+    // string-error-ok
     std::fs::read_to_string(path).map_err(|error| format!("{}: {error}", path.display()))
 }
 
 fn verify_lock(sources: &Path) -> Result<Vec<Pin>, String> {
+    // string-error-ok
     let lock = read(&sources.join("SOURCES.lock"))?;
     let mut pins = Vec::new();
     for line in lock
@@ -89,6 +98,7 @@ fn verify_lock(sources: &Path) -> Result<Vec<Pin>, String> {
 
 /// Parse one pinned RDF file into the reader-neutral triple form.
 fn read_rdf(sources: &Path, pin: &Pin) -> Result<Vec<published_sources::RdfTriple>, String> {
+    // string-error-ok
     use oxrdf::{NamedOrBlankNode, Term};
     use oxrdfio::{RdfFormat, RdfParser};
     use published_sources::{RdfObject, RdfTriple};
@@ -138,6 +148,7 @@ fn index_fibo(
     sources: &Path,
     pins: &[Pin],
 ) -> Result<Vec<published_sources::IndexedTerm>, String> {
+    // string-error-ok
     use published_sources::{RdfObject, RdfVocabulary};
     const BASE: &str = "https://spec.edmcouncil.org/fibo/ontology/";
     const SOURCE_REV: &str = "f59157fe156e3d91b1c045222d0a7dc06b7d78a2";
@@ -320,6 +331,7 @@ fn index_fibo(
 }
 
 fn build() -> Result<(), String> {
+    // string-error-ok
     let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").map_err(|e| e.to_string())?);
     let sources = manifest.join("sources");
     println!("cargo:rerun-if-changed=sources");
@@ -349,18 +361,22 @@ fn build() -> Result<(), String> {
         let name = pin.path.trim_start_matches("sumo/").to_string();
         sumo_files.push((name, read(&sources.join(&pin.path))?));
     }
-    let mut terms = published_sources::index_sumo(&sumo_files, &sumo_version)?;
+    let mut terms = published_sources::index_sumo(&sumo_files, &sumo_version)
+        .map_err(|error| error.to_string())?;
 
     let schema_version = pins
         .iter()
         .find(|pin| pin.path.starts_with("schema-org/"))
         .map(|pin| pin.version.clone())
         .ok_or("SOURCES.lock pins no schema.org files")?;
-    terms.extend(published_sources::index_schema_org(
-        &read(&sources.join("schema-org/schemaorg-all-https-types.csv"))?,
-        &read(&sources.join("schema-org/schemaorg-all-https-properties.csv"))?,
-        &schema_version,
-    )?);
+    terms.extend(
+        published_sources::index_schema_org(
+            &read(&sources.join("schema-org/schemaorg-all-https-types.csv"))?,
+            &read(&sources.join("schema-org/schemaorg-all-https-properties.csv"))?,
+            &schema_version,
+        )
+        .map_err(|error| error.to_string())?,
+    );
 
     // RDF vocabularies: parse each directory once, index each namespace.
     let mut parsed: std::collections::HashMap<

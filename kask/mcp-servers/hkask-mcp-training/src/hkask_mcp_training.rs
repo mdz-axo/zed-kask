@@ -85,7 +85,7 @@ use crate::adapter::expertise::{AdapterLifecycle, Expertise, MdsDomain, Training
 use crate::adapter::{AdapterSource, TrainedLoRAAdapter};
 use crate::adapters::{AdapterMetrics, JobStore};
 use crate::dataset::DatasetPipeline;
-use crate::huggingface::{CompletionManifest, HuggingFaceTraining};
+use crate::huggingface::{CompletionManifest, HuggingFaceTraining, TrainingArtifactError};
 use crate::providers::{
     HostProviderError, TrainingHarnessId, TrainingHost, TrainingHostConfig, TrainingHostId,
     TrainingJobStatus, create_host,
@@ -249,7 +249,8 @@ impl TrainingServer {
     async fn check_completion_manifest(
         &self,
         job_id: &str,
-    ) -> Result<Option<(TrainingJobStatus, Option<CompletionManifest>)>, String> {
+    ) -> Result<Option<(TrainingJobStatus, Option<CompletionManifest>)>, TrainingArtifactError>
+    {
         let Some(hf_training) = HuggingFaceTraining::from_env().ok() else {
             return Ok(None);
         };
@@ -290,7 +291,7 @@ impl TrainingServer {
                     error = %e,
                     "Completion manifest not found or unparsable (training may still be in progress, or the manifest is malformed)"
                 );
-                Err(e.to_string())
+                Err(e)
             }
         }
     }

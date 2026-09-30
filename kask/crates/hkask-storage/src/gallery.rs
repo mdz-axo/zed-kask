@@ -874,7 +874,6 @@ impl GalleryStore {
             .ok_or_else(|| GalleryStoreError::NotFound(NotFound { entity_type: "image".into(), id: image_id.into() }))
     }
 
-
     /// expect: Reanalysis replaces only successful model-produced metadata while preserving user annotations. [P1]
     /// pre: record was captured before inference; replace_tag_types names successful pipeline outputs
     /// post: prior non-user tags for those types are replaced atomically, including successful empty results
@@ -1526,7 +1525,6 @@ impl GalleryStore {
             Self::generation_from_row,
         )?)
     }
-
 
     /// Read an asset's canonical OMC creation graph, if one was recorded.
     pub fn get_omc_creation_graph(

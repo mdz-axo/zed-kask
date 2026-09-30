@@ -967,9 +967,7 @@ async fn scenario_full_reports_unreported_metrics_not_measured_ones() {
     let mut unreported: Vec<String> = parsed["assessment"]["unreported_metrics"]
         .as_array()
         .unwrap_or_else(|| {
-            panic!(
-                "scenario_full assessment must carry unreported_metrics, got: {parsed}"
-            )
+            panic!("scenario_full assessment must carry unreported_metrics, got: {parsed}")
         })
         .iter()
         .filter_map(|v| v.as_str().map(String::from))

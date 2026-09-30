@@ -38,7 +38,7 @@ impl TrainingServer {
                                 Err(reason) => (
                                     TrainingJobStatus::RunningUnknown,
                                     None,
-                                    Some(reason),
+                                    Some(reason.to_string()),
                                 ),
                             }
                         } else {

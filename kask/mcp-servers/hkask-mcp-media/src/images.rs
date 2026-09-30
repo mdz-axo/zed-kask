@@ -88,10 +88,7 @@ impl MediaServer {
     ///
     /// Used by face matching where we have image IDs from tags/registry,
     /// not gallery indices.
-    pub(crate) fn resolve_image_url_by_id(
-        &self,
-        image_id: &str,
-    ) -> Result<String, MediaError> {
+    pub(crate) fn resolve_image_url_by_id(&self, image_id: &str) -> Result<String, MediaError> {
         let record = self.gallery_store.get_by_id(image_id)?;
         image_record_url(&record)
     }

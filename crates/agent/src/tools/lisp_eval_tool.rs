@@ -1763,4 +1763,47 @@ mod tests {
             "fork > 2x upstream with zero sites still re-applies"
         );
     }
+
+    #[test]
+    fn test_diataxis_diagram_skill_md_pins_forms() {
+        // diataxis-diagram pins one lisp_eval form — the six-criterion
+        // weighted rubric total, a labelled estimate that chooses
+        // refinements and never gates. If it drifts, this fails until
+        // skill and tests are reconciled.
+        let skill_md = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../.agents/skills/diataxis-diagram/SKILL.md"
+        ))
+        .expect("diataxis-diagram SKILL.md must exist in the workspace");
+        let rubric =
+            r#"(+ (* c1 0.30) (* c2 0.25) (* c3 0.15) (* c4 0.15) (* c5 0.10) (* c6 0.05))"#;
+        assert!(
+            skill_md.contains(rubric),
+            "weighted rubric form must stay pinned in diataxis-diagram SKILL.md"
+        );
+        let deficient = hkask_lisp::eval_sandboxed_with_budget(
+            rubric,
+            &json!({"c1": 0.2, "c2": 0.1, "c3": 0.0, "c4": 0.0, "c5": 0.0, "c6": 0.0}),
+            100_000,
+            64,
+        )
+        .expect("rubric form must evaluate");
+        assert_eq!(
+            deficient,
+            json!(0.08499999999999999),
+            "c1=0.2, c2=0.1 weighs 0.06 + 0.025 = 0.085"
+        );
+        let perfect = hkask_lisp::eval_sandboxed_with_budget(
+            rubric,
+            &json!({"c1": 0.0, "c2": 0.0, "c3": 0.0, "c4": 0.0, "c5": 0.0, "c6": 0.0}),
+            100_000,
+            64,
+        )
+        .expect("rubric form must evaluate on a perfect diagram");
+        assert_eq!(
+            perfect,
+            json!(0.0),
+            "all-zero criteria weigh 0 — no refinement directives"
+        );
+    }
 }

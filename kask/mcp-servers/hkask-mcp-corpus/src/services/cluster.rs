@@ -120,7 +120,11 @@ mod tests {
             .into_iter()
             .map(|(entity_ref, vector)| (entity_ref.to_string(), vector))
             .collect();
-        ClusterInput { chunks, norm_map, dropped_malformed: 0 }
+        ClusterInput {
+            chunks,
+            norm_map,
+            dropped_malformed: 0,
+        }
     }
 
     #[test]

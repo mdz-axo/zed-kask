@@ -243,14 +243,8 @@ impl MediaServer {
             // Persist the payload and compose the slim result (the provider's
             // base64 payload never enters the model's context).
             let args = serde_json::to_value(&media_params).unwrap_or(serde_json::Value::Null);
-            persist_slim_and_enrich(
-                &self.gallery_store,
-                &result,
-                "upscale_image",
-                "image",
-                args,
-            )
-            .await
+            persist_slim_and_enrich(&self.gallery_store, &result, "upscale_image", "image", args)
+                .await
         })
         .await
     }

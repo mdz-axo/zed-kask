@@ -20,7 +20,6 @@ use crate::local_registry::LocalAgentCard;
 /// is the credit gate, this is the round gate).
 pub const MAX_TOOL_ROUNDS: usize = 4;
 
-
 /// The built-in reasoning tool name. When an agent card opts into reasoning
 /// (`capabilities.reasoning: true`), the executor registers this tool and
 /// handles it locally — no IPC dispatch. The model calls it to record a
@@ -403,7 +402,9 @@ impl AgentExecutor {
                         request_body: cap_body(&request_body),
                         response_body: String::new(),
                     });
-                    return Err(LocalSwarmError::Unavailable(format!("local inference failed: {error}")));
+                    return Err(LocalSwarmError::Unavailable(format!(
+                        "local inference failed: {error}"
+                    )));
                 }
             };
             self.capture_inference(CapturedInference {

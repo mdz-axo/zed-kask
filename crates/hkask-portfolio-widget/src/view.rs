@@ -1527,5 +1527,4 @@ mod tests {
         assert!(result.is_none(), "no result on failure");
         assert!(symbol.is_none(), "symbol cleared after failure");
     }
-
 }

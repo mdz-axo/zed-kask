@@ -216,14 +216,13 @@ impl MediaServer {
                 // comparator. (A previous cosine fast-path on LLM-produced
                 // "embeddings" was removed: LLMs cannot emit geometrically
                 // consistent vectors, so those scores were noise.)
-                let ref_url =
-                    match self.resolve_image_url_by_id(&reg_entry.image_id) {
-                        Ok(url) => url,
-                        Err(e) => {
-                            errors.push(format!("Registry entry {}: {}", reg_entry.id, e));
-                            continue;
-                        }
-                    };
+                let ref_url = match self.resolve_image_url_by_id(&reg_entry.image_id) {
+                    Ok(url) => url,
+                    Err(e) => {
+                        errors.push(format!("Registry entry {}: {}", reg_entry.id, e));
+                        continue;
+                    }
+                };
 
                 match vision::match_faces(
                     &self.vision_port,

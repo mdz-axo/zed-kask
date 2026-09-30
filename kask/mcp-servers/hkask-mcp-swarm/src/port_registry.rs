@@ -100,7 +100,6 @@ impl PortRegistry {
             .and_then(|entry| entry.schema.as_ref())
     }
 
-
     /// Merge a map of registered types into this registry (extension load).
     /// Existing entries with the same label are replaced by the incoming
     /// entry — the extension file is the newer state.

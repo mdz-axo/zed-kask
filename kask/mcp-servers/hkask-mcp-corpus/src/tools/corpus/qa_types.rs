@@ -26,6 +26,21 @@ impl QaType {
     }
 }
 
+/// The typed validation failure for a type-distribution spec. The `Display`
+/// text is the operator-facing explanation (it reaches the tool caller via
+/// `McpToolError::invalid_argument`), so each variant names the exact defect.
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
+pub(crate) enum TypeDistributionError {
+    #[error(
+        "type_distribution must be exactly 5 comma-separated weights (factual, conceptual, analyze, evaluate, create); got {0}"
+    )]
+    WrongArity(usize),
+    #[error("type_distribution weight {weight} is not a nonnegative integer: {part:?}")]
+    NotAnInteger { weight: usize, part: String },
+    #[error("type_distribution must request at least one QA type (all weights are zero)")]
+    AllZero,
+}
+
 /// Parse a type distribution spec like "1,1,2,1,0" into a list of QaType
 /// values. The 5 numbers correspond to Factual, Conceptual, Analyze,
 /// Evaluate, Create. The spec must be exactly 5 comma-separated nonnegative
@@ -33,28 +48,22 @@ impl QaType {
 /// silently corrupts the positional Bloom mapping (a typo in entry 3 turns
 /// every later level into its predecessor), so partial parsing must reject
 /// rather than drop entries.
-pub(crate) fn parse_type_distribution(spec: &str) -> Result<Vec<QaType>, String> {
+pub(crate) fn parse_type_distribution(spec: &str) -> Result<Vec<QaType>, TypeDistributionError> {
     let parts: Vec<&str> = spec.split(',').map(str::trim).collect();
     if parts.len() != 5 {
-        return Err(format!(
-            "type_distribution must be exactly 5 comma-separated weights (factual, conceptual, analyze, evaluate, create); got {}",
-            parts.len()
-        ));
+        return Err(TypeDistributionError::WrongArity(parts.len()));
     }
     let mut nums = [0usize; 5];
     for (i, part) in parts.iter().enumerate() {
-        nums[i] = part.parse().map_err(|_| {
-            format!(
-                "type_distribution weight {} is not a nonnegative integer: {part:?}",
-                i + 1
-            )
-        })?;
+        nums[i] = part
+            .parse()
+            .map_err(|_| TypeDistributionError::NotAnInteger {
+                weight: i + 1,
+                part: part.to_string(),
+            })?;
     }
     if nums.iter().all(|&count| count == 0) {
-        return Err(
-            "type_distribution must request at least one QA type (all weights are zero)"
-                .to_string(),
-        );
+        return Err(TypeDistributionError::AllZero);
     }
     let types = [
         QaType::Factual,
@@ -96,7 +105,14 @@ mod tests {
         // The silent-corruption case: a typo in one entry previously dropped
         // it and shifted every later Bloom level into its predecessor.
         let err = parse_type_distribution("1,1,x,1,1").expect_err("typo rejected");
-        assert!(err.contains("weight 3"), "names the bad entry: {err}");
+        assert_eq!(
+            err,
+            TypeDistributionError::NotAnInteger {
+                weight: 3,
+                part: "x".to_string()
+            },
+            "names the bad entry"
+        );
     }
 
     #[test]

@@ -96,7 +96,7 @@ impl PromptBuilderService {
             request.max_pairs.min(requested_pairs)
         };
         let rotation = parse_type_distribution(&request.type_distribution)
-            .map_err(McpToolError::invalid_argument)?;
+            .map_err(|error| McpToolError::invalid_argument(error.to_string()))?;
 
         let mut passages = HashMap::new();
         if request.context_k > 0 {
