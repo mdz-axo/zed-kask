@@ -1895,4 +1895,126 @@ mod tests {
             "the form returns true on empty; the SKILL's guard marks it unverified, never vacuously balanced"
         );
     }
+
+    #[test]
+    fn test_diagnose_skill_md_pins_forms() {
+        // diagnose pins two lisp_eval forms — the hypothesis invariant check
+        // (count, completeness, diversity, mutual exclusivity — instrumentation
+        // is gated on it) and the convergence score (normalized by 0.85). If
+        // either drifts, this fails until skill and tests are reconciled.
+        let skill_md = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../.agents/skills/diagnose/SKILL.md"
+        ))
+        .expect("diagnose SKILL.md must exist in the workspace");
+
+        // 1. The hypothesis invariant check.
+        let invariant = r#"(let ((hyps hypotheses))
+     (begin
+       (define walk-check (lambda (hs defects)
+         (if (is_null hs)
+           defects
+           (walk-check (cdr hs)
+             (append defects
+               (if (is_null (assoc "prediction" (car hs))) (list "missing_prediction") nil)
+               (if (is_null (assoc "falsifier" (car hs))) (list "missing_falsifier") nil))))))
+       (define get-texts (lambda (hs acc)
+         (if (is_null hs) acc (get-texts (cdr hs) (append acc (list (assoc "hypothesis" (car hs))))))))
+       (define get-likes (lambda (hs acc)
+         (if (is_null hs) acc (get-likes (cdr hs) (append acc (list (assoc "likelihood" (car hs))))))))
+       (define has-dupes (lambda (ts)
+         (if (is_null ts) nil
+           (if (member (car ts) (cdr ts)) (list "duplicate_hypothesis_text") (has-dupes (cdr ts))))))
+       (define diff-exists (lambda (ls first)
+         (if (is_null ls) nil
+           (if (string= (car ls) first) (diff-exists (cdr ls) first) (list "diverse")))))
+       (define texts (get-texts hyps nil))
+       (define likes (get-likes hyps nil))
+       (define defects
+         (append
+           (if (or (< (length hyps) 3) (> (length hyps) 7)) (list "count_out_of_range_3_to_7") nil)
+           (walk-check hyps nil)
+           (has-dupes texts)
+           (if (is_null likes) nil
+             (if (is_null (diff-exists (cdr likes) (car likes))) (list "no_likelihood_diversity") nil))))
+       (if (> (length defects) 0) defects 'ok)))"#;
+        assert!(
+            skill_md.contains(invariant),
+            "hypothesis invariant check must stay pinned in diagnose SKILL.md"
+        );
+        let clean = hkask_lisp::eval_sandboxed_with_budget(
+            invariant,
+            &json!({"hypotheses": [
+                {"hypothesis": "off-by-one in loop bound", "likelihood": "high", "prediction": "changing the bound fixes it", "falsifier": "probe X shows Y"},
+                {"hypothesis": "race on shared counter", "likelihood": "medium", "prediction": "locking removes it", "falsifier": "probe Z shows W"},
+                {"hypothesis": "stale cache entry", "likelihood": "low", "prediction": "invalidating cache fixes it", "falsifier": "probe Q shows R"}
+            ]}),
+            100_000,
+            64,
+        )
+        .expect("invariant check must evaluate");
+        assert_eq!(clean, json!("ok"), "a clean 3-hypothesis set passes");
+        let defective = hkask_lisp::eval_sandboxed_with_budget(
+            invariant,
+            &json!({"hypotheses": [
+                {"hypothesis": "same text", "likelihood": "high", "prediction": "pred A", "falsifier": "probe X"},
+                {"hypothesis": "same text", "likelihood": "high", "prediction": "pred B", "falsifier": "probe Y"}
+            ]}),
+            100_000,
+            64,
+        )
+        .expect("invariant check must evaluate on a defective set");
+        assert_eq!(
+            defective,
+            json!([
+                "count_out_of_range_3_to_7",
+                "duplicate_hypothesis_text",
+                "no_likelihood_diversity"
+            ]),
+            "count, duplicate text, and uniform likelihood are all named — instrumentation is gated on this"
+        );
+        let missing_pred = hkask_lisp::eval_sandboxed_with_budget(
+            invariant,
+            &json!({"hypotheses": [
+                {"hypothesis": "h1", "likelihood": "high", "falsifier": "probe X"},
+                {"hypothesis": "h2", "likelihood": "medium", "prediction": "pred B", "falsifier": "probe Y"},
+                {"hypothesis": "h3", "likelihood": "low", "prediction": "pred C", "falsifier": "probe Z"}
+            ]}),
+            100_000,
+            64,
+        )
+        .expect("invariant check must evaluate on a missing prediction");
+        assert_eq!(
+            missing_pred,
+            json!(["missing_prediction"]),
+            "a hypothesis without a prediction is named before any instrumentation runs"
+        );
+
+        // 2. The convergence score (normalized by 0.85).
+        let convergence = r#"(/ (+ (* 0.25 a) (* 0.15 r) (* 0.20 f) (* 0.15 e) (* 0.10 c)) 0.85)"#;
+        assert!(
+            skill_md.contains(convergence),
+            "convergence score form must stay pinned in diagnose SKILL.md"
+        );
+        let all_met = hkask_lisp::eval_sandboxed_with_budget(
+            convergence,
+            &json!({"a": 0, "r": 0, "f": 0, "e": 0, "c": 0}),
+            100_000,
+            64,
+        )
+        .expect("convergence form must evaluate");
+        assert_eq!(all_met, json!(0.0), "all met = 0.00 — root cause confirmed");
+        let ambiguous = hkask_lisp::eval_sandboxed_with_budget(
+            convergence,
+            &json!({"a": 1, "r": 0, "f": 0, "e": 0, "c": 0}),
+            100_000,
+            64,
+        )
+        .expect("convergence form must evaluate on an ambiguous root cause");
+        assert_eq!(
+            ambiguous,
+            json!(0.29411764705882354),
+            "root cause ambiguous alone = 0.25/0.85 — above the 0.25 convergence threshold"
+        );
+    }
 }
