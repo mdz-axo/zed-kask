@@ -1135,6 +1135,23 @@ exactly that lag), not evidence of absence.)
 
 ## Change log
 
+- 2026-09-30 — v0.24.3 executed the alignment plan §8's first cleanup
+  slice (CU-1 + CU-2 + CU-7's named candidates). One deletion:
+  `hkask-storage` `Database::in_memory_with_extensions`
+  (`connection.rs:349`, zero references repo-wide including tests and
+  docs) plus the `in_memory_impl` helper its deletion orphaned (inlined
+  into `in_memory()`) — net **−8 production lines** (+2/−10). All other
+  instruments clean with evidence: the dead-code-allow baseline's one
+  kask site is a documented test fixture (rejected); 32 traits, 1,479
+  pub fns, and 1,426 pub types swept with zero further candidates;
+  `cargo machete` clean in kask scope; CU-7's named candidates all
+  alive with cited consumers (the standalone subscriber is a test
+  fixture in a live module; `HKASK_USE_FAL_DOCRES` is a removal guard,
+  not an opt-in; no dead settings knobs). Receipts: hkask-storage
+  --lib 72/72, rustfmt clean, scoped clippy clean, `cargo check -p
+  zed` passed; full-repo symbol sweep over code AND docs clean.
+  Running §8 production ledger: **−8**.
+
 - 2026-09-30 — v0.24.2 executed the remaining open items under the
   operator's proceed instruction and recorded the cleanup program.
   **S4 landed** (L23's degraded-status contract): red-first, two tdd

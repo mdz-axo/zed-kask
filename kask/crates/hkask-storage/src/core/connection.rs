@@ -331,23 +331,15 @@ impl Database {
         )
     }
 
-    fn in_memory_impl(extensions: Option<&str>) -> Result<Self, DatabaseError> {
+    pub fn in_memory() -> Result<Self, DatabaseError> {
         Ok(Self {
             path: String::from(":memory:"),
             passphrase: String::new(),
-            extensions: extensions.map(|s| s.to_string()),
+            extensions: None,
             access: DatabaseAccess::ReadWrite,
             maintenance_lease: None,
             pool_cache: std::sync::Mutex::new(None),
         })
-    }
-
-    pub fn in_memory() -> Result<Self, DatabaseError> {
-        Self::in_memory_impl(None)
-    }
-
-    pub fn in_memory_with_extensions(extensions: &str) -> Result<Self, DatabaseError> {
-        Self::in_memory_impl(Some(extensions))
     }
 
     fn initialize_schema(conn: &rusqlite::Connection) -> Result<(), DatabaseError> {

@@ -2,7 +2,7 @@
 title: "Cybernetic Nervous System — Alignment Plan"
 audience: [architects, developers, operators, agents]
 last_updated: 2026-09-30
-version: "0.3.0"
+version: "0.3.1"
 status: "Active — operator ruling 2026-09-30 ('proceed as proposed — confirmed'): reference model admitted; S2 and S3 approved and landed"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle]
@@ -303,3 +303,41 @@ behavior preservation, `./script/clippy` + crate tests + `cargo check
 Sequencing: CU-1 → CU-2 (deps orphaned by CU-1); CU-3/CU-4/CU-8 ride
 every slice; CU-5 after memory- and doc-touching slices; CU-6 gated on
 an actual displacement; CU-7 independent, smallest first.
+
+### Execution record — first slice (2026-09-30: CU-1 + CU-2 + CU-7's named candidates)
+
+- **CU-1, all four instruments run:** (a) the `#[allow(dead_code)]`
+  baseline — one kask-scoped site
+  (`hkask-types/src/tool_schema.rs:259`), a documented test fixture for
+  the JsonSchema derive — REJECTED with reason (deleting it deletes the
+  test); (b) one-impl traits — 32 traits defined in kask production
+  `src/`, zero with ≤1 impl and ≤1 use — NO CANDIDATE; (c) pub and
+  `pub(crate)` fns — 1,479 swept, one real candidate:
+  `hkask-storage/src/core/connection.rs:349`
+  `Database::in_memory_with_extensions` (zero references repo-wide,
+  including tests and docs) — **DELETED** together with the
+  `in_memory_impl` helper its deletion orphaned (inlined into
+  `in_memory()`), net **−8 production lines** (+2/−10); one artifact
+  rejected (`connectedne` — a comment fragment, not a function); (d)
+  pub types — 1,426 swept case-corrected, zero with one occurrence — NO
+  CANDIDATE.
+- **CU-2:** `cargo machete` — zero kask-scoped findings (the only
+  flags are upstream crates, out of scope per the machete-scoping
+  rule); no deps orphaned by the CU-1 deletion. NO CANDIDATE, with
+  evidence.
+- **CU-7's named candidates:** (a) the standalone-launch subscriber
+  (`standalone_settings.rs:391`) — REJECTED: a test fixture inside
+  `malformed_settings_surface_fallback`, in a live module with cited
+  consumers (the corpus server's settings load,
+  `compose_tools.rs:23`, `hkask_mcp_corpus.rs:66`); (b)
+  `HKASK_USE_*` opt-ins — one in the tree, `HKASK_USE_FAL_DOCRES`, and
+  it is a removal guard pin (`mcp_servers.rs:1421-1422`), not an
+  opt-in — REJECTED; (c) settings knobs — the pub settings fields
+  swept, zero with one occurrence — NO CANDIDATE (a full
+  nested-settings audit remains available as a CU-7 continuation).
+- **CU-3/CU-4 at slice scope:** the touched region's comments verified
+  current; no stale comment referenced the deleted constructors.
+- **Receipts:** hkask-storage --lib 72/72; rustfmt clean; scoped
+  `./script/clippy` clean (machete + buf included); `cargo check -p
+  zed` passed; full-repo symbol sweep over code AND docs clean for
+  both removed identifiers. Running §8 production ledger: **−8**.
