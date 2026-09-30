@@ -54,6 +54,9 @@
 #   both the installed-copy sweep and the crossrefs gate.
 # - check-unsafe-forbid.sh and check-version-sync.sh: unsafe code stays
 #   gated, crate versions stay in sync.
+# - check-no-mod-rs.sh and check-no-smol-timer.sh: the fork layout stays
+#   mod.rs-free and the GPUI-side surface stays free of smol timers
+#   (both .rules conventions, machine-enforced).
 # - Gate selftests: the loop step below runs every
 #   kask/scripts/check-*-selftest.sh — see its comment for scope.
 #
@@ -163,6 +166,10 @@ jobs:
         run: |
           bash kask/scripts/check-unsafe-forbid.sh
           bash kask/scripts/check-version-sync.sh
+      - name: Fork layout — no mod.rs; GPUI-side timers — no smol::Timer
+        run: |
+          bash kask/scripts/check-no-mod-rs.sh
+          bash kask/scripts/check-no-smol-timer.sh
       - name: Gate selftests — every kask/scripts/check-*-selftest.sh fails on a violation
         run: |
           # The glob covers every gate selftest in kask/scripts: the

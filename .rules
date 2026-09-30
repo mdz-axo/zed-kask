@@ -13,17 +13,22 @@
 
 # Rust coding guidelines
 
-* Project scripts are bash, not Python — audit/build scripts live under `kask/scripts/` as bash (operator ruling 2026-09-09).
-* No `unwrap()` — use `?` to propagate errors. Be careful with indexing.
+* Project scripts are bash, not Python — audit/build scripts live under `kask/scripts/` as bash (operator ruling 2026-09-09). An embedded `python3` heredoc inside a bash script is fine for what bash cannot do (TOML parsing in `check-build-profile.sh`); a standalone `.py` script is not.
+* No `unwrap()` in production code — use `?` to propagate errors; in test code prefer `expect` with a message.
 * Never silently discard errors with `let _ =` on fallible operations. Propagate with `?`, use `.log_err()` for visibility, or handle explicitly.
-* No `mod.rs` files — use `src/module.rs` instead.
+* No `mod.rs` files — use `src/module.rs` instead (CI: `check-no-mod-rs.sh`, fork surface).
 * New crates: specify `[lib] path = "..."` in `Cargo.toml` (e.g., `gpui.rs`, not `lib.rs`).
 * No creative additions unless explicitly requested.
 * Build: use `./script/clippy` instead of `cargo clippy`.
 
 # Timers in tests
 
-Use `cx.background_executor().timer(duration).await` in GPUI tests, not `smol::Timer::after(...)` — smol timers aren't tracked by GPUI's scheduler and break `run_until_parked()`.
+Use `cx.background_executor().timer(duration).await` in GPUI tests, not `smol::Timer::after(...)` — smol timers aren't tracked by GPUI's scheduler and break `run_until_parked()` (CI: `check-no-smol-timer.sh`, GPUI-side fork surface).
+
+# Agent crate (crates/agent)
+
+* `cache_read_input_tokens` is served from the provider's prompt cache at ~0.1x cost — do NOT count it toward compaction thresholds. Use `billed_input_tokens` (input + cache_creation) for cost-driven decisions like compaction; use `total_input_tokens` only for context-window-overflow warnings. Mixing these causes premature compaction of nearly-free cached context.
+* The system prompt is cached on `Thread` keyed by a SHA-256 digest of its inputs (`render_system_prompt`). Do NOT bypass this by rendering `SystemPromptTemplate` directly — bypassing it breaks the byte-stability that lets the provider's prefix cache hit.
 
 # GPUI traps
 
@@ -45,8 +50,8 @@ Use `cx.background_executor().timer(duration).await` in GPUI tests, not `smol::T
 
 * `.rules` are traps to avoid, not maps to follow. No architectural descriptions.
 * New rules must be: non-obvious, repeatedly encountered, and specific enough to act on.
-* Only the worktree-root `.rules` is loaded into agent context (`load_worktree_rules_file`, `crates/agent/src/agent.rs`); a nested `.rules` is never read. Keep crate-scoped traps here under a crate heading, stated as one actionable line each.
-* Don't edit `.rules` inline during feature work — propose additions in PR descriptions.
+* Only the worktree-root `.rules` is loaded into agent context (`load_worktree_rules_file`, `crates/agent/src/agent.rs`); a nested `.rules` is never read. Keep crate-scoped traps here under a crate heading, stated as one actionable constraint each.
+* Don't edit `.rules` inline during feature work — propose additions in the change report or a dedicated rules-only commit.
 
 # Agent loop traps
 
@@ -60,7 +65,7 @@ Use `cx.background_executor().timer(duration).await` in GPUI tests, not `smol::T
 
 ## Divergence surface
 
-* `DIVERGENCE.md` defines what's ours (`kask/`) vs upstream Zed. Don't "fix" upstream files speculatively — push fixes into `kask/` behind a D-seam; an unavoidable upstream edit carries its D-seam entry + test in the same PR. Every `// zed-kask:` comment disabling upstream behavior needs a test pinning the disabled behavior.
+* `DIVERGENCE.md` defines what's ours (`kask/`) vs upstream Zed. Don't "fix" upstream files speculatively — push fixes into `kask/` behind a D-seam; an unavoidable upstream edit carries its D-seam entry + test in the same change. Every `// zed-kask:` comment disabling upstream behavior needs a test pinning the disabled behavior.
 * A zed-side edit carries its DIVERGENCE.md seam update in the same pass — an unrecorded zed-side change is indistinguishable from upstream drift at the next rebase.
 * `cargo machete` in `script/clippy` stays scoped to `kask/` on purpose — root scope flags ~30 upstream deps as macro/feature-activated false positives, and silencing them means editing ~30 upstream Cargo.tomls (rebase friction) while masking genuinely-dead deps. A machete finding in `kask/` is always actionable: verify zero `use <dep>` hits in `src/` and `tests/`, then remove the dep line.
 
@@ -81,7 +86,7 @@ Use `cx.background_executor().timer(duration).await` in GPUI tests, not `smol::T
 
 ## Agent typing system (hkask-mcp-swarm)
 
-* A new `accepts`/`produces` label needs a `PortRegistry` entry (`port_registry.rs`) in the same PR — labels are type references, not free strings.
+* A new `accepts`/`produces` label needs a `PortRegistry` entry (`port_registry.rs`) in the same change — labels are type references, not free strings.
 * Do not reintroduce a runtime request-classification heuristic (the deleted `classify_request` had no correct setting); admission typing (`validate_typing`) is the gate.
 * An unsupported JSON Schema keyword in `schema_validate.rs` is `ValidationStatus::UnsupportedSchema`, never a pass.
 
@@ -108,7 +113,7 @@ Use `cx.background_executor().timer(duration).await` in GPUI tests, not `smol::T
 
 * Trait-with-one-impl is speculative generality — grep for `self.<field>` before merging; if only constructor matches, it's unwired. Generalizes: convention helpers with only test callers are dead code, and folded-service modules with no production callers outside the subtree are dead surface.
 * Advertised invariants (doc comments claiming security gates, audit surfaces, migrations) must point to the enforcement line; if none exists, the doc must say "not yet enforced." Validation gates must return `Undetermined`/`Skipped` when the check wasn't performed, not `Ready` with empty findings.
-* **Stale comments are active misinformation.** When code behavior changes, every comment describing the old behavior is updated in the same PR — agents read comments as ground truth and follow stale comments over user instructions. Grep for comments referencing the changed behavior and update or delete them; a stale comment is worse than no comment.
+* **Stale comments are active misinformation.** When code behavior changes, every comment describing the old behavior is updated in the same change — agents read comments as ground truth and follow stale comments over user instructions. Grep for comments referencing the changed behavior and update or delete them; a stale comment is worse than no comment.
 * Cargo.toml deps outlive their consumers — when deleting a source file, grep for `use <dep>` in remaining `src/` and `tests/`; zero hits = remove the dep.
 * Deletions must clean up what they orphan — no orphan piles, no compatibility states (operator ruling 2026-09-09). Deleting h_mems removes their embeddings and memory_links (`MemoryStore::delete_h_mem` self-cleans; `delete_orphaned_embeddings` is the backstop); deleting a source file sweeps its dep; deleting a capability sweeps its settings knobs and doc sections — all in the same change.
 * MCP servers are leaf crates (zero external dependents) — `pub mod` → `pub(crate) mod` tightening is churn. Focus dead-code hunts on truly unused items (zero references anywhere, including `tests/`); test seams (`#[doc(hidden)] pub fn from_stores`) are alive even with zero `src/` callers.
@@ -118,7 +123,7 @@ Use `cx.background_executor().timer(duration).await` in GPUI tests, not `smol::T
 
 * Built-in file tools (`write_file`, `edit_file`, `create_directory`) are sandboxed to the project root — writes under `~/Documents/zk-data` (the companies/corpus/media/portfolio-mcp data dirs) fail with a misleading "parent directory doesn't exist" even when the directory exists. Write via `terminal` heredoc (split long content into `>>` appends) or the owning MCP server's tools.
 * `LanguageModelInferencePort` honors `model_override` via registry resolution — silently dropping it caused inference calls to use the wrong model.
-* `.desktop` files must never declare `text/plain`, `application/x-zerosize`, `x-scheme-handler/zed`, or `Keywords=zed` — run `kask/scripts/build/check-desktop-no-collision.sh` before committing.
+* `.desktop` files must never declare `text/plain`, `application/x-zerosize`, `x-scheme-handler/zed`, or `Keywords=zed` — enforced at install time by the desktop validation in `kask/scripts/build/install.sh` (the generated file is grepped for exactly these declarations); `check-desktop-no-collision.sh` guards upstream-file absence, not the declarations.
 * Stale diagnostics after bulk edits: the crate's lib root is authoritative, not individual-file diagnostics. Don't retry stale diagnostics or fix phantom errors.
 * LLM-improves-against-LLM-scored-target loops can game the scorer. Three mitigations required: ground in real sources, preserve load-bearing properties, validate against external ground truth.
 * `grep -q` exits at the FIRST match — piping a large body into it under `set -o pipefail` SIGPIPEs the writer, and `if !` flips a successful match into a false flag (2026-09-10: ~35% per check on 41KB bodies, `PIPESTATUS: 141 0`). Feed grep from a file or herestring, never `printf | grep -q` on large strings.
