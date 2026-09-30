@@ -2920,6 +2920,7 @@ impl Thread {
                         model,
                         request,
                         CompactionInsertion::Manual { marker_id: id },
+                        None,
                         cx,
                     )
                     .await
@@ -3598,12 +3599,23 @@ impl Thread {
                         ..
                     }
                 );
+                // The rejection's reported input-token count (when the
+                // provider parses it into the error) is the exact calibration
+                // datum for the rescue compaction's planning.
+                let reported_input_tokens = match &error {
+                    LanguageModelCompletionError::ProviderRejection {
+                        category: ProviderErrorCategory::PromptTooLarge { tokens },
+                        ..
+                    } => *tokens,
+                    _ => None,
+                };
                 if prompt_too_large && !prompt_too_large_rescue_used {
                     prompt_too_large_rescue_used = true;
                     match Self::perform_prompt_too_large_rescue(
                         this,
                         event_stream,
                         cancellation_rx.clone(),
+                        reported_input_tokens,
                         cx,
                     )
                     .await
@@ -3716,6 +3728,7 @@ impl Thread {
             model,
             request,
             CompactionInsertion::Auto { insertion_ix },
+            None,
             cx,
         )
         .await
@@ -3736,10 +3749,29 @@ impl Thread {
     /// the compacted history. Gated on auto-compaction being enabled: when
     /// the operator disabled auto-compact, manual Compact stays the recovery
     /// path.
+    ///
+    /// The rejection's reported input-token count (`reported_input_tokens`)
+    /// is the calibration denominator for the rescue compaction's planning:
+    /// at rescue time the last completed request's usage predates the growth
+    /// that caused the rejection, and the 2.0 bytes/token fallback can
+    /// over-budget token-dense content — planning a summarization request
+    /// that is itself rejected, killing the turn at the moment recovery
+    /// matters most.
+    ///
+    /// Transient failures of the rescue compaction retry inside this
+    /// function, bounded by the shared `RetryStrategy` machinery: the
+    /// threshold path retries its compaction through the turn loop, but the
+    /// rescue cannot — the loop-top check will not re-fire (the usage that
+    /// would trigger it is exactly what the rescue is recovering from), and
+    /// routing through the loop would re-send the known-oversized request on
+    /// every cycle. Permanent errors fail the rescue immediately. The whole
+    /// episode — initial attempt plus transient retries — is the turn's one
+    /// rescue.
     async fn perform_prompt_too_large_rescue(
         this: &WeakEntity<Self>,
         event_stream: &ThreadEventStream,
         cancellation_rx: watch::Receiver<bool>,
+        reported_input_tokens: Option<u64>,
         cx: &mut AsyncApp,
     ) -> Result<PromptTooLargeRescue> {
         let Some((model, request, insertion_ix)) = this.update(cx, |this, cx| {
@@ -3749,25 +3781,8 @@ impl Thread {
             if this.forced_compaction_target_ix().is_none() {
                 return None;
             }
-            // Mirror the threshold path's trailing-user handling: a trailing
-            // not-yet-answered user message (the prompt that started this
-            // turn) stays verbatim after the summary instead of being
-            // summarized away.
-            let insertion_ix = match this.messages.last() {
-                Some(message)
-                    if matches!(&**message,
-                        Message::User(UserMessage { id, .. })
-                            if !this.request_token_usage.contains_key(id)) =>
-                {
-                    this.messages.len().saturating_sub(1)
-                }
-                _ => this.messages.len(),
-            };
-            // The registry global is absent in harnesses that never wire it;
-            // fall back to the thread's own model like `compaction_model`.
-            let model = language_model::LanguageModelRegistry::try_read_global(cx)
-                .and_then(|registry| registry.compaction_model().map(|m| m.model))
-                .or_else(|| this.model().cloned())?;
+            let insertion_ix = this.trailing_user_aware_insertion_ix();
+            let model = this.compaction_model(cx)?;
             let request = this.build_compaction_request(insertion_ix, &model, cx);
             this.current_request_token_usage = TokenUsage::default();
             if this.pending_compaction_telemetry.is_none() {
@@ -3790,30 +3805,80 @@ impl Thread {
         log::warn!(
             "PromptTooLarge rejection rescued by forced compaction; retrying with the compacted history"
         );
-        match Self::stream_compaction(
-            this,
-            event_stream,
-            cancellation_rx,
-            model,
-            request,
-            CompactionInsertion::Auto { insertion_ix },
-            cx,
-        )
-        .await
-        {
-            Ok(ControlFlow::Continue(())) => Ok(PromptTooLargeRescue::Compacted),
-            Ok(ControlFlow::Break(())) => {
-                this.update(cx, |this, _| {
-                    this.emit_compaction_telemetry_outcome("canceled", None)
-                })?;
-                Ok(PromptTooLargeRescue::Cancelled)
-            }
-            Err(error) => {
-                let message = error.to_string();
-                this.update(cx, |this, _| {
-                    this.emit_compaction_telemetry_outcome("failed", Some(message))
-                })?;
-                Err(error)
+        let mut cancellation_rx = cancellation_rx;
+        let mut attempt = 0u8;
+        loop {
+            match Self::stream_compaction(
+                this,
+                event_stream,
+                cancellation_rx.clone(),
+                model.clone(),
+                request.clone(),
+                CompactionInsertion::Auto { insertion_ix },
+                reported_input_tokens,
+                cx,
+            )
+            .await
+            {
+                Ok(ControlFlow::Continue(())) => return Ok(PromptTooLargeRescue::Compacted),
+                Ok(ControlFlow::Break(())) => {
+                    this.update(cx, |this, _| {
+                        this.emit_compaction_telemetry_outcome("canceled", None)
+                    })?;
+                    return Ok(PromptTooLargeRescue::Cancelled);
+                }
+                Err(error) => {
+                    // The retry machinery classifies
+                    // LanguageModelCompletionError; anything else (e.g. a
+                    // planner error or an empty summary) is not
+                    // transient-retryable — fail the rescue immediately.
+                    let completion_error = match error.downcast::<LanguageModelCompletionError>() {
+                        Ok(completion_error) => completion_error,
+                        Err(error) => {
+                            let message = error.to_string();
+                            this.update(cx, |this, _| {
+                                this.emit_compaction_telemetry_outcome("failed", Some(message))
+                            })?;
+                            return Err(error);
+                        }
+                    };
+                    let Some(strategy) = Self::retry_strategy_for(&completion_error) else {
+                        let message = completion_error.to_string();
+                        this.update(cx, |this, _| {
+                            this.emit_compaction_telemetry_outcome("failed", Some(message))
+                        })?;
+                        return Err(completion_error.into());
+                    };
+                    attempt += 1;
+                    let Some(delay) = strategy.delay_after(&completion_error, attempt) else {
+                        let message = completion_error.to_string();
+                        this.update(cx, |this, _| {
+                            this.emit_compaction_telemetry_outcome("failed", Some(message))
+                        })?;
+                        return Err(completion_error.into());
+                    };
+                    let delay = crate::jitter_retry_delay(delay);
+                    this.update(cx, |this, _| {
+                        if let Some(telemetry) = this.pending_compaction_telemetry.as_mut() {
+                            telemetry.retries += 1;
+                        }
+                    })?;
+                    log::warn!(
+                        "PromptTooLarge rescue compaction failed transiently (attempt {attempt}): {completion_error}; retrying in {delay:?}"
+                    );
+                    let timer = cx.background_executor().timer(delay);
+                    futures::select! {
+                        _ = timer.fuse() => {}
+                        _ = cancellation_rx.changed().fuse() => {
+                            if *cancellation_rx.borrow() {
+                                this.update(cx, |this, _| {
+                                    this.emit_compaction_telemetry_outcome("canceled", None)
+                                })?;
+                                return Ok(PromptTooLargeRescue::Cancelled);
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -3825,6 +3890,12 @@ impl Thread {
         model: Arc<dyn LanguageModel>,
         request: LanguageModelRequest,
         insertion: CompactionInsertion,
+        // The provider's reported input-token count for this history, when
+        // the caller holds a fresher or more exact datum than the last
+        // completed request's usage — a PromptTooLarge rejection parses the
+        // exact count from the error. `None` reads the last completed
+        // request's usage (the threshold and manual paths).
+        reported_input_tokens: Option<u64>,
         cx: &mut AsyncApp,
     ) -> Result<ControlFlow<()>> {
         if *cancellation_rx.borrow() {
@@ -3849,13 +3920,21 @@ impl Thread {
                         model.max_output_tokens(),
                     );
                     // Calibrate the byte budget with the provider's own count
-                    // of roughly this same history: the last completed
-                    // request's input tokens (cache reads included).
-                    let last_input_tokens = this.update(cx, |thread, _| {
-                        thread
-                            .latest_request_token_usage()
-                            .map(total_input_tokens)
-                    })?;
+                    // of roughly this same history: the caller's reported
+                    // count when it has one (a PromptTooLarge rejection
+                    // carries the exact input token count — at rescue time
+                    // the last completed request's usage predates the growth
+                    // that caused the rejection, and the 2.0 fallback can
+                    // over-budget token-dense content), else the last
+                    // completed request's input tokens (cache reads included).
+                    let last_input_tokens = match reported_input_tokens {
+                        Some(tokens) => Some(tokens),
+                        None => this.update(cx, |thread, _| {
+                            thread
+                                .latest_request_token_usage()
+                                .map(total_input_tokens)
+                        })?,
+                    };
                     let (request, planned) = cx.background_spawn(async move {
                         let planned = crate::kask_compaction::plan_compaction(
                             &request,
@@ -5796,6 +5875,24 @@ impl Thread {
         }
     }
 
+    /// Insertion index that keeps a trailing not-yet-answered user message
+    /// (the prompt that started the current turn) verbatim after the summary
+    /// instead of summarizing it away. Shared by the threshold path and the
+    /// PromptTooLarge rescue — one rule, one home.
+    fn trailing_user_aware_insertion_ix(&self) -> usize {
+        match self.messages.last() {
+            Some(message)
+                if matches!(
+                    &**message,
+                    Message::User(UserMessage { id, .. }) if !self.request_token_usage.contains_key(id)
+                ) =>
+            {
+                self.messages.len().saturating_sub(1)
+            }
+            _ => self.messages.len(),
+        }
+    }
+
     fn compaction_message_target_ix(&self, cx: &App) -> Option<usize> {
         if !self.auto_compaction_enabled(cx) {
             return None;
@@ -5836,18 +5933,7 @@ impl Thread {
             return None;
         }
 
-        let insertion_ix = match self.messages.last() {
-            Some(message)
-                if matches!(
-                    &**message,
-                    Message::User(UserMessage { id, .. }) if !self.request_token_usage.contains_key(id)
-                ) =>
-            {
-                self.messages.len().saturating_sub(1)
-            }
-            _ => self.messages.len(),
-        };
-        Some(insertion_ix)
+        Some(self.trailing_user_aware_insertion_ix())
     }
 
     /// Insertion point for a manually-triggered compaction.
@@ -5863,9 +5949,11 @@ impl Thread {
     }
 
     fn compaction_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        LanguageModelRegistry::read_global(cx)
-            .compaction_model()
-            .map(|m| m.model)
+        // zed-kask: D8 — try_read_global: a harness that never wires the
+        // registry global must not panic here; the thread's own model is
+        // the documented fallback either way.
+        LanguageModelRegistry::try_read_global(cx)
+            .and_then(|registry| registry.compaction_model().map(|m| m.model))
             .or_else(|| self.model().cloned())
     }
 
@@ -8840,6 +8928,7 @@ fn convert_image(image_content: acp::ImageContent) -> LanguageModelImage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tests::set_auto_compact_settings;
     use gpui::TestAppContext;
     use language_model::LanguageModelToolUseId;
     use language_model::fake_provider::FakeLanguageModel;
@@ -9307,10 +9396,15 @@ mod tests {
         });
     }
 
-    fn set_auto_compact_settings(cx: &mut App, auto_compact: agent_settings::AutoCompactSettings) {
-        let mut settings = AgentSettings::get_global(cx).clone();
-        settings.auto_compact = auto_compact;
-        AgentSettings::override_global(settings, cx);
+    fn prompt_too_large_error() -> LanguageModelCompletionError {
+        LanguageModelCompletionError::ProviderRejection {
+            provider: "OpenRouter".to_string().into(),
+            status: None,
+            code: Some("400".into()),
+            message: "Requested token count exceeds the model's maximum context length".into(),
+            retry_after: None,
+            category: ProviderErrorCategory::PromptTooLarge { tokens: None },
+        }
     }
 
     fn set_registry_compaction_model(cx: &mut App, model: Option<Arc<dyn LanguageModel>>) {
@@ -11225,17 +11319,7 @@ mod tests {
         // The turn request arrives; reject it as PromptTooLarge.
         let turn_request = model.pending_completions().pop().expect("turn request");
         assert_eq!(turn_request.intent, Some(CompletionIntent::UserPrompt));
-        model.send_completion_stream_error(
-            &turn_request,
-            LanguageModelCompletionError::ProviderRejection {
-                provider: "OpenRouter".to_string().into(),
-                status: None,
-                code: Some("400".into()),
-                message: "Requested token count exceeds the model's maximum context length".into(),
-                retry_after: None,
-                category: ProviderErrorCategory::PromptTooLarge { tokens: None },
-            },
-        );
+        model.send_completion_stream_error(&turn_request, prompt_too_large_error());
         model.end_completion_stream(&turn_request);
         cx.run_until_parked();
 
@@ -11332,14 +11416,7 @@ mod tests {
             .unwrap();
         cx.run_until_parked();
 
-        let prompt_too_large = || LanguageModelCompletionError::ProviderRejection {
-            provider: "OpenRouter".to_string().into(),
-            status: None,
-            code: Some("400".into()),
-            message: "Requested token count exceeds the model's maximum context length".into(),
-            retry_after: None,
-            category: ProviderErrorCategory::PromptTooLarge { tokens: None },
-        };
+        let prompt_too_large = || prompt_too_large_error();
 
         // First rejection: rescued by one compaction.
         let turn_request = model.pending_completions().pop().expect("turn request");
@@ -11409,17 +11486,7 @@ mod tests {
         cx.run_until_parked();
 
         let turn_request = model.pending_completions().pop().expect("turn request");
-        model.send_completion_stream_error(
-            &turn_request,
-            LanguageModelCompletionError::ProviderRejection {
-                provider: "OpenRouter".to_string().into(),
-                status: None,
-                code: Some("400".into()),
-                message: "Requested token count exceeds the model's maximum context length".into(),
-                retry_after: None,
-                category: ProviderErrorCategory::PromptTooLarge { tokens: None },
-            },
-        );
+        model.send_completion_stream_error(&turn_request, prompt_too_large_error());
         model.end_completion_stream(&turn_request);
         cx.run_until_parked();
 
@@ -11432,6 +11499,222 @@ mod tests {
         );
         thread.read_with(cx, |thread, _| {
             assert!(thread.running_turn.is_none(), "the turn must be dead");
+        });
+    }
+
+    /// zed-kask: D8 — a transient failure of the rescue compaction retries
+    /// inside the rescue (bounded by the shared retry machinery) instead of
+    /// killing the turn; the whole episode is the turn's one rescue.
+    #[gpui::test]
+    async fn test_prompt_too_large_rescue_retries_transient_compaction_failure(
+        cx: &mut TestAppContext,
+    ) {
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+        let model = Arc::new(FakeLanguageModel::default());
+        let old_user_message_id = ClientUserMessageId::new();
+
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.set_model(model.clone(), cx);
+                thread
+                    .messages
+                    .push(user_text_message(old_user_message_id.clone(), "old user"));
+                thread.messages.push(agent_text_message("old assistant"));
+            });
+            set_auto_compact_settings(
+                cx,
+                agent_settings::AutoCompactSettings {
+                    enabled: true,
+                    threshold: agent_settings::AutoCompactThreshold::Percentage(0.9),
+                },
+            );
+        });
+
+        let _events = cx
+            .update(|cx| {
+                thread.update(cx, |thread, cx| {
+                    thread.send(ClientUserMessageId::new(), vec!["new prompt"], cx)
+                })
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        // The turn request is rejected as PromptTooLarge; the rescue fires.
+        let turn_request = model.pending_completions().pop().expect("turn request");
+        model.send_completion_stream_error(&turn_request, prompt_too_large_error());
+        model.end_completion_stream(&turn_request);
+        cx.run_until_parked();
+
+        // The rescue compaction fails transiently (503 + retry-after).
+        let first = model
+            .pending_completions()
+            .pop()
+            .expect("rescue compaction request");
+        assert_eq!(
+            first.intent,
+            Some(CompletionIntent::ThreadContextSummarization)
+        );
+        model.send_completion_stream_error(
+            &first,
+            LanguageModelCompletionError::from_http_status(
+                language_model::LanguageModelProviderName::new("test"),
+                http_client::StatusCode::SERVICE_UNAVAILABLE,
+                "compaction provider error".to_string(),
+                Some(Duration::from_secs(3)),
+            ),
+        );
+        model.end_completion_stream(&first);
+        cx.run_until_parked();
+        // The rescue waits out the jittered retry delay, then retries.
+        cx.executor()
+            .advance_clock(crate::maximum_retry_delay_with_jitter(Duration::from_secs(
+                3,
+            )));
+        cx.run_until_parked();
+
+        // The retried rescue compaction succeeds.
+        let second = model
+            .pending_completions()
+            .pop()
+            .expect("rescue compaction retry");
+        assert_eq!(
+            second.intent,
+            Some(CompletionIntent::ThreadContextSummarization)
+        );
+        model.send_completion_stream_text_chunk(&second, "rescued summary");
+        model.end_completion_stream(&second);
+        cx.run_until_parked();
+
+        // The turn retries against the compacted history and completes.
+        let retry_request = model.pending_completions().pop().expect("retry request");
+        model.send_completion_stream_text_chunk(&retry_request, "done");
+        model.send_completion_stream_event(
+            &retry_request,
+            LanguageModelCompletionEvent::Stop(StopReason::EndTurn),
+        );
+        model.end_completion_stream(&retry_request);
+        cx.run_until_parked();
+
+        thread.read_with(cx, |thread, _| {
+            assert!(thread.messages.iter().any(|message| matches!(
+                &**message,
+                Message::Compaction(CompactionInfo::Summary(summary))
+                    if summary.as_ref() == "rescued summary"
+            )));
+            assert!(thread.running_turn.is_none(), "the turn must complete");
+        });
+    }
+
+    /// zed-kask: D8 — the dead-turn marking self-heals the thread: the
+    /// synthesized usage makes the NEXT turn's threshold check fire an
+    /// auto-compaction before its first request. Emergent but correct —
+    /// pinned so it is not "fixed" away.
+    #[gpui::test]
+    async fn test_prompt_too_large_marking_self_heals_next_turn(cx: &mut TestAppContext) {
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+        let model = Arc::new(FakeLanguageModel::default());
+        let old_user_message_id = ClientUserMessageId::new();
+
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.set_model(model.clone(), cx);
+                thread
+                    .messages
+                    .push(user_text_message(old_user_message_id.clone(), "old user"));
+                thread.messages.push(agent_text_message("old assistant"));
+            });
+            // Auto-compact disabled: the PromptTooLarge rejection is not
+            // rescued, the turn dies, and handle_completion_error marks the
+            // synthesized usage.
+            set_auto_compact_settings(
+                cx,
+                agent_settings::AutoCompactSettings {
+                    enabled: false,
+                    threshold: agent_settings::AutoCompactThreshold::Percentage(0.9),
+                },
+            );
+        });
+
+        let _events = cx
+            .update(|cx| {
+                thread.update(cx, |thread, cx| {
+                    thread.send(ClientUserMessageId::new(), vec!["doomed prompt"], cx)
+                })
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        let turn_request = model.pending_completions().pop().expect("turn request");
+        model.send_completion_stream_error(&turn_request, prompt_too_large_error());
+        model.end_completion_stream(&turn_request);
+        cx.run_until_parked();
+        thread.read_with(cx, |thread, _| {
+            assert!(thread.running_turn.is_none(), "the turn must be dead");
+        });
+
+        // Re-enable auto-compaction and start the next turn: the threshold
+        // check sees the synthesized usage and compacts BEFORE the request.
+        cx.update(|cx| {
+            set_auto_compact_settings(
+                cx,
+                agent_settings::AutoCompactSettings {
+                    enabled: true,
+                    threshold: agent_settings::AutoCompactThreshold::Percentage(0.9),
+                },
+            );
+        });
+        let _events = cx
+            .update(|cx| {
+                thread.update(cx, |thread, cx| {
+                    thread.send(ClientUserMessageId::new(), vec!["next prompt"], cx)
+                })
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        // The threshold check fires BEFORE the request. The summarized
+        // history ([old user, old assistant, doomed prompt]) is splittable,
+        // so the plan is the two-half split: serve both segments, then the
+        // merge.
+        let segments = model.pending_completions();
+        assert_eq!(
+            segments.len(),
+            2,
+            "the splittable history plans the two-half split"
+        );
+        for segment in &segments {
+            assert_eq!(
+                segment.intent,
+                Some(CompletionIntent::ThreadContextSummarization)
+            );
+            model.send_completion_stream_text_chunk(segment, "segment summary");
+            model.end_completion_stream(segment);
+        }
+        cx.run_until_parked();
+        let merge = model.pending_completions().pop().expect("merge request");
+        model.send_completion_stream_text_chunk(&merge, "self-healed summary");
+        model.end_completion_stream(&merge);
+        cx.run_until_parked();
+
+        let retry_request = model.pending_completions().pop().expect("turn request");
+        let retry_text = retry_request
+            .messages
+            .iter()
+            .map(|m| m.string_contents())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(retry_text.contains("self-healed summary"));
+        assert!(retry_text.contains("next prompt"));
+        model.send_completion_stream_text_chunk(&retry_request, "done");
+        model.send_completion_stream_event(
+            &retry_request,
+            LanguageModelCompletionEvent::Stop(StopReason::EndTurn),
+        );
+        model.end_completion_stream(&retry_request);
+        cx.run_until_parked();
+
+        thread.read_with(cx, |thread, _| {
+            assert!(thread.running_turn.is_none(), "the turn must complete");
         });
     }
 

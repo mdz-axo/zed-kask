@@ -309,15 +309,15 @@ fn always_allow_tools(cx: &mut TestAppContext) {
     });
 }
 
-// zed-kask: D8 — the PromptTooLarge rescue compaction is gated on
-// auto-compaction; these tests pin the dead-turn marking contract on the
-// fall-through path, so they must disable the rescue.
-fn disable_auto_compact(cx: &mut TestAppContext) {
-    cx.update(|cx| {
-        let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
-        settings.auto_compact.enabled = false;
-        agent_settings::AgentSettings::override_global(settings, cx);
-    });
+// zed-kask: D8 — shared with thread.rs's test module (the rescue and
+// threshold pins): one helper for auto-compact settings overrides.
+pub(crate) fn set_auto_compact_settings(
+    cx: &mut App,
+    auto_compact: agent_settings::AutoCompactSettings,
+) {
+    let mut settings = AgentSettings::get_global(cx).clone();
+    settings.auto_compact = auto_compact;
+    AgentSettings::override_global(settings, cx);
 }
 
 /// Turns terminal sandboxing off so the non-sandboxed `TerminalTool` is the
@@ -3615,7 +3615,15 @@ async fn test_prompt_too_large_marks_token_usage_exceeded(cx: &mut TestAppContex
     // with auto-compaction enabled the PromptTooLarge rescue recovers the
     // turn instead (pinned in thread.rs). Applied after `setup` so the
     // settings-file watcher cannot reset it.
-    disable_auto_compact(cx);
+    cx.update(|cx| {
+        set_auto_compact_settings(
+            cx,
+            agent_settings::AutoCompactSettings {
+                enabled: false,
+                threshold: AutoCompactThreshold::Percentage(0.9),
+            },
+        )
+    });
     let fake_model = model.as_fake();
 
     thread
@@ -3671,7 +3679,15 @@ async fn test_prompt_too_large_marks_token_usage_exceeded(cx: &mut TestAppContex
 async fn test_prompt_too_large_uses_reported_token_count(cx: &mut TestAppContext) {
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
     // zed-kask: D8 — see test_prompt_too_large_marks_token_usage_exceeded.
-    disable_auto_compact(cx);
+    cx.update(|cx| {
+        set_auto_compact_settings(
+            cx,
+            agent_settings::AutoCompactSettings {
+                enabled: false,
+                threshold: AutoCompactThreshold::Percentage(0.9),
+            },
+        )
+    });
     let fake_model = model.as_fake();
 
     thread

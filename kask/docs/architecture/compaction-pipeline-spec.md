@@ -36,8 +36,16 @@ Three entry points trigger the same pipeline:
    *previous* request's usage), so one round whose growth exceeds the
    remaining headroom sails past it; the rescue runs one forced compaction
    and the turn retries against the compacted history. Bounded to one rescue
-   per turn; gated on auto-compaction being enabled; the turn's
-   not-yet-answered prompt stays verbatim after the summary. The rescue does
+   episode per turn; gated on auto-compaction being enabled; the turn's
+   not-yet-answered prompt stays verbatim after the summary. The rejection's
+   reported input-token count is the rescue compaction's calibration
+   denominator — at rescue time the last completed request's usage predates
+   the growth that caused the rejection, and the 2.0 fallback can
+   over-budget token-dense content. Transient failures of the rescue
+   compaction retry inside the rescue (the shared `RetryStrategy`
+   machinery — the threshold path retries through the turn loop, which the
+   rescue cannot use without re-sending the known-oversized request);
+   the whole episode is the turn's one rescue. The rescue does
    NOT mark token-limit-exceeded — the synthesized usage would re-fire the
    threshold check on the next loop iteration, and a successful rescue
    refreshes the usage indicator with the retry's real report. Every
@@ -176,6 +184,30 @@ can see directly — the failure mode that hid the previous no-op stage.
 | Content-mix drift after calibration | 0.85 safety factor absorbs it; a segment 400 would surface as a compaction error |
 | Segment cannot fit even fully elided | Typed error, surfaced; compaction fails without committing |
 | Indivisible history | Single elided call (last resort) |
+| Single message larger than the whole window | Unrescuable by design: stored history is never modified and the trailing prompt is preserved verbatim, so the rescue fires, the retry is rejected again, the once-per-turn bound stops a second rescue, and the turn dies with the usage marking |
+| Transient failure of the rescue compaction | Retries inside the rescue, bounded by the shared `RetryStrategy` machinery (the threshold path retries through the turn loop; the rescue cannot — the loop-top check will not re-fire, and routing through the loop would re-send the known-oversized request). Permanent errors fail the rescue immediately |
+
+### Interaction inventory
+
+The triggers, the usage marking, and the threshold check interact; these
+edges are designed, not accidental:
+
+- **Marking → threshold (fall-through path):** a dead PromptTooLarge turn
+  marks synthesized usage; the NEXT turn's threshold check sees it and
+  auto-compacts before its first request — the thread self-heals one turn
+  later (pinned by `test_prompt_too_large_marking_self_heals_next_turn`).
+- **Marking → threshold (rescue path):** the rescue deliberately does NOT
+  mark — the synthesized usage would re-fire the threshold check at the top
+  of the next loop iteration, compacting a second time over the
+  just-compacted window.
+- **Reported tokens → calibration (rescue path):** the rejection's parsed
+  input-token count is the calibration denominator for the rescue
+  compaction; without it the 2.0 fallback can over-budget token-dense
+  content and the rescue's own summarization request would be rejected
+  (pinned by `reported_token_count_keeps_dense_history_segments_within_capacity`).
+- **Rescue → threshold (post-compaction):** the inserted Compaction message
+  guards the loop-top check (`compaction_ix > usage_ix` → no-op), so a
+  successful rescue cannot trigger an immediate second compaction.
 
 ## Reference models
 
@@ -248,7 +280,16 @@ compressor — a separate consumer with its own protected-tools policy,
   `test_prompt_too_large_rescue_compacts_and_retries` (the rescue fires, the
   turn retries against the compacted history, the turn's prompt stays
   verbatim), `test_prompt_too_large_rescue_is_bound_to_once_per_turn`,
-  `test_prompt_too_large_rescue_respects_disabled_auto_compact`.
+  `test_prompt_too_large_rescue_respects_disabled_auto_compact`,
+  `test_prompt_too_large_rescue_retries_transient_compaction_failure`
+  (a transient summarization failure retries inside the rescue and the
+  turn still completes), `test_prompt_too_large_marking_self_heals_next_turn`
+  (the dead-turn marking makes the next turn's threshold check compact
+  first).
+- `kask_compaction.rs` rescue calibration:
+  `reported_token_count_keeps_dense_history_segments_within_capacity`
+  (the reported count's plan fits the token capacity on dense content;
+  the 2.0 fallback over-plans — the datum is load-bearing).
 - `tests/mod.rs` dead-turn marking (fall-through path, auto-compact
   disabled): `test_prompt_too_large_marks_token_usage_exceeded`,
   `test_prompt_too_large_uses_reported_token_count`.

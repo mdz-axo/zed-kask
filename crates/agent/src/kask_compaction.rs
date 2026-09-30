@@ -1084,6 +1084,52 @@ mod tests {
     }
 
     #[test]
+    fn reported_token_count_keeps_dense_history_segments_within_capacity() -> Result<()> {
+        // The PromptTooLarge rescue's calibration datum: the rejection's
+        // reported input-token count. Token-dense history (true 1.2
+        // bytes/token) over an 80K-token capacity — with the reported count
+        // the ratio is trusted and every segment's true token demand fits
+        // the capacity; with the 2.0 fallback the byte budget over-plans
+        // segments whose true token demand exceeds the capacity, so the
+        // rescue's own summarization request would be rejected at the
+        // moment recovery matters most.
+        let mut messages = vec![text_message(Role::System, "system")];
+        for index in 0..6 {
+            messages.push(text_message(Role::User, &format!("request {index}")));
+            messages.push(text_message(Role::Assistant, &"x".repeat(40_000)));
+        }
+        messages.push(text_message(Role::User, COMPACTION_PROMPT));
+        let request = request_with_messages(messages);
+        let true_ratio = 1.2_f64;
+        let reported_tokens = ((history_total_bytes(&request)? as f64 / true_ratio).ceil()) as u64;
+
+        let largest_segment_tokens = |last_input_tokens: Option<u64>| -> Result<f64> {
+            let planned = plan_compaction(&request, 80_000, last_input_tokens)?;
+            let CompactionPlan::Segments(segments) = planned.plan else {
+                anyhow::bail!("expected a segmented plan");
+            };
+            let mut largest = 0usize;
+            for segment in &segments {
+                largest = largest.max(history_bytes(segment_history_slice(segment, 1))?);
+            }
+            Ok(largest as f64 / true_ratio)
+        };
+
+        let calibrated = largest_segment_tokens(Some(reported_tokens))?;
+        let fallback = largest_segment_tokens(None)?;
+
+        assert!(
+            calibrated <= 80_000.0,
+            "the reported count's plan must fit the token capacity (estimated {calibrated} tokens)"
+        );
+        assert!(
+            fallback > 80_000.0,
+            "the 2.0 fallback must over-plan dense content (estimated {fallback} tokens) — the reported count is load-bearing"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn below_floor_capacity_keeps_legacy_two_half_plan() -> Result<()> {
         // 79,999 tokens is below MIN_COMPACTION_CONTEXT_WINDOW: no usable
         // budget, so no pre-shrink and the two-half split applies regardless
