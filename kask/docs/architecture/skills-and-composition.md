@@ -210,7 +210,8 @@ prompts). Pinned by `test_system_prompt_contains_tool_failure_mode_warnings`.
 ### 5.3 Mermaid diagram-type list (D18)
 
 - **zed-kask** `:33` names the exact directives the renderer accepts —
-  `sankey-beta`, `xychart-beta`, `architecture-beta`, `radar-beta`, `treemap`,
+  `sankey-beta`, `xychart-beta`, `architecture-beta`, `radar-beta`,
+  `treemap-beta`,
   `block`, `kanban` — and separately notes that the ` ```media `, ` ```graph `,
   ` ```kanban `, ` ```portfolio `, ` ```scenarios `, and
   ` ```swarm_delegate_results ` fenced blocks are kask viz widgets, not

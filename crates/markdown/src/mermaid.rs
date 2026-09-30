@@ -446,7 +446,6 @@ const SUPPORTED_PREFIXES: &[&str] = &[
     "architecture-beta",
     "radar-beta",
     "treemap-beta",
-    "treemap",
     "block-beta",
     "block",
 ];
