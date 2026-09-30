@@ -36,7 +36,7 @@ form: (let ((dens (if (= sites 0) 1 (/ markers sites)))) (list dens (if (or (> f
 env:  { "fork": <fork lines>, "upstream": <upstream lines>, "markers": <marker count>, "sites": <kask call sites> }
 ```
 
-Tested cases: 100/100/5/10 → git-merge; 100/100/4/10 → mapped; 201/100/10/10 → mapped; 50/100/0/0 → git-merge; 250/100/0/0 → mapped.
+Tested cases: 100/100/5/10 → git-merge; 100/100/4/10 → mapped-reapplication; 201/100/10/10 → mapped-reapplication; 50/100/0/0 → git-merge; 250/100/0/0 → mapped-reapplication.
 
 ## Reference model
 
@@ -99,12 +99,12 @@ list (numbers are never reused). Only surviving seams continue to Steps 1–7.
 
 **Scope:** Steps 1–7 apply to D-seam *files* — rows whose `DIVERGENCE.md` file
 column names an existing file. Deletion D-seams (file column `—` or
-~~struck through~~, e.g. D4, D10) are not files; skip Steps 1–7 for them and
+~~struck through~~ — check the retired-seams list for current examples) are not files; skip Steps 1–7 for them and
 proceed to Step 8 to verify the merge did not silently restore them.
 
 ### Step 1 — Establish the functional inventory (code-graph extraction)
 
-Extract every kask-wiring functional unit from the fork's file. A _functional unit_ is a contiguous block implementing one kask capability. Use `git diff upstream/main HEAD -- <file>` + `grep` to extract manually via `git diff upstream/main HEAD -- <file>` + `grep` for section headers and kask symbols.
+Extract every kask-wiring functional unit from the fork's file. A _functional unit_ is a contiguous block implementing one kask capability. Extract manually with `git diff upstream/main HEAD -- <file>` (to see what the fork added) plus `grep` for section headers and kask symbols.
 
 Output: a numbered list of functional units (F1, F2, …) with line ranges and one-sentence purpose.
 
@@ -238,14 +238,14 @@ The full process, with the `main.rs` functional inventory (28 units), DAG, and c
 |----------|---------|
 | `assess.j2` | Assess a D-seam file against the strategy decision rule. Extract line counts, kask call site count, marker count. Recommend merge vs. mapped re-application. |
 | `map.j2` | Extract the functional inventory (F1, F2, ...), classify each unit by constraint force, and build the dependency DAG. |
-| `decide.j2` | Apply the essentialist deletion test: is full re-application necessary, or is surgical marking + pinning sufficient? |
+| `decide.j2` | Consolidate the per-file seam survival decisions (retire / simplify / retain / needs-operator-decision) and apply the essentialist deletion test (G1): is full re-application necessary, or is surgical marking + pinning sufficient? Consumes assess's and map's outputs.
 | `execute.j2` | Execute the chosen strategy: add markers + pinning tests (surgical), or re-apply onto clean upstream in topological order (full re-application). |
 | `document.j2` | Update DIVERGENCE.md and produce the final report. |
 | `reflect.j2` | After the merge commit: compare what happened against this skill, and propose amendments each tied to a falsifiable held-out case. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `upstream-rebase/assess`) and a context object with the required variables.
 
-Run verification gates (cargo check/test, isolation script) with `terminal`; use `lisp_eval` only for arithmetic such as marker density. Template order: Step 0 survival over all D-rows (`decide.j2`), then `assess` → `map` → `execute` → `document` for surviving seam files only, then `reflect` after the merge commit.
+Run verification gates (cargo check/test, isolation script) with `terminal`; use `lisp_eval` only for arithmetic such as marker density. Template order: Step 0's all-rows survival review and Step 4's insertion-point mapping (per unit, the upstream landmark line — no template renders either) are direct agent work; then, per surviving seam file, `assess` → `map` → `decide` → `execute` → `document`, then `reflect` after the merge commit. The templates carry their own internal pipeline numbering — bind each `step_N_result` input to the named artifact, not to the SKILL.md's step numbers: `decide.j2`'s `step_1_result` = assess's output (the assessment) and `step_2_result` = map's output (the functional inventory); `execute.j2`'s `step_2_result` = map's output and `step_3_result` = decide's output (the strategy decision); `document.j2`'s `step_2_result` through `step_5_result` = map's, decide's, execute's, and the verification gate's outputs respectively.
 
 ## Constraints
 
@@ -265,17 +265,25 @@ breaking collaborator branches. Preserve upstream history; do not squash.
 
 ### Conflict classes
 
-The `DIVERGENCE.md` runbook names three classes (D-seam files, workspace `Cargo.toml`
-arrays, and the additive `kask/` tree that never conflicts). The table below
-adds the two modify/delete classes the runbook omits:
+The `DIVERGENCE.md` Upstream-sync runbook (step 2) names the conflict
+surfaces: D-seam files, workspace `Cargo.toml` arrays, `Cargo.lock`
+(regenerate from the merged manifests — do not hand-merge),
+`kask/deny.toml` `allow-git` (add upstream's new git sources),
+`typos.toml` (deleted under D46 — resolve by re-deleting), and
+modify/delete conflicts (upstream restoring D7/D16 deletions). The table
+below adds the resolution detail per class — cite the runbook's step, not
+line numbers, when the doc evolves:
 
 | Class | Resolution |
 | --- | --- |
 | **D-seam modify/modify** | Follow the decision rule (`SKILL.md` decision rule + Step 1 scope note). Git-merge if well-marked; mapped re-application if under-marked. |
-| **Kask-additive no-conflict** | No action (`DIV` L8–9, L76–79, L99). |
-| **Workspace `Cargo.toml` arrays** | Hand-merge: keep both sides' entries (`DIV` L10–11, L98). Never drop a kask member. |
+| **Kask-additive no-conflict** | No action (runbook step 3: everything under `kask/` is additive). |
+| **Workspace `Cargo.toml` arrays** | Hand-merge: keep both sides' entries. Never drop a kask member. |
+| **`Cargo.lock`** | Regenerate from the merged manifests (`cargo check --workspace` rewrites it) — never hand-merge. |
+| **`kask/deny.toml` `allow-git`** | Add upstream's new git source URLs; verify with `cargo deny --config kask/deny.toml check`. |
+| **`typos.toml`** | Deleted under D46 — resolve delete/modify conflicts by re-deleting. |
 | **Modify/delete — upstream restores** | Run Step 8 (`check-zed-isolation.sh`); re-delete every path it names; re-run until pass. |
-| **Modify/delete — upstream deletes a file zed-kask modifies** | Default (Hypothesis-tier, no instance in `DIV`): if the kask wiring is still load-bearing, re-add the file as a new D-seam row (move under `kask/` if possible). If obsolete, accept the deletion and remove the `DIV` row. Either way, add/update the pinning test in the same commit. |
+| **Modify/delete — upstream deletes a file zed-kask modifies** | Default (Hypothesis-tier, no instance yet): if the kask wiring is still load-bearing, re-add the file as a new D-seam row (move under `kask/` if possible). If obsolete, accept the deletion and remove the `DIV` row. Either way, add/update the pinning test in the same commit. |
 
 ### Commit hygiene
 
@@ -302,9 +310,9 @@ invariants first, then compile, then tests.
 
 1. `bash kask/scripts/build/check-zed-isolation.sh` — Zed-isolation + desktop
    no-collision (one script; `check-desktop-no-collision.sh` is a one-line alias
-   per its L7, so do not run both).
-2. `bash kask/scripts/check-hkask-no-zed-deps.sh` — §13.1 invariant (`DIV`
-   L100–101).
+   per its L6, so do not run both).
+2. `bash kask/scripts/check-hkask-no-zed-deps.sh` — §13.1 invariant (the
+   DIVERGENCE.md architecture section's hkask-no-zed-deps rule).
 3. `./script/clippy` — `.rules` build guidelines: "Use `./script/clippy` instead
    of `cargo clippy`." Runs under `--deny warnings`.
 4. `cargo check -p kask_bridge -p hkask-types -p hkask-mcp-server` — `DIV`

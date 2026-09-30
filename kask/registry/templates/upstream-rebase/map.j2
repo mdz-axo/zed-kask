@@ -3,6 +3,7 @@
 contract:
   input:
     target_file: string
+    upstream_ref: string
     step_1_result: object
     task: string
   output:
@@ -32,7 +33,7 @@ capability (e.g., "wire the cybernetics loop", "register kask MCP servers").
 
 Use these techniques:
 - `grep -n "// .*kask\|// .*hKask\|// Wire\|// Gate\|// Determine\|// Ensure\|// Re-sync\|// Resolve\|// Seed\|// Open\|// Run\|// Create\|// Load\|// Register" {{ target_file }}`
-- `git diff {{ step_1_result.upstream_ref }} HEAD -- {{ target_file }}` to see what the fork added
+- `git diff {{ upstream_ref }} HEAD -- {{ target_file }}` to see what the fork added
 - Look for `kask_bridge::`, `hkask_`, `set_*`, `KaskSettings`, `McpRuntime` call sites
 
 Assign each unit an ID (F1, F2, ...) with line range and one-sentence purpose.

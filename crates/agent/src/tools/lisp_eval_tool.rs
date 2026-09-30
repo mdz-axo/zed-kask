@@ -1709,4 +1709,58 @@ mod tests {
             "one unclassified component blocks convergence and names the re-entry"
         );
     }
+
+    #[test]
+    fn test_upstream_rebase_skill_md_pins_forms() {
+        // upstream-rebase pins one lisp_eval form — the per-file strategy
+        // decision rule (git-merge vs mapped-reapplication) over the four
+        // counts assess.j2 gathers. The SKILL.md documents five tested
+        // cases; all five are executed here. If the form drifts, this fails
+        // until skill and tests are reconciled.
+        let skill_md = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../.agents/skills/upstream-rebase/SKILL.md"
+        ))
+        .expect("upstream-rebase SKILL.md must exist in the workspace");
+        let rule = r#"(let ((dens (if (= sites 0) 1 (/ markers sites)))) (list dens (if (or (> fork (* 2 upstream)) (< dens 0.5)) (quote mapped-reapplication) (quote git-merge))))"#;
+        assert!(
+            skill_md.contains(rule),
+            "strategy decision rule must stay pinned in upstream-rebase SKILL.md"
+        );
+        let case = |fork: i64, upstream: i64, markers: i64, sites: i64| {
+            hkask_lisp::eval_sandboxed_with_budget(
+                rule,
+                &json!({"fork": fork, "upstream": upstream, "markers": markers, "sites": sites}),
+                100_000,
+                64,
+            )
+            .expect("strategy rule must evaluate")
+        };
+        // The five documented cases, in the SKILL.md's order.
+        assert_eq!(
+            case(100, 100, 5, 10),
+            json!([0.5, "git-merge"]),
+            "density exactly 0.5 merges"
+        );
+        assert_eq!(
+            case(100, 100, 4, 10),
+            json!([0.4, "mapped-reapplication"]),
+            "density 0.4 re-applies"
+        );
+        assert_eq!(
+            case(201, 100, 10, 10),
+            json!([1.0, "mapped-reapplication"]),
+            "fork > 2x upstream re-applies regardless of density"
+        );
+        assert_eq!(
+            case(50, 100, 0, 0),
+            json!([1, "git-merge"]),
+            "zero sites is vacuous density 1, merges"
+        );
+        assert_eq!(
+            case(250, 100, 0, 0),
+            json!([1, "mapped-reapplication"]),
+            "fork > 2x upstream with zero sites still re-applies"
+        );
+    }
 }
