@@ -60,7 +60,7 @@ below is retained: the admitted reference model (Pass 3) cites it.
 | L5 | PARTIAL | Diataxis `hkask-inference` reference docs (internal, evidence-cited); no prior-art model |
 | L6 | PARTIAL | `kask/docs/research/chunking-for-rag-research.md`; `build-corpus-pipeline` skill lacks a `## Reference models` section |
 | L7 | GAP | no recorded model |
-| L8 | GAP | superforecasting methodology named in the skill description; no recorded section |
+| L8 | ANCHOR | superforecasting methodology — `## Reference model` section (Tetlock & Gardner 2015, onto_anchor derived superforecasting; the commandment map in kask/registry/templates/superforecasting/README.md Theoretical Foundation) |
 | L9 | ANCHOR | `kask/docs/research/kanban-board-reference-models.md` (the exemplar) |
 | L10 | PARTIAL | `kask/docs/architecture/memory-system-specification.md` (internal spec-form) |
 | L11 | GAP | no recorded model |

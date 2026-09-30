@@ -118,7 +118,10 @@ assessment. (The `safety_violations` gate term is model-judged input:
 the gate is deterministic over its inputs, but that one input is P —
 goal-drift indicators are not harness-measurable.) Harness evaluation is D (deterministic
 contains/not_contains/regex evaluators); filing a proposal is P, gated by
-the D verdict.
+the D verdict. Agenda generation (candidate design, prioritization, prediction
+setting) is P, critiqued by the pre-registered prediction (Brier-scored at
+resolution) and the headroom pre-check; signal reads, registry queries, the
+pre-check verdict, and Brier computation are D.
 
 ## Instructions
 
@@ -147,6 +150,16 @@ The outer Kata uses the `kata-improvement` step templates directly; this skill s
    - Extrinsic Experience: when the environment provides grounded feedback (unit tests, task success, rewards).
 4. Generate a concrete improvement plan: what operator 𝒰 will be applied, what signal 𝒮_t will drive it, what experiment scope and explicitly authorized resource constraints apply, and what acceptance criteria will gate the update. Do not invent token quotas; token usage is measured, not budgeted.
 5. Respond with a JSON object containing `pathway` (θ or Σ), `scaffold_component` (if Σ: p, m, 𝒯, or Σ), `signal_type` (𝒟_t, e_t, or τ_t), `improvement_plan`, `budget`, `acceptance_criteria`, and `variety_check` (on PDCA iteration 2+: the pathway+signal combinations already attempted and the justification for the current selection).
+
+### si-agenda-generator (Plan-step extension — the experiment-designer loop)
+
+When improvement work has no single named target — the operator asked for self-improvement generally, or regulation signals are accumulating — the Plan step extends into an agenda generator (repair plan §P8.5 Phase 3). It replaces hand-assembling experiments from noticed problems: signals are read mechanically, candidates are designed per the experiment protocol (`evolution/experiment-protocol`), and the prioritized queue lives in the evolution registry as `proposed` experiments.
+
+1. **Read signals (D).** Skill-use issues: `curator_semantic_search` over recent issue fragments. Escalations: `curator_algedonic_log`. Variety deficits: `curator_status` with `include_variety: true`. Registry history: `population_query` (all experiments by status) plus `lineage_read` per resolved experiment for its fitness and selection records; compute each resolved experiment's prediction Brier from its `prediction.confidence` and the measured claim outcome (claim held → 1, refuted → 0; Brier = (confidence − outcome)²). No-headroom voids are design failures, not claim measurements — exclude them from the calibration record.
+2. **Design and prioritize (P).** Render `self-improvement/si-agenda-generator` with the signals, the registry history with computed Briers, and the session's declared budget. The rendered prompt designs candidates — each with hypothesis, layer, genotype refs, eval set, fitness function, pre-registered prediction, and budget — ranked by signal strength × expected information ÷ cost, with confidences calibrated against the registry's Brier record.
+3. **Register the queue (D).** Declare each agenda candidate with `experiment_propose` (the registry is the queue: status `proposed`; a stable `experiment_key` converges retried calls). The pre-registered prediction is the controller — never edited after measurement begins. Each candidate that runs this cycle also gets its linked goal via `kanban_goal_create` (Constraints: every improvement cycle registers a falsifiable outcome claim before Do).
+4. **Headroom pre-check (D, budgeted auto-run §P8.7-Q6/Q7).** Before any challenger spend, register the baseline variant and run it alone through the deterministic harness within the declared budget. Baseline `overall_pass_rate` = 1.0 → the eval set has no headroom: record `selection_record` verdict `rejected` with the no-headroom reason, redesign the eval set (harder discriminators — conservation checks, exact labels — never weaker evaluators), and re-declare as a new experiment. Baseline < 1.0 → headroom exists: proceed to Vary and the normal PDCA flow, the registry as the record path (the GEPA sub-loop for prompt artifacts; the five-step protocol otherwise).
+5. **File the cycle (P, gated by the D verdict).** Each experiment that reaches a verdict gets one card on **Algedonic review** (the Proposal card handoff): hypothesis, pre-registered prediction, measured fitness, verdict, computed Brier, and — for a selected challenger — the proposed diff. The operator's gemba walk is the algedonic decision; nothing auto-adopts. `selection_record` closes the experiment; the card carries the review record.
 
 ### si-execute-improvement (PDCA Do)
 
@@ -411,6 +424,7 @@ The skill implements the paper's safety recommendations (Section 9.1):
 | Template | Purpose |
 |----------|---------|
 | `si-select-pathway.j2` | Select between Foundation Model Improvement and Scaffolding Improvement pathways based on the current Kata state and available resources. |
+| `si-agenda-generator.j2` | Plan-step extension: design and prioritize the experiment agenda from regulation signals and registry history, with pre-registered predictions and headroom-aware eval sets. |
 | `si-execute-improvement.j2` | Execute the improvement action selected by si-select-pathway — either an FM improvement step or a Scaffolding improvement step. |
 | `si-evaluate-improvement.j2` | Report measured before/after harness pass rates, transfer, cost and safety for the Act gate (`regressions` is emitted null — the invoking agent computes it with `lisp_eval`); no verdict or Brier score. |
 | `si-propose-or-discard.j2` | From the measured evaluation and the deterministic gate result, either file a proposal for the algedonic review or discard the candidate; never commit. |

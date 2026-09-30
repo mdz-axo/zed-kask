@@ -2,7 +2,7 @@
 title: "hKask Core and MCP Review — Repair and Improvement Plan"
 audience: [developers, architects, agents, operators]
 last_updated: 2026-09-30
-version: "0.5.0"
+version: "0.7.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]
@@ -550,7 +550,7 @@ Protocol steps, every experiment:
 
 1. **Declare** — hypothesis, genotype config, eval set, fitness function, noise band, pre-registered prediction with confidence, energy budget → `experiment_propose` (creates the linked kanban goal; the prediction is Brier-scored at verdict).
 2. **Vary** — mutation/crossover per the layer's operator; each variant registered with its parent (lineage).
-3. **Test** — fitness from recorded runs only; feedback and selection sets disjoint wherever the operator is a model.
+3. **Test** — fitness from recorded runs only; feedback and selection sets disjoint wherever the operator is a model. **Headroom pre-check first (§P8.7-Q6):** the baseline variant runs alone before any challenger spend — a baseline at 1.0 (100% of the test set) voids the experiment at design time as `rejected` with a no-headroom reason, and the eval set is redesigned (harder discriminators, never weaker evaluators) and re-declared; the pre-check is budgeted auto-run (§P8.7-Q7).
 4. **Select** — deterministic pre-selection within noise bands; final selection at the algedonic review (§P8.7-Q4). Deterministic-fitness experiments auto-run within the declared budget (§P8.7-Q1); human-judged-fitness experiments route through the operator before running.
 5. **Retain** — selected variants land in git through the proposal → delegation → verification path (proposes, never commits); rejected variants persist as fossils with reasons; lineage recorded.
 
@@ -594,6 +594,23 @@ Implementation contracts: SQLCipher storage with the canonical passphrase helper
 | Q3 — server shape | **B — build `hkask-mcp-evolution` now.** Demand and requirement are proven by the existing GEPA machinery and the active work thread (operator, 2026-09-30); the server lands together with the protocol. | Phase 1 builds the 13th managed server; the program is re-phased around its schema (§P8.5). |
 | Q4 — human gate | **A — algedonic review as the single selection surface.** | One board, one fossil record; selection concentrates in the existing gemba walk. |
 | Q5 — compatibility posture | **No backward compatibility — pre-release** (operator, 2026-09-30; the plan-level §1 ruling applied to this program). Replace superseded paths directly, update all callers together, delete old paths in the same change; no deprecated APIs, legacy adapters, compatibility flags, dual writes, or parallel implementations; no legacy-import surface in the server. | Phase 1 is replacement-first: the GEPA retention mechanism and per-skill record formats are deleted as the registry lands, not kept as fallbacks. |
+| Q6 — eval-set headroom | **A — baseline headroom pre-check** (operator, 2026-09-30). Before any challenger spend, the baseline variant runs alone; a baseline pass rate of 1.0 (100% of the test set) voids the experiment at design time as `rejected` with a no-headroom reason, and the eval set is redesigned — harder discriminators (conservation checks, exact labels), never weaker evaluators — before re-declaring. | Saturation discovery costs one variant's spend, not two (the trap was observed twice in Phase 2, §P8.8); wired into §P8.3 step 3 and the Phase 3 agenda generator. |
+| Q7 — pre-check autonomy | **A — the pre-check is budgeted auto-run** (operator, 2026-09-30). The baseline-only measurement is deterministic-fitness work inside the declared budget under the Q1=b ruling; the operator chairs selection, not baseline measurement. | The Phase 3 agenda loop self-screens its queue; the operator reviews only screened experiments. |
+
+#### P8.8 Phase 2 outcome record (2026-09-30 — first real experiments)
+
+Two first-scope experiments ran end-to-end through the registry; both resolved **rejected** on measured refutation — the saturated-baseline trap, observed twice in the first generation.
+
+| Experiment | Layer | Variants | Measured result | Fossil |
+| --- | --- | --- | --- | --- |
+| E2A `exp_60c11d32269f4121b05f3806b0a2b2fa` | agent_card | temp 0.7 baseline vs temp 0.2 challenger; 3 exact-reply tasks × 4 repeats | both 12/12 (pass_rate 1.0); cost tie 918 vs 920 tokens (inside the 10% band) | `sel_5eb85ad924934a8bbcd28bd97657d260` rejected |
+| E2B `exp_6dfe3e8e8bdd4ab8b67293e14943dfaf` | skill (composite) | shipped sankey-flow body vs body + output-contract recap; 3 sankey tasks × 3 repeats | both 9/9 (pass_rate 1.0); challenger ~11% cheaper (67,311 vs 75,845 tokens) — post-hoc observation, not the registered claim | `sel_f943800e277d4e73b8e7a3cffd55df1e` rejected |
+
+Prediction calibration: E2A confidence 0.6 → Brier 0.36; E2B confidence 0.55 → Brier 0.3025 (both claims refuted). Fitness records `fit_bc5a9a24ca854574a4a33d542bfdaffd`, `fit_fe38ac3c8e0a476294c79291cefcb85d`, `fit_07a66de4f6914d46b350b5441a2852fe`, `fit_4813238f4db347c39a0244db0b598eb2` reference harness reports and genotype card snapshots saved under `~/Documents/zk-data/evolution-mcp/reports/`; the four temp cards were removed after the runs.
+
+**Protocol finding — ruled 2026-09-30 (§P8.7-Q6/Q7).** Both refutations share one root cause: the eval sets had no headroom — each baseline saturated at 1.0, so no challenger could demonstrate the predicted improvement (the failure mode the self-improvement gate already documents). The ruled gate (wired into §P8.3 step 3 and the Phase 3 experiment-designer): a **baseline headroom pre-check** — run the baseline first; if its fitness is at ceiling (100% of the test set), void the experiment at design time as `rejected` with a no-headroom reason and redesign the eval set (harder discriminators — conservation checks, exact node labels — never weaker evaluators) before spending challenger budget. This converts the saturation discovery from a two-variant spend into a one-variant spend; the pre-check itself is budgeted auto-run (§P8.7-Q7).
+
+**Operational note.** A `swarm_eval_agent_local` call whose runtime exceeds the 300 s MCP reply window loses only its reply — the runs complete server-side and are fully recoverable from the swarm events DB (`verdict` and `harness_summary` events carry pass/fail, task/repeat indices, harness IDs, and token usage). E2B's baseline was recovered this way after its 9-run call lost its reply; the events-DB recovery path is the canonical fallback for slow eval sets, with per-task calls as the within-window alternative.
 
 ## 7. Validation record from the review
 

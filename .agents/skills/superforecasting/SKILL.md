@@ -104,7 +104,7 @@ The former single inside-view step is split into three steps. Generation and cou
 
 1. Integrate multiple causal models and perspectives into a "dragonfly eye" view.
 2. Identify clashing causal forces pushing toward YES vs. NO.
-3. Steelman the strongest opposing arguments, making them as persuasive as possible.
+3. Steelman the strongest opposing arguments, making them as persuasive as possible — the book's Commandment 9 perspective-taking discipline ("understanding the arguments of the other side so well that you can reproduce them to the other's satisfaction"). The team-management halves of Commandment 9 (precision questioning, constructive confrontation) are DEFERRED, not dismissed: the book's finding is that teams were 23% more accurate than individuals, a superforecaster on a superteam became 50% more accurate, and superteams beat prediction markets by 15-30% — a single-agent pipeline cannot capture the interpersonal half; the platform's swarm machinery is the future path.
 4. Generate 3-5 distinct causal models, each with an implied probability.
 5. Apply MCDA-style weighted aggregation: score each model against evidence alignment, reference class stability, causal mechanism clarity, and model confidence criteria. Compute composite scores and detect compensation masking.
 6. Synthesize an integrated probability using the MCDA-weighted average of model probabilities via `lisp_eval` — one `(* m_i c_i)` term per model, normalized by the composite-score sum. Each `c_i` is the sum of that model's four criterion scores from the template output. The result is the `synthesized_probability` passed to stage 6; the template's `synthesized_probability_judgment` is a cross-check only:
@@ -165,7 +165,7 @@ Why it is two-phase: `market_check_resolutions` (1) snapshots every OPEN market'
 
 Never record a post-resolution price as the probability-at-observation, and never retry an ambiguous (50-50) resolution hoping for a different result. This check scores market buckets; scoring your own forecasts is the Brier loop below.
 
-Across questions, the Brier loop closes outside this session: once forecasts resolve, `scenario_calibration` returns the curve, and `scenario_calibrate` applies the learned bias (`hkask_forecast::apply_calibration_adjustment`, called inside the server, not by the agent) to later forecasts.
+Across questions, the Brier loop closes outside this session: once forecasts resolve, `scenario_calibration` returns the curve, and `scenario_calibrate` applies the learned bias (`hkask_forecast::apply_calibration_adjustment`, called inside the server, not by the agent) to later forecasts. Post-mortem BOTH failures and successes (the book's Commandment 8): a failed forecast gets an unflinching reasoning review, and a successful one gets one too — "not all successes imply that your reasoning was right. You may have just lucked out by making offsetting errors."
 
 ## LEAP Integration
 
