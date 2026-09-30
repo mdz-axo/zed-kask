@@ -2610,4 +2610,61 @@ mod tests {
             "questions with >= 3 failed attempts retire; q2 (1 attempt) continues"
         );
     }
+
+    #[test]
+    fn test_scenario_planning_skill_md_pins_forms() {
+        // scenario-planning pins its Convergence gate form — the project
+        // completion check over the scored counts. The form's `=` is the
+        // lisp-repair L2 numeric-equality fix: a float zero (0.0) must
+        // equal integer zero (the former type-strict eq form broke on the
+        // binding), and the SKILL.md's regression case documents the
+        // three-way receipt. Before this test nothing pinned the form.
+        let skill_md = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../.agents/skills/scenario-planning/SKILL.md"
+        ))
+        .expect("scenario-planning SKILL.md must exist in the workspace");
+
+        let convergence = r#"(and (> resolved_forecasts 0) (= unresolved_critical 0))"#;
+        assert!(
+            skill_md.contains(convergence),
+            "convergence gate form must stay pinned in scenario-planning SKILL.md"
+        );
+        let passes = hkask_lisp::eval_sandboxed_with_budget(
+            convergence,
+            &json!({"resolved_forecasts": 12, "unresolved_critical": 0}),
+            100_000,
+            64,
+        )
+        .expect("convergence form must evaluate");
+        assert_eq!(
+            passes,
+            json!(true),
+            "resolved forecasts and no unresolved critical events — the project is complete"
+        );
+        let float_zero = hkask_lisp::eval_sandboxed_with_budget(
+            convergence,
+            &json!({"resolved_forecasts": 12, "unresolved_critical": 0.0}),
+            100_000,
+            64,
+        )
+        .expect("convergence form must evaluate on a float zero");
+        assert_eq!(
+            float_zero,
+            json!(true),
+            "a float zero must ALSO pass — the pin for the lisp-repair L2 `=` fix (the former type-strict eq form broke on this binding)"
+        );
+        let fails = hkask_lisp::eval_sandboxed_with_budget(
+            convergence,
+            &json!({"resolved_forecasts": 12, "unresolved_critical": 2}),
+            100_000,
+            64,
+        )
+        .expect("convergence form must evaluate on unresolved events");
+        assert_eq!(
+            fails,
+            json!(false),
+            "events past deadline without outcomes fail the gate"
+        );
+    }
 }

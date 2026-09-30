@@ -1,9 +1,11 @@
-{# goal: Independent quality gate that evaluates scenario divergence, consistency, and coverage. Separated from the narrative generator to prevent self-assessment bias. Receives scenarios[] from step 4 output and produces calibrated scores. #}
+{# goal: Independent quality gate that evaluates scenario divergence, consistency, and coverage. Separated from the narrative generator to prevent self-assessment bias. Receives the four quadrant scenarios from the axes-and-narratives render (step 8) plus the two axis definitions, and produces calibrated scores. #}
 [inference]
 contract:
   input:
     scenarios: array
     refined_question: string
+    axis_1: object
+    axis_2: object
   output:
     gate_pass: boolean
     gate_findings: array
@@ -18,6 +20,14 @@ You are an independent quality assessor evaluating scenario planning outputs. Yo
 ## Refined Focal Question
 
 {{ refined_question }}
+
+## Scenario Axes
+
+The four scenarios were built on these two axes; check the coverage criteria
+against THEM, not against inferences from the narratives.
+
+- **Axis 1 — {{ axis_1.name }}**: low = {{ axis_1.low_end }}; high = {{ axis_1.high_end }}
+- **Axis 2 — {{ axis_2.name }}**: low = {{ axis_2.low_end }}; high = {{ axis_2.high_end }}
 
 ## Scenarios
 

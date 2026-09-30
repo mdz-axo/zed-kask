@@ -23,7 +23,7 @@ this skill is the operating procedure for that pipeline.
 - **Initial condition (T1):** the `scenario_triage` classification, the FramingDocument, and — when prior projects exist — `scenario_calibration` (resolved count, Brier, bias) passed as `prior_calibration`; on a first run it is null.
 - **Target condition (T2):** the Convergence gate below passes and the Chermack assessment is reported.
 
-**D/P labelling.** Every `scenario_*` tool call is D (the server is the oracle: it rejects bad probabilities, conditional lengths and cycles, and computes marginals, Bayes, synthesis and Brier). Framing answers are the operator's (human decision). Brainstorm events, conditionals, forces and narratives are P, critiqued by the separate `scenario-quality-gate` render (scenarios), `scenario_cross_validate` (divergence > 0.15 → `grill-me`, probability estimates), and, at resolution, Brier (events). Force selection is critiqued by `driving-forces.j2`'s internal independence rule plus the gate's axis-span criterion.
+**D/P labelling.** Every `scenario_*` tool call is D (the server is the oracle: it rejects bad probabilities, conditional lengths and cycles, and computes marginals, Bayes, synthesis and Brier). The Convergence gate (step 17) is D too — a `lisp_eval` form over the scored counts. Framing answers are the operator's (human decision). Brainstorm events, conditionals, forces and narratives are P — including the focal-question render's `refined_question` and the implications-indicators render's strategies, indicators and monitoring plan — critiqued by the separate `scenario-quality-gate` render (scenarios), `scenario_cross_validate` (divergence > 0.15 → `grill-me`, probability estimates), and, at resolution, Brier (events). Force selection is critiqued by `driving-forces.j2`'s internal independence rule plus the gate's axis-span criterion.
 
 ## When to Use
 
@@ -59,7 +59,7 @@ this skill is the operating procedure for that pipeline.
 
 ### Phase 2 — Diverge and structure (Schwartz: brainstorm)
 
-4. Call `scenario_brainstorm` with the frame. Run its 4-round protocol
+4. Call `scenario_brainstorm` with the framed subject (the FramingDocument's subject; pass `research_context` when research is already in hand — the tool takes subject, personas, research_context, start_round, time_horizon). Run its 4-round protocol
    (DIVERGE with the personas, GROUND in facts and base rates, LINK
    causal chains, PRUNE to the final tree).
 5. If research is needed, run web searches, then call `scenario_build`
@@ -85,8 +85,11 @@ quantified backbone.
    uncertainties as axes. `scenario-planning/focal-question` refines the
    question first when the framing document left it unbounded.
 8. Render `scenario-planning/axes-and-narratives` for the four quadrant
-   narratives, then `scenario-planning/scenario-quality-gate` — a separate
-   render that scores divergence, consistency and coverage (0–1). A failing
+   narratives, then `scenario-planning/scenario-quality-gate` with the
+   scenarios AND the two axis definitions (`axis_1`, `axis_2`) — the gate's
+   axis-span coverage criterion is checked against the actual axes, not
+   inferred from narratives. A separate render, it scores divergence,
+   consistency and coverage (0–1). A failing
    gate revises the narratives its fix notes name and re-runs once (max 2
    cycles); a second failure delivers the scenarios with the fix notes shown.
 9. Render `scenario-planning/implications-indicators` for robust and
@@ -101,12 +104,14 @@ quantified backbone.
    resolved forecasts exist in the store it applies the learned
    overconfidence bias automatically — read the calibration-adjusted
    probability it returns.
-11. On new evidence for a single event, call `scenario_update` (Bayes)
-   and then `scenario_propagate` with the full event list and the
-   event's new prior to recompute descendants and the joint. Both take
-   a `forecast_id` — mint one project-wide `forecast_id` at first use
-   and reuse it for every update, score and calibration call (the
-   journal is keyed by it). The propagation journal is the audit
+11. On new evidence for a single event, call `scenario_update` (Bayes; it
+   takes the project-wide `forecast_id`) and then `scenario_propagate`
+   with the full event list and the event's new prior to recompute
+   descendants and the joint (propagate takes events, event_id, new_prior
+   — no forecast_id). Mint one project-wide `forecast_id` at first use
+   and reuse it for every update and score call (the journal is keyed by
+   it; calibrate and propagate take no forecast_id). The propagation
+   journal is the audit
    record — report the deltas.
 12. When multiple independent perspectives exist, collect them and call
    `scenario_synthesize` (dragonfly-eye, inverse-Brier weighting).
@@ -177,7 +182,7 @@ To render a template, call `render_template` with the ref (e.g. `scenario-planni
 - `key-forces.j2`: `refined_question`, `planning_horizon`, `domain`, `market_context`
 - `driving-forces.j2`: `refined_question`, `key_forces`
 - `axes-and-narratives.j2`: `refined_question`, `critical_uncertainties`, `planning_horizon`
-- `scenario-quality-gate.j2`: `scenarios`, `refined_question`
+- `scenario-quality-gate.j2`: `scenarios`, `refined_question`, `axis_1`, `axis_2`
 - `implications-indicators.j2`: `refined_question`, `scenarios`
 
 ## Constraints

@@ -42,7 +42,7 @@ A **robust strategy** performs well across **all four scenarios**. These are the
 Rules:
 - A strategy must work in all 4 scenarios to be "robust".
 - Explain WHY it works in each scenario — don't just assert it.
-- Classify each strategy's `constraint_force` as `prohibition`, `guardrail`, or `guideline`.
+- Classify each strategy's `constraint_force` as `Prohibition`, `Guardrail`, or `Guideline` (the pragmatic-semantics hub's capitalized enum).
 
 ### 3. Contingent Strategies
 
@@ -78,7 +78,7 @@ Respond with a JSON object:
   "robust_strategies": [
     {
       "strategy": "Description of the robust strategy",
-      "works_in": ["Scenario A", "Scenario C"],
+      "works_in": ["Scenario A", "Scenario B", "Scenario C", "Scenario D"],
       "rationale": "Why this strategy performs well across all four scenarios",
       "constraint_force": "Guideline"
     }
@@ -105,7 +105,7 @@ Respond with a JSON object:
 
 - Output must be **actionable**, not just descriptive. Every strategy must be something you can actually do.
 - Robust strategies must work in all 4 scenarios — explain the mechanism in each.
-- Every robust and contingent strategy must include a `constraint_force` of `prohibition`, `guardrail`, or `guideline`.
+- Every robust and contingent strategy must include a `constraint_force` of `Prohibition`, `Guardrail`, or `Guideline`.
 - Early indicators must be measurable and observable — not vague trends.
 - At least 2 robust strategies and 2 early indicators per scenario.
 - Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
