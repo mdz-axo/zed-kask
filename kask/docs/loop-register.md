@@ -2,7 +2,7 @@
 title: "Loop Register — zed-kask canonical loops"
 audience: [developers, architects, agents, operators]
 last_updated: 2026-09-28
-version: "0.23.23"
+version: "0.23.24"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle]
@@ -851,8 +851,8 @@ exactly that lag), not evidence of absence.)
 | F2 | Legitimate-boundary pin sweep | **DONE** (`8f60b45efa`): the corpus credential declaration pinned in the kata-kanban source-pin form; the intent-validation and thread-recall legitimate sides verified pinned; the D5 propagation arm recorded as source-verified (unreachable through the public seam without disproportionate harness); the corpus tagging-tests fmt drift fixed |
 | F1 | D7 Nebius status contract | **DONE** (`83c5f27b95`): `RunningUnknown` + `completion_check_unavailable` — a failed completion check no longer claims Running; the legitimate short-circuit (unconfigured HF) keeps Running, pinned; the failed-check path source-verified (a live HF fetch is the only in-test route; injection seam disproportionate); 45 training tests green |
 | F4 | finish_research_run polish | **DONE** (`bbac2563f9`): the manifest surfaces `status_history` (from/to/note/at per transition), pinned by the extended contract test; the one-second PK edge needs no code — `now_rfc3339` carries sub-second precision, accepted and documented |
-| F5 | `.rules` proposals | **PACKAGED** (below, for operator ruling — never edited inline per `.rules` hygiene) |
-| F6 | D12 repair-plan §8 walk-through | Pending on request |
+| F5 | `.rules` proposals | **ADMITTED (operator ruling 2026-09-29, essentialist-tested):** both rules passed the 3-gate test in reduced forms — Rule 1 ("a fix that restricts behavior pins the legitimate case it must not break — in the same change") admitted to the test-protocol traps (G2 reduction: "security fix" → "behavior-restricting fix", since D7 was an honesty fix; G1 evidence: the O_NOFOLLOW catch + the D7 prevention); Rule 2 ("a sweep pattern that under-matches the semantic target reports false absence — validate against a known-positive") admitted to the agent-loop traps (G2 reduction: the general epistemic form was a map, not a trap; distinct from the bare-glob rule) |
+| F6 | D12 repair-plan §8 walk-through | **EXECUTED** — three of seven resolved by prior rulings/inspection (#5 by D11 wontfix-by-design; #6 by inspection: `.github/workflows/kask-invariants.yml:151` runs the feature-gated reconnect suite; #4 largely by D10, H1's dynamic test a small follow-up if loss is observed); four ruled 2026-09-29: **#2 B** (no destructive-deletion override — the mode is the consent gate; current behavior ratified), **#3 B** (single-webid attribution stands; folds into the P2 deferral per D9), **#7 A-as-scheduled-follow-up / B-until-landed** (normalize containment to the active project root — one authority, matching the D8 shared-canonical-paths principle — but a behavior change with spawn-plumbing implications, so the documented dual-root behavior stands until then), **#8 A IMPLEMENTED** — both `Interrupted` construction sites now carry one canonical effect note ("the call was accepted, so effects may have been applied; inspect the server's state before re-invoking") via a shared helper; reconnect suite 17/17 green at the process boundary |
 
 **F5 — proposed `.rules` additions (operator ruling requested):**
 
@@ -871,6 +871,19 @@ exactly that lag), not evidence of absence.)
 
 ## Change log
 
+- 2026-09-29 — v0.23.24 closed F5 and F6. The two proposed `.rules`
+  passed the essentialist 3-gate test in reduced forms and were admitted
+  by operator ruling: the behavior-restricting-fix boundary pin (test
+  protocol traps) and the under-matching-sweep false-absence trap
+  (agent loop traps). The repair-plan §8 walk-through executed: three
+  items resolved by prior rulings/inspection, four ruled — #2 B (no
+  destructive-deletion override), #3 B (attribution folds into P2), #7
+  A-as-follow-up (project-root normalization scheduled; dual-root
+  stands until then), #8 A **implemented**: the `Interrupted` report now
+  names the effect consequence and the inspection step through one
+  canonical helper at both construction sites; hkask-mcp lib 21/21,
+  reconnect suite 17/17 green. **The repair plan's §8 decision queue is
+  empty; every follow-up plan item (F1–F6) is closed.**
 - 2026-09-29 — v0.23.23 executed the approved follow-up plan in order.
   F3 (`cfb89021f8`): six drifted pin citations refreshed. F2
   (`8f60b45efa`): the corpus credential declaration pinned; the

@@ -1759,8 +1759,9 @@ impl McpRuntime {
         let result = match call.await {
             Err(_) => {
                 return Err(DispatchError::Interrupted(format!(
-                    "server '{server}' did not reply to '{tool}' within {:?}",
-                    self.config.call_timeout
+                    "server '{server}' did not reply to '{tool}' within {:?}{}",
+                    self.config.call_timeout,
+                    interrupted_effect_note(server, tool),
                 )));
             }
             Ok(Ok(result)) => result,
@@ -1771,7 +1772,10 @@ impl McpRuntime {
                 error @ (rmcp::service::ServiceError::TransportClosed
                 | rmcp::service::ServiceError::TransportSend(_)),
             )) => {
-                return Err(DispatchError::Interrupted(error.to_string()));
+                return Err(DispatchError::Interrupted(format!(
+                    "{error}{}",
+                    interrupted_effect_note(server, tool)
+                )));
             }
             Ok(Err(e)) => return Err(DispatchError::Failed(e.to_string())),
         };
@@ -1838,6 +1842,19 @@ enum DispatchError {
     Interrupted(String),
     /// The call reached the server and failed there. A retry would only repeat it.
     Failed(String),
+}
+
+/// The standard suffix for `Interrupted` reports (repair-plan §8 #8, operator
+/// ruling 2026-09-29): a live peer accepted the call, so its effects may
+/// have been applied — name that consequence and the inspection step instead
+/// of leaving the operator to infer it from "effect unknown." One canonical
+/// phrasing shared by both construction sites (timeout and transport loss).
+fn interrupted_effect_note(server: &str, tool: &str) -> String {
+    format!(
+        " — the call was accepted, so '{tool}' on server '{server}' may have \
+         applied its effects (remote jobs or filesystem writes may have started); \
+         inspect the server's state before re-invoking"
+    )
 }
 
 impl DispatchError {
