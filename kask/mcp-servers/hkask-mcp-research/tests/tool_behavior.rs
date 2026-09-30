@@ -24,7 +24,9 @@
 use hkask_mcp_research::ResearchServer;
 use hkask_mcp_research::research::cache::ResponseCache;
 use hkask_mcp_research::research::db::RESEARCH_SCHEMA_DDL;
-use hkask_mcp_research::research::providers::{ProviderSearchOutput, WebSearchPort};
+use hkask_mcp_research::research::providers::{
+    CrossrefCandidate, ProviderSearchOutput, WebSearchPort,
+};
 use hkask_mcp_research::research::rss_types::{
     DiscoverRequest, GetEntriesRequest, ListSubscriptionsRequest, MarkReadRequest,
     UnreadCountRequest, UnsubscribeRequest,
@@ -125,7 +127,166 @@ impl WebSearchPort for NoCredentialsPool {
     }
 }
 
-// ── Stub InferencePort ─────────────────────────────────────────────────────
+/// Stub whose `extract` returns a near-empty body — the JS-shell / bot-block
+/// shape observed on Cloudflare-gated publisher pages (2026-09-30 zk-reference
+/// lesson L1). Pins the degradation contract: a successful HTTP fetch with a
+/// near-empty body surfaces a note naming the likely cause, never a bare
+/// success, and is not cached.
+struct ChromeShellPool;
+
+#[async_trait]
+impl WebSearchPort for ChromeShellPool {
+    async fn search(
+        &self,
+        _query: &SearchQuery,
+        _strategy: SearchStrategy,
+        _provider: Option<&str>,
+    ) -> Result<CompoundSearchResult, WebError> {
+        Err(WebError::NoProviderConfigured(
+            "No search provider configured.".to_string(),
+        ))
+    }
+
+    async fn find_similar(
+        &self,
+        _url: &str,
+        _num_results: u32,
+    ) -> Result<ProviderSearchOutput, WebError> {
+        Err(WebError::NoProviderConfigured(
+            "Exa provider not configured.".to_string(),
+        ))
+    }
+
+    async fn extract(
+        &self,
+        _url: &str,
+        _opts: &ExtractOptions,
+    ) -> Result<ExtractedContent, WebError> {
+        Ok(ExtractedContent {
+            url: "https://example.com/js-shell".to_string(),
+            content: "[Skip to content] × Copy link ✓".to_string(),
+            format: "markdown".to_string(),
+            metadata: Some(serde_json::json!({"title": "A JS shell"})),
+        })
+    }
+
+    async fn browse(
+        &self,
+        _url: &str,
+        _instruction: &str,
+        _timeout: Duration,
+    ) -> Result<BrowseResult, WebError> {
+        Err(WebError::NoProviderConfigured(
+            "No browse provider configured.".to_string(),
+        ))
+    }
+
+    async fn health_check(&self) -> Vec<ProviderHealthEntry> {
+        Vec::new()
+    }
+
+    fn provider_fingerprint(&self) -> String {
+        "stub-chrome-shell".to_string()
+    }
+
+    fn provider_kinds(&self) -> Vec<String> {
+        Vec::new()
+    }
+
+    fn score_providers(&self, _query: &str, _intent: Option<&str>) -> Vec<ProviderRecommendation> {
+        Vec::new()
+    }
+}
+
+/// Stub whose `resolve_title` returns fixed Crossref candidates — pins the
+/// bibliographic title mode (2026-09-30 zk-reference lesson L4): candidates
+/// are surfaced in full, the top candidate resolves to the typed identity.
+struct TitleResolvePool;
+
+#[async_trait]
+impl WebSearchPort for TitleResolvePool {
+    async fn search(
+        &self,
+        _query: &SearchQuery,
+        _strategy: SearchStrategy,
+        _provider: Option<&str>,
+    ) -> Result<CompoundSearchResult, WebError> {
+        Err(WebError::NoProviderConfigured(
+            "No search provider configured.".to_string(),
+        ))
+    }
+
+    async fn find_similar(
+        &self,
+        _url: &str,
+        _num_results: u32,
+    ) -> Result<ProviderSearchOutput, WebError> {
+        Err(WebError::NoProviderConfigured(
+            "Exa provider not configured.".to_string(),
+        ))
+    }
+
+    async fn extract(
+        &self,
+        _url: &str,
+        _opts: &ExtractOptions,
+    ) -> Result<ExtractedContent, WebError> {
+        Err(WebError::NoProviderConfigured(
+            "No extract provider configured.".to_string(),
+        ))
+    }
+
+    async fn browse(
+        &self,
+        _url: &str,
+        _instruction: &str,
+        _timeout: Duration,
+    ) -> Result<BrowseResult, WebError> {
+        Err(WebError::NoProviderConfigured(
+            "No browse provider configured.".to_string(),
+        ))
+    }
+
+    async fn health_check(&self) -> Vec<ProviderHealthEntry> {
+        Vec::new()
+    }
+
+    fn provider_fingerprint(&self) -> String {
+        "stub-title-resolve".to_string()
+    }
+
+    fn provider_kinds(&self) -> Vec<String> {
+        Vec::new()
+    }
+
+    fn score_providers(&self, _query: &str, _intent: Option<&str>) -> Vec<ProviderRecommendation> {
+        Vec::new()
+    }
+
+    async fn resolve_title(
+        &self,
+        _title: &str,
+        _rows: u32,
+    ) -> Result<Vec<CrossrefCandidate>, WebError> {
+        Ok(vec![
+            CrossrefCandidate {
+                doi: "10.18653/v1/2022.acl-short.94".to_string(),
+                title: "A Recipe For Arbitrary Text Style Transfer with Large Language Models"
+                    .to_string(),
+                publication_year: Some(2022),
+                venue: Some("ACL 2022".to_string()),
+                first_author: Some("Reif".to_string()),
+            },
+            CrossrefCandidate {
+                doi: "10.18653/v1/2022.acl-long.285".to_string(),
+                title: "Zero-Shot Cross-lingual Semantic Parsing".to_string(),
+                publication_year: Some(2022),
+                venue: Some("ACL 2022".to_string()),
+                first_author: Some("Sherborne".to_string()),
+            },
+        ])
+    }
+}
 
 /// Stub inference port that always fails — pins the degradation contract:
 /// the deep strategy must surface the failure reason, never collapse it.
@@ -212,9 +373,13 @@ impl InferencePort for ScoringInferencePort {
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 fn make_server_without_db() -> ResearchServer {
+    make_server_with_pool(Arc::new(NoCredentialsPool))
+}
+
+fn make_server_with_pool(pool: Arc<dyn WebSearchPort>) -> ResearchServer {
     ResearchServer::new(
         WebID::new(),
-        Arc::new(NoCredentialsPool),
+        pool,
         Arc::new(ResponseCache::new(10, Duration::from_secs(60))),
         RateLimiter::new(10000, 60),
         None,
@@ -2164,6 +2329,138 @@ async fn resolve_paper_with_run_id_records_the_canonical_url() {
     );
     assert_eq!(sources[0]["recorded_by"].as_str(), Some("server"));
     assert_eq!(sources[0]["provider"].as_str(), Some("openalex"));
+}
+
+#[tokio::test]
+async fn resolve_paper_title_mode_surfaces_candidates_and_resolves_the_top() {
+    // Bibliographic mode (2026-09-30 zk-reference lesson L4): a title query
+    // resolves via Crossref candidates — every candidate is surfaced so the
+    // caller can verify the match (a title search can hit a different work
+    // than intended), and the top candidate resolves to the typed identity.
+    let server = make_server_with_pool(Arc::new(TitleResolvePool));
+    let json = parse(&ok(server
+        .resolve_paper(Parameters(ResolvePaperRequest {
+            query: None,
+            title: Some(
+                "A Recipe For Arbitrary Text Style Transfer with Large Language Models".to_string(),
+            ),
+            run_id: None,
+        }))
+        .await));
+    assert_eq!(json["mode"].as_str(), Some("bibliographic"));
+    assert_eq!(json["identifier"]["kind"].as_str(), Some("doi"));
+    assert_eq!(
+        json["identifier"]["value"].as_str(),
+        Some("10.18653/v1/2022.acl-short.94")
+    );
+    let candidates = json["candidates"].as_array().expect("candidates surfaced");
+    assert_eq!(candidates.len(), 2, "every candidate surfaced: {json}");
+    assert_eq!(
+        candidates[0]["title"].as_str(),
+        Some("A Recipe For Arbitrary Text Style Transfer with Large Language Models")
+    );
+    assert_eq!(
+        candidates[1]["doi"].as_str(),
+        Some("10.18653/v1/2022.acl-long.285")
+    );
+    // The openalex block degrades with a surfaced note on the stub pool —
+    // the identity is the deterministic floor.
+    assert!(
+        json["openalex"].is_object(),
+        "openalex block present: {json}"
+    );
+}
+
+#[tokio::test]
+async fn resolve_paper_title_mode_rejects_both_and_neither_with_typed_errors() {
+    let server = make_server_without_db();
+    // Both → ambiguous input, rejected with what was expected.
+    let error = err(server
+        .resolve_paper(Parameters(ResolvePaperRequest {
+            query: Some("doi:10.1/x".to_string()),
+            title: Some("A Title".to_string()),
+            run_id: None,
+        }))
+        .await);
+    assert_error_kind(&error, McpErrorKind::InvalidArgument);
+    assert!(
+        error.message.contains("either query"),
+        "rejection names the contract: {}",
+        error.message
+    );
+    // Neither → empty input, rejected with what was expected.
+    let error = err(server
+        .resolve_paper(Parameters(ResolvePaperRequest {
+            query: None,
+            title: None,
+            run_id: None,
+        }))
+        .await);
+    assert_error_kind(&error, McpErrorKind::InvalidArgument);
+    assert!(
+        error.message.contains("either query"),
+        "rejection names the contract: {}",
+        error.message
+    );
+}
+
+#[tokio::test]
+async fn web_extract_surfaces_near_empty_body_as_a_degradation_note() {
+    // L1 (2026-09-30 zk-reference lesson): a successful HTTP fetch whose
+    // captured body is near-empty (a JS shell / bot-block page) surfaces a
+    // note naming the likely cause and the alternative route — never a
+    // bare success. The degraded extraction is not cached: a second call
+    // re-fetches instead of replaying the shell.
+    let server = make_server_with_pool(Arc::new(ChromeShellPool));
+    let json = parse(&ok(server
+        .web_extract(Parameters(ExtractRequest {
+            url: "https://example.com/js-shell".to_string(),
+            format: None,
+            json_prompt: None,
+            json_schema: None,
+            main_content_only: None,
+            wait_for_ms: None,
+            run_id: None,
+        }))
+        .await));
+    let note = json["note"].as_str().expect("degradation note present");
+    assert!(
+        note.contains("JS shell") && note.contains("Wayback"),
+        "note names the likely cause and the alternative route: {note}"
+    );
+    // The degraded extraction is not cached: the second call re-fetches
+    // (the stub returns the same shell, but through a fresh fetch — the
+    // cache would have replayed the first response unchanged, which the
+    // note's presence on the second call also demonstrates).
+    let json2 = parse(&ok(server
+        .web_extract(Parameters(ExtractRequest {
+            url: "https://example.com/js-shell".to_string(),
+            format: None,
+            json_prompt: None,
+            json_schema: None,
+            main_content_only: None,
+            wait_for_ms: None,
+            run_id: None,
+        }))
+        .await));
+    assert!(
+        json2["note"].is_string(),
+        "degraded extraction not cached as a clean hit: {json2}"
+    );
+}
+
+#[tokio::test]
+async fn web_ping_carries_the_static_provider_profiles() {
+    // L5 (2026-09-30 zk-reference lesson): the static profile table moved
+    // from every web_search response (~1KB of repeated context per call) to
+    // web_ping — the per-server-version metacognitive lookup lives where a
+    // health-check consumer reads it.
+    let server = make_server_without_db();
+    let json = parse(&ok(server.web_ping().await));
+    assert!(
+        json["provider_profiles"].is_array(),
+        "ping carries the profile table (possibly empty on a stub pool): {json}"
+    );
 }
 
 // ── Semantic duplication tier (Commit 6) ───────────────────────────────────

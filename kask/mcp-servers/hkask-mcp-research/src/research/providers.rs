@@ -19,7 +19,8 @@ mod tavily;
 
 pub(crate) use arxiv::ArxivProvider;
 pub(crate) use brave::BraveProvider;
-pub(crate) use crossref::{CrossrefCandidate, CrossrefProvider};
+pub use crossref::CrossrefCandidate;
+pub(crate) use crossref::CrossrefProvider;
 pub(crate) use exa::ExaProvider;
 pub(crate) use firecrawl::FirecrawlProvider;
 pub(crate) use openalex::OpenAlexProvider;

@@ -274,17 +274,46 @@ the durable recall copy ingested via the corpus server — different job,
 different owner; `excerpt` is the server's own capped audit copy. No
 server-to-server coupling.
 
-## Paper identity (2026-09-09)
+## Paper identity (2026-09-09; title mode + OA candidate 2026-09-30)
 
-`resolve_paper` parses any identifier form — DOI (bare, `doi:`, doi.org
-URL), arXiv ID, PMID, PMCID, OpenAlex work ID — into a typed identity
-with the canonical URL and a stable kind-prefixed ledger key; every
-rejection names what was expected. OpenAlex (a free provider, always
-registered) enriches with title/authors/year/venue when a record exists;
-the identity is the deterministic floor and is returned even when the
-metadata lookup degrades (a note either way — never silent). arXiv IDs
-have no direct OpenAlex lookup key and resolve to no-record. Pass
-`run_id` to record the resolution into the run ledger.
+`resolve_paper` has two modes. Identifier mode: parses any identifier
+form — DOI (bare, `doi:`, doi.org URL), arXiv ID, PMID, PMCID, OpenAlex
+work ID — into a typed identity with the canonical URL and a stable
+kind-prefixed ledger key; every rejection names what was expected.
+Bibliographic mode (2026-09-30): pass `title` instead of `query` and
+Crossref's bibliographic search returns up to 3 candidate works (DOI,
+title, year, venue, first author), all surfaced so the caller can verify
+the match (a title search can hit a different work than intended); the
+top candidate resolves to the typed identity. OpenAlex (a free provider,
+always registered) enriches with title/authors/year/venue when a record
+exists — plus `oa_pdf_url`, the candidate open-access copy URL from
+`best_oa_location.pdf_url` (falling back to `open_access.oa_url`): a
+candidate, not a verified document (the copy can be a different version
+than the cited work — the consumer verifies identity). The identity is
+the deterministic floor and is returned even when the metadata lookup
+degrades (a note either way — never silent). arXiv IDs have no direct
+OpenAlex lookup key and resolve to no-record. Pass `run_id` to record the
+resolution into the run ledger.
+
+## Retrieval-path honesty (2026-09-30)
+
+Three changes from the zk-reference retrieval sweep's lessons:
+
+- `web_extract` surfaces a degradation note when the captured body is
+  near-empty (< 500 chars) — the origin likely served a JS shell, a
+  bot-block page, or an empty body — and does not cache the degraded
+  extraction, so a retry re-fetches instead of replaying the shell.
+- `web_search` results carry `oa_pdf_url` when a scholarly provider
+  holds a candidate open-access copy (OpenAlex `best_oa_location.pdf_url`,
+  Semantic Scholar `openAccessPdf.url`) — the same candidate-not-verified
+  contract as `resolve_paper`'s enrichment.
+- The static `provider_profiles` table moved from every `web_search`
+  response (~1KB of repeated context per call) to `web_ping`; web_search
+  keeps the per-call `provider_recommendations` audit of intent-driven
+  picks. The Semantic Scholar provider retries 429s with 1s/2s backoff
+  (two retries; a persistent 429 surfaces with the attempt count), and
+  the compound-provider timeout is 20s (raised from 10s — SerpAPI
+  consistently exceeded the old bound and never participated).
 
 ## Capability adoption record (2026-09-09)
 

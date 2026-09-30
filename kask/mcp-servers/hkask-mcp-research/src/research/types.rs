@@ -844,7 +844,9 @@ pub(crate) struct PingOutput {
     /// repeating it per call spent ~1KB of identical context per response
     /// (observed 2026-09-30 zk-reference sweep). web_search keeps the
     /// per-call `provider_recommendations` audit of intent-driven picks.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    /// Always serialized — an empty table (no profiled providers
+    /// configured) is information, not absence.
+    #[serde(default)]
     pub provider_profiles: Vec<ProviderProfileOutput>,
 }
 

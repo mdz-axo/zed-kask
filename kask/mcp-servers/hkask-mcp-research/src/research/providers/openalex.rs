@@ -329,6 +329,57 @@ mod openalex_tests {
     }
 
     #[test]
+    fn parse_work_reads_candidate_oa_pdf_url() {
+        // best_oa_location.pdf_url is the primary candidate (the direct
+        // PDF); open_access.oa_url is the fallback (a landing page for the
+        // OA copy); absent → None. The field is a CANDIDATE copy, not a
+        // verified document — the consumer verifies identity (2026-09-30
+        // zk-reference lesson L2: the provider holds the OA copy while the
+        // result URL is the often-paywalled DOI landing page).
+        let work = parse_openalex_work(
+            r#"{"id": "https://openalex.org/W1", "title": "T",
+                 "best_oa_location": {"pdf_url": "https://repo.example.org/paper.pdf"}}"#,
+        )
+        .expect("work with best_oa_location parses");
+        assert_eq!(
+            work.oa_pdf_url.as_deref(),
+            Some("https://repo.example.org/paper.pdf")
+        );
+
+        let work = parse_openalex_work(
+            r#"{"id": "https://openalex.org/W1", "title": "T",
+                 "open_access": {"oa_url": "https://repo.example.org/landing"}}"#,
+        )
+        .expect("work with open_access fallback parses");
+        assert_eq!(
+            work.oa_pdf_url.as_deref(),
+            Some("https://repo.example.org/landing")
+        );
+
+        let work = parse_openalex_work(WORK_FIXTURE).expect("fixture work parses");
+        assert_eq!(work.oa_pdf_url, None, "no OA fields → no candidate URL");
+    }
+
+    #[test]
+    fn parse_works_maps_candidate_oa_pdf_url() {
+        let results = parse_openalex_works(
+            r#"{"results": [{
+                "id": "https://openalex.org/W1",
+                "doi": "https://doi.org/10.1/first",
+                "title": "First paper",
+                "best_oa_location": {"pdf_url": "https://repo.example.org/first.pdf"}
+            }, {
+                "id": "https://openalex.org/W2", "title": "Second paper"
+            }]}"#,
+        );
+        assert_eq!(
+            results[0].oa_pdf_url.as_deref(),
+            Some("https://repo.example.org/first.pdf")
+        );
+        assert_eq!(results[1].oa_pdf_url, None);
+    }
+
+    #[test]
     fn parse_works_tolerates_missing_and_malformed_arrays() {
         assert!(parse_openalex_works(r#"{"meta": {"count": 0}}"#).is_empty());
         assert!(parse_openalex_works("not json").is_empty());
