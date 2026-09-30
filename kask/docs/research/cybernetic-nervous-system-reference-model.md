@@ -2,8 +2,8 @@
 title: "Cybernetic Nervous System — Reference Model (Draft)"
 audience: [architects, developers, operators, agents]
 last_updated: 2026-09-30
-version: "0.1.0"
-status: "Proposed — admission to the reference-model set pending operator ruling"
+version: "1.0.0"
+status: "Active — admitted to the reference-model set by operator ruling 2026-09-30"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle]
 ---
@@ -29,12 +29,12 @@ anatomy beyond the tier abstraction; no claims about particular nuclei or
 cortical areas). Where a cited source uses human evidence, the paper cites
 it for the general principle, not the species-specific anatomy.
 
-**Status.** This is a **draft presented as an admission proposal** (§7).
-Admitting it to the project's reference-model set is an operator decision;
-this document does not self-declare itself canonical. Citations were
-resolved through research run `4b9a3b3ed05bf860` (2026-09-30; 13
-load-bearing sources verified, 0 resolution failures; Powers 1973 is
-cited only through the resolved Mansell & Marken 2015 review).
+**Status.** **Admitted** to the project's reference-model set by operator
+ruling 2026-09-30 ("proceed as proposed — confirmed"); §7 records the
+ruling. Citations were resolved through research run `4b9a3b3ed05bf860`
+(2026-09-30; 13 load-bearing sources verified, 0 resolution failures;
+Powers 1973 is cited only through the resolved Mansell & Marken 2015
+review).
 
 ## 2. The abstract structure
 
@@ -240,7 +240,7 @@ coalescer already implements INV3 exactly: "Coalesce only semantically
 identical persistent deviation/advisory cycles. Changed values, clearing,
 and rollout measurements always emit" — exact repeats accumulate into a
 suppressed count, and an hourly heartbeat re-announces liveness with
-that count (`kask/crates/hkask-regulation/src/cybernetics_loop.rs:895-985`).
+that count (`kask/crates/hkask-regulation/src/cybernetics_loop.rs:895-968`).
 The algedonic binary-threshold escalation (`algedonic.rs:247+`) is the
 coarser ancestor of the same gate. The gap the register records (Pass 3
 premise verdict) is that this principle governs exactly one of the
@@ -327,3 +327,10 @@ If admitted, it would anchor:
 Requested ruling: admit as-is, admit with amendments, or keep as an
 unanchored draft (the register's gap table then continues to record the
 absence per its no-invented-anchors rule).
+
+**Ruling (2026-09-30): ADMITTED as-is** ("proceed as proposed —
+confirmed"). The model now anchors the register's layer taxonomy and
+INV1–INV6 scoring (`loop-register.md` Pass 3), the alignment plan's
+target condition, and the expectation-signal category's definition for
+future code-facing naming. The pass-2 anchor ledger's GAP rows gain
+this shared structural anchor alongside their row-specific records.

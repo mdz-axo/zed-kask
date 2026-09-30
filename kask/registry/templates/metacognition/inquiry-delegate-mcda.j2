@@ -5,7 +5,7 @@ contract:
   output:
     invoked: boolean
     skill: string
-    result: object|null
+    result: object|array|null
     rationale: string
 ---
 {# goal: When the inquiry engine requests decision analysis, weigh and rank alternatives with sensitivity. #}
@@ -23,10 +23,10 @@ Examine the array. Find ALL requests where `skill` equals `"mcda"`. Process ever
 **If found:** For EACH matching request, apply MCDA to `params.alternatives`. If multiple requests, return results as an array under `result`.
 
 1. Identify criteria from the problem domain
-2. Weight criteria (total = 1.0)
-3. Score each alternative per criterion (1-10)
-4. Weighted sum per alternative
-5. Detect compensation masking (cheap-but-dangerous?)
+2. Weight criteria (normalized by `(norm W)` in `lisp_eval` — the render's own normalization is not used)
+3. Score each alternative per criterion (0–10 raw; benefit 0 = worst, 10 = best; cost already inverted; normalized by /10)
+4. Composites via `lisp_eval` `(dot (norm W) <alt>)` per alternative — the weighted sum model
+5. Detect compensation masking (a critical criterion — weight >0.1 or marked essential — scoring below `danger_threshold` 0.3 triggers the warning; severity minor for one weak non-critical criterion, major for a weak critical one)
 6. Sensitivity: weight shift to change ranking
 
 ### Output

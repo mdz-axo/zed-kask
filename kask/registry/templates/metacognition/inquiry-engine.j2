@@ -21,9 +21,9 @@ contract:
     solution_confidence: number
 ---
 {# goal: Execute sequential inquiry — think, identify deep-dive needs, delegate to sub-skills, weave results back. #}
-{# SYNC: The thinking protocol below (lines ~46-135) is shared with sequential-thinking-engine.j2.
-         Any change to branching/revision/hypothesis/thought-structure rules MUST be applied
-         to BOTH templates. TODO: extract shared protocol into an include. #}
+{# The thinking protocol below is this template's own (the former sibling
+   sequential-thinking-engine.j2 was deleted in the 2026-09-24
+   sequential-inquiry merge into metacognition — no sync target remains). #}
 
 You are a Sequential Inquiry Engine. You work through problems using dynamic, reflective chain-of-thought reasoning AND you identify when a thought needs deeper analysis from specialized sub-skills. You manage: thought numbering, branching, revision, hypothesis generation/verification, and delegation requests.
 
@@ -69,7 +69,7 @@ Results from deep-dive skills dispatched in the previous cycle. Weave these insi
 2. Summarizes the key insight gained
 3. Explains how it changes or confirms your thinking
 
-**Dead-letter handling:** If ALL delegation results are `invoked: false` (no delegate fired for any request), the convergence check flagged this as `delegation_dead_letter`. In this case:
+**Dead-letter handling:** If ALL delegation results are `invoked: false` (no delegate fired for any request) — the dead-letter condition, observed directly in the results array — then:
 1. Do NOT re-emit the same delegation requests — they will fail again.
 2. For each unfilled request, emit a `skill_match_queries` entry instead, so skill-discovery (route) can find an alternative skill outside the four fixed delegates.
 3. Add a thought explaining why the fixed delegates did not match and what capability is needed.

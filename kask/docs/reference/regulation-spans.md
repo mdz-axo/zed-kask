@@ -1,8 +1,8 @@
 ---
 title: "Regulation Span Registry — Reference"
 audience: [developers, operators, agents]
-last_updated: 2026-09-28
-version: "0.41.0"
+last_updated: 2026-09-30
+version: "0.42.0"
 status: "Active"
 domain: "Core"
 mds_categories: [domain, curation]
@@ -18,6 +18,23 @@ Regulation uses two related observability forms:
 2. persisted `RegulationRecord` values, carrying a validated `Span`, actor, cybernetic phase, observation, and optional outcome metadata (`kask/crates/hkask-types/src/event.rs:16-28`, `kask/crates/hkask-types/src/event.rs:364-410`).
 
 A tracing target is not automatically a persisted Regulation record. The tool paths below are intentionally separated so documentation does not turn a log label into a fictional persisted operation.[^otel-spans][^beer-cybernetics]
+
+**In-host tracing delivery (operator-approved record, 2026-09-30).** In
+the zed host there is no global `tracing` subscriber in a standard build
+(the only ones in the repo are the cfg-gated Tracy layer,
+`crates/ztracing/src/lib.rs:87`, and the wasm layer). In-host `tracing`
+events still reach the operator's log file through tracing's `log`
+feature — enabled graph-wide by zed's `crates/rpc/Cargo.toml:35`
+(`tracing = { features = ["log"] }`) — which emits `log` records when
+no subscriber is active; `zlog` writes them to `Zed-Kask.log`, printing
+the record's module path (`crates/zlog/src/zlog.rs:73-78`). Two
+consequences: (a) the pathway depends on an upstream crate's feature
+flag — dropping it would silently remove these lines (empirically
+confirmed working: 2,173 forwarded child-stderr lines in the 2026-09-30
+live log); (b) under a Tracy build the fallback stops firing and the
+same lines move to Tracy. MCP *child* processes always have their own
+stderr subscriber (`server/transport.rs:42-46`); the host forwards their
+stderr lines into this pathway (`hkask-mcp/src/runtime.rs:813-830`).
 
 ## 2. Canonical namespace and typed-span surface
 

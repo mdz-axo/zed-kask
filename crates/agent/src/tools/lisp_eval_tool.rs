@@ -2366,4 +2366,141 @@ mod tests {
             "a gapless chain below 0.8 does not converge"
         );
     }
+
+    #[test]
+    fn test_metacognition_skill_md_pins_forms() {
+        // metacognition — the audit's own prediction instrument — pins four
+        // lisp_eval forms: the guarded normalization, the hypotenuse, the
+        // reduction, and the convergence threshold. The pre-repair
+        // regression case claimed "three pinned forms" with a hypotenuse
+        // receipt of 0.7123124314512559 for env {og: 0.25,
+        // pg: 0.6666666666666666} — the live tool produces 0.7120003121097942
+        // for that env; the claimed value is the ROUNDED-pg (0.667) result,
+        // and no form was pinned at all. This test pins the true chain.
+        let skill_md = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../.agents/skills/metacognition/SKILL.md"
+        ))
+        .expect("metacognition SKILL.md must exist in the workspace");
+
+        // 1. The guarded normalization.
+        let normalization = r#"(if (and (> required_artifacts 0) (> required_steps 0) (<= 0 missing_artifacts) (<= missing_artifacts required_artifacts) (<= 0 incomplete_steps) (<= incomplete_steps required_steps)) (list (/ missing_artifacts required_artifacts) (/ incomplete_steps required_steps)) (quote unmeasured))"#;
+        assert!(
+            skill_md.contains(normalization),
+            "guarded normalization form must stay pinned in metacognition SKILL.md"
+        );
+        let normalized = hkask_lisp::eval_sandboxed_with_budget(
+            normalization,
+            &json!({"required_artifacts": 4, "required_steps": 3, "missing_artifacts": 1, "incomplete_steps": 2}),
+            100_000,
+            64,
+        )
+        .expect("normalization form must evaluate");
+        assert_eq!(
+            normalized,
+            json!([0.25, 0.6666666666666666]),
+            "1 of 4 artifacts missing, 2 of 3 steps incomplete"
+        );
+        let degenerate = hkask_lisp::eval_sandboxed_with_budget(
+            normalization,
+            &json!({"required_artifacts": 0, "required_steps": 3, "missing_artifacts": 0, "incomplete_steps": 0}),
+            100_000,
+            64,
+        )
+        .expect("normalization form must evaluate on a degenerate target");
+        assert_eq!(
+            degenerate,
+            json!("unmeasured"),
+            "the guard fires before the division — without it (/ 1 0) errors"
+        );
+
+        // 2. The hypotenuse (the MC9 regression case).
+        let hypotenuse = r#"(sqrt (+ (* og og) (* pg pg)))"#;
+        assert!(
+            skill_md.contains(hypotenuse),
+            "hypotenuse form must stay pinned in metacognition SKILL.md"
+        );
+        let hyp = hkask_lisp::eval_sandboxed_with_budget(
+            hypotenuse,
+            &json!({"og": 0.25, "pg": 0.6666666666666666}),
+            100_000,
+            64,
+        )
+        .expect("hypotenuse form must evaluate");
+        assert_eq!(
+            hyp,
+            json!(0.7120003121097942),
+            "the TRUE chain value — the pre-repair case claimed 0.7123124314512559, which is the rounded-pg (0.667) result, not this env's"
+        );
+        let zero_gap = hkask_lisp::eval_sandboxed_with_budget(
+            hypotenuse,
+            &json!({"og": 0.0, "pg": 0.0}),
+            100_000,
+            64,
+        )
+        .expect("hypotenuse form must evaluate at zero");
+        assert_eq!(zero_gap, json!(0.0), "both gaps zero — target met");
+
+        // 3. The reduction (chains from the true hypotenuse receipt).
+        let reduction = r#"(- gap_before gap_after)"#;
+        assert!(
+            skill_md.contains(reduction),
+            "reduction form must stay pinned in metacognition SKILL.md"
+        );
+        let reduced = hkask_lisp::eval_sandboxed_with_budget(
+            reduction,
+            &json!({"gap_before": 0.7120003121097942, "gap_after": 0.3}),
+            100_000,
+            64,
+        )
+        .expect("reduction form must evaluate");
+        assert_eq!(
+            reduced,
+            json!(0.4120003121097942),
+            "the gap_before chains from the true hypotenuse receipt"
+        );
+        let regression = hkask_lisp::eval_sandboxed_with_budget(
+            reduction,
+            &json!({"gap_before": 0.3, "gap_after": 0.5}),
+            100_000,
+            64,
+        )
+        .expect("reduction form must evaluate on a regression");
+        assert_eq!(
+            regression,
+            json!(-0.2),
+            "a negative reduction is gap growth — the threshold check fails it"
+        );
+
+        // 4. The convergence threshold.
+        let threshold = r#"(>= (- gap_before gap_after) (* gap_before expected_gap_reduction))"#;
+        assert!(
+            skill_md.contains(threshold),
+            "convergence threshold form must stay pinned in metacognition SKILL.md"
+        );
+        let met = hkask_lisp::eval_sandboxed_with_budget(
+            threshold,
+            &json!({"gap_before": 0.7120003121097942, "gap_after": 0.3, "expected_gap_reduction": 0.5}),
+            100_000,
+            64,
+        )
+        .expect("threshold form must evaluate");
+        assert_eq!(
+            met,
+            json!(true),
+            "0.412 >= 0.356 — the predeclared 50% reduction was met"
+        );
+        let missed = hkask_lisp::eval_sandboxed_with_budget(
+            threshold,
+            &json!({"gap_before": 0.7120003121097942, "gap_after": 0.5, "expected_gap_reduction": 0.5}),
+            100_000,
+            64,
+        )
+        .expect("threshold form must evaluate on a miss");
+        assert_eq!(
+            missed,
+            json!(false),
+            "0.212 < 0.356 — the predeclared reduction was not met"
+        );
+    }
 }

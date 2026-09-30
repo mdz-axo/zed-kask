@@ -910,20 +910,6 @@ impl CyberneticsLoop {
         );
         *self.loop_quality.write().await = quality;
 
-        tracing::debug!(
-            target: "reg.cybernetics",
-            delay_ms = quality.delay_ms,
-            response_coverage = quality.response_coverage,
-            fidelity = quality.fidelity_score,
-            rollout_progress = ?quality.rollout_progress_score,
-
-            deviations = deviations.len(),
-            advisories_computed = actions.len(),
-            rollout_impact_reports = impact_reports.len(),
-
-            "Loop-quality telemetry recorded"
-        );
-
         // Coalesce only semantically identical persistent deviation/advisory
         // cycles. Changed values, clearing, and rollout measurements always emit.
         // Exact repeats accumulate until

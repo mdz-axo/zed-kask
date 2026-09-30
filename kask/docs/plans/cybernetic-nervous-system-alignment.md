@@ -2,8 +2,8 @@
 title: "Cybernetic Nervous System — Alignment Plan"
 audience: [architects, developers, operators, agents]
 last_updated: 2026-09-30
-version: "0.1.0"
-status: "Proposed — pending the operator's coaching-kata checkpoint ruling (§7)"
+version: "0.2.0"
+status: "Active — operator ruling 2026-09-30 ('proceed as proposed — confirmed'): reference model admitted; S2 and S3 approved and landed"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle]
 ---
@@ -70,8 +70,8 @@ system confirms it.
 
 | # | Obstacle | Invariant | Status |
 | --- | --- | --- | --- |
-| O1 | The tracing→log bridge is undocumented and incidental (rpc's feature flag) | INV6 | Corrected finding; doc step S2 priced |
-| O2 | Surprise-gated reporting governs 1 of 12 pathways; the rest log raw activity | INV3 | The core gap; S3 is the smallest instance |
+| O1 | The tracing→log bridge is undocumented and incidental (rpc's feature flag) | INV6 | Corrected finding; **S2 landed** (recorded as designed in regulation-spans.md §1) |
+| O2 | Surprise-gated reporting governs 1 of 12 pathways; the rest log raw activity | INV3 | The core gap; **S3 landed** (the raw duplicate deleted, net −14); the count changes only with S6 |
 | O3 | Expectation carriage absent outside L2 + stored priors | INV2 | Direction only; no code step admitted this pass |
 | O4 | B→C handoff receipt deferrals (L1/L7 memory receipt, L9 ack gate) | INV5 | **Ruled design** (operator D3/D4: deliberate loose coupling) — parked, not obstacles |
 | O5 | L23 poisoned-lock silent fallback | INV4 | Standing operator deferral; S4 priced |
@@ -96,7 +96,10 @@ the deletion test, preserve behavior, and validate (`./script/clippy`,
   by `crates/rpc/Cargo.toml:35`, that zlog prints the module path, and
   that a Tracy build moves these lines to Tracy. Replaces: the
   undocumented coupling. Deletes: the false implication that tracing
-  events are "process-local diagnostics" only. No production lines.
+  "process-local diagnostics" only. No production lines.
+  **DONE (2026-09-30, operator-approved):** landed in
+  `reference/regulation-spans.md` §1 (v0.42.0; +21/−2 doc lines) — the
+  undocumented-coupling finding closed by record.
 - **S3 — delete the duplicative raw-activity emission (code, ~−16
   production lines):** the `tracing::debug!` quality-metrics block at
   `hkask-regulation/src/cybernetics_loop.rs:905-920` fires every tick and
@@ -113,6 +116,17 @@ the deletion test, preserve behavior, and validate (`./script/clippy`,
   `bash kask/scripts/cargo-test-nonzero.sh -p hkask-regulation --lib`,
   `cargo check -p zed`, and a live-log before/after check that
   `reg.outcome.loop_quality` spans still appear.
+  **DONE (2026-09-30, operator-approved):** the block (pre-deletion
+  `cybernetics_loop.rs:913-925`) is deleted — **net −14 production
+  lines** (0 insertions). Falsifier pre-check: zero consumers of the
+  debug format (the only remaining occurrence is the `SpanKind` doc
+  comment, which documents the span) and 0 occurrences in the live log —
+  zlog filters debug, so the deleted emission was inert output; the
+  Tracy-build destination is the only behavior delta, as priced.
+  Receipts: rustfmt --check clean; hkask-regulation --lib **99/99** via
+  cargo-test-nonzero (the suite grew from 96 with concurrent additions);
+  scoped `./script/clippy` clean (machete + buf included);
+  `cargo check -p zed` passed.
 - **S4 — L23 degraded-status contract (operator decision, behavior
   change):** surface the poisoned-lock leg (INV4 repair) — priced in
   L23's standing deferral with its falsifier; not admitted without the
@@ -148,6 +162,15 @@ gated on the checkpoint ruling, not landed.
 - **When to check:** one session — the slice is a single-file edit with
   an existing test surface (hkask-regulation --lib, 96 tests at the
   last recorded run).
+
+**Observed (2026-09-30, landed same session):** all three prediction
+components held — the coalesced span path is untouched (the telemetry
+pins passed within 99/99); net production lines −14 (predicted ~−16);
+the live-log falsifier pre-check found the debug format already absent
+from the log (zlog filters debug), so the observable log is unchanged
+and the deletion removes inert output. The coalescer region's register
+citations were re-measured to `cybernetics_loop.rs:895-968` in the same
+change.
 
 ## 6. What this plan is NOT
 
@@ -192,3 +215,9 @@ The five questions, with this pass's answers, presented for the ruling:
 Requested ruling: approve/modify/reject S3; approve/modify S2; admit or
 keep the reference-model draft as unanchored; and score the goal's
 ground truth when you confirm the deliverables.
+
+**Ruling (2026-09-30): "proceed as proposed — confirmed".** The
+reference model is ADMITTED as-is; S2 and S3 approved and landed the
+same session (receipts in §4–§5); S4 stays priced behind its standing
+deferral; the goal's ground truth was confirmed by the operator — the
+0.75 intake prediction Brier-scored at 0.0625.

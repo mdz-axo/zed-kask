@@ -192,6 +192,14 @@ pub(crate) fn snapshot_stats(
     }
 }
 
+/// Whether the live-performance channel itself is degraded — the
+/// aggregator's mutex is poisoned, so outcome writes are skipped and reads
+/// fall back to static profiles. Pool-global: one check covers every
+/// provider's recommendation (loop-register L23, S4).
+pub(crate) fn live_channel_degraded(aggregator: &Mutex<ProviderPerformanceAggregator>) -> bool {
+    aggregator.lock().is_err()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -18,16 +18,23 @@ arrives only after the operator resolves the recorded prediction.
 - Improvement Kata — Rother, *Toyota Kata* (2010); `onto_anchor` → derived `improvement_kata`.
 - PDCA — Shewhart (1939), Deming; `onto_anchor` → derived `pdca_cycle`.
 - Brier score — Brier (1950); `onto_anchor` → derived `brier_score`.
-- Metacognition — David Dunning (Kruger & Dunning 1999; Dunning 2011); `onto_anchor` → derived `metacognition` (operator ruling 2026-09-25). Dunning's double curse is why this skill never grades its own prediction: the knowledge needed to close the gap is the knowledge needed to see it, so the check comes from outside the self-assessment — the operator's `kanban_goal_score` and its Brier score. Sources: the capabilities-reasoner replica corpus ("The Trouble of Not Knowing What You Don't Know") and the Dunning talks in the curator's `dunning-video-catalog`.
+- Metacognition — David Dunning (Kruger & Dunning 1999; Dunning 2011); `onto_anchor` → derived `metacognition` (operator ruling 2026-09-25). Dunning's double curse is why this skill never grades its own prediction: the knowledge needed to close the gap is the knowledge needed to see it, so the check comes from outside the self-assessment — the operator's `kanban_goal_score` and its Brier score. Sources: the published literature (Kruger & Dunning 1999; Dunning 2011). Historical provenance, now unverifiable: the capabilities-reasoner replica corpus ("The Trouble of Not Knowing What You Don't Know" — the skill was deleted 2026-09-24, its corpus runs 2026-09-29) and the curator's `dunning-video-catalog` (not reachable through the curator recall path as of 2026-09-30).
 
 ## D/P labelling
 
 Grasp-current, establish-target, predict, and the experiment's calibration
 choice are P — the practitioner's judgment, critiqued by the measured gap and
-the operator's score. The gap arithmetic is D: the guarded normalization,
-the hypotenuse, the reduction, and the convergence checks run in `lisp_eval`
+the operator's score. The inquiry experiment's machinery is P likewise — the
+engine's thought generation, the delegation dispatch, the skill-match loop,
+and the dead-letter handling are judgment, critiqued by the delegates'
+returned analyses and the engine's `hypothesis_verified` gate. The gap
+arithmetic is D: the guarded normalization, the hypotenuse, the reduction,
+and the convergence checks run in `lisp_eval`
 over cited receipts — an uncited model status leaves the after-gap
-unmeasured, not zero. Prediction recording is D (`kanban_goal_create`); the
+unmeasured, not zero. The goal-tool calls are D recordings —
+`kanban_goal_list` (Step 0's prior-calibration read), `kanban_goal_create`
+(the prediction record), `kanban_goal_judge` (the verdict record); the
+prediction and verdict CONTENT they carry is P. The
 Brier score is the operator's alone — this skill never scores its own
 prediction (the Dunning double curse: the knowledge needed to close the gap
 is the knowledge needed to see it).
@@ -79,7 +86,7 @@ is the knowledge needed to see it).
 
 ### meta-experiment (Kata Step 4: Experiment / Do)
 
-1. Apply the predicted calibration — Falstaffian perspective rotation, ellipsis analysis (render `metacognition/ellipsis-analysis` with `text` = the context text, `expectations`, `biases`, `assumptions`, and `domain`), strategy adjustment, or an **inquiry experiment** for a problem that needs branching, revision and deep-dive delegation (below).
+1. Apply the predicted calibration — Falstaffian perspective rotation (the five shapes — predicate hollow, subject expansion, object inversion, direction reversal, value redefinition — defined in `company-research/falstaffian-competitive-rotation`; apply the rotation inline to the assessment), ellipsis analysis (render `metacognition/ellipsis-analysis` with `text` = the context text, `expectations`, `biases`, `assumptions`, and `domain`), strategy adjustment, or an **inquiry experiment** for a problem that needs branching, revision and deep-dive delegation (below).
 2. Re-measure the current condition after the experiment (the experiment changed the system).
 3. Produce new current_artifacts and current_procedure for the gap computation. Carry Step 2's measured `gap_before` and Step 3's predeclared reduction threshold unchanged; never recompute the baseline from post-experiment data.
 
@@ -88,7 +95,7 @@ is the knowledge needed to see it).
 Use when the gap is in understanding a problem that needs several dependent reasoning steps, not in calibrating a known one. It runs inside Step 4; the Kata steps around it are unchanged.
 
 1. Render `metacognition/inquiry-engine` with `problem`, `domain`, `constraints`, `max_thoughts` (≤ 20; 12 is the default) and the prior cycle's `prior_chain`, `prior_delegation_results` and `prior_skill_match_results`. It generates, branches, revises and verifies thoughts and emits `delegation_requests` and `skill_match_queries`.
-2. For each `delegation_requests` entry, render the matching delegation template with it: `metacognition/inquiry-delegate-hypothesis-framer` (question framing, FINER + PICO), `metacognition/inquiry-delegate-mcda` (choice among alternatives), `metacognition/inquiry-delegate-diagnose` (a bug or regression), or `metacognition/inquiry-delegate-falsifiability` (a counterfactual or an untestable claim). For `skill_match_queries`, render `skill-discovery/skill-discovery-route` with `task_description`, `task_context`, the actual installed `skill_catalog`, `max_recommendations: 3`, and its required `epistemic_state: {}` when no independently supported confidence/type was supplied. An empty object disables the boost; never invent 0.5 or an uncertainty type. Do this for at most three follow-up skills.
+2. For each `delegation_requests` entry, render the matching delegation template: `metacognition/inquiry-delegate-hypothesis-framer` (question framing, FINER + PICO), `metacognition/inquiry-delegate-mcda` (choice among alternatives), `metacognition/inquiry-delegate-diagnose` (a bug or regression), or `metacognition/inquiry-delegate-falsifiability` (a counterfactual or an untestable claim). Render the matching delegate with the FULL `delegation_requests` array — each delegate filters to its own skill's entries and returns an array under `result` when multiple match. For `skill_match_queries`, render `skill-discovery/skill-discovery-route` with `task_description`, `task_context`, the actual installed `skill_catalog`, `max_recommendations: 3`, and its required `epistemic_state: {}` when no independently supported confidence/type was supplied. An empty object disables the boost; never invent 0.5 or an uncertainty type. Do this for at most three follow-up skills.
 3. Feed the delegation and skill-match results back into the next engine render. The engine's `final_answer` and `hypothesis_verified` become the post-experiment current condition.
 
 ### Convergence (Steps 5-9: Check + Act)
@@ -99,7 +106,7 @@ The counts are probabilistic (P — model-produced, critiqued by the operator wh
 2. (D) Compute the hypotenuse with `lisp_eval`, form `(sqrt (+ (* og og) (* pg pg)))`, env `{ "og": <object gap>, "pg": <process gap> }`. Never estimate the gap in prose.
 3. (D) The reduction is `(- gap_before gap_after)` via `lisp_eval`; `gap_before` is the Step 3 value, unchanged.
 4. Judge the recorded goal with the measured gap (`kanban_goal_judge`). The Brier score arrives only when the operator scores the goal; until then calibration is pending, not zero error.
-5. Check the predeclared gap-reduction threshold and the user's task-specific success evidence separately. The threshold check is `(>= (- gap_before gap_after) (* gap_before expected_gap_reduction))` via `lisp_eval`, env `{ "gap_before": <the Step 3 value>, "gap_after": <the measured after-gap>, "expected_gap_reduction": <the predeclared fraction in [0,1] }`. A zero after-gap with observed target-outcome evidence meets the local target; with missing evidence report `unmeasured`. Two nearly unchanged measured iterations while the target still fails indicate a plateau, not success. Operator-resolved Brier calibration remains pending until `kanban_goal_score`; do not convert a session gap into a scored outcome. Re-enter grasp-current only on a named obstacle and new observation; stop after three cycles with remaining gaps visible.
+5. Check the predeclared gap-reduction threshold and the user's task-specific success evidence separately. The threshold check is `(>= (- gap_before gap_after) (* gap_before expected_gap_reduction))` via `lisp_eval`, env `{ "gap_before": <the Step 3 value>, "gap_after": <the measured after-gap>, "expected_gap_reduction": <the predeclared fraction in (0, 1] — 0 is forbidden: a zero reduction passes the threshold vacuously on any non-regression }`. A zero after-gap with observed target-outcome evidence meets the local target; with missing evidence report `unmeasured`. Two nearly unchanged measured iterations while the target still fails indicate a plateau, not success. Operator-resolved Brier calibration remains pending until `kanban_goal_score`; do not convert a session gap into a scored outcome. Re-enter grasp-current only on a named obstacle and new observation; stop after three cycles with remaining gaps visible.
 
 ## Registry Templates
 
@@ -114,7 +121,7 @@ The counts are probabilistic (P — model-produced, critiqued by the operator wh
 | `inquiry-delegate-mcda.j2` | Delegation: weigh and rank alternatives with sensitivity. |
 | `inquiry-delegate-diagnose.j2` | Delegation: structured root-cause diagnosis of a bug or regression. |
 | `inquiry-delegate-falsifiability.j2` | Delegation: eliminative inference for a counterfactual or an untestable claim. |
-| `ellipsis-analysis.j2` | Apply Bloom's five-step method to detect gaps in context, classify them as ellipsis (deliberate) or leak (unintentional), and surface what is not inferable. Used by the experiment step for ellipsis perspective. |
+| `ellipsis-analysis.j2` | Apply Bloom's five-step method to detect gaps in context, classify them as ellipsis (deliberate) or leak (unintentional), and find what is not inferno (Calvino: the exceptional, supported element worth preserving). Used by the experiment step for ellipsis perspective. |
 
 To render a template, call `render_template` with the template ref and these **top-level** context keys (not nested under `variables`). Pass the prior step's result as the named condition, not as `current_grasp` or `predicted_calibration`:
 
@@ -145,17 +152,21 @@ A `render_template` call renders the prompt; it does not execute the inference s
 
 ## Regression case
 
-Run the three pinned `lisp_eval` forms through the live tool with representative
+Run the four `lisp_eval` forms through the live tool with representative
 values: the guarded normalization (env `{required_artifacts: 4, required_steps: 3,
 missing_artifacts: 1, incomplete_steps: 2}` → `[0.25, 0.6666666666666666]`
-— the artifact gap and the process gap; rounded to 3 decimals: [0.25, 0.667]);
-the hypotenuse (env `{og: 0.25, pg: 0.6666666666666666}` → `0.7123124314512559`
-— rounded: 0.712); and the reduction (env `{gap_before: 0.7123124314512559,
-gap_after: 0.3}` → `0.4123124314512559` — rounded: 0.412; the gap_before
-chains from the hypotenuse receipt). Verify the normalization returns
+— the artifact gap and the process gap); the hypotenuse (env `{og: 0.25,
+pg: 0.6666666666666666}` → `0.7120003121097942`); the reduction (env
+`{gap_before: 0.7120003121097942, gap_after: 0.3}` → `0.4120003121097942`;
+the gap_before chains from the hypotenuse receipt — the pre-repair case
+claimed 0.7123124314512559, which is the ROUNDED-pg (0.667) result, not the
+stated env's); and the convergence threshold (env `{gap_before:
+0.7120003121097942, gap_after: 0.3, expected_gap_reduction: 0.5}` → true:
+0.412 ≥ 0.356). Verify the normalization returns
 `unmeasured` when required_artifacts or required_steps is 0 (the guard fires
 before the division — without it `(/ 1 0)` errors). Verify the hypotenuse
 is 0 when both gaps are 0 (target met). Verify the reduction is negative
-when gap_after > gap_before (a regression — the form handles it; the
-convergence step's plateau rule interprets it). All receipts executed
-through the live tool 2026-09-29.
+when gap_after > gap_before (a regression — the threshold check fails it,
+which is the correct interpretation). All four forms durably pinned by
+`test_metacognition_skill_md_pins_forms`; receipts executed through the
+live tool 2026-09-30.

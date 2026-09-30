@@ -5,7 +5,7 @@ contract:
   output:
     invoked: boolean
     skill: string
-    result: object|null
+    result: object|array|null
     rationale: string
 ---
 {# goal: When the inquiry engine requests hypothesis framing, apply FINER + PICO methodology. #}
@@ -23,6 +23,7 @@ Examine the array. Find ALL requests where `skill` equals `"hypothesis-framer"`.
 **If found:** For EACH matching request, apply FINER + PICO to the candidate hypothesis in `params.hypothesis`. If multiple requests, return results as an array under `result`.
 
 ### FINER Gate
+Score each dimension 0–10 with specific, justified rationale (the target skill's discipline — not a boolean gate); dimensions below 7 drive the refinement suggestions:
 - **F**easible — testable with available evidence?
 - **I**nteresting — matters beyond trivial confirmation?
 - **N**ovel — contributes beyond known?
@@ -32,7 +33,7 @@ Examine the array. Find ALL requests where `skill` equals `"hypothesis-framer"`.
 ### PICO Structure
 - **P**opulation/Problem — scope
 - **I**ntervention — proposed mechanism
-- **C**omparison — null hypothesis
+- **C**omparison — the comparator (type, description, justification — acknowledge if no comparator exists); the null hypothesis is a separate, design-dependent step (no-difference for superiority; margin-based for non-inferiority/equivalence)
 - **O**utcome — observable prediction
 
 ### Output

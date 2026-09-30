@@ -5,7 +5,7 @@ contract:
   output:
     invoked: boolean
     skill: string
-    result: object|null
+    result: object|array|null
     rationale: string
 ---
 {# goal: When the inquiry engine identifies a bug pattern, apply structured root-cause diagnosis. #}
@@ -22,9 +22,9 @@ Examine the array. Find ALL requests where `skill` equals `"diagnose"`. Process 
 
 **If found:** For EACH matching request, apply structured diagnosis to `params.symptom`. If multiple requests, return results as an array under `result`.
 
-1. **Reproduce** — fastest deterministic feedback loop (failing test, CLI, harness)
-2. **Anchor** — map symptom to code path / invariant violation
-3. **Hypothesise** — 3-5 ranked, falsifiable root-cause hypotheses
+1. **Anchor** — map symptom to the actual code structure (the target skill's Phase 0 + step 1: grep the affected symbol, trace the call chain)
+2. **Reproduce** — fastest deterministic feedback loop (failing test, CLI, harness)
+3. **Hypothesise** — 3–7 ranked, falsifiable root-cause hypotheses (the target skill's pinned invariant count)
 4. **Instrument** — probes to discriminate between hypotheses
 5. **Recommend** — most likely cause + fix strategy
 

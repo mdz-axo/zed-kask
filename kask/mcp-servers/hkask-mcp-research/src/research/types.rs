@@ -175,6 +175,14 @@ pub struct ProviderRecommendation {
     /// `None` when fewer than `MIN_SAMPLES_FOR_LIVE` observations exist.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub live_sample_count: Option<usize>,
+    /// `true` when the live-performance channel itself is degraded (the
+    /// aggregator's state is poisoned — outcome writes are skipped and reads
+    /// fall back to static profiles). Distinguishes a broken feedback
+    /// channel from "too few samples" (which leaves this `false` with the
+    /// live fields `None`). Serialized only when `true`, so healthy
+    /// responses are unchanged.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub live_stats_degraded: bool,
 }
 
 // ── Request types ──

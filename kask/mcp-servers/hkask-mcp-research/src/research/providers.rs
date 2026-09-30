@@ -321,7 +321,9 @@ impl ProviderPool {
             "REG"
         );
         // Record into the in-process aggregator for live score_providers
-        // penalties. Best-effort — a poisoned lock skips the live path.
+        // penalties. Best-effort — a poisoned lock skips the live path; the
+        // read side surfaces the degraded state (`live_stats_degraded` +
+        // the rationale part), so the skip is never silent.
         if let Ok(mut agg) = self.performance.lock() {
             agg.record_outcome(
                 kind,
@@ -688,6 +690,10 @@ impl ProviderPool {
         let configured_kinds: std::collections::HashSet<&str> =
             self.search_providers.iter().map(|p| p.kind()).collect();
 
+        // Pool-global: the live channel's health is one lock state shared by
+        // every provider's recommendation (loop-register L23, S4).
+        let live_degraded = crate::research::performance::live_channel_degraded(&self.performance);
+
         let mut recs: Vec<ProviderRecommendation> = PROVIDER_PROFILES
             .iter()
             .map(|profile| {
@@ -734,8 +740,12 @@ impl ProviderPool {
                     );
                 if live_penalty > 0.0 {
                     score += live_penalty;
-                    rationale_parts.extend(live_rationale.iter());
                 }
+                // Zero-penalty rationales still carry load-bearing news: the
+                // poisoned-lock arm reports the degraded live channel at
+                // penalty 0.0. Gating the rationale on the penalty is what
+                // made that degradation silent (loop-register L23).
+                rationale_parts.extend(live_rationale.iter());
                 // Snapshot live stats for surfacing in the recommendation.
                 // `None` below MIN_SAMPLES_FOR_LIVE — the model sees the static
                 // profile alone until enough data accumulates.
@@ -770,6 +780,7 @@ impl ProviderPool {
                     live_success_rate: live_stats.as_ref().map(|s| s.success_rate),
                     live_p50_latency_ms: live_stats.as_ref().map(|s| s.p50_latency_ms),
                     live_sample_count: live_stats.as_ref().map(|s| s.sample_count),
+                    live_stats_degraded: live_degraded,
                 }
             })
             .collect();
@@ -1311,5 +1322,60 @@ mod tests {
             "named provider was not called"
         );
         Ok(())
+    }
+
+    /// S4 (loop-register L23): a degraded live-performance channel must be
+    /// surfaced, never silently read as "live data says this provider is
+    /// fine". Poisoning the pool's performance mutex is the degraded state;
+    /// before this contract the caller dropped zero-penalty rationales, so
+    /// the poisoned arm's degradation message never reached the
+    /// recommendation.
+    #[test]
+    fn poisoned_performance_channel_surfaces_the_degradation_in_every_recommendation() {
+        let pool = ProviderPool::new(vec![], vec![], vec![], None, None);
+        // Poison the channel: a panic while holding the lock poisons the
+        // std Mutex permanently — the exact degraded state under test.
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = pool.performance.lock().expect("lock before poisoning");
+            panic!("poison the performance channel");
+        }));
+        let recs = pool.score_providers("query", None);
+        assert!(
+            !recs.is_empty(),
+            "the static profile table always yields recommendations"
+        );
+        for rec in &recs {
+            assert!(
+                rec.rationale.contains("live performance unavailable"),
+                "a degraded live channel must be surfaced in the rationale — got: {}",
+                rec.rationale
+            );
+        }
+    }
+
+    /// The machine-readable half of the S4 contract: `live_stats_degraded`
+    /// distinguishes a broken channel (`true`; live fields `None`) from a
+    /// healthy pool with too few samples (`false`; live fields `None`) —
+    /// the two states were indistinguishable before.
+    #[test]
+    fn live_stats_degraded_distinguishes_poisoned_channel_from_thin_samples() {
+        let pool = ProviderPool::new(vec![], vec![], vec![], None, None);
+        // Healthy, below MIN_SAMPLES_FOR_LIVE: not degraded, live fields None.
+        let healthy = pool.score_providers("query", None);
+        assert!(
+            healthy
+                .iter()
+                .all(|r| !r.live_stats_degraded && r.live_sample_count.is_none()),
+            "a healthy pool with thin samples must read as not-degraded with live fields None"
+        );
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = pool.performance.lock().expect("lock before poisoning");
+            panic!("poison the performance channel");
+        }));
+        let degraded = pool.score_providers("query", None);
+        assert!(
+            degraded.iter().all(|r| r.live_stats_degraded),
+            "a poisoned channel must set live_stats_degraded on every recommendation"
+        );
     }
 }

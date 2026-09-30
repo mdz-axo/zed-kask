@@ -1,4 +1,4 @@
-{# goal: Apply Bloom's five-step method to detect gaps in context, classify them as ellipsis (deliberate) or leak (unintentional), and surface what is not inferable. Used by the experiment step for ellipsis perspective. #}
+{# goal: Apply Bloom's five-step method to detect gaps in context, classify them as ellipsis (deliberate) or leak (unintentional), and find what is not inferno (Calvino: the exceptional, supported element worth preserving). Used by the experiment step for ellipsis perspective. #}
 [inference]
 contract:
   input:
@@ -41,19 +41,13 @@ contract:
   Bloom Step 1: Read deeply, not to believe, accept, contradict, but to learn.
   Engage with text as "program that reaches through time into your imagination."
 #}
-{%- set analysis = {
-    'stated': [],
-    'unstated': [],
-    'gaps': [],
-    'narrative': ''
-} -%}
 {{ text }}
 {% endmacro %}
 
-{% macro mind_the_gaps(content, expectations) %}
+{% macro mind_the_gaps(expectations) %}
 {#
   Bloom Step 2: Mind the gaps — what is said AND what is not said.
-  Compare content against baseline expectations.
+  Check each baseline expectation against the text read in step 1.
 
   Expectations are candidates for evidence review, not substring checks:
   a mention may explicitly say the topic is absent.
@@ -125,7 +119,7 @@ See clearly; do not assume intention.
 
 ## 2. Mind the Gaps
 
-{{ mind_the_gaps(text, expectations) }}
+{{ mind_the_gaps(expectations) }}
 
 ## 3. Classify only grounded gaps
 
