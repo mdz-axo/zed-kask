@@ -12,7 +12,28 @@
 
 use hkask_types::spreadsheet::SPREADSHEET_VIZ;
 use hkask_types::spreadsheet::SpreadsheetBlock;
+use hkask_types::spreadsheet::SpreadsheetError;
 use serde::Deserialize;
+
+/// The typed strict-parse failure for a claimed ```` ```spreadsheet ````
+/// block — which required field is missing, or the wire contract's own
+/// rejection (the hkask-* string-error standard: typed errors, not
+/// `Result<_, String>`).
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+pub enum BlockError {
+    #[error("spreadsheet block is missing its opaque artifact identity")]
+    MissingArtifact,
+    #[error("spreadsheet block is missing its initial viewport")]
+    MissingViewport,
+    #[error("spreadsheet block is missing its analytical origin")]
+    MissingOrigin,
+    #[error("spreadsheet block is missing its title")]
+    MissingTitle,
+    #[error("spreadsheet block is missing its active sheet")]
+    MissingActiveSheet,
+    #[error("spreadsheet block failed its own contract: {0}")]
+    Contract(#[from] SpreadsheetError),
+}
 
 /// The tolerant discriminator-tagged body of a ```` ```spreadsheet ```` block.
 ///
@@ -53,26 +74,15 @@ impl SpreadsheetBlockBody {
 
     /// The strict wire contract, parsed after the claim. Errors carry the
     /// reason for the widget's visible error state.
-    pub fn strict_block(&self) -> Result<SpreadsheetBlock, String> {
-        let artifact = self.artifact.clone().ok_or_else(|| {
-            "spreadsheet block is missing its opaque artifact identity".to_string()
-        })?;
-        let viewport = self
-            .viewport
-            .clone()
-            .ok_or_else(|| "spreadsheet block is missing its initial viewport".to_string())?;
-        let origin = self
-            .origin
-            .clone()
-            .ok_or_else(|| "spreadsheet block is missing its analytical origin".to_string())?;
-        let title = self
-            .title
-            .clone()
-            .ok_or_else(|| "spreadsheet block is missing its title".to_string())?;
+    pub fn strict_block(&self) -> Result<SpreadsheetBlock, BlockError> {
+        let artifact = self.artifact.clone().ok_or(BlockError::MissingArtifact)?;
+        let viewport = self.viewport.clone().ok_or(BlockError::MissingViewport)?;
+        let origin = self.origin.clone().ok_or(BlockError::MissingOrigin)?;
+        let title = self.title.clone().ok_or(BlockError::MissingTitle)?;
         let active_sheet = self
             .active_sheet
             .clone()
-            .ok_or_else(|| "spreadsheet block is missing its active sheet".to_string())?;
+            .ok_or(BlockError::MissingActiveSheet)?;
         let block = SpreadsheetBlock::new(
             title,
             active_sheet,
@@ -80,8 +90,7 @@ impl SpreadsheetBlockBody {
             viewport,
             origin,
             self.mutation.clone(),
-        )
-        .map_err(|error| format!("spreadsheet block failed its own contract: {error}"))?;
+        )?;
         Ok(block)
     }
 }
@@ -145,7 +154,10 @@ mod tests {
         let error = parsed
             .strict_block()
             .expect_err("missing identity must fail");
-        assert!(error.contains("artifact"), "unexpected error: {error}");
+        assert!(
+            error.to_string().contains("artifact"),
+            "unexpected error: {error}"
+        );
     }
 
     #[test]
@@ -164,6 +176,9 @@ mod tests {
         let error = parsed
             .strict_block()
             .expect_err("incomplete mutation must fail");
-        assert!(error.contains("provenance"), "unexpected error: {error}");
+        assert!(
+            error.to_string().contains("provenance"),
+            "unexpected error: {error}"
+        );
     }
 }

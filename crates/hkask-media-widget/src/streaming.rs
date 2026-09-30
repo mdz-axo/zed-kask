@@ -41,6 +41,42 @@ pub struct StreamUrls {
     pub warning: Option<String>,
 }
 
+/// The typed resolution failure for a streaming URL — why a video URL
+/// could not be turned into a streamable one (the hkask-* string-error
+/// standard: typed errors, not `Result<_, String>`).
+#[derive(Debug, thiserror::Error)]
+pub enum StreamError {
+    /// The URL failed the shared media-URL safety validation (scheme,
+    /// credentials, host, SSRF guard). The underlying validator is
+    /// anyhow-based; it is carried as the source so the reason survives.
+    #[error("unsafe media URL: {0}")]
+    UnsafeUrl(#[source] anyhow::Error),
+    /// The URL parsed but carries no host.
+    #[error("unsafe media URL: missing host")]
+    MissingHost,
+    /// The URL's port could not be determined.
+    #[error("unsafe media URL: unknown port")]
+    UnknownPort,
+    /// DNS resolution of the URL's host failed.
+    #[error("media URL DNS resolution failed: {0}")]
+    Dns(#[source] std::io::Error),
+    /// No yt-dlp binary was found on PATH or the common install locations.
+    #[error(
+        "yt-dlp not found on PATH or common install locations — install it to stream from video platforms (YouTube, Vimeo, etc.)"
+    )]
+    YtDlpNotFound,
+    /// The yt-dlp subprocess could not be launched.
+    #[error("failed to run yt-dlp: {0}")]
+    YtDlpSpawn(#[source] std::io::Error),
+    /// yt-dlp ran and failed; the classified issue carries the actionable
+    /// message (the same classification the warning path uses).
+    #[error("{}", .0.actionable_message())]
+    YtDlp(hkask_types::ytdlp::YtDlpIssue),
+    /// yt-dlp exited successfully but printed no stream URL.
+    #[error("yt-dlp produced no output URL")]
+    NoOutputUrl,
+}
+
 /// Resolve a video URL to streamable URL(s).
 ///
 /// - If the URL has a direct video file extension → returned as-is (FFmpeg
@@ -53,7 +89,7 @@ pub struct StreamUrls {
 ///   video-only URL would play silent video.
 /// - If yt-dlp is not installed or fails → the resolution error is returned;
 ///   platform HTML must not be mislabeled as a direct media stream.
-pub async fn resolve_stream_urls(url: &str) -> Result<StreamUrls, String> {
+pub async fn resolve_stream_urls(url: &str) -> Result<StreamUrls, StreamError> {
     validate_network_url(url).await?;
     if is_direct_video_url(url) {
         return Ok(StreamUrls {
@@ -71,26 +107,26 @@ pub async fn resolve_stream_urls(url: &str) -> Result<StreamUrls, String> {
     Ok(resolved)
 }
 
-pub(crate) async fn validate_network_url(url: &str) -> Result<(), String> {
+pub(crate) async fn validate_network_url(url: &str) -> Result<(), StreamError> {
     let parsed = crate::media_ref::validate_remote_url_with_addresses(url, &[])
-        .map_err(|error| format!("unsafe media URL: {error}"))?;
+        .map_err(StreamError::UnsafeUrl)?;
     let host = parsed
         .host_str()
-        .ok_or_else(|| "unsafe media URL: missing host".to_string())?
+        .ok_or(StreamError::MissingHost)?
         .to_string();
     let port = parsed
         .port_or_known_default()
-        .ok_or_else(|| "unsafe media URL: unknown port".to_string())?;
+        .ok_or(StreamError::UnknownPort)?;
     let addresses = smol::unblock(move || {
         (host.as_str(), port)
             .to_socket_addrs()
             .map(|addresses| addresses.map(|address| address.ip()).collect::<Vec<_>>())
     })
     .await
-    .map_err(|error| format!("media URL DNS resolution failed: {error}"))?;
+    .map_err(StreamError::Dns)?;
     crate::media_ref::validate_remote_url_with_addresses(url, &addresses)
         .map(|_| ())
-        .map_err(|error| format!("unsafe media URL: {error}"))
+        .map_err(StreamError::UnsafeUrl)
 }
 
 /// Check whether a URL points directly to a video file (has a known video
@@ -157,16 +193,14 @@ async fn newest_yt_dlp_binary() -> Option<String> {
 /// file: DASH-only sources (most modern YouTube) print two URLs — video
 /// then audio — which the player opens as two FFmpeg inputs. A progressive
 /// source prints one URL that already carries audio.
-async fn resolve_with_yt_dlp(url: &str) -> Result<StreamUrls, String> {
-    let ytdlp = newest_yt_dlp_binary().await.ok_or_else(|| {
-        "yt-dlp not found on PATH or common install locations — install it to \
-         stream from video platforms (YouTube, Vimeo, etc.)"
-            .to_string()
-    })?;
+async fn resolve_with_yt_dlp(url: &str) -> Result<StreamUrls, StreamError> {
+    let ytdlp = newest_yt_dlp_binary()
+        .await
+        .ok_or(StreamError::YtDlpNotFound)?;
     resolve_with_yt_dlp_binary(url, &ytdlp).await
 }
 
-async fn resolve_with_yt_dlp_binary(url: &str, ytdlp: &str) -> Result<StreamUrls, String> {
+async fn resolve_with_yt_dlp_binary(url: &str, ytdlp: &str) -> Result<StreamUrls, StreamError> {
     let output = Command::new(ytdlp)
         .args([
             "-g",
@@ -178,13 +212,13 @@ async fn resolve_with_yt_dlp_binary(url: &str, ytdlp: &str) -> Result<StreamUrls
         ])
         .output()
         .await
-        .map_err(|error| format!("failed to run yt-dlp: {error}"))?;
+        .map_err(StreamError::YtDlpSpawn)?;
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     if !output.status.success() {
         let issue = hkask_types::ytdlp::classify_stderr(&stderr)
             .unwrap_or(hkask_types::ytdlp::YtDlpIssue::Other);
-        return Err(issue.actionable_message().to_string());
+        return Err(StreamError::YtDlp(issue));
     }
     let warning = hkask_types::ytdlp::classify_stderr(&stderr)
         .filter(|issue| *issue != hkask_types::ytdlp::YtDlpIssue::Other)
@@ -210,7 +244,7 @@ async fn resolve_with_yt_dlp_binary(url: &str, ytdlp: &str) -> Result<StreamUrls
             audio: Some(audio.clone()),
             warning,
         }),
-        [] => Err("yt-dlp produced no output URL".to_string()),
+        [] => Err(StreamError::NoOutputUrl),
     }
 }
 
@@ -281,8 +315,8 @@ mod tests {
             &binary,
         ))
         .expect_err("authorization must fail");
-        assert!(error.contains("denied access"));
-        assert!(!error.contains("Sign in to confirm"));
+        assert!(error.to_string().contains("denied access"));
+        assert!(!error.to_string().contains("Sign in to confirm"));
         Ok(())
     }
 

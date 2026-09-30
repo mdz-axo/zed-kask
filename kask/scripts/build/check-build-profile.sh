@@ -22,7 +22,9 @@
 
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+# Overridable via env so the self-test can point at a fixture tree; the
+# default preserves the production behavior exactly.
+ROOT="${ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}"
 CARGO_TOML="$ROOT/Cargo.toml"
 INSTALL_SH="$ROOT/kask/scripts/build/install.sh"
 

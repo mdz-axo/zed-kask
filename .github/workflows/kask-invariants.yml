@@ -48,6 +48,10 @@
 #   check-template-contracts.sh: skill cross-references resolve, the
 #   forecasting contract matches its primitives, and template contracts
 #   match template bodies.
+# - check-retired-record.sh: every skill retired within the change range
+#   is appended to RETIRED_SKILL_NAMES in the same change (the D1
+#   retirement convention) — a forgotten append would silently shrink
+#   both the installed-copy sweep and the crossrefs gate.
 # - check-unsafe-forbid.sh and check-version-sync.sh: unsafe code stays
 #   gated, crate versions stay in sync.
 # - Gate selftests: the loop step below runs every
@@ -60,13 +64,16 @@
 #
 # zed-check (minutes, main pushes only): the full workspace build, plus
 #   the kask-side lib tests that live in zed-path crates (`agent` — the
-#   skill/lisp_eval/template seam pins; `settings_ui` — the skill-creator
+#   skill/lisp_eval/template seam pins; `agent_skills` — the
+#   retirement-record and seeding pins; `settings_ui` — the skill-creator
 #   pins), which the kask-tests job's kask-subtree selection cannot
-#   reach. zed depends on every panel and the bridge, so cargo check -p
-#   zed is the gate that catches zed-side breakage — the kanban_panel
-#   class (a removed field still constructed at a panel call site) that
-#   kask-scoped checks cannot see. PRs skip this job to bound minutes; a
-#   red main run is the fix-forward signal.
+#   reach. (remote_server's D1 pin lives in its collab test suite — too
+#   heavy for this tier; a known, accepted gap.) zed depends on every
+#   panel and the bridge, so cargo check -p zed is the gate that catches
+#   zed-side breakage — the kanban_panel class (a removed field still
+#   constructed at a panel call site) that kask-scoped checks cannot
+#   see. PRs skip this job to bound minutes; a red main run is the
+#   fix-forward signal.
 #
 # Both build jobs install mold first: .cargo/config.toml forces
 # -fuse-ld=mold for x86_64-unknown-linux-gnu (dev-box link-speed seam, see
@@ -144,23 +151,26 @@ jobs:
           bash kask/scripts/check-skill-crossrefs.sh
           bash kask/scripts/check-forecast-conformance.sh
           bash kask/scripts/check-template-contracts.sh
+      - name: Retired-skill record completeness — every retirement in range is recorded
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          git fetch origin "$BASE_SHA" --depth=1 || true
+          git fetch origin "$HEAD_SHA" --depth=1 || true
+          bash kask/scripts/check-retired-record.sh --range "$BASE_SHA" "$HEAD_SHA"
       - name: Crate hygiene — unsafe gated, versions in sync
         run: |
           bash kask/scripts/check-unsafe-forbid.sh
           bash kask/scripts/check-version-sync.sh
       - name: Gate selftests — every kask/scripts/check-*-selftest.sh fails on a violation
         run: |
-          # The glob is broader than the gates wired above: it also proves
-          # LOCAL-only gates still fail on a synthetic violation, so a local
-          # gate cannot silently go vacuous without CI noticing —
-          # check-reg-creep.sh (the pre-commit anti-creep guard), the
-          # commit-msg git hook (kask/githooks/commit-msg) and the audit
-          # receipt checker under kask/scripts/audit/.
-          # Known gap: the build/ gates (check-zed-isolation.sh,
-          # check-desktop-no-collision.sh, check-build-profile.sh,
-          # check-lean-toolchain.sh) have no selftests; desktop-collision
-          # execs zed-isolation, so only that script's checks are
-          # transitively exercised.
+          # The glob covers every gate selftest in kask/scripts: the
+          # check-job gates (including the build/ gates and the fmt step —
+          # each proves its gate fails on a synthetic violation) and the
+          # LOCAL-only gates (check-reg-creep.sh, the commit-msg git hook,
+          # the audit receipt checker), so no gate can silently go vacuous
+          # without CI noticing.
           for selftest in kask/scripts/check-*-selftest.sh; do
             # Advisory: runs in goal-traceability-advisory, never blocking.
             [ "$selftest" = kask/scripts/check-goal-traceability-selftest.sh ] && continue
@@ -205,5 +215,5 @@ jobs:
           sudo apt-get install -y mold
       - name: Full workspace — cargo check -p zed
         run: cargo check -p zed
-      - name: Zed-path kask seam tests — agent + settings_ui lib pins
-        run: cargo test -p agent -p settings_ui --lib
+      - name: Zed-path kask seam tests — agent + agent_skills + settings_ui lib pins
+        run: cargo test -p agent -p agent_skills -p settings_ui --lib

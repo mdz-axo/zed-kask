@@ -22,11 +22,12 @@ use gpui_util::ResultExt as _;
 use hkask_spreadsheet::{ViewportContent, WorkbookDocument, WorkbookService};
 use hkask_tool_invoker::{InvokeError, shared_tool_invoker};
 use hkask_types::spreadsheet::{
-    CellEdit, EditTransaction, SpreadsheetAccess, SpreadsheetBlock, SpreadsheetViewport, TableValue,
+    CellEdit, EditTransaction, SpreadsheetAccess, SpreadsheetBlock, SpreadsheetError,
+    SpreadsheetViewport, TableValue,
 };
 use ui::prelude::*;
 
-use crate::block::SpreadsheetBlockBody;
+use crate::block::{BlockError, SpreadsheetBlockBody};
 use crate::logic::{
     Nav, Rect, commit_to_edit, editor_text, move_active, selection_rect, selection_to_tsv,
     tsv_to_edits, value_to_text, window_contains, window_covering,
@@ -37,20 +38,26 @@ use crate::logic::{
 const SPREADSHEET_SERVER: &str = "spreadsheet";
 const SPREADSHEET_APPLY: &str = "spreadsheet_apply";
 
+/// The typed engine-start failure cached in [`SHARED_SERVICE`] (an
+/// unwritable artifact root is not transient, so the failure is cached and
+/// surfaced by the widget).
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+#[error("engine actor failed to start: {0}")]
+pub struct EngineStartError(#[from] SpreadsheetError);
+
 /// The editor-process engine actor, started lazily on first widget use.
 /// Documents are keyed by (artifact, revision) inside the actor, so the
 /// widget opens once per revision and holds the [`WorkbookDocument`] handle
 /// — re-opening a live revision would reset its staged state.
-static SHARED_SERVICE: OnceLock<Result<Arc<WorkbookService>, String>> = OnceLock::new();
+static SHARED_SERVICE: OnceLock<Result<Arc<WorkbookService>, EngineStartError>> = OnceLock::new();
 
 /// The shared editor-process engine service. Start failures are cached (an
 /// unwritable artifact root is not transient) and surfaced by the widget.
-pub fn shared_spreadsheet_service() -> Result<&'static Arc<WorkbookService>, String> {
+pub fn shared_spreadsheet_service() -> Result<&'static Arc<WorkbookService>, EngineStartError> {
     SHARED_SERVICE
         .get_or_init(|| {
             let root = hkask_spreadsheet::artifact_store::production_root();
-            WorkbookService::start_with_root(root)
-                .map_err(|error| format!("engine actor failed to start: {error}"))
+            WorkbookService::start_with_root(root).map_err(EngineStartError)
         })
         .as_ref()
         .map_err(Clone::clone)
@@ -121,7 +128,7 @@ struct EditorState {
 
 pub struct SpreadsheetWidget {
     focus_handle: FocusHandle,
-    block: Result<SpreadsheetBlock, String>,
+    block: Result<SpreadsheetBlock, BlockError>,
     service_error: Option<String>,
     document: Option<WorkbookDocument>,
     sheets: Vec<String>,
@@ -153,12 +160,12 @@ impl SpreadsheetWidget {
     pub fn new(body: SpreadsheetBlockBody, cx: &mut Context<Self>) -> Self {
         match shared_spreadsheet_service() {
             Ok(service) => Self::new_with_service(body, Arc::clone(service), cx),
-            Err(error) => Self::degraded(body.strict_block(), error, cx),
+            Err(error) => Self::degraded(body.strict_block(), error.to_string(), cx),
         }
     }
 
     fn degraded(
-        block: Result<SpreadsheetBlock, String>,
+        block: Result<SpreadsheetBlock, BlockError>,
         error: String,
         cx: &mut Context<Self>,
     ) -> Self {

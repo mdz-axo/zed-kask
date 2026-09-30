@@ -157,7 +157,7 @@ async fn fetch_remote_media(
 ) -> Result<Vec<u8>, SharedString> {
     crate::streaming::validate_network_url(&url)
         .await
-        .map_err(SharedString::from)?;
+        .map_err(|error| SharedString::from(error.to_string()))?;
     let request = Request::get(&url)
         .follow_redirects(RedirectPolicy::NoFollow)
         .body(AsyncBody::default())
@@ -540,7 +540,7 @@ impl MediaWidget {
                     }
                     Err(error) => {
                         widget.video_loading = false;
-                        widget.error = Some(SharedString::from(error));
+                        widget.error = Some(SharedString::from(error.to_string()));
                     }
                 }
                 widget.sync_transport_state(cx);

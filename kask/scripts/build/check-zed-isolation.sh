@@ -3,7 +3,9 @@
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-repo_root="$(cd "$script_dir/../../.." && pwd)"
+# Overridable via env so the self-test can point at a fixture tree; the
+# default preserves the production behavior exactly.
+repo_root="${REPO_ROOT:-$(cd "$script_dir/../../.." && pwd)}"
 errors=0
 
 fail() {

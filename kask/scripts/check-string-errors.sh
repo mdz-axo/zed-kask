@@ -16,11 +16,10 @@
 # - An Ok type ending in a nested `String>` (e.g. `Result<(String, String),
 #   TypedError>`) false-positives. Zero instances today; a loud false
 #   positive is recoverable, a silent miss is not.
-# - Scope is the kask subtree's `hkask-*` crates (SCAN_DIRS below). The
-#   zed-kask-side adapters — `kask_bridge` and the zed-path widget crates
-#   (`crates/hkask-*`, which live in the zed tree precisely because they
-#   depend on GPUI) — legitimately carry `String` errors across the editor
-#   boundary and are out of scope.
+# - Scope: every hkask-* crate — the kask subtree (crates/hkask-*,
+#   mcp-servers/hkask-*) and the zed-path widget/adapter crates
+#   (../crates/hkask-*). Only `kask_bridge` is out of scope: the D8 seam
+#   crosses the GPUI/tokio boundary where String errors are accepted.
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -28,17 +27,19 @@ cd "$(dirname "$0")/.."
 # Overridable scan roots so the self-test (check-string-errors-selftest.sh)
 # can point the gate at a temp tree with a synthetic violation. Defaults to
 # the production source roots.
-SCAN_DIRS=( ${SCAN_DIRS:-crates/hkask-* mcp-servers/hkask-*} )
+SCAN_DIRS=( ${SCAN_DIRS:-crates/hkask-* mcp-servers/hkask-* ../crates/hkask-*} )
 
 FAIL=0
 TMPFILE=$(mktemp)
 trap 'rm -f "$TMPFILE"' EXIT
 
-# Collect all lines containing 'Result<' from hKask library code (exclude tests
-# and main.rs). Scan roots are the kask subtree's `hkask-*` crates — the
-# zed-kask-side adapters (`kask_bridge`, D8, and the zed-path widget crates
-# `crates/hkask-*`) legitimately use `String` errors to cross the GPUI
-# boundary and are out of scope. See zed-host-architecture-plan.md:640.
+# Collect all lines containing 'Result<' from hkask library code (exclude tests
+# and main.rs). Scan roots cover every hkask-* crate — the kask subtree's
+# crates/hkask-* + mcp-servers/hkask-* and the zed-path widget crates
+# ../crates/hkask-* (widened 2026-09-30: the hkask-* hygiene standard is
+# uniform across both trees, matching check-unsafe-forbid.sh's coverage).
+# Only the kask_bridge seam (D8) stays out — String errors are accepted at
+# the GPUI/tokio boundary. See zed-host-architecture-plan.md:640.
 grep -rn -- 'Result<' "${SCAN_DIRS[@]}" \
     --include='*.rs' \
     --exclude-dir=target \
