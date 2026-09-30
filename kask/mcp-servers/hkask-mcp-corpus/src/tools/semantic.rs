@@ -223,7 +223,7 @@ impl CorpusServer {
     }
 
     #[tool(
-        description = "Generate ontology-anchored embedding vectors for corpus chunks. Uses the configured embedding model via the inference router. Reads chunks from chunks_jsonl (entity_ref, source, text, word_count per line). When tagged_jsonl is provided, ontology tags are prepended to chunk text before embedding (per INSTRUCTOR, Su et al. 2023), producing vectors that encode both content and ontological classification. Batch-embeds in groups of batch_size and replaces each DB/ref vector plus original passage_text, publishing to the warm cache. Annotations affect embedding input only. Returns total, embedded, failed, cancelled, legacy model=requested_model, requested_model, provider-returned actual_model, and actual_model_status (confirmed, partial, or unavailable); clear/purge cancellation includes a note — no inline vectors."
+        description = "Generate ontology-anchored embedding vectors for corpus chunks. Uses the configured embedding model via the inference router. Reads chunks from chunks_jsonl (entity_ref, source, text, word_count per line). When tagged_jsonl is provided, ontology tags are prepended to chunk text before embedding (per INSTRUCTOR, Su et al. 2023), producing vectors that encode both content and ontological classification. Batch-embeds in groups of batch_size and replaces each DB/ref vector plus original passage_text, publishing to the warm cache. Annotations affect embedding input only. Returns total, embedded, failed, retries (transient retries consumed across batches — a saturation signal, not an error), cancelled, legacy model=requested_model, requested_model, provider-returned actual_model, and actual_model_status (confirmed, partial, or unavailable); clear/purge cancellation includes a note — no inline vectors."
     )]
     pub async fn corpus_embed(
         &self,
@@ -369,6 +369,7 @@ impl CorpusServer {
 
         let embedded = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let failed = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let retries = Arc::new(std::sync::atomic::AtomicU32::new(0));
         let failed_entity_refs = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
         let identity = Arc::new(std::sync::Mutex::new(EmbeddingIdentityState::default()));
 
@@ -385,6 +386,7 @@ impl CorpusServer {
             let model_name = Arc::clone(&model_name);
             let embedded = Arc::clone(&embedded);
             let failed = Arc::clone(&failed);
+            let retries = Arc::clone(&retries);
             let failed_entity_refs = Arc::clone(&failed_entity_refs);
             let identity = Arc::clone(&identity);
 
@@ -408,9 +410,10 @@ impl CorpusServer {
                 )
                 .await
                 {
-                    Ok(batch) => {
+                    Ok(outcome) => {
                         slot.report_success();
-                        batch
+                        retries.fetch_add(outcome.retries, std::sync::atomic::Ordering::Relaxed);
+                        outcome.value
                     }
                     Err(e) => {
                         slot.report_failure();
@@ -505,6 +508,7 @@ impl CorpusServer {
         // Includes rows lost to a task panic, not just reported provider/store errors.
         let failed = total - embedded;
         let cancelled = cancelled.load(std::sync::atomic::Ordering::Relaxed);
+        let retries = retries.load(std::sync::atomic::Ordering::Relaxed);
         let identity = identity
             .lock()
             .map_err(|_| McpToolError::internal("embedding identity lock poisoned"))?;
@@ -520,7 +524,7 @@ impl CorpusServer {
 
         tracing::info!(
             target: "hkask.mcp.docproc.embed",
-            total, embedded, failed, num_batches, ceiling = crate::max_concurrency(),
+            total, embedded, failed, retries, num_batches, ceiling = crate::max_concurrency(),
             "Embedding complete"
         );
 
@@ -528,6 +532,7 @@ impl CorpusServer {
             "total": total,
             "embedded": embedded,
             "failed": failed,
+            "retries": retries,
             "failed_entity_refs": failed_entity_refs,
             "failed_entity_refs_complete": failed_entity_refs_complete,
             "cancelled": cancelled,

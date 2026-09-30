@@ -102,6 +102,16 @@ impl BatchRetryError for hkask_types::EmbeddingGenerationError {
     }
 }
 
+/// The retry loop's outcome: the value plus how many retries it took, so
+/// tool summaries can surface retry telemetry (the 2026-09-29 inference
+/// saturation wedge was visible only in WARN logs — the embed summary
+/// reported embedded/failed with no retry signal).
+pub(crate) struct RetryOutcome<T> {
+    pub value: T,
+    /// Retries consumed after the first attempt (0 = succeeded first try).
+    pub retries: u32,
+}
+
 /// Retry a typed inference operation with exponential backoff.
 ///
 /// Backoff: `2^attempts` seconds (2s, 4s for attempts 1, 2). The previous
@@ -119,7 +129,7 @@ pub(crate) async fn retry_with_backoff<T, E, F, Fut>(
     target: &str,
     context: &str,
     mut f: F,
-) -> Result<T, E>
+) -> Result<RetryOutcome<T>, E>
 where
     F: FnMut() -> Fut,
     Fut: Future<Output = Result<T, E>>,
@@ -128,7 +138,12 @@ where
     let mut attempts = 0u32;
     loop {
         match f().await {
-            Ok(result) => return Ok(result),
+            Ok(result) => {
+                return Ok(RetryOutcome {
+                    value: result,
+                    retries: attempts,
+                });
+            }
             Err(e) => {
                 attempts += 1;
                 if !e.is_transient() || attempts >= max_retries.min(MAX_RETRIES) {
@@ -343,7 +358,7 @@ mod retry_tests {
     #[tokio::test]
     async fn slice5_shared_retry_preserves_error_types() {
         let mut calls = 0;
-        let inference: Result<(), InferenceError> =
+        let inference: Result<RetryOutcome<()>, InferenceError> =
             retry_with_backoff(MAX_RETRIES, "test", "auth", || {
                 calls += 1;
                 std::future::ready(Err(InferenceError::Auth("same credential error".into())))
@@ -355,7 +370,7 @@ mod retry_tests {
         );
 
         let mut calls = 0;
-        let embedding: Result<(), EmbeddingGenerationError> =
+        let embedding: Result<RetryOutcome<()>, EmbeddingGenerationError> =
             retry_with_backoff(MAX_RETRIES, "test", "embedding auth", || {
                 calls += 1;
                 std::future::ready(Err(EmbeddingGenerationError::Api(
@@ -403,7 +418,7 @@ mod retry_tests {
     #[tokio::test]
     async fn slice5_retry_ceiling_and_transient_type() {
         let mut calls = 0;
-        let result: Result<(), InferenceError> =
+        let result: Result<RetryOutcome<()>, InferenceError> =
             retry_with_backoff(MAX_RETRIES + 1, "test", "bounded transient", || {
                 calls += 1;
                 std::future::ready(Err(InferenceError::Timeout("same timeout".into())))
@@ -413,6 +428,36 @@ mod retry_tests {
         assert!(
             matches!(result, Err(InferenceError::Timeout(message)) if message == "same timeout")
         );
+    }
+
+    /// expect: the counted outcome reports retries consumed — 0 on a
+    /// first-try success, N after N transient failures then success — so
+    /// tool summaries can surface the retry signal.
+    #[tokio::test]
+    async fn slice5_counted_outcome_reports_retries() {
+        let mut calls = 0;
+        let first_try: RetryOutcome<()> =
+            retry_with_backoff(MAX_RETRIES, "test", "first try", || {
+                calls += 1;
+                std::future::ready(Ok::<_, InferenceError>(()))
+            })
+            .await
+            .expect("first try succeeds");
+        assert_eq!((first_try.retries, calls), (0, 1));
+
+        let mut calls = 0;
+        let after_retries: RetryOutcome<()> =
+            retry_with_backoff(MAX_RETRIES, "test", "retry then succeed", || {
+                calls += 1;
+                if calls < 3 {
+                    std::future::ready(Err(InferenceError::Timeout("transient".into())))
+                } else {
+                    std::future::ready(Ok(()))
+                }
+            })
+            .await
+            .expect("succeeds after transient retries");
+        assert_eq!((after_retries.retries, calls), (2, 3));
     }
 }
 

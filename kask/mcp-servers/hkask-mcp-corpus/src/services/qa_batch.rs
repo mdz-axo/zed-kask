@@ -95,6 +95,7 @@ async fn infer_with_retry_using(
         },
     )
     .await
+    .map(|outcome| outcome.value)
     .map_err(|error| {
         QaCompletionError::LlmFailed(attempts, format!("{phase} inference failed: {error}"))
     })

@@ -245,9 +245,9 @@ Respond in JSON format: {{\"h_mems\": [{{\"subject\": \"...\", \"predicate\": \"
                 )
                 .await
                 {
-                    Ok(resp) => {
+                    Ok(outcome) => {
                         slot.report_success();
-                        resp
+                        outcome.value
                     }
                     Err(_) => {
                         slot.report_failure();

@@ -353,9 +353,9 @@ impl CorpusServer {
                     )
                     .await
                     {
-                        Ok(resp) => {
+                        Ok(outcome) => {
                             slot.report_success();
-                            resp
+                            outcome.value
                         }
                         Err(e) => {
                             slot.report_failure();
