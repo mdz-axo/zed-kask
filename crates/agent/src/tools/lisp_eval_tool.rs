@@ -1076,4 +1076,187 @@ mod tests {
             "the stale reports-path constraint was removed"
         );
     }
+
+    #[test]
+    fn test_self_improvement_skill_md_pins_forms() {
+        // self-improvement SKILL.md pins six agent-executed lisp_eval gate
+        // forms with nothing else running them — the exact risk class that
+        // shipped broken before (the grounding-verify floor form). If any
+        // drifts, this fails until skill and tests are reconciled. The
+        // convergence-gate example near the Fine-tuning Phase 5 text is
+        // deliberately NOT pinned: the skill marks it as an example, not
+        // policy ("do not use the example as a default policy").
+        let skill_md = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../.agents/skills/self-improvement/SKILL.md"
+        ))
+        .expect("self-improvement SKILL.md must exist in the workspace");
+
+        // 1. The propose-or-discard acceptance gate.
+        assert!(
+            skill_md.contains(
+                r#"(and (not (member evaluation_method (list "none_available"))) (numberp pass_rate) (numberp baseline_pass_rate) (> pass_rate baseline_pass_rate) (= regressions 0) (= (length safety_violations) 0))"#
+            ),
+            "acceptance gate must stay pinned in self-improvement SKILL.md"
+        );
+        let gate = r#"(and (not (member evaluation_method (list "none_available"))) (numberp pass_rate) (numberp baseline_pass_rate) (> pass_rate baseline_pass_rate) (= regressions 0) (= (length safety_violations) 0))"#;
+        let pass = hkask_lisp::eval_sandboxed_with_budget(
+            gate,
+            &json!({"evaluation_method": "metric-based", "pass_rate": 0.8, "baseline_pass_rate": 0.6, "regressions": 0, "safety_violations": []}),
+            100_000,
+            64,
+        )
+        .expect("acceptance gate must evaluate");
+        assert_eq!(pass, json!(true));
+        let no_method = hkask_lisp::eval_sandboxed_with_budget(
+            gate,
+            &json!({"evaluation_method": "none_available", "pass_rate": 0.8, "baseline_pass_rate": 0.6, "regressions": 0, "safety_violations": []}),
+            100_000,
+            64,
+        )
+        .expect("acceptance gate must evaluate on none_available");
+        assert_eq!(
+            no_method,
+            json!(false),
+            "none_available must fail the gate — no harness, no proposal"
+        );
+
+        // 2. The regression-count walker.
+        assert!(
+            skill_md.contains(
+                r#"(begin (define regs (lambda (b a) (if (is_null b) 0 (+ (if (< (car a) (car b)) 1 0) (regs (cdr b) (cdr a)))))) (regs (list b1 b2 ...) (list a1 a2 ...)))"#
+            ),
+            "regression walker must stay pinned in self-improvement SKILL.md"
+        );
+        let regs = r#"(begin (define regs (lambda (b a) (if (is_null b) 0 (+ (if (< (car a) (car b)) 1 0) (regs (cdr b) (cdr a)))))) (regs (list 0.9 0.8 0.7) (list 0.85 0.9 0.7)))"#;
+        let one_reg = hkask_lisp::eval_sandboxed_with_budget(regs, &json!({}), 100_000, 64)
+            .expect("regression walker must evaluate");
+        assert_eq!(one_reg, json!(1), "0.9→0.85 is the one regression");
+
+        // 3. The GEPA dominance form with the 10% cost band.
+        assert!(
+            skill_md.contains(
+                r#"(begin (define better-cost (lambda (a b) (< a (* 0.9 b)))) (define dom (lambda (a b) (and (>= (car a) (car b)) (not (better-cost (nth 1 b) (nth 1 a))) (or (> (car a) (car b)) (better-cost (nth 1 a) (nth 1 b)))))) (dom a b))"#
+            ),
+            "GEPA dominance form must stay pinned in self-improvement SKILL.md"
+        );
+        let dom = r#"(begin (define better-cost (lambda (a b) (< a (* 0.9 b)))) (define dom (lambda (a b) (and (>= (car a) (car b)) (not (better-cost (nth 1 b) (nth 1 a))) (or (> (car a) (car b)) (better-cost (nth 1 a) (nth 1 b)))))) (dom a b))"#;
+        let dominates = hkask_lisp::eval_sandboxed_with_budget(
+            dom,
+            &json!({"a": [0.8, 1000], "b": [0.8, 1200]}),
+            100_000,
+            64,
+        )
+        .expect("dominance form must evaluate");
+        assert_eq!(dominates, json!(true), "a 17% cost win is a strict win");
+        let tie = hkask_lisp::eval_sandboxed_with_budget(
+            dom,
+            &json!({"a": [0.8, 100], "b": [0.8, 105]}),
+            100_000,
+            64,
+        )
+        .expect("dominance form must evaluate on a within-band pair");
+        assert_eq!(
+            tie,
+            json!(false),
+            "a 5% cost gap is a tie, not a strict win — the band the frontier template must match"
+        );
+
+        // 4. The GEPA convergence form.
+        assert!(
+            skill_md.contains("(and (>= iteration 2) (= new_members 0))"),
+            "GEPA convergence form must stay pinned in self-improvement SKILL.md"
+        );
+        let conv = "(and (>= iteration 2) (= new_members 0))";
+        let converged = hkask_lisp::eval_sandboxed_with_budget(
+            conv,
+            &json!({"iteration": 2, "new_members": 0}),
+            100_000,
+            64,
+        )
+        .expect("GEPA convergence form must evaluate");
+        assert_eq!(converged, json!(true));
+        let moving = hkask_lisp::eval_sandboxed_with_budget(
+            conv,
+            &json!({"iteration": 2, "new_members": 1}),
+            100_000,
+            64,
+        )
+        .expect("GEPA convergence form must evaluate on a moving frontier");
+        assert_eq!(
+            moving,
+            json!(false),
+            "a single arrival means the frontier is still moving"
+        );
+
+        // 5. The noise-floor standard-error form (three branches).
+        assert!(
+            skill_md.contains(
+                r#"(let ((pc (/ kc nc)) (pb (/ kb nb))) (let ((se (sqrt (+ (/ (* pc (- 1 pc)) nc) (/ (* pb (- 1 pb)) nb))))) (cond ((or (< nc 10) (< nb 10)) (list "undetermined" "fewer than 10 held-out examples")) ((= se 0) (list (if (> pc pb) "beyond_noise" "within_noise") 0)) (t (list (if (> (- pc pb) (* 2 se)) "beyond_noise" "within_noise") (- pc pb) (* 2 se))))))"#
+            ),
+            "noise-floor form must stay pinned in self-improvement SKILL.md"
+        );
+        let noise = r#"(let ((pc (/ kc nc)) (pb (/ kb nb))) (let ((se (sqrt (+ (/ (* pc (- 1 pc)) nc) (/ (* pb (- 1 pb)) nb))))) (cond ((or (< nc 10) (< nb 10)) (list "undetermined" "fewer than 10 held-out examples")) ((= se 0) (list (if (> pc pb) "beyond_noise" "within_noise") 0)) (t (list (if (> (- pc pb) (* 2 se)) "beyond_noise" "within_noise") (- pc pb) (* 2 se))))))"#;
+        let within = hkask_lisp::eval_sandboxed_with_budget(
+            noise,
+            &json!({"kc": 42, "nc": 50, "kb": 36, "nb": 50}),
+            100_000,
+            64,
+        )
+        .expect("noise-floor form must evaluate");
+        assert_eq!(
+            within,
+            json!(["within_noise", 0.12, 0.16395121225535358]),
+            "42/50 vs 36/50: a 12-point gain inside a 16-point band — the skill's documented example"
+        );
+        let beyond = hkask_lisp::eval_sandboxed_with_budget(
+            noise,
+            &json!({"kc": 48, "nc": 50, "kb": 30, "nb": 50}),
+            100_000,
+            64,
+        )
+        .expect("noise-floor form must evaluate on a beyond-noise pair");
+        assert_eq!(
+            beyond,
+            json!(["beyond_noise", 0.36, 0.14923806484942104]),
+            "48/50 vs 30/50 clears twice the combined standard error"
+        );
+        let undetermined = hkask_lisp::eval_sandboxed_with_budget(
+            noise,
+            &json!({"kc": 5, "nc": 6, "kb": 3, "nb": 8}),
+            100_000,
+            64,
+        )
+        .expect("noise-floor form must evaluate on a short held-out set");
+        assert_eq!(
+            undetermined,
+            json!(["undetermined", "fewer than 10 held-out examples"]),
+            "fewer than 10 examples per side blocks acceptance"
+        );
+
+        // 6. The Improvement Measure convergence form (adjacent differences).
+        assert!(
+            skill_md.contains(
+                "(and (>= (length xs) 3) (< (abs (- (nth (- (length xs) 1) xs) (nth (- (length xs) 2) xs))) 0.02) (< (abs (- (nth (- (length xs) 2) xs) (nth (- (length xs) 3) xs))) 0.02))"
+            ),
+            "Improvement Measure convergence form must stay pinned in self-improvement SKILL.md"
+        );
+        let im = "(and (>= (length xs) 3) (< (abs (- (nth (- (length xs) 1) xs) (nth (- (length xs) 2) xs))) 0.02) (< (abs (- (nth (- (length xs) 2) xs) (nth (- (length xs) 3) xs))) 0.02))";
+        let stable = hkask_lisp::eval_sandboxed_with_budget(
+            im,
+            &json!({"xs": [0.72, 0.73, 0.72]}),
+            100_000,
+            64,
+        )
+        .expect("Improvement Measure form must evaluate");
+        assert_eq!(stable, json!(true));
+        let drifting = hkask_lisp::eval_sandboxed_with_budget(
+            im,
+            &json!({"xs": [0.5, 0.9, 0.72]}),
+            100_000,
+            64,
+        )
+        .expect("Improvement Measure form must evaluate on a drifting sequence");
+        assert_eq!(drifting, json!(false), "a 0.18 jump is not convergence");
+    }
 }

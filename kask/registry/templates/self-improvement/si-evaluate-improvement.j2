@@ -74,6 +74,6 @@ If using a judge-based evaluator (Φ_judge), ensure evaluator independence: use 
 - Cost and safety metrics are mandatory.
 - If judge-based, evaluator must be independent from the improvement signal.
 
-The Act gate reads `baseline_pass_rate` and `pass_rate` as the `overall_pass_rate` fields of the recorded before and after `swarm_eval_agent_local` reports (same agent task set, evaluators and repeats), plus `regressions` and `(length safety_violations)`. Copy those values from the actual reports; if either report is missing, set all three to null and `evaluation_method: "none_available"`. Never estimate them.
+The Act gate reads `baseline_pass_rate` and `pass_rate` as the `overall_pass_rate` fields of the recorded before and after `swarm_eval_agent_local` reports (same agent task set, evaluators and repeats). Copy those two values from the actual reports; if either report is missing, set both to null and `evaluation_method: "none_available"`. Never estimate them. `regressions` is always null in your response (the invoking agent computes it with `lisp_eval`); `safety_violations` is your judged list.
 
 Respond with a JSON object containing `performance_trajectory`, `baseline_pass_rate`, `pass_rate`, `regressions` (null — the invoking agent computes it with `lisp_eval`), `transfer_score`, `cost_summary`, `safety_violations`, and `evaluation_method` (exactly `metric-based`, `judge-based`, or `none_available`). Report measured values only; you do not decide whether the update is kept.

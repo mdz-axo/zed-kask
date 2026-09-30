@@ -16,7 +16,9 @@ contract:
 {#
   Group: G (Optimization — evolutionary)
   Pareto dominance: variant A dominates variant B if A is at least as good
-  as B on ALL objectives and strictly better on at least ONE.
+  as B on ALL objectives and strictly better than B on at least ONE
+  (a cost objective counts as strictly better only when it is more than
+  10% lower; a smaller gap is a tie).
   The frontier is the set of all non-dominated variants.
   Frontier size is capped by frontier_size; if exceeded, prune by crowding
   distance (keep the most diverse frontier members).
