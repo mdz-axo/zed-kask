@@ -64,7 +64,7 @@ The following sources were called to produce this text. Each claim may or may no
    - `subject`: the entity the claim is about (e.g., "company_revenue")
    - `predicate`: what is being asserted (e.g., "was")
    - `object`: the value asserted (e.g., "$15.4B")
-   - `epistemic_mode`: IS / OUGHT / subjunctive / probabilistic
+   - `epistemic_mode`: IS / OUGHT / subjunctive / probabilistic (a grounding-verify cut of pragmatic-semantics' ontological + epistemic axes; only IS-declarative claims proceed to verification)
    - `source_reference`: the named source the claim cites (tool_name + output_key or chunk_id), or null if uncited
 
 3. For claims that are NOT IS-mode (OUGHT, subjunctive, probabilistic), record them in `excluded_claims` with the reason for exclusion. These are not fabrications — they are different kinds of statement that do not require grounding.

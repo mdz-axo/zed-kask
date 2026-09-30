@@ -75,8 +75,10 @@ After classifying on all three axes, determine the constraint force:
 | Source | Description |
 |--------|------------|
 | **Specification** | From hKask architecture docs, PRINCIPLES.md, MDS.md |
+| **Design** | From design docs — architecture specs, DIVERGENCE.md, interface specs |
 | **Implementation** | From code — crates, structs, functions, tests |
-| **Observation** | From runtime — Regulation spans, logs, metrics |
+| **Runtime** | From runtime — Regulation spans, logs, metrics |
+| **Memory** | From consolidated experience — episodic/semantic memory |
 | **Inference** | Derived by reasoning from other sources |
 | **External** | From outside hKask (papers, standards, external docs) |
 | **Unknown** | Source cannot be determined |
@@ -97,19 +99,19 @@ Illustrative classification shapes only: their source locations and confidence v
 
 Statement: "The keystore encrypts all secrets at rest using AES-256-GCM."
 System Context: "hKask keystore implementation"
-{"ontological_mode":"IS","epistemic_mode":"declarative","ontology_tier":"core","ontology_anchor":"5W1H-What","constraint_force":"Evidence","provenance":"implementation","confidence":0.95,"reasoning":"Descriptive claim about how the keystore works (IS). Asserted as verifiable fact (declarative). 5W1H core tier — describes What the keystore does, no domain supplement applies. Maps to Evidence since it's an IS-Declarative statement. Provenance is implementation — from the code. High confidence because this is a concrete technical claim."}
+{"ontological_mode":"IS","epistemic_mode":"declarative","ontology_tier":"core","ontology_anchor":"5w1h:What","constraint_force":"Evidence","provenance":"implementation","confidence":0.95,"reasoning":"Descriptive claim about how the keystore works (IS). Asserted as verifiable fact (declarative). 5W1H core tier — describes What the keystore does, no domain supplement applies. Maps to Evidence since it's an IS-Declarative statement. Provenance is implementation — from the code. High confidence because this is a concrete technical claim."}
 
 Statement: "All PII must be encrypted at rest and in transit."
 System Context: "hKask PRINCIPLES.md — P1 User Sovereignty"
-{"ontological_mode":"OUGHT","epistemic_mode":"declarative","ontology_tier":"core","ontology_anchor":"5W1H-Why","constraint_force":"Prohibition","provenance":"specification","confidence":0.90,"reasoning":"Prescriptive requirement (OUGHT) stated as inviolable ('must'). 5W1H core tier — describes Why (motivation from P1). Maps to Prohibition — violating PII encryption breaks user sovereignty. Specification provenance from PRINCIPLES.md. Confidence 0.90 because 'all PII' is broad."}
+{"ontological_mode":"OUGHT","epistemic_mode":"declarative","ontology_tier":"core","ontology_anchor":"5w1h:Why","constraint_force":"Prohibition","provenance":"specification","confidence":0.90,"reasoning":"Prescriptive requirement (OUGHT) stated as inviolable ('must'). 5W1H core tier — describes Why (motivation from P1). Maps to Prohibition — violating PII encryption breaks user sovereignty. Specification provenance from PRINCIPLES.md. Confidence 0.90 because 'all PII' is broad."}
 
 Statement: "AAPL has a market capitalization of 3.2 trillion USD."
 System Context: "hkask-mcp-companies — company_profile tool output"
-{"ontological_mode":"IS","epistemic_mode":"declarative","ontology_tier":"domain_supplement","ontology_anchor":"fibo-ind-mkt-bas:MarketCapitalization","constraint_force":"Evidence","provenance":"observation","confidence":0.85,"reasoning":"Descriptive measurement (IS) from tool output (declarative). FIBO domain supplement — MarketCapitalization is a verified FIBO concept (IND/MarketIndices/BasketIndices). The +0.10 FIBO confidence modifier is an hKask tuning choice for domain-verified anchors, but observation provenance from API limits to 0.85."}
+{"ontological_mode":"IS","epistemic_mode":"declarative","ontology_tier":"domain_supplement","ontology_anchor":"fibo-ind-mkt-bas:MarketCapitalization","constraint_force":"Evidence","provenance":"runtime","confidence":0.85,"reasoning":"Descriptive measurement (IS) from tool output (declarative). FIBO domain supplement — MarketCapitalization is a verified FIBO concept (IND/MarketIndices/BasketIndices). The 0.85 is the judged base (0.75) plus the +0.10 FIBO modifier — runtime provenance from a tool response carries no special ceiling."}
 
 Statement: "The agent encoded the experience and is now consolidating it to semantic memory."
-System Context: "hkask-mcp-memory — episodic_consolidate_status tool output"
-{"ontological_mode":"IS","epistemic_mode":"declarative","ontology_tier":"domain_supplement","ontology_anchor":"sumo:Process","constraint_force":"Evidence","provenance":"observation","confidence":0.80,"reasoning":"Descriptive observation (IS) from tool output (declarative). SUMO domain supplement — Process is an upper-ontology concept. The +0.05 SUMO confidence modifier is an hKask tuning choice for upper-ontology anchors. Combined with observation provenance, confidence is 0.80."}
+System Context: "hkask-memory — episodic consolidation status"
+{"ontological_mode":"IS","epistemic_mode":"declarative","ontology_tier":"domain_supplement","ontology_anchor":"sumo:Process","constraint_force":"Evidence","provenance":"runtime","confidence":0.80,"reasoning":"Descriptive observation (IS) from memory-system status (declarative). SUMO domain supplement — Process is an upper-ontology concept. The +0.05 SUMO confidence modifier is an hKask tuning choice for upper-ontology anchors. Combined with runtime provenance, confidence is 0.80."}
 
 ## Output Requirements
 
@@ -122,7 +124,7 @@ Respond with a JSON object:
   "ontology_tier": "core|dual_axis|domain_supplement",
   "ontology_anchor": "5w1h:Who|5w1h:What|5w1h:When|5w1h:Where|5w1h:Why|5w1h:How|pko:<ConceptName>|bibo:<ConceptName>|dcterms:<ConceptName>|fibo-<module>:<ConceptName>|golem:<ConceptName>|sumo:<ConceptName>|mls:<ConceptName>|omc:<ConceptName>|unanchored",
   "constraint_force": "Prohibition|Guardrail|Guideline|Evidence|Hypothesis",
-  "provenance": "specification|implementation|observation|inference|external|unknown",
+  "provenance": "specification|design|implementation|runtime|memory|inference|external|unknown",
   "confidence": 0.0,
   "reasoning": "Step-by-step reasoning for each classification axis, including ontology tier justification and any confidence modifier applied"
 }
@@ -136,7 +138,7 @@ Respond with a JSON object:
 - Declarative OUGHT-statements map to Prohibition or Guardrail (never Hypothesis).
 - Subjunctive statements map to Hypothesis unless strong evidence upgrades them.
 - If provenance is Unknown, confidence must be ≤ 0.3.
-- Apply the Specification confidence floor only when the named specification and its current applicability have actually been checked; a path supplied as context is not verification. Otherwise mark provenance as unverified/unknown and do not apply the floor or ontology boost to compensate for missing evidence.
+- Apply the Specification confidence floor only when the named specification and its current applicability have actually been checked; a path supplied as context is not verification. Otherwise mark provenance as unknown and do not apply the floor or ontology boost to compensate for missing evidence.
 - FIBO-anchored statements: apply +0.10 confidence modifier (OMG standard, high adoption).
 - SUMO-anchored statements: apply +0.05 confidence boost (upper ontology, broad coverage).
 - Unanchored statements (no ontology tier): flag as ontological noise per P5.2, reduce confidence by 0.15.

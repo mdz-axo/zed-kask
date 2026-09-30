@@ -4,6 +4,7 @@ contract:
     step_description: string
     available_oracles: string
   output:
+    step: string
     regime: string
     oracle: string
     critique: string
@@ -46,6 +47,7 @@ Respond with a JSON object:
 
 ```json
 {
+  "step": "the step id (from the step_description)",
   "regime": "D|P:propose-verify|P:probabilistic|P:forecast",
   "oracle": "the named oracle, gate, server, or resolution mechanism",
   "critique": "what checks this label",
@@ -59,4 +61,5 @@ Respond with a JSON object:
 - Every D tag names a real oracle; every P tag names its collapse path.
 - A step tagged D where the answer has genuine multiplicity, or P where a deterministic checker exists, is flagged as a mismatch disease, never silently relabelled.
 - Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
+- Preserve the original prompt structure and formatting.
 - Handle missing variables gracefully (leave as-is or use default if specified).

@@ -14,7 +14,7 @@ Hume's is–ought distinction (*A Treatise of Human Nature*, 1739); Optimality T
 
 ## D/P labelling
 
-Statement classification (all axes of semantics-classify-statement, the tiers of semantics-conflict-resolve, provenance-trace steps 1–6) and semantics-route-step's regime classification are P — judgment, critiqued by the operator and by the convergence gate's inputs. The confidence computation (classify step 7), the lexicographic ranking (conflict-resolve step 7), the convergence gate, and route-step's mismatch flags over named oracles are D (`lisp_eval`, the forms below). A D tag on a step with no real oracle is checkably wrong; a P tag on a step with a cheap deterministic checker is a precision-improvement candidate.
+Statement classification (all axes of semantics-classify-statement, the tiers and resolution/escalation steps of semantics-conflict-resolve, provenance-trace steps 1–7) and semantics-route-step's regime classification, mismatch flags, and hybrid labeling are P — judgment, critiqued by the operator (a mismatch flag naming a nonexistent oracle is checkably wrong against the available_oracles input; a classification that contradicts its traced provenance is a finding). The confidence computation (classify step 7), the lexicographic ranking (conflict-resolve step 7), and the convergence gate are D (`lisp_eval`, the forms below). A D tag on a step with no real oracle is checkably wrong; a P tag on a step with a cheap deterministic checker is a precision-improvement candidate.
 
 ## When to Use
 
@@ -41,10 +41,10 @@ Statement classification (all axes of semantics-classify-statement, the tiers of
 3. Identify the domain ontology anchoring tier (core, dual_axis, or domain_supplement) and the specific ontology anchor.
 4. Identify both the process axis (PKO) and state axis (DC+BIBO) if the statement is dual-axis.
 5. Map the statement to its constraint force (Prohibition, Guardrail, Guideline, Evidence, or Hypothesis) based on its ontological and epistemic modes.
-6. Classify the provenance of the statement (Specification, Implementation, Observation, Inference, External, or Unknown).
-7. Judge a base confidence (P), then compute the final confidence with `lisp_eval` (D) — tier modifier, clamp to [0,1], Unknown-provenance ceiling 0.3, Specification floor 0.8 only when the spec was actually checked as current:
-   - form: `(let ((c (max 0 (min 1 (+ base (cond ((string= tier "fibo") 0.10) ((string= tier "sumo") 0.05) ((string= tier "unanchored") -0.15) (t 0))))))) (cond ((string= prov "unknown") (min c 0.3)) ((and (string= prov "specification") spec_checked) (max c 0.8)) (t c)))`
-   - env: `{ "base": <judged base confidence>, "tier": "fibo|sumo|core|unanchored", "prov": <provenance, lower-case>, "spec_checked": <true only if the named spec was verified current> }`
+6. Classify the provenance of the statement (Specification, Design, Implementation, Runtime, Memory, Inference, External, or Unknown — the trace's data-layer hierarchy; `Runtime` replaces the former `Observation`, same concept).
+7. Judge a base confidence (P), then compute the final confidence with `lisp_eval` (D) — tier modifier, clamp to [0,1], Unknown-provenance ceiling 0.3 (a specification claimed but not checked is treated as unknown — the floor never applies to an unchecked spec), Specification floor 0.8 only when the spec was actually checked as current:
+   - form: `(let ((c (max 0 (min 1 (+ base (cond ((string= tier "fibo") 0.10) ((string= tier "sumo") 0.05) ((string= tier "unanchored") -0.15) (t 0))))))) (cond ((or (string= prov "unknown") (and (string= prov "specification") (not spec_checked))) (min c 0.3)) ((and (string= prov "specification") spec_checked) (max c 0.8)) (t c)))`
+   - env: `{ "base": <judged base confidence>, "tier": "fibo|sumo|core|unanchored" (derived from ontology_anchor: `fibo-*` → fibo, `sumo:*` → sumo, `unanchored` → unanchored, every other anchor → core, i.e. no modifier), "prov": <provenance, lower-case>, "spec_checked": <true only if the named spec was verified current> }`
 
 ### semantics-provenance-trace
 
@@ -63,31 +63,31 @@ Statement classification (all axes of semantics-classify-statement, the tiers of
 3. Break ties within the same ontological mode by epistemic certainty (Declarative > Probabilistic > Subjunctive).
 4. Break ties within the same epistemic mode by constraint force (Prohibition > Guardrail > Guideline > Evidence > Hypothesis).
 5. Break ties within the same constraint force by provenance authority (Specification > Design > Implementation > Runtime > Memory > Inference > Unknown).
-6. Use ontology anchoring as the final tiebreaker, prioritizing higher-confidence ontologies (e.g., FIBO over SUMO, unanchored as lowest priority).
+6. Use ontology anchoring as the final tiebreaker, prioritizing the Tier-5 anchoring rank (FIBO over SUMO, unanchored as lowest priority — the rank is adoption-based, not the confidence modifier).
 7. (D) Once each statement's five classifications are fixed, the ranking is a lexicographic comparison — compute it with `lisp_eval`, never judge it. Encode each statement as its rank on each tier (0 = strongest, in the orders of steps 2–6) and compare: `(begin (define cmp (lambda (a b) (cond ((is_null a) "tie") ((< (car a) (car b)) "first") ((> (car a) (car b)) "second") (t (cmp (cdr a) (cdr b)))))) (cmp a b))`, env `{ "a": [<5 tier ranks>], "b": [<5 tier ranks>] }`. The classifications themselves remain P.
 8. Determine the winning statement and select a resolution strategy (Override, Scope, Defer, Escalate, or Confirm if no conflict exists).
 9. Escalate to human review if two Prohibitions conflict or if the comparison returns `tie`.
 
 ### semantics-route-step
 
-Standalone analysis: it classifies computation steps (P8.4), not statements, and is not part of the three-statement convergence gate.
+Standalone analysis: it classifies computation steps (P8.4), not statements, and is not part of the three-analysis convergence gate (one statement × three analyses).
 
 1. Classify the step's regime by the entropy-matching rule:
    - **D** — the answer is pinned and a deterministic checker exists. Name the oracle (`lisp_eval`, `lean_check`, `cargo`, a server-side oracle).
    - **P, propose-verify** — knowledge is exhibited only in data; the model proposes and a D gate collapses. Name the gate.
    - **P, explicit probabilistic compute** — the answer is genuinely a distribution; a D server computes over P inputs. Name the server.
    - **P, calibrated forecast** — no characterizable posterior and no cheap oracle; judgment scored against external ground truth. Name the resolution mechanism (resolved outcomes, Brier).
-2. Emit the tag: `{ "step": <step id>, "regime": "D" | "P:propose-verify" | "P:probabilistic" | "P:forecast", "oracle": <the named oracle, gate, server or resolution mechanism>, "critique": <what checks this label> }`.
+2. Emit the tag: `{ "step": <step id>, "regime": "D" | "P:propose-verify" | "P:probabilistic" | "P:forecast", "oracle": <the named oracle, gate, server or resolution mechanism>, "critique": <what checks this label>, "mismatch_diseases": <the flagged diseases, each naming its step> }`.
 3. Flag both mismatch diseases: a P step that could be D is a precision-improvement candidate; a D step where the answer has genuine multiplicity is false certainty.
 4. Label hybrid steps at sub-step granularity (precedent: `falsifiability` splits its step 5 into a P call and a D verdict). `render_template` is D (deterministic render) feeding P (model consumption) — label the render and the consumption separately.
 
 ### Convergence
 
-9. Gate — call `lisp_eval` with:
+Gate — call `lisp_eval` with:
    - form: `(and (= (length unverifiable_gaps) 0) (>= chain_confidence 0.8))`
    - env: `{ "unverifiable_gaps": <provenance-chain gaps that stayed unverifiable>,
              "chain_confidence": <overall confidence from semantics-provenance-trace step 5> }`
-   If the classification source is unknown or the conflict result was skipped, carry that status into the final report; do not claim all three analyses passed on provenance alone. Bound: one re-trace — apply the verification recommendations
+   If the classification provenance is unknown or the conflict result was skipped, carry that status into the final report; do not claim all three analyses passed on provenance alone. Bound: one re-trace — apply the verification recommendations
    (semantics-provenance-trace step 7) and re-run the trace; gaps that
    survive the second pass are reported as unverifiable (the honest exit
    semantics-provenance-trace step 5 defines). This gate is the convergence
@@ -105,7 +105,9 @@ Standalone analysis: it classifies computation steps (P8.4), not statements, and
 To render a template, call the `render_template` tool with the template ref (e.g., `pragmatic-semantics/semantics-classify-statement`) and a context object with the required variables.
 
 Template context variables (from each template's [inference] contract):
-- `semantics-conflict-resolve.j2`: `provenance_result`,`classification_result`
+- `semantics-classify-statement.j2`: `statement`, `system_context`
+- `semantics-provenance-trace.j2`: `classification_result`, `statement`, `system_context`
+- `semantics-conflict-resolve.j2`: `provenance_result`, `classification_result`, `statements` (the multi-statement case)
 - `semantics-route-step.j2`: `step_description`, `available_oracles`
 
 
@@ -115,5 +117,5 @@ Template context variables (from each template's [inference] contract):
 - `semantics-provenance-trace.j2`: Every step must identify a concrete location. Unknown source → confidence ≤ 0.2. Direct spec quotes → confidence ≥ 0.9. Inference steps reduce confidence by ≥ 0.1.
 - `semantics-conflict-resolve.j2`: OUGHT never loses to IS. Two Prohibitions conflicting → escalate. Resolution enum: override, scope, defer, escalate, confirm.
 - `semantics-route-step.j2`: Every D tag names a real oracle; every P tag names its collapse path. A step tagged D where the answer has genuine multiplicity, or P where a deterministic checker exists, is flagged as a mismatch disease, never silently relabelled.
-- Conflict resolution runs only if `conflicts_detected == true`; otherwise record it as skipped, not a successful resolution. If true, require a ranked result or report the unresolved conflict; never default a missing result to `{}` and claim convergence.
-- Convergence check incorporates all three analysis steps (classification, provenance, conflict resolution), not just classification.
+- Conflict resolution runs only if `conflicts_detected == true`; the no-conflict outcome is resolution `confirm` (a valid result, not a failure). Record `skipped` only when the step did not run at all, and carry that status into the final report. If conflicts were detected, require a ranked result or report the unresolved conflict; never default a missing result to `{}` and claim convergence. A missing `conflicts_detected` field is not a no-conflict claim — state that the field is missing.
+- The convergence gate (D) checks the provenance axis (`unverifiable_gaps` + `chain_confidence`); the classification-provenance and conflict statuses are carried into the final report by instruction — do not claim all three analyses passed on provenance alone.

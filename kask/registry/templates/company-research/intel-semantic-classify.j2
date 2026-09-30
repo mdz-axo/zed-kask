@@ -65,6 +65,12 @@ For each `news_item` and each `hypothesis` in the intel bundle, classify on:
 - **external**: From outside the pipeline (analyst prior knowledge — flag if present).
 - **unknown**: Source cannot be determined.
 
+(An intel-document adaptation of pragmatic-semantics' provenance axis:
+`observation` here means directly-attributed source content — the hub's
+`runtime` covers hKask-internal runtime evidence, and the hub's
+specification/design/implementation/memory layers do not apply to external
+intel bundles.)
+
 ## What to Classify
 
 1. Every item in `intel_bundle.news_items` — classify the `headline` (and `quote` if present).

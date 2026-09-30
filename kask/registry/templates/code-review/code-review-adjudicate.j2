@@ -56,7 +56,9 @@ For each raw finding, classify:
 - **epistemic_mode**: declarative (high certainty) | probabilistic | subjunctive
   (low certainty). A subjunctive statement presented as declarative is a FALSE
   POSITIVE — downgrade it.
-- **provenance**: direct_measurement | inference | assessment. Flag
+- **provenance**: direct_measurement | inference | assessment (an evidence-type
+  adaptation of pragmatic-semantics' provenance axis — the hub's axis is source
+  layers, this one is finding-evidence strength). Flag
   LLM-assessed (assessment) conclusions; they never exceed Should-fix severity.
 
 ## Step 2 — Falsifiability (hypothesis-framer + falsifiability)

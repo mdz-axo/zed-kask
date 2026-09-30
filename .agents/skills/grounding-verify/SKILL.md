@@ -161,8 +161,10 @@ verified: the counts and the floor are facts for the reader, not a verdict.
      if the text's conclusions would change if it were wrong (ISA 320); this
      drives finding severity and the tracing scope, not whether the cheap
      mechanical checks run (they run on everything)
-   - `epistemic_mode`: IS / OUGHT / subjunctive / probabilistic (per
-     pragmatic-semantics classification)
+   - `epistemic_mode`: IS / OUGHT / subjunctive / probabilistic (a
+     grounding-verify cut of pragmatic-semantics' two axes: the ontological
+     IS/OUGHT folded in; only IS-declarative claims proceed, so declarative is
+     the unmarked default)
    - `source_reference`: the named source the claim cites (MCP tool name +
      output key, transcript chunk_id, URL), or `none` if uncited
 

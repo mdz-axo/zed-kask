@@ -2218,4 +2218,152 @@ mod tests {
             "the count gap is the charter's calibration signal for the next expedition"
         );
     }
+
+    #[test]
+    fn test_pragmatic_semantics_skill_md_pins_forms() {
+        // pragmatic-semantics — the vocabulary hub — pins three lisp_eval
+        // forms: the classify confidence computation (tier modifier +
+        // unknown ceiling + spec floor), the conflict lexicographic ranking,
+        // and the convergence gate. The classify form enforces the template's
+        // constraint that a specification claimed but NOT checked is treated
+        // as unknown (ceiling 0.3) — the pre-repair form fell through to (t c)
+        // on specification+unchecked, retaining the ontology boost the
+        // template forbids ("do not apply the floor or ontology boost to
+        // compensate for missing evidence"). If any form drifts, this fails
+        // until skill and tests are reconciled.
+        let skill_md = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../.agents/skills/pragmatic-semantics/SKILL.md"
+        ))
+        .expect("pragmatic-semantics SKILL.md must exist in the workspace");
+
+        // 1. The classify confidence form.
+        let classify = r#"(let ((c (max 0 (min 1 (+ base (cond ((string= tier "fibo") 0.10) ((string= tier "sumo") 0.05) ((string= tier "unanchored") -0.15) (t 0))))))) (cond ((or (string= prov "unknown") (and (string= prov "specification") (not spec_checked))) (min c 0.3)) ((and (string= prov "specification") spec_checked) (max c 0.8)) (t c)))"#;
+        assert!(
+            skill_md.contains(classify),
+            "classify confidence form must stay pinned in pragmatic-semantics SKILL.md"
+        );
+        let fibo_boost = hkask_lisp::eval_sandboxed_with_budget(
+            classify,
+            &json!({"base": 0.75, "tier": "fibo", "prov": "runtime", "spec_checked": false}),
+            100_000,
+            64,
+        )
+        .expect("classify form must evaluate");
+        assert_eq!(
+            fibo_boost,
+            json!(0.85),
+            "FIBO +0.10 over a 0.75 base with runtime provenance — no ceiling or floor"
+        );
+        let unchecked_spec = hkask_lisp::eval_sandboxed_with_budget(
+            classify,
+            &json!({"base": 0.75, "tier": "fibo", "prov": "specification", "spec_checked": false}),
+            100_000,
+            64,
+        )
+        .expect("classify form must evaluate on an unchecked spec");
+        assert_eq!(
+            unchecked_spec,
+            json!(0.3),
+            "a specification claimed but not checked is treated as unknown — the ceiling applies, the boost does not compensate (the template's constraint, now enforced by the form)"
+        );
+        let checked_spec = hkask_lisp::eval_sandboxed_with_budget(
+            classify,
+            &json!({"base": 0.6, "tier": "core", "prov": "specification", "spec_checked": true}),
+            100_000,
+            64,
+        )
+        .expect("classify form must evaluate on a checked spec");
+        assert_eq!(
+            checked_spec,
+            json!(0.8),
+            "a checked-current specification takes the 0.8 floor"
+        );
+        let unknown_ceiling = hkask_lisp::eval_sandboxed_with_budget(
+            classify,
+            &json!({"base": 0.5, "tier": "unanchored", "prov": "unknown", "spec_checked": false}),
+            100_000,
+            64,
+        )
+        .expect("classify form must evaluate on unknown provenance");
+        assert_eq!(
+            unknown_ceiling,
+            json!(0.3),
+            "unknown provenance is capped at 0.3 (0.5 - 0.15 unanchored = 0.35, then the ceiling)"
+        );
+
+        // 2. The conflict lexicographic ranking form.
+        let ranking = r#"(begin (define cmp (lambda (a b) (cond ((is_null a) "tie") ((< (car a) (car b)) "first") ((> (car a) (car b)) "second") (t (cmp (cdr a) (cdr b)))))) (cmp a b))"#;
+        assert!(
+            skill_md.contains(ranking),
+            "conflict lexicographic ranking form must stay pinned in pragmatic-semantics SKILL.md"
+        );
+        let first_wins = hkask_lisp::eval_sandboxed_with_budget(
+            ranking,
+            &json!({"a": [0, 1, 2, 0, 1], "b": [0, 2, 1, 0, 1]}),
+            100_000,
+            64,
+        )
+        .expect("ranking form must evaluate");
+        assert_eq!(
+            first_wins,
+            json!("first"),
+            "a wins on tier 2 (epistemic rank 1 < 2) after tying tier 1"
+        );
+        let second_wins = hkask_lisp::eval_sandboxed_with_budget(
+            ranking,
+            &json!({"a": [0, 2, 1, 0, 1], "b": [0, 1, 2, 0, 1]}),
+            100_000,
+            64,
+        )
+        .expect("ranking form must evaluate on the reversed case");
+        assert_eq!(second_wins, json!("second"), "the mirror case ranks second");
+        let tie = hkask_lisp::eval_sandboxed_with_budget(
+            ranking,
+            &json!({"a": [0, 1, 2, 0, 1], "b": [0, 1, 2, 0, 1]}),
+            100_000,
+            64,
+        )
+        .expect("ranking form must evaluate on a tie");
+        assert_eq!(
+            tie,
+            json!("tie"),
+            "all-five-equal is a tie — escalate to human review, never pick arbitrarily"
+        );
+
+        // 3. The convergence gate form.
+        let gate = r#"(and (= (length unverifiable_gaps) 0) (>= chain_confidence 0.8))"#;
+        assert!(
+            skill_md.contains(gate),
+            "convergence gate form must stay pinned in pragmatic-semantics SKILL.md"
+        );
+        let converged = hkask_lisp::eval_sandboxed_with_budget(
+            gate,
+            &json!({"unverifiable_gaps": [], "chain_confidence": 0.85}),
+            100_000,
+            64,
+        )
+        .expect("gate form must evaluate");
+        assert_eq!(converged, json!(true), "no gaps and 0.85 >= 0.8 converges");
+        let gapped = hkask_lisp::eval_sandboxed_with_budget(
+            gate,
+            &json!({"unverifiable_gaps": ["unverified source"], "chain_confidence": 0.9}),
+            100_000,
+            64,
+        )
+        .expect("gate form must evaluate on a gapped chain");
+        assert_eq!(gapped, json!(false), "any surviving gap fails the gate");
+        let low_confidence = hkask_lisp::eval_sandboxed_with_budget(
+            gate,
+            &json!({"unverifiable_gaps": [], "chain_confidence": 0.75}),
+            100_000,
+            64,
+        )
+        .expect("gate form must evaluate on low confidence");
+        assert_eq!(
+            low_confidence,
+            json!(false),
+            "a gapless chain below 0.8 does not converge"
+        );
+    }
 }

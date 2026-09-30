@@ -27,6 +27,7 @@ You are a provenance tracer. Trace a claim back through hKask's data layers to d
 | **Runtime observation** | Regulation spans (`reg.*`), variety counters, algedonic alerts | Empirical — what actually happens |
 | **Memory** | `hkask-memory`: episodic (private), semantic (public) | Derived — consolidated from experience |
 | **Inference** | Agent reasoning, template output, Curator conclusions | Lowest — derived, may contain assumptions |
+| **External** | Papers, standards, external docs | Claim-dependent — primary for domain claims; outside hKask's verified layers |
 
 ## Provenance Chain Structure
 
@@ -70,7 +71,7 @@ Respond with a JSON object:
   "provenance_chain": [
     {
       "step": 1,
-      "source": "specification|design|implementation|runtime|memory|inference|unknown",
+      "source": "specification|design|implementation|runtime|memory|inference|external|unknown",
       "location": "Specific doc path, crate path, Regulation span, or memory reference",
       "derivation": "direct_quote|measurement|aggregation|summarization|generalization|inference",
       "transform": "none|summarized|generalized|inferred|unknown",
