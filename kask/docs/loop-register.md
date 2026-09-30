@@ -2,7 +2,7 @@
 title: "Loop Register — zed-kask canonical loops"
 audience: [developers, architects, agents, operators]
 last_updated: 2026-09-28
-version: "0.23.21"
+version: "0.23.22"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle]
@@ -193,12 +193,12 @@ assesses alignment where anchors exist, and invents none.
 | media | 98 | count (`hkask_mcp_media.rs:449-459`) | yes |
 | portfolio | 18 | name-set (`hkask_mcp_portfolio.rs:65-75`) | yes |
 | prediction-markets | 32 | count (`hkask_mcp_prediction_markets.rs:2070-2084`) | yes |
-| research | 26 | count (`hkask_mcp_research.rs:2435-2439`) | yes |
+| research | 27 | count (`hkask_mcp_research.rs:2519-2521`) | yes |
 | scenarios | 19 | count (`hkask_mcp_scenarios.rs:1899-1909`) | yes |
 | spreadsheet | 2 | name-set | yes |
 | swarm | 90 | count (`hkask_mcp_swarm.rs:1026-1036`) | yes |
 | training | 9 | count (`hkask_mcp_training.rs:318-326`) | **no** |
-| **total** | **402** | 9 count / 3 name-set | 9/12 |
+| **total** | **403** | 9 count / 3 name-set | 9/12 |
 
 ### Per-server tool-review ledger (S1–S12; the pass-2 per-tool surface review)
 
@@ -845,6 +845,24 @@ exactly that lag), not evidence of absence.)
 
 ## Change log
 
+- 2026-09-29 — v0.23.22 the four-lens post-landing review (refactor-
+  architecture, essentialist, hypothesis-framer, grill-me) over the
+  pass's 14 code commits. Findings fixed: the register's tool inventory
+  was stale after `finish_research_run` (research 26→27, total 402→403,
+  pin citation refreshed); the corpus helpers doc comment still
+  described the pre-D8 `fs::write` pattern its body no longer uses;
+  the primitive's doc now states the non-Unix arm's weaker guarantee
+  explicitly; the dataset writer's identity `Err(e) => Err(e)` arm
+  collapsed to `?`. New pin: the legitimate-symlink boundary test — an
+  inside-root symlink resolves at check time and the write lands on its
+  target (only the check-to-open race refuses), the strongest
+  hypothesis-framer finding, previously reasoned but unpinned. Noted,
+  not acted: the write path's double-containment (idempotent, cold
+  paths, one extra canonicalize — a Speculative deepening candidate at
+  best); `finish_research_run`'s history PK edge (two finishes in one
+  second collide as an honest internal error); the kanban double-notify
+  on fast completions (GPUI coalesces). Full gate green — the
+  concurrent actor's agent-crate work landed, unblocking the repo gate.
 - 2026-09-29 — v0.23.21 **D8 IMPLEMENTED** (`971185a553`): the shared
   `O_NOFOLLOW` write primitive closed the F4 check-to-open symlink race —
   seven call sites swapped across corpus and training; the pinned

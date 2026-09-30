@@ -377,6 +377,9 @@ pub fn contain_for_write(path: &str) -> Result<std::path::PathBuf, McpToolError>
 /// with `O_NOFOLLOW` (Unix), so the swap surfaces as `ELOOP` and is
 /// classified `invalid_argument` naming the refusal, never a silent
 /// escape. Non-symlink IO failures classify through [`map_io_error`].
+/// On non-Unix targets the open falls back to a plain write WITHOUT the
+/// symlink refusal — the containment check still runs, but the race window
+/// reopens there (documented platform gap; the project's targets are Unix).
 /// Residual window, documented: an intermediate DIRECTORY component
 /// swapped for a symlink after the check is still followed — full
 /// protection needs an `openat(2)` component walk, which this
@@ -463,6 +466,27 @@ mod tests {
             !real_target.exists(),
             "the symlinked write must not have reached the outside target"
         );
+        Ok(())
+    }
+
+    /// expect: "A symlink whose target is INSIDE the allowed root still works —
+    /// canonicalize resolves it at check time, so the O_NOFOLLOW open sees
+    /// the real file, not the link" [P4] (the legitimate-use boundary of the
+    /// F4 fix: only the check-to-open RACE refuses, not operator symlinks).
+    #[test]
+    #[cfg(unix)]
+    fn write_contained_follows_a_symlink_resolved_to_an_inside_root_target()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir_in(env!("CARGO_MANIFEST_DIR"))?;
+        let real = dir.path().join("real.txt");
+        std::fs::write(&real, b"before")?;
+        let link = dir.path().join("link.txt");
+        std::os::unix::fs::symlink(&real, &link)?;
+
+        let written = write_contained(&link.to_string_lossy(), b"after")?;
+        // The write landed on the symlink's RESOLVED target.
+        assert_eq!(std::fs::read(&real)?, b"after");
+        assert_eq!(written, real.canonicalize()?);
         Ok(())
     }
 

@@ -177,21 +177,17 @@ impl TrainingServer {
             // ~/.ssh/authorized_keys or /etc/cron.d/... must be rejected.
             let train_path = hkask_mcp_server::contain_for_write(&output_path)?;
             let train_items = &conversations[..train_count];
-            match write_jsonl(&train_path, train_items) {
-                Ok(n) => {
-                    let mut result = json!({"train_examples": n, "train_path": output_path, "total_matched": total});
-                    if train_count < limit {
-                        let test_path = PathBuf::from(format!("{}.test.jsonl", train_path.to_string_lossy()));
-                        let test_items = &conversations[train_count..];
-                        match write_jsonl(&test_path, test_items) {
-                            Ok(m) => { result["test_examples"] = json!(m); result["test_path"] = json!(test_path.to_string_lossy().to_string()); }
-                            Err(e) => { result["test_write_error"] = json!(e.to_string()); }
-                        }
-                    }
-                    Ok(result)
+            let n = write_jsonl(&train_path, train_items)?;
+            let mut result = json!({"train_examples": n, "train_path": output_path, "total_matched": total});
+            if train_count < limit {
+                let test_path = PathBuf::from(format!("{}.test.jsonl", train_path.to_string_lossy()));
+                let test_items = &conversations[train_count..];
+                match write_jsonl(&test_path, test_items) {
+                    Ok(m) => { result["test_examples"] = json!(m); result["test_path"] = json!(test_path.to_string_lossy().to_string()); }
+                    Err(e) => { result["test_write_error"] = json!(e.to_string()); }
                 }
-                Err(e) => Err(e),
             }
+            Ok(result)
         })
         .await
     }

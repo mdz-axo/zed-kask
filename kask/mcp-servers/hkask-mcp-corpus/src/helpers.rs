@@ -200,13 +200,16 @@ pub(crate) fn open_memory_store(
         .map_err(|e| map_database_error(e, "Cannot open memory DB"))
 }
 
-/// Resolve `output` through `contain_for_write` and write `content` to the
-/// contained path. Single enforcement point for the `contain_for_write` +
-/// `std::fs::write` + `map_corpus_io_error` pattern duplicated across
+/// Write `content` to a caller-supplied `output` path under containment.
+/// Single enforcement point for the corpus output writes of
 /// `corpus_dedup_chunks`, `corpus_ingest_qa`, `corpus_prepare_training_dataset`,
 /// `corpus_tag_chunks`, `ConsolidationService::consolidate`, and
-/// `PromptBuilderService::build_prompts`. An escaping path is rejected with
-/// `invalid_argument` before any write reaches disk.
+/// `PromptBuilderService::build_prompts`. Delegates to the shared
+/// `hkask_mcp_server::server::write_contained` primitive: containment plus
+/// the `O_NOFOLLOW` final-component open, so a symlink planted between
+/// check and open is refused (repair-plan F4), never silently followed.
+/// An escaping path is rejected with `invalid_argument` before any write
+/// reaches disk.
 pub(crate) fn write_contained(output: &str, content: &str) -> Result<(), McpToolError> {
     // The shared primitive re-runs containment and opens the final component
     // with O_NOFOLLOW — a symlink planted between check and open is refused
