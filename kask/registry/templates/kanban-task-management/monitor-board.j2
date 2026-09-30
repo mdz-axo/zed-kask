@@ -40,20 +40,16 @@ All tools are on the `hkask-mcp-kata-kanban` server.
 {% for t in tasks %}
 {{ loop.index }}. [{{ t.status }}] {{ t.title }}
    Assignee: {{ t.assignee or "unassigned" }}
-   Priority: {{ t.priority or "none" }}
-   Est. hours: {{ t.estimated_hours or "?" }}
-   Deliverables: {{ t.deliverables | length }}
-   Comments: {{ t.comments | length }}
-   {% if t.due_date %}Due: {{ t.due_date }}{% endif %}
+   Activity: {{ t.activity or "no recent activity" }}
 {% endfor %}
 
 ## Assessment
 
 Answer these questions:
 
-1. **Blockers** — Are any tasks stuck? Look for tasks in InProgress with no recent comments or deliverables.
+1. **Blockers** — Are any tasks stuck? Look for tasks in InProgress with no recent activity.
 2. **Ready for Review** — Which tasks are in Review and need verification?
-3. **Overdue** — Are any tasks past their estimated hours?
+3. **Overdue** — Which tasks have been InProgress with no activity since the last sweep (staleness threshold per the operator)?
 4. **Capacity** — Are any columns approaching WIP limits?
 5. **Gaps** — Are there tasks with no assignee that should be delegated?
 

@@ -2,9 +2,9 @@
 [inference]
 contract:
   input:
-    project_description: string
-    task_to_delegate: object
-    board_id: string
+    project_description: string|null
+    task_to_delegate: object|null
+    board_id: string|null
   output:
     phase: string
     rationale: string

@@ -135,8 +135,7 @@ is asserted; the pasted command and exit code are ran-and-pasted.
 | `decompose-tasks.j2` | Decompose a project into INVEST-compliant tasks with vertical slicing, dependencies, recomposition strategy, and acceptance criteria. Phase: decompose. |
 | `review-tasks.j2` | Review decomposed tasks for INVEST compliance, completeness, and recomposition viability. Phase: decompose. |
 | `populate-board.j2` | Convert accepted tasks into board-ready format. Includes post-step instructions for the agent to call kanban_board_create and kanban_task_create. Phase: decompose. |
-| `configure-spawn.j2` | Configure spawn parameters: delegation level, skills, memory scope, timeout. Includes post-step instructions for the agent to call kanban_task_spawn. Phase: delegate. |
-
+| `configure-spawn.j2` | Configure spawn parameters: delegation level, skills, memory scope. Includes post-step instructions for the agent to call kanban_task_spawn. Phase: delegate. |
 | `monitor-board.j2` | Monitor board state, identify blockers, flag overdue tasks. Includes pre-step instructions for the agent to fetch board data via kanban_board_list and kanban_task_list. Phase: operate. |
 | `coordinate-agents.j2` | Read active-task comment threads and prepare actionable replies. Includes post-step instructions for the agent to call kanban_task_comment. Phase: operate. |
 | `track-deliverables.j2` | Assess deliverables for completeness. Includes post-step instructions for the agent to call kanban_task_move and kanban_task_add_deliverable. Phase: operate. |
@@ -144,12 +143,15 @@ is asserted; the pasted command and exit code are ran-and-pasted.
 | `verify-completion.j2` | Assess evidence criterion by criterion; comment and return failed work without a pass signal, and call `kanban_task_verify` only after operator-confirmed Review success. |
 | `escalate.j2` | Convert unresolved issues into human-operator-ready escalations. Includes post-step instructions for the agent to call kanban_task_comment. Phase: operate. |
 
-To render a template, call the `render_template` tool with the template ref (e.g., `kanban-task-management/triage`) and a context object with the required variables.
-
-Template context variables (from each template's [inference] contract):
-- `coordinate-agents.j2`: `triage_phase`,`board_name` `active_tasks`
-- `escalate.j2`: `triage_phase`,`board_name` `escalation_candidates`
-
+To render a template, call the `render_template` tool with the template ref (e.g., `kanban-task-management/triage`) and a context object with the required variables — each template's `[inference]` contract is the authoritative input list. The contract audit checks each template's contract-to-body agreement; cross-template producer→consumer seams (one step's output feeding the next step's input) are this skill's own chain to verify at render time.
 
 ## Constraints
+
+- The board is the durable ledger: a task's state comes from `kanban_task_list` re-reads, never from the manager's memory. Every transition is confirmed by re-listing before it is reported.
+- A criterion is satisfied only by `ran-and-pasted` or `demonstrated` evidence; `asserted` never satisfies (the floor tier is never the ceiling). A done task without its evidence tier recorded is unverified, not complete.
+- `kanban_task_verify` runs only after the operator confirms a Review task's observed pass evidence; its nonempty `evidence` is the pass signal. A delegate's `task_success` verdict or the template's `passed: true` is evidence for Review, never operator-confirmed completion.
+- After `kanban_task_spawn`, read `kanban_task_delegate_result` for the same task ID; if unavailable or failed, leave the task open and surface the missing receipt. Never replay a spawn after an uncertain tool error, and never render a second execution prompt.
+- The sweep gate `(and (= (length unverified_review) 0) (= (length stalled_in_progress) 0))` checks sweep obstacles only — it never proves the functional goal. Goal achievement is the operator's judgment.
+- Board deletion happens only after every task is Done, deliverables are recorded outside the board, and the operator confirms closure; a board with any open task is kept and named. Never delete a board to make a sweep look clean.
+- Before Decompose, an inferred goal is only a question; board creation stops until the operator confirms the target. `kanban_goal_create` runs once, with a stable idempotency key.
 

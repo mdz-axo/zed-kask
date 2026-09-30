@@ -4,9 +4,10 @@ contract:
   input:
     triage_phase: string
     project_description: string
-    target_task_hours: number
+    target_task_hours: number|null
     goals: array
     constraints: array
+    resources: array
   output:
     tasks: array
     recomposition: object
@@ -32,18 +33,29 @@ You are a task decomposition expert. Your job is to break down a project into di
 {% endif %}
 
 {% if constraints %}
-**Constraints:**
+## Constraints
 {% for constraint in constraints %}
 - {{ constraint }}
 {% endfor %}
 {% endif %}
+{% if resources %}
+## Resources
+{% for resource in resources %}
+- {{ resource }}
+{% endfor %}
+Size tasks against these resources: a task that needs an unavailable resource is split or flagged in its description, never silently assumed.
+{% endif %}
 
 ## Target Task Size
 
+{% if target_task_hours %}
 Each task should take approximately {{ target_task_hours }} hours to complete. This means:
-- A 2-hour task is a single focused piece of work (e.g., "Add email validation to signup form")
-- A 4-hour task may involve multiple files but one clear outcome (e.g., "Implement password reset flow end-to-end")
-- An 8-hour task is a substantial feature component (e.g., "Build search with filters and pagination")
+- A 2-hour task is a single focused piece of work (e.g. "Add email validation to signup form")
+- A 4-hour task may involve multiple files but one clear outcome (e.g. "Implement password reset flow end-to-end")
+- An 8-hour task is a substantial feature component (e.g. "Build search with filters and pagination")
+{% else %}
+No target task size was supplied. Size tasks by INVEST's vertical-slice principle instead of an hour figure: each task delivers one testable outcome end-to-end.
+{% endif %}
 
 ## Decomposition Rules
 
@@ -52,7 +64,7 @@ Each task should take approximately {{ target_task_hours }} hours to complete. T
    - **Negotiable**: Details can be refined during execution
    - **Valuable**: Delivers user or stakeholder value
    - **Estimable**: Can be reasonably sized in hours
-   - **Small**: Fits within the target task size
+   - **Small**: Fits within the target task size (when one was supplied; otherwise delivers one testable outcome end-to-end)
    - **Testable**: Has clear, verifiable acceptance criteria
 
 2. **Vertical Slicing** — Each task delivers end-to-end functionality, not just a horizontal layer. Prefer "User can reset their password" over "Build password reset API endpoint" + "Build password reset UI" as separate tasks.
@@ -76,16 +88,14 @@ Each task should take approximately {{ target_task_hours }} hours to complete. T
    - **integration_order**: Ordered list of task titles showing the assembly sequence
    - **final_verification**: How to verify the fully reassembled deliverable works end-to-end
 
-Return a JSON object with a "tasks" array AND a "recomposition" object. Each task must have all fields specified below. Do not include tasks that are trivial (under 30 minutes). Group related work into coherent tasks rather than splitting into micro-tasks.
+Return a JSON object with a "tasks" array AND a "recomposition" object. Each task must have all fields specified above. Do not include tasks that are trivial (under 30 minutes). Group related work into coherent tasks rather than splitting into micro-tasks.
 
 8. **Kata Guidance** — Include optional guidance on how Toyota Kata practices can be applied to each task. This is SOFT guidance — suggestions, not requirements. The system will learn from experience when katas are most useful.
 
    For each task, optionally include:
-   - **starter_kata**: When should the agent use an observation drill? "If you're unsure why progress is slow, run /kanban practice <task> to separate facts from interpretations."
-   - **improvement_kata**: When should the agent run a PDCA experiment? "If the task hits a blocker, run /kanban improve <task> to design a targeted experiment."
-   - **coaching_guidance**: For the agent managing this task — what coaching approach helps? "Ask the agent what ONE obstacle they're addressing, not all of them. Use /kanban coach <task> for the 5-question dialogue."
+   - **starter_kata**: When should the agent use an observation drill? "If you're unsure why progress is slow, run `kanban_task_kata_prompt` with stage `practice` to separate facts from interpretations."
+   - **improvement_kata**: When should the agent run a PDCA experiment? "If the task hits a blocker, run `kanban_task_kata_prompt` with stage `improvement` to design a targeted experiment."
+   - **coaching_guidance**: For the agent managing this task — what coaching approach helps? "Ask the agent what ONE obstacle they're addressing, not all of them. Use `kanban_task_kata_prompt` with stage `coaching` for the 5-question dialogue."
 
    Include a "kata_guidance" object in the output with per-task suggestions. This is optional — omit it if katas don't naturally apply to a task.
-
-Return a JSON object with "tasks", "recomposition", and optionally "kata_guidance". Do not include tasks that are trivial (under 30 minutes). Group related work into coherent tasks rather than splitting into micro-tasks.
 {% endif %}

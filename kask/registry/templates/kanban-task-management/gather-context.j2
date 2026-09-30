@@ -5,9 +5,11 @@ contract:
     triage_phase: string
     project_description: string
   output:
+    project_name: string
     goals: array
     constraints: array
     resources: array
+    target_task_hours: number|null
 ---
 
 {% if triage_phase and triage_phase != 'decompose' %}
@@ -29,7 +31,7 @@ Extract only what the operator stated or confirmed. An implicit goal is a questi
 2. **Goals** — the operator-confirmed functional target and 2–4 observable criteria; if absent, return an empty goals array and ask before decomposition
 3. **Constraints** — Any limitations mentioned (time, budget, technology, team size, etc.)
 4. **Resources** — What's available (existing codebase, tools, team members, etc.)
-5. **Task time budget** — include only when the operator supplied it; never derive 3/5/8-hour estimates from a project label.
+5. **Target task hours** (`target_task_hours`) — include only when the operator supplied it; never derive 3/5/8-hour estimates from a project label. Null when absent.
 
-Return a JSON object with these fields. Be concise — this is input for the next step.
+Return a JSON object with these fields (`project_name`, `goals`, `constraints`, `resources`, `target_task_hours`). Be concise — this is input for the next step.
 {% endif %}

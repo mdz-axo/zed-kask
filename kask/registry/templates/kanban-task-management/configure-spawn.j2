@@ -1,17 +1,15 @@
-{# goal: Configure spawn parameters: delegation level, skills, memory scope, timeout. Includes post-step instructions for the agent to call kanban_task_spawn. Phase: delegate. #}
+{# goal: Configure spawn parameters: delegation level, skills, and memory scope. Includes post-step instructions for the agent to call kanban_task_spawn. Phase: delegate. #}
 [inference]
 contract:
   input:
     triage_phase: string
     task: object
     available_skills: array
-    available_tool_servers: array
   output:
     delegation_level: string
     delegated_skills: array
     memory_scope: string
-    tool_servers: array
-    timeout_seconds: integer
+    rationale: string
 ---
 
 {% if triage_phase and triage_phase != 'delegate' %}
@@ -28,15 +26,11 @@ You are a kanban task delegation planner. Configure the minimum capable sub-agen
 ## Available Skills
 {{ available_skills | tojson }}
 
-## Available Tool Servers
-{{ available_tool_servers | tojson }}
-
 ## Configuration Rules
 
 - Choose `minimal` for focused, low-risk work with few dependencies; `standard` for normal implementation or analysis; `maximal` only when the task genuinely requires broad context or multiple coordinated capabilities.
-- Delegate only skills and tool servers necessary to satisfy the task's acceptance criteria.
+- Delegate only skills necessary to satisfy the task's acceptance criteria.
 - Use `none`, `episodic`, or `full` memory scope. Prefer the narrowest scope that provides the task's needed context.
-- Set a bounded timeout appropriate to the estimated work.
 
 ## Output Format
 
@@ -47,14 +41,11 @@ Return a JSON object:
   "delegation_level": "minimal|standard|maximal",
   "delegated_skills": ["available skill name"],
   "memory_scope": "none|episodic|full",
-  "tool_servers": ["available tool server name"],
-  "timeout_seconds": 0,
   "rationale": "Brief explanation tying every selected capability to a task requirement"
 }
 ```
 
-This output is a proposed spawn configuration. It must contain no hidden capabilities, credentials, or parameters.
-{% endif %}
+This output is a proposed spawn configuration. It must contain no hidden capabilities, credentials, or parameters. `kanban_task_spawn` accepts exactly `task_id`, `idempotency_key`, `delegation_level`, `delegated_skills`, `memory_scope` and `swarm_id` — configure only those; any other parameter would be silently dropped at the tool boundary.
 
 ## MCP Tool Calls (Agent Action — Post-Process)
 
@@ -70,3 +61,4 @@ These instructions are for the agent running the skill, not for the template's L
 4. The spawn result (agent_id, model, tokens, latency, response) is recorded on the task as a comment by the server.
 
 All tools are on the `hkask-mcp-kata-kanban` server.
+{% endif %}
