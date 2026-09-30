@@ -43,7 +43,7 @@ Return JSON:
   "behavior_estimate": null,
   "depth_score": {"score": null, "classification": "NoSource", "formula": "N/A", "threshold_met": false, "distance_to_deep": null, "provenance_note": "No source provided"},
   "red_flags": ["module_source is empty — cannot assess depth"],
-  "recommendations": [{"text": "Provide module source or skip assessment", "constraint_force": "guardrail"}]
+  "recommendations": [{"text": "Provide module source or skip assessment", "constraint_force": "Guardrail"}]
 }
 ```
 {% endif %}
@@ -170,8 +170,8 @@ Respond with a JSON object:
   },
   "red_flags": [],
   "recommendations": [
-    {"text": "Module is adequate — consider merging SessionConfig and SessionSummary into a single type to improve depth score", "constraint_force": "guideline"},
-    {"text": "Monitor interface creep as features are added", "constraint_force": "guideline"}
+    {"text": "Module is adequate — consider merging SessionConfig and SessionSummary into a single type to improve depth score", "constraint_force": "Guideline"},
+    {"text": "Monitor interface creep as features are added", "constraint_force": "Guideline"}
   ]
 }
 ```
@@ -182,7 +182,7 @@ Respond with a JSON object:
 - Estimate behavior conservatively — err on the side of undercounting.
 - Flag all red flags even if the depth score is acceptable.
 - If `total_interface_items == 0`, return `classification: "Empty"` with `depth_score: null` — do not divide by zero.
-- Every recommendation MUST carry a `constraint_force` field: `prohibition`, `guardrail`, `guideline`, `evidence`, or `hypothesis`.
+- Every recommendation MUST carry a `constraint_force` field: `Prohibition`, `Guardrail`, `Guideline`, `Evidence`, or `Hypothesis` (the pragmatic-semantics hub's capitalized enum).
 - Depth score thresholds are Evidence (Ousterhout's empirical observation), not Prohibition — present them as such.
 - Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
 - Handle missing variables gracefully (leave as-is or use default if specified).

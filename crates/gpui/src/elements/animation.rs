@@ -486,7 +486,16 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
                             let interval = Duration::from_secs_f32(1.0 / max_fps);
                             window
                                 .spawn(cx, async move |cx| {
-                                    cx.background_executor().timer(interval).await;
+                                    // zed-kask: D84 — align capped animation timers to
+                                    // the shared redraw grid so N visible animators coalesce
+                                    // into one redraw per boundary instead of N
+                                    // unsynchronized triggers per interval (measured 31
+                                    // draws/s from sidebar animators alone, 2026-09-30).
+                                    let delay = crate::frame_grid::next_grid_delay_from(
+                                        cx.background_executor().now(),
+                                        interval,
+                                    );
+                                    cx.background_executor().timer(delay).await;
                                     delayed_frame_pending.set(false);
                                     cx.update(move |_, cx| cx.notify(view)).ok();
                                 })
@@ -1017,34 +1026,45 @@ mod tests {
 
     #[gpui::test]
     fn test_max_fps_schedules_timer_driven_frames(cx: &mut TestAppContext) {
+        // zed-kask: capped animations re-render on a timer aligned to the
+        // shared redraw grid (D84), so the exact fire instant is
+        // boundary-dependent; this test pins the mechanism (no per-frame
+        // callback; timer-driven re-renders) and the rate bound (at most one
+        // re-render per max_fps interval, each within one interval of the
+        // last).
         let (rendered_deltas, window) = open_test_window_with_max_fps(cx, Some(10.0));
 
-        // The test scheduler's clock jitters forward slightly on each poll,
-        // so compare against expectations loosely.
-        let assert_deltas_approx_eq = |expected: &[f32]| {
-            let actual = rendered_deltas.borrow();
-            assert_eq!(actual.len(), expected.len(), "deltas: {actual:?}");
-            for (actual, expected) in actual.iter().zip(expected) {
-                assert!(
-                    (actual - expected).abs() < 1e-2,
-                    "expected {expected}, got {actual}"
-                );
-            }
-        };
-
-        assert_deltas_approx_eq(&[0.0]);
+        assert_eq!(rendered_deltas.borrow().len(), 1);
 
         // No per-frame callback is scheduled; re-renders are timer-driven.
         assert_eq!(simulate_next_frame(&window, cx), 0);
-        assert_deltas_approx_eq(&[0.0]);
+        assert_eq!(rendered_deltas.borrow().len(), 1);
 
         cx.executor().advance_clock(Duration::from_millis(105));
         cx.run_until_parked();
-        assert_deltas_approx_eq(&[0.0, 0.105]);
+        {
+            let deltas = rendered_deltas.borrow();
+            assert_eq!(deltas.len(), 2, "one timer-driven re-render per interval");
+            assert!(deltas[1] > deltas[0], "time advances between renders");
+            assert!(
+                deltas[1] - deltas[0] <= 0.1 + 1e-2,
+                "re-renders are rate-bounded by max_fps: {}",
+                deltas[1]
+            );
+        }
 
         cx.executor().advance_clock(Duration::from_millis(105));
         cx.run_until_parked();
-        assert_deltas_approx_eq(&[0.0, 0.105, 0.21]);
+        {
+            let deltas = rendered_deltas.borrow();
+            assert_eq!(deltas.len(), 3, "the loop continues on the timer");
+            assert!(deltas[2] > deltas[1]);
+            assert!(
+                deltas[2] - deltas[1] <= 0.1 + 1e-2,
+                "each re-render is within one interval of the last: {}",
+                deltas[2]
+            );
+        }
     }
 
     #[gpui::test]

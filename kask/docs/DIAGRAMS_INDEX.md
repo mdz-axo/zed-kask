@@ -1,8 +1,8 @@
 ---
 title: "hKask Diagram Index — Mermaid Verification Registry"
 audience: [architects, developers, agents]
-last_updated: 2026-09-28
-version: "2.4.0"
+last_updated: 2026-09-30
+version: "2.5.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [curation, composition]
@@ -10,20 +10,20 @@ mds_categories: [curation, composition]
 
 # hKask Diagram Index — Mermaid Verification Registry
 
-This registry is generated from the surviving `DIAGRAM_ALIGNMENT` metadata under `kask/docs/`. On 2026-09-28 the corpus contains **105 active alignment records representing 105 unique IDs**: 34 records in the five consolidated diagram files and 71 inline records. The 2026-09-28 how-to folds moved eleven inline records from the per-crate how-to documents into their set references' Procedures sections (count unchanged by the folds); the deleted `DIAG-SKILL-CFR` (subject removed with the GSR/CFR skills, commit `5eed0134bf`) reduced the count from 106 to 105.
+This registry is generated from the surviving `DIAGRAM_ALIGNMENT` metadata under `kask/docs/`. On 2026-09-30 the corpus contains **107 active alignment records representing 107 unique IDs**: 34 records in the five consolidated diagram files and 73 inline records. The 2026-09-28 how-to folds moved eleven inline records from the per-crate how-to documents into their set references' Procedures sections (count unchanged by the folds); the deleted `DIAG-SKILL-CFR` (subject removed with the GSR/CFR skills, commit `5eed0134bf`) reduced the count from 106 to 105.
 
-The corpus contains 106 Mermaid blocks, all current-state and each carrying one immediately adjacent alignment record. On 2026-09-26 the skill learning loop registered as `DIAG-ARCH-LEARNING-LOOP-001` in `diagrams/architecture.md`. The last two conversions landed 2026-09-19: the LogiSheets plan's architecture block registered as `DIAG-ARCH-SPREADSHEET-001` (implementation began 2026-09-18, converting the plan to `Active` per `kask/docs/architecture/DOCUMENTATION_STANDARDS.md` §4.2), and `research/cmp-gap-methodology.md`'s Stage-7 routing block registered as `DIAG-RES-CMP-001` together with the file's frontmatter.
+The corpus contains 109 Mermaid blocks; 108 carry one immediately adjacent alignment record — the one exception is `architecture/DOCUMENTATION_STANDARDS.md` §3's own lifecycle diagram (the standards document illustrating its own lifecycle; registering it or exempting it by rule is a recorded housekeeping item, not silently absorbed). On 2026-09-26 the skill learning loop registered as `DIAG-ARCH-LEARNING-LOOP-001` in `diagrams/architecture.md`. The last two conversions landed 2026-09-19: the LogiSheets plan's architecture block registered as `DIAG-ARCH-SPREADSHEET-001` (implementation began 2026-09-18, converting the plan to `Active` per `kask/docs/architecture/DOCUMENTATION_STANDARDS.md` §4.2), and `research/cmp-gap-methodology.md`'s Stage-7 routing block registered as `DIAG-RES-CMP-001` together with the file's frontmatter. On 2026-09-30 the three-layer review registered two model diagrams in `research/cybernetic-nervous-system-reference-model.md`: `DIAG-RES-CNS-001` (the abstract tiered feedback structure, verified against the external canonical sources) and `DIAG-RES-CNS-002` (the A/B/C pathway mapping, verified against the layer pathway code sites).
 
 ## Consolidated files
 
 | File | Alignment records |
 | --- | ---: |
-| [`diagrams/architecture.md`](./diagrams/architecture.md) | 14 |
+| [`diagrams/architecture.md`](./diagrams/architecture.md) | 13 |
 | [`diagrams/kanban.md`](./diagrams/kanban.md) | 3 |
 | [`diagrams/mcp-dispatch.md`](./diagrams/mcp-dispatch.md) | 4 |
 | [`diagrams/swarm.md`](./diagrams/swarm.md) | 6 |
 | [`diagrams/ui-widgets.md`](./diagrams/ui-widgets.md) | 8 |
-| **Total** | **35** |
+| **Total** | **34** |
 
 ## Current metadata registry
 
@@ -97,6 +97,8 @@ Every row below is an actual `(id, location)` metadata pair. Dates and statuses 
 | `DIAG-RES-CHUNK-001` | [`research/chunking-for-rag-research.md`](./research/chunking-for-rag-research.md) | 2026-09-16 | VERIFIED |
 | `DIAG-RES-CHUNK-002` | [`research/chunking-for-rag-research.md`](./research/chunking-for-rag-research.md) | 2026-09-28 | VERIFIED |
 | `DIAG-RES-CMP-001` | [`research/cmp-gap-methodology.md`](./research/cmp-gap-methodology.md) | 2026-09-28 | VERIFIED |
+| `DIAG-RES-CNS-001` | [`research/cybernetic-nervous-system-reference-model.md`](./research/cybernetic-nervous-system-reference-model.md) | 2026-09-30 | VERIFIED |
+| `DIAG-RES-CNS-002` | [`research/cybernetic-nervous-system-reference-model.md`](./research/cybernetic-nervous-system-reference-model.md) | 2026-09-30 | VERIFIED |
 | `DIAG-RF-003` | [`reference/mcp-servers/README.md`](./reference/mcp-servers/README.md) | 2026-09-28 | VERIFIED |
 | `DIAG-RF-004` | [`reference/mcp-servers/companies.md`](./reference/mcp-servers/companies.md) | 2026-09-28 | VERIFIED |
 | `DIAG-RF-004A` | [`reference/mcp-servers/companies.md`](./reference/mcp-servers/companies.md) | 2026-09-28 | VERIFIED |
@@ -138,7 +140,7 @@ Every row below is an actual `(id, location)` metadata pair. Dates and statuses 
 | `DIAG-VIZ-SCENARIOS` | [`diagrams/ui-widgets.md`](./diagrams/ui-widgets.md) | 2026-09-28 | VERIFIED |
 | `DIAG-VIZ-SWARM` | [`diagrams/ui-widgets.md`](./diagrams/ui-widgets.md) | 2026-09-28 | VERIFIED |
 
-Metadata-date distribution: 104 records at 2026-09-28 and one externally-anchored record at 2026-09-16 (`DIAG-RES-CHUNK-001`, verified against arXiv/Anthropic engineering sources rather than tree files). All 105 active records are `VERIFIED`.
+Metadata-date distribution: 104 records at 2026-09-28, two at 2026-09-30 (the cybernetic-nervous-system model diagrams), and one externally-anchored record at 2026-09-16 (`DIAG-RES-CHUNK-001`, verified against arXiv/Anthropic engineering sources rather than tree files). All 107 active records are `VERIFIED`.
 
 ## Retired/tombstone IDs (excluded from active registry validation)
 
