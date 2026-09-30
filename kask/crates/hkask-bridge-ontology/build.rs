@@ -13,12 +13,14 @@ use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
-// Build-script errors are plain text by design: cargo renders the `Display`
-// value of whatever `main` returns and nothing matches on variants, so the
-// plumbing below keeps `Result<_, String>` (each signature marked
-// `string-error-ok` for the CI gate). The shared readers in
+// Build-script errors are plain text by design: cargo renders the error text
+// and nothing matches on variants, so the plumbing below keeps `String`
+// errors behind one alias — the single `string-error-ok` site the CI gate's
+// marker check sees (trailing markers on `fn` signature lines do not survive
+// rustfmt, which moves them into the body). The shared readers in
 // `src/published_sources.rs` return the typed `SourceError`; the call sites
 // map it through `Display` so the rendered diagnostics are unchanged.
+type TextResult<T> = Result<T, String>; // string-error-ok
 
 struct Pin {
     path: String,
@@ -26,13 +28,11 @@ struct Pin {
     version: String,
 }
 
-fn read(path: &Path) -> Result<String, String> {
-    // string-error-ok
+fn read(path: &Path) -> TextResult<String> {
     std::fs::read_to_string(path).map_err(|error| format!("{}: {error}", path.display()))
 }
 
-fn verify_lock(sources: &Path) -> Result<Vec<Pin>, String> {
-    // string-error-ok
+fn verify_lock(sources: &Path) -> TextResult<Vec<Pin>> {
     let lock = read(&sources.join("SOURCES.lock"))?;
     let mut pins = Vec::new();
     for line in lock
@@ -97,8 +97,7 @@ fn verify_lock(sources: &Path) -> Result<Vec<Pin>, String> {
 }
 
 /// Parse one pinned RDF file into the reader-neutral triple form.
-fn read_rdf(sources: &Path, pin: &Pin) -> Result<Vec<published_sources::RdfTriple>, String> {
-    // string-error-ok
+fn read_rdf(sources: &Path, pin: &Pin) -> TextResult<Vec<published_sources::RdfTriple>> {
     use oxrdf::{NamedOrBlankNode, Term};
     use oxrdfio::{RdfFormat, RdfParser};
     use published_sources::{RdfObject, RdfTriple};
@@ -147,8 +146,7 @@ fn index_fibo(
     manifest: &Path,
     sources: &Path,
     pins: &[Pin],
-) -> Result<Vec<published_sources::IndexedTerm>, String> {
-    // string-error-ok
+) -> TextResult<Vec<published_sources::IndexedTerm>> {
     use published_sources::{RdfObject, RdfVocabulary};
     const BASE: &str = "https://spec.edmcouncil.org/fibo/ontology/";
     const SOURCE_REV: &str = "f59157fe156e3d91b1c045222d0a7dc06b7d78a2";
@@ -330,8 +328,7 @@ fn index_fibo(
     Ok(terms)
 }
 
-fn build() -> Result<(), String> {
-    // string-error-ok
+fn build() -> TextResult<()> {
     let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").map_err(|e| e.to_string())?);
     let sources = manifest.join("sources");
     println!("cargo:rerun-if-changed=sources");
