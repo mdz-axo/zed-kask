@@ -240,15 +240,25 @@ impl TrainingServer {
     /// script writes a manifest to /workspace/completion.json and uploads it
     /// to HuggingFace at jobs/{job_id}/completion-manifest.json after training.
     ///
-    /// Returns `Some((status, manifest))` if a manifest was found, or `None`
-    /// if no manifest exists yet (training still in progress or HF not configured).
+    /// Returns `Ok(Some((status, manifest)))` if a manifest was found;
+    /// `Ok(None)` when there is nothing to check (HF not configured, no job
+    /// store, or no artifacts for the job — the legitimate short-circuit,
+    /// which keeps `Running`); `Err(reason)` when the check RAN and FAILED
+    /// (fetch or parse error) — the D7 case: the training-vs-completed state
+    /// is unverified and must surface as `RunningUnknown`, not `Running`.
     async fn check_completion_manifest(
         &self,
         job_id: &str,
-    ) -> Option<(TrainingJobStatus, Option<CompletionManifest>)> {
-        let hf_training = HuggingFaceTraining::from_env().ok()?;
-        let job_store = self.job_store.as_ref()?;
-        let artifacts = job_store.artifacts(job_id).ok().flatten()?;
+    ) -> Result<Option<(TrainingJobStatus, Option<CompletionManifest>)>, String> {
+        let Some(hf_training) = HuggingFaceTraining::from_env().ok() else {
+            return Ok(None);
+        };
+        let Some(job_store) = self.job_store.as_ref() else {
+            return Ok(None);
+        };
+        let Some(artifacts) = job_store.artifacts(job_id).ok().flatten() else {
+            return Ok(None);
+        };
 
         match hf_training.fetch_completion_manifest(&artifacts).await {
             Ok(manifest) => {
@@ -264,20 +274,23 @@ impl TrainingServer {
                     detected_status = ?status,
                     "Completion detected via HuggingFace manifest"
                 );
-                Some((status, Some(manifest)))
+                Ok(Some((status, Some(manifest))))
             }
             Err(e) => {
                 // Log at warn (not debug) so manifest parse failures are visible.
                 // A malformed manifest (e.g., missing required field) means
                 // training_status cannot detect completion — the operator should
                 // see this rather than wondering why the job appears stuck.
+                // The Err return (D7) makes the unverified state distinct:
+                // status.rs surfaces RunningUnknown + the reason instead of
+                // claiming Running.
                 tracing::warn!(
                     target: "hkask.training.completion.check",
                     job_id = %job_id,
                     error = %e,
                     "Completion manifest not found or unparsable (training may still be in progress, or the manifest is malformed)"
                 );
-                None
+                Err(e.to_string())
             }
         }
     }

@@ -558,6 +558,12 @@ impl Default for TrainingParams {
 pub(crate) enum TrainingJobStatus {
     Queued,
     Running,
+    /// The pod is up but the training-vs-completed state is UNVERIFIED — the
+    /// completion-manifest check ran and failed (operator ruling 2026-09-29,
+    /// D7). Distinct from `Running`, which claims the check confirmed
+    /// training is still in progress; the pod stays up after completion
+    /// (sleep-infinity), so an unverified `Running` can hide a finished job.
+    RunningUnknown,
     Completed,
     Failed,
     Cancelled,
