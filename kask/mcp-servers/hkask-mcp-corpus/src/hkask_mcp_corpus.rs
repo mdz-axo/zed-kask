@@ -280,6 +280,35 @@ impl rmcp::ServerHandler for CorpusServer {}
 mod tool_surface_tests {
     use crate::CorpusServer;
 
+    /// expect: "The corpus server declares its DB passphrase honestly —
+    /// optional, with the degraded-mode description naming what runs without
+    /// it and what fails closed." [P1] The S6/F-K1 fix flipped `vec![]` to
+    /// the honest `optional` declaration; this source-pin (the kata-kanban
+    /// `kanban_startup_requires_durable_storage` precedent) catches a silent
+    /// reversion to the undeclared form, where the framework seam never
+    /// learns the DB dependency and standalone launches lose the startup
+    /// observability.
+    /// pre: the production startup source is compiled
+    /// post: the optional HKASK_DB_PASSPHRASE declaration is present
+    #[test]
+    fn corpus_declares_its_db_passphrase_optionally_with_degraded_mode() {
+        let source = include_str!("hkask_mcp_corpus.rs");
+        let declaration = [
+            "CredentialRequirement::optional(",
+            "\n            \"HKASK_DB_PASSPHRASE\"",
+        ]
+        .concat();
+        assert!(
+            source.contains(&declaration),
+            "the corpus must declare HKASK_DB_PASSPHRASE optional — an undeclared \
+             (vec![]) or required form is a surface change requiring a register update"
+        );
+        assert!(
+            source.contains("document processing runs without it"),
+            "the declaration's description must name the degraded mode honestly"
+        );
+    }
+
     /// The corpus server registers exactly 26 tools. A `#[tool]` method in an
     /// impl block WITHOUT `#[tool_router]` silently registers nothing while
     /// `cargo check` passes — `corpus_prepare_training_dataset` shipped that
