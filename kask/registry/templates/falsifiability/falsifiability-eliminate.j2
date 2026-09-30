@@ -6,6 +6,8 @@ contract:
     discriminating_tests: array
     observations: object
     prior_eliminated: array
+    irreducible: array
+    irreducible_pairs: array
   output:
     eliminated: array
     corroborated: array
@@ -35,6 +37,8 @@ output "proven"; for a tested survivor output "survived test T_n, alternatives A
 
 ## Observations (results of the tests run this cycle)
 
+A map of test description → observed outcome (e.g., `{"<test description>": "<observed outcome>"}` — the results of the tests actually run this cycle):
+
 ```json
 {{ observations | tojson }}
 ```
@@ -44,6 +48,22 @@ output "proven"; for a tested survivor output "survived test T_n, alternatives A
 
 ```json
 {{ prior_eliminated | tojson }}
+```
+{% endif %}
+
+{% if irreducible %}
+## Flagged Irreducible (from the counterfactual render)
+
+```json
+{{ irreducible | tojson }}
+```
+{% endif %}
+
+{% if irreducible_pairs %}
+## Irreducible Pairs (from the discriminate render)
+
+```json
+{{ irreducible_pairs | tojson }}
 ```
 {% endif %}
 
@@ -60,7 +80,7 @@ output "proven"; for a tested survivor output "survived test T_n, alternatives A
 
 3. **Corroborate survivors.** Only a hypothesis tested by an observation that could have falsified it and whose prediction matched is corroborated — it survived a test that could have falsified it. Corroboration is not confirmation: surviving does not make the hypothesis more likely in any absolute sense, only more resilient. State which test corroborated it and which alternatives that test eliminated.
 
-4. **Handle survived-by-default.** Hypotheses flagged irreducible (no counterfactual) or not falsifiable by any available test survive by default — they are neither eliminated nor corroborated. Record them as `survived_by_default` with the reason. The user must understand these were not tested, only that nothing could test them.
+4. **Handle every untested survivor.** A survivor without a corroborating observation this cycle is recorded in `survived_by_default` — ALL three kinds: hypotheses flagged irreducible (no counterfactual) or not falsifiable by any available test (from the `irreducible` input or the discriminate render's untestable flags), AND falsifiable hypotheses this cycle's observations were neutral toward. Each entry carries its reason. The user must understand these were not corroborated — either nothing could test them, or this cycle's observations did not speak to them. `untested` in the verdict is exactly `survived_by_default`'s length.
 
 5. **Compute the verdict in this order** (the first matching case wins):
    - No observations this cycle → `nothing_eliminated`; `corroborated` is empty. Still list all untested survivors as `survived_by_default`.

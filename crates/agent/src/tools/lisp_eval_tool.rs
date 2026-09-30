@@ -2667,4 +2667,170 @@ mod tests {
             "events past deadline without outcomes fail the gate"
         );
     }
+
+    #[test]
+    fn test_falsifiability_skill_md_pins_forms() {
+        // falsifiability — the eliminative-inference engine, a delegation
+        // target for seven consumers — pins its four lisp_eval forms: the
+        // verdict (six branches, clause order load-bearing), the
+        // verdict-score ordinal mapping (operator ruling 2026-09-29), the
+        // convergence composite, and the materiality guard. The
+        // batch-8 repairs fixed a term inversion (the prose named "the
+        // irreducible remainder" where the form computes
+        // reducible_remainder) and made the composite's env readings
+        // explicit (eliminated_proportion = cumulative/(total-1) — the
+        // ALTERNATIVES proportion; reducible_remainder = untested/total —
+        // the open-work proportion; the practical maximum is 0.95, not
+        // 1.0, because a no-observation cycle still scores
+        // nothing_eliminated at 0.1).
+        let skill_md = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../.agents/skills/falsifiability/SKILL.md"
+        ))
+        .expect("falsifiability SKILL.md must exist in the workspace");
+
+        // 1. The verdict form — the six branches.
+        let verdict = r#"(cond ((= observations 0) "nothing_eliminated") ((= eliminated total) "none_corroborated") ((> untested 0) "untested_remainder") ((= eliminated 0) "nothing_eliminated") ((and (= corroborated 1) (= eliminated (- total 1))) "one_corroborated_survivor") (t "multiple_corroborated"))"#;
+        assert!(
+            skill_md.contains(verdict),
+            "verdict form must stay pinned in falsifiability SKILL.md"
+        );
+        let no_observations = hkask_lisp::eval_sandboxed_with_budget(
+            verdict,
+            &json!({"observations": 0, "total": 3, "eliminated": 0, "corroborated": 0, "untested": 3}),
+            100_000,
+            64,
+        )
+        .expect("verdict form must evaluate");
+        assert_eq!(
+            no_observations,
+            json!("nothing_eliminated"),
+            "branch 1 precedes branch 3: a no-observation cycle WITH default survivors is nothing_eliminated"
+        );
+        let all_eliminated = hkask_lisp::eval_sandboxed_with_budget(
+            verdict,
+            &json!({"observations": 2, "total": 3, "eliminated": 3, "corroborated": 0, "untested": 0}),
+            100_000,
+            64,
+        )
+        .expect("verdict form must evaluate on full elimination");
+        assert_eq!(
+            all_eliminated,
+            json!("none_corroborated"),
+            "every hypothesis eliminated — the framing is wrong, restart"
+        );
+        let load_bearing = hkask_lisp::eval_sandboxed_with_budget(
+            verdict,
+            &json!({"observations": 3, "total": 3, "eliminated": 0, "corroborated": 1, "untested": 1}),
+            100_000,
+            64,
+        )
+        .expect("verdict form must evaluate on the load-bearing case");
+        assert_eq!(
+            load_bearing,
+            json!("untested_remainder"),
+            "one corroborated plus one untested — clause 3 blocks nothing_eliminated (clause 4) and multiple_corroborated (default); one_corroborated_survivor is blocked arithmetically (eliminated = total-1 forces untested = 0 under the disjoint accounting)"
+        );
+        let unique_survivor = hkask_lisp::eval_sandboxed_with_budget(
+            verdict,
+            &json!({"observations": 2, "total": 3, "eliminated": 2, "corroborated": 1, "untested": 0}),
+            100_000,
+            64,
+        )
+        .expect("verdict form must evaluate on a unique survivor");
+        assert_eq!(
+            unique_survivor,
+            json!("one_corroborated_survivor"),
+            "exactly one corroborated with all alternatives eliminated"
+        );
+
+        // 2. The verdict-score form (the ordinal mapping).
+        let verdict_score = r#"(cond ((string= verdict "one_corroborated_survivor") 1.0) ((string= verdict "multiple_corroborated") 0.5) ((string= verdict "untested_remainder") 0.3) ((string= verdict "nothing_eliminated") 0.1) (t 0.0))"#;
+        assert!(
+            skill_md.contains(verdict_score),
+            "verdict-score form must stay pinned in falsifiability SKILL.md"
+        );
+        let best = hkask_lisp::eval_sandboxed_with_budget(
+            verdict_score,
+            &json!({"verdict": "one_corroborated_survivor"}),
+            100_000,
+            64,
+        )
+        .expect("verdict-score form must evaluate");
+        assert_eq!(best, json!(1.0), "the operator ruling's top ordinal");
+
+        // 3. The composite form (with the explicit env readings).
+        let composite = r#"(+ (* 0.5 (- 1 verdict_score)) (* 0.3 (- 1 eliminated_proportion)) (* 0.2 reducible_remainder))"#;
+        assert!(
+            skill_md.contains(composite),
+            "composite form must stay pinned in falsifiability SKILL.md"
+        );
+        let converged = hkask_lisp::eval_sandboxed_with_budget(
+            composite,
+            &json!({"verdict_score": 1.0, "eliminated_proportion": 1.0, "reducible_remainder": 0.0}),
+            100_000,
+            64,
+        )
+        .expect("composite form must evaluate");
+        assert_eq!(
+            converged,
+            json!(0.0),
+            "full convergence: verdict 1.0, all alternatives eliminated (cumulative/(total-1) = 1.0), nothing untested"
+        );
+        let no_observation_max = hkask_lisp::eval_sandboxed_with_budget(
+            composite,
+            &json!({"verdict_score": 0.1, "eliminated_proportion": 0.0, "reducible_remainder": 1.0}),
+            100_000,
+            64,
+        )
+        .expect("composite form must evaluate on the no-observation maximum");
+        assert_eq!(
+            no_observation_max,
+            json!(0.95),
+            "the PRACTICAL maximum — 1.0 is a theoretical bound the ordinal mapping never reaches (nothing_eliminated scores 0.1)"
+        );
+
+        // 4. The materiality guard.
+        let guard = r#"(and (= eliminated 0) (not new_test_available) (< (abs (- metric metric_prior)) 0.02))"#;
+        assert!(
+            skill_md.contains(guard),
+            "materiality guard must stay pinned in falsifiability SKILL.md"
+        );
+        let forces = hkask_lisp::eval_sandboxed_with_budget(
+            guard,
+            &json!({"eliminated": 0, "new_test_available": false, "metric": 0.5, "metric_prior": 0.49}),
+            100_000,
+            64,
+        )
+        .expect("guard must evaluate");
+        assert_eq!(
+            forces,
+            json!(true),
+            "no elimination this cycle, no new test, delta 0.01 < 0.02 — force convergence (the remainder is irreducible)"
+        );
+        let boundary = hkask_lisp::eval_sandboxed_with_budget(
+            guard,
+            &json!({"eliminated": 0, "new_test_available": false, "metric": 0.5, "metric_prior": 0.48}),
+            100_000,
+            64,
+        )
+        .expect("guard must evaluate at the boundary");
+        assert_eq!(
+            boundary,
+            json!(false),
+            "the boundary is strict <: a delta of exactly 0.02 does not force convergence"
+        );
+        let new_test = hkask_lisp::eval_sandboxed_with_budget(
+            guard,
+            &json!({"eliminated": 0, "new_test_available": true, "metric": 0.5, "metric_prior": 0.49}),
+            100_000,
+            64,
+        )
+        .expect("guard must evaluate with a new test available");
+        assert_eq!(
+            new_test,
+            json!(false),
+            "a new test available means the residual is testable — do not force convergence"
+        );
+    }
 }
