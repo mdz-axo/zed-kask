@@ -84,18 +84,18 @@ Use `grep` to trace the call chain:
 
 The call chain IS a PKO Procedure:
 - `pko:Procedure` — the overall execution path from entry point to the buggy function (the incoming traversal result).
-- `pplan:Step` — each function in the chain is a Step. The buggy function is the Step where the `pko:IssueOccurrence` occurs.
-- `pko:hasStep` / `pko:nextStep` — the ordering of Steps in the Procedure (the call chain order).
-- `pko:StepExecution` — the specific execution of the buggy Step where the issue manifests.
+- `pko:hasStep` — each function in the chain is a step of the Procedure (related by `pko:hasStep`; the buggy function is the step where the `pko:IssueOccurrence` occurs).
+- `pko:nextStep` — the ordering of steps in the Procedure (the call chain order).
+- `pko:StepExecution` — the specific execution of the buggy step where the issue manifests.
 - `pko:IssueOccurrence` — the bug itself: what went wrong at this StepExecution.
 
 If the affected entity implements a trait, note it — the bug may be in the trait contract, not just the impl.
 
 ### Step 3: Assess blast radius (PKO impact)
 
-Use `grep` to find references to the primary symbol with `max_depth: 3`.
+Use `grep` to find references to the primary symbol (text search for call sites; the transitive caller closure is the `blast_radius` input, pre-computed by Step 0).
 
-This reveals what ELSE is affected — every caller of the buggy function, transitively. This is the `pko:IssueOccurrence` scope: the set of Procedures that flow through the buggy Step and are therefore impacted.
+This reveals what ELSE is affected — the callers of the buggy function. This is the `pko:IssueOccurrence` scope: the set of Procedures that flow through the buggy step and are therefore impacted.
 
 ### Step 4: Classify the issue ontologically
 

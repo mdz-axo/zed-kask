@@ -125,7 +125,7 @@ annual. The embedded seed payload equals the authored tree (pinned in
 | Skill | Purpose |
 |-------|---------|
 | `code-review` | Convergent code review of a change against its stated spec: scope → multi-axis perspectives → adjudicate → report → optional implement |
-| `diagnose` | Disciplined diagnosis loop: reproduce → anchor → hypothesise → instrument → fix → regression-test |
+| `diagnose` | Disciplined diagnosis loop: anchor → reproduce → hypothesise → instrument → fix → regression-test |
 | `tdd` | Test-driven development: RED → GREEN → REFACTOR loop |
 | `bug-hunt` | Bug hunting expeditions against target crates using Weinberg, Beizer, Bach, Hendrickson methodologies |
 | `refactor-architecture` | End-to-end architecture refactoring: discover friction, rank candidates, walk design tree, audit duplication, plan strangler-fig migration, verify integrity |
