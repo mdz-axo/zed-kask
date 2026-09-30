@@ -2355,13 +2355,21 @@ async fn finish_research_run_transitions_and_preserves_the_sources_ledger() {
     assert_eq!(finished["from_status"].as_str(), Some("planned"));
     assert_eq!(finished["note"].as_str(), Some("no sources reachable"));
 
-    // The manifest reflects the terminal status; the sources ledger is untouched.
+    // The manifest reflects the terminal status AND its transition history;
+    // the sources ledger is untouched.
     let manifest = parse(&ok(server
         .get_research_run(Parameters(GetResearchRunRequest {
             run_id: run_id.clone(),
         }))
         .await));
     assert_eq!(manifest["status"].as_str(), Some("blocked"));
+    let history = manifest["status_history"]
+        .as_array()
+        .expect("status_history present");
+    assert_eq!(history.len(), 1, "one journaled transition: {manifest}");
+    assert_eq!(history[0]["from_status"].as_str(), Some("planned"));
+    assert_eq!(history[0]["to_status"].as_str(), Some("blocked"));
+    assert_eq!(history[0]["note"].as_str(), Some("no sources reachable"));
     assert!(
         manifest["sources"].as_array().is_some_and(|s| s.is_empty()),
         "finishing never appends or mutates sources: {manifest}"

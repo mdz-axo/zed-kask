@@ -313,6 +313,26 @@ pub(crate) fn get_research_run(
         }),
     };
 
+    // The status-transition history (D6): every finish appends one row; the
+    // manifest surfaces the full audit trail so a terminal status is
+    // readable WITH its provenance, not just its latest value. Empty for a
+    // run that was never finished.
+    let mut statement = connection.prepare(
+        "SELECT from_status, to_status, note, at FROM research_run_status_history \
+         WHERE run_id = ?1 ORDER BY at",
+    )?;
+    let status_history: Vec<serde_json::Value> = statement
+        .query_map([run_id], |row| {
+            Ok(serde_json::json!({
+                "from_status": row.get::<_, String>(0)?,
+                "to_status": row.get::<_, String>(1)?,
+                "note": row.get::<_, Option<String>>(2)?,
+                "at": row.get::<_, String>(3)?,
+            }))
+        })?
+        .filter_map(|row| row.ok())
+        .collect();
+
     Ok(Some(serde_json::json!({
         "run_id": run_id,
         "question": question,
@@ -320,6 +340,7 @@ pub(crate) fn get_research_run(
         "began_at": began_at,
         "updated_at": updated_at,
         "sources": sources,
+        "status_history": status_history,
         "validation": validation,
     })))
 }
