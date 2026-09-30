@@ -164,7 +164,12 @@ Operator-driven waves use
 `kask/scripts/audit/call-corpus-tool-via-host.sh`, which invokes the corpus
 binary directly with its own per-call response window
 (`HKASK_CALIBRATION_RESPONSE_TIMEOUT_SECS`; 630s default for inference tools,
-120s otherwise).
+120s otherwise). Conversion waves run through
+`kask/scripts/audit/run-corpus-conversion-queue.sh` over a manifest built by
+`kask/scripts/audit/build-corpus-conversion-queue.sh`: one unit per source
+with the source content hash recorded, resume by receipt, a strand guard so
+an unguarded exit inside a unit's running window can never strand it, and
+`--requeue` for tool-error deaths (which never wrote output).
 
 ### Database lease locks
 

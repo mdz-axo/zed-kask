@@ -2,7 +2,7 @@
 set -euo pipefail
 
 if [[ $# -ne 4 ]]; then
-    echo "usage: $0 <corpus_build_chunk_representations|corpus_embedding_inventory|corpus_embed|corpus_query|corpus_tag_chunks|corpus_generate_qa_batch> <arguments-json> <response-json> <server-log>" >&2
+    echo "usage: $0 <corpus_build_chunk_representations|corpus_embedding_inventory|corpus_embed|corpus_query|corpus_tag_chunks|corpus_generate_qa_batch|corpus_convert> <arguments-json> <response-json> <server-log>" >&2
     exit 64
 fi
 
@@ -21,6 +21,15 @@ case "$tool_name" in
     corpus_embed|corpus_query)
         needs_inference=true
         required_model_var=HKASK_EMBEDDING_MODEL
+        default_timeout=$(( ${HKASK_INFERENCE_TIMEOUT_SECS:-600} + 30 ))
+        ;;
+    corpus_convert)
+        # Conversions route OCR through the inference socket; text-only
+        # conversions do not, so the OCR model is borrowed when configured
+        # but only the socket itself is required up front (the server fails
+        # with visible guidance when an OCR-needing page finds no model).
+        needs_inference=true
+        required_model_var=
         default_timeout=$(( ${HKASK_INFERENCE_TIMEOUT_SECS:-600} + 30 ))
         ;;
     corpus_tag_chunks)
@@ -77,6 +86,7 @@ if [[ "$needs_inference" == true && ( -z ${HKASK_INFERENCE_SOCKET:-} || -z $requ
     host_embedding_model=$(read_host_env HKASK_EMBEDDING_MODEL)
     host_classifier_model=$(read_host_env HKASK_CLASSIFIER_MODEL)
     host_qa_generation_model=$(read_host_env HKASK_QA_GENERATION_MODEL)
+    host_ocr_model=$(read_host_env HKASK_OCR_MODEL)
     host_template_root=$(read_host_env HKASK_TEMPLATE_ROOT)
     host_deepinfra_token=$(read_host_env DEEPINFRA_TOKEN)
     host_openrouter_token=$(read_host_env OPENROUTER_API_KEY)
@@ -85,11 +95,12 @@ if [[ "$needs_inference" == true && ( -z ${HKASK_INFERENCE_SOCKET:-} || -z $requ
     HKASK_EMBEDDING_MODEL=${HKASK_EMBEDDING_MODEL:-$host_embedding_model}
     HKASK_CLASSIFIER_MODEL=${HKASK_CLASSIFIER_MODEL:-$host_classifier_model}
     HKASK_QA_GENERATION_MODEL=${HKASK_QA_GENERATION_MODEL:-$host_qa_generation_model}
+    HKASK_OCR_MODEL=${HKASK_OCR_MODEL:-$host_ocr_model}
     HKASK_TEMPLATE_ROOT=${HKASK_TEMPLATE_ROOT:-$host_template_root}
     DEEPINFRA_TOKEN=${DEEPINFRA_TOKEN:-$host_deepinfra_token}
     OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-$host_openrouter_token}
     export HKASK_INFERENCE_SOCKET HKASK_INFERENCE_TIMEOUT_SECS HKASK_EMBEDDING_MODEL
-    export HKASK_CLASSIFIER_MODEL HKASK_QA_GENERATION_MODEL
+    export HKASK_CLASSIFIER_MODEL HKASK_QA_GENERATION_MODEL HKASK_OCR_MODEL
     export HKASK_TEMPLATE_ROOT
     export DEEPINFRA_TOKEN OPENROUTER_API_KEY
 fi
