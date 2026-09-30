@@ -18,12 +18,10 @@
 //! (live-observed 2026-09-10: the earlier empty-object `{}` form was
 //! silently dropped from tool-call arguments on the GLM/OpenRouter path).
 //!
-//! This module lives in `hkask-types` (rather than `hkask-mcp-server`) so that
-//! [`find_boolean_schema_positions`] without pulling in `hkask-mcp-server`'s
-//! heavy transitive deps (`rmcp`, `reqwest`, `hkask-keystore`,
-//! `tracing-subscriber`, …). `hkask-mcp-server` re-exports these items for
-//! backward compatibility with the many MCP server crates that import them via
-//! `hkask_mcp_server::`.
+//! This module lives in `hkask-types` (rather than `hkask-mcp-server`) so
+//! that [`find_boolean_schema_positions`] can be used without pulling in
+//! `hkask-mcp-server`'s heavy transitive deps (`rmcp`, `reqwest`,
+//! `hkask-keystore`, `tracing-subscriber`, …).
 
 use std::borrow::Cow;
 use std::ops::Deref;

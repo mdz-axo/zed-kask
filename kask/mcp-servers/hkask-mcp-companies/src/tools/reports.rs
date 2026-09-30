@@ -5,7 +5,7 @@
 //! the hidden internal data dir. Users need to find their reports without
 //! digging through `~/.local/share/zed-kask/`.
 use crate::CompaniesServer;
-use hkask_mcp_server::AnyJsonValue;
+use hkask_types::AnyJsonValue;
 use hkask_mcp_server::server::{McpToolError, execute_tool};
 use hkask_types::agent_paths::{mcp_artifacts_subdir, resolve_under_artifacts_dir};
 use rmcp::{handler::server::wrapper::Parameters, schemars::JsonSchema, tool, tool_router};
@@ -233,7 +233,7 @@ mod tests {
         assert_eq!(payload["properties"], serde_json::json!({}));
         assert_eq!(payload["additionalProperties"], serde_json::json!({}));
         assert!(
-            hkask_mcp_server::find_boolean_schema_positions(&schema).is_empty(),
+            hkask_types::find_boolean_schema_positions(&schema).is_empty(),
             "ReportSaveRequest must carry no bare-boolean schema positions",
         );
     }

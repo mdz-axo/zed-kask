@@ -40,7 +40,7 @@ pub const MAX_EVAL_REPEATS: u32 = 10;
 pub const MAX_EVAL_ROLLOUTS: usize = 50;
 
 fn validate_model_params(
-    input: Option<hkask_mcp_server::AnyJsonValue>,
+    input: Option<hkask_types::AnyJsonValue>,
 ) -> Result<Option<serde_json::Value>, McpToolError> {
     let Some(input) = input else {
         return Ok(None);
@@ -3676,7 +3676,7 @@ mod tests {
 
     #[test]
     fn model_params_validation_accepts_partial_explicit_thinking_disable() {
-        let validated = validate_model_params(Some(hkask_mcp_server::AnyJsonValue(
+        let validated = validate_model_params(Some(hkask_types::AnyJsonValue(
             serde_json::json!({"thinking_allowed": false}),
         )))
         .expect("partial parameters validate")
@@ -3687,12 +3687,12 @@ mod tests {
     #[test]
     fn model_params_validation_rejects_wrong_shape_and_known_field_type() {
         let wrong_shape =
-            validate_model_params(Some(hkask_mcp_server::AnyJsonValue(serde_json::json!([
+            validate_model_params(Some(hkask_types::AnyJsonValue(serde_json::json!([
                 "not", "an", "object"
             ]))));
         assert!(wrong_shape.is_err());
 
-        let wrong_type = validate_model_params(Some(hkask_mcp_server::AnyJsonValue(
+        let wrong_type = validate_model_params(Some(hkask_types::AnyJsonValue(
             serde_json::json!({"thinking_allowed": "false"}),
         )));
         assert!(wrong_type.is_err());

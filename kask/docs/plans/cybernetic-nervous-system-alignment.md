@@ -2,7 +2,7 @@
 title: "Cybernetic Nervous System — Alignment Plan"
 audience: [architects, developers, operators, agents]
 last_updated: 2026-09-30
-version: "0.3.1"
+version: "0.3.2"
 status: "Active — operator ruling 2026-09-30 ('proceed as proposed — confirmed'): reference model admitted; S2 and S3 approved and landed"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle]
@@ -341,3 +341,45 @@ an actual displacement; CU-7 independent, smallest first.
   `./script/clippy` clean (machete + buf included); `cargo check -p
   zed` passed; full-repo symbol sweep over code AND docs clean for
   both removed identifiers. Running §8 production ledger: **−8**.
+
+### Execution record — second slice (2026-09-30: CU-3 + CU-4, the advertised-invariant sweep)
+
+Verified against the current tree throughout — past audits are context,
+not verdict (operator calibration, 2026-09-30).
+
+- **The load-bearing advertised invariants (7 named-enforcement claims)
+  all verified with cited enforcement lines:** `write_turn`
+  (`kask_bridge/src/memory/ingest.rs:277`, claimed at
+  `hkask-types/src/ports/memory_port.rs:56`); `validate_board_name`
+  (`kata-kanban/src/kanban/service_impl/service.rs:124`, claimed at
+  `kanban_wire.rs:28`); the >=8 passphrase minimum
+  (`hkask-storage/src/core/connection.rs:250`, `rotation.rs:125`,
+  claimed at `hkask-keystore/src/passphrase.rs:14`); the legacy
+  `declared_method.threshold` rejection
+  (`hkask-mcp-corpus/src/compose.rs:214-224`, a typed BadRequest naming
+  the remediation, claimed at `salience.rs:438`); the never-untagged
+  ladder (the total rung chain, `axis.rs:184-196`); the `busy_timeout`
+  ordering (enforced by the `WAL_PRAGMA_BATCH` constant itself,
+  `sqlite.rs:16-24`); drop-safety for the forgetting-spec migration (the
+  `Immediate` transaction, `connection.rs:384-395`).
+- **One actionable finding, landed:** the `tool_schema` backward-compat
+  re-export — `hkask-mcp-server` re-exported
+  `AnyJsonValue`/`find_boolean_schema_positions` "for backward
+  compatibility" (`hkask_mcp_server.rs:29-35`) while all 8 servers
+  already depend on `hkask-types`, whose root re-export is the shorter
+  canonical path. **DELETED** (the shim + its comment); 16 import sites
+  across 8 servers repointed to `hkask_types::`; the `tool_schema.rs`
+  doc paragraph repaired (the compat sentence died; its broken
+  grammar fixed). Net **−10 production lines** (+21/−31).
+- **Rejected with reason:** the salience legacy `threshold` field (a
+  live rejection gate — deleting it would make legacy declarations
+  silently ignored instead of clearly rejected); the `actions.rs`
+  "backward-compatible" encoding claim (a serde format property — the
+  tag attribute is inline — not a code shim); the data-state "legacy
+  row" handling (migration windows with tests).
+- **`#[deprecated]`: zero in kask — the hard rule holds.**
+- **Receipts:** cargo check on all 10 affected crates clean; **1340
+  tests green** across 36 result lines; rustfmt clean; scoped
+  `./script/clippy` clean (machete + buf included); `cargo check -p
+  zed` passed; residue grep for the re-export path clean. Running §8
+  production ledger: **−18** (−8 first slice, −10 this slice).

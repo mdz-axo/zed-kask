@@ -277,7 +277,7 @@ pub(crate) enum LoraInit {
 /// is rejected by strict-schema-decoding providers (Ollama: `400 cannot
 /// unmarshal bool into ... of type api.ToolProperty`; Gemini likewise) - see
 /// the `.rules` trap "kask MCP tool inputs that accept arbitrary JSON use
-/// `AnyJsonValue`" and `hkask_mcp_server::find_boolean_schema_positions`.
+/// `AnyJsonValue`" and `hkask_types::find_boolean_schema_positions`.
 ///
 /// Removing the keyword leaves the schema correct (it still accepts
 /// `{"pissa_niter": N}`; serde ignores unknown fields by default, so allowing

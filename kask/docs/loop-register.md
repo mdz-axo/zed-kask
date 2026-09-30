@@ -1135,6 +1135,22 @@ exactly that lag), not evidence of absence.)
 
 ## Change log
 
+- 2026-09-30 — v0.24.4 executed the alignment plan §8's second cleanup
+  slice (CU-3/CU-4, the advertised-invariant sweep), verified against
+  the current tree throughout — past audits are context, not verdict.
+  One deletion: the `tool_schema` backward-compat re-export in
+  `hkask-mcp-server` (the shim + its comment) with 16 import sites
+  across 8 servers repointed to the canonical `hkask_types::` root
+  re-export and the module doc repaired — net **−10 production lines**
+  (+21/−31). The seven load-bearing advertised invariants all verified
+  with cited enforcement lines (`write_turn`, `validate_board_name`,
+  the >=8 passphrase minimum, the legacy-threshold rejection gate, the
+  never-untagged ladder, the `busy_timeout` ordering, the migration
+  drop-safety transaction); `#[deprecated]` zero in kask. Receipts:
+  cargo check on all 10 affected crates, **1340 tests green**, rustfmt
+  clean, scoped clippy clean, `cargo check -p zed` passed. Running §8
+  production ledger: **−18**.
+
 - 2026-09-30 — v0.24.3 executed the alignment plan §8's first cleanup
   slice (CU-1 + CU-2 + CU-7's named candidates). One deletion:
   `hkask-storage` `Database::in_memory_with_extensions`

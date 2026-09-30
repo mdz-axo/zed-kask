@@ -6,7 +6,7 @@
 //! safe to relocate (unlike the tool handlers, which rmcp requires in a
 //! single `impl` block — see the `tool_router` macro in `rmcp-macros`).
 
-use hkask_mcp_server::AnyJsonValue;
+use hkask_types::AnyJsonValue;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 

@@ -33,7 +33,7 @@ use hkask_mcp_media::types::{
     VideoToGifRequest, VoiceDesignRequest, WorkflowDeleteRequest, WorkflowLoadRequest,
     WorkflowSaveRequest, YoutubeSearchRequest,
 };
-use hkask_mcp_server::find_boolean_schema_positions;
+use hkask_types::find_boolean_schema_positions;
 use schemars::schema_for;
 
 macro_rules! schema_clean_test {

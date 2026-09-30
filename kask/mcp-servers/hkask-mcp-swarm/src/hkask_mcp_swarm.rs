@@ -980,7 +980,7 @@ mod smoke_tests {
                 output_contract: None,
                 input_contract: None,
                 temperature: None,
-                model_params: Some(hkask_mcp_server::AnyJsonValue(
+                model_params: Some(hkask_types::AnyJsonValue(
                     serde_json::json!({"thinking_allowed": false}),
                 )),
                 evaluators: None,

@@ -3,7 +3,7 @@
 //! Extracted from main.rs — these are the tool input structs that derive
 //! Deserialize + JsonSchema for MCP parameter deserialization.
 
-use hkask_mcp_server::AnyJsonValue;
+use hkask_types::AnyJsonValue;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 

@@ -2064,7 +2064,7 @@ fn memory_insert_request_value_schema_is_object_typed_not_boolean() {
     assert_eq!(value["properties"], serde_json::json!({}));
     assert_eq!(value["additionalProperties"], serde_json::json!({}));
     assert!(
-        hkask_mcp_server::find_boolean_schema_positions(&schema).is_empty(),
+        hkask_types::find_boolean_schema_positions(&schema).is_empty(),
         "MemoryInsertRequest must carry no bare-boolean schema positions",
     );
 }
@@ -2093,7 +2093,7 @@ fn memory_update_request_new_value_schema_is_object_typed_not_boolean() {
     assert_eq!(new_value["properties"], serde_json::json!({}));
     assert_eq!(new_value["additionalProperties"], serde_json::json!({}));
     assert!(
-        hkask_mcp_server::find_boolean_schema_positions(&schema).is_empty(),
+        hkask_types::find_boolean_schema_positions(&schema).is_empty(),
         "MemoryUpdateRequest must carry no bare-boolean schema positions",
     );
 }

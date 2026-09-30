@@ -1,4 +1,4 @@
-use hkask_mcp_server::AnyJsonValue;
+use hkask_types::AnyJsonValue;
 use schemars::JsonSchema;
 use serde::Deserialize;
 
