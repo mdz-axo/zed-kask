@@ -73,7 +73,7 @@ Apply Multi-Criteria Decision Analysis to weight and score each causal model. Ea
 **Weighted synthesis** (computed downstream by `lisp_eval`, shown for reference):
 - composite = sum of the four criterion scores; weights = composite / sum of composites
 - synthesized_probability = sum(model.implied_probability × model.weight)
-- If compensation masking is detected, reduce the weight of the affected model
+- If compensation masking is detected, flag it in `compensation_warning` — do NOT re-weight: the SKILL.md's `lisp_eval` form is authoritative and its `c_i` is the sum of that model's four criterion scores; a masked critical criterion is REPORTED (the warning), not compensated by weight adjustment
 
 ### Step 5: Synthesize
 Integrate the perspectives:

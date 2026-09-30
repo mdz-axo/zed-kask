@@ -14,14 +14,14 @@ Tetlock & Gardner, *Superforecasting: The Art and Science of Prediction* (2015) 
 
 ## D/P labelling
 
-Every stage heading below carries its label. **D**: `lisp_eval` arithmetic
-checks on base rates, posteriors, and the synthesis weighted average; the
+Every stage heading below carries its label. **D**: the six `lisp_eval` forms
+(the stage-2 rate check and anchor check, the stage-4 posterior, the stage-5
+weighted average, the gate pass rule, the market-prior gate); the
 `scenario_*` server oracles (triage classification, quantify rejection,
 calibration); `forecast_persist`; and Brier at resolution. **P**: triage,
 Fermi decomposition, outside-view comparability, and dragonfly-eye
 synthesis — each names its critique (`scenario_triage` cross-check,
-falsifiability delegation, `scenario_cross_validate` divergence > 0.15 →
-grill-me, the operator). The forecast probability itself is P — calibrated
+falsifiability delegation, the gate's steelman step, the operator). The forecast probability itself is P — calibrated
 judgment, scored only by Brier over resolved forecasts, never falsified by
 one outcome.
 
@@ -81,9 +81,9 @@ one outcome.
 
 The former single inside-view step is split into three steps. Generation and counterfactual analysis are delegated to the `falsifiability` skill; probability estimation stays in superforecasting.
 
-1. **Generate causal hypotheses (delegate to falsifiability).** Invoke `falsifiability/falsifiability-hypothesize` with `admitted_target` = the resolvable event question admitted at stage 0, `domain` = "forecasting", `context` = the sub-questions, outside-view output, resolution criteria, and deadline. Apply falsifying observations to specific causal hypotheses; do not demand that one outcome falsify a probabilistic forecast or add a second Popper gate. Produces 3–7 ranked candidate causal pathways with forced diversity (≥1 primary, ≥1 alternative, ≥1 contamination/false-positive, ≥1 opposing-outcome), each with a Platt-form prediction and a falsifier; discards vibes at generation.
+1. **Generate causal hypotheses (delegate to falsifiability).** Invoke `falsifiability/falsifiability-hypothesize` with `admitted_target` = the resolvable event question admitted at stage 0, `domain` = "forecasting", `context` = the sub-questions, outside-view output, resolution criteria, and deadline. Apply falsifying observations to specific causal hypotheses; do not demand that one outcome falsify a probabilistic forecast or add a second Popper gate. Produces 3–7 ranked candidate causal pathways with the delegate's forced diversity (≥1 unlikely, ≥1 challenging the obvious explanation, ≥1 embarrassing-if-true — which for forecasting questions typically surface as alternative mechanisms, contamination/false-positive paths, and opposing-outcome pathways), each with a Platt-form prediction and a falsifier; discards vibes at generation.
 2. **Construct counterfactuals / necessary conditions (delegate to falsifiability).** Invoke `falsifiability/falsifiability-counterfactual` with the generated `hypotheses`, `admitted_target`, `domain`. For each hypothesis construct the minimal do(not X) counterfactual, hold confounders fixed, and derive the testable consequence that distinguishes the counterfactual world from the factual one. Flag irreducible causes.
-3. **Estimate probabilities and emit the tree (superforecasting).** Invoke `superforecasting/stage_3_probability_estimate` with the `hypotheses`, `counterfactuals`, `starting_probability` (the verified, source-labeled anchor), and `outside_view_output`. For each hypothesis weigh evidence pro/con against its counterfactual's testable consequence, assign an individual probability, and enforce internal consistency. For each tree node estimate a marginal (roots) or a conditional table (dependents) — the combinator (AND/OR/mixture) is encoded structurally in the conditional values, not as a separate field. The invoking agent then calls `scenario_quantify` (hkask-mcp-scenarios) with the tree's nodes as ScenarioEvent objects — it topologically sorts the dependency graph and marginalizes via the shared `hkask_forecast::marginalize`, returning each node's `marginal_probability` plus the `joint_probability`. The outcome node's `marginal_probability` is `tree_combined_probability` — the exact inside-view posterior fed to stage 4 as the prior. The LLM no longer estimates `combined_probability`; the Rust tool owns that.
+3. **Estimate probabilities and emit the tree (superforecasting).** Invoke `superforecasting/stage_3_probability_estimate` with the `hypotheses`, `counterfactuals`, `starting_probability` (the verified, source-labeled anchor), `outside_view_output`, and the stage-1 tree inputs (`sub_question_tree`, `topological_order`, `outcome_node_id`) — the template's `tree_nodes` output is what `scenario_quantify` consumes; without the tree inputs there is no `tree_combined_probability` to feed stage 4. For each hypothesis weigh evidence pro/con against its counterfactual's testable consequence, assign an individual probability, and enforce internal consistency. For each tree node estimate a marginal (roots) or a conditional table (dependents) — the combinator (AND/OR/mixture) is encoded structurally in the conditional values, not as a separate field. The invoking agent then calls `scenario_quantify` (hkask-mcp-scenarios) with the tree's nodes as ScenarioEvent objects — it topologically sorts the dependency graph and marginalizes via the shared `hkask_forecast::marginalize`, returning each node's `marginal_probability` plus the `joint_probability`. The outcome node's `marginal_probability` is `tree_combined_probability` — the exact inside-view posterior fed to stage 4 as the prior. The LLM no longer estimates `combined_probability`; the Rust tool owns that.
 
 > **MCP tool step (after stage 3, call `scenario_quantify` directly — no template):** map the `sub_question_tree` nodes into ScenarioEvent objects (id, name, question, deadline, time_horizon, scenario_type, subject, probability, depends_on with parent_event_ids + conditionals, sub_questions, update_count) and call `scenario_quantify`. The outcome node's `marginal_probability` is `tree_combined_probability`, stage 4's prior. The server's sequence advisory expects `scenario_build` first — the advisory warn is expected noise when superforecasting brings its own tree.
 
@@ -92,9 +92,11 @@ The former single inside-view step is split into three steps. Generation and cou
 1. Incorporate new evidence and update probabilities using likelihood ratios and Bayesian reasoning.
 2. Assess the strength (weak/moderate/strong) and direction (supports/contradicts/neutral) of each piece of evidence.
 3. Calculate or estimate the likelihood ratio (P(E|H) / P(E|~H)) for each evidence item.
-4. Compute each update via `lisp_eval` — the posterior of one update is the prior of the next:
+4. Compute each update via `lisp_eval` — the posterior of one update is the prior of the next; the `lisp_eval` posterior is the authoritative D value (the template's `updated_probability` is a cross-check):
    - form: "(/ (* prior likelihood_ratio) (+ (* prior likelihood_ratio) (- 1 prior)))"
    - env: `{ "prior": <current prior>, "likelihood_ratio": <P(E|H) / P(E|~H)> }`
+
+   > **MCP tool step (when the forecast is tracked in the scenarios server's tree — call `scenario_update` directly):** pass the prior, the template's `evidence_likelihood` (P(E|H)) and `evidence_base_rate` (P(E)), and an evidence description — the server journals the update; its Bayes is the same computation as the `lisp_eval` form, and the journal is the durable record.
 5. Make many small updates most of the time, and occasional large updates when evidence is very strong.
 6. Update the prior probability to the posterior probability based on the accumulated evidence.
 
@@ -118,7 +120,7 @@ The former single inside-view step is split into three steps. Generation and cou
 ### stage_6_calibration (P — calibration: `scenario_calibrate`, which applies the learned overconfidence bias when ≥5 resolved forecasts exist)
 
 1. Assign a precise, well-calibrated probability to the forecasted outcome using the full 0-100% scale.
-2. Anchor the assignment on `scenario_calibrate` (hkask-mcp-scenarios): call it with the question and the stage-1 sub-questions (each with estimate + confidence) — the server computes the calibrated probability via Tetlock's methodology. Depart from its output only with explicit justification.
+2. Anchor the assignment on `scenario_calibrate` (hkask-mcp-scenarios): call it with the question and per-sub-question estimates (constructed from the stage-3 tree nodes' marginals paired with the stage-1 sub-questions, each with an estimate + confidence) — the server computes the calibrated probability via Tetlock's methodology. Pass its output as `server_calibrated_probability` to the stage-6 render and anchor `final_probability` on it; depart only with explicit justification.
 3. Avoid hedge words and use specific percentages matched to evidence quality.
 4. Assess confidence level (low, medium, high) based on evidence quality, model agreement, and reference class stability.
 5. Justify the specific probability and precision against the pipeline's evidence trail.
@@ -251,10 +253,10 @@ Template context variables (from each template's [inference] contract):
 - `stage_0_triage.j2`: `forecasting_question`, `domain`, `time_horizon`
 - `stage_1_fermi_decompose.j2`: `forecasting_question`, `triage_output`
 - `stage_2_outside_view.j2`: `forecasting_question`, `sub_questions`, `knowns`, `market_context`, `expert_prior`
-- `stage_3_probability_estimate.j2`: `forecasting_question`, `hypotheses`, `counterfactuals`, `starting_probability`, `outside_view_output`
+- `stage_3_probability_estimate.j2`: `forecasting_question`, `hypotheses`, `counterfactuals`, `starting_probability`, `outside_view_output`, `sub_question_tree`, `topological_order`, `outcome_node_id`
 - `stage_4_evidence_update.j2`: `forecasting_question`, `prior_probability`, `hypothesis_analysis`, `new_evidence`, `market_context`, `expert_prior`
 - `stage_5_synthesis.j2`: `forecasting_question`, `updated_probability`, `hypothesis_analysis`
-- `stage_6_calibration.j2`: `forecasting_question`, `synthesized_probability`, `synthesis_output`
+- `stage_6_calibration.j2`: `forecasting_question`, `synthesized_probability`, `synthesis_output`, `server_calibrated_probability`
 - `stage_7_record.j2`: `forecasting_question`, `final_probability`, `confidence_level`, `pipeline_summary`, `resolution_criteria`, `expiration_date`
 - `forecast-quality-gate.j2`: `forecasting_question`, `calibration_result`, `record_result`, `synthesis_output`
 

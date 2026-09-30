@@ -132,51 +132,22 @@ Each stage produces structured JSON output that feeds into subsequent stages:
 }
 ```
 
-## Regulation Integration
-
-The pipeline emits Regulation spans for monitoring:
-
-- `hkask.template.select` — Pipeline selection
-- `hkask.template.render` — Template execution at each stage
-- `hkask.template.outcome` — Forecast recorded
-
-**Variety Counters:**
-
-- `hypothesis_count` — Number of causal hypotheses generated
-- `reference_class_count` — Number of reference classes identified
-- `evidence_item_count` — Number of evidence items evaluated
-
-**Algedonic Alert:** Triggered if variety deficit >100 (escalates to Curator)
-
-## Capability Requirements
-
-The pipeline requires the following capabilities:
-
-- Template render permissions for all 8 stages
-- Manifest execution permission
-- Regulation emission permission
-- Memory storage permission (for forecast recording)
-
-All capabilities are template-scoped and expire after 3600 seconds.
-
-## Error Handling
-
-| Error Type         | Behavior                  |
-| ------------------ | ------------------------- |
-| Energy exceeded    | Abort                     |
-| Timeout            | Retry (max 2, 2s backoff) |
-| Validation failure | Abort                     |
-| Capability denied  | Escalate to Curator       |
-
 ## Audit Trail
 
-All pipeline executions are logged with:
+The pipeline's durable records (no manifest executes this pipeline — the
+SKILL.md's stage instructions are the operating procedure):
 
-- Input question and parameters
-- Output from each stage
-- Energy costs per stage
-- Regulation event references
-- Final forecast record
+- The forecast record (stage 7's output: tracking ID, question, resolution
+  criteria, probability, confidence, expiration)
+- The scenarios server's propagation journal (when the forecast is tracked
+  in the event tree — `scenario_update` writes it)
+- The forecast journal at resolution (`scenario_score` — the only writer;
+  Brier is computed there)
+
+(An earlier revision of this README described a flow engine emitting
+`hkask.template.*` Regulation spans, variety counters, an algedonic alert,
+manifest-execution permissions, energy caps, and retry backoff — none of
+that machinery exists; the description was fabricated and is removed.)
 
 ## Testing the Pipeline
 
@@ -186,12 +157,12 @@ All pipeline executions are logged with:
 
 ## Future Enhancements
 
-- [x] Iterative loop (return to earlier stages on new evidence) — step 11 restarts at Fermi decomposition (step 2), carrying forward the prior iteration's calibrated probability for the materiality guard
+- [x] Iterative loop — the SKILL.md's Loop (PDCA over the gate): the gate's fix notes name the stage to re-run, downstream stages re-run, max 2 gate cycles, then deliver with the failing dimensions recorded
 - [x] Independent quality gate (step 9) — evaluates calibration realism, confidence justification, evidence trail, and record completeness without self-assessment bias
 - [ ] Ensemble mode (multiple parallel pipeline runs) — Note: distinct from hKask ensemble module (deferred 2026-06-14)
 - [ ] Human-in-the-loop checkpoints
 - [ ] Automatic reference class lookup from knowledge base
-- [ ] Brier score tracking and feedback
+- [x] Brier score tracking and feedback — `scenario_score` at resolution writes the forecast journal and reports Brier; `scenario_calibration` computes the curve; `scenario_calibrate` applies the learned bias (≥5 resolved)
 - [x] MCDA-style weighted aggregation in stage 5 (synthesis) — causal models scored against evidence alignment, reference class stability, causal mechanism clarity, and model confidence criteria, with compensation masking detection. Embedded in the synthesis template rather than delegated via template_ref to avoid flow step ordinal shifts.
 - [ ] Sub-question independence validation in stage 1 (Fermi) — hypothesis-framer interface mismatch: FINER/PICO evaluates research question quality, not Fermi sub-question independence. A lightweight independence check embedded in the Fermi template is a better fit than cross-skill delegation.
 

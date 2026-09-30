@@ -218,15 +218,24 @@ across the layers:[^brier-1950][^tetlock-record]
 
 The deterministic `hkask_forecast::*` primitives are invoked by the model directly via the
 `lisp_eval` agent tool (wrapping `hkask_lisp::eval_sandboxed_with_budget`) when a SKILL.md
-instructs it to. Within the superforecasting skill's 16-step pipeline, `lisp_eval` drives
-three deterministic stages and loop re-entry drives the fourth:[^deming-pdca-compute]
+instructs it to. Within the superforecasting skill's eight-stage pipeline, `lisp_eval` drives
+six deterministic checks (all pinned by `test_superforecasting_skill_md_pins_forms`):
 
-| Step | Tool | Form | Role |
-|------|------|------|------|
-| 3 | `lisp_eval` | `calibrate_from_fermi` | Fermi weighted-average of LLM-produced sub-questions → inside estimate |
-| 5 | `lisp_eval` | `outside_view_adjustment` | Shrinkage blend of LLM-produced base rate with Fermi estimate → calibrated anchor |
-| 10 | `lisp_eval` | `bayesian_update` | Bayes' theorem: LLM produces P(E\|H) + P(E), Rust computes the posterior |
-| 16 | compute | `apply_calibration_adjustment` | Calibration feedback in loop re-entry → adjusted prior |
+| Stage | Tool | Form | Role |
+|-------|------|------|------|
+| stage 2 | `lisp_eval` | rate check | Validates a reported historical rate against its own outcomes/sample_size arithmetic; `invalid` on a degenerate record |
+| stage 2 | `lisp_eval` | anchor check | Bounds the selected `starting_probability` to [0, 1] before stage 3 renders |
+| stage 4 | `lisp_eval` | Bayes posterior | `(/ (* prior likelihood_ratio) (+ (* prior likelihood_ratio) (- 1 prior)))` — the LR-form update; the template's `evidence_likelihood`/`evidence_base_rate` feed `scenario_update` when the forecast is tracked in the event tree |
+| stage 5 | `lisp_eval` | MCDA weighted average | `(/ (+ (* m1 c1) ...) (+ c1 ...))` — the dragonfly-eye synthesis over model probabilities weighted by criterion-score composites |
+| gate | `lisp_eval` | pass rule | `(and (>= s1 0.6) ...)` — all four quality dimensions ≥ 0.60 |
+| Market-prior check | `lisp_eval` | calibration gate | `(and (= stale_buckets 0) (< without_snapshot_rate 0.2))` — the scan-cadence health check |
+
+The server-side deterministic computations: `scenario_quantify` (the tree
+marginalization — the outcome node's `marginal_probability` is stage 4's
+prior), `scenario_calibrate` (the calibrated probability; it applies the
+learned overconfidence bias internally when ≥5 resolved forecasts exist —
+`apply_calibration_adjustment` is called inside the server, not by the agent),
+and `scenario_score` (Brier at resolution — the only forecast-journal writer).
 
 ### Common drift and how this model prevents it
 

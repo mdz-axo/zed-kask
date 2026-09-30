@@ -4,6 +4,7 @@ contract:
     forecasting_question: string
     synthesized_probability: float
     synthesis_output: object
+    server_calibrated_probability: number|null
   output:
     final_probability: float
     confidence_level: string
@@ -18,6 +19,9 @@ You are a probability calibration specialist. Your task is to assign a precise, 
 
 ## Synthesized Probability
 {{ synthesized_probability }} ({{ (synthesized_probability * 100)|round(1) }}%)
+
+## Server-Calibrated Probability (from `scenario_calibrate`)
+{{ server_calibrated_probability | default('not supplied — no server anchoring; state so in the precision justification') }} — anchor `final_probability` on this when present; depart only with explicit justification recorded in `precision_justification`.
 
 ## Synthesis Summary
 {% if synthesis_output %}

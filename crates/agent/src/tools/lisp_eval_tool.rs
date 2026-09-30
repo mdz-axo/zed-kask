@@ -1050,6 +1050,122 @@ mod tests {
             skill_md.contains("(/ (+ (* m1 c1) (* m2 c2) (* m3 c3)) (+ c1 c2 c3))"),
             "MCDA weighted-average form must stay pinned in superforecasting SKILL.md"
         );
+
+        // The regression case claims "six pinned forms" — before this
+        // extension only two were pinned. The remaining four, pinned here
+        // with live cases (all verified live by the batch-8 critic):
+
+        // 3. The stage-2 rate check.
+        let rate_check = r#"(if (and (numberp outcomes) (numberp sample_size) (> sample_size 0) (<= 0 outcomes) (<= outcomes sample_size)) (/ outcomes sample_size) (quote invalid))"#;
+        assert!(
+            skill_md.contains(rate_check),
+            "stage-2 rate-check form must stay pinned in superforecasting SKILL.md"
+        );
+        let valid_rate = hkask_lisp::eval_sandboxed_with_budget(
+            rate_check,
+            &json!({"outcomes": 3, "sample_size": 10}),
+            100_000,
+            64,
+        )
+        .expect("rate-check form must evaluate");
+        assert_eq!(
+            valid_rate,
+            json!(0.3),
+            "3 of 10 observed cases -> the computed rate"
+        );
+        let degenerate = hkask_lisp::eval_sandboxed_with_budget(
+            rate_check,
+            &json!({"outcomes": 0, "sample_size": 0}),
+            100_000,
+            64,
+        )
+        .expect("rate-check form must evaluate on a degenerate record");
+        assert_eq!(
+            degenerate,
+            json!("invalid"),
+            "a zero sample is invalid, never a 0/0 rate"
+        );
+
+        // 4. The stage-2 anchor check.
+        let anchor_check = r#"(and (numberp p) (<= 0 p) (<= p 1))"#;
+        assert!(
+            skill_md.contains(anchor_check),
+            "anchor-check form must stay pinned in superforecasting SKILL.md"
+        );
+        let bounded =
+            hkask_lisp::eval_sandboxed_with_budget(anchor_check, &json!({"p": 0.65}), 100_000, 64)
+                .expect("anchor-check form must evaluate");
+        assert_eq!(bounded, json!(true), "0.65 is a valid anchor");
+        let out_of_bounds =
+            hkask_lisp::eval_sandboxed_with_budget(anchor_check, &json!({"p": 1.5}), 100_000, 64)
+                .expect("anchor-check form must evaluate out of bounds");
+        assert_eq!(
+            out_of_bounds,
+            json!(false),
+            "stage 3 requires a number in [0,1] — never render null * 100"
+        );
+
+        // 5. The forecast-quality-gate pass rule.
+        let gate_rule = r#"(and (>= s1 0.6) (>= s2 0.6) (>= s3 0.6) (>= s4 0.6))"#;
+        assert!(
+            skill_md.contains(gate_rule),
+            "gate pass-rule form must stay pinned in superforecasting SKILL.md"
+        );
+        let passes = hkask_lisp::eval_sandboxed_with_budget(
+            gate_rule,
+            &json!({"s1": 0.6, "s2": 0.7, "s3": 0.6, "s4": 0.9}),
+            100_000,
+            64,
+        )
+        .expect("gate rule must evaluate");
+        assert_eq!(
+            passes,
+            json!(true),
+            "all four dimensions >= 0.60 (inclusive) — the gate passes"
+        );
+        let fails = hkask_lisp::eval_sandboxed_with_budget(
+            gate_rule,
+            &json!({"s1": 0.59, "s2": 0.7, "s3": 0.6, "s4": 0.9}),
+            100_000,
+            64,
+        )
+        .expect("gate rule must evaluate on a failing dimension");
+        assert_eq!(
+            fails,
+            json!(false),
+            "one dimension below 0.60 fails the gate"
+        );
+
+        // 6. The market-prior calibration gate.
+        let market_gate = r#"(and (= stale_buckets 0) (< without_snapshot_rate 0.2))"#;
+        assert!(
+            skill_md.contains(market_gate),
+            "market-prior gate form must stay pinned in superforecasting SKILL.md"
+        );
+        let healthy = hkask_lisp::eval_sandboxed_with_budget(
+            market_gate,
+            &json!({"stale_buckets": 0, "without_snapshot_rate": 0.19}),
+            100_000,
+            64,
+        )
+        .expect("market gate must evaluate");
+        assert_eq!(
+            healthy,
+            json!(true),
+            "no stale buckets and a sub-0.2 too-late rate — calibration evidence is current"
+        );
+        let boundary = hkask_lisp::eval_sandboxed_with_budget(
+            market_gate,
+            &json!({"stale_buckets": 0, "without_snapshot_rate": 0.2}),
+            100_000,
+            64,
+        )
+        .expect("market gate must evaluate at the boundary");
+        assert_eq!(
+            boundary,
+            json!(false),
+            "the boundary is strict <: a rate of exactly 0.2 recommends a more frequent cadence"
+        );
     }
 
     #[test]
