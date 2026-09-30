@@ -94,6 +94,8 @@ Return JSON only:
     "source_changed":false,
     "oracle_hash_before":"",
     "oracle_hash_after":"",
+    "contract_hash_before":"",
+    "contract_hash_after":"",
     "hashes_verified":false,
     "receipt_path":"",
     "receipt_pinned_sha256":"",
@@ -120,6 +122,7 @@ Return JSON only:
     {"hypothesis":"", "prediction":"", "observation":"", "disposition":"eliminated|corroborated|irreducible"}
   ],
   "verdict":"compressed_preserved|essential_no_safe_reduction|blocked|reverted",
+  "verdict_note":"retained_targets_missed is NOT emitted here — it is the ACT-phase override (SKILL.md step 12): preservation passed but targets missed, retained only with operator approval; the template emits reverted and the agent re-labels post-approval",
   "next_step":""
 }
 ```

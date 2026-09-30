@@ -126,3 +126,46 @@ fn pinned_context_form_rejects_nonpositive_sample() -> Result<(), Box<dyn std::e
     assert_eq!(evaluate(check, environment)?, json!(false));
     Ok(())
 }
+
+/// The inventory gate (SKILL.md step 3) — the first `- form:` marker.
+/// expect: "A false result blocks compression and returns to step 1."
+#[test]
+fn pinned_inventory_gate_admits_complete_baseline_and_blocks_gaps()
+-> Result<(), Box<dyn std::error::Error>> {
+    let form = form_after("   - form: `")?;
+    let complete = json!({"gate": {"missing_expectations": 0, "unfalsifiable_expectations": 0}});
+    assert_eq!(evaluate(form, complete)?, json!(true));
+    let missing = json!({"gate": {"missing_expectations": 1, "unfalsifiable_expectations": 0}});
+    assert_eq!(evaluate(form, missing)?, json!(false));
+    let unfalsifiable =
+        json!({"gate": {"missing_expectations": 0, "unfalsifiable_expectations": 2}});
+    assert_eq!(evaluate(form, unfalsifiable)?, json!(false));
+    Ok(())
+}
+
+/// The preservation gate (SKILL.md step 10) — the `- Preservation: ` marker.
+/// expect: "Any failure rejects/reverts the candidate regardless of speedup."
+#[test]
+fn pinned_preservation_gate_requires_all_seven_zero_and_lean_pass()
+-> Result<(), Box<dyn std::error::Error>> {
+    let form = form_after("    - Preservation: `")?;
+    let clean = json!({"check": {
+        "missing_expectations": 0, "lost_falsifiers": 0, "lost_oracle_kinds": 0,
+        "lost_failure_classes": 0, "downgraded_provenance": 0,
+        "failed_harmful_cases": 0, "allowed_change_control_failures": 0,
+        "lean_proof_passed": true}});
+    assert_eq!(evaluate(form, clean)?, json!(true));
+    let lost_falsifier = json!({"check": {
+        "missing_expectations": 0, "lost_falsifiers": 1, "lost_oracle_kinds": 0,
+        "lost_failure_classes": 0, "downgraded_provenance": 0,
+        "failed_harmful_cases": 0, "allowed_change_control_failures": 0,
+        "lean_proof_passed": true}});
+    assert_eq!(evaluate(form, lost_falsifier)?, json!(false));
+    let lean_failed = json!({"check": {
+        "missing_expectations": 0, "lost_falsifiers": 0, "lost_oracle_kinds": 0,
+        "lost_failure_classes": 0, "downgraded_provenance": 0,
+        "failed_harmful_cases": 0, "allowed_change_control_failures": 0,
+        "lean_proof_passed": false}});
+    assert_eq!(evaluate(form, lean_failed)?, json!(false));
+    Ok(())
+}
