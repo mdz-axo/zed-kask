@@ -432,6 +432,49 @@ fi
 mv "$tmp/source-a.original" "$tmp/source-a.txt"
 unset FAKE_EMBED_INTERRUPT_DB FAKE_EMBED_INTERRUPT_MARKER
 
+# Orphan index without durable identity: a first-shard kill leaves stored
+# rows the guard cannot inventory (identity is only published on a completed
+# response). Resume must archive the orphan and re-embed fresh, not refuse.
+export FAKE_EMBED_INTERRUPT_DB=reference
+export FAKE_EMBED_INTERRUPT_MARKER="$tmp/embed-interrupted-reference"
+if "$runner" "$tmp/run-spec.json" "$tmp/orphan-run" \
+    >"$tmp/orphan-run.stdout" 2>"$tmp/orphan-run.stderr"; then
+    echo "calibration unexpectedly completed after a lost first-shard response" >&2
+    exit 1
+fi
+grep -F 'embedding host call failed for reference/shard-00000' "$tmp/orphan-run.stderr" >/dev/null
+[[ -s "$tmp/orphan-run/reference.db" ]]
+[[ ! -e "$tmp/orphan-run/embedding-model-identity.json" ]]
+if compgen -G "$tmp/orphan-run/embed/checkpoints/reference-shard-*.json" > /dev/null; then
+    echo "interrupted first shard must not leave a completed checkpoint" >&2
+    exit 1
+fi
+"$runner" --resume "$tmp/run-spec.json" "$tmp/orphan-run" \
+    >"$tmp/orphan-resume.stdout" 2>"$tmp/orphan-resume.stderr"
+grep -F 'orphan reference index without durable model identity' "$tmp/orphan-resume.stderr" >/dev/null
+orphan_archive=$(compgen -G "$tmp/orphan-run/orphan-reference-*.db")
+[[ -n "$orphan_archive" && -s "$orphan_archive" ]]
+[[ -s "$tmp/orphan-run/reference.db" ]]
+[[ -s "$tmp/orphan-run/run-identity.json" ]]
+
+# Checkpoints without a verifiable identity are an inconsistent state (the
+# identity write precedes every checkpoint write): the archive path must
+# refuse rather than discard completed work.
+export FAKE_EMBED_INTERRUPT_MARKER="$tmp/embed-interrupted-reference-b"
+if "$runner" "$tmp/run-spec.json" "$tmp/inconsistent-run" \
+    >"$tmp/inconsistent-run.stdout" 2>"$tmp/inconsistent-run.stderr"; then
+    echo "calibration unexpectedly completed after a lost first-shard response" >&2
+    exit 1
+fi
+touch "$tmp/inconsistent-run/embed/checkpoints/reference-shard-00001.json"
+if "$runner" --resume "$tmp/run-spec.json" "$tmp/inconsistent-run" \
+    >"$tmp/inconsistent-resume.stdout" 2>"$tmp/inconsistent-resume.stderr"; then
+    echo "resume accepted checkpoints without a verifiable model identity" >&2
+    exit 1
+fi
+grep -F 'embedding checkpoints exist without a verifiable model identity' "$tmp/inconsistent-resume.stderr" >/dev/null
+unset FAKE_EMBED_INTERRUPT_DB FAKE_EMBED_INTERRUPT_MARKER
+
 export FAKE_ACTUAL_MODEL_STATUS=unavailable
 if "$runner" "$tmp/run-spec.json" "$tmp/unconfirmed-run"; then
     echo "calibration accepted an unconfirmed provider model identity" >&2

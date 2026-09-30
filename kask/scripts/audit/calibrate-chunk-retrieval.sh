@@ -612,7 +612,7 @@ for policy in reference current fine; do
         if [[ -e "$checkpoint" || -e "$checkpoint.sha256" ]]; then
             verify_hashed_json "$checkpoint"
             if [[ -z "$actual_model" ]]; then
-                echo "completed shard checkpoint exists without embedding model identity" >&2
+                echo "completed shard checkpoint exists without embedding model identity; next action: restore $model_identity or delete the shard checkpoints to restart embedding" >&2
                 exit 65
             fi
             if ! jq -e --arg preseal "$preseal_run_id" --arg policy "$policy" \
@@ -641,20 +641,35 @@ for policy in reference current fine; do
         pending=$shard
         if [[ "$resume" == true && -f "$index_db" ]]; then
             if [[ -z "$actual_model" ]]; then
-                echo "partial embedding database cannot be reconciled before one provider-confirmed model identity is durable" >&2
-                exit 65
-            fi
-            inventory=$(inventory_shard "$policy" "$shard" "$index_db" "$actual_model" "recovery-$$")
-            recovered_rows=$(jq -er '.stored_matching_model' <<<"$inventory")
-            retry_refs=$(mktemp "$output_dir/embed/.retry-refs.XXXXXX")
-            jq '.retry_entity_refs' <<<"$inventory" > "$retry_refs"
-            pending="$shard_dir/$shard_name-recovery-$$.jsonl"
-            jq -c --slurpfile retry "$retry_refs" \
-                'select(.entity_ref as $ref | ($retry[0] | index($ref)) != null)' "$shard" > "$pending"
-            rm -f "$retry_refs"
-            if [[ $(wc -l < "$pending" | tr -d ' ') -ne $(jq -r '.retry_entity_refs | length' <<<"$inventory") ]]; then
-                echo "durable inventory retry selection did not reconcile for $policy/$shard_name" >&2
-                exit 65
+                # The model identity is published before any shard checkpoint
+                # is written (the identity write precedes the checkpoint write
+                # in the embed loop), so no durable identity implies zero
+                # completed checkpoints; verify defensively before discarding
+                # anything — a checkpoint-first reorder must refuse here, not
+                # discard completed work.
+                if compgen -G "$checkpoint_dir/$policy-shard-*.json" > /dev/null; then
+                    echo "embedding checkpoints exist without a verifiable model identity; next action: restore $model_identity or delete the shard checkpoints to restart embedding" >&2
+                    exit 65
+                fi
+                orphan="$output_dir/orphan-$policy-$(date +%Y%m%dT%H%M%S)-$$"
+                archived_bytes=$(stat -c %s "$index_db" 2>/dev/null || echo 0)
+                mv "$index_db" "$orphan.db"
+                [[ -f "$index_db-wal" ]] && mv "$index_db-wal" "$orphan.db-wal"
+                [[ -f "$index_db-shm" ]] && mv "$index_db-shm" "$orphan.db-shm"
+                echo "orphan $policy index without durable model identity (${archived_bytes} bytes at archive time; rows are not inventoryable without identity): archived to $orphan.db and re-embedding" >&2
+            else
+                inventory=$(inventory_shard "$policy" "$shard" "$index_db" "$actual_model" "recovery-$$")
+                recovered_rows=$(jq -er '.stored_matching_model' <<<"$inventory")
+                retry_refs=$(mktemp "$output_dir/embed/.retry-refs.XXXXXX")
+                jq '.retry_entity_refs' <<<"$inventory" > "$retry_refs"
+                pending="$shard_dir/$shard_name-recovery-$$.jsonl"
+                jq -c --slurpfile retry "$retry_refs" \
+                    'select(.entity_ref as $ref | ($retry[0] | index($ref)) != null)' "$shard" > "$pending"
+                rm -f "$retry_refs"
+                if [[ $(wc -l < "$pending" | tr -d ' ') -ne $(jq -r '.retry_entity_refs | length' <<<"$inventory") ]]; then
+                    echo "durable inventory retry selection did not reconcile for $policy/$shard_name" >&2
+                    exit 65
+                fi
             fi
         fi
 
@@ -683,7 +698,7 @@ for policy in reference current fine; do
         fi
         while [[ "$shard_embedded" -lt "$shard_expected" ]]; do
             if [[ "$attempt" -gt "$embedding_shard_retry_limit" ]]; then
-                echo "embedding shard exhausted retry limit for $policy/$shard_name: attempts=$shard_attempts" >&2
+                echo "embedding shard exhausted retry limit for $policy/$shard_name: attempts=$shard_attempts; next action: re-run --resume with the same run spec — resume inventories durable rows and re-embeds only the missing set" >&2
                 exit 65
             fi
             attempt_label=$(printf '%02d' "$attempt")
@@ -695,7 +710,10 @@ for policy in reference current fine; do
                 '{chunks_jsonl:$chunks_jsonl,tagged_jsonl:null,db_path:$db_path,model:$model,batch_size:$batch_size}' > "$arguments"
             started=$(now_ns)
             verify_runtime_executables
-            "$host_call" corpus_embed "$arguments" "$response" "$log"
+            if ! "$host_call" corpus_embed "$arguments" "$response" "$log"; then
+                echo "embedding host call failed for $policy/$shard_name attempt $attempt_label; next action: re-run --resume with the same run spec — resume inventories durable rows and re-embeds only the missing set (raise HKASK_CALIBRATION_RESPONSE_TIMEOUT_SECS when a shard legitimately exceeds the per-call window)" >&2
+                exit 65
+            fi
             ended=$(now_ns)
             content=$(tool_content "$response")
             reported_requested_model=$(jq -er '.requested_model | select(type == "string" and length > 0)' <<<"$content")
