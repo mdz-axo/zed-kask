@@ -762,6 +762,16 @@ exactly that lag), not evidence of absence.)
 
 ## Change log
 
+- 2026-09-30 — v0.24.6 executed the operator's aeneas ruling ("delete"):
+  the three-file Aeneas record set removed (the Proposed plan, the
+  adoption-gate record, the feasibility evidence) — a blocked upstream
+  program (Aeneas issue #838) that authorized nothing. Successors
+  named in the README lifecycle ledger tombstone; git history is the
+  archive. `DOCUMENTATION_STANDARDS` §258's example row updated in the
+  same change. Corpus: 74 → **71 files** (70 md + 1 yaml). Gates
+  re-run green (count, links, no-deleted-surfaces — only tombstone
+  mentions remain).
+
 - 2026-09-30 — v0.24.5 executed the alignment plan §8 CU-5's first
   condensation pass over this register (the named first candidate).
   The superseded pass-1/pass-2 process narrative is condensed with

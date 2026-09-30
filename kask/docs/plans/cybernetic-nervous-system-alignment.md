@@ -405,6 +405,10 @@ not verdict (operator calibration, 2026-09-30).
   records are retained-for-decision; deleting all three (−3 files,
   74 → 71) is a one-word ruling — the plan's own summary paragraph
   carries the durable facts, git history the detail.
+  **RULING (2026-09-30): delete.** Executed same session: the three
+  files removed (`git rm`), the README lifecycle ledger carries the
+  tombstone with successors, `DOCUMENTATION_STANDARDS` §258's example
+  row updated, corpus 74 → **71**. The gates re-run green.
 - **CU-5(b) probe artifacts: clean** (no probe/scratch/tmp/bak files
   in production trees).
 - **Gates:** count 74 (< the 75 cap; the 60-file target remains the
