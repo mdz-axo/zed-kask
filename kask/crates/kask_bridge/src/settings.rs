@@ -56,7 +56,7 @@ pub struct KaskSettings {
     /// Kask-wide general configuration: global inference concurrency + batching.
     pub general: KaskGeneralSettings,
 
-    /// MCP server configuration — which of the 12 built-in servers to load.
+    /// MCP server configuration — which of the 13 built-in servers to load.
     pub mcp: KaskMcpSettings,
 
     /// Curator configuration.
@@ -1208,7 +1208,7 @@ mod tests {
     // deserialization, NOT for Default::default(). When the user had a `kask`
     // section but no `kask.mcp` subsection, From<KaskSettingsContent> fell back
     // to KaskMcpSettings::default() → load_default: false, and sync_kask_mcp_servers
-    // treated all 12 servers as disabled, registering nothing. The manual Default
+    // treated all 13 servers as disabled, registering nothing. The manual Default
     // impl above returns true, matching the serde default.
     #[test]
     fn mcp_settings_default_load_default_is_true() {

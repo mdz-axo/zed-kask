@@ -38,10 +38,10 @@ A skill **is** a `SKILL.md` file — the upstream Zed model. The body contains t
 
 ## MCP Servers
 
-hKask ships **12 MCP servers** launched by zed's `context_server` as child processes over stdio. They are the tool surface over the domain crates. (The `McpRuntime` that governs tool calls runs in-process; the servers themselves are child processes.)
+hKask ships **13 MCP servers** launched by zed's `context_server` as child processes over stdio. They are the tool surface over the domain crates. (The `McpRuntime` that governs tool calls runs in-process; the servers themselves are child processes.)
 
 - **Runtime registry (authoritative, always current):** `BUILT_IN_MCP_SERVERS` in `kask/crates/kask_bridge/src/mcp_servers.rs`.
-- **On-disk servers:** `kask/mcp-servers/hkask-mcp-*` — companies, corpus, curator, kata-kanban, media, portfolio, prediction-markets, research, scenarios, spreadsheet, swarm, training.
+- **On-disk servers:** `kask/mcp-servers/hkask-mcp-*` — companies, corpus, curator, evolution, kata-kanban, media, portfolio, prediction-markets, research, scenarios, spreadsheet, swarm, training.
 - **Catalog + per-tool behavior:** `kask/docs/reference/mcp-servers/README.md` (server catalog with per-server tool-surface pin tests); per-tool behavior is enforced by the tool-behavior contract-test standard (`kask/scripts/check-mcp-tool-tests.sh` + the Testing standard section of the catalog README), not by a per-tool contracts doc.
 - **Tool dispatch:** `McpRuntime::invoke` (per-tick call ceiling / runaway-loop breaker) + per-agent `mcp_tools` allowlist (D3/D8).
 - **§13.1 at the MCP boundary:** MCP servers reach hKask primitives via `kask_bridge` (D8); they never link zed-kask crates directly.

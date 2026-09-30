@@ -36,13 +36,14 @@ The `media` MCP server is the fleet's largest (98 tools): image and video genera
 
 ### MCP servers
 
-**12 built-in MCP servers** (**402 registered tools** fleet-wide, every count pinned by a test) are launched by the in-process governed `McpRuntime` (D3 — single spawn authority) as child processes over stdio and exposed as agent tools through `rmcp`. Each is a thin surface over in-process domain crates — the binary entrypoint is a one-line wrapper around a library `run()`. The fleet:
+**13 built-in MCP servers** (**408 registered tools** fleet-wide, every count pinned by a test) are launched by the in-process governed `McpRuntime` (D3 — single spawn authority) as child processes over stdio and exposed as agent tools through `rmcp`. Each is a thin surface over in-process domain crates — the binary entrypoint is a one-line wrapper around a library `run()`. The fleet:
 
 | Server               | Surface                                                       | Tools |
 | -------------------- | ------------------------------------------------------------- | ----: |
 | `companies`          | FIBO-anchored financial forecasting, dual-provider routing, research notes, transcripts, screener | 40 |
 | `corpus`             | Gather→process→output document pipeline, QA generation, style replicas | 26 |
 | `curator`            | Curator memory, regulation query, algedonic signals, skill-use reporting | 15 |
+| `evolution`          | Experiment registry for the sharded evolution program: registered experiments with pre-registered predictions, variant lineages, grounded fitness, selection fossils | 6 |
 | `kata-kanban`        | Toyota-Kata task boards and persistent functional goals        | 27 |
 | `media`              | AI media generation (image, video, audio, gallery, educt transcripts, Reduct cloud) | 98 |
 | `portfolio`          | Transaction-ledger portfolio store (stocks, prediction-event portfolios, CMP indices) with holdings/returns views | 18 |
@@ -53,7 +54,7 @@ The `media` MCP server is the fleet's largest (98 tools): image and video genera
 | `swarm`              | ABW cloud swarms + local swarm substrate + Xaman Ek curator     | 90 |
 | `training`           | LoRA/QLoRA training pipeline (dataset, submit, validate, evaluate) | 9 |
 
-Companies, scenarios, and prediction-markets form a three-layer forecasting stack (see [`kask/docs/reference/mcp-servers/README.md`](./kask/docs/reference/mcp-servers/README.md) for the full registry, architecture, and per-server count pins). All twelve servers auto-load by default (`load_default: true`) unless the operator disables the fleet or an individual server; the Curator additionally ships as a native in-process agent.
+Companies, scenarios, and prediction-markets form a three-layer forecasting stack (see [`kask/docs/reference/mcp-servers/README.md`](./kask/docs/reference/mcp-servers/README.md) for the full registry, architecture, and per-server count pins). All thirteen servers auto-load by default (`load_default: true`) unless the operator disables the fleet or an individual server; the Curator additionally ships as a native in-process agent.
 
 ## Installation
 

@@ -26,7 +26,7 @@ This document assumes:
 
 ## 1. What has been built
 
-The media MCP server is the project's largest MCP server: **98 registered tools** out of 402 fleet-wide across 12 built-in servers (`kask/docs/reference/mcp-servers/README.md`). The count is not documentation — it is pinned end-to-end by the test `tool_surface_is_exactly_98_registered_tools`, which asserts `MediaServer::combined_router().list_all().len() == 98` (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:457-460`). The tool surface, grouped by the module that registers each tool (`kask/mcp-servers/hkask-mcp-media/src/tools.rs`):
+The media MCP server is the project's largest MCP server: **98 registered tools** out of 408 fleet-wide across 13 built-in servers (`kask/docs/reference/mcp-servers/README.md`). The count is not documentation — it is pinned end-to-end by the test `tool_surface_is_exactly_98_registered_tools`, which asserts `MediaServer::combined_router().list_all().len() == 98` (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:457-460`). The tool surface, grouped by the module that registers each tool (`kask/mcp-servers/hkask-mcp-media/src/tools.rs`):
 
 ### Gallery management — 26 tools (`src/tools/gallery.rs`)
 `gallery_organize`, `gallery_status`, `gallery_search`, `gallery_refresh`, `describe_image`, `gallery_analyze`, `gallery_name_face`, `face_validate`, `face_register`, `face_scan_folder`, `face_list`, `face_remove`, `gallery_timeline`, `gallery_record_generation`, `gallery_lineage`, `gallery_list_assets`, `gallery_asset_detail`, `gallery_reproduce`, `gallery_delete_image`, `gallery_add_media`, `gallery_create_album`, `gallery_list_albums`, `gallery_move_to_album`, `gallery_remove_from_album`, `gallery_delete_album`, `gallery_list_album_members`
@@ -82,7 +82,7 @@ Per-tool descriptions condensed from the live `#[tool]` descriptors are in the r
 
 ### Process model and bootstrap
 
-The server is a thin binary over a library: `src/main.rs:6-9` is a one-line `#[tokio::main]` wrapper around `hkask_mcp_media::run()`. `run()` (`src/hkask_mcp_media.rs:548-665`) resolves the inference port, opens the gallery DB, and hands a `MediaServer` constructor closure to `hkask_mcp_server::run_server` — the shared server crate (`kask/crates/hkask-mcp-server`) that provides `run_server`, the `mcp_server!` macro, `McpToolError`, and the `execute_tool` dispatch wrapper (`kask/crates/hkask-mcp-server/src/server.rs:36-42`). All 12 built-in servers follow this same shape (`kask/docs/reference/mcp-servers/README.md`).
+The server is a thin binary over a library: `src/main.rs:6-9` is a one-line `#[tokio::main]` wrapper around `hkask_mcp_media::run()`. `run()` (`src/hkask_mcp_media.rs:548-665`) resolves the inference port, opens the gallery DB, and hands a `MediaServer` constructor closure to `hkask_mcp_server::run_server` — the shared server crate (`kask/crates/hkask-mcp-server`) that provides `run_server`, the `mcp_server!` macro, `McpToolError`, and the `execute_tool` dispatch wrapper (`kask/crates/hkask-mcp-server/src/server.rs:36-42`). All 13 built-in servers follow this same shape (`kask/docs/reference/mcp-servers/README.md`).
 
 ### How tools are registered
 

@@ -8964,6 +8964,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "hkask-mcp-evolution"
+version = "0.40.0"
+dependencies = [
+ "chrono",
+ "hkask-mcp-server",
+ "hkask-storage",
+ "hkask-types",
+ "regex",
+ "rmcp",
+ "schemars 1.0.4",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.17",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "hkask-mcp-kata-kanban"
 version = "0.40.0"
 dependencies = [

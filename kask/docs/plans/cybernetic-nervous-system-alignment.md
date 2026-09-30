@@ -245,7 +245,7 @@ executed S4 — see §4 — and directed the §8 cleanup program below.)*
 reaffirming the repair plan's standing rule): deletions are outright —
 no compatibility shims, no `#[deprecated]` attributes, no
 kept-for-compatibility states, no migration paths. Wire formats (the
-12 MCP servers' tool schemas) may change. Where a deletion changes a
+13 MCP servers' tool schemas) may change. Where a deletion changes a
 persisted shape, the slice names the consequence and the operator
 rules on migrate-vs-recreate before it lands.
 

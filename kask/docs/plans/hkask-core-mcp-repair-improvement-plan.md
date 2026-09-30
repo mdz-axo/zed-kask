@@ -1,8 +1,8 @@
 ---
 title: "hKask Core and MCP Review — Repair and Improvement Plan"
 audience: [developers, architects, agents, operators]
-last_updated: 2026-09-28
-version: "0.4.0"
+last_updated: 2026-09-30
+version: "0.5.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]
@@ -491,6 +491,109 @@ The self-sustaining loops are gone: with no thread running the editor no longer 
 | 9 | Documentation repeats stale facts | Checked inventory and links | Registry-derived facts plus link checks | No dangling contracts or false enforcement claims |
 
 Suggested first target: P0 and the P1 experiments within one week of authorized execution, adjusted to actual test feedback. After each experiment record prediction, observation, and next obstacle; revise the theory if the test disproves it. No improvement metric is recorded as achieved before the change and test exist.
+
+### P8 — Evolution reference model and program (2026-09-30; recorded here because the docs-count cap forbids a new plan file)
+
+**Provenance.** Composed 2026-09-30 from the David Ha research run (research run `9c47de77a42b8ed8`, completed) — insight 3: evolution and population-based search as a first-class optimizer with small, structurally interpretable controllers; insight 4: the improve loop as itself an automatable, evolvable system — plus same-day tree probes: the GEPA sub-loop census, the experiment-template census, and the registered-MCP-surface census. Operator decisions locked 2026-09-30 (§P8.7). **Promotion path:** split into `research/evolution-reference-model.md` at the next docs condensation (the tree sits at 74 files under the formal fewer-than-75 count gate, with a working 60-file target).
+
+#### P8.1 The design pattern: vary locally, select centrally, retain durably
+
+The capability to evolve is already sharded across zed-kask's layers and stays sharded: each layer's genotype medium differs, so each layer owns its variation operators. What is shared is the ledger (comparable fitness and selection records), the selection surface (one human-chaired gate), and this named pattern.
+
+| Element | In zed-kask |
+| --- | --- |
+| Genotype (small, legible, versioned) | SKILL.md **plus its `.j2` templates as one composite genotype** (§P8.7-Q2); agent cards (system_prompt, model_params, evaluators); MCP tool schemas; regulation thresholds; LoRA adapters; goal/task definitions. Structure over weights: prefer evolving text/config to fine-tuning when both could serve — cheaper, reviewable, revertible. |
+| Phenotype | A running session/agent/server expressing a genotype configuration. Fitness is measured on phenotypes; selection edits genotypes. |
+| Variation (sharded) | Mutation (GEPA prompt evolution; skill edits; `evolve_mcp_tool_schema` directives), recombination (adapter merging under merge contracts; skill bundling; roster composition), continuous calibration (thresholds — the scalar ES analog). |
+| Fitness (grounded only) | Deterministic evaluators, verifier gates, Brier scores on resolved outcomes, calibration readings, algedonic verdicts. Never LLM-only (the anti-gaming rule). Recorded runs only — never simulated (the GEPA house rule). |
+| Selection (central, human-chaired) | Automated pre-selection only within declared noise bands (GEPA's 10% cost band is the precedent); final selection at the algedonic review (§P8.7-Q4) or a recorded grant. Nothing auto-adopts. |
+| Retention & lineage | Git is the germline (proposal → delegated implementation → verification). The experiment registry is the fossil record, including rejected variants with reasons. Curator memory holds acquired traits, feeding variation through therapy's reification (the Baldwin channel). |
+
+Two zed-kask-specific syntheses:
+
+1. **The pre-registered, Brier-scored prediction is the tiny controller.** The experiment machinery (swarm rollouts, eval harnesses, training jobs) is the big shared commodity part; the hypothesis plus prediction is the small, legible, evolvable part; the Brier score is the selection signal on the experimenter, not just the artifact. This is the advantage over the source setting: Ha's fitness functions are external benchmarks; this system scores its own hypotheses.
+2. **D/P labelling is the legibility constraint that makes variants selectable.** The variant carries its own deterministic gates, declared evaluators, and lineage — it explains itself, so selection is auditable.
+
+#### P8.2 Current state — the shard map (probe evidence, 2026-09-30)
+
+| Layer | Genotype | Variation today | Fitness today | Gap |
+| --- | --- | --- | --- | --- |
+| Prompt/template | system prompts, `.j2` | GEPA sub-loop (mutation+crossover, Pareto frontier, pinned D forms) | `swarm_eval_agent_local` on disjoint feedback/selection sets; 10% cost noise band | "Prompts only (v1)"; no cross-run lineage |
+| Weights (FM) | LoRA adapters | retrain mode; verdict-bridged rollouts (SFT/DPO) | held-out eval; A/B on job completion | runs not registered or comparable |
+| Skill | SKILL.md + templates | skill-maintenance edits; therapy reification | fixed-task comparisons; pin tests | ad hoc A/Bs, no records |
+| Agent/swarm | agent cards | reconfigure; roster composition | `swarm_eval_agent_local`; task boards | no variant populations or retention |
+| Tool schema | MCP schemas | `evolve_mcp_tool_schema` directive | skill-use reports | fitness loop thin (issues, not outcomes) |
+| Regulation scalars | thresholds, budgets | `calibrate_threshold` directives | variety deficit, Brier, calibration readings | calibration by judgment, not recorded fitness |
+| Memory | h_mems, rules | insert/update; therapy | recall/decay, contradictions | acquired vs heritable not distinguished |
+
+Evidence notes:
+
+- GEPA sub-loop: `.agents/skills/self-improvement/SKILL.md` ("Prompt evolution (GEPA)" section; templates `gpa-sample-trajectories.j2`, `gpa-reflect.j2`, `gpa-propose-mutations.j2`, `gpa-test-variants.j2`, `gpa-frontier-update.j2`); dominance and convergence forms pinned by `test_self_improvement_skill_md_pins_forms` in `crates/agent/src/tools/lisp_eval_tool.rs`. Scoped "Prompts only (v1)"; disjoint feedback/selection sets; recorded runs only.
+- Experiment-concept shards (each skill its own notion, no shared record): `kask/registry/templates/eqm/eqm-imp-experiment.j2`, `kask/registry/templates/kata-improvement/coaching-q4-experiment.j2`, `kask/registry/templates/kata-improvement/improvement-step4-experiment.j2`, `kask/registry/templates/metacognition/meta-experiment.j2`, `kask/registry/templates/verification-compression/experiment.j2`.
+- No evolution/experiment MCP server registered (list_mcp_tools census, 2026-09-30).
+- GEPA run logs persist per-run at `~/Documents/zk-data/skills/self-improvement/gepa/{date}-{run}/` — directories, not a queryable registry.
+
+#### P8.3 The generalized experiment protocol
+
+Generalizes GEPA (prompts-only v1) to the artifact classes. **The skill genotype is composite** (§P8.7-Q2): SKILL.md process text and its `.j2` template resources evolve together; a skill experiment's variants are (SKILL.md, templates) pairs, and pin suites re-run in the same change.
+
+| Artifact class | Eval-set requirement | Fitness | Noise band / gates |
+| --- | --- | --- | --- |
+| Skill (composite: SKILL.md + templates) | Fixed task set plus the skill's pin tests | Evaluator pass rates on the fixed set; pin suites green | Pin-suite gate mandatory; D/P labels preserved |
+| Agent card | Fixed task set with declared evaluators | `swarm_eval_agent_local` pass_rate, total_tokens | 10% cost band (GEPA precedent) |
+| Standalone prompt/template | Runnable eval set, disjoint feedback/selection | Eval-set scores | GEPA dominance/convergence forms |
+| Tool schema | Skill-use reports over a window | Issue counts, resolution outcomes | Curator directive ledger |
+| Regulation scalar | Calibration/Brier records over a window | Calibration delta | Curator thresholds |
+| LoRA adapter | Held-out task set | `training_evaluate` scores | lora-training gates G-M1..G-Q5 |
+
+Protocol steps, every experiment:
+
+1. **Declare** — hypothesis, genotype config, eval set, fitness function, noise band, pre-registered prediction with confidence, energy budget → `experiment_propose` (creates the linked kanban goal; the prediction is Brier-scored at verdict).
+2. **Vary** — mutation/crossover per the layer's operator; each variant registered with its parent (lineage).
+3. **Test** — fitness from recorded runs only; feedback and selection sets disjoint wherever the operator is a model.
+4. **Select** — deterministic pre-selection within noise bands; final selection at the algedonic review (§P8.7-Q4). Deterministic-fitness experiments auto-run within the declared budget (§P8.7-Q1); human-judged-fitness experiments route through the operator before running.
+5. **Retain** — selected variants land in git through the proposal → delegation → verification path (proposes, never commits); rejected variants persist as fossils with reasons; lineage recorded.
+
+#### P8.4 The server: `hkask-mcp-evolution` (§P8.7-Q3 — build now)
+
+A new `hkask-mcp-evolution` crate alongside the existing hkask-mcp-* server crates — the 13th managed MCP server — landing together with the protocol. Tool surface:
+
+| Tool | Record shape (summary) |
+| --- | --- |
+| `experiment_propose` | hypothesis, layer, genotype_refs, eval_set, fitness_fn, noise_band, prediction, confidence, budget → experiment_id (status: proposed) plus a linked kanban goal |
+| `variant_register` | experiment_id, genotype_config (AnyJsonValue), parent_variant_id → variant_id |
+| `fitness_record` | experiment_id, variant_id, runs (recorded report refs only), per-objective scores → immutable fitness row |
+| `selection_record` | experiment_id, verdict, selected_variant_id, reject_reasons, algedonic_reference → fossil (selected and rejected both retained) |
+| `lineage_read` | artifact_ref → ancestry chain with fitness and selection events |
+| `population_query` | layer, status, window → variants and frontier state |
+
+Implementation contracts: SQLCipher storage with the canonical passphrase helper (`hkask_mcp_server::server::resolve_db_passphrase`); per-variant error classification (never blanket `internal`); `AnyJsonValue` for genotype configs; `unwrap_tool_envelope`; missing credentials surface as `permission_denied` naming the env var. The curator regulates the server — its energy budget is the evolution compute budget (cheap ladder tiers generate variants, strong tiers reflect, deterministic tools score). `evolve_mcp_tool_schema` remains the schema-mutation path for the server's own tools. DIVERGENCE.md D-seam entry plus tests in the same change; the MDS 12-server count becomes 13; the `reference/mcp-servers/` registry entry needs a docs slot (see Phase 1). No compatibility surface: the registry is the only record path from day one — no legacy-import path for historical GEPA log directories ships (§P8.7-Q5); historical directories on disk are data, untouched.
+
+#### P8.5 The re-phased program (Q3=B: the server lands with the protocol)
+
+- **Phase 0 — design authority (this section, 2026-09-30).** Pattern, shard map, protocol, server schemas, decisions, re-phased plan. *Acceptance:* this section exists with the decision log complete. *Replaces:* nothing yet — this section is the program's first artifact.
+- **Phase 1 — the server and protocol build (replacement-first; §P8.7-Q5).** `hkask-mcp-evolution` per §P8.4; `experiment-protocol.j2` registry template as the **single** experiment-record path; routing edits that replace the old paths in the same change, never running alongside them: the GEPA sub-loop's Test and frontier steps are rewritten to record into the server and the per-run log-directory retention instructions are deleted from the skill (historical log directories on disk are data, untouched — the mechanism is replaced); the five per-skill experiment templates (`eqm/eqm-imp-experiment.j2`, `kata-improvement/coaching-q4-experiment.j2`, `kata-improvement/improvement-step4-experiment.j2`, `metacognition/meta-experiment.j2`, `verification-compression/experiment.j2`) are audited in the same change — where a template's record format duplicates the shared protocol it is deleted or rewritten to delegate, so no parallel record formats remain; skill-maintenance comparisons route through the protocol. Pin-test re-runs (`cargo test -p agent --lib lisp_eval_tool`); D-seam plus tests; MDS 12→13 (direct replacement, no transitional count); the mcp-servers reference doc (needs a docs slot — run the docs condensation first, or fold into the registry README). *Acceptance:* the server builds with tests green; one experiment passes proposed → variants registered → fitness recorded → selection recorded end-to-end through the server's tools; zero superseded record paths remain in the skills. *Replaces:* the GEPA per-run log-directory retention mechanism and the per-skill experiment-record formats — deleted in the same change, not kept as fallbacks.
+- **Phase 2 — first scope through the loop (§P8.7-Q2: skills-as-composite plus agent cards).** At least two registered experiments across the first-scope genotypes with pre-registered Brier-scored predictions; one full select/reject with fossil; budgeted auto-run operating per §P8.7-Q1. *Acceptance:* the run-one-through — a skill (SKILL.md plus templates) or card experiment completes the full protocol with a recorded verdict.
+- **Phase 3 — the experiment-designer agenda loop.** Extend self-improvement's Plan step into an agenda generator: reads regulation signals (skill-use issues, escalations, variety deficits) plus the registry's fitness/Brier history → prioritized experiment queue as algedonic proposals with pre-registered predictions; delegated runs within budget; proposes, never commits. *Acceptance:* one full cycle (signal → registered experiment → verdict → algedonic decision → retention) completes with human touch only at review; experiment-prediction Brier is computed and reported. *Replaces:* the human assembling experiments by hand from signals.
+
+#### P8.6 Guardrails, meta-metrics, research anchors
+
+**Guardrails** (each tied to a project rule): grounded fitness only — the anti-gaming trio (real sources, load-bearing properties preserved, external ground truth); algedonic selection — nothing auto-adopts; proposes-never-commits; D-seam entries plus tests in the same change; SKILL.md edits re-run pin suites; scripts are bash; new crates declare `[lib] path`; no `mod.rs`; no `unwrap()`; no backward compatibility (§P8.7-Q5) — replace superseded paths directly and delete them in the same change: no deprecated APIs, legacy adapters, compatibility flags, dual writes, or parallel implementations; every phase names its replaces; energy budgets price the loop.
+
+**Meta-metrics:** experiment-prediction Brier (primary — the system learning to predict its own improvements; computed from the registry, reported at algedonic review); retention rate (selected variants still active after N weeks); throughput (proposals → registered → completed → selected/rejected per cycle); variety (genotype distribution in active use — the curator's variety-deficit metric extended to evolution).
+
+**Research anchors** (all retrieved in research run `9c47de77a42b8ed8`): population search over hill-climbing — EvoJAX (Tang, Tian & Ha, 2022); Recurrent World Models (Ha & Schmidhuber, 2018). Small legible controllers — Weight Agnostic Neural Networks (Gaier & Ha, 2019); World Models (Ha & Schmidhuber, 2018). Structural interpretability — Neuroevolution of Self-Interpretable Agents (Tang, Nguyen & Ha, 2020). The loop as the target — The AI Scientist (Lu et al., 2024); The AI Scientist-v2 (Yamada et al., 2025); Towards end-to-end automation of AI research (Yamada et al., Nature, 2026). Recombination — Evolutionary optimization of model merging recipes (Akiba et al., 2024). Adversarial and open-ended search — Digital Red Queen (Kumar et al., 2026); Automating the Search for Artificial Life with Foundation Models (Kumar et al., 2024).
+
+#### P8.7 Decision log (operator rulings, 2026-09-30)
+
+| Decision | Ruling | Consequence |
+| --- | --- | --- |
+| Q0 — docs slot | Not answered in the locking reply; proceeded with the host-as-section recommendation (this section, per the P7f precedent) to keep the locked decisions moving. Promotion path recorded above; an operator override (cap raise or condensation-first) splits this section into `research/evolution-reference-model.md` at any time. | The reference model is durable today; standalone-file promotion pending a slot. |
+| Q1 — loop autonomy | **b — budgeted auto-run.** Deterministic-fitness experiments auto-run within a declared energy budget; the operator chairs selection at the algedonic review with itemized spends; human-judged-fitness experiments route through the operator before running. | The loop runs between reviews; the operator keeps the selection chair and the budget lever. |
+| Q2 — first scope | **a+b — skills and templates together, plus agent cards.** The skill genotype is composite: SKILL.md and its `.j2` templates evolve as one unit ("you need to evolve the skill.md with the jinja2 templates" — operator, 2026-09-30). | Skill experiments mutate process text and templates in one variant; pin suites re-run in the same change. |
+| Q3 — server shape | **B — build `hkask-mcp-evolution` now.** Demand and requirement are proven by the existing GEPA machinery and the active work thread (operator, 2026-09-30); the server lands together with the protocol. | Phase 1 builds the 13th managed server; the program is re-phased around its schema (§P8.5). |
+| Q4 — human gate | **A — algedonic review as the single selection surface.** | One board, one fossil record; selection concentrates in the existing gemba walk. |
+| Q5 — compatibility posture | **No backward compatibility — pre-release** (operator, 2026-09-30; the plan-level §1 ruling applied to this program). Replace superseded paths directly, update all callers together, delete old paths in the same change; no deprecated APIs, legacy adapters, compatibility flags, dual writes, or parallel implementations; no legacy-import surface in the server. | Phase 1 is replacement-first: the GEPA retention mechanism and per-skill record formats are deleted as the registry lands, not kept as fallbacks. |
 
 ## 7. Validation record from the review
 

@@ -538,12 +538,35 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
         credentials: Some(&[]),
         config_env: Some(&[
             // Artifacts dir — needed so `production_root` resolves
-            // `spreadsheet-mcp/workbooks/` under the same visible root as
-            // the parent process. Without this, an operator
+            // `spreadsheet-mcp/workbooks/` under the same visible root as the
+            // parent process. Without this, an operator
             // `HKASK_ARTIFACTS_DIR` override is silently dropped by
             // `filter_config_env_for_server` (the same trap the portfolio
             // entry documents).
             "HKASK_ARTIFACTS_DIR",
+        ]),
+    },
+    BuiltinMcpServer {
+        id: "evolution",
+        binary: "hkask-mcp-evolution",
+        description: "Evolution — experiment registry for the sharded evolution program: registered experiments with pre-registered predictions, variant lineages, grounded fitness records, and selection fossils",
+        // HKASK_DB_PASSPHRASE is the ONE SQLCipher passphrase — the evolution
+        // registry opens with it via the canonical resolve_db_passphrase
+        // chain (same as curator/kata-kanban/research/swarm/training). A
+        // missing passphrase fails startup visibly (Infrastructure), never
+        // an empty-key open.
+        credentials: Some(&["HKASK_DB_PASSPHRASE"]),
+        config_env: Some(&[
+            // Data dir — needed so the registry's default DB path
+            // (`mcp_server_db("evolution", "evolution")` under the D28
+            // layout) resolves under the same root as the parent process.
+            // Without this, an operator HKASK_DATA_DIR override is silently
+            // dropped by `filter_config_env_for_server`.
+            "HKASK_DATA_DIR",
+            // Registry DB path override — read via std::env::var in run()
+            // (the same non-secret DB-path pattern as HKASK_KANBAN_DB and
+            // HKASK_RESEARCH_DB).
+            "HKASK_EVOLUTION_DB",
         ]),
     },
 ];
@@ -943,6 +966,26 @@ pub(crate) fn filter_config_env_for_server(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The evolution server's registration entry is pinned: id, binary, the
+    /// SQLCipher passphrase credential, and the config allowlist aligned with
+    /// the crate's actual env reads (HKASK_DATA_DIR for the D28 default DB
+    /// path, HKASK_EVOLUTION_DB for the override). A drift here breaks launch
+    /// under governed env before any tool runs — the allowlist is the only
+    /// delivery path for the passphrase (no std::env fallback tier in the
+    /// child).
+    #[test]
+    fn evolution_registration_entry_is_pinned() {
+        let server = BUILT_IN_MCP_SERVERS
+            .iter()
+            .find(|s| s.id == "evolution")
+            .expect("evolution server registered");
+        assert_eq!(server.binary, "hkask-mcp-evolution");
+        let expected_credentials: &[&str] = &["HKASK_DB_PASSPHRASE"];
+        let expected_config: &[&str] = &["HKASK_DATA_DIR", "HKASK_EVOLUTION_DB"];
+        assert_eq!(server.credentials, Some(expected_credentials));
+        assert_eq!(server.config_env, Some(expected_config));
+    }
 
     #[test]
     fn qa_generation_setting_round_trips_and_reaches_only_its_consumer() {

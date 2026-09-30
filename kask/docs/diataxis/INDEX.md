@@ -55,7 +55,7 @@ How-to quadrant alone.
 
 ### MCP server crates — complete 12-server inventory
 
-The 12 managed server crates are documented cross-cuttingly under
+The 13 managed server crates are documented cross-cuttingly under
 [`kask/docs/reference/mcp-servers/`](../reference/mcp-servers/README.md) rather
 than receiving another per-crate set:
 

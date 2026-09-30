@@ -10,7 +10,7 @@ mds_categories: [composition, trust, lifecycle]
 
 # zed-kask — Minimal-Divergence Fork Architecture & Migration Plan
 
-> **One-line frame:** `zed-kask` is a fork of Zed that tracks `upstream` and carries a named, test-pinned divergence surface. Zed-side files are not assumed byte-identical: `DIVERGENCE.md` records the current numbered seams and their retired gaps, while hKask libraries live under `kask/`, the editor owns the process-global Regulation/runtime graph, and 12 MCP servers run as governed child processes. The former Kask panel is deleted; the Agent panel, cross-domain Steer panels, and inline widgets are the live surfaces.
+> **One-line frame:** `zed-kask` is a fork of Zed that tracks `upstream` and carries a named, test-pinned divergence surface. Zed-side files are not assumed byte-identical: `DIVERGENCE.md` records the current numbered seams and their retired gaps, while hKask libraries live under `kask/`, the editor owns the process-global Regulation/runtime graph, and 13 MCP servers run as governed child processes. The former Kask panel is deleted; the Agent panel, cross-domain Steer panels, and inline widgets are the live surfaces.
 
 ## Table of contents
 
@@ -40,7 +40,7 @@ mds_categories: [composition, trust, lifecycle]
 
 ---
 
-> **Current state (2026-09-23):** `kask/crates/` contains 19 libraries (18 `hkask-*` plus `kask_bridge`) and `kask/mcp-servers/` contains 12 server packages. The editor-side integration also includes Swarm, Kanban, Portfolio, and Media Steer panels plus inline viz widgets. [`DIVERGENCE.md`](../../../DIVERGENCE.md) is the authoritative Zed-side seam table; retired numbers are not active seams.
+> **Current state (2026-09-23):** `kask/crates/` contains 19 libraries (18 `hkask-*` plus `kask_bridge`) and `kask/mcp-servers/` contains 13 server packages. The editor-side integration also includes Swarm, Kanban, Portfolio, and Media Steer panels plus inline viz widgets. [`DIVERGENCE.md`](../../../DIVERGENCE.md) is the authoritative Zed-side seam table; retired numbers are not active seams.
 
 ---
 
@@ -75,7 +75,7 @@ Inference routing (`crates/language_model`, `language_model_core`, `language_mod
 
 ### 2.2 hKask keeps (unique: curator + sovereignty + tools) — compiled into zed-kask
 
-**Status (2026-09-28):** **19 kask crates** under `kask/crates/` (18 `hkask-*` + `kask_bridge`) plus **12 MCP server crates** under `kask/mcp-servers/` and zed-side crates (`swarm_panel`, `kanban_panel`, `portfolio_panel`, `hkask-steer`, `hkask-viz-core`, `hkask-*-widget`, `hkask-tool-invoker`, `marketplace_ui_common`). The `kask_extensions_ui` crate was removed 2026-08-20 (skill marketplace retired); the `hkask-conversation-injector` zed-side crate was removed 2026-09-28 (D21 retirement, commit `fa95c2b8c7`). 12 MCP servers on disk (curator may be unloaded via `kask.mcp.overrides`).
+**Status (2026-09-28):** **19 kask crates** under `kask/crates/` (18 `hkask-*` + `kask_bridge`) plus **13 MCP server crates** under `kask/mcp-servers/` and zed-side crates (`swarm_panel`, `kanban_panel`, `portfolio_panel`, `hkask-steer`, `hkask-viz-core`, `hkask-*-widget`, `hkask-tool-invoker`, `marketplace_ui_common`). The `kask_extensions_ui` crate was removed 2026-08-20 (skill marketplace retired); the `hkask-conversation-injector` zed-side crate was removed 2026-09-28 (D21 retirement, commit `fa95c2b8c7`). 13 MCP servers on disk (curator may be unloaded via `kask.mcp.overrides`).
 
 | Crate                                                                                     | Why irreducible                                                                                                                                                                                                                                                                                                            |
 | ----------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -93,7 +93,7 @@ Inference routing (`crates/language_model`, `language_model_core`, `language_mod
 | `hkask-mcp`                                                                               | Child-process lifecycle, MCP dispatch, and metering. Per-agent `CallCap` is charged at `McpRuntime::invoke` as a runaway-loop breaker (fail-open on an unseeded agent ); governed completion persists `SpanKind::ToolCompleted`, and persistence failures warn at `reg.mcp` (`kask/crates/hkask-mcp/src/runtime.rs:1545-1612`).                                                                                                                                                                |
 | `hkask-condenser`                                                                         | In-process thread condensation via `kask_bridge::BridgeThreadCondenser`.                                                                                                                                                                                                                                                  |
 | `hkask-services-core`                                                                     | Shared foundation: `ServiceError`, `ServiceConfig`, `HkaskSettings`.                                                                                                                                                          |
-| 12 MCP servers (on-disk set)                                                              | **The tools** — child processes over stdio (D3), governed by the in-process `McpRuntime`.                                                                                                                                                                                                                                                                             |
+| 13 MCP servers (on-disk set)                                                              | **The tools** — child processes over stdio (D3), governed by the in-process `McpRuntime`.                                                                                                                                                                                                                                                                             |
 
 ### 2.3 MCP load set (12 on disk)
 
