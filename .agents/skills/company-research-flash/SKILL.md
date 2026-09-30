@@ -5,14 +5,14 @@ description: "Equity research flash pipeline (EFRA-AI conversion): SCOUT → sou
 
 # Company Research — Flash Pipeline
 
-Equity research flash pipeline converted from EFRA-AI (Replicant-Partners). Governed process producing a flash note / initiation report, with an author-side evidence review before publication. MCP tool calls (forecast_list, company_research_search, web_search, company_transcript, scenario_build, dcf_valuation, comparable_analysis, expectations_gap, scenario_impact_valuation, market_check_resolutions, market_calibration, market_match, evaluate_evidence, forecast_persist) are called directly; templates do LLM synthesis over their outputs.
+Equity research flash pipeline converted from EFRA-AI (Replicant-Partners). Governed process producing a flash note / initiation report, with an author-side evidence review before publication. MCP tool calls (forecast_list, company_research_search, web_search, company_transcript, dcf_valuation, comparable_analysis, expectations_gap, scenario_impact_valuation, market_check_resolutions, market_calibration, market_match, evaluate_evidence, forecast_persist) are called directly; templates do LLM synthesis over their outputs.
 
 ## When to Use
 
 - When you need a flash note or initiation report for an equity ticker, following the Valentine × Gunn Dual-Mode Framework.
 - When you want the full EFRA-AI main pipeline (SCOUT → INTEL → FORENSIC × 2 → CRITICAL FACTOR → VALUATION → COMMUNICATION → KATA → LENS) as a single governed process.
 - When you want deterministic, testable MCP tool calls (DCF, comparables, expectations gap, scenario-weighted PT) rather than LLM-mediated tool use.
-- When you want the forecast-to-outcome calibration loop (market_check_resolutions → KATA PDCA "check") that EFRA-AI's KATA agent describes but cannot close.
+- When you want the analyst forecast-to-outcome calibration loop (`forecast_persist` → recorded outcomes → `forecast_list` → the KATA PDCA "check" `lisp_eval` form) that EFRA-AI's KATA agent describes but cannot close.
 - When you want the LENS five-framework consistency audit (The Loop, Superforecasting, Dunning-Kruger, Hidden Champions, Kauffman) as a convergence signal.
 
 ## When NOT to Use
@@ -31,14 +31,17 @@ SCOUT component scoring, INTEL synthesis, LISTEN reading, FORENSIC and
 CRITICAL FACTOR judgment, COMMUNICATION drafting, and the LENS audit are
 P — critiqued by the author-side evidence review, the DROP/HALT/BLOCK gate
 inputs, and the operator. The gates and computations are D: the alpha
-score, the pt_12m blend, the rr/rating/DROP gate, and the ENTER gate
-dispatch run in `lisp_eval` (fixed forms — publication requires the ENTER
+score, the pt_12m blend, the rr/rating/DROP gate, the ENTER gate
+dispatch, the KATA calibration measure, and the publication gate
+(adjusted confidence + the publish boolean) run in `lisp_eval` (fixed forms — publication requires the ENTER
 gate's literal output and adjusted confidence ≥ 0.50, never the model's
 assessment); the valuation tools (`dcf_valuation`, `comparable_analysis`,
 `expectations_gap`, `scenario_impact_valuation`) are server oracles over
 model-supplied inputs; quote verification runs `lisp_eval`
-`string-contains` against its own passage. The KATA check closes
-deterministically: `market_check_resolutions` → `market_calibration`.
+`string-contains` against its own passage. The KATA calibration measure
+closes deterministically: `forecast_list` over the analyst's resolved
+forecasts → the calibration `lisp_eval` form (the `market_calibration`
+bucket Brier is market context, never the analyst's calibration).
 
 ## Instructions
 
@@ -100,18 +103,18 @@ After INTEL collection, read the company once through the `listening` skill's lo
 
 1. Identify 3–5 critical factors that drive EPS or the multiple.
 2. Construct Bull/Base/Bear scenarios with granular probabilities (not round numbers) and EPS impact.
-3. Emit impact_mappings (per-node DCF assumption deltas for scenario_impact_valuation).
+3. Emit impact_mappings (per-node DCF assumption deltas for scenario_impact_valuation) and the scenario tree in the flat format the tool accepts — the Bull/Base/Bear nodes with their ids and marginal probabilities, so `scenario_impact_valuation` has its `scenario_tree` input from this stage.
 4. Empty factors = DROP terminal gate.
 
 ### forensic-full
 
 1. Full audit: accruals quality, governance (board independence, COB/CEO separation), management profile (owner-operator, capital allocation track record).
 2. Consume company_transcript MCP tool output for verbatim management quotes. If `company_transcript` is unavailable, search for `"{company} earnings call transcript Q{N} {year}"` via `web_search(provider="serpapi")` — SerpAPI supports YouTube transcript extraction. Fall back to `web_search(provider="tavily")` for written transcript sources. Never substitute Wikipedia-sourced paraphrases for verbatim management quotes without flagging a `data_gap`.
-3. Emit recommendation (BLOCK terminal gate), management_quality, governance_score, accruals_score, and the revised severity — the full audit may upgrade or downgrade the pre-screen severity on deeper evidence.
+3. Emit recommendation (BLOCK terminal gate), management_quality, governance_score, accruals_score, and the revised severity — the full audit may upgrade or downgrade the pre-screen severity on deeper evidence. A revised severity re-binds `eps_haircut` and `dr_add_bps` to the severity scale (the forensic-pre-screen table): the VALUATION stage consumes the re-bound values, never the pre-screen's stale ones.
 
 ### valuation-8step
 
-1. Render `company-research/valuation-8step` with `ticker`, the `forensic_profile` (severity, eps_haircut, dr_add_bps from the FORENSIC stages), the `cf_scenarios` (the Bull/Base/Bear outputs — the bear case anchors the risk-reward), the `intel_bundle`, the `downstream_mode` from SCOUT (the operating mode — valentine / gunn / dual), the four MCP tool outputs (`dcf_result`, `comparables_result`, `expectations_result`, `scenario_pt_result`), and `lens_tensions` from the prior LENS audit when re-entering — address them in this run.
+1. Render `company-research/valuation-8step` with `ticker`, the `forensic_profile` (severity, eps_haircut, dr_add_bps from the FORENSIC stages), the `cf_scenarios` (the Bull/Base/Bear outputs — the bear case anchors the risk-reward), the `intel_bundle`, the `downstream_mode` from SCOUT (the operating mode — valentine / gunn / dual), the four MCP tool outputs (`dcf_result`, `comparables_result`, `expectations_result`, `scenario_pt_result`), and `lens_tensions` from the prior LENS audit when re-entering — address them in this run. Call `dcf_valuation`, `comparable_analysis` and `scenario_impact_valuation` with the FORENSIC-adjusted inputs so the tool outputs the template consumes already reflect the forensic severity: each tool's `discount_rate` carries `dr_add_bps` (bps converted to decimal, e.g. 150bps → +0.015) and the earnings-basis inputs (margins, and growth to the extent it is earnings-driven) are multiplied by (1 − `eps_haircut`/100, e.g. 10% → ×0.90). `expectations_gap` has no adjustment surface (its `growth_estimate` is annotation-only) — it is consumed unadjusted. Tool outputs computed on unadjusted inputs are flagged in `data_gaps`, never silently blended.
 2. Produce pt_12m as a weighted blend of the tool outputs via `lisp_eval` — one term per tool output, weights chosen by judgment and stated in the rationale, normalized by the weight sum:
    - form: "(/ (+ (* dcf w_dcf) (* comps w_comps) (* scenario_pt w_siv)) (+ w_dcf w_comps w_siv))"
    - env: `{ "dcf": <DCF fair value>, "comps": <comparables fair value>, "scenario_pt": <scenario-weighted PT>, "w_dcf": <weight>, "w_comps": <weight>, "w_siv": <weight> }`
@@ -135,12 +138,12 @@ After INTEL collection, read the company once through the `listening` skill's lo
 
 ### lens-five-frameworks
 
-1. Render `company-research/lens-five-frameworks` with `ticker`, `downstream_mode`, the prior stage outputs (`scout`, `intel`, `forensic`, `cf`, `valuation`, `communication`, `kata`), `calibration_gap` from kata-calibration-measure, `semantic_tags` from intel-semantic-classify, the market outside view (from `market_match` and `evaluate_evidence`, step 18 mcp_batch), and the evidence audit. The stage applies the five intellectual frameworks: The Loop (economic potential, variant expectations, valuation anchor Value = Profits / (r − g), target return > 12%, max P/E < 25×), Superforecasting (granular probabilities, outside view via market_match, certainty-level drift via semantic_tags), Dunning-Kruger (process_confidence vs final_confidence gap, calibration_gap from kata-calibration-measure), Hidden Champions (Simon 8 characteristics), Kauffman (ergodic vs nonergodic, adjacent possible).
+1. Render `company-research/lens-five-frameworks` with `ticker`, `downstream_mode`, the prior stage outputs (`scout`, `intel`, `forensic`, `cf`, `valuation`, `communication`, `kata`), `calibration_gap` from kata-calibration-measure, `semantic_tags` from intel-semantic-classify, the market outside view (from `market_match` and `evaluate_evidence`), and the evidence audit. The stage applies the five intellectual frameworks: The Loop (economic potential, variant expectations, valuation anchor Value = Profits / (r − g), target return > 12%, max P/E < 25×), Superforecasting (granular probabilities, outside view via market_match, certainty-level drift via semantic_tags), Dunning-Kruger (process_confidence vs final_confidence gap, calibration_gap from kata-calibration-measure), Hidden Champions (Simon 8 characteristics), Kauffman (ergodic vs nonergodic, adjacent possible).
 2. The stage emits overall_verdict (CONSISTENT / PARTIAL / INCONSISTENT — the convergence signal), lens_scores, lens_findings, key_tensions, recommendations, pm_memo (200 words). Never blocks publication.
 
 ### kata-calibration-measure
 
-1. Close the open kata loop — step 20 (kata-improvement-step1-direction) sets the direction but never measures the gap.
+1. Set the direction first: render `kata-improvement/improvement-step1-direction` for this note's scope (knowledge gaps, untested assumptions, the next PDCA experiment) — its `goal`, `current_condition` and `prediction` outputs are the kata-calibration-measure template's required inputs. If the direction step cannot run, its absent prediction is recorded by the adapter as a calibration signal, never silently skipped.
 2. (D) Measure the analyst's own calibration, not the market's: read the analyst's resolved price-target forecasts for this symbol with `forecast_list` (stated `forecast_probability`, outcome in band 1/0), then compute with `lisp_eval`:
    - form: `(begin (define sum (lambda (l) (if (is_null l) 0 (+ (car l) (sum (cdr l)))))) (define mean (lambda (l) (/ (sum l) (length l)))) (cond ((is_null ps) (list 1.0 "no_prediction")) ((< (length ps) 5) (list nil "undetermined")) (t (let ((d (- (mean ps) (mean os)))) (list (abs d) (if (> d 0) "overconfident" (if (< d 0) "underconfident" "calibrated")))))))`
    - env: `{ "ps": <stated probabilities>, "os": <outcomes 1/0> }`
@@ -187,14 +190,13 @@ After KATA/LENS and any consistency-driven revision, assemble the full CASCADE r
 
 ## Convergence
 
-The consistency loop remains LENS-driven: CONSISTENT = 0.0, PARTIAL = 0.5 (re-enter VALUATION with tensions), INCONSISTENT = 1.0 (escalate). LENS remains advisory to publication, but is not a factuality check. Publication separately requires the evidence review performed with no unresolved contradicted load-bearing claim, ENTER eligibility and adjusted confidence ≥ 0.50. Factual failures re-enter collection or the affected synthesis stage, not merely valuation weighting. An unperformed review stops publication and the note is labelled with what was not checked. max_iterations: 3 bounds ALL correction cycles together; exhaustion returns a labelled draft, never a publishable note.
+The consistency loop remains LENS-driven: CONSISTENT = 0.0, PARTIAL = 0.5 (re-enter VALUATION with tensions), INCONSISTENT = 1.0 (escalate to the operator with the tensions named). LENS remains advisory to publication, but is not a factuality check. Publication separately requires the evidence review performed with no unresolved contradicted load-bearing claim, ENTER eligibility and adjusted confidence ≥ 0.50. Factual failures re-enter collection or the affected synthesis stage, not merely valuation weighting. An unperformed review stops publication and the note is labelled with what was not checked. max_iterations: 3 bounds ALL correction cycles together; exhaustion returns a labelled draft, never a publishable note.
 
 ## Cross-Skill Composition
 
 - LISTEN reuses the full `listening` skill (`listening/apply-template-rag`, no-fabrication invariant) over the company's own narrative documents; material disclosures are exempt from its horizon filter.
-- Step 4 reuses `pragmatic-semantics/semantics-classify-statement` (via `company-research/intel-semantic-classify` adapter) — classifies intel items by IS/OUGHT, declarative/probabilistic/subjunctive before downstream steps consume them.
-- Step 20 reuses `kata-improvement/improvement-step1-direction` (Toyota Improvement Kata step 1).
-- The kata-calibration-measure adapter reuses `metacognition/meta-experiment` — closes the open kata loop by measuring the calibration gap using the market_calibration Brier score.
+- The intel-semantic-classify stage reuses `pragmatic-semantics/semantics-classify-statement` (via `company-research/intel-semantic-classify` adapter) — classifies intel items by IS/OUGHT, declarative/probabilistic/subjunctive before downstream steps consume them.
+- The KATA direction step reuses `kata-improvement/improvement-step1-direction` (Toyota Improvement Kata step 1); the kata-calibration-measure adapter reuses `metacognition/meta-experiment` — closes the open kata loop by measuring the calibration gap over the analyst's own resolved forecasts (`forecast_list` → the calibration `lisp_eval` form); the `market_calibration` bucket Brier is market context only.
 - Mandatory verify-before-publish runs the author-side evidence review (`company-research/evidence-review`) over the composed texts; its summary goes in the note as the review note. The flash skill owns collection, correction and publication; the review records what was checked and never labels the note verified.
 
 ## Registry Templates
@@ -208,7 +210,7 @@ All templates live in the shared `kask/registry/templates/company-research/` cra
 | `forensic-pre-screen.j2` | Agent 04 FORENSIC (pre-screen). Quick risk pre-screen across accounting red flags, governance, going-concern signals. Emits `severity` (SEV-1 minor → SEV-5 fraud/restatement), `recommendation` (CLEAR+adj / CONDITIONAL / BLOCK), `eps_haircut`, `dr_add_bps` (severity-scaled — the VALUATION stage consumes them), `findings`. BLOCK is a terminal early-exit gate. FORENSIC cannot be skipped (EFRA-AI invariant). |
 | `valuation-8step.j2` | Agent 05 VALUATION (DEEPEN). 8-step price target engine. Consumes the forensic profile (severity-scaled haircuts), the cf_scenarios bear case, the SCOUT downstream_mode operating mode, four direct MCP tool outputs (`dcf_result`, `comparables_result`, `expectations_result`, `scenario_pt_result`), and lens_tensions on LENS-driven re-entry. Emits `pt_12m`, `pt_components`, `rr_ratio`, `rating` (BUY/HOLD/UNDERPERFORM), `faves`, `confidence`, `data_gaps`. RR < 2:1 + UNDERPERFORM = DROP terminal gate. |
 | `lens-five-frameworks.j2` | Agent 09 LENS. Consistency auditor over every prior stage output plus the calibration gap, semantic tags, the market outside view and the evidence audit. Applies the firm's five intellectual frameworks: The Loop (valuation anchor Value = Profits / (r − g), target return > 12%, max P/E < 25×), Superforecasting, Dunning-Kruger, Hidden Champions, Kauffman / Adjacent Possible. Emits `overall_verdict` (CONSISTENT / PARTIAL / INCONSISTENT), `lens_scores`, `lens_findings`, `key_tensions`, `recommendations`, `pm_memo`. Never blocks publication. |
-| `kata-calibration-measure.j2` | Cross-skill adapter. Adapts metacognition/meta-experiment to close the flash pipeline's open kata loop. Flash step 20 (kata-improvement-step1-direction) sets the direction but never measures the gap. This step measures the analyst's calibration gap using the market_calibration Brier score (step 19) and resolved_outcomes (step 18), then re-measures the current condition. Emits calibration_gap (0.0 calibrated → 1.0 maximum gap) that LENS (step 23) consumes as a 6th axis alongside the existing five frameworks. |
+| `kata-calibration-measure.j2` | Cross-skill adapter. Adapts metacognition/meta-experiment to close the flash pipeline's open kata loop. The KATA direction step (kata-improvement/improvement-step1-direction) sets the direction; this step measures the analyst's calibration gap from their own resolved forecasts (`forecast_list` → the calibration `lisp_eval` form), then re-measures the current condition. Emits calibration_gap (0.0 calibrated → 1.0 maximum gap) that LENS consumes as a 6th axis alongside the existing five frameworks. |
 | `evidence-review.j2` | Author-side evidence review of the composed note texts in the audit working-paper discipline: assertion inventory (materiality-scoped), vouching (claim → evidence), tracing (evidence → report), disagreement coverage, mechanical counts recorded as counts. Emits the review record; never a verified label. Used by company-research-flash and company-research-deep. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `company-research/intel-mosaic`) and a context object with the required variables.

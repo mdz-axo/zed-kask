@@ -1075,6 +1075,104 @@ mod tests {
             !skill_md.contains("reports/company-research/"),
             "the stale reports-path constraint was removed"
         );
+        assert!(
+            !skill_md.contains("using the market_calibration Brier score"),
+            "the stale market-Brier calibration semantics was purged — the analyst's own resolved forecasts are the measurement"
+        );
+
+        // The publication gate — the skill's most load-bearing D gate —
+        // executed on its three branches: publish, block on adjusted
+        // confidence, and the null-input incomplete path.
+        let pub_gate = r#"(if (or (is_null enter_eligible) (is_null unadjusted_confidence) (is_null confidence_adjustment) (is_null review_performed) (is_null unresolved_contradictions)) (list nil false) (let ((adjusted (+ unadjusted_confidence confidence_adjustment))) (list (max 0 adjusted) (and enter_eligible (>= adjusted 0.50) review_performed (= unresolved_contradictions 0)))))"#;
+        assert!(
+            skill_md.contains(pub_gate),
+            "publication gate form must stay pinned in flash SKILL.md"
+        );
+        let publish = hkask_lisp::eval_sandboxed_with_budget(
+            pub_gate,
+            &json!({"enter_eligible": true, "unadjusted_confidence": 0.55, "confidence_adjustment": 0.0, "review_performed": true, "unresolved_contradictions": 0}),
+            100_000,
+            64,
+        )
+        .expect("publication gate must evaluate");
+        assert_eq!(publish, json!([0.55, true]));
+        let blocked = hkask_lisp::eval_sandboxed_with_budget(
+            pub_gate,
+            &json!({"enter_eligible": true, "unadjusted_confidence": 0.55, "confidence_adjustment": -0.10, "review_performed": true, "unresolved_contradictions": 0}),
+            100_000,
+            64,
+        )
+        .expect("publication gate must evaluate on a penalized review");
+        assert_eq!(
+            blocked,
+            json!([0.45000000000000007, false]),
+            "a -0.10 uncorroborated-claim adjustment must block publication below 0.50"
+        );
+        let incomplete = hkask_lisp::eval_sandboxed_with_budget(
+            pub_gate,
+            &json!({"enter_eligible": null, "unadjusted_confidence": 0.55, "confidence_adjustment": 0.0, "review_performed": true, "unresolved_contradictions": 0}),
+            100_000,
+            64,
+        )
+        .expect("publication gate must evaluate on a null input");
+        assert_eq!(
+            incomplete,
+            json!([null, false]),
+            "a missing input is an incomplete data gap, never a publish"
+        );
+
+        // The KATA calibration form — four branches: overconfident,
+        // no_prediction (broken feedback loop), undetermined (<5),
+        // underconfident.
+        let kata = r#"(begin (define sum (lambda (l) (if (is_null l) 0 (+ (car l) (sum (cdr l)))))) (define mean (lambda (l) (/ (sum l) (length l)))) (cond ((is_null ps) (list 1.0 "no_prediction")) ((< (length ps) 5) (list nil "undetermined")) (t (let ((d (- (mean ps) (mean os)))) (list (abs d) (if (> d 0) "overconfident" (if (< d 0) "underconfident" "calibrated")))))))"#;
+        assert!(
+            skill_md.contains(kata),
+            "KATA calibration form must stay pinned in flash SKILL.md"
+        );
+        let over = hkask_lisp::eval_sandboxed_with_budget(
+            kata,
+            &json!({"ps": [0.8, 0.7, 0.9, 0.6, 0.8], "os": [1, 0, 1, 0, 1]}),
+            100_000,
+            64,
+        )
+        .expect("KATA calibration form must evaluate");
+        assert_eq!(
+            over,
+            json!([0.16000000000000003, "overconfident"]),
+            "mean stated 0.76 vs observed 0.6 is a 0.16 overconfident gap"
+        );
+        let no_prediction =
+            hkask_lisp::eval_sandboxed_with_budget(kata, &json!({"ps": [], "os": []}), 100_000, 64)
+                .expect("KATA calibration form must evaluate on empty forecasts");
+        assert_eq!(
+            no_prediction,
+            json!([1.0, "no_prediction"]),
+            "no resolved forecasts is a broken feedback loop (1.0), not neutral"
+        );
+        let undetermined = hkask_lisp::eval_sandboxed_with_budget(
+            kata,
+            &json!({"ps": [0.6, 0.55], "os": [1, 0]}),
+            100_000,
+            64,
+        )
+        .expect("KATA calibration form must evaluate on a short history");
+        assert_eq!(
+            undetermined,
+            json!([null, "undetermined"]),
+            "fewer than 5 resolved forecasts is undetermined (null), never a number"
+        );
+        let under = hkask_lisp::eval_sandboxed_with_budget(
+            kata,
+            &json!({"ps": [0.6, 0.55, 0.65, 0.7, 0.5], "os": [1, 1, 1, 1, 1]}),
+            100_000,
+            64,
+        )
+        .expect("KATA calibration form must evaluate on an underconfident history");
+        assert_eq!(
+            under,
+            json!([0.3999999999999999, "underconfident"]),
+            "mean stated 0.6 vs observed 1.0 is a 0.4 underconfident gap"
+        );
     }
 
     #[test]

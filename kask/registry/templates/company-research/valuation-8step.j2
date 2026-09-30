@@ -85,6 +85,14 @@ weighting, rating, or FaVeS to resolve the tension.
 
 ## 8-Step Price Target Engine
 
+0. **Forensic-adjusted basis** — `dcf_result`, `comparables_result` and
+   `scenario_pt_result` above were computed on FORENSIC-adjusted inputs
+   (discount rate + `dr_add_bps`/10000 from the forensic profile;
+   earnings-basis inputs × (1 − `eps_haircut`/100)). `expectations_result`
+   has no adjustment surface and is consumed unadjusted. If any adjusted
+   tool's output reflects unadjusted inputs, flag it in `data_gaps` and
+   weight that output down in the blend — never silently blend an unadjusted
+   figure.
 1. **Market price** — current price (from inputs or DCF tool's market context)
 2. **DCF fair value** — from `dcf_result`
 3. **Comparable multiples fair value** — from `comparables_result`

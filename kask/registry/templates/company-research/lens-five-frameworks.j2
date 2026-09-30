@@ -81,7 +81,7 @@ The `calibration_gap` field ranges 0.0 (calibrated) to 1.0 (maximum gap). It is 
 ```
 The `certainty_drift_risk` field (low/medium/high) indicates whether the intel mosaic's items were properly classified by certainty level. A high drift risk means downstream steps may have treated a management quote as an ontological fact or a scenario as a forecast. If absent, Lens 2 (Superforecasting) cannot verify that probabilities were applied to the right epistemic category — flag the gap.
 
-### Market Outside View (from market_cmp MCP tool — Tetlock outside view)
+### Market Outside View (from `market_match` and `evaluate_evidence` — Tetlock outside view)
 ```json
 {{ market_outside_view | tojson }}
 ```
@@ -197,4 +197,4 @@ The 2–4 specific tensions that drove the verdict. Each tension: `lens`, `descr
 - If `semantic_tags` is absent, report `semantic_tags: N/A` in Lens 2 — the intel mosaic was not classified by certainty level and the Superforecasting lens cannot verify epistemic category alignment. Flag the gap, do not score Lens 2 as if the classification were checked.
 - If `market_outside_view` is absent, Lens 2 cannot check the outside view — flag it as a gap, do not score Lens 2 as if the outside view were checked.
 - `pm_memo` must be exactly 200 words (±10).
-- `overall_verdict` must be one of the three exact strings — the lisp.eval convergence step matches on these.
+- `overall_verdict` must be one of the three exact strings — the convergence mapping (CONSISTENT=0.0, PARTIAL=0.5 re-enters VALUATION with tensions, INCONSISTENT=1.0 escalates to the operator with the tensions named) reads them.

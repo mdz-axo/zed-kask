@@ -18,15 +18,15 @@ contract:
     result_description: string
     rationale: string
 ---
-{# goal: Adapt metacognition/meta-experiment to close the flash pipeline's open kata loop. Flash step 20 (kata-improvement-step1-direction) sets the direction but never measures the gap. This step measures the analyst's calibration gap using the market_calibration Brier score (step 19) and resolved_outcomes (step 18), then re-measures the current condition. #}
+{# goal: Adapt metacognition/meta-experiment to close the flash pipeline's open kata loop. The KATA direction step (kata-improvement/improvement-step1-direction) sets the direction; this step measures the analyst's calibration gap from their own resolved forecasts (forecast_list -> the calibration lisp_eval form, passed as calibration_gap_measured), then re-measures the current condition. The market_calibration bucket Brier is context only, never the analyst's calibration. #}
 {# #}
 {# This is a thin adapter over meta-experiment. It does NOT run the full #}
-{# Improvement Kata — flash step 20 already did step 1 (direction). This #}
+{# Improvement Kata — the KATA direction step (improvement-step1-direction) already did step 1 (direction). This #}
 {# is step 4 (experiment/measure) only, specialized for the equity- #}
-{# research calibration loop. The output feeds LENS (step 23) as a #}
+{# research calibration loop. The output feeds LENS as a #}
 {# calibration_gap signal alongside the existing kata signal. #}
 
-You are performing the measurement half of the Toyota Improvement Kata for an equity-research pipeline. Flash step 20 set the direction (knowledge gaps, untested assumptions, next PDCA experiment). Your job is to measure the calibration gap — is the analyst calibrated about their own confidence?
+You are performing the measurement half of the Toyota Improvement Kata for an equity-research pipeline. The KATA direction step set the direction (knowledge gaps, untested assumptions, next PDCA experiment). Your job is to measure the calibration gap — is the analyst calibrated about their own confidence?
 
 ## Ticker
 {{ ticker }}
@@ -34,7 +34,7 @@ You are performing the measurement half of the Toyota Improvement Kata for an eq
 ## Goal
 {{ goal }}
 
-## Current Condition (from KATA step 20 — the direction-setting)
+## Current Condition (from the KATA direction step — improvement-step1-direction)
 
 ```json
 {{ current_condition | tojson }}
@@ -48,11 +48,11 @@ You are performing the measurement half of the Toyota Improvement Kata for an eq
 ```
 {% else %}
 ## Prediction
-No prediction was recorded by the KATA direction step. This is itself a calibration signal — the analyst set a direction without predicting whether it would close the gap. Record this in `applied_calibration` and set `calibration_gap` to 1.0 (maximum gap — no prediction means no calibration).
+No prediction was recorded by the KATA direction step. This is itself a calibration signal — the analyst set a direction without predicting whether it would close the gap. Record this in `applied_calibration`. It does not override a measured gap: the `calibration_gap_measured` result is still copied into your output unchanged. Only when there is also no measured gap (no resolved analyst forecasts) is `calibration_gap` 1.0 with direction `no_prediction` (a broken feedback loop, not neutral).
 {% endif %}
 
 {% if calibration_brier %}
-## Calibration Brier Score (from market_calibration MCP tool — step 19)
+## Calibration Brier Score (from market_calibration MCP tool — market context)
 
 ```json
 {{ calibration_brier | tojson }}
@@ -62,13 +62,13 @@ The Brier score ranges 0.0 (perfect calibration) to 1.0 (worst). A Brier score �
 {% endif %}
 
 {% if resolved_outcomes %}
-## Resolved Outcomes (from market_check_resolutions MCP tool — step 18)
+## Resolved Outcomes (from market_check_resolutions MCP tool — market context)
 
 ```json
 {{ resolved_outcomes | tojson }}
 ```
 
-These are previously resolved market outcomes. Compare the analyst's prior forecasts (if any) against these outcomes to assess whether the analyst's confidence was calibrated.
+These are previously resolved market outcomes — environment context for the ellipsis analysis, not the analyst's calibration measurement. The analyst's own resolved forecasts (with their recorded outcomes) are the measurement, passed as `calibration_gap_measured`.
 {% endif %}
 
 {% if context_text %}
@@ -95,7 +95,7 @@ The gap is measured on the ANALYST's own resolved forecasts (stated `forecast_pr
 {{ calibration_gap_measured | tojson }}
 
 Copy its `calibration_gap` and `calibration_direction` into your output unchanged:
-- no prediction recorded → `calibration_gap` 1.0, direction `no_prediction` (a broken feedback loop, not neutral)
+- no resolved analyst forecasts → `calibration_gap` 1.0, direction `no_prediction` (a broken feedback loop, not neutral)
 - fewer than 5 resolved forecasts → `calibration_gap` null, direction `undetermined`
 - otherwise → `calibration_gap` = |mean stated probability − observed hit rate|, direction `overconfident`, `underconfident` or `calibrated`
 
@@ -129,9 +129,9 @@ Copy its `calibration_gap` and `calibration_direction` into your output unchange
 
 ## Constraints
 
-- This is the measurement half only. Do NOT set a new direction — flash step 20 already did that.
-- `calibration_gap` ranges 0.0 (calibrated) to 1.0 (maximum gap). This is the signal LENS (step 23) consumes as a 6th axis alongside the existing five frameworks.
-- If no prediction was recorded by the KATA step, `calibration_gap` must be 1.0 — this is a broken feedback loop, not a neutral state.
+- This is the measurement half only. Do NOT set a new direction — the KATA direction step already did that.
+- `calibration_gap` ranges 0.0 (calibrated) to 1.0 (maximum gap). This is the signal LENS consumes as a 6th axis alongside the existing five frameworks.
+- If no prediction was recorded by the KATA step, record it in `applied_calibration` — it does not override a measured gap. `calibration_gap` is 1.0 with direction `no_prediction` only when there is also no measured gap (no resolved analyst forecasts) — a broken feedback loop, not a neutral state.
 - With fewer than 5 resolved analyst forecasts, `calibration_gap` is null (undetermined), never 0.5 — an unmeasured gap is not a neutral one. Flag it in `rationale`.
 - Do not re-run the KATA direction step. You are closing the loop, not restarting it.
 - The `result_description` must state the calibration verdict (overconfident / well-calibrated / under-confident) and the next PDCA experiment — this is what LENS consumes.
