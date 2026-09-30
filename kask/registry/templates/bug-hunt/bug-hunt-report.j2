@@ -5,27 +5,33 @@ contract:
     charter: object
     evaluated_findings: array
     classified_findings: array
+    taxonomy_summary: object
     quality_criteria: string
     probes_executed: integer
     files_read: integer
     tests_run: integer
     crates_examined: array
-    prior_expedition: object
+    prior_expedition: object|null
+    predicted_findings: integer
+    predicted_category: string
   output:
     expedition_id: string
+    charter: object
     findings: array
     summary: object
     lessons_learned: array
     pattern_signatures: array
     next_charter_focus: string
+    probes_executed: integer
 ---
 {# Phase 5 — REPORT (structured JSON bug report) #}
 {#
   the report now emits lessons_learned and
-  pattern_signatures. These are consumed by the next expedition's charter
-  (via the manifest's loop step routing them as prior_expedition) to close
-  the feedback loop. Without these fields, each expedition is a one-shot and
-  cannot learn from prior iterations.
+  pattern_signatures. The agent routes them back to the next expedition's
+  charter (as prior_expedition.lessons_learned and
+  prior_expedition.pattern_signatures) to close the feedback loop. Without
+  these fields, each expedition is a one-shot and cannot learn from prior
+  iterations.
 #}
 
 You are a bug report compiler. Produce a structured JSON bug report from all prior phases.
@@ -51,11 +57,26 @@ You are a bug report compiler. Produce a structured JSON bug report from all pri
 - Tests run: {{ tests_run | default(0) }}
 - Crates examined: {{ crates_examined | default([]) | tojson }}
 - Quality criteria: {{ quality_criteria }}
+- Prediction (from probe step 0): predicted_findings = {{ predicted_findings | default(0) }}, predicted_category = {{ predicted_category | default('') }}
 {% if prior_expedition and prior_expedition | length > 0 %}
 - Prior expedition: consumed (this is iteration N+1)
 {% else %}
 - Prior expedition: none (first pass)
 {% endif %}
+
+## Step 0 — Reconcile the prediction (D)
+
+The probe step 0 recorded `predicted_findings` and `predicted_category` before
+probing. Reconcile them against the observed results:
+- `confirmed_findings` = confirmed_bugs + potential_bugs (the oracle's counts)
+- `observed_category` = the taxonomy_summary category with the highest count
+
+Compute the count gap with `lisp_eval` (D):
+`(- confirmed_findings predicted_findings)`
+
+Report all four values plus the gap in `summary.prediction_reconciliation`.
+The gap is the charter's calibration signal for the next expedition, not a
+finding — an unreported gap is.
 
 ## Output
 
@@ -94,6 +115,7 @@ Respond with the complete expedition report as JSON. Combine all prior phase out
     "crates_examined": [],
     "files_read": 0,
     "tests_run": 0,
+    "prediction_reconciliation": {"predicted_findings": 0, "confirmed_findings": 0, "count_gap": 0, "predicted_category": "...", "observed_category": "..."},
     "taxonomy_coverage": {
       "by_category": {},
       "by_severity": {}
@@ -118,8 +140,8 @@ Respond with the complete expedition report as JSON. Combine all prior phase out
 
 ### lessons_learned and pattern_signatures — purpose
 
-These two fields close the feedback loop. The manifest's loop step routes them
-back to the charter as `prior_expedition.lessons_learned` and
+These two fields close the feedback loop. The agent routes them back to the
+charter as `prior_expedition.lessons_learned` and
 `prior_expedition.pattern_signatures`. The next charter consumes them to:
 - adjust probe strategy (lessons_learned)
 - extend the probe pattern list (pattern_signatures)
@@ -127,11 +149,11 @@ back to the charter as `prior_expedition.lessons_learned` and
 Without these fields, each expedition is a one-shot and cannot learn from prior
 iterations. Treat them as first-class outputs, not afterthoughts.
 
-: Report Persistence
+### Report Persistence
 
-After producing the report JSON, write it to the trace filesystem as
-`bug-hunt-report.json` in the current run's trace directory (fixed filename,
-expedition_id inside the JSON). Use the `write_file` tool to write the file.
+After producing the report JSON, the agent writes it to the trace filesystem
+as `bug-hunt-report.json` in the current run's trace directory (fixed filename,
+expedition_id inside the JSON) using the `write_file` tool.
 
 The report is the durable record of the expedition: later expeditions consume
 it via `prior_expedition`, and an operator can read it to target test gaps at
@@ -139,7 +161,11 @@ the found locations.
 
 ## Constraints
 
-- Consolidate findings from oracle + taxonomy into a single findings array.
+- Consolidate findings from oracle + taxonomy into a single findings array
+  (join by id: the oracle's evaluated_findings carry location and evidence;
+  the taxonomy's classified_findings carry category, severity, signature).
+- `summary.taxonomy_coverage` comes from the taxonomize's `taxonomy_summary`
+  (by_category / by_severity) — do not recompute it from classified_findings.
 - Each finding must include all fields: id, summary, location, verdict, confidence, reproducibility, beizer_category, severity, evidence, pattern_signature, fix_suggestion.
 - Summary counts must be accurate, including rejected_findings from the oracle.
 - lessons_learned must be concrete and actionable, not generic platitudes.

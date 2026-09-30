@@ -47,8 +47,13 @@ For each finding, assign a tier, confidence, AND reproducibility:
 | Tier | Criteria | Confidence | Reproducibility | Label |
 |------|----------|-----------|-----------------|-------|
 | Tier 1 | Contract violated | 0.90–1.00 | any | BUG — cite the contract |
-| Tier 2 | Pattern matched, no contract | 0.60–0.89 | any | POTENTIAL BUG — cite the pattern |
+| Tier 2 | Pattern matched, no contract | 0.60–0.89 | any | POTENTIAL_BUG — cite the pattern |
 | Tier 3 | Suspicious but unverified | <0.60 | any | OBSERVATION — flag as contract gap |
+
+The categorical criterion governs tier assignment; the confidence bands are
+typical ranges, not gates — a contract-violated finding is Tier 1 BUG even at
+0.75. The convergence check re-derives consistency from the cited contract,
+not the confidence number.
 
 ### Reproducibility axis (separate from confidence)
 
@@ -117,6 +122,7 @@ Respond with a JSON object:
       "summary": "one sentence — what the finding is and why it matters",
       "location": { "file": "src/path.rs", "function": "fn_name", "line_approx": "123-127" },
       "verdict": "BUG | POTENTIAL_BUG | OBSERVATION",
+      "contract": "the violated contract for Tier 1 BUG findings (verbatim or precise reference); null for other tiers",
       "confidence": 0.85,
       "reproducibility": "reproduced | reproducible | hard_to_reproduce | not_reproducible",
       "is_vs_ought": "IS | OUGHT",

@@ -2118,4 +2118,104 @@ mod tests {
             "the gap is [findings gap, blockers gap] — the report's unreported-gap signal"
         );
     }
+
+    #[test]
+    fn test_bug_hunt_skill_md_pins_forms() {
+        // bug-hunt pins two lisp_eval forms — the convergence computation
+        // (new confirmed-or-potential locations vs the prior expedition, plus
+        // the verdict/contract/location defect count) and the report's
+        // prediction-reconciliation count gap. The convergence form's defect
+        // channel reads `verdict` and `contract` — the keys the oracle
+        // actually emits; the pre-repair form read `tier`, which no oracle
+        // output carries, so the channel was vacuously true (a contract-less
+        // BUG reported 0 defects — a silent false negative in the D check).
+        // If either form drifts, this fails until skill and tests are
+        // reconciled.
+        let skill_md = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../.agents/skills/bug-hunt/SKILL.md"
+        ))
+        .expect("bug-hunt SKILL.md must exist in the workspace");
+
+        // 1. The convergence form.
+        let convergence = r#"(begin (define new-locs (lambda (cur prior) (if (is_null cur) (quote ()) (if (member (car cur) prior) (new-locs (cdr cur) prior) (cons (car cur) (new-locs (cdr cur) prior)))))) (define bad (lambda (fs) (if (is_null fs) 0 (+ (if (and (string= (assoc "verdict" (car fs)) "BUG") (is_null (assoc "contract" (car fs)))) 1 0) (if (is_null (assoc "location" (car fs))) 1 0) (bad (cdr fs)))))) (list (new-locs current_locations prior_locations) (bad findings)))"#;
+        assert!(
+            skill_md.contains(convergence),
+            "convergence form must stay pinned in bug-hunt SKILL.md"
+        );
+        let contractless_bug = hkask_lisp::eval_sandboxed_with_budget(
+            convergence,
+            &json!({
+                "current_locations": ["src/foo.rs:10"],
+                "prior_locations": [],
+                "findings": [
+                    {"verdict": "BUG", "contract": null, "location": {"file": "src/foo.rs", "line_approx": "10"}}
+                ]
+            }),
+            100_000,
+            64,
+        )
+        .expect("convergence form must evaluate");
+        assert_eq!(
+            contractless_bug,
+            json!([["src/foo.rs:10"], 1]),
+            "a Tier-1 BUG without a cited contract is a defect — the channel must fire on real oracle output"
+        );
+        let clean = hkask_lisp::eval_sandboxed_with_budget(
+            convergence,
+            &json!({
+                "current_locations": ["src/foo.rs:10", "src/bar.rs:20"],
+                "prior_locations": ["src/bar.rs:20"],
+                "findings": [
+                    {"verdict": "BUG", "contract": "no unwrap in library code", "location": {"file": "src/foo.rs", "line_approx": "10"}},
+                    {"verdict": "POTENTIAL_BUG", "contract": null, "location": {"file": "src/bar.rs", "line_approx": "20"}}
+                ]
+            }),
+            100_000,
+            64,
+        )
+        .expect("convergence form must evaluate on a clean expedition");
+        assert_eq!(
+            clean,
+            json!([["src/foo.rs:10"], 0]),
+            "a cited-contract BUG with a location is clean; prior locations are excluded from new-locs"
+        );
+        let uncited = hkask_lisp::eval_sandboxed_with_budget(
+            convergence,
+            &json!({
+                "current_locations": [],
+                "prior_locations": [],
+                "findings": [
+                    {"verdict": "OBSERVATION", "contract": null}
+                ]
+            }),
+            100_000,
+            64,
+        )
+        .expect("convergence form must evaluate on an uncited finding");
+        assert_eq!(
+            uncited,
+            json!([[], 1]),
+            "a finding without a location is a no-fiction defect"
+        );
+
+        // 2. The prediction-reconciliation count gap.
+        let gap = r#"(- confirmed_findings predicted_findings)"#;
+        assert!(
+            skill_md.contains(gap),
+            "prediction-reconciliation gap form must stay pinned in bug-hunt SKILL.md"
+        );
+        let reconciled = hkask_lisp::eval_sandboxed_with_budget(
+            gap,
+            &json!({"confirmed_findings": 7, "predicted_findings": 5}),
+            100_000,
+            64,
+        )
+        .expect("gap form must evaluate");
+        assert_eq!(
+            reconciled,
+            json!(2),
+            "the count gap is the charter's calibration signal for the next expedition"
+        );
+    }
 }

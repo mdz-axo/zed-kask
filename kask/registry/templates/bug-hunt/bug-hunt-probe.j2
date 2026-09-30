@@ -3,7 +3,8 @@
 contract:
   input:
     charter: object
-    probe_findings: string
+    probe_findings: string|null
+    probe_depth: string
     files_read: integer|null
     tests_run: integer|null
     probes_executed: integer|null
@@ -52,8 +53,8 @@ Only report what the agent actually discovered through MCP tool usage.
 
 The agent has not yet executed the probe. Using the charter's probe_instructions,
 explore the target with available MCP tools:
-- `file:read` — read source files
-- `code:search` — search for bug patterns
+- `read_file` — read source files
+- `grep` — search for bug patterns
 - `terminal` — run cargo check, cargo test, cargo clippy
 
 ### Step 1 — Static baseline patterns (floor, not ceiling)
@@ -99,7 +100,7 @@ Check for the presence of tests:
 If tests are absent or sparse:
 - Record this as a finding (Tier 3 OBSERVATION in the oracle, but a finding
   nonetheless). Missing tests are a quality threat per Weinberg's definition.
-- Adjust strategy: shift toward static analysis (more `code:search`, more
+- Adjust strategy: shift toward static analysis (more `grep`, more
   `cargo clippy -- -W warnings`) since dynamic probing has nothing to run.
 - If `probe_depth` includes `dynamic` or `full`, note that BugStalker runtime
   probes are not possible without a binary to debug.
@@ -107,8 +108,10 @@ If tests are absent or sparse:
 ### Step 4 — Algedonic escalation (VSM S1→S5 short-circuit)
 
 While probing, if you encounter any of the following, emit a `probe_escalation`
-entry IN ADDITION to the normal finding. These short-circuit the full pipeline
-— the user should see them before taxonomize/report completes:
+entry IN ADDITION to the normal finding. The agent surfaces these entries to
+the user IMMEDIATELY after the probe phase — before oracle/taxonomize/report
+run — which is the short-circuit; the prefixed findings still flow into the
+oracle as ordinary findings:
 
 - `unsafe` block with likely undefined behavior (raw pointer dereference
   without provenance, data race through `UnsafeCell`, etc.)
@@ -167,5 +170,6 @@ Collect all findings as structured text to feed into the oracle phase.
 
 If any algedonic escalations were emitted, prefix the findings with:
 `[ESCALATION] <summary> at <file:line> — <reason>`
-so the oracle and downstream phases can detect and route them.
+so the agent can surface them to the user before the pipeline completes; the
+prefixed findings also flow into the oracle as ordinary findings.
 {% endif %}

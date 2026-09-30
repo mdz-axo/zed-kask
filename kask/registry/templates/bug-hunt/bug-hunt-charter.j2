@@ -4,9 +4,10 @@ contract:
   input:
     target: object
     quality_criteria: string
-    prior_expedition: object
+    prior_expedition: object|null
     mutation_report: object
     precomputed_analysis: object|null
+    crate_model: object|null
   output:
     charter_statement: string
     target_area: string
@@ -14,6 +15,8 @@ contract:
     expected_category: string
     beizer_focus: array
     crate_model: object
+    probe_instructions: array
+    prior_feedback_consumed: string
 ---
 {# Phase 1 — CHARTER (Hendrickson + Bach HTSM + Good Regulator + feedback loop) #}
 {#
@@ -45,7 +48,7 @@ consume them to amplify this charter rather than starting from scratch.
 
 - **lessons_learned**: distill into 1-3 concrete adjustments to probe strategy.
 - **pattern_signatures**: extend the probe pattern list with derived signatures.
-- **next_charter_focus**: if present, this is the convergence check's directed
+- **next_charter_focus**: if present, this is the prior report's directed
   focus for the next iteration. Make it the primary target_area unless it is
   already exhausted.
 {% else %}
@@ -90,13 +93,18 @@ Prioritize `target_area` toward functions with surviving mutants. Adjust
 
 ## Step 1 — Crate Model (Good Regulator compliance)
 
-Before selecting Beizer categories, build a lightweight model of the target
-crate. A regulator must be a model of the system it regulates (Conant-Ashby).
+Before selecting Beizer categories, ground the model of the target crate. A
+regulator must be a model of the system it regulates (Conant-Ashby).
 Jumping straight to taxonomy selection without modeling the crate is a Good
 Regulator violation.
 
-Read the crate's `Cargo.toml`, `lib.rs` / `main.rs`, and module structure.
-Then describe:
+The agent reads the crate BEFORE this render (`Cargo.toml`, `lib.rs` /
+`main.rs`, module structure) and supplies `crate_model`. Refine and use it.
+If `crate_model` is absent, derive what you can from the target,
+`precomputed_analysis`, and `prior_expedition` — and state the sparsity in
+`crate_model.architecture` so downstream phases know the model is thin.
+
+The model describes:
 - **architecture**: 1-2 sentences on the crate's shape (library / binary / both,
   module layout, primary types).
 - **data_flow**: where data enters, where it is transformed, where it exits.
@@ -141,7 +149,7 @@ overrides `requirements` regardless of generic prevalence.
 
 {% if prior_expedition and prior_expedition.next_charter_focus %}
 ## Prior-Directed Focus
-The convergence check directed this iteration to focus on:
+The prior expedition's report directed this iteration to focus on:
   {{ prior_expedition.next_charter_focus }}
 
 Make this the primary target_area and adjust beizer_focus accordingly, unless
