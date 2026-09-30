@@ -1840,6 +1840,11 @@ fn main() {
                             let http_client = app_state_for_deferred.client.http_client();
                             let tokio_handle = gpui_tokio::Tokio::handle(cx);
                             let embedding_model = embedding_model.clone();
+                            // The embedding-side bound on in-flight HTTP calls —
+                            // the same `kask.general.max_concurrency` setting that
+                            // bounds the chat port's dispatch (wire_kask_inference_stack).
+                            let embedding_max_concurrency =
+                                kask_settings.general.max_concurrency as usize;
                             let credentials_provider =
                                 zed_credentials_provider::global(cx);
                             cx.spawn(async move |cx| {
@@ -1854,6 +1859,7 @@ fn main() {
                                         credentials,
                                         http_client,
                                         tokio_handle,
+                                        embedding_max_concurrency,
                                     )
                                 })
                             })

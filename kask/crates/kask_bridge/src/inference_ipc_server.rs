@@ -1790,6 +1790,7 @@ mod tests {
             },
             http_client,
             tokio::runtime::Handle::current(),
+            4,
         );
         let port: Arc<dyn InferencePort> = Arc::new(CannedInferencePort);
         let outcome = dispatch(
