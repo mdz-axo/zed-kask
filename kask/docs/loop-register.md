@@ -186,18 +186,18 @@ assesses alignment where anchors exist, and invents none.
 
 | Server | Tools | Pin | Per-server doc |
 | --- | --- | --- | --- |
-| companies | 40 | count (`hkask_mcp_companies.rs:497-501`) | yes |
-| corpus | 26 | count (`hkask_mcp_corpus.rs:280-290`) | yes |
+| companies | 40 | count (`hkask_mcp_companies.rs:499-503`) | yes |
+| corpus | 26 | count (`hkask_mcp_corpus.rs:289-299`) | yes |
 | curator | 15 | count (`hkask_mcp_curator.rs:2256-2262`) | **no** |
 | kata-kanban | 27 | name-set (build.rs + `tool_names_match_live_router`) | **no** |
-| media | 98 | count (`hkask_mcp_media.rs:449-459`) | yes |
+| media | 98 | count (`hkask_mcp_media.rs:470-480`) | yes |
 | portfolio | 18 | name-set (`hkask_mcp_portfolio.rs:65-75`) | yes |
 | prediction-markets | 32 | count (`hkask_mcp_prediction_markets.rs:2070-2084`) | yes |
 | research | 27 | count (`hkask_mcp_research.rs:2519-2521`) | yes |
-| scenarios | 19 | count (`hkask_mcp_scenarios.rs:1899-1909`) | yes |
+| scenarios | 19 | count (`hkask_mcp_scenarios.rs:1906-1916`) | yes |
 | spreadsheet | 2 | name-set | yes |
-| swarm | 90 | count (`hkask_mcp_swarm.rs:1026-1036`) | yes |
-| training | 9 | count (`hkask_mcp_training.rs:318-326`) | **no** |
+| swarm | 90 | count (`hkask_mcp_swarm.rs:1030-1040`) | yes |
+| training | 9 | count (`hkask_mcp_training.rs:322-330`) | **no** |
 | **total** | **403** | 9 count / 3 name-set | 9/12 |
 
 ### Per-server tool-review ledger (S1–S12; the pass-2 per-tool surface review)
