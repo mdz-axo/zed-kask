@@ -810,8 +810,9 @@ exactly that lag), not evidence of absence.)
   carries it, rule or allowlisted-with-reason; the seven no-producer
   variants allowlisted with their verified reasons). Red-first: the
   closure test, the alert-ids test, and the all-reasons case list all
-  observed RED before the implementation. Net **+80 production lines**
-  (a pathway completion closing a broken feedback loop, not a
+  observed RED before the implementation. Net **~+100 production
+  lines** (measured: 254 crate insertions, ~150 of them tests; a pathway
+  completion closing a broken feedback loop, not a
   condensation candidate — the subtractive constraint governs
   condensation; this slice replaces silent-drop behavior, which has no
   lines to delete). Receipts: rustfmt clean; hkask-regulation --lib
