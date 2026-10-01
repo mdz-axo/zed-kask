@@ -118,7 +118,7 @@ annual. The embedded seed payload equals the authored tree (pinned in
 | `prompt-enhance` | General-purpose prompt enhancement: 7-type taxonomy routing with 3-tier effort knob |
 | `local-research-swarm` | Coordinate a project-sized, source-grounded research effort across a local agent roster, with a kanban board for work state and scoped A2A handoffs |
 | `swarm-intelligence` | Agent-swarm composition PDCA (SENSE → ORIENT → DECIDE → ACT → CHECK → CONVERGE), its receipt-checked local steering loop, and the swarm panel's agent/swarm authoring aid |
-| `lora-training` | LoRA/QLoRA training config and contract enforcement: 8-gate PEFT method selection, math/quant/data/harness audit |
+| `lora-training` | LoRA/QLoRA training config and contract enforcement: 8-gate PEFT method selection, 19-gate phase-aware audit (math/quantization/data/forgetting/harness/runtime/persistence) |
 
 ### Coding in your project
 

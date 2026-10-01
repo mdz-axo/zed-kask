@@ -158,7 +158,9 @@ STATIC_CONFIG
   - Local/unknown hosts: `not_applicable`.
   [Citation: HF huggingface-llm-trainer skill §Critical: Saving Results to
    Hub — ephemeral environment, must push to Hub]
-  Runtime enforcement: `lora_validation::validate_persistence()`.
+  Runtime enforcement: `training_submit`'s G-P1 preflight — `HuggingFaceTraining::from_env()`
+  (submit.rs:61-76, the reg.lora.audit gate="G-P1" refuse span) plus the runpod host's
+  defense-in-depth persistence check (runpod.rs:1012-1026).
 
 HARNESS
 - G-M1 Initialization contract: inspect selected initializer documentation

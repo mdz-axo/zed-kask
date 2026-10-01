@@ -38,8 +38,12 @@ This skill does not train, load, initialize, merge, or evaluate models.
 
 The recommendation (method, harness, hyperparameters) is P — advisory judgment
 from declared evidence, critiqued by the operator's accept/override/reject
-decision; the skill recommends, it never selects. The gate accounting is D:
-the all-present gate-coverage form and the readiness precedence form run in
+decision; the skill recommends, it never selects. The finding classification
+(phase, state, evidence kind, severity) is likewise P — judgment over the
+observed config, critiqued by the no-fiction citation check and the operator's
+reading. The gate accounting is D:
+the all-present gate-coverage form, the readiness precedence form (with its
+enum guard), and the no-fiction citation count run in
 `lisp_eval` over observed gate results — readiness is computed from complete
 coverage, never judged, and missing static evidence never becomes `Pass`. The
 math-contract audit is D (`training_validate_config` — the server validates
@@ -150,9 +154,9 @@ Process order: recommend with `select-method` from declared evidence → operato
 8. The selected configuration starts a bounded PDCA: audit the applicable current-phase gates, check their coverage and states, then route the readiness verdict, `blockers`, and `gate_results_summary` into `prior_iteration` only when a concrete, operator-authorized refinement is possible. First call `lisp_eval` on gate IDs *before* computing readiness:
    - form: `(begin (define all-present (lambda (xs ys) (if (is_null xs) t (and (member (car xs) ys) (all-present (cdr xs) ys))))) (and (> (length expected_gate_ids) 0) (= (length expected_gate_ids) (length observed_gate_ids)) (all-present expected_gate_ids observed_gate_ids) (all-present observed_gate_ids expected_gate_ids)))`
    - env: `expected_gate_ids` from the gate catalog applicable to the current selected method/phase; `observed_gate_ids` from actual gate results (not just the training server's subset). A missing, duplicated, or empty gate list is `Not evaluated`; do not pass a partial list to the readiness rule as if it were complete. Coverage is structural, not proof that each finding is correct.
-   Then compute the readiness verdict from the complete current-phase states with `lisp_eval` using `report.j2`'s precedence (Refuse > Fail > Conditional > Deferred > Not evaluated > Pass):
-   - form: `(begin (define has (lambda (s l) (if (is_null l) nil (or (string= (car l) s) (has s (cdr l)))))) (cond ((is_null states) "Not evaluated") ((has "refuse" states) "Refuse") ((has "fail" states) "Fail") ((has "warn" states) "Conditional") ((or (has "deferred" states) (has "planned" states)) "Deferred") ((has "not_evaluated" states) "Not evaluated") (t "Pass")))`
-   - env: `{ "states": [<state of every gate applicable in the current phase>] }`
+   Then compute the readiness verdict from the complete current-phase states with `lisp_eval` using the precedence below (Refuse > Fail > Conditional > Deferred > Not evaluated > Pass):
+   - form: `(begin (define has (lambda (s l) (if (is_null l) nil (or (string= (car l) s) (has s (cdr l)))))) (define valid-state (lambda (s) (member s (list "pass" "warn" "fail" "refuse" "deferred" "planned" "not_evaluated" "not_applicable")))) (define all-valid (lambda (l) (if (is_null l) t (and (valid-state (car l)) (all-valid (cdr l)))))) (if (not (all-valid states)) "unknown-state" (cond ((is_null states) "Not evaluated") ((has "refuse" states) "Refuse") ((has "fail" states) "Fail") ((has "warn" states) "Conditional") ((or (has "deferred" states) (has "planned" states)) "Deferred") ((has "not_evaluated" states) "Not evaluated") (t "Pass"))))`
+   - env: `{ "states": [<state of every gate applicable in the current phase>] }` — every state must be one of the eight schema states; a state outside the enum (a typo) returns `unknown-state`, never a silent Pass (the pre-repair form's final branch read ANY unrecognized string as Pass — a readiness-inflation hazard; `not_applicable` reads Pass by design: the pass condition is pass-or-not_applicable).
    A complete current-phase `Pass` stops the local loop. Future runtime and post-training requirements remain separately `deferred` or `planned`, not evidence of a preflight pass or reason to rerun a recommendation without new inputs. No coverage or unchanged evidence means `Not evaluated`/blocked, not another turn. Bound: at most 3 operator-authorized refinement turns; report remaining blockers rather than repeating. Readiness is state-based, not a weighted convergence metric.
 9. Return separate `recommendation`, `readiness`, `justification`, and
    `authority` objects.
@@ -184,10 +188,15 @@ Process order: recommend with `select-method` from declared evidence → operato
    or framework-version-specific refusal rule.
 8. Enforce no-fiction mechanically: findings with `evidence_kind` of
    `config_value`, `code_presence`, or `code_absence` MUST have non-null
-   `evidence.config_path` AND non-null `evidence.line`. Findings that fail this
+   `evidence.config_path` AND non-null `evidence.line`. Count the violations
+   with `lisp_eval` before accepting the finding list:
+   - form: `(define requires-citation (lambda (k) (or (string= k "config_value") (string= k "code_presence") (string= k "code_absence")))) (define count-uncited (lambda (fs) (if (is_null fs) 0 (if (and (requires-citation (assoc "evidence_kind" (car fs))) (or (is_null (assoc "config_path" (assoc "evidence" (car fs)))) (is_null (assoc "line" (assoc "evidence" (car fs)))))) (+ 1 (count-uncited (cdr fs))) (count-uncited (cdr fs)))))) (count-uncited findings)`
+   - env: `{ "findings": [<the finding list about to be accepted>] }` — the count is the number of citation-required findings with a null path or line. Findings that fail this
    check are rejected at the audit gate and counted in `rejected_findings` with
-   reason `"missing_citation"`. Findings with `evidence_kind` of
+   reason `"missing_citation"` — the count and the rejected list must reconcile. Findings with `evidence_kind` of
    `not_available`, `operator_assertion`, or `runtime_measurement` are exempt.
+   For long finding lists pass `max_depth` ≥ 8× the list length (the recursive
+   walker consumes 2–4 depth frames per element).
 9. Return a `refuse_escalation` entry for every `refuse` finding, carrying
    `finding_id`, `gate_id`, `claim`, `requirement`, `evidence`, `selected_method`,
    `host`, and `severity: critical`. The invoking agent surfaces it immediately
@@ -213,7 +222,7 @@ Every finding has exactly these fields:
 - `evidence`: `{config_path, line, parameter, value, snippet}`
 - `provenance`: `direct | inference | assessment | operator`
 - `epistemic_mode`: `declarative | probabilistic | subjunctive`
-- `citation`
+- `citation`: array (source citations; the templates' contracts type it as array)
 - `recommendation`
 - `host`
 
@@ -243,7 +252,44 @@ Do not create alternate finding shapes. A recommendation never overwrites
 | `audit-config.j2` | Audit the selected configuration with the applicable subset of 19 declared gates, preserving citations and refuse escalations. Consumes actual `dataset_validation` findings when available and `runtime_metrics` for G-R1 when supplied; unmeasured gates remain unassessed. G-P1 checks declared persistence setup before submit. |
 | `report.j2` | Synthesize audit findings with concrete config evidence, source citations (arXiv paper sections + PEFT v0.19.0 doc sections), severity (critical/high/medium/low), gate ID, and remediation. Preserve the normalized Finding schema, identify contract gaps, and separate recommendation from phase-aware readiness. Produce verdicts from evidence-backed states without reclassifying findings. |
 
-To render a template, call the `render_template` tool with the template ref (e.g., `lora-training/preflight-dataset`) and a context object with the required variables.
+To render a template, call the `render_template` tool with the template ref (e.g., `lora-training/preflight-dataset`) with a context object carrying the required variables.
+
+Template context variables (from each template's [inference] contract):
+- `preflight-dataset.j2`: `host`, `dataset_validation`
+- `select-method.j2`: `training_config_path`, `dataset_path`, `model_size_b`, `memory_budget_gb`, `inference_constraint`, `task_distance`, `quality_vs_cost`, `knowledge_preservation_required`, `host`, `harness_preference`, `trainer_preference`, `adapter_purpose`, `dataset_format_hint`, `provider_capabilities`, `prior_training_history`, `prior_iteration`
+- `audit-config.j2`: `config_paths`, `selected_method`, `host`, `dataset_validation`, `runtime_metrics`
+- `report.j2`: `findings`, `gate_results`, `selected_method`, `computed_readiness`, `host`
+
+## Regression case
+
+All receipts executed live through `lisp_eval` (2026-10-01, batch-10 audit):
+
+- Gate coverage, complete: expected `[G-M1, G-M2, G-Q1]` vs observed
+  `[G-Q1, G-M1, G-M2]` (reordered) → `true` — order-independent, both
+  directions checked.
+- Gate coverage, missing: expected `[G-M1, G-M2, G-Q1]` vs observed
+  `[G-M1, G-Q1]` → `false` — a partial observed list never reads as
+  complete coverage.
+- Readiness precedence, refuse dominates: states `[pass, warn, refuse, pass]`
+  → `"Refuse"`.
+- Readiness precedence, fail over warn: `[pass, fail, warn]` → `"Fail"`.
+- Readiness precedence, deferred: `[pass, deferred]` → `"Deferred"`.
+- Readiness, all pass: `[pass, pass, pass]` → `"Pass"`.
+- Readiness, not_applicable reads Pass: `[pass, not_applicable]` → `"Pass"`
+  (the template's pass condition is pass-or-not_applicable).
+- Readiness, unknown state is loud: `[pass, "warnning"]` (a typo) →
+  `"unknown-state"` — never a silent Pass (the pre-repair form's final
+  branch read any unrecognized string as Pass; the enum guard closes it).
+- Readiness, empty states: `[]` → `"Not evaluated"` (never an inferred
+  pass).
+- No-fiction citation count: three findings — a cited `config_value`
+  (path + line present), an uncited `code_presence` (null config_path),
+  and an exempt `not_available` → `1` — exactly the uncited one; the count
+  must reconcile with `rejected_findings`.
+- bf16 floor: `{"model_size_b": 7}` over `(* model_size_b 2)` → `14` —
+  an approximate base-weight floor, never a fit prediction.
+
+The skill's forms are executed at use time, never anchored in code.
 
 ## Constraints
 
