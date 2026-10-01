@@ -62,6 +62,13 @@
 #   the real count, and every gate reference carries the canonical numbers
 #   — the 2026-09-30 drift (67 recorded against a 73-file tree) landed
 #   undetected while the gate was documentation-enforced only.
+# - check-duplication-ratchet.sh: no net-new duplication clusters (jscpd,
+#   min-tokens 70, over kask/ + fork-diverged files vs the pinned scan
+#   base) beyond duplication-ratchet-baseline.txt — the simplification
+#   program's Phase 1.2 oracle; the redraw-grid two-private-copies class
+#   becomes mechanically detectable. The step fetches the pinned upstream
+#   commit (depth 1) so a bare clone computes the same scan set — the
+#   retired-record step's pattern — and installs jq (jscpd's JSON parser).
 # - Gate selftests: the loop step below runs every
 #   kask/scripts/check-*-selftest.sh — see its comment for scope.
 #
@@ -177,6 +184,11 @@ jobs:
           bash kask/scripts/check-no-smol-timer.sh
       - name: Docs count gate — §3 cap, recorded-measurement parity, reference agreement
         run: bash kask/scripts/check-docs-count-gate.sh
+      - name: Duplication ratchet — no net-new clone clusters beyond the baseline
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq jq
+          git fetch origin "$(head -1 kask/scripts/duplication-scan-base.txt)" --depth=1
+          bash kask/scripts/check-duplication-ratchet.sh
       - name: Gate selftests — every kask/scripts/check-*-selftest.sh fails on a violation
         run: |
           # The glob covers every gate selftest in kask/scripts: the

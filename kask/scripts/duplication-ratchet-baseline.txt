@@ -1,0 +1,7 @@
+2871
+# Duplication-cluster ratchet (simplification program, Phase 1.2).
+# Metric: jscpd 5.4.0 --min-tokens 70 statistics.total.clones
+# over kask/ + fork-diverged files vs the scan base pinned in
+# duplication-scan-base.txt. The scan reads the shared working tree.
+# Bump in the same commit as the addition that justifies it; refresh after
+# removals and in the upstream-merge commit (together with the scan-base pin).

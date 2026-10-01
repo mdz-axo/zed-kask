@@ -1,0 +1,6 @@
+7fc2cf9b84005e3d46159b9b51a466cbc29ada42
+# The upstream commit the duplication scan diverges from — the second
+# parent of the last upstream merge (d2f29c3827, 2026-09-24). The pin, not
+# a live upstream ref, defines the fork-diverged scan set so a bare CI
+# clone computes the same set as a full clone. Refresh in the
+# upstream-merge commit, together with duplication-ratchet-baseline.txt.
