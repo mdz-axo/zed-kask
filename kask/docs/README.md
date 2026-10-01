@@ -2,7 +2,7 @@
 title: "zed-kask Documentation"
 audience: [developers, architects, agents, operators]
 last_updated: 2026-10-01
-version: "2.6.1"
+version: "2.6.2"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]
@@ -16,7 +16,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 
 **Per-crate docs:** [`diataxis/INDEX.md`](diataxis/INDEX.md) lists 19 retained artifacts across 10 cross-cutting sets. Eight tutorials were folded on 2026-09-16; on 2026-09-28 the eight per-crate how-to documents were folded into their set references (each reference gained a Procedures section) and the hkask-tool-port explanation was folded into its reference; `diataxis/hkask-mcp-server/tutorial.md` is the one retained tutorial.
 
-**Corpus size (measured 2026-09-30):** 71 Markdown documents and one live YAML inventory, 72 files total (`find kask/docs -type f | wc -l`) — under the formal **fewer-than-75** count gate, with a working **60-file target** as the condensation direction (cap and target set by operator ruling 2026-09-30, [`DOCUMENTATION_STANDARDS.md`](architecture/DOCUMENTATION_STANDARDS.md) §3). The 2026-09-30 three-layer review added two documents (the admitted cybernetic-nervous-system reference model and the alignment plan); the same day's CU-5 condensation deleted the Aeneas record set (three files — tombstone below). The 2026-09-28 condensation folded the eight per-crate how-to documents into their set references (Procedures sections), recorded in the lifecycle ledger below. [`principle-constraints.yaml`](architecture/principle-constraints.yaml) is a live governance inventory consumed by `kask/scripts/check-principle-constraints.sh`, not a deletion candidate.
+**Corpus size (measured 2026-10-01):** 70 Markdown documents and one live YAML inventory, 71 files total (`find kask/docs -type f | wc -l`) — under the formal **fewer-than-75** count gate, with a working **60-file target** as the condensation direction (cap and target set by operator ruling 2026-09-30, [`DOCUMENTATION_STANDARDS.md`](architecture/DOCUMENTATION_STANDARDS.md) §3). The 2026-09-30 three-layer review added two documents (the admitted cybernetic-nervous-system reference model and the alignment plan); the same day's CU-5 condensation deleted the Aeneas record set (three files — tombstone below). The 2026-09-28 condensation folded the eight per-crate how-to documents into their set references (Procedures sections), recorded in the lifecycle ledger below. On 2026-10-01 the operator's P1 ruling folded the region-space collaboration report into its sibling (tombstone below). [`principle-constraints.yaml`](architecture/principle-constraints.yaml) is a live governance inventory consumed by `kask/scripts/check-principle-constraints.sh`, not a deletion candidate.
 
 ## Repair and improvement plans
 
@@ -87,8 +87,7 @@ The LogiSheets plan's future-state block converted to a registered implementatio
 | [`research/chunking-for-rag-research.md`](research/chunking-for-rag-research.md) | Prior-art study of RAG text-chunking patterns and reference models, and the corpus pipeline's alignment and gaps against them. Recommendations only — not implemented. |
 | [`research/kanban-board-reference-models.md`](research/kanban-board-reference-models.md) | Reference models for kanban board naming/navigation (Wekan, Planka, Kan, Kanboard), the kata-kanban's alignment and gaps against them, and the implemented shaping/test plan. |
 | [`research/deterministic-vs-probabilistic-compute-routing.md`](research/deterministic-vs-probabilistic-compute-routing.md) | When deterministic vs probabilistic compute fits: routing claim with falsifiers, Shannon/Gibbs entropy analogy tested (Jaynes, Landauer bridges and breakdowns), and a problem matrix whose game axis splits into recurrence and world closure. Hypotheses only — no routing implemented. Added 2026-09-27. |
-| [`research/syntax-semantic-probabilistic-deterministic-space.md`](research/syntax-semantic-probabilistic-deterministic-space.md) | The syntax–semantic × probabilistic–deterministic 2×2 region space — the `region-routing` skill's recorded reference model: framing, prior art, an empirical micro-test, the navigable map, and the C1–C15 claim ledger. |
-| [`research/navigating-the-region-space-collaboration.md`](research/navigating-the-region-space-collaboration.md) | Three-party collaboration overlay on the region space (operator/Curator/agent), the region-routing skill's reification record, and the capability log; priced for fold into the sibling space doc (alignment plan §8 sixth slice — ruling pending). |
+| [`research/syntax-semantic-probabilistic-deterministic-space.md`](research/syntax-semantic-probabilistic-deterministic-space.md) | The syntax–semantic × probabilistic–deterministic 2×2 region space — the `region-routing` skill's recorded reference model: framing, prior art, an empirical micro-test, the navigable map, the C1–C15 claim ledger, and the folded three-party collaboration overlay (§4). |
 | [`research/d-seam-audit.md`](research/d-seam-audit.md) | D-seam audit ledger — resumable per-seam worklist over the live `DIVERGENCE.md` surface; identity coverage checked by `kask/scripts/check-d-seam-audit-ledger.sh`. |
 | [`research/cmp-gap-methodology.md`](research/cmp-gap-methodology.md) | Process spec for detecting, measuring, and interpreting gaps between prediction-market and traditional-market expectations (CMP term structures vs rates/FX/equities analogs); worked run instances are recorded as companies-mcp reports. Added 2026-09-19 by the operator. |
 | [`research/media-server-lead-onboarding.md`](research/media-server-lead-onboarding.md) | Onboarding document for the media MCP server lead (combined product-manager/program-manager role): grounded 98-tool surface inventory, architecture and invariants, project principles, tree-specific coding rules, and target-condition priorities; test baseline verified 2026-09-30. |
@@ -97,6 +96,12 @@ The LogiSheets plan's future-state block converted to a registered implementatio
 ## Document lifecycle ledger
 
 Git history is the archive of record. Every removed document names its active successor here. The dated Corpus size measurement above, not this lifecycle ledger, applies the Markdown-document gate and identifies the separate live YAML inventory.
+
+### Folded 2026-10-01 (P1 ruling — region-space research consolidation)
+
+| Artifact | Successor |
+| --- | --- |
+| `research/navigating-the-region-space-collaboration.md` | `research/syntax-semantic-probabilistic-deterministic-space.md` §4 (the three-party collaboration overlay subsection — the durable model); the reification record lives in `.agents/skills/region-routing/SKILL.md` and the skills registry; git history is the session-record archive. |
 
 ### Deleted 2026-09-30 (CU-5 condensation — the Aeneas record set, operator ruling)
 
@@ -189,7 +194,7 @@ The eight tutorial removals landed in `5881f1f406fafe12f4fc65a549dbf1eb0a62ca84`
 - [x] Internal links target retained documents; the eight folded how-to documents' links were repointed to their set references (2026-09-28).
 - [x] Diagram metadata has unique-ID/location registry parity (106 records, tree-verified 2026-09-28).
 - [x] Edited citations use full repository-relative paths; 525 sampled citations across the recomposed artifacts resolve (2026-09-28).
-- [x] Document count is 72, under the fewer-than-75 cap with a working 60-file target (`find kask/docs -type f | wc -l`, measured 2026-09-30).
+- [x] Document count is 71, under the fewer-than-75 cap with a working 60-file target (`find kask/docs -type f | wc -l`, measured 2026-10-01).
 
 ## See also
 

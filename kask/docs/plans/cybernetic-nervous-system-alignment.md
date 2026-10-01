@@ -2,7 +2,7 @@
 title: "Cybernetic Nervous System — Alignment Plan"
 audience: [architects, developers, operators, agents]
 last_updated: 2026-10-01
-version: "0.3.5"
+version: "0.3.6"
 status: "Active — reference model admitted (operator ruling 2026-09-30); S1–S6 recorded; §8 cleanup CU-1–CU-5/CU-7 complete, CU-6 gated on displacement; L25 classified (2026-10-01)"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle]
@@ -543,3 +543,12 @@ current program state), the DIAGRAMS_INDEX row (105 → 107 records,
 spec; the two region-space research docs — one being the
 region-routing skill's reference model, absent from the map until
 now).
+
+**Ruling (2026-10-01):** P1 APPROVED and executed — the fold landed
+(sibling §4 gained the overlay subsection; the probe citations
+repointed; README tombstone recorded; corpus 72 → 71). P2 REJECTED by
+operator ruling ("leave the media file alone" — the role document
+stays). P3 stands as priced, recommended against, unrulled. The gap
+docs (curator, training) are deferred per the operator's direction to
+focus on code work. The 60-file target remains a standing direction;
+the measured floor is 71.

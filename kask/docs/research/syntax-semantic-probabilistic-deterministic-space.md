@@ -1,8 +1,8 @@
 ---
 title: "The Syntax–Semantic × Probabilistic–Deterministic Space: A Navigable 2×2"
 audience: [researchers, architects, agents]
-last_updated: 2026-09-28
-version: "1.0.0"
+last_updated: 2026-10-01
+version: "1.1.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [composition, trust]
@@ -166,18 +166,19 @@ the exemplar sources' published senses, which is why §5 exists.
 **Update 2026-09-28 (post-rebuild).** The five coarse terms below have since
 been ruled into the derived registry (operator ruling 2026-09-28, granted in
 the follow-up pass) and resolve live at the derived rung — entries at
-`derived.rs:675-718`, live probes recorded in
-`navigating-the-region-space-collaboration.md` §1. The table preserves the
+`derived.rs:675-718` are the live record. (The composition-time live probes
+were recorded in the collaboration report, folded into §4 below and removed
+2026-10-01 — git history is the archive.) The table preserves the
 composition-time tier with the update noted per row.
 
 | Term | Tier / anchor | Ruling path / published grounding |
 |---|---|---|
-| `syntax` | coarse at composition → **derived rung** (ruled 2026-09-28, live post-rebuild) | Chomsky (1957) + Tarski (1944) — entry `derived.rs:675`; live probe in the collaboration report §1 |
-| `semantics` | coarse at composition → **derived rung** (ruled 2026-09-28, live post-rebuild) | Tarski (1944) + Wittgenstein (1953) — entry `derived.rs:683`; live probe in the collaboration report §1 |
+| `syntax` | coarse at composition → **derived rung** (ruled 2026-09-28, live post-rebuild) | Chomsky (1957) + Tarski (1944) — entry `derived.rs:675`; live probe at composition (report folded 2026-10-01; git history) |
+| `semantics` | coarse at composition → **derived rung** (ruled 2026-09-28, live post-rebuild) | Tarski (1944) + Wittgenstein (1953) — entry `derived.rs:683`; live probe at composition (report folded 2026-10-01; git history) |
 | `probability` | upper — SUMO `ProbabilityFn` | "The a priori probability of a state of affairs" (Merge.kif, pinned) |
-| `determinism` | coarse at composition → **derived rung** (ruled 2026-09-28, live post-rebuild) | Turing (1936) — entry `derived.rs:691`; live probe in the collaboration report §1 |
-| `computation` | coarse at composition → **derived rung** (ruled 2026-09-28, live post-rebuild) | Turing (1936) + Newell & Simon (1976) — entry `derived.rs:699`; live probe in the collaboration report §1 |
-| `template` | coarse at composition → **derived rung** (ruled 2026-09-28, live post-rebuild) | Jinja2 (Pallets) + the registry instance — entry `derived.rs:711`; live probe in the collaboration report §1 |
+| `determinism` | coarse at composition → **derived rung** (ruled 2026-09-28, live post-rebuild) | Turing (1936) — entry `derived.rs:691`; live probe at composition (report folded 2026-10-01; git history) |
+| `computation` | coarse at composition → **derived rung** (ruled 2026-09-28, live post-rebuild) | Turing (1936) + Newell & Simon (1976) — entry `derived.rs:699`; live probe at composition (report folded 2026-10-01; git history) |
+| `template` | coarse at composition → **derived rung** (ruled 2026-09-28, live post-rebuild) | Jinja2 (Pallets) + the registry instance — entry `derived.rs:711`; live probe at composition (report folded 2026-10-01; git history) |
 | `deterministic_computation` | **derived rung** (operator ruling 2026-09-27) | "Execution with multiplicity 1 … enforces zero conditional entropy relative to the spec." Authority: Turing (1936) |
 | `probabilistic_computation` | **derived rung** (operator ruling 2026-09-27) | "A sample from a learned approximation of a posterior … model confidence is not task probability." Authority: Gershman & Goodman (2014); Hu et al. (2024) [S11] |
 
@@ -310,6 +311,37 @@ computing over probabilistic semantics — assign the region by what the tool
 *guarantees* (nothing, Sem-P) while noting the machine is D; the model
 survives this only by that convention, stated here rather than hidden.
 
+### The three-party collaboration overlay (folded 2026-10-01)
+
+The collaboration report (`navigating-the-region-space-collaboration.md`,
+removed 2026-10-01 per the operator's P1 ruling; git history is the
+archive) modeled the parties that navigate this space. Its load-bearing
+claim [K13, inferred]: **each party is the preferred oracle for a
+different part of the space, and the collaboration breaks when a party
+is used where another's oracle is cheaper.**
+
+| Party | SD (form × deterministic) | SP (form × probabilistic) | Sem-D (meaning × deterministic) | Sem-P (meaning × probabilistic) |
+|---|---|---|---|---|
+| **Operator (human)** | ratifies oracle authority; supplies the spec determinism enforces | confirms *intent* at messy-input boundaries | grants rulings; ground-truths scored outcomes | **the oracle**: spec authority, acceptance, what the work is FOR |
+| **Curator (regulator)** | maintains the D/P legend, thresholds, calibration records | records skill-use failures against the generating skill | owns the derived registry, evidence-cited memory, rulings record | consults memory; escalates domain concerns |
+| **Z-K agent (executor)** | runs the oracles (`lisp_eval`, `lean_check`, `cargo`) | generates into formal shape; iterates against gates | resolves anchors; keeps ledgers and citations verbatim | carries verification states; drafts; asks — never assumes consent |
+
+Three consequences (each a testable OUGHT): the operator is load-bearing
+exactly where machines are weakest — Sem-P scope questions, which is why
+the goal loop vests scoring and acceptance in the operator alone; the
+Curator's distinctive function is the formalization ratchet's operator
+(converting episodic probabilistic experience into deterministic
+structure — no other party both remembers across sessions and holds the
+registry); the agent's distinctive function is the traverse — the only
+party that routinely crosses all four regions in one task, obligated to
+gate at every syntactic handoff and carry verification states across
+semantic spans. The report's machinery classification found every
+on-tree collaboration tool is a **shared representation** — a grounding
+medium in Clark's sense (§5) — sitting at a region boundary rather than
+inside a region. The reified machinery (the `region-routing` skill) and
+its validation record live in the skill
+(`.agents/skills/region-routing/SKILL.md`) and the skills registry.
+
 ## 5. Exemplars and their checkable sources
 
 All sources recorded in research run `b6f6206e00fae965` (server-side ledger,
@@ -361,7 +393,7 @@ States from the six-value lattice; every claim's citation resolves in
 |---|---|---|---|
 | C1 | 2×2 is the user-confirmed base model; graded refinement is open-question extension | verified | U1 |
 | C2 | P-axis terms resolve on the derived rung (Turing 1936; Gershman & Goodman 2014; Hu et al. 2024) | verified | O1 |
-| C3 | Five R-axis/P-axis terms resolved only coarse (5W1H) at composition; rulings requested, none assigned privately. **Update 2026-09-28:** all five ruled and live at the derived rung (collaboration report §1) | verified (composition-time; superseded by the landed ruling) | O1 |
+| C3 | Five R-axis/P-axis terms resolved only coarse (5W1H) at composition; rulings requested, none assigned privately. **Update 2026-09-28:** all five ruled and live at the derived rung (probes recorded at composition — report folded 2026-10-01, git history) | verified (composition-time; superseded by the landed ruling) | O1 |
 | C4 | `probability` resolves to SUMO `ProbabilityFn` | verified | O1 |
 | C5 | First-shot artifact failed 5/12 vectors: 4 accepted-invalid + 1 type-error crash | verified | E1 |
 | C6 | One gate-driven revision closed it: 12/12 pass | verified | E1 |
