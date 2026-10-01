@@ -2,7 +2,7 @@
 title: "Cybernetic Nervous System — Alignment Plan"
 audience: [architects, developers, operators, agents]
 last_updated: 2026-10-01
-version: "0.3.4"
+version: "0.3.5"
 status: "Active — reference model admitted (operator ruling 2026-09-30); S1–S6 recorded; §8 cleanup CU-1–CU-5/CU-7 complete, CU-6 gated on displacement; L25 classified (2026-10-01)"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle]
@@ -495,3 +495,51 @@ target awaits whole-file rulings; CU-6 stays gated; the L25 row's
 `store.rs:707` citation is commit-anchored at `c57e1706db` and
 refreshes when the concurrent stream's in-flight evolution work
 lands.
+
+### Execution record — sixth slice (2026-10-01: CU-5(c) continuation — the whole-file pricing pass; a ruling menu, no deletions)
+
+Method: line counts, frontmatter statuses (all 72 claim Active —
+status does not discriminate), the README lifecycle ledger (seven
+prior condensation rounds), and a corrected repo-wide
+inbound-reference matrix over every basename (the first sweep's
+exclusion filtered inbound references too — the `.rules`
+under-match class, caught when the region-routing SKILL.md citation
+surfaced; re-run counting files that reference each basename,
+excluding only the file itself).
+
+**No-candidate finding (pure orphans): ZERO.** Every file carries at
+least one inbound reference and a role; the corpus is fully
+cross-referenced after seven rounds. The 60-file target is not
+reachable by orphan deletion.
+
+**The ruling menu:**
+
+| # | Candidate | Price | Successor | Assessment |
+| --- | --- | --- | --- | --- |
+| P1 | Fold `research/navigating-the-region-space-collaboration.md` (344 ln) into its sibling `research/syntax-semantic-probabilistic-deterministic-space.md` | −1 file, ~−305 corpus lines | the sibling (its only inbound reference, `:170`); the reified machinery lives in the `region-routing` SKILL.md and the skills README row; git history archives the session narrative (the 2026-09-23 fold pattern) | **recommended** — low risk; the skill cites the sibling, not this doc |
+| P2 | Delete `research/media-server-lead-onboarding.md` (253 ln) | −1 file | `reference/mcp-servers/media.md` + the media diataxis set (the grounded inventory and architecture content is duplicated there); git history | **operator question** — a role document; deletable only if the media-lead onboarding role is closed (a functional call) |
+| P3 | Fold the 8 diataxis `explanation.md` files into their set references (condenser 102, inference 112, mcp-server 135, regulation 187, storage 156, types 155, kask_bridge 143, swarm_system 148 ln) | −8 files | the set references' opening sections (the hkask-tool-port precedent, 2026-09-28) | **priced, recommended against** — the explanations are substantial, and the fold dissolves the Diataxis explanation layer the standards prescribe; an OUGHT taxonomy change, not condensation |
+
+**Gap findings (additions the per-server discipline requires):**
+`reference/mcp-servers/curator.md` and
+`reference/mcp-servers/training.md` do not exist — 2 of the 13 live
+servers are undocumented against the fleet's per-server discipline
+(the gap `evolution.md` closed on 2026-09-30). Ruling these adds +2
+files.
+
+**Target math (honest):** P1 → 71. P1+P2 → 70. With the gap docs →
+72. P1+P2+P3+gaps → 64. **The 60-file target is not reachable
+without P3** (the explanation-layer dissolution, recommended
+against); the steady-state floor under current standards is ~70–72.
+Options: re-rule the target to the measured floor, rule P3 to
+approach 60, or keep 60 as a standing direction.
+
+**README map repairs landed in this slice (CU-8):** the
+loop-register row (23 → 25 loops), the alignment-plan row (the
+current program state), the DIAGRAMS_INDEX row (105 → 107 records,
+71 → 73 inline), the README frontmatter (last_updated 2026-09-28 →
+2026-10-01 — a version-drift catch), and the three missing map rows
+(`architecture/compaction-pipeline-spec.md` — the ratified 2026-09-29
+spec; the two region-space research docs — one being the
+region-routing skill's reference model, absent from the map until
+now).

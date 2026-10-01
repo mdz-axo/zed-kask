@@ -1,8 +1,8 @@
 ---
 title: "zed-kask Documentation"
 audience: [developers, architects, agents, operators]
-last_updated: 2026-09-28
-version: "2.6.0"
+last_updated: 2026-10-01
+version: "2.6.1"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]
@@ -23,7 +23,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 | Document | Status and purpose |
 | --- | --- |
 | [`hKask core and MCP repair plan`](plans/hkask-core-mcp-repair-improvement-plan.md) | Active, operator-authorized repair plan; no backward-compatibility requirements. §9 separates verified training/gallery/packaging slices from unfinished authority, cancellation, containment, attribution and recovery work; P6 separates skill evaluation (algedonic review with operator and Curator) from skill execution; P8 records the evolution reference model and program with its locked operator decisions (2026-09-30). |
-| [`Cybernetic nervous system alignment plan`](plans/cybernetic-nervous-system-alignment.md) | Active (operator ruling 2026-09-30 — model admitted, S2/S3 landed): measurable target condition for the three-layer loop alignment, the executed live-log PDCA experiment (the tracing-drop finding refuted and corrected to the undocumented log-feature bridge, now recorded as designed in regulation-spans.md), ranked subtractive steps S1–S6, and the landed S3 deletion (net −14 production lines, 99/99 tests, clippy + cargo check green). Added 2026-09-30. |
+| [`Cybernetic nervous system alignment plan`](plans/cybernetic-nervous-system-alignment.md) | Active — reference model admitted (operator ruling 2026-09-30); S1–S6 recorded; the §8 legacy/orphan cleanup program (CU-1–CU-8) with CU-1–CU-5/CU-7 complete and CU-6 gated on displacement; register row L25 classified (2026-10-01). Carries the measurable target condition, the executed live-log PDCA experiment, the ranked subtractive steps S1–S6, and the whole-file pricing menu for the 60-file docs target (sixth slice, ruling pending). |
 
 ## Architecture
 
@@ -34,6 +34,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 | [`memory-system-specification.md`](architecture/memory-system-specification.md) | **Memory system specification** — schema, ingestion, recall, consolidation, decay, hygiene, sovereignty, and embedded diagrams. |
 | [`skills-and-composition.md`](architecture/skills-and-composition.md) | **Agent system** — prompt surfaces, skill body injection, composition principles, and testing. |
 | [`functional-interaction-spec.md`](architecture/functional-interaction-spec.md) | **Division of Responsibilities** — operator/product-manager and agent/program-manager working agreement. |
+| [`compaction-pipeline-spec.md`](architecture/compaction-pipeline-spec.md) | **Compaction pipeline specification** — ratified 2026-09-29: the three entry points and the always-succeed, deterministic-stage-first pipeline contract. |
 | [`core/PRINCIPLES.md`](architecture/core/PRINCIPLES.md) | Architecture principles P1–P12. |
 | [`core/magna-carta.md`](architecture/core/magna-carta.md) | The Magna Carta — four sovereignty principles. |
 | [`core/MDS.md`](architecture/core/MDS.md) | Minimal Domain Specification — five-category taxonomy, 19 library/composition crates, and 13 MCP servers. |
@@ -58,7 +59,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 | [`reference/mcp-servers/spreadsheet.md`](reference/mcp-servers/spreadsheet.md) | Spreadsheet server — LogiSheets-backed workbook surface (2 tools). |
 | [`reference/mcp-servers/swarm.md`](reference/mcp-servers/swarm.md) | Swarm server — Agent Bestiary World and local substrate (90 tools). |
 | [`reference/skills/README.md`](reference/skills/README.md) | Registry of 60 skills, 56 template namespaces, and 274 `.j2` resources. |
-| [`loop-register.md`](loop-register.md) | Loop audit register — 23 system loops with audit verdicts, three-layer (A/B/C) classifications with per-row sense→report→actuate maps and INV1–INV6 alignment verdicts (pass 3), deferred operator decisions, and the change-log ledger. |
+| [`loop-register.md`](loop-register.md) | Loop audit register — 25 system loops (L24 the evolution protocol, L25 evolution-health sensing, added 2026-09-30/10-01) with audit verdicts, three-layer (A/B/C) classifications with per-row sense→report→actuate maps and INV1–INV6 alignment verdicts (pass 3), deferred operator decisions, and the change-log ledger. |
 | [`reference/kask-settings.md`](reference/kask-settings.md) | Kask settings and environment reference. |
 | [`reference/lisp-eval-dialect.md`](reference/lisp-eval-dialect.md) | Sandboxed `lisp_eval` dialect and `form`/`env` contract. |
 | [`reference/ontology-bridge.md`](reference/ontology-bridge.md) | Published-vocabulary bridge, exact term resolver, and `onto_anchor` ladder. |
@@ -69,7 +70,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 
 | Document | Description |
 | --- | --- |
-| [`DIAGRAMS_INDEX.md`](DIAGRAMS_INDEX.md) | Registry of 105 current `DIAGRAM_ALIGNMENT` records representing 105 unique IDs; 34 records are in the five consolidated files and 71 are inline. |
+| [`DIAGRAMS_INDEX.md`](DIAGRAMS_INDEX.md) | Registry of 107 current `DIAGRAM_ALIGNMENT` records representing 107 unique IDs; 34 records are in the five consolidated files and 73 are inline. |
 | [`diagrams/architecture.md`](diagrams/architecture.md) | Cross-cutting architecture diagrams. |
 | [`diagrams/kanban.md`](diagrams/kanban.md) | Kata-kanban state machines: task status, move controller, and the goal lifecycle (create → judge → score → acknowledge outbox). |
 | [`diagrams/swarm.md`](diagrams/swarm.md) | Swarm architecture and control loops. |
@@ -86,6 +87,8 @@ The LogiSheets plan's future-state block converted to a registered implementatio
 | [`research/chunking-for-rag-research.md`](research/chunking-for-rag-research.md) | Prior-art study of RAG text-chunking patterns and reference models, and the corpus pipeline's alignment and gaps against them. Recommendations only — not implemented. |
 | [`research/kanban-board-reference-models.md`](research/kanban-board-reference-models.md) | Reference models for kanban board naming/navigation (Wekan, Planka, Kan, Kanboard), the kata-kanban's alignment and gaps against them, and the implemented shaping/test plan. |
 | [`research/deterministic-vs-probabilistic-compute-routing.md`](research/deterministic-vs-probabilistic-compute-routing.md) | When deterministic vs probabilistic compute fits: routing claim with falsifiers, Shannon/Gibbs entropy analogy tested (Jaynes, Landauer bridges and breakdowns), and a problem matrix whose game axis splits into recurrence and world closure. Hypotheses only — no routing implemented. Added 2026-09-27. |
+| [`research/syntax-semantic-probabilistic-deterministic-space.md`](research/syntax-semantic-probabilistic-deterministic-space.md) | The syntax–semantic × probabilistic–deterministic 2×2 region space — the `region-routing` skill's recorded reference model: framing, prior art, an empirical micro-test, the navigable map, and the C1–C15 claim ledger. |
+| [`research/navigating-the-region-space-collaboration.md`](research/navigating-the-region-space-collaboration.md) | Three-party collaboration overlay on the region space (operator/Curator/agent), the region-routing skill's reification record, and the capability log; priced for fold into the sibling space doc (alignment plan §8 sixth slice — ruling pending). |
 | [`research/d-seam-audit.md`](research/d-seam-audit.md) | D-seam audit ledger — resumable per-seam worklist over the live `DIVERGENCE.md` surface; identity coverage checked by `kask/scripts/check-d-seam-audit-ledger.sh`. |
 | [`research/cmp-gap-methodology.md`](research/cmp-gap-methodology.md) | Process spec for detecting, measuring, and interpreting gaps between prediction-market and traditional-market expectations (CMP term structures vs rates/FX/equities analogs); worked run instances are recorded as companies-mcp reports. Added 2026-09-19 by the operator. |
 | [`research/media-server-lead-onboarding.md`](research/media-server-lead-onboarding.md) | Onboarding document for the media MCP server lead (combined product-manager/program-manager role): grounded 98-tool surface inventory, architecture and invariants, project principles, tree-specific coding rules, and target-condition priorities; test baseline verified 2026-09-30. |
