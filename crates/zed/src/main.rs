@@ -1800,6 +1800,25 @@ fn main() {
                                                 }
                                             }
                                             _ = retention_interval.tick() => {
+                                                // Per-span retention: the reg.tool.completed
+                                                // per-call telemetry (98% the regulation
+                                                // loop's own 10s sensing polls, measured
+                                                // 2026-09-30) ages out at 7 days; every
+                                                // other span keeps the uniform 30-day
+                                                // cutoff below. Pinned by
+                                                // regulation_store::retention_tests.
+                                                let telemetry_cutoff = chrono::Utc::now()
+                                                    - chrono::Duration::days(7);
+                                                if let Err(e) = archive_for_maintenance.delete_older_than_in_span(
+                                                    telemetry_cutoff,
+                                                    "reg.tool.completed",
+                                                ) {
+                                                    tracing::warn!(
+                                                        target: "reg.storage",
+                                                        error = %e,
+                                                        "RegulationArchive span retention delete failed"
+                                                    );
+                                                }
                                                 // Retain 30 days of regulation records.
                                                 let cutoff = chrono::Utc::now()
                                                     - chrono::Duration::days(30);

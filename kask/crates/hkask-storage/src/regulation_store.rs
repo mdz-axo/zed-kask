@@ -155,6 +155,47 @@ impl RegulationArchive {
         Ok(count)
     }
 
+    /// Delete regulation records older than the given cutoff within one span
+    /// path prefix (the exact path or dot-delimited descendants, mirroring
+    /// `query_records`'s namespace predicate).
+    ///
+    /// Per-span retention: the `reg.tool.completed` per-call telemetry is 98%
+    /// the regulation loop's own 10s sensing polls (measured 2026-09-30:
+    /// 7,245 each of kanban_task_list / kanban_board_list per day vs ~300 real
+    /// agent calls), so it ages out at 7 days while audit spans keep
+    /// `delete_older_than`'s uniform 30-day cutoff. The aggregates the sensors
+    /// read are journaled separately under `reg.outcome.*`.
+    ///
+    /// expect: "The system provides durable storage for event data"
+    /// \[P9\] Motivating: Homeostatic Self-Regulation — per-span retention bounds telemetry volume
+    /// pre:  `before` is a valid timestamp
+    /// post: records older than `before` under `span_path` are deleted; returns count of deleted rows
+    pub fn delete_older_than_in_span(
+        &self,
+        before: chrono::DateTime<chrono::Utc>,
+        span_path: &str,
+    ) -> Result<usize, InfrastructureError> {
+        let before_str = before.to_rfc3339();
+        let count = self.driver.execute(
+            "DELETE FROM reg_records WHERE timestamp < ?1 \
+               AND (span_path = ?2 OR substr(span_path, 1, length(?2) + 1) = ?2 || '.')",
+            &[
+                DbValue::Text(before_str),
+                DbValue::Text(span_path.to_string()),
+            ],
+        )?;
+        if count > 0 {
+            tracing::info!(
+                target: "hkask.storage",
+                deleted = count,
+                cutoff = %before.to_rfc3339(),
+                span = %span_path,
+                "RegulationArchive retention: deleted old reg_records in span"
+            );
+        }
+        Ok(count)
+    }
+
     /// Run a passive WAL checkpoint, reclaim free pages, and analyze indices.
     ///
     /// Wraps the same PRAGMA sequence as `Database::checkpoint()` but runs it
@@ -457,5 +498,57 @@ impl RegulationSink for RegulationArchive {
         event: &RegulationRecord,
     ) -> Result<bool, InfrastructureError> {
         self.insert_if_absent(event)
+    }
+}
+
+#[cfg(test)]
+mod retention_tests {
+    use super::*;
+    use crate::database::sqlite::SqliteDriver;
+
+    fn record(category: &str, local_path: &str, days_ago: i64) -> RegulationRecord {
+        let namespace = SpanNamespace::new(&format!("reg.{category}"))
+            .unwrap_or_else(|| SpanNamespace::new("reg.tool").expect("reg.tool is canonical"));
+        RegulationRecord {
+            id: EventID::from_uuid(uuid::Uuid::new_v4()),
+            timestamp: chrono::Utc::now() - chrono::Duration::days(days_ago),
+            observer_webid: WebID::from_uuid(uuid::Uuid::new_v4()),
+            span: Span::new(namespace, local_path),
+            phase: CyclePhase::Act,
+            observation: serde_json::json!({"test": local_path}),
+            regulation: None,
+            outcome: None,
+            recursion_depth: 0,
+            parent_event: None,
+            visibility: "internal".to_string(),
+        }
+    }
+
+    /// Per-span retention: the `reg.tool.completed` telemetry cutoff deletes
+    /// ONLY old records in that span — an old audit-span record of the same
+    /// age survives (it is gemba evidence), and a recent telemetry record
+    /// survives. The span predicate matches the exact path or dot-delimited
+    /// descendants, mirroring `query_records`.
+    #[test]
+    fn span_retention_deletes_only_old_records_in_the_named_span() -> anyhow::Result<()> {
+        let archive = RegulationArchive::from_driver(SqliteDriver::in_memory_driver())?;
+        archive.insert(&record("tool", "completed", 10))?; // old telemetry → deleted
+        archive.insert(&record("tool", "completed", 1))?; // recent telemetry → survives
+        archive.insert(&record("skill", "program-manager.outcome", 10))?; // old audit span → survives
+
+        let cutoff = chrono::Utc::now() - chrono::Duration::days(7);
+        let deleted = archive.delete_older_than_in_span(cutoff, "reg.tool.completed")?;
+        assert_eq!(deleted, 1, "only the old telemetry record is deleted");
+
+        let since = chrono::Utc::now() - chrono::Duration::days(30);
+        let telemetry = archive.query_records(since, Some("reg.tool.completed"), 10)?;
+        assert_eq!(telemetry.len(), 1, "the recent telemetry record survives");
+        let audit = archive.query_records(since, Some("reg.skill"), 10)?;
+        assert_eq!(
+            audit.len(),
+            1,
+            "the old audit-span record survives the span cutoff"
+        );
+        Ok(())
     }
 }
