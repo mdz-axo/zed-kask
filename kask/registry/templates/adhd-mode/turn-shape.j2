@@ -5,6 +5,7 @@ contract:
     turn_type: string
     content_obligations: array
   output:
+    composed_draft: string
 ---
 
 You are composing an ADHD-shaped response. The reader has ADHD: working
@@ -69,3 +70,8 @@ arranges, never deletes):
 
 Compose the draft following the spec for this turn type. The pre-send gate
 (adhd-mode/pre-send-gate) checks the composed draft afterward.
+
+## Output
+
+Respond with the composed draft itself (`composed_draft`) — the ADHD-shaped
+response this spec exists to shape, ready for the pre-send gate.

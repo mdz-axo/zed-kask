@@ -23,7 +23,7 @@ compose passes the per-turn gate below before sending.
 
 ## D/P labelling
 
-Draft composition and the mode's shape rules are P (model output, critiqued by the per-turn gate and the operator). The pre-send gate is D: Form G (list cap and field checks) and Form C (content obligations) run in `lisp_eval` over fields extracted by the `pre-send-gate.j2` render — extraction is P (the model reads its own draft), the verdict is D over the extracted fields. Caveman compression is P (model rewrite), re-checked by the same gate. On `render_template` or `lisp_eval` failure the prose self-check fallback is P and is surfaced as a degraded gate, never reported as a passed gate.
+Draft composition and the mode's shape rules are P (model output, critiqued by the per-turn gate and the operator). The pre-send gate is D: Form G (list cap and field checks) and Form C (content obligations) run in `lisp_eval` over fields extracted by the `pre-send-gate.j2` render — extraction is P (the model reads its own draft), the verdict is D over the extracted fields. The verdict's soundness is conditional on that P extraction: a non-conforming draft with a lazy or self-serving extraction can pass (no gate field can catch its own input being wrong) — the evidence-not-verdicts extraction rule and the operator's reading are the backstops. Caveman compression is P (model rewrite), re-checked by the same gate. On `render_template` or `lisp_eval` failure the prose self-check fallback is P and is surfaced as a degraded gate, never reported as a passed gate.
 
 ## Instructions
 
@@ -91,7 +91,9 @@ draft.
 
 5. If `content_obligations` is non-empty, call `lisp_eval` with Form C below,
    env binding `required` to the content obligations and `sections` to the
-   section headers present in the draft.
+   section headers present in the draft, extracted verbatim against the
+   obligation strings (exact-match is what keeps the check D — a
+   case-divergent header reads as missing).
 
 6. Verdicts `send` and `content-complete`: send the draft. Any `revise` or
    `missing-content`: apply the named fixes (delete the flagged opener, closer,
@@ -142,13 +144,35 @@ env: `required` (the active process skill's content obligations), `sections`
 |----------|---------|
 | `pre-send-gate.j2` | Extraction checklist for the per-turn gate: gate fields extracted as evidence (not verdicts) from the composed draft, feeding lisp_eval Forms G and C. |
 | `turn-shape.j2` | Per-turn-type shape spec (assess, directives, verify, code-answer), generic over the active process skill's content obligations. |
-| `caveman-compress.j2` | Compression pass for the compressed variant: drop articles, filler, pleasantries, and hedging from connective prose while preserving technical substance, sacred text (code, errors, URLs), and clarity exceptions. Absorbed from the caveman skill 2026-09-09. |
+| `caveman-compress.j2` | Compression pass for the compressed variant: drop articles, filler, pleasantries, and empty hedging from the connective prose between structural elements while preserving real-uncertainty hedges, technical substance, sacred text (code, errors, URLs), and the structural elements. Absorbed from the caveman skill 2026-09-09. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `adhd-mode/pre-send-gate`) and a context object with the required variables.
 
 Template context variables (from each template's [inference] contract):
+- `pre-send-gate.j2`: `turn_type`, `content_obligations`
+- `turn-shape.j2`: `turn_type`, `content_obligations`
 - `caveman-compress.j2`: `draft_response`,`context_topic`
 
+
+## Regression case
+
+All receipts executed live through `lisp_eval` (2026-09-30, batch-10 audit):
+
+- Form G clean: all fields conformant (opener "Run the tests", closer "end of
+  draft", counts 0, `next_actions_count` 1, all three reshape booleans true, `cap` 5)
+  → `send`.
+- Form G revise: opener "Let me" + closer "Hope that helps" + `assumptions_count` 6
+  over `cap` 5 + `next_actions_count` 2 + `first_line_is_action` false →
+  `["revise", ["delete-opener:Let me", "delete-closer:Hope that helps",
+  "split:assumptions", "exactly-one-next-action",
+  "reshape:first-line-is-action"]]` — every defect named with its fix.
+- Form C complete: `required` [what changed, validation, files] all present in
+  `sections` → `content-complete`.
+- Form C missing: same `required` with `files` absent from `sections` →
+  `["missing-content", ["files"]]` — the missing obligation named.
+
+The skill's forms are executed at use time (the per-turn gate), never anchored
+in code.
 
 ## Constraints
 
@@ -183,14 +207,30 @@ The ten rules (faithful to the source; references renamed):
    problem." State cause and fix.
 9. **Cap lists at 5 items.** If a list grows past five, split into "do now"
    vs "later," or "must" vs "nice to have." Five ranked beats ten unranked.
-   Enforced by Form G via `cap`.
+   This rule shapes presentation only — it must not limit analysis, search,
+   tool results, candidate generation, or retained information: when
+   completeness matters, retain the full set internally (undisplayed) and
+   present the top five ranked. Form G enforces the cap over the five counted
+   list types (assumptions, risks, goals, critical, minor groups); other
+   lists rely on composition.
 10. **No preamble, no recap, no closing pleasantries.** Forbidden openers:
     "Great question," "Let me...", "I'll...", "Sure!", "Looking at your...",
     "To answer your question...". Forbidden recaps after a completed task.
     Forbidden closers: "Let me know if you need anything else," "Hope that
     helps," "Happy to clarify," "Feel free to ask." Start with the answer;
-    end when the answer is done. The lexical checks are enforced by Form G;
-    the full phrase lists live there and in the pre-send-gate template.
+    end when the answer is done. The lexical checks are enforced by Form G,
+    which carries the phrase fragments; the pre-send-gate template defines how
+    opener and closer are extracted (the verbatim first/last words), not the
+    lists. Known limitation, bounded: the lexical channel is exact-match over
+    the 2–3-word verbatim extracts — prefix-shaped openers ("Let me think")
+    and the one-word entries ("I'll", "Sure!") cannot match the extract shape,
+    and a `string-contains` rewrite is unusable (the engine's reversal guard
+    errors when the needle is longer than the extract — verified live
+    2026-09-30). The boolean channel backstops: a preamble opener is normally
+    not an actionable first line, so `first_line_is_action` fires and the
+    draft is still revised. Closing the gap needs an engine capability
+    (a `starts-with`/`ends-with` builtin, or a reversal guard scoped to the
+    actual reversal case) — filed as an operator question.
 
 Override the defaults when:
 
