@@ -35,6 +35,15 @@ pub enum RegulationData {
     /// for the advisory. Subsequent sensing may show that the condition
     /// recovered, but recovery alone does not establish that advice worked.
     OcrSilentFailuresExceeded { count: f64, threshold: f64 },
+    /// Stuck evolution experiments exceeded the set-point (0) — running
+    /// experiments unresolved past the stale set point (D-3) or with their
+    /// whole declared budget recorded but no verdict.
+    ///
+    /// Carries the count at escalation time; the alert's error context
+    /// carries the stuck experiment ids (re-read from
+    /// `EvolutionHealthSource` at delivery), so the board card names the
+    /// experiments to unstick.
+    EvolutionStuckExperimentsExceeded { count: f64, threshold: f64 },
 
     /// No typed regulation data — used for non-regulation actions.
     #[serde(rename = "no_data")]

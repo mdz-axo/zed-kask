@@ -269,6 +269,12 @@ pub struct CyberneticsLoop {
     /// same source for the sense phase.
     context_server_health_source:
         Option<Arc<dyn crate::sensor_provider::ContextServerHealthSource>>,
+    /// Optional evolution health source retained so alert delivery can
+    /// re-read the stuck-experiment ids for the board card's context (the
+    /// count in the message cannot name WHICH experiments to unstick).
+    /// The sensor registry holds an `EvolutionHealthSensor` wrapping the
+    /// same source for the sense phase.
+    evolution_health_source: Option<Arc<dyn crate::sensor_provider::EvolutionHealthSource>>,
 }
 
 impl CyberneticsLoop {
@@ -326,6 +332,7 @@ impl CyberneticsLoop {
             max_iterations,
             inference_health_wired: false,
             inference_resilience_source: None,
+            evolution_health_source: None,
             inference_intervention_cursor: std::sync::atomic::AtomicU64::new(0),
             tick_count: std::sync::atomic::AtomicUsize::new(0),
             dampener,
@@ -561,6 +568,9 @@ impl CyberneticsLoop {
         &mut self,
         source: Arc<dyn crate::sensor_provider::EvolutionHealthSource>,
     ) {
+        // Retain the source for the alert-delivery path (the stuck ids in
+        // the board card's context); the sensor takes its own Arc.
+        self.evolution_health_source = Some(Arc::clone(&source));
         self.sensor_registry.replace(
             crate::loops::SignalMetric::EvolutionStuckExperiments,
             Arc::new(crate::sensor_provider::EvolutionHealthSensor::new(

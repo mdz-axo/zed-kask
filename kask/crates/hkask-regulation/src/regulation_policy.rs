@@ -36,6 +36,7 @@ pub(crate) enum RegulationReason {
     ModelUnavailable,
     ContextServerFleetDegraded,
     OcrSilentFailuresExceeded,
+    EvolutionStuckExperimentsExceeded,
 }
 
 impl RegulationReason {
@@ -59,6 +60,7 @@ impl RegulationReason {
             Self::ModelUnavailable => "model_unavailable",
             Self::ContextServerFleetDegraded => "context_server_fleet_degraded",
             Self::OcrSilentFailuresExceeded => "ocr_silent_failures_exceeded",
+            Self::EvolutionStuckExperimentsExceeded => "evolution_stuck_experiments_exceeded",
         }
     }
 }
@@ -94,8 +96,11 @@ pub(crate) struct RegulationPolicy {
 impl RegulationPolicy {
     /// Build the default regulation policy with all currently-supported rules.
     ///
-    /// Covers all 31 `SignalMetric` variants per ADR-056 (Ashby's Law closure).
-    /// Metrics are categorized by cybernetic role:
+    /// Covers every `SignalMetric` variant a sensor can emit per ADR-056
+    /// (Ashby's Law closure) — pinned by
+    /// `every_signal_metric_has_a_rule_or_documented_allowlist_entry`, which
+    /// also carries the no-producer variants with their reasons. Metrics
+    /// are categorized by cybernetic role:
     /// - **Notify** (observational, no regulation needed)
     /// - **Escalate** (meta-regulatory, route to Curation)
     /// - **Domain-specific** (Calibrate/Throttle/CircuitBreak/Prune)
@@ -293,6 +298,23 @@ impl RegulationPolicy {
                         reason: OcrSilentFailuresExceeded,
                     }],
                 },
+                // ── Evolution registry health (Cybernetics Loop 6; §P8.9
+                //    step 1) ── A stuck experiment (unresolved past the
+                //    stale set point or budget-spent with no verdict) needs
+                //    an operator/agent verdict — the loop cannot self-heal
+                //                it (the corrective is the evolution protocol:
+                //                record a selection or void the experiment).
+                //                Escalate to Curation so the stuck ids reach
+                //                the reviewable board.
+                RegulationRule {
+                    metric: EvolutionStuckExperiments,
+                    direction: AboveSetPoint,
+                    proposed: &[ProposedAction {
+                        target: Curation,
+                        action_type: Escalate,
+                        reason: EvolutionStuckExperimentsExceeded,
+                    }],
+                },
             ],
         }
     }
@@ -341,6 +363,9 @@ pub(crate) fn extract_deficit_threshold(data: &RegulationData) -> Option<(u64, u
             total_count,
         } => Some((*total_count - *healthy_count, *total_count)),
         RegulationData::OcrSilentFailuresExceeded { count, threshold } => {
+            Some((rounded_count(*count), rounded_count(*threshold)))
+        }
+        RegulationData::EvolutionStuckExperimentsExceeded { count, threshold } => {
             Some((rounded_count(*count), rounded_count(*threshold)))
         }
         RegulationData::NoData => None,
@@ -410,6 +435,102 @@ fn rounded_count(value: f64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// ADR-056 Ashby closure, made checkable: every `SignalMetric` variant
+    /// either has a policy rule or is allowlisted with its no-producer
+    /// reason. The or-pattern below is exhaustive (no `_` arm) — adding a
+    /// variant breaks the build until this test carries it. D87 added
+    /// `EvolutionStuckExperiments` with a sensor but no rule: the deviation
+    /// was sensed and then silently dropped by `decide` — the exact gap
+    /// this test now pins shut.
+    #[test]
+    fn every_signal_metric_has_a_rule_or_documented_allowlist_entry() {
+        use crate::loops::SignalMetric;
+        let all = {
+            use SignalMetric::*;
+            // Exhaustive or-pattern (no `_` arm): a new variant fails this
+            // match's exhaustiveness check until the list grows with it.
+            match EnergyRemaining {
+                EnergyRemaining
+                | VarietyDeficit
+                | ErrorRate
+                | ConnectorLatency
+                | CommunicationQueueDepth
+                | MemoryLife
+                | TripleCount
+                | LowConfidenceCount
+                | CircuitBreakerState
+                | InferenceModelAvailable
+                | ContextServerHealth
+                | OcrSilentFailures
+                | AlgedonicEvents
+                | AlgedonicLogApproachingCap
+                | PendingEscalations
+                | ConsolidationCandidates
+                | GoalStaleCount
+                | GoalExpiredCount
+                | MetacognitionCriticalAlerts
+                | EvolutionStuckExperiments
+                | ToolReliability
+                | PassRate
+                | TestCoverage
+                | MutationScore => vec![
+                    EnergyRemaining,
+                    VarietyDeficit,
+                    ErrorRate,
+                    ConnectorLatency,
+                    CommunicationQueueDepth,
+                    MemoryLife,
+                    TripleCount,
+                    LowConfidenceCount,
+                    CircuitBreakerState,
+                    InferenceModelAvailable,
+                    ContextServerHealth,
+                    OcrSilentFailures,
+                    AlgedonicEvents,
+                    AlgedonicLogApproachingCap,
+                    PendingEscalations,
+                    ConsolidationCandidates,
+                    GoalStaleCount,
+                    GoalExpiredCount,
+                    MetacognitionCriticalAlerts,
+                    EvolutionStuckExperiments,
+                    ToolReliability,
+                    PassRate,
+                    TestCoverage,
+                    MutationScore,
+                ],
+            }
+        };
+        // No production sensor emits these (verified 2026-10-01: zero
+        // production `Signal::new` sites): legacy Loop-6 vocabulary
+        // (EnergyRemaining, ErrorRate, ConnectorLatency,
+        // CommunicationQueueDepth), the event-driven impact-check channel
+        // (PassRate — consumed by verify_impact, not the policy decide
+        // path), and decode-only persisted-history metrics (TestCoverage,
+        // MutationScore).
+        let allowlisted = [
+            SignalMetric::EnergyRemaining,
+            SignalMetric::ErrorRate,
+            SignalMetric::ConnectorLatency,
+            SignalMetric::CommunicationQueueDepth,
+            SignalMetric::PassRate,
+            SignalMetric::TestCoverage,
+            SignalMetric::MutationScore,
+        ];
+        let policy = RegulationPolicy::default();
+        for metric in all {
+            if allowlisted.contains(&metric) {
+                continue;
+            }
+            let covered = policy.rules.iter().any(|rule| rule.metric == metric);
+            assert!(
+                covered,
+                "{metric:?} has a producer but no policy rule — a deviation it emits \
+                 would be sensed and then silently dropped by decide()"
+            );
+        }
+    }
 
     #[test]
     fn block_severity_reserves_critical_for_large_worsening() {
