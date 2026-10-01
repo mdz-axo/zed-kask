@@ -21,7 +21,6 @@
 //! The decay model (Wozniak-Gorzelanczyk, 1995: R(t) = exp(-t/S)) is applied
 //! at recall time.
 
-use std::collections::HashSet;
 use std::sync::Arc;
 
 use hkask_storage::database::value::DbValue;
@@ -822,7 +821,10 @@ impl MemoryStore {
             .h_mem_store
             .delete_by_entity_prefix_with_entities(prefix)?;
         for entity in &affected {
-            self.cleanup_orphaned_references_for_entity(entity);
+            // Prefix deletion empties every affected entity — no single
+            // deleted passage to clean; the emptied-entity branch handles
+            // the full reference sweep.
+            self.cleanup_orphaned_references_for_entity(entity, None);
         }
         if count > 0 {
             tracing::debug!(
@@ -901,22 +903,36 @@ impl MemoryStore {
     /// so rows left behind after the entity empties are orphans. The
     /// operator's 2026-09-09 ruling: deletions must clean up what they
     /// orphan — no orphan piles, no compatibility states.
+    /// Delete an h_mem and the references it orphans. When this was the
+    /// entity's last row, the entity's embeddings and memory_links rows go
+    /// (the entity_ref is the join key between embeddings and h_mems —
+    /// README: "One entity_ref string links each embedding vector to its
+    /// relational h_mem row"). When the entity survives, the deleted row's
+    /// own passage-scoped embedding goes — unless a surviving sibling shares
+    /// the passage. The operator's 2026-09-09 ruling: deletions must clean up
+    /// what they orphan — no orphan piles, no compatibility states; the
+    /// 2026-10-01 consolidation meals showed the live-entity case the
+    /// entity-scoped sweep cannot see.
     pub fn delete_h_mem(&self, id: &hkask_storage::HMemId) -> Result<(), MemoryStoreError> {
-        let entity = self.h_mem_store.get_by_id(id)?.map(|h_mem| h_mem.entity);
+        let deleted = self.h_mem_store.get_by_id(id)?;
         self.h_mem_store.delete_by_id(id)?;
-        if let Some(entity) = entity {
-            self.cleanup_orphaned_references_for_entity(&entity);
-        }
+        let Some(deleted) = deleted else {
+            return Ok(());
+        };
+        let passage = semantic_passage_for_h_mem(&deleted);
+        self.cleanup_orphaned_references_for_entity(&deleted.entity, passage.as_deref());
         Ok(())
     }
 
-    /// Remove the embeddings and memory_links rows of an entity whose
-    /// h_mems were all deleted. Failures are logged, not propagated:
-    /// callers have already deleted the h_mems (the primary operation
-    /// succeeded), and the periodic orphan sweep in
+    /// Remove the references a deletion orphans. When the entity emptied,
+    /// all of its embeddings and memory_links rows go. When the entity
+    /// survives, only the deleted row's passage-scoped embedding goes — and
+    /// only when no surviving sibling shares the passage. Failures are
+    /// logged, not propagated: callers have already deleted the h_mems (the
+    /// primary operation succeeded), and the periodic orphan sweep in
     /// [`Self::delete_orphaned_embeddings`] is the backstop that catches
     /// anything a failed cleanup leaves behind.
-    fn cleanup_orphaned_references_for_entity(&self, entity: &str) {
+    fn cleanup_orphaned_references_for_entity(&self, entity: &str, deleted_passage: Option<&str>) {
         let remaining = match self.h_mem_store.query_by_entity(entity) {
             Ok(rows) => rows,
             Err(error) => {
@@ -929,33 +945,51 @@ impl MemoryStore {
                 return;
             }
         };
-        if !remaining.is_empty() {
+        if remaining.is_empty() {
+            match self.embedding.delete_all_by_entity_ref(entity) {
+                Ok(count) if count > 0 => tracing::debug!(
+                    target: "hkask.memory",
+                    entity,
+                    count,
+                    "Deleted orphaned embeddings of emptied entity"
+                ),
+                Ok(_) => {}
+                Err(error) => tracing::warn!(
+                    target: "hkask.memory",
+                    %error,
+                    entity,
+                    "Failed to delete orphaned embeddings of emptied entity — periodic sweep will retry"
+                ),
+            }
+            if let Err(error) = self.h_mem_store.driver().execute(
+                "DELETE FROM memory_links WHERE entity_a = ?1 OR entity_b = ?1",
+                &[DbValue::Text(entity.to_string())],
+            ) {
+                tracing::warn!(
+                    target: "hkask.memory",
+                    %error,
+                    entity,
+                    "Failed to delete orphaned memory_links of emptied entity — periodic sweep will retry"
+                );
+            }
             return;
         }
-        match self.embedding.delete_all_by_entity_ref(entity) {
-            Ok(count) if count > 0 => tracing::debug!(
-                target: "hkask.memory",
-                entity,
-                count,
-                "Deleted orphaned embeddings of emptied entity"
-            ),
-            Ok(_) => {}
-            Err(error) => tracing::warn!(
-                target: "hkask.memory",
-                %error,
-                entity,
-                "Failed to delete orphaned embeddings of emptied entity — periodic sweep will retry"
-            ),
+        let Some(deleted_passage) = deleted_passage else {
+            return;
+        };
+        let passage_shared = remaining
+            .iter()
+            .any(|row| semantic_passage_for_h_mem(row).as_deref() == Some(deleted_passage));
+        if passage_shared {
+            return;
         }
-        if let Err(error) = self.h_mem_store.driver().execute(
-            "DELETE FROM memory_links WHERE entity_a = ?1 OR entity_b = ?1",
-            &[DbValue::Text(entity.to_string())],
-        ) {
+        if let Err(error) = self.delete_embedding_by_entity_ref_and_passage(entity, deleted_passage)
+        {
             tracing::warn!(
                 target: "hkask.memory",
                 %error,
                 entity,
-                "Failed to delete orphaned memory_links of emptied entity — periodic sweep will retry"
+                "Failed to delete the deleted row's passage embedding — periodic sweep will retry"
             );
         }
     }
@@ -1037,11 +1071,14 @@ impl MemoryStore {
     }
 
     /// Delete each prune candidate, sparing ones recalled more recently
-    /// than `spare_cutoff`, then remove the emptied entities' embeddings
-    /// and memory_links rows (deletions must clean up what they orphan —
-    /// operator ruling 2026-09-09). Individual delete failures are
-    /// counted, not propagated — one stuck row must not block pruning of
-    /// the rest.
+    /// than `spare_cutoff`. Each delete routes through `delete_h_mem` so the
+    /// pruned row takes its passage-scoped embedding with it and the last
+    /// row of an entity sweeps the emptied entity's references (deletions
+    /// must clean up what they orphan — operator ruling 2026-09-09; the
+    /// former raw `delete_by_id` + post-loop cleanup only saw emptied
+    /// entities, stranding passage embeddings under live entities — the
+    /// 2026-10-01 orphan class). Individual delete failures are counted,
+    /// not propagated — one stuck row must not block pruning of the rest.
     fn prune_candidates(
         &self,
         max_age_days: i64,
@@ -1051,7 +1088,6 @@ impl MemoryStore {
         let mut deleted_count = 0usize;
         let mut spared_count = 0usize;
         let mut failed_count = 0usize;
-        let mut deleted_entities: HashSet<String> = HashSet::new();
 
         for h_mem in &candidates {
             // Spare actively-recalled memories when the caller requested it.
@@ -1061,10 +1097,9 @@ impl MemoryStore {
                     continue;
                 }
             }
-            match self.h_mem_store.delete_by_id(&h_mem.id) {
+            match self.delete_h_mem(&h_mem.id) {
                 Ok(()) => {
                     deleted_count += 1;
-                    deleted_entities.insert(h_mem.entity.clone());
                 }
                 Err(error) => {
                     failed_count += 1;
@@ -1076,10 +1111,6 @@ impl MemoryStore {
                     );
                 }
             }
-        }
-
-        for entity in &deleted_entities {
-            self.cleanup_orphaned_references_for_entity(entity);
         }
 
         tracing::info!(
@@ -1793,6 +1824,106 @@ mod tests {
             store.connectedness("thread:a").expect("links swept"),
             0,
             "deleting the last h_mem of an entity must remove its memory_links"
+        );
+    }
+
+    /// Pin the live-entity orphan class (2026-10-01 consolidation meals):
+    /// deleting one row of a multi-row entity must take its passage-scoped
+    /// embedding with it — the entity's survival must not strand the
+    /// embedding where the entity-scoped orphan sweep can never see it.
+    #[test]
+    fn delete_h_mem_removes_the_deleted_rows_passage_embedding_under_a_live_entity() {
+        let store = test_store();
+        let webid = WebID::from_persona(b"curator");
+        store_h_mem(&store, "thread:t10", "chunk:0", "alpha content", webid);
+        store_h_mem(&store, "thread:t10", "chunk:1", "beta content", webid);
+        let dim = hkask_storage::embedding_dim();
+        store
+            .store_embedding(
+                "thread:t10",
+                &vec![0.4; dim],
+                "test-model",
+                Some("alpha content"),
+            )
+            .expect("seed alpha embedding");
+        store
+            .store_embedding(
+                "thread:t10",
+                &vec![0.6; dim],
+                "test-model",
+                Some("beta content"),
+            )
+            .expect("seed beta embedding");
+
+        let first = store
+            .h_mem_store
+            .query_by_entity("thread:t10")
+            .expect("query rows")
+            .into_iter()
+            .find(|row| row.value == serde_json::json!("alpha content"))
+            .expect("alpha row");
+        store
+            .delete_h_mem(&first.id)
+            .expect("delete one row of the live entity");
+
+        assert!(
+            !store
+                .has_embedding_for_passage("thread:t10", "alpha content")
+                .expect("probe alpha"),
+            "the deleted row's passage embedding must not survive as an orphan under the live entity"
+        );
+        assert!(
+            store
+                .has_embedding_for_passage("thread:t10", "beta content")
+                .expect("probe beta"),
+            "the surviving sibling's passage embedding must stay"
+        );
+        assert_eq!(
+            store
+                .h_mem_store
+                .query_by_entity("thread:t10")
+                .expect("query rows")
+                .len(),
+            1,
+            "the sibling row survives"
+        );
+    }
+
+    /// The safety case the per-row cleanup must not break: rows sharing one
+    /// canonical passage — deleting one spares the passage's embedding
+    /// because a surviving sibling still holds it.
+    #[test]
+    fn delete_h_mem_spares_a_passage_shared_with_a_surviving_sibling() {
+        let store = test_store();
+        let webid = WebID::from_persona(b"curator");
+        store_h_mem(&store, "thread:t11", "chunk:0", "shared content", webid);
+        store_h_mem(&store, "thread:t11", "chunk:1", "shared content", webid);
+        let dim = hkask_storage::embedding_dim();
+        store
+            .store_embedding(
+                "thread:t11",
+                &vec![0.5; dim],
+                "test-model",
+                Some("shared content"),
+            )
+            .expect("seed shared embedding");
+
+        let first = store
+            .h_mem_store
+            .query_by_entity("thread:t11")
+            .expect("query rows")
+            .into_iter()
+            .find(|row| row.attribute == "chunk:0")
+            .expect("chunk 0");
+        store
+            .delete_h_mem(&first.id)
+            .expect("delete one of the duplicate rows");
+
+        assert!(
+            store
+                .has_embedding_for_passage("thread:t11", "shared content")
+                .expect("probe shared"),
+            "the surviving sibling still holds the passage — its embedding must stay"
         );
     }
 
