@@ -13,12 +13,6 @@ default-run = "zed-kask"
 workspace = true
 
 [features]
-# zed-kask: D85 — mimalloc is the default global allocator on every build
-# path. glibc's per-thread arenas retain their 64MB high-water mark (measured
-# 2026-09-28: 117 arenas ≈ 7.5GB of a 10.78GiB RSS after 8h of agent work),
-# and an install.sh-only flag was bypassed by a manual `cargo build --release
-# -p zed` + copy (2026-09-29). Pinned by check-build-profile.sh check 8.
-default = ["mimalloc"]
 tracy = ["ztracing/tracy"]
 # LEAK_BACKTRACE=1 cargo run --features zed/track-project-leak --profile release-fast
 track-project-leak = ["gpui/leak-detection"]

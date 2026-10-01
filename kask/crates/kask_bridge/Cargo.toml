@@ -17,6 +17,7 @@ hkask-bridge-ontology.workspace = true
 
 hkask-memory.workspace = true
 hkask-storage.workspace = true
+hkask-mcp-evolution.workspace = true
 hkask-event-store.workspace = true
 r2d2.workspace = true
 

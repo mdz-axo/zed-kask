@@ -484,6 +484,71 @@ impl Sensor for MemoryHealthSensor {
     }
 }
 
+// ═════════════════════════════════════════════════════════════════════════
+// EVOLUTION REGISTRY HEALTH (§P8.9 step 1)
+// ═════════════════════════════════════════════════════════════════════════
+
+/// Evolution registry health source — the bridge implements this over the
+/// evolution store's health snapshot.
+#[async_trait::async_trait]
+pub trait EvolutionHealthSource: Send + Sync {
+    /// Ids of running experiments that are stuck: unresolved past the stale
+    /// set point (D-3), or with their whole declared budget recorded but no
+    /// verdict. Empty = healthy. `Err` means the registry could not be read —
+    /// a broken sensor, which the caller must `warn!` about, never collapse
+    /// into an empty list (the `.rules` `unwrap_or(0)` trap: an unreadable
+    /// registry would read as "no stuck experiments").
+    async fn stuck_running_experiments(&self, stale_days: u32) -> Result<Vec<String>, String>;
+}
+
+/// The stale-experiment set point (D-3, operator ruling 2026-09-30): an
+/// experiment unresolved after a week is a deviation worth an advisory,
+/// not a crisis.
+pub const DEFAULT_EVOLUTION_STALE_DAYS: u32 = 7;
+
+/// Senses stuck evolution experiments from the registry's health snapshot
+/// (§P8.9 step 1) — the Layer-A afferent pathway for the evolution program.
+/// Without this, the loop reports `signal_count=0` while an experiment sits
+/// unresolved forever or a session strands an experiment at its budget
+/// ceiling — the blind-feedback-loop trap.
+pub(crate) struct EvolutionHealthSensor {
+    source: Arc<dyn EvolutionHealthSource>,
+    stale_days: u32,
+}
+
+impl EvolutionHealthSensor {
+    pub fn new(source: Arc<dyn EvolutionHealthSource>, stale_days: u32) -> Self {
+        Self { source, stale_days }
+    }
+}
+
+#[async_trait::async_trait]
+impl Sensor for EvolutionHealthSensor {
+    async fn observe(&self) -> Option<Signal> {
+        let stuck = match self.source.stuck_running_experiments(self.stale_days).await {
+            Ok(stuck) => stuck,
+            Err(error) => {
+                // A broken sensor is not "no deviation" — warn so an
+                // unreadable registry is distinguishable from a healthy one
+                // (the `.rules` failure-signal rule).
+                tracing::warn!(
+                    target: "hkask.sensor.evolution",
+                    error = %error,
+                    "EvolutionHealthSensor: evolution registry unreadable — returning no signal (not 'no deviation')"
+                );
+                return None;
+            }
+        };
+        // A real zero proves recovery; a missing reading does not.
+        Some(Signal::new(
+            LoopId::Cybernetics,
+            SignalMetric::EvolutionStuckExperiments,
+            stuck.len() as f64,
+            0.0, // set-point: no stuck experiments
+        ))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -743,5 +808,62 @@ mod tests {
             broken: true,
         }));
         assert!(sensor.sense().await.is_none());
+    }
+
+    struct MockEvolutionSource {
+        stuck: Result<Vec<String>, String>,
+    }
+
+    #[async_trait::async_trait]
+    impl EvolutionHealthSource for MockEvolutionSource {
+        async fn stuck_running_experiments(&self, _stale_days: u32) -> Result<Vec<String>, String> {
+            self.stuck.clone()
+        }
+    }
+
+    /// §P8.9 step 1: stuck experiments (stale past the D-3 set point, or
+    /// budget spent with no verdict) surface as a count signal above the
+    /// zero set-point; the deviation derives downstream.
+    #[tokio::test]
+    async fn evolution_sensor_signals_stuck_experiments() {
+        let sensor = EvolutionHealthSensor::new(
+            Arc::new(MockEvolutionSource {
+                stuck: Ok(vec!["exp_stale".to_string(), "exp_spent".to_string()]),
+            }),
+            DEFAULT_EVOLUTION_STALE_DAYS,
+        );
+        let signal = sensor.observe().await.expect("signal");
+        assert_eq!(signal.metric, SignalMetric::EvolutionStuckExperiments);
+        assert_eq!(signal.value, 2.0);
+        assert_eq!(signal.set_point, 0.0);
+        let deviation = crate::loops::Deviation::from_signal(&signal);
+        assert!(deviation.is_some(), "a positive stuck count is a deviation");
+    }
+
+    #[tokio::test]
+    async fn evolution_sensor_zero_when_healthy() {
+        let sensor = EvolutionHealthSensor::new(
+            Arc::new(MockEvolutionSource {
+                stuck: Ok(Vec::new()),
+            }),
+            DEFAULT_EVOLUTION_STALE_DAYS,
+        );
+        let signal = sensor.observe().await.expect("signal");
+        assert_eq!(signal.value, 0.0);
+        assert!(
+            crate::loops::Deviation::from_signal(&signal).is_none(),
+            "zero stuck at set-point zero is the homeostatic state"
+        );
+    }
+
+    #[tokio::test]
+    async fn evolution_sensor_returns_none_on_broken_source() {
+        let sensor = EvolutionHealthSensor::new(
+            Arc::new(MockEvolutionSource {
+                stuck: Err("registry unreadable".to_string()),
+            }),
+            DEFAULT_EVOLUTION_STALE_DAYS,
+        );
+        assert!(sensor.observe().await.is_none());
     }
 }

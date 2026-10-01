@@ -36,7 +36,7 @@ lto = false
 codegen-units = 16
 EOF
 printf '[build]\njobs = 16\n' > "$fixture/.cargo/config.toml"
-printf '[features]\ndefault = ["mimalloc"]\n' > "$fixture/crates/zed/Cargo.toml"
+printf '[features]\n' > "$fixture/crates/zed/Cargo.toml"
 
 failures=0
 

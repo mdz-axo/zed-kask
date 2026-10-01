@@ -45,7 +45,8 @@ fn proposal(layer: &str) -> ExperimentProposeRequest {
             claim: "variant B wins".to_string(),
             confidence: 0.7,
         },
-        budget: AnyJsonValue(serde_json::json!({"energy_budget": "one eval run"})),
+        budget: AnyJsonValue(serde_json::json!({"energy_budget": "one eval run", "max_runs": 18})),
+        linked_goal_id: None,
         experiment_key: None,
     }
 }
@@ -109,12 +110,14 @@ async fn full_protocol_runs_through_the_tool_seam() {
             experiment_id: experiment_id.clone(),
             variant_id: challenger_id.clone(),
             runs: vec!["swarm_eval_agent_local run 42".to_string()],
+            run_count: 3,
             scores: AnyJsonValue(serde_json::json!({"pass_rate": 0.8, "total_tokens": 1200})),
         }))
         .await
         .expect("fitness_record succeeds");
     let fitness = envelope(&fitness);
     assert_eq!(fitness["fitness"]["variant_id"], challenger_id.as_str());
+    assert_eq!(fitness["fitness"]["run_count"], 3);
     assert_eq!(
         fitness["fitness"]["runs"][0],
         "swarm_eval_agent_local run 42"
@@ -211,11 +214,33 @@ async fn invalid_inputs_are_rejected_with_named_errors() {
             experiment_id,
             variant_id,
             runs: Vec::new(),
+            run_count: 1,
             scores: AnyJsonValue(serde_json::json!({})),
         }))
         .await
         .expect_err("empty runs rejected");
     assert!(error.to_string().contains("runs"), "{error}");
+
+    // A zero run_count is refused — a fitness record must state how many
+    // rollouts its reports cover (§P8.9 step 2).
+    let proposed = propose(&server, "skill").await;
+    let experiment_id = proposed["experiment"]["id"]
+        .as_str()
+        .expect("id")
+        .to_string();
+    let variant = register_variant(&server, &experiment_id, "v2", None).await;
+    let variant_id = variant["variant"]["id"].as_str().expect("id").to_string();
+    let error = server
+        .fitness_record(Parameters(FitnessRecordRequest {
+            experiment_id,
+            variant_id,
+            runs: vec!["r".to_string()],
+            run_count: 0,
+            scores: AnyJsonValue(serde_json::json!({})),
+        }))
+        .await
+        .expect_err("zero run_count rejected");
+    assert!(error.to_string().contains("run_count"), "{error}");
 }
 
 /// Unknown records are not_found; a resolved experiment refuses further
@@ -320,6 +345,108 @@ async fn replay_keys_converge_retried_calls_through_the_tool_seam() {
         first["experiment"]["id"], second["experiment"]["id"],
         "a retried propose with the same key must converge, not duplicate"
     );
+}
+
+/// §P8.9 step 2 (D-1: enforce) through the tool seam: a declaration without
+/// `budget.max_runs` is refused; recording past the declared ceiling is a
+/// typed `budget_exhausted` refusal naming the experiment and the ceiling —
+/// never a silent overshoot.
+#[tokio::test]
+async fn budget_max_runs_is_enforced_through_the_tool_seam() {
+    let server = make_server();
+
+    // A budget without max_runs is refused at declaration.
+    let mut request = proposal("skill");
+    request.budget = AnyJsonValue(serde_json::json!({"energy_budget": "one eval run"}));
+    let error = server
+        .experiment_propose(Parameters(request))
+        .await
+        .expect_err("budget without max_runs rejected");
+    assert!(error.to_string().contains("budget.max_runs"), "{error}");
+
+    // A non-positive max_runs is refused too.
+    let mut request = proposal("skill");
+    request.budget = AnyJsonValue(serde_json::json!({"max_runs": 0}));
+    let error = server
+        .experiment_propose(Parameters(request))
+        .await
+        .expect_err("zero max_runs rejected");
+    assert!(error.to_string().contains("budget.max_runs"), "{error}");
+
+    // The ceiling is enforced at fitness_record: 9 + 9 = 18 is allowed at
+    // the boundary; the 19th run is a typed refusal.
+    let proposed = propose(&server, "skill").await; // max_runs = 18
+    let experiment_id = proposed["experiment"]["id"]
+        .as_str()
+        .expect("id")
+        .to_string();
+    assert_eq!(proposed["experiment"]["max_runs"], 18);
+    let variant = register_variant(&server, &experiment_id, "baseline", None).await;
+    let variant_id = variant["variant"]["id"].as_str().expect("id").to_string();
+    for _ in 0..2 {
+        server
+            .fitness_record(Parameters(FitnessRecordRequest {
+                experiment_id: experiment_id.clone(),
+                variant_id: variant_id.clone(),
+                runs: vec!["harness report".to_string()],
+                run_count: 9,
+                scores: AnyJsonValue(serde_json::json!({})),
+            }))
+            .await
+            .expect("records up to the ceiling are allowed");
+    }
+    let error = server
+        .fitness_record(Parameters(FitnessRecordRequest {
+            experiment_id: experiment_id.clone(),
+            variant_id,
+            runs: vec!["one run too many".to_string()],
+            run_count: 1,
+            scores: AnyJsonValue(serde_json::json!({})),
+        }))
+        .await
+        .expect_err("over-ceiling record refused");
+    let message = error.to_string();
+    assert!(message.contains("budget exhausted"), "{message}");
+    assert!(message.contains(&experiment_id), "{message}");
+    assert!(message.contains("19"), "{message}");
+    assert!(message.contains("18"), "{message}");
+}
+
+/// §P8.9 step 5: the linked goal id round-trips through the declaration and
+/// the population query — the explicit registry ↔ goal-loop join.
+#[tokio::test]
+async fn linked_goal_id_round_trips_through_the_declaration() {
+    let server = make_server();
+    let mut request = proposal("skill");
+    request.linked_goal_id = Some("04998f4f-2ae2-4d53-a67d-f178e77072f5".to_string());
+    let response = server
+        .experiment_propose(Parameters(request))
+        .await
+        .expect("propose with linked goal");
+    let response = envelope(&response);
+    assert_eq!(
+        response["experiment"]["linked_goal_id"],
+        "04998f4f-2ae2-4d53-a67d-f178e77072f5"
+    );
+    let experiment_id = response["experiment"]["id"]
+        .as_str()
+        .expect("id")
+        .to_string();
+    let population = server
+        .population_query(Parameters(PopulationQueryRequest {
+            layer: None,
+            status: None,
+            created_since: None,
+            limit: Some(10),
+        }))
+        .await
+        .expect("population query");
+    let population = envelope(&population);
+    assert_eq!(
+        population["experiments"][0]["linked_goal_id"],
+        "04998f4f-2ae2-4d53-a67d-f178e77072f5"
+    );
+    assert_eq!(population["experiments"][0]["id"], experiment_id.as_str());
 }
 
 #[test]

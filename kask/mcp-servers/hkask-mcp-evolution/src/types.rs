@@ -49,6 +49,15 @@ pub struct ExperimentRecord {
     pub noise_band: serde_json::Value,
     pub prediction: Prediction,
     pub budget: serde_json::Value,
+    /// The machine-readable run ceiling parsed from `budget.max_runs` at
+    /// declaration (§P8.9 step 2, D-1 enforce) — the Layer-A set point the
+    /// store enforces at `fitness_record`. NULL only on pre-rule records
+    /// (all resolved; the branch is unreachable for new experiments).
+    pub max_runs: Option<u64>,
+    /// The linked kanban goal (§P8.9 step 5) — the goal loop Brier-scores
+    /// the pre-registered claim against the measured outcome; this field is
+    /// the explicit registry ↔ goal-loop join.
+    pub linked_goal_id: Option<String>,
     pub status: String,
     pub created_at: String,
 }
@@ -72,6 +81,10 @@ pub struct FitnessRecord {
     pub experiment_id: String,
     pub variant_id: String,
     pub runs: Vec<String>,
+    /// The number of rollouts the referenced reports cover (§P8.9 step 2) —
+    /// a report reference names a harness run whose rollout count the
+    /// caller states; the store sums these against `max_runs`.
+    pub run_count: u64,
     pub scores: serde_json::Value,
     pub created_at: String,
 }
@@ -86,6 +99,94 @@ pub struct SelectionRecord {
     pub reject_reasons: Vec<String>,
     pub algedonic_reference: Option<String>,
     pub created_at: String,
+}
+
+/// Per-experiment health row for the regulation snapshot (§P8.9 step 1) —
+/// the Layer-A afferent view the bridge feeds to the cybernetics loop's
+/// `EvolutionHealthSensor`.
+#[derive(Debug, Clone, Serialize)]
+pub struct ExperimentHealth {
+    pub id: String,
+    pub layer: String,
+    pub status: String,
+    pub created_at: String,
+    pub max_runs: Option<u64>,
+    pub recorded_runs: u64,
+    pub prediction_confidence: Option<f64>,
+    pub verdict: Option<String>,
+    pub reject_reasons: Vec<String>,
+}
+
+/// The registry's health snapshot: every experiment with its recorded-run
+/// total, prediction confidence, and verdict.
+#[derive(Debug, Clone, Serialize)]
+pub struct EvolutionHealthSnapshot {
+    pub experiments: Vec<ExperimentHealth>,
+}
+
+impl EvolutionHealthSnapshot {
+    /// Ids of running experiments that are stuck (§P8.9 step 1, D-3):
+    /// unresolved past `stale_days`, or with their whole declared budget
+    /// recorded but no verdict yet. An unparseable timestamp reads as
+    /// stuck — visible, never silent.
+    pub fn stuck_running(&self, stale_days: u64) -> Vec<String> {
+        let cutoff = chrono::Utc::now() - chrono::Duration::days(stale_days as i64);
+        self.experiments
+            .iter()
+            .filter(|experiment| experiment.status == STATUS_RUNNING)
+            .filter(|experiment| {
+                let stale = chrono::DateTime::parse_from_rfc3339(&experiment.created_at)
+                    .map(|stamp| stamp.with_timezone(&chrono::Utc) < cutoff)
+                    .unwrap_or(true);
+                let spent = experiment
+                    .max_runs
+                    .is_some_and(|ceiling| experiment.recorded_runs >= ceiling);
+                stale || spent
+            })
+            .map(|experiment| experiment.id.clone())
+            .collect()
+    }
+
+    /// Mean Brier over resolved non-void claims: selected → the claim held
+    /// (outcome 1), rejected → refuted (outcome 0). No-headroom voids (the
+    /// first reject reason contains "no-headroom") are design failures, not
+    /// claim measurements — excluded from the calibration record. Returns
+    /// `(mean_brier, claim_count)`; `None` when no measured claims exist.
+    pub fn resolved_claim_brier(&self) -> Option<(f64, u32)> {
+        let mut sum = 0.0;
+        let mut claims = 0u32;
+        for experiment in &self.experiments {
+            if experiment.status != STATUS_RESOLVED {
+                continue;
+            }
+            let Some(confidence) = experiment.prediction_confidence else {
+                continue;
+            };
+            match experiment.verdict.as_deref() {
+                Some(VERDICT_SELECTED) => {
+                    sum += (confidence - 1.0) * (confidence - 1.0);
+                    claims += 1;
+                }
+                Some(VERDICT_REJECTED) => {
+                    if experiment
+                        .reject_reasons
+                        .first()
+                        .is_some_and(|reason| reason.contains("no-headroom"))
+                    {
+                        continue;
+                    }
+                    sum += confidence * confidence;
+                    claims += 1;
+                }
+                _ => {}
+            }
+        }
+        if claims == 0 {
+            None
+        } else {
+            Some((sum / claims as f64, claims))
+        }
+    }
 }
 
 /// Registry failures, classified per-variant for MCP dispatch — never a
@@ -108,6 +209,18 @@ pub enum EvolutionError {
     UnknownLayer(String),
     #[error("prediction confidence must be in [0, 1], got {0}")]
     ConfidenceOutOfRange(f64),
+    #[error(
+        "budget.max_runs must be a positive integer — the declared budget is the Layer-A set point the server enforces (§P8.9 step 2, D-1); budget was: {0}"
+    )]
+    BudgetMissingMaxRuns(String),
+    #[error(
+        "experiment {0} budget exhausted: recording {1} total runs would exceed the declared ceiling of {2} (§P8.9 step 2, D-1)"
+    )]
+    BudgetExhausted(String, u64, u64),
+    #[error(
+        "run_count must be a positive integer — the number of rollouts the referenced reports cover (§P8.9 step 2); got {0}"
+    )]
+    RunCountInvalid(u64),
     #[error("verdict must be \"selected\" or \"rejected\", got {0:?}")]
     UnknownVerdict(String),
     #[error("status must be one of proposed, running, resolved; got {0:?}")]

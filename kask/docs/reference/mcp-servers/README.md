@@ -219,7 +219,7 @@ across the layers:[^brier-1950][^tetlock-record]
 The deterministic `hkask_forecast::*` primitives are invoked by the model directly via the
 `lisp_eval` agent tool (wrapping `hkask_lisp::eval_sandboxed_with_budget`) when a SKILL.md
 instructs it to. Within the superforecasting skill's eight-stage pipeline, `lisp_eval` drives
-six deterministic checks (all pinned by `test_superforecasting_skill_md_pins_forms`):
+six deterministic checks (executed live through `lisp_eval`; receipts in the skill-audit records):
 
 | Stage | Tool | Form | Role |
 |-------|------|------|------|

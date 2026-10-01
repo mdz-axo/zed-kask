@@ -2080,6 +2080,41 @@ fn main() {
                                     .detach();
                                 }
 
+                                // zed-kask: D87 — wire the evolution health
+                                // source into the cybernetics loop (§P8.9
+                                // step 1 — the Layer-A afferent pathway for
+                                // the evolution program). Without this, the
+                                // loop is blind to stuck experiments: a
+                                // running experiment unresolved past the
+                                // stale set point (D-3: 7 days) or at its
+                                // declared budget ceiling with no verdict
+                                // produces no signal.
+                                match kask_bridge::BridgeEvolutionHealthSource::open(&passphrase) {
+                                    Ok(source) => {
+                                        let evolution_source: std::sync::Arc<
+                                            dyn hkask_regulation::EvolutionHealthSource,
+                                        > = std::sync::Arc::new(source);
+                                        let loop_for_evolution =
+                                            cybernetics_loop_for_panel_deferred.clone();
+                                        gpui_tokio::Tokio::spawn(cx, async move {
+                                            let mut loop_guard =
+                                                loop_for_evolution.write().await;
+                                            loop_guard
+                                                .set_evolution_health_source(evolution_source);
+                                        })
+                                        .detach();
+                                    }
+                                    Err(error) => {
+                                        // A broken source is not "no deviation"
+                                        // — warn so an unreadable registry is
+                                        // distinguishable from a healthy one
+                                        // (the `.rules` failure-signal rule).
+                                        log::warn!(
+                                            "hKask evolution health source not wired: {error}"
+                                        );
+                                    }
+                                }
+
                                 // D11 curator mirror: wire the curator context
                                 // injector so the Curator recalls its own
                                 // sovereign memory from

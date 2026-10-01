@@ -41,12 +41,17 @@ pub fn map_evolution_error(error: EvolutionError) -> McpToolError {
         EvolutionError::VariantNotInExperiment(..)
         | EvolutionError::UnknownLayer(_)
         | EvolutionError::ConfidenceOutOfRange(_)
+        | EvolutionError::BudgetMissingMaxRuns(_)
+        | EvolutionError::RunCountInvalid(_)
         | EvolutionError::UnknownVerdict(_)
         | EvolutionError::UnknownStatus(_)
         | EvolutionError::SelectedWithoutVariant
         | EvolutionError::RejectedWithoutReasons
         | EvolutionError::Empty(_)
         | EvolutionError::BadTimestamp(_) => McpToolError::invalid_argument(error.to_string()),
+        EvolutionError::BudgetExhausted(..) => {
+            McpToolError::new(McpErrorKind::FailedPrecondition, error.to_string())
+        }
         EvolutionError::Database(_) | EvolutionError::Serialization(_) => {
             McpToolError::internal(error.to_string())
         }
@@ -87,8 +92,15 @@ pub struct ExperimentProposeRequest {
     /// confidence must be in [0, 1].
     pub prediction: Prediction,
     /// The energy-budget declaration (arbitrary JSON): the spend ceiling
-    /// for auto-run (§P8.7-Q1).
+    /// for auto-run (§P8.7-Q1). **Must carry `max_runs` — a positive integer
+    /// the server enforces at `fitness_record` (§P8.9 step 2, D-1): the
+    /// declared budget is the Layer-A set point, and recording past it is a
+    /// typed refusal, never a silent overshoot.
     pub budget: AnyJsonValue,
+    /// The linked kanban goal (§P8.9 step 5) — the goal loop Brier-scores the
+    /// pre-registered claim against the measured outcome; this field is the
+    /// explicit registry ↔ goal-loop join.
+    pub linked_goal_id: Option<String>,
     /// Optional replay-convergence key: a retried call returns the existing
     /// experiment instead of duplicating it.
     pub experiment_key: Option<String>,
@@ -114,6 +126,11 @@ pub struct FitnessRecordRequest {
     /// entry names a real harness/evaluator report (e.g. a
     /// swarm_eval_agent_local run).
     pub runs: Vec<String>,
+    /// The number of rollouts the referenced reports cover (§P8.9 step 2).
+    /// The server sums recorded run counts against the experiment's declared
+    /// `budget.max_runs` ceiling and refuses the record with a typed
+    /// `budget_exhausted` error when it would exceed it.
+    pub run_count: u64,
     /// Per-objective scores computed from those runs (arbitrary JSON).
     pub scores: AnyJsonValue,
 }
@@ -155,7 +172,7 @@ pub struct PopulationQueryRequest {
 #[tool_router(router = evolution_router, vis = "pub")]
 impl EvolutionServer {
     #[tool(
-        description = "Register an evolution experiment (protocol step 1, Declare): hypothesis, artifact layer (skill | agent_card | prompt_template | tool_schema | regulation_scalar | lora_adapter), genotype refs, eval set, fitness function, noise band, pre-registered prediction with confidence in [0,1], and energy budget. Returns the experiment record with status proposed. Optional experiment_key converges retried calls onto the existing record instead of duplicating it."
+        description = "Register an evolution experiment (protocol step 1, Declare): hypothesis, artifact layer (skill | agent_card | prompt_template | tool_schema | regulation_scalar | lora_adapter), genotype refs, eval set, fitness function, noise band, pre-registered prediction with confidence in [0,1], and an energy budget that MUST carry max_runs (a positive integer the server enforces at fitness_record — recording past the ceiling is a typed budget_exhausted refusal, §P8.9 step 2). Optional linked_goal_id joins the experiment to the kanban goal that Brier-scores its claim. Returns the experiment record with status proposed. Optional experiment_key converges retried calls onto the existing record instead of duplicating it."
     )]
     pub async fn experiment_propose(
         &self,
@@ -168,6 +185,7 @@ impl EvolutionServer {
             noise_band,
             prediction,
             budget,
+            linked_goal_id,
             experiment_key,
         }): Parameters<ExperimentProposeRequest>,
     ) -> Result<String, McpToolError> {
@@ -186,6 +204,15 @@ impl EvolutionServer {
                     prediction.confidence,
                 )));
             }
+            // §P8.9 step 2 (D-1: enforce): the declared budget must carry a
+            // machine-readable run ceiling — the Layer-A set point.
+            let max_runs = budget
+                .get("max_runs")
+                .and_then(serde_json::Value::as_u64)
+                .filter(|value| *value > 0)
+                .ok_or_else(|| {
+                    map_evolution_error(EvolutionError::BudgetMissingMaxRuns(budget.to_string()))
+                })?;
             let record = self
                 .store
                 .propose_experiment(
@@ -197,6 +224,8 @@ impl EvolutionServer {
                     &noise_band,
                     &prediction,
                     &budget,
+                    max_runs,
+                    linked_goal_id.as_deref(),
                     experiment_key.as_deref(),
                 )
                 .map_err(map_evolution_error)?;
@@ -234,7 +263,7 @@ impl EvolutionServer {
     }
 
     #[tool(
-        description = "Record grounded fitness for a variant (protocol step 3, Test): runs are recorded report references ONLY — never simulated; each entry names a real harness or evaluator report (e.g. a swarm_eval_agent_local run) — plus per-objective scores computed from those runs. Immutable once written. A resolved experiment no longer accepts fitness."
+        description = "Record grounded fitness for a variant (protocol step 3, Test): runs are recorded report references ONLY — never simulated; each entry names a real harness or evaluator report (e.g. a swarm_eval_agent_local run) — plus run_count (the number of rollouts those reports cover; the server sums run counts against the experiment's declared budget.max_runs and refuses with a typed budget_exhausted error when the record would exceed the ceiling, §P8.9 step 2) and per-objective scores computed from those runs. Immutable once written. A resolved experiment no longer accepts fitness."
     )]
     pub async fn fitness_record(
         &self,
@@ -242,6 +271,7 @@ impl EvolutionServer {
             experiment_id,
             variant_id,
             runs,
+            run_count,
             scores,
         }): Parameters<FitnessRecordRequest>,
     ) -> Result<String, McpToolError> {
@@ -251,9 +281,14 @@ impl EvolutionServer {
             if runs.is_empty() || runs.iter().any(|r| r.trim().is_empty()) {
                 return Err(map_evolution_error(EvolutionError::Empty("runs")));
             }
+            if run_count == 0 {
+                return Err(map_evolution_error(EvolutionError::RunCountInvalid(
+                    run_count,
+                )));
+            }
             let record = self
                 .store
-                .record_fitness(&experiment_id, &variant_id, &runs, &scores)
+                .record_fitness(&experiment_id, &variant_id, &runs, run_count, &scores)
                 .map_err(map_evolution_error)?;
             Ok(serde_json::json!({ "status": "recorded", "fitness": record }))
         })

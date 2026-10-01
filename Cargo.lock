@@ -10904,6 +10904,7 @@ dependencies = [
  "hkask-inference",
  "hkask-keystore",
  "hkask-mcp-curator",
+ "hkask-mcp-evolution",
  "hkask-mcp-kata-kanban",
  "hkask-mcp-server",
  "hkask-mcp-swarm",

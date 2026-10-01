@@ -285,11 +285,8 @@ insert is D — the returned h_mem id.
    mechanical floor (abandoned, unowned, malformed shape); each
    state's entry conditions are carried by its definition.
    (`member` is the string-equality primitive — `assoc`/`eq` compare
-   identity and silently miss env-provided strings; the pin test holds
-   the member-based count-token, the shape guard, and the red-on-shape
-   branch in `lisp_eval_tool.rs`
-   (`test_program_manager_skill_md_pins_closure_ledger_form`), and the
-   regression case validates the form live in both directions plus the
+   identity and silently miss env-provided strings; the regression
+   case validates the form live in both directions plus the
    object-shape red case.)
 6. When the operator confirms the outcome, resolve the goal
    (`kanban_goal_score`) so the intake prediction is Brier-scored
@@ -311,7 +308,7 @@ To render a template, call the `render_template` tool with the template ref (e.g
 
 ## Regression case
 
-Run a small governed change (one file, one behavior) through the loop with a two-item open-items ledger: (i) render `program-manager/design-review` with the design record's five inputs; (ii) render `program-manager/dod-checklist` with the change summary and residue targets; (iii) render `program-manager/closeout-report` with goal, outcome, the ledger, and the learning; (iv) render `program-manager/delivery-rubric` with the findings; (v) run the closure-ledger form three ways — a green flat ledger (both items owned and closed) → green; a red flat ledger (one `reported-abandoned`, one `owner:none`) → red; and a ledger with one object-shaped entry → red (the shape guard). The three-way form check is also pinned by `test_program_manager_skill_md_pins_closure_ledger_form`.
+Run a small governed change (one file, one behavior) through the loop with a two-item open-items ledger: (i) render `program-manager/design-review` with the design record's five inputs; (ii) render `program-manager/dod-checklist` with the change summary and residue targets; (iii) render `program-manager/closeout-report` with goal, outcome, the ledger, and the learning; (iv) render `program-manager/delivery-rubric` with the findings; (v) run the closure-ledger form three ways — a green flat ledger (both items owned and closed) → green; a red flat ledger (one `reported-abandoned`, one `owner:none`) → red; and a ledger with one object-shaped entry → red (the shape guard). The three-way form check is executed live through `lisp_eval` (receipts above).
 
 ## Convergence
 

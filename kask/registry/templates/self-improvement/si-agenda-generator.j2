@@ -40,7 +40,7 @@ Design candidate experiments and rank them. Every candidate must be runnable end
 5. **Fitness function** — the per-objective aggregates from recorded runs (pass_rate; cost objective total_tokens).
 6. **Noise band** — the 10% cost band unless the layer's protocol row says otherwise.
 7. **Prediction** — {claim, confidence in [0,1]}: the claim names which variant wins and on what measured quantity; it is pre-registered and never edited after measurement begins.
-8. **Budget** — the runs this candidate needs (variants × tasks × repeats), within the declared ceiling.
+8. **Budget** — must carry `max_runs` (a positive integer): the runs this candidate needs (variants × tasks × repeats), within the declared ceiling. The server enforces it at `fitness_record` — recording past the ceiling is a typed `budget_exhausted` refusal (§P8.9 step 2).
 
 ### Calibration (mandatory)
 

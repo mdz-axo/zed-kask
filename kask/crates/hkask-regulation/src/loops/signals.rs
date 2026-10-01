@@ -73,6 +73,14 @@ pub enum SignalMetric {
     GoalExpiredCount,
     /// Metacognition critical alert count (Curation Loop 5)
     MetacognitionCriticalAlerts,
+    /// Stuck evolution-experiment count (Cybernetics Loop 6; §P8.9 step 1).
+    /// Running experiments unresolved past the stale set point (D-3:
+    /// 7 days) or with their whole declared budget recorded but no verdict.
+    /// Sensed from the evolution registry's health snapshot via the bridge
+    /// source. Set-point 0.0; any positive count is a deviation — without
+    /// this metric the loop reports `signal_count=0` while experiments sit
+    /// unresolved forever (the blind-feedback-loop trap).
+    EvolutionStuckExperiments,
 
     // MetacognitionVarietyDeficit removed 2026-08-30 — a pure duplicate of
     // VarietyDeficit (same ledger `overall_deficit`, same Escalate→Curation
@@ -130,6 +138,7 @@ impl SignalMetric {
             SignalMetric::GoalStaleCount => "goal_stale_count",
             SignalMetric::GoalExpiredCount => "goal_expired_count",
             SignalMetric::MetacognitionCriticalAlerts => "metacognition_critical_alerts",
+            SignalMetric::EvolutionStuckExperiments => "evolution_stuck_experiments",
             SignalMetric::ToolReliability => "tool_reliability",
             SignalMetric::PassRate => "pass_rate",
             SignalMetric::TestCoverage => "test_coverage",
@@ -161,6 +170,7 @@ impl SignalMetric {
             SignalMetric::GoalStaleCount,
             SignalMetric::GoalExpiredCount,
             SignalMetric::MetacognitionCriticalAlerts,
+            SignalMetric::EvolutionStuckExperiments,
             SignalMetric::ToolReliability,
             SignalMetric::PassRate,
             SignalMetric::TestCoverage,
@@ -183,7 +193,9 @@ impl SignalMetric {
             | SignalMetric::ContextServerHealth
             | SignalMetric::ToolReliability
             | SignalMetric::PassRate => Some(true),
-            SignalMetric::VarietyDeficit | SignalMetric::OcrSilentFailures => Some(false),
+            SignalMetric::VarietyDeficit
+            | SignalMetric::OcrSilentFailures
+            | SignalMetric::EvolutionStuckExperiments => Some(false),
             _ => None,
         }
     }
@@ -209,6 +221,10 @@ mod tests {
         assert_eq!(SignalMetric::VarietyDeficit.impact_direction(), Some(false));
         assert_eq!(
             SignalMetric::OcrSilentFailures.impact_direction(),
+            Some(false)
+        );
+        assert_eq!(
+            SignalMetric::EvolutionStuckExperiments.impact_direction(),
             Some(false)
         );
         assert_eq!(SignalMetric::ErrorRate.impact_direction(), None);
@@ -259,6 +275,7 @@ mod tests {
             "goal_stale_count",
             "goal_expired_count",
             "metacognition_critical_alerts",
+            "evolution_stuck_experiments",
             "tool_reliability",
             "pass_rate",
             "test_coverage",

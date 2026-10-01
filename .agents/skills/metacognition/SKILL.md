@@ -167,6 +167,7 @@ stated env's); and the convergence threshold (env `{gap_before:
 before the division — without it `(/ 1 0)` errors). Verify the hypotenuse
 is 0 when both gaps are 0 (target met). Verify the reduction is negative
 when gap_after > gap_before (a regression — the threshold check fails it,
-which is the correct interpretation). All four forms durably pinned by
-`test_metacognition_skill_md_pins_forms`; receipts executed through the
-live tool 2026-09-30.
+which is the correct interpretation). All four forms verified
+through the live tool 2026-09-30 (receipts in the audit's steps
+record; the forms are executed at audit and use time, never
+anchored in code).

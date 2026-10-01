@@ -47,6 +47,7 @@ pub use regulation_policy::alert_condition;
 pub use runtime::NoopEventSink;
 pub use runtime::{OBSERVATION_WINDOW_SECS, OperatorFeedbackObservation, RegulationLedger};
 pub use sensor_provider::ContextServerHealthSource;
+pub use sensor_provider::EvolutionHealthSource;
 pub use sensor_provider::MemoryHealthSource;
 pub use sensor_provider::OcrHealthError;
 pub use sensor_provider::OcrHealthSource;

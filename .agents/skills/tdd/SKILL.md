@@ -134,8 +134,9 @@ Run the cycle gate's branch matrix through `lisp_eval` (receipts live 2026-09-30
 - absent oracle: env without the key → `unbound symbol: oracle` (the engine's typed refusal — honest, not a silent pass)
 - unconfirmed seam: `"seam_confirmed": "no"` → `"open"`
 
-The gate form and the null-oracle pin live in `test_tdd_skill_md_pins_forms`
-(`crates/agent/src/tools/skill_md_pins.rs`).
+The gate form and the five-branch receipts above are executed through
+the live tool (`lisp_eval`); the skill's forms are verified at audit
+and use time, never anchored in code.
 
 ## Constraints
 

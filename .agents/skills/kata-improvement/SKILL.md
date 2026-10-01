@@ -128,8 +128,7 @@ negative when the metric regressed (metric_after < metric_before).
 Render one coaching template (e.g., `kata-improvement/coaching-q1-target`)
 with a contract-conformant context — the ASK render (no `learner_answer`)
 and the ASSESS render (with it) both execute. All receipts through the
-live tool, re-executed 2026-09-30 (batch-9 re-audit); the Check forms and
-the five fixed questions are pinned in `test_kata_improvement_skill_md_pins_forms`.
+live tool, re-executed 2026-09-30 (batch-9 re-audit).
 
 ## Constraints
 

@@ -549,6 +549,27 @@ impl CyberneticsLoop {
         }
     }
 
+    /// Wire an evolution health source after construction (§P8.9 step 1 —
+    /// the Layer-A afferent pathway for the evolution program).
+    ///
+    /// Used by the composition root to wire the sensor over the evolution
+    /// registry's health snapshot. Without this, the loop is blind to stuck
+    /// experiments: a running experiment unresolved past the stale set point
+    /// (D-3: 7 days) or with its whole declared budget recorded but no
+    /// verdict produces no signal — the blind-feedback-loop trap.
+    pub fn set_evolution_health_source(
+        &mut self,
+        source: Arc<dyn crate::sensor_provider::EvolutionHealthSource>,
+    ) {
+        self.sensor_registry.replace(
+            crate::loops::SignalMetric::EvolutionStuckExperiments,
+            Arc::new(crate::sensor_provider::EvolutionHealthSensor::new(
+                source,
+                crate::sensor_provider::DEFAULT_EVOLUTION_STALE_DAYS,
+            )),
+        );
+    }
+
     /// Submit a rollout impact check for the next `verify_impact` pass.
     ///
     /// This is the producer side of the event-substrate phase 6 seam: a

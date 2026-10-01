@@ -66,12 +66,14 @@ grep -q -- '--jobs' "$INSTALL_SH" \
     || fail "install.sh lost its cargo --jobs cap — uncapped builds peg every core"
 grep -q -- 'HKASK_BUILD_JOBS' "$INSTALL_SH" \
     || fail "install.sh lost the HKASK_BUILD_JOBS override"
-# 2b. The zed build must carry --features mimalloc: without it the binary
-# falls back to glibc malloc, whose per-thread arenas retain their 64MB
-# high-water mark — RSS ratchets to multi-GB over a working session
-# (measured 2026-09-28: 117 arenas ≈ 7.5GB after 8h).
-grep -q -- '--features mimalloc' "$INSTALL_SH" \
-    || fail "install.sh lost --features mimalloc on the zed build — glibc arena retention returns (2026-09-28 RSS finding)"
+# 2b. REMOVED 2026-09-30: the mimalloc default was a divergence upstream does
+# not carry (upstream Linux builds run glibc malloc; mimalloc is an opt-in
+# feature there). D85 landed it unmeasured on the performance side while the
+# draw-cost regression (2.3–7.5 ms → 20–38 ms per draw) appeared only after
+# it. The allocator divergence is removed for upstream parity; the glibc
+# arena-ratchet memory finding (2026-09-28) is handled outside code if it
+# recurs (MALLOC_ARENA_MAX in the launcher). mimalloc stays available as an
+# opt-in feature, exactly as upstream.
 
 # 3. install.sh reads the split output dirs.
 grep -q 'target/release-mcp' "$INSTALL_SH" \
@@ -108,13 +110,9 @@ for sccache_consumer in "$ROOT/script/setup-sccache" "$ROOT/script/clippy" "$INS
     fi
 done
 
-# 8. The zed crate's DEFAULT features must include mimalloc. The install.sh
-# flag alone (check 2b) was bypassed by a manual `cargo build --release -p
-# zed` + copy (2026-09-29: a glibc binary landed in ~/.local/bin and the
-# arena ratchet restarted). The default lives in the manifest so every
-# build path — scripted or manual — resolves the allocator.
-grep -A8 '^\[features\]' "$ROOT/crates/zed/Cargo.toml" | grep -q 'default = \["mimalloc"\]' \
-    || fail "zed crate lost default = [\"mimalloc\"] — manual builds fall back to glibc malloc and RSS ratchets (2026-09-29 bypass finding)"
+# 8. REMOVED 2026-09-30 with the D85 mimalloc default (see 2b): the check
+# pinned a divergence upstream does not carry. Upstream parity means no
+# default allocator feature; mimalloc remains opt-in as upstream has it.
 
 # Exercise the wrapper without Cargo: profile selection must not silently
 # trigger a release dependency rebuild or weaken the lint coverage.

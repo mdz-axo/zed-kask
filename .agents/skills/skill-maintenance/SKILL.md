@@ -47,7 +47,7 @@ Fagan, "Design and code inspections to reduce errors in program development," IB
 | Validate — mechanical checks (S1–S11, T1–T5) | D | the sweep scripts, the prescreen, the render_template_tool.rs corpus tests, file reads |
 | Validate — read-triage adjudication (S10 body usages, S13 loop-anatomy recognition) | P | the operator's rulings cited in the check text; the prescreen flags, the auditor adjudicates |
 | Audit — signal verification | D | the actual tree and live tool surface (file:line evidence); the vague-instruction judgment is P, critiqued by the operator |
-| Audit — health score | D | `lisp_eval` (the pinned form; `test_skill_maintenance_skill_md_pins_health_score_form`) |
+| Audit — health score | D | `lisp_eval` (the health-score form; receipts in the regression case) |
 | Optimize — candidate design | P | the fixed-case comparison (the evaluator); the operator judges in the gemba walk |
 | Optimize — measurement (Check) | D | the same tasks and evaluator run on every candidate; recorded harness outputs |
 | Template-logic audit — goal loading, reconciliation, hard-gate counts | D | `read_file`, `lisp_eval`, recorded harness outputs |
@@ -207,7 +207,7 @@ Audits one `.j2` template's logic against its `{# goal: ... #}` annotation and t
 
 ## Regression case
 
-Validate both directions: render `skill-maintenance/skill-maintenance-validate` with `target` naming a known-good skill (e.g. `listening`) and a known-bad fixture (a SKILL.md missing When to Use and Constraints) — the good target passes S5/S8, the bad target fails them with file:line evidence. Audit: render `skill-maintenance/skill-maintenance-audit` with `skill_name` and `workspace_context`, then run the health-score form three ways via `lisp_eval` — `{0,0,0,0}` → 1.0, one critical → 0.5, `{2 critical, 1 high, 1 medium, 1 low}` → 0 (the floor). Template-logic chain: render `logic-load-goal` with a `target_path` and `target_content` carrying a `{# goal: ... #}` block (goal found) and one without (goal missing); render `logic-critique-template` then `logic-critique-critique` over the critique (the decoupled second pass). Optimize: render `skill-maintenance-optimize` with `skill_name`, `objective`, `baseline`, `tasks`, `candidates`, `observations`. The health form is pinned by `test_skill_maintenance_skill_md_pins_health_score_form` in `lisp_eval_tool.rs`.
+Validate both directions: render `skill-maintenance/skill-maintenance-validate` with `target` naming a known-good skill (e.g. `listening`) and a known-bad fixture (a SKILL.md missing When to Use and Constraints) — the good target passes S5/S8, the bad target fails them with file:line evidence. Audit: render `skill-maintenance/skill-maintenance-audit` with `skill_name` and `workspace_context`, then run the health-score form three ways via `lisp_eval` — `{0,0,0,0}` → 1.0, one critical → 0.5, `{2 critical, 1 high, 1 medium, 1 low}` → 0 (the floor). Template-logic chain: render `logic-load-goal` with a `target_path` and `target_content` carrying a `{# goal: ... #}` block (goal found) and one without (goal missing); render `logic-critique-template` then `logic-critique-critique` over the critique (the decoupled second pass). Optimize: render `skill-maintenance-optimize` with `skill_name`, `objective`, `baseline`, `tasks`, `candidates`, `observations`. The health form's three-way receipts above are executed live through `lisp_eval`.
 
 ## Registry Templates
 

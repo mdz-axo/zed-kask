@@ -18,8 +18,9 @@ use hkask_storage::database::types::DbError;
 use hkask_storage::database::value::{DbRow, DbValue};
 
 use crate::types::{
-    EvolutionError, ExperimentRecord, FitnessRecord, Prediction, STATUS_PROPOSED, STATUS_RESOLVED,
-    STATUS_RUNNING, SelectionRecord, VERDICT_REJECTED, VERDICT_SELECTED, VariantRecord,
+    EvolutionError, EvolutionHealthSnapshot, ExperimentHealth, ExperimentRecord, FitnessRecord,
+    Prediction, STATUS_PROPOSED, STATUS_RESOLVED, STATUS_RUNNING, SelectionRecord,
+    VERDICT_REJECTED, VERDICT_SELECTED, VariantRecord,
 };
 
 /// Serialize a column value as canonical JSON text.
@@ -41,6 +42,13 @@ fn optional_text(row: &DbRow, idx: usize) -> Option<String> {
     row.get_str(idx).ok().map(str::to_string)
 }
 
+/// Read an optional INTEGER column (NULL or missing value → None).
+fn optional_int(row: &DbRow, idx: usize) -> Option<u64> {
+    row.get_int(idx)
+        .ok()
+        .and_then(|value| u64::try_from(value).ok())
+}
+
 fn experiment_from_row(row: &DbRow) -> Result<ExperimentRecord, EvolutionError> {
     Ok(ExperimentRecord {
         id: row.get_str(0)?.to_string(),
@@ -52,6 +60,8 @@ fn experiment_from_row(row: &DbRow) -> Result<ExperimentRecord, EvolutionError> 
         noise_band: row.get_json(6)?,
         prediction: row.get_json(7)?,
         budget: row.get_json(8)?,
+        max_runs: optional_int(row, 11),
+        linked_goal_id: optional_text(row, 12),
         status: row.get_str(9)?.to_string(),
         created_at: row.get_str(10)?.to_string(),
     })
@@ -73,8 +83,9 @@ fn fitness_from_row(row: &DbRow) -> Result<FitnessRecord, EvolutionError> {
         experiment_id: row.get_str(1)?.to_string(),
         variant_id: row.get_str(2)?.to_string(),
         runs: row.get_json(3)?,
+        run_count: row.get_int(5).unwrap_or(0).max(0) as u64,
         scores: row.get_json(4)?,
-        created_at: row.get_str(5)?.to_string(),
+        created_at: row.get_str(6)?.to_string(),
     })
 }
 
@@ -111,6 +122,8 @@ impl EvolutionStore {
                  noise_band TEXT NOT NULL, \
                  prediction TEXT NOT NULL, \
                  budget TEXT NOT NULL, \
+                 max_runs INTEGER, \
+                 linked_goal_id TEXT, \
                  status TEXT NOT NULL, \
                  created_at TEXT NOT NULL \
              ); \
@@ -129,6 +142,7 @@ impl EvolutionStore {
                  variant_id TEXT NOT NULL, \
                  runs TEXT NOT NULL, \
                  scores TEXT NOT NULL, \
+                 run_count INTEGER NOT NULL DEFAULT 0, \
                  created_at TEXT NOT NULL \
              ); \
              CREATE TABLE IF NOT EXISTS selection_records (\
@@ -142,8 +156,40 @@ impl EvolutionStore {
              ); \
              CREATE INDEX IF NOT EXISTS variants_by_experiment ON variants(experiment_id); \
              CREATE INDEX IF NOT EXISTS fitness_by_variant ON fitness_records(variant_id); \
-             CREATE INDEX IF NOT EXISTS selection_by_experiment ON selection_records(experiment_id);",
+             CREATE INDEX IF NOT EXISTS selection_by_experiment ON selection_records(experiment_id)",
         )?;
+        // Additive migrations for pre-§P8.9 databases (§P8.7-Q5: no
+        // compatibility surface — these columns are the record's own
+        // evolution). Existing rows keep NULL `max_runs` (declared before
+        // the rule; all such experiments are resolved, so the budget check
+        // never applies to them) and run_count 0.
+        let has_column = |table: &str, column: &str| -> Result<bool, DbError> {
+            let rows = driver.query(&format!("PRAGMA table_info({table})"), &[])?;
+            Ok(rows
+                .iter()
+                .any(|row| row.get_str(1).map(|name| name == column).unwrap_or(false)))
+        };
+        for (table, column, definition) in [
+            (
+                "experiments",
+                "max_runs",
+                "ALTER TABLE experiments ADD COLUMN max_runs INTEGER",
+            ),
+            (
+                "experiments",
+                "linked_goal_id",
+                "ALTER TABLE experiments ADD COLUMN linked_goal_id TEXT",
+            ),
+            (
+                "fitness_records",
+                "run_count",
+                "ALTER TABLE fitness_records ADD COLUMN run_count INTEGER NOT NULL DEFAULT 0",
+            ),
+        ] {
+            if !has_column(table, column)? {
+                driver.execute(definition, &[])?;
+            }
+        }
         Ok(Self { driver })
     }
 
@@ -162,6 +208,8 @@ impl EvolutionStore {
         noise_band: &serde_json::Value,
         prediction: &Prediction,
         budget: &serde_json::Value,
+        max_runs: u64,
+        linked_goal_id: Option<&str>,
         experiment_key: Option<&str>,
     ) -> Result<ExperimentRecord, EvolutionError> {
         let id = format!("exp_{}", uuid::Uuid::new_v4().simple());
@@ -169,8 +217,9 @@ impl EvolutionStore {
         let inserted = self.driver.execute(
             "INSERT OR IGNORE INTO experiments \
              (id, experiment_key, hypothesis, layer, genotype_refs, eval_set, \
-              fitness_fn, noise_band, prediction, budget, status, created_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+              fitness_fn, noise_band, prediction, budget, max_runs, linked_goal_id, \
+              status, created_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
             &[
                 DbValue::Text(id.clone()),
                 text_or_null(experiment_key),
@@ -182,6 +231,8 @@ impl EvolutionStore {
                 DbValue::Text(value_column(noise_band)?),
                 DbValue::Text(value_column(prediction)?),
                 DbValue::Text(value_column(budget)?),
+                DbValue::Integer(max_runs as i64),
+                text_or_null(linked_goal_id),
                 DbValue::Text(STATUS_PROPOSED.to_string()),
                 DbValue::Text(created_at),
             ],
@@ -203,7 +254,7 @@ impl EvolutionStore {
     pub fn experiment_by_id(&self, id: &str) -> Result<ExperimentRecord, EvolutionError> {
         let row = self.driver.query_optional(
             "SELECT id, hypothesis, layer, genotype_refs, eval_set, fitness_fn, \
-             noise_band, prediction, budget, status, created_at \
+             noise_band, prediction, budget, status, created_at, max_runs, linked_goal_id \
              FROM experiments WHERE id = ?1",
             &[DbValue::Text(id.to_string())],
         )?;
@@ -215,7 +266,7 @@ impl EvolutionStore {
     fn experiment_by_key(&self, key: &str) -> Result<ExperimentRecord, EvolutionError> {
         let row = self.driver.query_optional(
             "SELECT id, hypothesis, layer, genotype_refs, eval_set, fitness_fn, \
-             noise_band, prediction, budget, status, created_at \
+             noise_band, prediction, budget, status, created_at, max_runs, linked_goal_id \
              FROM experiments WHERE experiment_key = ?1",
             &[DbValue::Text(key.to_string())],
         )?;
@@ -360,11 +411,20 @@ impl EvolutionStore {
     /// Append an immutable, grounded fitness record. Recorded report refs
     /// only — the caller asserts these name real harness/evaluator reports
     /// (§P8.3: never simulated). A resolved experiment refuses new fitness.
+    ///
+    /// §P8.9 step 2 (D-1: enforce): `run_count` is the number of rollouts the
+    /// referenced reports cover; the store sums recorded run counts against
+    /// the experiment's declared `max_runs` ceiling and refuses the record
+    /// with a typed `BudgetExhausted` error — never a silent overshoot.
+    /// Pre-rule rows carry NULL `max_runs`; every such experiment is already
+    /// resolved (the `ExperimentResolved` check above fires first), so the
+    /// no-ceiling branch is unreachable in practice and documented here.
     pub fn record_fitness(
         &self,
         experiment_id: &str,
         variant_id: &str,
         runs: &[String],
+        run_count: u64,
         scores: &serde_json::Value,
     ) -> Result<FitnessRecord, EvolutionError> {
         let experiment = self.experiment_by_id(experiment_id)?;
@@ -382,24 +442,74 @@ impl EvolutionStore {
         }
         let id = format!("fit_{}", uuid::Uuid::new_v4().simple());
         let created_at = chrono::Utc::now().to_rfc3339();
-        self.driver.execute(
-            "INSERT INTO fitness_records \
-             (id, experiment_id, variant_id, runs, scores, created_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            &[
-                DbValue::Text(id.clone()),
-                DbValue::Text(experiment_id.to_string()),
-                DbValue::Text(variant_id.to_string()),
-                DbValue::Text(value_column(&runs)?),
-                DbValue::Text(value_column(scores)?),
-                DbValue::Text(created_at.clone()),
-            ],
-        )?;
+        if let Some(ceiling) = experiment.max_runs {
+            // Single-statement atomicity (the crate's INSERT OR IGNORE shape):
+            // the budget condition and the write are ONE statement, so two
+            // concurrent fitness_record calls cannot both pass the check —
+            // SQLite serializes writers and the second statement's WHERE
+            // sees the first's committed SUM. A check-then-insert pair here
+            // was racy under rmcp's concurrent dispatch (observed live
+            // 2026-10-01: two run_count=1 records landed 57µs apart against
+            // a ceiling of 1).
+            let inserted = self.driver.execute(
+                "INSERT INTO fitness_records \
+                 (id, experiment_id, variant_id, runs, run_count, scores, created_at) \
+                 SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7 \
+                 WHERE ?5 + COALESCE((SELECT SUM(run_count) FROM fitness_records \
+                   WHERE experiment_id = ?2), 0) <= ?8",
+                &[
+                    DbValue::Text(id.clone()),
+                    DbValue::Text(experiment_id.to_string()),
+                    DbValue::Text(variant_id.to_string()),
+                    DbValue::Text(value_column(&runs)?),
+                    DbValue::Integer(run_count as i64),
+                    DbValue::Text(value_column(scores)?),
+                    DbValue::Text(created_at.clone()),
+                    DbValue::Integer(ceiling as i64),
+                ],
+            )?;
+            if inserted == 0 {
+                // Diagnostic only — the refusal above is the atomic gate;
+                // this read may race a concurrent record by one run in the
+                // message (cosmetic, never in the enforcement).
+                let row = self.driver.query_optional(
+                    "SELECT COALESCE(SUM(run_count), 0) FROM fitness_records \
+                     WHERE experiment_id = ?1",
+                    &[DbValue::Text(experiment_id.to_string())],
+                )?;
+                let recorded = row.and_then(|row| row.get_int(0).ok()).unwrap_or(0).max(0) as u64;
+                return Err(EvolutionError::BudgetExhausted(
+                    experiment_id.to_string(),
+                    recorded + run_count,
+                    ceiling,
+                ));
+            }
+        } else {
+            // No ceiling: a pre-§P8.9 record (NULL max_runs). Every such
+            // experiment is already resolved, so the ExperimentResolved
+            // check above fires first — this branch is unreachable in
+            // practice and kept only for the type system.
+            self.driver.execute(
+                "INSERT INTO fitness_records \
+                 (id, experiment_id, variant_id, runs, run_count, scores, created_at) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                &[
+                    DbValue::Text(id.clone()),
+                    DbValue::Text(experiment_id.to_string()),
+                    DbValue::Text(variant_id.to_string()),
+                    DbValue::Text(value_column(&runs)?),
+                    DbValue::Integer(run_count as i64),
+                    DbValue::Text(value_column(scores)?),
+                    DbValue::Text(created_at.clone()),
+                ],
+            )?;
+        }
         Ok(FitnessRecord {
             id,
             experiment_id: experiment_id.to_string(),
             variant_id: variant_id.to_string(),
             runs: runs.to_vec(),
+            run_count,
             scores: scores.clone(),
             created_at,
         })
@@ -410,7 +520,7 @@ impl EvolutionStore {
         variant_id: &str,
     ) -> Result<Vec<FitnessRecord>, EvolutionError> {
         let rows = self.driver.query(
-            "SELECT id, experiment_id, variant_id, runs, scores, created_at \
+            "SELECT id, experiment_id, variant_id, runs, scores, run_count, created_at \
              FROM fitness_records WHERE variant_id = ?1 ORDER BY created_at",
             &[DbValue::Text(variant_id.to_string())],
         )?;
@@ -422,7 +532,7 @@ impl EvolutionStore {
         experiment_id: &str,
     ) -> Result<Vec<FitnessRecord>, EvolutionError> {
         let rows = self.driver.query(
-            "SELECT id, experiment_id, variant_id, runs, scores, created_at \
+            "SELECT id, experiment_id, variant_id, runs, scores, run_count, created_at \
              FROM fitness_records WHERE experiment_id = ?1 ORDER BY created_at",
             &[DbValue::Text(experiment_id.to_string())],
         )?;
@@ -553,12 +663,49 @@ impl EvolutionStore {
         let rows = self.driver.query(
             &format!(
                 "SELECT id, hypothesis, layer, genotype_refs, eval_set, fitness_fn, \
-                 noise_band, prediction, budget, status, created_at \
+                 noise_band, prediction, budget, status, created_at, max_runs, linked_goal_id \
                  FROM experiments WHERE {where_clause} ORDER BY created_at DESC LIMIT {limit}"
             ),
             &params,
         )?;
         rows.iter().map(experiment_from_row).collect()
+    }
+
+    // ── Regulation health (§P8.9 step 1) ────────────────────────────────
+
+    /// The Layer-A afferent view: every experiment with its recorded-run
+    /// total, prediction confidence, and verdict. The bridge source feeds
+    /// this to the cybernetics loop's `EvolutionHealthSensor`.
+    pub fn health_snapshot(&self) -> Result<EvolutionHealthSnapshot, EvolutionError> {
+        let rows = self.driver.query(
+            "SELECT e.id, e.layer, e.status, e.created_at, e.max_runs, e.prediction, \
+             (SELECT COALESCE(SUM(f.run_count), 0) FROM fitness_records f \
+               WHERE f.experiment_id = e.id) AS recorded_runs, \
+             (SELECT s.verdict FROM selection_records s WHERE s.experiment_id = e.id \
+               ORDER BY s.created_at LIMIT 1) AS verdict, \
+             (SELECT s.reject_reasons FROM selection_records s WHERE s.experiment_id = e.id \
+               ORDER BY s.created_at LIMIT 1) AS reject_reasons \
+             FROM experiments e ORDER BY e.created_at DESC",
+            &[],
+        )?;
+        let experiments = rows
+            .iter()
+            .map(|row| {
+                let prediction: Prediction = row.get_json(5)?;
+                Ok(ExperimentHealth {
+                    id: row.get_str(0)?.to_string(),
+                    layer: row.get_str(1)?.to_string(),
+                    status: row.get_str(2)?.to_string(),
+                    created_at: row.get_str(3)?.to_string(),
+                    max_runs: optional_int(row, 4),
+                    prediction_confidence: Some(prediction.confidence),
+                    recorded_runs: row.get_int(6).unwrap_or(0).max(0) as u64,
+                    verdict: optional_text(row, 7),
+                    reject_reasons: row.get_json::<Vec<String>>(8).ok().unwrap_or_default(),
+                })
+            })
+            .collect::<Result<Vec<_>, EvolutionError>>()?;
+        Ok(EvolutionHealthSnapshot { experiments })
     }
 }
 
@@ -586,7 +733,9 @@ mod tests {
                     claim: "variant B wins".to_string(),
                     confidence: 0.7,
                 },
-                &serde_json::json!({"energy_budget": "one eval run"}),
+                &serde_json::json!({"energy_budget": "one eval run", "max_runs": 18}),
+                18,
+                None,
                 key,
             )
             .expect("propose")
@@ -638,10 +787,12 @@ mod tests {
                 &experiment.id,
                 &challenger.id,
                 &["swarm_eval_agent_local run 42".to_string()],
+                3,
                 &serde_json::json!({"pass_rate": 0.8, "total_tokens": 1200}),
             )
             .expect("fitness");
         assert_eq!(fitness.variant_id, challenger.id);
+        assert_eq!(fitness.run_count, 3);
         assert_eq!(
             fitness.runs,
             vec!["swarm_eval_agent_local run 42".to_string()]
@@ -790,5 +941,215 @@ mod tests {
             .expect("proposed");
         assert_eq!(proposed.len(), 1);
         assert_eq!(proposed[0].id, skill.id);
+    }
+
+    #[test]
+    fn budget_refusal_at_the_boundary() {
+        let store = store();
+        let experiment = propose(&store, "skill", None); // max_runs = 18
+        let baseline = variant(&store, &experiment.id, "baseline", None, Some("baseline"));
+        // 9 recorded: 9/18 — fine.
+        store
+            .record_fitness(
+                &experiment.id,
+                &baseline.id,
+                &["r1".to_string()],
+                9,
+                &serde_json::json!({}),
+            )
+            .expect("first half");
+        // 9 more: exactly at the ceiling (18) — allowed (§P8.9 step 2: the
+        // refusal is for records that would EXCEED the ceiling).
+        store
+            .record_fitness(
+                &experiment.id,
+                &baseline.id,
+                &["r2".to_string()],
+                9,
+                &serde_json::json!({}),
+            )
+            .expect("at ceiling");
+        // One more run would make 19 > 18 — typed refusal naming the
+        // experiment, the would-be total, and the declared ceiling.
+        let error = store
+            .record_fitness(
+                &experiment.id,
+                &baseline.id,
+                &["r3".to_string()],
+                1,
+                &serde_json::json!({}),
+            )
+            .expect_err("over ceiling");
+        assert!(
+            matches!(&error, EvolutionError::BudgetExhausted(id, would_record, ceiling)
+                if id == &experiment.id && *would_record == 19 && *ceiling == 18),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn health_snapshot_reports_recorded_runs_verdict_and_brier() {
+        let store = store();
+        let experiment = propose(&store, "skill", None); // confidence 0.7
+        let baseline = variant(&store, &experiment.id, "baseline", None, Some("baseline"));
+        store
+            .record_fitness(
+                &experiment.id,
+                &baseline.id,
+                &["r1".to_string()],
+                9,
+                &serde_json::json!({}),
+            )
+            .expect("fitness");
+        store
+            .record_selection(
+                &experiment.id,
+                VERDICT_SELECTED,
+                Some(&baseline.id),
+                &[],
+                Some("card 1"),
+            )
+            .expect("selection");
+        let snapshot = store.health_snapshot().expect("snapshot");
+        assert_eq!(snapshot.experiments.len(), 1);
+        let row = &snapshot.experiments[0];
+        assert_eq!(row.id, experiment.id);
+        assert_eq!(row.status, STATUS_RESOLVED);
+        assert_eq!(row.max_runs, Some(18));
+        assert_eq!(row.recorded_runs, 9);
+        assert_eq!(row.verdict.as_deref(), Some(VERDICT_SELECTED));
+        // selected at confidence 0.7 → Brier (0.7-1)^2 = 0.09
+        let (brier, claims) = snapshot.resolved_claim_brier().expect("brier");
+        assert!((brier - 0.09).abs() < 1e-9, "brier: {brier}");
+        assert_eq!(claims, 1);
+        // Resolved + selected → not stuck regardless of budget.
+        assert!(snapshot.stuck_running(7).is_empty());
+    }
+
+    #[test]
+    fn snapshot_stuck_and_void_exclusion_rules() {
+        use crate::types::{EvolutionHealthSnapshot, ExperimentHealth};
+        let old = (chrono::Utc::now() - chrono::Duration::days(30)).to_rfc3339();
+        let fresh = chrono::Utc::now().to_rfc3339();
+        let snapshot = EvolutionHealthSnapshot {
+            experiments: vec![
+                // Running, created 30 days ago → stuck on age (D-3: 7 days).
+                ExperimentHealth {
+                    id: "exp_stale".to_string(),
+                    layer: "skill".to_string(),
+                    status: STATUS_RUNNING.to_string(),
+                    created_at: old,
+                    max_runs: Some(18),
+                    recorded_runs: 3,
+                    prediction_confidence: Some(0.5),
+                    verdict: None,
+                    reject_reasons: Vec::new(),
+                },
+                // Running, fresh, but the whole budget is recorded with no
+                // verdict → stuck on spend.
+                ExperimentHealth {
+                    id: "exp_spent".to_string(),
+                    layer: "skill".to_string(),
+                    status: STATUS_RUNNING.to_string(),
+                    created_at: fresh.clone(),
+                    max_runs: Some(9),
+                    recorded_runs: 9,
+                    prediction_confidence: Some(0.5),
+                    verdict: None,
+                    reject_reasons: Vec::new(),
+                },
+                // Running, fresh, budget unspent → healthy.
+                ExperimentHealth {
+                    id: "exp_healthy".to_string(),
+                    layer: "skill".to_string(),
+                    status: STATUS_RUNNING.to_string(),
+                    created_at: fresh.clone(),
+                    max_runs: Some(18),
+                    recorded_runs: 3,
+                    prediction_confidence: Some(0.5),
+                    verdict: None,
+                    reject_reasons: Vec::new(),
+                },
+                // Rejected at 0.5 confidence → Brier 0.25.
+                ExperimentHealth {
+                    id: "exp_refuted".to_string(),
+                    layer: "skill".to_string(),
+                    status: STATUS_RESOLVED.to_string(),
+                    created_at: fresh.clone(),
+                    max_runs: Some(18),
+                    recorded_runs: 18,
+                    prediction_confidence: Some(0.5),
+                    verdict: Some(VERDICT_REJECTED.to_string()),
+                    reject_reasons: vec!["claim refuted".to_string()],
+                },
+                // No-headroom void → excluded from the calibration record.
+                ExperimentHealth {
+                    id: "exp_void".to_string(),
+                    layer: "skill".to_string(),
+                    status: STATUS_RESOLVED.to_string(),
+                    created_at: fresh,
+                    max_runs: Some(9),
+                    recorded_runs: 9,
+                    prediction_confidence: Some(0.9),
+                    verdict: Some(VERDICT_REJECTED.to_string()),
+                    reject_reasons: vec!["no-headroom: baseline saturated at 1.0".to_string()],
+                },
+            ],
+        };
+        let stuck = snapshot.stuck_running(7);
+        assert_eq!(
+            stuck,
+            vec!["exp_stale".to_string(), "exp_spent".to_string()]
+        );
+        // Only the refuted claim counts: mean Brier 0.25 over 1 claim.
+        let (brier, claims) = snapshot.resolved_claim_brier().expect("brier");
+        assert!((brier - 0.25).abs() < 1e-9, "brier: {brier}");
+        assert_eq!(claims, 1);
+    }
+
+    #[test]
+    fn migration_adds_columns_to_pre_rule_database() {
+        // A pre-§P8.9 experiments table (no max_runs, no linked_goal_id)
+        // with one resolved row — the production registry's shape before
+        // this change. with_driver must add the columns and keep the row.
+        let driver = SqliteDriver::in_memory_driver();
+        driver
+            .execute_batch(
+                "CREATE TABLE experiments (\
+                     id TEXT PRIMARY KEY, \
+                     experiment_key TEXT UNIQUE, \
+                     hypothesis TEXT NOT NULL, \
+                     layer TEXT NOT NULL, \
+                     genotype_refs TEXT NOT NULL, \
+                     eval_set TEXT NOT NULL, \
+                     fitness_fn TEXT NOT NULL, \
+                     noise_band TEXT NOT NULL, \
+                     prediction TEXT NOT NULL, \
+                     budget TEXT NOT NULL, \
+                     status TEXT NOT NULL, \
+                     created_at TEXT NOT NULL\
+                 );",
+            )
+            .expect("old schema");
+        driver
+            .execute(
+                "INSERT INTO experiments \
+                 (id, hypothesis, layer, genotype_refs, eval_set, fitness_fn, noise_band, \
+                  prediction, budget, status, created_at) \
+                 VALUES ('exp_old', 'h', 'skill', '[]', '{}', 'f', '{}', \
+                  '{\"claim\":\"c\",\"confidence\":0.5}', '{}', 'resolved', \
+                  '2026-09-30T00:00:00+00:00')",
+                &[],
+            )
+            .expect("old row");
+        let store = EvolutionStore::with_driver(driver).expect("migrated store");
+        let record = store.experiment_by_id("exp_old").expect("old row readable");
+        assert_eq!(record.status, STATUS_RESOLVED);
+        assert_eq!(record.max_runs, None);
+        assert_eq!(record.linked_goal_id, None);
+        let snapshot = store.health_snapshot().expect("snapshot");
+        assert_eq!(snapshot.experiments.len(), 1);
+        assert_eq!(snapshot.experiments[0].recorded_runs, 0);
+        assert_eq!(snapshot.experiments[0].verdict, None);
     }
 }
