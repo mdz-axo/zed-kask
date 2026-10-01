@@ -7,11 +7,17 @@ contract:
     target:
       type: string
       non_blank: true
+    findings:
+      type: array
   output:
     proposals: array
 ---
 
 You are classifying therapy findings for "{{ target }}" and proposing resolutions.
+
+## Findings
+
+{{ findings | tojson }}
 
 ## Two distinct processes
 

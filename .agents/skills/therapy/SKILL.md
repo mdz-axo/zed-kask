@@ -29,7 +29,7 @@ Forgetting (purging/condensing) is NOT learning. It is shedding low-value inform
 
 ## D/P labelling
 
-The scan's counts, the approved-proposal count, the execution check and the post-treatment re-scan gate are D (`lisp_eval` over tool results). Finding classification, Festinger strategy choice and reification drafts are P; every P step is critiqued by the operator's per-proposal approval in Phase 4 — nothing unapproved is executed. Self-assessed memory quality is the Dunning case (`onto_anchor` → derived `metacognition`): the check comes from outside the session.
+The scan's counts, the approved-proposal count, the execution check and the post-treatment re-scan gate are D (`lisp_eval` over tool results). Finding classification, Festinger strategy choice and reification drafts are P; every P step except the Phase-2 prediction is critiqued by the operator's per-proposal approval in Phase 4 — nothing unapproved is executed. The prediction is critiqued by the Phase-6 gaps computation (D). Self-assessed memory quality is the Dunning case (`onto_anchor` → derived `metacognition`): the check comes from outside the session.
 
 ## When to Use
 
@@ -54,13 +54,13 @@ The scan's counts, the approved-proposal count, the execution check and the post
 
 ## Grounding
 
-### Computational models of memory (Cox & Shiffrin, 2026, OECS)
+### Computational models of memory (Cox, 2026, OECS; citing Cox & Shiffrin 2017/2024)
 
 - **Memory traces can be altered once retrieved** — "long-term traces are not necessarily immutable; long-term traces can be altered, augmented, and changed once retrieved." Therapy is the deliberate process of doing this.
 - **Distorted traces** (Loftus, 2005) — "long-term traces may represent events in a distorted manner." Therapy identifies and corrects distortions.
 - **Trace coevolution** (Nelson & Shiffrin, 2013) — "traces can accumulate information across events, enabling event memory and knowledge traces to coevolve." Therapy re-organizes traces so they accumulate correctly, then reifies the accumulated knowledge into skills/rules.
 - **Probe-activation retrieval** — traces activate in proportion to similarity to the probe. Contradictory traces with similar features both activate, producing noise. Therapy reduces noise by resolving contradictions.
-- **REM model** (Shiffrin & Steyvers, 1997) — storage parameters `u` (transfer probability), `c` (correct storage probability), `g` (distinctiveness). Low `c` produces error-prone traces. Therapy identifies low-`c` traces and corrects them.
+- **REM model** (Shiffrin & Steyvers, 1997) — storage parameters `u` (transfer probability), `c` (correct storage probability), `g` (distinctiveness). Low `c` produces error-prone traces. The scan's miscalibrated-confidence category operationalizes the correction (raise/lower/reset via `memory_update`), not a literal c-value computation.
 
 ### Cognitive dissonance (Festinger; Lidwell, *Universal Principles of Design*)
 
@@ -131,6 +131,7 @@ The scan's counts, the approved-proposal count, the execution check and the post
    Scan technique: prefer a complete read-only audit over sampling via recall tools — `sqlcipher "file:<db>?mode=ro" "PRAGMA key='<passphrase>'; ..."` against the live DB (WAL allows concurrent readers; the passphrase resolves via `HKASK_DB_PASSPHRASE`, default `allostery` on first run). Sampling through `curator_memory_recall`/`curator_semantic_search` misses systemic patterns and cannot see embedding-less entities at all. The MCP write tools remain the modification path. Direct SQL WRITES to `hmems` bypass the `value` column's JSON serialization — the 2026-09-01 session's bare-string values corrupted 4 rows and broke the first full-store scan (2026-09-04, surfaced by the backfill tool's dry run); if a SQL write is ever unavoidable, `json_quote` the value, and audit prior SQL-written rows with `json_valid(value)` before any full-store scan.
 
 3. Collect all findings as structured data. Each finding includes:
+   - `id`: the finding's own identifier (F001-style) — Phase 3's `finding_id` references it.
    - `h_mem_id`: the ID of the problematic h_mem (or the cluster ID for reification candidates).
    - `entity`: the entity of the h_mem.
    - `attribute`: the attribute.
@@ -140,14 +141,13 @@ The scan's counts, the approved-proposal count, the execution check and the post
    - `description`: what the issue is.
    - `contradicting_h_mem_ids`: for contradictions, the IDs of the contradicting h_mems.
    - `source_h_mem_ids`: for reification candidates, the IDs of the memories that form the pattern.
-   - `proposed_resolution`: the strategy + specific action.
-   - `evidence`: the values/confidence/connectedness data that supports the finding.
+   - `evidence`: the values/confidence/connectedness data that supports the finding. (Proposed resolutions are NOT finding fields — Phase 3 owns the proposal list.)
 
 4. Call `lisp_eval` to check the scan is non-trivial:
-   - form: "(length (assoc \"findings\" scan_result))"
-   - env: { "scan_result": <your scan output> }
-   - For recursive helper forms, pass `max_depth` ≥ 8× the list length — helpers consume 2–4 depth frames per element, so the 1024 default only covers lists of a few hundred elements.
+   - form: `(length findings)`
+   - env: `{ "findings": <the scan output's findings array> }` — pass the findings array itself, not the whole scan output: an absent `findings` binding refuses with the engine's unbound-symbol error (a scan that produced no findings array is a broken scan, never a clean one), and an empty array legitimately reads 0.
    - If the result is 0, report "No issues found in {target}. Memory is clean." and exit.
+   - For recursive helper forms, pass `max_depth` ≥ 8× the list length — helpers consume 2–4 depth frames per element, so the 1024 default only covers lists of a few hundred elements.
 
 ### Phase 3 — Classify and propose
 
@@ -195,9 +195,12 @@ The scan's counts, the approved-proposal count, the execution check and the post
 
 3. Produce a structured proposal list. Each proposal includes:
    - `finding_id`: the ID of the finding being addressed.
+   - `process`: hygiene | reification | post_reification_hygiene.
    - `strategy`: the resolution strategy.
    - `action`: the specific tool call(s) to execute.
    - `h_mem_ids`: the h_mems involved.
+   - `failure_origin`: the skill-use attribution value, when the finding carried one.
+   - `owner`: skill | tool | provider | environment | operator | unresolved.
    - `reification_target`: for reification proposals, the skill/template/rule to create.
    - `reason`: why this resolution is proposed (citing the finding and the grounding).
    - `requires_approval`: true (all modifications require user approval).
@@ -246,12 +249,14 @@ The scan's counts, the approved-proposal count, the execution check and the post
 4. Record the outcome of each execution (success/failure).
 
 5. Call `lisp_eval` to verify all executions succeeded:
-   - form: "(define count-failed (lambda (lst) (if (is_null lst) 0 (if (eq (assoc \"success\" (car lst)) nil) (+ 1 (count-failed (cdr lst))) (count-failed (cdr lst)))))) (count-failed results)"
+   - form: "(define count-failed (lambda (lst) (if (is_null lst) 0 (if (not (eq (assoc \"success\" (car lst)) t)) (+ 1 (count-failed (cdr lst))) (count-failed (cdr lst)))))) (count-failed results)"
    - env: { "results": <your execution results> }
    - The interpreter has no `filter` builtin — the count is a recursive
      helper (the floor-strength pattern). Pass `max_depth` ≥ 8× the list
-     length — recursive helpers consume 2–4 depth frames per element. A missing `success` counts as a
-     failure; an explicit `false` does not.
+     length — recursive helpers consume 2–4 depth frames per element. A
+     missing, null, or explicitly false `success` counts as a failure;
+     only an explicit true passes — an execution reporting `success: false`
+     is a failed execution, never a succeeded one.
    - If the result is > 0, report the failures and suggest manual remediation.
 
 ### Post-execute verification (the loop's Check)
@@ -259,7 +264,7 @@ The scan's counts, the approved-proposal count, the execution check and the post
 After Phase 5 and before the report: re-run the Phase 2 scan on the
 treated targets only. Gate — call `lisp_eval` with:
 - form: `(eq (length remaining_contradictions) 0)`
-- env: `{ "remaining_contradictions": <contradictions still present on treated targets> }`
+- env: `{ "remaining_contradictions": <contradictions still present on treated targets — the list itself, not the re-scan output object> }`
 Bound: one re-scan per session — survivors are re-proposed (Phase 3)
 only if the operator approves in-session; otherwise they go into the
 report's follow-up recommendations. Fragmentation that remains because
@@ -267,7 +272,10 @@ the operator approved only partial merges is expected, not a failure.
 
 ### Phase 6 — Report
 
-0. **Reconcile the prediction (D).** Report predicted vs found per finding class from Phase 2 item 0, gaps computed by `lisp_eval` over the two count lists. The gap is the session's calibration signal about this memory store, carried into the report's hygiene summary.
+0. **Reconcile the prediction (D).** Report predicted vs found per finding class from Phase 2 item 0, gaps computed by `lisp_eval` over the two count lists:
+   - form: `(define gaps (lambda (f p) (if (is_null f) '() (cons (- (car f) (car p)) (gaps (cdr f) (cdr p)))))) (gaps found_counts predicted_counts)`
+   - env: `{ "found_counts": <the four class counts from the scan, in the Phase-2 item-0 order>, "predicted_counts": <the four predicted counts, same order> }`
+   The gap is the session's calibration signal about this memory store, carried into the report's hygiene summary.
 1. Call `render_template` to render the report template:
    - template: `therapy/report.j2`
    - variables: { "target": "<target name>", "findings": <scan findings>, "proposals": <approved proposals>, "executions": <execution results> }
@@ -280,6 +288,30 @@ the operator approved only partial merges is expected, not a failure.
 
 3. Present the report to the user.
 
+## Regression case
+
+All receipts executed live through the tools — `lisp_eval` for the forms, `render_template` for the classify render (2026-09-30, batch-10 audit):
+
+- Scan check `(length findings)`: `{"findings": []}` → 0 (a clean scan);
+  `{"findings": [<two findings>]}` → 2; an absent `findings` binding →
+  `unbound symbol: findings` (a broken scan never reads clean — the
+  pre-repair form read a missing findings key as 0/clean).
+- Approved count `(count-approved proposals)`: `[{"approved": true}, {"approved": false}, {"approved": true}]` → 2.
+- Execution check `(count-failed results)`: `[{"success": true}, {}, {"success": false}]` → 2.
+  Before the repair this returned 1: the old predicate `(eq (assoc "success" ...) nil)`
+  counted an explicit `success: false` as SUCCEEDED. The repaired predicate
+  `(not (eq (assoc "success" ...) t))` counts missing, null, and explicit false
+  as failures; only an explicit true passes.
+- Re-scan gate `(eq (length remaining_contradictions) 0)`: `[]` → true;
+  `[<survivor>]` → false.
+- Prediction reconciliation `(gaps found_counts predicted_counts)`:
+  found `[2,1,0,3]` vs predicted `[1,2,0,2]` → `[1,-1,0,1]`.
+- `therapy/classify` renders with `{target, findings}` and the findings list
+  appears in the rendered prompt (before the repair the template never
+  injected the findings it exists to classify).
+
+The skill's forms are executed at audit and use time, never anchored in code.
+
 ## Constraints
 
 - **User sovereignty.** The memory system is transparent to the user and respects user sovereignty. The user can see what's in memory (read-only tools available to all threads), approve all modifications (no autonomous editing), run without memory loops (the zed agent has no memory), and purge any memory at any time. The system serves the user, not the other way around.
@@ -291,7 +323,7 @@ the operator approved only partial merges is expected, not a failure.
 - **Fix the writer, not just the written.** When a hygiene finding has a wiring root cause (a code path producing bad rows), the code fix lands in the same session, before or alongside the hygiene execution. Hygiene executed on buggy wiring is re-corrupted by the next write — the 2026-09-01 recalibration set every row to the 0.5 floor, and the skill-use reporting path (which defaulted to 1.0) re-created above-floor rows within days.
 - **Reification requires user review of the proposed skill/template/rule content.** The user must see and approve the actual content before it is written.
 - **Post-reification forgetting requires separate approval.** The user approves reification and forgetting as separate decisions — they may reify a lesson but choose to keep the source memories.
-- **Curator-only writes for curator memory.** The `memory_insert`, `memory_update`, and `memory_resolve_contradiction` tools are curator MCP server tools, restricted to curator threads (enforced in `enabled_tools`). Read-only curator tools remain available to all threads.
+- **Writes are user-approved, never silent.** The `memory_insert`, `memory_update`, and `memory_resolve_contradiction` tools are curator MCP server tools available to all threads (the curator-thread gate was removed 2026-09-01 by operator decision); the safety properties are the Phase-4 per-proposal approval, the server-side evidence-citation and confidence-floor invariants, and the no-deletion-without-reason constraint below — not a thread gate.
 - **No deletion without reason.** Every `memory_resolve_contradiction` call must include a reason citing the contradiction or the reification.
 - **Confidence floor.** New memories inserted via therapy start at confidence 0.5.
 - **Report honestly.** If no issues are found, say so. If executions fail, report the failures. Do not fabricate success.
