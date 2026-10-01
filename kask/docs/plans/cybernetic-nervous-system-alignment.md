@@ -2,7 +2,7 @@
 title: "Cybernetic Nervous System — Alignment Plan"
 audience: [architects, developers, operators, agents]
 last_updated: 2026-10-01
-version: "0.3.6"
+version: "0.3.7"
 status: "Active — reference model admitted (operator ruling 2026-09-30); S1–S6 recorded; §8 cleanup CU-1–CU-5/CU-7 complete, CU-6 gated on displacement; L25 classified (2026-10-01)"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle]
@@ -552,3 +552,20 @@ stays). P3 stands as priced, recommended against, unrulled. The gap
 docs (curator, training) are deferred per the operator's direction to
 focus on code work. The 60-file target remains a standing direction;
 the measured floor is 71.
+
+### Execution record — seventh slice (2026-10-01: CU-1 continuation — the legacy metric vocabulary; found by the closure test)
+
+The v0.25.0 closure test's allowlist was the finding instrument: the
+four legacy Loop-6 metrics (`EnergyRemaining`, `ErrorRate`,
+`ConnectorLatency`, `CommunicationQueueDepth`) had zero production
+emission sites, no rules, no set-points — dead vocabulary. Deleted
+with their impl arms, the strategy evaluator's inert seeds, and the
+rollout bridge's two unreachable string arms (one a naming lie —
+"energy_remaining" extracted token usage). Net **−356 lines**
+(+38/−394, six files). Decode safety verified: both `from_str_name`
+production callers warn-and-skip unknown names. The concurrent
+stream absorbed the working-tree deletion into its `301c5a29d5`
+(alongside its selection-race transaction); the set verified intact
+at HEAD and the battery re-run green there (104/104, 258/258, 13/13,
+clippy, `cargo check -p zed`). Register v0.25.1 carries the full
+record.

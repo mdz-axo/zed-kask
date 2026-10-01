@@ -2,7 +2,7 @@
 title: "Loop Register — zed-kask canonical loops"
 audience: [developers, architects, agents, operators]
 last_updated: 2026-10-01
-version: "0.25.0"
+version: "0.25.1"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle]
@@ -633,13 +633,13 @@ the spec's minimum list, recorded below rather than narrowed away.
 - **Crate/path:** `kask/mcp-servers/hkask-mcp-evolution`
 - **Entry point:** `server.rs:160` `experiment_propose`, `:211` `variant_register`, `:239` `fitness_record`, `:266` `selection_record`, `:301` `lineage_read`, `:367` `population_query`; store `store.rs:93` `EvolutionStore`
 - **Trigger:** agent/operator tool calls through the four-step protocol (Declare → Vary → Test → Select); no autonomous polling
-- **Functional graph (IS):** propose (with the pre-registered `Prediction`, `types.rs:28-38`) → register variants (lineage via parent ids) → record grounded fitness (report references only, never simulated) → record the selection verdict (fossils retain selected AND rejected; the first selection resolves; a further selection is `failed_precondition`) → lineage/population readback (the fossil record; the population view serves the algedonic agenda and the curator's ORIENT)
+- **Functional graph (IS):** propose (with the pre-registered `Prediction`, `types.rs:28-38`) → register variants (lineage via parent ids) → record grounded fitness (report references only, never simulated) → record the selection verdict (fossils retain selected AND rejected; the first selection resolves; a further selection is `failed_precondition` — race-safe since `301c5a29d5`: the insert and the resolve-flip are one transaction, a lost race rolling the insert back) → lineage/population readback (the fossil record; the population view serves the algedonic agenda and the curator's ORIENT)
 - **Hands off to:** L9 (the linked kanban goal scores the prediction — the Brier edge), L16 (the `algedonic_reference` names the review record chairing the selection)
 - **Pass 3 layer classification (2026-09-30):** primary **B** (agent-driven in-thread tool calls; the selection decision is agent/operator-mediated); secondary **C** (the durable registry is the fossil record — the reflection substrate; `population_query` is the curator's ORIENT view). Sense→report→actuate: sense = the grounded fitness records; report = the lineage/population readback + the registry; actuate = the selection verdict. Five properties: closed for the protocol lifecycle (propose→select resolves; the readback returns the fossils); timely per explicit call; accurate (grounded fitness — report refs only); complete (selected and rejected both retained); actionable (the fossils prevent blindly retrying rejected mutations). Grill: primary-A fails — no autonomous actuation; an autonomous selection controller would force reclassification. Alignment: **INV2 held by design** (the pre-registered `Prediction` with confidence is the stored expectation, scored via the linked kanban goal — the fleet's second INV2-exemplary loop after L2); INV4 held (the double-selection conflict is surfaced; nothing is dropped); INV5 partial (the registry feeds the algedonic agenda — the C-tier consumption is review-mediated).
 
 ### L25 — Evolution registry health sensing (added 2026-10-01; D87 landed in the concurrent stream's `b43a704c9c`)
 - **Crate/path:** sensor `kask/crates/hkask-regulation/src/sensor_provider.rs`; bridge `kask/crates/kask_bridge/src/evolution_health_bridge.rs`; producer `kask/mcp-servers/hkask-mcp-evolution`; wiring `crates/zed/src/main.rs`
-- **Entry point:** `sensor_provider.rs:514` `EvolutionHealthSensor` (`:526` `observe`); bridge `evolution_health_bridge.rs:47` `open`, `:80` `stuck_running_experiments`; producer `store.rs:707` `health_snapshot` (line measured at `c57e1706db` — the stream's in-flight selection-race diff, verified orthogonal to this pathway, will shift it); metric `loops/signals.rs:76-83`; wiring `main.rs:2081-2117`, setter `cybernetics_loop.rs:564` `set_evolution_health_source`
+- **Entry point:** `sensor_provider.rs:514` `EvolutionHealthSensor` (`:526` `observe`); bridge `evolution_health_bridge.rs:47` `open`, `:80` `stuck_running_experiments`; producer `store.rs:709` `health_snapshot` (re-measured after the selection-race transaction landed in `301c5a29d5`); metric `loops/signals.rs:76-83`; wiring `main.rs:2081-2117`, setter `cybernetics_loop.rs:564` `set_evolution_health_source`
 - **Trigger:** L2's autonomous @10s sense cycle (`main.rs:1227-1236`, gated on `kask.curator.always_on`); no agent or user involvement
 - **Functional graph (IS):** `health_snapshot` reads the registry (status, created_at, max_runs, prediction, verdict, recorded runs) → `stuck_running(7)` keeps STATUS_RUNNING experiments unresolved past the D-3 stale set point or budget-spent with no verdict; an unparseable timestamp reads as stuck — visible, never silent (`types.rs:127-137`) → the bridge re-reads per sense call over the same SQLCipher registry the MCP child serves (path parity, `evolution_health_bridge.rs:16-21`) → the sensor emits `Signal(Cybernetics, EvolutionStuckExperiments, stuck.len(), set_point 0.0)`; a broken source warns and returns `None` — never an empty-Ok collapse (`sensor_provider.rs:526-549`) → L2's canonical deviation → alert-condition → regulation-action machinery → escalated advisory on the board (the efferent half completed 2026-10-01, same day as classification — see the correction below; `impact_direction Some(false)`, `signals.rs:196-198`)
 - **Hands off to:** L2 (the entire report/actuate half — alert fan-out, escalation arms, telemetry coalescing), L24 (the sensed substrate; the corrective — recording a verdict — is L24's agent-driven protocol)
@@ -787,6 +787,38 @@ exactly that lag), not evidence of absence.)
    generally.
 
 ## Change log
+
+- 2026-10-01 — v0.25.1 deleted the legacy Loop-6 metric vocabulary (the
+  operator's proceed ruling; the v0.25.0 closure test's allowlist was
+  the finding instrument). **Evidence first:** the four metrics
+  (`EnergyRemaining`, `ErrorRate`, `ConnectorLatency`,
+  `CommunicationQueueDepth`) had zero production emission sites (the
+  2026-10-01 producer sweep), no policy rule, no set-point, and zero
+  doc mentions; both `from_str_name` production callers degrade
+  unknown names to a visible warn-and-skip, so no persisted or
+  submitted record can crash on the deletion. **Deleted:** the four
+  variants and their `as_str`/`from_str_name`/`impact_direction`/
+  `from_signal` arms; the strategy evaluator's four inert seed
+  entries; the rollout bridge's two unreachable string arms (one a
+  naming lie — "energy_remaining" extracted token usage); the stale
+  `RegulationRule` doc example naming the long-deleted
+  `Throttle`/`AdjustEnergyBudget` action types; fixtures repointed to
+  live metrics. The round-trip name list and the closure test's
+  allowlist shrank with them (the allowlist is now the three
+  deliberate no-producer entries: PassRate event-driven,
+  TestCoverage/MutationScore decode-only). Net **−356 lines** across
+  six files (+38/−394). **Landing provenance:** the concurrent stream
+  absorbed the working-tree deletion into `301c5a29d5` ("prune dead
+  signal metrics") together with its selection-race transaction —
+  the `49b5f1518a` pattern; the deletion set verified intact at HEAD
+  (zero variant/bridge-arm matches). Receipts re-run at HEAD:
+  hkask-regulation --lib 104/104, kask_bridge --lib 258/258,
+  hkask-mcp-evolution --lib 13/13 (the stream's race tests), rustfmt
+  clean, scoped clippy clean, `cargo check -p zed` passed. **Rode
+  along:** the L25 `health_snapshot` citation re-measured to
+  `store.rs:709` (the promised refresh, due when the stream's work
+  landed); the L24 row notes the selection gate is race-safe since
+  the same commit.
 
 - 2026-10-01 — v0.25.0 completed the D87 pathway's efferent half (the
   operator's code-work direction; L25's classification correction
