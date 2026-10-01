@@ -107,12 +107,13 @@ failure. Inject boundaries through traits the code already takes
 - **Close each cycle with evidence.** Call `lisp_eval` with the cycle record;
   the next slice starts only on `closed`:
 
-  form: `(if (and (string= red "failed") (string= green "passed") (string= seam_confirmed "yes") (not (string= oracle "implementation"))) (quote closed) (quote open))`
+  form: `(if (and (string= red "failed") (string= green "passed") (string= seam_confirmed "yes") (stringp oracle) (not (string= oracle "implementation"))) (quote closed) (quote open))`
 
-  env: `{"red": "<observed result of the first run>", "green": "<observed result after the change>", "seam_confirmed": "yes|no", "oracle": "literal|worked-example|spec|implementation"}`
+  env: `{"red": "<observed result of the first run>", "green": "<observed result after the change>", "seam_confirmed": "yes|no", "oracle": "literal|worked-example|spec|implementation"}` — the oracle must be a present, non-null string: the `stringp` term exists because a null oracle silently passed the old `(not (string= oracle "implementation"))` guard (a null is not the implementation, so the double negative approved it — the tautology guard bypassed exactly when the provenance is missing; an absent key refuses with the engine's unbound-symbol error, which is honest).
 
   An `open` cycle names what is missing: a test that never failed, a seam
-  never agreed, or an expected value derived from the code.
+  never agreed, an expected value derived from the code, or a provenance
+  value that is absent or not a string.
 
 ## Templates
 
@@ -122,6 +123,19 @@ failure. Inject boundaries through traits the code already takes
 | `tdd/tdd-cycle` | One cycle: the failing test, the observed red, the minimal change, the observed green. |
 
 Render with `render_template` and the context the template's contract names.
+
+## Regression case
+
+Run the cycle gate's branch matrix through `lisp_eval` (receipts live 2026-09-30):
+
+- closed: `{"red": "failed", "green": "passed", "seam_confirmed": "yes", "oracle": "literal"}` → `"closed"`
+- tautology guard: same env with `"oracle": "implementation"` → `"open"`
+- null oracle: same env with `"oracle": null` → `"open"` (before the `stringp` repair this returned `"closed"` — the lie the repair removes; the before/after receipts are pinned)
+- absent oracle: env without the key → `unbound symbol: oracle` (the engine's typed refusal — honest, not a silent pass)
+- unconfirmed seam: `"seam_confirmed": "no"` → `"open"`
+
+The gate form and the null-oracle pin live in `test_tdd_skill_md_pins_forms`
+(`crates/agent/src/tools/skill_md_pins.rs`).
 
 ## Constraints
 

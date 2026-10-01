@@ -2826,4 +2826,97 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn test_tdd_skill_md_pins_forms() {
+        // tdd — batch-9 fresh audit — pins the cycle gate form and its
+        // null-oracle repair. The gate is the skill's only lisp_eval
+        // computation and its load-bearing branch: the tautology guard `(not (string= oracle
+        // "implementation"))` silently APPROVED a null oracle (a null is
+        // not the implementation, so the double negative passed) — the
+        // degradation-as-success family the skill itself forbids. The
+        // `stringp` term (lisp-repair L2) makes a null oracle gate open.
+        // Pinned before/after: the null-oracle env CLOSED the old form and
+        // OPENS the repaired one (live receipts 2026-09-30).
+        let skill_md = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../.agents/skills/tdd/SKILL.md"
+        ))
+        .expect("tdd SKILL.md must exist in the workspace");
+
+        let form = r#"(if (and (string= red "failed") (string= green "passed") (string= seam_confirmed "yes") (stringp oracle) (not (string= oracle "implementation"))) (quote closed) (quote open))"#;
+        assert!(
+            skill_md.contains(form),
+            "the cycle gate form (with the stringp oracle guard) must stay pinned in tdd SKILL.md"
+        );
+
+        let eval = |env: serde_json::Value| {
+            hkask_lisp::eval_sandboxed_with_budget(form, &env, 100_000, 64)
+        };
+
+        // Closed: every conjunct satisfied.
+        assert_eq!(
+            eval(json!({"red": "failed", "green": "passed", "seam_confirmed": "yes", "oracle": "literal"}))
+                .expect("gate must evaluate on a complete record"),
+            json!("closed"),
+            "a complete honest cycle closes"
+        );
+        // The tautology guard: an implementation-derived oracle opens.
+        assert_eq!(
+            eval(json!({"red": "failed", "green": "passed", "seam_confirmed": "yes", "oracle": "implementation"}))
+                .expect("gate must evaluate on the tautology case"),
+            json!("open"),
+            "an implementation-derived expected value is an open cycle"
+        );
+        // THE REPAIR: a null oracle opens (the pre-repair form closed on it).
+        assert_eq!(
+            eval(
+                json!({"red": "failed", "green": "passed", "seam_confirmed": "yes", "oracle": null})
+            )
+            .expect("gate must evaluate on the null-oracle case"),
+            json!("open"),
+            "a null oracle is an open cycle — the pre-repair form closed on it"
+        );
+        // The before-receipt, executed: the OLD form's lie, pinned so the
+        // repair is never simplified back.
+        let old_form = r#"(if (and (string= red "failed") (string= green "passed") (string= seam_confirmed "yes") (not (string= oracle "implementation"))) (quote closed) (quote open))"#;
+        assert_eq!(
+            hkask_lisp::eval_sandboxed_with_budget(
+                old_form,
+                &json!({"red": "failed", "green": "passed", "seam_confirmed": "yes", "oracle": null}),
+                100_000,
+                64,
+            )
+            .expect("the old form must still evaluate (the before-receipt)"),
+            json!("closed"),
+            "the old form's silent bypass — the defect the stringp term removes"
+        );
+        // An unconfirmed seam opens.
+        assert_eq!(
+            eval(json!({"red": "failed", "green": "passed", "seam_confirmed": "no", "oracle": "literal"}))
+                .expect("gate must evaluate on the unconfirmed-seam case"),
+            json!("open"),
+            "an unconfirmed seam is an open cycle"
+        );
+        // An absent oracle refuses with the engine's typed error naming the
+        // field — never a silent pass.
+        let absent_err = eval(json!({"red": "failed", "green": "passed", "seam_confirmed": "yes"}))
+            .expect_err("the absent-oracle case must refuse, not pass")
+            .to_string();
+        assert!(
+            absent_err.contains("unbound symbol: oracle"),
+            "an absent oracle must refuse with the unbound-symbol error naming the field, got {absent_err}"
+        );
+
+        // The cycle template carries the gate's semantics in its closing line.
+        let template = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../kask/registry/templates/tdd/tdd-cycle.j2"
+        ))
+        .expect("tdd-cycle.j2 must exist");
+        assert!(
+            template.contains("present, non-null provenance value"),
+            "the cycle template's closing condition must name the stringp requirement"
+        );
+    }
 }
