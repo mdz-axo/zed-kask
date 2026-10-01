@@ -128,7 +128,7 @@ FOR round in 1..max_rounds:
 
 ### Gate 1 — EXIST: Deletion Test
 
-**Delegate:** `deep-module/deep-module-delete` (consumes `module_assessment` — produced by the loop-start `deep-module/deep-module-assess` pass; G2 reuses it)
+**Delegate:** `deep-module/deep-module-delete` (consumes `module_assessment` — the whole output object of the loop-start `deep-module/deep-module-assess` pass, passed as its `module_assessment` input; G2 reuses it)
 
 Apply the deletion test in both directions:
 

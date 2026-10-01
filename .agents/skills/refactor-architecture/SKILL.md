@@ -15,7 +15,7 @@ End-to-end architecture refactoring skill. Merges the discovery phase (formerly 
 5. **Strangle** — Plan and execute the strangler-fig migration for the selected domain: write failing tests, implement the service, wire adapters, delete duplicate logic. One domain per commit.
 6. **Verify** — Verify surgical completeness: dependency direction, depth test, code-hygiene compliance (no stubs, no deprecation attributes, behavioral tests), clippy, test suite, surface adapter thinness.
 
-Includes the migration-strategy phase (folded from the standalone strangler-fig skill). Composes `tdd` (ra-strangle's failing-then-passing seam tests), `coding-guidelines` (surgical change scope), `pragmatic-semantics` (the five-force constraint classification in ra-audit/ra-strangle), and `deep-module` (the design tree, the depth test, and the deletion test applied throughout) as methodological guidance.
+Includes the migration-strategy phase (folded from the standalone strangler-fig skill). Composes `tdd` (ra-strangle's failing-then-passing seam tests), `coding-guidelines` (surgical change scope), `pragmatic-semantics` (the five-force constraint classification in ra-audit/ra-strangle), and `deep-module` (the depth test and the deletion test applied throughout; the design tree is this skill's own — ra-deepen walks it) as methodological guidance.
 
 ## Reference models
 

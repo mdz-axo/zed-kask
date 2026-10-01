@@ -62,8 +62,9 @@ When an output-shaping skill (e.g., adhd-mode) is active in the session:
    follows.
 3. When a shape cap would drop required content, split and rank using the
    shape skill's own escape (adhd-mode rule 9's must/nice split) or group by
-   anti-pattern — never truncate — verified by adhd-mode's shape gate when
-   active.
+   anti-pattern — never truncate. The shape gate checks caps and shape
+   fields, not absence: truncated content simply isn't there to count, so
+   truncation is caught by your content-obligation check, never by the gate.
 4. The shape skill's override conditions and the harness system prompt
    outrank these guidelines' presentation defaults.
 
