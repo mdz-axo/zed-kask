@@ -1,8 +1,8 @@
 ---
 title: "Cybernetic Nervous System — Reference Model (Draft)"
 audience: [architects, developers, operators, agents]
-last_updated: 2026-09-30
-version: "1.0.0"
+last_updated: 2026-10-01
+version: "1.0.1"
 status: "Active — admitted to the reference-model set by operator ruling 2026-09-30"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle]
@@ -13,7 +13,7 @@ mds_categories: [domain, composition, trust, lifecycle]
 ## 1. Purpose, scope, and status
 
 This paper is the reference model for treating zed-kask's canonical loops
-(`loop-register.md`, rows L1–L23) as a **three-layer cybernetic nervous
+(`loop-register.md`, rows L1–L25) as a **three-layer cybernetic nervous
 system**: every loop's state sensed, reported, and actuated through one
 canonical pathway per layer, with the log carrying the delta between
 expectation and observation — surprise, not raw activity — so feedback

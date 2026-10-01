@@ -2,7 +2,7 @@
 title: "Loop Register — zed-kask canonical loops"
 audience: [developers, architects, agents, operators]
 last_updated: 2026-10-01
-version: "0.24.8"
+version: "0.24.9"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle]
@@ -76,6 +76,11 @@ below is retained: the admitted reference model (Pass 3) cites it.
 | L21 | GAP | no recorded model |
 | L22 | ANCHOR | `kask/docs/plans/logisheets-spreadsheet-capability-plan.md` (plan-form, chartered 2026-09-18) |
 | L23 | GAP | no recorded model |
+| L24 | PARTIAL | the repair plan's §P8 experiment protocol (plan-form, `kask/docs/plans/hkask-core-mcp-repair-improvement-plan.md`); no prior-art model recorded |
+| L25 | PARTIAL | the admitted CNS reference model — the afferent-pathway structure is this row's own shape; no domain prior-art model recorded |
+
+(L24/L25 ledger rows added 2026-10-01, post-Pass-3, completing the
+per-row claim.)
 
 Inventory shape: 274 `.j2` templates, 2 with `Reference model:` headers
 (`company-research/thesis-three-pillars.j2` — MAIA;
@@ -278,6 +283,11 @@ grilling is Phase 3's deliverable (per-row blocks below).
 | L21 | A, B | scan/reconcile (A); explicit calls (B) |
 | L22 | A, B | idempotency/digest/reconcile (A); widget edits (B) |
 | L23 | A, B | in-process penalty (A); surfaced rationale (B) |
+| L24 | B, C | agent-driven protocol calls (B); the fossil-record registry + population readback (C) |
+| L25 | A, B | autonomous snapshot sensing + deviation vs the zero set-point (A); L2-mediated escalation/toast surfacing (B) |
+
+(L24/L25 rows added 2026-10-01, post-Pass-3, completing the per-row
+coverage claim; full classifications in the row blocks.)
 
 ### Pass 3 classification record (D3) — saturation and the alignment gap table
 
@@ -297,10 +307,10 @@ named invariants from the Phase 2 model, file:line, verdict):
 
 | Invariant | Holds where (file:line) | Verdict |
 | --- | --- | --- |
-| INV1 — one canonical pathway per layer | within-loop single-copy: L4's one `execute_tool` span (`tool_span.rs:162`), L2's one alert fan-out (`cycle.rs:568+`), L10's one store (`memory_store.rs:288`), L14's one sync funnel (`main.rs:3585`) | **PARTIAL** — canonical within loops; cross-cutting, twelve report pathways serve three layers (Pass 3 inventory R1–R12) |
+| INV1 — one canonical pathway per layer | within-loop single-copy: L4's one `execute_tool` span (`tool_span.rs:162`), L2's one alert fan-out (`cycle.rs:568+`), L10's one store (`memory_store.rs:288`), L14's one sync funnel (`main.rs:3585`), L25's afferent sensor feeding L2's canonical arms (a new loop adding no new report pathway) | **PARTIAL** — canonical within loops; cross-cutting, twelve report pathways serve three layers (Pass 3 inventory R1–R12) |
 | INV2 — expectation carriage | `Signal.set_point` + `Deviation` (`loops/signals.rs:332-343`); alert deficit/threshold (`cycle.rs:600-611`); goal intake prediction (Brier at resolution); forecast probability (`forecast_persist`); L22's base digest | **PARTIAL** — held in L2 (exemplar), L8/L9/L17 (stored priors), L22 (digest); absent from R1–R4, R9, R12 |
 | INV3 — surprise-gated reporting | loop-quality telemetry coalescer (`cybernetics_loop.rs:895-968`); algedonic binary threshold (`algedonic.rs:247+`); L20's conditional GET (protocol level) | **GAP** — one in-process pathway of twelve; the rest log raw activity. S3 (2026-09-30, operator-approved) deleted the per-tick raw duplicate of the coalesced span (net −14) — the direction held; the count changes only with S6 pathway scoping |
-| INV4 — escalation, never silent drop | exhaustion escalation (`cycle.rs:781-804`); circuit breaker (`runtime.rs:1155-1177`); L18's `RunningUnknown` (the F1 repair); L22's explicit unknown; L23's `live_stats_degraded` (the S4 repair, 2026-09-30) | **HELD at the audited sites** — both named violations resolved (L23 repaired by S4; the suspected in-host tracing drop refuted by the Pass 4 experiment); a full per-row INV4 sweep rides the §8 cleanup (alignment plan) |
+| INV4 — escalation, never silent drop | exhaustion escalation (`cycle.rs:781-804`); circuit breaker (`runtime.rs:1155-1177`); L18's `RunningUnknown` (the F1 repair); L22's explicit unknown; L23's `live_stats_degraded` (the S4 repair, 2026-09-30), L25's broken-source warn-and-None (D87, pinned by test) | **HELD at the audited sites** — both named violations resolved (L23 repaired by S4; the suspected in-host tracing drop refuted by the Pass 4 experiment); a full per-row INV4 sweep rides the §8 cleanup (alignment plan) |
 | INV5 — model revision at the top | curator distillation/consolidation (`consolidation_service.rs:38`); set-point loading (`set_points.rs:439`); skill verdicts (algedonic review); calibration readback (L8/L17) | **PARTIAL** — the C-tier machinery exists; the B→C handoffs carry standing receipt deferrals (L1/L7 memory receipt, L9 acknowledgment gate) |
 | INV6 — afferent/efferent direction discipline | directive inbox (`cybernetics_loop.rs:672-687`, efferent); alert channel (`main.rs:632-641`, afferent); L10 inject-down/ingest-up | **PARTIAL** — the channels exist and are clean; the log/tracing framework split (R1 vs R3) is bridged only by an incidental feature flag (`crates/rpc/Cargo.toml:35`) — functional but undocumented (the L2/L3 corrected finding) |
 
@@ -317,7 +327,7 @@ named invariants from the Phase 2 model, file:line, verdict):
 | Forecast/calibration loop | present | L8 |
 | Kanban/goal loop | present | L9 |
 | Memory recall/ingest cycle | present | L10 |
-| Extensions found in tree | recorded | L11–L24 |
+| Extensions found in tree | recorded | L11–L25 |
 
 No expected family was absent; the tree shows additional loop families beyond
 the spec's minimum list, recorded below rather than narrowed away.
@@ -627,6 +637,14 @@ the spec's minimum list, recorded below rather than narrowed away.
 - **Hands off to:** L9 (the linked kanban goal scores the prediction — the Brier edge), L16 (the `algedonic_reference` names the review record chairing the selection)
 - **Pass 3 layer classification (2026-09-30):** primary **B** (agent-driven in-thread tool calls; the selection decision is agent/operator-mediated); secondary **C** (the durable registry is the fossil record — the reflection substrate; `population_query` is the curator's ORIENT view). Sense→report→actuate: sense = the grounded fitness records; report = the lineage/population readback + the registry; actuate = the selection verdict. Five properties: closed for the protocol lifecycle (propose→select resolves; the readback returns the fossils); timely per explicit call; accurate (grounded fitness — report refs only); complete (selected and rejected both retained); actionable (the fossils prevent blindly retrying rejected mutations). Grill: primary-A fails — no autonomous actuation; an autonomous selection controller would force reclassification. Alignment: **INV2 held by design** (the pre-registered `Prediction` with confidence is the stored expectation, scored via the linked kanban goal — the fleet's second INV2-exemplary loop after L2); INV4 held (the double-selection conflict is surfaced; nothing is dropped); INV5 partial (the registry feeds the algedonic agenda — the C-tier consumption is review-mediated).
 
+### L25 — Evolution registry health sensing (added 2026-10-01; D87 landed in the concurrent stream's `b43a704c9c`)
+- **Crate/path:** sensor `kask/crates/hkask-regulation/src/sensor_provider.rs`; bridge `kask/crates/kask_bridge/src/evolution_health_bridge.rs`; producer `kask/mcp-servers/hkask-mcp-evolution`; wiring `crates/zed/src/main.rs`
+- **Entry point:** `sensor_provider.rs:514` `EvolutionHealthSensor` (`:526` `observe`); bridge `evolution_health_bridge.rs:47` `open`, `:80` `stuck_running_experiments`; producer `store.rs:707` `health_snapshot` (line measured at `c57e1706db` — the stream's in-flight selection-race diff, verified orthogonal to this pathway, will shift it); metric `loops/signals.rs:76-83`; wiring `main.rs:2081-2117`, setter `cybernetics_loop.rs:564` `set_evolution_health_source`
+- **Trigger:** L2's autonomous @10s sense cycle (`main.rs:1227-1236`, gated on `kask.curator.always_on`); no agent or user involvement
+- **Functional graph (IS):** `health_snapshot` reads the registry (status, created_at, max_runs, prediction, verdict, recorded runs) → `stuck_running(7)` keeps STATUS_RUNNING experiments unresolved past the D-3 stale set point or budget-spent with no verdict; an unparseable timestamp reads as stuck — visible, never silent (`types.rs:127-137`) → the bridge re-reads per sense call over the same SQLCipher registry the MCP child serves (path parity, `evolution_health_bridge.rs:16-21`) → the sensor emits `Signal(Cybernetics, EvolutionStuckExperiments, stuck.len(), set_point 0.0)`; a broken source warns and returns `None` — never an empty-Ok collapse (`sensor_provider.rs:526-549`) → L2's canonical deviation → alert-condition → regulation-action machinery (no evolution-specific actuation arm exists; the setter at `cybernetics_loop.rs:564` is the loop's only evolution-specific code) → advisory per severity policy (`impact_direction Some(false)`, `signals.rs:196-198`)
+- **Hands off to:** L2 (the entire report/actuate half — alert fan-out, escalation arms, telemetry coalescing), L24 (the sensed substrate; the corrective — recording a verdict — is L24's agent-driven protocol)
+- **Pass 3 layer classification (2026-10-01):** primary **A** (autonomous regulation: periodic sensing, deviation vs the zero set-point, standard advisory/escalation — the bridge's own doc names it "the Layer-A afferent pathway for the evolution program", `evolution_health_bridge.rs:14`); secondary **B** (the escalation/toast arm surfaces in-thread through L2's pathway when severity warrants; the wiring `log::warn!` on a failed open is operator-visible, `main.rs:2115-2117`). The C-tier consumption (stuck-experiment escalations feeding the algedonic agenda) is L2/L16-mediated — recorded as a hands-off, not a secondary. Sense→report→actuate: sense = the snapshot re-read per cycle; report = the deviation signal into L2's alert channel; actuate = L2's regulation action, with the corrective delegated to L24. Five properties: closed for sensing (re-observation; "a real zero proves recovery", `sensor_provider.rs:542`) — the corrective arc is delegated, so the A-tier closure ends at the advisory; timely (a 10s cadence against a 7-day stale set point); accurate (the authoritative registry — the bridge opens the same DB the child serves, documented at `evolution_health_bridge.rs:16-21`; the child side of that parity is pinned by the env-injection test, the bridge side is documented only); complete for the two named stuck classes — an abandoned STATUS_PROPOSED experiment is out of scope by the metric's named boundary (`signals.rs:76-83`); actionable at count fidelity only (the impedance below). Impedance (IS): endpoints `stuck_running_experiments` (returns ids, `evolution_health_bridge.rs:80-86`) × `observe` (emits `stuck.len() as f64`, `sensor_provider.rs:546`) — dimension: identity fidelity; the actuation ("unstick experiment X") needs X, the report carries N; the operator bridges it with one `population_query` call (L24's readback). Grill: the strongest alternative is a fold into L2's participant list — the other zed-side sensor bridges (context-server health, OCR health, rollout events) are L2 participants, not rows. Discriminator: those bridges are thin readbacks of already-rowed loops, while this pathway's stuck semantics (stale days, budget-spent, unparseable-reads-stuck) are domain policy living in the sensed crate (`types.rs:127-137`), and the cycle's corrective closes through L24 — a two-row cycle, not an internal leg. Reclassification falsifiers: moving the stuck semantics into the sensor (a thin readback) would fold the row into L2's participants; an autonomous verdict-timeout actuator (the loop itself resolving or voiding stuck experiments) would drop the B secondary; an advisory consumed only via the review agenda would demote B to C. Alignment: **INV1 held by construction** — an afferent sensor feeding L2's existing canonical pathways; no thirteenth report pathway (the R1–R12 inventory unchanged; the broken-source warn rides R3, the escalation rides R6/R7 through L2); INV2 held at the signal level (set-point 0.0 + deviation — the loop's generic expectation carriage; the stored-prediction form is L24's); INV3 partial (per-tick signal emission; the report side is coalesced by L2's telemetry coalescer — the fleet-wide standing state); **INV4 held** (broken-source warn-and-None — the `.rules` `unwrap_or(0)` trap explicitly avoided and pinned by `evolution_sensor_returns_none_on_broken_source`); INV5 partial (B→C consumption is L2-mediated); INV6 held (a clean one-direction afferent: registry → bridge → sensor → loop; no efferent arm of its own).
+
 ## Boundary notes (sub-cycles folded into rows above, not separate rows)
 
 - Email alert delivery — sensor leg inside L2 (`hkask-email`, `main.rs:656`).
@@ -769,6 +787,28 @@ exactly that lag), not evidence of absence.)
    generally.
 
 ## Change log
+
+- 2026-10-01 — v0.24.9 classified the D87 evolution-health pathway as
+  **L25** (landed in the stream's `b43a704c9c`; classified per the
+  operator's ruling on the deferred decision item, after verifying the
+  stream's in-flight selection-race diff is orthogonal to the pathway —
+  zero `health` hunks; the one at-risk citation, `store.rs:707`, is
+  commit-anchored at `c57e1706db`). Primary A, secondary B; the C-tier
+  consumption is a hands-off (L2/L16-mediated). INV1 held by
+  construction — a new loop adding zero report pathways (an afferent
+  sensor feeding L2's canonical arms; R1–R12 unchanged); INV4 held
+  (broken-source warn-and-None, pinned by test). One impedance
+  recorded (IS): ids dropped at the sensor boundary — the signal
+  carries the count, the actuation needs the identity; bridged today
+  by L24's `population_query`. The fold-into-L2 alternative was
+  grilled and rejected with the discriminator recorded in the row.
+  **Table completion repair (this pass):** v0.24.7's L24 addition left
+  the layer-coverage, anchor-ledger, and family-coverage tables
+  un-extended (the session review did not catch it); L24 and L25 rows
+  now complete the per-row claims, and the INV1/INV4 gap-table
+  exemplars gain L25. The reference-model paper's §1 scope statement
+  refreshed L1–L23 → L1–L25 (paper v1.0.1) — L25 is a direct instance
+  of the paper's own afferent-pathway structure.
 
 - 2026-10-01 — v0.24.8 closed the v0.24.7 S4 re-run deferral. The
   concurrent stream's provider refactor landed (Crossref title
