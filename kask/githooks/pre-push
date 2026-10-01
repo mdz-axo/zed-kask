@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# pre-push — net-lines + DIVERGENCE.md seam delta for the pushed range.
+#
+# Simplification program, Phase 1.1 (mission 2026-10-01): "a visible number
+# at every push. Visible bloat gets challenged; invisible bloat compounds."
+# Deliberately NOT a gate — this hook never blocks a push; printing the
+# number is the whole job.
+#
+# stdin (git pre-push protocol), one line per ref being pushed:
+#   <local_ref> <local_sha> <remote_ref> <remote_sha>
+# The all-zero sha marks a creation (no remote counterpart) or a deletion.
+#
+# Output per pushed ref:
+#   [pre-push] <ref>: <git diff --shortstat> — net <±N> lines
+#   [pre-push] seams: +<A> added / -<R> retired (DIVERGENCE.md '^| D<digits>' rows) — net <±S>
+#
+# Self-test: kask/scripts/check-pre-push-selftest.sh (runs in CI via the
+# gate-selftest glob).
+
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
+cd "$REPO_ROOT" || exit 0
+
+ZERO=0000000000000000000000000000000000000000
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [ "$local_sha" = "$ZERO" ] && continue # ref deletion: nothing to measure
+
+  if [ "$remote_sha" = "$ZERO" ]; then
+    # New branch: no remote counterpart. Fall back to the upstream merge
+    # base so the number still means "what the fork adds"; if that is
+    # unavailable too, say so and skip — never guess a range.
+    base="$(git merge-base upstream/main "$local_sha" 2>/dev/null)"
+    if [ -z "$base" ]; then
+      echo "[pre-push] $local_ref: new branch, no upstream/main merge base — net-lines skipped"
+      continue
+    fi
+    range="$base..$local_sha"
+    note=" (new branch, vs upstream merge base)"
+  else
+    range="$remote_sha..$local_sha"
+    note=""
+  fi
+
+  shortstat="$(git diff --shortstat "$range" 2>/dev/null)"
+  if [ -n "$shortstat" ]; then
+    net="$(git diff --numstat "$range" 2>/dev/null | awk '{a += $1; d += $2} END {printf "%+d", a - d}')"
+    echo "[pre-push] $local_ref$note: $shortstat — net $net lines"
+  else
+    echo "[pre-push] $local_ref$note: no diff in range"
+  fi
+
+  seam_added="$(git diff "$range" -- DIVERGENCE.md 2>/dev/null | grep -c '^+| D[0-9]')"
+  seam_retired="$(git diff "$range" -- DIVERGENCE.md 2>/dev/null | grep -c '^-| D[0-9]')"
+  echo "[pre-push] seams: +$seam_added added / -$seam_retired retired (DIVERGENCE.md '^| D<digits>' rows) — net $((seam_added - seam_retired))"
+done
+
+exit 0
