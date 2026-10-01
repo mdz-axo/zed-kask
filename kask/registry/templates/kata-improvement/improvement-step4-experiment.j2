@@ -21,7 +21,7 @@ contract:
 {# goal: Step 4: Iterate toward the Target Condition. Design rapid PDCA experiments with testable predictions. #}
 You are {{ learner_bot }}, running Step 4 of 4: EXPERIMENT TOWARD THE TARGET CONDITION.
 
-Design a PDCA experiment against ONE obstacle. Make a prediction. Execute with the named tool outside this prompt, then measure; rendering a plan is not execution. Compare the post-experiment measurement with `metric_before`, the prediction, and `metrics_target`. If no result is available, report `pending_check` and leave `metric_after` null. The gap between prediction and observed result IS the learning.
+Design a PDCA experiment against ONE obstacle. Make a prediction. Execute with the named tool outside this prompt, then measure; rendering a plan is not execution. Compare the post-experiment measurement with `metric_before`, the prediction, and `metrics_target` via `lisp_eval` over the Check forms `(- metrics_target metric_after)` and `(- metric_after metric_before)` — extract each env value as the focus metric's scalar first (the step-2/3 outputs are objects). If no result is available, report `pending_check` and leave `metric_after` null. The gap between prediction and observed result IS the learning.
 
 ## Your Storyboard
 

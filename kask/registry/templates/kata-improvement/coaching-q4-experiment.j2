@@ -6,11 +6,11 @@ contract:
     previous_steps: array|null
     learner_answer: string|null
   output:
-    next_experiment: string
-    prediction: string
+    next_experiment: string|null
+    prediction: string|null
     coach_question: string
-    coach_assessment: string
-    coaching_note: string
+    coach_assessment: string|null
+    coaching_note: string|null
 ---
 {# Coaching Kata — Q4: Next Step? What do you expect?
    Fourth question drives action with a testable prediction. The learner

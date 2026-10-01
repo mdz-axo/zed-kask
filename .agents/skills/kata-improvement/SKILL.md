@@ -5,14 +5,14 @@ description: "4-step Improvement Kata templates for scientific capability develo
 
 # Kata Improvement
 
-4-step Improvement Kata templates for scientific capability development. Step 1: Understand Direction. Step 2: Grasp Current Condition. Step 3: Establish Target Condition. Step 4: Experiment (PDCA). Each step references prior outputs. The cycle closes with before/after measurement. Includes beginner_mode drills (folded from kata-starter): Five Questions, PDCA Cycle, and Observation Drill for foundational scientific thinking habit-building; agents graduate when automaticity > 0.5. The Coaching Kata (folded from kata-coaching, 2026-09-28) is the coach role that runs the five questions against a learner's storyboard — the same kata seen from the other chair.
+4-step Improvement Kata templates for scientific capability development. Step 1: Understand Direction. Step 2: Grasp Current Condition. Step 3: Establish Target Condition. Step 4: Experiment (PDCA). Each step references prior outputs. The cycle closes with before/after measurement. Includes beginner_mode drills (folded from kata-starter): Five Questions, PDCA Cycle, and Observation Drill for foundational scientific thinking habit-building; agents graduate when automaticity exceeds 0.5 across two consecutive sessions on the same drill. The Coaching Kata (folded from kata-coaching, 2026-09-28) is the coach role that runs the five questions against a learner's storyboard — the same kata seen from the other chair.
 
 
 ## Reference model
 
 Rother, *Toyota Kata* (2010) and the Lean Enterprise Institute lexicon — `onto_anchor` → derived `improvement_kata`, `pdca_cycle` and `coaching_kata` (operator rulings 2026-09-24). The Coaching Kata's five questions are Rother's, asked by a coach who gives procedural guidance rather than solutions; **the coach is a separate role from the learner** — one session never plays both.
 
-**D/P labelling.** Steps 1–3 and step 4's Plan are P (the practitioner's judgment; critique: the operator, or the Coaching Kata below run by a separate coach). Step 2's measurements are D when taken from a tool or test — name it in `metrics[].method`. Step 4's Check is D: compute `(- metrics_target metric_after)` and `(- metric_after metric_before)` with `lisp_eval` over the observed values, and never from a plan.
+**D/P labelling.** Steps 1–3 and step 4's Plan are P (the practitioner's judgment; critique: the operator, or the Coaching Kata below run by a separate coach). Step 2's measurements are D when taken from a tool or test — name it in `metrics[].method`. Step 4's Check is D: compute `(- metrics_target metric_after)` and `(- metric_after metric_before)` with `lisp_eval` over the observed values, and never from a plan. The beginner drills' `automaticity_self_assess` is P — the learner's honest self-report, never tool-verified; the selector's routing and the graduation rule consume it as reported. Step 4's `prediction_result` (supported | refuted | pending_check) is P — the practitioner's verdict over the D inputs (the Check forms' outputs and the observed values), critiqued by the next session's observed result; it is never inferred from a plan.
 
 ## When to Use
 
@@ -27,7 +27,7 @@ Rother, *Toyota Kata* (2010) and the Lean Enterprise Institute lexicon — `onto
 
 ## Beginner-mode drills
 
-The three drills build the kata's foundational habits before the four-step practice. Selection: render `kata-improvement/beginner-selector` with the learner's practice history; it routes to the appropriate drill (Observation Drill for a first session or >7 days since last practice; the lowest-automaticity drill otherwise). Each drill runs one session, produces its declared output, and self-assesses automaticity on a 0–1 scale (the learner's own honest rating, not a test score). Graduate when automaticity exceeds 0.5 across two consecutive sessions on the same drill; the selector's `< 0.3` threshold routes a struggling learner back to the same drill rather than advancing.
+The three drills build the kata's foundational habits before the four-step practice. Selection: render `kata-improvement/beginner-selector` with the learner's practice history; it routes to the appropriate drill (Observation Drill for a first session or >7 days since last practice; a drill scoring below 0.3 automaticity is targeted; balanced scores rotate through all three). Each drill runs one session, produces its declared output, and self-assesses automaticity on a 0–1 scale (the learner's own honest rating, not a test score). Graduate when automaticity exceeds 0.5 across two consecutive sessions on the same drill.
 
 ## When NOT to Use
 
@@ -73,10 +73,10 @@ The three drills build the kata's foundational habits before the four-step pract
 6. Act after observing the result: compare the measured outcome to `metric_before`, the prediction, and `metrics_target` via `lisp_eval`:
    - gap-to-target form: `(- metrics_target metric_after)`
    - improvement form: `(- metric_after metric_before)`
-   - env: `{ "metrics_target": <the step-3 target>, "metric_after": <the observed post-experiment value>, "metric_before": <the step-2 baseline> }`
+   - env: `{ "metrics_target": <the focus metric's scalar target, extracted from the step-3 metrics_target object>, "metric_after": <the observed post-experiment value>, "metric_before": <the focus metric's scalar baseline, extracted from the step-2 metric_before object> }` — the step-2/3 outputs are OBJECTS (multi-metric storyboards); the forms compute over ONE metric, so extract the focus metric's scalar value first and name which metric you extracted.
    If no post-experiment observation is available, report `pending_check` rather than an improvement. If wrong, revise the theory and re-enter step 2; if correct but below target, select the next obstacle and re-enter step 3. Stop after three experiments or on target attainment; report the remaining gap.
 7. Determine how quickly you can go and see the result.
-8. Respond with a JSON object containing `obstacle`, `next_experiment`, `prediction`, `measurement_method`, `success_criterion`, `learning_commitment`, `when_to_check`, and (only after observation) `metric_after`, `prediction_result`, and `next_step`. Never fill `metric_after` from a plan.
+8. Respond with a JSON object containing `obstacle`, `next_experiment`, `prediction`, `measurement_method`, `success_criterion`, `learning_commitment`, `when_to_check`, `skill_match_query` (a capability-gap query for skill-discovery when the experiment surfaces one), and (only after observation) `metric_after`, `prediction_result`, and `next_step`. Never fill `metric_after` from a plan.
 
 ### Coaching Kata — the five questions (coach role)
 
@@ -128,7 +128,8 @@ negative when the metric regressed (metric_after < metric_before).
 Render one coaching template (e.g., `kata-improvement/coaching-q1-target`)
 with a contract-conformant context — the ASK render (no `learner_answer`)
 and the ASSESS render (with it) both execute. All receipts through the
-live tool 2026-09-29.
+live tool, re-executed 2026-09-30 (batch-9 re-audit); the Check forms and
+the five fixed questions are pinned in `test_kata_improvement_skill_md_pins_forms`.
 
 ## Constraints
 

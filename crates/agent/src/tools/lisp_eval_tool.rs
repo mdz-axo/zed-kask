@@ -3144,4 +3144,90 @@ mod tests {
         .expect("gate must evaluate on infeasible");
         assert_eq!(infeasible, json!(false), "the feasibility recheck failed");
     }
+
+    #[test]
+    fn test_kata_improvement_skill_md_pins_forms() {
+        // kata-improvement — a batch-9 RE-AUDIT (batch 4 closed it with 7
+        // defects) — pins its two step-4 Check forms and the five coach
+        // questions' fixed text. The Check forms are the skill's only
+        // D-computation; the batch-9 M1 fix added the scalar-extraction
+        // instruction (the step-2/3 outputs are objects; the forms compute
+        // over the focus metric's extracted scalar). The five questions are
+        // fixed text per the SKILL.md's constraint — this pin makes the
+        // fixed-text enforcement durable (the batch-4 open item #3).
+        let skill_md = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../.agents/skills/kata-improvement/SKILL.md"
+        ))
+        .expect("kata-improvement SKILL.md must exist in the workspace");
+
+        // 1. The two Check forms.
+        let gap_form = "(- metrics_target metric_after)";
+        let improvement_form = "(- metric_after metric_before)";
+        assert!(
+            skill_md.contains(gap_form),
+            "gap-to-target form must stay pinned in kata-improvement SKILL.md"
+        );
+        assert!(
+            skill_md.contains(improvement_form),
+            "improvement form must stay pinned in kata-improvement SKILL.md"
+        );
+        let representative = hkask_lisp::eval_sandboxed_with_budget(
+            &format!("(list {} {})", gap_form, improvement_form),
+            &json!({"metrics_target": 10, "metric_after": 7, "metric_before": 5}),
+            100_000,
+            64,
+        )
+        .expect("Check forms must evaluate");
+        assert_eq!(
+            representative,
+            json!([3, 2]),
+            "the regression case's receipt: gap 3, improvement 2 (scalars extracted from the step-2/3 objects per the env spec)"
+        );
+        let met = hkask_lisp::eval_sandboxed_with_budget(
+            &format!("(list {} {})", gap_form, improvement_form),
+            &json!({"metrics_target": 10, "metric_after": 10, "metric_before": 5}),
+            100_000,
+            64,
+        )
+        .expect("Check forms must evaluate on target attainment");
+        assert_eq!(met, json!([0, 5]), "gap 0 when the target is met");
+        let regressed = hkask_lisp::eval_sandboxed_with_budget(
+            &format!("(list {} {})", gap_form, improvement_form),
+            &json!({"metrics_target": 10, "metric_after": 3, "metric_before": 5}),
+            100_000,
+            64,
+        )
+        .expect("Check forms must evaluate on a regression");
+        assert_eq!(
+            regressed,
+            json!([7, -2]),
+            "the improvement is negative when the metric regressed"
+        );
+
+        // 2. The five coach questions' fixed text (each coaching template
+        //    must carry its question).
+        let questions = [
+            ("coaching-q1-target.j2", "What is the Target Condition"),
+            ("coaching-q2-actual.j2", "What is the Actual Condition"),
+            ("coaching-q3-obstacles.j2", "What obstacles do you see"),
+            ("coaching-q4-experiment.j2", "What is your next step"),
+            ("coaching-q5-learn.j2", "How quickly can we go and see"),
+        ];
+        for (file, question) in questions {
+            // concat! is literals-only, so the per-file path is assembled at
+            // runtime (format!) instead of inside the macro.
+            let path = format!(
+                "{}/../../kask/registry/templates/kata-improvement/{}",
+                env!("CARGO_MANIFEST_DIR"),
+                file
+            );
+            let template =
+                std::fs::read_to_string(&path).unwrap_or_else(|_| panic!("{file} must exist"));
+            assert!(
+                template.contains(question),
+                "{file} must carry its fixed coach question ({question}) — the SKILL.md's no-rephrase constraint"
+            );
+        }
+    }
 }
