@@ -32,6 +32,8 @@ mod read_file_tool;
 mod record_skill_feedback_tool;
 mod rename_tool;
 mod render_template_tool;
+#[cfg(test)]
+mod skill_md_pins;
 mod skill_tool;
 mod spawn_agent_tool;
 mod symbol_locator;
