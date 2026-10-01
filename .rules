@@ -132,6 +132,8 @@ Use `cx.background_executor().timer(duration).await` in GPUI tests, not `smol::T
 * In a shared tree, check the staged index (`git diff --cached --stat`) before any `git commit` — the operator's staged work rode into the agent's deletion commit under an unrelated message (2026-09-10, commit 3cf1f7e4a5).
 * Pathspec-limited commits (`git commit -m "..." -- <files>`) are the default in a shared tree — checking the index is necessary but not sufficient; a bare `git commit` sweeps whatever is staged into your message.
 * A sweep pattern that under-matches the semantic target (wrong plurality, casing, or form) reports false absence — validate the instrument against a known-positive before reading zero as "nothing there" (2026-09-29: a plural-heading grep recorded 8 false reference-model gaps; the bare-glob rule below covers zero-match patterns, this covers valid-but-narrow ones).
+* jq `(... | select(...)) as $x` runs its body ZERO times when the select matches nothing — a merge loop over entries silently drops every unpatched entry (2026-09-30: 357→17, twice in one recovery). Safe form: `([($patches[] | select(.slug == $e.slug))] | first // null) as $p`, or merge manifests in Python.
+* Verify the invariant, not the shape — `jq -e '.counts'` exits 0 on ANY object; a 5-entry manifest passed it and was installed as canonical (2026-09-30). After every manifest write, assert the count itself: `jq -e '(.entries|length) == 368'`.
 
 # Test protocol traps
 
