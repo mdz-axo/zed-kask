@@ -44,7 +44,7 @@ Design candidate experiments and rank them. Every candidate must be runnable end
 
 ### Calibration (mandatory)
 
-Read the registry history's Brier record. State the system's demonstrated prediction hit rate (resolved claims held / resolved experiments measured to verdict; no-headroom voids are design failures and do not count). Set each new confidence against that record: a confidence above the demonstrated hit rate needs a stated reason in the candidate's priority_reason. Two refuted predictions at 0.6 and 0.55 confidence (both saturated-baseline ties) are the current record — confidence above 0.5 on an unproven eval set needs explicit justification.
+Read the registry history's Brier record. State the system's demonstrated prediction hit rate (resolved claims held / resolved experiments measured to verdict; voids — `no-headroom` design failures and `measurement-void` infrastructure failures — never tested their claim and do not count). Set each new confidence against that record: a confidence above the demonstrated hit rate needs a stated reason in the candidate's priority_reason. Three refuted predictions (0.6 and 0.55 saturation ties, 0.5 measured reversal) are the current record — 0 of 3 claims held; the E4 measurement-void (provider failure, 2026-10-01) is excluded as never tested. Confidence above 0.5 on an unproven eval set needs explicit justification.
 
 ### Prioritization
 

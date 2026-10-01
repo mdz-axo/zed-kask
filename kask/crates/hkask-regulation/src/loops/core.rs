@@ -595,7 +595,7 @@ mod tests {
     /// Response coverage counts handled deviations and remains bounded.
     #[test]
     fn from_cycle_response_coverage_is_dispositions_over_deviations() {
-        let signal_a = Signal::new(LoopId::Cybernetics, SignalMetric::EnergyRemaining, 0.1, 0.2);
+        let signal_a = Signal::new(LoopId::Cybernetics, SignalMetric::ToolReliability, 0.1, 0.2);
         let signal_b = Signal::new(
             LoopId::Cybernetics,
             SignalMetric::VarietyDeficit,
@@ -609,8 +609,8 @@ mod tests {
         let action = RegulatoryAction::with_metric(
             LoopId::Curation,
             ActionType::Escalate,
-            RegulatoryActionParams::reason("energy_budget_low"),
-            "energy_remaining".into(),
+            RegulatoryActionParams::reason("tool_reliability_degraded"),
+            "tool_reliability".into(),
         );
         let metrics =
             LoopMetrics::from_cycle(0, &deviations, &[action], &[], TriggerOrigin::Scheduled);
@@ -633,16 +633,16 @@ mod tests {
     fn from_cycle_progress_is_improved_over_verified() {
         let report_accept = ImpactReport::new(
             ActionType::Notify,
-            SignalMetric::EnergyRemaining,
+            SignalMetric::ToolReliability,
             0.1,
-            0.3, // improved (delta > 0 for EnergyRemaining)
+            0.3, // improved (delta > 0 for the upward-good floor)
             ActionDecision::Accept,
         );
         let report_block = ImpactReport::new(
             ActionType::Escalate,
-            SignalMetric::ErrorRate,
+            SignalMetric::VarietyDeficit,
             0.3,
-            0.5, // worsened
+            0.5, // worsened (delta > 0 for the downward-good metric)
             ActionDecision::Block,
         );
         let metrics = LoopMetrics::from_cycle(

@@ -7,6 +7,29 @@
 use super::types::DbError;
 use super::value::{DbRow, DbValue};
 
+/// Connection-scoped statement handle for [`DatabaseDriver::transaction`]
+/// closures.
+///
+/// A dedicated trait (not `DatabaseDriver`) because a pinned rusqlite
+/// connection is `Send` but not `Sync` — the store contract (`Arc<dyn
+/// DatabaseDriver>` requires `Send + Sync`) cannot wrap it, and the closure's
+/// view never leaves the transaction's stack. Every statement the closure
+/// runs through this handle executes on the one pinned connection, so the
+/// BEGIN/COMMIT bracket actually brackets them.
+pub trait TransactionOps {
+    /// Execute a parameterized statement (INSERT, UPDATE, DELETE, DDL).
+    fn execute(&self, sql: &str, params: &[DbValue]) -> Result<usize, DbError>;
+
+    /// Execute a batch of SQL statements.
+    fn execute_batch(&self, sql: &str) -> Result<(), DbError>;
+
+    /// Query rows, returning all results as `DbRow` values.
+    fn query(&self, sql: &str, params: &[DbValue]) -> Result<Vec<DbRow>, DbError>;
+
+    /// Query a single optional row.
+    fn query_optional(&self, sql: &str, params: &[DbValue]) -> Result<Option<DbRow>, DbError>;
+}
+
 /// The database driver abstraction.
 ///
 /// Stores use `&dyn DatabaseDriver` instead of raw `rusqlite::Connection`.
@@ -34,6 +57,28 @@ pub trait DatabaseDriver: Send + Sync {
     fn sqlite_pool(&self) -> Option<&r2d2::Pool<crate::SqliteConnectionManager>> {
         None
     }
+
+    /// Run a multi-statement transaction atomically over one pinned
+    /// connection.
+    ///
+    /// The closure receives a connection-scoped [`TransactionOps`] view; `Ok`
+    /// commits, `Err` rolls back — a mid-transaction failure leaves no
+    /// partial writes. Required (not defaulted): an implementation that
+    /// cannot pin a connection must surface that with a typed error, never
+    /// silently run the statements outside a transaction (the `.rules`
+    /// silent-fallback trap).
+    ///
+    /// This closes the check-then-write race class: a status read followed
+    /// by an insert can both pass under concurrent dispatch (observed live
+    /// 2026-10-01 in the evolution registry — two fitness records landed
+    /// 57µs apart against a ceiling of 1). Inside a transaction the read and
+    /// the write serialize against other writers. In-crate call sites with
+    /// direct pool access may keep using rusqlite's `Transaction` directly;
+    /// this method is the port for stores coding against the trait.
+    fn transaction(
+        &self,
+        operations: &mut dyn FnMut(&dyn TransactionOps) -> Result<(), DbError>,
+    ) -> Result<(), DbError>;
 
     /// Whether the underlying storage survives a process restart.
     ///

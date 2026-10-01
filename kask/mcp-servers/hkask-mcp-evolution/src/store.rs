@@ -582,28 +582,58 @@ impl EvolutionStore {
         }
         let id = format!("sel_{}", uuid::Uuid::new_v4().simple());
         let created_at = chrono::Utc::now().to_rfc3339();
-        self.driver.execute(
-            "INSERT INTO selection_records \
-             (id, experiment_id, verdict, selected_variant_id, reject_reasons, \
-              algedonic_reference, created_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            &[
-                DbValue::Text(id.clone()),
-                DbValue::Text(experiment_id.to_string()),
-                DbValue::Text(verdict.to_string()),
-                text_or_null(selected_variant_id),
-                DbValue::Text(value_column(&reject_reasons)?),
-                text_or_null(algedonic_reference),
-                DbValue::Text(created_at.clone()),
-            ],
-        )?;
-        self.driver.execute(
-            "UPDATE experiments SET status = ?2 WHERE id = ?1",
-            &[
-                DbValue::Text(experiment_id.to_string()),
-                DbValue::Text(STATUS_RESOLVED.to_string()),
-            ],
-        )?;
+        // Serialized before the closure: the closure's error type is DbError,
+        // so the EvolutionError-producing column serialization happens here.
+        let reject_reasons_column = value_column(&reject_reasons)?;
+        // The insert and the resolve flip are ONE transaction (§P8.9 follow-up,
+        // 2026-10-01): the conditional UPDATE is the authoritative
+        // first-selection gate — a concurrent selection that committed first
+        // leaves this UPDATE at zero rows and the whole transaction (insert
+        // included) rolls back, so exactly one fossil ever records. The prior
+        // check-then-insert shape could double-record under concurrent
+        // dispatch (the same TOCTOU class as the budget gate).
+        let mut concurrently_resolved = false;
+        let transaction = self.driver.transaction(&mut |tx| {
+            tx.execute(
+                "INSERT INTO selection_records \
+                 (id, experiment_id, verdict, selected_variant_id, reject_reasons, \
+                  algedonic_reference, created_at) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                &[
+                    DbValue::Text(id.clone()),
+                    DbValue::Text(experiment_id.to_string()),
+                    DbValue::Text(verdict.to_string()),
+                    text_or_null(selected_variant_id),
+                    DbValue::Text(reject_reasons_column.clone()),
+                    text_or_null(algedonic_reference),
+                    DbValue::Text(created_at.clone()),
+                ],
+            )?;
+            let resolved = tx.execute(
+                "UPDATE experiments SET status = ?2 WHERE id = ?1 AND status != ?2",
+                &[
+                    DbValue::Text(experiment_id.to_string()),
+                    DbValue::Text(STATUS_RESOLVED.to_string()),
+                ],
+            )?;
+            if resolved == 0 {
+                concurrently_resolved = true;
+                return Err(DbError::Database(
+                    "selection lost the resolve race — the experiment was \
+                     resolved concurrently; this insert rolls back"
+                        .to_string(),
+                ));
+            }
+            Ok(())
+        });
+        if let Err(error) = transaction {
+            if concurrently_resolved {
+                return Err(EvolutionError::ExperimentResolved(
+                    experiment_id.to_string(),
+                ));
+            }
+            return Err(EvolutionError::Database(error));
+        }
         let updated = self.experiment_by_id(experiment_id)?;
         let record = SelectionRecord {
             id,
@@ -1087,12 +1117,29 @@ mod tests {
                     id: "exp_void".to_string(),
                     layer: "skill".to_string(),
                     status: STATUS_RESOLVED.to_string(),
-                    created_at: fresh,
+                    created_at: fresh.clone(),
                     max_runs: Some(9),
                     recorded_runs: 9,
                     prediction_confidence: Some(0.9),
                     verdict: Some(VERDICT_REJECTED.to_string()),
                     reject_reasons: vec!["no-headroom: baseline saturated at 1.0".to_string()],
+                },
+                // Measurement-void (infrastructure failure) → also excluded:
+                // the claim was never tested, so scoring it as refuted would
+                // pollute the calibration record with provider noise.
+                ExperimentHealth {
+                    id: "exp_meas_void".to_string(),
+                    layer: "skill".to_string(),
+                    status: STATUS_RESOLVED.to_string(),
+                    created_at: fresh,
+                    max_runs: Some(18),
+                    recorded_runs: 18,
+                    prediction_confidence: Some(0.5),
+                    verdict: Some(VERDICT_REJECTED.to_string()),
+                    reject_reasons: vec![
+                        "measurement-void: 7/9 rollouts errored at the provider (0 tokens)"
+                            .to_string(),
+                    ],
                 },
             ],
         };
@@ -1101,10 +1148,74 @@ mod tests {
             stuck,
             vec!["exp_stale".to_string(), "exp_spent".to_string()]
         );
-        // Only the refuted claim counts: mean Brier 0.25 over 1 claim.
+        // Only the refuted claim counts: both voids (no-headroom and
+        // measurement-void) are excluded — mean Brier 0.25 over 1 claim.
         let (brier, claims) = snapshot.resolved_claim_brier().expect("brier");
         assert!((brier - 0.25).abs() < 1e-9, "brier: {brier}");
         assert_eq!(claims, 1);
+    }
+
+    /// The §P8.9 follow-up (2026-10-01): concurrent selections on one
+    /// experiment record exactly one fossil. The insert and the conditional
+    /// resolve are ONE transaction; a loser's UPDATE sees the winner's
+    /// committed status, rolls back its insert, and surfaces
+    /// `ExperimentResolved` — never a double-recorded verdict. Runs on a
+    /// multi-connection file-backed pool (the in-memory helper is
+    /// max_size(1) and serializes at the pool, which cannot reproduce the
+    /// race).
+    #[test]
+    fn concurrent_selections_record_exactly_one_fossil() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db_path = dir.path().join("evolution-race.db");
+        let db_path = db_path.to_string_lossy().to_string();
+        let pool = SqliteDriver::file_pool(&db_path).expect("file pool");
+        let driver: Arc<dyn hkask_storage::database::driver::DatabaseDriver> =
+            Arc::new(SqliteDriver::new_labeled(pool, db_path.as_str()));
+        let store = Arc::new(EvolutionStore::with_driver(driver).expect("race store"));
+
+        let experiment = propose(&store, "skill", None);
+        let variant = variant(&store, &experiment.id, "challenger", None, None);
+
+        let (winners, losers) = std::thread::scope(|scope| {
+            let mut handles = Vec::new();
+            for _ in 0..4 {
+                let store = Arc::clone(&store);
+                let experiment_id = experiment.id.clone();
+                let variant_id = variant.id.clone();
+                handles.push(scope.spawn(move || {
+                    store.record_selection(
+                        &experiment_id,
+                        VERDICT_SELECTED,
+                        Some(&variant_id),
+                        &[],
+                        None,
+                    )
+                }));
+            }
+            let mut winners = 0;
+            let mut losers = 0;
+            for handle in handles {
+                match handle.join().expect("selection thread") {
+                    Ok(_) => winners += 1,
+                    Err(EvolutionError::ExperimentResolved(_)) => losers += 1,
+                    Err(other) => panic!("unexpected error: {other}"),
+                }
+            }
+            (winners, losers)
+        });
+        assert_eq!(winners, 1, "exactly one selection records");
+        assert_eq!(losers, 3, "the losers surface ExperimentResolved");
+        let selections = store
+            .selections_for_experiment(&experiment.id)
+            .expect("selections");
+        assert_eq!(selections.len(), 1, "exactly one fossil row");
+        assert_eq!(
+            store
+                .experiment_by_id(&experiment.id)
+                .expect("reload")
+                .status,
+            STATUS_RESOLVED
+        );
     }
 
     #[test]

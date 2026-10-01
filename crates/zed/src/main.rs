@@ -2103,6 +2103,9 @@ fn main() {
                                                 .set_evolution_health_source(evolution_source);
                                         })
                                         .detach();
+                                        log::info!(
+                                            "hKask evolution health source wired — the regulation loop senses stuck experiments (stale set point: 7 days)"
+                                        );
                                     }
                                     Err(error) => {
                                         // A broken source is not "no deviation"

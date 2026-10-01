@@ -12,16 +12,8 @@ use super::core::LoopId;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SignalMetric {
-    /// Fraction of energy budget remaining (Cybernetics Loop 6)
-    EnergyRemaining,
     /// Raw variety deficit count (Cybernetics Loop 6)
     VarietyDeficit,
-    /// Error rate as a fraction (Cybernetics Loop 6)
-    ErrorRate,
-    /// Connector latency in milliseconds (Cybernetics Loop 6)
-    ConnectorLatency,
-    /// Communication queue depth (backpressure signal)
-    CommunicationQueueDepth,
     // StorageUsage removed 2026-09-08 with the budget teardown (operator
     // ruling 2026-09-04): it was h_mem_count / storage_budget — a budget-framed
     // duplicate of TripleCount (h_mem_count vs an absolute set-point), and the
@@ -117,11 +109,7 @@ impl SignalMetric {
     /// Returns the snake_case string representation for comparison.
     pub fn as_str(&self) -> &'static str {
         match self {
-            SignalMetric::EnergyRemaining => "energy_remaining",
             SignalMetric::VarietyDeficit => "variety_deficit",
-            SignalMetric::ErrorRate => "error_rate",
-            SignalMetric::ConnectorLatency => "connector_latency",
-            SignalMetric::CommunicationQueueDepth => "communication_queue_depth",
             SignalMetric::MemoryLife => "memory_life",
             SignalMetric::TripleCount => "triple_count",
             SignalMetric::LowConfidenceCount => "low_confidence_count",
@@ -151,11 +139,7 @@ impl SignalMetric {
     /// silent default that would mislabel the report.
     pub fn from_str_name(name: &str) -> Option<Self> {
         [
-            SignalMetric::EnergyRemaining,
             SignalMetric::VarietyDeficit,
-            SignalMetric::ErrorRate,
-            SignalMetric::ConnectorLatency,
-            SignalMetric::CommunicationQueueDepth,
             SignalMetric::MemoryLife,
             SignalMetric::TripleCount,
             SignalMetric::LowConfidenceCount,
@@ -189,8 +173,7 @@ impl SignalMetric {
     /// it describes.
     pub fn impact_direction(&self) -> Option<bool> {
         match self {
-            SignalMetric::EnergyRemaining
-            | SignalMetric::ContextServerHealth
+            SignalMetric::ContextServerHealth
             | SignalMetric::ToolReliability
             | SignalMetric::PassRate => Some(true),
             SignalMetric::VarietyDeficit
@@ -205,13 +188,12 @@ impl SignalMetric {
 mod tests {
     use super::*;
 
-    /// Pins the per-metric impact direction: energy remaining, fleet
-    /// health, and tool reliability improve upward; variety deficit
+    /// Pins the per-metric impact direction: fleet health, tool
+    /// reliability, and pass rate improve upward; variety deficit
     /// improves downward; everything else has no verified impact path
     /// (`verify_impact` falls back to any-nonzero-delta).
     #[test]
     fn impact_direction_covers_the_verifiable_metrics() {
-        assert_eq!(SignalMetric::EnergyRemaining.impact_direction(), Some(true));
         assert_eq!(
             SignalMetric::ContextServerHealth.impact_direction(),
             Some(true)
@@ -227,7 +209,6 @@ mod tests {
             SignalMetric::EvolutionStuckExperiments.impact_direction(),
             Some(false)
         );
-        assert_eq!(SignalMetric::ErrorRate.impact_direction(), None);
         assert_eq!(SignalMetric::TestCoverage.impact_direction(), None);
     }
 
@@ -256,11 +237,7 @@ mod tests {
         // missing from the parse table would silently fall to the caller's
         // fallback and mislabel impact reports.
         let names = [
-            "energy_remaining",
             "variety_deficit",
-            "error_rate",
-            "connector_latency",
-            "communication_queue_depth",
             "memory_life",
             "triple_count",
             "low_confidence_count",
@@ -359,8 +336,7 @@ impl Deviation {
         }
         let diff = signal.value - signal.set_point;
         let healthy = match signal.metric {
-            SignalMetric::EnergyRemaining
-            | SignalMetric::ContextServerHealth
+            SignalMetric::ContextServerHealth
             | SignalMetric::ToolReliability
             | SignalMetric::TestCoverage
             | SignalMetric::MutationScore

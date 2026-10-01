@@ -78,9 +78,8 @@ pub(crate) struct ProposedAction {
 pub(crate) struct RegulationRule {
     pub metric: SignalMetric,
     pub direction: DeviationDirection,
-    /// The proposed actions for this rule. A single rule can produce
-    /// multiple proposed actions (e.g., EnergyRemaining triggers both
-    /// Throttle and AdjustEnergyBudget).
+    /// The proposed actions for this rule (a slice so a rule can propose
+    /// more than one; every current rule proposes exactly one).
     pub proposed: &'static [ProposedAction],
 }
 
@@ -450,12 +449,8 @@ mod tests {
             use SignalMetric::*;
             // Exhaustive or-pattern (no `_` arm): a new variant fails this
             // match's exhaustiveness check until the list grows with it.
-            match EnergyRemaining {
-                EnergyRemaining
-                | VarietyDeficit
-                | ErrorRate
-                | ConnectorLatency
-                | CommunicationQueueDepth
+            match VarietyDeficit {
+                VarietyDeficit
                 | MemoryLife
                 | TripleCount
                 | LowConfidenceCount
@@ -475,11 +470,7 @@ mod tests {
                 | PassRate
                 | TestCoverage
                 | MutationScore => vec![
-                    EnergyRemaining,
                     VarietyDeficit,
-                    ErrorRate,
-                    ConnectorLatency,
-                    CommunicationQueueDepth,
                     MemoryLife,
                     TripleCount,
                     LowConfidenceCount,
@@ -503,17 +494,16 @@ mod tests {
             }
         };
         // No production sensor emits these (verified 2026-10-01: zero
-        // production `Signal::new` sites): legacy Loop-6 vocabulary
+        // production `Signal::new` sites): the event-driven impact-check
+        // channel (PassRate — consumed by verify_impact, not the policy
+        // decide path) and decode-only persisted-history metrics
+        // (TestCoverage, MutationScore). The legacy Loop-6 vocabulary
         // (EnergyRemaining, ErrorRate, ConnectorLatency,
-        // CommunicationQueueDepth), the event-driven impact-check channel
-        // (PassRate — consumed by verify_impact, not the policy decide
-        // path), and decode-only persisted-history metrics (TestCoverage,
-        // MutationScore).
+        // CommunicationQueueDepth) was deleted 2026-10-01 — zero
+        // production emission sites, and the string-resolution paths
+        // degrade to a visible warn-and-skip for any stale submitted
+        // name.
         let allowlisted = [
-            SignalMetric::EnergyRemaining,
-            SignalMetric::ErrorRate,
-            SignalMetric::ConnectorLatency,
-            SignalMetric::CommunicationQueueDepth,
             SignalMetric::PassRate,
             SignalMetric::TestCoverage,
             SignalMetric::MutationScore,

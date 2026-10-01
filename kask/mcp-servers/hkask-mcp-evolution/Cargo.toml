@@ -34,6 +34,10 @@ regex.workspace = true
 # The tool-behavior contract suite (tests/tool_behavior.rs) drives the six
 # tools through their Parameters seams — #[tokio::test] needs rt + macros.
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+# The concurrent-selection race test needs a multi-connection file-backed pool
+# (the in-memory helper is max_size(1) — it serializes at the pool and
+# cannot reproduce the race).
+tempfile.workspace = true
 
 [lints]
 workspace = true

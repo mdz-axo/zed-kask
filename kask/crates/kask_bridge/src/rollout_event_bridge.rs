@@ -196,18 +196,13 @@ impl RolloutEventSource for BridgeRolloutEventSource {
             // No events for this rollout — absence, not zero.
             return Ok(None);
         }
-        // Derive the metric value from each event's payload. Three metrics
-        // today: latency (model_request.latency_ms), token usage
-        // (model_request.usage.total_tokens), and pass_rate
-        // (harness_summary.overall_pass_rate). Anything else has no captured
-        // source — None, never fabricated.
+        // Derive the metric value from each event's payload. One metric
+        // today: pass_rate (harness_summary.overall_pass_rate). Anything
+        // else has no captured source — None, never fabricated. (The
+        // legacy latency/token-usage arms went with their never-emitted
+        // metrics, deleted 2026-10-01; git history is the archive.)
         let value_of = |payload: &serde_json::Value| -> Option<f64> {
             match metric {
-                "connector_latency" => payload.get("latency_ms").and_then(|v| v.as_f64()),
-                "energy_remaining" => payload
-                    .get("usage")
-                    .and_then(|usage| usage.get("total_tokens"))
-                    .and_then(|v| v.as_f64()),
                 "pass_rate" => payload.get("overall_pass_rate").and_then(|v| v.as_f64()),
                 _ => None,
             }
@@ -507,8 +502,7 @@ mod tests {
         assert_eq!(result, None, "no event after the last — absence, not zero");
     }
 
-    /// Sample sizes come from the same summaries as the pass-rate values,
-    /// and are absent (not invented) for metrics without attempt counts.
+    /// Sample sizes come from the same summaries as the pass-rate values.
     #[test]
     fn metric_observation_reads_total_rollouts_for_pass_rate() {
         let store = memory_store();
@@ -521,13 +515,6 @@ mod tests {
                 .unwrap()
                 .and_then(|v| v.sample_sizes),
             Some((10, 10))
-        );
-        assert_eq!(
-            bridge
-                .metric_observation("alpha", "connector_latency", first)
-                .unwrap()
-                .and_then(|v| v.sample_sizes),
-            None
         );
     }
 

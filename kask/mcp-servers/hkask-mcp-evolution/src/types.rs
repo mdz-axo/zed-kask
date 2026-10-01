@@ -148,9 +148,12 @@ impl EvolutionHealthSnapshot {
     }
 
     /// Mean Brier over resolved non-void claims: selected → the claim held
-    /// (outcome 1), rejected → refuted (outcome 0). No-headroom voids (the
-    /// first reject reason contains "no-headroom") are design failures, not
-    /// claim measurements — excluded from the calibration record. Returns
+    /// (outcome 1), rejected → refuted (outcome 0). Void experiments — the
+    /// first reject reason carries a void marker, "no-headroom" (design
+    /// failure: the eval set cannot discriminate) or "measurement-void"
+    /// (infrastructure failure: the runs never produced a valid
+    /// measurement) — never tested their claim, so they are excluded from
+    /// the calibration record rather than scored as refuted. Returns
     /// `(mean_brier, claim_count)`; `None` when no measured claims exist.
     pub fn resolved_claim_brier(&self) -> Option<(f64, u32)> {
         let mut sum = 0.0;
@@ -171,7 +174,7 @@ impl EvolutionHealthSnapshot {
                     if experiment
                         .reject_reasons
                         .first()
-                        .is_some_and(|reason| reason.contains("no-headroom"))
+                        .is_some_and(|reason| is_void_marker(reason))
                     {
                         continue;
                     }
@@ -187,6 +190,18 @@ impl EvolutionHealthSnapshot {
             Some((sum / claims as f64, claims))
         }
     }
+}
+
+/// Void markers for the calibration record: a reject reason carrying one
+/// of these marks an experiment whose pre-registered claim was never
+/// tested — "no-headroom" (design failure: baseline saturated, nothing to
+/// measure) or "measurement-void" (infrastructure failure: the runs never
+/// produced a valid measurement). Such claims are excluded from
+/// [`EvolutionHealthSnapshot::resolved_claim_brier`] rather than scored as
+/// refuted, so provider or harness noise cannot pollute the calibration
+/// record the agenda generator calibrates against.
+fn is_void_marker(reason: &str) -> bool {
+    reason.contains("no-headroom") || reason.contains("measurement-void")
 }
 
 /// Registry failures, classified per-variant for MCP dispatch — never a

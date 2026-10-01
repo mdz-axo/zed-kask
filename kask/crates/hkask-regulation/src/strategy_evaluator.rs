@@ -72,14 +72,7 @@ impl StrategyEvaluator {
     pub fn new() -> Self {
         let mut strategies: HashMap<SignalMetric, Vec<RegulationStrategy>> = HashMap::new();
 
-        let regulated_metrics = [
-            SignalMetric::EnergyRemaining,
-            SignalMetric::VarietyDeficit,
-            SignalMetric::ErrorRate,
-            SignalMetric::ConnectorLatency,
-            SignalMetric::CommunicationQueueDepth,
-            SignalMetric::ToolReliability,
-        ];
+        let regulated_metrics = [SignalMetric::VarietyDeficit, SignalMetric::ToolReliability];
 
         for &metric in &regulated_metrics {
             strategies.insert(

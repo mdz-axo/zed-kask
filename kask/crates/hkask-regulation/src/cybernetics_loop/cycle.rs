@@ -2033,12 +2033,11 @@ mod tests {
     }
 
     /// S1 + happy path: a store-answered pass_rate regression writes a verdict
-    /// event labeled with the REAL metric name ("pass_rate"), not the
-    /// `SignalMetric` fallback ("energy_remaining"). Before the fix the
-    /// write-back passed `metric.as_str()`, which fell through
-    /// `from_str_name("pass_rate").unwrap_or(EnergyRemaining)` →
-    /// `"energy_remaining"` — self-describing JSON that lied about its
-    /// content.
+    /// event labeled with the REAL metric name ("pass_rate"), not a
+    /// fallback default. Before the fix the write-back passed
+    /// `metric.as_str()`, which fell through a `from_str_name` default
+    /// (the since-deleted energy metric) → a self-describing JSON field
+    /// that lied about its content.
     #[test]
     fn verify_impact_write_back_records_real_metric_name() {
         let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
@@ -2301,11 +2300,11 @@ mod tests {
     #[test]
     fn from_cycle_fidelity_no_string_fallback() {
         use crate::loops::core::{LoopMetrics, TriggerOrigin};
-        let signal = Signal::new(LoopId::Cybernetics, SignalMetric::EnergyRemaining, 0.1, 0.2);
+        let signal = Signal::new(LoopId::Cybernetics, SignalMetric::ToolReliability, 0.1, 0.2);
         let deviation = Deviation::from_signal(&signal).unwrap();
         // An action with no metric_name but a reason that contains "low" —
-        // under the old fallback this would have matched EnergyRemaining
-        // BelowSetPoint via reason.contains("low").
+        // under the old fallback this would have matched the deviation's
+        // metric via reason.contains("low").
         let action = RegulatoryAction {
             target: LoopId::Curation,
             action_type: ActionType::Escalate,
