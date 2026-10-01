@@ -1,9 +1,9 @@
 ---
 title: "Cybernetic Nervous System — Alignment Plan"
 audience: [architects, developers, operators, agents]
-last_updated: 2026-09-30
-version: "0.3.3"
-status: "Active — operator ruling 2026-09-30 ('proceed as proposed — confirmed'): reference model admitted; S2 and S3 approved and landed"
+last_updated: 2026-10-01
+version: "0.3.4"
+status: "Active — reference model admitted (operator ruling 2026-09-30); S1–S6 recorded; §8 cleanup CU-1–CU-5/CU-7 complete, CU-6 gated on displacement; L25 classified (2026-10-01)"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle]
 ---
@@ -14,8 +14,8 @@ Kata steps 3–4 for the three-layer review (operator spec 2026-09-30).
 Step 2's current condition lives in `loop-register.md` Pass 3 (naming
 survey, mechanism inventory R1–R12, premise verdict, layer coverage,
 per-row classifications, alignment gap table). The reference model is
-`research/cybernetic-nervous-system-reference-model.md` (draft; admission
-pending). This plan states the target condition, ranks the pragmatic
+`research/cybernetic-nervous-system-reference-model.md` (admitted by
+operator ruling 2026-09-30). This plan states the target condition, ranks the pragmatic
 steps under the subtractive constraint, records the executed PDCA
 experiment, and closes with the coaching-kata checkpoint.
 
@@ -71,11 +71,11 @@ system confirms it.
 | # | Obstacle | Invariant | Status |
 | --- | --- | --- | --- |
 | O1 | The tracing→log bridge is undocumented and incidental (rpc's feature flag) | INV6 | Corrected finding; **S2 landed** (recorded as designed in regulation-spans.md §1) |
-| O2 | Surprise-gated reporting governs 1 of 12 pathways; the rest log raw activity | INV3 | The core gap; **S3 landed** (the raw duplicate deleted, net −14); the count changes only with S6 |
+| O2 | Surprise-gated reporting governs 1 of 12 pathways; the rest log raw activity | INV3 | The core gap; **S3 landed** (the raw duplicate deleted, net −14); **S6 recorded** (register v0.24.2: the R1–R12 role table — no displacement candidate; the count stands until a pathway is displaced, CU-6's gate) |
 | O3 | Expectation carriage absent outside L2 + stored priors | INV2 | Direction only; no code step admitted this pass |
 | O4 | B→C handoff receipt deferrals (L1/L7 memory receipt, L9 ack gate) | INV5 | **Ruled design** (operator D3/D4: deliberate loose coupling) — parked, not obstacles |
 | O5 | L23 poisoned-lock silent fallback | INV4 | **S4 landed** (2026-09-30: `live_stats_degraded` + the rationale surfacing, red-first) |
-| O6 | Scoping 12 pathways into 3 canonical ones | INV1 | Multi-slice program; not this session's unit |
+| O6 | Scoping 12 pathways into 3 canonical ones | INV1 | **S6 recorded** (register v0.24.2: three canonical, eight diagnostics, one substrate — no-candidate); the deletion arm is CU-6, gated on an actual displacement |
 
 **Focus obstacle: O2.** It is the target condition's core (clause 3),
 has the smallest verifiable instance (S3), and the in-tree precedent
@@ -153,6 +153,14 @@ the deletion test, preserve behavior, and validate (`./script/clippy`,
   or explicitly scoping the rest — one pathway per slice, deletion test
   per pathway. Not this session's unit; named so the target condition's
   clause 2 has a path.
+  **DONE (2026-09-30, register v0.24.2):** the R1–R12 role table
+  recorded — three canonical pathways (A: the R5 archive with R10's
+  producer and R6's escalation arm; B: the envelope + R7 toasts on
+  R11's substrate; C: R8 memory with R12 work-state), eight
+  diagnostics pathways with explicit roles, one substrate; the
+  no-candidate finding stands (the one true duplication was S3,
+  already deleted). The deletion arm is CU-6, gated on an actual
+  pathway displacement.
 
 **Net production lines this pass: zero changed** — the pass is a review
 (doc-only: the register, the reference-model draft, this plan, and the
@@ -431,10 +439,12 @@ not verdict (operator calibration, 2026-09-30).
   (both surfaces: `HkaskSettings` swept in the first slice,
   `KaskSettings` here). No dead knob exists in either settings
   surface.
-- **Observed, not acted:** the concurrent stream's evolution server
-  landed with its registry row (6 tools, pinned) — its per-server
-  detail doc does not exist yet (the kata-kanban precedent: a recorded
-  gap proposal, their stream's business).
+- **Observed, not acted (2026-09-30; since closed):** the concurrent
+  stream's evolution server landed with its registry row (6 tools,
+  pinned) — its per-server detail doc did not exist yet. **Closed by
+  register v0.24.7 (2026-09-30):** `reference/mcp-servers/evolution.md`
+  created, with the docs-README row and the credential-declaration
+  repair in the same change.
 
 ### Code-facing naming proposal (the expectation-signal category; closes the reference model §6/§7-4 cross-reference)
 
@@ -458,8 +468,30 @@ coinages. Proposal:
   holds by construction (nothing is added).
 - **CU-5(b) probe artifacts: clean** (no probe/scratch/tmp/bak files
   in production trees).
-- **Gates:** count 74 (< the 75 cap; the 60-file target remains the
-  direction — the file-count work needs the whole-file rulings);
+- **Gates (at this slice, 2026-09-30):** count 74 under the 75 cap
+  (currency 2026-10-01: **72** — the aeneas deletion −3, the evolution
+  per-server doc +1; register v0.24.6/v0.24.7). The 60-file target
+  remains the direction — the file-count work needs the whole-file
+  rulings;
   links, citations, frontmatter, and no-deleted-surfaces re-checked
   (the README's register row updated to drop the stale INVEST
   emphasis).
+
+### Execution record — fifth slice (2026-10-01: plan-record reconciliation — CU-8 applied to this plan)
+
+Records-only; no code, no corpus change. The §8 slices landed their
+work but left this plan's own records behind it: (a) §4's S6 entry and
+§3's O2/O6 statuses said "not this session's unit" while the S6
+record existed in the register (v0.24.2) — pointers added; (b) the
+fourth slice's "per-server detail doc does not exist yet" note was
+overtaken by the v0.24.7 repair — closed with the pointer; (c) the
+gates line carried the stale 74 count — dated and corrected to 72;
+(d) the intro still said the reference model was "draft; admission
+pending" — contradicted by this plan's own §7 ruling record —
+corrected to the admitted state; (e) the frontmatter status line
+predated S4, §8, and L25 — refreshed. Open surface after this slice:
+O3 (INV2 direction) awaits an operator decision; the 60-file docs
+target awaits whole-file rulings; CU-6 stays gated; the L25 row's
+`store.rs:707` citation is commit-anchored at `c57e1706db` and
+refreshes when the concurrent stream's in-flight evolution work
+lands.
