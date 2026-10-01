@@ -111,7 +111,7 @@ the enforcement layer; the prose rules are the floor, not a replacement.
 ### Form G — gate
 
 ```
-(let ((issues (append (if (member opener (list "Let me" "I'll" "Great question" "Sure!" "Looking at" "To answer")) (list (concat "delete-opener:" opener)) nil) (if (member closer (list "Hope that helps" "Let me know" "Happy to clarify" "Feel free to ask")) (list (concat "delete-closer:" closer)) nil) (if (> sidebar_count 0) (list "delete-sidebar") nil) (if (> empty_hedge_count 0) (list "delete-empty-hedge") nil) (if (> idiom_count 0) (list "replace-idiom") nil) (if (> assumptions_count cap) (list "split:assumptions") nil) (if (> risks_count cap) (list "split:risks") nil) (if (> goals_count cap) (list "split:goals") nil) (if (> critical_count cap) (list "split:critical") nil) (if (> minor_groups cap) (list "split:minor_groups") nil) (if (not (= next_actions_count 1)) (list "exactly-one-next-action") nil) (if (not first_line_is_action) (list "reshape:first-line-is-action") nil) (if (not last_line_states_next) (list "reshape:last-line-states-next") nil) (if (not last_line_states_done) (list "reshape:last-line-states-done") nil)))) (if (> (length issues) 0) (list 'revise issues) 'send))
+(let ((issues (append (if (or (starts-with "Let me" opener) (starts-with "I'll" opener) (starts-with "Great question" opener) (starts-with "Sure!" opener) (starts-with "Looking at" opener) (starts-with "To answer" opener)) (list (concat "delete-opener:" opener)) nil) (if (or (ends-with "that helps" closer) (ends-with "me know" closer) (ends-with "to clarify" closer) (ends-with "free to ask" closer) (ends-with "anything else" closer)) (list (concat "delete-closer:" closer)) nil) (if (> sidebar_count 0) (list "delete-sidebar") nil) (if (> empty_hedge_count 0) (list "delete-empty-hedge") nil) (if (> idiom_count 0) (list "replace-idiom") nil) (if (> assumptions_count cap) (list "split:assumptions") nil) (if (> risks_count cap) (list "split:risks") nil) (if (> goals_count cap) (list "split:goals") nil) (if (> critical_count cap) (list "split:critical") nil) (if (> minor_groups cap) (list "split:minor_groups") nil) (if (not (= next_actions_count 1)) (list "exactly-one-next-action") nil) (if (not first_line_is_action) (list "reshape:first-line-is-action") nil) (if (not last_line_states_next) (list "reshape:last-line-states-next") nil) (if (not last_line_states_done) (list "reshape:last-line-states-done") nil)))) (if (> (length issues) 0) (list 'revise issues) 'send))
 ```
 
 env: `opener`, `closer` (strings, verbatim evidence); `sidebar_count`,
@@ -166,6 +166,12 @@ All receipts executed live through `lisp_eval` (2026-09-30, batch-10 audit):
   `["revise", ["delete-opener:Let me", "delete-closer:Hope that helps",
   "split:assumptions", "exactly-one-next-action",
   "reshape:first-line-is-action"]]` — every defect named with its fix.
+- Form G lexical channel, prefix/suffix shapes (re-verified 2026-10-01 with
+  the `starts-with`/`ends-with` builtins): opener extract "Let me think" →
+  `delete-opener` flagged (the exact-match channel missed it); opener "I'll
+  run" → flagged (the one-word entry, previously dead by construction);
+  closer extract "that helps" → `delete-closer` flagged; clean opener "Run
+  the tests" + closer "end of draft" → no lexical flags.
 - Form C complete: `required` [what changed, validation, files] all present in
   `sections` → `content-complete`.
 - Form C missing: same `required` with `files` absent from `sections` →
@@ -221,16 +227,15 @@ The ten rules (faithful to the source; references renamed):
     end when the answer is done. The lexical checks are enforced by Form G,
     which carries the phrase fragments; the pre-send-gate template defines how
     opener and closer are extracted (the verbatim first/last words), not the
-    lists. Known limitation, bounded: the lexical channel is exact-match over
-    the 2–3-word verbatim extracts — prefix-shaped openers ("Let me think")
-    and the one-word entries ("I'll", "Sure!") cannot match the extract shape,
-    and a `string-contains` rewrite is unusable (the engine's reversal guard
-    errors when the needle is longer than the extract — verified live
-    2026-09-30). The boolean channel backstops: a preamble opener is normally
-    not an actionable first line, so `first_line_is_action` fires and the
-    draft is still revised. Closing the gap needs an engine capability
-    (a `starts-with`/`ends-with` builtin, or a reversal guard scoped to the
-    actual reversal case) — filed as an operator question.
+    lists. The opener channel is prefix-shaped (`starts-with` — an extract
+    like "Let me think" matches the "Let me" fragment) and the closer channel
+    suffix-shaped (`ends-with` — "that helps" matches the tail of "Hope that
+    helps"), so prefix-shaped openers and the one-word entries ("I'll",
+    "Sure!") are caught. Both builtins were added for this gate (2026-10-01):
+    the earlier exact-match `member` channel missed them, and a
+    `string-contains` rewrite errored the whole gate on short extracts (the
+    reversal guard). The boolean channel (`first_line_is_action`) remains the
+    semantic backstop.
 
 Override the defaults when:
 
