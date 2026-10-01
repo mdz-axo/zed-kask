@@ -13,8 +13,8 @@
 //!   Special forms: quote, if, let, lambda, define, begin, and, or, not, cond
 //!   Built-in functions: car, cdr, cons, list, length, nth, reverse,
 //!     +, -, *, /, =, !=, <, <=, >, >=, is_null, numberp, listp, stringp,
-//!     assoc, append, string=, string-contains, concat, abs, sqrt, max, min,
-//!     eq, member
+//!     assoc, append, string=, string-contains, starts-with, ends-with,
+//!     concat, abs, sqrt, max, min, eq, member
 //!
 //! Integer arithmetic is checked (overflow is a typed `Runtime` error, never
 //! a silent wrap), and all-Int comparisons are exact i64 (never coerced
@@ -870,6 +870,13 @@ fn default_builtins() -> Vec<(&'static str, NativeFn)> {
         // would verify anything, and a check that fires on correct output is
         // worse than no check.
         ("string-contains", string_contains_fn),
+        // Prefix/suffix checks. (starts-with prefix subject) and
+        // (ends-with suffix subject) — needle-first like string-contains,
+        // but no length guard: a prefix/suffix longer than the subject is a
+        // legitimate false (the check is directional). Empty prefix/suffix
+        // errors (the string-contains precedent).
+        ("starts-with", starts_with_fn),
+        ("ends-with", ends_with_fn),
         // Absolute value. (abs x) returns the magnitude of a numeric arg.
         // Used by convergence-gap forms that need a symmetric delta.
         ("abs", abs_fn),
@@ -1533,6 +1540,88 @@ fn string_contains_fn(
         )));
     }
     Ok(LispValue::Bool(haystack.contains(needle.as_str())))
+}
+
+/// Prefix check: `(starts-with prefix subject)` returns true iff `subject`
+/// begins with `prefix`. Arg order follows `string-contains` (searched-for
+/// first, searched-in second). A prefix longer than the subject is a
+/// legitimate false, not an error — unlike `string-contains` there is no
+/// reversal ambiguity worth a length guard: the check is directional, and
+/// the lexical-gate use case checks short prefixes against short verbatim
+/// extracts where a guard would break the check. An empty prefix errors
+/// rather than returning true — every string starts with the empty prefix,
+/// and a check that fires on correct output is worse than no check (the
+/// `string-contains` precedent).
+fn starts_with_fn(
+    _env: &Rc<RefCell<Env>>,
+    args: &[LispValue],
+    _budget: &mut EvalBudget,
+) -> Result<LispValue, LispError> {
+    if args.len() != 2 {
+        return Err(LispError::Arity("starts-with expects 2 args".into()));
+    }
+    let prefix = match &args[0] {
+        LispValue::String(s) => s,
+        other => {
+            return Err(LispError::TypeError {
+                expected: "string".into(),
+                actual: type_of(other),
+            });
+        }
+    };
+    let subject = match &args[1] {
+        LispValue::String(s) => s,
+        other => {
+            return Err(LispError::TypeError {
+                expected: "string".into(),
+                actual: type_of(other),
+            });
+        }
+    };
+    if prefix.is_empty() {
+        return Err(LispError::Runtime(
+            "starts-with: prefix must be a non-empty string".into(),
+        ));
+    }
+    Ok(LispValue::Bool(subject.starts_with(prefix.as_str())))
+}
+
+/// Suffix check: `(ends-with suffix subject)` returns true iff `subject`
+/// ends with `suffix`. Same conventions as `starts-with`: needle-first,
+/// no length guard (a suffix longer than the subject is a legitimate
+/// false), empty suffix errors.
+fn ends_with_fn(
+    _env: &Rc<RefCell<Env>>,
+    args: &[LispValue],
+    _budget: &mut EvalBudget,
+) -> Result<LispValue, LispError> {
+    if args.len() != 2 {
+        return Err(LispError::Arity("ends-with expects 2 args".into()));
+    }
+    let suffix = match &args[0] {
+        LispValue::String(s) => s,
+        other => {
+            return Err(LispError::TypeError {
+                expected: "string".into(),
+                actual: type_of(other),
+            });
+        }
+    };
+    let subject = match &args[1] {
+        LispValue::String(s) => s,
+        other => {
+            return Err(LispError::TypeError {
+                expected: "string".into(),
+                actual: type_of(other),
+            });
+        }
+    };
+    if suffix.is_empty() {
+        return Err(LispError::Runtime(
+            "ends-with: suffix must be a non-empty string".into(),
+        ));
+    }
+    Ok(LispValue::Bool(subject.ends_with(suffix.as_str())))
 }
 
 /// Absolute value: `(abs x)` returns the magnitude of a numeric arg.
@@ -2412,6 +2501,82 @@ mod tests {
         let result =
             eval_sandboxed(r#"(string-contains "abc" "xyz")"#, &serde_json::json!({})).unwrap();
         assert_eq!(result, serde_json::json!(false));
+    }
+
+    #[test]
+    fn starts_with_and_ends_with_match_directionally() {
+        // The adhd-mode lexical-gate shapes: prefix openers, suffix closers.
+        let env = &serde_json::json!({});
+        assert_eq!(
+            eval_sandboxed(r#"(starts-with "Let me" "Let me think")"#, env).unwrap(),
+            serde_json::json!(true),
+            "a prefix-shaped opener extract matches its forbidden prefix"
+        );
+        assert_eq!(
+            eval_sandboxed(r#"(starts-with "Run" "Run the tests")"#, env).unwrap(),
+            serde_json::json!(true)
+        );
+        assert_eq!(
+            eval_sandboxed(r#"(ends-with "that helps" "Hope that helps")"#, env).unwrap(),
+            serde_json::json!(true),
+            "a suffix-shaped closer extract matches its forbidden suffix"
+        );
+        assert_eq!(
+            eval_sandboxed(r#"(ends-with "tests" "Run the tests")"#, env).unwrap(),
+            serde_json::json!(true)
+        );
+    }
+
+    #[test]
+    fn starts_with_ends_with_longer_needle_is_legitimate_false() {
+        // The contrast with string-contains's reversal guard: these checks are
+        // directional, so a prefix/suffix longer than the subject is a normal
+        // false, never an error. This is exactly the case where a
+        // string-contains rewrite of the adhd-mode lexical gate broke (the
+        // guard errored the whole gate on short extracts — verified live
+        // 2026-09-30, which motivated these builtins).
+        let env = &serde_json::json!({});
+        assert_eq!(
+            eval_sandboxed(r#"(starts-with "Great question" "Run the tests")"#, env).unwrap(),
+            serde_json::json!(false),
+            "a longer prefix is a legitimate false, not a reversal error"
+        );
+        assert_eq!(
+            eval_sandboxed(r#"(ends-with "anything else" "end of draft")"#, env).unwrap(),
+            serde_json::json!(false)
+        );
+        assert_eq!(
+            eval_sandboxed(r#"(starts-with "Let me" "Sure!")"#, env).unwrap(),
+            serde_json::json!(false)
+        );
+    }
+
+    #[test]
+    fn starts_with_ends_with_empty_needle_errors() {
+        // The string-contains precedent: every string starts/ends with the
+        // empty needle, and a check that fires on correct output is worse
+        // than no check.
+        let err = eval_sandboxed(
+            r#"(starts-with "" "Run the tests")"#,
+            &serde_json::json!({}),
+        )
+        .unwrap_err();
+        assert!(matches!(err, LispError::Runtime(_)), "got: {err}");
+        let err = eval_sandboxed(r#"(ends-with "" "Run the tests")"#, &serde_json::json!({}))
+            .unwrap_err();
+        assert!(matches!(err, LispError::Runtime(_)), "got: {err}");
+    }
+
+    #[test]
+    fn starts_with_ends_with_non_string_args_error() {
+        let err = eval_sandboxed(
+            r#"(starts-with 5 "revenue growth of 12%")"#,
+            &serde_json::json!({}),
+        )
+        .unwrap_err();
+        assert!(matches!(err, LispError::TypeError { .. }), "got: {err}");
+        let err = eval_sandboxed(r#"(ends-with "growth" 42)"#, &serde_json::json!({})).unwrap_err();
+        assert!(matches!(err, LispError::TypeError { .. }), "got: {err}");
     }
 
     /// expect: "Skill forms clamp and take extrema with `max`/`min` instead of

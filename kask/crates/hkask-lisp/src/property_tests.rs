@@ -179,8 +179,11 @@ proptest! {
 
     /// Hypothesis: string semantics match Rust — `length` counts chars
     /// (multibyte is the pinned corner), `string=` is content equality,
-    /// `concat` joins, and `string-contains` is needle-first containment
-    /// with the empty-needle and probable-reversal guards.
+    /// `concat` joins, `string-contains` is needle-first containment
+    /// with the empty-needle and probable-reversal guards, and
+    /// `starts-with`/`ends-with` are directional checks whose only error
+    /// case is the empty needle (no length guard — a longer needle is a
+    /// legitimate false).
     #[test]
     fn string_semantics_match_rust_oracles(s in ".*", t in ".*") {
         let env = serde_json::json!({});
@@ -214,6 +217,18 @@ proptest! {
                 );
             }
             Err(err) => prop_assert!(false, "{}: unexpected error {}", contains, err),
+        }
+        for (form, want) in [
+            (format!("(starts-with {ls} {lt})"), t.starts_with(&s)),
+            (format!("(ends-with {ls} {lt})"), t.ends_with(&s)),
+        ] {
+            match eval_sandboxed(&form, &env) {
+                Ok(got) => prop_assert_eq!(got, serde_json::json!(want), "{}", form),
+                Err(LispError::Runtime(msg)) if s.is_empty() => {
+                    prop_assert!(msg.contains("non-empty"), "{}: {}", form, msg)
+                }
+                Err(err) => prop_assert!(false, "{}: unexpected error {}", form, err),
+            }
         }
     }
 }
@@ -365,6 +380,18 @@ fn every_registry_builtin_has_a_passing_specimen() {
         (
             "string-contains",
             "(string-contains \"ell\" \"hello\")".into(),
+            empty.clone(),
+            serde_json::json!(true),
+        ),
+        (
+            "starts-with",
+            "(starts-with \"hel\" \"hello\")".into(),
+            empty.clone(),
+            serde_json::json!(true),
+        ),
+        (
+            "ends-with",
+            "(ends-with \"llo\" \"hello\")".into(),
             empty.clone(),
             serde_json::json!(true),
         ),

@@ -35,7 +35,8 @@ pub struct LispEvalToolInput {
     /// arithmetic (`+`, `-`, `*`, `/`, `=`, `!=`, `<`, `<=`, `>`, `>=`),
     /// `car`, `cdr`, `cons`, `list`, `length`, `nth`, `reverse`, `is_null`,
     /// `numberp`, `listp`, `stringp`, `assoc`, `append`, `member`, `abs`,
-    /// `sqrt`, `max`, `min`, `eq`, `string=`, `string-contains`, `concat`.
+    /// `sqrt`, `max`, `min`, `eq`, `string=`, `string-contains`,
+    /// `starts-with`, `ends-with`, `concat`.
     /// Integer arithmetic is checked (overflow errors, never wraps silently)
     /// and all-integer comparisons are exact (never coerced through f64).
     /// `/` always returns a Float (`(/ 6 3)` → `2.0`); over 3+ args `!=`
