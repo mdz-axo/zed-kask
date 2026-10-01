@@ -136,7 +136,7 @@ annual. The embedded seed payload equals the authored tree (pinned in
 | Skill | Purpose |
 |-------|---------|
 | `coding-guidelines` | Enforce Karpathy's four coding principles: Think Before Coding, Simplicity First, Surgical Changes, Goal-Driven Execution |
-| `deep-module` | Module design via Ousterhout's deletion test and interface minimalism |
+| `deep-module` | Module design via Ousterhout's depth criteria (kask-operationalized deletion test, depth score, ≤7 surface cap) |
 | `essentialist` | Recursive eliminative interrogation (Exist → Surface → Contract) |
 | `pragmatic-semantics` | Classify statements by certainty, constraint force, provenance; route computation steps to deterministic or probabilistic machines (D/P labelling, P8.4) |
 | `pragmatic-cybernetics` | Feedback loops, variety engineering, system homeostasis |

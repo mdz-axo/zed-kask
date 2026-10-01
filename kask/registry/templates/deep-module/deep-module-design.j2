@@ -13,6 +13,7 @@ contract:
     error_design: object
     config_design: object
     depth_projection: object
+    design_skipped: boolean
 ---
 
 You are a module interface designer using Ousterhout's deep module discipline. Design a module interface that maximizes depth — small public surface, much behavior behind it. Start from deletion test results and domain requirements.
@@ -79,7 +80,7 @@ Only add additional public functions when ALL of these are true:
 2. The operation serves a different caller need (not just a convenience wrapper)
 3. The operation would cause significant complexity if callers had to implement it themselves
 
-**Target: ≤7 public functions total.** More than 7 strongly suggests splitting.
+**Target: ≤7 public functions total** (a kask operationalization — Ousterhout argues depth qualitatively; the numeric cap is this project's Evidence-tier rule). More than 7 strongly suggests splitting.
 
 ### Step 3 — Design Public Types
 
@@ -117,7 +118,7 @@ Unify all configuration into a single config struct:
 Estimate the resulting depth score:
 
 ```
-Projected Behavior Lines / (Public Functions + Public Types) = Projected Depth Score
+Projected Behavior Lines / (Public Functions + Public Types + Public Traits + Public Constants + Public Sub-modules) = Projected Depth Score — the same five-item denominator as the assess step, so projected and assessed depth are comparable.
 ```
 
 Target: ≥100 (Deep). Minimum: ≥50 (Adequate).
@@ -198,6 +199,9 @@ Respond with a JSON object:
   "depth_projection": {
     "public_functions": 4,
     "public_types": 0,
+    "public_traits": 0,
+    "public_constants": 0,
+    "public_modules": 0,
     "estimated_implementation_lines": 520,
     "projected_depth_score": 130,
     "classification": "Deep",
@@ -210,11 +214,9 @@ Respond with a JSON object:
 
 - Design interface first, implementation second.
 - Every public function must survive the deletion test: if callers could trivially implement it, don't expose it.
-- No more than 7 public functions. If the design exceeds 7, split the module.
+- No more than 7 public functions (a kask operationalization of Ousterhout's qualitative depth criterion). If the design exceeds 7, split the module.
 - One error type per module. Map, don't leak, dependency errors.
 - One config struct. Validated at construction.
 - Hide everything that isn't required by callers.
 - If `deletion_test_result.recommendation` is `DELETE` or `MERGE`, return `module_specification: null` with `design_skipped: true` and a reason — design is not applicable for modules that should not exist.
-- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
-- Handle missing variables gracefully (leave as-is or use default if specified).
 

@@ -7,7 +7,7 @@ description: "Module design discipline based on Ousterhout's 'A Philosophy of So
 
 # Deep Module
 
-Module design discipline based on John Ousterhout's *A Philosophy of Software Design*. Apply the deletion test to evaluate whether a module deserves to exist: delete the callers — if complexity reappears, extract. Delete the module — if complexity vanishes, don't create it. Enforces depth (high benefit/cost ratio), interface minimalism (≤7 public functions), and dependency direction.
+Module design discipline based on John Ousterhout's *A Philosophy of Software Design*. Apply the deletion test to evaluate whether a module deserves to exist: delete the callers — if complexity reappears, extract. Delete the module — if complexity vanishes, don't create it. Enforces depth (high benefit/cost ratio), interface minimalism (≤7 public functions — a kask operationalization; Ousterhout argues depth qualitatively), and dependency direction.
 
 ## When to Use
 
@@ -26,12 +26,17 @@ Module design discipline based on John Ousterhout's *A Philosophy of Software De
 
 ## D/P labelling
 
-The deletion-test verdict (delete / merge / keep) and the reduction
+The deletion-test verdict (the matrix's EXTRACT / DEEPEN / MERGE / DELETE) and the reduction
 recommendations are P — judgment, critiqued by the human in advisory mode and
 by the re-run gates. The interface inventory, the depth score (computed with
 `lisp_eval` over the counted public surface — the same denominator as the
 assess template), and the convergence check (the last three recorded
-public-interface counts equal) are D. A depth score the model states but
+public-interface counts equal) are D; the mechanical counting itself is D in
+substance (grep-able, itemized in the inventory — the auditable receipt), with
+the behavior-line estimate P when the source is unavailable (the report says
+which). Red-flag identification and the behavior lists are P — judgment over
+the counted inventory, critiqued by the human. The design projection is the D
+form over P-estimated inputs — its report says which inputs were estimated. A depth score the model states but
 does not compute from the counted items is not a score.
 
 ## Instructions
@@ -72,7 +77,7 @@ does not compute from the counted items is not a score.
 3. Verify dependency direction: dependencies are acyclic and point toward stability.
 4. Assess caller benefit: callers genuinely benefit from the abstraction (not pass-through).
 5. Check that depth-improvement recommendations are specific and actionable.
-6. The convergence signal is the public-interface item count (the result of step 3's `public_interface | length`). Track this signal across iterations and evaluate convergence: the iterates have stopped moving when the signal is stable across iterations (minimum 2 iterations). Re-enter at assess after each iteration; stop when the signal has stabilized. When the design step is skipped (DELETE/MERGE recommendation), the result of step 3 is undefined and the signal defaults to 0, which is stable — convergence is reached after the minimum iteration count.
+6. The convergence signal is the public-interface item count (the result of step 3's `public_interface | length`). Track this signal across iterations and evaluate convergence with the Constraints' form: converged when the last three recorded counts are equal — checkable once three counts are recorded (two counts can never satisfy the form; verified live). Re-enter at assess after each iteration; stop when the signal has stabilized. When the design step is skipped (DELETE/MERGE recommendation), the result of step 3 is undefined and the signal defaults to 0, which is stable — convergence is reached once three counts are recorded.
 
 ## Registry Templates
 
@@ -85,9 +90,9 @@ does not compute from the counted items is not a score.
 To render a template, call the `render_template` tool with the template ref (e.g., `deep-module/deep-module-assess`) and a context object with the required variables.
 
 Template context variables (from each template's [inference] contract):
-- `deep-module-assess.j2`: `module_path`,`module_source` `caller_paths`,`codebase_context`
-- `deep-module-delete.j2`: `module_assessment`,`caller_code` `dependency_code`,`codebase_context`
-- `deep-module-design.j2`: `deletion_test_result`,`domain_requirements` `dependency_interfaces`,`constraint_classification`
+- `deep-module-assess.j2`: `module_path`, `module_source`, `caller_paths`, `codebase_context`
+- `deep-module-delete.j2`: `module_assessment`, `caller_code`, `dependency_code`, `codebase_context`
+- `deep-module-design.j2`: `deletion_test_result`, `domain_requirements`, `dependency_interfaces`, `constraint_classification`
 
 
 ## Constraints
@@ -98,7 +103,25 @@ Template context variables (from each template's [inference] contract):
 - One error type per module — map, do not leak, dependency errors. One config struct, validated at construction.
 - Hide everything that callers do not strictly require.
 - Every recommendation carries a `constraint_force` field: `prohibition`, `guardrail`, `guideline`, `evidence`, or `hypothesis`.
-- Depth score thresholds are Evidence (Ousterhout's empirical observation), not Prohibition.
+- Depth score thresholds and the ≤7 cap are Evidence-tier kask operationalizations of Ousterhout's qualitative criteria (the repo's derived `deep_module` anchor is qualitative), not Ousterhout's own numbers and not Prohibitions.
 - If `total_interface_items == 0`, return `classification: "Empty"` with `depth_score: null` — do not divide by zero.
 - Design step is gated on `delete.recommendation in ['EXTRACT', 'DEEPEN']` — skipped for DELETE/MERGE.
-- Evaluate convergence after each full iteration with `lisp_eval` over the recorded public-interface counts, oldest first: `(and (>= (length xs) 3) (= (nth (- (length xs) 1) xs) (nth (- (length xs) 2) xs)) (= (nth (- (length xs) 2) xs) (nth (- (length xs) 3) xs)))` — converged when the last three counts are equal. Minimum 2 iterations; maximum 5, after which the remaining instability is reported, not iterated.
+- Evaluate convergence after each full iteration with `lisp_eval` over the recorded public-interface counts, oldest first: `(and (>= (length xs) 3) (= (nth (- (length xs) 1) xs) (nth (- (length xs) 2) xs)) (= (nth (- (length xs) 2) xs) (nth (- (length xs) 3) xs)))` — converged when the last three counts are equal (checkable once three counts are recorded; two counts can never converge under this form). Maximum 5 iterations, after which the remaining instability is reported, not iterated.
+
+## Regression case
+
+All receipts executed live through `lisp_eval` (2026-10-01, batch-10 audit):
+
+- Depth form, Empty: `{"items": 0, "lines": 500}` → `[null, "Empty"]` (no
+  division; `depth_score: null` per the Constraints).
+- Depth form, Deep: `{"items": 2, "lines": 300}` → `[150.0, "Deep"]` (s = 150
+  ≥ 100). The Adequate/Shallow/Very-Shallow classes are the same `cond` chain
+  at their thresholds (50/20/below).
+- Convergence form, converged: `{"xs": [3, 5, 5, 5]}` → `true` (the last three
+  equal — the early instability is correctly ignored).
+- Convergence form, unstable: `{"xs": [3, 5, 5, 4]}` → `false`.
+- Convergence form, too few counts: `{"xs": [5, 5]}` → `false` — two counts
+  can never converge (the pre-repair prose claimed "minimum 2 iterations";
+  the form is the D oracle and requires three).
+
+The skill's forms are executed at use time, never anchored in code.

@@ -104,7 +104,7 @@ Depth Score = Behavior Lines / total_interface_items
 | 0–19  | Very Shallow — minimal benefit relative to interface cost |
 | N/A   | Empty — zero public interface items, division undefined |
 
-**Provenance note**: These thresholds are Ousterhout's empirical observations (2018, Ch. 4), not normative mandates. They correlate with deep modules but do not prescribe depth.
+**Provenance note**: These numeric thresholds are kask operationalizations of Ousterhout's qualitative narrow-interface criterion (2018, Ch. 4 — the repo's derived `deep_module` anchor defines the criterion qualitatively; the depth score and its thresholds are this project's Evidence-tier operationalization), not Ousterhout's own numbers and not normative mandates. They correlate with deep modules but do not prescribe depth.
 
 ### Step 4 — Identify Red Flags
 
@@ -166,8 +166,9 @@ Respond with a JSON object:
     "formula": "480 / total_interface_items (5 + 2 + 0 + 1 + 0) = 60.0",
     "threshold_met": true,
     "distance_to_deep": 40,
-    "provenance_note": "Thresholds from Ousterhout 2018, Ch. 4 — empirical, not normative"
+    "provenance_note": "Thresholds are kask operationalizations of Ousterhout's qualitative criterion (2018, Ch. 4) — Evidence-tier, not normative"
   },
+  "classification": "Adequate",
   "red_flags": [],
   "recommendations": [
     {"text": "Module is adequate — consider merging SessionConfig and SessionSummary into a single type to improve depth score", "constraint_force": "Guideline"},
