@@ -337,10 +337,27 @@ pub(crate) async fn write_turn(
         // are malformed events, not a synthetic `list` goal identity.
         let is_score = event.tool_name == "kanban_goal_score";
         let Some(goal_id) = event.goal_id() else {
-            return Err(MemoryError::Ingestion(format!(
-                "{} result carried no goal_id",
-                event.tool_name
-            )));
+            // Best-effort contract for non-score events (this loop's header):
+            // an id-less result — a rejected call whose output is error text, a
+            // canceled outcome-unknown string — is skipped loudly, never allowed
+            // to abort its siblings (observed live 2026-10-01: one rejected
+            // kanban_goal_create dropped the turn's real create and judge
+            // events, leaving zero post-restart goal records in curator
+            // memory). Score events stay strict — their failure is the retry
+            // signal the resolved-goal acknowledgment path depends on.
+            if is_score {
+                return Err(MemoryError::Ingestion(format!(
+                    "{} result carried no goal_id",
+                    event.tool_name
+                )));
+            }
+            tracing::warn!(
+                target: "reg.memory",
+                thread_id = %thread_id,
+                tool = %event.tool_name,
+                "Skipping id-less goal event (failed or malformed call) — sibling events still ingest"
+            );
+            continue;
         };
         let goal_ontology = HMemOntology {
             dimensions: vec![Dimension::Why.as_str().to_string()],

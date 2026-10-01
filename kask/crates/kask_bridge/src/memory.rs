@@ -1781,6 +1781,107 @@ pub(crate) mod tests {
         );
     }
 
+    /// expect: "One failed or malformed goal call cannot destroy its siblings' memory records."
+    /// [P2] Motivating: Transparent Imperfection — the skip is warned, never silent.
+    /// pre: a turn whose first goal event is an id-less non-score result (a
+    ///      rejected call's error text as a JSON string value — the live
+    ///      2026-10-01 shape), followed by a valid create and judge for the
+    ///      same goal.
+    /// post: the id-less event is skipped; both valid events land as shared
+    ///       goal h_mems; ingestion succeeds.
+    #[tokio::test]
+    async fn id_less_non_score_goal_event_is_skipped_and_siblings_still_ingest() {
+        let port = in_memory_port_with_embed_fn(Arc::new(|_text: &str| vec![0.25; 1024]));
+        let record = TurnRecord {
+            thread_id: "goal-poison-thread".to_string(),
+            user_input: String::new(),
+            agent_response: String::new(),
+            model: "test-model".to_string(),
+            thread_title: None,
+            agent_id: Some("zed".to_string()),
+            goal_events: vec![
+                // The live defect shape: a rejected call's raw_output is the
+                // error text as a JSON string — no goal_id at any probed level.
+                hkask_types::GoalEvent {
+                    tool_name: "kanban_goal_create".to_string(),
+                    output: serde_json::json!(
+                        "Tool invocation failed: failed to deserialize parameters: invalid type: string, expected struct GoalCriterionInput"
+                    ),
+                },
+                hkask_types::GoalEvent {
+                    tool_name: "kanban_goal_create".to_string(),
+                    output: serde_json::json!({
+                        "content": {
+                            "goal_id": "g-live",
+                            "goal_text": "The user can filter by date",
+                            "prediction": 0.8
+                        }
+                    }),
+                },
+                hkask_types::GoalEvent {
+                    tool_name: "kanban_goal_judge".to_string(),
+                    output: serde_json::json!({
+                        "content": { "goal_id": "g-live", "verdict": "continue" }
+                    }),
+                },
+            ],
+        };
+
+        port.ingest_turn(record)
+            .await
+            .expect("ingest should succeed despite the id-less sibling");
+        let curator_store = port.curator_store.get().expect("curator store");
+        let shared = curator_store
+            .query_deduped_untouched("curator:goal:g-live")
+            .expect("query should succeed");
+        assert_eq!(shared.len(), 2, "both the create and judge events land");
+        assert!(
+            shared
+                .iter()
+                .any(|h_mem| h_mem.attribute == "kanban_goal_create")
+        );
+        assert!(
+            shared
+                .iter()
+                .any(|h_mem| h_mem.attribute == "kanban_goal_judge")
+        );
+    }
+
+    /// expect: "An id-less score event still fails the ingestion — the resolved-goal
+    ///          acknowledgment path retries on that failure (D58)."
+    /// pre: a turn whose only goal event is an id-less kanban_goal_score result.
+    /// post: ingestion errors and no goal h_mem is stored.
+    #[tokio::test]
+    async fn id_less_score_goal_event_still_fails_ingestion() {
+        let port = in_memory_port_with_embed_fn(Arc::new(|_text: &str| vec![0.25; 1024]));
+        let record = TurnRecord {
+            thread_id: "goal-score-strict-thread".to_string(),
+            user_input: String::new(),
+            agent_response: String::new(),
+            model: "test-model".to_string(),
+            thread_title: None,
+            agent_id: Some("zed".to_string()),
+            goal_events: vec![hkask_types::GoalEvent {
+                tool_name: "kanban_goal_score".to_string(),
+                output: serde_json::json!("Tool invocation failed: server unavailable"),
+            }],
+        };
+
+        let result = port.ingest_turn(record).await;
+        assert!(
+            result.is_err(),
+            "an id-less score event must fail the ingestion (retry signal)"
+        );
+        let curator_store = port.curator_store.get().expect("curator store");
+        assert!(
+            curator_store
+                .query_deduped_untouched("curator:goal:")
+                .expect("query should succeed")
+                .is_empty(),
+            "no goal h_mem may be stored from an id-less score event"
+        );
+    }
+
     /// expect: "A goal remembered by the Curator is discoverable through semantic recall, not only exact lookup."
     /// [P8] Motivating: Semantic Grounding — persisted goal content must have a matching entity_ref embedding.
     /// [P2] Constraining: Transparent Imperfection — an invisible goal must not be reported as persisted.
@@ -3313,6 +3414,14 @@ pub(crate) mod tests {
         }
         fn sqlite_pool(&self) -> Option<&r2d2::Pool<hkask_storage::SqliteConnectionManager>> {
             self.inner.sqlite_pool()
+        }
+        fn transaction(
+            &self,
+            operations: &mut dyn FnMut(
+                &dyn hkask_storage::database::driver::TransactionOps,
+            ) -> Result<(), hkask_types::DbError>,
+        ) -> Result<(), hkask_types::DbError> {
+            self.inner.transaction(operations)
         }
     }
 
