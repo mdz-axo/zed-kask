@@ -3062,4 +3062,86 @@ mod tests {
             "a new test available means the residual is testable — do not force convergence"
         );
     }
+
+    #[test]
+    fn test_hypothesis_framer_skill_md_pins_forms() {
+        // hypothesis-framer — a batch-9 RE-AUDIT (batch 4 closed it with 2
+        // surgical defects) — pins its convergence gate form. The gate is a
+        // five-way conjunction over the skill's own step outputs (the
+        // batch-4 record's open item: project machinery, unanchored — the
+        // pin makes the machinery durable regardless of the anchor
+        // ruling). All six directions from the regression case, verified
+        // live by both the pass and the critic.
+        let skill_md = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../.agents/skills/hypothesis-framer/SKILL.md"
+        ))
+        .expect("hypothesis-framer SKILL.md must exist in the workspace");
+
+        let gate = r#"(and (= misalignment_count 0) (= (length weak_finer) 0) testable admissible feasible)"#;
+        assert!(
+            skill_md.contains(gate),
+            "convergence gate form must stay pinned in hypothesis-framer SKILL.md"
+        );
+        let clean = hkask_lisp::eval_sandboxed_with_budget(
+            gate,
+            &json!({"misalignment_count": 0, "weak_finer": [], "testable": true, "admissible": true, "feasible": true}),
+            100_000,
+            64,
+        )
+        .expect("gate must evaluate");
+        assert_eq!(
+            clean,
+            json!(true),
+            "all five conditions clean -> the framing is ready"
+        );
+        let misaligned = hkask_lisp::eval_sandboxed_with_budget(
+            gate,
+            &json!({"misalignment_count": 1, "weak_finer": [], "testable": true, "admissible": true, "feasible": true}),
+            100_000,
+            64,
+        )
+        .expect("gate must evaluate on a misalignment");
+        assert_eq!(misaligned, json!(false), "a five-link misalignment fails");
+        let weak = hkask_lisp::eval_sandboxed_with_budget(
+            gate,
+            &json!({"misalignment_count": 0, "weak_finer": ["Ethical"], "testable": true, "admissible": true, "feasible": true}),
+            100_000,
+            64,
+        )
+        .expect("gate must evaluate on a weak FINER dimension");
+        assert_eq!(weak, json!(false), "a FINER dimension still below 7 fails");
+        let untestable = hkask_lisp::eval_sandboxed_with_budget(
+            gate,
+            &json!({"misalignment_count": 0, "weak_finer": [], "testable": false, "admissible": true, "feasible": true}),
+            100_000,
+            64,
+        )
+        .expect("gate must evaluate on untestable");
+        assert_eq!(
+            untestable,
+            json!(false),
+            "the falsifiability admission or the delta-margin requirement failed"
+        );
+        let inadmissible = hkask_lisp::eval_sandboxed_with_budget(
+            gate,
+            &json!({"misalignment_count": 0, "weak_finer": [], "testable": true, "admissible": false, "feasible": true}),
+            100_000,
+            64,
+        )
+        .expect("gate must evaluate on inadmissible");
+        assert_eq!(
+            inadmissible,
+            json!(false),
+            "the falsifiability-admit result rejected the H1"
+        );
+        let infeasible = hkask_lisp::eval_sandboxed_with_budget(
+            gate,
+            &json!({"misalignment_count": 0, "weak_finer": [], "testable": true, "admissible": true, "feasible": false}),
+            100_000,
+            64,
+        )
+        .expect("gate must evaluate on infeasible");
+        assert_eq!(infeasible, json!(false), "the feasibility recheck failed");
+    }
 }

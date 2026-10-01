@@ -124,10 +124,10 @@ Respond with a JSON object:
 }
 ```
 
-Rating scale:
+Rating scale (aligned with the gate's below-7 refinement threshold — a dimension at 6 is NOT adequate: it earns a refinement suggestion and fails the convergence gate's weak_finer check):
 - **strong**: All dimensions ≥ 8
-- **adequate**: All dimensions ≥ 6, no dimension below 5
-- **weak**: One or more dimensions 3–5
+- **adequate**: All dimensions ≥ 7 (the gate's threshold — anything below 7 is weak_finer)
+- **weak**: One or more dimensions below 7
 - **critical_flaw**: Any dimension below 3 — the question needs fundamental rethinking
 
 ## Constraints
