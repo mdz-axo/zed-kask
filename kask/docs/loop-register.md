@@ -1,8 +1,8 @@
 ---
 title: "Loop Register — zed-kask canonical loops"
 audience: [developers, architects, agents, operators]
-last_updated: 2026-09-30
-version: "0.24.7"
+last_updated: 2026-10-01
+version: "0.24.8"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle]
@@ -769,6 +769,25 @@ exactly that lag), not evidence of absence.)
    generally.
 
 ## Change log
+
+- 2026-10-01 — v0.24.8 closed the v0.24.7 S4 re-run deferral. The
+  concurrent stream's provider refactor landed (Crossref title
+  resolution `b7c0b15f6f`; retrieval-honesty pins `4e265ba2f8`) and the
+  full re-run executed against the current tree: hkask-mcp-research
+  --lib **88/88** via cargo-test-nonzero — both S4 contract tests green
+  (`live_stats_degraded_distinguishes_poisoned_channel_from_thin_samples`,
+  `poisoned_performance_channel_surfaces_the_degradation_in_every_recommendation`);
+  the stream's tool-count pin grew to 27 registered tools (their
+  update, green). The same pass re-verified S3 in the evolved tree:
+  hkask-regulation --lib **102/102** (grown from 99 by the stream's D87
+  evolution-health sensor tests), rustfmt clean on both touched crates,
+  scoped clippy clean (machete + buf), `cargo check -p zed` passed.
+  Provenance: the battery ran on the working tree including the
+  stream's uncommitted-but-compiling storage/evolution edits (a
+  mid-flight storage half-edit briefly blocked the battery and settled
+  before the run). Register note: the stream's `22544f9fa8` flipped
+  L8 GAP → ANCHOR (the superforecasting reference model) directly in
+  the anchor ledger.
 
 - 2026-09-30 — v0.24.7 closed the evolution server's recorded gaps (the
   session review's next focus). **L24 added** (the evolution
