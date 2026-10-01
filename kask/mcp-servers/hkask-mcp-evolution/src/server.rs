@@ -459,25 +459,22 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
         "hkask-mcp-evolution",
         env!("CARGO_PKG_VERSION"),
         |ctx: hkask_mcp_server::ServerContext| {
-            let db_path = std::env::var("HKASK_EVOLUTION_DB")
-                .ok()
-                .filter(|value| !value.trim().is_empty())
-                .unwrap_or_else(|| {
-                    let relative_path =
-                        hkask_types::agent_paths::mcp_server_db("evolution", "evolution");
-                    let default_path =
-                        hkask_types::agent_paths::resolve_under_data_dir(&relative_path);
-                    if let Some(Err(error)) = default_path.parent().map(std::fs::create_dir_all) {
-                        tracing::warn!(
-                            target: "hkask.mcp.evolution",
-                            path = %default_path.display(),
-                            %error,
-                            "Failed to create default evolution DB directory \
-                             — the subsequent DB open will surface the failure"
-                        );
-                    }
-                    default_path.to_string_lossy().to_string()
-                });
+            let registry_path = crate::registry_path();
+            // First boot: the registry's parent directory may not exist yet
+            // (the default lives under nested per-agent data dirs). Create
+            // it up front so the failure mode is a real DB error, not a
+            // missing-directory error; either way the open surfaces it
+            // visibly.
+            if let Some(Err(error)) = registry_path.parent().map(std::fs::create_dir_all) {
+                tracing::warn!(
+                    target: "hkask.mcp.evolution",
+                    path = %registry_path.display(),
+                    %error,
+                    "Failed to create the evolution DB directory \
+                     — the subsequent DB open will surface the failure"
+                );
+            }
+            let db_path = registry_path.to_string_lossy().to_string();
             // Canonical 2-tier passphrase chain (ctx.credentials → env →
             // keychain). See `hkask_mcp_server::server::resolve_db_passphrase`.
             // Startup failures map to Infrastructure — visible and named, never

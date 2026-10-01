@@ -24,6 +24,56 @@ include!(concat!(env!("OUT_DIR"), "/tool_names.gen.rs"));
 
 pub use server::run;
 
+// ── Registry path (shared by the MCP child and the in-host bridge) ────────
+
+/// Resolve the registry DB path: `HKASK_EVOLUTION_DB` when set to a
+/// non-empty value, else the per-agent default under the hKask data dir.
+///
+/// Both the MCP child (`server::run`) and the in-host health bridge
+/// (`kask_bridge::evolution_health_bridge`) open the registry through this
+/// one function — parity is structural, not mirrored: a drift here would
+/// read a different registry than the one the tools write.
+pub fn registry_path() -> std::path::PathBuf {
+    registry_path_from(std::env::var("HKASK_EVOLUTION_DB").ok().as_deref())
+}
+
+/// The pure resolution core — testable without process-global env mutation.
+pub fn registry_path_from(env_value: Option<&str>) -> std::path::PathBuf {
+    match env_value.filter(|value| !value.trim().is_empty()) {
+        Some(value) => std::path::PathBuf::from(value),
+        None => hkask_types::agent_paths::resolve_under_data_dir(
+            &hkask_types::agent_paths::mcp_server_db("evolution", "evolution"),
+        ),
+    }
+}
+
+#[cfg(test)]
+mod registry_path_tests {
+    use super::*;
+
+    /// The parity contract: a non-empty override is honored, and
+    /// empty/whitespace/absent all fall to the same per-agent default —
+    /// the bridge and the server cannot resolve different registries.
+    #[test]
+    fn registry_path_override_and_default() {
+        let default = registry_path_from(None);
+        assert_eq!(default, registry_path_from(Some("")));
+        assert_eq!(default, registry_path_from(Some("   ")));
+        assert_eq!(
+            registry_path_from(Some("/tmp/alt-evolution.db")),
+            std::path::PathBuf::from("/tmp/alt-evolution.db")
+        );
+        // The default is the per-agent evolution registry under the data
+        // dir — the same relative path the MCP child serves.
+        assert_eq!(
+            default,
+            hkask_types::agent_paths::resolve_under_data_dir(
+                &hkask_types::agent_paths::mcp_server_db("evolution", "evolution"),
+            )
+        );
+    }
+}
+
 #[cfg(test)]
 mod tool_name_pin {
     // Pins the generated TOOL_NAMES const against the live rmcp tool surface —

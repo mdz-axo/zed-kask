@@ -15,10 +15,11 @@
 //!
 //! ## Path parity with the MCP child
 //!
-//! The path resolution mirrors the evolution server's `run()`. A drift here
-//! reads a different registry than the one the tools write — the same
-//! config-drift class the `mcp_servers` env-injection test pins for the child
-//! side.
+//! Both the bridge and the evolution server's `run()` resolve the registry
+//! through `hkask_mcp_evolution::registry_path()` — one source of truth;
+//! parity is structural, not mirrored. A drift there would read a different
+//! registry than the one the tools write; the shared helper is pinned by
+//! `registry_path_override_and_default` in the evolution crate.
 
 use std::sync::Arc;
 
@@ -42,19 +43,13 @@ pub struct BridgeEvolutionHealthSource {
 impl BridgeEvolutionHealthSource {
     /// Open the registry the evolution MCP child serves.
     ///
-    /// `HKASK_EVOLUTION_DB` overrides the per-agent default under the hKask
-    /// data dir — the same resolution the server's `run()` performs.
+    /// Resolution is shared with the child (`registry_path()`): the
+    /// `HKASK_EVOLUTION_DB` override or the per-agent default under the
+    /// hKask data dir — never a private copy.
     pub fn open(passphrase: &str) -> Result<Self, String> {
-        let db_path = std::env::var("HKASK_EVOLUTION_DB")
-            .ok()
-            .filter(|value| !value.trim().is_empty())
-            .unwrap_or_else(|| {
-                hkask_types::agent_paths::resolve_under_data_dir(
-                    &hkask_types::agent_paths::mcp_server_db("evolution", "evolution"),
-                )
-                .to_string_lossy()
-                .to_string()
-            });
+        let db_path = hkask_mcp_evolution::registry_path()
+            .to_string_lossy()
+            .to_string();
         let db = hkask_storage::open_or_repair(&db_path, passphrase)
             .map_err(|error| format!("evolution registry {db_path}: {error}"))?;
         let pool = db
