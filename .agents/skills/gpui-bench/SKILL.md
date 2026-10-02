@@ -217,7 +217,7 @@ cx.bench_renderer(view, |view, _window, cx| {
 });
 ```
 
-Do not benchmark a detached entity and call the result rendering performance. Do not call `run_until_idle` inside a measured loop merely to make the fixture pass: production does not drain all asynchronous work before every frame, and doing so erases the scheduling behavior being measured.
+Do not benchmark a detached entity and call the result rendering performance. Do not call `run_until_idle` inside a measured loop merely to make the fixture pass: production does not drain all asynchronous work before every frame, and doing so erases the scheduling behavior being measured. For deadline-driven workloads, `bench_renderer_session` (`crates/gpui/src/app/bench_context.rs:840`) provides a timeout-bounded renderer session with deadline checks between polls and frames — currently without callers outside its own module; inspect it before choosing an API.
 
 ## Headless rendering and frame data
 
@@ -352,7 +352,7 @@ Running a Criterion executable directly requires `--bench`. `--profile-time` rep
 
 Inspect the trace table of contents and export only focused tables such as `time-sample`; never load a complete `.trace` or large XML export into agent context. Filter by target PID, main thread when investigating foreground stalls, running state, and timer-fired samples. Symbolicate with the exact binary, dSYM, architecture, and load address using `atos`, then use `rustfilt` for Rust names.
 
-If the profile contains a large `<deduplicated_symbol>` bucket or implausible functions, stop treating its symbol-level attribution as actionable and recapture with `-Wl,-no_deduplicate`. Report both flat leaf and inclusive bottom-up profiles. Load the `xctrace-rust-profile` skill for the complete export and symbolication workflow.
+If the profile contains a large `<deduplicated_symbol>` bucket or implausible functions, stop treating its symbol-level attribution as actionable and recapture with `-Wl,-no_deduplicate`. Report both flat leaf and inclusive bottom-up profiles. (There is no `xctrace-rust-profile` skill in this corpus — the export and symbolication workflow is the one in this section: focused-table exports, `atos` with the exact binary, dSYM, architecture, and load address, `rustfilt` for Rust names.)
 
 Trace bundles can contain process environments, paths, source, and credentials. Keep them local, inspect focused exports, and never paste raw trace metadata into a shared thread.
 
@@ -412,6 +412,47 @@ Lead with whether the user-visible responsiveness problem was reproduced and whe
 4. Feature-isolation evidence.
 5. Headless-renderer limitations and sources of noise.
 6. Remaining expensive work and the next profile or optimization to pursue.
+
+## Regression case
+
+All receipts executed live (2026-10-01, batch-13 audit):
+
+- Feature-isolation probe, clean: `cargo tree -p hkask-media-benchmarks -e
+  normal,build,dev,features` (5,414 lines) greps zero
+  `feature "test-support"` occurrences — the kask-owned benchmark package
+  passes the isolation rule. The upstream `crates/benchmarks` package
+  intentionally enables `test-support` in its dev-dependencies and fails
+  this probe; it is upstream's package, outside this skill's isolation
+  rule — do not "fix" it, and do not host production-shaped kask benchmarks
+  there (the separate-package rule is what `hkask-media-benchmarks` exists
+  to satisfy).
+- Work-count reconciliation, green: 1,000 enqueued = 1,000 completed +
+  0 dropped, 0 ordering violations, final state asserted → `true`.
+- Work-count reconciliation, dropped work: 1,000 = 998 + 2 → `false` —
+  the `(= work_dropped 0)` clause fails; a faster run cannot hide dropped
+  work.
+- Work-count reconciliation, ordering violation: counts green but
+  `ordering_violations: 1` → `false`.
+
+The work-count form (executed at report time over the fixture's own
+recorded counters — never over invented timings; the counters arrive as
+one nested object because the tool's advertised env schema types each
+value as an object — a flat bare-number env invites schema-following
+emitters to wrap the values a second time and fail the form):
+
+```
+form: "(and (= (assoc \"work_enqueued\" counters) (+ (assoc \"work_completed\" counters) (assoc \"work_dropped\" counters))) (= (assoc \"work_dropped\" counters) 0) (= (assoc \"ordering_violations\" counters) 0) (assoc \"final_state_asserted\" counters))"
+env:  { "counters": { "work_enqueued": <fixture counter>, "work_completed": <fixture counter>, "work_dropped": <fixture counter>,
+                      "ordering_violations": <fixture counter>, "final_state_asserted": <the fixture's completion assertion result> } }
+```
+
+The skill's forms are executed at use time, never anchored in code.
+
+## Registry Templates
+
+This skill owns no registry templates by design — the arithmetic is
+Criterion's and the work is benchmark code (the Step types section says
+the same).
 
 ## References
 
