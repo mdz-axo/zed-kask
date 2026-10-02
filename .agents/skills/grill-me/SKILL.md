@@ -17,7 +17,7 @@ Socratic questioning, with a difficulty ladder (Recall → Mechanism → Rationa
 Question generation and answer grading (Solid/Partial/Gap) are P — the round
 render's judgment, critiqued by the learner's next answer and the operator.
 The Feedback gate is D: the escalation decision (hold/reprobe/escalate/
-complete) and the question-retirement count run as pinned `lisp_eval` forms
+complete) and the question-retirement count run as `lisp_eval` forms
 over the recorded grades and attempt counts — the level and direction come
 from the gate, never from the grader's feel. The final assessment is P, built
 only from actual answers; a rating for an unanswered question is a gap

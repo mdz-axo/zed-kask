@@ -49,7 +49,7 @@ critiqued by the file:line citation enforcement (a finding without a location
 is rejected), the essentialist gates, and the operator's ratification. The
 gates are D: Gate A/B/C, the Convergence count,
 and the measured-layout gate (the five-gate + probe form in the layout loop)
-run as pinned `lisp_eval` forms over the template outputs — the convergence score is passed to
+run as `lisp_eval` forms over the template outputs — the convergence score is passed to
 final-report, never supplied by the model. Layout measurements are D when
 taken from the code (widths, counts); the remedy choice is P, critiqued by
 the adversarial probes. Caller-count sweeps (grep) are D.
@@ -65,9 +65,9 @@ Converge: lisp open count (uncited/unadjudicated -> 0) within the batch; max 2 r
 Final: commit the ledger per completed batch; report remaining rows explicitly as pending
 ```
 
-The Gate A, B, C and Converge forms are pinned in
+The Gate A, B, C and Converge forms live in
 `kask/registry/templates/kask-seam-audit/gates.md` (read it with `read_file`);
-the measured-layout gate form is pinned in this SKILL.md (the layout loop,
+the measured-layout gate form lives in this SKILL.md (the layout loop,
 step 3). Run them with `lisp_eval` over the template outputs. The Converge count is
 passed to `final-report` as `convergence_score`; the model never supplies it.
 

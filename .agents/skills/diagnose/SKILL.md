@@ -20,10 +20,10 @@ ranked list is presented before instrumenting) and by the observed loop. The
 feedback loop is D: the reproduction (failing test, CLI invocation, bisect)
 and the regression test (written before the fix, run by `cargo test`) are
 deterministic oracles — a fix is verified by the loop's output, never by the
-diagnoser's confidence. The hypothesis invariant check is D (the pinned
+diagnoser's confidence. The hypothesis invariant check is D (the
 `lisp_eval` form over count, completeness, diversity, mutual exclusivity —
 instrumentation is gated on it), and the convergence arithmetic is D (the
-pinned `lisp_eval` form normalizing the five met/unmet readings by 0.85 —
+`lisp_eval` form normalizing the five met/unmet readings by 0.85 —
 step 7). An unreproduced symptom is not yet an
 admitted target for root-cause elimination.
 

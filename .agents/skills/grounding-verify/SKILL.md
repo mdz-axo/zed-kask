@@ -122,16 +122,16 @@ cited.
 |------|------|-------------------|
 | 1 item 0 (prediction) | P | scored by the Step 7 item 0 reconciliation (D) — the prediction is a calibration claim, not a finding |
 | 1 extract and classify | P | the operator; the mandatory `decoupling` field (an `in_thread` run is flagged as a self-check); the append-only error log |
-| 1 item 4 (structural invariants) | D | `lisp_eval` (the zero-claim guard — pinned) |
+| 1 item 4 (structural invariants) | D | `lisp_eval` (the zero-claim guard) |
 | 2 provenance assignment | P | the lattice is fixed, the assignment is judgment — critiqued by the Step 2 validation calls (D) and the operator |
-| 2 item 5 (validation calls) | D | `lisp_eval` (closed-vocabulary + why-min-40 counts — pinned) |
+| 2 item 5 (validation calls) | D | `lisp_eval` (closed-vocabulary + why-min-40 counts) |
 | 3 mechanical verification (drivers, grading wrapper, empty-env, origins, consistency) | D | `lisp_eval` — a claim's verification status comes from the form's output, never the model's assertion |
 | 4 narrative scan | D render feeding P | `render_template` (D); leak-rule interpretation P — critiqued by the operator |
-| 4 item 1 (block marking) | D | `lisp_eval` (the any-verified/mark pair — pinned) |
+| 4 item 1 (block marking) | D | `lisp_eval` (the any-verified/mark pair) |
 | 4.5 omission materiality | P | the operator; the record of what was examined and what was not |
 | 5 counts | D | computed from the run's own records — never a composite score |
-| 6 provenance floor + confidence band | D | `lisp_eval` (the floor form — pinned); the band derives from floor + conflicts + decoupling, never from the model |
-| 7 item 0 (reconciliation) | D | `lisp_eval` (the gap form — pinned) |
+| 6 provenance floor + confidence band | D | `lisp_eval` (the floor form); the band derives from floor + conflicts + decoupling, never from the model |
+| 7 item 0 (reconciliation) | D | `lisp_eval` (the gap form) |
 | 7 severity + emission | P | the operator; graduated sanctions; high/critical findings surface immediately |
 
 `render_template` renders are D (deterministic render) feeding P (the
@@ -576,7 +576,7 @@ This is a bounded verifier loop, not skill-effectiveness evaluation; the operato
 
 ## Regression case
 
-Renders (declared contexts): `grounding-verify/extract-claims` with `target_text` (a short report citing one verbatim quote and one derived number) and `source_outputs` (two `{tool_name, description, output_key}` objects); `assign-provenance` with the extracted claims, the source outputs, a `pipeline_tool_log`, and one `congruence_rules` entry; `scan-narrative` with `narrative_fields`, post-Step-3 `sourced_blocks`, and `leak_rules` (one `Word` rule from an unsourced block); `compile-error-log` with one finding of each class (E, W, N). Forms: the six SKILL.md-pinned forms are executed by the pin suite (`test_canonical_provenance_floor_form`, `test_canonical_vocabulary_check_form`, `test_canonical_why_length_check_form`, `test_canonical_step1_structural_form`, `test_canonical_narrative_mark_form`, `test_canonical_prediction_reconciliation_form` — the last two added 2026-09-28). Full-run-only behaviors a render cannot check (a case that claims them over-claims): the extraction ceiling's correct operation (a synthesized claim held at strength 1), the append-only registry, and the decoupling field's presence in the emitted report — asserted by the process, not by any render.
+Renders (declared contexts): `grounding-verify/extract-claims` with `target_text` (a short report citing one verbatim quote and one derived number) and `source_outputs` (two `{tool_name, description, output_key}` objects); `assign-provenance` with the extracted claims, the source outputs, a `pipeline_tool_log`, and one `congruence_rules` entry; `scan-narrative` with `narrative_fields`, post-Step-3 `sourced_blocks`, and `leak_rules` (one `Word` rule from an unsourced block); `compile-error-log` with one finding of each class (E, W, N). Forms: the six forms are executed live through `lisp_eval` at use time (receipts in the skill-audit records; the former pin suite was deleted by operator ruling 2026-09-30 — skills evolve independently of Rust). Full-run-only behaviors a render cannot check (a case that claims them over-claims): the extraction ceiling's correct operation (a synthesized claim held at strength 1), the append-only registry, and the decoupling field's presence in the emitted report — asserted by the process, not by any render.
 
 ## Registry Templates
 

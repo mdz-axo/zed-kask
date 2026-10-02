@@ -61,7 +61,7 @@ finding.
 | Phase 2 Map, Phase 3 Detect (measurements) | D | probe outputs and counts (grep/read_file receipts, span counts) |
 | Phase 4 Hypothesize | P | the discriminating-prediction test — each hypothesis must predict differently for the next probe |
 | Phase 5 Report (prioritization) | P | the fixed reason-class priority order; the user |
-| Phase 6 Converge (stability gate) | D | `lisp_eval` `(and (eq new_gradient_shapes 0) (eq top_k_stable 1))` — pinned in `lisp_eval_tool.rs` |
+| Phase 6 Converge (stability gate) | D | `lisp_eval` `(and (eq new_gradient_shapes 0) (eq top_k_stable 1))` — in this SKILL.md, executed live at use time |
 | Phase 7 Loop (re-enter or emit) | D | the gate result vs the bound (max 2 prior refinements) |
 | Expectation-led step 3 (relevance gate) | P | the operator — explicit feedback is the priority signal; no consequence for the active goal → stop |
 | Expectation-led step 6 (bound and report) | P | the user (revised-expectation honesty); the two-probe count is D |
