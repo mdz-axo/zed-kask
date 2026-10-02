@@ -14,7 +14,7 @@
 # Environment variables:
 #   HKASK_VERSION       Tag to clone (default: 0.40.0; falls back to main only
 #                       if HKASK_ALLOW_FALLBACK=true)
-#   HKASK_BUILD_TYPE    release or debug (default: release)
+#   HKASK_BUILD_TYPE    release, release-fast, or debug (default: release)
 #   HKASK_SOURCE_DIR    Use an existing source directory instead of cloning
 #   HKASK_REPO_URL      Git URL (default: https://github.com/mdz-axo/zed-kask.git)
 #   HKASK_ALLOW_FALLBACK  Set to "true" to allow silent fallback to main when
@@ -182,6 +182,19 @@ install_rust() {
 # Build and Install
 # ============================================================================
 
+# Shared server build for the release and release-fast paths (D46): the MCP
+# servers are I/O daemons and always build on the cheap release-mcp profile —
+# only the zed binary's profile differs between build types.
+build_mcp_servers() {
+    local jobs="$1"
+    log "Building MCP servers on the release-mcp profile..."
+    local server_args=()
+    for server in "${MCP_SERVERS[@]}"; do
+        server_args+=(--package "$server")
+    done
+    cargo build --jobs "$jobs" --profile release-mcp "${server_args[@]}"
+}
+
 build_hkask() {
     clone_repo
     local workspace_root="$HKASK_SOURCE_DIR"
@@ -243,14 +256,26 @@ build_hkask() {
         # real; if it recurs, address it without a code divergence
         # (MALLOC_ARENA_MAX in the launcher) and re-measure.
         if cargo build --jobs "$jobs" --release --package zed; then
-            log "Building MCP servers on the release-mcp profile..."
-            local server_args=()
-            for server in "${MCP_SERVERS[@]}"; do
-                server_args+=(--package "$server")
-            done
-            cargo build --jobs "$jobs" --profile release-mcp "${server_args[@]}" && build_ok=1
+            build_mcp_servers "$jobs" && build_ok=1
+        fi
+    elif [ "${HKASK_BUILD_TYPE:-release}" = "release-fast" ]; then
+        # --fast: the release-fast profile (lto=false, codegen-units=16,
+        # inherits release → debug_assertions OFF) — iteration speed without
+        # the dev-profile costs named in the --debug warning below. Servers
+        # still build on release-mcp (D46).
+        log "Building zed binary on the release-fast profile (release flags, no LTO)..."
+        log "Building with at most $jobs concurrent compile jobs..."
+        if cargo build --jobs "$jobs" --profile release-fast --package zed; then
+            build_mcp_servers "$jobs" && build_ok=1
         fi
     else
+        # --debug ships a dev-profile binary as the daily driver. That has
+        # real costs (measured 2026-10-02, two-symptom latency findings §7.9):
+        # debug_assertions tax every hot path, and the hang detector goes
+        # blind below 5s with a 100ms frame-budget threshold. Legitimate for
+        # debugger workflows — warn loudly so it is never the default habit.
+        log_warning "--debug builds the DEV profile: debug_assertions tax every hot path and the hang detector cannot see stalls under 5s (frame-budget threshold 100ms)."
+        log_warning "For quick rebuilds without those costs use --fast (release flags, no LTO); for full parity use the default release build."
         log "Building in debug mode..."
         log "Building with at most $jobs concurrent compile jobs..."
         local package_args=(--package zed)
@@ -283,12 +308,17 @@ install_binary() {
     assert_not_zed_owned_path "$BIN_DIR" "binary installation" || return 1
     mkdir -p "$BIN_DIR"
 
-    # Two profile dirs in release mode (D46): the zed binary from
-    # target/release, the MCP servers from target/release-mcp. Debug mode
-    # builds everything into target/debug.
+    # Profile dirs (D46): release mode takes the zed binary from
+    # target/release and the MCP servers from target/release-mcp; --fast
+    # (release-fast) takes zed from target/release-fast and the servers from
+    # the same release-mcp dir; debug mode builds everything into
+    # target/debug.
     local zed_profile_dir profile_dir
     if [ "${HKASK_BUILD_TYPE:-release}" = "release" ]; then
         zed_profile_dir="$workspace_root/target/release"
+        profile_dir="$workspace_root/target/release-mcp"
+    elif [ "${HKASK_BUILD_TYPE:-release}" = "release-fast" ]; then
+        zed_profile_dir="$workspace_root/target/release-fast"
         profile_dir="$workspace_root/target/release-mcp"
     else
         zed_profile_dir="$workspace_root/target/debug"
@@ -657,7 +687,8 @@ Options:
     --install           Install hKask (default)
     --uninstall         Remove hKask
     --build-only        Build without installing
-    --debug             Build in debug mode
+    --debug             Build in debug mode (dev profile — prints its costs)
+    --fast              Build on the release-fast profile (parity flags, no LTO)
     --system            Install system-wide (symlink in /usr/local/bin)
     --skip-deps         Skip system dependency installation
     --skip-rust         Skip Rust installation
@@ -667,7 +698,7 @@ Options:
 Environment Variables:
     HKASK_VERSION         Tag to install (default: derived from workspace
                           Cargo.toml version, or 0.40.0 if unreadable)
-    HKASK_BUILD_TYPE      release or debug (default: release)
+    HKASK_BUILD_TYPE      release, release-fast, or debug (default: release)
     HKASK_SOURCE_DIR      Use existing source directory instead of cloning
     HKASK_REPO_URL        Git repository URL
     HKASK_ALLOW_FALLBACK  Allow silent fallback to main if tag missing (default: false)
@@ -679,7 +710,10 @@ Examples:
     # Install hKask (latest release tag)
     curl -fsSL https://raw.githubusercontent.com/mdz-axo/zed-kask/main/kask/scripts/build/install.sh | bash
 
-    # Debug build from an existing checkout
+    # Quick rebuild from an existing checkout (parity flags, no LTO)
+    bash kask/scripts/build/install.sh --fast --skip-deps
+
+    # Debug build from an existing checkout (dev profile)
     bash kask/scripts/build/install.sh --debug --skip-deps
 
     # Install with custom directory
@@ -722,6 +756,10 @@ main() {
                 ;;
             --debug)
                 HKASK_BUILD_TYPE="debug"
+                shift
+                ;;
+            --fast)
+                HKASK_BUILD_TYPE="release-fast"
                 shift
                 ;;
             --system)

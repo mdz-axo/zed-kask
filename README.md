@@ -84,7 +84,7 @@ Environment variables the installer honors:
 | Variable                 | Default                          | Purpose                                                         |
 | ------------------------ | -------------------------------- | --------------------------------------------------------------- |
 | `HKASK_VERSION`          | derived from workspace `Cargo.toml` (or `0.40.0`) | Pin a release tag (e.g. `0.40.0`)                  |
-| `HKASK_BUILD_TYPE`       | `release`                        | `release` or `debug`                                            |
+| `HKASK_BUILD_TYPE`       | `release`                        | `release`, `release-fast`, or `debug`                          |
 | `HKASK_SOURCE_DIR`       | unset                            | Use an existing checkout instead of cloning                     |
 | `HKASK_REPO_URL`         | `https://github.com/mdz-axo/zed-kask.git` | Override the clone URL                                |
 | `HKASK_ALLOW_FALLBACK`   | `false`                          | Set to `true` to fall back to `main` if the tag is missing      |
@@ -92,7 +92,7 @@ Environment variables the installer honors:
 | `HKASK_SYSTEM_INSTALL`   | `false`                          | Set to `true` to symlink into `/usr/local/bin`                  |
 | `HKASK_REMOVE_CONFIG`    | `false`                          | Set to `true` to remove config and data on uninstall            |
 
-Flags: `--debug` (debug build), `--skip-deps` (skip `script/linux`), `--system` (system-wide install), `--uninstall`.
+Flags: `--fast` (release-fast build — parity flags, no LTO), `--debug` (dev-profile build — prints its costs), `--skip-deps` (skip `script/linux`), `--system` (system-wide install), `--uninstall`.
 
 An updater is installed alongside the binaries; run `update-zed-kask` (or `kask/scripts/build/update-zed-kask.sh`) to move to a newer release.
 

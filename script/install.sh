@@ -11,7 +11,7 @@
 #   bash script/install.sh [OPTIONS]
 #
 # Options are forwarded to kask/scripts/build/install.sh. See that script for
-# the full list (--debug, --system, --skip-deps, --uninstall, etc.).
+# the full list (--fast, --debug, --system, --skip-deps, --uninstall, etc.).
 
 set -eu
 
