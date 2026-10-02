@@ -2,7 +2,7 @@
 title: "Loop Register — zed-kask canonical loops"
 audience: [developers, architects, agents, operators]
 last_updated: 2026-10-01
-version: "0.25.3"
+version: "0.25.4"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle]
@@ -308,7 +308,7 @@ named invariants from the Phase 2 model, file:line, verdict):
 | Invariant | Holds where (file:line) | Verdict |
 | --- | --- | --- |
 | INV1 — one canonical pathway per layer | within-loop single-copy: L4's one `execute_tool` span (`tool_span.rs:162`), L2's one alert fan-out (`cycle.rs:568+`), L10's one store (`memory_store.rs:288`), L14's one sync funnel (`main.rs:3585`), L25's afferent sensor feeding L2's canonical arms (a new loop adding no new report pathway) | **PARTIAL** — canonical within loops; cross-cutting, twelve report pathways serve three layers (Pass 3 inventory R1–R12) |
-| INV2 — expectation carriage | `Signal.set_point` + `Deviation` (`loops/signals.rs:332-343`); alert deficit/threshold (`cycle.rs:600-611`); goal intake prediction (Brier at resolution); forecast probability (`forecast_persist`); L22's base digest | **PARTIAL** — held in L2 (exemplar), L8/L9/L17 (stored priors), L22 (digest); absent from R1–R4, R9, R12 |
+| INV2 — expectation carriage | `Signal.set_point` + `Deviation` (`loops/signals.rs:273-280,326-333`); alert deficit/threshold (`cycle.rs:628-639`); goal intake prediction (Brier at resolution); forecast probability (`forecast_persist`); L22's base digest | **PARTIAL, scoped by design** (operator ruling 2026-10-01, closing O3) — held in L2 (exemplar), L8/L9/L17 (stored priors), L22 (digest), and the board cards' deficit/threshold pair; absent from R1–R4, R9, R12 *by design* — event-record surfaces where expectation fields would be ceremony with no scoring consumer |
 | INV3 — surprise-gated reporting | loop-quality telemetry coalescer (`cybernetics_loop.rs:895-968`); algedonic binary threshold (`algedonic.rs:247+`); L20's conditional GET (protocol level) | **GAP** — one in-process pathway of twelve; the rest log raw activity. S3 (2026-09-30, operator-approved) deleted the per-tick raw duplicate of the coalesced span (net −14) — the direction held; the count changes only with S6 pathway scoping |
 | INV4 — escalation, never silent drop | exhaustion escalation (`cycle.rs:781-804`); circuit breaker (`runtime.rs:1155-1177`); L18's `RunningUnknown` (the F1 repair); L22's explicit unknown; L23's `live_stats_degraded` (the S4 repair, 2026-09-30), L25's broken-source warn-and-None (D87, pinned by test) | **HELD at the audited sites** — both named violations resolved (L23 repaired by S4; the suspected in-host tracing drop refuted by the Pass 4 experiment); a full per-row INV4 sweep rides the §8 cleanup (alignment plan) |
 | INV5 — model revision at the top | curator distillation/consolidation (`consolidation_service.rs:38`); set-point loading (`set_points.rs:439`); skill verdicts (algedonic review); calibration readback (L8/L17) | **PARTIAL** — the C-tier machinery exists; the B→C handoffs carry standing receipt deferrals (L1/L7 memory receipt, L9 acknowledgment gate) |
@@ -787,6 +787,21 @@ exactly that lag), not evidence of absence.)
    generally.
 
 ## Change log
+
+- 2026-10-01 — v0.25.4 closed O3 as designed (operator ruling "close it
+  out"; records-only, zero code). Expectation carriage is scoped to
+  actuation against a stored reference: the scored loops hold it (L2's
+  set-points, the L8/L9/L17 Brier priors, L22's digest, L24's
+  pre-registered predictions) and the board cards already carry the
+  expectation pair (deficit vs threshold in every escalated alert's
+  context). The event-record pathways (R1–R4, R9, R12) stay
+  expectation-free by design — fields there would be ceremony with no
+  scoring consumer, failing the deletion test. The INV2 gap-table
+  verdict gains the scope (its citations re-measured after the
+  v0.25.1/v0.25.3 deletions); the reference model's INV2 gains the
+  scope note (paper v1.0.2); the plan's parking lot is now **fully
+  dispositioned** — O1/O2/O5 landed, O3 closed-as-designed, O4/O6
+  ruled design.
 
 - 2026-10-01 — v0.25.3 deleted the strategy evaluator — self-tracking
   dead surface since its birth (the operator-approved consumption

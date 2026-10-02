@@ -2,7 +2,7 @@
 title: "Cybernetic Nervous System — Reference Model (Draft)"
 audience: [architects, developers, operators, agents]
 last_updated: 2026-10-01
-version: "1.0.1"
+version: "1.0.2"
 status: "Active — admitted to the reference-model set by operator ruling 2026-09-30"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle]
@@ -162,6 +162,14 @@ properties of the *nervous system*, not of any one loop:
   criterion), and the report records expectation, observation, and the
   delta — the TOTE's Test result (Miller et al. 1960), not just the
   Operate.
+  *Scope (operator ruling 2026-10-01, closing the alignment plan's
+  O3):* the invariant governs **actuation** — pathways acting against
+  a stored reference. The fleet's scored loops hold it (L2's
+  set-points, the Brier-scored priors, L22's digest, L24's
+  predictions, and the board cards' deficit/threshold pair);
+  event-record pathways (raw logs, tool traces, work-state cards) are
+  afferent surfaces, not actuations, and stay expectation-free by
+  design.
 - **INV3 — surprise-gated reporting.** The report channel carries
   prediction error, not raw activity; exact steady state is coalesced
   with a counted liveness heartbeat. (Information argument in §4.)

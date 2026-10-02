@@ -2,8 +2,8 @@
 title: "Cybernetic Nervous System — Alignment Plan"
 audience: [architects, developers, operators, agents]
 last_updated: 2026-10-01
-version: "0.3.7"
-status: "Active — reference model admitted (operator ruling 2026-09-30); S1–S6 recorded; §8 cleanup CU-1–CU-5/CU-7 complete, CU-6 gated on displacement; L25 classified (2026-10-01)"
+version: "0.3.8"
+status: "Active — reference model admitted (operator ruling 2026-09-30); S1–S6 recorded; §8 cleanup CU-1–CU-5/CU-7 complete, CU-6 gated on displacement; L25 classified; parking lot fully dispositioned — O3 closed as designed (2026-10-01)"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle]
 ---
@@ -72,7 +72,7 @@ system confirms it.
 | --- | --- | --- | --- |
 | O1 | The tracing→log bridge is undocumented and incidental (rpc's feature flag) | INV6 | Corrected finding; **S2 landed** (recorded as designed in regulation-spans.md §1) |
 | O2 | Surprise-gated reporting governs 1 of 12 pathways; the rest log raw activity | INV3 | The core gap; **S3 landed** (the raw duplicate deleted, net −14); **S6 recorded** (register v0.24.2: the R1–R12 role table — no displacement candidate; the count stands until a pathway is displaced, CU-6's gate) |
-| O3 | Expectation carriage absent outside L2 + stored priors | INV2 | Direction only; no code step admitted this pass |
+| O3 | Expectation carriage absent outside L2 + stored priors | INV2 | **CLOSED as designed** (operator ruling 2026-10-01): scoped to actuation against a stored reference — the scored loops and the board cards' deficit/threshold pair hold it; the event-record pathways (R1–R4, R9, R12) stay expectation-free by design (ceremony with no scoring consumer fails the deletion test). Records-only: the INV2 gap-table verdict and the reference model's INV2 scope note carry the ruling |
 | O4 | B→C handoff receipt deferrals (L1/L7 memory receipt, L9 ack gate) | INV5 | **Ruled design** (operator D3/D4: deliberate loose coupling) — parked, not obstacles |
 | O5 | L23 poisoned-lock silent fallback | INV4 | **S4 landed** (2026-09-30: `live_stats_degraded` + the rationale surfacing, red-first) |
 | O6 | Scoping 12 pathways into 3 canonical ones | INV1 | **S6 recorded** (register v0.24.2: three canonical, eight diagnostics, one substrate — no-candidate); the deletion arm is CU-6, gated on an actual displacement |
