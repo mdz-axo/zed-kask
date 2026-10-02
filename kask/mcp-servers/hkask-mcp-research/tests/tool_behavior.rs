@@ -166,7 +166,7 @@ impl WebSearchPort for ChromeShellPool {
             url: "https://example.com/js-shell".to_string(),
             content: "[Skip to content] × Copy link ✓".to_string(),
             format: "markdown".to_string(),
-            metadata: Some(serde_json::json!({"title": "A JS shell"})),
+            metadata: Some(serde_json::json!({"title": "A JS shell", "statusCode": 200})),
         })
     }
 
@@ -187,6 +187,75 @@ impl WebSearchPort for ChromeShellPool {
 
     fn provider_fingerprint(&self) -> String {
         "stub-chrome-shell".to_string()
+    }
+
+    fn provider_kinds(&self) -> Vec<String> {
+        Vec::new()
+    }
+
+    fn score_providers(&self, _query: &str, _intent: Option<&str>) -> Vec<ProviderRecommendation> {
+        Vec::new()
+    }
+}
+
+/// Stub whose extraction returns a thin body with a non-2xx fetch status —
+/// pins P2 (2026-10-01): the degradation note names the observed status
+/// (a gone/moved URL) instead of guessing the JS-shell cause list.
+struct GoneOriginPool;
+
+#[async_trait]
+impl WebSearchPort for GoneOriginPool {
+    async fn search(
+        &self,
+        _query: &SearchQuery,
+        _strategy: SearchStrategy,
+        _provider: Option<&str>,
+    ) -> Result<CompoundSearchResult, WebError> {
+        Err(WebError::NoProviderConfigured(
+            "No search provider configured.".to_string(),
+        ))
+    }
+
+    async fn find_similar(
+        &self,
+        _url: &str,
+        _num_results: u32,
+    ) -> Result<ProviderSearchOutput, WebError> {
+        Err(WebError::NoProviderConfigured(
+            "Exa provider not configured.".to_string(),
+        ))
+    }
+
+    async fn extract(
+        &self,
+        _url: &str,
+        _opts: &ExtractOptions,
+    ) -> Result<ExtractedContent, WebError> {
+        Ok(ExtractedContent {
+            url: "https://example.com/gone".to_string(),
+            content: "# 404 Not Found\n\n* * *\n\nnginx/1.24.0".to_string(),
+            format: "markdown".to_string(),
+            metadata: Some(serde_json::json!({"statusCode": 404, "error": "Not Found"})),
+        })
+    }
+
+    async fn browse(
+        &self,
+        _url: &str,
+        _instruction: &str,
+        _timeout: Duration,
+    ) -> Result<BrowseResult, WebError> {
+        Err(WebError::NoProviderConfigured(
+            "No browse provider configured.".to_string(),
+        ))
+    }
+
+    async fn health_check(&self) -> Vec<ProviderHealthEntry> {
+        Vec::new()
+    }
+
+    fn provider_fingerprint(&self) -> String {
+        "stub-gone-origin".to_string()
     }
 
     fn provider_kinds(&self) -> Vec<String> {
@@ -283,6 +352,106 @@ impl WebSearchPort for TitleResolvePool {
                 publication_year: Some(2022),
                 venue: Some("ACL 2022".to_string()),
                 first_author: Some("Sherborne".to_string()),
+            },
+        ])
+    }
+}
+
+/// Stub whose `resolve_title` returns the live-observed superstring-first
+/// candidate list — pins P1 (2026-10-01): exact-title matches rank first,
+/// stable within groups.
+struct SuperstringFirstTitlePool;
+
+#[async_trait]
+impl WebSearchPort for SuperstringFirstTitlePool {
+    async fn search(
+        &self,
+        _query: &SearchQuery,
+        _strategy: SearchStrategy,
+        _provider: Option<&str>,
+    ) -> Result<CompoundSearchResult, WebError> {
+        Err(WebError::NoProviderConfigured(
+            "No search provider configured.".to_string(),
+        ))
+    }
+
+    async fn find_similar(
+        &self,
+        _url: &str,
+        _num_results: u32,
+    ) -> Result<ProviderSearchOutput, WebError> {
+        Err(WebError::NoProviderConfigured(
+            "Exa provider not configured.".to_string(),
+        ))
+    }
+
+    async fn extract(
+        &self,
+        _url: &str,
+        _opts: &ExtractOptions,
+    ) -> Result<ExtractedContent, WebError> {
+        Err(WebError::NoProviderConfigured(
+            "No extract provider configured.".to_string(),
+        ))
+    }
+
+    async fn browse(
+        &self,
+        _url: &str,
+        _instruction: &str,
+        _timeout: Duration,
+    ) -> Result<BrowseResult, WebError> {
+        Err(WebError::NoProviderConfigured(
+            "No browse provider configured.".to_string(),
+        ))
+    }
+
+    async fn health_check(&self) -> Vec<ProviderHealthEntry> {
+        Vec::new()
+    }
+
+    fn provider_fingerprint(&self) -> String {
+        "stub-superstring-first".to_string()
+    }
+
+    fn provider_kinds(&self) -> Vec<String> {
+        Vec::new()
+    }
+
+    fn score_providers(&self, _query: &str, _intent: Option<&str>) -> Vec<ProviderRecommendation> {
+        Vec::new()
+    }
+
+    async fn resolve_title(
+        &self,
+        _title: &str,
+        _rows: u32,
+    ) -> Result<Vec<CrossrefCandidate>, WebError> {
+        // The live 2026-10-01 observation: Crossref's relevance put the
+        // superstring "Computing Machinery and Intelligence Amplification"
+        // first, with Turing's exact-titled work (in two case variants)
+        // behind it.
+        Ok(vec![
+            CrossrefCandidate {
+                doi: "10.1109/9780470544297.ch3".to_string(),
+                title: "Computing Machinery and Intelligence Amplification".to_string(),
+                publication_year: Some(2009),
+                venue: Some("Computational Intelligence".to_string()),
+                first_author: None,
+            },
+            CrossrefCandidate {
+                doi: "10.7551/mitpress/4626.003.0002".to_string(),
+                title: "Computing Machinery and Intelligence".to_string(),
+                publication_year: Some(1997),
+                venue: Some("Mind Design II".to_string()),
+                first_author: Some("Turing".to_string()),
+            },
+            CrossrefCandidate {
+                doi: "10.1016/b978-1-4832-1446-7.50006-6".to_string(),
+                title: "COMPUTING MACHINERY AND INTELLIGENCE".to_string(),
+                publication_year: Some(1988),
+                venue: Some("Readings in Cognitive Science".to_string()),
+                first_author: Some("TURING".to_string()),
             },
         ])
     }
@@ -2372,6 +2541,47 @@ async fn resolve_paper_title_mode_surfaces_candidates_and_resolves_the_top() {
 }
 
 #[tokio::test]
+async fn resolve_paper_title_mode_ranks_exact_title_matches_first() {
+    // P1 (2026-10-01): Crossref's relevance put the superstring
+    // "Computing Machinery and Intelligence Amplification" above
+    // Turing's exact-titled work (observed live); the exact-first sort
+    // promotes the exact matches — stable within the group (the 1997
+    // reprint stays ahead of the 1988 one, and the uppercase variant
+    // exercises the normalization) — and the top candidate's resolution
+    // follows the ranking.
+    let server = make_server_with_pool(Arc::new(SuperstringFirstTitlePool));
+    let json = parse(&ok(server
+        .resolve_paper(Parameters(ResolvePaperRequest {
+            query: None,
+            title: Some("Computing Machinery and Intelligence".to_string()),
+            run_id: None,
+        }))
+        .await));
+    let candidates = json["candidates"].as_array().expect("candidates surfaced");
+    assert_eq!(candidates.len(), 3, "every candidate surfaced: {json}");
+    assert_eq!(
+        candidates[0]["doi"].as_str(),
+        Some("10.7551/mitpress/4626.003.0002"),
+        "exact match ranks first: {json}"
+    );
+    assert_eq!(
+        candidates[1]["doi"].as_str(),
+        Some("10.1016/b978-1-4832-1446-7.50006-6"),
+        "case-normalized exact match ranks second (stable within the group): {json}"
+    );
+    assert_eq!(
+        candidates[2]["doi"].as_str(),
+        Some("10.1109/9780470544297.ch3"),
+        "the superstring title ranks last: {json}"
+    );
+    assert_eq!(
+        json["identifier"]["value"].as_str(),
+        Some("10.7551/mitpress/4626.003.0002"),
+        "the top candidate's resolution follows the exact-first ranking: {json}"
+    );
+}
+
+#[tokio::test]
 async fn resolve_paper_title_mode_rejects_both_and_neither_with_typed_errors() {
     let server = make_server_without_db();
     // Both → ambiguous input, rejected with what was expected.
@@ -2446,6 +2656,41 @@ async fn web_extract_surfaces_near_empty_body_as_a_degradation_note() {
     assert!(
         json2["note"].is_string(),
         "degraded extraction not cached as a clean hit: {json2}"
+    );
+}
+
+#[tokio::test]
+async fn web_extract_degradation_note_names_a_non_2xx_origin_status() {
+    // P2 (2026-10-01): a thin body from a non-2xx origin names the
+    // observed status in the note — a 404's cause is a gone/moved URL,
+    // not a JS shell (observed live: the httpstat.us probe surfaced the
+    // JS-shell cause list while the metadata held statusCode 404). The
+    // ChromeShellPool test above pins the boundary: a 2xx status keeps
+    // the JS-shell cause list.
+    let server = make_server_with_pool(Arc::new(GoneOriginPool));
+    let json = parse(&ok(server
+        .web_extract(Parameters(ExtractRequest {
+            url: "https://example.com/gone".to_string(),
+            format: None,
+            json_prompt: None,
+            json_schema: None,
+            main_content_only: None,
+            wait_for_ms: None,
+            run_id: None,
+        }))
+        .await));
+    let note = json["note"].as_str().expect("degradation note present");
+    assert!(
+        note.contains("HTTP 404") && note.contains("gone or moved"),
+        "note names the observed status and its cause: {note}"
+    );
+    assert!(
+        note.contains("Wayback"),
+        "the alternative route stays named: {note}"
+    );
+    assert!(
+        !note.contains("JS shell"),
+        "the JS-shell cause list is not guessed when the status is known: {note}"
     );
 }
 

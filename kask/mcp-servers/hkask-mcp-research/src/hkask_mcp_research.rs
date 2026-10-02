@@ -745,12 +745,34 @@ impl ResearchServer {
             let content_chars = extracted.content.trim().chars().count();
             let degraded = content_chars < MIN_SUBSTANTIVE_CONTENT_CHARS;
             let note = degraded.then(|| {
-                format!(
-                    "extraction captured only {content_chars} chars — the origin \
-                     likely served a JS shell, a bot-block page, or an empty body; \
-                     the content may be incomplete (consider the Wayback Machine \
-                     or a headless-browser route for this URL)"
-                )
+                // P2 (2026-10-01): when the fetch metadata carries a
+                // non-2xx status, name it — a thin 404 body is a gone or
+                // moved URL, not a JS shell (observed: a 404 origin
+                // surfaced as "36 chars — JS shell / bot-block / empty
+                // body" while the metadata held statusCode 404).
+                let origin_status = extracted
+                    .metadata
+                    .as_ref()
+                    .and_then(|m| m.get("statusCode"))
+                    .and_then(|v| {
+                        v.as_u64()
+                            .or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok()))
+                    })
+                    .filter(|code| !(200..300).contains(code));
+                match origin_status {
+                    Some(code) => format!(
+                        "extraction captured only {content_chars} chars — the origin \
+                         returned HTTP {code} (the URL may be gone or moved); the \
+                         content may be incomplete (consider the Wayback Machine \
+                         or a headless-browser route for this URL)"
+                    ),
+                    None => format!(
+                        "extraction captured only {content_chars} chars — the origin \
+                         likely served a JS shell, a bot-block page, or an empty body; \
+                         the content may be incomplete (consider the Wayback Machine \
+                         or a headless-browser route for this URL)"
+                    ),
+                }
             });
             if degraded {
                 tracing::warn!(
@@ -1879,7 +1901,7 @@ impl ResearchServer {
     }
 
     #[tool(
-        description = "Resolve a paper reference to a typed identity. Two modes: (1) identifier — pass `query` with any supported form (DOI, arXiv ID, PMID, PMCID, OpenAlex work ID — bare, prefixed, or registry URL) to parse, normalize, and enrich it; (2) bibliographic — pass `title` with a work's title for Crossref's bibliographic search: up to 3 candidates (DOI, title, year, venue, first author) are surfaced, the top candidate is resolved to the typed identity and enriched via OpenAlex — check the candidates before trusting the resolution (a title search can hit a different work than intended). Both modes return the identifier kind/value, canonical URL, stable ledger key, and OpenAlex metadata (title, authors, year, venue, and the candidate open-access copy URL `oa_pdf_url` when the record holds one — a candidate, not a verified document) — the identity is always returned even when the metadata lookup degrades. Pass run_id to record the resolution into a research run's ledger. Every rejection names what was expected."
+        description = "Resolve a paper reference to a typed identity. Two modes: (1) identifier — pass `query` with any supported form (DOI, arXiv ID, PMID, PMCID, OpenAlex work ID — bare, prefixed, or registry URL) to parse, normalize, and enrich it; (2) bibliographic — pass `title` with a work's title for Crossref's bibliographic search: up to 3 candidates (DOI, title, year, venue, first author) are surfaced, ranked with exact-title matches first (Crossref relevance within ties), and the top candidate is resolved to the typed identity and enriched via OpenAlex — check the candidates before trusting the resolution (a title search can hit a different work than intended). Both modes return the identifier kind/value, canonical URL, stable ledger key, and OpenAlex metadata (title, authors, year, venue, and the candidate open-access copy URL `oa_pdf_url` when the record holds one — a candidate, not a verified document) — the identity is always returned even when the metadata lookup degrades. Pass run_id to record the resolution into a research run's ledger. Every rejection names what was expected."
     )]
     pub async fn resolve_paper(
         &self,
@@ -1913,12 +1935,23 @@ impl ResearchServer {
                     // Crossref bibliographic resolution: candidates are
                     // surfaced in full so the caller can verify the match
                     // (the no-substitution rule) before trusting the top
-                    // candidate's resolution.
-                    let candidates = self.pool.resolve_title(&title, 3).await.map_err(|e| {
+                    // candidate's resolution. P1 (2026-10-01): exact-title
+                    // matches rank first — Crossref's relevance can put a
+                    // superstring title above the exact work (observed:
+                    // "Computing Machinery and Intelligence Amplification"
+                    // outranked Turing's "Computing Machinery and
+                    // Intelligence"); the stable sort keeps Crossref's order
+                    // within each group, so equally-exact candidates (a
+                    // preprint and the published version of the same work)
+                    // stay consumer-verifiable via the surfaced list.
+                    let mut candidates = self.pool.resolve_title(&title, 3).await.map_err(|e| {
                         McpToolError::failed_precondition(format!(
                             "Crossref bibliographic search failed: {e}"
                         ))
                     })?;
+                    candidates.sort_by_key(|c| {
+                        !crate::research::providers::title_matches_exactly(&title, &c.title)
+                    });
                     let Some(top) = candidates.first() else {
                         return Ok(serde_json::json!({
                             "mode": "bibliographic",

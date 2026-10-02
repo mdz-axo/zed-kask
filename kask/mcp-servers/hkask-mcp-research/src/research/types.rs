@@ -806,7 +806,9 @@ pub(crate) struct ExtractOutput {
     pub metadata: Option<serde_json::Value>,
     /// Degradation note, present when the extraction succeeded HTTP-wise
     /// but the captured body is suspiciously small — the origin likely
-    /// served a JS shell, a bot-block page, or an empty body. Never a bare
+    /// served a JS shell, a bot-block page, or an empty body; when the
+    /// fetch metadata carries a non-2xx status, the note names the
+    /// status instead (a gone or moved URL; P2 2026-10-01). Never a bare
     /// success: the caller learns the content may be incomplete and can
     /// route to another path (e.g. the Wayback Machine) with the cause named.
     #[serde(skip_serializing_if = "Option::is_none")]

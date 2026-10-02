@@ -274,7 +274,7 @@ the durable recall copy ingested via the corpus server — different job,
 different owner; `excerpt` is the server's own capped audit copy. No
 server-to-server coupling.
 
-## Paper identity (2026-09-09; title mode + OA candidate 2026-09-30)
+## Paper identity (2026-09-09; title mode + OA candidate 2026-09-30; exact-first ranking 2026-10-01)
 
 `resolve_paper` has two modes. Identifier mode: parses any identifier
 form — DOI (bare, `doi:`, doi.org URL), arXiv ID, PMID, PMCID, OpenAlex
@@ -283,7 +283,12 @@ kind-prefixed ledger key; every rejection names what was expected.
 Bibliographic mode (2026-09-30): pass `title` instead of `query` and
 Crossref's bibliographic search returns up to 3 candidate works (DOI,
 title, year, venue, first author), all surfaced so the caller can verify
-the match (a title search can hit a different work than intended); the
+the match (a title search can hit a different work than intended);
+candidates rank exact-title matches first (2026-10-01: Crossref's
+relevance can put a superstring title above the exact work — observed
+live; the stable sort keeps Crossref's order within each group, so
+equally-exact candidates such as a preprint and its published version
+stay consumer-verifiable); the
 top candidate resolves to the typed identity. OpenAlex (a free provider,
 always registered) enriches with title/authors/year/venue when a record
 exists — plus `oa_pdf_url`, the candidate open-access copy URL from
@@ -301,7 +306,9 @@ Three changes from the zk-reference retrieval sweep's lessons:
 
 - `web_extract` surfaces a degradation note when the captured body is
   near-empty (< 500 chars) — the origin likely served a JS shell, a
-  bot-block page, or an empty body — and does not cache the degraded
+  bot-block page, or an empty body; when the fetch metadata carries a
+  non-2xx status the note names it instead (a gone/moved URL;
+  2026-10-01, P2) — and does not cache the degraded
   extraction, so a retry re-fetches instead of replaying the shell.
 - `web_search` results carry `oa_pdf_url` when a scholarly provider
   holds a candidate open-access copy (OpenAlex `best_oa_location.pdf_url`,

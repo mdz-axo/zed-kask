@@ -37,6 +37,29 @@ pub struct CrossrefCandidate {
     pub first_author: Option<String>,
 }
 
+/// Exact-title comparison for candidate ranking (P1, 2026-10-01):
+/// normalized (lowercase, whitespace-collapsed) string equality.
+/// Crossref's bibliographic relevance can rank a superstring title
+/// above the exact work (observed live 2026-10-01: "Computing
+/// Machinery and Intelligence Amplification" outranked Turing's
+/// "Computing Machinery and Intelligence"), so `resolve_paper`'s title
+/// mode sorts candidates exact-first. The sort is stable — Crossref's
+/// relevance order stands within each group, so equally-exact
+/// candidates (e.g. a preprint and the published version of the same
+/// work) keep their relative order and stay verifiable via the
+/// surfaced candidates.
+pub(crate) fn title_matches_exactly(query: &str, candidate: &str) -> bool {
+    fn normalized(title: &str) -> String {
+        title
+            .trim()
+            .to_lowercase()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+    normalized(query) == normalized(candidate)
+}
+
 /// Crossref bibliographic search client.
 #[derive(Clone)]
 pub(crate) struct CrossrefProvider {
