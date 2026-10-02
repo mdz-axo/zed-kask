@@ -112,6 +112,16 @@ Template context variables (from each template's [inference] contract):
 - `present-map.j2` (pure render; its `[inference]` header declares inputs only, no model call): `map_diagram` (string — the mermaid quadrant chart text), `recommendations` (array of objects, each `{category, component, recommendation, priority, confidence, rationale}` — all plain strings; passing an array of strings renders N/A rows), `rationale` (string — the assessment paragraph)
 
 
+## Regression case
+
+All receipts executed live through `lisp_eval` (2026-10-01, backfill pass),
+over the convergence gate:
+
+- Zero unclassified components and zero unresolved dependencies → `true`.
+- One unresolved dependency → `false`.
+
+The skill's forms are executed at use time, never anchored in code.
+
 ## Constraints
 
 - `present-map.j2`: rendering template (no inference) — surfaces the diagram as the process's final output.

@@ -117,6 +117,18 @@ The `skill` tool accepts `name` and `task` only. Read the user's task and gather
 
 To render a template, call the `render_template` tool with the template ref (e.g., `code-review/code-review-scope`) and a context object with the required variables.
 
+## Regression case
+
+All receipts executed live through `lisp_eval` (2026-10-01, backfill pass):
+
+- Severity form, Prohibition violated at conf 0.9 → `"Blocker"` (base 3,
+  no demotion).
+- Severity form, Guideline violated at conf 0.5 → `"Nit"` (base 2,
+  low-confidence demotion to 1).
+- Gap form, found [8, 5] vs predicted [8, 5] → `[0, 0]`.
+
+The skill's forms are executed at use time, never anchored in code.
+
 ## Constraints
 
 - `code-review-scope.j2`: compute the diff from real git output; never estimate from the spec. When `prior_review.next_review_focus` is present it MUST be consumed (silently ignoring prior feedback is a feedback-loop violation). Do not judge findings here — only model the change.

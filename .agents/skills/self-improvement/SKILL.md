@@ -443,6 +443,18 @@ The skill implements the paper's safety recommendations (Section 9.1):
 
 To render a template, call the `render_template` tool with the template ref (e.g., `self-improvement/si-select-pathway`) and a context object with the required variables.
 
+## Regression case
+
+All receipts executed live through `lisp_eval` (2026-10-01, backfill pass),
+over the fitness gate:
+
+- Harness-measured 0.8 over baseline 0.6, zero regressions, zero safety
+  violations → `true`.
+- Same with one regression → `false` — an improvement that regresses
+  anything is not an improvement.
+
+The skill's forms are executed at use time, never anchored in code.
+
 ## Constraints
 
 - `si-execute-improvement.j2`: Public (router only — delegates to sub-pathway templates).

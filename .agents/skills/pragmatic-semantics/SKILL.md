@@ -111,6 +111,19 @@ Template context variables (from each template's [inference] contract):
 - `semantics-route-step.j2`: `step_description`, `available_oracles`
 
 
+## Regression case
+
+All receipts executed live through `lisp_eval` (2026-10-01, backfill pass):
+
+- Classify form, spec-checked FIBO anchor at base 0.7 → `0.8` (the
+  +0.10 tier bonus, floored at 0.8).
+- Classify form, unknown provenance → `0.3` (the cap — unchecked
+  spec-as-unknown enforced).
+- Gate form, zero unverifiable gaps at chain confidence 0.85 → `true`;
+  at 0.7 → `false`.
+
+The skill's forms are executed at use time, never anchored in code.
+
 ## Constraints
 
 - `semantics-classify-statement.j2`: IS-statements are never Prohibitions. Declarative OUGHT-statements map to Prohibition or Guardrail. Unknown provenance → confidence ≤ 0.3. Specification provenance → confidence ≥ 0.8 (verify spec is current). FIBO +0.10, SUMO +0.05, unanchored -0.15.

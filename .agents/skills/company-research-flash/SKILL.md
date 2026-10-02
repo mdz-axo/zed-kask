@@ -219,6 +219,19 @@ To render a template, call the `render_template` tool with the template ref (e.g
 
 All MCP tool calls are called directly (deterministic, governed, testable). See `kask/docs/architecture/skills-and-composition.md` Part II for the invocation patterns. Failed MCP tools surface as `data_gaps` entries in the consuming template — never collapse to None (per .rules).
 
+## Regression case
+
+All receipts executed live through `lisp_eval` (2026-10-01, backfill pass),
+over the KATA calibration form:
+
+- Five predictions at 0.8 vs five outcomes at 0.5 → `[0.3,
+  "overconfident"]`.
+- No predictions → `[1.0, "no_prediction"]`.
+- Fewer than five predictions → `[null, "undetermined"]` — never a
+  fabricated verdict.
+
+The skill's forms are executed at use time, never anchored in code.
+
 ## Constraints
 
 - MCP tool failures must not collapse to None. Templates emit `data_gaps` entries naming the failed tool.

@@ -154,6 +154,16 @@ parent template (`seam-map.j2`, the audit template, or `remediate.j2`) with
 
 To render a template, call the `render_template` tool with the template ref (e.g., `kask-seam-audit/seam-map`) and a context object with the required variables.
 
+## Regression case
+
+All receipts executed live through `lisp_eval` (2026-10-01, backfill pass),
+over the convergence gate:
+
+- Zero failed gates and zero probe failures → `true`.
+- One failed gate → `false`.
+
+The skill's forms are executed at use time, never anchored in code.
+
 ## Constraints
 
 - Hard-stop on any remediation requiring an upstream non-D-seam edit.

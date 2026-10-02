@@ -80,6 +80,20 @@ Grading each answer Solid / Partial / Gap is P (the round render's judgment, cri
 
 To render a template, call the `render_template` tool with the template ref (e.g., `grill-me/grill-me-round`) and a context object with the required variables.
 
+## Regression case
+
+All receipts executed live through `lisp_eval` (2026-10-01, backfill pass):
+
+- Escalation form, unanswered → `[2, "hold"]`.
+- Solid ratio 0.9 at level 3 → `[4, "escalate"]`.
+- Round 5 → `[3, "complete"]`.
+- Solid ratio 0.2 → `[3, "reprobe"]`.
+- Retirement form, attempts `[["q1", 3], ["q2", 2], ["q3", 4]]` →
+  `["q1", "q3"]` — only questions answered solidly at least three
+  times retire.
+
+The skill's forms are executed at use time, never anchored in code.
+
 ## Constraints
 
 - Escalation is the `lisp_eval` rule in the Feedback gate; there is no escalation template.

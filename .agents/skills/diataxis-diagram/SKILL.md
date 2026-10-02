@@ -66,6 +66,16 @@ Generate Mermaid diagrams from code, using Diátaxis to choose the documentation
 
 To render a template, call the `render_template` tool with the template ref (e.g., `diataxis-diagram/diataxis-diagram-classify`) and a context object with the required variables.
 
+## Regression case
+
+All receipts executed live through `lisp_eval` (2026-10-01, backfill pass),
+over the six-criterion weighted rubric:
+
+- c1=0.2, c2=0.1, rest 0 → `0.085` (the documented deficient case).
+- All criteria 0 → `0.0` — the inverted scale: 0 is perfect.
+
+The skill's forms are executed at use time, never anchored in code.
+
 ## Constraints
 
 - Zed rendering constraints: no `%%{init}%%`, no `classDef`, no inline color styles; prefer `TD` over `LR` for narrow sidebar rendering

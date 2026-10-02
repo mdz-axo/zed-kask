@@ -248,6 +248,24 @@ To render a template, call the `render_template` tool with the template ref (e.g
 
 Run verification gates (cargo check/test, isolation script) with `terminal`; use `lisp_eval` only for arithmetic such as marker density. Template order: Step 0's all-rows survival review and Step 4's insertion-point mapping (per unit, the upstream landmark line — no template renders either) are direct agent work; then, per surviving seam file, `assess` → `map` → `decide` → `execute` → `document`, then `reflect` after the merge commit. The templates carry their own internal pipeline numbering — bind each `step_N_result` input to the named artifact, not to the SKILL.md's step numbers: `decide.j2`'s `step_0_records` = Step 0's all-rows survival records (null when Step 0 was skipped), `step_1_result` = assess's output (the assessment) and `step_2_result` = map's output (the functional inventory); `execute.j2`'s `step_2_result` = map's output and `step_3_result` = decide's output (the strategy decision); `document.j2`'s `step_2_result` through `step_5_result` = map's, decide's, execute's, and the verification gate's outputs respectively.
 
+## Regression case
+
+All receipts executed live through `lisp_eval` (2026-10-01, backfill pass),
+over the per-file strategy decision rule — all five documented cases
+reproduce exactly:
+
+- 100/100/5/10 → `[0.5, "git-merge"]`.
+- 100/100/4/10 → `[0.4, "mapped-reapplication"]` (marker density below
+  0.5).
+- 201/100/10/10 → `[1.0, "mapped-reapplication"]` (fork more than twice
+  upstream).
+- 50/100/0/0 → `[1, "git-merge"]` (no call sites: density defaults to
+  1, small fork).
+- 250/100/0/0 → `[1, "mapped-reapplication"]` (no call sites, large
+  fork).
+
+The skill's forms are executed at use time, never anchored in code.
+
 ## Constraints
 
 - Do NOT modify any upstream file outside the D-seam surface. Consult `DIVERGENCE.md`'s divergence-surface table for the current D-seam rows — the table is authoritative; do not rely on a hardcoded range label (the count drifts as seams are added). If an upstream edit seems necessary, propose a new D-seam entry in `DIVERGENCE.md`.

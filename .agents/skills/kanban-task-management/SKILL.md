@@ -145,6 +145,16 @@ is asserted; the pasted command and exit code are ran-and-pasted.
 
 To render a template, call the `render_template` tool with the template ref (e.g., `kanban-task-management/triage`) and a context object with the required variables — each template's `[inference]` contract is the authoritative input list. The contract audit checks each template's contract-to-body agreement; cross-template producer→consumer seams (one step's output feeding the next step's input) are this skill's own chain to verify at render time.
 
+## Regression case
+
+All receipts executed live through `lisp_eval` (2026-10-01, backfill pass),
+over the sweep gate:
+
+- Empty unverified-review and stalled-in-progress lists → `true`.
+- One unverified review card → `false`.
+
+The skill's forms are executed at use time, never anchored in code.
+
 ## Constraints
 
 - The board is the durable ledger: a task's state comes from `kanban_task_list` re-reads, never from the manager's memory. Every transition is confirmed by re-listing before it is reported.

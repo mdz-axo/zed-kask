@@ -178,6 +178,17 @@ When the MATCH step routes to research delegation (the prompt references an exte
 - **Two time periods** (e.g., "Q3 vs Q4 budget"): produce two Sankeys with identical node structure, and add a third "delta" Sankey showing the differences (positive values for increases, the Sankey will render these as flows from "Q4" to the changed categories). Note in the description that the delta Sankey is a comparison, not a flow.
 - **Family of related flows** (e.g., the three financial statements — income, balance sheet, cash flow): produce one Sankey per statement, cross-linked. This mirrors GuruFocus's approach of three separate breakdown charts.
 
+## Regression case
+
+All receipts executed live through `lisp_eval` (2026-10-01, backfill pass),
+over the node-rows balance form:
+
+- Two rows each within epsilon → `true`.
+- One row off by 5 against epsilon 0.5 → `false` — conservation is
+  checked per row, never averaged across rows.
+
+The skill's forms are executed at use time, never anchored in code.
+
 ## Constraints
 
 - **Never fabricate weights.** This is the single hard rule. Weights must be user-stated, source-read, or explicitly marked as unitless placeholders (`value=1`).

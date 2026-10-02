@@ -108,6 +108,17 @@ admitted target for root-cause elimination.
 
 To render a template, call the `render_template` tool with the template ref (e.g., `diagnose/diagnose-spec-anchor`) and a context object with the required variables.
 
+## Regression case
+
+All receipts executed live through `lisp_eval` (2026-10-01, backfill pass),
+over the convergence normalization form:
+
+- All five met/unmet readings 1 → `1.0` (the 0.85-normalized ceiling).
+- Admission unmet (a=0), rest met → `0.7058823529411765` — the gap is
+  measured, not judged.
+
+The skill's forms are executed at use time, never anchored in code.
+
 ## Constraints
 
 - Step 3 (hypothesize) is delegated to falsifiability/falsifiability-hypothesize

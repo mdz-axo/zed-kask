@@ -110,6 +110,19 @@ Charter design, crate-model description, the probe step-0 prediction (expected c
 
 To render a template, call the `render_template` tool with the template ref (e.g., `bug-hunt/bug-hunt-charter`) and a context object with the required variables.
 
+## Regression case
+
+All receipts executed live through `lisp_eval` (2026-10-01, backfill pass),
+over the convergence form:
+
+- Clean: one prior location, one current location, one well-formed BUG
+  finding → `[[], 0]` — no new locations, no malformed findings.
+- Defect: a new location ("cache") plus a BUG finding missing its
+  location → `[["cache"], 1]` — both defect channels (new unexplored
+  locations; findings missing contract or location) named in one pass.
+
+The skill's forms are executed at use time, never anchored in code.
+
 ## Constraints
 
 - `bug-hunt-charter.j2`: Beizer category selection must be justified against the `crate_model`, not generic prevalence. When `prior_expedition` is present, the charter MUST consume it — silent ignoring is a feedback-loop violation.

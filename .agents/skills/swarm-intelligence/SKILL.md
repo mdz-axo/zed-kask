@@ -381,6 +381,19 @@ the surviving record).
 
 To render a template, call the `render_template` tool with the template ref (e.g., `swarm-intelligence/swarm-sense`) and a context object with the required variables.
 
+## Regression case
+
+All receipts executed live through `lisp_eval` (2026-10-01, backfill pass):
+
+- Target-plus-stability gate, four distances stepping ≤0.03, vc 0.95,
+  div 0.3, lc 1, coherence non-decreasing, no algedonic alert, task
+  success 1 → `true`.
+- One 0.05 jump in the distance sequence → `false`.
+- Distance form, vc 0.8 / div 0.2 / lc 0.9 / s null →
+  `0.22912878474779194` — the PSO balance reading.
+
+The skill's forms are executed at use time, never anchored in code.
+
 ## Constraints
 
 - Every ABW spend delegation carries an explicit `credits_authorized` and consent. Local member delegation carries `swarm_id`, not a credit budget.

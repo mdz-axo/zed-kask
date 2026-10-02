@@ -144,6 +144,16 @@ Template context variables (from each template's [inference] contract):
 - `ra-strangle.j2`: `domain`, `target_condition`, `service_module_name`, `current_cli_path`, `current_api_path`, `known_adrs`, `constraint_forces`
 - `ra-verify.j2`: `domain`, `migration_phase`, `initial_condition`, `target_condition`, `code_context`, `known_adrs`
 
+## Regression case
+
+Receipt executed live (2026-10-01, backfill pass): `render_template`
+`refactor-architecture/ra-verify` with a domain/migration context renders
+the verification checklist whose discipline is unmeasured-never-pass — a
+build-only pass leaves the target condition `unmeasured` and the overall
+status `partial`. The skill's D oracles are the cargo commands
+(check/test/clippy), not lisp_eval forms; the deterministic render is the
+receipt, and the commands it names are run at use time.
+
 ## Constraints
 
 - Exploration without a selected candidate remains advisory, never migration authority; the user's explicit signal (ra-route) gates any refactor.

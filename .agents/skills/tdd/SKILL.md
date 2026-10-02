@@ -115,7 +115,7 @@ failure. Inject boundaries through traits the code already takes
   never agreed, an expected value derived from the code, or a provenance
   value that is absent or not a string.
 
-## Templates
+## Registry Templates
 
 | Template | Use |
 |---|---|
@@ -123,6 +123,9 @@ failure. Inject boundaries through traits the code already takes
 | `tdd/tdd-cycle` | One cycle: the failing test, the observed red, the minimal change, the observed green. |
 
 Render with `render_template` and the context the template's contract names.
+Template context variables (from each template's `[inference]` contract):
+- `tdd-seams.j2`: `task`, `crate_scope`, `public_interface` (optional)
+- `tdd-cycle.j2`: `behavior`, `seam`, `layer`, `falsifier`, `oracle`, `crate_scope`
 
 ## Regression case
 

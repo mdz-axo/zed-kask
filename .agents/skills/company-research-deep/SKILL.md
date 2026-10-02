@@ -293,6 +293,18 @@ To render a template, call the `render_template` tool with the template ref (e.g
 
 All MCP tool calls are called directly (deterministic, governed, testable). See `kask/docs/architecture/skills-and-composition.md` Part II for the invocation patterns. Failed MCP tools surface as `data_gaps` entries in the consuming template — never collapse to None (per .rules).
 
+## Regression case
+
+All receipts executed live through `lisp_eval` (2026-10-01, backfill pass):
+
+- GORILLA fixed-weight scoring, all four axes 100 → score 100 →
+  `GORILLA`.
+- All axes 40 → score 40 → `PEDESTRIAN` (below the 50 SMALL_ANIMAL
+  line).
+- Claim-source key closure: matched 5, total 6, dropped 1 → `[5, 6, 1]`.
+
+The skill's forms are executed at use time, never anchored in code.
+
 ## Constraints
 
 - Every perspective runs on every report; none is skipped, deferred or bypassed. A perspective that cannot establish its observations records its limitation in the report.
