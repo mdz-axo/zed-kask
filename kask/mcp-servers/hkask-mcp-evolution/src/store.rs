@@ -442,6 +442,18 @@ impl EvolutionStore {
         }
         let id = format!("fit_{}", uuid::Uuid::new_v4().simple());
         let created_at = chrono::Utc::now().to_rfc3339();
+        // The shared INSERT parameters — both the ceiling-gated and the
+        // no-ceiling statements bind the same seven record values; the
+        // gated statement appends the ceiling as ?8.
+        let mut params = vec![
+            DbValue::Text(id.clone()),
+            DbValue::Text(experiment_id.to_string()),
+            DbValue::Text(variant_id.to_string()),
+            DbValue::Text(value_column(&runs)?),
+            DbValue::Integer(run_count as i64),
+            DbValue::Text(value_column(scores)?),
+            DbValue::Text(created_at.clone()),
+        ];
         if let Some(ceiling) = experiment.max_runs {
             // Single-statement atomicity (the crate's INSERT OR IGNORE shape):
             // the budget condition and the write are ONE statement, so two
@@ -451,22 +463,14 @@ impl EvolutionStore {
             // was racy under rmcp's concurrent dispatch (observed live
             // 2026-10-01: two run_count=1 records landed 57µs apart against
             // a ceiling of 1).
+            params.push(DbValue::Integer(ceiling as i64));
             let inserted = self.driver.execute(
                 "INSERT INTO fitness_records \
                  (id, experiment_id, variant_id, runs, run_count, scores, created_at) \
                  SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7 \
                  WHERE ?5 + COALESCE((SELECT SUM(run_count) FROM fitness_records \
                    WHERE experiment_id = ?2), 0) <= ?8",
-                &[
-                    DbValue::Text(id.clone()),
-                    DbValue::Text(experiment_id.to_string()),
-                    DbValue::Text(variant_id.to_string()),
-                    DbValue::Text(value_column(&runs)?),
-                    DbValue::Integer(run_count as i64),
-                    DbValue::Text(value_column(scores)?),
-                    DbValue::Text(created_at.clone()),
-                    DbValue::Integer(ceiling as i64),
-                ],
+                &params,
             )?;
             if inserted == 0 {
                 // Diagnostic only — the refusal above is the atomic gate;
@@ -493,15 +497,7 @@ impl EvolutionStore {
                 "INSERT INTO fitness_records \
                  (id, experiment_id, variant_id, runs, run_count, scores, created_at) \
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                &[
-                    DbValue::Text(id.clone()),
-                    DbValue::Text(experiment_id.to_string()),
-                    DbValue::Text(variant_id.to_string()),
-                    DbValue::Text(value_column(&runs)?),
-                    DbValue::Integer(run_count as i64),
-                    DbValue::Text(value_column(scores)?),
-                    DbValue::Text(created_at.clone()),
-                ],
+                &params,
             )?;
         }
         Ok(FitnessRecord {
