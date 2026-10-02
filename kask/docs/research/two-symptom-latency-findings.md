@@ -285,3 +285,13 @@ Round-2 termination check: symptom 1 — mechanism carried (S1-H1, §2.1) with t
 3. **True flag A/B still pending** — a local install.sh release build (in-tree `target/release` untouched since Sep 30). Schedule when the operator is not using the app (16-job build inflates draw cost 2–3× while running, P7f), or supersede it by fixing the pipeline's flags (R3/OQ-8 — the parity-required path).
 
 **Learning banked:** two rebuilds in one day, both through the unidentified pipeline with the same flag defect — every "rebuilt and restarted" must begin with the startup-line check (sha + debug-build warning) before any performance reading is trusted. Binary identity precedes code attribution.
+
+### 7.8 R1 follow-up — mid-session trajectory, profiler enabled, ratchet at baseline (2026-10-02 15:10)
+
+**Mid-session accumulation sample (session age ~45 min, 15:04–15:10, active streaming):** draws avg **20.7–33.5 ms** (maxes 53–100), `[DIAG-anr]` avg **5.56–5.74 ms/event** — flat at the healthy band. The morning artifact read 60–89 ms by ~50 min of age; this build has not begun that climb. The discriminating test remains the ≥ 2 h checkpoint (session started 14:26 → checkpoint ≥ 16:26): if the morning trajectory (→ 104 ms) reproduces, accumulation is build-independent (S2-H1/S2-H4); if not, a range commit fixed it and bisection is cheap.
+
+**Profiler instrument now live:** the operator's settings carry `instrumentation.performance_profiler.enabled: true` (added 15:02; diff vs `settings.json.bak-profiler` shows the addition) — round-1's "mandated instrument is off" condition is cleared. The R2 early-vs-late differential is now runnable: `zed: open performance profiler` once now (healthy band) and once at ≥ 2 h session age, same session. If the panel shows no spans, one app restart is needed for the setting to take effect.
+
+**hang_traces/ is empty** (0 files) — consistent with the debug-assertions hang detector's 5 s blindness (`hang_detection.rs:32-42`): the instrument cannot record the sub-5 s stalls that constitute symptom 2. No fresh thread-open data from that source; OQ-2 stays gated on the probe re-add (plan §4 step 2).
+
+**Duplication ratchet (R5 first half):** `check-duplication-ratchet.sh` reads **2820 clusters, at baseline** — no net-new duplication since the baseline commit (`b25cb266e3` tightened it 13:28). This is the drift check, not the inventory; the cluster-size extraction + dependency-hierarchy review is the R5 dedicated pass, calibrated by the PM's OQ-9 answer (which pair the "two assembler codepaths" ruling names).
