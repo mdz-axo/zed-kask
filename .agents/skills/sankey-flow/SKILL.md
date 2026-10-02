@@ -85,6 +85,8 @@ Enricher,Quarantine,20
 
 Sourced-quantity fidelity (hard requirement): every quantity the user stated — every dollar figure, count, rate, or measure — appears verbatim as a CSV value in the rendered diagram (e.g. "$5,000" becomes the value 5000 on its edge). Do not round, rescale, aggregate, or omit any sourced quantity; if a stated quantity has no edge, add the edge. A missing sourced quantity is a failed output, not a style choice.
 
+A stated total that is the sum of its parts — the $5000 income that splits, the $2000 budget that allocates — appears in its source node's label, e.g. `Monthly Income ($5000),Housing,1800`, so the total is visible in the diagram itself, never only in prose. Keep the label within 30 characters by abbreviating words, never the number; never place a comma inside the parentheses (it breaks the CSV row).
+
 Zed rendering constraints (same as `diataxis-diagram`): no `%%{init}%%`, no `classDef`, no inline color styles. Use the front-matter `config` block instead of `init` directives.
 
 ## Flow Domain Catalog
