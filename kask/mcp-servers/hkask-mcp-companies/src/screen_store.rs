@@ -19,7 +19,13 @@ use std::path::PathBuf;
 /// live alongside the portfolio crate's schema in the same SQLite DB.
 /// The portfolio crate owns the `portfolios`, `transactions`, `price_cache`,
 /// `daily_holdings`, and `daily_returns` tables; this module owns the rest.
-const COMPANIES_SCHEMA_DDL: &str = "CREATE TABLE IF NOT EXISTS notes (
+///
+/// Public because the DB is genuinely shared: portfolio's schema-recovery
+/// tests seed the mixed-database scenario from this exact DDL (via a
+/// dev-dependency) so the fixture cannot drift from the real schema — the
+/// hand-mirrored copy it replaced had already fallen behind (it seeded 3 of
+/// the 5 tables).
+pub const COMPANIES_SCHEMA_DDL: &str = "CREATE TABLE IF NOT EXISTS notes (
                     id TEXT PRIMARY KEY,
                     portfolio_name TEXT NOT NULL REFERENCES portfolios(name) ON DELETE CASCADE,
                     symbol TEXT NOT NULL,

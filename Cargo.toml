@@ -937,6 +937,7 @@ hkask-memory = { path = "kask/crates/hkask-memory" }
 hkask-email = { path = "kask/crates/hkask-email" }
 hkask-mcp-server = { path = "kask/crates/hkask-mcp-server" }
 hkask-mcp-portfolio = { path = "kask/mcp-servers/hkask-mcp-portfolio" }
+hkask-mcp-companies = { path = "kask/mcp-servers/hkask-mcp-companies" }
 hkask-mcp-spreadsheet = { path = "kask/mcp-servers/hkask-mcp-spreadsheet" }
 hkask-mcp-prediction-markets = { path = "kask/mcp-servers/hkask-mcp-prediction-markets" }
 minijinja = { version = "2", features = ["loader", "serde", "json", "internal_safe_search"] }

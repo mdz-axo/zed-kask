@@ -78,6 +78,11 @@ pub(crate) mod types;
 
 use screen_store::{PersistedForecast, ResearchStore};
 
+// The shared-DB schema, re-exported for portfolio's schema-recovery tests
+// (dev-dependency) so their mixed-database fixture seeds the real tables
+// instead of a hand-mirrored copy that drifts.
+pub use screen_store::COMPANIES_SCHEMA_DDL;
+
 pub(crate) mod tools;
 
 // ── Validation ──────────────────────────────────────────────────────

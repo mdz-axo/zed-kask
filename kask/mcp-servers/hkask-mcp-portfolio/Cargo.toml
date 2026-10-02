@@ -35,6 +35,10 @@ regex.workspace = true
 [dev-dependencies]
 tempfile.workspace = true
 proptest = { workspace = true }
+# Test-only edge (cargo permits dev-dependency cycles): the schema-recovery
+# tests seed the mixed shared-DB scenario from companies' real DDL so the
+# fixture cannot drift from the schema companies actually creates.
+hkask-mcp-companies.workspace = true
 
 [lints]
 workspace = true

@@ -1086,61 +1086,31 @@ fn seed_legacy_portfolio_schema(connection: &rusqlite::Connection) -> rusqlite::
 }
 
 fn seed_research_schema(connection: &rusqlite::Connection) -> rusqlite::Result<()> {
-    // Mirror companies' COMPANIES_SCHEMA_DDL without reversing its dependency
-    // on portfolio. In particular, retain the cascading parent relationships.
+    // The companies tables from the source of truth (dev-dependency on
+    // hkask-mcp-companies): the mixed shared-DB scenario must carry the
+    // schema companies actually creates — the hand-mirrored DDL this
+    // replaces had already drifted (it seeded 3 of the 5 tables, missing
+    // screen_jobs/screen_job_items). The cascading parent relationships
+    // live in the real DDL.
+    connection.execute_batch("PRAGMA foreign_keys = ON;")?;
+    connection.execute_batch(hkask_mcp_companies::COMPANIES_SCHEMA_DDL)?;
     connection.execute_batch(
-        r#"PRAGMA foreign_keys = ON;
-         CREATE TABLE IF NOT EXISTS notes (
-             id TEXT PRIMARY KEY,
-             portfolio_name TEXT NOT NULL REFERENCES portfolios(name) ON DELETE CASCADE,
-             symbol TEXT NOT NULL,
-             date TEXT NOT NULL,
-             title TEXT NOT NULL,
-             body TEXT NOT NULL,
-             tags TEXT DEFAULT '[]',
-             created_at TEXT NOT NULL
-         );
-         CREATE INDEX IF NOT EXISTS idx_notes_portfolio ON notes(portfolio_name);
-         CREATE INDEX IF NOT EXISTS idx_notes_symbol ON notes(symbol);
-         CREATE TABLE IF NOT EXISTS files (
-             id TEXT PRIMARY KEY,
-             portfolio_name TEXT NOT NULL REFERENCES portfolios(name) ON DELETE CASCADE,
-             symbol TEXT NOT NULL,
-             date TEXT NOT NULL,
-             filename TEXT NOT NULL,
-             mime_type TEXT NOT NULL,
-             size INTEGER NOT NULL,
-             path TEXT NOT NULL,
-             notes TEXT DEFAULT '',
-             created_at TEXT NOT NULL
-         );
-         CREATE INDEX IF NOT EXISTS idx_files_portfolio ON files(portfolio_name);
-         CREATE INDEX IF NOT EXISTS idx_files_symbol ON files(symbol);
-         CREATE TABLE IF NOT EXISTS forecasts (
-             id TEXT PRIMARY KEY,
-             symbol TEXT NOT NULL,
-             revision_of TEXT,
-             snapshot TEXT NOT NULL,
-             outcomes TEXT NOT NULL DEFAULT '[]',
-             created_at TEXT NOT NULL
-         );
-         CREATE INDEX IF NOT EXISTS idx_forecasts_symbol ON forecasts(symbol);
-         INSERT INTO notes VALUES (
+        "INSERT INTO notes VALUES (
              'note-1', 'legacy', 'AAPL', '2026-09-01', 'Thesis', 'Durable research',
-             '["investment"]', '2026-09-01T00:00:00Z'
+             '[\"investment\"]', '2026-09-01T00:00:00Z'
          );
          INSERT INTO files VALUES (
              'file-1', 'legacy', 'AAPL', '2026-09-01', 'report.txt', 'text/plain',
              16, 'attachments/report.txt', 'Supporting evidence', '2026-09-01T00:00:00Z'
          );
          INSERT INTO forecasts VALUES (
-             'forecast-1', 'AAPL', NULL, '{"price_target":200}',
-             '[{"price":190,"date":"2026-09-02"}]', '2026-09-01T00:00:00Z'
+             'forecast-1', 'AAPL', NULL, '{\"price_target\":200}',
+             '[{\"price\":190,\"date\":\"2026-09-02\"}]', '2026-09-01T00:00:00Z'
          );
          INSERT INTO forecasts VALUES (
-             'forecast-2', 'AAPL', 'forecast-1', '{"price_target":210}',
-             '[{"price":205,"date":"2026-09-03"}]', '2026-09-02T00:00:00Z'
-         );"#,
+             'forecast-2', 'AAPL', 'forecast-1', '{\"price_target\":210}',
+             '[{\"price\":205,\"date\":\"2026-09-03\"}]', '2026-09-02T00:00:00Z'
+         );",
     )
 }
 
