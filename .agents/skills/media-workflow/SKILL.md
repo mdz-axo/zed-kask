@@ -16,7 +16,7 @@ MovieLabs Ontology for Media Creation (OMC) — the creation-graph vocabulary th
 - **Initial condition:** the chosen pipeline and its inputs — subject, style, brand inputs, or source gallery image.
 - **Target condition:** the pipeline's acceptance property in the Verification loop holds, and the operator has seen the final artifact.
 
-## Step types
+## Step types (D/P labelling)
 
 | Step | Type | Oracle / critique |
 |------|------|-------------------|
@@ -55,7 +55,7 @@ Generates a clean product image, removes the background for a clean cutout, and 
 Generates a base image, applies an artistic style transfer, then upscales to final resolution.
 
 1. Call `generate_image` with the subject prompt.
-2. Call `image_apply_style` on the generated image with the target style prompt and strength (default: 0.75).
+2. Call `image_apply_style` on the generated image with the target style prompt and strength (use 0.75 unless the operator directs otherwise — the tool carries no default).
 3. Call `upscale_image` on the styled result with scale=2 or scale=4.
 
 ### Reaction-GIF Pipeline
@@ -79,9 +79,11 @@ Creates a collage from gallery images with background removal for transparent co
 Creates a meme video: select a template, generate a caption, animate, and overlay text.
 
 1. Call `gallery_search` or use a gallery image index to select a meme template image.
-2. Generate a meme-style caption using `describe_image` with a meme-captioning prompt, or write the caption directly.
+2. Generate a meme-style caption yourself, or use `describe_image`
+   (style "descriptive") on the template image as grounding for your own
+   caption — the tool returns a caption, not a meme prompt.
 3. Call `image_to_video` on the template image with a motion prompt (e.g., "slow zoom in"). Duration: 3-5 seconds.
-4. Call `video_add_caption` on the animated video with the caption text, positioned top or bottom.
+4. Call `video_add_caption` on the animated video with the caption text, positioned top or bottom. (The server also registers a purpose-built `video_meme` tool — text overlay plus motion in one call — as an alternative to steps 3–4.)
 
 ### NFT Derivation Pipeline
 
@@ -94,11 +96,11 @@ Derives an NFT from a gallery image: style transfer, upscale, and metadata capti
 
 ### Logo Pipeline
 
-Principled logo design (Martin, *Minimum Viable Brand*; Bokhua, *Principles of Logo Design* — five formal gates; Peters, *Logos That Last*). Brand mapping and critique are P; the operator chooses the logo, never the critique.
+Principled logo design (Martin, *Minimum Viable Brand*; Bokhua, *Principles of Logo Design* — five formal gates). Brand mapping and critique are P; the operator chooses the logo, never the critique.
 
-1. **Discovery.** Render `media/logo-discovery-map` with name, industry, audience, values and personality; send it to inference and parse `style`, `logo_type`, `dominant_shape`, `typography_class`, `palette_hex`, `density`, `rationale`. Choose single-shot (simple brand), iterative-refine (complex brand) or moodboard-first (visual-first brand, e.g. luxury, fashion).
-2. **Formal generation.** Render `media/logo-formal-prompt` with those parameters (map `palette_hex`, joined into a readable list, to its `palette` input) and call `generate_image`; then `image_remove_background` and, for print, `upscale_image` as needed.
-3. **Refinement (iterative-refine).** Generate 3 candidates, critique each with `describe_image` on readability, scalability, distinctiveness, professionalism and text accuracy (1–10 each, plus the strongest weakness). Show the operator every candidate with its scores and ask which to refine; if the operator is unavailable, report the ranked candidates and stop. Regenerate the chosen one addressing its critique, show it beside the previous version, and repeat only while the operator asks — at most 3 rounds.
+1. **Discovery.** Render `media/logo-discovery-map` with name, industry, audience, values; send it to inference and parse `style`, `logo_type`, `dominant_shape`, `typography_class`, `palette_direction`, `palette_hex`, `density`, `rationale`. Choose single-shot (simple brand), iterative-refine (complex brand) or moodboard-first (visual-first brand, e.g. luxury, fashion).
+2. **Formal generation.** Render `media/logo-formal-prompt` with the consumed parameters (map `palette_hex`, joined into a readable list, to its `palette` input; `rationale` is discovery's output, not this template's input) and call `generate_image`; then `image_remove_background` and, for print, `upscale_image` as needed.
+3. **Refinement (iterative-refine).** Generate 3 candidates, critique each — your own model judgment on readability, scalability, distinctiveness, professionalism and text accuracy (1–10 each, plus the strongest weakness; `describe_image` style "descriptive" can ground the readability check, but the tool returns a caption, not a rubric — the scores are model estimates, per the Step types table). Show the operator every candidate with its scores and ask which to refine; if the operator is unavailable, report the ranked candidates and stop. Regenerate the chosen one addressing its critique, show it beside the previous version, and repeat only while the operator asks — at most 3 rounds.
 4. **Deliverables.** `image_remove_background` for a transparent PNG; `generate_image` for a monochrome variant (pure black on white, same design), a 1:1 icon-only mark that works at 64×64, and a photorealistic real-world context mockup of "{name}". Return all four.
 
 ## Verification loop (all pipelines)
@@ -117,6 +119,46 @@ silently.
 ## Cleanup (all pipelines)
 
 After the operator accepts the deliverables, delete the run's rejected outputs — unchosen logo candidates, failed-retry artifacts and other variants that are not ancestors of a kept deliverable — with `gallery_delete_image(image_id, delete_file: true)`. Keep every ancestor of a kept deliverable: its lineage and OMC creation graph reference them. File deletion needs a destructive-mode gallery; in read-only or copy-on-write mode, remove only the index entry and list the files left on disk in the report. Confirm with `gallery_list_assets` (storage Cleanup rule).
+
+## Regression case
+
+All receipts executed live (2026-10-01, batch-14 audit):
+
+- Logo discovery render: `render_template` `media/logo-discovery-map`
+  with a brand brief (name, industry, audience, values)
+  renders the strategist prompt with the closed parameter schema
+  (style, logo_type, dominant_shape, typography_class, palette_direction,
+  palette_hex, density, rationale) — the discovery step's D output.
+- Logo formal-prompt render: `render_template`
+  `media/logo-formal-prompt` with the mapped parameters (palette_hex
+  joined into the `palette` list per the Instructions) renders the
+  generation prompt carrying Bokhua's five design gates verbatim
+  (G1 simplicity … G5 scalability) — the formal-generation step's D
+  output.
+
+The pipelines' verification loop is honest about its oracles: only
+`video_info` is deterministic; every `describe_image` check is a vision
+model judgment shown to the operator. There is no lisp_eval form — the
+D steps are the tool receipts and the template renders.
+
+## Registry Templates
+
+| Template | Purpose |
+|----------|---------|
+| `logo-discovery-map.j2` | Map a brand brief to formal logo design parameters (style, logo type, shape, typography, palette, density) with a rationale. |
+| `logo-formal-prompt.j2` | The logo generation prompt encoding Bokhua's five design gates (simplicity, monochrome viability, grid discipline, negative space, scalability). |
+
+Both live under `kask/registry/templates/media/` (the `media/` namespace,
+not `media-workflow/`). Template context variables (formal-prompt: its
+`[inference]` contract; discovery-map: the Jinja body — its `[inference]`
+block is the legacy shape retained for provenance only):
+- `logo-discovery-map.j2`: `name` (required), `industry` (required),
+  `audience`, `values` — its output schema adds `style`, `logo_type`,
+  `dominant_shape`, `typography_class`, `palette_direction`, `palette_hex`,
+  `density`, `rationale` (parsed by the caller, not consumed by
+  formal-prompt)
+- `logo-formal-prompt.j2`: `name`, `logo_type`, `style`, `dominant_shape`,
+  `density`, `industry`, `palette`, `tagline`, `typography_class`
 
 ## Constraints
 
