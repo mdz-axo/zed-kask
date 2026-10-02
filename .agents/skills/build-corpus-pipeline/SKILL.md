@@ -31,7 +31,11 @@ and generation run as server tools whose measured counts and digests are
 the record — a stage's claimed output is never substituted for its
 measured output. Model passes inside the tools (tagging, QA generation)
 are P, critiqued by each stage's validated layer stats and rejection
-rates. Stage 10 verification is D (`lisp_eval` over measured stage
+rates. Agent-side model passes are likewise P — Stage 7's adjudication
+render (`docproc/adjudicate-passages.j2`) and Stage 8's decoupled
+`grounding-verify` run — critiqued by the same layer stats, the
+operator's semantic acceptance, and the mechanical gates they feed.
+Stage 10 verification is D (`lisp_eval` over measured stage
 equalities and the separately evidenced semantic-gate boolean — never
 fixed totals, file sizes, or a model's success claim).
 
@@ -54,8 +58,8 @@ lists parameters. Enforcement anchors (paths relative to the repository root):
 | One bounded word-window engine, real overlap including explicit zero | `kask/crates/hkask-memory/src/text_chunking.rs:123`; `kask/mcp-servers/hkask-mcp-corpus/src/helpers.rs:373` |
 | Required current-protocol classification, identity correlation and server-resolved published anchors | `kask/crates/hkask-types/src/corpus.rs`; `kask/crates/hkask-bridge-ontology/src/term_resolution.rs`; `kask/mcp-servers/hkask-mcp-corpus/src/tools/tagging/ops.rs` |
 | Full-source stored context and partition-stable prompt IDs | `kask/mcp-servers/hkask-mcp-corpus/src/services/prompt_builder.rs:119`; `kask/crates/hkask-types/src/corpus.rs:38` |
-| Structured evidence across generation and ingestion | `kask/mcp-servers/hkask-mcp-corpus/src/services/qa_pipeline.rs:19`; `kask/mcp-servers/hkask-mcp-corpus/src/tools/corpus/qa_parsing.rs:53` |
-| Exclusive QA output ownership and typed retries | `kask/mcp-servers/hkask-mcp-corpus/src/services/qa_batch.rs:99`; `kask/mcp-servers/hkask-mcp-corpus/src/batch.rs:73` |
+| Structured evidence across generation and ingestion | `kask/mcp-servers/hkask-mcp-corpus/src/services/qa_pipeline.rs:26`; `kask/mcp-servers/hkask-mcp-corpus/src/tools/corpus/qa_parsing.rs:53` |
+| Exclusive QA output ownership and typed retries | `kask/mcp-servers/hkask-mcp-corpus/src/services/qa_batch.rs:99`; `kask/mcp-servers/hkask-mcp-corpus/src/services/qa_batch.rs:124`; `kask/mcp-servers/hkask-mcp-corpus/src/batch.rs:74` |
 
 ## Inputs and preflight
 
@@ -288,8 +292,9 @@ same candidate.
 The minimum reference suite is:
 
 1. **Passage baseline** — greedy sentence-bounded 100-word passages, no overlap,
-   merging a final passage below 50 words backward (Lewis et al., 2020; Chen et al.,
-   2024).
+   merging a final passage below 50 words backward (Lewis et al., 2020,
+   arXiv:2005.11401; Chen et al., 2024 — author-year only, resolve to a
+   full citation before relying on it as provenance).
 2. **Current candidate** — the caller's proposed structure/sentence-aware maximum,
    floor and overlap, recorded exactly rather than relabeled as the baseline.
 3. **Small-to-big challenger** — fine deterministic child units linked to
@@ -328,7 +333,9 @@ The sealed run identity hashes accepted sources, queries, the actual model, full
 and retriever parameters, every representation, the child-parent map, parents and all
 indexes; any resume drift fails. Do not add semantic breakpoint chunking, dynamic
 routing, contextual generation or linked tiers merely to complete the comparison. The
-design taxonomy is segmentation × embedding paradigm (Zhou et al., 2026);
+design taxonomy is segmentation × embedding paradigm (Zhou et al., 2026 —
+author-year only, resolve to a full citation before relying on it as
+provenance);
 in-document needle retrieval and in-corpus retrieval are separate evaluation strata.
 
 After calibration selects a policy, call `corpus_chunk` with `input_dir` set to the
@@ -710,6 +717,33 @@ classification and the approved prompt count when required, reconciled generatio
 semantic acceptance, relevant retrieval and requested style validation. Never
 substitute fixed totals, incomplete coverage, a model's success claim or file size.
 
+The canonical form — bind every value from this run's measured stage records,
+never from a target, a previous run, or a model's claim; omit a not-requested
+branch's clause (classification, prompts/pairs, export, style) and record the
+omission in the run record, never bind both sides equal to fake a pass:
+
+```
+form: "(and (= sources_present sources_expected) (= embeddings_stored chunks_measured) (= classified_count classified_target) (= prompts_written prompts_expected) (= pairs_requested pairs_expected) (= prompts_total (+ prompts_succeeded prompts_failed)) (= unresolved_failed 0) (= candidate_parsed candidate_nonblank) (= candidate_parsed (+ filter_drops duplicates retained)) (= retained (+ stored failed)) (= storage_errors 0) (= (+ train_rows validation_rows) retained) style_ok semantic_gate retrieval_ok)"
+env:  { "sources_present": <measured>, "sources_expected": <inventoried>,
+        "embeddings_stored": <measured>, "chunks_measured": <measured>,
+        "classified_count": <measured>, "classified_target": <total chunks, when classification is required>,
+        "prompts_written": <measured>, "prompts_expected": <classified_count when uncapped — one PreparedQaPrompt per chunk; the chunk count the approved pair cap selects when capped>,
+        "pairs_requested": <measured>, "pairs_expected": <classified_count × qa_pairs_per_chunk, or the approved max_pairs>,
+        "prompts_total": <measured>, "prompts_succeeded": <measured>, "prompts_failed": <measured>,
+        "unresolved_failed": <identified prompts with no terminal outcome>,
+        "candidate_parsed": <measured>, "candidate_nonblank": <measured>, "filter_drops": <measured>, "duplicates": <measured>,
+        "retained": <measured>, "stored": <measured>, "failed": <measured>,
+        "storage_errors": <measured>,
+        "train_rows": <measured assembled total, when export is requested>, "validation_rows": <measured assembled total, when export is requested>,
+        "style_ok": <the Stage 5 measured style criterion, when the style branch is requested>,
+        "semantic_gate": <the separately evidenced Stage 8 boolean>,
+        "retrieval_ok": <the live query's source/text identity verdict> }
+```
+
+The prompt identity and the pairs identity are distinct: Stage 6 writes one
+`PreparedQaPrompt` per chunk and requests `qa_pairs_per_chunk` pairs per
+prompt — never bind the pair count into a prompt clause.
+
 Report every stage as not requested, blocked/failed, partial, or verified with
 its actual tool outcome and evidence. Manual extraction merges, file partitions,
 cleanup, audits and reruns carry the same status/accounting discipline. A blocked
@@ -719,6 +753,42 @@ failures via `curator_report_skill_use_issue`, never silently bypass the engine.
 No claim of a rebuild, ingestion, centroid or training completion is valid without
 the corresponding run. Code/doc work cites its commit, or explicitly says
 **uncommitted**; training readiness is not evidence of trained capability.
+
+## Regression case
+
+All receipts executed live through `lisp_eval` (2026-10-01, batch-13 audit):
+
+- Stage 10 verification, green: 12 inventoried sources all present, 400
+  embeddings equal to 400 measured chunks, classification complete
+  (400/400), 400 prompts equal to 400 expected (one per chunk), 800 pairs
+  requested equal to 800 expected, generation reconciled (400 = 400 + 0)
+  with zero unresolved failures, the candidate file reconciled
+  (800 nonblank = 800 parsed = 0 drops + 0 duplicates + 800 retained),
+  ingestion reconciled (800 = 800 + 0) with zero storage errors, export
+  reconciled (640 train + 160 validation = 800 retained), style gate,
+  semantic gate and retrieval all true → `true`.
+- Stage 10 verification, embedding loss: same env with
+  `embeddings_stored: 399` vs `chunks_measured: 400` → `false` — one lost
+  embedding fails the whole verification; a tool's degraded threshold is
+  not a pass.
+- Stage 10 verification, unresolved generation failure: same env with
+  `unresolved_failed: 1` → `false` — an identified-but-unresolved prompt
+  failure blocks completion.
+- Stage 10 verification, prompt/pairs conflation: same env with
+  `prompts_written: 800` (the pair count bound into the prompt clause) vs
+  `prompts_expected: 400` → `false` — the pairs identity is not the prompt
+  identity; Stage 6 keeps them distinct and the form enforces both.
+
+The skill's form is executed at use time, never anchored in code.
+
+## Registry Templates
+
+This skill owns no registry templates. Stage 7 renders
+`docproc/adjudicate-passages.j2` — a registry template under the `docproc/`
+namespace with no owning skill in `.agents/skills/` — to produce reviewer
+adjudication decisions; this skill consumes its output directly as the
+`prepared-qa-adjudication-v2` JSONL without re-specifying its context
+contract.
 
 ## Constraints
 
