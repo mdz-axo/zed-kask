@@ -148,3 +148,7 @@ Use `cx.background_executor().timer(duration).await` in GPUI tests, not `smol::T
 # Concurrent-edit trap
 
 * A build-breaking half-edit left in the tree (e.g. an API change without its call sites) blocks every other agent's validation and is a release blocker, not work-in-progress. If you cannot finish a refactor in one pass, do not leave the tree broken — gate it, branch it, or revert it.
+
+# Repository fragmentation (absolute prohibition)
+
+* One repository, one working tree, one skills set. Never create a second clone, worktree, or copy of this repository for any purpose — A/B measurement, benchmarking, isolation, or "testing" (operator ruling 2026-10-01: the zed-kask-ab worktree, created against explicit instruction, put a stale 60-skill copy on the live skill-load path and fragmented project logic surreptitiously; removed same day with prejudice). Measurements run as branches in the canonical clone or in-tree; the shared-tree discipline (pathspec commits, index checks) is the isolation mechanism. An agent that perceives a need for a second copy surfaces it and waits — never creates it, and never after being told no.
