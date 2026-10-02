@@ -1,6 +1,6 @@
 ---
 name: transcript-reel
-description: "Distill a recording into a highlight reel over the media server's educt layer system: record and transcribe with word-level timings, run correction and speaker passes, select highlights semantically, compose and render an EDL, and export captions or corpus text. Reifies the capture-post-distribution discipline (MovieLabs OMC) over the educt transcript tools."
+description: "Distill a recording into a highlight reel over the media server's educt layer system: record and transcribe with word-level timings, run correction and speaker passes, select highlights semantically, compose and render an EDL, and export captions or corpus text. Reifies the Reduct.video transcript-linked-media discipline (operator ruling 2026-09-25) over the educt transcript tools, with MovieLabs OMC provenance vocabulary."
 ---
 
 # Transcript Reel
@@ -40,7 +40,10 @@ Reduct.video — the transcript bundled with its video as one linked artifact: c
 ### Phase 1 — Capture and store
 
 1. If recording now: call `record_and_transcribe` with the duration.
-   It returns the audio path and a synchronized TranscriptBundle.
+   It returns the audio path and a synchronized TranscriptBundle — then
+   call `educt_store_transcript` with the returned bundle to obtain the
+   transcript id the later phases anchor to (record_and_transcribe does
+   not store it itself).
    If the media already exists: call `transcribe_and_store` with the
    audio/video path or URL (plus the gallery asset id if the media is
    indexed). It transcribes and stores the bundle server-side in one
@@ -101,6 +104,29 @@ Reduct.video — the transcript bundled with its video as one linked artifact: c
     first) rather than delivering a broken reel. Bound: at most 2
     re-entries per failing phase; a third failure delivers the best
     available reel with the failure noted.
+
+## Regression case
+
+All receipts executed live through `lisp_eval` (2026-10-01, batch-14 audit),
+over the Convergence form:
+
+- Green: `{reel_exists: 1, clip_count: 5, rejection_rate: 0.1}` → `true` —
+  the reel rendered with clips and the passes accepted.
+- Empty reel: `clip_count: 0` → `false` — a highlight selection with no
+  keep-ops re-enters the highlight phase (a sharper request); in practice
+  `educt_render_edl` rejects an empty clip plan outright, so this state
+  fails at the first conjunct — the receipt pins the form's behavior
+  regardless.
+- Heavy rejection: `rejection_rate: 0.45` (the paragraph pass rejected
+  heavily) → `false` — re-enter at Phase 2 (corrections first), never
+  deliver a broken reel.
+
+The skill's form is executed at use time, never anchored in code.
+
+## Registry Templates
+
+This skill owns no registry templates — the pipeline is the media server's
+educt tool family plus the convergence form above.
 
 ## Constraints
 
