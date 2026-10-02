@@ -550,8 +550,11 @@ repointed; README tombstone recorded; corpus 72 → 71). P2 REJECTED by
 operator ruling ("leave the media file alone" — the role document
 stays). P3 stands as priced, recommended against, unrulled. The gap
 docs (curator, training) are deferred per the operator's direction to
-focus on code work. The 60-file target remains a standing direction;
-the measured floor is 71.
+focus on code work. **Closed 2026-10-01** (the operator's proceed ruling,
+after the code focus ran to exhaustion): both per-server docs created
+(`reference/mcp-servers/curator.md`, `reference/mcp-servers/training.md`);
+corpus 72 → 74. The 60-file target remains a standing direction;
+the measured floor moves with the discipline-required docs.
 
 ### Execution record — seventh slice (2026-10-01: CU-1 continuation — the legacy metric vocabulary; found by the closure test)
 

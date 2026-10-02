@@ -2,7 +2,7 @@
 title: "Loop Register — zed-kask canonical loops"
 audience: [developers, architects, agents, operators]
 last_updated: 2026-10-01
-version: "0.25.4"
+version: "0.25.5"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle]
@@ -787,6 +787,22 @@ exactly that lag), not evidence of absence.)
    generally.
 
 ## Change log
+
+- 2026-10-01 — v0.25.5 closed the per-server doc gap (the operator's
+  proceed ruling; the last open finding from the pricing pass).
+  `reference/mcp-servers/curator.md` (15 tools — the sovereign-memory
+  and regulation-readback surface; the shared-store design; the
+  passphrase required) and `reference/mcp-servers/training.md` (9 tools
+  — the consent-gated training job surface; the passphrase optional
+  with the WARNED in-memory fallback, documented as the deliberate
+  contrast with the start-refusing durable stores) created per the
+  fleet's per-server discipline. Both credential declarations
+  verified honest against the startup code before writing (the F-K1
+  audit rode the survey): the curator's `required` matches its
+  refusing startup; the training server's `optional` matches its
+  surfaced degradation. Corpus 72 → **74** (under the 75 cap; the
+  60-file target's floor moves with it — the discipline requires the
+  docs). The plan's sixth-slice deferral note closed.
 
 - 2026-10-01 — v0.25.4 closed O3 as designed (operator ruling "close it
   out"; records-only, zero code). Expectation carriage is scoped to

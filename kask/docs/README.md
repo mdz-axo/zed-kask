@@ -16,7 +16,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 
 **Per-crate docs:** [`diataxis/INDEX.md`](diataxis/INDEX.md) lists 19 retained artifacts across 10 cross-cutting sets. Eight tutorials were folded on 2026-09-16; on 2026-09-28 the eight per-crate how-to documents were folded into their set references (each reference gained a Procedures section) and the hkask-tool-port explanation was folded into its reference; `diataxis/hkask-mcp-server/tutorial.md` is the one retained tutorial.
 
-**Corpus size (measured 2026-10-01):** 71 Markdown documents and one live YAML inventory, 72 files total (`find kask/docs -type f | wc -l`) — under the formal **fewer-than-75** count gate, with a working **60-file target** as the condensation direction (cap and target set by operator ruling 2026-09-30, [`DOCUMENTATION_STANDARDS.md`](architecture/DOCUMENTATION_STANDARDS.md) §3). The 2026-09-30 three-layer review added two documents (the admitted cybernetic-nervous-system reference model and the alignment plan); the same day's CU-5 condensation deleted the Aeneas record set (three files — tombstone below). The 2026-09-28 condensation folded the eight per-crate how-to documents into their set references (Procedures sections), recorded in the lifecycle ledger below. On 2026-10-01 the operator's P1 ruling folded the region-space collaboration report into its sibling (tombstone below), and the concurrent stream added `research/two-symptom-latency-findings.md`. [`principle-constraints.yaml`](architecture/principle-constraints.yaml) is a live governance inventory consumed by `kask/scripts/check-principle-constraints.sh`, not a deletion candidate.
+**Corpus size (measured 2026-10-01):** 73 Markdown documents and one live YAML inventory, 74 files total (`find kask/docs -type f | wc -l`) — under the formal **fewer-than-75** count gate, with a working **60-file target** as the condensation direction (cap and target set by operator ruling 2026-09-30, [`DOCUMENTATION_STANDARDS.md`](architecture/DOCUMENTATION_STANDARDS.md) §3). The 2026-09-30 three-layer review added two documents (the admitted cybernetic-nervous-system reference model and the alignment plan); the same day's CU-5 condensation deleted the Aeneas record set (three files — tombstone below). The 2026-09-28 condensation folded the eight per-crate how-to documents into their set references (Procedures sections), recorded in the lifecycle ledger below. On 2026-10-01 the operator's P1 ruling folded the region-space collaboration report into its sibling (tombstone below), the concurrent stream added `research/two-symptom-latency-findings.md`, and the per-server doc gap closed (curator and training docs created). [`principle-constraints.yaml`](architecture/principle-constraints.yaml) is a live governance inventory consumed by `kask/scripts/check-principle-constraints.sh`, not a deletion candidate.
 
 ## Repair and improvement plans
 
@@ -49,6 +49,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 | [`reference/mcp-servers/README.md`](reference/mcp-servers/README.md) | MCP server registry — 13 built-in servers and the fleet tool surface. |
 | [`reference/mcp-servers/companies.md`](reference/mcp-servers/companies.md) | Companies server — valuation, forecasting, and portfolio analysis. |
 | [`reference/mcp-servers/corpus.md`](reference/mcp-servers/corpus.md) | Corpus server — gather → process → output pipeline. |
+| [`reference/mcp-servers/curator.md`](reference/mcp-servers/curator.md) | Curator server — sovereign memory, regulation readback, and the algedonic log (15 tools). |
 | [`reference/mcp-servers/evolution.md`](reference/mcp-servers/evolution.md) | Evolution server — experiment registry for the sharded evolution program (6 tools). |
 | [`reference/mcp-servers/kata-kanban.md`](reference/mcp-servers/kata-kanban.md) | Kata-kanban server — Toyota Kata task boards and persistent-until-resolved functional goals (27 tools). |
 | [`reference/mcp-servers/media.md`](reference/mcp-servers/media.md) | Media server — gallery, generation, transcription, jobs, and workflows. |
@@ -58,6 +59,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 | [`reference/mcp-servers/scenarios.md`](reference/mcp-servers/scenarios.md) | Scenarios server — Schwartz/Tetlock pipeline (19 tools). |
 | [`reference/mcp-servers/spreadsheet.md`](reference/mcp-servers/spreadsheet.md) | Spreadsheet server — LogiSheets-backed workbook surface (2 tools). |
 | [`reference/mcp-servers/swarm.md`](reference/mcp-servers/swarm.md) | Swarm server — Agent Bestiary World and local substrate (90 tools). |
+| [`reference/mcp-servers/training.md`](reference/mcp-servers/training.md) | Training server — consent-gated LoRA/QLoRA training jobs, datasets, validation, evaluation (9 tools). |
 | [`reference/skills/README.md`](reference/skills/README.md) | Registry of 60 skills, 56 template namespaces, and 274 `.j2` resources. |
 | [`loop-register.md`](loop-register.md) | Loop audit register — 25 system loops (L24 the evolution protocol, L25 evolution-health sensing, added 2026-09-30/10-01) with audit verdicts, three-layer (A/B/C) classifications with per-row sense→report→actuate maps and INV1–INV6 alignment verdicts (pass 3), deferred operator decisions, and the change-log ledger. |
 | [`reference/kask-settings.md`](reference/kask-settings.md) | Kask settings and environment reference. |
@@ -194,7 +196,7 @@ The eight tutorial removals landed in `5881f1f406fafe12f4fc65a549dbf1eb0a62ca84`
 - [x] Internal links target retained documents; the eight folded how-to documents' links were repointed to their set references (2026-09-28).
 - [x] Diagram metadata has unique-ID/location registry parity (106 records, tree-verified 2026-09-28).
 - [x] Edited citations use full repository-relative paths; 525 sampled citations across the recomposed artifacts resolve (2026-09-28).
-- [x] Document count is 72, under the fewer-than-75 cap with a working 60-file target (`find kask/docs -type f | wc -l`, measured 2026-10-01).
+- [x] Document count is 74, under the fewer-than-75 cap with a working 60-file target (`find kask/docs -type f | wc -l`, measured 2026-10-01).
 
 ## See also
 
