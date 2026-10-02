@@ -3271,10 +3271,18 @@ async fn test_reasoning_runaway_watchdog_aborts_thinking_only_stream(cx: &mut Te
     });
     fake_model.end_last_completion_stream();
 
-    // The turn must end (the collector is bounded — no hang possible)
-    // with the named runaway error surfaced on the event stream.
-    let remaining_events = collect_events_until_stop(&mut events, cx).await;
-    let surfaced = remaining_events.iter().any(|event| {
+    // The turn ends with the named runaway error on the event stream. The
+    // error path emits no Stop event (like the existing `Other` arm), so
+    // `collect_events_until_stop` would panic by design — drain the
+    // channel directly after the turn completes. `try_recv` is
+    // non-blocking and the channel closes when the turn is taken, so
+    // this cannot hang.
+    cx.run_until_parked();
+    let mut collected = Vec::new();
+    while let Ok(event) = events.try_recv() {
+        collected.push(event);
+    }
+    let surfaced = collected.iter().any(|event| {
         event
             .as_ref()
             .err()
@@ -3282,7 +3290,7 @@ async fn test_reasoning_runaway_watchdog_aborts_thinking_only_stream(cx: &mut Te
     });
     assert!(
         surfaced,
-        "expected the turn to surface the reasoning-runaway error, got: {remaining_events:?}"
+        "expected the turn to surface the reasoning-runaway error, got: {collected:?}"
     );
 }
 

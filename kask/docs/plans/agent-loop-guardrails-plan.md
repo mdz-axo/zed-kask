@@ -30,9 +30,10 @@ reasoning-runaway watchdog) landed the same day: both bounds checked per
 delta (no timer race needed while reasoning flows — the stalled-stream
 case is the deferred stall bound), state-machine unit suite + a
 source-structure wiring pin green, clippy `-D warnings` clean. Deferred
-from Slice 2, recorded in DIVERGENCE.md: the behavioral turn-level test,
-the first-chunk/stall bounds, and the settings keys. Slice 3 (C1b recovery
-ladder) remains pending execution against this plan.
+from Slice 2, recorded in DIVERGENCE.md: the first-chunk/stall bounds and
+the settings keys (the behavioral turn-level test landed 2026-10-02 after
+the rebuild as `test_reasoning_runaway_watchdog_aborts_thinking_only_stream`).
+Slice 3 (C1b recovery ladder) remains pending execution against this plan.
 
 **Provenance.** Patterns are translated at the architecture level from
 FrontierAgent (Apache-2.0, v0.1.0 unreleased, active — last commit 2026-10-02)
