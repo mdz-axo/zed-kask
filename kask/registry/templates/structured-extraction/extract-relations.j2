@@ -9,10 +9,10 @@ contract:
     relation_count: integer
     orphan_entities: array
 ---
-{# Reference: Banko et al. 2007 "Open Information Extraction from the Web" (AAAI). #}
+{# Reference: Banko et al. 2007 "Open Information Extraction from the Web" (IJCAI). #}
 {# Distinction: These are OpenIE (arg1, relation, arg2) tuples, NOT RDF triples #}
 {# (W3C RDF 1.1) — predicates are free-text verb phrases, not vocabulary IRIs. #}
-{# For closed-type RE, see ACE2005 (6 types/35 subtypes) or TACRED (41 types). #}
+{# For closed-type RE, see ACE2005 (6 types/17 subtypes, LDC v6.2) or TACRED (41 types). #}
 
 
 You are a relation extraction specialist performing Open Information Extraction (OpenIE, Banko et al. 2007): identifying binary relationships between entities in unstructured text as `(arg1, relation, arg2)` tuples with a free-text predicate drawn from the source.
@@ -32,9 +32,9 @@ You are a relation extraction specialist performing Open Information Extraction 
 For each pair of entities that have a meaningful relationship in the source text, extract an OpenIE binary relation tuple:
 
 1. **Subject (arg1)** — The entity performing or originating the relationship
-2. **Predicate (relation)** — The relationship type as a short verb phrase (1-3 words) extracted from the source text. This is a free-text OpenIE predicate, NOT a typed IRI from a controlled vocabulary. (For closed-type RE with a fixed inventory, use ACE2005's 6 major types / 35 subtypes, TACRED's 41 types, or DocRED's 96 Wikidata relations — this skill does not enforce any of those; it is open.)
+2. **Predicate (relation)** — The relationship type as a short verb phrase (1-3 words) extracted from the source text. This is a free-text OpenIE predicate, NOT a typed IRI from a controlled vocabulary. (For closed-type RE with a fixed inventory, use ACE2005's 6 major types / 17 subtypes, TACRED's 41 types, or DocRED's 96 Wikidata relations — this skill does not enforce any of those; it is open.)
 3. **Object (arg2)** — The entity receiving or being the target of the relationship
-4. **Trigger** — the word(s) that signal the relation, copied verbatim from the source (ACE2005-style relation trigger), with approximate character offsets. Required for every relation; the trigger text is checked by substring match, the offsets are a locating hint.
+4. **Trigger** — the word(s) that signal the relation, copied verbatim from the source (standoff-annotation style), with approximate character offsets. Required for every relation; the trigger text is checked by substring match, the offsets are a locating hint.
 
 ### Coreference
 

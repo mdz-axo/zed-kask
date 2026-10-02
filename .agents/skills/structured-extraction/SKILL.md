@@ -37,9 +37,9 @@ Structured data extraction from unstructured text. Identifies entities, extracts
 
 1. Open Information Extraction (OpenIE, Banko et al. 2007): extract a binary relation tuple for each pair of entities that have a meaningful relationship in the source text. These are `(arg1, relation, arg2)` tuples with free-text predicates — NOT RDF triples (W3C RDF 1.1), which require typed IRI predicates from a vocabulary.
 2. Identify the Subject (arg1) as the entity performing or originating the relationship (after coreference resolution — CoNLL-2012).
-3. Identify the Predicate (relation) as a short verb phrase (1-3 words) extracted from the source. For closed-type RE, use ACE2005 (6 types/35 subtypes), TACRED (41 types), or DocRED (96 Wikidata relations) — this skill is open by default.
+3. Identify the Predicate (relation) as a short verb phrase (1-3 words) extracted from the source. For closed-type RE, use ACE2005 (6 types/17 subtypes, LDC English Relations Guidelines v6.2), TACRED (41 types), or DocRED (96 Wikidata relations) — this skill is open by default.
 4. Identify the Object (arg2) as the entity receiving or being the target of the relationship.
-5. Record the `trigger_span` (character offsets of the relation signal word(s), ACE2005-style) for every relation.
+5. Record the `trigger_span` (character offsets of the relation signal word(s), standoff-annotation style) for every relation.
 6. Assign a confidence score (0.0-1.0) for each relation based on textual clarity.
 7. Mark any entity that has no detected relations as an isolated entity (graph-theory: isolated vertex; reported in `orphan_entities`).
 8. Only extract relations that are explicitly stated or clearly implied in the source text.
@@ -52,21 +52,22 @@ Structured data extraction from unstructured text. Identifies entities, extracts
 4. Resolve conflicts if multiple entities map to the same field by selecting the most confident or most recent.
 5. Infer missing but required fields from surrounding context if possible.
 6. Report fields that cannot be populated from available information as unresolved fields.
+7. Emit `field_coverage`: for every schema field, populated (with its source entity) or unresolved — the field-level coverage record the template's output contract requires.
 
 ### Verify (D — `lisp_eval`)
 
-Before mapping, check every entity's `entity_text` and every relation trigger against the source with `lisp_eval` `(string-contains entity_text source_text)`. Drop anything that fails and list it as `rejected_extractions`; a model-produced string that is not in the source is a fabrication, not an entity. Offsets are not checked (the interpreter has no substring-at-offset builtin), so they stay approximate — a consumer that needs an exact offset (e.g. `grounding-verify`) must locate the verified text itself.
+Before mapping, check every entity's `entity_text` and every relation trigger against the source with `lisp_eval` `(string-contains entity_text source_text)`. Drop anything that fails and list it as `rejected_extractions`; a model-produced string that is not in the source is a fabrication, not an entity. A guard error on a correctly-ordered call (the needle longer than the whole source) means rejection — never swap the arguments: the swapped call can return true (the source inside the over-long entity) and pass a fabrication through the gate. Offsets are not checked (the interpreter has no substring-at-offset builtin), so they stay approximate — a consumer that needs an exact offset (e.g. `grounding-verify`) must locate the verified text itself.
 
-**D/P labelling.** Entity identification, typing, relation extraction, confidence and field inference are P, critiqued by this substring check and by the operator; the substring check and the Convergence gate are D. Reference models: OpenIE (Banko et al. 2007), ACE2005 standoff annotation, CoNLL-2012 coreference.
+**D/P labelling.** Entity identification, typing, relation extraction, confidence, field inference, map-to-schema's type coercion and conflict resolution are P, critiqued by this substring check and by the operator; the substring check and the Convergence gate are D. Reference models: OpenIE (Banko et al. 2007, IJCAI), ACE2005 standoff annotation, CoNLL-2012 coreference.
 
 ### Convergence
 
-7. Gate — call `lisp_eval` with:
-   - form: `(eq (length unresolved_fields) 0)`
-   - env: `{ "unresolved_fields": <required schema fields still unpopulated> }`
-   Bound: one re-entry — re-run identify-entities with the unresolved field
-   names as extraction hints; fields that remain unresolved after the second
-   pass are reported as unresolved (map-to-schema step 6), never fabricated.
+Gate — call `lisp_eval` with:
+- form: `(eq (length unresolved_fields) 0)`
+- env: `{ "unresolved_fields": <required schema fields still unpopulated> }`
+- Bound: one re-entry — re-run identify-entities with the unresolved field
+  names as extraction hints; fields that remain unresolved after the second
+  pass are reported as unresolved (map-to-schema step 6), never fabricated.
 
 ## Registry Templates
 
@@ -78,5 +79,39 @@ Before mapping, check every entity's `entity_text` and every relation trigger ag
 
 To render a template, call the `render_template` tool with the template ref (e.g., `structured-extraction/extract-relations`) and a context object with the required variables.
 
+Template context variables (from each template's [inference] contract):
+- `identify-entities.j2`: `source_text`, `target_schema`, `extraction_hints`
+- `extract-relations.j2`: `source_text`, `entities`
+- `map-to-schema.j2`: `source_text`, `target_schema`, `entities`, `relations`, `unmapped_text`
+
+## Regression case
+
+All receipts executed live through `lisp_eval` (2026-10-01, batch-11 audit):
+
+- Substring verify, present: `{entity_text: "Acme Corp", source_text: "Acme
+  Corp reported revenue of $12M in 2024."}` → `true` (needle-first: the
+  entity text is the needle, the source the haystack).
+- Substring verify, fabricated: `{entity_text: "Globex Industries", ...}` →
+  `false` — a model-produced string not in the source is a fabrication, not
+  an entity; it lands in `rejected_extractions`.
+- Convergence gate, resolved: `{unresolved_fields: []}` → `true`.
+- Convergence gate, unresolved: `{unresolved_fields: ["founded_date"]}` →
+  `false` — one re-entry with the field names as hints, then reported, never
+  fabricated.
+
+The skill's forms are executed at use time, never anchored in code.
+
 ## Constraints
+
+- Extraction produces candidates, not verdicts — verification belongs to
+  `grounding-verify`.
+- Predicates are free-text verb phrases (OpenIE), never RDF typed IRIs;
+  closed-type RE pre-populates the predicate vocabulary in
+  `extraction_hints`.
+- Every entity text and relation trigger is substring-verified against the
+  source before mapping; failures are rejected, not repaired.
+- Character offsets are locating hints only (the interpreter has no
+  substring-at-offset builtin) — a consumer needing exact offsets locates
+  the verified text itself.
+- Unresolved fields are reported after one re-entry, never fabricated.
 
