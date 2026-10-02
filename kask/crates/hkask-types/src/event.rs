@@ -424,8 +424,6 @@ pub enum SpanKind {
     // ── Regulation spans (reg.outcome.*) — v0.31.0 Fermi impact-gate ──
     /// Impact verification completed: `reg.outcome.impact_verified`
     ImpactVerified,
-    /// Action substituted due to repeated ineffectiveness: `reg.outcome.action_substituted`
-    ActionSubstituted,
     /// Action blocked due to severe counterproductivity: `reg.outcome.action_blocked`
     ActionBlocked,
     /// Regulatory plateau detected — escalation triggered: `reg.outcome.plateau_detected`
@@ -450,7 +448,6 @@ impl SpanKind {
             SpanKind::CurationDirectiveAcknowledged => ("reg.curation", "directive_acknowledged"),
             SpanKind::VarietyAlgedonicAlert => ("reg.variety", "algedonic_alert"),
             SpanKind::ImpactVerified => ("reg.outcome", "impact_verified"),
-            SpanKind::ActionSubstituted => ("reg.outcome", "action_substituted"),
             SpanKind::ActionBlocked => ("reg.outcome", "action_blocked"),
             SpanKind::RegulatoryPlateauDetected => ("reg.outcome", "plateau_detected"),
             SpanKind::LoopMetricsTelemetry => ("reg.outcome", "loop_quality"),

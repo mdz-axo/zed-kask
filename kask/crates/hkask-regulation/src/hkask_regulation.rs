@@ -19,7 +19,6 @@ pub(crate) mod set_points;
 pub(crate) mod extrapolation;
 pub(crate) mod loops;
 pub(crate) mod sensor_provider;
-pub(crate) mod strategy_evaluator;
 
 pub(crate) mod runtime;
 pub use algedonic::{

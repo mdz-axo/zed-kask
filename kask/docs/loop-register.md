@@ -2,7 +2,7 @@
 title: "Loop Register — zed-kask canonical loops"
 audience: [developers, architects, agents, operators]
 last_updated: 2026-10-01
-version: "0.25.2"
+version: "0.25.3"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle]
@@ -353,7 +353,7 @@ the spec's minimum list, recorded below rather than narrowed away.
 - **Entry point:** `kask/crates/hkask-regulation/src/metacognition.rs:346` `run` / `:405` `tick`; cycle stages at `cybernetics_loop/cycle.rs:305` `sense`, `:409` `compute`, `:450` `act`, `:723` `prepare_impact_checks`, `:781` `escalate_exhausted_checks`, `:810` `verify_impact`; facade `cybernetics_loop.rs:278` `CyberneticsLoop::new`
 - **Participants:** `RegulationLedger` (constructed `crates/zed/src/main.rs:790`), set points (`main.rs:773-784`), alert channel (`main.rs:632-641`), directive inbox (`main.rs:796-803`), email sink (`main.rs:656`, `kask/crates/hkask-email`); zed-side sensor bridges: `kask_bridge/src/context_server_health_bridge.rs:39`, `ocr_health_bridge.rs:36`, `rollout_event_bridge.rs:104` `poll_once`, `algedonic_log_bridge.rs`, `inference_resilience.rs`, `metacognition_bridge.rs`, `directive_bridge.rs`; wired on the kask tokio runtime (`crates/zed/src/main.rs:579-593`)
 - **Trigger:** composition-root tick drivers gated on `kask.curator.always_on` (`main.rs:1225-1243`, D8/F10): CyberneticsLoop @10s (`:1227-1236`), MetacognitionLoop @30s (`:1239-1242`, self-interval `metacognition.rs:346-354`), harness-regression monitor @60s (`:1256-1300`, backpressure/retry semantics `:1272-1296`); alert channel (`main.rs:632-641`); `curator_directive` tool → `process_inbox` (`cybernetics_loop.rs:672-687`)
-- **Functional graph (Phase 1, IS-cited per node):** CyberneticsLoop::tick (`cybernetics_loop.rs:780-981`, serialized by `impact_tick` `:781-783`): sense (sensor providers + observations cache) → escalation-sink reconcile (`:793-797`) → compare → compute (advisories) → act (`cycle.rs:450-562`: E04 cap-exhaustion captured BEFORE the per-tick reset `:479-497`, `reset_all_caps`, alert fan-out) → `route_action_as_alert` (`:568+`: board + live channel + archive fallback + email, dedup latches, retention authority `:450-477`) → claim accepted checks (`:800-811`) → `prepare_impact_checks` (`cycle.rs:723`: bounded read retry, ready/retry/exhausted) → worklist reconcile before any awaited effect (`:822-827`) → `escalate_exhausted_checks` (`cycle.rs:781`: board + live channel, no verdict) → `verify_impact` (`cycle.rs:810`, evidence already read) → strategy evaluator → `ledger.record_cycle_outcome` (`:899`) → loop-quality telemetry (fingerprint suppression, hourly heartbeat, `:902-981`). MetacognitionLoop::tick (`metacognition.rs:405-435`): ledger + regulation health + skill-feedback drift sense (`:447+`) → compare (`:535`) → act (`:592`, drains the CyberneticsLoop alert channel at `:659`) → snapshot surfaced via `curator_status`.
+- **Functional graph (Phase 1, IS-cited per node; citations re-measured 2026-10-01):** CyberneticsLoop::tick (`cybernetics_loop.rs:806-946`, serialized by `impact_tick` `:807-809`): sense (sensor providers + observations cache) → escalation-sink reconcile (`:819-823`) → compare → compute (advisories) → act (`cycle.rs:477-593`: E04 cap-exhaustion captured BEFORE the per-tick reset `:506-524`, `reset_all_caps`, alert fan-out) → `route_action_as_alert` (`:596+`: board + live channel + archive fallback + email, dedup latches, retention authority `:477-505`) → claim accepted checks (`:826-837`) → `prepare_impact_checks` (`cycle.rs:752`: bounded read retry, ready/retry/exhausted) → worklist reconcile before any awaited effect (`:840-853`) → `escalate_exhausted_checks` (`cycle.rs:810`: board + live channel, no verdict) → `verify_impact` (`cycle.rs:840`, evidence already read) → `ledger.record_cycle_outcome` (`:877`) → loop-quality telemetry (fingerprint suppression, hourly heartbeat, `:891-946`). MetacognitionLoop::tick (`metacognition.rs:405-435`): ledger + regulation health + skill-feedback drift sense (`:447+`) → compare (`:535`) → act (`:592`, drains the CyberneticsLoop alert channel at `:659`) → snapshot surfaced via `curator_status`.
 - **Findings (Phase 2, adjudicated):** **F1 IS, no action** — the two-loop split is the minimal shape: two required cadences (10s actuation vs 30s observability) and a one-way channel decoupling failure domains; merging couples them (a slow drift pass would delay cap-exhaustion escalation) — merge REJECTED on behavior grounds (also pinned by D8/F3/F10). **F2 IS, no action** — sensor no-data discipline enforced and documented (`sensor_provider.rs:138`/`:158`, the `unwrap_or(0)` trap named and avoided); the `dampener.rs:319`/`extrapolation.rs:55` hits are computation guards with local invariants, not sensor reads. **F3 IS, verified** — `always_on` has a real enforcement point (`main.rs:1226`). **F4 IS, informational** — the tick loops carry no cancellation tokens; process-lifetime loops owning no child processes (contrast: the MCP runtime's lifecycle latch exists for child-process death, L3). **F5 IS** — harness-monitor degradation surfaced (`Backpressured`/`Err` logged). **Bridge fleet examined:** each bridge implements a distinct hkask-regulation trait across a documented GPUI/tokio boundary; a shared snapshot-cell generic over the two health bridges adds indirection and saves ~20-40 lines — FAILS the admission test, rejected.
 - **Five properties (post-slice):** closed for ordinary alert/ledger resensing and for accepted rollout checks — a store-read error retains the check in the same bounded queue within `MAX_ROLLOUT_READ_ATTEMPTS` (3) (`cybernetics_loop.rs:814-827`; `cycle.rs:751-765`), and a check exhausting those retries escalates to the review board without a verdict (`cycle.rs:760-765`, `:781-804`), keeping the absent-verdict restart rescan as the recovery backstop; timely at the periodic tick with a bounded retry horizon; accurate for surfaced query warnings and exhaustion escalations; actionable for ordinary alerts and for a dropped check (board card `rollout_check_unverifiable:<metric>`). The pre-slice closure gap (recorded below) is fixed and pinned.
 - **Prediction vs actual (finalized by this audit, 2026-09-27):** predicted 2 defects / 2 impedances / conf 0.55 → actual: 1 reproduced behavioral defect (the accepted-check loss — found by the audit's reproduction, fixed by the landed slice `a2321f0df2`), 0 impedances, 0 surviving consolidation candidates (the two-loop split, the bridge fleet, and the exhaustion path were each examined and resolved on evidence). Brier-scored at Phase 4.
@@ -787,6 +787,28 @@ exactly that lag), not evidence of absence.)
    generally.
 
 ## Change log
+
+- 2026-10-01 — v0.25.3 deleted the strategy evaluator — self-tracking
+  dead surface since its birth (the operator-approved consumption
+  sweep). **Finding (IS):** `StrategyEvaluator` advertised
+  "multi-model strategy selection" with a ladder table, but
+  `RegulationStrategy` carried only a name — no ladder content, no
+  behavior difference between "default" and "aggressive"; the active
+  strategy was a private field with **no read path** (no getter, no
+  consumer — the promotion's only observables were an info log and
+  an `ActionSubstituted` span); and that span kind's only emitter was
+  the promotion site itself. Added with the original regulation
+  crate (`72a37d9507`), never wired. **Deleted:** the module
+  (173 lines), the loop field + import + initializer, the tick
+  integration block (~47 lines), the `SpanKind::ActionSubstituted`
+  variant + mapping (decode-safe: `Span` persists as plain strings
+  with no reverse mapping — old archive records unaffected), and
+  the two doc rows (`regulation-spans.md`'s span-kind table, the
+  diataxis hkask-regulation module table). The L2 row's tick graph
+  drops the node and its citations are re-measured (the drift rode
+  the v0.25.0 enrichment block and this deletion). Receipts:
+  hkask-regulation --lib 104/104, hkask-types --lib 87/87, rustfmt
+  clean, scoped clippy clean, `cargo check -p zed` passed.
 
 - 2026-10-01 — v0.25.2 made the L25 bridge/server registry-path parity
   structural (the recommended pin, executed as the deeper fix). The

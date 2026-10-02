@@ -115,7 +115,6 @@ use crate::sensor_provider::{SensorBus, VarietySensor};
 use crate::extrapolation::MovingAverageExtrapolator;
 use crate::runtime::RegulationLedger;
 use crate::set_points::SetPoints;
-use crate::strategy_evaluator::StrategyEvaluator;
 
 use crate::loops::{ActionDecision, CurationInput, LoopMetrics, TriggerOrigin};
 
@@ -252,9 +251,6 @@ pub struct CyberneticsLoop {
     /// Pluggable metric sensors (Fermi Extractor pattern).
     sensor_registry: Arc<SensorBus>,
     observations: parking_lot::Mutex<HashMap<crate::loops::SignalMetric, crate::loops::Signal>>,
-    /// Statistical learner for per-tool cost distributions and reliability.
-    /// Multi-model strategy evaluator (Fermi improvement-loop pattern).
-    strategy_evaluator: Mutex<StrategyEvaluator>,
     /// Trend extrapolator for anticipatory regulation (moving-average projection).
     extrapolator: MovingAverageExtrapolator,
     /// Runtime-calibratable thresholds — updated by `SetPointCalibrator` background task.
@@ -350,7 +346,6 @@ impl CyberneticsLoop {
             sensor_registry,
             observations: parking_lot::Mutex::new(HashMap::new()),
 
-            strategy_evaluator: Mutex::new(StrategyEvaluator::new()),
             extrapolator: MovingAverageExtrapolator::new(10),
             calibrated_thresholds,
             rollout_events: None,
@@ -863,54 +858,6 @@ impl CyberneticsLoop {
         // remains its recovery backstop.
         self.escalate_exhausted_checks(&exhausted).await;
         let impact_reports = self.verify_impact(&ready).await;
-
-        // Feed per-metric rollout outcomes into strategy evaluator.
-        // Collect promoted metrics in a locked scope; emit spans outside
-        // to avoid holding MutexGuard across .await (not Send).
-        let promoted_metrics = {
-            let mut evaluator = self
-                .strategy_evaluator
-                .lock()
-                .unwrap_or_else(|e| e.into_inner());
-            let mut seen = std::collections::HashSet::new();
-            let mut promoted = Vec::new();
-            for report in &impact_reports {
-                if seen.insert(report.metric) {
-                    let metric_reports: Vec<_> = impact_reports
-                        .iter()
-                        .filter(|r| r.metric == report.metric)
-                        .collect();
-                    let accepted = metric_reports
-                        .iter()
-                        .filter(|r| r.decision == ActionDecision::Accept)
-                        .count() as u64;
-                    let staged = metric_reports
-                        .iter()
-                        .filter(|r| r.decision == ActionDecision::Stage)
-                        .count() as u64;
-                    let blocked = metric_reports
-                        .iter()
-                        .filter(|r| r.decision == ActionDecision::Block)
-                        .count() as u64;
-                    evaluator.record_cycle(report.metric, accepted, staged, blocked);
-                    // Check for strategy promotion; emit Regulation span if promoted.
-                    if evaluator.active_policy(report.metric) {
-                        promoted.push(report.metric);
-                    }
-                }
-            }
-            promoted
-        };
-        for metric in promoted_metrics {
-            self.emit_regulation_span(
-                SpanKind::ActionSubstituted,
-                serde_json::json!({
-                    "event": "strategy_promoted",
-                    "metric": metric.as_str(),
-                }),
-            )
-            .await;
-        }
 
         // Feed regulation health into Regulation for metacognition observability.
         {

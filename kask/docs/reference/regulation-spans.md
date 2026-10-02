@@ -46,7 +46,7 @@ stderr lines into this pathway (`hkask-mcp/src/runtime.rs:813-830`).
 | --- | --- |
 | Tool dispatch | `ToolCompleted` |
 | Curation and variety | `CurationDirectiveAcknowledged`, `VarietyAlgedonicAlert` |
-| Outcome assessment | `ImpactVerified`, `ActionSubstituted`, `ActionBlocked`, `RegulatoryPlateauDetected`, `LoopMetricsTelemetry`, `ToolOutcomeBreakdown` |
+| Outcome assessment | `ImpactVerified`, `ActionBlocked`, `RegulatoryPlateauDetected`, `LoopMetricsTelemetry`, `ToolOutcomeBreakdown` |
 | Inference resilience | `InferenceCircuitTransition`, `InferenceObservedRecovery` |
 
 `CyclePhase` is `Sense | Compute | Compare | Act`; there is no `Verify` phase (`kask/crates/hkask-types/src/event.rs:468-473`).
