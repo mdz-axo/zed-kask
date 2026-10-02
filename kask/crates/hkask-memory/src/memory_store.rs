@@ -381,9 +381,19 @@ impl MemoryStore {
         perspective: WebID,
     ) -> Result<Vec<HMem>, MemoryStoreError> {
         let h_mems = self.h_mem_store.query_by_entity(entity)?;
-        let mut filtered: Vec<HMem> = h_mems
+        let scoped: Vec<HMem> = h_mems
             .into_iter()
             .filter(|t| t.access.perspective == Some(perspective))
+            .collect();
+        Ok(self.decay_sort_dedup(scoped))
+    }
+
+    /// The shared recall pipeline: decay each h_mem's confidence by its
+    /// recall age, order newest-first, and deduplicate — the tail of every
+    /// deduped query.
+    fn decay_sort_dedup(&self, h_mems: Vec<HMem>) -> Vec<HMem> {
+        let mut filtered: Vec<HMem> = h_mems
+            .into_iter()
             .map(|mut t| {
                 let days_since = crate::bayesian::days_since(t.recalled_at);
                 t.confidence = t.confidence.memory_decay(days_since, self.memory_life_days);
@@ -391,7 +401,7 @@ impl MemoryStore {
             })
             .collect();
         filtered.sort_by_key(|b| std::cmp::Reverse(b.observed_at));
-        Ok(crate::recall_dedup::dedup_h_mems(filtered))
+        crate::recall_dedup::dedup_h_mems(filtered)
     }
 
     /// Query by entity for a specific perspective, with deduplication and
@@ -430,16 +440,7 @@ impl MemoryStore {
         limit: usize,
     ) -> Result<Vec<HMem>, MemoryStoreError> {
         let h_mems = self.h_mem_store.query_by_entity_prefix(prefix, limit)?;
-        let mut filtered: Vec<HMem> = h_mems
-            .into_iter()
-            .map(|mut t| {
-                let days_since = crate::bayesian::days_since(t.recalled_at);
-                t.confidence = t.confidence.memory_decay(days_since, self.memory_life_days);
-                t
-            })
-            .collect();
-        filtered.sort_by_key(|b| std::cmp::Reverse(b.observed_at));
-        Ok(crate::recall_dedup::dedup_h_mems(filtered))
+        Ok(self.decay_sort_dedup(h_mems))
     }
 
     /// Touch `recalled_at` on a single h_mem, resetting its decay clock.
