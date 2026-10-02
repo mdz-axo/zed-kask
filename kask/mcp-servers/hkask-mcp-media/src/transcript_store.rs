@@ -813,6 +813,55 @@ mod tests {
         SqliteDriver::in_memory_driver()
     }
 
+    /// The gallery-backed test preamble: a fresh tempdir, an in-memory
+    /// driver, and a copy-on-write gallery opened at the tempdir's root —
+    /// the setup the transcript/gallery relationship tests share. Media
+    /// files are written and assets added by the caller against the
+    /// returned root and store.
+    fn gallery_root() -> (
+        tempfile::TempDir,
+        std::sync::Arc<SqliteDriver>,
+        hkask_storage::gallery::GalleryStore,
+        hkask_storage::gallery::GalleryRecord,
+    ) {
+        use hkask_storage::gallery::{GalleryMode, GalleryStore};
+
+        let root = tempfile::tempdir().expect("gallery root");
+        let pool = SqliteDriver::in_memory_pool().expect("in-memory SQLite pool");
+        let driver = std::sync::Arc::new(SqliteDriver::new(pool));
+        let gallery_store = GalleryStore::from_driver(driver.clone()).expect("gallery store");
+        let gallery = gallery_store
+            .open(
+                root.path().to_str().expect("UTF-8 gallery root"),
+                GalleryMode::CopyOnWrite,
+            )
+            .expect("open gallery");
+        (root, driver, gallery_store, gallery)
+    }
+
+    /// Add one audio asset to the gallery — the asset shape every
+    /// transcript/gallery test links its transcript to.
+    fn add_audio_asset(
+        gallery_store: &hkask_storage::gallery::GalleryStore,
+        gallery_id: &str,
+        media_path: &std::path::Path,
+        hash: &str,
+        size_bytes: u64,
+    ) -> hkask_storage::gallery::ImageRecord {
+        gallery_store
+            .add_media(
+                gallery_id,
+                media_path.to_str().expect("UTF-8 media path"),
+                hash,
+                0,
+                0,
+                "wav",
+                size_bytes,
+                "audio",
+            )
+            .expect("add asset")
+    }
+
     fn bundle(word_count: usize, path: &str) -> TranscriptBundle {
         let words: Vec<TimedWord> = (0..word_count)
             .map(|index| TimedWord {
@@ -910,32 +959,10 @@ mod tests {
 
     #[test]
     fn list_filters_by_media_path_and_asset() {
-        use hkask_storage::gallery::{GalleryMode, GalleryStore};
-
-        let root = tempfile::tempdir().expect("gallery root");
+        let (root, driver, gallery_store, gallery) = gallery_root();
         let media_path = root.path().join("a.wav");
         std::fs::write(&media_path, b"source audio").expect("source media");
-        let pool = SqliteDriver::in_memory_pool().expect("in-memory SQLite pool");
-        let driver = std::sync::Arc::new(SqliteDriver::new(pool));
-        let gallery_store = GalleryStore::from_driver(driver.clone()).expect("gallery store");
-        let gallery = gallery_store
-            .open(
-                root.path().to_str().expect("UTF-8 gallery root"),
-                GalleryMode::CopyOnWrite,
-            )
-            .expect("open gallery");
-        let asset = gallery_store
-            .add_media(
-                &gallery.id,
-                media_path.to_str().expect("UTF-8 media path"),
-                "hash",
-                0,
-                0,
-                "wav",
-                12,
-                "audio",
-            )
-            .expect("add asset");
+        let asset = add_audio_asset(&gallery_store, &gallery.id, &media_path, "hash", 12);
         store_transcript(
             &*driver,
             &bundle(2, media_path.to_str().expect("UTF-8 media path")),
@@ -1038,32 +1065,10 @@ mod tests {
     /// [P1] Motivating: Durable editorial work survives catalog deletion without pretending its Asset still exists.
     #[test]
     fn gallery_asset_deletion_preserves_and_detaches_transcript() {
-        use hkask_storage::gallery::{GalleryMode, GalleryStore};
-
-        let root = tempfile::tempdir().expect("gallery root");
+        let (root, driver, gallery_store, gallery) = gallery_root();
         let media_path = root.path().join("source.wav");
         std::fs::write(&media_path, b"source audio").expect("source media");
-        let pool = SqliteDriver::in_memory_pool().expect("in-memory SQLite pool");
-        let driver = std::sync::Arc::new(SqliteDriver::new(pool));
-        let gallery_store = GalleryStore::from_driver(driver.clone()).expect("gallery store");
-        let gallery = gallery_store
-            .open(
-                root.path().to_str().expect("UTF-8 gallery root"),
-                GalleryMode::CopyOnWrite,
-            )
-            .expect("open gallery");
-        let asset = gallery_store
-            .add_media(
-                &gallery.id,
-                media_path.to_str().expect("UTF-8 media path"),
-                "hash",
-                0,
-                0,
-                "wav",
-                12,
-                "audio",
-            )
-            .expect("add asset");
+        let asset = add_audio_asset(&gallery_store, &gallery.id, &media_path, "hash", 12);
         let summary = store_transcript(
             &*driver,
             &bundle(5, media_path.to_str().expect("UTF-8 media path")),
@@ -1094,9 +1099,7 @@ mod tests {
     /// [P1] Motivating: Explicitly published outputs survive project-state deletion without losing provenance.
     #[test]
     fn transcript_deletion_preserves_and_detaches_published_outputs() {
-        use hkask_storage::gallery::{GalleryMode, GalleryStore};
-
-        let root = tempfile::tempdir().expect("gallery root");
+        let (root, driver, gallery_store, gallery) = gallery_root();
         let source_path = root.path().join("source.wav");
         let render_path = root.path().join("render.wav");
         std::fs::write(&source_path, b"source audio").expect("source media");
@@ -1108,39 +1111,10 @@ mod tests {
         std::fs::write(&document_path, b"captions").expect("document");
         std::fs::write(&metadata_path, b"{}").expect("metadata");
 
-        let pool = SqliteDriver::in_memory_pool().expect("in-memory SQLite pool");
-        let driver = std::sync::Arc::new(SqliteDriver::new(pool));
-        let gallery_store = GalleryStore::from_driver(driver.clone()).expect("gallery store");
-        let gallery = gallery_store
-            .open(
-                root.path().to_str().expect("UTF-8 gallery root"),
-                GalleryMode::CopyOnWrite,
-            )
-            .expect("open gallery");
-        let source_asset = gallery_store
-            .add_media(
-                &gallery.id,
-                source_path.to_str().expect("UTF-8 source path"),
-                "source-hash",
-                0,
-                0,
-                "wav",
-                12,
-                "audio",
-            )
-            .expect("add source asset");
-        let render_asset = gallery_store
-            .add_media(
-                &gallery.id,
-                render_path.to_str().expect("UTF-8 render path"),
-                "render-hash",
-                0,
-                0,
-                "wav",
-                14,
-                "audio",
-            )
-            .expect("add render asset");
+        let source_asset =
+            add_audio_asset(&gallery_store, &gallery.id, &source_path, "source-hash", 12);
+        let render_asset =
+            add_audio_asset(&gallery_store, &gallery.id, &render_path, "render-hash", 14);
         let summary = store_transcript(
             &*driver,
             &bundle(5, source_path.to_str().expect("UTF-8 source path")),
