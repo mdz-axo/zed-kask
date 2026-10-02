@@ -528,7 +528,7 @@ Invoke the skill-listing surface from the agent panel. The output shows the skil
 
 ```
   .agents/skills/:
-    coding-guidelines     description="Enforce Karpathy's four coding principles"
+    coding-guidelines     description="Behavioral guardrails for LLM coding based on Karpathy's four principles: Think Before Coding, Simplicity First, Surgical Changes, Goal-Driven Execution."
     diagnose              description="Disciplined diagnosis loop"
     ...
 ```

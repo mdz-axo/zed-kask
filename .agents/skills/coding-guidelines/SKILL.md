@@ -11,7 +11,7 @@ Behavioral guardrails for LLM coding based on Karpathy's four principles: Think 
 
 ## Reference model
 
-The four principles are from forrestchang's `CLAUDE.md` (github.com/forrestchang/andrej-karpathy-skills), derived from Andrej Karpathy's public observations on LLM coding failure modes — the wording is forrestchang's, the diagnosis Karpathy's.
+The four principles are from forrestchang's `CLAUDE.md` (github.com/forrestchang/andrej-karpathy-skills), derived from Andrej Karpathy's public observations on LLM coding failure modes — the wording is forrestchang's, the diagnosis Karpathy's. The seven anti-patterns are this skill's synthesis: six trace to the same CLAUDE.md's bullets; unrequested logging/telemetry is a kask-side addition.
 
 ## D/P labelling
 
@@ -43,10 +43,10 @@ The assessment (step 1), the constrained plan (step 2) and the audit's four prin
 4. **Close the loop.** On a failing audit (any critical violation, or
    overall < 0.7), apply the violations report's corrections to the
    diff and re-run this audit step. Gate — call `lisp_eval` with:
-   - form: `(and (eq critical_violations 0) (>= overall_score 0.7))`
-   - env: `{ "critical_violations": <count from the violations report>,
+   - form: `(and (eq (length critical_violations) 0) (>= overall_score 0.7))`
+   - env: `{ "critical_violations": <the violations report's critical entries as a list — the length IS the count, derived from the report rather than asserted by the model>,
             "overall_score": <the mean of the four principle scores, computed with lisp_eval `(/ (+ s1 s2 s3 s4) 4)` — not the model's stated total> }`
-   The four principle scores and the violation list are P (the audit's judgment, critiqued by the operator); the mean and the gate are D.
+   The four principle scores and the violation list are P (the audit's judgment, critiqued by the operator); the mean, the critical-count length, and the gate are D — every gate input is derived, never model-asserted.
    Bound: max 2 audit cycles (initial + one correction pass); a second
    failing audit is delivered with the violations report and the score — the
    failure is surfaced, never silently passed.
@@ -72,16 +72,35 @@ When an output-shaping skill (e.g., adhd-mode) is active in the session:
 
 | Template | Purpose |
 |----------|---------|
-| `anti-patterns.j2` | Shared Jinja2 fragment listing the seven canonical Karpathy anti-patterns. Included by coding-guidelines/guidelines-apply via {% include %}. Not a standalone renderable template — no inference header or contract. |
+| `anti-patterns.j2` | Shared Jinja2 fragment listing the seven canonical Karpathy anti-patterns. Included by coding-guidelines/guidelines-apply via {% include %}. Not a standalone inference template — no `[inference]` header or contract; rendering it directly yields the bare fragment with no task context. |
 | `guidelines-assess.j2` | Assess a coding task against four behavioral principles before implementation. Surfaces assumptions, simplicity risks, scope creep warnings, and success criteria. |
 | `guidelines-apply.j2` | Generate constrained implementation directives from the assessment. Produces file-level guardrails, forbidden patterns, and style matching rules. |
 | `guidelines-verify.j2` | Verify an implementation or diff against all four principles. Produces a violations report, compliance scores, and corrective recommendations. |
 
-To render a template, call the `render_template` tool with the template ref (e.g., `coding-guidelines/anti-patterns`) and a context object with the required variables.
+To render a template, call the `render_template` tool with the template ref (e.g., `coding-guidelines/guidelines-assess`) and a context object with the required variables.
 
 Template context variables (from each template's [inference] contract):
-- `guidelines-assess.j2`: `task_description`,`code_context`
+- `guidelines-assess.j2`: `task_description`, `code_context`
+- `guidelines-apply.j2`: `task_description`, `assumptions`, `simplicity_risks`, `scope_creep_warnings`, `success_criteria`, `plan`
+- `guidelines-verify.j2`: `task_description`, `assumptions`, `success_criteria`, `constrained_plan`, `diff_preview`
+- `anti-patterns.j2` is a shared Jinja2 fragment (no contract, not standalone-renderable) — do not render it directly.
 
+## Regression case
+
+All receipts executed live through `lisp_eval` (2026-10-01, batch-11 audit):
+
+- Mean: `{s1: 1.0, s2: 0.8, s3: 0.9, s4: 0.7}` over `(/ (+ s1 s2 s3 s4) 4)` →
+  `0.8500000000000001` (the float artifact is the engine's honest arithmetic;
+  the gate compares it against 0.7 with `>=`).
+- Gate, pass: `{critical_violations: [], overall_score: 0.85}` → `true`.
+- Gate, critical violation: `{critical_violations: [<one listed critical
+  entry>], overall_score: 0.9}` → `false` — the length is derived from the
+  report's own list, never a model-asserted count (the pre-repair form took
+  the count as a bare number, the one gate input with no deterministic
+  derivation).
+- Gate, below floor: `{critical_violations: [], overall_score: 0.6}` → `false`.
+
+The skill's forms are executed at use time, never anchored in code.
 
 ## Constraints
 

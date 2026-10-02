@@ -67,12 +67,17 @@ re-application) on the target D-seam file.
 7. Diff the result against both `HEAD` and `{{ upstream_ref }}`: every upstream-added
    function and test must be present or accounted for.
 
-## Coding guardrails (from coding-guidelines)
+## Coding guardrails
+
+Project Rust rules (repo `.rules`):
 
 - No `unwrap()` — use `?` to propagate errors.
 - No silent `let _ =` on fallible ops.
 - Prefer editing existing files.
 - No `mod.rs`.
+
+From coding-guidelines (the four principles' surgical discipline):
+
 - Surgical changes only — touch only the target file + test module.
 - No adjacent-code refactoring.
 - No unsolicited docstring/formatting changes.
