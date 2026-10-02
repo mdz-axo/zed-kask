@@ -1811,27 +1811,64 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn dispatch_tool_invoke_rejects_missing_allowlist() {
-        // A missing allowlist is a protocol violation — fail closed,
-        // never an implicit grant-all.
+    /// Dispatch a request through the canned test ports — the scaffolding
+    /// every dispatch test repeats: the canned inference port, fresh
+    /// list-models and provider-credential channels, no embedding port, no
+    /// worktree spawn port (the worktree tests use `dispatch_worktree`).
+    /// `tool_port` toggles the tool-dispatch leg.
+    async fn dispatch_canned(
+        request: InferenceRequest,
+        tool_port: Option<&Arc<dyn ToolPort>>,
+    ) -> InferenceOutcome {
         let port: Arc<dyn InferencePort> = Arc::new(CannedInferencePort);
-        let tool_port: Arc<dyn ToolPort> = Arc::new(CannedToolPort);
         let list_models_tx = make_list_models_tx();
         let provider_credential_tx = make_provider_credential_tx();
-
-        let request = make_tool_invoke_request("kanban", "kanban_task_create", None);
-
-        let outcome = dispatch(
+        dispatch(
             &port,
             None,
-            Some(&tool_port),
+            tool_port,
             &list_models_tx,
             None,
             &provider_credential_tx,
             request,
         )
-        .await;
+        .await
+    }
+
+    /// A granted CreateWorktreeThread request — the fixture both worktree
+    /// early-return tests build: a fresh server name, a WORKTREE_SPAWN
+    /// grant, an empty allowlist, fixed prompt and title. Returns the server
+    /// name so the caller can revoke the grant when the test ends.
+    fn granted_worktree_request() -> (String, InferenceRequest) {
+        let server = format!("spawn-test-{}", uuid::Uuid::new_v4());
+        let grant = crate::delegation_grants::grant_for_server(
+            &server,
+            &[crate::delegation_grants::WORKTREE_SPAWN.into()],
+        )
+        .expect("grant");
+        let request = InferenceRequest {
+            id: 1,
+            method: InferenceMethod::CreateWorktreeThread,
+            params: InferenceParams {
+                tool_grant: Some(grant),
+                tool_allowlist: Some(vec![]),
+                worktree_prompt: Some("do a thing".to_string()),
+                worktree_title: Some("Test Task".to_string()),
+                ..Default::default()
+            },
+        };
+        (server, request)
+    }
+
+    #[tokio::test]
+    async fn dispatch_tool_invoke_rejects_missing_allowlist() {
+        // A missing allowlist is a protocol violation — fail closed,
+        // never an implicit grant-all.
+        let tool_port: Arc<dyn ToolPort> = Arc::new(CannedToolPort);
+
+        let request = make_tool_invoke_request("kanban", "kanban_task_create", None);
+
+        let outcome = dispatch_canned(request, Some(&tool_port)).await;
 
         match outcome {
             InferenceOutcome::Error { error } => {
@@ -1845,23 +1882,11 @@ mod tests {
     #[tokio::test]
     async fn dispatch_tool_invoke_rejects_empty_allowlist() {
         // An empty allowlist is also a protocol violation — fail closed.
-        let port: Arc<dyn InferencePort> = Arc::new(CannedInferencePort);
         let tool_port: Arc<dyn ToolPort> = Arc::new(CannedToolPort);
-        let list_models_tx = make_list_models_tx();
-        let provider_credential_tx = make_provider_credential_tx();
 
         let request = make_tool_invoke_request("kanban", "kanban_task_create", Some(vec![]));
 
-        let outcome = dispatch(
-            &port,
-            None,
-            Some(&tool_port),
-            &list_models_tx,
-            None,
-            &provider_credential_tx,
-            request,
-        )
-        .await;
+        let outcome = dispatch_canned(request, Some(&tool_port)).await;
 
         match outcome {
             InferenceOutcome::Error { error } => {
@@ -1876,10 +1901,7 @@ mod tests {
     async fn dispatch_tool_invoke_allows_listed_tool() {
         // The tool IS in the allowlist — dispatch must succeed and return
         // the tool result.
-        let port: Arc<dyn InferencePort> = Arc::new(CannedInferencePort);
         let tool_port: Arc<dyn ToolPort> = Arc::new(CannedToolPort);
-        let list_models_tx = make_list_models_tx();
-        let provider_credential_tx = make_provider_credential_tx();
 
         let mut request = make_tool_invoke_request(
             "kanban",
@@ -1892,16 +1914,7 @@ mod tests {
             &["kanban/kanban_task_create".into()],
         );
 
-        let outcome = dispatch(
-            &port,
-            None,
-            Some(&tool_port),
-            &list_models_tx,
-            None,
-            &provider_credential_tx,
-            request,
-        )
-        .await;
+        let outcome = dispatch_canned(request, Some(&tool_port)).await;
 
         match outcome {
             InferenceOutcome::ToolResult { result } => {
@@ -1916,26 +1929,13 @@ mod tests {
 
     #[tokio::test]
     async fn dispatch_tool_invoke_errors_without_tool_port() {
-        let port: Arc<dyn InferencePort> = Arc::new(CannedInferencePort);
-        let list_models_tx = make_list_models_tx();
-        let provider_credential_tx = make_provider_credential_tx();
-
         let request = make_tool_invoke_request(
             "kanban",
             "kanban_task_create",
             Some(vec!["kanban/kanban_task_create".to_string()]),
         );
 
-        let outcome = dispatch(
-            &port,
-            None,
-            None, // no tool port
-            &list_models_tx,
-            None,
-            &provider_credential_tx,
-            request,
-        )
-        .await;
+        let outcome = dispatch_canned(request, None).await; // no tool port
 
         match outcome {
             InferenceOutcome::Error { error } => {
@@ -1992,10 +1992,6 @@ mod tests {
 
     #[tokio::test]
     async fn dispatch_embed_errors_without_embedding_port() {
-        let port: Arc<dyn InferencePort> = Arc::new(CannedInferencePort);
-        let list_models_tx = make_list_models_tx();
-        let provider_credential_tx = make_provider_credential_tx();
-
         let request = InferenceRequest {
             id: 1,
             method: InferenceMethod::Embed,
@@ -2006,16 +2002,7 @@ mod tests {
             },
         };
 
-        let outcome = dispatch(
-            &port,
-            None, // no embedding port
-            None,
-            &list_models_tx,
-            None,
-            &provider_credential_tx,
-            request,
-        )
-        .await;
+        let outcome = dispatch_canned(request, None).await; // no embedding port
 
         match outcome {
             InferenceOutcome::Error { error } => {
@@ -2032,10 +2019,6 @@ mod tests {
     async fn dispatch_generate_returns_canned_result() {
         // Pins the basic `generate` dispatch path — the InferencePort is
         // called and the result is returned as `InferenceOutcome::Result`.
-        let port: Arc<dyn InferencePort> = Arc::new(CannedInferencePort);
-        let list_models_tx = make_list_models_tx();
-        let provider_credential_tx = make_provider_credential_tx();
-
         let request = InferenceRequest {
             id: 42,
             method: InferenceMethod::Generate,
@@ -2046,16 +2029,7 @@ mod tests {
             },
         };
 
-        let outcome = dispatch(
-            &port,
-            None,
-            None,
-            &list_models_tx,
-            None,
-            &provider_credential_tx,
-            request,
-        )
-        .await;
+        let outcome = dispatch_canned(request, None).await;
 
         match outcome {
             InferenceOutcome::Result { result } => {
@@ -2068,10 +2042,6 @@ mod tests {
 
     #[tokio::test]
     async fn dispatch_generate_with_messages_returns_canned_result() {
-        let port: Arc<dyn InferencePort> = Arc::new(CannedInferencePort);
-        let list_models_tx = make_list_models_tx();
-        let provider_credential_tx = make_provider_credential_tx();
-
         let request = InferenceRequest {
             id: 1,
             method: InferenceMethod::GenerateWithMessages,
@@ -2085,16 +2055,7 @@ mod tests {
             },
         };
 
-        let outcome = dispatch(
-            &port,
-            None,
-            None,
-            &list_models_tx,
-            None,
-            &provider_credential_tx,
-            request,
-        )
-        .await;
+        let outcome = dispatch_canned(request, None).await;
 
         match outcome {
             InferenceOutcome::Result { result } => {
@@ -2106,10 +2067,6 @@ mod tests {
 
     #[tokio::test]
     async fn dispatch_generate_vision_returns_canned_result() {
-        let port: Arc<dyn InferencePort> = Arc::new(CannedInferencePort);
-        let list_models_tx = make_list_models_tx();
-        let provider_credential_tx = make_provider_credential_tx();
-
         let request = InferenceRequest {
             id: 1,
             method: InferenceMethod::GenerateVision,
@@ -2121,16 +2078,7 @@ mod tests {
             },
         };
 
-        let outcome = dispatch(
-            &port,
-            None,
-            None,
-            &list_models_tx,
-            None,
-            &provider_credential_tx,
-            request,
-        )
-        .await;
+        let outcome = dispatch_canned(request, None).await;
 
         match outcome {
             InferenceOutcome::Result { result } => {
@@ -2144,10 +2092,7 @@ mod tests {
 
     #[tokio::test]
     async fn dispatch_tool_invoke_errors_without_tool_server() {
-        let port: Arc<dyn InferencePort> = Arc::new(CannedInferencePort);
         let tool_port: Arc<dyn ToolPort> = Arc::new(CannedToolPort);
-        let list_models_tx = make_list_models_tx();
-        let provider_credential_tx = make_provider_credential_tx();
 
         let request = InferenceRequest {
             id: 1,
@@ -2160,16 +2105,7 @@ mod tests {
             },
         };
 
-        let outcome = dispatch(
-            &port,
-            None,
-            Some(&tool_port),
-            &list_models_tx,
-            None,
-            &provider_credential_tx,
-            request,
-        )
-        .await;
+        let outcome = dispatch_canned(request, Some(&tool_port)).await;
 
         match outcome {
             InferenceOutcome::Error { error } => {
@@ -2182,10 +2118,7 @@ mod tests {
 
     #[tokio::test]
     async fn dispatch_tool_invoke_errors_without_tool_name() {
-        let port: Arc<dyn InferencePort> = Arc::new(CannedInferencePort);
         let tool_port: Arc<dyn ToolPort> = Arc::new(CannedToolPort);
-        let list_models_tx = make_list_models_tx();
-        let provider_credential_tx = make_provider_credential_tx();
 
         let request = InferenceRequest {
             id: 1,
@@ -2198,16 +2131,7 @@ mod tests {
             },
         };
 
-        let outcome = dispatch(
-            &port,
-            None,
-            Some(&tool_port),
-            &list_models_tx,
-            None,
-            &provider_credential_tx,
-            request,
-        )
-        .await;
+        let outcome = dispatch_canned(request, Some(&tool_port)).await;
 
         match outcome {
             InferenceOutcome::Error { error } => {
@@ -2287,38 +2211,9 @@ mod tests {
         // workspace), dispatch must return a Connection error — not reach
         // the defensive arm. This pins the early-return for
         // `CreateWorktreeThread`.
-        let port: Arc<dyn InferencePort> = Arc::new(CannedInferencePort);
-        let list_models_tx = make_list_models_tx();
-        let provider_credential_tx = make_provider_credential_tx();
+        let (server, request) = granted_worktree_request();
 
-        let server = format!("spawn-test-{}", uuid::Uuid::new_v4());
-        let grant = crate::delegation_grants::grant_for_server(
-            &server,
-            &[crate::delegation_grants::WORKTREE_SPAWN.into()],
-        )
-        .expect("grant");
-        let request = InferenceRequest {
-            id: 1,
-            method: InferenceMethod::CreateWorktreeThread,
-            params: InferenceParams {
-                tool_grant: Some(grant),
-                tool_allowlist: Some(vec![]),
-                worktree_prompt: Some("do a thing".to_string()),
-                worktree_title: Some("Test Task".to_string()),
-                ..Default::default()
-            },
-        };
-
-        let outcome = dispatch(
-            &port,
-            None,
-            None,
-            &list_models_tx,
-            None, // no worktree spawn port
-            &provider_credential_tx,
-            request,
-        )
-        .await;
+        let outcome = dispatch_canned(request, None).await; // no worktree spawn port
 
         match outcome {
             InferenceOutcome::Error { error } => {
@@ -2339,42 +2234,13 @@ mod tests {
         // `CreateWorktreeThread` early-return: the spawn port is present but
         // the receiver was dropped (server shutting down). Dispatch must
         // return a Connection error — not reach the defensive arm.
-        let port: Arc<dyn InferencePort> = Arc::new(CannedInferencePort);
-        let list_models_tx = make_list_models_tx();
-        let provider_credential_tx = make_provider_credential_tx();
-
         let (tx, rx) = tokio::sync::mpsc::channel::<WorktreeSpawnRequest>(WORKTREE_QUEUE_CAPACITY);
         drop(rx);
         let worktree_spawn_tx = Arc::new(tx);
 
-        let server = format!("spawn-test-{}", uuid::Uuid::new_v4());
-        let grant = crate::delegation_grants::grant_for_server(
-            &server,
-            &[crate::delegation_grants::WORKTREE_SPAWN.into()],
-        )
-        .expect("grant");
-        let request = InferenceRequest {
-            id: 1,
-            method: InferenceMethod::CreateWorktreeThread,
-            params: InferenceParams {
-                tool_grant: Some(grant),
-                tool_allowlist: Some(vec![]),
-                worktree_prompt: Some("do a thing".to_string()),
-                worktree_title: Some("Test Task".to_string()),
-                ..Default::default()
-            },
-        };
+        let (server, request) = granted_worktree_request();
 
-        let outcome = dispatch(
-            &port,
-            None,
-            None,
-            &list_models_tx,
-            Some(&worktree_spawn_tx),
-            &provider_credential_tx,
-            request,
-        )
-        .await;
+        let outcome = dispatch_worktree(&worktree_spawn_tx, request).await;
 
         match outcome {
             InferenceOutcome::Error { error } => {
