@@ -304,7 +304,7 @@ Parameterize workload sizes and report throughput units when they clarify scalin
 
 1. Add the benchmark before changing the production rule when practical.
 2. Prove it reproduces the symptom on the baseline.
-3. Keep benchmark code identical between baseline and candidate. Use a benchmark-only commit that can be applied to both revisions or a separate comparison worktree.
+3. Keep benchmark code identical between baseline and candidate. Use a benchmark-only commit that can be applied to both revisions, building the baseline binary, then switching to the candidate and building again — the two binaries persist side by side without a second working tree. Never create a second clone, worktree, or copy of this repository for the comparison (`.rules`, Repository fragmentation — a working tree here is a governance surface: its skills and docs load into agent sessions).
 4. Build both with the same optimized profile, features, Rust flags, and lockfile.
 5. Run on the same machine under similar thermal and power conditions.
 6. Run a short smoke first, then a bounded measured run with the same warmup, measurement time, sample size, and input filter.
