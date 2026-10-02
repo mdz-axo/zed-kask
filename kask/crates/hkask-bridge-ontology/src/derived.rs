@@ -340,9 +340,9 @@ pub const DERIVED_CONCEPTS: &[DerivedConcept] = &[
             "minimalism documentation",
         ],
         identity: "documentation designed around the reader's real tasks, cutting material that does not support action",
-        definition: "John M. Carroll's minimalist instruction (The Nurnberg Funnel, MIT Press, 1990): task-oriented, brief material that lets users act and recover from errors. In zed-kask it anchors doc-update's fewer-than-70-documents condensation cap.",
+        definition: "John M. Carroll's minimalist instruction (The Nurnberg Funnel, MIT Press, 1990): task-oriented, brief material that lets users act and recover from errors. In zed-kask it anchors doc-update's fewer-than-75-files condensation cap (working target 60).",
         constituents: &["task", "documentation"],
-        authority: "operator ruling 2026-09-26; Carroll, The Nurnberg Funnel (1990)",
+        authority: "operator rulings 2026-09-26 and 2026-09-30 (cap); Carroll, The Nurnberg Funnel (1990)",
     },
     DerivedConcept {
         term: "strangler_fig_pattern",

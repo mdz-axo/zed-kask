@@ -1,6 +1,6 @@
 ---
 name: doc-update
-description: Realign the kask/docs tree with the current code. Full recomposition per docs-set (ground → compare → recompose → verify) under the <70-document condensation cap, with role-based triage, file:line citation discipline, and the corpus-tool decision point. Use when code changes have drifted docs, when adding a new crate/server to the documented surface, or on a scheduled docs refresh.
+description: Realign the kask/docs tree with the current code. Full recomposition per docs-set (ground → compare → recompose → verify) under the <75-file condensation cap (working target 60), with role-based triage, file:line citation discipline, and the corpus-tool decision point. Use when code changes have drifted docs, when adding a new crate/server to the documented surface, or on a scheduled docs refresh.
 ---
 
 # doc-update
@@ -17,7 +17,7 @@ to make every documented claim verifiable against the current tree.
   quadrant determines its recomposition standard.
 - **Minimalism** (Carroll, *The Nurnberg Funnel*) — fewer, task-oriented
   documents beat comprehensive ones. Anchors the condensation cap: the tree
-  holds fewer than 70 documents; leaf docs without a formal role are folded
+  holds fewer than 75 files (working target 60); leaf docs without a formal role are folded
   or deleted, never left to rot.
 - **PKO** (Procedural Knowledge Ontology) — this skill IS a procedure with
   specification/execution separation: the SKILL.md is the spec, the phases
@@ -44,8 +44,8 @@ to make every documented claim verifiable against the current tree.
 ## Governing specs (read before editing)
 
 1. `kask/docs/architecture/DOCUMENTATION_STANDARDS.md` — frontmatter,
-   Mermaid-First, DIAGRAM_ALIGNMENT, lifecycle, the <70 cap (§3), verification
-   checklist (§10).
+   Mermaid-First, DIAGRAM_ALIGNMENT, lifecycle, the <75 cap with 60 working
+   target (§3), verification checklist (§10).
 2. `kask/docs/architecture/core/MDS.md` — the surviving-crate list
    (Composition Root). A doc naming a crate not in that table, or a deleted
    surface, is stale by definition.
@@ -66,7 +66,9 @@ citations were not re-checked is unverified recomposition.
 
 ### Phase 0 — Condensation triage (before any recomposition)
 
-1. Count the tree: `find kask/docs -type f | wc -l`. The cap is **< 70**.
+1. Count the tree: `find kask/docs -type f | wc -l`. The cap is **< 75**
+   (all files, not only Markdown; working target 60 — operator ruling
+   2026-09-30).
    If the realignment would add documents, the triage must first make room.
 2. Classify every candidate artifact by role:
    - **CORE** — referenced from a governing spec (README, INDEX,
@@ -159,20 +161,24 @@ citations were not re-checked is unverified recomposition.
 
 **D/P labelling.** Phases 0–3 (triage, grounding, comparison, recomposition)
 and Phase 4's diagram content are P — judgment over the tree, critiqued by
-these gates and by the operator's review of the recomposed docs. Phase 5's
-counts and the Phase 6 gates are D (`find`/`wc`, link sweep, `file:line`
-spot-check against `read_file`, frontmatter grep).
+these gates and by the operator's review of the recomposed docs. Phase 0's
+tree count, Phase 4's structural verification (node names exist, counts
+match, flows match the code path), Phase 5's counts, and the Phase 6 gates
+are D (`find`/`wc`, link sweep, `file:line` spot-check against `read_file`,
+frontmatter grep).
 
 Run every gate; all must pass before the pass is done:
 
-1. **Count gate**: `find kask/docs -type f | wc -l` → must be < 70.
+1. **Count gate**: `find kask/docs -type f | wc -l` → must be < 75
+   (working target 60).
 2. **Link gate**: sweep every `](target)` relative link in every `.md`;
    zero may be unresolved.
 3. **Citation gate**: sample at least 5 `file:line` citations per recomposed
    artifact and verify each resolves to the claimed content (`sed -n` /
    `grep`). If any fails, re-verify all citations in that artifact.
-4. **Frontmatter gate**: every `.md` has the six-field metadata header with a
-   valid `status`.
+4. **Frontmatter gate**: every `.md` has the seven-field metadata header
+   (`title`, `audience`, `last_updated`, `version`, `status`, `domain`,
+   `mds_categories` — §2) with a valid `status`.
 5. **No-deleted-surfaces gate**: search all files in the *current* `kask/docs/`
    subtree, including new untracked documents, without crossing into nested
    historical worktrees elsewhere in the repo. Use a literal, subtree-scoped
@@ -196,6 +202,18 @@ If any gate is false, re-enter the failing phase. Do not end the pass with a
 known-failing gate; report the failure instead. Bound: max 2 re-entries per
 failing phase; a third failure ends the pass with the failure reported.
 
+## Regression case
+
+All receipts executed live through `lisp_eval` (2026-10-01, batch-12 audit):
+
+- Convergence gate, all five green: count/links/citations/frontmatter/
+  no-deleted all true → `true`.
+- Convergence gate, one failing: `citations_ok: false` → `false` — a single
+  failing gate re-enters its phase; the pass never ends with a known-failing
+  gate.
+
+The skill's form is executed at use time, never anchored in code.
+
 ## Failure surfacing
 
 If any tool call fails during a pass, call `curator_report_skill_use_issue`
@@ -203,10 +221,19 @@ with `skill_name: "doc-update"`, the failed tool, and the error — then
 continue with the best available grounding. A grounding failure must degrade
 the doc's claims (mark unverified), never silently pass them through.
 
+## Registry Templates
+
+| Template | Purpose |
+|----------|---------|
+| `triage.j2` | Render the Phase 0 triage output shapes: per-artifact role decisions with successors, fold rows, and ledger rows. |
+
+Template context variables (from the template's `[inference]` contract):
+- `triage.j2`: `date`, `count_before`, `count_after`, `reason_category`, `triage_rows`, `fold_rows`, `ledger_rows`
+
 ## Constraints
 
-- The cap is **fewer than 70 documents** in `kask/docs/` — enforced at
-  Phase 0 and re-checked at Phase 6.
+- The cap is **fewer than 75 files** in `kask/docs/` (working target
+  60) — enforced at Phase 0 and re-checked at Phase 6.
 - Never document a deleted surface as current. Tombstones say "no longer
   exists" and name the commit or date.
 - Never invent a tool name, test name, or count. Extract from the `#[tool]`

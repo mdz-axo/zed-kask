@@ -156,15 +156,15 @@ annual. The embedded seed payload equals the authored tree (pinned in
 | `create-skill` | Author or translate a skill: ontology research, PDCA derivation, scaffold under the artifact contract, prescreen, validate |
 | `skill-maintenance` | Validate and audit existing skills, including the template-logic audit of `.j2` goals and callsites and the prescreen's body-side D/P labelling presence check (P8.4); compare designs and file proposals for the algedonic review |
 | `skill-discovery` | Route tasks to installed skills (fit-scored recommendations), detect capability gaps, evaluate candidates before installation |
-| `skill-bundler` | Compose multiple skills into a cohesive bundle |
+| `skill-bundler` | Merge peer-level skill outputs into one grounded unified report (per-skill summaries, cross-skill insights, explicit conflicts, one bounded correction) |
 | `self-improvement` | Unified self-induced update operator: nested PDCA + outer Improvement Kata across two pathways — Foundation Model (θ) and Scaffolding (Σ), including the GEPA prompt-evolution sub-loop |
 | `gpui-bench` | Design, write, review, run, and interpret production-shaped GPUI Criterion benchmarks (renderer/task benches, responsiveness, hang regressions, before/after evidence) |
 | `kask-seam-audit` | Convergent multi-skill audit of the zed-kask Kask-Zed seam (`DIVERGENCE.md` is the current numbered-seam authority); its measured-layout loop also runs standalone for GPUI cards and panels |
 | `upstream-rebase` | Manage upstream Zed rebases for zed-kask: per-D-seam-file strategy, mapped re-application, test-pin, DIVERGENCE.md update |
-| `doc-update` | Realign the kask/docs tree with the code: condensation triage (<70 cap), ground-compare-recompose per docs-set, file:line citation gates, corpus-tool decision point |
+| `doc-update` | Realign the kask/docs tree with the code: condensation triage (<75 cap, working target 60), ground-compare-recompose per docs-set, file:line citation gates, corpus-tool decision point |
 | `improv` | Agent interaction grammar (Plussing, Yes And, Freestyling, Riffing) |
 
-> **Filesystem reality (verified 2026-09-28):** `.agents/skills/` contains 59
+> **Filesystem reality (verified 2026-10-01):** `.agents/skills/` contains 60
 > `SKILL.md` directories. Merged by operator decision 2026-09-24:
 > `gemba-walk` into `algedonic-review`, `skill-router` into `skill-discovery`
 > (route phase), `sequential-inquiry` into

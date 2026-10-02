@@ -1,4 +1,4 @@
-{# goal: Emit the Phase 0 condensation-triage output shapes for the doc-update skill: the triage table (CORE / FOLD / DELETE with named successors), the fold plan, the lifecycle-ledger entry appended to kask/docs/README.md, and the Phase 6 gate-results table. Every decision needs a successor; "none" is only valid for DELETE rows whose content is fully obsolete. Feeds the <70-document cap check. #}
+{# goal: Emit the Phase 0 condensation-triage output shapes for the doc-update skill: the triage table (CORE / FOLD / DELETE with named successors), the fold plan, and the lifecycle-ledger entry appended to kask/docs/README.md. Every decision needs a successor; "none" is only valid for DELETE rows whose content is fully obsolete. Feeds the <75-document cap check (working target 60). The Phase 6 gate results are reported by the skill's own convergence form, not by this template — gate data does not exist at Phase 0 render time. #}
 [inference]
 contract:
   input:
@@ -9,16 +9,14 @@ contract:
     triage_rows: array
     fold_rows: array
     ledger_rows: array
-    gate_results: object
   output:
     triage_table: string
     fold_plan: string
     ledger_entry: string
-    gate_table: string
 ---
 ## Condensation triage — {{ date }}
 
-Tree count before: {{ count_before }} (cap: < 70)
+Tree count before: {{ count_before }} (cap: < 75, working target 60)
 Tree count after (projected): {{ count_after }}
 
 | Path | Role (CORE / FOLD / DELETE) | Reason | Successor |
@@ -48,16 +46,6 @@ being carried forward, and the links that must be repointed.
 | {{ row.artifact }} | {{ row.successor }} |
 {%- endfor %}
 
-## Gate results (fill after Phase 6)
-
-| Gate | Result | Evidence |
-|------|--------|----------|
-| Count (< 70) | {{ gate_results.count }} | `find kask/docs -type f | wc -l` → {{ gate_results.n }} |
-| Links (0 broken) | {{ gate_results.links }} | sweep result |
-| Citations (sample ≥ 5/artifact) | {{ gate_results.citations }} | {{ gate_results.sampled }} checked, {{ gate_results.failed }} failed |
-| Frontmatter (all .md) | {{ gate_results.frontmatter }} | sweep result |
-| No deleted surfaces as current | {{ gate_results.no_deleted_surfaces }} | grep result |
-
 ## Output
 
 Respond with a JSON object:
@@ -66,7 +54,6 @@ Respond with a JSON object:
 {
   "triage_table": "<the filled triage table>",
   "fold_plan": "<the filled fold plan>",
-  "ledger_entry": "<the filled lifecycle-ledger entry>",
-  "gate_table": "<the filled gate-results table>"
+  "ledger_entry": "<the filled lifecycle-ledger entry>"
 }
 ```
