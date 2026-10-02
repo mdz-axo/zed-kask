@@ -1859,6 +1859,12 @@ impl NativeAgent {
                 .await?
                 .with_context(|| format!("no thread found with ID: {id:?}"))?;
 
+            // [DIAG-open] — the from_db phase (S1-H1 split): entity
+            // construction from the parsed DbThread, including the saved
+            // model re-resolution (`LanguageModelRegistry::select_model`).
+            // Remove with the S1 fix (grep DIAG-open).
+            let diag_entries = db_thread.messages.len();
+            let from_db_started = std::time::Instant::now();
             let result = this.update(cx, |this, cx| {
                 let project_id = this.get_or_create_project_state(&project, cx);
                 let project_state = this
@@ -1883,6 +1889,12 @@ impl NativeAgent {
                     thread
                 }))
             })?;
+            log::info!(
+                "[DIAG-open] from_db thread_id={} entries={} from_db_ms={}",
+                &*id.0,
+                diag_entries,
+                from_db_started.elapsed().as_millis()
+            );
             result
         })
     }
@@ -1912,6 +1924,17 @@ impl NativeAgent {
             .spawn({
                 let id = id.clone();
                 async move |this, cx| {
+                    // [DIAG-open] — the S1 first-open decomposition probe
+                    // (two-symptom research doc §4 step 2): db_total (the
+                    // load_thread task: connection + blob read + zstd/JSON
+                    // parse + from_db), replay (event generation), forward
+                    // (the handle_thread_events consumption loop — the same
+                    // per-event path [DIAG-anr] measures), and the
+                    // click-to-ready total. One line per real open (cached
+                    // sessions short-circuit above). Remove with the S1 fix
+                    // (grep DIAG-open).
+                    let diag_started = std::time::Instant::now();
+                    let db_started = std::time::Instant::now();
                     let thread = match task.await {
                         Ok(thread) => thread,
                         Err(err) => {
@@ -1922,6 +1945,7 @@ impl NativeAgent {
                             return Err(Arc::new(err));
                         }
                     };
+                    let db_total_ms = db_started.elapsed().as_millis();
                     let acp_thread = this
                         .update(cx, |this, cx| {
                             let project_id = this.get_or_create_project_state(&project, cx);
@@ -1929,7 +1953,10 @@ impl NativeAgent {
                             this.register_session(thread.clone(), project_id, cx)
                         })
                         .map_err(Arc::new)?;
+                    let replay_started = std::time::Instant::now();
                     let events = thread.update(cx, |thread, cx| thread.replay(cx));
+                    let replay_ms = replay_started.elapsed().as_millis();
+                    let forward_started = std::time::Instant::now();
                     cx.update(|cx| {
                         NativeAgentConnection::handle_thread_events(
                             events,
@@ -1940,6 +1967,14 @@ impl NativeAgent {
                     })
                     .await
                     .map_err(Arc::new)?;
+                    log::info!(
+                        "[DIAG-open] open thread_id={} db_total_ms={} replay_ms={} forward_ms={} ready_ms={}",
+                        &*id.0,
+                        db_total_ms,
+                        replay_ms,
+                        forward_started.elapsed().as_millis(),
+                        diag_started.elapsed().as_millis()
+                    );
                     Ok(acp_thread)
                 }
             })

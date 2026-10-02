@@ -616,17 +616,36 @@ impl ThreadsDatabase {
         let connection = self.connection.clone();
 
         self.executor.spawn(async move {
+            // [DIAG-open] — the S1 first-open decomposition probe
+            // (two-symptom research doc §4 step 2): lock-wait (S1-H2 — a
+            // concurrent turn-end save holds this one shared connection
+            // while writing the whole-thread blob) split from
+            // read+deserialize (S1-H1 — the whole-thread zstd+JSON
+            // round-trip). One line per open; opens are user-initiated and
+            // infrequent. Remove with the S1 fix (grep DIAG-open).
+            let lock_started = std::time::Instant::now();
             let connection = connection.lock();
+            let lock_wait_ms = lock_started.elapsed().as_millis();
             let mut select = connection.select_bound::<Arc<str>, (DataType, Vec<u8>)>(indoc! {"
                 SELECT data_type, data FROM threads WHERE id = ? LIMIT 1
             "})?;
 
-            let rows = select(id.0)?;
-            if let Some((data_type, data)) = rows.into_iter().next() {
+            let rows = select(id.0.clone())?;
+            let read_parse_started = std::time::Instant::now();
+            let blob_bytes = rows.iter().next().map(|(_, data)| data.len());
+            let result = if let Some((data_type, data)) = rows.into_iter().next() {
                 Ok(Some(Self::deserialize_thread(data_type, data)?))
             } else {
                 Ok(None)
-            }
+            };
+            log::info!(
+                "[DIAG-open] db_load thread_id={} lock_wait_ms={} read_parse_ms={} blob_bytes={}",
+                &*id.0,
+                lock_wait_ms,
+                read_parse_started.elapsed().as_millis(),
+                blob_bytes.unwrap_or(0),
+            );
+            result
         })
     }
 
