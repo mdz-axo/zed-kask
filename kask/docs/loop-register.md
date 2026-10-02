@@ -804,7 +804,8 @@ exactly that lag), not evidence of absence.)
   variant + mapping (decode-safe: `Span` persists as plain strings
   with no reverse mapping — old archive records unaffected), and
   the two doc rows (`regulation-spans.md`'s span-kind table, the
-  diataxis hkask-regulation module table). The L2 row's tick graph
+  diataxis hkask-regulation module table). Net **−209 lines**
+  (+25/−234). The L2 row's tick graph
   drops the node and its citations are re-measured (the drift rode
   the v0.25.0 enrichment block and this deletion). Receipts:
   hkask-regulation --lib 104/104, hkask-types --lib 87/87, rustfmt
