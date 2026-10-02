@@ -88,6 +88,24 @@ expect "subject mentioning fences in prose accepted" 0 \
 expect "subject naming a subject line in prose accepted" 0 \
 'Subject line hygiene in the commit-msg guard'
 
+# ── Goal-traceability (advisory; invoked by the hook) ────────────────────────
+# The fixed script must recognize a convention-placed Goal line (after the
+# subject — `git interpret-trailers --parse` sees only the final paragraph,
+# which made every convention-placed Goal line invisible and every compliant
+# commit a false ADVISORY until 2026-10-01). A compliant message must never
+# produce the "missing or malformed" ADVISORY, whatever is staged.
+traceability_msg="$(mktemp)"
+traceability_out="$(mktemp)"
+printf 'Repair the skill\n\nGoal: 708d6e58-03df-4dcd-ab13-1a778fedd580\n\nBody.\n' > "$traceability_msg"
+bash "$KASK_ROOT/scripts/check-goal-traceability.sh" --message "$traceability_msg" > "$traceability_out" 2>&1
+if grep -q 'missing or malformed' "$traceability_out"; then
+  echo "FAIL: convention-placed Goal line (after the subject) still false-fires the ADVISORY" >&2
+  failures=$((failures + 1))
+else
+  echo "PASS: convention-placed Goal line recognized (no false ADVISORY)"
+fi
+rm -f "$traceability_msg" "$traceability_out"
+
 if [ "$failures" -eq 0 ]; then
   echo "commit-msg selftest: all cases passed"
   exit 0

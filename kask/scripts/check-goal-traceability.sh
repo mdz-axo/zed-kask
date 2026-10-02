@@ -1,21 +1,26 @@
 #!/usr/bin/env bash
-# Advisory only. Goal trailers are syntax, not authenticated goal/approval evidence.
+# Advisory only. Goal lines are syntax, not authenticated goal/approval evidence.
+# Matched anywhere in the message: the project convention places Goal right
+# after the subject, and `git interpret-trailers --parse` recognizes trailers
+# only in the message's final paragraph — a trailers-only grep was blind to
+# every convention-placed Goal line, so every compliant commit false-fired
+# the ADVISORY (live-observed 2026-09-28..2026-10-01: every skill-audit batch
+# commit).
 # --message FILE: staged changes (local hook). --range BASE HEAD: every commit
 # in BASE..HEAD (CI, including squash commits). All skill-path edits are reported;
 # materiality and exception approval remain reviewer decisions.
 set -euo pipefail
 
 check_message() {
-    local label="$1" message="$2" paths="$3" affected=0 path trailers
-    trailers=$(git -c trailer.separators=: interpret-trailers --parse <<< "$message")
+    local label="$1" message="$2" paths="$3" affected=0 path
     while IFS= read -r -d '' path; do
         case "$path" in .agents/skills/*) affected=1 ;; esac
     done < "$paths"
     if [ "$affected" -eq 0 ]; then
         echo "$label: no skill paths changed"
-    elif grep -Eq '^Goal: [[:xdigit:]]{8}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{12}[[:space:]]*$' <<< "$trailers"; then
-        echo "$label: Goal trailer present (syntax only; goal existence and approval not verified)"
-    elif grep -Eq '^Goal-Exception: [^[:space:]].*' <<< "$trailers"; then
+    elif grep -Eq '^Goal: [[:xdigit:]]{8}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{12}[[:space:]]*$' <<< "$message"; then
+        echo "$label: Goal line present (syntax only; goal existence and approval not verified)"
+    elif grep -Eq '^Goal-Exception: [^[:space:]].*' <<< "$message"; then
         echo "ADVISORY: $label: exception claim requires operator review; not approval evidence"
     else
         echo "ADVISORY: missing or malformed Goal: <full UUID> for $label skill changes; commit remains allowed"

@@ -54,12 +54,17 @@ pub struct LispEvalToolInput {
     /// an object value becomes an association list, so a wrapped scalar
     /// reaches arithmetic as a list and fails with a type error.
     ///
-    /// Uses `HashMap<String, AnyJsonValue>` (not `serde_json::Value`) so the
-    /// generated schema is `{"type":"object","additionalProperties":{}}` — a
-    /// bare `AnyJsonValue` emits `{}` (any value), which the model doesn't
-    /// populate; a bare `serde_json::Value` emits `true`, which strict-schema
-    /// providers reject outright. The `HashMap` shape gives the model a clear
-    /// `type: object` signal to send a JSON object.
+    /// The advertised schema is `{"type":"object","additionalProperties":{}}`
+    /// (the `schema_with` override below): object-typed outer — a clear
+    /// signal to send a JSON object — with permissive value schemas, so
+    /// scalars pass unwrapped. The default `HashMap<String, AnyJsonValue>`
+    /// schema would advertise each VALUE as `type: object` (AnyJsonValue's
+    /// own shape), pressuring schema-following providers into wrapping
+    /// scalars, which arrive as association lists and fail numeric forms
+    /// (live-observed 2026-10-01: the gpui-bench audit critic's 8/8 wrapped
+    /// emissions, "type error: expected number, got list"). A bare
+    /// `serde_json::Value` emits `true`, which strict-schema providers
+    /// reject outright.
     ///
     /// `deserialize_env_field` tolerates models that emit `env` as a stringified
     /// JSON string (e.g. `"{}"`) instead of a bare object, and teaches on every
@@ -67,6 +72,7 @@ pub struct LispEvalToolInput {
     /// accepted shape (an error that does not teach produces identical
     /// retries — the 2026-09-28 audit lockout anatomy).
     #[serde(default, deserialize_with = "deserialize_env_field")]
+    #[schemars(schema_with = "permissive_env_map_schema")]
     env: std::collections::HashMap<String, hkask_types::AnyJsonValue>,
     /// Maximum evaluation steps (default 100000). Prevents infinite loops.
     /// The `maxSteps` alias tolerates camelCase emissions so an explicit budget
@@ -124,6 +130,30 @@ where
         "a JSON object like {\"binding\": value} (a stringified JSON object is also accepted)",
         true,
     )
+}
+
+/// The env map's advertised schema: object-typed outer (the model sends a
+/// JSON object), permissive value schemas (scalars stay scalars). Overrides
+/// the default `HashMap<String, AnyJsonValue>` schema, which advertises each
+/// value as `type: object` — schema-following providers then wrap scalars,
+/// which arrive as association lists and fail numeric forms (live-observed
+/// 2026-10-01: the gpui-bench audit critic's 8/8 wrapped emissions, "type
+/// error: expected number, got list"). The value schema is an empty SCHEMA
+/// object, never a bare boolean — Ollama's `api.ToolProperty` rejects
+/// booleans in schema positions — and the outer schema carries
+/// `additionalProperties` explicitly so schema preprocessing cannot tighten
+/// it into "no properties allowed".
+fn permissive_env_map_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    let mut map = serde_json::Map::new();
+    map.insert(
+        "type".to_string(),
+        serde_json::Value::String("object".to_string()),
+    );
+    map.insert(
+        "additionalProperties".to_string(),
+        serde_json::Value::Object(serde_json::Map::new()),
+    );
+    schemars::Schema::from(map)
 }
 
 fn deserialize_max_steps_field<'de, D>(deserializer: D) -> Result<u64, D::Error>
@@ -308,6 +338,30 @@ pub fn evaluate_lisp(input: LispEvalToolInput) -> Result<Value, String> {
 mod tests {
     use super::LispEvalToolInput;
     use serde_json::json;
+
+    /// The env property's advertised schema must be object-typed with
+    /// PERMISSIVE value schemas: the default `HashMap<String, AnyJsonValue>`
+    /// schema advertises each value as `type: object`, and schema-following
+    /// providers wrap scalars accordingly — the wrapped values arrive as
+    /// association lists and fail numeric forms (live-observed 2026-10-01:
+    /// the gpui-bench audit critic's 8/8 wrapped emissions, "type error:
+    /// expected number, got list").
+    #[test]
+    fn env_schema_advertises_permissive_values() {
+        let schema =
+            serde_json::to_value(schemars::schema_for!(LispEvalToolInput)).expect("schema");
+        assert_eq!(schema["properties"]["env"]["type"], json!("object"));
+        assert_eq!(
+            schema["properties"]["env"]["additionalProperties"],
+            json!({})
+        );
+        // No `properties` key on the env schema: the map is open, not a
+        // closed struct.
+        assert!(schema["properties"]["env"].get("properties").is_none());
+        // No bare boolean schema positions anywhere (Ollama/Gemini reject
+        // them).
+        assert!(hkask_types::find_boolean_schema_positions(&schema).is_empty());
+    }
 
     // The tool dispatches to `hkask_lisp::eval_sandboxed_with_budget` — these
     // tests exercise the interpreter directly along the exact code path the

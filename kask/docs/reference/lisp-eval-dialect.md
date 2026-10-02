@@ -25,7 +25,7 @@ Unlike the paper's persistent SBCL process, each call is stateless. State crosse
 ## `form` / `env` contract
 
 - `form` is the Lisp source string to evaluate.
-- `env` is a JSON object whose keys become top-level bindings.
+- `env` is a JSON object whose keys become top-level bindings. Values may be any JSON type — pass scalars directly (`{"a": 1, "b": true}`); an object value becomes an association list, so a wrapped scalar reaches arithmetic as a list and fails with a type error.
 - `max_steps` and `max_depth` bound evaluation. The tool defaults are 100,000 steps and depth 1,024 (tool-side defaults at `crates/agent/src/tools/lisp_eval_tool.rs:143-154`; the engine entry that applies them at `kask/crates/hkask-lisp/src/hkask_lisp.rs:1904`). Step cost is linear in list length since lisp-repair L3 — a 600-element walker costs ~7,900 steps — but recursive walkers still consume ~2–4 DEPTH frames per element, so raise `max_depth` for lists beyond ~250 elements.
 - The result is converted back to JSON for the next reasoning step.
 
