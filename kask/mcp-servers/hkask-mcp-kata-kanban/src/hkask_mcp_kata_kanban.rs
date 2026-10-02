@@ -1768,21 +1768,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
 // a tool added/renamed without regenerating (or a `name =` override the
 // build script can't see) fails here instead of degrading to "tool not
 // found" at dispatch time.
-#[test]
-fn tool_names_match_live_router() {
-    let mut live: Vec<String> = KanbanServer::tool_router()
-        .list_all()
-        .iter()
-        .map(|tool| tool.name.to_string())
-        .collect();
-    live.sort();
-    let generated: Vec<&str> = TOOL_NAMES.to_vec();
-    assert_eq!(
-        generated,
-        live.iter().map(String::as_str).collect::<Vec<_>>(),
-        "TOOL_NAMES (build.rs-generated) must match the live tool_router surface"
-    );
-}
+hkask_mcp_server::tool_name_pin_test!(KanbanServer::tool_router(), "tool_router");
 
 /// expect: "Kanban refuses startup rather than accepting mutations without durable encrypted state."
 /// [P1] Motivating: User Sovereignty — the operator can trust persisted workflow state.

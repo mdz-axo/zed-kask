@@ -87,6 +87,51 @@ macro_rules! impl_tool_context {
     };
 }
 
+/// Generate the `tool_names_match_live_router` pin — the test every
+/// build.rs-driven MCP server carries: the generated `TOOL_NAMES` const
+/// must match the live rmcp router surface, so a tool added/renamed (or a
+/// `name =` override the build script cannot see) fails here instead of
+/// degrading to "tool not found" at dispatch.
+///
+/// Invoked from the server's test module with the router expression and
+/// its name for the failure message:
+/// ```ignore
+/// tool_name_pin_test!(crate::server::EvolutionServer::evolution_router(), "evolution_router");
+/// ```
+///
+/// `TOOL_NAMES` is read from the invoking crate's root (the build.rs
+/// `include!` site). Both sides are sorted before comparison — the pin is
+/// set equality, not build.rs emission order.
+// `crate::` below deliberately resolves at the macro CALL site (each
+// server's own TOOL_NAMES), not in this crate — clippy's crate_in_macro_def
+// guards against accidental self-references; this one is the mechanism.
+#[allow(clippy::crate_in_macro_def)]
+#[macro_export]
+macro_rules! tool_name_pin_test {
+    ($router:expr, $router_name:literal $(,)?) => {
+        #[test]
+        fn tool_names_match_live_router() {
+            let mut live: Vec<String> = $router
+                .list_all()
+                .iter()
+                .map(|tool| tool.name.to_string())
+                .collect();
+            live.sort();
+            let mut generated: Vec<&str> = crate::TOOL_NAMES.to_vec();
+            generated.sort();
+            assert_eq!(
+                generated,
+                live.iter().map(String::as_str).collect::<Vec<_>>(),
+                concat!(
+                    "TOOL_NAMES (build.rs-generated) must match the live ",
+                    $router_name,
+                    " surface"
+                )
+            );
+        }
+    };
+}
+
 /// Define an MCP server struct with standard fields + constructor.
 ///
 /// Generates the struct with a mandatory `webid` field plus any

@@ -76,22 +76,8 @@ mod registry_path_tests {
 
 #[cfg(test)]
 mod tool_name_pin {
-    // Pins the generated TOOL_NAMES const against the live rmcp tool surface —
-    // a tool added/renamed fails here instead of degrading to "tool not found"
-    // at dispatch.
-    #[test]
-    fn tool_names_match_live_router() {
-        let mut live: Vec<String> = crate::server::EvolutionServer::evolution_router()
-            .list_all()
-            .iter()
-            .map(|tool| tool.name.to_string())
-            .collect();
-        live.sort();
-        let generated: Vec<&str> = crate::TOOL_NAMES.to_vec();
-        assert_eq!(
-            generated,
-            live.iter().map(String::as_str).collect::<Vec<_>>(),
-            "TOOL_NAMES (build.rs-generated) must match the live evolution_router surface"
-        );
-    }
+    hkask_mcp_server::tool_name_pin_test!(
+        crate::server::EvolutionServer::evolution_router(),
+        "evolution_router"
+    );
 }

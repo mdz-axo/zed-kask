@@ -465,22 +465,7 @@ mod tool_surface_tests {
     // RENDERED from TOOL_NAMES (hkask_steer::render_grouped_tool_advertisement
     // in media_panel), so this pin is the chain's integrity check: without it,
     // an unrouted `#[tool]` fn would flow into the prompt as a dead name.
-    // Mirrors portfolio's `tool_names_match_live_router`.
-    #[test]
-    fn tool_names_match_live_router() {
-        let mut live: Vec<String> = MediaServer::combined_router()
-            .list_all()
-            .iter()
-            .map(|tool| tool.name.to_string())
-            .collect();
-        live.sort();
-        let mut generated = TOOL_NAMES.to_vec();
-        generated.sort();
-        assert_eq!(
-            generated, live,
-            "TOOL_NAMES (build.rs-generated) must match the live combined_router surface"
-        );
-    }
+    hkask_mcp_server::tool_name_pin_test!(MediaServer::combined_router(), "combined_router");
 
     // Coverage: every registered tool must map to an OMC concept. Catches
     // the silent-drop failure mode where a new tool is added to the router
