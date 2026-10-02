@@ -26,6 +26,7 @@ pub mod federated_recall; // Identity-bound read-only external passage retrieval
 pub mod memory_store; // Unified store (ontology-discriminated)
 pub mod recall_dedup;
 pub mod salience;
+pub mod test_support;
 pub mod text_chunking; // Pure chunking helpers (no store access)
 
 pub use consolidation_service::MemoryConsolidator;

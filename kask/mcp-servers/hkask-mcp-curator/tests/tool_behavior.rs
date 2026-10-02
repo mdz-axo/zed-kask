@@ -2436,122 +2436,18 @@ fn federated_fixture_vector() -> Vec<f32> {
     vector
 }
 
-fn federated_fixture_sha256(path: &std::path::Path) -> Result<String, Box<dyn std::error::Error>> {
-    use sha2::Digest as _;
-    use std::io::Read as _;
-
-    let mut file = std::fs::File::open(path)?;
-    let mut hasher = sha2::Sha256::new();
-    let mut buffer = [0_u8; 64 * 1024];
-    loop {
-        let read = file.read(&mut buffer)?;
-        if read == 0 {
-            break;
-        }
-        hasher.update(&buffer[..read]);
-    }
-    Ok(format!("{:x}", hasher.finalize()))
-}
-
 fn federated_source_fixture(
     directory: &std::path::Path,
 ) -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
-    let database_path = directory.join("reference.db");
-    let database = database_path
-        .to_str()
-        .ok_or_else(|| std::io::Error::other("non-UTF-8 database path"))?;
-    let entity_ref = "calibration:fixture:sealed-v1:reference:utf8-65766964656e63652e747874:0";
-    {
-        let store = hkask_memory::MemoryStore::open(database, "test-passphrase", test_dim())?;
-        store.store(hkask_storage::HMem::new(
-            entity_ref,
-            "text",
-            serde_json::json!("external corpus evidence"),
-            WebID::new(),
-        ))?;
-        store.store(hkask_storage::HMem::new(
-            entity_ref,
-            "method_signals",
-            serde_json::json!({"parataxis_ratio": 1.0}),
-            WebID::new(),
-        ))?;
-        store.store_embedding(
-            entity_ref,
-            &federated_fixture_vector(),
-            "test-model",
-            Some("external corpus evidence"),
-        )?;
-    }
-    {
-        let database = hkask_storage::open_or_repair(database, "test-passphrase")?;
-        let pool = database.sqlite_pool()?;
-        let connection = pool.get()?;
-        connection.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
-    }
-    for suffix in [".maintenance-lock", "-wal", "-shm"] {
-        let sidecar = format!("{database}{suffix}");
-        if std::path::Path::new(&sidecar).exists() {
-            std::fs::remove_file(sidecar)?;
-        }
-    }
-    let digest = federated_fixture_sha256(&database_path)?;
-    let representations_path = directory.join("representations-manifest.json");
-    std::fs::write(
-        &representations_path,
-        serde_json::to_vec_pretty(&serde_json::json!({
-            "schema_version": 2,
-            "entity_ref_prefix": "calibration:fixture:sealed-v1",
-            "boilerplate_exclusion_reports": {
-                "fixture.txt": {"input_words": 3, "retained_words": 3, "exclusions": []}
-            },
-            "validation": {
-                "accepted_source_count": 1,
-                "boilerplate_filter_applied": true
-            }
-        }))?,
-    )?;
-    let manifest_digest = federated_fixture_sha256(&representations_path)?;
-    let run_identity_path = directory.join("run-identity.json");
-    let mut identity = serde_json::json!({
-        "schema_version": 3,
-        "preseal_run_id": "a".repeat(64),
-        "accepted_sources_sha256": "b".repeat(64),
-        "run_spec_sha256": "c".repeat(64),
-        "queries_sha256": "d".repeat(64),
-        "requested_embedding_model": "test-model",
-        "actual_embedding_model": "test-model",
-        "policies_sha256": "e".repeat(64),
-        "retriever_sha256": "f".repeat(64),
-        "evaluator_sha256": "0".repeat(64),
-        "representations_manifest_sha256": manifest_digest,
-        "representations": {
-            "reference": "1".repeat(64),
-            "current": "2".repeat(64),
-            "fine": "3".repeat(64),
-            "child_parent_map": "4".repeat(64),
-            "parent": "5".repeat(64)
-        },
-        "indexes": {"reference": digest, "current": "6".repeat(64), "fine": "7".repeat(64)}
-    });
-    identity["run_id"] =
-        serde_json::json!(hkask_memory::federated_recall::sealed_run_id(&identity)?);
-    std::fs::write(&run_identity_path, serde_json::to_vec_pretty(&identity)?)?;
-    let manifest_path = directory.join("federated-sources.json");
-    std::fs::write(
-        &manifest_path,
-        serde_json::to_vec_pretty(&serde_json::json!({
-            "schema_version": 1,
-            "sources": [{
-                "id": "fixture-corpus",
-                "display_name": "Fixture corpus",
-                "database_path": database_path,
-                "run_identity_path": run_identity_path,
-                "representations_manifest_path": representations_path,
-                "index_name": "reference"
-            }]
-        }))?,
-    )?;
-    Ok(manifest_path)
+    Ok(hkask_memory::test_support::sealed_federated_fixture(
+        directory,
+        "fixture-corpus",
+        "Fixture corpus",
+        "evidence.txt",
+        "external corpus evidence",
+        "test-model",
+        "test-model",
+    )?)
 }
 
 /// expect: "One explicit search returns Curator experience and sealed corpus evidence with provenance." [P8]

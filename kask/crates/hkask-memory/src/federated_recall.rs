@@ -377,11 +377,14 @@ impl ReadOnlyPassageSource {
             "entity_ref_prefix",
             &representations.entity_ref_prefix,
         )?;
-        let entity_ref_prefix = format!(
-            "{}:{}:",
-            representations.entity_ref_prefix.trim_end_matches(':'),
-            spec.index_name
-        );
+        // Compose the expected prefix exactly as the calibration producer
+        // composes refs (`{prefix}:{index}:`, verbatim — no normalization).
+        // The producer builds refs from the manifest prefix as-is, so a
+        // trailing-colon prefix (the corpus pipeline's `corpus:researcher:`)
+        // yields double-colon refs; the legacy trim here rejected every
+        // embedding of the first real sealed build.
+        let entity_ref_prefix =
+            format!("{}:{}:", representations.entity_ref_prefix, spec.index_name);
 
         let database_path = std::fs::canonicalize(&spec.database_path).map_err(|source| {
             FederatedRecallError::ReadArtifact {

@@ -1,12 +1,8 @@
-use std::io::Read;
-
+use hkask_memory::test_support::{reseal_fixture_identity, sha256_file};
 use hkask_memory::{
-    FederatedHit, FederatedSourceKind, FederatedSourcesManifest, MemoryStore, RankedSourceBatch,
+    FederatedHit, FederatedSourceKind, FederatedSourcesManifest, RankedSourceBatch,
     ReadOnlyPassageSource, interleave_ranked_batches,
 };
-use hkask_storage::HMem;
-use hkask_types::WebID;
-use sha2::{Digest, Sha256};
 
 const PASSPHRASE: &str = "test-passphrase";
 const SOURCE_ID: &str = "fixture-reference";
@@ -14,154 +10,22 @@ const ENTITY_PREFIX: &str = "calibration:fixture:sealed-v1:reference:";
 const REQUESTED_MODEL: &str = "provider/fixture-model";
 const ACTUAL_MODEL: &str = "fixture-model";
 
-fn sha256_file(path: &std::path::Path) -> anyhow::Result<String> {
-    let mut file = std::fs::File::open(path)?;
-    let mut hasher = Sha256::new();
-    let mut buffer = [0_u8; 64 * 1024];
-    loop {
-        let read = file.read(&mut buffer)?;
-        if read == 0 {
-            break;
-        }
-        hasher.update(&buffer[..read]);
-    }
-    Ok(format!("{:x}", hasher.finalize()))
-}
-
-fn sorted_fixture_json(value: &serde_json::Value) -> serde_json::Value {
-    match value {
-        serde_json::Value::Object(object) => {
-            let mut result = serde_json::Map::new();
-            let mut keys: Vec<_> = object.keys().collect();
-            keys.sort();
-            for key in keys {
-                if let Some(value) = object.get(key) {
-                    result.insert(key.clone(), sorted_fixture_json(value));
-                }
-            }
-            serde_json::Value::Object(result)
-        }
-        serde_json::Value::Array(values) => {
-            serde_json::Value::Array(values.iter().map(sorted_fixture_json).collect())
-        }
-        other => other.clone(),
-    }
-}
-
-fn reseal_fixture_identity(identity: &mut serde_json::Value) -> anyhow::Result<()> {
-    identity
-        .as_object_mut()
-        .ok_or_else(|| anyhow::anyhow!("run identity must be an object"))?
-        .remove("run_id");
-    let mut canonical = serde_json::to_vec(&sorted_fixture_json(identity))?;
-    canonical.push(b'\n');
-    identity["run_id"] = serde_json::json!(format!("{:x}", Sha256::digest(&canonical)));
-    Ok(())
+fn fixture(directory: &std::path::Path) -> anyhow::Result<std::path::PathBuf> {
+    hkask_memory::test_support::sealed_federated_fixture(
+        directory,
+        SOURCE_ID,
+        "Fixture research library",
+        "fixture.txt",
+        "grounded fixture passage",
+        REQUESTED_MODEL,
+        ACTUAL_MODEL,
+    )
 }
 
 fn fixture_vector() -> Vec<f32> {
     let mut vector = vec![0.0; hkask_storage::embedding_dim()];
     vector[0] = 1.0;
     vector
-}
-
-fn fixture(directory: &std::path::Path) -> anyhow::Result<std::path::PathBuf> {
-    let database_path = directory.join("reference.db");
-    let database = database_path
-        .to_str()
-        .ok_or_else(|| anyhow::anyhow!("non-UTF-8 database path"))?;
-    {
-        let store = MemoryStore::open(database, PASSPHRASE, hkask_storage::embedding_dim())?;
-        let entity = format!("{ENTITY_PREFIX}utf8-666978747572652e747874:0");
-        store.store(HMem::new(
-            &entity,
-            "text",
-            serde_json::json!("grounded fixture passage"),
-            WebID::new(),
-        ))?;
-        store.store(HMem::new(
-            &entity,
-            "method_signals",
-            serde_json::json!({"parataxis_ratio": 1.0}),
-            WebID::new(),
-        ))?;
-        store.store_embedding(
-            &entity,
-            &fixture_vector(),
-            ACTUAL_MODEL,
-            Some("grounded fixture passage"),
-        )?;
-    }
-    {
-        let database = hkask_storage::open_or_repair(database, PASSPHRASE)?;
-        let pool = database.sqlite_pool()?;
-        let connection = pool.get()?;
-        connection.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
-    }
-    for suffix in [".maintenance-lock", "-wal", "-shm"] {
-        let sidecar = format!("{database}{suffix}");
-        if std::path::Path::new(&sidecar).exists() {
-            std::fs::remove_file(sidecar)?;
-        }
-    }
-
-    let digest = sha256_file(&database_path)?;
-    let representations_path = directory.join("representations-manifest.json");
-    std::fs::write(
-        &representations_path,
-        serde_json::to_vec_pretty(&serde_json::json!({
-            "schema_version": 2,
-            "entity_ref_prefix": "calibration:fixture:sealed-v1",
-            "boilerplate_exclusion_reports": {
-                "fixture.txt": {"input_words": 3, "retained_words": 3, "exclusions": []}
-            },
-            "validation": {
-                "accepted_source_count": 1,
-                "boilerplate_filter_applied": true
-            }
-        }))?,
-    )?;
-    let manifest_digest = sha256_file(&representations_path)?;
-    let run_identity_path = directory.join("run-identity.json");
-    let mut identity = serde_json::json!({
-        "schema_version": 3,
-        "preseal_run_id": "a".repeat(64),
-        "accepted_sources_sha256": "b".repeat(64),
-        "run_spec_sha256": "c".repeat(64),
-        "queries_sha256": "d".repeat(64),
-        "requested_embedding_model": REQUESTED_MODEL,
-        "actual_embedding_model": ACTUAL_MODEL,
-        "policies_sha256": "e".repeat(64),
-        "retriever_sha256": "f".repeat(64),
-        "evaluator_sha256": "0".repeat(64),
-        "representations_manifest_sha256": manifest_digest,
-        "representations": {
-            "reference": "1".repeat(64),
-            "current": "2".repeat(64),
-            "fine": "3".repeat(64),
-            "child_parent_map": "4".repeat(64),
-            "parent": "5".repeat(64)
-        },
-        "indexes": {"reference": digest, "current": "6".repeat(64), "fine": "7".repeat(64)}
-    });
-    reseal_fixture_identity(&mut identity)?;
-    std::fs::write(&run_identity_path, serde_json::to_vec_pretty(&identity)?)?;
-    let manifest_path = directory.join("federated-sources.json");
-    std::fs::write(
-        &manifest_path,
-        serde_json::to_vec_pretty(&serde_json::json!({
-            "schema_version": 1,
-            "sources": [{
-                "id": SOURCE_ID,
-                "display_name": "Fixture research library",
-                "database_path": database_path,
-                "run_identity_path": run_identity_path,
-                "representations_manifest_path": representations_path,
-                "index_name": "reference"
-            }]
-        }))?,
-    )?;
-    Ok(manifest_path)
 }
 
 /// expect: "A configured external source is identity-bound and returns only passage text." [P8]
@@ -208,6 +72,43 @@ fn bound_source_returns_provenance_without_method_signals() -> anyhow::Result<()
                 .exists()
         );
     }
+    Ok(())
+}
+
+/// expect: "A trailing-colon manifest prefix composes the producer's double-colon index prefix and still admits." [P8]
+/// The real calibration builder seals refs from the manifest prefix verbatim
+/// (`corpus:researcher:` + `:fine:` → `corpus:researcher::fine:`); the consumer
+/// must mirror that composition, never normalize it.
+#[test]
+fn bound_source_admits_trailing_colon_manifest_prefix() -> anyhow::Result<()> {
+    let directory = tempfile::tempdir()?;
+    let manifest_path = hkask_memory::test_support::sealed_federated_fixture_indexed(
+        directory.path(),
+        SOURCE_ID,
+        "Fixture research library",
+        "fixture.txt",
+        "grounded fixture passage",
+        REQUESTED_MODEL,
+        ACTUAL_MODEL,
+        "corpus:researcher:",
+        "fine",
+    )?;
+
+    let manifest = FederatedSourcesManifest::load(&manifest_path)?;
+    let source = ReadOnlyPassageSource::open(&manifest.sources[0], PASSPHRASE)?;
+    assert_eq!(
+        source.identity().entity_ref_prefix,
+        "corpus:researcher::fine:"
+    );
+    assert_eq!(source.identity().passage_count, 1);
+
+    let batch = source.search(REQUESTED_MODEL, &fixture_vector(), 3)?;
+    assert_eq!(batch.hits.len(), 1);
+    assert_eq!(batch.hits[0].text, "grounded fixture passage");
+    assert_eq!(
+        batch.hits[0].entity_ref,
+        "corpus:researcher::fine:utf8-666978747572652e747874:0"
+    );
     Ok(())
 }
 

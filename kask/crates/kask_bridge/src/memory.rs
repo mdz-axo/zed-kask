@@ -1424,116 +1424,6 @@ pub(crate) mod tests {
         port_with(in_memory_curator_store(), embedding_port, None, 0, 0.3)
     }
 
-    // Match the producer's SHA-256 seal without changing this crate's dependencies.
-    async fn sealed_fixture_digest(path: &Path) -> anyhow::Result<String> {
-        let output = tokio::process::Command::new("sha256sum")
-            .arg(path)
-            .output()
-            .await?;
-        anyhow::ensure!(
-            output.status.success(),
-            "sha256sum failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        Ok(String::from_utf8(output.stdout)?
-            .split_whitespace()
-            .next()
-            .ok_or_else(|| anyhow::anyhow!("sha256sum returned no digest"))?
-            .to_string())
-    }
-
-    pub(crate) async fn sealed_external_fixture(directory: &Path) -> anyhow::Result<PathBuf> {
-        let database_path = directory.join("reference.db");
-        let database = database_path
-            .to_str()
-            .ok_or_else(|| anyhow::anyhow!("non-UTF-8 fixture database path"))?;
-        let dim = 1024;
-        let mut vector = vec![0.0; dim];
-        vector[0] = 1.0;
-        let entity = "calibration:fixture:sealed-v1:reference:utf8-666978747572652e747874:0";
-        {
-            let store = MemoryStore::open(database, "test-passphrase", dim)?;
-            store.store(hkask_storage::HMem::new(
-                entity,
-                "text",
-                serde_json::json!("grounded fixture passage"),
-                WebID::new(),
-            ))?;
-            store.store(hkask_storage::HMem::new(
-                entity,
-                "method_signals",
-                serde_json::json!({"parataxis_ratio": 1.0}),
-                WebID::new(),
-            ))?;
-            store.store_embedding(
-                entity,
-                &vector,
-                "test-model",
-                Some("grounded fixture passage"),
-            )?;
-        }
-        {
-            let database = hkask_storage::open_or_repair(database, "test-passphrase")?;
-            database
-                .sqlite_pool()?
-                .get()?
-                .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
-        }
-        for suffix in [".maintenance-lock", "-wal", "-shm"] {
-            let sidecar = format!("{database}{suffix}");
-            if Path::new(&sidecar).exists() {
-                std::fs::remove_file(sidecar)?;
-            }
-        }
-        let digest = sealed_fixture_digest(&database_path).await?;
-        let representations_path = directory.join("representations-manifest.json");
-        std::fs::write(
-            &representations_path,
-            serde_json::to_vec_pretty(&serde_json::json!({
-                "schema_version": 2,
-                "entity_ref_prefix": "calibration:fixture:sealed-v1",
-                "boilerplate_exclusion_reports": {"fixture.txt": {"input_words": 3, "retained_words": 3, "exclusions": []}},
-                "validation": {"accepted_source_count": 1, "boilerplate_filter_applied": true}
-            }))?,
-        )?;
-        let manifest_digest = sealed_fixture_digest(&representations_path).await?;
-        let run_identity_path = directory.join("run-identity.json");
-        let mut identity = serde_json::json!({
-            "schema_version": 3,
-            "preseal_run_id": "a".repeat(64),
-            "accepted_sources_sha256": "b".repeat(64),
-            "run_spec_sha256": "c".repeat(64),
-            "queries_sha256": "d".repeat(64),
-            "requested_embedding_model": "test-model",
-            "actual_embedding_model": "test-model",
-            "policies_sha256": "e".repeat(64),
-            "retriever_sha256": "f".repeat(64),
-            "evaluator_sha256": "0".repeat(64),
-            "representations_manifest_sha256": manifest_digest,
-            "representations": {"reference": "1".repeat(64), "current": "2".repeat(64), "fine": "3".repeat(64), "child_parent_map": "4".repeat(64), "parent": "5".repeat(64)},
-            "indexes": {"reference": digest, "current": "6".repeat(64), "fine": "7".repeat(64)}
-        });
-        identity["run_id"] =
-            serde_json::json!(hkask_memory::federated_recall::sealed_run_id(&identity)?);
-        std::fs::write(&run_identity_path, serde_json::to_vec_pretty(&identity)?)?;
-        let manifest_path = directory.join("federated-sources.json");
-        std::fs::write(
-            &manifest_path,
-            serde_json::to_vec_pretty(&FederatedSourcesManifest {
-                schema_version: 1,
-                sources: vec![FederatedSourceSpec {
-                    id: "fixture-reference".to_string(),
-                    display_name: "Fixture research library".to_string(),
-                    database_path,
-                    run_identity_path,
-                    representations_manifest_path: representations_path,
-                    index_name: "reference".to_string(),
-                }],
-            })?,
-        )?;
-        Ok(manifest_path)
-    }
-
     pub(crate) fn in_memory_port_with_external_fixture() -> RealMemoryPort {
         let mut port = in_memory_port_with_embed_fn(Arc::new(|_query: &str| {
             let mut vector = vec![0.0; 1024];
@@ -1550,7 +1440,15 @@ pub(crate) mod tests {
     async fn external_search_reads_only_selected_sealed_source_and_revalidates()
     -> anyhow::Result<()> {
         let directory = tempfile::tempdir()?;
-        let manifest_path = sealed_external_fixture(directory.path()).await?;
+        let manifest_path = hkask_memory::test_support::sealed_federated_fixture(
+            directory.path(),
+            "fixture-reference",
+            "Fixture research library",
+            "fixture.txt",
+            "grounded fixture passage",
+            "test-model",
+            "test-model",
+        )?;
         let mut manifest = FederatedSourcesManifest::load(&manifest_path)?;
         let mut broken = manifest.sources[0].clone();
         broken.id = "unselected-broken".to_string();
