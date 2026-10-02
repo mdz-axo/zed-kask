@@ -1442,34 +1442,6 @@ pub(crate) mod tests {
             .to_string())
     }
 
-    fn sorted_sealed_fixture(value: &serde_json::Value) -> serde_json::Value {
-        match value {
-            serde_json::Value::Object(object) => {
-                let mut sorted = serde_json::Map::new();
-                let mut keys: Vec<_> = object.keys().collect();
-                keys.sort();
-                for key in keys {
-                    if let Some(value) = object.get(key) {
-                        sorted.insert(key.clone(), sorted_sealed_fixture(value));
-                    }
-                }
-                serde_json::Value::Object(sorted)
-            }
-            serde_json::Value::Array(values) => {
-                serde_json::Value::Array(values.iter().map(sorted_sealed_fixture).collect())
-            }
-            other => other.clone(),
-        }
-    }
-
-    async fn sealed_fixture_run_id(identity: &serde_json::Value) -> anyhow::Result<String> {
-        let mut canonical = serde_json::to_vec(&sorted_sealed_fixture(identity))?;
-        canonical.push(b'\n');
-        let file = tempfile::NamedTempFile::new()?;
-        std::fs::write(file.path(), canonical)?;
-        sealed_fixture_digest(file.path()).await
-    }
-
     pub(crate) async fn sealed_external_fixture(directory: &Path) -> anyhow::Result<PathBuf> {
         let database_path = directory.join("reference.db");
         let database = database_path
@@ -1541,7 +1513,8 @@ pub(crate) mod tests {
             "representations": {"reference": "1".repeat(64), "current": "2".repeat(64), "fine": "3".repeat(64), "child_parent_map": "4".repeat(64), "parent": "5".repeat(64)},
             "indexes": {"reference": digest, "current": "6".repeat(64), "fine": "7".repeat(64)}
         });
-        identity["run_id"] = serde_json::json!(sealed_fixture_run_id(&identity).await?);
+        identity["run_id"] =
+            serde_json::json!(hkask_memory::federated_recall::sealed_run_id(&identity)?);
         std::fs::write(&run_identity_path, serde_json::to_vec_pretty(&identity)?)?;
         let manifest_path = directory.join("federated-sources.json");
         std::fs::write(

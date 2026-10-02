@@ -9045,6 +9045,7 @@ version = "0.40.0"
 dependencies = [
  "chrono",
  "hkask-bridge-ontology",
+ "hkask-mcp-companies",
  "hkask-mcp-server",
  "hkask-spreadsheet",
  "hkask-types",

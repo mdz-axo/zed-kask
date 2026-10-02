@@ -780,6 +780,21 @@ fn sorted_json(value: &serde_json::Value) -> serde_json::Value {
     }
 }
 
+/// The seal computation shared by the verifier and every federated test
+/// fixture builder: hash the canonical (sorted-keys, compact) serialization
+/// of `identity` — which must NOT yet carry its `run_id` field — plus one
+/// trailing newline, matching the producer's `jq -cS .` pipeline.
+///
+/// Public so federated test fixtures across crates (kask_bridge, curator)
+/// compute seals through the same code the verifier checks against — a
+/// hand-copied canonicalizer in a test can drift and still pass, sealing
+/// against a stale algorithm.
+pub fn sealed_run_id(identity: &serde_json::Value) -> Result<String, serde_json::Error> {
+    let mut canonical = serde_json::to_vec(&sorted_json(identity))?;
+    canonical.push(b'\n');
+    Ok(format!("{:x}", Sha256::digest(&canonical)))
+}
+
 fn verify_run_id(
     source_id: &str,
     path: &Path,
@@ -793,15 +808,11 @@ fn verify_run_id(
         ))
     })?;
     fields.remove("run_id");
-    let mut canonical = serde_json::to_vec(&sorted_json(&identity)).map_err(|error| {
-        FederatedRecallError::ParseArtifact {
-            artifact: "run identity",
-            path: path.to_path_buf(),
-            source: error,
-        }
+    let actual = sealed_run_id(&identity).map_err(|error| FederatedRecallError::ParseArtifact {
+        artifact: "run identity",
+        path: path.to_path_buf(),
+        source: error,
     })?;
-    canonical.push(b'\n');
-    let actual = format!("{:x}", Sha256::digest(&canonical));
     if !expected.eq_ignore_ascii_case(&actual) {
         return Err(FederatedRecallError::RunIdentityMismatch {
             source_id: source_id.to_string(),

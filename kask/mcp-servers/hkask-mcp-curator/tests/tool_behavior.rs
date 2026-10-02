@@ -2453,35 +2453,6 @@ fn federated_fixture_sha256(path: &std::path::Path) -> Result<String, Box<dyn st
     Ok(format!("{:x}", hasher.finalize()))
 }
 
-fn sorted_federated_fixture(value: &serde_json::Value) -> serde_json::Value {
-    match value {
-        serde_json::Value::Object(object) => {
-            let mut result = serde_json::Map::new();
-            let mut keys: Vec<_> = object.keys().collect();
-            keys.sort();
-            for key in keys {
-                if let Some(value) = object.get(key) {
-                    result.insert(key.clone(), sorted_federated_fixture(value));
-                }
-            }
-            serde_json::Value::Object(result)
-        }
-        serde_json::Value::Array(values) => {
-            serde_json::Value::Array(values.iter().map(sorted_federated_fixture).collect())
-        }
-        other => other.clone(),
-    }
-}
-
-fn federated_fixture_run_id(
-    identity: &serde_json::Value,
-) -> Result<String, Box<dyn std::error::Error>> {
-    use sha2::Digest as _;
-    let mut canonical = serde_json::to_vec(&sorted_federated_fixture(identity))?;
-    canonical.push(b'\n');
-    Ok(format!("{:x}", sha2::Sha256::digest(&canonical)))
-}
-
 fn federated_source_fixture(
     directory: &std::path::Path,
 ) -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
@@ -2562,7 +2533,8 @@ fn federated_source_fixture(
         },
         "indexes": {"reference": digest, "current": "6".repeat(64), "fine": "7".repeat(64)}
     });
-    identity["run_id"] = serde_json::json!(federated_fixture_run_id(&identity)?);
+    identity["run_id"] =
+        serde_json::json!(hkask_memory::federated_recall::sealed_run_id(&identity)?);
     std::fs::write(&run_identity_path, serde_json::to_vec_pretty(&identity)?)?;
     let manifest_path = directory.join("federated-sources.json");
     std::fs::write(
