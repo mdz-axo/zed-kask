@@ -1,6 +1,6 @@
 ---
 name: writing-style
-description: "Compose or rewrite prose in a curated literary style using the live style registry — Hemingway, Woolf, Agatha Eliot, Jane Wilde, Ulysses S. Twain, plus Gentle Lovelace and Dunning technical corpora. Three modes: conversational turns, fresh composition, and recomposition of existing documents. Every generation is centroid-validated against measured style signatures, not vibes."
+description: "Compose or rewrite prose in a curated literary style using the live style registry — Hemingway, Woolf, Agatha Eliot, Jane Wilde, Ulysses S. Twain, plus Gentle Lovelace and Dunning technical corpora. Three modes: conversational turns, fresh composition, and recomposition of existing documents. Compose/rewrite generations are centroid-validated against measured style signatures, not vibes; paths without a validation instrument are labeled unvalidated."
 ---
 
 # Writing Style
@@ -20,8 +20,9 @@ and places them in the system prompt (`compose.rs`, retrieval section) —
 the in-context style-transfer family (e.g. Reif et al., "A Recipe for
 Arbitrary Text Style Transfer with Large Language Models", ACL 2022).
 The validation is embedding-space stylometry: cosine distance between the
-composed prose's embedding and the author's corpus centroid
-(`hkask-mcp-corpus/src/compose.rs:502`, `helpers.rs:334`), gated by the
+composed prose's embedding and the author's corpus centroid (generation call
+`hkask-mcp-corpus/src/compose.rs:502`; centroid validation `compose.rs:507-531`;
+`cosine_distance` at `helpers.rs:339`), gated by the
 config's `centroid_distance_max`. This is the tool's own instrument, not a
 published authorship-attribution method — it is not Burrows's Delta (2002)
 nor the feature-based stylometry surveyed by Stamatatos (2009), and no
@@ -80,16 +81,21 @@ report), not just the tone.
 ### Mode 1 — Conversational style turn
 
 1. The operator names a style for the session ("talk to me in
-   Hemingway"). Load the style's catalog row: its mechanics live in the
-   cognition config's `jinja2_template` (`read_file` the YAML).
-2. Read the config's mechanics — the syntactic rules, dialogue ratios,
-   signal thresholds (e.g. hemingway's adjective_density_max 5.0,
-   parataxis_ratio_min 0.6). These are the measurable signature.
+   Hemingway"). Load the style's catalog row: its voice rules live in the
+   cognition config's `jinja2_template`, its measurable signature in the
+   corpus's declared methods (`read_file` both YAMLs — e.g.
+   `kask/registry/styles/hemingway/corpus.yaml:169-179`).
+2. Read the mechanics — the syntactic rules and dialogue ratios from the
+   config's template, the signal thresholds from the corpus's declared
+   methods (hemingway: `adjective_density_max 5.0`, `parataxis_ratio_min 0.6`).
+   These are the measurable signature.
 3. Adopt the voice for the turn: compose the reply following the
    mechanics. A one-shot `corpus_compose` call is NOT required for every
-   conversational turn — the config's rules are the prompt. But run a
-   validation pass on the composed draft (Mode 3 step 3) when the turn
-   is long or the operator asks for authenticity.
+   conversational turn — the config's rules are the prompt. Validation is
+   available only through `corpus_rewrite` (Mode 3 step 3), which measures
+   the rewrite it produces — not the draft itself; a draft that must stand
+   verbatim is reported unvalidated, never pretended measured. Run it when
+   the operator asks for authenticity and the turn may be rewritten.
 4. Style off: the operator says so, or the session ends. Like adhd-mode,
    the style applies to output shape, never to technical content —
    facts, code, file paths stay verbatim under any voice.
@@ -135,7 +141,9 @@ report), not just the tone.
    counts: `(and (= h_src h_rec) (= f_src f_rec) (= t_src t_rec))`. The
    counts come from grep, not from the model. `^#` also counts `#` lines
    inside code fences; parity still holds because both files carry the
-   same fences.
+   same fences. Parity is a necessary floor, not a sufficiency proof —
+   equal counts do not show the headings are the *same* headings; the
+   per-section centroid validation (step 3) carries the semantic check.
 
 ### Degraded modes — surface, never fake
 
@@ -159,7 +167,8 @@ report), not just the tone.
 |------|------|-------------------|
 | Mode 2 compose, Mode 3 rewrite | P | the tool-reported centroid distance against the config's `centroid_distance_max`; the operator on a miss |
 | Mode 3 structure parity | D | `grep -c` counts and the `lisp_eval` equality |
-| Mode 1 conversational turn | P | unvalidated unless a validation pass is run; the operator |
+| Mode 1 conversational turn | P | unvalidated unless a rewrite-validation pass is run (it measures the rewrite, not the draft); the operator |
+| style-recommend render | D render feeding P | `render_template` (D); the recommendation is P, critiqued by the operator and the corpus-shape heuristic |
 
 ## Convergence
 
@@ -177,9 +186,25 @@ There is no iteration loop — a miss either re-composes once or surfaces.
 
 To render a template, call the `render_template` tool with the template ref (e.g., `writing-style/style-recommend`) and a context object with the required variables.
 
-Template context variables (from each template's `[inference] contract):
+Template context variables (from each template's `[inference]` contract):
 - `style-recommend.j2`: `document_brief`, `available_styles`
 - `conversational-turn.j2`: `style_name`, `style_mechanics`, `draft_reply`, `technical_content`
+
+## Regression case
+
+All receipts executed live through `lisp_eval` (2026-10-01, batch-12 audit):
+
+- Structure parity, green: headings 12=12, fences 8=8, tables 3=3 → `true`
+  (the counts come from `grep -c` on both files, never from the model).
+- Structure parity, heading lost: `h_rec: 11` vs `h_src: 12` → `false` — a
+  recomposition that drops a heading fails parity regardless of prose
+  quality; `^#` also counts `#` lines inside code fences, and parity still
+  holds because both files carry the same fences. Equal counts are the
+  floor, not the proof — the same count with different headings passes
+  parity and fails semantics; the per-section centroid validation carries
+  that check.
+
+The skill's form is executed at use time, never anchored in code.
 
 ## Constraints
 
