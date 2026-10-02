@@ -23,12 +23,14 @@ Cybernetic reasoning framework for hKask's Regulation. VSM mapping, feedback loo
 ## D/P labelling
 
 VSM mapping, loop-property assessment, and variety-engineering proposals are
-P — judgment, critiqued by the Good Regulator check (can this model of the
-system actually regulate it?) and the operator. The gates are D: the loop
-assessments and Good Regulator conditions run as pinned `lisp_eval` forms
-over the observed loop evidence — a loop with no observable feedback path is
-an open loop no matter how well it is described, and spec drift is measured
-against the recorded spec, not judged.
+P — judgment over the observed evidence, critiqued by the Good Regulator check
+(can this model of the system actually regulate it?), by measurement against
+the recorded spec (spec drift is measured, not judged), and by the operator.
+The Convergence gate is D: a `lisp_eval` form over the analyses' counted
+outputs (broken-property count, variety counts, algedonic-channel boolean),
+live-executed at use time — a loop with no observable feedback path is an
+open loop no matter how well it is described, and the convergence verdict
+comes from the form's output, never from the analyst's confidence.
 
 ## Instructions
 
@@ -65,13 +67,13 @@ against the recorded spec, not judged.
 ### Convergence
 
 1. Gate — call `lisp_eval` with:
-   - form: `(cond ((> broken_properties 0) "broken_loop") ((< regulator_variety system_variety) "variety_deficit") ((not algedonic_channel) "unviable") (t "viable"))`
+   - form: `(cond ((> broken_properties 0) "broken_loop") ((not algedonic_channel) "unviable") ((< regulator_variety system_variety) "variety_deficit") (t "viable"))`
    - env: `{ "broken_properties": <loop properties rated broken or none>, "regulator_variety": <counted response classes>, "system_variety": <counted disturbance classes>, "algedonic_channel": <true if the S1 → S5 channel exists and is unblocked> }`
    The three analyses are P (judgment against evidence, each grounded in named hKask mechanisms, critiqued by the operator); the gate over their counted outputs is D. On anything but `viable`, re-run the failing analysis once with its remediation applied or the missing evidence gathered; a second failure is reported as the diagnosis, not iterated.
 
 ## Reference models
 
-Ashby, *An Introduction to Cybernetics* (1956) — requisite variety; Conant & Ashby, "Every good regulator of a system must be a model of that system" (1970); Beer, *Brain of the Firm* (1972) — the Viable System Model.
+Ashby, *An Introduction to Cybernetics* (1956) — requisite variety; Conant & Ashby, "Every good regulator of a system must be a model of that system" (1970); Beer, *Brain of the Firm* (1972) — the Viable System Model. The five-property loop framework (polarity, delay, gain, closure, fidelity) is this project's own synthesis — a diagnostic decomposition informed by that control-theory literature, not a framework from a published source; it is labeled as such wherever it is taught.
 
 ## Registry Templates
 
@@ -84,14 +86,34 @@ Ashby, *An Introduction to Cybernetics* (1956) — requisite variety; Conant & A
 To render a template, call the `render_template` tool with the template ref (e.g., `pragmatic-cybernetics/cybernetics-analyze-loop`) and a context object with the required variables.
 
 Template context variables (from each template's [inference] contract):
-- `cybernetics-analyze-loop.j2`: `loop_description`,`system_context`
-- `cybernetics-variety-check.j2`: `loop_analysis`,`system_context`
-- `cybernetics-vsm-map.j2`: `loop_analysis`,`variety_result` `system_context`
+- `cybernetics-analyze-loop.j2`: `loop_description`, `system_context`
+- `cybernetics-variety-check.j2`: `loop_analysis`, `system_context`
+- `cybernetics-vsm-map.j2`: `loop_analysis`, `variety_result`, `system_context`
 
+## Regression case
+
+All receipts executed live through `lisp_eval` (2026-10-01, batch-12 audit):
+
+- Convergence gate, viable: `{broken_properties: 0, regulator_variety: 5,
+  system_variety: 5, algedonic_channel: true}` → `"viable"`.
+- Convergence gate, broken loop: same env with `broken_properties: 1` →
+  `"broken_loop"` (a single broken/none property dominates — the
+  analyze-loop instruction's rule, enforced by the form's clause order).
+- Convergence gate, unviable: `algedonic_channel: false` → `"unviable"`
+  (the S1 → S5 channel blocked — non-negotiable per the Constraints).
+- Convergence gate, unviable not masked by deficit: `regulator_variety: 3`
+  vs `system_variety: 5` AND `algedonic_channel: false` → `"unviable"` —
+  the non-negotiable unviable verdict fires before the variety-deficit
+  clause; a deficit never masks a blocked algedonic channel.
+- Convergence gate, variety deficit: `regulator_variety: 3` vs
+  `system_variety: 5` (algedonic channel open) → `"variety_deficit"`
+  (Ashby's requisite-variety shortfall, counted in distinct classes).
+
+The skill's form is executed at use time, never anchored in code.
 
 ## Constraints
 
 - `cybernetics-analyze-loop.j2`: Every property assessment must be grounded in evidence. Broken/none property → broken loop. Remediation must name specific mechanisms. No external monitoring stacks (Prometheus, Grafana) — hKask is headless.
-- `cybernetics-variety-check.j2`: Every recommendation must reference a concrete hKask mechanism. Algedonic thresholds follow the runtime rule (`RuntimeAlert::new`, `hkask-regulation/src/algedonic.rs`): Warning when deficit > threshold/2, Critical when deficit > threshold; the deficit is counted in distinct classes. Critical status requires explicit escalation directive.
+- `cybernetics-variety-check.j2`: Every recommendation must reference a concrete hKask mechanism. Algedonic thresholds follow the runtime rule (`RuntimeAlert::new`, `hkask-regulation/src/algedonic.rs`): Warning when deficit > threshold/2, Critical when deficit > threshold; the deficit is counted in distinct classes. An idle window (zero observed states) yields deficit 0 from `VarietyTracker::deficit` (`hkask-regulation/src/runtime.rs:201`, pinned by `deficit_is_zero_for_idle_window`) — read it as no signal, never as variety health; name the idle window in the analysis instead of reporting a satisfied balance. Critical status requires explicit escalation directive.
 - `cybernetics-vsm-map.j2`: Every component maps to exactly one primary subsystem. Missing/blocked algedonic channel (S1 → S5) → unviable (non-negotiable). S4 must have spec-drift detection. S5 must reference Magna Carta principles.
 - Convergence check incorporates all three analysis steps (loop analysis, variety assessment, VSM mapping), not just loop analysis alone — defined in the Convergence section above.
