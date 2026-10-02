@@ -25,8 +25,14 @@ authorized by this document alone; the operator charters each workstream
 **Execution record.** Chartered 2026-10-02 ("proceed with plan
 execution"). Slice 0 (lisp_eval TypeError teaching) and Slice 1 (C2
 repetition stop-loss) landed the same day — RED→GREEN receipts in §9, one
-design revision recorded in §7. Slices 2–3 (C1 runaway protection) remain
-pending execution against this plan.
+design revision recorded in §7 (committed as `1d4bff6fb2`). Slice 2 (C1a
+reasoning-runaway watchdog) landed the same day: both bounds checked per
+delta (no timer race needed while reasoning flows — the stalled-stream
+case is the deferred stall bound), state-machine unit suite + a
+source-structure wiring pin green, clippy `-D warnings` clean. Deferred
+from Slice 2, recorded in DIVERGENCE.md: the behavioral turn-level test,
+the first-chunk/stall bounds, and the settings keys. Slice 3 (C1b recovery
+ladder) remains pending execution against this plan.
 
 **Provenance.** Patterns are translated at the architecture level from
 FrontierAgent (Apache-2.0, v0.1.0 unreleased, active — last commit 2026-10-02)

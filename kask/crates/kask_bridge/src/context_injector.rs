@@ -491,7 +491,15 @@ mod tests {
     #[tokio::test]
     async fn curator_chat_injects_selected_sealed_external_passage() -> anyhow::Result<()> {
         let directory = tempfile::tempdir()?;
-        let manifest_path = crate::memory::tests::sealed_external_fixture(directory.path()).await?;
+        let manifest_path = hkask_memory::test_support::sealed_federated_fixture(
+            directory.path(),
+            "fixture-reference",
+            "Fixture research library",
+            "fixture.txt",
+            "grounded fixture passage",
+            "test-model",
+            "test-model",
+        )?;
         let port = Arc::new(crate::memory::tests::in_memory_port_with_external_fixture());
         let prompt = "Can you find this grounded fixture passage for my question?";
         let enabled = BridgeContextInjector::new_curator(port.clone(), 3, 0.0, true)
