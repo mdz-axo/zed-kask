@@ -51,7 +51,8 @@ the curator as oracles for semantic questions.
 ### Step 2: Classify and route
 
 Render `region-routing/route` with those inputs. Follow the template's
-output schema: per step produce region, tools, gate, and role, applying the
+output schema: per step produce region, tools, gate, role, and a checkpoint
+field (Step 4 governs it), applying the
 routing rule — input formal and answer pinned -> deterministic tool, oracle
 named; input messy and output formal -> model proposes, deterministic gate
 iterates, both named; semantic output with a cheap boundary check -> gate at
@@ -62,7 +63,7 @@ a verification state and a named calibration mechanism.
 
 Call `lisp_eval`:
 - form: `(and (= unclassified 0) (= ungated 0) (= bad_region 0) (>= operator_roles 1) (>= other_roles 1))`
-- env: `{ "unclassified": <steps with no region>, "ungated": <SP/Sem-P steps with no named gate>, "bad_region": <regions outside the four>, "operator_roles": <steps assigning the operator a role>, "other_roles": <steps assigning the curator or executing agent a role> }`
+- env: `{ "unclassified": <steps with no region>, "ungated": <SP/Sem-P steps with no named gate>, "bad_region": <regions outside the four>, "operator_roles": <steps assigning the operator a role>, "other_roles": <steps assigning the curator or executing agent a role> }` — the five counts are P (model-performed counting over the delivered plan, critiqued by any consumer's recomputation); the invariant over them is D. A plan in which the operator is the only role is checkably wrong: the executing agent or curator must hold at least one step (the agent's traverse is the only function that routinely crosses all four regions in one task).
 
 If false, re-enter Step 2 with the failing steps named — max 2 iterations,
 then deliver with the failures listed. Never ship a plan the form rejects.
@@ -116,6 +117,24 @@ from observed outcomes, never from the model scoring its own plan.
 | Template | Purpose |
 |----------|---------|
 | `region-routing/route` | Classify task steps into the 2x2 regions and emit the routing plan: region, tools, gate, and role per step. |
+
+Template context variables (from the template's [inference] contract):
+- `route.j2`: `task_description`, `steps`, `available_oracles`
+
+## Regression case
+
+All receipts executed live through `lisp_eval` (2026-10-01, batch-11 audit):
+
+- Structural invariant, green: `{unclassified: 0, ungated: 0, bad_region: 0,
+  operator_roles: 1, other_roles: 2}` → `true`.
+- Structural invariant, ungated generating step: same env with `ungated: 1` →
+  `false` — the primary defect class (an SP/Sem-P step with no named gate).
+- Structural invariant, no operator role: `operator_roles: 0` → `false`.
+- Convergence, done: `{ratio: 0.75, iteration: 1}` → `done` (≥ 70% as-planned).
+- Convergence, iterate: `{ratio: 0.5, iteration: 1}` → `iterate`.
+- Convergence, stop-and-report: `{ratio: 0.5, iteration: 2}` → `stop-and-report`.
+
+The skill's forms are executed at use time, never anchored in code.
 
 ## Constraints
 
