@@ -101,27 +101,37 @@ impl std::str::FromStr for AssetType {
     }
 }
 
-impl rusqlite::ToSql for AssetType {
-    fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
-        Ok(rusqlite::types::ToSqlOutput::Owned(
-            rusqlite::types::Value::Text(self.to_string()),
-        ))
-    }
+/// rusqlite text round-trip impls for the string-backed enums — each enum
+/// stores as its Display form and parses back via FromStr.
+macro_rules! rusqlite_text_enum {
+    ($ty:ty) => {
+        impl rusqlite::ToSql for $ty {
+            fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
+                Ok(rusqlite::types::ToSqlOutput::Owned(
+                    rusqlite::types::Value::Text(self.to_string()),
+                ))
+            }
+        }
+
+        impl rusqlite::types::FromSql for $ty {
+            fn column_result(
+                value: rusqlite::types::ValueRef<'_>,
+            ) -> rusqlite::types::FromSqlResult<Self> {
+                match value {
+                    rusqlite::types::ValueRef::Text(bytes) => {
+                        let s = std::str::from_utf8(bytes)
+                            .map_err(|_| rusqlite::types::FromSqlError::InvalidType)?;
+                        s.parse::<$ty>()
+                            .map_err(|e| rusqlite::types::FromSqlError::Other(e.into()))
+                    }
+                    _ => Err(rusqlite::types::FromSqlError::InvalidType),
+                }
+            }
+        }
+    };
 }
 
-impl rusqlite::types::FromSql for AssetType {
-    fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
-        match value {
-            rusqlite::types::ValueRef::Text(bytes) => {
-                let s = std::str::from_utf8(bytes)
-                    .map_err(|_| rusqlite::types::FromSqlError::InvalidType)?;
-                s.parse::<AssetType>()
-                    .map_err(|e| rusqlite::types::FromSqlError::Other(e.into()))
-            }
-            _ => Err(rusqlite::types::FromSqlError::InvalidType),
-        }
-    }
-}
+rusqlite_text_enum!(AssetType);
 
 // ── Transaction type ─────────────────────────────────────────────────
 
@@ -175,27 +185,7 @@ impl std::str::FromStr for TxType {
     }
 }
 
-impl rusqlite::ToSql for TxType {
-    fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
-        Ok(rusqlite::types::ToSqlOutput::Owned(
-            rusqlite::types::Value::Text(self.to_string()),
-        ))
-    }
-}
-
-impl rusqlite::types::FromSql for TxType {
-    fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
-        match value {
-            rusqlite::types::ValueRef::Text(bytes) => {
-                let s = std::str::from_utf8(bytes)
-                    .map_err(|_| rusqlite::types::FromSqlError::InvalidType)?;
-                s.parse::<TxType>()
-                    .map_err(|e| rusqlite::types::FromSqlError::Other(e.into()))
-            }
-            _ => Err(rusqlite::types::FromSqlError::InvalidType),
-        }
-    }
-}
+rusqlite_text_enum!(TxType);
 
 // ── Transaction ──────────────────────────────────────────────────────
 
