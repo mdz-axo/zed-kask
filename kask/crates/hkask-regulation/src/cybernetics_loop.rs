@@ -265,12 +265,12 @@ pub struct CyberneticsLoop {
     /// same source for the sense phase.
     context_server_health_source:
         Option<Arc<dyn crate::sensor_provider::ContextServerHealthSource>>,
-    /// Optional evolution health source retained so alert delivery can
+    /// Optional experimentation health source retained so alert delivery can
     /// re-read the stuck-experiment ids for the board card's context (the
     /// count in the message cannot name WHICH experiments to unstick).
-    /// The sensor registry holds an `EvolutionHealthSensor` wrapping the
+    /// The sensor registry holds an `ExperimentationHealthSensor` wrapping the
     /// same source for the sense phase.
-    evolution_health_source: Option<Arc<dyn crate::sensor_provider::EvolutionHealthSource>>,
+    experimentation_health_source: Option<Arc<dyn crate::sensor_provider::ExperimentationHealthSource>>,
 }
 
 impl CyberneticsLoop {
@@ -328,7 +328,7 @@ impl CyberneticsLoop {
             max_iterations,
             inference_health_wired: false,
             inference_resilience_source: None,
-            evolution_health_source: None,
+            experimentation_health_source: None,
             inference_intervention_cursor: std::sync::atomic::AtomicU64::new(0),
             tick_count: std::sync::atomic::AtomicUsize::new(0),
             dampener,
@@ -551,26 +551,26 @@ impl CyberneticsLoop {
         }
     }
 
-    /// Wire an evolution health source after construction (§P8.9 step 1 —
-    /// the Layer-A afferent pathway for the evolution program).
+    /// Wire an experimentation health source after construction (§P8.9 step 1 —
+    /// the Layer-A afferent pathway for the experimentation program).
     ///
     /// Used by the composition root to wire the sensor over the evolution
     /// registry's health snapshot. Without this, the loop is blind to stuck
     /// experiments: a running experiment unresolved past the stale set point
     /// (D-3: 7 days) or with its whole declared budget recorded but no
     /// verdict produces no signal — the blind-feedback-loop trap.
-    pub fn set_evolution_health_source(
+    pub fn set_experimentation_health_source(
         &mut self,
-        source: Arc<dyn crate::sensor_provider::EvolutionHealthSource>,
+        source: Arc<dyn crate::sensor_provider::ExperimentationHealthSource>,
     ) {
         // Retain the source for the alert-delivery path (the stuck ids in
         // the board card's context); the sensor takes its own Arc.
-        self.evolution_health_source = Some(Arc::clone(&source));
+        self.experimentation_health_source = Some(Arc::clone(&source));
         self.sensor_registry.replace(
-            crate::loops::SignalMetric::EvolutionStuckExperiments,
-            Arc::new(crate::sensor_provider::EvolutionHealthSensor::new(
+            crate::loops::SignalMetric::ExperimentationStuckExperiments,
+            Arc::new(crate::sensor_provider::ExperimentationHealthSensor::new(
                 source,
-                crate::sensor_provider::DEFAULT_EVOLUTION_STALE_DAYS,
+                crate::sensor_provider::DEFAULT_EXPERIMENTATION_STALE_DAYS,
             )),
         );
     }

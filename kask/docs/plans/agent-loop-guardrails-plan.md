@@ -35,6 +35,29 @@ the settings keys (the behavioral turn-level test landed 2026-10-02 after
 the rebuild as `test_reasoning_runaway_watchdog_aborts_thinking_only_stream`).
 Slice 3 (C1b recovery ladder) remains pending execution against this plan.
 
+**C1a removed 2026-10-02 (operator directive, the same day it landed).**
+Three live false positives killed working turns in one day — a legitimate
+sub-agent's 123-second reasoning phase (the 120 s time bound, removed
+separately first), the operator's working thread (token bound), and the
+analysis turn examining that abort (token bound). The token bound
+(16384 estimated reasoning tokens) sits inside the legitimate operating
+range of this platform's own reasoning models: a frontier model working a
+hard problem emits 16k+ reasoning tokens before its first visible
+output, so reasoning length cannot distinguish "stuck" from "working" —
+the §11 falsifier fired in the harmful direction, and the grill-me
+answer ("fires only when reasoning is flowing and nothing else arrives")
+had conflated the mechanism's window with its legitimacy. The abort was
+also fatal with no recovery path (C1b was never built) and no settings
+knob, so a misfire lost the whole turn. Removed in full: `kask_runaway.rs`,
+the thread.rs wiring and `CompletionError::ReasoningRunaway`, the
+behavioral pin, and the DIVERGENCE.md entry; the deferred
+first-chunk/stall bounds and settings keys are void with it. The floor
+that remains: the model's own `max_tokens` cap ends a true runaway, and
+D43 names the zero-content MaxTokens signature in the log. C1b stays
+chartered, unbuilt. Do not re-land C1a without a content-level
+discriminator (looping vs. progressing), a non-fatal recovery path, and
+a settings knob.
+
 **Provenance.** Patterns are translated at the architecture level from
 FrontierAgent (Apache-2.0, v0.1.0 unreleased, active — last commit 2026-10-02)
 and its pinned engine `apodex-agent-core==0.12.2` (PyPI; engine mechanisms
@@ -296,7 +319,11 @@ Effort: 1–2 days.
 
 ## 8. Workstream C — C1 runaway protection (Slices 2–3)
 
-### C1a — stream watchdogs (S5)
+### C1a — stream watchdogs (S5) — REMOVED 2026-10-02
+
+**Removed the same day it landed** (operator directive, after two live
+false-positive aborts killed working turns — see the execution record in
+§1). The text below is the historical design, not a shipped surface.
 
 - New module `crates/agent/src/kask_runaway.rs` (kask-owned addition in
   the upstream crate — the `kask_compaction.rs`/`tool_retry_tracker.rs`

@@ -1,16 +1,16 @@
 [package]
-name = "hkask-mcp-evolution"
+name = "hkask-mcp-experimentation"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Evolution MCP server — the experiment registry for the sharded evolution program (repair plan §P8): registered experiments with pre-registered Brier-scored predictions, variant lineages, grounded fitness records, and selection fossils across the six artifact layers"
+description = "Experimentation MCP server — the experiment registry for the sharded experimentation program (repair plan §P8): registered experiments with pre-registered Brier-scored predictions, variant lineages, grounded fitness records, and selection fossils across the six artifact layers"
 
 [lib]
-name = "hkask_mcp_evolution"
-path = "src/hkask_mcp_evolution.rs"
+name = "hkask_mcp_experimentation"
+path = "src/hkask_mcp_experimentation.rs"
 
 [[bin]]
-name = "hkask-mcp-evolution"
+name = "hkask-mcp-experimentation"
 path = "src/main.rs"
 
 [dependencies]

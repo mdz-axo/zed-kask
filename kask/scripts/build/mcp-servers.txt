@@ -20,4 +20,4 @@ hkask-mcp-prediction-markets
 hkask-mcp-swarm
 hkask-mcp-media
 hkask-mcp-spreadsheet
-hkask-mcp-evolution
+hkask-mcp-experimentation

@@ -1,9 +1,9 @@
 #![forbid(unsafe_code)]
 #![warn(clippy::let_underscore_future)]
-//! hkask-mcp-evolution — the experiment registry for the sharded evolution
+//! hkask-mcp-experimentation — the experiment registry for the sharded experimentation
 //! program (repair plan §P8).
 //!
-//! One server owns the durable record of evolution experiments across the
+//! One server owns the durable record of experiments across the
 //! six artifact layers (§P8.3): registered experiments with pre-registered
 //! Brier-scored predictions, variant lineages, grounded fitness records
 //! (recorded report refs only — never simulated), and selection fossils
@@ -26,15 +26,15 @@ pub use server::run;
 
 // ── Registry path (shared by the MCP child and the in-host bridge) ────────
 
-/// Resolve the registry DB path: `HKASK_EVOLUTION_DB` when set to a
+/// Resolve the registry DB path: `HKASK_EXPERIMENTATION_DB` when set to a
 /// non-empty value, else the per-agent default under the hKask data dir.
 ///
 /// Both the MCP child (`server::run`) and the in-host health bridge
-/// (`kask_bridge::evolution_health_bridge`) open the registry through this
+/// (`kask_bridge::experimentation_health_bridge`) open the registry through this
 /// one function — parity is structural, not mirrored: a drift here would
 /// read a different registry than the one the tools write.
 pub fn registry_path() -> std::path::PathBuf {
-    registry_path_from(std::env::var("HKASK_EVOLUTION_DB").ok().as_deref())
+    registry_path_from(std::env::var("HKASK_EXPERIMENTATION_DB").ok().as_deref())
 }
 
 /// The pure resolution core — testable without process-global env mutation.
@@ -42,7 +42,7 @@ pub fn registry_path_from(env_value: Option<&str>) -> std::path::PathBuf {
     match env_value.filter(|value| !value.trim().is_empty()) {
         Some(value) => std::path::PathBuf::from(value),
         None => hkask_types::agent_paths::resolve_under_data_dir(
-            &hkask_types::agent_paths::mcp_server_db("evolution", "evolution"),
+            &hkask_types::agent_paths::mcp_server_db("experimentation", "experimentation"),
         ),
     }
 }
@@ -60,15 +60,15 @@ mod registry_path_tests {
         assert_eq!(default, registry_path_from(Some("")));
         assert_eq!(default, registry_path_from(Some("   ")));
         assert_eq!(
-            registry_path_from(Some("/tmp/alt-evolution.db")),
-            std::path::PathBuf::from("/tmp/alt-evolution.db")
+            registry_path_from(Some("/tmp/alt-experimentation.db")),
+            std::path::PathBuf::from("/tmp/alt-experimentation.db")
         );
-        // The default is the per-agent evolution registry under the data
+        // The default is the per-agent experimentation registry under the data
         // dir — the same relative path the MCP child serves.
         assert_eq!(
             default,
             hkask_types::agent_paths::resolve_under_data_dir(
-                &hkask_types::agent_paths::mcp_server_db("evolution", "evolution"),
+                &hkask_types::agent_paths::mcp_server_db("experimentation", "experimentation"),
             )
         );
     }
@@ -77,7 +77,7 @@ mod registry_path_tests {
 #[cfg(test)]
 mod tool_name_pin {
     hkask_mcp_server::tool_name_pin_test!(
-        crate::server::EvolutionServer::evolution_router(),
-        "evolution_router"
+        crate::server::ExperimentationServer::experimentation_router(),
+        "experimentation_router"
     );
 }

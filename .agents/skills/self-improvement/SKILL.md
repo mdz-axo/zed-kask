@@ -1,6 +1,6 @@
 ---
 name: self-improvement
-description: "General self-improvement skill for FM-based agents. Drives persistent, endogenous adaptation across Foundation Model Improvement and Scaffolding Improvement via intrinsic demonstrations, evaluative feedback, and extrinsic exploratory experience. Runs the verifier-gated LoRA fine-tuning loop (rollout baseline, verdict-bridged dataset, gated submit, held-out adapter evaluation, feedback retrain) and GEPA prompt evolution; files proposals, never commits."
+description: "General self-improvement skill for FM-based agents. Drives persistent, endogenous adaptation across Foundation Model Improvement and Scaffolding Improvement via intrinsic demonstrations, evaluative feedback, and extrinsic exploratory experience. Runs the verifier-gated LoRA fine-tuning loop (rollout baseline, verdict-bridged dataset, gated submit, held-out adapter evaluation, feedback retrain) and GEPA prompt experimentation; files proposals, never commits."
 ---
 
 # Self-Improvement
@@ -82,8 +82,8 @@ The skill follows a **three-layer architecture**:
 │    §5.2 Intrinsic Evaluative Feedback (sample → judge → optimize) │
 │    §5.3 Extrinsic Exploratory Experience (interact → reward → RL) │
 │  Scaffolding Improvement:                                         │
-│    §6.1 Prompt Optimization (scalar/qualitative/evolution/gradient)│
-│    §6.2 Memory Evolution (CRUD: Create/Read/Update/Delete)        │
+│    §6.1 Prompt Optimization (scalar/qualitative/experimentation/gradient)│
+│    §6.2 Memory Experimentation (CRUD: Create/Read/Update/Delete)        │
 │    §6.3 Tool Governance (routing/refinement/creation)            │
 │    §6.4 Full Scaffolding (self-referential code rewrite)          │
 └─────────────────────────────────────────────────────────────────┘
@@ -153,7 +153,7 @@ The outer Kata uses the `kata-improvement` step templates directly; this skill s
 
 ### si-agenda-generator (Plan-step extension — the experiment-designer loop)
 
-When improvement work has no single named target — the operator asked for self-improvement generally, or regulation signals are accumulating — the Plan step extends into an agenda generator (repair plan §P8.5 Phase 3). It replaces hand-assembling experiments from noticed problems: signals are read mechanically, candidates are designed per the experiment protocol (`evolution/experiment-protocol`), and the prioritized queue lives in the evolution registry as `proposed` experiments.
+When improvement work has no single named target — the operator asked for self-improvement generally, or regulation signals are accumulating — the Plan step extends into an agenda generator (repair plan §P8.5 Phase 3). It replaces hand-assembling experiments from noticed problems: signals are read mechanically, candidates are designed per the experiment protocol (`experimentation/experiment-protocol`), and the prioritized queue lives in the experimentation registry as `proposed` experiments.
 
 1. **Read signals (D).** Skill-use issues: `curator_semantic_search` over recent issue fragments. Escalations: `curator_algedonic_log`. Variety deficits: `curator_status` with `include_variety: true`. Registry history: `population_query` (all experiments by status) plus `lineage_read` per resolved experiment for its fitness and selection records; compute each resolved experiment's prediction Brier from its `prediction.confidence` and the measured claim outcome (claim held → 1, refuted → 0; Brier = (confidence − outcome)²). Voids — `no-headroom` (design failure: the eval set cannot discriminate) and `measurement-void` (infrastructure failure: the runs never produced a valid measurement) — never tested their claim; exclude them from the calibration record.
 2. **Design and prioritize (P).** Render `self-improvement/si-agenda-generator` with the signals, the registry history with computed Briers, and the session's declared budget. The rendered prompt designs candidates — each with hypothesis, layer, genotype refs, eval set, fitness function, pre-registered prediction, and budget — ranked by signal strength × expected information ÷ cost, with confidences calibrated against the registry's Brier record.
@@ -170,7 +170,7 @@ When improvement work has no single named target — the operator asked for self
      - `si-exec-fm-feedback.j2` (§5.2): Sample candidate outputs, apply intrinsic evaluator, convert to update signal, optimize via RL/DPO/critique-conditioned fine-tuning.
      - `si-exec-fm-experience.j2` (§5.3): Collect interaction trajectories from grounded or simulated environments, update via PPO/DPO.
    - **Scaffolding Improvement**:
-     - `si-exec-scaffold-prompt.j2` (§6.1): Apply one of four paradigms (scalar/qualitative/evolution/textual-gradient). For population-based evolution with a Pareto frontier, run the "Prompt evolution (GEPA)" sub-loop below.
+     - `si-exec-scaffold-prompt.j2` (§6.1): Apply one of four paradigms (scalar/qualitative/experimentation/textual-gradient). For population-based experimentation with a Pareto frontier, run the "Prompt experimentation (GEPA)" sub-loop below.
      - `si-exec-scaffold-memory.j2` (§6.2): Apply signal-driven CRUD operations (Create/Read/Update/Delete).
      - `si-exec-scaffold-tool.j2` (§6.3): Apply dynamic tool routing, iterative refinement, or autonomous creation.
      - `si-exec-scaffold-full.j2` (§6.4): Treat entire scaffold as mutable program, generate patches, gate through verifier. Delegates to `diagnose` for reproduce→hypothesize→fix loops.
@@ -205,9 +205,9 @@ The executing session never commits a durable change to a skill, prompt, memory,
 5. Judge the registered goal (`kanban_goal_judge`) with the measured results; the operator's score comes later.
 6. Respond with `decision` ("propose", "discard", or "blocked"), `proposal_card_id` (only after card creation succeeds), `failure_mode` (if discarded or blocked), and `next_step` ("re-enter", "exit", or "refine").
 
-### Prompt evolution (GEPA) — a scaffolding sub-loop (formerly gpa-evolution)
+### Prompt experimentation (GEPA) — a scaffolding sub-loop (formerly gpa-experimentation)
 
-For a prompt artifact with a runnable eval set, when natural-language reflection on real trajectories should drive the change (Agrawal et al., GEPA, arXiv:2507.19457; NSGA-II non-dominated sorting, Deb et al. 2002 — `onto_anchor` → derived `reflective_prompt_evolution`). Prompts only (v1). Reflection and mutation are P, critiqued by recorded eval-set scores; dominance, frontier membership and the convergence form are D.
+For a prompt artifact with a runnable eval set, when natural-language reflection on real trajectories should drive the change (Agrawal et al., GEPA, arXiv:2507.19457; NSGA-II non-dominated sorting, Deb et al. 2002 — `onto_anchor` → derived `reflective_prompt_experimentation`). Prompts only (v1). Reflection and mutation are P, critiqued by recorded eval-set scores; dominance, frontier membership and the convergence form are D.
 
 Executor binding (local prompt artifacts): the eval set is a list of `{task, evaluator: {evaluator, spec}}` entries (contains/not_contains/regex); objectives are `pass_rate` (maximize), `total_tokens` (minimize) and `mean_latency_ms` (minimize). Each candidate prompt runs as a temporary local card whose `agent_id` is the variant id (`swarm_create_local_agent`, copying the target card's other fields); remove every temporary card with `swarm_remove_local` when the session ends and confirm with `swarm_list_local_agents`, and never reconfigure the target card. The proposal card on Algedonic review is the durable review record; remove temporary cards at session end.
 
@@ -215,7 +215,7 @@ Split the eval set before iteration 1 into a **feedback set** (Sample and Reflec
 
 Reflect and Propose are P steps executed by an agent: send the rendered template to a local reasoning agent with `swarm_delegate_local` and use its returned JSON. The orchestrating session only copies each returned variant's `content` into a card, verbatim; it never writes, edits or selects variant text.
 
-Registry recording (repair plan §P8 — the single record path, §P8.7-Q5): the evolution server is the record of record for this sub-loop. Before iteration 1, declare the run with `experiment_propose` (layer `prompt_template`; genotype_refs the target artifact; eval_set the feedback/selection split; fitness_fn the pass_rate and total_tokens objectives; noise_band the 10% cost band; prediction the pre-registered claim with confidence; budget the session's spend ceiling; experiment_key a stable run key), and register every proposed variant with `variant_register` (genotype_config the variant descriptor, parent_variant_id its parent, variant_key the variant id). Per-run log directories are not written.
+Registry recording (repair plan §P8 — the single record path, §P8.7-Q5): the experimentation server is the record of record for this sub-loop. Before iteration 1, declare the run with `experiment_propose` (layer `prompt_template`; genotype_refs the target artifact; eval_set the feedback/selection split; fitness_fn the pass_rate and total_tokens objectives; noise_band the 10% cost band; prediction the pre-registered claim with confidence; budget the session's spend ceiling; experiment_key a stable run key), and register every proposed variant with `variant_register` (genotype_config the variant descriptor, parent_variant_id its parent, variant_key the variant id). Per-run log directories are not written.
 
 1. **Sample** (`self-improvement/gpa-sample-trajectories`) — for the target (iteration 1) or each frontier member (2+), call `swarm_delegate_local` per eval task to get the response text, then `swarm_evaluate_local` with that task's evaluator on the response; each `{source, input, output, tool_calls, scores: {pass_rate: 1|0}}` pair is a recorded run. `swarm_eval_agent_local` reports counts only, no response text, so it cannot feed Reflect. No executor or evaluator → stop and report `unverified`.
 2. **Reflect** (`self-improvement/gpa-reflect`) — diagnose why each outcome was poor or good and extract transferable rules. Pass its whole output object to Propose as `reflections`.
@@ -473,4 +473,4 @@ The skill's forms are executed at use time, never anchored in code.
 - `next_step` field must be exactly "re-enter", "exit", or "refine" (lowercase).
 - `signal_type` may be a single value or an array for multi-signal support.
 - Variety engineering: PDCA iteration 2+ must check for repeated pathway/signal combinations and justify or diversify.
-- Delegation: `si-exec-scaffold-prompt.j2` routes population-based evolution to the Prompt evolution (GEPA) sub-loop and its `gpa-*` templates. `si-exec-scaffold-full.j2` delegates to `diagnose` for debugging loops.
+- Delegation: `si-exec-scaffold-prompt.j2` routes population-based experimentation to the Prompt experimentation (GEPA) sub-loop and its `gpa-*` templates. `si-exec-scaffold-full.j2` delegates to `diagnose` for debugging loops.

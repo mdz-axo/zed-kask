@@ -100,16 +100,16 @@ impl super::CyberneticsLoop {
                 error_context["outcome_breakdown"] = serde_json::json!(breakdown);
             }
         }
-        // Evolution-stuck alerts carry the stuck experiment ids so the board
+        // Experimentation-stuck alerts carry the stuck experiment ids so the board
         // card names what to unstick — the count in the message cannot. The
         // ids are re-read at delivery time (the freshest identity: an
         // experiment resolved between sense and delivery drops out honestly).
-        let evolution_stuck_related = recovery_signal
-            .is_some_and(|signal| signal.metric == SignalMetric::EvolutionStuckExperiments)
-            || alert.domain.contains("evolution_stuck");
-        if evolution_stuck_related && let Some(source) = self.evolution_health_source.as_ref() {
+        let experimentation_stuck_related = recovery_signal
+            .is_some_and(|signal| signal.metric == SignalMetric::ExperimentationStuckExperiments)
+            || alert.domain.contains("experimentation_stuck");
+        if experimentation_stuck_related && let Some(source) = self.experimentation_health_source.as_ref() {
             match source
-                .stuck_running_experiments(crate::sensor_provider::DEFAULT_EVOLUTION_STALE_DAYS)
+                .stuck_running_experiments(crate::sensor_provider::DEFAULT_EXPERIMENTATION_STALE_DAYS)
                 .await
             {
                 Ok(ids) if !ids.is_empty() => {
@@ -122,7 +122,7 @@ impl super::CyberneticsLoop {
                     tracing::warn!(
                         target: "reg.alert",
                         error = %error,
-                        "Evolution-stuck alert delivered without experiment ids — the registry re-read failed"
+                        "Experimentation-stuck alert delivered without experiment ids — the registry re-read failed"
                     );
                 }
             }
@@ -1131,13 +1131,13 @@ impl super::CyberneticsLoop {
             )),
             // Carry the stuck-experiment count into escalation evidence; the
             // delivery path enriches the board card's context with the ids.
-            RegulationReason::EvolutionStuckExperimentsExceeded => {
+            RegulationReason::ExperimentationStuckExperimentsExceeded => {
                 Some(RegulatoryAction::with_metric(
                     proposed.target,
                     proposed.action_type,
                     RegulatoryActionParams::with_data(
                         proposed.reason.as_str(),
-                        RegulationData::EvolutionStuckExperimentsExceeded {
+                        RegulationData::ExperimentationStuckExperimentsExceeded {
                             count: dev.signal.value,
                             threshold: dev.signal.set_point,
                         },
@@ -1786,16 +1786,16 @@ mod tests {
         );
     }
 
-    /// Evolution-stuck escalations carry the stuck experiment ids in the
+    /// Experimentation-stuck escalations carry the stuck experiment ids in the
     /// board card's context — the count in the message cannot name WHICH
     /// experiments to unstick (the L25 identity impedance, repaired at the
     /// delivery boundary exactly like the tool-reliability breakdown
     /// above).
     #[tokio::test]
-    async fn evolution_alert_carries_stuck_experiment_ids() {
+    async fn experimentation_alert_carries_stuck_experiment_ids() {
         struct StuckSource(Vec<String>);
         #[async_trait::async_trait]
-        impl crate::sensor_provider::EvolutionHealthSource for StuckSource {
+        impl crate::sensor_provider::ExperimentationHealthSource for StuckSource {
             async fn stuck_running_experiments(
                 &self,
                 _stale_days: u32,
@@ -1807,17 +1807,17 @@ mod tests {
         let escalation = Arc::new(RecordingEscalationSink::new());
         let mut regulation_loop = CyberneticsLoop::new(Arc::clone(&ledger));
         regulation_loop.set_alert_escalation_sink(Some(escalation.clone()));
-        regulation_loop.set_evolution_health_source(Arc::new(StuckSource(vec![
+        regulation_loop.set_experimentation_health_source(Arc::new(StuckSource(vec![
             "exp_stale".to_string(),
             "exp_spent".to_string(),
         ])));
         // The sense phase's observation the alert routing looks up; seed it
         // directly so the test exercises the routing, not the bus.
         regulation_loop.observations.lock().insert(
-            SignalMetric::EvolutionStuckExperiments,
+            SignalMetric::ExperimentationStuckExperiments,
             Signal::new(
                 LoopId::Cybernetics,
-                SignalMetric::EvolutionStuckExperiments,
+                SignalMetric::ExperimentationStuckExperiments,
                 2.0,
                 0.0,
             ),
@@ -1827,13 +1827,13 @@ mod tests {
             LoopId::Curation,
             ActionType::Escalate,
             RegulatoryActionParams::with_data(
-                "evolution_stuck_experiments_exceeded",
-                RegulationData::EvolutionStuckExperimentsExceeded {
+                "experimentation_stuck_experiments_exceeded",
+                RegulationData::ExperimentationStuckExperimentsExceeded {
                     count: 2.0,
                     threshold: 0.0,
                 },
             ),
-            "evolution_stuck_experiments".into(),
+            "experimentation_stuck_experiments".into(),
         );
         regulation_loop.route_action_as_alert(&action).await;
 
@@ -2240,7 +2240,7 @@ mod tests {
                 (InferenceModelAvailable, BelowSetPoint, 0.0, 1.0),
                 (ContextServerHealth, BelowSetPoint, 0.0, 1.0),
                 (OcrSilentFailures, AboveSetPoint, 14.0, 0.0),
-                (EvolutionStuckExperiments, AboveSetPoint, 2.0, 0.0),
+                (ExperimentationStuckExperiments, AboveSetPoint, 2.0, 0.0),
             ];
 
             for &(metric, direction, value, set_point) in cases {

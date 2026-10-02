@@ -109,8 +109,8 @@ pub use context_server_health_bridge::BridgeContextServerHealthSource;
 mod ocr_health_bridge;
 pub use ocr_health_bridge::BridgeOcrHealthSource;
 
-mod evolution_health_bridge;
-pub use evolution_health_bridge::BridgeEvolutionHealthSource;
+mod experimentation_health_bridge;
+pub use experimentation_health_bridge::BridgeExperimentationHealthSource;
 
 mod algedonic_board;
 #[cfg(test)]

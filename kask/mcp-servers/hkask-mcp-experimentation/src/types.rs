@@ -1,4 +1,4 @@
-//! Domain types for the evolution experiment registry (repair plan §P8).
+//! Domain types for the experiment registry (repair plan §P8).
 
 use serde::{Deserialize, Serialize};
 
@@ -103,7 +103,7 @@ pub struct SelectionRecord {
 
 /// Per-experiment health row for the regulation snapshot (§P8.9 step 1) —
 /// the Layer-A afferent view the bridge feeds to the cybernetics loop's
-/// `EvolutionHealthSensor`.
+/// `ExperimentationHealthSensor`.
 #[derive(Debug, Clone, Serialize)]
 pub struct ExperimentHealth {
     pub id: String,
@@ -120,11 +120,11 @@ pub struct ExperimentHealth {
 /// The registry's health snapshot: every experiment with its recorded-run
 /// total, prediction confidence, and verdict.
 #[derive(Debug, Clone, Serialize)]
-pub struct EvolutionHealthSnapshot {
+pub struct ExperimentationHealthSnapshot {
     pub experiments: Vec<ExperimentHealth>,
 }
 
-impl EvolutionHealthSnapshot {
+impl ExperimentationHealthSnapshot {
     /// Ids of running experiments that are stuck (§P8.9 step 1, D-3):
     /// unresolved past `stale_days`, or with their whole declared budget
     /// recorded but no verdict yet. An unparseable timestamp reads as
@@ -197,7 +197,7 @@ impl EvolutionHealthSnapshot {
 /// tested — "no-headroom" (design failure: baseline saturated, nothing to
 /// measure) or "measurement-void" (infrastructure failure: the runs never
 /// produced a valid measurement). Such claims are excluded from
-/// [`EvolutionHealthSnapshot::resolved_claim_brier`] rather than scored as
+/// [`ExperimentationHealthSnapshot::resolved_claim_brier`] rather than scored as
 /// refuted, so provider or harness noise cannot pollute the calibration
 /// record the agenda generator calibrates against.
 fn is_void_marker(reason: &str) -> bool {
@@ -207,7 +207,7 @@ fn is_void_marker(reason: &str) -> bool {
 /// Registry failures, classified per-variant for MCP dispatch — never a
 /// blanket internal (project rule).
 #[derive(Debug, thiserror::Error)]
-pub enum EvolutionError {
+pub enum ExperimentationError {
     #[error("experiment {0} not found")]
     ExperimentNotFound(String),
     #[error("variant {0} not found")]

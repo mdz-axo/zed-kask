@@ -7,12 +7,12 @@
 //! validation, per-variant error classification, and the full protocol
 //! lifecycle — the in-process rehearsal of the §P8.5 run-one-through.
 
-use hkask_mcp_evolution::server::{
-    EvolutionServer, ExperimentProposeRequest, FitnessRecordRequest, LineageReadRequest,
+use hkask_mcp_experimentation::server::{
+    ExperimentationServer, ExperimentProposeRequest, FitnessRecordRequest, LineageReadRequest,
     PopulationQueryRequest, SelectionRecordRequest, VariantRegisterRequest,
 };
-use hkask_mcp_evolution::store::EvolutionStore;
-use hkask_mcp_evolution::types::Prediction;
+use hkask_mcp_experimentation::store::ExperimentationStore;
+use hkask_mcp_experimentation::types::Prediction;
 use hkask_storage::database::sqlite::SqliteDriver;
 use hkask_types::AnyJsonValue;
 use hkask_types::WebID;
@@ -20,10 +20,10 @@ use hkask_types::tool_response::unwrap_tool_envelope;
 use rmcp::handler::server::wrapper::Parameters;
 use std::sync::Arc;
 
-fn make_server() -> EvolutionServer {
-    let store = EvolutionStore::with_driver(SqliteDriver::in_memory_driver())
-        .expect("in-memory evolution store");
-    EvolutionServer::new(WebID::new(), Arc::new(store))
+fn make_server() -> ExperimentationServer {
+    let store = ExperimentationStore::with_driver(SqliteDriver::in_memory_driver())
+        .expect("in-memory experimentation store");
+    ExperimentationServer::new(WebID::new(), Arc::new(store))
 }
 
 /// Parse a tool response and unwrap the `{"content": <value>}` envelope —
@@ -51,7 +51,7 @@ fn proposal(layer: &str) -> ExperimentProposeRequest {
     }
 }
 
-async fn propose(server: &EvolutionServer, layer: &str) -> serde_json::Value {
+async fn propose(server: &ExperimentationServer, layer: &str) -> serde_json::Value {
     let response = server
         .experiment_propose(Parameters(proposal(layer)))
         .await
@@ -60,7 +60,7 @@ async fn propose(server: &EvolutionServer, layer: &str) -> serde_json::Value {
 }
 
 async fn register_variant(
-    server: &EvolutionServer,
+    server: &ExperimentationServer,
     experiment_id: &str,
     name: &str,
     parent: Option<&str>,
@@ -450,7 +450,7 @@ async fn linked_goal_id_round_trips_through_the_declaration() {
 }
 
 #[test]
-fn evolution_declares_its_db_passphrase_as_required() {
+fn experimentation_declares_its_db_passphrase_as_required() {
     let source = include_str!("../src/server.rs");
     let declaration = [
         "CredentialRequirement::required(",
@@ -459,6 +459,6 @@ fn evolution_declares_its_db_passphrase_as_required() {
     .concat();
     assert!(
         source.contains(&declaration),
-        "the evolution server must declare HKASK_DB_PASSPHRASE required — its run() \n         refuses to start without it, so an undeclared (vec![]) or optional form \n         misdescribes the startup contract"
+        "the experimentation server must declare HKASK_DB_PASSPHRASE required — its run() \n         refuses to start without it, so an undeclared (vec![]) or optional form \n         misdescribes the startup contract"
     );
 }

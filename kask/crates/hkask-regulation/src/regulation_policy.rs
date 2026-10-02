@@ -36,7 +36,7 @@ pub(crate) enum RegulationReason {
     ModelUnavailable,
     ContextServerFleetDegraded,
     OcrSilentFailuresExceeded,
-    EvolutionStuckExperimentsExceeded,
+    ExperimentationStuckExperimentsExceeded,
 }
 
 impl RegulationReason {
@@ -60,7 +60,7 @@ impl RegulationReason {
             Self::ModelUnavailable => "model_unavailable",
             Self::ContextServerFleetDegraded => "context_server_fleet_degraded",
             Self::OcrSilentFailuresExceeded => "ocr_silent_failures_exceeded",
-            Self::EvolutionStuckExperimentsExceeded => "evolution_stuck_experiments_exceeded",
+            Self::ExperimentationStuckExperimentsExceeded => "experimentation_stuck_experiments_exceeded",
         }
     }
 }
@@ -306,12 +306,12 @@ impl RegulationPolicy {
                 //                Escalate to Curation so the stuck ids reach
                 //                the reviewable board.
                 RegulationRule {
-                    metric: EvolutionStuckExperiments,
+                    metric: ExperimentationStuckExperiments,
                     direction: AboveSetPoint,
                     proposed: &[ProposedAction {
                         target: Curation,
                         action_type: Escalate,
-                        reason: EvolutionStuckExperimentsExceeded,
+                        reason: ExperimentationStuckExperimentsExceeded,
                     }],
                 },
             ],
@@ -364,7 +364,7 @@ pub(crate) fn extract_deficit_threshold(data: &RegulationData) -> Option<(u64, u
         RegulationData::OcrSilentFailuresExceeded { count, threshold } => {
             Some((rounded_count(*count), rounded_count(*threshold)))
         }
-        RegulationData::EvolutionStuckExperimentsExceeded { count, threshold } => {
+        RegulationData::ExperimentationStuckExperimentsExceeded { count, threshold } => {
             Some((rounded_count(*count), rounded_count(*threshold)))
         }
         RegulationData::NoData => None,
@@ -439,7 +439,7 @@ mod tests {
     /// either has a policy rule or is allowlisted with its no-producer
     /// reason. The or-pattern below is exhaustive (no `_` arm) — adding a
     /// variant breaks the build until this test carries it. D87 added
-    /// `EvolutionStuckExperiments` with a sensor but no rule: the deviation
+    /// `ExperimentationStuckExperiments` with a sensor but no rule: the deviation
     /// was sensed and then silently dropped by `decide` — the exact gap
     /// this test now pins shut.
     #[test]
@@ -465,7 +465,7 @@ mod tests {
                 | GoalStaleCount
                 | GoalExpiredCount
                 | MetacognitionCriticalAlerts
-                | EvolutionStuckExperiments
+                | ExperimentationStuckExperiments
                 | ToolReliability
                 | PassRate
                 | TestCoverage
@@ -485,7 +485,7 @@ mod tests {
                     GoalStaleCount,
                     GoalExpiredCount,
                     MetacognitionCriticalAlerts,
-                    EvolutionStuckExperiments,
+                    ExperimentationStuckExperiments,
                     ToolReliability,
                     PassRate,
                     TestCoverage,

@@ -1,6 +1,6 @@
-//! Evolution MCP server — the experiment registry (repair plan §P8).
+//! Experimentation MCP server — the experiment registry (repair plan §P8).
 //!
-//! One server owns the durable record of evolution experiments: declaration
+//! One server owns the durable record of experiments: declaration
 //! with a pre-registered prediction, variant registration with lineage,
 //! grounded fitness (recorded report refs only), selection fossils, lineage
 //! reads, and population queries. The registry is the single record path —
@@ -17,42 +17,42 @@ use rmcp::{tool, tool_handler, tool_router};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use crate::store::EvolutionStore;
-use crate::types::{EvolutionError, LAYERS, Prediction, STATUSES};
+use crate::store::ExperimentationStore;
+use crate::types::{ExperimentationError, LAYERS, Prediction, STATUSES};
 
 hkask_mcp_server::mcp_server!(
-    pub struct EvolutionServer {
-        pub store: Arc<EvolutionStore>,
+    pub struct ExperimentationServer {
+        pub store: Arc<ExperimentationStore>,
     }
 );
 
-/// Classify [`EvolutionError`] for MCP dispatch: each variant maps to a
+/// Classify [`ExperimentationError`] for MCP dispatch: each variant maps to a
 /// distinct `McpToolError` kind so callers can distinguish "bad input" from
 /// "no such record" from "resolved experiment" from "store failure" — never
 /// a blanket internal (project rule).
-pub fn map_evolution_error(error: EvolutionError) -> McpToolError {
+pub fn map_experimentation_error(error: ExperimentationError) -> McpToolError {
     match error {
-        EvolutionError::ExperimentNotFound(_) | EvolutionError::VariantNotFound(_) => {
+        ExperimentationError::ExperimentNotFound(_) | ExperimentationError::VariantNotFound(_) => {
             McpToolError::not_found(error.to_string())
         }
-        EvolutionError::ExperimentResolved(_) => {
+        ExperimentationError::ExperimentResolved(_) => {
             McpToolError::new(McpErrorKind::FailedPrecondition, error.to_string())
         }
-        EvolutionError::VariantNotInExperiment(..)
-        | EvolutionError::UnknownLayer(_)
-        | EvolutionError::ConfidenceOutOfRange(_)
-        | EvolutionError::BudgetMissingMaxRuns(_)
-        | EvolutionError::RunCountInvalid(_)
-        | EvolutionError::UnknownVerdict(_)
-        | EvolutionError::UnknownStatus(_)
-        | EvolutionError::SelectedWithoutVariant
-        | EvolutionError::RejectedWithoutReasons
-        | EvolutionError::Empty(_)
-        | EvolutionError::BadTimestamp(_) => McpToolError::invalid_argument(error.to_string()),
-        EvolutionError::BudgetExhausted(..) => {
+        ExperimentationError::VariantNotInExperiment(..)
+        | ExperimentationError::UnknownLayer(_)
+        | ExperimentationError::ConfidenceOutOfRange(_)
+        | ExperimentationError::BudgetMissingMaxRuns(_)
+        | ExperimentationError::RunCountInvalid(_)
+        | ExperimentationError::UnknownVerdict(_)
+        | ExperimentationError::UnknownStatus(_)
+        | ExperimentationError::SelectedWithoutVariant
+        | ExperimentationError::RejectedWithoutReasons
+        | ExperimentationError::Empty(_)
+        | ExperimentationError::BadTimestamp(_) => McpToolError::invalid_argument(error.to_string()),
+        ExperimentationError::BudgetExhausted(..) => {
             McpToolError::new(McpErrorKind::FailedPrecondition, error.to_string())
         }
-        EvolutionError::Database(_) | EvolutionError::Serialization(_) => {
+        ExperimentationError::Database(_) | ExperimentationError::Serialization(_) => {
             McpToolError::internal(error.to_string())
         }
     }
@@ -62,7 +62,7 @@ pub fn map_evolution_error(error: EvolutionError) -> McpToolError {
 fn require_non_empty(label: &'static str, value: &str) -> Result<(), McpToolError> {
     if value.trim().is_empty() {
         return Err(McpToolError::invalid_argument(
-            EvolutionError::Empty(label).to_string(),
+            ExperimentationError::Empty(label).to_string(),
         ));
     }
     Ok(())
@@ -169,10 +169,10 @@ pub struct PopulationQueryRequest {
 
 // ── Tool router ─────────────────────────────────────────────────────
 
-#[tool_router(router = evolution_router, vis = "pub")]
-impl EvolutionServer {
+#[tool_router(router = experimentation_router, vis = "pub")]
+impl ExperimentationServer {
     #[tool(
-        description = "Register an evolution experiment (protocol step 1, Declare): hypothesis, artifact layer (skill | agent_card | prompt_template | tool_schema | regulation_scalar | lora_adapter), genotype refs, eval set, fitness function, noise band, pre-registered prediction with confidence in [0,1], and an energy budget that MUST carry max_runs (a positive integer the server enforces at fitness_record — recording past the ceiling is a typed budget_exhausted refusal, §P8.9 step 2). Optional linked_goal_id joins the experiment to the kanban goal that Brier-scores its claim. Returns the experiment record with status proposed. Optional experiment_key converges retried calls onto the existing record instead of duplicating it."
+        description = "Register an experiment (protocol step 1, Declare): hypothesis, artifact layer (skill | agent_card | prompt_template | tool_schema | regulation_scalar | lora_adapter), genotype refs, eval set, fitness function, noise band, pre-registered prediction with confidence in [0,1], and an energy budget that MUST carry max_runs (a positive integer the server enforces at fitness_record — recording past the ceiling is a typed budget_exhausted refusal, §P8.9 step 2). Optional linked_goal_id joins the experiment to the kanban goal that Brier-scores its claim. Returns the experiment record with status proposed. Optional experiment_key converges retried calls onto the existing record instead of duplicating it."
     )]
     pub async fn experiment_propose(
         &self,
@@ -192,15 +192,15 @@ impl EvolutionServer {
         execute_tool(self, "experiment_propose", async {
             require_non_empty("hypothesis", &hypothesis)?;
             if !LAYERS.contains(&layer.as_str()) {
-                return Err(map_evolution_error(EvolutionError::UnknownLayer(layer)));
+                return Err(map_experimentation_error(ExperimentationError::UnknownLayer(layer)));
             }
             if genotype_refs.is_empty() || genotype_refs.iter().any(|r| r.trim().is_empty()) {
-                return Err(map_evolution_error(EvolutionError::Empty("genotype_refs")));
+                return Err(map_experimentation_error(ExperimentationError::Empty("genotype_refs")));
             }
             require_non_empty("fitness_fn", &fitness_fn)?;
             require_non_empty("prediction.claim", &prediction.claim)?;
             if !(0.0..=1.0).contains(&prediction.confidence) {
-                return Err(map_evolution_error(EvolutionError::ConfidenceOutOfRange(
+                return Err(map_experimentation_error(ExperimentationError::ConfidenceOutOfRange(
                     prediction.confidence,
                 )));
             }
@@ -211,7 +211,7 @@ impl EvolutionServer {
                 .and_then(serde_json::Value::as_u64)
                 .filter(|value| *value > 0)
                 .ok_or_else(|| {
-                    map_evolution_error(EvolutionError::BudgetMissingMaxRuns(budget.to_string()))
+                    map_experimentation_error(ExperimentationError::BudgetMissingMaxRuns(budget.to_string()))
                 })?;
             let record = self
                 .store
@@ -228,7 +228,7 @@ impl EvolutionServer {
                     linked_goal_id.as_deref(),
                     experiment_key.as_deref(),
                 )
-                .map_err(map_evolution_error)?;
+                .map_err(map_experimentation_error)?;
             Ok(serde_json::json!({ "status": "proposed", "experiment": record }))
         })
         .await
@@ -256,7 +256,7 @@ impl EvolutionServer {
                     parent_variant_id.as_deref(),
                     variant_key.as_deref(),
                 )
-                .map_err(map_evolution_error)?;
+                .map_err(map_experimentation_error)?;
             Ok(serde_json::json!({ "status": "registered", "variant": record }))
         })
         .await
@@ -279,17 +279,17 @@ impl EvolutionServer {
             require_non_empty("experiment_id", &experiment_id)?;
             require_non_empty("variant_id", &variant_id)?;
             if runs.is_empty() || runs.iter().any(|r| r.trim().is_empty()) {
-                return Err(map_evolution_error(EvolutionError::Empty("runs")));
+                return Err(map_experimentation_error(ExperimentationError::Empty("runs")));
             }
             if run_count == 0 {
-                return Err(map_evolution_error(EvolutionError::RunCountInvalid(
+                return Err(map_experimentation_error(ExperimentationError::RunCountInvalid(
                     run_count,
                 )));
             }
             let record = self
                 .store
                 .record_fitness(&experiment_id, &variant_id, &runs, run_count, &scores)
-                .map_err(map_evolution_error)?;
+                .map_err(map_experimentation_error)?;
             Ok(serde_json::json!({ "status": "recorded", "fitness": record }))
         })
         .await
@@ -320,7 +320,7 @@ impl EvolutionServer {
                     &reject_reasons,
                     algedonic_reference.as_deref(),
                 )
-                .map_err(map_evolution_error)?;
+                .map_err(map_experimentation_error)?;
             Ok(serde_json::json!({
                 "status": "resolved",
                 "selection": record,
@@ -344,19 +344,19 @@ impl EvolutionServer {
                     let ancestry = self
                         .store
                         .variant_ancestry(&artifact_ref)
-                        .map_err(map_evolution_error)?;
+                        .map_err(map_experimentation_error)?;
                     let experiment = self
                         .store
                         .experiment_by_id(&variant.experiment_id)
-                        .map_err(map_evolution_error)?;
+                        .map_err(map_experimentation_error)?;
                     let fitness = self
                         .store
                         .fitness_for_experiment(&variant.experiment_id)
-                        .map_err(map_evolution_error)?;
+                        .map_err(map_experimentation_error)?;
                     let selections = self
                         .store
                         .selections_for_experiment(&variant.experiment_id)
-                        .map_err(map_evolution_error)?;
+                        .map_err(map_experimentation_error)?;
                     Ok(serde_json::json!({
                         "kind": "variant",
                         "ancestry": ancestry,
@@ -365,23 +365,23 @@ impl EvolutionServer {
                         "selections": selections,
                     }))
                 }
-                Err(EvolutionError::VariantNotFound(_)) => {
+                Err(ExperimentationError::VariantNotFound(_)) => {
                     let experiment = self
                         .store
                         .experiment_by_id(&artifact_ref)
-                        .map_err(map_evolution_error)?;
+                        .map_err(map_experimentation_error)?;
                     let variants = self
                         .store
                         .variants_for_experiment(&artifact_ref)
-                        .map_err(map_evolution_error)?;
+                        .map_err(map_experimentation_error)?;
                     let fitness = self
                         .store
                         .fitness_for_experiment(&artifact_ref)
-                        .map_err(map_evolution_error)?;
+                        .map_err(map_experimentation_error)?;
                     let selections = self
                         .store
                         .selections_for_experiment(&artifact_ref)
-                        .map_err(map_evolution_error)?;
+                        .map_err(map_experimentation_error)?;
                     Ok(serde_json::json!({
                         "kind": "experiment",
                         "experiment": experiment,
@@ -390,7 +390,7 @@ impl EvolutionServer {
                         "selections": selections,
                     }))
                 }
-                Err(error) => Err(map_evolution_error(error)),
+                Err(error) => Err(map_experimentation_error(error)),
             }
         })
         .await
@@ -411,21 +411,21 @@ impl EvolutionServer {
         execute_tool(self, "population_query", async {
             if let Some(value) = &layer {
                 if !LAYERS.contains(&value.as_str()) {
-                    return Err(map_evolution_error(EvolutionError::UnknownLayer(
+                    return Err(map_experimentation_error(ExperimentationError::UnknownLayer(
                         value.clone(),
                     )));
                 }
             }
             if let Some(value) = &status {
                 if !STATUSES.contains(&value.as_str()) {
-                    return Err(map_evolution_error(EvolutionError::UnknownStatus(
+                    return Err(map_experimentation_error(ExperimentationError::UnknownStatus(
                         value.clone(),
                     )));
                 }
             }
             if let Some(value) = &created_since {
                 chrono::DateTime::parse_from_rfc3339(value).map_err(|_| {
-                    map_evolution_error(EvolutionError::BadTimestamp(value.clone()))
+                    map_experimentation_error(ExperimentationError::BadTimestamp(value.clone()))
                 })?;
             }
             let limit = limit.unwrap_or(50).clamp(1, 200);
@@ -437,7 +437,7 @@ impl EvolutionServer {
                     created_since.as_deref(),
                     limit,
                 )
-                .map_err(map_evolution_error)?;
+                .map_err(map_experimentation_error)?;
             Ok(serde_json::json!({
                 "count": experiments.len(),
                 "experiments": experiments,
@@ -447,16 +447,16 @@ impl EvolutionServer {
     }
 }
 
-#[tool_handler(router = Self::evolution_router())]
-impl rmcp::ServerHandler for EvolutionServer {}
+#[tool_handler(router = Self::experimentation_router())]
+impl rmcp::ServerHandler for ExperimentationServer {}
 
-/// Start the server: the registry lives in the per-agent evolution database
-/// under the hKask data dir (`HKASK_EVOLUTION_DB` overrides the path), opened
+/// Start the server: the registry lives in the per-agent experimentation database
+/// under the hKask data dir (`HKASK_EXPERIMENTATION_DB` overrides the path), opened
 /// through the canonical passphrase chain — a missing `HKASK_DB_PASSPHRASE`
 /// fails startup visibly, never as an empty-key open.
 pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
     hkask_mcp_server::run_server(
-        "hkask-mcp-evolution",
+        "hkask-mcp-experimentation",
         env!("CARGO_PKG_VERSION"),
         |ctx: hkask_mcp_server::ServerContext| {
             let registry_path = crate::registry_path();
@@ -467,10 +467,10 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
             // visibly.
             if let Some(Err(error)) = registry_path.parent().map(std::fs::create_dir_all) {
                 tracing::warn!(
-                    target: "hkask.mcp.evolution",
+                    target: "hkask.mcp.experimentation",
                     path = %registry_path.display(),
                     %error,
-                    "Failed to create the evolution DB directory \
+                    "Failed to create the experimentation DB directory \
                      — the subsequent DB open will surface the failure"
                 );
             }
@@ -495,14 +495,14 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 hkask_storage::database::sqlite::SqliteDriver::new_labeled(pool, db_path.as_str()),
             );
             let store = Arc::new(
-                EvolutionStore::with_driver(driver)
-                    .map_err(|error| infrastructure(format!("evolution store init: {error}")))?,
+                ExperimentationStore::with_driver(driver)
+                    .map_err(|error| infrastructure(format!("experimentation store init: {error}")))?,
             );
-            Ok(EvolutionServer::new(ctx.webid, store))
+            Ok(ExperimentationServer::new(ctx.webid, store))
         },
         vec![hkask_mcp_server::CredentialRequirement::required(
             "HKASK_DB_PASSPHRASE",
-            "SQLCipher encryption passphrase for the evolution experiment registry — the server refuses to start without it (the registry is the record of record from day one; no legacy-import path)",
+            "SQLCipher encryption passphrase for the experiment registry — the server refuses to start without it (the registry is the record of record from day one; no legacy-import path)",
         )],
     )
     .await

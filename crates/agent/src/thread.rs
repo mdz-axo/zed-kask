@@ -1461,16 +1461,6 @@ enum CompletionError {
     MaxTokens,
     #[error("refusal")]
     Refusal,
-    /// zed-kask: agent-loop guardrails plan C1a — the reasoning-runaway
-    /// watchdog aborted a stream that produced only reasoning output.
-    #[error(
-        "reasoning-only runaway ({trigger} bound: ~{estimated_tokens} tokens, {elapsed_s:.0}s)"
-    )]
-    ReasoningRunaway {
-        elapsed_s: f64,
-        estimated_tokens: u64,
-        trigger: &'static str,
-    },
     #[error(transparent)]
     Other(#[from] anyhow::Error),
 }
@@ -3196,22 +3186,6 @@ impl Thread {
                                 );
                                 event_stream.send_stop(acp::StopReason::MaxTokens);
                             }
-                            Ok(CompletionError::ReasoningRunaway {
-                                elapsed_s,
-                                estimated_tokens,
-                                trigger,
-                            }) => {
-                                // zed-kask: agent-loop guardrails plan C1a —
-                                // the watchdog already warned at the abort
-                                // site; surface a named error so the turn
-                                // ends visibly instead of silently.
-                                event_stream.send_error(anyhow::anyhow!(
-                                    "reasoning-only runaway aborted ({trigger} bound: \
-                                     ~{estimated_tokens} estimated tokens, {elapsed_s:.0}s) \
-                                     — the model produced only reasoning output with no \
-                                     visible text or tool call"
-                                ));
-                            }
                             Ok(CompletionError::Other(error)) | Err(error) => {
                                 event_stream.send_error(error);
                             }
@@ -3410,10 +3384,6 @@ impl Thread {
             let mut early_tool_results: Vec<(usize, LanguageModelToolResult)> = Vec::new();
             let mut cancelled = false;
             let mut had_refusal = false;
-            // zed-kask: reasoning-runaway watchdog (agent-loop guardrails
-            // plan C1a) — per-request state, one completion attempt; see
-            // kask_runaway.rs.
-            let mut watchdog = crate::kask_runaway::ReasoningRunawayWatchdog::new();
             loop {
                 // Race between getting the first event, tool completion, and cancellation.
                 let first_event = futures::select! {
@@ -3458,43 +3428,6 @@ impl Thread {
                 let mut batch = vec![first_event];
                 while let Some(event) = events.next().now_or_never().flatten() {
                     batch.push(event);
-                }
-
-                // zed-kask: reasoning-runaway watchdog (agent-loop guardrails
-                // plan C1a) — abort a stream that has produced ONLY reasoning
-                // output past a token or time bound (D42: timeouts are the
-                // kill mechanism for runaway processes). Both bounds are
-                // checked per delta, so no timer race is needed while
-                // reasoning is flowing; a stream that STALLS mid-reasoning is
-                // the deferred inter-chunk stall bound. Productive output
-                // (visible text or a tool call) permanently disarms it.
-                let mut runaway_trigger = None;
-                for event in batch.iter().flatten() {
-                    if let Some(trigger) = watchdog.observe(event) {
-                        runaway_trigger = Some(trigger);
-                        break;
-                    }
-                }
-                if let Some(trigger) = runaway_trigger {
-                    let elapsed_s = watchdog.elapsed_seconds();
-                    let estimated_tokens = watchdog.estimated_tokens();
-                    log::warn!(
-                        target: "agent.thread",
-                        "reasoning-only runaway aborted ({} bound: ~{} estimated tokens, {:.0}s) — only reasoning output, no visible text or tool call",
-                        trigger.as_str(),
-                        estimated_tokens,
-                        elapsed_s
-                    );
-                    // Propagate exactly like the MaxTokens path (the failed
-                    // downcast's `?` at the batch-error site): anyhow(CompletionError)
-                    // reaches run_turn's match, which downcasts to the named
-                    // arm. The early return drops the stream (releasing the
-                    // rate-limit permit) the same way that propagation does.
-                    return Err(anyhow::Error::new(CompletionError::ReasoningRunaway {
-                        elapsed_s,
-                        estimated_tokens,
-                        trigger: trigger.as_str(),
-                    }));
                 }
 
                 // Process the batch in a single update

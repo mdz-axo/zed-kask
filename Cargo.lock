@@ -8964,7 +8964,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "hkask-mcp-evolution"
+name = "hkask-mcp-experimentation"
 version = "0.40.0"
 dependencies = [
  "chrono",
@@ -10906,7 +10906,7 @@ dependencies = [
  "hkask-inference",
  "hkask-keystore",
  "hkask-mcp-curator",
- "hkask-mcp-evolution",
+ "hkask-mcp-experimentation",
  "hkask-mcp-kata-kanban",
  "hkask-mcp-server",
  "hkask-mcp-swarm",

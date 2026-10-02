@@ -1,7 +1,7 @@
 //! SQLCipher-backed experiment registry (§P8.4).
 //!
 //! One database per server (the per-agent default under the hKask data dir,
-//! overridable via `HKASK_EVOLUTION_DB`), opened through the canonical
+//! overridable via `HKASK_EXPERIMENTATION_DB`), opened through the canonical
 //! passphrase chain. The registry is the record of record from day one —
 //! there is no legacy-import path (§P8.7-Q5).
 //!
@@ -18,14 +18,14 @@ use hkask_storage::database::types::DbError;
 use hkask_storage::database::value::{DbRow, DbValue};
 
 use crate::types::{
-    EvolutionError, EvolutionHealthSnapshot, ExperimentHealth, ExperimentRecord, FitnessRecord,
+    ExperimentationError, ExperimentationHealthSnapshot, ExperimentHealth, ExperimentRecord, FitnessRecord,
     Prediction, STATUS_PROPOSED, STATUS_RESOLVED, STATUS_RUNNING, SelectionRecord,
     VERDICT_REJECTED, VERDICT_SELECTED, VariantRecord,
 };
 
 /// Serialize a column value as canonical JSON text.
-fn value_column<T: serde::Serialize>(value: &T) -> Result<String, EvolutionError> {
-    serde_json::to_string(value).map_err(|error| EvolutionError::Serialization(error.to_string()))
+fn value_column<T: serde::Serialize>(value: &T) -> Result<String, ExperimentationError> {
+    serde_json::to_string(value).map_err(|error| ExperimentationError::Serialization(error.to_string()))
 }
 
 /// Optional key columns: an absent key is NULL (SQLite treats NULLs as
@@ -49,7 +49,7 @@ fn optional_int(row: &DbRow, idx: usize) -> Option<u64> {
         .and_then(|value| u64::try_from(value).ok())
 }
 
-fn experiment_from_row(row: &DbRow) -> Result<ExperimentRecord, EvolutionError> {
+fn experiment_from_row(row: &DbRow) -> Result<ExperimentRecord, ExperimentationError> {
     Ok(ExperimentRecord {
         id: row.get_str(0)?.to_string(),
         hypothesis: row.get_str(1)?.to_string(),
@@ -67,7 +67,7 @@ fn experiment_from_row(row: &DbRow) -> Result<ExperimentRecord, EvolutionError> 
     })
 }
 
-fn variant_from_row(row: &DbRow) -> Result<VariantRecord, EvolutionError> {
+fn variant_from_row(row: &DbRow) -> Result<VariantRecord, ExperimentationError> {
     Ok(VariantRecord {
         id: row.get_str(0)?.to_string(),
         experiment_id: row.get_str(1)?.to_string(),
@@ -77,7 +77,7 @@ fn variant_from_row(row: &DbRow) -> Result<VariantRecord, EvolutionError> {
     })
 }
 
-fn fitness_from_row(row: &DbRow) -> Result<FitnessRecord, EvolutionError> {
+fn fitness_from_row(row: &DbRow) -> Result<FitnessRecord, ExperimentationError> {
     Ok(FitnessRecord {
         id: row.get_str(0)?.to_string(),
         experiment_id: row.get_str(1)?.to_string(),
@@ -89,7 +89,7 @@ fn fitness_from_row(row: &DbRow) -> Result<FitnessRecord, EvolutionError> {
     })
 }
 
-fn selection_from_row(row: &DbRow) -> Result<SelectionRecord, EvolutionError> {
+fn selection_from_row(row: &DbRow) -> Result<SelectionRecord, ExperimentationError> {
     Ok(SelectionRecord {
         id: row.get_str(0)?.to_string(),
         experiment_id: row.get_str(1)?.to_string(),
@@ -101,11 +101,11 @@ fn selection_from_row(row: &DbRow) -> Result<SelectionRecord, EvolutionError> {
     })
 }
 
-pub struct EvolutionStore {
+pub struct ExperimentationStore {
     driver: Arc<dyn DatabaseDriver>,
 }
 
-impl EvolutionStore {
+impl ExperimentationStore {
     /// Build the store over an existing driver, creating the schema if
     /// needed. Takes a driver rather than a path so the store shares the
     /// server's durability domain (and its encryption).
@@ -211,7 +211,7 @@ impl EvolutionStore {
         max_runs: u64,
         linked_goal_id: Option<&str>,
         experiment_key: Option<&str>,
-    ) -> Result<ExperimentRecord, EvolutionError> {
+    ) -> Result<ExperimentRecord, ExperimentationError> {
         let id = format!("exp_{}", uuid::Uuid::new_v4().simple());
         let created_at = chrono::Utc::now().to_rfc3339();
         let inserted = self.driver.execute(
@@ -240,7 +240,7 @@ impl EvolutionStore {
         if inserted == 0 {
             // Converged on an existing experiment_key — return that record.
             let key = experiment_key.ok_or_else(|| {
-                EvolutionError::Serialization(
+                ExperimentationError::Serialization(
                     "INSERT was ignored without an experiment_key — an unexpected \
                      constraint was violated"
                         .to_string(),
@@ -251,7 +251,7 @@ impl EvolutionStore {
         self.experiment_by_id(&id)
     }
 
-    pub fn experiment_by_id(&self, id: &str) -> Result<ExperimentRecord, EvolutionError> {
+    pub fn experiment_by_id(&self, id: &str) -> Result<ExperimentRecord, ExperimentationError> {
         let row = self.driver.query_optional(
             "SELECT id, hypothesis, layer, genotype_refs, eval_set, fitness_fn, \
              noise_band, prediction, budget, status, created_at, max_runs, linked_goal_id \
@@ -260,10 +260,10 @@ impl EvolutionStore {
         )?;
         row.map(|row| experiment_from_row(&row))
             .transpose()?
-            .ok_or_else(|| EvolutionError::ExperimentNotFound(id.to_string()))
+            .ok_or_else(|| ExperimentationError::ExperimentNotFound(id.to_string()))
     }
 
-    fn experiment_by_key(&self, key: &str) -> Result<ExperimentRecord, EvolutionError> {
+    fn experiment_by_key(&self, key: &str) -> Result<ExperimentRecord, ExperimentationError> {
         let row = self.driver.query_optional(
             "SELECT id, hypothesis, layer, genotype_refs, eval_set, fitness_fn, \
              noise_band, prediction, budget, status, created_at, max_runs, linked_goal_id \
@@ -272,7 +272,7 @@ impl EvolutionStore {
         )?;
         row.map(|row| experiment_from_row(&row))
             .transpose()?
-            .ok_or_else(|| EvolutionError::ExperimentNotFound(format!("experiment_key {key}")))
+            .ok_or_else(|| ExperimentationError::ExperimentNotFound(format!("experiment_key {key}")))
     }
 
     // ── Variants ───────────────────────────────────────────────────────
@@ -285,17 +285,17 @@ impl EvolutionStore {
         genotype_config: &serde_json::Value,
         parent_variant_id: Option<&str>,
         variant_key: Option<&str>,
-    ) -> Result<VariantRecord, EvolutionError> {
+    ) -> Result<VariantRecord, ExperimentationError> {
         let experiment = self.experiment_by_id(experiment_id)?;
         if experiment.status == STATUS_RESOLVED {
-            return Err(EvolutionError::ExperimentResolved(
+            return Err(ExperimentationError::ExperimentResolved(
                 experiment_id.to_string(),
             ));
         }
         if let Some(parent) = parent_variant_id {
             let parent_record = self.variant_by_id(parent)?;
             if parent_record.experiment_id != experiment_id {
-                return Err(EvolutionError::VariantNotInExperiment(
+                return Err(ExperimentationError::VariantNotInExperiment(
                     parent.to_string(),
                     experiment_id.to_string(),
                 ));
@@ -318,7 +318,7 @@ impl EvolutionStore {
         )?;
         if inserted == 0 {
             let key = variant_key.ok_or_else(|| {
-                EvolutionError::Serialization(
+                ExperimentationError::Serialization(
                     "INSERT was ignored without a variant_key — an unexpected \
                      constraint was violated"
                         .to_string(),
@@ -344,7 +344,7 @@ impl EvolutionStore {
         })
     }
 
-    pub fn variant_by_id(&self, id: &str) -> Result<VariantRecord, EvolutionError> {
+    pub fn variant_by_id(&self, id: &str) -> Result<VariantRecord, ExperimentationError> {
         let row = self.driver.query_optional(
             "SELECT id, experiment_id, genotype_config, parent_variant_id, created_at \
              FROM variants WHERE id = ?1",
@@ -352,14 +352,14 @@ impl EvolutionStore {
         )?;
         row.map(|row| variant_from_row(&row))
             .transpose()?
-            .ok_or_else(|| EvolutionError::VariantNotFound(id.to_string()))
+            .ok_or_else(|| ExperimentationError::VariantNotFound(id.to_string()))
     }
 
     fn variant_by_key(
         &self,
         experiment_id: &str,
         key: &str,
-    ) -> Result<VariantRecord, EvolutionError> {
+    ) -> Result<VariantRecord, ExperimentationError> {
         let row = self.driver.query_optional(
             "SELECT id, experiment_id, genotype_config, parent_variant_id, created_at \
              FROM variants WHERE experiment_id = ?1 AND variant_key = ?2",
@@ -370,13 +370,13 @@ impl EvolutionStore {
         )?;
         row.map(|row| variant_from_row(&row))
             .transpose()?
-            .ok_or_else(|| EvolutionError::VariantNotFound(format!("variant_key {key}")))
+            .ok_or_else(|| ExperimentationError::VariantNotFound(format!("variant_key {key}")))
     }
 
     pub fn variants_for_experiment(
         &self,
         experiment_id: &str,
-    ) -> Result<Vec<VariantRecord>, EvolutionError> {
+    ) -> Result<Vec<VariantRecord>, ExperimentationError> {
         let rows = self.driver.query(
             "SELECT id, experiment_id, genotype_config, parent_variant_id, created_at \
              FROM variants WHERE experiment_id = ?1 ORDER BY created_at",
@@ -388,7 +388,7 @@ impl EvolutionStore {
     /// The variant's ancestry chain, oldest parent first, ending with the
     /// variant itself (§P8.1 lineage). Cycle-guarded: a malformed parent loop
     /// surfaces as an error, never an infinite walk.
-    pub fn variant_ancestry(&self, variant_id: &str) -> Result<Vec<VariantRecord>, EvolutionError> {
+    pub fn variant_ancestry(&self, variant_id: &str) -> Result<Vec<VariantRecord>, ExperimentationError> {
         let mut chain = Vec::new();
         let mut current = Some(variant_id.to_string());
         while let Some(id) = current {
@@ -396,7 +396,7 @@ impl EvolutionStore {
             current = variant.parent_variant_id.clone();
             chain.push(variant);
             if chain.len() > 128 {
-                return Err(EvolutionError::Serialization(
+                return Err(ExperimentationError::Serialization(
                     "variant ancestry exceeds 128 members — a parent cycle is suspected"
                         .to_string(),
                 ));
@@ -426,16 +426,16 @@ impl EvolutionStore {
         runs: &[String],
         run_count: u64,
         scores: &serde_json::Value,
-    ) -> Result<FitnessRecord, EvolutionError> {
+    ) -> Result<FitnessRecord, ExperimentationError> {
         let experiment = self.experiment_by_id(experiment_id)?;
         if experiment.status == STATUS_RESOLVED {
-            return Err(EvolutionError::ExperimentResolved(
+            return Err(ExperimentationError::ExperimentResolved(
                 experiment_id.to_string(),
             ));
         }
         let variant = self.variant_by_id(variant_id)?;
         if variant.experiment_id != experiment_id {
-            return Err(EvolutionError::VariantNotInExperiment(
+            return Err(ExperimentationError::VariantNotInExperiment(
                 variant_id.to_string(),
                 experiment_id.to_string(),
             ));
@@ -482,7 +482,7 @@ impl EvolutionStore {
                     &[DbValue::Text(experiment_id.to_string())],
                 )?;
                 let recorded = row.and_then(|row| row.get_int(0).ok()).unwrap_or(0).max(0) as u64;
-                return Err(EvolutionError::BudgetExhausted(
+                return Err(ExperimentationError::BudgetExhausted(
                     experiment_id.to_string(),
                     recorded + run_count,
                     ceiling,
@@ -514,7 +514,7 @@ impl EvolutionStore {
     pub fn fitness_for_variant(
         &self,
         variant_id: &str,
-    ) -> Result<Vec<FitnessRecord>, EvolutionError> {
+    ) -> Result<Vec<FitnessRecord>, ExperimentationError> {
         let rows = self.driver.query(
             "SELECT id, experiment_id, variant_id, runs, scores, run_count, created_at \
              FROM fitness_records WHERE variant_id = ?1 ORDER BY created_at",
@@ -526,7 +526,7 @@ impl EvolutionStore {
     pub fn fitness_for_experiment(
         &self,
         experiment_id: &str,
-    ) -> Result<Vec<FitnessRecord>, EvolutionError> {
+    ) -> Result<Vec<FitnessRecord>, ExperimentationError> {
         let rows = self.driver.query(
             "SELECT id, experiment_id, variant_id, runs, scores, run_count, created_at \
              FROM fitness_records WHERE experiment_id = ?1 ORDER BY created_at",
@@ -549,21 +549,21 @@ impl EvolutionStore {
         selected_variant_id: Option<&str>,
         reject_reasons: &[String],
         algedonic_reference: Option<&str>,
-    ) -> Result<(SelectionRecord, ExperimentRecord), EvolutionError> {
+    ) -> Result<(SelectionRecord, ExperimentRecord), ExperimentationError> {
         let experiment = self.experiment_by_id(experiment_id)?;
         if experiment.status == STATUS_RESOLVED {
-            return Err(EvolutionError::ExperimentResolved(
+            return Err(ExperimentationError::ExperimentResolved(
                 experiment_id.to_string(),
             ));
         }
         match verdict {
             VERDICT_SELECTED => {
                 let Some(selected) = selected_variant_id else {
-                    return Err(EvolutionError::SelectedWithoutVariant);
+                    return Err(ExperimentationError::SelectedWithoutVariant);
                 };
                 let variant = self.variant_by_id(selected)?;
                 if variant.experiment_id != experiment_id {
-                    return Err(EvolutionError::VariantNotInExperiment(
+                    return Err(ExperimentationError::VariantNotInExperiment(
                         selected.to_string(),
                         experiment_id.to_string(),
                     ));
@@ -571,15 +571,15 @@ impl EvolutionStore {
             }
             VERDICT_REJECTED => {
                 if reject_reasons.is_empty() {
-                    return Err(EvolutionError::RejectedWithoutReasons);
+                    return Err(ExperimentationError::RejectedWithoutReasons);
                 }
             }
-            other => return Err(EvolutionError::UnknownVerdict(other.to_string())),
+            other => return Err(ExperimentationError::UnknownVerdict(other.to_string())),
         }
         let id = format!("sel_{}", uuid::Uuid::new_v4().simple());
         let created_at = chrono::Utc::now().to_rfc3339();
         // Serialized before the closure: the closure's error type is DbError,
-        // so the EvolutionError-producing column serialization happens here.
+        // so the ExperimentationError-producing column serialization happens here.
         let reject_reasons_column = value_column(&reject_reasons)?;
         // The insert and the resolve flip are ONE transaction (§P8.9 follow-up,
         // 2026-10-01): the conditional UPDATE is the authoritative
@@ -624,11 +624,11 @@ impl EvolutionStore {
         });
         if let Err(error) = transaction {
             if concurrently_resolved {
-                return Err(EvolutionError::ExperimentResolved(
+                return Err(ExperimentationError::ExperimentResolved(
                     experiment_id.to_string(),
                 ));
             }
-            return Err(EvolutionError::Database(error));
+            return Err(ExperimentationError::Database(error));
         }
         let updated = self.experiment_by_id(experiment_id)?;
         let record = SelectionRecord {
@@ -646,7 +646,7 @@ impl EvolutionStore {
     pub fn selections_for_experiment(
         &self,
         experiment_id: &str,
-    ) -> Result<Vec<SelectionRecord>, EvolutionError> {
+    ) -> Result<Vec<SelectionRecord>, ExperimentationError> {
         let rows = self.driver.query(
             "SELECT id, experiment_id, verdict, selected_variant_id, reject_reasons, \
              algedonic_reference, created_at \
@@ -666,7 +666,7 @@ impl EvolutionStore {
         status: Option<&str>,
         created_since: Option<&str>,
         limit: u32,
-    ) -> Result<Vec<ExperimentRecord>, EvolutionError> {
+    ) -> Result<Vec<ExperimentRecord>, ExperimentationError> {
         let mut clauses: Vec<String> = Vec::new();
         let mut params: Vec<DbValue> = Vec::new();
         if let Some(layer) = layer {
@@ -701,8 +701,8 @@ impl EvolutionStore {
 
     /// The Layer-A afferent view: every experiment with its recorded-run
     /// total, prediction confidence, and verdict. The bridge source feeds
-    /// this to the cybernetics loop's `EvolutionHealthSensor`.
-    pub fn health_snapshot(&self) -> Result<EvolutionHealthSnapshot, EvolutionError> {
+    /// this to the cybernetics loop's `ExperimentationHealthSensor`.
+    pub fn health_snapshot(&self) -> Result<ExperimentationHealthSnapshot, ExperimentationError> {
         let rows = self.driver.query(
             "SELECT e.id, e.layer, e.status, e.created_at, e.max_runs, e.prediction, \
              (SELECT COALESCE(SUM(f.run_count), 0) FROM fitness_records f \
@@ -730,8 +730,8 @@ impl EvolutionStore {
                     reject_reasons: row.get_json::<Vec<String>>(8).ok().unwrap_or_default(),
                 })
             })
-            .collect::<Result<Vec<_>, EvolutionError>>()?;
-        Ok(EvolutionHealthSnapshot { experiments })
+            .collect::<Result<Vec<_>, ExperimentationError>>()?;
+        Ok(ExperimentationHealthSnapshot { experiments })
     }
 }
 
@@ -741,12 +741,12 @@ mod tests {
     use crate::types::Prediction;
     use hkask_storage::database::sqlite::SqliteDriver;
 
-    fn store() -> EvolutionStore {
-        EvolutionStore::with_driver(SqliteDriver::in_memory_driver())
+    fn store() -> ExperimentationStore {
+        ExperimentationStore::with_driver(SqliteDriver::in_memory_driver())
             .expect("in-memory driver store")
     }
 
-    fn propose(store: &EvolutionStore, layer: &str, key: Option<&str>) -> ExperimentRecord {
+    fn propose(store: &ExperimentationStore, layer: &str, key: Option<&str>) -> ExperimentRecord {
         store
             .propose_experiment(
                 "Variant B beats the baseline on the fixed task set",
@@ -768,7 +768,7 @@ mod tests {
     }
 
     fn variant(
-        store: &EvolutionStore,
+        store: &ExperimentationStore,
         experiment_id: &str,
         name: &str,
         parent: Option<&str>,
@@ -844,7 +844,7 @@ mod tests {
         let error = store
             .register_variant(&experiment.id, &serde_json::json!({}), None, None)
             .expect_err("resolved refuses variants");
-        assert!(matches!(error, EvolutionError::ExperimentResolved(_)));
+        assert!(matches!(error, ExperimentationError::ExperimentResolved(_)));
         let error = store
             .record_selection(
                 &experiment.id,
@@ -854,7 +854,7 @@ mod tests {
                 None,
             )
             .expect_err("resolved refuses re-selection");
-        assert!(matches!(error, EvolutionError::ExperimentResolved(_)));
+        assert!(matches!(error, ExperimentationError::ExperimentResolved(_)));
     }
 
     #[test]
@@ -896,7 +896,7 @@ mod tests {
             .expect_err("cross-experiment parent");
         assert!(matches!(
             error,
-            EvolutionError::VariantNotInExperiment(_, _)
+            ExperimentationError::VariantNotInExperiment(_, _)
         ));
     }
 
@@ -908,15 +908,15 @@ mod tests {
         let error = store
             .record_selection(&experiment.id, VERDICT_SELECTED, None, &[], None)
             .expect_err("selected without a variant");
-        assert!(matches!(error, EvolutionError::SelectedWithoutVariant));
+        assert!(matches!(error, ExperimentationError::SelectedWithoutVariant));
         let error = store
             .record_selection(&experiment.id, VERDICT_REJECTED, None, &[], None)
             .expect_err("rejected without reasons");
-        assert!(matches!(error, EvolutionError::RejectedWithoutReasons));
+        assert!(matches!(error, ExperimentationError::RejectedWithoutReasons));
         let error = store
             .record_selection(&experiment.id, "maybe", None, &["reason".into()], None)
             .expect_err("unknown verdict");
-        assert!(matches!(error, EvolutionError::UnknownVerdict(_)));
+        assert!(matches!(error, ExperimentationError::UnknownVerdict(_)));
         // A valid rejected selection still resolves the experiment.
         let (record, updated) = store
             .record_selection(
@@ -1007,7 +1007,7 @@ mod tests {
             )
             .expect_err("over ceiling");
         assert!(
-            matches!(&error, EvolutionError::BudgetExhausted(id, would_record, ceiling)
+            matches!(&error, ExperimentationError::BudgetExhausted(id, would_record, ceiling)
                 if id == &experiment.id && *would_record == 19 && *ceiling == 18),
             "unexpected error: {error}"
         );
@@ -1054,10 +1054,10 @@ mod tests {
 
     #[test]
     fn snapshot_stuck_and_void_exclusion_rules() {
-        use crate::types::{EvolutionHealthSnapshot, ExperimentHealth};
+        use crate::types::{ExperimentationHealthSnapshot, ExperimentHealth};
         let old = (chrono::Utc::now() - chrono::Duration::days(30)).to_rfc3339();
         let fresh = chrono::Utc::now().to_rfc3339();
-        let snapshot = EvolutionHealthSnapshot {
+        let snapshot = ExperimentationHealthSnapshot {
             experiments: vec![
                 // Running, created 30 days ago → stuck on age (D-3: 7 days).
                 ExperimentHealth {
@@ -1162,12 +1162,12 @@ mod tests {
     #[test]
     fn concurrent_selections_record_exactly_one_fossil() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let db_path = dir.path().join("evolution-race.db");
+        let db_path = dir.path().join("experimentation-race.db");
         let db_path = db_path.to_string_lossy().to_string();
         let pool = SqliteDriver::file_pool(&db_path).expect("file pool");
         let driver: Arc<dyn hkask_storage::database::driver::DatabaseDriver> =
             Arc::new(SqliteDriver::new_labeled(pool, db_path.as_str()));
-        let store = Arc::new(EvolutionStore::with_driver(driver).expect("race store"));
+        let store = Arc::new(ExperimentationStore::with_driver(driver).expect("race store"));
 
         let experiment = propose(&store, "skill", None);
         let variant = variant(&store, &experiment.id, "challenger", None, None);
@@ -1193,7 +1193,7 @@ mod tests {
             for handle in handles {
                 match handle.join().expect("selection thread") {
                     Ok(_) => winners += 1,
-                    Err(EvolutionError::ExperimentResolved(_)) => losers += 1,
+                    Err(ExperimentationError::ExperimentResolved(_)) => losers += 1,
                     Err(other) => panic!("unexpected error: {other}"),
                 }
             }
@@ -1249,7 +1249,7 @@ mod tests {
                 &[],
             )
             .expect("old row");
-        let store = EvolutionStore::with_driver(driver).expect("migrated store");
+        let store = ExperimentationStore::with_driver(driver).expect("migrated store");
         let record = store.experiment_by_id("exp_old").expect("old row readable");
         assert_eq!(record.status, STATUS_RESOLVED);
         assert_eq!(record.max_runs, None);

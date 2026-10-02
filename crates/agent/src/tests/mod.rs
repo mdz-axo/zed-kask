@@ -3243,58 +3243,6 @@ async fn test_terminal_tool_timeout_expires(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_reasoning_runaway_watchdog_aborts_thinking_only_stream(cx: &mut TestAppContext) {
-    // zed-kask: agent-loop guardrails plan C1a — the behavioral pin for
-    // the reasoning-runaway watchdog (the source-structure pin
-    // `thread_loop_wires_the_watchdog` covers the wiring; this covers the
-    // behavior). A model that burns its output budget inside the
-    // reasoning channel — only thinking deltas, no visible text, no
-    // tool call — is aborted at the token bound with a named error, not
-    // a silent zero-content MaxTokens stop or a hang.
-    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
-    always_allow_tools(cx);
-    let fake_model = model.as_fake();
-
-    let mut events = thread
-        .update(cx, |thread, cx| {
-            thread.send(ClientUserMessageId::new(), ["research this"], cx)
-        })
-        .unwrap();
-
-    cx.run_until_parked();
-
-    // One thinking delta that crosses the token bound (16384 estimated
-    // tokens at chars/4 = 65536 chars).
-    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::Thinking {
-        text: "x".repeat(4 * 16_385),
-        signature: None,
-    });
-    fake_model.end_last_completion_stream();
-
-    // The turn ends with the named runaway error on the event stream. The
-    // error path emits no Stop event (like the existing `Other` arm), so
-    // `collect_events_until_stop` would panic by design — drain the
-    // channel directly after the turn completes. `try_recv` is
-    // non-blocking and the channel closes when the turn is taken, so
-    // this cannot hang.
-    cx.run_until_parked();
-    let mut collected = Vec::new();
-    while let Ok(event) = events.try_recv() {
-        collected.push(event);
-    }
-    let surfaced = collected.iter().any(|event| {
-        event
-            .as_ref()
-            .err()
-            .is_some_and(|error| error.to_string().contains("reasoning-only runaway"))
-    });
-    assert!(
-        surfaced,
-        "expected the turn to surface the reasoning-runaway error, got: {collected:?}"
-    );
-}
-
-#[gpui::test]
 async fn test_in_progress_send_canceled_by_next_send(cx: &mut TestAppContext) {
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
     let fake_model = model.as_fake();

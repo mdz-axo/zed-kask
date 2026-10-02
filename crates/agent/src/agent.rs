@@ -2,7 +2,6 @@ mod curator_agent_server;
 mod db;
 mod delegation_authority;
 mod kask_compaction;
-mod kask_runaway;
 mod kask_thread_state;
 mod legacy_thread;
 mod native_agent_server;
