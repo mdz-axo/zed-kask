@@ -28,8 +28,8 @@ requirement debt), or guesses the verdict (the goal loop never closes).
 
 ## Ontological Anchors
 
-- **Product management practice** (IBM's lifecycle framing; Product
-  School's PM/TPM split): the PM owns vision, requirements,
+- **Product management practice** (the standard PM/TPM split, per
+  Product School's published framing): the PM owns vision, requirements,
   prioritization, and post-launch judgment; delivery coordination
   belongs to the program manager. Requirements flow PM → TPM;
   decisions flow back.
@@ -41,7 +41,8 @@ requirement debt), or guesses the verdict (the goal loop never closes).
   plan. A criterion that cannot fail is not a criterion.
 - **This project's functional-interaction spec** (the four moves): the
   operator's words are the goal; the agent interprets, never revises;
-  the goal loop Brier-scores predictions on both sides.
+  the goal loop Brier-scores the agent's intake prediction against the
+  operator's ground truth.
 - **Cybernetics (VSM)**: the operator is the policy level (S5); decisions
   owed to the agent are the algedonic channel's return path — an
   unanswered decision is a blocked loop, and the queue of them is
@@ -52,9 +53,9 @@ requirement debt), or guesses the verdict (the goal loop never closes).
 ## Initial and target condition
 
 - **Initial condition:** the operator's request as received, including its stated outcome, spec pointer or explicit absence, observable criteria, and binding constraints. Missing information remains missing; an agent's interpretation is a question, not a ratified requirement.
-- **Target condition:** the operator confirms the functional outcome and 2–4 criteria that can fail, identifies the spec or says none exists, and receives one clearly scoped question round for anything still missing. No code begins from an unconfirmed interpretation.
+- **Target condition:** the operator confirms the functional outcome and 2–4 criteria that can fail, identifies the spec or says none exists, and receives one clearly scoped question round for anything still missing (bounded at two rounds total — the initial round plus one gap-only follow-up, per Instruction 5). No code begins from an unconfirmed interpretation.
 
-## Step types
+## Step types (D/P labelling)
 
 | Step | Type | Oracle / critique |
 |------|------|-------------------|
@@ -129,8 +130,12 @@ requirement debt), or guesses the verdict (the goal loop never closes).
 
 ## The kata alignment
 
-The collaboration IS the Improvement Kata, split across the division:
-you set the direction and the target condition (the requirement and
+The collaboration IS the Improvement Kata, split across the division —
+as a deliberate adaptation: in Rother's kata the learner establishes
+the target condition, and here the operator confirms the criteria (the
+agent Fermi-decomposes them at goal creation); the division keeps the
+operator as the check. You set the direction and the target condition
+(the requirement and
 criteria); the agent grasps the current condition, experiments (PDCA
 against one obstacle at a time), and reports; your confirmation is the
 check; the banked learning starts the next cycle. When a requirement is
@@ -160,6 +165,36 @@ durable decisions recorded in the curator's memory.
 4. Record the delivered requirement in the operator's words as the
    `goal_text` when the goal loop is active.
 5. **Check → Act (bounded intake PDCA).** Compare the operator's answer with the initial brief: is the outcome confirmed, is spec provenance explicit (including “no spec exists”), and are 2–4 observable criteria able to fail? If all hold, stop intake and hand the agreed target to `program-manager`; no second round is needed. If a field remains unconfirmed, name the exact remaining gap and ask once more *only about that gap*. On a second missing answer, stop as blocked rather than supplying a requirement yourself. An operator correction changes the target; re-render `product-manager/intake-brief` only with their corrected words. After delivery, the operator's confirmation against those criteria is the outer feedback loop; this intake check does not judge the work's outcome.
+
+## Regression case
+
+All receipts executed live (2026-10-01, batch-13 audit):
+
+- Intake-brief render, complete context: `render_template`
+  `product-manager/intake-brief` with all five contract fields provided
+  (requirement, spec provenance "no spec exists — design with the operator",
+  two observable criteria, one constraint, two standing rules) renders the
+  brief with every field carried verbatim and the missing-fields question
+  round present — the empty fields are the questions, and none were.
+- Intake-brief render, sparse context: the same render with empty
+  criteria/constraints arrays still renders the question round — the
+  template's own refusal rule ("an empty missing_fields with empty required
+  fields is an improvised requirement — refuse it") is the intake check's
+  backstop, executed by the model that consumes the rendered prompt (the
+  render itself is deterministic Jinja substitution — no inference),
+  never by a form.
+
+The skill's D step is the render itself; there is no lisp_eval form to
+receipt — the oracle is `render_template`'s deterministic output.
+
+## Registry Templates
+
+| Template | Purpose |
+|----------|---------|
+| `intake-brief.j2` | Render the intake brief — the work order whose empty fields are the one-round question set (requirement → spec provenance → criteria → constraints → standing rules). |
+
+Template context variables (from the template's `[inference]` contract):
+- `intake-brief.j2` inputs: `requirement`, `spec_provenance`, `acceptance_criteria`, `constraints`, `standing_rules`; output: `missing_fields` — the one-round question set
 
 ## Constraints
 
