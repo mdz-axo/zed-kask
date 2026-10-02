@@ -1592,18 +1592,26 @@ impl hkask_tool_port::ToolPort for McpRuntime {
                 // Call the tool.
                 let result = self.call_tool_inner(server, tool, args).await;
 
-                // Regulation: emit the call-settled span (best-effort, non-blocking).
-                let status = if result.is_ok() { "success" } else { "failure" };
-                use hkask_types::event::{CyclePhase, RegulationRecord, Span, SpanKind};
-                let record = RegulationRecord::new(
-                    agent,
-                    Span::from_kind(SpanKind::ToolCompleted),
-                    CyclePhase::Act,
-                    serde_json::json!({ "server": server, "tool": tool, "calls": 1, "status": status }),
-                    0,
-                );
-                if let Err(e) = sink.persist(&record) {
-                    tracing::warn!(target: "reg.mcp", error = %e, "Failed to persist reg.mcp call-settled span");
+                // Regulation: emit the call-settled span (best-effort,
+                // non-blocking) — EXCEPT the regulation loop's own board-sensing
+                // polls, which are 98% of this span's volume with no reader (the
+                // reliability/variety sensors feed from the in-process ledger
+                // below, never the journal). The loop's non-sensing
+                // interventions (card creates/comments/moves — the escalation
+                // audit trail) and every real-agent call still journal.
+                if !hkask_types::event::is_regulation_board_sensing_call(&agent, tool) {
+                    let status = if result.is_ok() { "success" } else { "failure" };
+                    use hkask_types::event::{CyclePhase, RegulationRecord, Span, SpanKind};
+                    let record = RegulationRecord::new(
+                        agent,
+                        Span::from_kind(SpanKind::ToolCompleted),
+                        CyclePhase::Act,
+                        serde_json::json!({ "server": server, "tool": tool, "calls": 1, "status": status }),
+                        0,
+                    );
+                    if let Err(e) = sink.persist(&record) {
+                        tracing::warn!(target: "reg.mcp", error = %e, "Failed to persist reg.mcp call-settled span");
+                    }
                 }
 
                 // Record the outcome in the RegulationLedger so the
@@ -2526,6 +2534,130 @@ mod metering_tests {
             ledger_guard.variety_for_domain("fixture").await,
             1,
             "repeats of one tool count once — variety is distinct tools, not call volume"
+        );
+    }
+
+    /// A `RegulationSink` that records every persisted record's
+    /// (span path, tool) — the oracle for which governed calls journal a
+    /// `reg.tool.completed` record.
+    struct RecordingSink(std::sync::Mutex<Vec<(String, String)>>);
+
+    impl hkask_types::RegulationSink for RecordingSink {
+        fn persist(
+            &self,
+            event: &hkask_types::RegulationRecord,
+        ) -> Result<(), hkask_types::InfrastructureError> {
+            let tool = event
+                .observation
+                .get("tool")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            self.0
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push((event.span.path.clone(), tool));
+            Ok(())
+        }
+    }
+
+    impl RecordingSink {
+        /// The tools that journaled a `reg.tool.completed` record, in order.
+        fn completed_tools(&self) -> Vec<String> {
+            self.0
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .iter()
+                .filter(|(path, _)| path == "reg.tool.completed")
+                .map(|(_, tool)| tool.clone())
+                .collect()
+        }
+    }
+
+    /// The regulation loop's own board-sensing polls (the 10s
+    /// awaiting-review-count reads under the swarm-panel persona) do not
+    /// journal `reg.tool.completed` records — measured 2026-10-02, those
+    /// two tools are 89,631 of the persona's 91,355 records (98%), pure
+    /// write-only audit volume. The call itself is untouched: it still
+    /// executes, still charges the call meter, and still feeds the
+    /// in-process reliability/variety ledger (asserted below — the sensors
+    /// read that ledger, never the journal). The loop's non-sensing
+    /// interventions (the escalation-card audit trail) and every real-agent
+    /// call keep their journal records.
+    #[tokio::test]
+    async fn regulation_board_sensing_polls_skip_the_journal_siblings_do_not() {
+        let ledger = Arc::new(RwLock::new(RegulationLedger::with_threshold(100)));
+        let cyber = Arc::new(RwLock::new(CyberneticsLoop::new(ledger.clone())));
+        let sink = Arc::new(RecordingSink(std::sync::Mutex::new(Vec::new())));
+        let runtime = McpRuntime::new().with_governance(cyber, sink.clone());
+        let kanban_tool = |name: &str| McpTool {
+            name: name.to_string(),
+            description: String::new(),
+            input_schema: Value::Null,
+            server_id: "kata-kanban".to_string(),
+        };
+        runtime
+            .register_server(McpServer {
+                id: "kata-kanban".to_string(),
+                name: "kata-kanban".to_string(),
+                tools: vec![
+                    kanban_tool("kanban_board_list"),
+                    kanban_tool("kanban_task_list"),
+                    kanban_tool("kanban_task_create"),
+                ],
+            })
+            .await;
+
+        let panel = WebID::for_agent_name(hkask_types::event::SWARM_PANEL_PERSONA);
+        // The loop's sensing polls. Dispatch reports Unavailable (no live
+        // connection) — irrelevant to the journal decision, which fires
+        // after every settled call regardless of result.
+        let _ = runtime
+            .invoke("kata-kanban", "kanban_board_list", Value::Null, panel)
+            .await;
+        let _ = runtime
+            .invoke("kata-kanban", "kanban_task_list", Value::Null, panel)
+            .await;
+        assert!(
+            sink.completed_tools().is_empty(),
+            "the loop's sensing polls must not journal reg.tool.completed records"
+        );
+
+        // The skip is journal-only: the sensing call still fed the
+        // in-process variety ledger the sensors actually read.
+        let ledger_guard = ledger.read().await;
+        assert!(
+            ledger_guard.variety_for_domain("kata-kanban").await >= 1,
+            "the skipped sensing call still feeds the in-process ledger"
+        );
+        drop(ledger_guard);
+
+        // The loop's non-sensing interventions keep their journal records.
+        let _ = runtime
+            .invoke("kata-kanban", "kanban_task_create", Value::Null, panel)
+            .await;
+        assert_eq!(
+            sink.completed_tools(),
+            vec!["kanban_task_create".to_string()],
+            "the loop's interventions (the escalation audit trail) still journal"
+        );
+
+        // A real agent's call to the same sensing tool still journals.
+        let _ = runtime
+            .invoke(
+                "kata-kanban",
+                "kanban_board_list",
+                Value::Null,
+                WebID::new(),
+            )
+            .await;
+        assert_eq!(
+            sink.completed_tools(),
+            vec![
+                "kanban_task_create".to_string(),
+                "kanban_board_list".to_string()
+            ],
+            "real-agent calls keep their journal records, including to sensing tools"
         );
     }
 

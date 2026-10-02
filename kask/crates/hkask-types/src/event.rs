@@ -459,6 +459,41 @@ impl SpanKind {
     }
 }
 
+// ── Regulation loop board-sensing: the journal-skip policy ────────────────
+//
+// The regulation loop's board connector (BoardAlertEscalationSink, wired in
+// zed's main.rs through PanelToolInvoker) polls the algedonic review board
+// every 10s to sense the awaiting-review count. Those polls arrive at the
+// governed MCP runtime under the swarm-panel persona — the identity
+// PanelToolInvoker stamps on every call (verified 2026-10-02:
+// WebID::for_agent_name("swarm-panel") is the observer owning 91,355 of the
+// journal's reg.tool.completed records, 89,631 of them the two sensing tools
+// below — pure write-only audit volume with no reader).
+
+/// The machine persona shared by the swarm panel UI and the regulation
+/// loop's board connector — `PanelToolInvoker` stamps every call with
+/// `WebID::for_agent_name(SWARM_PANEL_PERSONA)`.
+pub const SWARM_PANEL_PERSONA: &str = "swarm-panel";
+
+/// The regulation loop's board-sensing reads — the 10s
+/// `awaiting_review_count` polls. These carry no audit value as per-call
+/// journal records: the tool-reliability and variety sensors feed from the
+/// in-process RegulationLedger (`record_outcome` / `record_variety`), never
+/// from the journal. The loop's non-sensing interventions (card creates,
+/// comments, moves — the escalation audit trail) are NOT in this set and
+/// keep their per-call journal records.
+pub const REGULATION_BOARD_SENSING_TOOLS: &[&str] = &["kanban_board_list", "kanban_task_list"];
+
+/// Whether a governed tool call is the regulation loop's own board-sensing
+/// poll — the per-call `reg.tool.completed` journal record is skipped for
+/// these. The call itself is untouched: it still executes, still charges the
+/// call meter, and still feeds the in-process reliability/variety ledger.
+#[must_use]
+pub fn is_regulation_board_sensing_call(agent: &WebID, tool: &str) -> bool {
+    *agent == WebID::for_agent_name(SWARM_PANEL_PERSONA)
+        && REGULATION_BOARD_SENSING_TOOLS.contains(&tool)
+}
+
 /// Phase of the cybernetic cycle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
