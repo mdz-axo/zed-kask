@@ -2,7 +2,7 @@
 //!
 //! Implements `hkask_regulation::ExperimentationHealthSource` over the experimentation
 //! server's own store: opens the same SQLCipher registry the MCP child
-//! serves (`HKASK_EVOLUTION_DB` override → the per-agent default under the
+//! serves (`HKASK_EXPERIMENTATION_DB` override → the per-agent default under the
 //! hKask data dir) and reads `ExperimentationStore::health_snapshot()`.
 //!
 //! ## The blind-feedback-loop gap this closes
@@ -44,7 +44,7 @@ impl BridgeExperimentationHealthSource {
     /// Open the registry the experimentation MCP child serves.
     ///
     /// Resolution is shared with the child (`registry_path()`): the
-    /// `HKASK_EVOLUTION_DB` override or the per-agent default under the
+    /// `HKASK_EXPERIMENTATION_DB` override or the per-agent default under the
     /// hKask data dir — never a private copy.
     pub fn open(passphrase: &str) -> Result<Self, String> {
         let db_path = hkask_mcp_experimentation::registry_path()

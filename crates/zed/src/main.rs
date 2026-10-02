@@ -2100,7 +2100,7 @@ fn main() {
                                             let mut loop_guard =
                                                 loop_for_experimentation.write().await;
                                             loop_guard
-                                                .set_experimentation_health_source(evolution_source);
+                                                .set_experimentation_health_source(experimentation_source);
                                         })
                                         .detach();
                                         log::info!(

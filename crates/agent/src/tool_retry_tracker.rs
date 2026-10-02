@@ -18,16 +18,20 @@
 //!    actual pathology — a true death spiral retries the same payload.
 //!
 //! 3. **Per-input success-streak tracker** — `(tool_name, input_hash) →
-//!    consecutive_success_count`. The complement of dimension 1: consecutive
-//!    SUCCESSFUL executions of the identical (tool, input) pair, deduped per
-//!    assistant message. The failure side cannot see this class — a success
-//!    resets it — and measured on the source system, 71% of budget-exhausted
-//!    sub-agents died inside runs of ten or more consecutive byte-identical
-//!    calls (median 87, worst 198 of 200). Hints at `WARN_THRESHOLD` prior
-//!    identical successes, refuses at the per-tool hard cap (`hard_cap_for`).
-//!    A changed input is a different key and always admissible; a failure of
-//!    the same key resets the streak (each outcome resets the other, so a key
-//!    never holds both a failure count and a success streak).
+//!    consecutive_success_count`. The complement of dimension 1: back-to-back
+//!    SUCCESSFUL executions of the identical (tool, input) pair with no
+//!    other dispatch in between, deduped per assistant message. The failure
+//!    side cannot see this class — a success resets it — and measured on
+//!    the source system, 71% of budget-exhausted sub-agents died inside
+//!    runs of ten or more consecutive byte-identical calls (median 87,
+//!    worst 198 of 200). Hints at `WARN_THRESHOLD` prior identical
+//!    successes, refuses at the per-tool hard cap (`hard_cap_for`). A
+//!    changed input is a different key and always admissible; a different
+//!    dispatch in between breaks the chain (reset-on-distinct — interleaved
+//!    identical calls, e.g. edit → verify → edit → verify, never
+//!    accumulate); a failure of the same key resets the streak (each
+//!    outcome resets the other, so a key never holds both a failure count
+//!    and a success streak).
 //!
 //! A successful call resets both failure trackers for that tool/input and
 //! advances the success streak; a failed call resets the success streak.
@@ -146,6 +150,14 @@ pub struct ToolRetryTracker {
     /// success-streak tracker (dimension 3 in the module docs). Bounded by
     /// the same `MAX_PER_INPUT_ENTRIES` eviction as the failure map.
     success_streak: Mutex<HashMap<(String, u64), FailureCount>>,
+    /// The key most recently dispatched through `check_repetition`. The
+    /// success streak is true-consecutive: `check_repetition` clears a
+    /// key's streak entry when a different key was dispatched since its
+    /// last success (reset-on-distinct — the Lean spec's
+    /// `nextStreak_distinct_resets`), so interleaved identical calls
+    /// (edit → verify → edit → verify) never accumulate; only back-to-back
+    /// repeats do.
+    last_dispatched: Mutex<Option<(String, u64)>>,
 }
 
 /// A message-deduped counter; also used by the success-streak map (the
@@ -287,14 +299,30 @@ impl ToolRetryTracker {
     /// running it. The streak counts PRIOR consecutive successful executions
     /// (deduped per assistant message), so the hint lands on the dispatch
     /// after the 3rd identical success and the refusal after the hard cap —
-    /// the same check-before-call contract as the failure side.
+    /// the same check-before-call contract as the failure side. The streak
+    /// is true-consecutive: a different key dispatched since this key's
+    /// last success breaks the chain (the entry is cleared —
+    /// reset-on-distinct, the Lean spec's `nextStreak_distinct_resets`),
+    /// so interleaved identical calls never accumulate.
     pub fn check_repetition(&self, tool_name: &str, input: &serde_json::Value) -> RepeatVerdict {
         let input_key = (tool_name.to_string(), input_hash(input));
         let streak = {
-            let success_streak = self
+            let mut last_dispatched = self
+                .last_dispatched
+                .lock()
+                .expect("retry tracker mutex poisoned");
+            let mut success_streak = self
                 .success_streak
                 .lock()
                 .expect("retry tracker mutex poisoned");
+            if last_dispatched.as_ref() != Some(&input_key) {
+                // A different key was dispatched since this key's last
+                // success — the consecutive chain is broken. Clear the
+                // entry so interleaved identical calls (edit → verify →
+                // edit → verify) never accumulate.
+                success_streak.remove(&input_key);
+            }
+            *last_dispatched = Some(input_key.clone());
             success_streak
                 .get(&input_key)
                 .map_or(0, |count| count.count)
@@ -804,9 +832,19 @@ mod tests {
     fn success_streak_refuses_at_hard_cap_and_changed_input_resets() {
         let tracker = ToolRetryTracker::default();
         let input = serde_json::json!({"path": "foo.rs"});
+        // Five consecutive successful dispatches (check-before-call, then
+        // record — the production flow). Dispatches after the 3rd success
+        // carry the hint but still proceed.
         for message_ix in 0..HARD_CAP as usize {
+            let verdict = tracker.check_repetition("read_file", &input);
+            if (message_ix as u32) < WARN_THRESHOLD {
+                assert!(matches!(verdict, RepeatVerdict::Allow));
+            } else {
+                assert!(matches!(verdict, RepeatVerdict::Hint { .. }));
+            }
             tracker.record_success_for_message("read_file", &input, message_ix);
         }
+        // The next dispatch sees HARD_CAP prior consecutive successes.
         match tracker.check_repetition("read_file", &input) {
             RepeatVerdict::Refuse { streak } => assert_eq!(streak, HARD_CAP),
             other => panic!("expected Refuse, got {other:?}"),
@@ -819,15 +857,9 @@ mod tests {
             tracker.check_repetition("read_file", &changed),
             RepeatVerdict::Allow
         ));
-    }
-
-    #[test]
-    fn sibling_identical_successes_in_one_message_count_once() {
-        let tracker = ToolRetryTracker::default();
-        let input = serde_json::json!({"path": "foo.rs"});
-        tracker.record_success_for_message("read_file", &input, 7);
-        tracker.record_success_for_message("read_file", &input, 7);
-        // Two sibling successes in one message advance the streak once.
+        tracker.record_success_for_message("read_file", &changed, 99);
+        // The intervening dispatch also resets the ORIGINAL key's chain —
+        // returning to it starts a fresh streak, not a refusal.
         assert!(matches!(
             tracker.check_repetition("read_file", &input),
             RepeatVerdict::Allow
@@ -835,12 +867,40 @@ mod tests {
     }
 
     #[test]
+    fn sibling_identical_successes_in_one_message_count_once() {
+        let tracker = ToolRetryTracker::default();
+        let input = serde_json::json!({"path": "foo.rs"});
+        // Three messages, each dispatching two identical sibling calls.
+        // Deduped per message the streak reaches 3 (hint on the next
+        // dispatch); without the dedup it would reach 6 (refusal).
+        for message_ix in 0..WARN_THRESHOLD as usize {
+            assert!(matches!(
+                tracker.check_repetition("read_file", &input),
+                RepeatVerdict::Allow
+            ));
+            tracker.record_success_for_message("read_file", &input, message_ix);
+            tracker.record_success_for_message("read_file", &input, message_ix);
+        }
+        match tracker.check_repetition("read_file", &input) {
+            RepeatVerdict::Hint { streak } => assert_eq!(streak, WARN_THRESHOLD),
+            other => panic!("expected Hint, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn failure_resets_the_success_streak() {
         let tracker = ToolRetryTracker::default();
         let input = serde_json::json!({"path": "foo.rs"});
         for message_ix in 0..WARN_THRESHOLD as usize {
+            assert!(matches!(
+                tracker.check_repetition("read_file", &input),
+                RepeatVerdict::Allow
+            ));
             tracker.record_success_for_message("read_file", &input, message_ix);
         }
+        // A failure of the same key breaks the success chain — the next
+        // dispatch of the identical input starts fresh (without the
+        // failure reset it would hint at streak 3).
         tracker.record_failure_for_message("read_file", &input, 99);
         assert!(matches!(
             tracker.check_repetition("read_file", &input),
@@ -854,13 +914,24 @@ mod tests {
         let input = serde_json::json!({"name": "some-skill"});
         // Below the skill override cap the streak only hints.
         for message_ix in 0..HARD_CAP as usize {
+            let verdict = tracker.check_repetition("skill", &input);
+            if (message_ix as u32) < WARN_THRESHOLD {
+                assert!(matches!(verdict, RepeatVerdict::Allow));
+            } else {
+                assert!(matches!(verdict, RepeatVerdict::Hint { .. }));
+            }
             tracker.record_success_for_message("skill", &input, message_ix);
         }
         assert!(matches!(
             tracker.check_repetition("skill", &input),
             RepeatVerdict::Hint { .. }
         ));
-        for message_ix in HARD_CAP as usize..SKILL_TOOL_HARD_CAP as usize {
+        tracker.record_success_for_message("skill", &input, HARD_CAP as usize);
+        for message_ix in (HARD_CAP as usize + 1)..SKILL_TOOL_HARD_CAP as usize {
+            assert!(matches!(
+                tracker.check_repetition("skill", &input),
+                RepeatVerdict::Hint { .. }
+            ));
             tracker.record_success_for_message("skill", &input, message_ix);
         }
         assert!(matches!(
@@ -883,5 +954,58 @@ mod tests {
             MAX_PER_INPUT_ENTRIES,
             success_streak.len()
         );
+    }
+
+    #[test]
+    fn interleaved_identical_successes_do_not_accumulate() {
+        // The edit-verify loop: the identical verification call repeats
+        // across the whole thread, but an edit dispatch intervenes between
+        // every pair — reset-on-distinct keeps the streak at 1 and the
+        // guard never fires. This is the property the per-key-map
+        // implementation lacked (2026-10-02 plan audit): interleaved
+        // repeats accumulated and the 6th verification would be refused
+        // as a "zero-gain loop".
+        let tracker = ToolRetryTracker::default();
+        let verify = serde_json::json!({"pattern": "TODO"});
+        let edit = serde_json::json!({"path": "a.rs", "content": "x"});
+        for message_ix in 0..10 {
+            for (tool, input) in [("grep", &verify), ("edit_file", &edit)] {
+                assert!(
+                    matches!(tracker.check_repetition(tool, input), RepeatVerdict::Allow),
+                    "interleaved identical calls must never hint or refuse \
+                     (round {message_ix}, {tool})"
+                );
+                tracker.record_success_for_message(tool, input, message_ix);
+            }
+        }
+    }
+
+    #[test]
+    fn intervening_dispatch_resets_the_streak() {
+        let tracker = ToolRetryTracker::default();
+        let input = serde_json::json!({"path": "foo.rs"});
+        let other = serde_json::json!({"path": "bar.rs"});
+        // Three consecutive successes → the next dispatch hints.
+        for message_ix in 0..WARN_THRESHOLD as usize {
+            assert!(matches!(
+                tracker.check_repetition("read_file", &input),
+                RepeatVerdict::Allow
+            ));
+            tracker.record_success_for_message("read_file", &input, message_ix);
+        }
+        assert!(matches!(
+            tracker.check_repetition("read_file", &input),
+            RepeatVerdict::Hint { streak: 3 }
+        ));
+        // One different dispatch breaks the chain: the same input's next
+        // check starts fresh — no hint, no refusal.
+        assert!(matches!(
+            tracker.check_repetition("read_file", &other),
+            RepeatVerdict::Allow
+        ));
+        assert!(matches!(
+            tracker.check_repetition("read_file", &input),
+            RepeatVerdict::Allow
+        ));
     }
 }

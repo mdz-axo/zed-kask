@@ -31,9 +31,6 @@ mod inspector;
 mod interactive;
 mod key_dispatch;
 mod keymap;
-// zed-kask: D84/D14 — shared redraw-grid facility for periodic redraw
-// drivers (looping animation timers, streaming reveal timers).
-pub mod frame_grid;
 mod path_builder;
 mod platform;
 pub mod prelude;

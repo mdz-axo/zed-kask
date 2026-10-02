@@ -33,7 +33,7 @@ source-structure wiring pin green, clippy `-D warnings` clean. Deferred
 from Slice 2, recorded in DIVERGENCE.md: the first-chunk/stall bounds and
 the settings keys (the behavioral turn-level test landed 2026-10-02 after
 the rebuild as `test_reasoning_runaway_watchdog_aborts_thinking_only_stream`).
-Slice 3 (C1b recovery ladder) remains pending execution against this plan.
+Slice 3 (C1b recovery ladder) — charter dropped 2026-10-02 by the plan audit below (zero live occurrences of its motivating signature since D42 removed its root cause).
 
 **C1a removed 2026-10-02 (operator directive, the same day it landed).**
 Three live false positives killed working turns in one day — a legitimate
@@ -53,10 +53,36 @@ the thread.rs wiring and `CompletionError::ReasoningRunaway`, the
 behavioral pin, and the DIVERGENCE.md entry; the deferred
 first-chunk/stall bounds and settings keys are void with it. The floor
 that remains: the model's own `max_tokens` cap ends a true runaway, and
-D43 names the zero-content MaxTokens signature in the log. C1b stays
-chartered, unbuilt. Do not re-land C1a without a content-level
-discriminator (looping vs. progressing), a non-fatal recovery path, and
-a settings knob.
+D43 names the zero-content MaxTokens signature in the log. C1b's charter
+was dropped the same day by the audit below. Do not re-land C1a without a
+content-level discriminator (looping vs. progressing), a non-fatal
+recovery path, and a settings knob.
+
+**Plan audit (2026-10-02, operator-directed, post-C1a-removal).** Every
+remaining component was re-evaluated on the axes a guard's danger class
+turns on: what a misfire costs, whether the trigger discriminates the
+failure mode from legitimate work, and whether it has fired live.
+Findings: (1) **C2's shipped code did not implement its documented
+contract** — the docs, hint/refusal texts, and the Lean spec all say
+"consecutive", but the call-level revision kept a per-key map with no
+reset on a different dispatch, so interleaved identical calls
+accumulated: the edit → verify → edit → verify loop would be refused at
+its 6th verification as a "zero-gain loop". Fixed the same day —
+`check_repetition` now clears the key's streak when a different key was
+dispatched since its last success (reset-on-distinct; the Lean spec's
+`nextStreak_distinct_resets` now describes the shipped behavior),
+pinned by `interleaved_identical_successes_do_not_accumulate` and
+`intervening_dispatch_resets_the_streak`. Zero live firings before the
+fix (the guard had landed hours earlier). (2) **C1b's charter is
+dropped**: its motivating failure (zero-content MaxTokens) had its root
+cause removed by D42, and the observable logs carry zero D43
+`silent-stop` lines — no observed failure, no mechanism. Re-charter bar:
+a live D43 zero-content line. (3) **lisp_eval teaching kept**:
+diagnostic-only, locally motivated (three live receipts),
+discriminated, negative controls pinned. The systemic lesson, on record:
+the components built from borrowed evidence (C1a's bounds, C2's 71%
+motivation) were the miscalibrated ones; the one component built from
+local evidence is the one that works.
 
 **Provenance.** Patterns are translated at the architecture level from
 FrontierAgent (Apache-2.0, v0.1.0 unreleased, active — last commit 2026-10-02)
@@ -317,6 +343,19 @@ guard runs first and the failure check covers allowed batches — the two
 texts teach the same lesson from different angles; accepted.
 Effort: 1–2 days.
 
+**Second design revision (2026-10-02, plan audit).** The call-level
+revision above kept a per-key streak map with no reset on a different
+dispatch, so "consecutive" in this section's contract was not what
+shipped: interleaved identical calls accumulated (edit → verify → edit →
+verify — the verification call's streak survived every intervening
+edit, and the 6th verification would be refused as a "zero-gain loop").
+The fix restores the spec'd semantics at call granularity:
+`check_repetition` clears the key's streak when a different key was
+dispatched since its last success (reset-on-distinct —
+`nextStreak_distinct_resets`), so only back-to-back identical repeats
+accumulate. The Lean spec is unchanged — it already specified this; the
+code now matches it.
+
 ## 8. Workstream C — C1 runaway protection (Slices 2–3)
 
 ### C1a — stream watchdogs (S5) — REMOVED 2026-10-02
@@ -346,7 +385,14 @@ false-positive aborts killed working turns — see the execution record in
   `.rules`): `kask.loop_watchdog.{reasoning_only_max_tokens,
   reasoning_only_timeout_s, first_chunk_timeout_s, stall_timeout_s}`.
 
-### C1b — capped-empty recovery ladder (S6, S7)
+### C1b — capped-empty recovery ladder (S6, S7) — CHARTER DROPPED 2026-10-02
+
+**Charter dropped** (plan audit, same day as C1a's removal): the
+motivating failure's root cause was already removed by D42 (hidden
+reasoning budgets), and the observable logs carry zero D43 zero-content
+`silent-stop` lines — no observed failure, no mechanism. Re-charter
+bar: a live D43 zero-content line. The text below is the historical
+design.
 
 - Trigger: `Stop(StopReason::MaxTokens)` with zero visible content (no
   text, no tool calls) — the D43-detectable signature, at
@@ -462,7 +508,13 @@ after the 3rd identical success and the refusal after the hard cap.
 `record_failure_inner`'s streak reset is an additional reset-to-1 path the
 spec does not model; it preserves all four theorems (a reset only ever
 makes streaks smaller). The spec's `Batch`/signature corresponds to the
-implementation's `(tool_name, input_hash)` key.
+implementation's `(tool_name, input_hash)` key. **Corrected 2026-10-02
+(plan audit):** the first implementation did NOT reset on distinct — a
+per-key map let interleaved identical calls accumulate, so
+`nextStreak_distinct_resets` described the spec, not the code.
+`check_repetition` now clears the key's streak when a different key was
+dispatched since its last success; the mapping above is accurate as of
+that fix.
 
 ## 13. Open questions for the operator
 

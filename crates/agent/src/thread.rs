@@ -4590,8 +4590,11 @@ impl Thread {
         };
 
         // Success-repetition guard — the complement of the failure cap
-        // above: consecutive identical SUCCESSFUL executions of this
-        // (tool, input) pair. The failure side cannot see this class
+        // above: back-to-back identical SUCCESSFUL executions of this
+        // (tool, input) pair with no other dispatch in between
+        // (reset-on-distinct: a different call breaks the chain, so the
+        // edit → verify → edit → verify loop never accumulates). The
+        // failure side cannot see this class
         // (`record_success_for_message` resets it); measured on the source system, 71%
         // of budget-exhausted sub-agents died inside runs of ten or more
         // consecutive byte-identical calls. Same ladder as the failure

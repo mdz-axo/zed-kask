@@ -10,14 +10,6 @@ use crate::{
 pub use easing::*;
 use smallvec::SmallVec;
 
-/// zed-kask: default redraw-rate cap for looping animations, in frames per
-/// second. Every `repeat()`/`repeat_synced()` animation in the tree is a
-/// looping indicator (spinner, pulsating label, shimmer) — none needs
-/// refresh-rate redraws, and uncapped loops request a full window redraw on
-/// every display frame while visible. 20 fps is visually indistinguishable
-/// for indicator loops; `with_max_fps` overrides it in either builder order.
-pub const DEFAULT_REPEAT_MAX_FPS: f32 = 20.0;
-
 /// An animation that can be applied to an element.
 #[derive(Clone)]
 pub struct Animation {
@@ -49,17 +41,8 @@ impl Animation {
     }
 
     /// Set the animation to loop when it finishes.
-    ///
-    /// zed-kask: looping animations default to a capped redraw rate
-    /// (`DEFAULT_REPEAT_MAX_FPS`). Uncapped, every visible loop requests a full
-    /// window redraw on every display frame; while agent threads ran, the
-    /// sidebar spinner and generating-title pulsator together pinned the GPUI
-    /// main thread (measured 100% of a core during active turns, 2026-09-28;
-    /// still 96% after capping the spinner alone, 2026-09-29). Callers can
-    /// override with `with_max_fps` in either builder order.
     pub fn repeat(mut self) -> Self {
         self.oneshot = false;
-        self.max_fps.get_or_insert(DEFAULT_REPEAT_MAX_FPS);
         self
     }
 
@@ -67,7 +50,6 @@ impl Animation {
     pub fn repeat_synced(mut self) -> Self {
         self.oneshot = false;
         self.synced = true;
-        self.max_fps.get_or_insert(DEFAULT_REPEAT_MAX_FPS);
         self
     }
 
@@ -86,16 +68,6 @@ impl Animation {
     /// are ignored.
     pub fn with_max_fps(mut self, max_fps: f32) -> Self {
         self.max_fps = Some(max_fps);
-        self
-    }
-
-    /// zed-kask: opt out of the looping redraw-rate default set by
-    /// [`Animation::repeat`]/[`Animation::repeat_synced`], re-rendering on
-    /// every frame instead. For looping indicators the default cap is what
-    /// you want; this is the explicit escape hatch for callers (and tests)
-    /// that drive renders per display frame.
-    pub fn uncapped(mut self) -> Self {
-        self.max_fps = None;
         self
     }
 }
@@ -486,16 +458,7 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
                             let interval = Duration::from_secs_f32(1.0 / max_fps);
                             window
                                 .spawn(cx, async move |cx| {
-                                    // zed-kask: D84 — align capped animation timers to
-                                    // the shared redraw grid so N visible animators coalesce
-                                    // into one redraw per boundary instead of N
-                                    // unsynchronized triggers per interval (measured 31
-                                    // draws/s from sidebar animators alone, 2026-09-30).
-                                    let delay = crate::frame_grid::next_grid_delay_from(
-                                        cx.background_executor().now(),
-                                        interval,
-                                    );
-                                    cx.background_executor().timer(delay).await;
+                                    cx.background_executor().timer(interval).await;
                                     delayed_frame_pending.set(false);
                                     cx.update(move |_, cx| cx.notify(view)).ok();
                                 })
@@ -648,28 +611,17 @@ mod tests {
             };
             div()
                 .size_full()
-                .child(
-                    div().with_animation(
-                        "first-synced-animation",
-                        // zed-kask: uncapped so the test drives renders per display
-                        // frame via simulate_next_frame; the phase-sync purpose is
-                        // independent of the looping redraw-rate default.
-                        Animation::new(Duration::from_secs(1))
-                            .repeat_synced()
-                            .uncapped(),
-                        record_deltas(self.first_deltas.clone()),
-                    ),
-                )
+                .child(div().with_animation(
+                    "first-synced-animation",
+                    Animation::new(Duration::from_secs(1)).repeat_synced(),
+                    record_deltas(self.first_deltas.clone()),
+                ))
                 .when(self.show_second, |this| {
-                    this.child(
-                        div().with_animation(
-                            "second-synced-animation",
-                            Animation::new(Duration::from_secs(1))
-                                .repeat_synced()
-                                .uncapped(),
-                            record_deltas(self.second_deltas.clone()),
-                        ),
-                    )
+                    this.child(div().with_animation(
+                        "second-synced-animation",
+                        Animation::new(Duration::from_secs(1)).repeat_synced(),
+                        record_deltas(self.second_deltas.clone()),
+                    ))
                 })
         }
     }
@@ -968,110 +920,50 @@ mod tests {
 
     #[gpui::test]
     fn test_repeating_animation_schedules_animation_frames(cx: &mut TestAppContext) {
-        // zed-kask: repeating animations default to a capped, timer-driven
-        // redraw rate (DEFAULT_REPEAT_MAX_FPS), so the loop continues without
-        // per-frame callbacks: stepping display frames schedules nothing, and
-        // advancing the clock past the cap interval re-renders.
         let (rendered_deltas, window) = open_test_window(cx);
 
         assert_eq!(rendered_deltas.borrow().len(), 1);
 
-        // No per-frame callback is scheduled; re-renders are timer-driven.
-        assert_eq!(simulate_next_frame(&window, cx), 0);
-        assert_eq!(rendered_deltas.borrow().len(), 1);
-
-        let interval = Duration::from_secs_f32(1.0 / DEFAULT_REPEAT_MAX_FPS);
-        cx.executor()
-            .advance_clock(interval + Duration::from_millis(5));
-        cx.run_until_parked();
-        assert_eq!(rendered_deltas.borrow().len(), 2);
-
-        cx.executor()
-            .advance_clock(interval + Duration::from_millis(5));
-        cx.run_until_parked();
-        assert_eq!(rendered_deltas.borrow().len(), 3);
-    }
-
-    /// zed-kask pin: `repeat()` and `repeat_synced()` default their redraw
-    /// rate to `DEFAULT_REPEAT_MAX_FPS`; explicit `with_max_fps` overrides
-    /// survive in either builder order; oneshot animations stay uncapped.
-    #[test]
-    fn repeating_animations_default_to_capped_redraw() {
-        let repeated = Animation::new(Duration::from_secs(2)).repeat();
-        assert_eq!(repeated.oneshot, false);
-        assert_eq!(repeated.max_fps, Some(DEFAULT_REPEAT_MAX_FPS));
-
-        let synced = Animation::new(Duration::from_secs(2)).repeat_synced();
-        assert_eq!(synced.synced, true);
-        assert_eq!(synced.max_fps, Some(DEFAULT_REPEAT_MAX_FPS));
-
-        let overridden_before = Animation::new(Duration::from_secs(2))
-            .with_max_fps(60.0)
-            .repeat();
-        assert_eq!(overridden_before.max_fps, Some(60.0));
-
-        let overridden_after = Animation::new(Duration::from_secs(2))
-            .repeat()
-            .with_max_fps(60.0);
-        assert_eq!(overridden_after.max_fps, Some(60.0));
-
-        let uncapped = Animation::new(Duration::from_secs(2)).repeat().uncapped();
-        assert_eq!(uncapped.oneshot, false);
-        assert_eq!(uncapped.max_fps, None);
-
-        let oneshot = Animation::new(Duration::from_secs(2));
-        assert_eq!(oneshot.oneshot, true);
-        assert_eq!(oneshot.max_fps, None);
+        for expected_frames in 2..=3 {
+            assert_eq!(simulate_next_frame(&window, cx), 1);
+            assert_eq!(rendered_deltas.borrow().len(), expected_frames);
+        }
     }
 
     #[gpui::test]
     fn test_max_fps_schedules_timer_driven_frames(cx: &mut TestAppContext) {
-        // zed-kask: capped animations re-render on a timer aligned to the
-        // shared redraw grid (D84), so the exact fire instant is
-        // boundary-dependent; this test pins the mechanism (no per-frame
-        // callback; timer-driven re-renders) and the rate bound (at most one
-        // re-render per max_fps interval, each within one interval of the
-        // last).
         let (rendered_deltas, window) = open_test_window_with_max_fps(cx, Some(10.0));
 
-        assert_eq!(rendered_deltas.borrow().len(), 1);
+        // The test scheduler's clock jitters forward slightly on each poll,
+        // so compare against expectations loosely.
+        let assert_deltas_approx_eq = |expected: &[f32]| {
+            let actual = rendered_deltas.borrow();
+            assert_eq!(actual.len(), expected.len(), "deltas: {actual:?}");
+            for (actual, expected) in actual.iter().zip(expected) {
+                assert!(
+                    (actual - expected).abs() < 1e-2,
+                    "expected {expected}, got {actual}"
+                );
+            }
+        };
+
+        assert_deltas_approx_eq(&[0.0]);
 
         // No per-frame callback is scheduled; re-renders are timer-driven.
         assert_eq!(simulate_next_frame(&window, cx), 0);
-        assert_eq!(rendered_deltas.borrow().len(), 1);
+        assert_deltas_approx_eq(&[0.0]);
 
         cx.executor().advance_clock(Duration::from_millis(105));
         cx.run_until_parked();
-        {
-            let deltas = rendered_deltas.borrow();
-            assert_eq!(deltas.len(), 2, "one timer-driven re-render per interval");
-            assert!(deltas[1] > deltas[0], "time advances between renders");
-            assert!(
-                deltas[1] - deltas[0] <= 0.1 + 1e-2,
-                "re-renders are rate-bounded by max_fps: {}",
-                deltas[1]
-            );
-        }
+        assert_deltas_approx_eq(&[0.0, 0.105]);
 
         cx.executor().advance_clock(Duration::from_millis(105));
         cx.run_until_parked();
-        {
-            let deltas = rendered_deltas.borrow();
-            assert_eq!(deltas.len(), 3, "the loop continues on the timer");
-            assert!(deltas[2] > deltas[1]);
-            assert!(
-                deltas[2] - deltas[1] <= 0.1 + 1e-2,
-                "each re-render is within one interval of the last: {}",
-                deltas[2]
-            );
-        }
+        assert_deltas_approx_eq(&[0.0, 0.105, 0.21]);
     }
 
     #[gpui::test]
     fn test_synced_animations_share_phase_across_elements(cx: &mut TestAppContext) {
-        // zed-kask: this test drives renders per display frame, so its view's
-        // animations opt out of the looping redraw-rate default with
-        // `uncapped()`; the phase-sharing purpose is independent of the cap.
         let first_deltas = Rc::new(RefCell::new(Vec::new()));
         let second_deltas = Rc::new(RefCell::new(Vec::new()));
         let window = cx.open_window(size(px(100.), px(100.)), {

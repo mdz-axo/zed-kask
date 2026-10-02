@@ -3499,14 +3499,8 @@ impl AcpThread {
     fn start_streaming_reveal(&self, cx: &mut Context<Self>) -> Task<()> {
         cx.spawn(async move |this, cx| {
             loop {
-                // zed-kask: D14 extension — sleep until the next boundary of the
-                // shared redraw grid (gpui::frame_grid) instead of a fixed 50ms,
-                // so concurrent streaming threads AND capped animation timers
-                // coalesce their foreground wakes into one redraw per boundary.
-                let interval = Duration::from_millis(StreamingTextBuffer::TASK_UPDATE_MS);
-                let now = cx.background_executor().now();
                 cx.background_executor()
-                    .timer(gpui::frame_grid::next_grid_delay_from(now, interval))
+                    .timer(Duration::from_millis(StreamingTextBuffer::TASK_UPDATE_MS))
                     .await;
 
                 let should_continue = this
@@ -12741,11 +12735,6 @@ mod tests {
              See DIVERGENCE.md D14."
         );
     }
-
-    // zed-kask: the reveal-grid alignment math moved to gpui::frame_grid (the
-    // D84 shared facility, consumed by both the reveal loop and capped
-    // animation timers); its pin is
-    // `gpui::frame_grid::tests::grid_delay_lands_on_shared_boundaries`.
 
     /// D27: sandboxed terminal commands must run non-interactively. The sandbox
     /// creates a new session (setsid) with no controlling terminal and stdin
