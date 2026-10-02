@@ -1251,35 +1251,32 @@ pub(crate) mod tests {
         assert!(body.contains(concat!("lookup fai", "led")));
     }
 
-    fn in_memory_port_with_cadence(
-        consolidation_cadence_secs: u64,
-        confidence_floor: f64,
-    ) -> RealMemoryPort {
-        // Curator store — a separate in-memory driver so the curator copy
-        // lands in a different DB, mirroring production where the curator
-        // has its own `curator.db`.
+    /// The in-memory curator `MemoryStore` — a separate in-memory driver so
+    /// the curator copy lands in a different DB, mirroring production where
+    /// the curator has its own `curator.db`.
+    fn in_memory_curator_store() -> Arc<MemoryStore> {
         let curator_driver: Arc<dyn hkask_storage::DatabaseDriver> =
             SqliteDriver::in_memory_driver();
         let curator_h_mem_store =
             HMemStore::from_driver(Arc::clone(&curator_driver)).expect("curator hmem store init");
         let curator_embedding_store =
             EmbeddingStore::from_driver(curator_driver, 1024).expect("embedding store init");
-        let curator_store_inner = Arc::new(MemoryStore::new(
+        Arc::new(MemoryStore::new(
             curator_h_mem_store,
             curator_embedding_store,
-        ));
+        ))
+    }
 
-        // Tests don't call embed — use a stub port with no backing task.
-        let embedding_port = LanguageModelEmbeddingPort::for_tests();
-
-        // Curator consolidation service — mirrors the production construction
-        // in `RealMemoryPort::new`. Skipped when cadence is 0 (matches
-        // production). The curator store is always `Some` in tests.
-        let curator_consolidation = build_curator_consolidation(
-            consolidation_cadence_secs,
-            &Some(Arc::clone(&curator_store_inner)),
-        );
-
+    /// The `RealMemoryPort` literal — the one copy of the fifteen-field
+    /// construction the port constructors below and the counting-driver
+    /// tests share.
+    fn port_with(
+        curator_store_inner: Arc<MemoryStore>,
+        embedding_port: LanguageModelEmbeddingPort,
+        curator_consolidation: Option<Arc<MemoryConsolidator>>,
+        consolidation_cadence_secs: u64,
+        confidence_floor: f64,
+    ) -> RealMemoryPort {
         RealMemoryPort {
             curator_store: Arc::new(CuratorStore::for_tests(Some(curator_store_inner))),
             embedding_port: Some(embedding_port),
@@ -1297,6 +1294,116 @@ pub(crate) mod tests {
         }
     }
 
+    /// The `TurnRecord` skeleton every test in this module builds — only the
+    /// per-test fields vary; model and title are constant across tests.
+    fn turn_record(
+        thread_id: &str,
+        user_input: &str,
+        agent_response: &str,
+        agent_id: &str,
+        goal_events: Vec<hkask_types::GoalEvent>,
+    ) -> TurnRecord {
+        TurnRecord {
+            thread_id: thread_id.to_string(),
+            user_input: user_input.to_string(),
+            agent_response: agent_response.to_string(),
+            model: "test-model".to_string(),
+            thread_title: None,
+            agent_id: Some(agent_id.to_string()),
+            goal_events,
+        }
+    }
+
+    /// A one-goal-event turn with empty turn text and the `zed` agent id —
+    /// the record shape of the goal-ingestion tests.
+    fn goal_event_turn(thread_id: &str, tool_name: &str, output: serde_json::Value) -> TurnRecord {
+        turn_record(
+            thread_id,
+            "",
+            "",
+            "zed",
+            vec![hkask_types::GoalEvent {
+                tool_name: tool_name.to_string(),
+                output,
+            }],
+        )
+    }
+
+    /// The with-turn-text variant for goal tests that also exercise the
+    /// chunk path alongside the goal event.
+    fn goal_event_turn_with_text(
+        thread_id: &str,
+        user_input: &str,
+        agent_response: &str,
+        tool_name: &str,
+        output: serde_json::Value,
+    ) -> TurnRecord {
+        turn_record(
+            thread_id,
+            user_input,
+            agent_response,
+            "zed",
+            vec![hkask_types::GoalEvent {
+                tool_name: tool_name.to_string(),
+                output,
+            }],
+        )
+    }
+
+    /// The `WriteContext` the `write_turn` tests build — identical except
+    /// for the embedding port under test.
+    fn write_context<'a>(
+        port: &'a RealMemoryPort,
+        embedding_port: Option<&'a LanguageModelEmbeddingPort>,
+    ) -> WriteContext<'a> {
+        WriteContext {
+            curator_store: &port.curator_store,
+            embedding_port,
+            embedding_model: &port.embedding_model,
+            classifier_model: port.classifier_model.as_deref(),
+            template_root: port.template_root.as_path(),
+            curator_webid: port.curator_webid,
+            tokio_handle: &port.tokio_handle,
+            curator_consolidation: &port.curator_consolidation,
+            consolidation_cadence_secs: port.consolidation_cadence_secs,
+        }
+    }
+
+    /// The below-floor probe h_mem the consolidation tests seed — it must
+    /// survive ingestion untouched and die only on a consolidation pass.
+    fn below_floor_probe(webid: WebID) -> hkask_storage::HMem {
+        hkask_storage::HMem::new(
+            "probe:low",
+            "fact",
+            serde_json::Value::String("low-confidence probe".to_string()),
+            webid,
+        )
+        .with_confidence(hkask_types::Confidence::new(0.1))
+    }
+
+    fn in_memory_port_with_cadence(
+        consolidation_cadence_secs: u64,
+        confidence_floor: f64,
+    ) -> RealMemoryPort {
+        let curator_store_inner = in_memory_curator_store();
+        // Tests don't call embed — use a stub port with no backing task.
+        let embedding_port = LanguageModelEmbeddingPort::for_tests();
+        // Curator consolidation service — mirrors the production construction
+        // in `RealMemoryPort::new`. Skipped when cadence is 0 (matches
+        // production). The curator store is always `Some` in tests.
+        let curator_consolidation = build_curator_consolidation(
+            consolidation_cadence_secs,
+            &Some(Arc::clone(&curator_store_inner)),
+        );
+        port_with(
+            curator_store_inner,
+            embedding_port,
+            curator_consolidation,
+            consolidation_cadence_secs,
+            confidence_floor,
+        )
+    }
+
     /// Construct an in-memory `RealMemoryPort` whose embedding port is backed
     /// by `embed_fn` (a deterministic text→vector closure) instead of the
     /// channel-closed `for_tests()` stub. For tests that exercise the
@@ -1310,37 +1417,11 @@ pub(crate) mod tests {
     where
         F: Fn(&str) -> Vec<f32> + Send + Sync + ?Sized + 'static,
     {
-        let curator_driver: Arc<dyn hkask_storage::DatabaseDriver> =
-            SqliteDriver::in_memory_driver();
-        let curator_h_mem_store =
-            HMemStore::from_driver(Arc::clone(&curator_driver)).expect("curator hmem store init");
-        let curator_embedding_store =
-            EmbeddingStore::from_driver(curator_driver, 1024).expect("embedding store init");
-        let curator_store_inner = Arc::new(MemoryStore::new(
-            curator_h_mem_store,
-            curator_embedding_store,
-        ));
-
         let embedding_port = LanguageModelEmbeddingPort::for_tests_with_embed_fn(
             embed_fn,
             tokio::runtime::Handle::current(),
         );
-
-        RealMemoryPort {
-            curator_store: Arc::new(CuratorStore::for_tests(Some(curator_store_inner))),
-            embedding_port: Some(embedding_port),
-            embedding_model: "test-model".to_string(),
-            external_passphrase: String::new(),
-            external_sources: Arc::new(std::sync::Mutex::new(None)),
-            classifier_model: None,
-            template_root: std::path::PathBuf::from("test-registry-root"),
-            curator_webid: WebID::from_persona(b"curator"),
-            curator_consolidation: Arc::new(RwLock::new(None)),
-            consolidation_cadence_secs: 0,
-            confidence_floor: 0.3,
-            tokio_handle: tokio::runtime::Handle::current(),
-            ingest_semaphore: tokio::sync::Semaphore::new(1),
-        }
+        port_with(in_memory_curator_store(), embedding_port, None, 0, 0.3)
     }
 
     // Match the producer's SHA-256 seal without changing this crate's dependencies.
@@ -1854,18 +1935,11 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn id_less_score_goal_event_still_fails_ingestion() {
         let port = in_memory_port_with_embed_fn(Arc::new(|_text: &str| vec![0.25; 1024]));
-        let record = TurnRecord {
-            thread_id: "goal-score-strict-thread".to_string(),
-            user_input: String::new(),
-            agent_response: String::new(),
-            model: "test-model".to_string(),
-            thread_title: None,
-            agent_id: Some("zed".to_string()),
-            goal_events: vec![hkask_types::GoalEvent {
-                tool_name: "kanban_goal_score".to_string(),
-                output: serde_json::json!("Tool invocation failed: server unavailable"),
-            }],
-        };
+        let record = goal_event_turn(
+            "goal-score-strict-thread",
+            "kanban_goal_score",
+            serde_json::json!("Tool invocation failed: server unavailable"),
+        );
 
         let result = port.ingest_turn(record).await;
         assert!(
@@ -1890,24 +1964,17 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn persisted_goal_event_is_semantically_visible_by_entity_ref() {
         let port = in_memory_port_with_embed_fn(Arc::new(|_text: &str| vec![0.25; 1024]));
-        let record = TurnRecord {
-            thread_id: "goal-semantic-thread".to_string(),
-            user_input: String::new(),
-            agent_response: String::new(),
-            model: "test-model".to_string(),
-            thread_title: None,
-            agent_id: Some("zed".to_string()),
-            goal_events: vec![hkask_types::GoalEvent {
-                tool_name: "kanban_goal_create".to_string(),
-                output: serde_json::json!({
-                    "content": {
-                        "goal_id": "g-semantic",
-                        "goal_text": "The user can filter by date",
-                        "prediction": 0.8
-                    }
-                }),
-            }],
-        };
+        let record = goal_event_turn(
+            "goal-semantic-thread",
+            "kanban_goal_create",
+            serde_json::json!({
+                "content": {
+                    "goal_id": "g-semantic",
+                    "goal_text": "The user can filter by date",
+                    "prediction": 0.8
+                }
+            }),
+        );
 
         port.ingest_turn(record).await.expect("goal ingest");
         let snippets = port
@@ -1930,20 +1997,13 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn goal_embedding_failure_blocks_persistence_and_score_acknowledgment() {
         let port = in_memory_port();
-        let create = TurnRecord {
-            thread_id: "goal-embedding-failure".to_string(),
-            user_input: String::new(),
-            agent_response: String::new(),
-            model: "test-model".to_string(),
-            thread_title: None,
-            agent_id: Some("zed".to_string()),
-            goal_events: vec![hkask_types::GoalEvent {
-                tool_name: "kanban_goal_create".to_string(),
-                output: serde_json::json!({
-                    "content": {"goal_id": "g-no-vector", "goal_text": "must remain visible"}
-                }),
-            }],
-        };
+        let create = goal_event_turn(
+            "goal-embedding-failure",
+            "kanban_goal_create",
+            serde_json::json!({
+                "content": {"goal_id": "g-no-vector", "goal_text": "must remain visible"}
+            }),
+        );
         assert!(
             port.ingest_turn(create).await.is_err(),
             "every individual goal event fails closed when semantic publication is unavailable"
@@ -1957,20 +2017,13 @@ pub(crate) mod tests {
             "a failed embedding must leave no goal h_mem"
         );
 
-        let score = TurnRecord {
-            thread_id: "goal-embedding-failure".to_string(),
-            user_input: String::new(),
-            agent_response: String::new(),
-            model: "test-model".to_string(),
-            thread_title: None,
-            agent_id: Some("zed".to_string()),
-            goal_events: vec![hkask_types::GoalEvent {
-                tool_name: "kanban_goal_score".to_string(),
-                output: serde_json::json!({
-                    "content": {"goal_id": "g-no-vector", "achieved": false, "brier": null}
-                }),
-            }],
-        };
+        let score = goal_event_turn(
+            "goal-embedding-failure",
+            "kanban_goal_score",
+            serde_json::json!({
+                "content": {"goal_id": "g-no-vector", "achieved": false, "brier": null}
+            }),
+        );
         assert!(
             port.ingest_turn(score).await.is_err(),
             "a score must remain unacknowledged until semantic publication succeeds"
@@ -1992,20 +2045,13 @@ pub(crate) mod tests {
     async fn goal_score_with_brier_requires_a_create_record() {
         let port = in_memory_port_with_embeddings();
         let result = port
-            .ingest_turn(TurnRecord {
-                thread_id: "goal-missing-create".to_string(),
-                user_input: String::new(),
-                agent_response: String::new(),
-                model: "test-model".to_string(),
-                thread_title: None,
-                agent_id: Some("zed".to_string()),
-                goal_events: vec![hkask_types::GoalEvent {
-                    tool_name: "kanban_goal_score".to_string(),
-                    output: serde_json::json!({
-                        "content": {"goal_id": "g-missing-create", "achieved": true, "brier": 0.04}
-                    }),
-                }],
-            })
+            .ingest_turn(goal_event_turn(
+                "goal-missing-create",
+                "kanban_goal_score",
+                serde_json::json!({
+                    "content": {"goal_id": "g-missing-create", "achieved": true, "brier": 0.04}
+                }),
+            ))
             .await;
         assert!(result.is_err());
         let curator_store = port.curator_store.get().expect("curator store");
@@ -2027,45 +2073,35 @@ pub(crate) mod tests {
         // 0.0625 maps to a 0.875 signal, which combined with the 0.5 floor
         // is 0.875.
         let port = in_memory_port_with_embeddings();
-        let create_record = TurnRecord {
-            thread_id: "goal-thread".to_string(),
-            user_input: "set a goal".to_string(),
-            agent_response: "goal recorded".to_string(),
-            model: "test-model".to_string(),
-            thread_title: None,
-            agent_id: Some("zed".to_string()),
-            goal_events: vec![hkask_types::GoalEvent {
-                tool_name: "kanban_goal_create".to_string(),
-                output: serde_json::json!({
-                    "content": {
-                        "goal_id": "g-brier",
-                        "goal_text": "The user can filter by date",
-                        "prediction": 0.75
-                    }
-                }),
-            }],
-        };
+        let create_record = goal_event_turn_with_text(
+            "goal-thread",
+            "set a goal",
+            "goal recorded",
+            "kanban_goal_create",
+            serde_json::json!({
+                "content": {
+                    "goal_id": "g-brier",
+                    "goal_text": "The user can filter by date",
+                    "prediction": 0.75
+                }
+            }),
+        );
         port.ingest_turn(create_record)
             .await
             .expect("create ingest");
-        let score_record = TurnRecord {
-            thread_id: "goal-thread".to_string(),
-            user_input: "score it".to_string(),
-            agent_response: "scored".to_string(),
-            model: "test-model".to_string(),
-            thread_title: None,
-            agent_id: Some("zed".to_string()),
-            goal_events: vec![hkask_types::GoalEvent {
-                tool_name: "kanban_goal_score".to_string(),
-                output: serde_json::json!({
-                    "content": {
-                        "goal_id": "g-brier",
-                        "achieved": true,
-                        "brier": 0.0625
-                    }
-                }),
-            }],
-        };
+        let score_record = goal_event_turn_with_text(
+            "goal-thread",
+            "score it",
+            "scored",
+            "kanban_goal_score",
+            serde_json::json!({
+                "content": {
+                    "goal_id": "g-brier",
+                    "achieved": true,
+                    "brier": 0.0625
+                }
+            }),
+        );
         port.ingest_turn(score_record).await.expect("score ingest");
 
         let curator_store = port.curator_store.get().expect("curator store");
@@ -2100,35 +2136,21 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn goal_score_retry_does_not_reapply_brier_calibration() {
         let port = in_memory_port_with_embeddings();
-        let create = TurnRecord {
-            thread_id: "goal-retry-thread".to_string(),
-            user_input: String::new(),
-            agent_response: String::new(),
-            model: "test-model".to_string(),
-            thread_title: None,
-            agent_id: Some("zed".to_string()),
-            goal_events: vec![hkask_types::GoalEvent {
-                tool_name: "kanban_goal_create".to_string(),
-                output: serde_json::json!({
-                    "content": {"goal_id": "g-retry", "goal_text": "retry safely", "prediction": 0.75}
-                }),
-            }],
-        };
+        let create = goal_event_turn(
+            "goal-retry-thread",
+            "kanban_goal_create",
+            serde_json::json!({
+                "content": {"goal_id": "g-retry", "goal_text": "retry safely", "prediction": 0.75}
+            }),
+        );
         port.ingest_turn(create).await.expect("create ingest");
-        let score = TurnRecord {
-            thread_id: "goal-retry-thread".to_string(),
-            user_input: String::new(),
-            agent_response: String::new(),
-            model: "test-model".to_string(),
-            thread_title: None,
-            agent_id: Some("zed".to_string()),
-            goal_events: vec![hkask_types::GoalEvent {
-                tool_name: "kanban_goal_score".to_string(),
-                output: serde_json::json!({
-                    "content": {"goal_id": "g-retry", "achieved": true, "brier": 0.0625}
-                }),
-            }],
-        };
+        let score = goal_event_turn(
+            "goal-retry-thread",
+            "kanban_goal_score",
+            serde_json::json!({
+                "content": {"goal_id": "g-retry", "achieved": true, "brier": 0.0625}
+            }),
+        );
         port.ingest_turn(score.clone())
             .await
             .expect("first score ingest");
@@ -2198,15 +2220,7 @@ pub(crate) mod tests {
                 .expect("seed embedding-incomplete goal h_mem");
         }
 
-        let retry = TurnRecord {
-            thread_id: "goal-repair-thread".to_string(),
-            user_input: String::new(),
-            agent_response: String::new(),
-            model: "test-model".to_string(),
-            thread_title: None,
-            agent_id: Some("zed".to_string()),
-            goal_events: vec![event],
-        };
+        let retry = turn_record("goal-repair-thread", "", "", "zed", vec![event]);
         assert!(
             port.ingest_turn(retry).await.is_err(),
             "an embedding-incomplete stored score must fail closed"
@@ -2234,44 +2248,34 @@ pub(crate) mod tests {
         // `brier` is null when no intake prediction was recorded — nothing
         // to calibrate. The create record must stay at the 0.5 floor.
         let port = in_memory_port_with_embeddings();
-        let create_record = TurnRecord {
-            thread_id: "goal-thread".to_string(),
-            user_input: "set a goal".to_string(),
-            agent_response: "goal recorded".to_string(),
-            model: "test-model".to_string(),
-            thread_title: None,
-            agent_id: Some("zed".to_string()),
-            goal_events: vec![hkask_types::GoalEvent {
-                tool_name: "kanban_goal_create".to_string(),
-                output: serde_json::json!({
-                    "content": {
-                        "goal_id": "g-nopred",
-                        "goal_text": "The user can filter by date"
-                    }
-                }),
-            }],
-        };
+        let create_record = goal_event_turn_with_text(
+            "goal-thread",
+            "set a goal",
+            "goal recorded",
+            "kanban_goal_create",
+            serde_json::json!({
+                "content": {
+                    "goal_id": "g-nopred",
+                    "goal_text": "The user can filter by date"
+                }
+            }),
+        );
         port.ingest_turn(create_record)
             .await
             .expect("create ingest");
-        let score_record = TurnRecord {
-            thread_id: "goal-thread".to_string(),
-            user_input: "score it".to_string(),
-            agent_response: "scored".to_string(),
-            model: "test-model".to_string(),
-            thread_title: None,
-            agent_id: Some("zed".to_string()),
-            goal_events: vec![hkask_types::GoalEvent {
-                tool_name: "kanban_goal_score".to_string(),
-                output: serde_json::json!({
-                    "content": {
-                        "goal_id": "g-nopred",
-                        "achieved": true,
-                        "brier": null
-                    }
-                }),
-            }],
-        };
+        let score_record = goal_event_turn_with_text(
+            "goal-thread",
+            "score it",
+            "scored",
+            "kanban_goal_score",
+            serde_json::json!({
+                "content": {
+                    "goal_id": "g-nopred",
+                    "achieved": true,
+                    "brier": null
+                }
+            }),
+        );
         port.ingest_turn(score_record).await.expect("score ingest");
 
         let curator_store = port.curator_store.get().expect("curator store");
@@ -2297,45 +2301,35 @@ pub(crate) mod tests {
         // floor-delete cleans it up. Calibration by outcome, cleanup by
         // floor: the two mechanisms compose.
         let port = in_memory_port_with_embeddings();
-        let create_record = TurnRecord {
-            thread_id: "goal-thread".to_string(),
-            user_input: "set a goal".to_string(),
-            agent_response: "goal recorded".to_string(),
-            model: "test-model".to_string(),
-            thread_title: None,
-            agent_id: Some("zed".to_string()),
-            goal_events: vec![hkask_types::GoalEvent {
-                tool_name: "kanban_goal_create".to_string(),
-                output: serde_json::json!({
-                    "content": {
-                        "goal_id": "g-wrong",
-                        "goal_text": "The user can filter by date",
-                        "prediction": 0.9
-                    }
-                }),
-            }],
-        };
+        let create_record = goal_event_turn_with_text(
+            "goal-thread",
+            "set a goal",
+            "goal recorded",
+            "kanban_goal_create",
+            serde_json::json!({
+                "content": {
+                    "goal_id": "g-wrong",
+                    "goal_text": "The user can filter by date",
+                    "prediction": 0.9
+                }
+            }),
+        );
         port.ingest_turn(create_record)
             .await
             .expect("create ingest");
-        let score_record = TurnRecord {
-            thread_id: "goal-thread".to_string(),
-            user_input: "score it".to_string(),
-            agent_response: "scored".to_string(),
-            model: "test-model".to_string(),
-            thread_title: None,
-            agent_id: Some("zed".to_string()),
-            goal_events: vec![hkask_types::GoalEvent {
-                tool_name: "kanban_goal_score".to_string(),
-                output: serde_json::json!({
-                    "content": {
-                        "goal_id": "g-wrong",
-                        "achieved": false,
-                        "brier": 1.0
-                    }
-                }),
-            }],
-        };
+        let score_record = goal_event_turn_with_text(
+            "goal-thread",
+            "score it",
+            "scored",
+            "kanban_goal_score",
+            serde_json::json!({
+                "content": {
+                    "goal_id": "g-wrong",
+                    "achieved": false,
+                    "brier": 1.0
+                }
+            }),
+        );
         port.ingest_turn(score_record).await.expect("score ingest");
 
         let curator_store = port.curator_store.get().expect("curator store");
@@ -2667,15 +2661,13 @@ pub(crate) mod tests {
         // but no records are written since there's no store to write to.
         let port = in_memory_port();
         port.curator_store.set_for_tests(None);
-        let record = TurnRecord {
-            thread_id: "test-no-curator".to_string(),
-            user_input: "What is memory?".to_string(),
-            agent_response: "Memory is persistence across time.".to_string(),
-            model: "test-model".to_string(),
-            thread_title: None,
-            agent_id: Some("Curator".to_string()),
-            goal_events: Vec::new(),
-        };
+        let record = turn_record(
+            "test-no-curator",
+            "What is memory?",
+            "Memory is persistence across time.",
+            "Curator",
+            Vec::new(),
+        );
 
         let result = port.ingest_turn(record).await;
         assert!(
@@ -2691,26 +2683,14 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn write_turn_reports_non_blocking_partial_embedding_failure() {
         let port = in_memory_port();
-        let ctx = WriteContext {
-            curator_store: &port.curator_store,
-            embedding_port: port.embedding_port.as_ref(),
-            embedding_model: &port.embedding_model,
-            classifier_model: port.classifier_model.as_deref(),
-            template_root: port.template_root.as_path(),
-            curator_webid: port.curator_webid,
-            tokio_handle: &port.tokio_handle,
-            curator_consolidation: &port.curator_consolidation,
-            consolidation_cadence_secs: port.consolidation_cadence_secs,
-        };
-        let record = TurnRecord {
-            thread_id: "surfaced-embedding-degradation".to_string(),
-            user_input: "remember this turn".to_string(),
-            agent_response: "the conversation continues".to_string(),
-            model: "test-model".to_string(),
-            thread_title: None,
-            agent_id: Some("Curator".to_string()),
-            goal_events: Vec::new(),
-        };
+        let ctx = write_context(&port, port.embedding_port.as_ref());
+        let record = turn_record(
+            "surfaced-embedding-degradation",
+            "remember this turn",
+            "the conversation continues",
+            "Curator",
+            Vec::new(),
+        );
 
         let report = ingest::write_turn(&ctx, record)
             .await
@@ -2727,26 +2707,14 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn write_turn_reports_unavailable_embedding_capability() {
         let port = in_memory_port();
-        let ctx = WriteContext {
-            curator_store: &port.curator_store,
-            embedding_port: None,
-            embedding_model: &port.embedding_model,
-            classifier_model: port.classifier_model.as_deref(),
-            template_root: port.template_root.as_path(),
-            curator_webid: port.curator_webid,
-            tokio_handle: &port.tokio_handle,
-            curator_consolidation: &port.curator_consolidation,
-            consolidation_cadence_secs: port.consolidation_cadence_secs,
-        };
-        let record = TurnRecord {
-            thread_id: "unavailable-embedding-capability".to_string(),
-            user_input: "remember this turn".to_string(),
-            agent_response: "the conversation continues".to_string(),
-            model: "test-model".to_string(),
-            thread_title: None,
-            agent_id: Some("Curator".to_string()),
-            goal_events: Vec::new(),
-        };
+        let ctx = write_context(&port, None);
+        let record = turn_record(
+            "unavailable-embedding-capability",
+            "remember this turn",
+            "the conversation continues",
+            "Curator",
+            Vec::new(),
+        );
 
         let report = ingest::write_turn(&ctx, record)
             .await
@@ -2763,15 +2731,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn ingest_turn_handles_empty_prompt_gracefully() {
         let port = in_memory_port();
-        let record = TurnRecord {
-            thread_id: "test-empty".to_string(),
-            user_input: String::new(),
-            agent_response: "Response".to_string(),
-            model: "test".to_string(),
-            thread_title: None,
-            agent_id: Some("Curator".to_string()),
-            goal_events: Vec::new(),
-        };
+        let record = turn_record("test-empty", "", "Response", "Curator", Vec::new());
 
         let result = port.ingest_turn(record).await;
         assert!(result.is_ok(), "empty prompt should not fail ingestion");
@@ -2788,20 +2748,18 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn ingest_turn_skips_chunks_when_turn_is_empty() {
         let port = in_memory_port_with_embeddings();
-        let record = TurnRecord {
-            thread_id: "fully-empty-thread".to_string(),
-            user_input: String::new(),
-            agent_response: String::new(),
-            model: "test-model".to_string(),
-            thread_title: None,
-            agent_id: Some("Curator".to_string()),
-            goal_events: vec![hkask_types::GoalEvent {
+        let record = turn_record(
+            "fully-empty-thread",
+            "",
+            "",
+            "Curator",
+            vec![hkask_types::GoalEvent {
                 tool_name: "kanban_goal_create".to_string(),
                 output: serde_json::json!({
                     "content": {"goal_id": "g-empty-turn", "goal_text": "empty"}
                 }),
             }],
-        };
+        );
 
         port.ingest_turn(record)
             .await
@@ -2832,15 +2790,13 @@ pub(crate) mod tests {
             vector
         });
         let port = in_memory_port_with_embed_fn(embed_fn);
-        let record = TurnRecord {
-            thread_id: "embedding-round-trip".to_string(),
-            user_input: "check the embedding round trip".to_string(),
-            agent_response: "the round trip is verified".to_string(),
-            model: "test-model".to_string(),
-            thread_title: None,
-            agent_id: Some("Curator".to_string()),
-            goal_events: Vec::new(),
-        };
+        let record = turn_record(
+            "embedding-round-trip",
+            "check the embedding round trip",
+            "the round trip is verified",
+            "Curator",
+            Vec::new(),
+        );
         port.ingest_turn(record).await.expect("ingest succeeds");
 
         let curator_store = port.curator_store.get().expect("curator store");
@@ -2869,15 +2825,13 @@ pub(crate) mod tests {
     async fn ingest_turn_chunk_values_are_bounded() {
         let port = in_memory_port();
         let long_response = "word ".repeat(2000);
-        let record = TurnRecord {
-            thread_id: "huge-turn".to_string(),
-            user_input: "dump something enormous".to_string(),
-            agent_response: long_response,
-            model: "test-model".to_string(),
-            thread_title: None,
-            agent_id: Some("Curator".to_string()),
-            goal_events: Vec::new(),
-        };
+        let record = turn_record(
+            "huge-turn",
+            "dump something enormous",
+            &long_response,
+            "Curator",
+            Vec::new(),
+        );
         port.ingest_turn(record).await.expect("ingest succeeds");
 
         let curator_store = port.curator_store.get().expect("curator store");
@@ -2909,24 +2863,17 @@ pub(crate) mod tests {
         // from this path.
         let port = in_memory_port_with_cadence(1, 0.3);
         let store = port.curator_store.get().expect("curator store");
-        let h_mem = hkask_storage::HMem::new(
-            "probe:low",
-            "fact",
-            serde_json::Value::String("low-confidence probe".to_string()),
-            port.curator_webid,
-        )
-        .with_confidence(hkask_types::Confidence::new(0.1));
-        store.store(h_mem).expect("seed below-floor h_mem");
+        store
+            .store(below_floor_probe(port.curator_webid))
+            .expect("seed below-floor h_mem");
 
-        let record = TurnRecord {
-            thread_id: "no-consolidation-from-ingest".to_string(),
-            user_input: "Tell me about memory consolidation".to_string(),
-            agent_response: "Consolidation promotes episodic to semantic.".to_string(),
-            model: "test-model".to_string(),
-            thread_title: None,
-            agent_id: Some("Curator".to_string()),
-            goal_events: Vec::new(),
-        };
+        let record = turn_record(
+            "no-consolidation-from-ingest",
+            "Tell me about memory consolidation",
+            "Consolidation promotes episodic to semantic.",
+            "Curator",
+            Vec::new(),
+        );
         port.ingest_turn(record.clone())
             .await
             .expect("ingest_turn should succeed");
@@ -2960,14 +2907,9 @@ pub(crate) mod tests {
     async fn consolidation_timer_fires_and_prunes_low_confidence() {
         let port = in_memory_port_with_cadence(60, 0.3);
         let store = port.curator_store.get().expect("curator store");
-        let h_mem = hkask_storage::HMem::new(
-            "probe:low",
-            "fact",
-            serde_json::Value::String("low-confidence probe".to_string()),
-            port.curator_webid,
-        )
-        .with_confidence(hkask_types::Confidence::new(0.1));
-        store.store(h_mem).expect("seed below-floor h_mem");
+        store
+            .store(below_floor_probe(port.curator_webid))
+            .expect("seed below-floor h_mem");
         assert_eq!(store.h_mem_count().expect("count"), 1);
 
         let timer = port
@@ -3449,21 +3391,13 @@ pub(crate) mod tests {
         .expect("embedding store init");
         let store = Arc::new(MemoryStore::new(h_mem_store, embedding_store));
 
-        let port = RealMemoryPort {
-            curator_store: Arc::new(CuratorStore::for_tests(Some(Arc::clone(&store)))),
-            embedding_port: Some(LanguageModelEmbeddingPort::for_tests()),
-            embedding_model: "test-model".to_string(),
-            external_passphrase: String::new(),
-            external_sources: Arc::new(std::sync::Mutex::new(None)),
-            classifier_model: None,
-            template_root: std::path::PathBuf::from("test-registry-root"),
-            curator_webid: WebID::from_persona(b"curator"),
-            curator_consolidation: Arc::new(RwLock::new(None)),
-            consolidation_cadence_secs: 0,
-            confidence_floor: 0.3,
-            tokio_handle: tokio::runtime::Handle::current(),
-            ingest_semaphore: tokio::sync::Semaphore::new(1),
-        };
+        let port = port_with(
+            Arc::clone(&store),
+            LanguageModelEmbeddingPort::for_tests(),
+            None,
+            0,
+            0.3,
+        );
 
         // 20 h_mems under distinct curator:thread:* entities (the keyword
         // leg's prefix), all matching the query word, all owned by the curator
