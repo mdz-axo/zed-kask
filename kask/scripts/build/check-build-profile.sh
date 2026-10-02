@@ -79,17 +79,18 @@ grep -q -- 'HKASK_BUILD_JOBS' "$INSTALL_SH" \
 grep -q 'target/release-mcp' "$INSTALL_SH" \
     || fail "install.sh no longer copies MCP servers from target/release-mcp (D46)"
 
-# 3b. The --fast path keeps parity flags and --debug warns about its costs
-# (2026-10-02 incident: a day of dev-profile daily-drivers installed via
-# --debug read as a performance regression — two-symptom latency findings
-# §7.9). A silent revert to dev flags, or a dropped warning, reintroduces
-# the class.
+# 3b. The installer offers release-class builds only (2026-10-02
+# incident: a day of dev-profile daily-drivers installed via --debug read
+# as a performance regression — two-symptom latency findings §7.9).
+# --fast is the quick-rebuild path (parity flags), and no dev-profile
+# route may return.
 grep -q -- '--profile release-fast' "$INSTALL_SH" \
     || fail "install.sh lost the --fast zed build path (--profile release-fast)"
 grep -q 'target/release-fast' "$INSTALL_SH" \
     || fail "install.sh must install the --fast zed binary from target/release-fast"
-grep -q 'debug_assertions' "$INSTALL_SH" \
-    || fail "install.sh --debug must warn about the dev-profile costs (debug_assertions tax, blind hang detector)"
+if grep -qE 'HKASK_BUILD_TYPE="debug"|target/debug' "$INSTALL_SH"; then
+    fail "install.sh must not offer a dev-profile build route (the removed --debug footgun)"
+fi
 
 # 4. The self-observing trace is wired (the observability half of D46).
 grep -q 'build-monitor.sh' "$INSTALL_SH" \

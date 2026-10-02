@@ -89,23 +89,23 @@ else
   echo "OK (case 3 — fast path removed): gate failed with the --fast message"
 fi
 
-# Case 4: the --debug cost warning is gone → the gate fails.
+# Case 4: a dev-profile build route returns → the gate fails.
 cp "$KASK_ROOT/scripts/build/install.sh" "$fixture/kask/scripts/build/install.sh"
-sed -i '/debug_assertions/d' "$fixture/kask/scripts/build/install.sh"
+printf '\nHKASK_BUILD_TYPE="debug"\n' >> "$fixture/kask/scripts/build/install.sh"
 set +e
 out="$(ROOT="$fixture" bash "$GATE" 2>&1)"
 rc=$?
 set -e
-if [ "$rc" -eq 0 ] || ! printf '%s\n' "$out" | grep -q -- '--debug must warn'; then
-  echo "FAIL (case 4 — debug warning removed): rc=$rc"
+if [ "$rc" -eq 0 ] || ! printf '%s\n' "$out" | grep -q 'dev-profile build route'; then
+  echo "FAIL (case 4 — dev-profile route returns): rc=$rc"
   printf '%s\n' "$out" | tail -4
   failures=$((failures + 1))
 else
-  echo "OK (case 4 — debug warning removed): gate failed with the warning-pin message"
+  echo "OK (case 4 — dev-profile route returns): gate failed with the removal message"
 fi
 
 if [ "$failures" -eq 0 ]; then
-  echo "SELFTEST OK: build-profile gate is alive (missing-profile, complete, fast-path, debug-warning all pinned)"
+  echo "SELFTEST OK: build-profile gate is alive (missing-profile, complete, fast-path, no-dev-profile all pinned)"
   exit 0
 fi
 echo "SELFTEST FAIL: $failures case(s) did not behave as expected"

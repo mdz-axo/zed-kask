@@ -9,12 +9,12 @@
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/mdz-axo/zed-kask/main/kask/scripts/build/install.sh | bash
-#   bash kask/scripts/build/install.sh --debug --skip-deps
+#   bash kask/scripts/build/install.sh --fast --skip-deps
 #
 # Environment variables:
 #   HKASK_VERSION       Tag to clone (default: 0.40.0; falls back to main only
 #                       if HKASK_ALLOW_FALLBACK=true)
-#   HKASK_BUILD_TYPE    release, release-fast, or debug (default: release)
+#   HKASK_BUILD_TYPE    release or release-fast (default: release)
 #   HKASK_SOURCE_DIR    Use an existing source directory instead of cloning
 #   HKASK_REPO_URL      Git URL (default: https://github.com/mdz-axo/zed-kask.git)
 #   HKASK_ALLOW_FALLBACK  Set to "true" to allow silent fallback to main when
@@ -258,31 +258,18 @@ build_hkask() {
         if cargo build --jobs "$jobs" --release --package zed; then
             build_mcp_servers "$jobs" && build_ok=1
         fi
-    elif [ "${HKASK_BUILD_TYPE:-release}" = "release-fast" ]; then
+    else
         # --fast: the release-fast profile (lto=false, codegen-units=16,
-        # inherits release → debug_assertions OFF) — iteration speed without
-        # the dev-profile costs named in the --debug warning below. Servers
-        # still build on release-mcp (D46).
+        # debug=full, inherits release → debug_assertions OFF) — quick
+        # rebuilds with parity flags, and full debug symbols so debugger
+        # workflows keep working. Dev-profile installs are removed: they
+        # shipped a debug_assertions-on daily-driver (the 2026-10-02
+        # "rebuilt and worse" incident, two-symptom findings §7.9).
         log "Building zed binary on the release-fast profile (release flags, no LTO)..."
         log "Building with at most $jobs concurrent compile jobs..."
         if cargo build --jobs "$jobs" --profile release-fast --package zed; then
             build_mcp_servers "$jobs" && build_ok=1
         fi
-    else
-        # --debug ships a dev-profile binary as the daily driver. That has
-        # real costs (measured 2026-10-02, two-symptom latency findings §7.9):
-        # debug_assertions tax every hot path, and the hang detector goes
-        # blind below 5s with a 100ms frame-budget threshold. Legitimate for
-        # debugger workflows — warn loudly so it is never the default habit.
-        log_warning "--debug builds the DEV profile: debug_assertions tax every hot path and the hang detector cannot see stalls under 5s (frame-budget threshold 100ms)."
-        log_warning "For quick rebuilds without those costs use --fast (release flags, no LTO); for full parity use the default release build."
-        log "Building in debug mode..."
-        log "Building with at most $jobs concurrent compile jobs..."
-        local package_args=(--package zed)
-        for server in "${MCP_SERVERS[@]}"; do
-            package_args+=(--package "$server")
-        done
-        cargo build --jobs "$jobs" "${package_args[@]}" && build_ok=1
     fi
 
     # Stop the sampler before reporting, so the trace covers exactly the
@@ -309,21 +296,16 @@ install_binary() {
     mkdir -p "$BIN_DIR"
 
     # Profile dirs (D46): release mode takes the zed binary from
-    # target/release and the MCP servers from target/release-mcp; --fast
-    # (release-fast) takes zed from target/release-fast and the servers from
-    # the same release-mcp dir; debug mode builds everything into
-    # target/debug.
+    # target/release; --fast (release-fast) takes it from
+    # target/release-fast. The MCP servers always come from
+    # target/release-mcp.
     local zed_profile_dir profile_dir
     if [ "${HKASK_BUILD_TYPE:-release}" = "release" ]; then
         zed_profile_dir="$workspace_root/target/release"
-        profile_dir="$workspace_root/target/release-mcp"
-    elif [ "${HKASK_BUILD_TYPE:-release}" = "release-fast" ]; then
-        zed_profile_dir="$workspace_root/target/release-fast"
-        profile_dir="$workspace_root/target/release-mcp"
     else
-        zed_profile_dir="$workspace_root/target/debug"
-        profile_dir="$workspace_root/target/debug"
+        zed_profile_dir="$workspace_root/target/release-fast"
     fi
+    profile_dir="$workspace_root/target/release-mcp"
 
     if [ ! -x "$zed_profile_dir/zed-kask" ]; then
         log_error "Built CLI binary not found: $zed_profile_dir/zed-kask"
@@ -687,7 +669,6 @@ Options:
     --install           Install hKask (default)
     --uninstall         Remove hKask
     --build-only        Build without installing
-    --debug             Build in debug mode (dev profile — prints its costs)
     --fast              Build on the release-fast profile (parity flags, no LTO)
     --system            Install system-wide (symlink in /usr/local/bin)
     --skip-deps         Skip system dependency installation
@@ -698,7 +679,7 @@ Options:
 Environment Variables:
     HKASK_VERSION         Tag to install (default: derived from workspace
                           Cargo.toml version, or 0.40.0 if unreadable)
-    HKASK_BUILD_TYPE      release, release-fast, or debug (default: release)
+    HKASK_BUILD_TYPE      release or release-fast (default: release)
     HKASK_SOURCE_DIR      Use existing source directory instead of cloning
     HKASK_REPO_URL        Git repository URL
     HKASK_ALLOW_FALLBACK  Allow silent fallback to main if tag missing (default: false)
@@ -712,9 +693,6 @@ Examples:
 
     # Quick rebuild from an existing checkout (parity flags, no LTO)
     bash kask/scripts/build/install.sh --fast --skip-deps
-
-    # Debug build from an existing checkout (dev profile)
-    bash kask/scripts/build/install.sh --debug --skip-deps
 
     # Install with custom directory
     INSTALL_DIR=/opt/hkask bash install.sh
@@ -754,10 +732,6 @@ main() {
                 action="build-only"
                 shift
                 ;;
-            --debug)
-                HKASK_BUILD_TYPE="debug"
-                shift
-                ;;
             --fast)
                 HKASK_BUILD_TYPE="release-fast"
                 shift
@@ -795,6 +769,19 @@ main() {
                 ;;
         esac
     done
+
+    # Dev-profile installs are removed (2026-10-02 incident, two-symptom
+    # findings §7.9): the installer produces release-class binaries only.
+    # --fast is the quick-rebuild path; a dev-profile build is a plain
+    # `cargo build` in the repo, not an install.
+    case "${HKASK_BUILD_TYPE:-release}" in
+        release | release-fast) ;;
+        *)
+            log_error "HKASK_BUILD_TYPE must be 'release' or 'release-fast' (got '${HKASK_BUILD_TYPE}')"
+            log_error "Dev-profile installs are removed — use --fast for quick rebuilds (parity flags, full debug symbols)."
+            exit 1
+            ;;
+    esac
 
     # --system and --install-dir are mutually exclusive: --system installs to
     # fixed system paths (/usr/local/libexec/hkask); --install-dir installs
