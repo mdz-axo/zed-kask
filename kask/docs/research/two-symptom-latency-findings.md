@@ -256,3 +256,32 @@ H-ECO (operator's hypothesis, 2026-10-02): *duplicated logic paths, uncoordinate
 | OQ-6 | P7g supersession pointer in the plan doc | open → docs pass (this doc is now the round-1+round-2 record) | operator |
 
 Round-2 termination check: symptom 1 — mechanism carried (S1-H1, §2.1) with the regression window exonerated (§7.3); symptom 2 — cause class re-confirmed on the new build's readings **plus** a new confirmed build-flag mechanism (B-1R) whose magnitude split is R1's job; H-ECO's three sub-claims each tested with named instances (§7.4). Parity itself is not yet reached — the goal remains `continue`.
+
+### 7.7 R1 result — the 14:19 rebuild (2026-10-02 afternoon)
+
+**Binary identity (verified):** `~/.local/bin/zed-kask` installed 14:19:24 from commit `aec78779b3` (= HEAD at build time, 14:16); running process started 14:26; startup line `dev.aec78779b3…` (`Zed-Kask.log:1771`). The build contains the full Oct-2 range — the board-sensing journal skip (`821055ce47`; ~90K journal writes/day removed, 98 % of `reg.tool.completed` volume), the agent-loop success-repetition guard (`1d4bff6fb2`), the reasoning-runaway watchdog (`aec78779b3`), the inference IPC socket swap (`86ef3d876f`) — and the tree was clean at build time (no half-edit hazard; the round-2 findings commit `aadab9a4b3` is in HEAD, docs-only). The `reg.tool` log lines still seen are the MCP server's own `serve_inner` logging — a different surface from the journal the skip targets; the skip's live behavior is pinned by its commit's tests, and ancestry (sha = HEAD ⊇ `821055ce47`) puts it in the running binary.
+
+**The flag did NOT change:** the startup still logs `debug build, only reporting hangs longer then 5s` (`Zed-Kask.log:1783`) — the rebuild came through the **same external pipeline**, not install.sh (in-tree `target/release/zed-kask` still Sep 30 20:19). OQ-7/8 remain open and are now **parity-blocking**: upstream ships release flags, and every rebuild of the running binary carries debug assertions — a uniform hot-path tax upstream does not have, which alone prevents flag-level parity regardless of its measured share.
+
+**Readings (15-min session, single window dominant, loadavg ~1.9 on 24 cores, active streaming):**
+
+| Metric | Morning artifact, early (24–37 min) | Morning artifact, degraded (2 h) | New binary `aec78779b3` (1–16 min) |
+| --- | --- | --- | --- |
+| `ui frame health` avg_ms | 39–55 | 73–104 | **22–35** (steady maxes 45–96) |
+| `[DIAG-anr]` avg/event | 4.7–5.9 | 13.0–16.2 | **4.6–5.9** (max 9–20) |
+| Main thread (jiffy / 5 s) | ~100 % (4 h avg 83.6 % CPU) | — | **~75 %** (755 ticks) |
+| Telemetry dirty→present | avg 49, p50 46.7 (first report) | avg 118, p50 62.2 | avg 48.9, **p50 35.5** |
+
+22–35 ms is the P7f healthy quiet band (20–38) — the new binary sits at the healthy end **under active streaming**, below round-1's heavy readings (42–55, taken with a build running).
+
+**B-1R re-weighted (evidence, not assumption):** the debug-assertion flag is unchanged, yet draws dropped to the healthy band — the flag is **not the dominant driver** of the morning's degraded bands. The operator's "worse" report decomposes to: session accumulation (39→104 ms over 2 h — the S2-H1 content-scaling mechanism) plus confounds (a second live window in the morning session; workload differences). The flag remains a real defect on two independent grounds — the hot-path tax, and instrument blinding: in this binary the hang detector cannot see below 5 s and the frame-budget incident threshold is 100 ms (24 ms in release), so "no hang reports" is not evidence of absence. Fixing the pipeline is required for parity either way.
+
+**Unattributed improvement:** the new binary starts lower than the morning artifact did at comparable age (22–35 vs 39–55). Candidates not decomposed: the ~90K/day journal-write removal, the agent-loop guards, single-window workload, session-age mismatch. No mechanism claim is made.
+
+**Sharpened next measurements:**
+
+1. **R2 as an early-vs-late differential** — capture the profiler's per-element timing at ~15 min (healthy, 22–35 ms) and again at ≥ 2 h in the *same* session; whatever grows names the accumulating per-draw cost. This closes OQ-1 directly and is now the top-ranked action.
+2. **Accumulation re-check** — read `ui frame health` + `[DIAG-anr]` at ~2 h session age on this build. If the morning trajectory (→104 ms) reproduces, accumulation is confirmed build-independent (S2-H1/S2-H4); if not, a range commit fixed it and bisection is cheap.
+3. **True flag A/B still pending** — a local install.sh release build (in-tree `target/release` untouched since Sep 30). Schedule when the operator is not using the app (16-job build inflates draw cost 2–3× while running, P7f), or supersede it by fixing the pipeline's flags (R3/OQ-8 — the parity-required path).
+
+**Learning banked:** two rebuilds in one day, both through the unidentified pipeline with the same flag defect — every "rebuilt and restarted" must begin with the startup-line check (sha + debug-build warning) before any performance reading is trusted. Binary identity precedes code attribution.
