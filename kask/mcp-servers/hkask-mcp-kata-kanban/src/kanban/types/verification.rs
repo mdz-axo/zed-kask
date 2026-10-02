@@ -31,8 +31,9 @@ impl VerificationCriterion {
 
 /// Verification — result of task verification.
 ///
-/// Produced by `task_verify`: either an LLM-mediated evaluation against
-/// the task's acceptance criteria, or a human-in-the-loop confirmation.
+/// Produced by `task_verify`: a human-in-the-loop confirmation — the user's
+/// evidence text is the pass signal (criteria guide work but do not gate
+/// completion; there is no LLM-mediated evaluation path in task_verify).
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Verification {

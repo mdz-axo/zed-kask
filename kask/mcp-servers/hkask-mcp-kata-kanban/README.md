@@ -21,8 +21,8 @@ Kata-Kanban workflow coordination MCP server — task management with WIP limits
 | `kanban_task_update` | Update editable fields on a task (title, description, criteria, priority, labels, `advances` citations); only the task owner can edit |
 | `kanban_task_list` | List tasks on a kanban board, optionally filtered by status |
 | `kanban_task_move` | Move a task to a new column (status transition) |
-| `kanban_task_assign` | Assign a task to an agent with consent proof (P1 compliance) |
-| `kanban_task_verify` | Verify a task against its acceptance criteria |
+| `kanban_task_assign` | Claim an unassigned task as the authenticated caller (no arbitrary-agent assignment; the caller's identity is the assignee) |
+| `kanban_task_verify` | Record verification evidence for a Review task — the user's confirmation text is the pass signal (criteria guide work but do not gate completion; only the operator's relayed confirmation moves Review to Done) |
 | `kanban_task_reopen` | Reopen a completed task (Done → InProgress) |
 
 ### Goals (functional target conditions)
