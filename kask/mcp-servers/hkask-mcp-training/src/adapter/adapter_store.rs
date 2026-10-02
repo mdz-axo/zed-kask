@@ -362,16 +362,21 @@ impl AdapterStore {
             "{} WHERE skill_name = ?1 ORDER BY created_at DESC LIMIT 1",
             ADAPTER_SELECT
         );
-        let rows: Vec<TrainedLoRAAdapter> = query_map(
-            &*self.driver,
-            &sql,
-            &[DbValue::Text(skill_name.to_string())],
-            |row| {
-                let r = Self::row_to_adapter_row(row)?;
-                Self::row_to_adapter(r)
-                    .map_err(|e| hkask_storage::database::types::DbError::Database(e.to_string()))
-            },
-        )?;
+        self.first_adapter_by_sql(&sql, &[DbValue::Text(skill_name.to_string())])
+    }
+
+    /// Run an adapter SELECT and return its first row, if any — the tail of
+    /// the by-skill-name lookups.
+    fn first_adapter_by_sql(
+        &self,
+        sql: &str,
+        params: &[DbValue],
+    ) -> Result<Option<TrainedLoRAAdapter>, AdapterStoreError> {
+        let rows: Vec<TrainedLoRAAdapter> = query_map(&*self.driver, sql, params, |row| {
+            let r = Self::row_to_adapter_row(row)?;
+            Self::row_to_adapter(r)
+                .map_err(|e| hkask_storage::database::types::DbError::Database(e.to_string()))
+        })?;
         Ok(rows.into_iter().next())
     }
 
@@ -389,20 +394,13 @@ impl AdapterStore {
             "{} WHERE skill_name = ?1 AND adapter_id != ?2 ORDER BY created_at DESC LIMIT 1",
             ADAPTER_SELECT
         );
-        let rows: Vec<TrainedLoRAAdapter> = query_map(
-            &*self.driver,
+        self.first_adapter_by_sql(
             &sql,
             &[
                 DbValue::Text(skill_name.to_string()),
                 DbValue::Text(exclude_id.to_string()),
             ],
-            |row| {
-                let r = Self::row_to_adapter_row(row)?;
-                Self::row_to_adapter(r)
-                    .map_err(|e| hkask_storage::database::types::DbError::Database(e.to_string()))
-            },
-        )?;
-        Ok(rows.into_iter().next())
+        )
     }
 
     // ── Row mapping helpers ────────────────────────────────────────────────
