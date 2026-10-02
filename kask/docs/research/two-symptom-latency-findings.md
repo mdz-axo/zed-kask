@@ -112,7 +112,7 @@ The **per-draw cost decomposition** is the one unconfirmed link: P7f's attributi
 
 ## 3. Stage 3 — hypothesis register
 
-Each entry below is labeled by its actual state. "Confirmed" = mechanism chain verified against HEAD **and** corroborated by a measurement; "hypothesis" = falsifiable statement + mechanism + discriminating test, test **not** run.
+Each entry below is labeled by its actual state. "Confirmed" = mechanism chain verified against HEAD **and** corroborated by a measurement; "hypothesis" = falsifiable statement + mechanism + discriminating test, test **not** run. Round-2 register additions — **B-1R** and the **H-ECO** series — live in §7.4; this table is the round-1 record.
 
 | ID | Statement (falsifiable) | Mechanism chain | Evidence | Discriminating test | State |
 | --- | --- | --- | --- | --- | --- |
@@ -180,3 +180,79 @@ Cross-cutting: `kask/docs/plans/hkask-core-mcp-repair-improvement-plan.md` P7g s
 | OQ-6 | P7g in the plan doc should be superseded by this report | open → docs-count pricing decision | operator (docs pass) |
 
 Per the closure discipline: no item is `reported-abandoned`; OQ-1/5 need operator-side captures (the mandated instrument and the user's own symptom confirmation), which is why they are surfaced as decisions, not silently dropped.
+
+---
+
+## 7. Round 2 (2026-10-02) — new-build re-baseline, binary provenance, and the H-ECO register
+
+**Context.** After the round-1 write-up the code was rebuilt/restarted and the operator reported performance **worse**. This section is the round-2 Stage-0 re-baseline on the new build, the binary-provenance finding, the regression-window source delta, and the formalized H-ECO register (the operator's 2026-10-02 hypothesis). Round-1 §1–§6 stand as the historical record; §7.5 supersedes §4's plan ordering.
+
+### 7.1 Binary identity and provenance — the running binary is not a product of this tree's build path
+
+| Fact | Evidence |
+| --- | --- |
+| Running binary: `~/.local/bin/zed-kask`, installed 2026-10-02 06:23; app PID 1090835 started 06:23:23 | `stat`; `ps`; `/proc/1090835/exe` |
+| It self-identifies: `starting zed version 0.40.0+dev.e5a8c29e6c9c0898836eb6e51702439fdd3ddc96, sha e5a8c29` | `Zed-Kask.log.old` 06:23:23 |
+| Commit `e5a8c29e6c` ("Prohibit repository fragmentation", 10-01 20:56): the whole Oct-1 churn is in the binary; the Oct-2 06:43+ commits are not | `git log` |
+| **Debug assertions ON in the running binary**: startup logs `WARN [zed_kask::reliability::hang_detection] debug build, only reporting hangs longer then 5s`; the gate is `cfg!(debug_assertions)` (`crates/zed/src/reliability/hang_detection.rs:32-57`) | log + source |
+| Consequence (a): a uniform hot-path multiplier (overflow checks + `debug_assert`/`assert` arms on every operation); consequence (b): the hang detector is blind below 5 s and the frame-budget incident threshold is 100 ms (vs 24 ms in release builds) — **absence of hang reports this session is not evidence of absence** | `hang_detection.rs:32-53` |
+| **Not an install.sh product**: install.sh builds `cargo build --jobs "$jobs" --release --package zed` (`kask/scripts/build/install.sh:245`) and sets no `ZED_COMMIT_SHA`/`ZED_BUILD_ID`/`RUSTFLAGS` (grep over install.sh: zero hits); a local build prints `sha unknown` (`crates/zed/src/main.rs:386-417`) and `[profile.release]` (`Cargo.toml:1254-1262`) enables neither debug assertions nor an embedded sha | install.sh, Cargo.toml, main.rs |
+| **Not built in this tree**: `target/release/zed-kask` and its hardlink `deps/zed_kask-a7937ef9f58b320b` are Sep 30 20:19 — the artifact round-1 measured (638 MB installed); no in-tree release build exists after that date; the new install is 674 MB | `ls target/release{,/deps}`; round-1 §1.2 |
+| Install path: the download-only updater bundle (`~/.local/share/zed-kask/install/`, all files 06:23; `install-binary.sh` downloads a verified GitHub release archive and never builds). No cron/systemd trigger, no shell-history entry. **The pipeline that built the artifact is unidentified — nothing in this repo sets `ZED_BUILD_ID` (grep: only the `option_env!` read at `main.rs:386`)** | `install-binary.sh:1-136`; `crontab -l`; `systemctl --user list-timers`; `~/.bash_history` |
+
+**Conclusion:** round-1's eliminated hypothesis **B-1 (build-profile mismatch) is un-eliminated for the new binary** — re-registered as **B-1R** (§7.4). The 06:23 update swapped a local release build (debug assertions off) for an external pipeline artifact (debug assertions on). The artifact's codegen level is not directly measured; its animation floor (§7.2) argues against opt-level 0 — the flag that *is* measured is `debug_assertions=on`.
+
+### 7.2 New-build readings vs round-1 (same machine; loadavg 1.40 on 24 cores, no build running, 13 `hkask-mcp-*` servers at 0.0–0.3 % CPU)
+
+| Instrument | Round-1 (Oct-1 binary) | New build (Oct-2) | Delta |
+| --- | --- | --- | --- |
+| `ui frame health` avg_ms, heavy streaming | 42–55 (max 71–87) | **73–104** (max 117–255) | ~1.7–2× |
+| `[DIAG-anr]` avg/event | 3.6–5.4 ms (busy ≈ 33 % of window) | operator's morning 06:28–06:46: **4.7–5.9 ms** (parity), drifting to 5.9–8.9 through 07:24; this session 08:25+: **13.0–16.2 ms**, busy 33–54 s/60 s (55–90 %) | parity early; 2.7–3× under this session's content |
+| Telemetry `Frame Duration Report` (instrument first read this round) | — | avg dirty→present **49 → 64 → 79 → 118 ms** across the last hour; p50 46.7→62.2; p95 86→144 | corroborates the degradation |
+| Animation floor (20 fps-cap windows, ~500–590 draws/30 s) | quiet band 20–38 ms (P7f) | **23–29 ms** | within the old quiet band — the floor did not move |
+| Main thread | 98–101 % of one core (jiffy, 5 s windows) | ~100 % (562 ticks/~5 s), RSS 5.4 GB, 107 threads | saturation unchanged |
+| `threads.db` | 338 MB | 360 MB | +6 % |
+| Within-session trajectory | 42–55 at ~4 h into session | 38.3 ms at 23 min → 104 ms at 2 h | degrades ~2.7× within the session |
+
+**Reading.** The new binary *starts* at round-1 parity (the operator's morning session: 4.7–5.9 ms/event, 39–55 ms draws) and degrades with content; the worst windows (08:25+) coincide with this investigation's own large tool outputs landing in the conversation. Honest-measurement notes: (1) the investigator's session contaminates its own worst readings — the operator's morning bands (which reached 58.9–89.2 ms, bands round-1 never recorded) are the cleaner regression signal, though thread content differs between sessions; (2) `[DIAG-anr]` busy/avg measure wall time per event, which includes time descheduled while the foreground draws — the 08:25+ event-avg inflation is therefore partly downstream of the draw-cost inflation, not necessarily an independent per-event regression. The build-vs-content magnitude split is exactly what ranked step R1 (§7.5) measures.
+
+### 7.3 Regression-window source delta — no hot-path candidate
+
+`f463bce207` (Sep 30 17:19, ≈ the round-1 binary's tree state) → `e5a8c29e6c`: 26 files, +1327/−3254 in binary-linked Rust, **all background** — regulation sensor/policy (`f3f83bf021`, `301c5a29d5`, `84bc0a4462`), evolution health bridge (`b43a704c9c`), lisp builtins (`be44843324`), kanban goal ingestion (`e6c00be216`), embedding cleanup (`f9e29adc65`), strategy-evaluator deletion (`3267b2df20`). Zero changes to the draw path (gpui/editor/markdown/viz) or the event-forwarding path (`agent.rs:2505` / `acp_thread.rs`). The commit-range hypothesis has no mechanism; **B-1R (build flags) is the leading cause candidate**, with content scaling (S2-H1's confirmed class) stacking on top.
+
+### 7.4 Register additions — B-1R and the H-ECO series
+
+H-ECO (operator's hypothesis, 2026-10-02): *duplicated logic paths, uncoordinated shared-resource access, and uneliminated work produce divergent behavior, races, and waste; the ecosystem must be sorted layer by layer.* Sub-claims, each tested this round:
+
+| ID | Statement (falsifiable) | Instance found this round | State |
+| --- | --- | --- | --- |
+| **B-1R** | The 06:23 artifact's build flags (debug assertions on release-class codegen) explain a uniform 1.5–3× hot-path multiplier vs the round-1 binary | mechanism: overflow checks + assert arms on every hot-path op; evidence: hang-detection line + gate source, `install.sh:245`, `Cargo.toml:1254-1262`, `main.rs:386-417`, no in-tree build after Sep 30 | **Hypothesis (mechanism confirmed, magnitude unsplit)** — discriminating test: R1's same-session A/B rebuild |
+| **H-ECO-dup** | Same behavior implemented N times → divergent behavior, N× maintenance surface | **The two installer codepaths** (confirmed with harm): `install.sh` (source build: release, no embedded sha) vs `install-binary.sh`/`update-zed-kask.sh` (download-only: pipeline artifact with debug assertions) — both live, they produced different binaries with different flags, invisible until measured (this incident). Corroborating: the ratchet's documented prior instance ("the redraw grid existed as two private copies before consolidation", `check-duplication-ratchet.sh` header), the Oct-2 dedup series (`57e5a7f14d`, `be51a486b1`, `0b0d6c3f8b`), and the system-prompt assembly pair (canonical cached `render_system_prompt`, `thread.rs:5687/5706`, vs direct `SystemPromptTemplate` construction — the `.rules` byte-stability warning; production-bypass status not swept this round) | **Confirmed (instance-with-harm: the installer pair)**; full dependency-hierarchy review = R5 |
+| **H-ECO-race** | Uncoordinated shared-resource access | (1) the binary-swap race: an uncoordinated update path replaced the running binary mid-investigation with a flag-regressed artifact; (2) duplicate `Kask MCP sync fired` + `Removing 13 raw context_servers entries` within one second at startup (settings-observer fan-out firing twice, `Zed-Kask.log.old` 06:23:24 ×2); (3) S1-H2's single shared `Connection` mutex (carried, unmeasured) | **Confirmed (instances)** |
+| **H-ECO-waste** | Work not eliminated because no canonical shared path owns it | (1) regulation board-sensing polls every 10 s + tool-journal writes (`kanban_board_list`/`kanban_task_list`, 1–48 ms server-side, throughout the log) — tree-fixed at `821055ce47` (06:52) but **not in the running binary** (deployed-binary lag as a waste vector); (2) whole-thread JSON+zstd re-serialization per save/open (S1-H1/D28 — the canonical instance); (3) four background tick loops (cybernetics 10 s, metacognition 30 s, harness monitor 60 s, consolidation 300 s) — present, foreground-relevance unmeasured | **Confirmed (instances on the load path)**; foreground hot-path split gated on the profiler (OQ-1) |
+
+### 7.5 Round-2 ranked plan (supersedes §4's ordering; §4 rows carry as R4)
+
+| # | Action | Owner | Measurement that demonstrates movement |
+| --- | --- | --- | --- |
+| **R1** | **Rebuild + reinstall the local release binary via install.sh** — the B-1R splitter; also deploys the tree's already-landed fixes (`821055ce47` board-sensing skip, `57e5a7f14d`, `be51a486b1`, `0b0d6c3f8b`). Schedule-aware: the build pegs 16 jobs and inflates draw cost 2–3× while it runs (P7f) — run when the operator is not using the app | operator + agent | same-session before/after: `ui frame health` bands, `[DIAG-anr]` avg, one 5 s jiffy sample. B-1R's share is the delta that returns toward round-1's bands (42–55 ms draws, 3.6–5.4 ms/event); any residual is content/accumulation (S2-H1/S2-H4), split further by R2 |
+| **R2** | **Run the mandated profiler** (round-1 step 1 — still never run) on the clean binary: heavy conversation vs empty tab vs build | operator | per-element timing table (closes OQ-1) |
+| **R3** | **PM decision: which installer path is canonical** (the H-ECO-dup fix). If the download path stays, its pipeline must build with install.sh-equivalent flags and embed provenance; identify the pipeline (OQ-7/8) | PM | a future update cannot reproduce this incident; the updater refuses or flags debug-assertion artifacts |
+| **R4** | Round-1 §4 steps 2–9 carry unchanged (message-level storage, read-only connection pool, event batching, expensive-element fix, build hygiene, `MALLOC_ARENA_MAX` A/B, `[DIAG-anr]` removal) | agent | as §4 |
+| **R5** | H-ECO layer-by-layer: run `kask/scripts/check-duplication-ratchet.sh` (read-only mode) + the dependency-hierarchy review over the kask surface; one canonical path per behavior (the PM's stated requirement) | agent | ratchet output + dup inventory in the next findings pass |
+| **R6** | Record the installer divergence in DIVERGENCE.md if R3 keeps both paths | agent | DIVERGENCE.md entry in the same change as any R3 code |
+
+### 7.6 Open questions (round-2)
+
+| # | Question | Closure state | Owner |
+| --- | --- | --- | --- |
+| OQ-7 | Who/what built and installed the 06:23 artifact (`ZED_BUILD_ID=dev.e5a8c29e…` is set by nothing in this repo)? | open | PM |
+| OQ-8 | What profile/flags does that pipeline use (debug assertions on release codegen — confirm and fix)? | open → gated on OQ-7 | PM + agent |
+| OQ-9 | Which pair did the PM's "two assembler codepaths" ruling (2026-10-01) name? (Candidates found: the installer pair, §7.4; the prompt-assembly pair, §7.4) | open | PM |
+| OQ-1 | per-draw element decomposition | open → gated on R2 (profiler on the clean binary) | operator + agent |
+| OQ-2/3 | fresh first-open measurement; save-lock contention timing | open → gated on R1 (probe re-add per §4 step 2) | agent |
+| OQ-4 | build-inflation mechanism | open → unchanged | agent |
+| OQ-5 | quiet-machine empty-tab differential | open → re-run on the clean binary (R1/R2) | operator |
+| OQ-6 | P7g supersession pointer in the plan doc | open → docs pass (this doc is now the round-1+round-2 record) | operator |
+
+Round-2 termination check: symptom 1 — mechanism carried (S1-H1, §2.1) with the regression window exonerated (§7.3); symptom 2 — cause class re-confirmed on the new build's readings **plus** a new confirmed build-flag mechanism (B-1R) whose magnitude split is R1's job; H-ECO's three sub-claims each tested with named instances (§7.4). Parity itself is not yet reached — the goal remains `continue`.
