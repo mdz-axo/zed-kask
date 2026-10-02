@@ -1,4 +1,4 @@
-{# goal: Propose type-driven Rust solutions with code examples, informed by LSP code actions. Rust-analyzer's refactor suggestions (replace with enum, extract struct, add missing trait impl) are compiler-verified starting points. Apply algebraic types, ownership patterns, error propagation, and trait design. Reference std library patterns, ecosystem best practices, and relevant RFCs. Record which decisions were compiler- suggested vs LLM-originated. #}
+{# goal: Propose type-driven Rust solutions with code examples, informed by LSP code actions. Rust-analyzer's refactor suggestions (replace with enum, extract struct, add missing trait impl) are compiler-verified starting points. Apply algebraic types, ownership patterns, error propagation, and trait design. Reference std library patterns, ecosystem best practices, and relevant RFCs. Record which decisions were compiler-suggested vs LLM-originated. #}
 [inference]
 contract:
   input:
@@ -116,7 +116,7 @@ Map the ownership DAG. For each value:
 - Prefer many small traits over one large trait (interface segregation).
 - Use `impl Trait` in return position when the concrete type is an implementation detail.
 - Derive common traits: `Debug`, `Clone`, `PartialEq`, `Eq`, `Hash`, `Serialize`, `Deserialize`.
-- Implement `From<T>` for conversions, never custom `as_*` methods.
+- Implement `From<T>` for conversions; when a conversion is a cheap borrow, the API guidelines' C-CONV naming (`as_*` for cheap, `to_*` for costly, `into_*` for consuming) governs — `as_*` is the endorsed form there, not a violation.
 
 ### 5. Ecosystem Awareness
 

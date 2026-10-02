@@ -28,9 +28,9 @@ contract:
        maps to a Hoare principle:
          - clippy::needless_borrow → Principle 5 (explicit over implicit)
          - clippy::unwrap_used → Principle 7 (errors as values)
-         - clippy::bool_to_enum → Principle 1 (invalid states)
+         - clippy::option_option → Principle 1 (invalid states)
          - clippy::box_collection → Principle 4 (zero-cost abstraction)
-         - clippy::trait_duplication → Principle 6 (composition)
+         - clippy::trait-duplication-in-bounds → Principle 6 (composition)
 
   The agent should also run `diagnostics` on any proposed code to verify
   it compiles — a design that doesn't compile is a critical gap, not a

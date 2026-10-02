@@ -23,7 +23,7 @@ The compiler is the extrinsic oracle that closes the gap:
 | Inquiry | `diagnostics` | Compiler errors/warnings as the starting point for assessment |
 | Design | `get_code_actions` | Compiler-verified refactor suggestions as design starting points |
 | Challenge | `find_references` + `diagnostics` | Actual blast radius + compile verification of proposed code |
-| Challenge | `./script/clippy` | Codified idiomatic Rust lints as ground-truth design feedback |
+| Challenge | `./script/clippy` (not LSP — the codified-lint oracle) | Codified idiomatic Rust lints as ground-truth design feedback |
 
 Each compiler diagnostic is interpreted through the Hoare lens:
 - Borrow checker error → Principle 2 (ownership is architecture)
@@ -35,8 +35,8 @@ Each compiler diagnostic is interpreted through the Hoare lens:
 
 ## D/P labelling
 
-Design proposals (type-driven solutions, LSP-informed code actions) and the
-adversarial review's verdicts are P — judgment, critiqued by the compiler and
+Design proposals (type-driven solutions, LSP-informed code actions), the inquiry's `assessment_score`, the design's `design_score`, and the
+adversarial review's verdicts (including its `critique_score`) are P — judgment, critiqued by the compiler and
 clippy as the extrinsic oracles. The verification is D: diagnostics errors on
 the proposed code, new `./script/clippy` warnings versus the baseline, and
 compiler-confirmed findings, counted from the actual tool output and computed
@@ -62,7 +62,7 @@ critique the compiler contradicts is overruled.
 Plan:  Phase 1 — Inquiry   → Assess against Hoare's principles using rust-analyzer diagnostics as ground truth
 Do:    Phase 2 — Design    → Propose type-driven solutions informed by LSP code actions
 Check: Phase 3 — Challenge → Adversarial review verified by find_references, diagnostics, and clippy
-Check: Phase 4 — Converge  → evaluate critique score stability (design has stopped moving)
+Check: Phase 4 — Converge  → evaluate the Improvement Measure gate (compiler-confirmed finding stability — the critique score is reported, never gated on)
 Act:   Phase 5 — Loop      → Re-enter inquiry (step 1) with refinement directives from challenge
 ```
 
@@ -118,18 +118,38 @@ findings → re-assess → re-design → re-challenge.
 | Template | Purpose |
 |----------|---------|
 | `idiomatic-rust-inquiry.j2` | Assess a Rust design problem against Graydon Hoare's principles, using rust-analyzer diagnostics as ground truth. The compiler's errors and warnings are the starting point — not the LLM's guess. Interpret each diagnostic through the Hoare lens (borrow checker → ownership, type mismatch → invalid states, etc.). Identify invariants, invalid states, ownership graphs, and error domains. Produce a scored design assessment with specific improvement targets, marking each as compiler-confirmed (extrinsic) or LLM-identified (intrinsic — lower confidence). |
-| `idiomatic-rust-design.j2` | Propose type-driven Rust solutions with code examples, informed by LSP code actions. Rust-analyzer's refactor suggestions (replace with enum, extract struct, add missing trait impl) are compiler-verified starting points. Apply algebraic types, ownership patterns, error propagation, and trait design. Reference std library patterns, ecosystem best practices, and relevant RFCs. Record which decisions were compiler- suggested vs LLM-originated. |
+| `idiomatic-rust-design.j2` | Propose type-driven Rust solutions with code examples, informed by LSP code actions. Rust-analyzer's refactor suggestions (replace with enum, extract struct, add missing trait impl) are compiler-verified starting points. Apply algebraic types, ownership patterns, error propagation, and trait design. Reference std library patterns, ecosystem best practices, and relevant RFCs. Record which decisions were compiler-suggested vs LLM-originated. |
 | `idiomatic-rust-challenge.j2` | Adversarial review of a Rust design proposal, grounded by compiler feedback. Uses find_references (actual blast radius, not LLM's guess), diagnostics (compile verification of proposed code), and clippy (codified idiomatic Rust lints as ground-truth design feedback). Find gaps, test edge cases, challenge assumptions, identify deeper connections. Produce a scored critique with specific refinement directives, marking each as compiler-confirmed or LLM-identified. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `idiomatic-rust/idiomatic-rust-inquiry`) and a context object with the required variables.
 
 Template context variables (from each template's [inference] contract):
-- `idiomatic-rust-inquiry.j2`: `design_problem`,`existing_code` `design_constraints`,`compiler_diagnostics` `iteration_focus`
+- `idiomatic-rust-inquiry.j2`: `design_problem`, `existing_code`, `design_constraints`, `compiler_diagnostics`, `iteration_focus`
+- `idiomatic-rust-design.j2`: `design_problem`, `existing_code`, `assessment`, `code_actions`, `iteration_focus`
+- `idiomatic-rust-challenge.j2`: `design_problem`, `design_proposal`, `assessment`, `design_constraints`, `clippy_lints`
 
+## Regression case
+
+All receipts executed live through `lisp_eval` (2026-10-01, batch-11 audit):
+
+- Gate, converged: `{clippy_ran: true, errors: 0, new_warnings: 0,
+  confirmed: [3, 3, 3]}` → `"converged"`.
+- Gate, oscillating: `confirmed: [2, 4, 3]` (up then down) → `"oscillating"`
+  (the adjacent-difference product is negative — escalates to the operator).
+- Gate, undetermined: `{clippy_ran: false, ...}` → `"undetermined"` — an
+  LLM-only challenge never counts as converged.
+- Gate, continue on errors: `{errors: 1, ...}` → `"continue"`.
+- Gate, short confirmed list: `confirmed: [3, 3]` → `"converged"` — the
+  length guard short-circuits the oscillation check (no out-of-bounds `nth`;
+  the clean-compiler branch dominates when errors and new warnings are 0).
+
+The skill's form is executed at use time, never anchored in code.
 
 ## Constraints
 
 - The loop targets step 1 (inquiry), not step 2 (design) — challenge findings must re-inform the assessment.
-- The convergence check (step 5) is mandatory — the loop must not run until iteration or timeout exhaustion.
-- Step 4 uses `lisp_eval` to compute a custom design-quality score (weighted combination of critique score, compiler-confirmed findings, and unresolved issues). This demonstrates inline deterministic compute — no Rust change needed for custom scoring logic. The interpreter supports both prefix (`(+ a b)`) and infix (`a + b`) operator notation — use infix for simple scoring expressions, prefix for complex nested logic.
+- The Improvement Measure gate runs after each challenge (not only at
+  iteration exhaustion) — the loop must not run unbounded; `oscillating`
+  escalates rather than loops.
+- The interpreter supports both prefix (`(+ a b)`) and infix (`a + b`) operator notation — use infix for simple scoring expressions, prefix for complex nested logic.
 - Compiler grounding is preferred but not required — when LSP tools are unavailable (pure skill execution), the skill falls back to intrinsic reasoning with reduced confidence.
