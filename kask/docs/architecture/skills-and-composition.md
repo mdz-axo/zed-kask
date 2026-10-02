@@ -272,9 +272,9 @@ errors rather than no-body fallbacks.
 **Removed 2026-08-20 (commit `e7503c0cf4`, "revert skill cascade").** The
 `## Multi-skill composition with skill_bundle` prompt section and the
 `skill_bundle` tool no longer exist: the template carries no `skill_bundle`
-text, and no `skill_bundle` tool is registered in `crates/agent/src`. Bundle
-composition is now driven by the **skill-bundler** skill (see Part II,
-"Composing Skill Bundles").
+text, and no `skill_bundle` tool is registered in `crates/agent/src`. Merging
+peer-level skill outputs is driven by the **skill-bundler** skill (see Part
+II, "Merging Skill Outputs").
 
 ### 5.7 `## Division of Responsibilities (kask)` — new section (D40)
 
@@ -751,25 +751,26 @@ Tool use is observable after dispatch through two concrete records: server-side 
 
 ---
 
-## Composing Skill Bundles
+## Merging Skill Outputs
 
-Bundle composition is driven by the **skill-bundler** skill. The former `BundleService` in the deleted `hkask-services-skill` crate and the `kask bundle compose/list/show/apply/evolve/skills/off` CLI commands have been removed.[^ousterhout-bundle]
+Merging peer-level skill outputs is driven by the **skill-bundler** skill. The former `BundleService` in the deleted `hkask-services-skill` crate and the `kask bundle compose/list/show/apply/evolve/skills/off` CLI commands have been removed.[^ousterhout-bundle]
 
-### Creating a Bundle
+### Merging outputs
 
-Invoke the skill-bundler skill from the agent panel with the skills to compose:
+Run the peer skills on the same task, obtain their outputs, then invoke the skill-bundler skill with the task, the ordered skill names, and the corresponding outputs (its template contract: `skill_names`, `task`, `skill_outputs`):
 
 ```
 skill: skill-bundler
-skills: coding-guidelines,idiomatic-rust
-name: rust-review-bundle
+task: review this change against the coding guidelines and the Rust idiom guidance
+skill_names: coding-guidelines, idiomatic-rust
+skill_outputs: <the peer skills' outputs on that task>
 ```
 
-The skill-bundler performs inference-driven analysis to produce a coordinated composition.
+The skill-bundler merges the supplied outputs into one report — per-skill summaries, cross-skill insights, explicit conflicts, prioritized recommendations — with one bounded correction. It does not compose, order, or dispatch skills, and it never re-runs them.
 
-### Bundle Management
+### Bundle Management (removed)
 
-Bundle management (list, show, apply, evolve) is performed in-process through the agent panel. The former `kask bundle list/show/apply/evolve/skills/off` CLI commands have been removed. Bundles are session-scoped: applying a bundle activates its composition for the current agent session; deactivating is a no-op since bundles do not persist beyond the session.
+The former bundle-management surface (list, show, apply, evolve, session-scoped bundle activation) has been removed with the CLI commands; there is no bundle management. The skill-bundler skill merges outputs per invocation and persists nothing.
 
 ---
 
@@ -966,7 +967,7 @@ builds and copies the child binary.
     Cited for the MCP protocol that skill execution uses for tool invocation.
 
 [^ousterhout-bundle]: Ousterhout, J. (2018). *A Philosophy of Software Design*. Yakny Press.
-    Cited for the module-composition discipline the skill-bundler applies when ordering skills into phases.
+    Cited for the deletion-test discipline behind the removal — the `BundleService` and its CLI had no remaining consumers, and a module nothing calls is dead surface to delete, not preserve.
 
 [^beer-feedback-loop]: Beer, S. (1979). *The Heart of Enterprise*. John Wiley & Sons.
     Cited for the cybernetic feedback-loop design skill-discovery's route → detect-gap loop implements.

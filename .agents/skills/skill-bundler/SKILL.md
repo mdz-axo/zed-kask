@@ -33,11 +33,12 @@ Given peer-level skills' outputs on the same task, merge them into one report. T
 
 | Step | Type | Oracle / critique |
 |------|------|-------------------|
-| 1 Pairing check, 4 name/order check | D | the pinned `lisp_eval` forms |
+| 1 Pairing check, 4 name/order check | D | the `lisp_eval` forms (live-verified at use time) |
 | 2–3 Summaries, cross-skill insights | P | step 4's per-finding source inspection; the operator |
+| 4 Name/order check + per-finding source inspection | D + P | the name/order form is D (live-executed); each finding's grounding in its source output is P, critiqued by the operator |
 | 5 One correction | P | the same step-4 checks against the same inputs |
 
-There is no external reference model: correctness is governed by the pinned forms and per-finding source inspection, not by a summarization method.
+There is no external reference model: correctness is governed by the live-executed forms and per-finding source inspection, not by a summarization method.
 
 ## Registry Templates
 
@@ -46,6 +47,25 @@ There is no external reference model: correctness is governed by the pinned form
 | `bundler-merge.j2` | Merge the outputs of N concurrently-executed skills into a single cohesive report with per-skill summaries, cross-skill insights, conflict surfacing, and prioritized recommendations. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `skill-bundler/bundler-merge`) and a context object with the required variables.
+
+Template context variables (from the template's [inference] contract):
+- `bundler-merge.j2`: `skill_names`, `task`, `skill_outputs`
+
+## Regression case
+
+All receipts executed live through `lisp_eval` (2026-10-01, batch-12 audit):
+
+- Pairing check, matched: two names, two outputs → `true`.
+- Pairing check, missing output: two names, one output → `false` — stop and
+  request the missing output; never synthesize a missing result.
+- Name/order check, green: summary names identical to skill names in order,
+  no unsupported findings → `true`.
+- Name/order check, unsupported finding: same names but
+  `unsupported_names: ["fabricated-finding"]` → `false` — names and counts
+  cannot prove semantic grounding; the per-finding source inspection is the
+  real check.
+
+The skill's forms are executed at use time, never anchored in code.
 
 ## Constraints
 
