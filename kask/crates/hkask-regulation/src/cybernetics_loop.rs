@@ -991,3 +991,29 @@ mod submission_tests {
         assert!(queue.iter().all(|check| check.rollout_id != "refused"));
     }
 }
+
+/// Test support shared by the cycle and directive test modules — the
+/// CapturingSink both previously hand-copied (the duplication ratchet's
+/// cross-file pair).
+#[cfg(test)]
+pub(crate) mod test_support {
+    use std::sync::Mutex;
+
+    /// Capturing RegulationSink — records every persisted span's path and
+    /// observation so tick and acknowledgment policies can be asserted
+    /// without a durable archive.
+    pub(crate) struct CapturingSink(pub(crate) Mutex<Vec<(String, serde_json::Value)>>);
+
+    impl hkask_types::RegulationSink for CapturingSink {
+        fn persist(
+            &self,
+            event: &hkask_types::RegulationRecord,
+        ) -> Result<(), hkask_types::InfrastructureError> {
+            self.0
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push((event.span.path.clone(), event.observation.clone()));
+            Ok(())
+        }
+    }
+}

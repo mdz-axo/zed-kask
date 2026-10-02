@@ -405,28 +405,11 @@ impl super::CyberneticsLoop {
 mod tests {
     use super::*;
     use crate::CyberneticsLoop;
+    use crate::cybernetics_loop::test_support::CapturingSink;
     use crate::runtime::RegulationLedger;
     use hkask_types::curator::EscalationSeverity;
     use std::sync::{Arc, Mutex};
     use tokio::sync::{RwLock, mpsc};
-
-    /// Capturing RegulationSink — records every persisted span's path and
-    /// observation (the same pattern as the cycle tests) so acknowledgment
-    /// outcomes can be asserted without a durable archive.
-    struct CapturingSink(Mutex<Vec<(String, serde_json::Value)>>);
-
-    impl hkask_types::RegulationSink for CapturingSink {
-        fn persist(
-            &self,
-            event: &hkask_types::RegulationRecord,
-        ) -> Result<(), hkask_types::InfrastructureError> {
-            self.0
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .push((event.span.path.clone(), event.observation.clone()));
-            Ok(())
-        }
-    }
 
     /// Sink whose persist always fails — the acknowledgment-failure control.
     struct FailingSink;

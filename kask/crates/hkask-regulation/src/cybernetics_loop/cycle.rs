@@ -1175,6 +1175,7 @@ impl super::CyberneticsLoop {
 mod tests {
     use crate::CyberneticsLoop;
     use crate::cybernetics_loop::RolloutImpactCheck;
+    use crate::cybernetics_loop::test_support::CapturingSink;
     use crate::loops::{
         ActionDecision, ActionType, Deviation, DeviationDirection, LoopId, RegulationData,
         RegulatoryAction, RegulatoryActionParams, Signal, SignalMetric,
@@ -2573,24 +2574,6 @@ mod tests {
         });
     }
 
-    /// Capturing RegulationSink — records every persisted span's path and
-    /// observation so the tick-emission policy can be asserted without a
-    /// durable archive.
-    struct CapturingSink(Mutex<Vec<(String, serde_json::Value)>>);
-
-    impl hkask_types::RegulationSink for CapturingSink {
-        fn persist(
-            &self,
-            event: &hkask_types::RegulationRecord,
-        ) -> Result<(), hkask_types::InfrastructureError> {
-            self.0
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .push((event.span.path.clone(), event.observation.clone()));
-            Ok(())
-        }
-    }
-
     struct FailOnceCapturingSink {
         fail_next: std::sync::atomic::AtomicBool,
         persisted: Mutex<Vec<(String, serde_json::Value)>>,
@@ -2617,6 +2600,102 @@ mod tests {
         }
     }
 
+    /// The shared observe_since body: clone the observation, keep only
+    /// receipts past `cursor`, and advance next_cursor to the newest kept
+    /// id — the filtering both resilience-source stubs below perform.
+    fn observe_since_filtered(
+        observation: &crate::InferenceObservation,
+        cursor: u64,
+    ) -> crate::InferenceObservation {
+        let mut observation = observation.clone();
+        observation
+            .interventions
+            .retain(|receipt| receipt.id > cursor);
+        observation
+            .permanent_failures
+            .retain(|receipt| receipt.id > cursor);
+        observation.next_cursor = observation
+            .interventions
+            .iter()
+            .map(|receipt| receipt.id)
+            .chain(
+                observation
+                    .permanent_failures
+                    .iter()
+                    .map(|receipt| receipt.id),
+            )
+            .max()
+            .unwrap_or(cursor);
+        observation
+    }
+
+    /// One circuit-state intervention receipt (id 1) and no permanent
+    /// failures — the observation shape of the transient-circuit tests.
+    fn circuit_intervention_observation(
+        now: chrono::DateTime<chrono::Utc>,
+        recent_timeout_count: u64,
+        circuit_state: crate::InferenceCircuitState,
+        kind: crate::InferenceInterventionKind,
+    ) -> crate::InferenceObservation {
+        crate::InferenceObservation {
+            snapshot: crate::InferenceSnapshot {
+                observed_at: now,
+                in_flight: 0,
+                max_concurrency: 2,
+                recent_timeout_count,
+                circuit_state,
+            },
+            interventions: vec![crate::InferenceInterventionReceipt {
+                id: 1,
+                kind,
+                occurred_at: now,
+            }],
+            permanent_failures: Vec::new(),
+            next_cursor: 1,
+        }
+    }
+
+    /// Route a circuit-breaker escalation with a pre-seeded
+    /// circuit_breaker_state observation of `signal_value` — the shared
+    /// setup of the recovery-signal attachment tests.
+    async fn escalate_with_circuit_observation(signal_value: f64) -> Arc<RecordingEscalationSink> {
+        let escalation = Arc::new(RecordingEscalationSink::new());
+        let mut regulation_loop =
+            CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())));
+        regulation_loop.set_alert_escalation_sink(Some(escalation.clone()));
+        regulation_loop.observations.lock().insert(
+            SignalMetric::CircuitBreakerState,
+            Signal::new(
+                LoopId::Inference,
+                SignalMetric::CircuitBreakerState,
+                signal_value,
+                0.0,
+            ),
+        );
+        let action = RegulatoryAction::with_metric(
+            LoopId::Curation,
+            ActionType::Escalate,
+            RegulatoryActionParams::reason("circuit_breaker_open"),
+            SignalMetric::CircuitBreakerState.as_str().to_string(),
+        );
+        regulation_loop.route_action_as_alert(&action).await;
+        escalation
+    }
+
+    /// An in-memory regulation archive plus the `since` instant one second
+    /// before now — the algedonic-read-budget tests' shared preamble.
+    fn in_memory_archive() -> (
+        Arc<hkask_storage::RegulationArchive>,
+        chrono::DateTime<chrono::Utc>,
+    ) {
+        let driver = hkask_storage::database::sqlite::SqliteDriver::in_memory_driver();
+        let archive = Arc::new(
+            hkask_storage::RegulationArchive::from_driver(driver).expect("regulation archive"),
+        );
+        let since = chrono::Utc::now() - chrono::Duration::seconds(1);
+        (archive, since)
+    }
+
     struct StubResilienceSource {
         observation: crate::InferenceObservation,
     }
@@ -2627,26 +2706,7 @@ mod tests {
             &self,
             cursor: u64,
         ) -> Result<crate::InferenceObservation, crate::InferenceObservationError> {
-            let mut observation = self.observation.clone();
-            observation
-                .interventions
-                .retain(|receipt| receipt.id > cursor);
-            observation
-                .permanent_failures
-                .retain(|receipt| receipt.id > cursor);
-            observation.next_cursor = observation
-                .interventions
-                .iter()
-                .map(|receipt| receipt.id)
-                .chain(
-                    observation
-                        .permanent_failures
-                        .iter()
-                        .map(|receipt| receipt.id),
-                )
-                .max()
-                .unwrap_or(cursor);
-            Ok(observation)
+            Ok(observe_since_filtered(&self.observation, cursor))
         }
     }
 
@@ -2665,26 +2725,7 @@ mod tests {
                 .lock()
                 .unwrap_or_else(|error| error.into_inner())
                 .push(cursor);
-            let mut observation = self.observation.clone();
-            observation
-                .interventions
-                .retain(|receipt| receipt.id > cursor);
-            observation
-                .permanent_failures
-                .retain(|receipt| receipt.id > cursor);
-            observation.next_cursor = observation
-                .interventions
-                .iter()
-                .map(|receipt| receipt.id)
-                .chain(
-                    observation
-                        .permanent_failures
-                        .iter()
-                        .map(|receipt| receipt.id),
-                )
-                .max()
-                .unwrap_or(cursor);
-            Ok(observation)
+            Ok(observe_since_filtered(&self.observation, cursor))
         }
     }
 
@@ -2696,22 +2737,12 @@ mod tests {
     async fn failed_inference_receipt_persistence_does_not_advance_cursor() {
         let now = chrono::Utc::now();
         let source = Arc::new(CursorRecordingResilienceSource {
-            observation: crate::InferenceObservation {
-                snapshot: crate::InferenceSnapshot {
-                    observed_at: now,
-                    in_flight: 0,
-                    max_concurrency: 2,
-                    recent_timeout_count: 0,
-                    circuit_state: crate::InferenceCircuitState::Closed,
-                },
-                interventions: vec![crate::InferenceInterventionReceipt {
-                    id: 1,
-                    kind: crate::InferenceInterventionKind::CircuitClosed,
-                    occurred_at: now,
-                }],
-                permanent_failures: Vec::new(),
-                next_cursor: 1,
-            },
+            observation: circuit_intervention_observation(
+                now,
+                0,
+                crate::InferenceCircuitState::Closed,
+                crate::InferenceInterventionKind::CircuitClosed,
+            ),
             cursors: Mutex::new(Vec::new()),
         });
         let sink = Arc::new(FailOnceCapturingSink {
@@ -2751,22 +2782,12 @@ mod tests {
     async fn failed_inference_escalation_does_not_advance_cursor() {
         let now = chrono::Utc::now();
         let source = Arc::new(CursorRecordingResilienceSource {
-            observation: crate::InferenceObservation {
-                snapshot: crate::InferenceSnapshot {
-                    observed_at: now,
-                    in_flight: 0,
-                    max_concurrency: 2,
-                    recent_timeout_count: 1,
-                    circuit_state: crate::InferenceCircuitState::Open,
-                },
-                interventions: vec![crate::InferenceInterventionReceipt {
-                    id: 1,
-                    kind: crate::InferenceInterventionKind::CircuitReopened,
-                    occurred_at: now,
-                }],
-                permanent_failures: Vec::new(),
-                next_cursor: 1,
-            },
+            observation: circuit_intervention_observation(
+                now,
+                1,
+                crate::InferenceCircuitState::Open,
+                crate::InferenceInterventionKind::CircuitReopened,
+            ),
             cursors: Mutex::new(Vec::new()),
         });
         let mut regulation =
@@ -2794,22 +2815,12 @@ mod tests {
         let sink = Arc::new(CapturingSink(Mutex::new(Vec::new())));
         let now = chrono::Utc::now();
         let source = Arc::new(StubResilienceSource {
-            observation: crate::InferenceObservation {
-                snapshot: crate::InferenceSnapshot {
-                    observed_at: now,
-                    in_flight: 0,
-                    max_concurrency: 2,
-                    recent_timeout_count: 0,
-                    circuit_state: crate::InferenceCircuitState::Closed,
-                },
-                interventions: vec![crate::InferenceInterventionReceipt {
-                    id: 1,
-                    kind: crate::InferenceInterventionKind::CircuitClosed,
-                    occurred_at: now,
-                }],
-                permanent_failures: Vec::new(),
-                next_cursor: 1,
-            },
+            observation: circuit_intervention_observation(
+                now,
+                0,
+                crate::InferenceCircuitState::Closed,
+                crate::InferenceInterventionKind::CircuitClosed,
+            ),
         });
         let mut regulation =
             CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())))
@@ -2838,22 +2849,12 @@ mod tests {
     async fn initial_inference_circuit_open_does_not_escalate() {
         let now = chrono::Utc::now();
         let source = Arc::new(StubResilienceSource {
-            observation: crate::InferenceObservation {
-                snapshot: crate::InferenceSnapshot {
-                    observed_at: now,
-                    in_flight: 0,
-                    max_concurrency: 2,
-                    recent_timeout_count: 3,
-                    circuit_state: crate::InferenceCircuitState::Open,
-                },
-                interventions: vec![crate::InferenceInterventionReceipt {
-                    id: 1,
-                    kind: crate::InferenceInterventionKind::CircuitOpened,
-                    occurred_at: now,
-                }],
-                permanent_failures: Vec::new(),
-                next_cursor: 1,
-            },
+            observation: circuit_intervention_observation(
+                now,
+                3,
+                crate::InferenceCircuitState::Open,
+                crate::InferenceInterventionKind::CircuitOpened,
+            ),
         });
         let escalation = Arc::new(RecordingEscalationSink::new());
         let mut regulation =
@@ -2882,22 +2883,12 @@ mod tests {
     async fn reopened_inference_circuit_routes_native_escalation() {
         let now = chrono::Utc::now();
         let source = Arc::new(StubResilienceSource {
-            observation: crate::InferenceObservation {
-                snapshot: crate::InferenceSnapshot {
-                    observed_at: now,
-                    in_flight: 0,
-                    max_concurrency: 2,
-                    recent_timeout_count: 3,
-                    circuit_state: crate::InferenceCircuitState::Open,
-                },
-                interventions: vec![crate::InferenceInterventionReceipt {
-                    id: 1,
-                    kind: crate::InferenceInterventionKind::CircuitReopened,
-                    occurred_at: now,
-                }],
-                permanent_failures: Vec::new(),
-                next_cursor: 1,
-            },
+            observation: circuit_intervention_observation(
+                now,
+                3,
+                crate::InferenceCircuitState::Open,
+                crate::InferenceInterventionKind::CircuitReopened,
+            ),
         });
         let escalation = Arc::new(ConfirmingEscalationSink::new());
         let event_sink = Arc::new(CapturingSink(Mutex::new(Vec::new())));
@@ -2950,29 +2941,9 @@ mod tests {
     ///       recoverable-at-threshold
     #[tokio::test]
     async fn reopened_circuit_escalation_drops_unmeasurable_recovery_signal() {
-        let escalation = Arc::new(RecordingEscalationSink::new());
-        let mut regulation_loop =
-            CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())));
-        regulation_loop.set_alert_escalation_sink(Some(escalation.clone()));
         // The stale prior-pass observation the mid-sense routing looks up:
         // healthy (value == set-point), so unmeasurable as a trigger.
-        regulation_loop.observations.lock().insert(
-            SignalMetric::CircuitBreakerState,
-            Signal::new(
-                LoopId::Inference,
-                SignalMetric::CircuitBreakerState,
-                0.0,
-                0.0,
-            ),
-        );
-
-        let action = RegulatoryAction::with_metric(
-            LoopId::Curation,
-            ActionType::Escalate,
-            RegulatoryActionParams::reason("circuit_breaker_open"),
-            SignalMetric::CircuitBreakerState.as_str().to_string(),
-        );
-        regulation_loop.route_action_as_alert(&action).await;
+        let escalation = escalate_with_circuit_observation(0.0).await;
 
         let contexts = escalation.contexts.lock().expect("contexts");
         assert_eq!(contexts.len(), 1, "the escalation persists once");
@@ -2994,27 +2965,7 @@ mod tests {
     ///       pass can auto-resolve it when the circuit closes
     #[tokio::test]
     async fn escalation_attaches_measurable_recovery_signal() {
-        let escalation = Arc::new(RecordingEscalationSink::new());
-        let mut regulation_loop =
-            CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())));
-        regulation_loop.set_alert_escalation_sink(Some(escalation.clone()));
-        regulation_loop.observations.lock().insert(
-            SignalMetric::CircuitBreakerState,
-            Signal::new(
-                LoopId::Inference,
-                SignalMetric::CircuitBreakerState,
-                1.0,
-                0.0,
-            ),
-        );
-
-        let action = RegulatoryAction::with_metric(
-            LoopId::Curation,
-            ActionType::Escalate,
-            RegulatoryActionParams::reason("circuit_breaker_open"),
-            SignalMetric::CircuitBreakerState.as_str().to_string(),
-        );
-        regulation_loop.route_action_as_alert(&action).await;
+        let escalation = escalate_with_circuit_observation(1.0).await;
 
         let contexts = escalation.contexts.lock().expect("contexts");
         assert_eq!(contexts.len(), 1, "the escalation persists once");
@@ -3397,11 +3348,7 @@ mod tests {
     /// expect: "Board-unavailable fallback preserves one alert per persistent condition instead of displacing earlier informative events" [P9]
     #[tokio::test(start_paused = true)]
     async fn persistent_fallback_alerts_do_not_displace_prior_informative_events() {
-        let driver = hkask_storage::database::sqlite::SqliteDriver::in_memory_driver();
-        let archive = Arc::new(
-            hkask_storage::RegulationArchive::from_driver(driver).expect("regulation archive"),
-        );
-        let since = chrono::Utc::now() - chrono::Duration::seconds(1);
+        let (archive, since) = in_memory_archive();
         let informative = hkask_types::RegulationRecord::new(
             WebID::from_persona(b"regulation"),
             hkask_types::event::Span::from_kind(hkask_types::event::SpanKind::ToolOutcomeBreakdown),
@@ -3448,11 +3395,7 @@ mod tests {
             }
         }
 
-        let driver = hkask_storage::database::sqlite::SqliteDriver::in_memory_driver();
-        let archive = Arc::new(
-            hkask_storage::RegulationArchive::from_driver(driver).expect("regulation archive"),
-        );
-        let since = chrono::Utc::now() - chrono::Duration::seconds(1);
+        let (archive, since) = in_memory_archive();
         let mut regulation_loop =
             CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())))
                 .with_event_sink(archive.clone() as Arc<dyn hkask_types::RegulationSink>);
