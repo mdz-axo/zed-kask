@@ -428,3 +428,51 @@ fn build_interpretation(composite: &f64, red_flags: &[String], green_flags: &[St
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// B.9 (operator resolution 2026-09-28): `eqm-catalog.yaml` is the source
+    /// of truth for the predictive 12; `KEY_EQMS` is its operational subset.
+    /// This pins the equality — a catalog edit that drops or adds a
+    /// predictive marker without updating `KEY_EQMS` (or vice versa) fails
+    /// here. The catalog is `include_str!`-ed so an edit recompiles this
+    /// test (the pin lives at the seam, not at a copy).
+    #[test]
+    fn key_eqms_match_catalog_predictive_twelve() {
+        let catalog = include_str!("../../../registry/templates/eqm/eqm-catalog.yaml");
+        // Marker-level ids are indented `      - id:` under a family's
+        // `markers:` list; their predictive flag sits at
+        // `        predictive:`. Family ids sit at `  - id:` — the scan
+        // tracks only the marker level, so a family id can never be
+        // collected (the 2026-10-01 extraction lesson: `alignment_and_discipline`
+        // is a family, `forecast_rationale_align` is its predictive marker).
+        let mut catalog_predictive: Vec<&str> = Vec::new();
+        let mut current_marker: Option<&str> = None;
+        for line in catalog.lines() {
+            if let Some(id) = line.strip_prefix("      - id: ") {
+                current_marker = Some(id);
+            } else if line.trim() == "predictive: true" {
+                if let Some(id) = current_marker {
+                    catalog_predictive.push(id);
+                }
+            }
+        }
+        let const_ids: Vec<&str> = KEY_EQMS.iter().map(|e| e.id).collect();
+        assert_eq!(
+            catalog_predictive.len(),
+            12,
+            "the catalog's predictive set must be twelve"
+        );
+        assert_eq!(const_ids.len(), 12, "KEY_EQMS must carry twelve markers");
+        let mut sorted_catalog = catalog_predictive.clone();
+        sorted_catalog.sort();
+        let mut sorted_const = const_ids.clone();
+        sorted_const.sort();
+        assert_eq!(
+            sorted_catalog, sorted_const,
+            "KEY_EQMS and the catalog's predictive-flagged markers must be the same id set"
+        );
+    }
+}
