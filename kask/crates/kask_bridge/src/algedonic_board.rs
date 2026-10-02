@@ -25,11 +25,22 @@ struct OpenCard {
 
 pub struct BoardAlertEscalationSink {
     invoker: Arc<dyn ToolInvoker>,
+    /// The resolved review-board id, cached after its first resolution: the
+    /// board is created once (idempotency key) and its id is stable, so the
+    /// per-call re-resolution below was pure waste — the regulation loop's
+    /// 10s sensing ticks made it 7,245 `kanban_board_list` calls/day against
+    /// ~300 real agent calls (measured 2026-09-30). Reset by
+    /// `list_board_tasks` when a fetch fails, so a deleted board re-resolves
+    /// (and re-creates) on the next call instead of erroring until restart.
+    board_id: tokio::sync::Mutex<Option<String>>,
 }
 
 impl BoardAlertEscalationSink {
     pub fn new(invoker: Arc<dyn ToolInvoker>) -> Self {
-        Self { invoker }
+        Self {
+            invoker,
+            board_id: tokio::sync::Mutex::new(None),
+        }
     }
 
     async fn call(&self, tool: &str, args: Value) -> Result<Value, String> {
@@ -45,6 +56,10 @@ impl BoardAlertEscalationSink {
     }
 
     async fn board_id(&self) -> Result<String, String> {
+        let mut cached = self.board_id.lock().await;
+        if let Some(id) = cached.as_ref() {
+            return Ok(id.clone());
+        }
         let boards = self.call("kanban_board_list", json!({})).await?;
         let entries = boards["boards"]
             .as_array()
@@ -52,42 +67,63 @@ impl BoardAlertEscalationSink {
         let mut matching = entries
             .iter()
             .filter(|board| board["name"] == ALGEDONIC_BOARD_NAME);
-        if let Some(board) = matching.next() {
+        let id = if let Some(board) = matching.next() {
             if matching.next().is_some() {
                 return Err(
                     "kanban_board_list: multiple Algedonic review boards; cannot choose a worklist"
                         .into(),
                 );
             }
-            return board["board_id"]
+            board["board_id"]
                 .as_str()
                 .map(str::to_string)
-                .ok_or_else(|| "kanban_board_list: matching board has no board_id".to_string());
-        }
-        let created = self
-            .call(
-                "kanban_board_create",
-                // First-use status reads and alerts may race. The kanban
-                // service atomically reserves this key across both callers.
-                json!({ "name": ALGEDONIC_BOARD_NAME, "idempotency_key": "algedonic-review-board" }),
-            )
-            .await?;
-        created["board_id"]
-            .as_str()
-            .map(str::to_string)
-            .ok_or_else(|| "kanban_board_create: missing board_id".to_string())
+                .ok_or_else(|| "kanban_board_list: matching board has no board_id".to_string())?
+        } else {
+            let created = self
+                .call(
+                    "kanban_board_create",
+                    // First-use status reads and alerts may race. The kanban
+                    // service atomically reserves this key across both callers.
+                    json!({ "name": ALGEDONIC_BOARD_NAME, "idempotency_key": "algedonic-review-board" }),
+                )
+                .await?;
+            created["board_id"]
+                .as_str()
+                .map(str::to_string)
+                .ok_or_else(|| "kanban_board_create: missing board_id".to_string())?
+        };
+        *cached = Some(id.clone());
+        Ok(id)
+    }
+
+    /// Fetch the algedonic board's task list — the one fetch both consumers
+    /// (`open_cards`, `awaiting_review_count`) read. A failed fetch resets
+    /// the cached board id: the board may have been deleted, and the next
+    /// call must re-resolve (and re-create) it rather than erroring until
+    /// restart.
+    async fn list_board_tasks(&self) -> Result<Vec<Value>, String> {
+        let board_id = self.board_id().await?;
+        let listed = match self
+            .call("kanban_task_list", json!({ "board_id": board_id }))
+            .await
+        {
+            Ok(listed) => listed,
+            Err(error) => {
+                *self.board_id.lock().await = None;
+                return Err(error);
+            }
+        };
+        listed["tasks"]
+            .as_array()
+            .cloned()
+            .ok_or_else(|| "kanban_task_list: missing tasks".to_string())
     }
 
     async fn open_cards(&self) -> Result<(String, Vec<OpenCard>), String> {
         let board_id = self.board_id().await?;
-        let listed = self
-            .call("kanban_task_list", json!({ "board_id": board_id }))
-            .await?;
-        let tasks = listed["tasks"]
-            .as_array()
-            .ok_or_else(|| "kanban_task_list: missing tasks".to_string())?;
+        let tasks = self.list_board_tasks().await?;
         let mut cards = Vec::new();
-        for task in tasks {
+        for task in &tasks {
             let status = task["status"]
                 .as_str()
                 .and_then(TaskStatus::parse_str)
@@ -132,13 +168,7 @@ impl BoardAlertEscalationSink {
     /// Count every work item on the board that has not reached verified Done,
     /// including skill proposals and manually added cards.
     pub async fn awaiting_review_count(&self) -> Result<usize, String> {
-        let board_id = self.board_id().await?;
-        let listed = self
-            .call("kanban_task_list", json!({ "board_id": board_id }))
-            .await?;
-        let tasks = listed["tasks"]
-            .as_array()
-            .ok_or_else(|| "kanban_task_list: missing tasks".to_string())?;
+        let tasks = self.list_board_tasks().await?;
         tasks.iter().try_fold(0, |count, task| {
             let status = task["status"]
                 .as_str()
@@ -307,11 +337,17 @@ mod tests {
     #[derive(Default)]
     struct Recorder {
         calls: Mutex<Vec<(String, Value)>>,
-        replies: Mutex<Vec<Value>>,
+        replies: Mutex<Vec<Result<Value, InvokeError>>>,
     }
 
     impl Recorder {
         fn with_replies(replies: Vec<Value>) -> Arc<Self> {
+            Self::with_results(replies.into_iter().map(Ok).collect())
+        }
+
+        /// Fixed replies, including failing ones — a failing reply stands in
+        /// for a board-scoped call the server rejects (e.g. a deleted board).
+        fn with_results(replies: Vec<Result<Value, InvokeError>>) -> Arc<Self> {
             Arc::new(Self {
                 calls: Mutex::new(Vec::new()),
                 replies: Mutex::new(replies),
@@ -340,7 +376,10 @@ mod tests {
                 .expect("calls")
                 .push((tool.to_string(), args));
             let reply = self.replies.lock().expect("replies").remove(0);
-            gpui::Task::ready(Ok(json!({ "content": reply }).to_string()))
+            match reply {
+                Ok(reply) => gpui::Task::ready(Ok(json!({ "content": reply }).to_string())),
+                Err(error) => gpui::Task::ready(Err(error)),
+            }
         }
     }
 
@@ -460,6 +499,50 @@ mod tests {
                 .await
                 .expect("count"),
             2
+        );
+    }
+
+    /// The board id is resolved once per sink and cached: a second operation
+    /// must not re-issue `kanban_board_list` — the per-tick re-resolution was
+    /// the 7,245 calls/day waste this cache deletes.
+    #[tokio::test]
+    async fn board_id_is_resolved_once_across_operations() {
+        let recorder = Recorder::with_replies(vec![
+            board(),
+            json!({ "tasks": [] }),
+            json!({ "tasks": [{ "status": "backlog" }] }),
+        ]);
+        let sink = BoardAlertEscalationSink::new(recorder.clone());
+        sink.reconcile_conditions(&[]).await.expect("reconcile");
+        assert_eq!(sink.awaiting_review_count().await.expect("count"), 1);
+        assert_eq!(
+            recorder.names(),
+            ["kanban_board_list", "kanban_task_list", "kanban_task_list"]
+        );
+    }
+
+    /// A failed board-scoped fetch resets the cached id: the next operation
+    /// re-resolves the board (and would re-create it) instead of erroring
+    /// against a stale id until restart.
+    #[tokio::test]
+    async fn a_failed_fetch_re_resolves_the_board_on_the_next_call() {
+        let recorder = Recorder::with_results(vec![
+            Ok(board()),
+            Err(InvokeError::NotWired),
+            Ok(board()),
+            Ok(json!({ "tasks": [] })),
+        ]);
+        let sink = BoardAlertEscalationSink::new(recorder.clone());
+        assert!(sink.awaiting_review_count().await.is_err());
+        sink.reconcile_conditions(&[]).await.expect("re-resolved");
+        assert_eq!(
+            recorder.names(),
+            [
+                "kanban_board_list",
+                "kanban_task_list",
+                "kanban_board_list",
+                "kanban_task_list"
+            ]
         );
     }
 
