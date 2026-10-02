@@ -86,7 +86,20 @@ pub struct RawDelegateResult {
 #[derive(Debug, Clone)]
 pub struct CapturedInference {
     pub rollout_id: String,
+    /// The provider-CONFIRMED model that served this call (what the
+    /// inference port reported back). Empty on the error path — a failed
+    /// request has no confirmation, and fabricating the requested id here
+    /// made error events read as if a different model/route served them
+    /// (observed 2026-10-01: `deepinfra/XiaomiMimo/...` on errors vs
+    /// `XiaomiMiMo/...` on successes in the same run).
     pub model: String,
+    /// The model id REQUESTED for this call — the card's explicit model,
+    /// the configured default, or `"host_session_default"` when resolution
+    /// is left to the host session. Always populated: the requested identity
+    /// is known even when the call fails. Requested vs confirmed are
+    /// separate fields so provider substitution and failure are both
+    /// legible in the event log (the embedding-identity precedent).
+    pub requested_model: String,
     pub status: &'static str,
     pub latency_ms: u128,
     pub total_tokens: i64,
@@ -390,10 +403,15 @@ impl AgentExecutor {
                 Ok(result) => result,
                 Err(error) => {
                     // Capture the failed call too — a failed inference is a
-                    // real event, not an absence.
+                    // real event, not an absence. `model` stays empty (no
+                    // provider confirmation exists); `requested_model`
+                    // carries what was asked.
                     self.capture_inference(CapturedInference {
                         rollout_id: rollout_id.clone(),
-                        model: model_override.unwrap_or("host_session_default").to_string(),
+                        model: String::new(),
+                        requested_model: model_override
+                            .unwrap_or("host_session_default")
+                            .to_string(),
                         status: "error",
                         latency_ms: inference_started.elapsed().as_millis(),
                         total_tokens: 0,
@@ -410,6 +428,7 @@ impl AgentExecutor {
             self.capture_inference(CapturedInference {
                 rollout_id: rollout_id.clone(),
                 model: result.model.clone(),
+                requested_model: model_override.unwrap_or("host_session_default").to_string(),
                 status: "ok",
                 latency_ms: inference_started.elapsed().as_millis(),
                 total_tokens: i64::from(result.usage.total_tokens),
@@ -700,6 +719,7 @@ mod tests {
         executor.capture_inference(CapturedInference {
             rollout_id: "r".into(),
             model: "m".into(),
+            requested_model: "m".into(),
             status: "ok",
             latency_ms: 1,
             total_tokens: 1,
@@ -721,6 +741,7 @@ mod tests {
         executor.capture_inference(CapturedInference {
             rollout_id: "rollout-a".into(),
             model: "stub-model".into(),
+            requested_model: "stub-model".into(),
             status: "ok",
             latency_ms: 5,
             total_tokens: 2,
@@ -733,6 +754,79 @@ mod tests {
         assert_eq!(captured.rollout_id, "rollout-a");
         assert_eq!(captured.status, "ok");
         assert_eq!(captured.response_body, "stub");
+    }
+
+    /// A failed inference captures `requested_model` (what was asked) with
+    /// an EMPTY `model` — the provider never confirmed anything — and a
+    /// successful inference captures both the confirmed `model` and the
+    /// requested id. Pins the 2026-10-01 fix: the error path used to stamp
+    /// the requested id into `model`, making error events read as if a
+    /// different model/route served them (`deepinfra/XiaomiMimo/...` on
+    /// errors vs `XiaomiMiMo/...` on successes in the same run).
+    #[tokio::test]
+    async fn capture_distinguishes_requested_from_confirmed_model() {
+        let card = LocalAgentCard {
+            agent_id: "model-id-test".into(),
+            capabilities: crate::local_registry::LocalAgentCapabilities {
+                model: "deepinfra/XiaomiMimo/Mimo-V2.6-Pro".into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        // Failing port: the request dies before any model confirms.
+        let executor = AgentExecutor::new(Arc::new(FailingInference), Arc::new(StubDispatch));
+        let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+        executor.set_capture(tx);
+        let outcome = executor.run(&card, "any task").await;
+        assert!(outcome.is_err(), "failing port must fail the run");
+        let captured = rx.recv().await.expect("error capture must arrive");
+        assert_eq!(captured.status, "error");
+        assert_eq!(captured.model, "", "no confirmation exists on error");
+        assert_eq!(
+            captured.requested_model, "deepinfra/XiaomiMimo/Mimo-V2.6-Pro",
+            "the requested id is still known and recorded"
+        );
+
+        // Succeeding port: confirmed model plus the requested id, separately.
+        let executor = AgentExecutor::new(Arc::new(StubInference), Arc::new(StubDispatch));
+        let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+        executor.set_capture(tx);
+        executor
+            .run(&card, "any task")
+            .await
+            .expect("stub delegation");
+        let captured = rx.recv().await.expect("ok capture must arrive");
+        assert_eq!(captured.status, "ok");
+        assert_eq!(captured.model, "stub-model", "confirmed by the port");
+        assert_eq!(
+            captured.requested_model, "deepinfra/XiaomiMimo/Mimo-V2.6-Pro",
+            "requested id recorded alongside the confirmation"
+        );
+    }
+
+    struct FailingInference;
+
+    impl hkask_types::InferencePort for FailingInference {
+        fn generate(
+            &self,
+            _prompt: &str,
+            _parameters: &hkask_types::LLMParameters,
+            _tools: Option<&[hkask_types::ChatToolDefinition]>,
+        ) -> Pin<
+            Box<
+                dyn Future<
+                        Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
+                    > + Send
+                    + '_,
+            >,
+        > {
+            Box::pin(async {
+                Err(hkask_types::InferenceError::Model(
+                    "simulated provider failure".into(),
+                ))
+            })
+        }
     }
 
     struct StubInference;

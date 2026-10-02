@@ -5,8 +5,8 @@
 //! the hidden internal data dir. Users need to find their reports without
 //! digging through `~/.local/share/zed-kask/`.
 use crate::CompaniesServer;
-use hkask_types::AnyJsonValue;
 use hkask_mcp_server::server::{McpToolError, execute_tool};
+use hkask_types::AnyJsonValue;
 use hkask_types::agent_paths::{mcp_artifacts_subdir, resolve_under_artifacts_dir};
 use rmcp::{handler::server::wrapper::Parameters, schemars::JsonSchema, tool, tool_router};
 use serde::Deserialize;

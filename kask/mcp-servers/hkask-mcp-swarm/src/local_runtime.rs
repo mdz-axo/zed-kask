@@ -269,7 +269,11 @@ impl LocalSwarmRuntime {
         tokio::spawn(async move {
             while let Some(captured) = rx.recv().await {
                 let payload = serde_json::json!({
+                    // Provider-confirmed serving model — empty on error
+                    // events (no confirmation exists); `requested_model`
+                    // carries what was asked. Never the same field.
                     "model": captured.model,
+                    "requested_model": captured.requested_model,
                     "status": captured.status,
                     "latency_ms": captured.latency_ms,
                     "usage": { "total_tokens": captured.total_tokens },
