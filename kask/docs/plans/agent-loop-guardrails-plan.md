@@ -22,6 +22,12 @@ It is a **plan, not an implementation record**. No implementation is
 authorized by this document alone; the operator charters each workstream
 (§13).
 
+**Execution record.** Chartered 2026-10-02 ("proceed with plan
+execution"). Slice 0 (lisp_eval TypeError teaching) and Slice 1 (C2
+repetition stop-loss) landed the same day — RED→GREEN receipts in §9, one
+design revision recorded in §7. Slices 2–3 (C1 runaway protection) remain
+pending execution against this plan.
+
 **Provenance.** Patterns are translated at the architecture level from
 FrontierAgent (Apache-2.0, v0.1.0 unreleased, active — last commit 2026-10-02)
 and its pinned engine `apodex-agent-core==0.12.2` (PyPI; engine mechanisms
@@ -247,6 +253,21 @@ does not fight the pin. Effort: ~0.5 day.
   agents), the search-specific rollback (the generic guard covers the
   class).
 
+**Design revision (2026-10-02, during Slice 1 execution).** The
+batch-signature design above was revised before landing: zed-kask
+dispatches tool calls as they stream in (`handle_tool_use_event` fires per
+event; tools start during streaming), so there is no pre-execution point
+where the whole batch is known. The landed guard is call-level — a
+per-`(tool, input)` consecutive-success streak that mirrors the failure
+side exactly (same per-message dedup via `record_success_for_message`,
+same check-before-call point, same warn-3/refuse-5 ladder via `hard_cap_for`,
+failure resets streak symmetric to success resetting failures).
+Consequence accepted and recorded: a call that stays identical across
+evolving batches (e.g., re-reading one unchanged file while varying a
+sibling grep) accumulates its own streak and is hinted at 3 — which
+mechanically enforces the D26 prompt guidance against re-reading after
+success.
+
 **Essentialist.** Exist: measured class (71%/87/198) plus verified
 absence. Surface: extends one module, reuses `input_hash`, the verdict
 ladder, and the injection path; no new file. Contract: extends the
@@ -398,6 +419,16 @@ Slice 1 tracker tests. C1's ladder termination is a bounded loop by
 construction — unit tests pin it; no Lean formalization (a proof would
 verify the spec formalization, not the Rust; consistent with the review's
 Phase 7 reasoning).
+
+**Implementation mapping (2026-10-02).** The spec's `step` models the
+recorded streak (advance on identical, reset on distinct); the Rust
+implementation checks the PRIOR streak before dispatch — the failure
+side's check-before-call contract — so the hint lands on the dispatch
+after the 3rd identical success and the refusal after the hard cap.
+`record_failure_inner`'s streak reset is an additional reset-to-1 path the
+spec does not model; it preserves all four theorems (a reset only ever
+makes streaks smaller). The spec's `Batch`/signature corresponds to the
+implementation's `(tool_name, input_hash)` key.
 
 ## 13. Open questions for the operator
 

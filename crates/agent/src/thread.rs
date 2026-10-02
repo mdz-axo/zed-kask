@@ -4589,6 +4589,47 @@ impl Thread {
             crate::tool_retry_tracker::RetryVerdict::Allow => None,
         };
 
+        // Success-repetition guard — the complement of the failure cap
+        // above: consecutive identical SUCCESSFUL executions of this
+        // (tool, input) pair. The failure side cannot see this class
+        // (`record_success_for_message` resets it); measured on the source system, 71%
+        // of budget-exhausted sub-agents died inside runs of ten or more
+        // consecutive byte-identical calls. Same ladder as the failure
+        // side: hint after 3 prior identical successes, refuse after the
+        // per-tool hard cap. A key can never hold both a failure count and
+        // a success streak (each outcome resets the other), so at most one
+        // of the two warnings is present.
+        let repeat_hint: Option<String> = match self.kask.check_repetition(tool_name_str, &input) {
+            crate::tool_retry_tracker::RepeatVerdict::Refuse { streak } => {
+                let content =
+                    crate::tool_retry_tracker::format_repeat_refusal(tool_name_str, streak);
+                log::warn!(
+                    "Tool '{tool_name_str}' repetition cap reached \
+                     ({streak} consecutive identical successes) — refusing"
+                );
+                return Some(Task::ready((
+                    owning_message_ix,
+                    LanguageModelToolResult {
+                        content: vec![LanguageModelToolResultContent::Text(Arc::from(content))],
+                        tool_use_id: tool_use.id,
+                        tool_name: tool_use.name,
+                        is_error: true,
+                        output: None,
+                    },
+                )));
+            }
+            crate::tool_retry_tracker::RepeatVerdict::Hint { streak } => {
+                let hint = crate::tool_retry_tracker::format_repeat_hint(tool_name_str, streak);
+                log::warn!(
+                    "Tool '{tool_name_str}' repetition hint \
+                     ({streak} consecutive identical successes)"
+                );
+                Some(hint)
+            }
+            crate::tool_retry_tracker::RepeatVerdict::Allow => None,
+        };
+        let retry_warning = retry_warning.or(repeat_hint);
+
         log::debug!("Running tool {}", tool_use.name);
 
         // Skill step tracker — record every tool call made during a skill
@@ -4707,10 +4748,16 @@ impl Thread {
                     if let Some(name) = activated_skill {
                         *active_skill.borrow_mut() = Some(name.into());
                     }
-                    // Record success — resets the failure counter for this key.
-                    retry_tracker
-                        .borrow()
-                        .record_success(&tool_name_for_tracking, &input_for_tracking);
+                    // Record success — resets the failure counters for this
+                    // key AND advances the consecutive-success streak for the
+                    // identical (tool, input) pair, deduped per assistant
+                    // message (sibling identical calls in one batch count
+                    // once — the same dedup as the failure side).
+                    retry_tracker.borrow().record_success_for_message(
+                        &tool_name_for_tracking,
+                        &input_for_tracking,
+                        owning_message_ix,
+                    );
                     let contains_image = output
                         .llm_output
                         .iter()
@@ -13877,7 +13924,7 @@ mod tests {
                 .kask
                 .retry_tracker_handle()
                 .borrow()
-                .record_success(tool_name, &input);
+                .record_success_for_message(tool_name, &input, 0);
         });
 
         let verdict = thread.read_with(cx, |thread, _| {
@@ -13885,7 +13932,7 @@ mod tests {
         });
         assert!(
             matches!(verdict, crate::tool_retry_tracker::RetryVerdict::Allow),
-            "check after record_success should return Allow (reset), got {:?}",
+            "check after record_success_for_message should return Allow (reset), got {:?}",
             verdict
         );
     }

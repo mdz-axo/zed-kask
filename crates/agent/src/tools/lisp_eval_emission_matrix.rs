@@ -174,6 +174,52 @@ fn unbound_symbol_with_empty_env_names_the_empty_binding_list() {
     assert_eq!(out, Err("unbound symbol: a — env bindings: []".to_string()));
 }
 
+// ── env: the wrapped-scalar class (the 2026-10-02 lockout; L3 closes it) ────
+
+#[test]
+fn env_wrapped_scalar_type_error_teaches_the_flatten_fix() {
+    // The model wraps each scalar in a typed object: {"a": {"n": 1}}
+    // instead of {"a": 1}. Deserialization SUCCEEDS — the object becomes
+    // an association list — and the form fails with "type error: expected
+    // number, got list", an error that named neither the binding nor the
+    // fix. Observed live 2026-10-02: three identical retries across two
+    // lisp_eval gate forms, including one under explicit deliberation to
+    // emit bare scalars (skill_use_issue:hypothesis-framer /
+    // skill_use_issue:region-routing) — the wrapping is deterministic for
+    // this emitter, so the error must teach on the FIRST failure. L3: the
+    // type error names the object-carrying bindings and the flatten fix.
+    let out = run(json!({"form": "(+ a 1)", "env": {"a": {"n": 1}}}));
+    assert_eq!(
+        out,
+        Err("type error: expected number, got list — env bindings carrying objects (objects become association lists): [\"a\"]. If you wrapped a scalar in an object, pass the scalar directly: {\"a\": 1}, not {\"a\": {\"n\": 1}}".to_string())
+    );
+}
+
+#[test]
+fn type_error_from_an_array_binding_keeps_the_plain_message() {
+    // An array binding also reaches arithmetic as a list, but the fix is
+    // different (do not pass an array to arithmetic) — no object bindings,
+    // no wrapped-scalar teaching. The plain message stays.
+    let out = run(json!({"form": "(+ a 1)", "env": {"a": [1]}}));
+    assert_eq!(
+        out,
+        Err("type error: expected number, got list".to_string())
+    );
+}
+
+#[test]
+fn type_error_with_object_bindings_but_non_list_actual_keeps_the_plain_message() {
+    // An object binding is present but the failing value is a string, not
+    // a list — the objects are not the culprit, so the enrichment stays off
+    // (no false teaching: the hint fires only on the wrapped-scalar
+    // signature, actual == "list").
+    let out = run(json!({"form": "(+ \"x\" 1)", "env": {"a": {"n": 1}}}));
+    assert_eq!(
+        out,
+        Err("type error: expected number, got string".to_string())
+    );
+}
+
 // ── form variants ───────────────────────────────────────────────────────────
 
 #[test]

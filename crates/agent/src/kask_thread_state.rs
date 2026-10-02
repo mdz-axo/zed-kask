@@ -314,6 +314,20 @@ impl KaskThreadState {
         self.tool_retry_tracker.borrow().check(tool_name, input)
     }
 
+    /// Check the success-repetition streak before running a tool: the guard
+    /// over consecutive identical SUCCESSFUL executions of the same
+    /// (tool, input) pair — the class the failure-side check above cannot
+    /// see (a success resets the failure counters).
+    pub fn check_repetition(
+        &self,
+        tool_name: &str,
+        input: &serde_json::Value,
+    ) -> crate::tool_retry_tracker::RepeatVerdict {
+        self.tool_retry_tracker
+            .borrow()
+            .check_repetition(tool_name, input)
+    }
+
     // ── Deferred tool results ────────────────────────────────────────
 
     /// Enqueue a deferred tool result.

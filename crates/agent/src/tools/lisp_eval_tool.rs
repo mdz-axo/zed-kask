@@ -50,6 +50,10 @@ pub struct LispEvalToolInput {
     /// converted to Lisp values: objects become association lists, arrays
     /// become lists, numbers stay numbers, strings stay strings.
     ///
+    /// Pass scalars directly: `{"a": 1, "b": true}`, not `{"a": {"n": 1}}` —
+    /// an object value becomes an association list, so a wrapped scalar
+    /// reaches arithmetic as a list and fails with a type error.
+    ///
     /// Uses `HashMap<String, AnyJsonValue>` (not `serde_json::Value`) so the
     /// generated schema is `{"type":"object","additionalProperties":{}}` — a
     /// bare `AnyJsonValue` emits `{}` (any value), which the model doesn't
@@ -231,6 +235,21 @@ pub fn evaluate_lisp(input: LispEvalToolInput) -> Result<Value, String> {
         .env
         .get("env")
         .is_some_and(|value| value.as_object().is_some());
+    // Bindings whose value is a JSON object — the wrapped-scalar signature.
+    // An object becomes an association list, so a scalar wrapped as
+    // `{"n": 1}` reaches a scalar position as a list and fails with
+    // "got list" — an error that (pre-L3) named neither the binding nor
+    // the fix. Observed live 2026-10-02: three identical retries across two
+    // lisp_eval gate forms, including one under explicit deliberation to
+    // emit bare scalars — the wrapping is deterministic for this emitter,
+    // so the error must teach on the FIRST failure (lisp-repair L1).
+    let mut object_bindings: Vec<String> = input
+        .env
+        .iter()
+        .filter(|(_, value)| value.as_object().is_some())
+        .map(|(key, _)| key.clone())
+        .collect();
+    object_bindings.sort();
     let env_value = {
         // Canonical order: env keys are sorted before the object is built, so
         // the boundary is deterministic across processes (HashMap iteration
@@ -264,6 +283,22 @@ pub fn evaluate_lisp(input: LispEvalToolInput) -> Result<Value, String> {
                 );
             }
             message
+        }
+        // The type error teaches when the wrapped-scalar signature is
+        // present: an object-valued binding reached a scalar position
+        // (surfacing as "got list"). Names the suspects and the fix so the
+        // first error changes the next emission; a type error without
+        // object bindings (or with a non-list actual — the objects are not
+        // the culprit) keeps the plain message.
+        hkask_lisp::LispError::TypeError { expected, actual }
+            if actual == "list" && !object_bindings.is_empty() =>
+        {
+            format!(
+                "type error: expected {expected}, got {actual} — env bindings \
+                 carrying objects (objects become association lists): \
+                 {object_bindings:?}. If you wrapped a scalar in an object, \
+                 pass the scalar directly: {{\"a\": 1}}, not {{\"a\": {{\"n\": 1}}}}"
+            )
         }
         other => other.to_string(),
     })
