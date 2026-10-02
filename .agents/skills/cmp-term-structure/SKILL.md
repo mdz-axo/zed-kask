@@ -14,7 +14,8 @@ matching compares against 1m/3m/6m (`hkask_forecast::CMP_TENORS_YEARS`).
 
 **Reference model.** The U.S. Treasury constant-maturity yield curve
 (interpolation to fixed tenors) applied to prediction-market contracts,
-with log-odds interpolation.
+with log-odds interpolation; the short-end/horizon-effects rationale
+behind the tenor grid is arXiv:2602.19520 (carried at `cmp.rs:150`).
 
 ## D/P labelling
 
@@ -74,8 +75,11 @@ ladder → context → indices → tree → coherence → duration matching.
    portfolios, and returns `indices` — an array of
    ProvenancedCmpIndex objects with full provenance.
 4. Read the per-venue report: `withheld_buckets` are buckets with no
-   eligible bracket — they are withheld, never fabricated. Report every
-   withheld bucket and its rejection reasons to the operator.
+   eligible bracket — they are withheld, never fabricated. The report
+   lists them as labels with a capped contract-level rejection sample
+   (`take(5)`), not a per-bucket reason map: report every withheld
+   bucket, and count as unexplained any bucket the sample's reasons do
+   not cover — when in doubt, count it unexplained and report it.
 
 ### Phase 3 — Compose and test coherence
 
@@ -99,6 +103,10 @@ ladder → context → indices → tree → coherence → duration matching.
    (curve as a tenor-constituent portfolio) or
    `market_cmp_portfolio_store` (solved maturity-bucketed portfolios).
    Both write transaction-ledger portfolios in the portfolio server.
+   Note: `market_cmp_index_store` takes no context parameters and
+   always resolves the curated default — after an operator context
+   override, `market_cmp_portfolio_store` (which carries the context
+   fields) is the context-faithful persistence path.
 9. For horizon matching against an equity, call `equity_duration`
    (companies server) with the symbol and read `cmp_tenor_gaps` — the
    maturity-transformation gap against the fixed CMP tenors. Pair
@@ -120,6 +128,30 @@ ladder → context → indices → tree → coherence → duration matching.
     context (with the operator) or report the discrepancy. Bound: at
     most one operator-negotiated context adjustment per run; a second
     unreconciled slope reports the discrepancy and ends the run.
+
+## Regression case
+
+All receipts executed live through `lisp_eval` (2026-10-01, batch-13 audit),
+over the Convergence form:
+
+- Reconciled: `{withheld_unexplained: 0, slope: 0.15, up: true}` →
+  `"reconciled"` — the slope sign matches the accepted direction.
+- Withheld unexplained: same env with `withheld_unexplained: 1` →
+  `"withheld_unexplained"` — a withheld bucket with no rejection reason
+  dominates; report it, never fill it from an adjacent tenor.
+- Slope undetermined: `slope: null` (30d or 1y uncovered) →
+  `"slope_undetermined"` — unknown is reported as unknown, not reconciled.
+- Slope contradicts context: `slope: -0.15` with `up: true` →
+  `"slope_contradicts_context"` — the numeric comparison, never a judged sign.
+- Flat: `slope: 0` → `"flat"`.
+
+The skill's form is executed at use time, never anchored in code.
+
+## Registry Templates
+
+This skill owns no registry templates — the pipeline is the MCP servers'
+  tool chain (prediction-markets, scenarios, companies) and the Convergence
+  form above.
 
 ## Constraints
 
