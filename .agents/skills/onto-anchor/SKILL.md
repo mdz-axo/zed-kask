@@ -22,7 +22,7 @@ mechanical step.
 |------|------|-------------------|
 | Resolve a term; traverse a relation | D | `onto_anchor` tool output |
 | Decide which words are domain terms worth anchoring | P | operator, via the ruling request and review of the output |
-| Record a ruling | D | `cargo test -p hkask-bridge-ontology` (`all_terms_are_official`) |
+| Record a ruling | D | `cargo test -p hkask-bridge-ontology` (the ruling's guards: `every_entry_cites_authority` plus the per-term tests; `all_terms_are_official` guards the published-source constants) |
 
 ## When to Use
 
@@ -43,7 +43,7 @@ mechanical step.
   `kask/crates/hkask-bridge-ontology/src/derived.rs` after an operator ruling,
   not something this skill does at run time.
 
-## The canonical pattern
+## Reference model — the canonical pattern
 
 The bridge crate is the single source of truth for ontology vocabulary
 (`kask/crates/hkask-bridge-ontology/README.md`). Its published index is
@@ -83,7 +83,8 @@ ladder (P8.3, `axis.rs` and the bridge root docs):
 records require re-tagging. A published resolution carries the source file
 and its own `definition` **if supplied** (an absent definition is omitted,
 not emitted as `null` or inferred). Publisher deprecation/supersession is
-reported in a separate `status` field: `"[deprecated]"` must never be treated
+reported in a separate `status` field — the values are `"deprecated"`
+and `"superseded_by:<concept>"`, and neither is ever to be treated
 as a definition. Read `status` before relying on a published sense. When
 several vocabularies publish the same word, every other sense
 is listed in `alternatives` (schema.org's `Game` is a creative work; SUMO's
@@ -112,10 +113,11 @@ ruling (recorded in the derived registry) improves it.
   resolves any term as before. An optional `relation_query` asks for outgoing
   neighbors (no `to`; `max_hops` must be 1, its default) or a bounded directed
   path (`to` term; `max_hops` 1–4, default 2). Each edge states its relation and authority. The graph
-  includes resolved derived-concept constituents and, from the full SUMO and
-  schema.org sources, every directly stated parent (`has_parent`) and inverse
-  property (`inverse_of`). It adds no inferred or transitive edges and
-  contains no facts about particular instances.
+  includes resolved derived-concept constituents and, from every pinned
+  published source (not only SUMO and schema.org), each directly stated
+  parent (`has_parent`) and inverse property (`inverse_of`). It adds no
+  inferred or transitive edges and contains no facts about particular
+  instances.
 
 ## Process
 
@@ -127,9 +129,10 @@ ruling (recorded in the derived registry) improves it.
    edges. Only assert the relationship actually stated by the directed,
    provenance-carrying path. `no_supported_path` means this bounded, partial
    graph lacks a path, not that the relation is false; `coarse_anchor` forbids
-   traversal. An inverse-property edge connects property *concepts*, never
-   proves an instance has or is part of another instance. Do not call the
-   graph when the task needs no relation.
+   traversal; `budget_exhausted` means the hop bound cut the walk short —
+   report it as bounded, never as absence. An inverse-property edge connects
+   property *concepts*, never proves an instance has or is part of another
+   instance. Do not call the graph when the task needs no relation.
 3. **Domain or derived rung** → compute from the published identity (rung 1)
    or the recorded identity (rung 2). Cite the concept in your output so
    the claim is redeemable against the published anchor.
@@ -147,6 +150,32 @@ ruling (recorded in the derived registry) improves it.
    formula survived two operator corrections and a 112-green test suite —
    the ruling that fixed it is the derived registry's first authority
    citation).
+
+## Regression case
+
+All receipts executed live through `onto_anchor` (2026-10-01, batch-13 audit):
+
+- Derived rung: `net margin` → tier `derived`, identity "net income / revenue",
+  authority "operator ruling 2026-09-10 (stated three times)" — the ruling
+  that fixed the pre-interest operating formula is the derived registry's
+  first authority citation, and the term resolves there ever after.
+- Domain rung with alternatives: `corporation` → tier `domain_supplement`,
+  `fibo-be-le-cb:Corporation` (FIBO Q2 Release) with the SUMO and schema.org
+  senses listed in `alternatives` — several vocabularies publishing the same
+  word is the normal case; read them before relying on the chosen sense.
+- Relation traversal (the skill's own documented example):
+  `{"term":"sustainable growth rate","relation_query":{"to":"net margin","max_hops":2}}`
+  → `path_found` through the recorded constituent chain
+  (sustainable_growth_rate —has_constituent→ return_on_equity
+  —has_constituent→ net_margin), each edge carrying its authority — only the
+  relationship actually stated by the directed path is asserted.
+
+The skill's steps are tool calls, never code-anchored forms.
+
+## Registry Templates
+
+This skill owns no registry templates — it is the process surface over the
+`onto_anchor` tool and the bridge crate's build-gated registry.
 
 ## Constraints
 
