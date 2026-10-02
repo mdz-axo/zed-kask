@@ -94,7 +94,7 @@ Act:   Phase 4 — Erase     → Check Prop/Type claims; revise and rerun or rep
 
 1. Render `lean-prover/lean-prover-refute` with the actual compiler output. For a decidable universal claim, try a specific counterexample as a *separate* `example : ¬ P witness := by decide`; a failed attempt to prove `P witness` is evidence about that instance, not a universal proof of negation. Distinguish false proposition, invalid tactic, missing instance, and missing import.
 2. Run a negative control expected to fail (`example : 1 = 2 := by decide`) and inspect the error, not just its exit status. In a Prop/Type question also test `Exists` elimination into data. See `kask/scripts/test-lean-prover-skill.sh` for runnable controls; give it a Lean binary path.
-3. Call `lisp_eval` only for deterministic *workflow bookkeeping*, e.g. `form: (and (= (length obligations) (length checks)) (not (member "unverified" checks)) (not (member "failed" checks)))`, `env: {"obligations":["base","step"],"checks":["verified","verified"]}`. This checks counts and statuses supplied by the agent, not Lean syntax, semantics, axioms, or proof validity. Always retain the corresponding Lean logs. On failure, revise from the diagnostic and rerun at most twice; otherwise report the unsolved obligation.
+3. Call `lisp_eval` only for deterministic *workflow bookkeeping*, e.g. `form: (and (= (length obligations) (length checks)) (not (member "unverified" checks)) (not (member "failed" checks)))`, `env: {"obligations":["base","step"],"checks":["verified","verified"]}`. This checks counts and statuses supplied by the agent, not Lean syntax, semantics, axioms, or proof validity. Always retain the corresponding Lean logs. The form is a floor, not a proof gate: it rejects only `unverified` and `failed` — a `sorry`-carrying check (`warnings`) or an `axioms_present` status passes this bookkeeping form and is caught by the axiom-policy gate (step 3 statuses and `#print axioms`), never by this form. On failure, revise from the diagnostic and rerun at most twice; otherwise report the unsolved obligation.
 
 ### lean-prover-erase
 
@@ -112,6 +112,29 @@ Act:   Phase 4 — Erase     → Check Prop/Type claims; revise and rerun or rep
 | `lean-prover-erase.j2` | Reason about proof erasure and irrelevance. Determine which proof terms are computationally relevant (in Type) vs irrelevant (in Prop). Assess whether the proof erases to a no-op or carries computational content. Identify small vs large elimination. Verify that the proof doesn't leak computational content across the Prop/Type boundary. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `lean-prover/lean-prover-anchor`) and a context object with the required variables.
+
+Template context variables (from each template's [inference] contract):
+- `lean-prover-anchor.j2`: `proof_obligation`, `existing_proof`, `context`, `lean_diagnostics`, `iteration_focus`
+- `lean-prover-construct.j2`: `proof_obligation`, `anchor`, `existing_proof`, `lean_code_actions`, `iteration_focus`
+- `lean-prover-refute.j2`: `proof_obligation`, `proof_attempt`, `anchor`, `lean_diagnostics`
+- `lean-prover-erase.j2`: `proof_obligation`, `proof_attempt`, `anchor`, `erase_diagnostics`
+
+## Regression case
+
+All receipts executed live through `lisp_eval` (2026-10-01, batch-12 audit):
+
+- Workflow bookkeeping, green: two obligations, two verified checks → `true`.
+- Bookkeeping, unverified: same counts with one `"unverified"` check →
+  `false` — the form checks counts and statuses supplied by the agent, never
+  Lean syntax, semantics, axioms, or proof validity (only Lean checks Lean
+  propositions; the Lean logs are retained alongside).
+- Bookkeeping, count mismatch: two obligations, one check → `false`.
+- Bookkeeping floor, axiom status passes: checks
+  `["axioms_present","axioms_present"]` → `true` — the form is a floor, not
+  a proof gate; the axiom-policy gate (step 3 statuses, `#print axioms`)
+  catches what it cannot.
+
+The skill's form is executed at use time, never anchored in code.
 
 ## Constraints
 
