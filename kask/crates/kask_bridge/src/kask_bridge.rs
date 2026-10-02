@@ -58,7 +58,9 @@ pub use inference_chat::{
 };
 pub use inference_edit_prediction::BridgeEditPredictionPort;
 pub use inference_embedding::LanguageModelEmbeddingPort;
-pub use inference_ipc_server::{InferenceIpcServer, WorktreeSpawner, set_worktree_spawner};
+pub use inference_ipc_server::{
+    InferenceIpcServer, WorktreeSpawner, set_worktree_spawner, swap_inference_ipc_ports,
+};
 pub use inference_providers::{
     DATA_SERVICES, DataServiceDescriptor, INFERENCE_PROVIDERS, InferenceProviderDescriptor,
     ResolvedEmbeddingCredentials, credential_url_for_key, credential_urls_for_mcp,

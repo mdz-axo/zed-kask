@@ -2454,6 +2454,18 @@ fn main() {
                         // model is configured. Without this, corpus embedding
                         // calls fail with "embedding port not configured" when
                         // the no-model fallback path runs.
+                        //
+                        // zed-kask: P7h — publish the same establishment deadline
+                        // the real wiring publishes (`wire_kask_inference_stack`
+                        // sets it from the same setting), so
+                        // `HKASK_INFERENCE_TIMEOUT_SECS` is identical across
+                        // the no-op→real port swap. Without this the re-wire's
+                        // timeout set changed the env map a second time and the
+                        // env-diff restart logic restarted every child even
+                        // with the socket path stable.
+                        kask_bridge::set_inference_timeout_secs(
+                            kask_settings.general.inference_timeout_secs,
+                        );
                         let no_model_port: std::sync::Arc<dyn hkask_types::InferencePort> =
                             std::sync::Arc::new(kask_bridge::NoModelInferencePort);
                         // No tool port here: the no-op port means no chat model
@@ -3403,41 +3415,71 @@ fn wire_kask_inference_stack(
     // child process never holds token material.
     let tool_port_for_ipc: Option<std::sync::Arc<dyn hkask_tool_port::ToolPort>> =
         Some(mcp_runtime.clone());
-    match kask_bridge::InferenceIpcServer::start(
-        inference_port,
-        embedding_port,
-        tool_port_for_ipc,
-        cx,
+    // zed-kask: P7h — swap-first. When the no-op server from the deferred
+    // task is holding the socket, replace its serving ports in place: the
+    // socket path (and every MCP child's `HKASK_INFERENCE_SOCKET` /
+    // `HKASK_INFERENCE_TIMEOUT_SECS`) is unchanged, so the env-diff restart
+    // logic in `sync_kask_mcp_runtime_servers` sees no change and no child
+    // restarts. The pre-P7h behavior started a SECOND server at a new
+    // nonce path, turning the model-resolved re-wire into an env change
+    // that killed and respawned the whole first launch wave (measured
+    // 2026-10-02: 30 restart events, portfolio 4× in 13 s, ~2.5 min to
+    // fleet stability). Fresh-start remains the fallback for the no-server
+    // case: the no-op start failed, or the model was already configured at
+    // deferred-task time so this call starts the first server.
+    let mut ipc_established = false;
+    if kask_bridge::swap_inference_ipc_ports(
+        inference_port.clone(),
+        embedding_port.clone(),
+        tool_port_for_ipc.clone(),
     ) {
-        Ok(ipc_server) => {
-            let socket_path = ipc_server.socket_path().to_string_lossy().to_string();
-            kask_bridge::set_inference_socket_path(&socket_path);
-            log::info!(
-                "hKask inference IPC server started at {socket_path} — \
-                 MCP servers will route inference through zed"
-            );
-            // The server's tasks are detached inside `start` and run for the
-            // process lifetime: the tokio listener (detach-on-drop) and the
-            // GPUI-side channel tasks (explicit `.detach()` — a GPUI `Task`
-            // is CANCELLED on handle drop, so storing the handles here would
-            // kill the credential/list_models/worktree channels when this
-            // closure's scope ends). Dropping this value is therefore
-            // harmless; the binding exists only to acknowledge the result.
-            let _ipc_server = ipc_server;
-            // zed-kask: D3/D8 — refresh the single managed path after the
-            // inference socket is available. First remove stale per-project
-            // descriptors and raw shadow entries, then restart governed
-            // McpRuntime children whose environment changed; otherwise those
-            // children retain a missing inference socket.
-            sync_kask_mcp_servers(cx);
-            sync_kask_mcp_runtime_servers(mcp_runtime, restart_env, launch_pass_complete, cx);
+        log::info!(
+            "hKask inference IPC ports swapped in place (no-op → real) — socket path \
+             unchanged, no MCP child restarts"
+        );
+        ipc_established = true;
+    } else {
+        match kask_bridge::InferenceIpcServer::start(
+            inference_port,
+            embedding_port,
+            tool_port_for_ipc,
+            cx,
+        ) {
+            Ok(ipc_server) => {
+                let socket_path = ipc_server.socket_path().to_string_lossy().to_string();
+                kask_bridge::set_inference_socket_path(&socket_path);
+                log::info!(
+                    "hKask inference IPC server started at {socket_path} — \
+                     MCP servers will route inference through zed"
+                );
+                // The server's tasks are detached inside `start` and run for the
+                // process lifetime: the tokio listener (detach-on-drop) and the
+                // GPUI-side channel tasks (explicit `.detach()` — a GPUI `Task`
+                // is CANCELLED on handle drop, so storing the handles here would
+                // kill the credential/list_models/worktree channels when this
+                // closure's scope ends). Dropping this value is therefore
+                // harmless; the binding exists only to acknowledge the result.
+                let _ipc_server = ipc_server;
+                ipc_established = true;
+            }
+            Err(e) => {
+                log::warn!(
+                    "Failed to start inference IPC server: {e} — \
+                     MCP servers will fall back to MediaRouter (media-only)"
+                );
+            }
         }
-        Err(e) => {
-            log::warn!(
-                "Failed to start inference IPC server: {e} — \
-                 MCP servers will fall back to MediaRouter (media-only)"
-            );
-        }
+    }
+    if ipc_established {
+        // zed-kask: D3/D8 — refresh the single managed path after the
+        // inference socket is available. First remove stale per-project
+        // descriptors and raw shadow entries, then restart governed
+        // McpRuntime children whose environment changed. With the stable
+        // socket + in-place port swap (P7h) there is no diff to restart on
+        // the re-wire — these syncs are the socketless→socket transition
+        // for the fresh-start path and a no-op for the swap path.
+        sync_kask_mcp_servers(cx);
+        sync_kask_mcp_runtime_servers(mcp_runtime, restart_env, launch_pass_complete, cx);
     }
 
     // The skill execution and edit-prediction wiring live in the separate
@@ -3747,6 +3789,21 @@ fn sync_kask_mcp_runtime_servers(
                              changed keys: {}",
                             changed_env_keys(&previous, &env).join(", ")
                         );
+                        // zed-kask: P7h — record the new baseline AT RESTART
+                        // INITIATION, on the same synchronous stretch as the
+                        // diff decision, so a sync that fires while the async
+                        // stop/start is still in flight sees the new env as
+                        // the baseline and restarts nothing. Recording only
+                        // after the async start completed let the 2026-10-02
+                        // startup's overlapping syncs (socket-set re-sync +
+                        // settings observer + wiring re-sync) each re-restart
+                        // the same server — portfolio 4× in 13 s. The deferred
+                        // launch loop already records before starting; this
+                        // is the same discipline.
+                        last_env
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .insert(server_id.to_string(), env.clone());
                         to_restart.push((server_id, format!("hkask-mcp-{server_id}"), env));
                     }
                 }
@@ -3761,6 +3818,14 @@ fn sync_kask_mcp_runtime_servers(
                     // server with no baseline is a genuine load transition or
                     // a retry of a failed start.
                     if loaded && launch_pass_complete.load(std::sync::atomic::Ordering::SeqCst) {
+                        // zed-kask: P7h — record at initiation (the same
+                        // discipline as the restart arm and the deferred
+                        // launch loop); removed again on start failure so the
+                        // next pass retries.
+                        last_env
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .insert(server_id.to_string(), env.clone());
                         to_start.push((server_id, format!("hkask-mcp-{server_id}"), env));
                     }
                 }
@@ -3805,21 +3870,23 @@ fn sync_kask_mcp_runtime_servers(
                     .await
                 {
                     Ok(()) => {
-                        last_env
-                            .lock()
-                            .unwrap_or_else(|e| e.into_inner())
-                            .insert(server_id.to_string(), env);
+                        // The baseline was recorded at initiation (the decision
+                        // loop); nothing to record here.
                         log::info!(
                             "Kask MCP server '{server_id}' loaded by settings — started \
                              (McpRuntime)"
                         );
                     }
                     Err(e) => {
-                        // No baseline recorded — the next observer pass retries
-                        // (the same retry-on-next-pass semantics as the restart
-                        // path's failure arm). The failed start still recorded
-                        // a launch spec, so a tool call also reconnects on
-                        // demand.
+                        // Drop the initiation-recorded baseline so the next
+                        // observer pass retries through the start path (no
+                        // baseline + loaded + latch). The failed start still
+                        // recorded a launch spec, so a tool call also
+                        // reconnects on demand.
+                        last_env
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .remove(server_id);
                         log::warn!(
                             "Kask MCP server '{server_id}' failed to start: {e} — set \
                              HKASK_MCP_{}_BIN to the binary path",
@@ -3835,19 +3902,18 @@ fn sync_kask_mcp_runtime_servers(
                     .await
                 {
                     Ok(()) => {
-                        // `insert`, not `get_mut().expect()`: the baseline entry is
-                        // written by the launch loop, but this observer can fire
-                        // concurrently with it, and a missing entry must record the
-                        // new baseline rather than panic (`.rules`: no `expect` on
-                        // fallible lookups).
-                        last_env
-                            .lock()
-                            .unwrap_or_else(|e| e.into_inner())
-                            .insert(server_id.to_string(), env);
+                        // The baseline was recorded at initiation (the decision
+                        // loop) — the insert-vs-expect concern is moot there
+                        // because the decision loop writes the entry it just
+                        // read, on the same synchronous stretch.
                     }
                     Err(e) => {
-                        // Keep the old baseline so a subsequent settings
-                        // change retries the restart.
+                        // Drop the initiation-recorded baseline so the next
+                        // observer pass retries through the start path (no
+                        // baseline + loaded + latch → to_start). The
+                        // initiation record already prevented duplicate
+                        // restarts while this attempt was in flight; keeping
+                        // it after a failure would suppress the retry.
                         //
                         // `stop_server` already dropped the connection, so the
                         // runtime has no live server for `server_id` right now.
@@ -3856,6 +3922,10 @@ fn sync_kask_mcp_runtime_servers(
                         // another settings change — but the failure is still an
                         // operator-visible warning, since a broken binary will not
                         // heal on its own.
+                        last_env
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .remove(server_id);
                         log::warn!(
                             "Kask MCP server '{server_id}' restart failed: {e} — the runtime \
                              will retry the connection on the next tool call"
@@ -5267,6 +5337,36 @@ mod tests {
         assert!(
             init < retention,
             "retention override must be set after agent_ui::init"
+        );
+    }
+
+    // zed-kask: P7h — the restart baseline must be recorded at restart
+    // INITIATION (in the decision loop, before the async stop/start is
+    // spawned), not after the async start completes; recording only on
+    // completion let the 2026-10-02 startup's overlapping syncs each
+    // re-restart the same server (portfolio 4× in 13 s). Source-structure
+    // pin: the baseline insert sits between the env-changed branch and the
+    // to_restart push. Needles are split via concat! so this test's own
+    // source cannot satisfy them (the D43 source-pin pattern).
+    #[test]
+    fn kask_restart_baseline_is_recorded_at_initiation() {
+        let source = include_str!("main.rs");
+        let branch_needle = concat!("} else if previous != e", "nv {");
+        let insert_needle = concat!(".insert(server_id.to_string(), env", ".clone())");
+        let push_needle = concat!(
+            "to_restart.push((server_id, format!(\"hkask-mcp-{server",
+            "_id}\"), env))"
+        );
+        let branch = source
+            .find(branch_needle)
+            .expect("env-changed restart branch");
+        let insert = source[branch..]
+            .find(insert_needle)
+            .expect("baseline insert in the restart branch");
+        let push = source[branch..].find(push_needle).expect("to_restart push");
+        assert!(
+            insert < push,
+            "the baseline must be recorded before the restart is queued"
         );
     }
 

@@ -411,9 +411,6 @@ impl InferenceIpcServer {
             ))
         })?;
 
-        let port = inference_port.clone();
-        let emb_port = embedding_port;
-
         // Delegated `host/skill` activation reads the GPUI-held skill catalog;
         // same channel pattern as `ListModels` below.
         let (skill_tx, mut skill_rx) =
@@ -429,9 +426,48 @@ impl InferenceIpcServer {
         })
         .detach();
         let tools = tool_port.map(|inner| {
-            Arc::new(crate::host_skill_tools::HostSkillToolPort { inner, skill_tx })
-                as Arc<dyn hkask_tool_port::ToolPort>
+            Arc::new(crate::host_skill_tools::HostSkillToolPort {
+                inner,
+                skill_tx: skill_tx.clone(),
+            }) as Arc<dyn hkask_tool_port::ToolPort>
         });
+        // zed-kask: P7h — the serving backend lives behind a swappable slot
+        // so the model-resolved re-wire replaces the ports in place
+        // (`swap_inference_ipc_ports`) instead of starting a second server
+        // at a new socket path. The per-instance path made the no-op→real
+        // transition an env CHANGE — restart-by-design — killing and
+        // respawning every MCP child launched against the no-op server
+        // (measured 2026-10-02: 30 restart events, portfolio 4× in 13 s,
+        // ~2.5 min to fleet stability).
+        let backend_slot = Arc::new(IpcBackendSlot::new(
+            IpcBackend {
+                inference: inference_port,
+                embedding: embedding_port,
+                tools,
+            },
+            skill_tx,
+        ));
+        {
+            let mut guard = match IPC_BACKEND_SLOT.lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => {
+                    tracing::warn!(
+                        target: "hkask.inference.ipc",
+                        "IPC_BACKEND_SLOT mutex poisoned — recovering via into_inner"
+                    );
+                    poisoned.into_inner()
+                }
+            };
+            if guard.is_some() {
+                tracing::warn!(
+                    target: "hkask.inference.ipc",
+                    "a second InferenceIpcServer::start is replacing the running server's \
+                     backend slot — one server per process is the design (P7h); the previous \
+                     socket is orphaned"
+                );
+            }
+            *guard = Some(backend_slot.clone());
+        }
 
         // Spawn a GPUI-side task for ListModels requests. `AsyncApp` is not
         // `Send`, so we can't pass it into tokio::spawn. Instead, this task
@@ -539,18 +575,14 @@ impl InferenceIpcServer {
             loop {
                 match listener.accept().await {
                     Ok((stream, _)) => {
-                        let port = port.clone();
-                        let emb_port = emb_port.clone();
-                        let tools = tools.clone();
+                        let backend_slot = backend_slot.clone();
                         let list_models_tx = list_models_tx.clone();
                         let worktree_spawn_tx = worktree_spawn_tx.clone();
                         let provider_credential_tx = provider_credential_tx.clone();
                         tokio::spawn(async move {
                             handle_connection(
                                 stream,
-                                port,
-                                emb_port,
-                                tools,
+                                backend_slot,
                                 list_models_tx,
                                 Some(worktree_spawn_tx),
                                 provider_credential_tx,
@@ -583,15 +615,146 @@ impl InferenceIpcServer {
     }
 }
 
-/// Generate a unique Unix socket path inside the per-user private socket
-/// directory (see [`inference_socket_dir`]).
+/// The per-request dispatch targets of the running inference IPC server.
+/// Held behind [`IpcBackendSlot`] so the model-resolved re-wire replaces
+/// them in place — the socket path (and therefore every MCP child's
+/// `HKASK_INFERENCE_SOCKET` env) never changes across the no-op→real
+/// transition (P7h).
+#[derive(Clone)]
+pub(crate) struct IpcBackend {
+    pub(crate) inference: Arc<dyn InferencePort>,
+    pub(crate) embedding: Option<LanguageModelEmbeddingPort>,
+    pub(crate) tools: Option<Arc<dyn hkask_tool_port::ToolPort>>,
+}
+
+/// The swappable backend holder shared by the accept loop and the
+/// model-resolved re-wire. `skill_tx` is the delegated `host/skill`
+/// activation channel created once at [`InferenceIpcServer::start`] (its
+/// GPUI-side task is model-independent); every tool port installed through
+/// [`IpcBackendSlot::swap`] is wrapped in `HostSkillToolPort` against that
+/// same channel.
+pub(crate) struct IpcBackendSlot {
+    backend: std::sync::RwLock<IpcBackend>,
+    skill_tx: tokio::sync::mpsc::UnboundedSender<crate::host_skill_tools::SkillRequest>,
+}
+
+impl IpcBackendSlot {
+    pub(crate) fn new(
+        backend: IpcBackend,
+        skill_tx: tokio::sync::mpsc::UnboundedSender<crate::host_skill_tools::SkillRequest>,
+    ) -> Self {
+        Self {
+            backend: std::sync::RwLock::new(backend),
+            skill_tx,
+        }
+    }
+
+    /// Replace the serving backend. In-flight requests complete on the
+    /// backend they started with; each connection reads the backend per
+    /// request, so subsequent requests dispatch to the new one.
+    pub(crate) fn swap(
+        &self,
+        inference: Arc<dyn InferencePort>,
+        embedding: Option<LanguageModelEmbeddingPort>,
+        tool: Option<Arc<dyn hkask_tool_port::ToolPort>>,
+    ) {
+        let tools = tool.map(|inner| {
+            Arc::new(crate::host_skill_tools::HostSkillToolPort {
+                inner,
+                skill_tx: self.skill_tx.clone(),
+            }) as Arc<dyn hkask_tool_port::ToolPort>
+        });
+        let mut guard = match self.backend.write() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                tracing::warn!(
+                    target: "hkask.inference.ipc",
+                    "IpcBackendSlot lock poisoned — recovering via into_inner"
+                );
+                poisoned.into_inner()
+            }
+        };
+        *guard = IpcBackend {
+            inference,
+            embedding,
+            tools,
+        };
+    }
+
+    /// A snapshot of the current backend. Cheap: three `Arc`/`Option`
+    /// clones.
+    pub(crate) fn current(&self) -> IpcBackend {
+        match self.backend.read() {
+            Ok(guard) => guard.clone(),
+            Err(poisoned) => {
+                tracing::warn!(
+                    target: "hkask.inference.ipc",
+                    "IpcBackendSlot lock poisoned — recovering via into_inner"
+                );
+                poisoned.into_inner().clone()
+            }
+        }
+    }
+}
+
+/// The running server's swappable backend — populated by the first
+/// [`InferenceIpcServer::start`] in the process. The model-resolved re-wire
+/// reaches the running server through this slot instead of starting a second
+/// server (P7h).
+static IPC_BACKEND_SLOT: std::sync::Mutex<Option<Arc<IpcBackendSlot>>> =
+    std::sync::Mutex::new(None);
+
+/// Swap the serving ports of the running inference IPC server — the
+/// model-resolved re-wire path (`wire_kask_inference_stack` in zed's
+/// `main.rs`). The socket path is unchanged, so no MCP child's env changes
+/// and the env-diff restart logic in `sync_kask_mcp_runtime_servers`
+/// restarts nothing: the no-op→real transition is a port swap behind one
+/// stable socket, not a server replacement (P7h — the per-instance socket
+/// path made this transition an env CHANGE; measured 2026-10-02: 30 restart
+/// events, portfolio 4× in 13 s, ~2.5 min to fleet stability).
+///
+/// Returns `false` when no server is running (the no-op start failed, or
+/// the model was already configured at deferred-task time so no no-op
+/// server was started) — the caller falls back to
+/// [`InferenceIpcServer::start`].
+pub fn swap_inference_ipc_ports(
+    inference_port: Arc<dyn InferencePort>,
+    embedding_port: Option<LanguageModelEmbeddingPort>,
+    tool_port: Option<Arc<dyn hkask_tool_port::ToolPort>>,
+) -> bool {
+    let guard = match IPC_BACKEND_SLOT.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            tracing::warn!(
+                target: "hkask.inference.ipc",
+                "IPC_BACKEND_SLOT mutex poisoned — recovering via into_inner"
+            );
+            poisoned.into_inner()
+        }
+    };
+    match guard.as_ref() {
+        Some(slot) => {
+            slot.swap(inference_port, embedding_port, tool_port);
+            true
+        }
+        None => false,
+    }
+}
+
+/// Generate the inference IPC socket path — STABLE for the process
+/// lifetime (pid-keyed, no per-instance nonce). The no-op→real port
+/// transition swaps the serving backend behind this one socket (see
+/// [`IpcBackendSlot`]), so `HKASK_INFERENCE_SOCKET` never changes after the
+/// first set and the env-diff restart logic in the zed-side observer sees
+/// no change (P7h: the former per-instance nonce made the model-resolved
+/// re-wire an env CHANGE — restart-by-design — killing and respawning every
+/// MCP child that launched against the no-op server). A second editor
+/// process gets a different pid, hence a different path; a stale socket
+/// from a crashed process with a reused pid is removed at bind (see
+/// [`InferenceIpcServer::start`]).
 fn generate_socket_path() -> Result<PathBuf, std::io::Error> {
     let pid = std::process::id();
-    let nonce = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    Ok(inference_socket_dir()?.join(format!("kask-inference-{pid}-{nonce}.sock")))
+    Ok(inference_socket_dir()?.join(format!("kask-inference-{pid}.sock")))
 }
 
 /// Handle a single connection from an MCP server.
@@ -600,9 +763,7 @@ fn generate_socket_path() -> Result<PathBuf, std::io::Error> {
 /// port, and writes newline-delimited JSON responses.
 async fn handle_connection(
     stream: tokio::net::UnixStream,
-    port: Arc<dyn InferencePort>,
-    embedding_port: Option<LanguageModelEmbeddingPort>,
-    tool_port: Option<Arc<dyn hkask_tool_port::ToolPort>>,
+    backend_slot: Arc<IpcBackendSlot>,
     list_models_tx: Arc<
         tokio::sync::mpsc::UnboundedSender<(tokio::sync::oneshot::Sender<Vec<ModelListEntry>>,)>,
     >,
@@ -655,10 +816,14 @@ async fn handle_connection(
         };
 
         let id = request.id;
+        // Read the backend per request so a mid-connection port swap (the
+        // model-resolved re-wire) applies from the next request; the
+        // in-flight request completes on the backend it started with.
+        let backend = backend_slot.current();
         // One in-flight request per connection. Monitor EOF while dispatch is
         // pending so dropping a client cancels queued/provider work immediately.
         let outcome = tokio::select! {
-            result = dispatch(&port, embedding_port.as_ref(), tool_port.as_ref(),
+            result = dispatch(&backend.inference, backend.embedding.as_ref(), backend.tools.as_ref(),
                 &list_models_tx, worktree_spawn_tx.as_ref(), &provider_credential_tx, request) => result,
             next = reader.read_line() => {
                 match next {
@@ -1470,11 +1635,18 @@ mod tests {
                 capacity: Arc::new(tokio::sync::Semaphore::new(1)),
             });
             let port: Arc<dyn InferencePort> = pending.clone();
+            let (skill_tx, _skill_rx) = tokio::sync::mpsc::unbounded_channel();
+            let backend_slot = Arc::new(IpcBackendSlot::new(
+                IpcBackend {
+                    inference: port,
+                    embedding: None,
+                    tools: None,
+                },
+                skill_tx,
+            ));
             let handler = tokio::spawn(handle_connection(
                 server,
-                port,
-                None,
-                None,
+                backend_slot,
                 make_list_models_tx(),
                 None,
                 make_provider_credential_tx(),
@@ -2370,11 +2542,18 @@ mod tests {
         start.await.expect("A started");
         let (mut client, socket) = tokio::net::UnixStream::pair().expect("socket pair");
         let port: Arc<dyn InferencePort> = Arc::new(CannedInferencePort);
+        let (skill_tx, _skill_rx) = tokio::sync::mpsc::unbounded_channel();
+        let backend_slot = Arc::new(IpcBackendSlot::new(
+            IpcBackend {
+                inference: port,
+                embedding: None,
+                tools: None,
+            },
+            skill_tx,
+        ));
         let handler = tokio::spawn(handle_connection(
             socket,
-            port,
-            None,
-            None,
+            backend_slot,
             make_list_models_tx(),
             Some(tx.clone()),
             make_provider_credential_tx(),
@@ -2443,12 +2622,72 @@ mod tests {
     // ── Socket path / directory tests ──────────────────────────────────
 
     #[test]
-    fn generate_socket_path_produces_unique_paths() {
+    fn generate_socket_path_is_stable_within_a_process() {
         let path_a = generate_socket_path().unwrap();
-        // A tiny delay ensures the nonce (nanosecond timestamp) differs.
-        std::thread::sleep(std::time::Duration::from_millis(1));
         let path_b = generate_socket_path().unwrap();
-        assert_ne!(path_a, path_b, "socket paths must be unique");
+        assert_eq!(
+            path_a, path_b,
+            "the socket path must be stable for the process lifetime — a per-instance path \
+             turns the no-op→real re-wire into an env change that restarts every MCP child (P7h)"
+        );
+        assert!(
+            path_a
+                .to_string_lossy()
+                .contains(&format!("kask-inference-{}", std::process::id())),
+            "the path is pid-keyed so concurrent editor processes never collide"
+        );
+    }
+
+    // zed-kask: P7h — the model-resolved re-wire swaps the serving backend in
+    // place; these pins hold the swap mechanics.
+
+    #[test]
+    fn backend_slot_swap_replaces_serving_ports_in_place() {
+        let (skill_tx, _skill_rx) = tokio::sync::mpsc::unbounded_channel();
+        let initial: Arc<dyn InferencePort> = Arc::new(crate::NoModelInferencePort);
+        let slot = IpcBackendSlot::new(
+            IpcBackend {
+                inference: initial.clone(),
+                embedding: None,
+                tools: None,
+            },
+            skill_tx,
+        );
+
+        let before = slot.current();
+        assert!(
+            Arc::ptr_eq(&before.inference, &initial),
+            "current() must serve the backend the slot was built with"
+        );
+        assert!(before.tools.is_none());
+
+        let replacement: Arc<dyn InferencePort> = Arc::new(crate::NoModelInferencePort);
+        slot.swap(replacement.clone(), None, Some(Arc::new(CannedToolPort)));
+
+        let after = slot.current();
+        assert!(
+            Arc::ptr_eq(&after.inference, &replacement),
+            "swap must replace the inference port in place"
+        );
+        assert!(
+            after.tools.is_some(),
+            "swap must install the tool port (wrapped in HostSkillToolPort against the slot's skill channel)"
+        );
+    }
+
+    #[test]
+    fn swap_inference_ipc_ports_without_a_server_returns_false_and_keeps_the_socket_path() {
+        // No `InferenceIpcServer::start` runs in this test binary, so the
+        // global slot is empty: the swap must report false (the caller falls
+        // back to a fresh start) and must not touch the socket-path global —
+        // the re-wire never changes `HKASK_INFERENCE_SOCKET` (P7h).
+        crate::set_inference_socket_path("/tmp/kask-test-swap-socket-path.sock");
+        let swapped = swap_inference_ipc_ports(Arc::new(crate::NoModelInferencePort), None, None);
+        assert!(!swapped, "no server is running in this test process");
+        assert_eq!(
+            crate::get_inference_socket_path().as_deref(),
+            Some("/tmp/kask-test-swap-socket-path.sock")
+        );
     }
 
     #[test]
