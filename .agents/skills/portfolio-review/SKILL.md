@@ -13,7 +13,7 @@ from live quotes and interpreting the results honestly.
 
 ## Reference models and labels
 
-Time-weighted return and Modified Dietz money-weighted return (CFA Institute GIPS standards); contribution analysis; Brinson-Fachler attribution (Brinson & Fachler, 1985) when a benchmark portfolio exists. Every step is D: the portfolio server computes returns and contributions from the seeded price cache and refuses to run on missing prices. The only P elements are the review window and the benchmark choice (the operator's) and the narrative note.
+Time-weighted return and Modified Dietz money-weighted return (CFA Institute GIPS standards); contribution analysis; Brinson-Fachler attribution (Brinson & Fachler, 1985) when a benchmark portfolio exists. Note the server's `total_return` is a flow-adjusted holding-period return — it equals a time-weighted return when external flows fall at period boundaries; `modified_dietz` is the GIPS-recognized money-weighted figure. The computation steps are D: the portfolio server computes returns and contributions from the seeded price cache and refuses to run on missing prices. The P elements are the review window and the benchmark choice (the operator's), the seeding decisions (which quotes to fetch and thread into the cache), and the narrative note.
 
 - **Initial condition:** the ledger (`ledger_read`) and the seeded prices for every symbol held at `from` and `to`.
 - **D/P labelling:** every phase's tool call and its receipt (`ledger_read`, `stock_quote`/`historical_price`, `portfolio_seed_price`, `portfolio_returns`, `portfolio_contribution`, `portfolio_attribution`, `note_add`) is D — the tool is the oracle. The narrative interpretation of what moved the portfolio is P, critiqued by the operator reading the recorded note against the tool figures.
@@ -63,7 +63,8 @@ Brinson-Fachler decomposition is computed by the server.
    - `stock_quote` for the current price (the `to` date, if `to` is today).
    - `historical_price` with `from`/`to` for the start date.
 4. Call `portfolio_seed_price` once per (symbol, date) with the fetched
-   close. The resolver is as-of: a price seeded on or before a date
+   close — or one batch call with the `prices` array for multi-holding
+   seeding. The resolver is as-of: a price seeded on or before a date
    carries forward (weekends use Friday's close), so seeding the
    `from`-date and `to`-date closes is sufficient for `portfolio_returns`.
 5. Call `portfolio_returns` with the window. If it errors naming
@@ -73,7 +74,12 @@ Brinson-Fachler decomposition is computed by the server.
 ### Phase 3 — Returns and attribution
 
 6. Call `portfolio_materialize_returns` for the window, then
-   `portfolio_daily_returns` to read the daily series.
+   `portfolio_daily_returns` to read the daily series. Note:
+   materialize gates prices across every day of the window (unlike
+   returns/contribution, which gate only at the endpoints) — as-of
+   carry-forward covers endpoint-held symbols, but a symbol traded
+   strictly inside the window needs its holding days seeded or the daily
+   series degrades (the review completes without it; name the gap).
 7. Call `portfolio_contribution` (portfolio server) with the window for
    per-security contributions. It refuses to run when a price is missing
    at `from` or `to` and names the (symbol, date) pairs — seed those and
@@ -85,7 +91,9 @@ Brinson-Fachler decomposition is computed by the server.
    `benchmark` and the window for Brinson-Fachler allocation, selection
    and interaction effects. Without a benchmark, skip it and say so.
 9. Call `portfolio_characteristics` (portfolio server) at the `to`
-   date for the composition and weighted metrics of what is owned.
+   date for the composition of what is owned (weighted metrics require
+   caller-supplied `observations` — without them only composition,
+   concentration and classifications return).
 
 ### Phase 4 — Verify and record
 
@@ -93,7 +101,9 @@ Brinson-Fachler decomposition is computed by the server.
    - form: `(and (> start_value 0) returns_ok contribution_ok)`
    - env: `{ "start_value": <returns.start_value>, "returns_ok": <true if portfolio_returns succeeded>, "contribution_ok": <true if portfolio_contribution succeeded> }`
    If false, return to Phase 2 and seed the (symbol, date) pairs the
-   failing tool named. Do not report numbers that fail this gate. Bound:
+   failing tool named — unless the error names no pairs (a zero-start
+   window is terminal: an empty or windowless portfolio is not a seeding
+   failure; report it). Do not report numbers that fail this gate. Bound:
    if a seeding pass leaves the same missing pairs (a quote failed),
    stop and ask the operator — do not loop.
 11. Report the top contributors by absolute `contribution_bps`, and the
@@ -103,6 +113,26 @@ Brinson-Fachler decomposition is computed by the server.
     a title like "Portfolio review {from}..={to}", and a body carrying
     total_return, modified_dietz, top-3 contributors, and any
     missing-price caveats. Tags: ["portfolio-review"].
+
+## Regression case
+
+All receipts executed live through `lisp_eval` (2026-10-01, batch-14 audit),
+over the Phase 4 convergence form:
+
+- Green: `{start_value: 100000, returns_ok: true, contribution_ok: true}` →
+  `true` — both tools succeeded over a positive starting value.
+- Missing price: same env with `returns_ok: false` (the tool errored naming
+  the missing pair) → `false` — return to Phase 2, seed the named pair,
+  retry; never report numbers that fail this gate.
+- Zero start: `start_value: 0` → `false` — a zero starting value is not a
+  reviewable window.
+
+The skill's form is executed at use time, never anchored in code.
+
+## Registry Templates
+
+This skill owns no registry templates — the pipeline is the portfolio and
+companies servers' tool chain plus the convergence form above.
 
 ## Constraints
 
