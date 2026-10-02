@@ -185,16 +185,16 @@ pub(crate) fn forget_distilled_threads(
             // Delete only the rows READ as covered — per id, never a blind
             // prefix delete. A turn racing in (observed_at > through) is
             // uncovered by construction and untouched.
-            let mut deleted_rows = 0;
-            for turn in &covered {
-                memory.delete_h_mem(&turn.id)?;
-                deleted_rows += 1;
-            }
             // Embeddings carry no timestamp; their link to a chunk is the
             // shared passage text (ingest writes both from one string).
             // A passage that also appears in an uncovered chunk cannot be
             // attributed — keep those rows (conservative: a bounded leak
             // beats erasing an uncovered chunk's semantic recall).
+            // The counted embedding delete runs BEFORE the h_mem deletions:
+            // delete_h_mem self-cleans the deleted row's passage embedding
+            // (f9e29adc65), so deleting the h_mems first would leave this
+            // counted call nothing to remove — the same embeddings-first
+            // ordering the whole-entity branch uses to capture its count.
             let uncovered_passages: HashSet<&str> = uncovered
                 .iter()
                 .filter_map(|turn| turn.value.as_str())
@@ -205,10 +205,14 @@ pub(crate) fn forget_distilled_threads(
                 .filter(|passage| !uncovered_passages.contains(*passage))
                 .map(str::to_string)
                 .collect();
-            (
-                deleted_rows,
-                memory.delete_embeddings_by_entity_passages(&shared_entity, &covered_passages)?,
-            )
+            let deleted_embeddings =
+                memory.delete_embeddings_by_entity_passages(&shared_entity, &covered_passages)?;
+            let mut deleted_rows = 0;
+            for turn in &covered {
+                memory.delete_h_mem(&turn.id)?;
+                deleted_rows += 1;
+            }
+            (deleted_rows, deleted_embeddings)
         };
         // Count the thread only when work was done — a qualifying thread
         // whose covered turns are already deleted (a prior pass) is a no-op,
