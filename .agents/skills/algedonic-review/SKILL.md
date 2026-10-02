@@ -12,7 +12,7 @@ The **Algedonic review** board in the kanban panel is the shared worklist for th
 
 Beer, *Brain of the Firm* (1972) — the algedonic channel (`onto_anchor` → derived `algedonic_signal`, operator ruling 2026-09-25): an alarm from System 1 to System 5 that carries only the signal that something breached; the policy level (the operator) decides. Rother, *Toyota Kata* (2010) for the gemba walk (`onto_anchor` → derived `gemba_walk`).
 
-- **Initial condition:** the board's columns as read by `kanban_task_list`, `loop_reading`, and the `reg.skill` window — or an explicit visibility gap where a read failed.
+- **Initial condition:** the board's columns as read by `kanban_task_list`, the `curator_status` `loop_reading` field, and the `reg.skill` window — or an explicit visibility gap where a read failed.
 - **Target condition:** every card in Review carries the observation that settles it, every open alert names its next action, and every proposal card has an operator verdict recorded on the card.
 - **D/P labelling:** board reads, column moves and `kanban_task_verify` receipts are D (the kanban tools are the oracle); severity triage, the fix decision and the skill verdict are P — the operator's, never this session's. The one bounded loop: steps 1–10 run once per review; a card whose settling observation is missing re-enters at step 3 for that card only, and the review ends when the target condition holds or the remaining gaps are named on their cards.
 
@@ -34,6 +34,25 @@ Beer, *Brain of the Firm* (1972) — the algedonic channel (`onto_anchor` → de
 8. Go to skill execution: call `reg_query` for `reg.skill` over the review window (default seven days), inspect `skill_use_issue:<skill>` memories for affected skills and look at prior `record_skill_feedback` entries. Activation means the skill loaded, not that its work was good. Classify tool failures by `failure_origin` before blaming a skill. Read skill-proposal cards and their linked evidence from the same Algedonic review board; a self-assessment on a card is a claim, not independent evidence.
 9. Present observed outcomes, operator feedback, issues, missing evidence and each proposal card to the operator. **Skill evaluation happens only here**, separately from the executing session. Wait for the operator's actual verdict; record it via `record_skill_feedback` and on the proposal card with a cited observation. The operator holds proposal authority unless a scoped grant to the Curator is recorded on the card.
 10. An accepted proposal or schema-evolution request is executed through an assigned or spawned agent from its card, with affected files, evidence and verification criteria recorded there. Move it to In Progress; attach the result, then move to Review. Verify through `kanban_task_verify` only after the operator or authorized Curator checks the predeclared work. An undecided or unverified card remains open for the next review.
+
+## Regression case
+
+Receipt executed live (2026-10-01, batch-14 audit), read-only:
+
+- SENSE phase board read: `kanban_board_list` returns the **Algedonic
+  review** board (5 columns: Backlog / Ready / In Progress / Review /
+  Done) — the shared worklist the skill documents, read without
+  mutating it. A failed read would be reported as a visibility gap,
+  never as an empty backlog.
+
+The skill's oracle is the kanban tool receipts themselves (board reads,
+column moves, `kanban_task_verify`); there is no lisp_eval form, and the
+review never mutates the board merely to produce a receipt.
+
+## Registry Templates
+
+This skill owns no registry templates — the worklist is the Algedonic
+review board and the kanban/curator tools.
 
 ## Constraints
 
