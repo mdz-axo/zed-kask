@@ -132,79 +132,86 @@ pub(crate) struct ResultFeedbackRequest {
     pub provider: Option<String>,
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct DcfValuationRequest {
+/// The ten DCF assumption fields shared by the valuation and analysis
+/// requests, in their two forms: `documented_dcf_request!` carries the
+/// doc comments and schemars ranges the schema-facing requests expose;
+/// `bare_dcf_request!` is the unannotated form the analysis requests
+/// use. Declarative macros cannot expand to struct fields, so each macro
+/// generates the whole struct — the field lists below are the single
+/// copy. `{ leading }` and `{ trailing }` pass each struct's own fields
+/// through as raw tokens.
+macro_rules! documented_dcf_request {
+    ($name:ident { $($leading:tt)* } { $($trailing:tt)* }) => {
+        #[derive(Debug, Deserialize, JsonSchema)]
+        pub(crate) struct $name {
+            $($leading)*
+            /// Stage 1 years (1–3, default 3)
+            #[schemars(range(min = 1, max = 3))]
+            pub stage1_years: Option<u8>,
+            /// Stage 2 years (2–7, default 7)
+            #[schemars(range(min = 2, max = 7))]
+            pub stage2_years: Option<u8>,
+            /// Discount rate / WACC (0.05–0.30, default 0.10)
+            #[schemars(range(min = 0.05, max = 0.30))]
+            pub discount_rate: Option<f64>,
+            /// Terminal growth rate (0.00–0.10, default 0.025; must be below discount rate)
+            #[schemars(range(min = 0.0, max = 0.10))]
+            pub terminal_growth: Option<f64>,
+
+            /// Override revenue growth rate (-0.50–1.00). Calibrated from history if omitted.
+            #[schemars(range(min = -0.50, max = 1.00))]
+            pub revenue_growth: Option<f64>,
+            /// Override gross margin (0.05–0.95). Calibrated from history if omitted.
+            #[schemars(range(min = 0.05, max = 0.95))]
+            pub gross_margin: Option<f64>,
+            /// Override D&A as % of revenue (0.00–0.20). Calibrated from history if omitted.
+            #[schemars(range(min = 0.0, max = 0.20))]
+            pub da_to_revenue: Option<f64>,
+            /// Override capex as % of revenue (0.00–0.30). Calibrated from history if omitted.
+            #[schemars(range(min = 0.0, max = 0.30))]
+            pub capex_to_revenue: Option<f64>,
+            /// Override NWC as % of revenue (-0.20–0.50). Calibrated from history if omitted.
+            #[schemars(range(min = -0.20, max = 0.50))]
+            pub nwc_to_revenue: Option<f64>,
+            /// Override effective tax rate (0.00–1.00). Calibrated from history if omitted.
+            #[schemars(range(min = 0.0, max = 1.0))]
+            pub tax_rate: Option<f64>,
+            $($trailing)*
+        }
+    };
+}
+
+macro_rules! bare_dcf_request {
+    ($name:ident { $($leading:tt)* } { $($trailing:tt)* }) => {
+        #[derive(Debug, Deserialize, JsonSchema)]
+        pub(crate) struct $name {
+            $($leading)*
+            pub stage1_years: Option<u8>,
+            pub stage2_years: Option<u8>,
+            pub discount_rate: Option<f64>,
+            pub terminal_growth: Option<f64>,
+            pub revenue_growth: Option<f64>,
+            pub gross_margin: Option<f64>,
+            pub da_to_revenue: Option<f64>,
+            pub capex_to_revenue: Option<f64>,
+            pub nwc_to_revenue: Option<f64>,
+            pub tax_rate: Option<f64>,
+            $($trailing)*
+        }
+    };
+}
+
+documented_dcf_request!(DcfValuationRequest {
     pub symbol: String,
     /// Optional parent forecast ID for a same-symbol revision.
     pub revision_of: Option<String>,
-    /// Stage 1 years (1–3, default 3)
-    #[schemars(range(min = 1, max = 3))]
-    pub stage1_years: Option<u8>,
-    /// Stage 2 years (2–7, default 7)
-    #[schemars(range(min = 2, max = 7))]
-    pub stage2_years: Option<u8>,
-    /// Discount rate / WACC (0.05–0.30, default 0.10)
-    #[schemars(range(min = 0.05, max = 0.30))]
-    pub discount_rate: Option<f64>,
-    /// Terminal growth rate (0.00–0.10, default 0.025; must be below discount rate)
-    #[schemars(range(min = 0.0, max = 0.10))]
-    pub terminal_growth: Option<f64>,
+} {
+});
 
-    /// Override revenue growth rate (-0.50–1.00). Calibrated from history if omitted.
-    #[schemars(range(min = -0.50, max = 1.00))]
-    pub revenue_growth: Option<f64>,
-    /// Override gross margin (0.05–0.95). Calibrated from history if omitted.
-    #[schemars(range(min = 0.05, max = 0.95))]
-    pub gross_margin: Option<f64>,
-    /// Override D&A as % of revenue (0.00–0.20). Calibrated from history if omitted.
-    #[schemars(range(min = 0.0, max = 0.20))]
-    pub da_to_revenue: Option<f64>,
-    /// Override capex as % of revenue (0.00–0.30). Calibrated from history if omitted.
-    #[schemars(range(min = 0.0, max = 0.30))]
-    pub capex_to_revenue: Option<f64>,
-    /// Override NWC as % of revenue (-0.20–0.50). Calibrated from history if omitted.
-    #[schemars(range(min = -0.20, max = 0.50))]
-    pub nwc_to_revenue: Option<f64>,
-    /// Override effective tax rate (0.00–1.00). Calibrated from history if omitted.
-    #[schemars(range(min = 0.0, max = 1.0))]
-    pub tax_rate: Option<f64>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct EquityDurationRequest {
+documented_dcf_request!(EquityDurationRequest {
     pub symbol: String,
-    /// Stage 1 years (1–3, default 3)
-    #[schemars(range(min = 1, max = 3))]
-    pub stage1_years: Option<u8>,
-    /// Stage 2 years (2–7, default 7)
-    #[schemars(range(min = 2, max = 7))]
-    pub stage2_years: Option<u8>,
-    /// Discount rate / WACC (0.05–0.30, default 0.10)
-    #[schemars(range(min = 0.05, max = 0.30))]
-    pub discount_rate: Option<f64>,
-    /// Terminal growth rate (0.00–0.10, default 0.025; must be below discount rate)
-    #[schemars(range(min = 0.0, max = 0.10))]
-    pub terminal_growth: Option<f64>,
-
-    /// Override revenue growth rate (-0.50–1.00). Calibrated from history if omitted.
-    #[schemars(range(min = -0.50, max = 1.00))]
-    pub revenue_growth: Option<f64>,
-    /// Override gross margin (0.05–0.95). Calibrated from history if omitted.
-    #[schemars(range(min = 0.05, max = 0.95))]
-    pub gross_margin: Option<f64>,
-    /// Override D&A as % of revenue (0.00–0.20). Calibrated from history if omitted.
-    #[schemars(range(min = 0.0, max = 0.20))]
-    pub da_to_revenue: Option<f64>,
-    /// Override capex as % of revenue (0.00–0.30). Calibrated from history if omitted.
-    #[schemars(range(min = 0.0, max = 0.30))]
-    pub capex_to_revenue: Option<f64>,
-    /// Override NWC as % of revenue (-0.20–0.50). Calibrated from history if omitted.
-    #[schemars(range(min = -0.20, max = 0.50))]
-    pub nwc_to_revenue: Option<f64>,
-    /// Override effective tax rate (0.00–1.00). Calibrated from history if omitted.
-    #[schemars(range(min = 0.0, max = 1.0))]
-    pub tax_rate: Option<f64>,
-}
+} {
+});
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct ReverseDcfRequest {
@@ -380,40 +387,20 @@ pub(crate) struct ForecastPersistRequest {
     pub forecast_id: Option<String>,
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct SensitivityAnalysisRequest {
+bare_dcf_request!(SensitivityAnalysisRequest {
     pub symbol: String,
-    pub stage1_years: Option<u8>,
-    pub stage2_years: Option<u8>,
-    pub discount_rate: Option<f64>,
-    pub terminal_growth: Option<f64>,
-    pub revenue_growth: Option<f64>,
-    pub gross_margin: Option<f64>,
-    pub da_to_revenue: Option<f64>,
-    pub capex_to_revenue: Option<f64>,
-    pub nwc_to_revenue: Option<f64>,
-    pub tax_rate: Option<f64>,
+} {
     #[serde(default = "default_sensitivity_range")]
     pub range_pct: f64,
-}
+});
 
 fn default_sensitivity_range() -> f64 {
     0.10
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct MonteCarloDcfRequest {
+bare_dcf_request!(MonteCarloDcfRequest {
     pub symbol: String,
-    pub stage1_years: Option<u8>,
-    pub stage2_years: Option<u8>,
-    pub discount_rate: Option<f64>,
-    pub terminal_growth: Option<f64>,
-    pub revenue_growth: Option<f64>,
-    pub gross_margin: Option<f64>,
-    pub da_to_revenue: Option<f64>,
-    pub capex_to_revenue: Option<f64>,
-    pub nwc_to_revenue: Option<f64>,
-    pub tax_rate: Option<f64>,
+} {
     #[serde(default = "default_mc_simulations")]
     pub simulations: u32,
     #[serde(default = "default_mc_range")]
@@ -428,7 +415,7 @@ pub(crate) struct MonteCarloDcfRequest {
     pub range_nwc: f64,
     #[serde(default = "default_mc_range_small")]
     pub range_discount_rate: f64,
-}
+});
 
 fn default_mc_simulations() -> u32 {
     1000
@@ -510,15 +497,7 @@ projection_overrides_from_request!(
     discount_rate,
     terminal_growth,
 );
-impl From<&ScenarioAnalysisRequest> for ProjectionAssumptionOverrides {
-    fn from(request: &ScenarioAnalysisRequest) -> Self {
-        Self {
-            discount_rate: request.discount_rate,
-            terminal_growth: request.terminal_growth,
-            ..Self::default()
-        }
-    }
-}
+projection_overrides_from_request!(ScenarioAnalysisRequest, discount_rate, terminal_growth);
 projection_overrides_from_request!(
     SensitivityAnalysisRequest,
     stage1_years,
@@ -552,15 +531,7 @@ projection_overrides_from_request!(
     discount_rate,
     terminal_growth,
 );
-impl From<&ComparableAnalysisRequest> for ProjectionAssumptionOverrides {
-    fn from(request: &ComparableAnalysisRequest) -> Self {
-        Self {
-            discount_rate: request.discount_rate,
-            terminal_growth: request.terminal_growth,
-            ..Self::default()
-        }
-    }
-}
+projection_overrides_from_request!(ComparableAnalysisRequest, discount_rate, terminal_growth);
 projection_overrides_from_request!(
     ScenarioImpactValuationRequest,
     stage1_years,
@@ -584,8 +555,7 @@ pub struct ResearchSearchRequest {
 
 // ── Scenario impact valuation request ─────────────────────────────────────
 
-#[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct ScenarioImpactValuationRequest {
+bare_dcf_request!(ScenarioImpactValuationRequest {
     pub symbol: String,
     /// JSON string of the resolved scenario event tree from `scenario_quantify`
     /// (hkask-mcp-scenarios). Accepts both the scenario server's native
@@ -597,16 +567,7 @@ pub(crate) struct ScenarioImpactValuationRequest {
     /// `yes_deltas` (additive DCF assumption deltas when the node resolves
     /// Yes), and optional `no_deltas` (deltas when No, default zero).
     pub impact_mappings: String,
-    pub stage1_years: Option<u8>,
-    pub stage2_years: Option<u8>,
-    pub discount_rate: Option<f64>,
-    pub terminal_growth: Option<f64>,
-    pub revenue_growth: Option<f64>,
-    pub gross_margin: Option<f64>,
-    pub da_to_revenue: Option<f64>,
-    pub capex_to_revenue: Option<f64>,
-    pub nwc_to_revenue: Option<f64>,
-    pub tax_rate: Option<f64>,
+} {
     /// Optional realized (historical) annual volatility of the equity, as a
     /// decimal (0.35 = 35%). When supplied together with a computable
     /// scenario risk measure, the tool emits `fused_volatility` — the
@@ -615,7 +576,7 @@ pub(crate) struct ScenarioImpactValuationRequest {
     /// probability mass (partial tree coverage down-weights the scenario
     /// channel). When omitted, no fusion is emitted (never fabricated).
     pub realized_volatility: Option<f64>,
-}
+});
 
 // ── Company transcript request (earnings + corpus modes) ──────────────
 
