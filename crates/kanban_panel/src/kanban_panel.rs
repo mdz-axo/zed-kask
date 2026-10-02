@@ -63,8 +63,9 @@ pub use panel_button::KanbanPanelButton;
 
 use board_picker::{BoardPickerDelegate, PickerBoard};
 use task_actions::{
-    CreateTaskForm, EditTaskForm, SpawnTaskForm, render_create_board_form, render_create_task_form,
-    render_edit_task_form, render_rename_board_form, render_spawn_task_form,
+    CreateTaskForm, EditTaskForm, SpawnTaskForm, confirm_panel, confirm_row,
+    render_create_board_form, render_create_task_form, render_edit_task_form,
+    render_rename_board_form, render_spawn_task_form,
 };
 
 /// The MCP server id (matches `KANBAN_SERVER_NAME` in `hkask_types::kanban_wire`).
@@ -1424,55 +1425,10 @@ impl KanbanPanel {
             Some(TaskActionKind::ConfirmDeleteTask(task_id)) => {
                 let task_id_clone = task_id.clone();
                 Some(
-                    v_flex()
-                        .gap_2()
-                        .p_3()
-                        .rounded_md()
-                        .border_1()
-                        .border_color(cx.theme().colors().border)
-                        .bg(cx.theme().colors().editor_background)
-                        .child(
-                            Label::new(format!("Delete task '{task_id}'?"))
-                                .size(LabelSize::Small)
-                                .color(Color::Warning),
-                        )
-                        .child(
-                            h_flex()
-                                .gap_2()
-                                .child(
-                                    div()
-                                        .id("kanban-delete-task-confirm")
-                                        .cursor_pointer()
-                                        .px_3()
-                                        .py_1()
-                                        .rounded_md()
-                                        .bg(cx.theme().colors().border)
-                                        .on_click(cx.listener(move |this, _, _, cx| {
-                                            this.execute_delete_task(task_id_clone.clone(), cx);
-                                        }))
-                                        .child(
-                                            Label::new("Delete")
-                                                .size(LabelSize::Small)
-                                                .color(Color::Warning),
-                                        ),
-                                )
-                                .child(
-                                    div()
-                                        .id("kanban-delete-task-cancel")
-                                        .cursor_pointer()
-                                        .px_2()
-                                        .py_1()
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.active_action = None;
-                                            cx.notify();
-                                        }))
-                                        .child(
-                                            Label::new("Cancel")
-                                                .size(LabelSize::Small)
-                                                .color(Color::Muted),
-                                        ),
-                                ),
-                        )
+                    confirm_panel(cx, &format!("Delete task '{task_id}'?"))
+                        .child(confirm_row(cx, "delete-task", "Delete", move |this, cx| {
+                            this.execute_delete_task(task_id_clone.clone(), cx)
+                        }))
                         .into_any_element(),
                 )
             }
@@ -1483,56 +1439,17 @@ impl KanbanPanel {
                     .map(|s| s.to_string())
                     .unwrap_or_default();
                 Some(
-                    v_flex()
-                        .gap_2()
-                        .p_3()
-                        .rounded_md()
-                        .border_1()
-                        .border_color(cx.theme().colors().border)
-                        .bg(cx.theme().colors().editor_background)
-                        .child(
-                            Label::new(format!("Delete board '{board_name}' and all its tasks?"))
-                                .size(LabelSize::Small)
-                                .color(Color::Warning),
-                        )
-                        .child(
-                            h_flex()
-                                .gap_2()
-                                .child(
-                                    div()
-                                        .id("kanban-delete-board-confirm")
-                                        .cursor_pointer()
-                                        .px_3()
-                                        .py_1()
-                                        .rounded_md()
-                                        .bg(cx.theme().colors().border)
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.execute_delete_board(cx);
-                                        }))
-                                        .child(
-                                            Label::new("Delete Board")
-                                                .size(LabelSize::Small)
-                                                .color(Color::Warning),
-                                        ),
-                                )
-                                .child(
-                                    div()
-                                        .id("kanban-delete-board-cancel")
-                                        .cursor_pointer()
-                                        .px_2()
-                                        .py_1()
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.active_action = None;
-                                            cx.notify();
-                                        }))
-                                        .child(
-                                            Label::new("Cancel")
-                                                .size(LabelSize::Small)
-                                                .color(Color::Muted),
-                                        ),
-                                ),
-                        )
-                        .into_any_element(),
+                    confirm_panel(
+                        cx,
+                        &format!("Delete board '{board_name}' and all its tasks?"),
+                    )
+                    .child(confirm_row(
+                        cx,
+                        "delete-board",
+                        "Delete Board",
+                        |this, cx| this.execute_delete_board(cx),
+                    ))
+                    .into_any_element(),
                 )
             }
         }

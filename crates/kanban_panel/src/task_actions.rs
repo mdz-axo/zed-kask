@@ -266,14 +266,22 @@ impl SpawnTaskForm {
     }
 }
 
-/// Render the create-task form.
-pub(crate) fn render_create_task_form(
-    form: &CreateTaskForm,
+// ── Shared form and confirm-dialog UI ────────────────────────────────────
+// Every inline form and confirm dialog renders the same bordered scaffold
+// and the same muted Cancel button; only the header, the submit label, and
+// the submit callback vary. These helpers are the single copy — the
+// renderers below compose them.
+
+/// The shared inline-form scaffold: the bordered panel plus its header row
+/// (small label + the header editor filling the row). Form-specific fields
+/// chain as children; the action row goes last.
+fn form_panel(
     cx: &mut Context<KanbanPanel>,
-) -> impl IntoElement {
+    header_label: &str,
+    header_editor: Entity<Editor>,
+) -> Div {
     let border_color = cx.theme().colors().border;
     let bg = cx.theme().colors().editor_background;
-
     v_flex()
         .gap_2()
         .p_3()
@@ -285,48 +293,120 @@ pub(crate) fn render_create_task_form(
             h_flex()
                 .gap_2()
                 .items_center()
-                .child(Label::new("New Task").size(LabelSize::Small))
-                .child(div().flex_1().child(form.title.clone())),
+                .child(Label::new(header_label).size(LabelSize::Small))
+                .child(div().flex_1().child(header_editor)),
         )
-        .child(div().child(form.description.clone()))
-        .child(div().child(form.criteria.clone()))
+}
+
+/// The shared confirm-dialog scaffold: the bordered panel plus its warning
+/// label. The confirm row chains as the last child.
+pub(crate) fn confirm_panel(cx: &mut Context<KanbanPanel>, warning: &str) -> Div {
+    let border_color = cx.theme().colors().border;
+    let bg = cx.theme().colors().editor_background;
+    v_flex()
+        .gap_2()
+        .p_3()
+        .rounded_md()
+        .border_1()
+        .border_color(border_color)
+        .bg(bg)
         .child(
-            h_flex()
-                .gap_2()
+            Label::new(warning)
+                .size(LabelSize::Small)
+                .color(Color::Warning),
+        )
+}
+
+/// The muted Cancel button every form and dialog shares: clears
+/// `active_action` and re-renders. Id: `kanban-<action>-cancel`.
+fn cancel_button(cx: &mut Context<KanbanPanel>, action: &str) -> impl IntoElement {
+    div()
+        .id(format!("kanban-{action}-cancel"))
+        .cursor_pointer()
+        .px_2()
+        .py_1()
+        .on_click(cx.listener(|this, _, _, cx| {
+            this.active_action = None;
+            cx.notify();
+        }))
+        .child(
+            Label::new("Cancel")
+                .size(LabelSize::Small)
+                .color(Color::Muted),
+        )
+}
+
+/// The submit/cancel row for editor forms: an accent submit button
+/// (`kanban-<action>-submit`) plus the shared cancel.
+fn action_row(
+    cx: &mut Context<KanbanPanel>,
+    action: &str,
+    submit_label: &str,
+    on_submit: fn(&mut KanbanPanel, &mut Context<KanbanPanel>),
+) -> impl IntoElement {
+    h_flex()
+        .gap_2()
+        .child(
+            div()
+                .id(format!("kanban-{action}-submit"))
+                .cursor_pointer()
+                .px_3()
+                .py_1()
+                .rounded_md()
+                .bg(Color::Accent.color(cx))
+                .on_click(cx.listener(move |this, _, _, cx| on_submit(this, cx)))
                 .child(
-                    div()
-                        .id("kanban-create-task-submit")
-                        .cursor_pointer()
-                        .px_3()
-                        .py_1()
-                        .rounded_md()
-                        .bg(Color::Accent.color(cx))
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.submit_create_task(cx);
-                        }))
-                        .child(
-                            Label::new("Create Task")
-                                .size(LabelSize::Small)
-                                .color(Color::Default),
-                        ),
-                )
-                .child(
-                    div()
-                        .id("kanban-create-task-cancel")
-                        .cursor_pointer()
-                        .px_2()
-                        .py_1()
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.active_action = None;
-                            cx.notify();
-                        }))
-                        .child(
-                            Label::new("Cancel")
-                                .size(LabelSize::Small)
-                                .color(Color::Muted),
-                        ),
+                    Label::new(submit_label)
+                        .size(LabelSize::Small)
+                        .color(Color::Default),
                 ),
         )
+        .child(cancel_button(cx, action))
+}
+
+/// The confirm/cancel row for delete dialogs: a warning-styled confirm
+/// button (`kanban-<action>-confirm`) plus the shared cancel. The confirm
+/// callback is a closure so it can capture the target id.
+pub(crate) fn confirm_row(
+    cx: &mut Context<KanbanPanel>,
+    action: &str,
+    confirm_label: &str,
+    on_confirm: impl Fn(&mut KanbanPanel, &mut Context<KanbanPanel>) + 'static,
+) -> impl IntoElement {
+    h_flex()
+        .gap_2()
+        .child(
+            div()
+                .id(format!("kanban-{action}-confirm"))
+                .cursor_pointer()
+                .px_3()
+                .py_1()
+                .rounded_md()
+                .bg(cx.theme().colors().border)
+                .on_click(cx.listener(move |this, _, _, cx| on_confirm(this, cx)))
+                .child(
+                    Label::new(confirm_label)
+                        .size(LabelSize::Small)
+                        .color(Color::Warning),
+                ),
+        )
+        .child(cancel_button(cx, action))
+}
+
+/// Render the create-task form.
+pub(crate) fn render_create_task_form(
+    form: &CreateTaskForm,
+    cx: &mut Context<KanbanPanel>,
+) -> impl IntoElement {
+    form_panel(cx, "New Task", form.title.clone())
+        .child(div().child(form.description.clone()))
+        .child(div().child(form.criteria.clone()))
+        .child(action_row(
+            cx,
+            "create-task",
+            "Create Task",
+            KanbanPanel::submit_create_task,
+        ))
 }
 
 /// Render the edit-task form.
@@ -334,23 +414,7 @@ pub(crate) fn render_edit_task_form(
     form: &EditTaskForm,
     cx: &mut Context<KanbanPanel>,
 ) -> impl IntoElement {
-    let border_color = cx.theme().colors().border;
-    let bg = cx.theme().colors().editor_background;
-
-    v_flex()
-        .gap_2()
-        .p_3()
-        .rounded_md()
-        .border_1()
-        .border_color(border_color)
-        .bg(bg)
-        .child(
-            h_flex()
-                .gap_2()
-                .items_center()
-                .child(Label::new("Edit Task").size(LabelSize::Small))
-                .child(div().flex_1().child(form.title.clone())),
-        )
+    form_panel(cx, "Edit Task", form.title.clone())
         .child(div().child(form.description.clone()))
         .child(
             h_flex()
@@ -358,43 +422,12 @@ pub(crate) fn render_edit_task_form(
                 .child(div().w_48().child(form.priority.clone()))
                 .child(div().flex_1().child(form.labels.clone())),
         )
-        .child(
-            h_flex()
-                .gap_2()
-                .child(
-                    div()
-                        .id("kanban-edit-task-submit")
-                        .cursor_pointer()
-                        .px_3()
-                        .py_1()
-                        .rounded_md()
-                        .bg(Color::Accent.color(cx))
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.submit_edit_task(cx);
-                        }))
-                        .child(
-                            Label::new("Save")
-                                .size(LabelSize::Small)
-                                .color(Color::Default),
-                        ),
-                )
-                .child(
-                    div()
-                        .id("kanban-edit-task-cancel")
-                        .cursor_pointer()
-                        .px_2()
-                        .py_1()
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.active_action = None;
-                            cx.notify();
-                        }))
-                        .child(
-                            Label::new("Cancel")
-                                .size(LabelSize::Small)
-                                .color(Color::Muted),
-                        ),
-                ),
-        )
+        .child(action_row(
+            cx,
+            "edit-task",
+            "Save",
+            KanbanPanel::submit_edit_task,
+        ))
 }
 
 /// Render the spawn-task form.
@@ -402,66 +435,19 @@ pub(crate) fn render_spawn_task_form(
     form: &SpawnTaskForm,
     cx: &mut Context<KanbanPanel>,
 ) -> impl IntoElement {
-    let border_color = cx.theme().colors().border;
-    let bg = cx.theme().colors().editor_background;
-
-    v_flex()
-        .gap_2()
-        .p_3()
-        .rounded_md()
-        .border_1()
-        .border_color(border_color)
-        .bg(bg)
-        .child(
-            h_flex()
-                .gap_2()
-                .items_center()
-                .child(Label::new("Spawn Subagent").size(LabelSize::Small))
-                .child(div().flex_1().child(form.skills.clone())),
-        )
+    form_panel(cx, "Spawn Subagent", form.skills.clone())
         .child(
             h_flex()
                 .gap_2()
                 .child(div().w_48().child(form.delegation_level.clone()))
                 .child(div().flex_1().child(form.swarm_id.clone())),
         )
-        .child(
-            h_flex()
-                .gap_2()
-                .child(
-                    div()
-                        .id("kanban-spawn-task-submit")
-                        .cursor_pointer()
-                        .px_3()
-                        .py_1()
-                        .rounded_md()
-                        .bg(Color::Accent.color(cx))
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.submit_spawn_task(cx);
-                        }))
-                        .child(
-                            Label::new("Spawn")
-                                .size(LabelSize::Small)
-                                .color(Color::Default),
-                        ),
-                )
-                .child(
-                    div()
-                        .id("kanban-spawn-task-cancel")
-                        .cursor_pointer()
-                        .px_2()
-                        .py_1()
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.active_action = None;
-                            cx.notify();
-                        }))
-                        .child(
-                            Label::new("Cancel")
-                                .size(LabelSize::Small)
-                                .color(Color::Muted),
-                        ),
-                ),
-        )
+        .child(action_row(
+            cx,
+            "spawn-task",
+            "Spawn",
+            KanbanPanel::submit_spawn_task,
+        ))
 }
 
 /// Render the create-board form.
@@ -469,60 +455,12 @@ pub(crate) fn render_create_board_form(
     name_editor: &Entity<Editor>,
     cx: &mut Context<KanbanPanel>,
 ) -> impl IntoElement {
-    let border_color = cx.theme().colors().border;
-    let bg = cx.theme().colors().editor_background;
-
-    v_flex()
-        .gap_2()
-        .p_3()
-        .rounded_md()
-        .border_1()
-        .border_color(border_color)
-        .bg(bg)
-        .child(
-            h_flex()
-                .gap_2()
-                .items_center()
-                .child(Label::new("New Board").size(LabelSize::Small))
-                .child(div().flex_1().child(name_editor.clone())),
-        )
-        .child(
-            h_flex()
-                .gap_2()
-                .child(
-                    div()
-                        .id("kanban-create-board-submit")
-                        .cursor_pointer()
-                        .px_3()
-                        .py_1()
-                        .rounded_md()
-                        .bg(Color::Accent.color(cx))
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.submit_create_board(cx);
-                        }))
-                        .child(
-                            Label::new("Create Board")
-                                .size(LabelSize::Small)
-                                .color(Color::Default),
-                        ),
-                )
-                .child(
-                    div()
-                        .id("kanban-create-board-cancel")
-                        .cursor_pointer()
-                        .px_2()
-                        .py_1()
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.active_action = None;
-                            cx.notify();
-                        }))
-                        .child(
-                            Label::new("Cancel")
-                                .size(LabelSize::Small)
-                                .color(Color::Muted),
-                        ),
-                ),
-        )
+    form_panel(cx, "New Board", name_editor.clone()).child(action_row(
+        cx,
+        "create-board",
+        "Create Board",
+        KanbanPanel::submit_create_board,
+    ))
 }
 
 /// The inline rename form for the selected board. Same shape as the create
@@ -532,60 +470,12 @@ pub(crate) fn render_rename_board_form(
     name_editor: &Entity<Editor>,
     cx: &mut Context<KanbanPanel>,
 ) -> impl IntoElement {
-    let border_color = cx.theme().colors().border;
-    let bg = cx.theme().colors().editor_background;
-
-    v_flex()
-        .gap_2()
-        .p_3()
-        .rounded_md()
-        .border_1()
-        .border_color(border_color)
-        .bg(bg)
-        .child(
-            h_flex()
-                .gap_2()
-                .items_center()
-                .child(Label::new("Rename Board").size(LabelSize::Small))
-                .child(div().flex_1().child(name_editor.clone())),
-        )
-        .child(
-            h_flex()
-                .gap_2()
-                .child(
-                    div()
-                        .id("kanban-rename-board-submit")
-                        .cursor_pointer()
-                        .px_3()
-                        .py_1()
-                        .rounded_md()
-                        .bg(Color::Accent.color(cx))
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.submit_rename_board(cx);
-                        }))
-                        .child(
-                            Label::new("Rename")
-                                .size(LabelSize::Small)
-                                .color(Color::Default),
-                        ),
-                )
-                .child(
-                    div()
-                        .id("kanban-rename-board-cancel")
-                        .cursor_pointer()
-                        .px_2()
-                        .py_1()
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.active_action = None;
-                            cx.notify();
-                        }))
-                        .child(
-                            Label::new("Cancel")
-                                .size(LabelSize::Small)
-                                .color(Color::Muted),
-                        ),
-                ),
-        )
+    form_panel(cx, "Rename Board", name_editor.clone()).child(action_row(
+        cx,
+        "rename-board",
+        "Rename",
+        KanbanPanel::submit_rename_board,
+    ))
 }
 
 impl KanbanPanel {
