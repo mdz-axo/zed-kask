@@ -341,4 +341,23 @@ Plan §4 step 2 executed: the bounded first-open decomposition probe is in the t
 - `[DIAG-open] from_db thread_id=… entries=… from_db_ms=…` — entity construction, including the saved-model re-resolution (`LanguageModelRegistry::select_model`) the phase hides
 - `[DIAG-open] open thread_id=… db_total_ms=… replay_ms=… forward_ms=… ready_ms=…` — the phase summary; forward is the same per-event path `[DIAG-anr]` measures, so the two probes cross-check
 
-The measurement is operator-gated on the next real open of a large thread (readings land in `Zed-Kask.log`); the S1-H2 discriminating test — open a thread while a big turn's save is in flight — is now runnable. Validation: `cargo check -p agent` clean, db tests 18/18, the D28 override pin green, clippy green; the one failing agent test (`test_reasoning_runaway_watchdog_aborts_thinking_only_stream`) is another stream's uncommitted in-flight work, untouched by this change.
+The measurement is operator-gated on the next real open of a large thread (readings land in `Zed-Kask.log`); the S1-H2 discriminating test — open a thread while a big turn's save is in flight — is now runnable. Validation: `cargo check -p agent` clean, db tests 18/18, the D28 override pin green, clippy green; the one failing agent test (`test_reasoning_runaway_watchdog_aborts_thinking_only_stream`) is another stream's uncommitted in-flight work, untouched by this change. (Later the same day the watchdog and this test were removed outright — see the agent-loop guardrails plan's execution record.)
+
+### 7.10 First probe readings + release flags confirmed (2026-10-02 18:13 boot, binary `3f6f844`)
+
+**Binary identity:** `3f6f844` descends from the probe commit (`1f5cadb1b0`) — `[DIAG-open]` is live. **Release flags confirmed for this artifact:** no `debug build` startup line, and the hang detector reports 113–559 ms stalls — the 100 ms release threshold is active (the 5 s debug blindness is gone). In-tree `target/release/zed-kask` built 16:48, installed 17:03 — an install.sh-shaped path; the OQ-7/8 *pipeline* remains unidentified but the *flag* parity-blocker is resolved for this binary.
+
+**D88 verification:** the boot-time automatic sign-in is gone (no client status lines in the first seconds). At 18 s in, a sign-in ran from a UI surface (the title-bar Sign In button now renders because the client stays signed out; the agent-panel onboarding does not render — non-Zed providers configured + history non-empty) and completed in 7 s via the browser auto-redirect: the fork is currently `Authenticated` against zed.dev (user 595927, fresh token). Open functional decision: hide the sign-in surfaces (deeper D7 isolation, one more seam) or leave them (the fork stays signed out unless clicked). The blocking listener wait was 559 ms this time (fast callback), plus 262 ms at the outer spawn.
+
+**First `[DIAG-open]` readings (all small threads — the large-thread open is still pending):**
+
+| thread | entries | blob | lock_wait | read_parse | from_db | db_total | replay | forward | ready |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| fffd6926 | 61 | 465 KB | 0 ms | 21 ms | 0 ms | 47 ms | 5 ms | 41 ms | 94 ms |
+| aaf20130 | 29 | 218 KB | 0 ms | 6 ms | 0 ms | 16 ms | 0 ms | 0 ms | 18 ms |
+| c6da1e21 | 4 | 27 KB | 0 ms | 1 ms | 0 ms | 48 ms* | 0 ms | 82 ms* | 131 ms* |
+| 3917174e | 2 | 20 KB | 0 ms | 0 ms | 0 ms | 48 ms* | 0 ms | 82 ms* | 131 ms* |
+
+(*) two concurrent opens — wall-clock phases overlap and include each other's work. Readings so far: **read_parse is linear in blob size (~45 ms/MB)**; forward ≈ 0.67 ms/entry (uncontaminated); from_db ≈ 0; lock_wait 0 (no save contention observed — these were restore opens, not save-in-flight); first-open connect overhead ~30 ms. Prediction for the S1 target from the linear fit: a 5–15 MB blob (the P7c 963-entry class) → 225–675 ms parse alone — consistent with P7c's 635 ms load. The S1-H1 magnitude split closes when a large thread is opened; the S1-H2 test (open while a big turn saves) is runnable on demand.
+
+**Un-blindfolded detector landscape (new sub-5 s visibility, this boot):** foreground — 907 ms `workspace.rs:2184` + 227 ms `main.rs:1567` at startup, 216 ms `opencode.rs:182` (model-catalog fetch); background burst at 18:13:54 — 113–325 ms across `language_registry.rs:705/852`, `environment.rs:214`, `wasm_host.rs:728`, `gpui/app/context.rs:858`; later `db.rs` stalls 114–156 ms (save/`deserialize_thread`/`load_thread` — the S1 machinery visible directly). Historical (15:58 session, prior binary): a **5.08 s foreground hang at `edit_file_tool.rs:300`** followed by an edit-finalize failure — symptom-2-relevant, separate item.
