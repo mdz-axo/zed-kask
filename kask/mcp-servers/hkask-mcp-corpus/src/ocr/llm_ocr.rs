@@ -61,6 +61,23 @@ pub(crate) async fn vision_ocr_bytes(
     Ok(result.text)
 }
 
+/// Encode a page image as PNG bytes — the input contract of
+/// [`vision_ocr_bytes`] (`LanguageModelImage` requires base64 PNG; JPEG
+/// bytes under a PNG MIME are dropped by strict decoders).
+fn encode_page_png(image: &DynamicImage, model: &str) -> Result<Vec<u8>, OcrError> {
+    let mut img_bytes: Vec<u8> = Vec::new();
+    image
+        .write_to(
+            &mut std::io::Cursor::new(&mut img_bytes),
+            image::ImageFormat::Png,
+        )
+        .map_err(|e| OcrError::BackendFailed {
+            model: model.to_string(),
+            message: format!("Failed to encode page image as PNG: {e}"),
+        })?;
+    Ok(img_bytes)
+}
+
 /// Circuit breaker for rate-limit resilience.
 ///
 /// After `threshold` consecutive failures, opens: the executor reports the
@@ -336,27 +353,46 @@ impl OcrExecutor for LlmOcrExecutor {
                 )
                 .to_rgb8(),
         );
-        let mut img_bytes: Vec<u8> = Vec::new();
-        normalized
-            .write_to(
-                &mut std::io::Cursor::new(&mut img_bytes),
-                image::ImageFormat::Png,
-            )
-            .map_err(|e| OcrError::BackendFailed {
-                model: model.clone(),
-                message: format!("Failed to encode page image as PNG: {e}"),
-            })?;
-
         // Remote-service gate: the adaptive limiter ramps LLM concurrency
         // (floor → ceiling on success, halved on failure, paused while any
         // breaker is open) instead of launching every in-flight page at the
         // ceiling. The ONE outcome classifier routes the call's result — a
         // CircuitOpen verdict pauses here — and the slot releases its
-        // in-flight count on drop.
+        // in-flight count on drop. A rotation request is the protocol
+        // working, not endpoint distress: the re-render retry stays inside
+        // the acquired slot (the endpoint already answered the first call)
+        // and the classifier reports the FINAL outcome only — no spurious
+        // halve for the rotated-page round trip.
         let slot = self.limiter.acquire().await;
-        let result = vision_ocr_bytes(&*self.router, &img_bytes, &model)
-            .await
-            .and_then(|raw| super::response::parse_page_response(&raw));
+        let mut current = normalized;
+        let mut rotation_retried = false;
+        let result = loop {
+            let img_bytes = encode_page_png(&current, &model)?;
+            let attempt = vision_ocr_bytes(&*self.router, &img_bytes, &model)
+                .await
+                .and_then(|raw| super::response::parse_page_response(&raw));
+            match attempt {
+                Err(OcrError::RotationRequested { correction }) if !rotation_retried => {
+                    rotation_retried = true;
+                    tracing::info!(
+                        target: "reg.pipeline.ocr.rotation",
+                        page_index,
+                        correction,
+                        "page requested rotation — re-rendering rotated and retrying once"
+                    );
+                    current = match correction {
+                        90 => current.rotate90(),
+                        180 => current.rotate180(),
+                        270 => current.rotate270(),
+                        // The parser admits only 0/90/180/270 and 0 never
+                        // reaches here; unreachable in practice.
+                        _ => current,
+                    };
+                    continue;
+                }
+                outcome => break outcome,
+            }
+        };
         slot.report_inference_outcome(&result);
 
         // Circuit-breaker + rate-limit tracking on the vision-call outcome. The
@@ -736,6 +772,166 @@ mod tests {
         )
         .await;
         assert!(blocked.is_err(), "execute must block on the limiter pause");
+    }
+
+    /// First call requests a 90° rotation; the retry on the re-rendered page
+    /// returns valid protocol text. Pins the recovery path end-to-end.
+    struct RotatingThenValidVisionPort {
+        calls: AtomicU64,
+    }
+
+    impl hkask_types::InferencePort for RotatingThenValidVisionPort {
+        fn generate(
+            &self,
+            _prompt: &str,
+            _parameters: &LLMParameters,
+            _tools: Option<&[hkask_types::ChatToolDefinition]>,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<
+                        Output = Result<hkask_types::InferenceResult, InferenceError>,
+                    > + Send
+                    + '_,
+            >,
+        > {
+            Box::pin(async {
+                Err(InferenceError::Connection(
+                    "noop — only generate_vision is under test".into(),
+                ))
+            })
+        }
+
+        fn generate_vision(
+            &self,
+            _prompt: &str,
+            _images: &[String],
+            _parameters: &LLMParameters,
+            _model_override: Option<&str>,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<
+                        Output = Result<hkask_types::InferenceResult, InferenceError>,
+                    > + Send
+                    + '_,
+            >,
+        > {
+            let n = self.calls.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async move {
+                let text = if n == 0 {
+                    "---\nprimary_language: en\nis_rotation_valid: False\nrotation_correction: 90\nis_table: False\nis_diagram: False\n---\nrotated".to_string()
+                } else {
+                    "---\nprimary_language: en\nis_rotation_valid: True\nrotation_correction: 0\nis_table: False\nis_diagram: False\n---\n\nrecovered page text".to_string()
+                };
+                Ok(hkask_types::InferenceResult {
+                    text,
+                    model: "fixture/ocr".to_string(),
+                    usage: hkask_types::InferenceUsage::default(),
+                    finish_reason: "stop".to_string(),
+                    tool_calls: Vec::new(),
+                    reasoning: None,
+                    cost_usd: None,
+                })
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn rotation_request_re_renders_and_recovers_the_page() {
+        crate::helpers::seed_registry_template_root();
+        let port = Arc::new(RotatingThenValidVisionPort {
+            calls: AtomicU64::new(0),
+        });
+        let executor = LlmOcrExecutor::new(port.clone());
+        let image = DynamicImage::new_rgb8(8, 8);
+        let result = executor
+            .execute(0, "RunPod/kask-ocr", &image)
+            .await
+            .expect("the rotated page must recover on the re-render retry");
+        assert_eq!(result.text, "recovered page text");
+        assert_eq!(
+            port.calls.load(Ordering::SeqCst),
+            2,
+            "exactly one re-render retry"
+        );
+    }
+
+    /// A page that still requests rotation after the retry fails the page —
+    /// the retry is bounded to one, never a loop.
+    struct AlwaysRotatingVisionPort {
+        calls: AtomicU64,
+    }
+
+    impl hkask_types::InferencePort for AlwaysRotatingVisionPort {
+        fn generate(
+            &self,
+            _prompt: &str,
+            _parameters: &LLMParameters,
+            _tools: Option<&[hkask_types::ChatToolDefinition]>,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<
+                        Output = Result<hkask_types::InferenceResult, InferenceError>,
+                    > + Send
+                    + '_,
+            >,
+        > {
+            Box::pin(async {
+                Err(InferenceError::Connection(
+                    "noop — only generate_vision is under test".into(),
+                ))
+            })
+        }
+
+        fn generate_vision(
+            &self,
+            _prompt: &str,
+            _images: &[String],
+            _parameters: &LLMParameters,
+            _model_override: Option<&str>,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<
+                        Output = Result<hkask_types::InferenceResult, InferenceError>,
+                    > + Send
+                    + '_,
+            >,
+        > {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async {
+                Ok(hkask_types::InferenceResult {
+                    text: "---\nprimary_language: en\nis_rotation_valid: False\nrotation_correction: 90\nis_table: False\nis_diagram: False\n---\nstill rotated".to_string(),
+                    model: "fixture/ocr".to_string(),
+                    usage: hkask_types::InferenceUsage::default(),
+                    finish_reason: "stop".to_string(),
+                    tool_calls: Vec::new(),
+                    reasoning: None,
+                    cost_usd: None,
+                })
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn rotation_retry_is_bounded_to_one() {
+        crate::helpers::seed_registry_template_root();
+        let port = Arc::new(AlwaysRotatingVisionPort {
+            calls: AtomicU64::new(0),
+        });
+        let executor = LlmOcrExecutor::new(port.clone());
+        let image = DynamicImage::new_rgb8(8, 8);
+        let error = executor
+            .execute(0, "RunPod/kask-ocr", &image)
+            .await
+            .expect_err("a page still requesting rotation after the retry must fail");
+        assert!(
+            matches!(error, OcrError::RotationRequested { correction: 90 }),
+            "the typed rotation request must survive to the caller, got: {error}"
+        );
+        assert_eq!(
+            port.calls.load(Ordering::SeqCst),
+            2,
+            "exactly one retry, never a rotation loop"
+        );
     }
 
     #[test]

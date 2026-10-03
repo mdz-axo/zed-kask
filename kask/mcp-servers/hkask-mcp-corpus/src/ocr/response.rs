@@ -57,7 +57,7 @@ fn is_figure_marker(marker: &str) -> bool {
 
 /// expect: [P4] Only a complete page response can supply corpus text; annotations cannot masquerade as quotations or fetched images.
 /// pre: raw is the configured model's page response.
-/// post: metadata and inline figure annotations are separate from unchanged body text; unsupported links and rotation requests fail.
+/// post: metadata and inline figure annotations are separate from unchanged body text; unsupported links fail; a rotation correction is a typed actionable request, not a rejection.
 /// inv: literal Markdown inside code remains text; no legacy plain-text fallback or remote URL stripping.
 pub(crate) fn parse_page_response(raw: &str) -> Result<PageResponse, OcrError> {
     let normalized = raw.replace("\r\n", "\n");
@@ -78,11 +78,18 @@ pub(crate) fn parse_page_response(raw: &str) -> Result<PageResponse, OcrError> {
     if ![0, 90, 180, 270].contains(&metadata.rotation_correction) {
         return Err(invalid("rotation_correction must be 0, 90, 180 or 270"));
     }
-    if !metadata.is_rotation_valid || metadata.rotation_correction != 0 {
-        return Err(invalid(format!(
-            "page requests rotation correction {}; no corrected text admitted",
-            metadata.rotation_correction
-        )));
+    if metadata.rotation_correction != 0 {
+        // Actionable: the model detected a rotated page and proposed the
+        // correction. The executor re-renders the page rotated and re-OCRs
+        // it once — the protocol working, not a malformed response.
+        return Err(OcrError::RotationRequested {
+            correction: metadata.rotation_correction,
+        });
+    }
+    if !metadata.is_rotation_valid {
+        return Err(invalid(
+            "page reports invalid rotation with no correction proposed",
+        ));
     }
 
     let mut figures = Vec::new();
@@ -195,6 +202,22 @@ mod tests {
                 "{image}"
             );
         }
+    }
+
+    /// expect: [P4] A rotation correction is a typed actionable request for the executor's re-render retry; invalid rotation without a correction stays a rejection.
+    #[test]
+    fn rotation_requests_are_typed_and_actionable() {
+        let rotated = parse_page_response(
+            &HEADER.replace("rotation_correction: 0", "rotation_correction: 90"),
+        );
+        assert!(matches!(
+            rotated,
+            Err(OcrError::RotationRequested { correction: 90 })
+        ));
+        let unactionable = parse_page_response(
+            &HEADER.replace("is_rotation_valid: True", "is_rotation_valid: False"),
+        );
+        assert!(matches!(unactionable, Err(OcrError::InvalidResponse(_))));
     }
 
     /// expect: [P4] Missing, mistyped and contradictory page metadata cannot become success through defaults.

@@ -35,6 +35,13 @@ pub(crate) enum OcrError {
     TemplateUnavailable,
     #[error("OCR response violates the required page protocol: {0}")]
     InvalidResponse(String),
+    /// The model detected a rotated page and proposed a correction in
+    /// degrees. Actionable, not a failure of the endpoint or the protocol:
+    /// the executor re-renders the page rotated and re-OCRs it once. Never
+    /// counts against the breaker (the endpoint answered) and never carries
+    /// a pause verdict.
+    #[error("page requests rotation correction {correction} degrees")]
+    RotationRequested { correction: i16 },
     #[error("OCR model '{model}' failed: {message}")]
     BackendFailed { model: String, message: String },
     #[error("No OCR model configured. Set HKASK_OCR_MODEL env var or pass the 'model' parameter.")]
