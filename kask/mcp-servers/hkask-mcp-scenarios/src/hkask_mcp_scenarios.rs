@@ -152,9 +152,13 @@ impl ScenariosServer {
     /// its expected predecessor was not called. In-memory only: tracking
     /// resets when the server process restarts. Does not block execution —
     /// tool flexibility is preserved for exploratory and bypass workflows.
-    fn record_experience(&self, tool: &str) {
+    /// Returns the advisory note when the expected predecessor was skipped
+    /// (S-03, mcp-tool-review): the caller — the only party that can correct
+    /// the sequence — now sees it, not just the server log.
+    fn record_experience(&self, tool: &str) -> Option<String> {
         let mut called = self.called_tools.lock().unwrap_or_else(|e| e.into_inner());
 
+        let mut note = None;
         if let Some(expected) = Self::expected_predecessor(tool)
             && !called.contains(expected)
         {
@@ -165,9 +169,28 @@ impl ScenariosServer {
                 "Pipeline sequence violation: {} called without prior {}",
                 tool, expected
             );
+            note = Some(format!(
+                "called without prior {expected} — the pipeline ladder is frame → brainstorm → build → quantify → calibrate → synthesize → score → calibration; exploratory and bypass workflows remain supported (this note advises, it never blocks)"
+            ));
         }
 
         called.insert(tool.to_string());
+        note
+    }
+
+    /// Attach the pipeline-sequence advisory to a tool response when the
+    /// expected predecessor was skipped (S-03). Non-blocking — the note
+    /// advises, it never gates; responses without a violation are unchanged.
+    fn with_sequence_note(
+        mut output: serde_json::Value,
+        note: Option<String>,
+    ) -> serde_json::Value {
+        if let Some(note) = note
+            && let Some(obj) = output.as_object_mut()
+        {
+            obj.insert("sequence_note".to_string(), serde_json::Value::String(note));
+        }
+        output
     }
 }
 
@@ -363,8 +386,10 @@ impl ScenariosServer {
                 tree,
             );
 
-            self.record_experience("scenario_status");
-            Ok(output)
+            Ok(Self::with_sequence_note(
+                output,
+                self.record_experience("scenario_status"),
+            ))
         }).await
     }
 
@@ -486,8 +511,10 @@ impl ScenariosServer {
                 "ontology": dc_bibo::DATASET
             });
 
-            self.record_experience("scenario_full");
-            Ok(output)
+            Ok(Self::with_sequence_note(
+                output,
+                self.record_experience("scenario_full"),
+            ))
         })
         .await
     }
@@ -787,8 +814,10 @@ impl ScenariosServer {
                 }
             });
 
-            self.record_experience("scenario_cross_validate");
-            Ok(output)
+            Ok(Self::with_sequence_note(
+                output,
+                self.record_experience("scenario_cross_validate"),
+            ))
         })
         .await
     }
@@ -826,8 +855,10 @@ impl ScenariosServer {
                 );
             }
 
-            self.record_experience("scenario_frame");
-            Ok(output)
+            Ok(Self::with_sequence_note(
+                output,
+                self.record_experience("scenario_frame"),
+            ))
         })
         .await
     }
@@ -879,8 +910,10 @@ impl ScenariosServer {
                 ]
             });
 
-            self.record_experience("scenario_frame_document");
-            Ok(output)
+            Ok(Self::with_sequence_note(
+                output,
+                self.record_experience("scenario_frame_document"),
+            ))
         })
         .await
     }
@@ -979,8 +1012,10 @@ impl ScenariosServer {
                 }
             });
 
-            self.record_experience("scenario_brainstorm");
-            Ok(output)
+            Ok(Self::with_sequence_note(
+                output,
+                self.record_experience("scenario_brainstorm"),
+            ))
         })
         .await
     }
@@ -1098,8 +1133,10 @@ impl ScenariosServer {
                 "ontology": Self::ontology_anchor("scenario_build").unwrap_or(dc_bibo::DATASET)
             });
 
-            self.record_experience("scenario_build");
-            Ok(output)
+            Ok(Self::with_sequence_note(
+                output,
+                self.record_experience("scenario_build"),
+            ))
         })
         .await
     }
@@ -1162,8 +1199,10 @@ impl ScenariosServer {
                 "framework": "Conditional probability tree. Each node's marginal is computed via full joint-table marginalization under parent independence: P(E) = Sum_a P(E|a) * Product_i P(p_i)^{a_i} * (1-P(p_i))^{1-a_i}. Root nodes use their intrinsic probability. Joint = product of all-nodes-occur conditionals."
             });
 
-            self.record_experience("scenario_quantify");
-            Ok(output)
+            Ok(Self::with_sequence_note(
+                output,
+                self.record_experience("scenario_quantify"),
+            ))
         })
         .await
     }
@@ -1272,8 +1311,10 @@ impl ScenariosServer {
                 "reference": "Tetlock & Gardner, Superforecasting (2015), Ch. 5"
             });
 
-            self.record_experience("scenario_update");
-            Ok(output)
+            Ok(Self::with_sequence_note(
+                output,
+                self.record_experience("scenario_update"),
+            ))
         })
         .await
     }
@@ -1388,8 +1429,10 @@ impl ScenariosServer {
                 )))?;
             }
 
-            self.record_experience("scenario_score");
-            Ok(output)
+            Ok(Self::with_sequence_note(
+                output,
+                self.record_experience("scenario_score"),
+            ))
         })
         .await
     }
@@ -1517,8 +1560,10 @@ impl ScenariosServer {
                 "reference": "Tetlock & Gardner, Superforecasting (2015), Ch. 4-6"
             });
 
-            self.record_experience("scenario_calibrate");
-            Ok(output)
+            Ok(Self::with_sequence_note(
+                output,
+                self.record_experience("scenario_calibrate"),
+            ))
         })
         .await
     }
@@ -1567,8 +1612,10 @@ impl ScenariosServer {
                 "reference": "Tetlock & Gardner, Superforecasting (2015), Ch. 7 — Dragonfly-Eye"
             });
 
-            self.record_experience("scenario_synthesize");
-            Ok(output)
+            Ok(Self::with_sequence_note(
+                output,
+                self.record_experience("scenario_synthesize"),
+            ))
         })
         .await
     }
@@ -1655,8 +1702,10 @@ impl ScenariosServer {
                 "reference": "Brier (1950); Murphy (1973) — decomposition of Brier score into reliability, resolution, and uncertainty components"
             });
 
-            self.record_experience("scenario_calibration");
-            Ok(output)
+            Ok(Self::with_sequence_note(
+                output,
+                self.record_experience("scenario_calibration"),
+            ))
         })
         .await
     }
@@ -1696,8 +1745,10 @@ impl ScenariosServer {
                 "reference": "Tetlock & Gardner, Superforecasting (2015), Ch. 3 — Triage and the Goldilocks Zone"
             });
 
-            self.record_experience("scenario_triage");
-            Ok(output)
+            Ok(Self::with_sequence_note(
+                output,
+                self.record_experience("scenario_triage"),
+            ))
         })
         .await
     }
@@ -1803,8 +1854,10 @@ impl ScenariosServer {
                 }
             });
 
-            self.record_experience("scenario_assess");
-            Ok(output)
+            Ok(Self::with_sequence_note(
+                output,
+                self.record_experience("scenario_assess"),
+            ))
         })
         .await
     }

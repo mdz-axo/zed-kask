@@ -160,6 +160,26 @@ pub fn rank_matches(query: &str, candidates: &[MarketRecord]) -> Vec<MatchCandid
     scored
 }
 
+/// The tool-level refusal the market_match description advertises: split
+/// ranked candidates into kept (Medium and above) and refused (Low). The
+/// refusal is surfaced by the caller — refused counts and a sample — never
+/// silent (PM-02, mcp-tool-review: implemented 2026-10-03 after the
+/// advertised refusal was found unimplemented).
+pub fn refuse_low_confidence(
+    candidates: Vec<MatchCandidate>,
+) -> (Vec<MatchCandidate>, Vec<MatchCandidate>) {
+    let mut kept = Vec::new();
+    let mut refused = Vec::new();
+    for candidate in candidates {
+        if candidate.match_confidence == MatchConfidence::Low {
+            refused.push(candidate);
+        } else {
+            kept.push(candidate);
+        }
+    }
+    (kept, refused)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -300,10 +320,9 @@ mod tests {
     }
 
     /// PM-02 pin (mcp-tool-review): the matcher's contract is tier-and-return —
-    /// a weak candidate is returned with its Low tier so the CONSUMER can
-    /// refuse it; the matcher never silently drops candidates. The tool
-    /// description states this contract (corrected 2026-10-03 after the
-    /// advertised tool-side refusal was falsified live).
+    /// it never silently drops candidates; the TOOL (market_match) applies the
+    /// advertised refusal via refuse_low_confidence, which surfaces what it
+    /// refused. Division of labor pinned 2026-10-03.
     #[test]
     fn low_confidence_candidates_are_returned_tiered_never_dropped() {
         let unrelated = test_market("Champions league winner", "2026-12-15T00:00:00Z");
@@ -314,5 +333,28 @@ mod tests {
             "the weak candidate is returned with its tier, not dropped"
         );
         assert_eq!(ranked[0].match_confidence, MatchConfidence::Low);
+    }
+
+    /// PM-02 implementation pin: the advertised refusal splits on the Low
+    /// tier and hands back what was refused — the tool surfaces the refusal,
+    /// it never silently drops it.
+    #[test]
+    fn refuse_low_confidence_splits_and_surfaces() {
+        let strong = test_market("Will the Fed cut rates in December", "2026-12-15T00:00:00Z");
+        let weak = test_market("Champions league winner", "2026-12-15T00:00:00Z");
+        let ranked = rank_matches("Will the Fed cut rates in December", &[weak, strong]);
+        let (kept, refused) = refuse_low_confidence(ranked);
+        assert_eq!(kept.len(), 1, "the strong candidate is kept");
+        assert_eq!(kept[0].match_confidence, MatchConfidence::High);
+        assert_eq!(
+            refused.len(),
+            1,
+            "the weak candidate is refused, not dropped"
+        );
+        assert_eq!(refused[0].match_confidence, MatchConfidence::Low);
+        assert_eq!(
+            refused[0].market.question, "Champions league winner",
+            "the refusal carries the candidate so the caller can see what was rejected"
+        );
     }
 }

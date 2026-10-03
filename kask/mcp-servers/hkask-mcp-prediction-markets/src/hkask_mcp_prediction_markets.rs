@@ -126,7 +126,7 @@ impl PredictionMarketsServer {
 
     /// Look up markets matching a query across both platforms.
     #[tool(
-        description = "Look up prediction markets across Polymarket and Kalshi by free-text query. Returns annotated MarketRecords: every probability is paired with spread/volume/calibration/volatility/reliability_tier and a dual-axis (PKO + Dublin Core) ontology mapping. Never returns a bare probability."
+        description = "Look up prediction markets across Polymarket and Kalshi by free-text query. Returns annotated MarketRecords: every probability is paired with spread/volume/calibration/volatility/reliability_tier and a dual-axis (PKO + Dublin Core) ontology mapping. Never returns a bare probability. The response carries records, gathered_count, and — whenever the result set is empty — a note distinguishing a provider state (no markets returned by either provider) from a no-match query result."
     )]
     pub async fn market_lookup(
         &self,
@@ -135,14 +135,30 @@ impl PredictionMarketsServer {
         execute_tool(self, "market_lookup", async {
             self.record_call("market_lookup");
             let mut records = self.gather_candidates().await?;
+            let gathered_count = records.len();
             Self::substring_filter(&mut records, &req.query);
             if let Some(category) = &req.category {
                 let cat = category.to_lowercase();
                 records.retain(|r| r.category.to_lowercase().contains(&cat));
             }
             records.truncate(req.limit.unwrap_or(10).min(50) as usize);
-            serde_json::to_value(&records)
-                .map_err(|e| McpToolError::internal(format!("record serialization failed: {e}")))
+            // PM-03 (mcp-tool-review): an empty result is never silent — a
+            // provider state (nothing gathered) is distinguished from a
+            // no-match query result, so a transient outage can't read as
+            // "no markets exist".
+            let note = if gathered_count == 0 {
+                Some("no candidate markets returned by either provider — this is a provider state, not a query result; retry before treating it as 'no markets exist'".to_string())
+            } else if records.is_empty() {
+                Some(format!("no records matched the query among {gathered_count} gathered candidates"))
+            } else {
+                None
+            };
+            serde_json::to_value(serde_json::json!({
+                "records": records,
+                "gathered_count": gathered_count,
+                "note": note,
+            }))
+            .map_err(|e| McpToolError::internal(format!("record serialization failed: {e}")))
         })
         .await
     }
@@ -150,7 +166,7 @@ impl PredictionMarketsServer {
     /// Resolve a scenario/forecast question to candidate markets about the
     /// same underlying event.
     #[tool(
-        description = "Resolve a scenario or forecasting question to candidate prediction markets about the same underlying event. Returns confidence-tiered candidates with deterministic match basis (token overlap + deadline alignment) — the tiers are the refusal mechanism: the tool returns every candidate with its tier and the consumer refuses low-confidence ones rather than anchoring on a wrong-event market (the same epistemic posture as reliability_tier)."
+        description = "Resolve a scenario or forecasting question to candidate prediction markets about the same underlying event. Refuses low-confidence candidates rather than anchoring on a wrong-event market — the refusal is surfaced, never silent: the response carries matches (Medium confidence and above, with deterministic match basis: token overlap + deadline alignment), refused_low_confidence with a refused_sample of what was rejected, gathered_count, and a note whenever the result set is empty (provider state vs all-refused)."
     )]
     pub async fn market_match(
         &self,
@@ -159,10 +175,38 @@ impl PredictionMarketsServer {
         execute_tool(self, "market_match", async {
             self.record_call("market_match");
             let records = self.gather_candidates().await?;
-            let mut matches = matcher::rank_matches(&req.question, &records);
-            matches.truncate(req.limit.unwrap_or(5).min(20) as usize);
-            serde_json::to_value(&matches)
-                .map_err(|e| McpToolError::internal(format!("match serialization failed: {e}")))
+            let ranked = matcher::rank_matches(&req.question, &records);
+            // PM-02 (mcp-tool-review): the advertised refusal, implemented —
+            // low-confidence candidates are refused, and the refusal is
+            // surfaced (count + sample), never a silent drop.
+            let (kept, refused) = matcher::refuse_low_confidence(ranked);
+            let limit = req.limit.unwrap_or(5).min(20) as usize;
+            let matches: Vec<_> = kept.into_iter().take(limit).collect();
+            let refused_sample: Vec<String> = refused
+                .iter()
+                .take(3)
+                .map(|c| c.market.question.clone())
+                .collect();
+            // PM-03: an empty result is never silent — a provider state is
+            // distinguished from an all-refused query result.
+            let note = if records.is_empty() {
+                Some("no candidate markets returned by either provider — this is a provider state, not a query result; retry before treating it as 'no markets exist'".to_string())
+            } else if matches.is_empty() {
+                Some(format!(
+                    "all {} gathered candidates refused as low-confidence — no wrong-event anchoring; refused_sample shows what was rejected",
+                    records.len()
+                ))
+            } else {
+                None
+            };
+            serde_json::to_value(serde_json::json!({
+                "matches": matches,
+                "refused_low_confidence": refused.len(),
+                "refused_sample": refused_sample,
+                "gathered_count": records.len(),
+                "note": note,
+            }))
+            .map_err(|e| McpToolError::internal(format!("match serialization failed: {e}")))
         })
         .await
     }
