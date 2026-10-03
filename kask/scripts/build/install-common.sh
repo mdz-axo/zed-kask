@@ -1,7 +1,7 @@
 #!/bin/bash
 # Shared helpers for zed-kask install scripts.
 #
-# Sourced by install.sh and install-binary.sh. Provides:
+# Sourced by install.sh. Provides:
 #   - log/log_success/log_warning/log_error
 #   - MCP_SERVERS array (loaded from mcp-servers.txt — single source of truth)
 #   - add_to_path (symlink-then-shell-config strategy)
@@ -626,14 +626,13 @@ remove_mcp_server_settings() {
     fi
 }
 
-# uninstall_hkask — remove everything install.sh / install-binary.sh deploy.
+# uninstall_hkask — remove everything install.sh deploys.
 #
 # Lives in the shared helpers file (not install.sh) so it is in scope when
 # install-common.sh is sourced by the regression test
 # (kask/scripts/build/check-uninstall-paths.sh), the same way
 # prepare_install_dir / add_to_path / remove_mcp_server_settings are tested.
-# install.sh's --uninstall dispatch calls this; it is not called by
-# install-binary.sh (which has no uninstall path).
+# install.sh's --uninstall dispatch calls this.
 #
 # Caller must set BIN_DIR, INSTALL_DIR, SYSTEM_BIN, MCP_SERVERS (the first
 # three are set by the installer's main(); MCP_SERVERS is loaded by sourcing
@@ -666,13 +665,6 @@ uninstall_hkask() {
         fi
     done
     log "Removed MCP server binaries"
-
-    local updater_dir="$INSTALL_DIR/share/zed-kask/install"
-    assert_not_zed_owned_path "$updater_dir" "updater removal" || return 1
-    if [ -d "$updater_dir" ]; then
-        rm -rf "$updater_dir"
-        log "Removed updater bundle: $updater_dir"
-    fi
 
     # Remove the NoDisplay .desktop entry installed by install_desktop_entry
     # (all release channels — dev/stable, nightly, preview) plus the icon.

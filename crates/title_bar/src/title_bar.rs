@@ -1141,9 +1141,9 @@ impl TitleBar {
             ),
             client::Status::UpgradeRequired => {
                 // zed-kask: auto_update crate removed (D7). The in-app update
-                // status widget is gone — the terminal-based
-                // `update-zed-kask.sh` script handles updates. Show a static
-                // label directing the user to run the updater.
+                // status widget is gone — updates are a source rebuild
+                // (`script/install.sh`). Show a static label directing the
+                // user to update.
                 Some(
                     Button::new("connection-status", "Please update Zed-Kask to Collaborate")
                         .label_size(LabelSize::Small)

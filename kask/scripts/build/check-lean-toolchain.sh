@@ -46,36 +46,15 @@ if install_lean_toolchain >/dev/null 2>&1; then
 fi
 [ ! -e "$ELAN_HOME/bin/elan" ]
 
-bash -n "$here/install-common.sh" "$here/install.sh" "$here/install-binary.sh"
+bash -n "$here/install-common.sh" "$here/install.sh"
 # The guarded call-site counts fail with a named message (a bare `[ -eq ]`
 # under set -e exits silently, leaving a selftest nothing to assert).
 # `|| true` because grep -c exits 1 on zero matches — the count is the
 # signal, not grep's status.
 install_sh_calls="$(grep -c '^[[:space:]]*install_lean_toolchain || return 1$' "$here/install.sh" || true)"
-install_binary_calls="$(grep -c '^[[:space:]]*install_lean_toolchain || return 1$' "$here/install-binary.sh" || true)"
-if [ "$install_sh_calls" -ne 2 ] || [ "$install_binary_calls" -ne 1 ]; then
-    echo "FAIL: guarded install_lean_toolchain call sites moved — install.sh carries $install_sh_calls (expected 2), install-binary.sh carries $install_binary_calls (expected 1)." >&2
+if [ "$install_sh_calls" -ne 2 ]; then
+    echo "FAIL: guarded install_lean_toolchain call sites moved — install.sh carries $install_sh_calls (expected 2)." >&2
     exit 1
 fi
 
-# Call the binary installer's real main with a failed provisioning stage.
-# A failed dependency must leave the already-installed editor untouched even
-# when main is called from a conditional (where Bash disables `set -e`).
-(
-    source "$here/install-binary.sh"
-    detect_target() { printf '%s\n' x86_64-unknown-linux-gnu; }
-    resolve_tag() { printf '%s\n' v0.40.0; }
-    download_and_extract() { mkdir -p "$scratch/download"; printf '%s\n' "$scratch/download"; }
-    install_lean_toolchain() { printf '%s\n' provision >> "$scratch/order"; return 1; }
-    install_binaries() { printf '%s\n' replaced >> "$scratch/order"; }
-    if main > "$scratch/binary-install.log" 2>&1; then
-        echo 'binary installer accepted a failed Lean provision' >&2
-        exit 1
-    fi
-    [ "$(cat "$scratch/order")" = provision ] || {
-        echo 'binary installer replaced the editor after Lean provision failed' >&2
-        exit 1
-    }
-)
-[ ! -e "$scratch/download" ] || { echo 'binary installer left a staging directory' >&2; exit 1; }
-printf '%s\n' 'Lean installer contract: cached setup, invalid root, checksum gate and binary-update failure gate passed'
+printf '%s\n' 'Lean installer contract: cached setup, invalid root, checksum gate and guarded call sites passed'

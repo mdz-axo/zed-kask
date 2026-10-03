@@ -79,7 +79,6 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
             disabled: false,
             items: vec![
                 MenuItem::action("About Zed", zed_actions::About),
-                MenuItem::action("Update Zed-Kask", super::RunZedKaskUpdate),
                 MenuItem::separator(),
                 MenuItem::submenu(Menu::new("Settings").items([
                     MenuItem::action("Open Settings", zed_actions::OpenSettings),
@@ -367,22 +366,5 @@ mod tests {
             .first()
             .expect("app_menus should return at least one menu");
         assert_eq!(leftmost.name.as_ref(), "z-k");
-    }
-
-    #[test]
-    fn test_leftmost_menu_has_zed_kask_update_item() {
-        let cx = TestAppContext::single();
-        cx.update(|cx| {
-            let mut store = settings::SettingsStore::new(cx, &settings::default_settings());
-            store.register_setting::<DisableAiSettings>();
-            cx.set_global(store);
-        });
-        let menus = cx.update(|cx| app_menus(cx));
-        let leftmost = menus
-            .first()
-            .expect("app_menus should return at least one menu");
-        assert!(leftmost.items.iter().any(|item| {
-            matches!(item, MenuItem::Action { name, .. } if name.as_ref() == "Update Zed-Kask")
-        }));
     }
 }

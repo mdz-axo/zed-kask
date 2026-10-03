@@ -344,24 +344,6 @@ install_binary() {
     log_success "Installed zed-kask + $installed_servers MCP server(s) to $BIN_DIR"
 }
 
-install_updater_bundle() {
-    local updater_dir="$INSTALL_DIR/share/zed-kask/install"
-    assert_not_zed_owned_path "$updater_dir" "updater installation" || return 1
-    mkdir -p "$updater_dir"
-
-    local file
-    for file in install-binary.sh install-common.sh update-zed-kask.sh mcp-servers.txt; do
-        if [ ! -f "$_HKASK_INSTALL_DIR/$file" ]; then
-            log_error "Updater bundle source is missing: $_HKASK_INSTALL_DIR/$file"
-            return 1
-        fi
-        cp "$_HKASK_INSTALL_DIR/$file" "$updater_dir/$file.tmp"
-        mv -f "$updater_dir/$file.tmp" "$updater_dir/$file"
-    done
-    chmod 755 "$updater_dir/install-binary.sh" "$updater_dir/update-zed-kask.sh"
-    log_success "Installed safe updater bundle to $updater_dir"
-}
-
 # install_icon — install the zed-kask icon into the hicolor theme so the
 # running application's window has a proper icon in the taskbar/dock.
 #
@@ -833,7 +815,6 @@ main() {
             install_lean_toolchain || return 1
             prepare_install_dir
             install_binary
-            install_updater_bundle
             install_icon
             install_desktop_entry
             setup_environment

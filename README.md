@@ -94,7 +94,7 @@ Environment variables the installer honors:
 
 Flags: `--fast` (release-fast build — parity flags, no LTO), `--skip-deps` (skip `script/linux`), `--system` (system-wide install), `--uninstall`.
 
-An updater is installed alongside the binaries; run `update-zed-kask` (or `kask/scripts/build/update-zed-kask.sh`) to move to a newer release.
+To update, rebuild from source: `bash script/install.sh` (or `--fast` for a quicker rebuild). The download-only updater was removed — no releases are published, so every download path 404'd.
 
 ## License
 

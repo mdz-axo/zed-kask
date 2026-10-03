@@ -7,7 +7,6 @@
 #
 # Consumers:
 #   - kask/scripts/build/install.sh        (mapfile -t MCP_SERVERS < this file)
-#   - kask/scripts/build/install-binary.sh (mapfile -t MCP_SERVERS < this file)
 hkask-mcp-research
 hkask-mcp-companies
 hkask-mcp-corpus

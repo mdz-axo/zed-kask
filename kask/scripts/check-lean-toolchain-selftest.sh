@@ -14,7 +14,7 @@ src="$KASK_ROOT/scripts/build"
 
 fixture="$(mktemp -d)"
 trap 'rm -rf "$fixture"' EXIT
-cp "$src/check-lean-toolchain.sh" "$src/install-common.sh" "$src/install-binary.sh" "$src/install.sh" "$src/mcp-servers.txt" "$fixture/"
+cp "$src/check-lean-toolchain.sh" "$src/install-common.sh" "$src/install.sh" "$src/mcp-servers.txt" "$fixture/"
 
 failures=0
 

@@ -12,7 +12,7 @@
 #      moving the function into install-common.sh so it could be tested.
 #
 #   2. Without HKASK_REMOVE_CONFIG, config + data are PRESERVED (opt-in),
-#      while binaries, the system symlink, the updater bundle, icons, the
+#      while binaries, the system symlink, icons, the
 #      desktop entry, shell PATH markers, and kask context_servers entries
 #      are still removed.
 #
@@ -39,7 +39,6 @@ install_prefix="$sandbox/install-prefix"
 mkdir -p \
     "$fake_home/.local/bin" \
     "$install_prefix/bin" \
-    "$install_prefix/share/zed-kask/install" \
     "$sandbox/system-bin"
 
 export HOME="$fake_home"
@@ -82,7 +81,6 @@ seed_installed_state() {
     for server in "${MCP_SERVERS[@]}"; do
         printf 'mcp %s\n' "$server" > "$BIN_DIR/$server"
     done
-    printf 'updater\n' > "$INSTALL_DIR/share/zed-kask/install/update-zed-kask.sh"
     printf 'icon\n' > "$XDG_DATA_HOME/icons/hicolor/512x512/apps/zed-kask.png"
     printf 'icon\n' > "$XDG_DATA_HOME/icons/hicolor/1024x1024/apps/dev.zed-kask.Zed-Kask.png"
     printf 'desktop\n' > "$XDG_DATA_HOME/applications/dev.zed-kask.Zed-Kask.desktop"
@@ -104,7 +102,6 @@ HKASK_REMOVE_CONFIG=true uninstall_hkask >"$log1" 2>&1 \
 for s in "${MCP_SERVERS[@]}"; do
     [ ! -e "$BIN_DIR/$s" ] || fail "MCP binary survived uninstall: $s"
 done
-[ ! -d "$INSTALL_DIR/share/zed-kask/install" ] || fail "updater bundle survived uninstall"
 [ ! -f "$XDG_DATA_HOME/icons/hicolor/512x512/apps/zed-kask.png" ] || fail "icon survived uninstall"
 [ ! -f "$XDG_DATA_HOME/applications/dev.zed-kask.Zed-Kask.desktop" ] || fail "desktop entry survived uninstall"
 # The core regression: the REAL zed-kask dirs must be gone. If the path were
@@ -135,7 +132,6 @@ uninstall_hkask >"$log2" 2>&1 \
 
 [ ! -L "$SYSTEM_BIN/zed-kask" ] || fail "system symlink survived default uninstall"
 [ ! -e "$BIN_DIR/zed-kask" ]    || fail "zed-kask binary survived default uninstall"
-[ ! -d "$INSTALL_DIR/share/zed-kask/install" ] || fail "updater bundle survived default uninstall"
 # config + data MUST survive — removal is opt-in.
 [ -f "$XDG_CONFIG_HOME/zed-kask/development_credentials" ] \
     || fail "config was removed without HKASK_REMOVE_CONFIG (must be opt-in)"
