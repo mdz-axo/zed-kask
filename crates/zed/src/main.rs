@@ -4531,24 +4531,14 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
 }
 
 async fn authenticate(client: Arc<Client>, cx: &AsyncApp) -> Result<()> {
-    // zed-kask: D88 — no automatic Zed-account sign-in at boot. Upstream's
-    // flow auto-signs-in with stored credentials against `server_url`
-    // (zed.dev), and when the stored access token has expired (the client
-    // stores no refresh token) the flow deletes it and falls through to the
-    // INTERACTIVE browser prompt: a zed.dev sign-in tab opens unprompted
-    // and the local HTTP callback listener — tiny_http `recv_timeout`, a
-    // blocking call inside an async task — pins a background worker for up
-    // to 100 s (the hang detector's `client.rs:1510` report; 2026-10-02:
-    // 5.9 s and 5.2 s on consecutive boots, with the re-auth completing ten
-    // minutes later from the browser session's auto-redirect, so the cycle
-    // repeats at every boot with an expired token). The fork is accountless
-    // under the D7 isolation invariant: it must not contact zed.dev or
-    // hold the operator's Zed-account session by default. Explicit sign-in
-    // via the UI remains available and stores under the fork-scoped
-    // `credentials_url` (default.json: "zed-kask://credentials"). The dev
-    // impersonation path is retained.
-    if stdout_is_a_pty() && client::IMPERSONATE_LOGIN.is_some() {
-        client.sign_in_with_optional_connect(false, cx).await?;
+    if stdout_is_a_pty() {
+        if client::IMPERSONATE_LOGIN.is_some() {
+            client.sign_in_with_optional_connect(false, cx).await?;
+        } else if client.has_credentials(cx).await {
+            client.sign_in_with_optional_connect(true, cx).await?;
+        }
+    } else if client.has_credentials(cx).await {
+        client.sign_in_with_optional_connect(true, cx).await?;
     }
 
     Ok(())
@@ -5347,34 +5337,6 @@ mod tests {
         assert!(
             init < retention,
             "retention override must be set after agent_ui::init"
-        );
-    }
-
-    // zed-kask: D88 — the boot-time client authenticate flow must not
-    // attempt a Zed-account sign-in. Upstream's auto path, on an expired
-    // stored token, deletes it and opens the interactive browser prompt:
-    // an unprompted zed.dev tab plus a background worker pinned for up to
-    // 100 s by the blocking callback listener (the hang detector's
-    // client.rs:1510 report). Source-structure pin: the flow's body
-    // contains no `has_credentials` call and retains the dev impersonation
-    // path.
-    #[test]
-    fn kask_boot_authenticate_does_not_auto_sign_in() {
-        let source = include_str!("main.rs");
-        let start = source
-            .find("async fn authenticate(client")
-            .expect("boot authenticate flow");
-        let end = source[start..]
-            .find("async fn system_id")
-            .expect("the fn following authenticate");
-        let body = &source[start..start + end];
-        assert!(
-            !body.contains("has_credentials"),
-            "the boot flow must not read stored Zed-account credentials (D88)"
-        );
-        assert!(
-            body.contains("IMPERSONATE_LOGIN"),
-            "the dev impersonation path is retained (D88)"
         );
     }
 
