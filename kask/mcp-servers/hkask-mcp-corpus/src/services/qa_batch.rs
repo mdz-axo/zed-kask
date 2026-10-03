@@ -14,10 +14,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use hkask_mcp_server::server::McpToolError;
 use hkask_types::{ChatMessage, InferencePort, InferenceResult};
 
-use crate::batch::{
-    ADAPTIVE_CONCURRENCY_FLOOR, AdaptiveLimiter, MAX_RETRIES, inference_error_is_transient,
-    retry_with_backoff,
-};
+use crate::batch::{ADAPTIVE_CONCURRENCY_FLOOR, AdaptiveLimiter, MAX_RETRIES, retry_with_backoff};
 use crate::helpers::map_corpus_io_error;
 use crate::services::qa_adjudication::{
     QA_ADJUDICATION_PROTOCOL, ReviewedPassageDecision, ReviewedQaAdjudications,
@@ -85,11 +82,11 @@ async fn infer_with_retry_using(
                 let response = router
                     .generate_with_messages(messages, &parameters, Some(selected_model), None)
                     .await;
-                match &response {
-                    Ok(_) => slot.report_success(),
-                    Err(error) if inference_error_is_transient(error) => slot.report_failure(),
-                    Err(_) => {}
-                }
+                // The ONE outcome classifier: CircuitOpen pauses the limiter,
+                // any other failure halves it. (This replaces the former
+                // per-callsite transient/permanent split — one classifier,
+                // per the 2026-10-02 regulator unification.)
+                slot.report_inference_outcome(&response);
                 response
             }
         },

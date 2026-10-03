@@ -237,20 +237,19 @@ Respond in JSON format: {{\"h_mems\": [{{\"subject\": \"...\", \"predicate\": \"
                     ..Default::default()
                 };
 
-                let response = match retry_with_backoff(
+                let outcome = retry_with_backoff(
                     MAX_RETRIES,
                     "hkask.mcp.docproc.assertions",
                     &entity_ref,
                     || router.generate_with_model(&prompt, &params, Some(&classifier), None),
                 )
-                .await
-                {
-                    Ok(outcome) => {
-                        slot.report_success();
-                        outcome.value
-                    }
+                .await;
+                // The ONE outcome classifier: CircuitOpen pauses the limiter,
+                // any other failure halves it.
+                slot.report_inference_outcome(&outcome);
+                let response = match outcome {
+                    Ok(outcome) => outcome.value,
                     Err(_) => {
-                        slot.report_failure();
                         failed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         return;
                     }

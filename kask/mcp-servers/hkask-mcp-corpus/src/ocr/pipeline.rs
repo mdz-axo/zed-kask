@@ -24,6 +24,8 @@ use image::DynamicImage;
 
 use crate::ocr::verification::verify_output;
 
+use crate::batch::BreakerFeedback;
+
 /// Typed errors for OCR backend execution.
 #[derive(Debug, Clone, thiserror::Error)]
 pub(crate) enum OcrError {
@@ -39,16 +41,32 @@ pub(crate) enum OcrError {
     NoModel,
     #[error("Model '{model}' exists but may not support vision input")]
     NotVisionModel { model: String },
+    /// Pre-call diagnostic (registry/configuration failures that never
+    /// reached an inference call). Never carries a breaker verdict.
     #[error("OCR inference failed: {0}")]
     InferenceFailed(String),
+    /// A typed inference-call outcome, carrying the source `InferenceError`
+    /// unstringified so the outcome classifier can recognize the shared
+    /// bridge's `CircuitOpen` verdict — the 2026-10-02 spiral began with
+    /// `e.to_string()` destroying that signal at this boundary.
+    #[error("OCR inference failed: {source}")]
+    Inference { source: hkask_types::InferenceError },
     #[error(
         "OCR model '{model}' returned no text for {input_bytes} bytes of input — empty output is a failure, not a success"
     )]
     EmptyOcrOutput { model: String, input_bytes: usize },
-    #[error(
-        "OCR circuit breaker open for model '{model}' — the endpoint is quarantined after repeated failures; wait for the cooldown or fix the endpoint"
-    )]
-    BreakerOpen { model: String },
+}
+
+impl BreakerFeedback for OcrError {
+    fn breaker_retry_after(&self) -> Option<std::time::Duration> {
+        match self {
+            // Only a typed inference-call outcome can carry the shared
+            // bridge's breaker verdict; pre-call diagnostics and page-level
+            // failures are capacity signals, never pause signals.
+            Self::Inference { source } => source.breaker_retry_after(),
+            _ => None,
+        }
+    }
 }
 
 /// Trait for executing OCR on a single page image via the configured model.
@@ -159,9 +177,11 @@ async fn run_pipeline_parallel(
     //   page execution at `max_concurrency` (`HKASK_MAX_CONCURRENCY`, the
     //   KaskGeneralSettings ceiling).
     // - The REMOTE bound is adaptive and lives in `LlmOcrExecutor`: an AIMD
-    //   limiter (floor 2, +1 per success, halve per failure, same ceiling)
-    //   gates each vision call, so LLM concurrency ramps instead of
-    //   launching at max. See `batch.rs::AdaptiveLimiter`.
+    //   limiter (floor 2, +1 per success, halve per failure, paused while
+    //   any breaker is open, same ceiling) gates each vision call, so LLM
+    //   concurrency ramps instead of launching at max — and waits out
+    //   breaker cooldowns instead of failing pages into them. See
+    //   `batch.rs::AdaptiveLimiter`.
     let semaphore = Arc::new(Semaphore::new(max_concurrency));
 
     let mut join_set = tokio::task::JoinSet::new();
@@ -381,22 +401,29 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn breaker_open_fails_visibly() {
-        let executor = Arc::new(MockExecutor {
-            results: vec![Err(OcrError::BreakerOpen {
-                model: "mock-model".into(),
-            })],
-        });
-        let outcome = run_pipeline([blank_page()], 1, executor, "mock-model", None).await;
-        assert!(!outcome.report.passed);
-        assert_eq!(outcome.results.len(), 0);
-        match &outcome.errors[0] {
-            PipelineError::OcrFailed { reason, .. } => {
-                assert!(reason.contains("circuit breaker open"), "reason: {reason}");
+    /// Only a typed inference-call outcome can carry the shared bridge's
+    /// breaker verdict; pre-call diagnostics and page-level failures are
+    /// capacity signals, never pause signals.
+    #[test]
+    fn ocr_error_delegates_breaker_feedback_through_the_typed_variant() {
+        let verdict = OcrError::Inference {
+            source: hkask_types::InferenceError::CircuitOpen(
+                "transient inference failure threshold reached; retry after 30s".into(),
+            ),
+        };
+        assert_eq!(
+            verdict.breaker_retry_after(),
+            Some(std::time::Duration::from_secs(32))
+        );
+        assert_eq!(
+            OcrError::EmptyOcrOutput {
+                model: "m".into(),
+                input_bytes: 1
             }
-            other => panic!("expected OcrFailed, got {other:?}"),
-        }
+            .breaker_retry_after(),
+            None,
+            "page-level failures are capacity signals, never pause signals"
+        );
     }
 
     #[tokio::test]

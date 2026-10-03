@@ -35,7 +35,10 @@ impl ChatMessage {
 }
 
 /// Inference error types
-#[derive(Debug, thiserror::Error)]
+// `Clone` (all-String variants, lossless): the corpus server's typed OCR
+// outcome `OcrError::Inference` carries a source `InferenceError` to the
+// adaptive limiter's outcome classifier without stringifying it.
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum InferenceError {
     #[error("Inference overloaded: {0}")]
     Overloaded(String),

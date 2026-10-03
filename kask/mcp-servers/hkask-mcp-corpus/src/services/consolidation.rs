@@ -214,18 +214,19 @@ impl ConsolidationService {
                     ..Default::default()
                 };
 
-                match router
+                let response = router
                     .generate_with_model(&combined, &params, model_override.as_deref(), None)
-                    .await
-                {
+                    .await;
+                // The ONE outcome classifier: CircuitOpen pauses the limiter,
+                // any other failure halves it.
+                slot.report_inference_outcome(&response);
+                match response {
                     Ok(response) => {
-                        slot.report_success();
                         let text = response.text.trim().to_string();
                         let mut results = results.lock().unwrap_or_else(|e| e.into_inner());
                         results[ci] = Some(text);
                     }
                     Err(_) => {
-                        slot.report_failure();
                         let mut results = results.lock().unwrap_or_else(|e| e.into_inner());
                         results[ci] = Some("__FALLBACK__".to_string());
                     }

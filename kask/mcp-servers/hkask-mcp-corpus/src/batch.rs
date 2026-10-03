@@ -180,6 +180,100 @@ where
 /// "empty output") was the motivating failure.
 pub(crate) const ADAPTIVE_CONCURRENCY_FLOOR: usize = 2;
 
+/// Fallback pause horizon when a breaker-open signal carries no parseable
+/// retry-after (the shared bridge formats its cooldown into the
+/// `CircuitOpen` message; an unparseable message must still pause, never
+/// busy-spin the floor against a just-expired breaker).
+pub(crate) const DEFAULT_BREAKER_RETRY_AFTER: std::time::Duration =
+    std::time::Duration::from_secs(30);
+
+/// Margin added to a PARSED retry-after horizon at the outcome classifier,
+/// so the first post-pause probes do not land exactly on the shared
+/// breaker's expiry boundary. Exact horizons from the executor's own
+/// breaker (which already escalates its cooldown) are honored as-is.
+const BREAKER_PAUSE_MARGIN: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Breaker-open feedback carried by a gated call's error. The shared
+/// inference bridge's circuit breaker rejects dispatch while open and names
+/// its retry-after horizon in the `CircuitOpen` message; the limiter pauses
+/// for that horizon instead of halving into the open breaker (the 2026-10-02
+/// spiral: the limiter halved per instant failure but never paused, so
+/// floor-concurrency pages kept re-tripping the shared breaker — 94
+/// consecutive openings on one book run).
+pub(crate) trait BreakerFeedback {
+    /// `Some(retry_after)` when this error is a circuit-breaker-open verdict
+    /// from the shared inference bridge.
+    fn breaker_retry_after(&self) -> Option<std::time::Duration>;
+}
+
+impl BreakerFeedback for InferenceError {
+    fn breaker_retry_after(&self) -> Option<std::time::Duration> {
+        match self {
+            Self::CircuitOpen(message) => Some(
+                parse_retry_after(message).unwrap_or(DEFAULT_BREAKER_RETRY_AFTER)
+                    + BREAKER_PAUSE_MARGIN,
+            ),
+            _ => None,
+        }
+    }
+}
+
+/// The embedding port has no breaker variant today — the shared bridge's
+/// `admit()` circuit gates the chat/vision path, not the embedding port.
+/// Honest `None`: an embedding failure is a capacity failure for AIMD
+/// purposes, never a fabricated pause signal.
+impl BreakerFeedback for hkask_types::EmbeddingGenerationError {
+    fn breaker_retry_after(&self) -> Option<std::time::Duration> {
+        None
+    }
+}
+
+/// Parse the retry-after horizon out of the shared bridge's `CircuitOpen`
+/// message. The bridge formats it as
+/// `"...; retry after {retry_after:?}"` (a Debug-formatted `Duration`:
+/// `30s`, `1m 30s`, `1.5s`, `500ms`, `1h`). Any drift from that format
+/// returns `None` and the caller falls back to
+/// [`DEFAULT_BREAKER_RETRY_AFTER`] — safe degradation, never a busy-spin.
+fn parse_retry_after(message: &str) -> Option<std::time::Duration> {
+    let rest = message.split("retry after").nth(1)?.trim_start();
+    let mut total = 0f64;
+    let mut parsed_any = false;
+    for token in rest.split_whitespace() {
+        // `split_once` would CONSUME the delimiter char ("30s" -> ("30", ""),
+        // "500ms" -> ("500", "s") — silently reading 500ms as 500s); `find`
+        // + `split_at` splits at the boundary without consuming it.
+        let split_at = token
+            .find(|c: char| !c.is_ascii_digit() && c != '.')
+            .unwrap_or(token.len());
+        let (value, unit_part) = token.split_at(split_at);
+        let Ok(value) = value.parse::<f64>() else {
+            break;
+        };
+        let unit: String = unit_part
+            .chars()
+            .take_while(|c| c.is_alphabetic())
+            .collect();
+        let multiplier = match unit.as_str() {
+            "h" => 3600.0,
+            "m" => 60.0,
+            "s" => 1.0,
+            "ms" => 0.001,
+            "us" | "\u{b5}s" => 0.000_001,
+            "ns" => 0.000_000_001,
+            _ => break,
+        };
+        total += value * multiplier;
+        parsed_any = true;
+    }
+    if parsed_any && total.is_finite() && total >= 0.0 {
+        // A hostile/garbage horizon must not overflow `from_secs_f64`; an
+        // hour is the maximum sane breaker cooldown.
+        Some(std::time::Duration::from_secs_f64(total.min(3600.0)))
+    } else {
+        None
+    }
+}
+
 /// AIMD adaptive concurrency limiter for remote LLM work.
 ///
 /// Starts at `floor`, grows additively (+1 per success) toward `ceiling`, and
@@ -187,6 +281,12 @@ pub(crate) const ADAPTIVE_CONCURRENCY_FLOOR: usize = 2;
 /// with lower capacity than the ceiling is discovered by probing, not by
 /// stampede. Local work (file IO) is NOT gated here — a static
 /// bound is correct for a local resource; adaptation is for remote services.
+///
+/// A circuit-breaker-open verdict PAUSES all acquisitions until the
+/// breaker's retry-after horizon: `current` snaps to the floor and
+/// `acquire` sleeps until the pause expires. Halving alone cannot express
+/// "do not dispatch until T" — at the floor it keeps firing doomed calls
+/// that re-trip the open breaker (the 2026-10-02 spiral).
 ///
 /// Backoff needs no permit recall: the acquire check (`in_flight < current`)
 /// is the authority, so shrinking `current` simply makes the next acquires
@@ -217,6 +317,9 @@ struct AdaptiveLimiterInner {
 struct AdaptiveLimiterState {
     current: usize,
     in_flight: usize,
+    /// While `Some`, no slot is granted until this instant passes — the
+    /// limiter's model of an open circuit breaker's cooldown horizon.
+    paused_until: Option<std::time::Instant>,
 }
 
 impl AdaptiveLimiter {
@@ -234,6 +337,7 @@ impl AdaptiveLimiter {
                 state: std::sync::Mutex::new(AdaptiveLimiterState {
                     current: floor,
                     in_flight: 0,
+                    paused_until: None,
                 }),
                 slot_open: tokio::sync::Notify::new(),
             }),
@@ -250,23 +354,47 @@ impl AdaptiveLimiter {
     }
 
     /// Acquire an execution slot, waiting while in-flight work is at the
-    /// current allowance. Cancellation-safe: `in_flight` is only incremented
-    /// when a slot is granted, so a dropped acquire future leaks nothing.
+    /// current allowance or a breaker pause is active. Cancellation-safe:
+    /// `in_flight` is only incremented when a slot is granted, so a dropped
+    /// acquire future (mid-pause-sleep or mid-park) leaks nothing.
     pub(crate) async fn acquire(&self) -> AdaptiveSlot {
         loop {
             let notified = self.inner.slot_open.notified();
-            {
+            // Decide under the lock; the guard never crosses an await —
+            // a `MutexGuard` is not `Send`, and every consumer spawns this
+            // future onto tokio workers.
+            let pause_sleep = {
                 let mut state = self
                     .inner
                     .state
                     .lock()
                     .expect("adaptive limiter state mutex poisoned");
-                if state.in_flight < state.current {
+                let pause_sleep = if let Some(paused_until) = state.paused_until {
+                    let now = std::time::Instant::now();
+                    if now < paused_until {
+                        Some(paused_until - now)
+                    } else {
+                        // Lazily clear an expired pause.
+                        state.paused_until = None;
+                        None
+                    }
+                } else {
+                    None
+                };
+                if pause_sleep.is_none() && state.in_flight < state.current {
                     state.in_flight += 1;
                     return AdaptiveSlot {
                         limiter: self.clone(),
                     };
                 }
+                pause_sleep
+            };
+            if let Some(remaining) = pause_sleep {
+                // Sleep out the pause, then re-check under the lock: the
+                // pause may have been extended while we slept. Nothing is
+                // reserved while waiting, so a dropped acquire leaks nothing.
+                tokio::time::sleep(remaining).await;
+                continue;
             }
             notified.await;
         }
@@ -314,24 +442,70 @@ impl AdaptiveLimiter {
             );
         }
     }
+
+    /// A circuit breaker opened on the remote inference path: snap the
+    /// allowance to the floor and pause every acquisition until
+    /// `retry_after` has passed. Queued work waits; nothing fires into the
+    /// open breaker. A later `report_breaker_open` extends an active
+    /// pause (max), never shortens it.
+    pub(crate) fn report_breaker_open(&self, retry_after: std::time::Duration) {
+        let paused_until = std::time::Instant::now() + retry_after;
+        {
+            let mut state = self
+                .inner
+                .state
+                .lock()
+                .expect("adaptive limiter state mutex poisoned");
+            state.current = self.inner.floor;
+            state.paused_until = Some(match state.paused_until {
+                Some(existing) => existing.max(paused_until),
+                None => paused_until,
+            });
+        }
+        tracing::warn!(
+            target: "reg.batch.concurrency",
+            current = self.inner.floor,
+            retry_after_secs = retry_after.as_secs(),
+            "Adaptive limiter paused on breaker-open — acquisitions wait out the cooldown"
+        );
+    }
 }
 
-/// One acquired execution slot. The gated call reports its outcome
-/// (`report_success` / `report_failure`); `Drop` releases the in-flight
-/// count and wakes a waiter.
+/// One acquired execution slot. The gated call reports its outcome through
+/// [`AdaptiveSlot::report_inference_outcome`] — the one classifier; `Drop`
+/// releases the in-flight count and wakes a waiter.
 pub(crate) struct AdaptiveSlot {
     limiter: AdaptiveLimiter,
 }
 
 impl AdaptiveSlot {
     /// The gated call succeeded — grow the allowance (additive, +1).
-    pub(crate) fn report_success(&self) {
+    fn report_success(&self) {
         self.limiter.report_success();
     }
 
     /// The gated call failed — back off (multiplicative, halve, floor-bounded).
-    pub(crate) fn report_failure(&self) {
+    fn report_failure(&self) {
         self.limiter.report_failure();
+    }
+
+    /// THE outcome classifier for a gated remote-inference call. Every
+    /// consumer reports through this one method — per-callsite match arms
+    /// are how the 2026-10-02 spiral hid (CircuitOpen stringified into a
+    /// generic failure arm: halve-only, never pause).
+    ///
+    /// - `Ok` → success: grow the allowance additively.
+    /// - `Err` carrying a breaker-open verdict → pause: snap to the floor
+    ///   and hold acquisitions for the breaker's retry-after horizon.
+    /// - any other `Err` → failure: halve, floor-bounded.
+    pub(crate) fn report_inference_outcome<T, E: BreakerFeedback>(&self, result: &Result<T, E>) {
+        match result {
+            Ok(_) => self.report_success(),
+            Err(error) => match error.breaker_retry_after() {
+                Some(retry_after) => self.limiter.report_breaker_open(retry_after),
+                None => self.report_failure(),
+            },
+        }
     }
 }
 
@@ -552,5 +726,138 @@ mod adaptive_limiter_tests {
             "growth must unblock a waiting acquire without any slot release"
         );
         drop(second);
+    }
+
+    /// A breaker-open verdict snaps the allowance to the floor AND pauses
+    /// acquisitions — halving alone keeps firing doomed calls at the floor
+    /// (the 2026-10-02 spiral: 94 consecutive breaker openings on one book).
+    #[test]
+    fn breaker_open_snaps_to_floor() {
+        let limiter = AdaptiveLimiter::new(96, 2);
+        for _ in 0..30 {
+            limiter.report_success();
+        }
+        assert_eq!(limiter.current(), 32);
+        limiter.report_breaker_open(std::time::Duration::from_millis(200));
+        assert_eq!(limiter.current(), 2, "breaker-open must snap to the floor");
+    }
+
+    #[tokio::test]
+    async fn pause_grants_nothing_until_expiry() {
+        let limiter = AdaptiveLimiter::new(4, 2);
+        limiter.report_breaker_open(std::time::Duration::from_millis(150));
+        let blocked =
+            tokio::time::timeout(std::time::Duration::from_millis(60), limiter.acquire()).await;
+        assert!(blocked.is_err(), "a paused limiter must grant nothing");
+        let granted =
+            tokio::time::timeout(std::time::Duration::from_secs(2), limiter.acquire()).await;
+        assert!(
+            granted.is_ok(),
+            "acquire must grant after the pause expires"
+        );
+    }
+
+    #[tokio::test]
+    async fn growth_resumes_from_floor_after_pause() {
+        let limiter = AdaptiveLimiter::new(4, 2);
+        for _ in 0..2 {
+            limiter.report_success();
+        }
+        assert_eq!(limiter.current(), 4);
+        limiter.report_breaker_open(std::time::Duration::from_millis(50));
+        assert_eq!(limiter.current(), 2);
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        let _slot = limiter.acquire().await;
+        limiter.report_success();
+        assert_eq!(
+            limiter.current(),
+            3,
+            "growth resumes from the floor post-pause"
+        );
+    }
+
+    #[tokio::test]
+    async fn circuit_open_routes_to_pause_not_halve() {
+        let limiter = AdaptiveLimiter::new(96, 2);
+        for _ in 0..30 {
+            limiter.report_success();
+        }
+        assert_eq!(limiter.current(), 32);
+        let slot = limiter.acquire().await;
+        let breaker_verdict: Result<(), InferenceError> = Err(InferenceError::CircuitOpen(
+            "transient inference failure threshold reached; retry after 30s".into(),
+        ));
+        slot.report_inference_outcome(&breaker_verdict);
+        assert_eq!(
+            limiter.current(),
+            2,
+            "CircuitOpen must snap to the floor (pause), not halve"
+        );
+        // The pause is active: the next acquire grants nothing promptly.
+        let blocked =
+            tokio::time::timeout(std::time::Duration::from_millis(60), limiter.acquire()).await;
+        assert!(blocked.is_err(), "CircuitOpen must pause acquisitions");
+    }
+
+    #[tokio::test]
+    async fn plain_failure_halves_without_pausing() {
+        let limiter = AdaptiveLimiter::new(96, 2);
+        for _ in 0..6 {
+            limiter.report_success();
+        }
+        assert_eq!(limiter.current(), 8);
+        let slot = limiter.acquire().await;
+        let capacity_failure: Result<(), InferenceError> =
+            Err(InferenceError::Overloaded("endpoint busy".into()));
+        slot.report_inference_outcome(&capacity_failure);
+        assert_eq!(limiter.current(), 4, "a non-breaker failure halves");
+        let granted =
+            tokio::time::timeout(std::time::Duration::from_millis(100), limiter.acquire()).await;
+        assert!(
+            granted.is_ok(),
+            "a plain failure must not pause acquisitions"
+        );
+    }
+
+    /// The parser is pinned to the shared bridge's exact `CircuitOpen`
+    /// message format (kask_bridge/src/inference_chat.rs `admit`):
+    /// `"...; retry after {retry_after:?}"`. If the bridge drifts, parsing
+    /// returns `None` and the classifier falls back to the 30s default —
+    /// safe, but this test is the tripwire that says the pin broke.
+    #[test]
+    fn retry_after_parses_the_bridge_message_format() {
+        let bridge_message = |retry_after: std::time::Duration| {
+            format!("transient inference failure threshold reached; retry after {retry_after:?}")
+        };
+        assert_eq!(
+            parse_retry_after(&bridge_message(std::time::Duration::from_secs(30))),
+            Some(std::time::Duration::from_secs(30))
+        );
+        assert_eq!(
+            parse_retry_after(&bridge_message(std::time::Duration::from_secs(90))),
+            Some(std::time::Duration::from_secs(90))
+        );
+        assert_eq!(
+            parse_retry_after(&bridge_message(std::time::Duration::from_millis(500))),
+            Some(std::time::Duration::from_millis(500))
+        );
+        assert_eq!(
+            parse_retry_after(&bridge_message(std::time::Duration::from_secs(3600))),
+            Some(std::time::Duration::from_secs(3600))
+        );
+        assert_eq!(parse_retry_after("no horizon in here"), None);
+        // The classifier adds the pause margin to a parsed horizon...
+        let verdict =
+            InferenceError::CircuitOpen(bridge_message(std::time::Duration::from_secs(30)));
+        assert_eq!(
+            verdict.breaker_retry_after(),
+            Some(std::time::Duration::from_secs(32))
+        );
+        // ...and falls back to the default when the horizon is unparseable.
+        let verdict = InferenceError::CircuitOpen("circuit open (no horizon)".into());
+        assert_eq!(
+            verdict.breaker_retry_after(),
+            Some(DEFAULT_BREAKER_RETRY_AFTER + BREAKER_PAUSE_MARGIN)
+        );
     }
 }

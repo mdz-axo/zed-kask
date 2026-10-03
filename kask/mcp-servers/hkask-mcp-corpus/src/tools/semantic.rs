@@ -396,7 +396,7 @@ impl CorpusServer {
                 let slot = limiter.acquire().await;
 
                 let batch_texts: Vec<String> = chunk_batch.iter().map(|c| c.2.clone()).collect();
-                let batch = match retry_with_backoff(
+                let outcome = retry_with_backoff(
                     MAX_RETRIES,
                     "hkask.mcp.docproc.embed",
                     &format!("batch {batch_idx} of {batch_len}"),
@@ -408,15 +408,17 @@ impl CorpusServer {
                         )
                     },
                 )
-                .await
-                {
+                .await;
+                // The ONE outcome classifier: a breaker-open verdict pauses
+                // the limiter (the embedding port carries none today — its
+                // impl is honestly None), any failure halves.
+                slot.report_inference_outcome(&outcome);
+                let batch = match outcome {
                     Ok(outcome) => {
-                        slot.report_success();
                         retries.fetch_add(outcome.retries, std::sync::atomic::Ordering::Relaxed);
                         outcome.value
                     }
                     Err(e) => {
-                        slot.report_failure();
                         tracing::warn!(
                             target: "hkask.mcp.docproc.embed",
                             batch = batch_idx,

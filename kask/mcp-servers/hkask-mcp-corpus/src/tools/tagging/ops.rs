@@ -345,20 +345,19 @@ impl CorpusServer {
                         ..Default::default()
                     };
 
-                    let response = match retry_with_backoff(
+                    let outcome = retry_with_backoff(
                         MAX_RETRIES,
                         "hkask.mcp.docproc.tag_chunks",
                         &format!("batch {batch_idx} of {batch_len}"),
                         || router.generate_with_model(&prompt, &params, Some(&model_override), None),
                     )
-                    .await
-                    {
-                        Ok(outcome) => {
-                            slot.report_success();
-                            outcome.value
-                        }
+                    .await;
+                    // The ONE outcome classifier: CircuitOpen pauses the
+                    // limiter, any other failure halves it.
+                    slot.report_inference_outcome(&outcome);
+                    let response = match outcome {
+                        Ok(outcome) => outcome.value,
                         Err(e) => {
-                            slot.report_failure();
                             // An inference failure must not silently read as
                             // "chunks tagged with fallback" — warn so the
                             // operator can distinguish the two.

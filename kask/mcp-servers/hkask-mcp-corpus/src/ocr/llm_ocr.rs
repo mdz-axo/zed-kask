@@ -10,10 +10,11 @@ use async_trait::async_trait;
 
 use crate::ocr::OcrResult;
 use base64::Engine;
-use hkask_types::{InferencePort, template::LLMParameters};
+use hkask_types::{InferenceError, InferencePort, template::LLMParameters};
 use image::DynamicImage;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
+use std::time::Duration;
 
 use crate::ocr::pipeline::{OcrError, OcrExecutor};
 
@@ -50,7 +51,7 @@ pub(crate) async fn vision_ocr_bytes(
     let result = router
         .generate_vision(&prompt, &[b64_data], &params, Some(model))
         .await
-        .map_err(|e| OcrError::InferenceFailed(e.to_string()))?;
+        .map_err(|e| OcrError::Inference { source: e })?;
     if result.text.trim().is_empty() {
         return Err(OcrError::EmptyOcrOutput {
             model: model.to_string(),
@@ -62,8 +63,12 @@ pub(crate) async fn vision_ocr_bytes(
 
 /// Circuit breaker for rate-limit resilience.
 ///
-/// After `threshold` consecutive failures, pauses all requests until
-/// `cooldown_secs` after the last failure. Embedded in `LlmOcrExecutor`.
+/// After `threshold` consecutive failures, opens: the executor reports the
+/// cooldown to the adaptive limiter, which holds new vision calls until it
+/// passes. A sensor/accumulator only — the limiter is the one actuation
+/// point (the 2026-10-02 spiral was two actuators fighting: this breaker
+/// fail-fasting pages while the limiter froze, unpausing, re-tripping).
+/// Embedded in `LlmOcrExecutor`.
 struct CircuitBreaker {
     /// Consecutive failure count (429 or connection errors).
     failures: AtomicU64,
@@ -115,7 +120,11 @@ impl CircuitBreaker {
     /// long book run otherwise re-burns one doomed vision call every fixed
     /// cooldown window — a dead endpoint taxed a 412-page run for its
     /// full duration at 30s intervals.
-    fn record_failure(&self) {
+    /// Record a failure. Returns `Some(cooldown_secs)` when this failure
+    /// opened (or re-opened) the breaker — the caller actuates the adaptive
+    /// limiter's pause with it, so breaker state and concurrency regulation
+    /// share one actuation path.
+    fn record_failure(&self) -> Option<u64> {
         let count = self.failures.fetch_add(1, Ordering::Relaxed) + 1;
         if count >= self.threshold {
             let openings = self.consecutive_openings.fetch_add(1, Ordering::Relaxed) + 1;
@@ -133,6 +142,9 @@ impl CircuitBreaker {
                 cooldown_secs,
                 "Circuit breaker opened — pausing LLM OCR requests"
             );
+            Some(cooldown_secs)
+        } else {
+            None
         }
     }
 }
@@ -256,9 +268,9 @@ pub(crate) struct LlmOcrExecutor {
     /// the recorder only exists in the server wiring.
     recorder: Option<Arc<OcrHealthRecorder>>,
     /// Adaptive ramp-up gate for the remote LLM service (AIMD: floor 2,
-    /// +1 per success, halve per failure, ceiling = `HKASK_MAX_CONCURRENCY`).
-    /// Process-lifetime: learns the endpoint's real capacity across runs
-    /// instead of re-probing per book.
+    /// +1 per success, halve per failure, pause while any breaker is open,
+    /// ceiling = `HKASK_MAX_CONCURRENCY`). Process-lifetime: learns the
+    /// endpoint's real capacity across runs instead of re-probing per book.
     limiter: crate::batch::AdaptiveLimiter,
 }
 
@@ -284,11 +296,11 @@ impl LlmOcrExecutor {
         self
     }
 
-    /// Whether the LLM OCR circuit breaker is currently open (LLM attempts
-    /// paused after consecutive failures). Stamped into pipeline outcomes so
-    /// a run that skipped every LLM page because of an open breaker is
-    /// distinguishable in the tool result from one that never routed to the
-    /// LLM at all.
+    /// Whether the LLM OCR circuit breaker is currently open. Stamped into
+    /// pipeline outcomes for observability: while it is open the adaptive
+    /// limiter is paused, so a run reporting `llm_breaker_open: true` WAITED
+    /// OUT a cooldown rather than losing pages to it (the pre-fix
+    /// fail-fast page loss was the 2026-10-02 spiral's other arm).
     pub fn breaker_open(&self) -> bool {
         !self.breaker.is_closed()
     }
@@ -307,20 +319,6 @@ impl OcrExecutor for LlmOcrExecutor {
         model: &str,
         image: &DynamicImage,
     ) -> Result<OcrResult, OcrError> {
-        // Quarantine rejects the page explicitly; the run retains the reason
-        // rather than substituting another backend's output.
-        if !self.breaker.is_closed() {
-            tracing::warn!(
-                target: "reg.pipeline.ocr.circuit_breaker",
-                page_index = page_index,
-                llm_model = %model,
-                "LLM OCR circuit breaker open — page fails, no fallback"
-            );
-            return Err(OcrError::BreakerOpen {
-                model: model.to_string(),
-            });
-        }
-
         let model = model.to_string();
 
         // Encode as PNG: `LanguageModelImage`'s contract is base64 PNG and
@@ -350,17 +348,16 @@ impl OcrExecutor for LlmOcrExecutor {
             })?;
 
         // Remote-service gate: the adaptive limiter ramps LLM concurrency
-        // (floor → ceiling on success, halved on failure) instead of
-        // launching every in-flight page at the ceiling. The slot reports
-        // the call's outcome and releases its in-flight count on drop.
+        // (floor → ceiling on success, halved on failure, paused while any
+        // breaker is open) instead of launching every in-flight page at the
+        // ceiling. The ONE outcome classifier routes the call's result — a
+        // CircuitOpen verdict pauses here — and the slot releases its
+        // in-flight count on drop.
         let slot = self.limiter.acquire().await;
         let result = vision_ocr_bytes(&*self.router, &img_bytes, &model)
             .await
             .and_then(|raw| super::response::parse_page_response(&raw));
-        match &result {
-            Ok(_) => slot.report_success(),
-            Err(_) => slot.report_failure(),
-        }
+        slot.report_inference_outcome(&result);
 
         // Circuit-breaker + rate-limit tracking on the vision-call outcome. The
         // breaker reacts to rate-limit, timeout, connection errors, AND empty
@@ -383,7 +380,10 @@ impl OcrExecutor for LlmOcrExecutor {
             // quarantined like a transport failure, and record the silent
             // failure for the regulation loop's health file.
             Err(OcrError::EmptyOcrOutput { model, input_bytes }) => {
-                self.breaker.record_failure();
+                if let Some(cooldown_secs) = self.breaker.record_failure() {
+                    self.limiter
+                        .report_breaker_open(Duration::from_secs(cooldown_secs));
+                }
                 tracing::warn!(
                     target: "reg.pipeline.ocr.silent_failure",
                     page_index = page_index,
@@ -400,19 +400,19 @@ impl OcrExecutor for LlmOcrExecutor {
                     input_bytes: *input_bytes,
                 });
             }
-            Err(OcrError::InferenceFailed(err_str)) => {
+            Err(OcrError::Inference { source }) => {
                 // Preserve HTTP status, DNS, TLS, or timeout details so the
                 // operator can distinguish a broken endpoint from empty text.
                 tracing::warn!(
                     target: "reg.pipeline.ocr.inference_failure",
                     page_index = page_index,
                     llm_model = %model,
-                    error = %err_str,
+                    error = %source,
                     "OCR inference call failed — no fallback backend exists"
                 );
-                let is_rate_limit = err_str.contains("429")
-                    || err_str.contains("rate limit")
-                    || err_str.contains("Rate limit");
+                let is_rate_limit = source.to_string().contains("429")
+                    || source.to_string().contains("rate limit")
+                    || source.to_string().contains("Rate limit");
                 if is_rate_limit {
                     tracing::warn!(
                         target: "reg.pipeline.ocr.rate_limit",
@@ -421,13 +421,20 @@ impl OcrExecutor for LlmOcrExecutor {
                         "OCR inference rate-limited — circuit breaker tracking"
                     );
                 }
-                // A dead-but-erroring endpoint (404/5xx) is the same class
-                // as a dead-but-responding one (200-empty): every inference
-                // failure counts against the breaker so a permanently
-                // failing endpoint is quarantined instead of taxing every
-                // page with a doomed call. The former substring filter
-                // ("timed out"/"connection") missed HTTP errors entirely.
-                self.breaker.record_failure();
+                // The shared bridge breaker's own verdict (CircuitOpen) is
+                // actuated by the outcome classifier's pause above — one
+                // signal, one clock. Counting it here too would re-grow the
+                // spiral's scoreboard (the 94 consecutive openings came from
+                // exactly that double-counting). Only DIRECT endpoint
+                // failures (HTTP, timeout, connection) accumulate here; a
+                // dead-but-erroring endpoint (404/5xx) is the same class as
+                // a dead-but-responding one (200-empty).
+                if !matches!(source, InferenceError::CircuitOpen(_)) {
+                    if let Some(cooldown_secs) = self.breaker.record_failure() {
+                        self.limiter
+                            .report_breaker_open(Duration::from_secs(cooldown_secs));
+                    }
+                }
                 if let Some(ref recorder) = self.recorder {
                     recorder.record_breaker_state(!self.breaker.is_closed());
                 }
@@ -647,6 +654,88 @@ mod tests {
             executor.breaker_open(),
             "5 consecutive HTTP-error failures must open the breaker"
         );
+    }
+
+    /// The shared bridge breaker's verdict arrives as a typed
+    /// `InferenceError::CircuitOpen`. It must pause the adaptive limiter
+    /// (the next page waits out the horizon) WITHOUT counting toward the
+    /// executor's own breaker — one signal, one clock (the 2026-10-02
+    /// spiral double-counted it into 94 consecutive openings).
+    struct CircuitOpenVisionPort;
+
+    impl hkask_types::InferencePort for CircuitOpenVisionPort {
+        fn generate(
+            &self,
+            _prompt: &str,
+            _parameters: &LLMParameters,
+            _tools: Option<&[hkask_types::ChatToolDefinition]>,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<
+                        Output = Result<hkask_types::InferenceResult, InferenceError>,
+                    > + Send
+                    + '_,
+            >,
+        > {
+            Box::pin(async {
+                Err(InferenceError::Connection(
+                    "noop — only generate_vision is under test".into(),
+                ))
+            })
+        }
+
+        fn generate_vision(
+            &self,
+            _prompt: &str,
+            _images: &[String],
+            _parameters: &LLMParameters,
+            _model_override: Option<&str>,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<
+                        Output = Result<hkask_types::InferenceResult, InferenceError>,
+                    > + Send
+                    + '_,
+            >,
+        > {
+            Box::pin(async {
+                Err(InferenceError::CircuitOpen(
+                    "transient inference failure threshold reached; retry after 30s".into(),
+                ))
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn circuit_open_pauses_the_limiter_and_not_the_local_breaker() {
+        crate::helpers::seed_registry_template_root();
+        let executor = LlmOcrExecutor::new(Arc::new(CircuitOpenVisionPort));
+        let image = DynamicImage::new_rgb8(8, 8);
+        let error = executor
+            .execute(0, "RunPod/kask-ocr", &image)
+            .await
+            .expect_err("a CircuitOpen vision call must fail the page");
+        assert!(
+            matches!(&error, OcrError::Inference { source } if matches!(source, InferenceError::CircuitOpen(_))),
+            "the typed verdict must survive to the caller, got: {error}"
+        );
+        assert!(
+            !executor.breaker_open(),
+            "the local breaker must not count the shared breaker's own verdict"
+        );
+        assert_eq!(
+            executor.adaptive_concurrency(),
+            crate::batch::ADAPTIVE_CONCURRENCY_FLOOR,
+            "the pause must snap the allowance to the floor"
+        );
+        // The next page WAITS OUT the pause instead of failing fast into the
+        // open breaker — no page is lost to a transient outage.
+        let blocked = tokio::time::timeout(
+            std::time::Duration::from_millis(300),
+            executor.execute(1, "RunPod/kask-ocr", &image),
+        )
+        .await;
+        assert!(blocked.is_err(), "execute must block on the limiter pause");
     }
 
     #[test]
