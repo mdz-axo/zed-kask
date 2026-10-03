@@ -78,7 +78,7 @@ duplicate sources or synthetic fixtures in an extraction input directory.
 | `multi_tier` | False for the directory QA substrate; per-file/text retrieval can request coarse/medium/fine tiers |
 | embedding `model`, `batch_size` | Use the configured embedding model and tool's batching; do not substitute a training or chat model |
 | `tag_batch_size` | **10** chunks per tagging inference call by default; distinct from the number of rows in a file partition |
-| `concurrency` | Bound tool concurrency to available capacity; AIMD starts at up to 2, grows by 1, halves on capacity failure |
+| `concurrency` | Bound tool concurrency to the endpoint's measured sustained capacity — set `HKASK_MAX_CONCURRENCY` for the run instead of inheriting the global default, which can sit an order of magnitude above one endpoint's real capacity. The shared AIMD limiter starts at up to 2, grows by 1, halves on capacity failure, and pauses outright while the shared inference breaker is open: a breaker-open verdict carries a retry horizon to wait out, not a capacity signal to halve through. The pause makes an accidental trip recoverable, not safe to provoke — an overshooting ramp still burns roughly one failed page per probe past the edge |
 | requested outputs | Retrieval is the core path. Classification, QA/exports and style centroids are explicit branches; QA and tag-selected centroids require classification |
 | `reference_author`, `config_path`, dimension selectors | Optional style branch; caller-supplied identity, current cognition YAML and explicit tag predicates for any requested subsets; the identity does not establish source authorship |
 | `qa_pairs_per_chunk` | Caller-approved positive level count carried by one prepared prompt per chunk; default **2**. Generation uses disposition proposal/review, then QA writing/review only when at least one merged level is supported |
@@ -155,8 +155,15 @@ make the operator ask whether work is still alive.
    Unsupported files and failed extractions remain visible scope gaps.
 2. Record requested outputs, namespace/DB ownership, chunk/overlap parameters,
    QA prompt count/type mix and semantic criteria, optional centroid selectors,
-   and pilot/spend bounds. Ask only for missing functional choices; do not borrow
-   another execution's identities, volume targets or budget approval.
+   and pilot/spend bounds. Bind the acceptance bar in the same intake record:
+   the denominator (the freshly inventoried source set), the tolerance for
+   deferrals and failures, and the named-gap policy — which residue is
+   acceptable only with per-file evidence of source impossibility, and which
+   gaps require operator authorization before any workaround. Every later
+   gate reconciles against the intake-bound bar; a bar first stated at a
+   gate reconciles a relaxed definition and passes. Ask only for missing
+   functional choices; do not borrow another execution's identities, volume
+   targets or budget approval.
 3. Verify tool schemas, installed/running components, settings-to-provider routing,
    template seeding/cache behavior, output paths and canonical credentials before
    expensive work. Do not hide broken setting propagation with per-call overrides.
@@ -213,7 +220,10 @@ ledger before the first conversion wave.
 
 When `corpus_convert` has no incremental status surface, use file mode for each
 pending source and execute bounded waves with disjoint output files. Reconcile and
-checkpoint each wave before scheduling the next. A directory call is allowed only
+checkpoint each wave before scheduling the next. For conversions long enough that
+the transport can die mid-call, the per-source receipt (the written output plus
+its report companion) is the record — a lost transport response is not a lost
+conversion; reconcile waves from receipts, never from transport responses alone. A directory call is allowed only
 when the tool exposes observable progress, or a measured pilot shows the entire
 bounded set completes within the operator's reporting cadence and the operator has
 accepted final-only reporting. Directory convenience never overrides observability.
@@ -259,6 +269,14 @@ For PDFs, `corpus_is_complex(path, summary=true)` provides cheap routing evidenc
 Preflight required OCR with a small `target_pages` slice and `force_ocr=true`, then
 inspect the report before bulk work. Missing configuration, endpoint errors,
 `error_count`, `quality_failed_pages` or breaker-open results block expansion.
+The shared inference breaker lives in the inference server, not in any corpus
+server instance: every instance — host-managed or per-call — shares it, and a
+fresh instance inherits it open. Probe a tripped breaker with ONE page in its
+half-open window; a bulk probe re-trips it. Order OCR waves
+longest-processing-time-first by triage `ocr_pages`, and size total in-flight
+width (workers × per-file ceiling) to the endpoint's measured sustained
+capacity — probed, not assumed; a width above it burns roughly one failed
+page per probe past the edge even with the limiter pause absorbing the trips.
 Source-confirmed blank pages can be recorded as such; never infer that every empty
 page is benign. `include_structure=true` is only needed for the block view.
 
