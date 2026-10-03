@@ -333,6 +333,20 @@ Round-2 termination check: symptom 1 — mechanism carried (S1-H1, §2.1) with t
 **Hang detector's first honest data:** 17 `hang detected` entries in the new session (release thresholds) — a startup cluster (18:13:53–54) plus periodic singles through 18:16. With draws averaging 6.5–6.9 ms these are the >100 ms tail (startup, MCP sync, thread opens) — the residue instrument for symptom 2, now visible for the first time. Main thread read 94 % during the startup+streaming window (not a settled-state reading; not comparable to 2 h-age samples).
 
 **Open-question re-basing:** OQ-1 (per-draw >30 ms element) is **overtaken by the readings** — no such element exists in the current 6.5–6.9 ms bands; the profiler captures are now confirmation, not decomposition. S1-H1's dominant measured term (per-event forwarding, 3.6–5.4 ms) now reads 35 µs — thread-open latency should collapse accordingly; OQ-2's measurement is the operator's next thread-open (the P7c probes are gone and `hang_traces/` is empty). The accumulation checkpoint re-bases to this build: session started 18:13 → read at ~20:13. The D46 DIVERGENCE addendum landed with this pass (the concurrent edit cleared).
+
+### 7.11 OQ-2 answered by the re-added probe; [DIAG-anr] removed per contract (2026-10-02 18:35)
+
+**OQ-2 (fresh first-open on this build) — measured, not predicted.** The S1 stream re-added the decomposition probe (`1f5cadb1b0`, 15:40 — plan §4 step 2 executed), and the parity binary carries it. Three real opens in the 18:13 session (`Zed-Kask.log`, 18:15:29–34):
+
+| Thread | Entries | db_total (lock_wait + parse) | replay | forward | **ready** |
+| --- | --- | --- | --- | --- | --- |
+| `2126de96` | 21 | 43 ms (n/a) | 0 ms | 21 ms | **67 ms** |
+| `b8e9f73b` | 30 | 61 ms (41 + 2; 161 KB blob) | 0 ms | 28 ms | **93 ms** |
+| `5304e38f` | 123 | 44 ms (27 + 12; 1.1 MB blob) | 9 ms | 66 ms | **122 ms** |
+
+vs P7c (2026-09-24): 0.54–2.0 s load-dominated opens. The **db term collapsed** (0.54–2.0 s → 43–61 ms at these sizes). **OQ-3 (S1-H2 lock contention) partially answered**: lock_wait 27–41 ms observed — real, tens-of-ms class, no longer a dominant term. Honest extrapolation: per-event open-forwarding is ~0.5–0.7 ms (123 entries → 66 ms ≈ P7c's 963 → 635 ms ≈ 0.66 ms/event — per-event open cost roughly unchanged), so a 963-entry open extrapolates to ~0.6 s — improved from 0.7–2.2 s but not collapsed; **message-level storage (round-1 step 3) stays relevant for monster threads**. Small–medium threads: symptom 1 as experienced is resolved on this build.
+
+**[DIAG-anr] removed** (its own contract: "remove with the fix"; the event-path fix landed — streaming forwarding 35–143 µs on this build): the probe (setup, per-event timing, accumulation, window summary) is deleted from `agent.rs`; the stale cross-reference in the [DIAG-open] comment updated in the same pass. Validated: `cargo check -p agent` green; full-repo sweep 0 live references (the two docs carrying the identifier are dated investigation records). The **running session keeps logging it until exit** (the probe is binary-resident) — the 20:13 accumulation checkpoint loses nothing. **[DIAG-open] stays**: it is the S1 stream's active instrument (added 15:40, storage work in flight) and its removal contract is the S1 fix, not this investigation's.
 ### 7.9 OQ-2 unblocked — the `[DIAG-open]` probe is live (2026-10-02 evening)
 
 Plan §4 step 2 executed: the bounded first-open decomposition probe is in the tree (`crates/agent/src/db.rs` `load_thread` + `crates/agent/src/agent.rs` `load_thread`/`open_thread`), tagged `[DIAG-open]` with the same removal contract as `[DIAG-anr]` (remove with the S1 fix). One line set per real open (cached sessions short-circuit):
