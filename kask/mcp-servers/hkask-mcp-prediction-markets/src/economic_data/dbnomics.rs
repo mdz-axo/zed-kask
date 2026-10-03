@@ -150,7 +150,7 @@ pub async fn list_providers(
         ("limit", limit_str.as_str()),
         ("offset", offset_str.as_str()),
     ];
-    let url = dbnomics_url("provider", &params);
+    let url = dbnomics_url("providers", &params);
     let body = client.fetch(DBNOMICS_PROVIDER, &url).await?;
 
     let num_found = body
@@ -330,4 +330,40 @@ pub async fn get_series(
     }))
 }
 
-// ── Tests ──────────────────────────────────────────────────────────────────
+// ── Tests ──────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// PM-04 regression pin (mcp-tool-review): the providers endpoint is the
+    /// PLURAL path. The singular form 404'd live (2026-10-02 tool probe)
+    /// while the plural path returned 94 providers — a one-token drift that
+    /// left the tool permanently broken.
+    #[test]
+    fn providers_endpoint_is_the_plural_path() {
+        let url = dbnomics_url("providers", &[("limit", "5"), ("offset", "0")]);
+        assert!(
+            url.starts_with("https://api.db.nomics.world/v22/providers"),
+            "the providers endpoint must be the plural path, got: {url}"
+        );
+    }
+
+    /// The other three endpoints match the live v22 API — the fix touched
+    /// exactly one token.
+    #[test]
+    fn search_dataset_and_series_endpoints_match_the_live_api() {
+        assert!(
+            dbnomics_url("search", &[("q", "GDP")])
+                .starts_with("https://api.db.nomics.world/v22/search")
+        );
+        assert!(
+            dbnomics_url("datasets/IMF/WEO", &[])
+                .starts_with("https://api.db.nomics.world/v22/datasets/IMF/")
+        );
+        assert!(
+            dbnomics_url("series/IMF/WEO/NGDP", &[])
+                .starts_with("https://api.db.nomics.world/v22/series/IMF/")
+        );
+    }
+}

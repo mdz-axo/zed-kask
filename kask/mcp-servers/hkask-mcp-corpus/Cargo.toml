@@ -51,6 +51,9 @@ async-trait.workspace = true
 regex.workspace = true
 minijinja.workspace = true
 pulldown-cmark.workspace = true
+# Charset detection/transcoding for legacy-encoded text documents (WHATWG
+# windows-1252 default; 2026-10-02: Latin-1 saved pages were unconvertible).
+encoding_rs.workspace = true
 
 serde_yaml_neo.workspace = true
 

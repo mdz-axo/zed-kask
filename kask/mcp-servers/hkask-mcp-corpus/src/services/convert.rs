@@ -1318,12 +1318,15 @@ pub(crate) async fn extract_text_with_order(
                 }
             }
         }
-        "plain" => match std::str::from_utf8(&file_bytes) {
-            Ok(text) => ExtractOutcome::Success {
-                text: text.to_string(),
-                word_count: text.split_whitespace().count(),
-                structure: None,
-            },
+        "plain" => match crate::convert::decode_text_bytes(&file_bytes) {
+            Ok((text, _encoding)) => {
+                let word_count = text.split_whitespace().count();
+                ExtractOutcome::Success {
+                    text,
+                    word_count,
+                    structure: None,
+                }
+            }
             Err(e) => {
                 return Err(McpToolError::invalid_argument(format!(
                     "Failed to decode text file '{}': {}",
@@ -1331,9 +1334,9 @@ pub(crate) async fn extract_text_with_order(
                 )));
             }
         },
-        "markdown" => match std::str::from_utf8(&file_bytes) {
-            Ok(content) => {
-                let text = crate::convert::strip_frontmatter(content);
+        "markdown" => match crate::convert::decode_text_bytes(&file_bytes) {
+            Ok((content, _encoding)) => {
+                let text = crate::convert::strip_frontmatter(&content);
                 let word_count = text.split_whitespace().count();
                 ExtractOutcome::Success {
                     text,
@@ -1348,9 +1351,9 @@ pub(crate) async fn extract_text_with_order(
                 )));
             }
         },
-        "html" | "htm" => match std::str::from_utf8(&file_bytes) {
-            Ok(content) => {
-                let text = crate::convert::strip_html(content);
+        "html" | "htm" => match crate::convert::decode_text_bytes(&file_bytes) {
+            Ok((content, _encoding)) => {
+                let text = crate::convert::strip_html(&content);
                 let word_count = text.split_whitespace().count();
                 ExtractOutcome::Success {
                     text,

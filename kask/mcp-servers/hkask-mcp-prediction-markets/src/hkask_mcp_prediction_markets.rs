@@ -150,7 +150,7 @@ impl PredictionMarketsServer {
     /// Resolve a scenario/forecast question to candidate markets about the
     /// same underlying event.
     #[tool(
-        description = "Resolve a scenario or forecasting question to candidate prediction markets about the same underlying event. Returns confidence-tiered candidates with deterministic match basis (token overlap + deadline alignment). Refuse low-confidence matches rather than anchoring on a wrong-event market."
+        description = "Resolve a scenario or forecasting question to candidate prediction markets about the same underlying event. Returns confidence-tiered candidates with deterministic match basis (token overlap + deadline alignment) — the tiers are the refusal mechanism: the tool returns every candidate with its tier and the consumer refuses low-confidence ones rather than anchoring on a wrong-event market (the same epistemic posture as reliability_tier)."
     )]
     pub async fn market_match(
         &self,
@@ -259,9 +259,10 @@ impl PredictionMarketsServer {
         .await
     }
 
-    /// Subscribe to Polymarket resolution events and feed the calibration store.
+    /// Subscribe to Polymarket resolution events (notifications only — the
+    /// caller feeds the calibration store).
     #[tool(
-        description = "Subscribe to Polymarket's public market channel for resolution events on the given CLOB asset IDs. Resolution events are logged as notifications — they do NOT write calibration observations (the wire carries no pre-resolution probability, and fabricating one would corrupt the Brier loop). Pair a notification with market_record_resolution (which takes the pre-resolution probability) to feed the loop."
+        description = "Subscribe to Polymarket's public market channel for resolution events on the given CLOB asset IDs. Resolution events are logged as notifications — they do NOT write calibration observations (the wire carries no pre-resolution probability, and fabricating one would corrupt the Brier loop). Pair a notification with market_record_resolution (which takes the pre-resolution probability) to feed the loop. The subscription is doubly bounded: it returns after max_resolutions resolution events (default 1) or after 300 seconds, whichever comes first — the response's timed_out field names which bound ended the call, so a quiet channel never holds the call open."
     )]
     pub async fn market_subscribe_resolutions(
         &self,
@@ -274,41 +275,63 @@ impl PredictionMarketsServer {
                 self.record_call("market_subscribe_resolutions");
                 let max = req.max_resolutions.unwrap_or(1).max(1);
                 let ingested = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
-                let bucket = req.bucket.clone();
-                let ingested_clone = std::sync::Arc::clone(&ingested);
 
-                streaming::subscribe_market(&req.asset_ids, move |event| {
-                    let _bucket = bucket.clone();
-                    let ingested = std::sync::Arc::clone(&ingested_clone);
-                    async move {
-                        if let streaming::MarketEvent::MarketResolved {
-                            winning_outcome, ..
-                        } = event
-                        {
-                            // Do NOT write a calibration observation here:
-                            // Brier scoring needs the *pre-resolution*
-                            // probability, which the stream does not carry.
-                            // Fabricating 1.0/0.0 would make every bucket
-                            // look perfectly calibrated — the reinforcing-loop
-                            // trap. The stream's role is to *notify*; the
-                            // caller pairs it with market_record_resolution
-                            // (which takes the pre-resolution probability).
-                            let outcome = winning_outcome.eq_ignore_ascii_case("yes");
-                            tracing::info!(
-                                "market resolved: outcome={} — call market_record_resolution                                  with the pre-resolution probability to feed the calibration loop",
-                                if outcome { "yes" } else { "no" }
-                            );
-                            ingested.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                // PM-08 (mcp-tool-review): the count bound terminates the
+                // call when events flow; the time bound terminates it when
+                // they do not. Both bounds surface in the response
+                // (resolutions_ingested, timed_out) — the call never hangs.
+                const SUBSCRIBE_TIME_BOUND: std::time::Duration =
+                    std::time::Duration::from_secs(300);
+
+                let subscribe = streaming::subscribe_market(&req.asset_ids, {
+                    let ingested = std::sync::Arc::clone(&ingested);
+                    move |event| {
+                        let ingested = std::sync::Arc::clone(&ingested);
+                        async move {
+                            let mut stop = false;
+                            if let streaming::MarketEvent::MarketResolved {
+                                winning_outcome,
+                                ..
+                            } = event
+                            {
+                                // Do NOT write a calibration observation here:
+                                // Brier scoring needs the *pre-resolution*
+                                // probability, which the stream does not carry.
+                                // Fabricating 1.0/0.0 would make every bucket
+                                // look perfectly calibrated — the reinforcing-loop
+                                // trap. The stream's role is to *notify*; the
+                                // caller pairs it with market_record_resolution
+                                // (which takes the pre-resolution probability).
+                                let outcome = winning_outcome.eq_ignore_ascii_case("yes");
+                                tracing::info!(
+                                    "market resolved: outcome={} — call market_record_resolution with the pre-resolution probability to feed the calibration loop",
+                                    if outcome { "yes" } else { "no" }
+                                );
+                                let count =
+                                    ingested.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+                                        + 1;
+                                stop = count >= max;
+                            }
+                            stop
                         }
                     }
-                })
-                .await?;
+                });
+
+                let timed_out =
+                    match tokio::time::timeout(SUBSCRIBE_TIME_BOUND, subscribe).await {
+                        Ok(result) => {
+                            result?;
+                            false
+                        }
+                        Err(_elapsed) => true,
+                    };
 
                 let count = ingested.load(std::sync::atomic::Ordering::SeqCst);
                 Ok(serde_json::json!({
                     "resolutions_ingested": count,
                     "bucket": req.bucket,
                     "max_resolutions": max,
+                    "timed_out": timed_out,
                 }))
             },
         )
@@ -1632,8 +1655,14 @@ impl PredictionMarketsServer {
                 records.push(record);
             }
         }
-        if let Ok(value) = serde_json::to_value(&records) {
-            self.response_cache.put(cache_key, value);
+        // PM-03 (mcp-tool-review): never cache an empty pool — a transient
+        // double-provider-empty would poison every lookup/match call for the
+        // TTL as a silent []. An empty gather re-fetches on the next call
+        // instead of serving a cached nothing.
+        if !records.is_empty() {
+            if let Ok(value) = serde_json::to_value(&records) {
+                self.response_cache.put(cache_key, value);
+            }
         }
         Ok(records)
     }

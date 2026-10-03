@@ -298,4 +298,21 @@ mod tests {
         );
         assert!(ranked[0].score > ranked[1].score);
     }
+
+    /// PM-02 pin (mcp-tool-review): the matcher's contract is tier-and-return —
+    /// a weak candidate is returned with its Low tier so the CONSUMER can
+    /// refuse it; the matcher never silently drops candidates. The tool
+    /// description states this contract (corrected 2026-10-03 after the
+    /// advertised tool-side refusal was falsified live).
+    #[test]
+    fn low_confidence_candidates_are_returned_tiered_never_dropped() {
+        let unrelated = test_market("Champions league winner", "2026-12-15T00:00:00Z");
+        let ranked = rank_matches("Will the Fed cut rates in December", &[unrelated]);
+        assert_eq!(
+            ranked.len(),
+            1,
+            "the weak candidate is returned with its tier, not dropped"
+        );
+        assert_eq!(ranked[0].match_confidence, MatchConfidence::Low);
+    }
 }

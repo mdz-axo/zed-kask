@@ -98,9 +98,11 @@ One pass per tool per cycle. For each tool:
 20. Run the routing invariant in `lisp_eval`: `(and (= unclassified 0) (= ungated 0) (= bad_region 0) (>= operator_roles 1) (>= other_roles 1))` over the run's step classification.
 21. Critic pass [P; decoupled by rubric]: re-read each finding against its citation — would a reviewer checking the cited line see the claimed behavior? Drop or amend what fails; record the pass in the artifact.
 
-### Phase G — Routing and report [D]
+### Phase G — Fix, pin, and route [D + P]
 
-22. Route findings to their actuators; file proposals, not commits. Report the verdict, the functional outcome, the findings table, the acceptance-check execution, the batched ask (when pending), and learnings.
+22. Close the loop on every finding: an in-scope code defect is FIXED in the same pass — the change, its pinning test, and the touched crates' suites green — before the run reports. A finding left unfixed is an unfinished review. Only findings that change a tool's functional contract (behavior a consumer depends on) go to the operator as decisions, and platform-level redesigns go to kanban/algedonic with the evidence.
+23. Verify live where possible: after a fix that changes wire behavior, re-probe the live tool (server rebuild+restart when the running binary predates the fix) and record the before/after. Where live verification is gated on a restart, name the exact remaining step and mark the receipt pending-restart — never claim it.
+24. Report the verdict, the functional outcome, the fixes landed with their test receipts, the acceptance-check execution, the batched ask (when pending), and learnings.
 
 ## D/P labelling
 
@@ -165,7 +167,7 @@ Render `mcp-tool-review/findings-artifact` for the JSON shape. Load-bearing fiel
 - Ask-first is batched: ONE decision request per run, never one interruption per tool.
 - Never assign a private definition to a pending anchor; never claim fidelity the process does not exercise.
 - Never probe a durable-mutation tool; never leave a probe's ephemeral state undisclosed.
-- Findings are proposals; code changes go to kanban / algedonic review, not commits.
+- Findings are fixed in-tree with pinning tests in the same pass (uncommitted — the shared-tree commit discipline stays with the operator); functional-contract changes and platform redesigns go to the operator / kanban, never implemented unilaterally. Never commit unless the operator explicitly asks.
 - No second clone or worktree for any measurement (absolute prohibition) — measurements run in-tree.
 - A tool's missing anchor, label, or D/P character is a finding, never a load-time failure.
 

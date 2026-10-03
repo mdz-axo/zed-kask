@@ -3,8 +3,10 @@
 //! Public channel (no auth): wss://ws-subscriptions-clob.polymarket.com/ws/market.
 //! Subscribe with CLOB asset (token) IDs; receive book/price_change/
 //! last_trade_price/market_resolved events. `market_resolved` carries
-//! `winning_outcome` — the automatic sense arm that feeds resolutions into
-//! the calibration store without polling.
+//! `winning_outcome` — the notification arm only: the wire carries no
+//! pre-resolution probability, so the stream never writes calibration
+//! observations (fabricating one would corrupt the Brier loop); the caller
+//! pairs a notification with market_record_resolution.
 //!
 //! Runs on the server's tokio runtime (MCP servers are tokio processes —
 //! the `.rules` background_spawn/GPUI trap does not apply here).
@@ -66,15 +68,17 @@ pub fn subscription_frame(asset_ids: &[String]) -> String {
 }
 
 /// Connect, subscribe, and drive events into a handler until the stream
-/// ends or errors. Errors propagate (typed) — a dead stream is surfaced,
-/// never silently dropped.
+/// ends, the handler signals its bound, or the call errors. The handler's
+/// future returns `true` to stop (its bound — e.g. max events — is
+/// reached): a clean, surfaced stop, not a dropped stream. Errors
+/// propagate (typed) — a dead stream is surfaced, never silently dropped.
 pub async fn subscribe_market<F, Fut>(
     asset_ids: &[String],
     mut on_event: F,
 ) -> Result<(), McpToolError>
 where
     F: FnMut(MarketEvent) -> Fut,
-    Fut: std::future::Future<Output = ()>,
+    Fut: std::future::Future<Output = bool>,
 {
     use futures::StreamExt as _;
 
@@ -99,7 +103,10 @@ where
         if let async_tungstenite::tungstenite::Message::Text(text) = message
             && let Some(event) = parse_frame(&text)
         {
-            on_event(event).await;
+            if on_event(event).await {
+                // The handler signalled its bound — stop cleanly.
+                return Ok(());
+            }
         }
     }
     Ok(())

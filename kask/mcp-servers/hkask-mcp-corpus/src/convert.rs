@@ -6,7 +6,8 @@
 /// `corpus_convert` can extract text from this format.
 ///
 /// Supported formats (text extraction works): pdf, markdown, html, plain,
-/// docx, pptx, xlsx, csv (csv via xlsx backend)
+/// docx, pptx, xlsx, csv (csv as plain text), plus text-serialized knowledge
+/// formats (ttl/owl/rdf/kif/json read as plain text)
 pub(crate) fn detect_format(path: &str) -> (&'static str, bool, Option<&'static str>) {
     let ext = std::path::Path::new(path)
         .extension()
@@ -19,9 +20,17 @@ pub(crate) fn detect_format(path: &str) -> (&'static str, bool, Option<&'static 
         "md" | "markdown" => ("markdown", true, None),
         "html" | "htm" => ("html", true, None),
         "txt" => ("plain", true, None),
+        // Ontology/knowledge serializations are text documents: Turtle, OWL,
+        // RDF/XML, KIF and JSON read through the plain-text path (2026-10-02:
+        // the zk-ref reference models were unconvertible without this).
+        "ttl" | "owl" | "rdf" | "kif" | "json" => ("plain", true, None),
         "docx" | "doc" => ("docx", true, None),
         "pptx" | "ppt" => ("pptx", true, None),
-        "xlsx" | "xls" | "csv" => ("xlsx", true, None),
+        "xlsx" | "xls" => ("xlsx", true, None),
+        // CSV is plain text: the xlsx backend (calamine) fails to sniff large
+        // quoted CSVs ("Cannot detect file format", 2026-10-02 zk-ref), and
+        // raw text preserves the document exactly for corpus chunking.
+        "csv" => ("plain", true, None),
         "rtf" => (
             "rtf",
             false,
@@ -49,7 +58,9 @@ pub(crate) fn dc_type_for_path(path: &str) -> Option<hkask_bridge_ontology::dc_b
         "pdf" => "application/pdf",
         "md" | "markdown" => "text/markdown",
         "html" | "htm" => "text/html",
-        "txt" => "text/plain",
+        "txt" | "kif" => "text/plain",
+        "ttl" => "text/turtle",
+        "owl" | "rdf" => "application/rdf+xml",
         "csv" => "text/csv",
         "json" => "application/json",
         "png" => "image/png",
@@ -70,6 +81,36 @@ pub(crate) fn dc_type_for_path(path: &str) -> Option<hkask_bridge_ontology::dc_b
         _ => return None,
     };
     hkask_bridge_ontology::dc_bibo::mime_to_dc_type(mime)
+}
+
+/// Decode text-family file bytes: UTF-8 first, then the document's declared
+/// charset (HTML `meta charset=`), then windows-1252 — the WHATWG default for
+/// legacy text. Returns the decoded text and the encoding actually used so
+/// the caller can surface it (2026-10-02: a Latin-1 saved page,
+/// engelbart-1962.html, was unconvertible under strict UTF-8 decoding).
+pub(crate) fn decode_text_bytes(bytes: &[u8]) -> Result<(String, &'static str), String> {
+    if let Ok(text) = std::str::from_utf8(bytes) {
+        return Ok((text.to_string(), "utf-8"));
+    }
+    // Sniff a declared charset from the first 4 KiB, case-insensitively.
+    let head_len = bytes.len().min(4096);
+    let head = String::from_utf8_lossy(&bytes[..head_len]).to_lowercase();
+    let label = head
+        .find("charset=")
+        .and_then(|at| {
+            let rest = &head[at + "charset=".len()..];
+            let end = rest
+                .find(|c: char| c == '"' || c == '\'' || c == ';' || c == '>' || c.is_whitespace())
+                .unwrap_or(rest.len());
+            Some(rest[..end].trim().to_string())
+        })
+        .filter(|label| !label.is_empty());
+    let encoding = label
+        .as_deref()
+        .and_then(|label| encoding_rs::Encoding::for_label(label.as_bytes()))
+        .unwrap_or(encoding_rs::WINDOWS_1252);
+    let (text, _, _) = encoding.decode(bytes);
+    Ok((text.into_owned(), encoding.name()))
 }
 
 /// Strip YAML frontmatter (delimited by `---`) from content.
@@ -315,6 +356,11 @@ mod tests {
             "doc.pptx",
             "doc.xlsx",
             "doc.csv",
+            "doc.ttl",
+            "doc.owl",
+            "doc.rdf",
+            "doc.kif",
+            "doc.json",
         ] {
             let (format, supported, _) = detect_format(path);
             assert!(supported, "{path} must be a supported format");
@@ -323,6 +369,22 @@ mod tests {
                 "{path} (format {format}) must ground to a Dublin Core type"
             );
         }
+    }
+
+    #[test]
+    fn decode_text_bytes_utf8_passthrough_and_charset_fallback() {
+        let (text, encoding) = decode_text_bytes(b"plain utf-8 text").expect("utf-8");
+        assert_eq!(text, "plain utf-8 text");
+        assert_eq!(encoding, "utf-8");
+        // "café" in windows-1252: the 0xE9 byte is invalid UTF-8.
+        let legacy = b"<meta charset=\"windows-1252\">caf\xe9";
+        let (text, encoding) = decode_text_bytes(legacy).expect("declared charset");
+        assert_eq!(text, "<meta charset=\"windows-1252\">café");
+        assert_eq!(encoding, "windows-1252");
+        // No declaration: the legacy default still decodes.
+        let (text, encoding) = decode_text_bytes(b"caf\xe9").expect("default charset");
+        assert_eq!(text, "café");
+        assert_eq!(encoding, "windows-1252");
     }
 
     #[test]

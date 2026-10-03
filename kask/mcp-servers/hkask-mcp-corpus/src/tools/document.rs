@@ -960,7 +960,21 @@ fn is_supported_document(path: &std::path::Path) -> bool {
         .is_some_and(|extension| {
             matches!(
                 extension.to_ascii_lowercase().as_str(),
-                "pdf" | "html" | "htm" | "md" | "txt" | "docx" | "pptx" | "xlsx" | "xls" | "csv"
+                "pdf"
+                    | "html"
+                    | "htm"
+                    | "md"
+                    | "txt"
+                    | "docx"
+                    | "pptx"
+                    | "xlsx"
+                    | "xls"
+                    | "csv"
+                    | "ttl"
+                    | "owl"
+                    | "rdf"
+                    | "kif"
+                    | "json"
             )
         })
 }

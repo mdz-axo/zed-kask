@@ -61,16 +61,20 @@ use types::*;
 ///
 /// Caller-input defects (bad probabilities, cycles, unknown parents, empty
 /// input) map to `InvalidArgument`; missing entities map to `NotFound`;
-/// empty-store maps to `Internal`. `Forecast` computation errors are
-/// classified per variant (all current `ForecastError` variants are
-/// caller-input defects).
+/// missing-state conditions the caller can remedy (empty store, no cached
+/// tree) map to `FailedPrecondition` — unified with
+/// `contract_price_coherence`'s no-cached-tree classification
+/// (mcp-tool-review S-02: the split between `Internal` here and
+/// `FailedPrecondition` there was inter-server drift). `Forecast`
+/// computation errors are classified per variant (all current
+/// `ForecastError` variants are caller-input defects).
 fn map_scenario_error(error: ScenarioError) -> McpToolError {
     match &error {
         ScenarioError::EventNotFound(id) => {
             McpToolError::not_found(format!("event '{id}' not found"))
         }
         ScenarioError::NoForecastData => {
-            McpToolError::internal("no stored forecasts found for calibration")
+            McpToolError::failed_precondition("no stored forecasts found for calibration")
         }
         ScenarioError::Forecast(forecast_error) => match forecast_error {
             hkask_forecast::ForecastError::InvalidProbability(..)

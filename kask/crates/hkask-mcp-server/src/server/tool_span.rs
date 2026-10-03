@@ -59,18 +59,30 @@ impl ToolSpanGuard {
         e
     }
 
-    /// Finish span with Ok, serializing `value` as the MCP `{"content": ...}`
-    /// tool-result envelope.
+    /// Finish span with Ok, serializing `value` as the MCP tool-result
+    /// envelope. The envelope carries `duration_ms` alongside `content` —
+    /// the measurement the Regulation span already makes, surfaced to the
+    /// caller (mcp-tool-review S-01: duration previously lived only in a
+    /// stderr tracing span that zed discards, leaving the caller-side
+    /// efficiency axis unmeasurable). Consumers unwrap `content` via
+    /// `unwrap_tool_envelope`, which ignores the extra field.
     ///
     /// post: Regulation tool span emitted with "ok" status
-    /// post: returns the `{"content": value}` JSON string
+    /// post: returns the `{"content": value, "duration_ms": N}` JSON string
     #[must_use]
     pub fn ok_json(self, value: Value) -> String {
-        self.ok(
-            serde_json::to_string(&serde_json::json!({"content": value})).unwrap_or_else(|e| {
-                serde_json::json!({"content": format!("serialization error: {e}")}).to_string()
-            }),
-        )
+        let duration_ms = self.start.elapsed().as_millis() as u64;
+        self.ok(serde_json::to_string(&serde_json::json!({
+            "content": value,
+            "duration_ms": duration_ms,
+        }))
+        .unwrap_or_else(|e| {
+            serde_json::json!({
+                "content": format!("serialization error: {e}"),
+                "duration_ms": duration_ms,
+            })
+            .to_string()
+        }))
     }
 
     /// Consume a `Result<Value, McpToolError>` — ok→`ok_json`, err→`error(…)`.
@@ -167,4 +179,27 @@ pub async fn execute_tool<C: ToolContext>(
     let span = ToolSpanGuard::new(tool_name, ctx.webid());
     let result = fut.await;
     span.finish(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// S-01 pin (mcp-tool-review): the tool-result envelope carries
+    /// `duration_ms` alongside `content` — the caller-side efficiency axis
+    /// depends on it, and `unwrap_tool_envelope` ignores the extra field.
+    #[test]
+    fn ok_json_envelope_carries_duration_ms() {
+        let guard = ToolSpanGuard::new("pin-test", &hkask_types::WebID::new());
+        let output = guard.ok_json(serde_json::json!({"x": 1}));
+        let value: Value = serde_json::from_str(&output).expect("envelope is valid JSON");
+        assert!(
+            value.get("content").is_some(),
+            "the envelope still carries content: {output}"
+        );
+        assert!(
+            value.get("duration_ms").and_then(Value::as_u64).is_some(),
+            "the envelope carries a numeric duration_ms: {output}"
+        );
+    }
 }

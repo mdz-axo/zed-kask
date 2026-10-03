@@ -97,7 +97,8 @@ pub const CITES_AS_EVIDENCE: DcConcept = "cito:citesAsEvidence";
 ///
 /// Office document MIME types (docx/pptx → Text, xlsx → Dataset) are included
 /// so the corpus ingest path — whose supported formats are exactly
-/// pdf/markdown/html/plain/docx/pptx/xlsx/csv — can ground every converted
+/// pdf/markdown/html/plain/docx/pptx/xlsx/csv plus the text-serialized
+/// knowledge formats (Turtle, RDF/XML) — can ground every converted
 /// artifact's state identity (the crate-level "every artifact carries a state
 /// identity" contract).
 pub fn mime_to_dc_type(mime: &str) -> Option<DcConcept> {
@@ -106,6 +107,8 @@ pub fn mime_to_dc_type(mime: &str) -> Option<DcConcept> {
         "video/mp4" | "video/webm" | "video/quicktime" => Some(MOVING_IMAGE),
         "audio/mpeg" | "audio/wav" | "audio/ogg" | "audio/flac" => Some(SOUND),
         "text/plain" | "text/markdown" | "text/html" | "application/pdf" => Some(TEXT),
+        // Ontology serializations (Turtle, RDF/XML) are text artifacts.
+        "text/turtle" | "application/rdf+xml" => Some(TEXT),
         // Word and PowerPoint documents are text artifacts.
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         | "application/vnd.openxmlformats-officedocument.presentationml.presentation" => Some(TEXT),
@@ -197,6 +200,8 @@ mod tests {
         assert_eq!(mime_to_dc_type("text/markdown"), Some(TEXT));
         assert_eq!(mime_to_dc_type("text/html"), Some(TEXT));
         assert_eq!(mime_to_dc_type("text/plain"), Some(TEXT));
+        assert_eq!(mime_to_dc_type("text/turtle"), Some(TEXT));
+        assert_eq!(mime_to_dc_type("application/rdf+xml"), Some(TEXT));
         assert_eq!(mime_to_dc_type("text/csv"), Some(DATASET));
         assert_eq!(
             mime_to_dc_type(

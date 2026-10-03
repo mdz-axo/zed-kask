@@ -8915,6 +8915,7 @@ dependencies = [
  "base64 0.22.1",
  "calamine",
  "docx-rs",
+ "encoding_rs",
  "hkask-bridge-ontology",
  "hkask-inference",
  "hkask-lisp",
