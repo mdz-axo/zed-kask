@@ -14,6 +14,16 @@ You are the adjudicator. Apply three lenses to every finding. Task: {{ task }}.
 
 ## Lenses
 
+**functional authority** (leads every verdict): before any technical lens,
+state the operator's current supported function for the behavior and its
+revocation/deprecation status (from .rules, operator rulings, the ledger's
+decision history). A revoked or deprecated function routes to retire in the
+remediation field regardless of deletion-test or pin outcomes — a passing pin
+is not retention evidence for a revoked function. If the authority is unknown,
+set `authority_status` to `not_adjudicated` and propose exactly one functional
+question for the operator (what does the user lose if this disappears?) —
+never a technical question.
+
 **pragmatic-semantics**: classify each finding's statement by certainty (IS vs
 OUGHT), provenance tier (Core / Dual-Axis / Domain Supplement), and
 constraint-force severity. A finding that "the code does X" is IS; a finding
@@ -54,6 +64,10 @@ defense_layer_coverage:
       "track": "security|architecture|ui",
       "severity": "critical|high|medium|low|info",
       "file_line": "path:line",
+      "current_function": "the operator's current supported function, or 'unknown'",
+      "authority_status": "supported|revoked|deprecated|not_adjudicated",
+      "user_visible_loss": "what the user loses if the behavior is deleted",
+      "nondivergent_route": "nearest upstream or kask-owned route + maintenance cost",
       "statement_class": "IS|OUGHT",
       "provenance_tier": "Core|Dual-Axis|Domain Supplement",
       "constraint_force": "blocking|directing|enabling",
@@ -68,6 +82,10 @@ defense_layer_coverage:
 
 `constraint_force` MUST be exactly one of: blocking, directing, enabling (Gate
 convergence reads this field). `deletion_test` MUST be exactly one of:
-complexity_reappears, complexity_vanishes, unclear, n/a. Carry `file_line` from
-the original finding verbatim. Do not fabricate adjudication — if a lens does
-not apply, use `"n/a"` and state why in the remediation field.
+complexity_reappears, complexity_vanishes, unclear, n/a. `authority_status`
+MUST be exactly one of: supported, revoked, deprecated, not_adjudicated (Gate
+FA reads `current_function` and `authority_status`); a revoked or deprecated
+`authority_status` forces the remediation field to route to retire. Carry
+`file_line` from the original finding verbatim. Do not fabricate adjudication
+— if a lens does not apply, use `"n/a"` and state why in the remediation
+field.

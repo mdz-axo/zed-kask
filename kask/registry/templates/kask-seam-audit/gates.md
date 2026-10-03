@@ -30,6 +30,17 @@ Every applied remediation has `test_added` equal to the string `"true"`, every
 (begin (define ok (lambda (fs) (if (= (length fs) 0) t (and (assoc "within_kask" (car fs)) (ok (cdr fs)))))) (define g (lambda (rs) (if (= (length rs) 0) t (and (string= (assoc "test_added" (car rs)) "true") (ok (assoc "touched_files" (car rs))) (g (cdr rs)))))) (and (g applied_remediations) (not triggered)))
 ```
 
+## Gate FA — adjudicate's `annotated_findings` (functional authority)
+
+Every annotated finding has a non-empty `current_function` and an
+`authority_status` in `supported|revoked|deprecated|not_adjudicated`. The
+authority verdict itself is judgment (P, the operator's); this gate only
+enforces that every finding carries one.
+
+```
+(begin (define st (lambda (s) (or (string= s "supported") (string= s "revoked") (string= s "deprecated") (string= s "not_adjudicated")))) (define g (lambda (fs) (if (= (length fs) 0) t (and (not (= (length (assoc "current_function" (car fs))) 0)) (st (assoc "authority_status" (car fs))) (g (cdr fs)))))) (g annotated_findings))
+```
+
 ## Converge — open count
 
 Bind `findings` to all tracks' findings and `adjudicated_ids` to the `id` list of
