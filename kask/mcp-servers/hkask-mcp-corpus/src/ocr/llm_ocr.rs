@@ -78,6 +78,22 @@ fn encode_page_png(image: &DynamicImage, model: &str) -> Result<Vec<u8>, OcrErro
     Ok(img_bytes)
 }
 
+/// Apply the model's `rotation_correction` to a page image. The correction
+/// is COUNTER-clockwise degrees (measured live: ieee-1012 pages 15/51
+/// requested 270, a clockwise 270 application left them 180 off and the
+/// retry requested 180 — wave-ocr-fix6, 2026-10-03); the image crate
+/// rotates clockwise, so apply the complement.
+fn apply_rotation_correction(image: DynamicImage, correction: i16) -> DynamicImage {
+    match correction {
+        90 => image.rotate270(),
+        180 => image.rotate180(),
+        270 => image.rotate90(),
+        // The parser admits only 0/90/180/270 and 0 never reaches here;
+        // unreachable in practice.
+        _ => image,
+    }
+}
+
 /// Circuit breaker for rate-limit resilience.
 ///
 /// After `threshold` consecutive failures, opens: the executor reports the
@@ -380,14 +396,7 @@ impl OcrExecutor for LlmOcrExecutor {
                         correction,
                         "page requested rotation — re-rendering rotated and retrying once"
                     );
-                    current = match correction {
-                        90 => current.rotate90(),
-                        180 => current.rotate180(),
-                        270 => current.rotate270(),
-                        // The parser admits only 0/90/180/270 and 0 never
-                        // reaches here; unreachable in practice.
-                        _ => current,
-                    };
+                    current = apply_rotation_correction(current, correction);
                     continue;
                 }
                 outcome => break outcome,
@@ -931,6 +940,33 @@ mod tests {
             port.calls.load(Ordering::SeqCst),
             2,
             "exactly one retry, never a rotation loop"
+        );
+    }
+
+    /// The model's correction is counter-clockwise degrees; the image crate
+    /// rotates clockwise, so the application must be the complement. A
+    /// clockwise application of the raw value leaves the page 180 off
+    /// (wave-ocr-fix6: pages requesting 270 then, after a clockwise 270
+    /// application, requesting 180). Pins the direction with an asymmetric
+    /// fixture: red left / blue right, correction 90 → blue top / red bottom.
+    #[test]
+    fn rotation_correction_applies_the_counter_clockwise_complement() {
+        use image::GenericImageView;
+        let mut img = image::RgbImage::new(2, 1);
+        img.put_pixel(0, 0, image::Rgb([255, 0, 0]));
+        img.put_pixel(1, 0, image::Rgb([0, 0, 255]));
+        let img = DynamicImage::ImageRgb8(img);
+        let rotated = apply_rotation_correction(img, 90);
+        assert_eq!(rotated.dimensions(), (1, 2));
+        assert_eq!(
+            rotated.get_pixel(0, 0),
+            image::Rgba([0, 0, 255, 255]),
+            "the right (blue) pixel must become the top row under a 90-degree counter-clockwise correction"
+        );
+        assert_eq!(
+            rotated.get_pixel(0, 1),
+            image::Rgba([255, 0, 0, 255]),
+            "the left (red) pixel must become the bottom row"
         );
     }
 
