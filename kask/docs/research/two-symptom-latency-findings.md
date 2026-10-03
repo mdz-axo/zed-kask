@@ -358,6 +358,16 @@ vs P7c (2026-09-24): 0.54–2.0 s load-dominated opens. The **db term collapsed*
 - Under a loadavg-3.8 window earlier in the session (18:54, another stream working) the bands still read 4.9–9.8 ms — the old builds read 83–128 ms under build-class load (P7f).
 
 **Goal-state reading:** both symptoms now carry confirmed mechanisms AND post-fix measurements on the parity build — symptom 1: opens 67–122 ms click-to-ready (small–medium threads; the monster-thread ~0.6 s extrapolation and the message-level-storage fix remain recorded as the S1 tail, owned by the S1 stream); symptom 2: the healthy draw band sustained for two hours with the residue reduced to a sparse >100 ms tail. Build-profile parity: achieved and gate-pinned. The operator's lived confirmation (typing during streaming, thread-open feel) is the remaining ground truth before the goal scores.
+
+### 7.13 Closure (2026-10-02 20:20)
+
+**Operator ground truth: "the code is running well now"** (2026-10-02, after the 2-hour checkpoint). Goal `19b82d53` scored **achieved** — Brier 0.16 against the 0.6 intake prediction.
+
+**The record in one paragraph:** round 1 (§1–§6) established the mechanisms (whole-thread-per-row storage × foreground replay-forwarding for symptom 1; cost-driven foreground saturation for symptom 2) and eliminated the rival causes with measurements. Round 2 (§7) found the actual regression — the running binary was a dev-profile install of the operator's own habitual `--debug` command — corrected three wrong inferences in the record, fixed the installer by deletion (the PM's essentialist ruling), and verified the fix on instruments: opens 67–122 ms click-to-ready, the healthy draw band sustained a full 2 hours where both debug sessions died, events flat at 92–168 µs, build-profile parity gate-pinned.
+
+**Residue named for follow-on streams (none silently dropped):** the sparse >100 ms hang tail (37 detections / 2 h — the remaining symptom-2 surface, now visible); monster-thread opens (~0.6 s extrapolation — message-level storage, the S1 stream's active work); the R5 duplication inventory (2820 clusters, seeded in §7.9, owned by the simplification program); OQ-3's lock-wait magnitude (27–41 ms observed, bounded).
+
+**Learnings banked:** binary identity precedes code attribution (the startup-line check — sha + debug-build warning — is the first instrument on any "rebuilt and worse" report); a warned footgun is still a footgun (delete the route, pin the absence); temporary probes carry their own removal contracts and the discipline held ([DIAG-anr] removed with its fix, [DIAG-open] left to its owner); and the "unidentified pipeline" was the operator's own habit — instruments over assumptions, in both directions.
 ### 7.9 OQ-2 unblocked — the `[DIAG-open]` probe is live (2026-10-02 evening)
 
 Plan §4 step 2 executed: the bounded first-open decomposition probe is in the tree (`crates/agent/src/db.rs` `load_thread` + `crates/agent/src/agent.rs` `load_thread`/`open_thread`), tagged `[DIAG-open]` with the same removal contract as `[DIAG-anr]` (remove with the S1 fix). One line set per real open (cached sessions short-circuit):
