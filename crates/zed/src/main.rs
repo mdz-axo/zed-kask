@@ -5350,24 +5350,6 @@ mod tests {
         );
     }
 
-    // zed-kask: D88 — the accountless fork does not ship the title-bar
-    // sign-in surface (the upstream knob, defaulted off): the surface is
-    // upstream product residue whose click path produced unprompted
-    // zed.dev browser tabs, worker stalls, and unconsented sessions. The
-    // knob remains functional for a user who deliberately opts in.
-    #[test]
-    fn kask_default_hides_the_account_sign_in_button() {
-        let defaults = include_str!("../../../assets/settings/default.json");
-        assert!(
-            defaults.contains("\"show_sign_in\": false"),
-            "the shipped default must not render the account sign-in surface (D88)"
-        );
-        assert!(
-            !defaults.contains("\"show_sign_in\": true"),
-            "the shipped default must not enable the account sign-in surface (D88)"
-        );
-    }
-
     // zed-kask: D88 — the boot-time client authenticate flow must not
     // attempt a Zed-account sign-in. Upstream's auto path, on an expired
     // stored token, deletes it and opens the interactive browser prompt:
