@@ -218,7 +218,7 @@ Per the closure discipline: no item is `reported-abandoned`; OQ-1/5 need operato
 
 ### 7.3 Regression-window source delta — no hot-path candidate
 
-`f463bce207` (Sep 30 17:19, ≈ the round-1 binary's tree state) → `e5a8c29e6c`: 26 files, +1327/−3254 in binary-linked Rust, **all background** — regulation sensor/policy (`f3f83bf021`, `301c5a29d5`, `84bc0a4462`), evolution health bridge (`b43a704c9c`), lisp builtins (`be44843324`), kanban goal ingestion (`e6c00be216`), embedding cleanup (`f9e29adc65`), strategy-evaluator deletion (`3267b2df20`). Zero changes to the draw path (gpui/editor/markdown/viz) or the event-forwarding path (`agent.rs:2505` / `acp_thread.rs`). The commit-range hypothesis has no mechanism; **B-1R (build flags) is the leading cause candidate**, with content scaling (S2-H1's confirmed class) stacking on top.
+`f463bce207` (Sep 30 17:19, ≈ the round-1 binary's tree state) → `e5a8c29e6c`: 26 files, +1327/−3254 in binary-linked Rust, **all background** — regulation sensor/policy (`f3f83bf021`, `301c5a29d5`, `84bc0a4462`), experimentation health bridge (`b43a704c9c`), lisp builtins (`be44843324`), kanban goal ingestion (`e6c00be216`), embedding cleanup (`f9e29adc65`), strategy-evaluator deletion (`3267b2df20`). Zero changes to the draw path (gpui/editor/markdown/viz) or the event-forwarding path (`agent.rs:2505` / `acp_thread.rs`). The commit-range hypothesis has no mechanism; **B-1R (build flags) is the leading cause candidate**, with content scaling (S2-H1's confirmed class) stacking on top.
 
 ### 7.4 Register additions — B-1R and the H-ECO series
 

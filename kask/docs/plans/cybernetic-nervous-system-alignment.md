@@ -423,7 +423,7 @@ not verdict (operator calibration, 2026-09-30).
 - **The instrument:** the 72 `pub` fields of
   `kask_bridge/src/settings.rs` (`KaskSettings` + its subsections)
   counted against a fresh repo-wide word corpus (rebuilt after the
-  evolution server landed — the tree moved mid-sweep, per the
+  experimentation server landed — the tree moved mid-sweep, per the
   operator's calibration).
 - **No-candidate, with evidence:** zero fields at ≤2 occurrences (both
   definition sites, no readers) and zero at 3 — every knob has ≥4
@@ -440,9 +440,9 @@ not verdict (operator calibration, 2026-09-30).
   `KaskSettings` here). No dead knob exists in either settings
   surface.
 - **Observed, not acted (2026-09-30; since closed):** the concurrent
-  stream's evolution server landed with its registry row (6 tools,
+  stream's experimentation server landed with its registry row (6 tools,
   pinned) — its per-server detail doc did not exist yet. **Closed by
-  register v0.24.7 (2026-09-30):** `reference/mcp-servers/evolution.md`
+  register v0.24.7 (2026-09-30):** `reference/mcp-servers/experimentation.md`
   created, with the docs-README row and the credential-declaration
   repair in the same change.
 
@@ -469,7 +469,7 @@ coinages. Proposal:
 - **CU-5(b) probe artifacts: clean** (no probe/scratch/tmp/bak files
   in production trees).
 - **Gates (at this slice, 2026-09-30):** count 74 under the 75 cap
-  (currency 2026-10-01: **72** — the aeneas deletion −3, the evolution
+  (currency 2026-10-01: **72** — the aeneas deletion −3, the experimentation
   per-server doc +1; register v0.24.6/v0.24.7). The 60-file target
   remains the direction — the file-count work needs the whole-file
   rulings;
@@ -493,7 +493,7 @@ predated S4, §8, and L25 — refreshed. Open surface after this slice:
 O3 (INV2 direction) awaits an operator decision; the 60-file docs
 target awaits whole-file rulings; CU-6 stays gated; the L25 row's
 `store.rs:707` citation is commit-anchored at `c57e1706db` and
-refreshes when the concurrent stream's in-flight evolution work
+refreshes when the concurrent stream's in-flight experimentation work
 lands.
 
 ### Execution record — sixth slice (2026-10-01: CU-5(c) continuation — the whole-file pricing pass; a ruling menu, no deletions)
@@ -524,7 +524,7 @@ reachable by orphan deletion.
 `reference/mcp-servers/curator.md` and
 `reference/mcp-servers/training.md` do not exist — 2 of the 13 live
 servers are undocumented against the fleet's per-server discipline
-(the gap `evolution.md` closed on 2026-09-30). Ruling these adds +2
+(the gap `experimentation.md` closed on 2026-09-30). Ruling these adds +2
 files.
 
 **Target math (honest):** P1 → 71. P1+P2 → 70. With the gap docs →

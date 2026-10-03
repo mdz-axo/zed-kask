@@ -3,18 +3,26 @@ zed-kask spec pin (agent-loop guardrails plan — Candidate 2, repetition
 stop-loss).
 
 The Rust side: `ToolRetryTracker` (crates/agent/src/tool_retry_tracker.rs)
-gains a batch-signature streak counter: at each assistant message's tool
-dispatch, the whole batch's signature (a hash over each call's argument
-JSON, joined in call order) is compared with the previous message's batch
-signature; an equal signature advances the streak, any distinct signature
-resets it to 1. The verdict ladder mirrors the failure-side ladder: a
-teaching hint at WARN_THRESHOLD (3), refusal at the hard cap (5).
+tracks a per-`(tool, input_hash)` consecutive-success streak. Before each
+dispatch, `check_repetition` clears the key's streak when a different key
+was dispatched since its last success (reset-on-distinct — restored by
+the 2026-10-02 plan audit; the first implementation kept a per-key map
+with no reset, so interleaved identical calls accumulated), so only
+back-to-back identical dispatches advance the streak. The verdict ladder
+mirrors the failure-side ladder: a teaching hint at WARN_THRESHOLD (3),
+refusal at the hard cap (5).
 
-This file pins the streak counter's structure at spec level. The signature
-is an opaque Nat — the Rust side hashes arguments, and equality is all the
-spec needs. The model is the guard's contract, not a verification of the
-Rust implementation; the implementation is pinned by the tracker's Rust
-tests named in the plan document (kask/docs/plans/agent-loop-guardrails-plan.md).
+This file pins the streak counter's structure at spec level. The spec's
+`Batch` corresponds to the implementation's `(tool_name, input_hash)`
+key, and its single `last`-state models the implementation's
+`last_dispatched` chain state: an identical consecutive dispatch advances
+the streak, any distinct dispatch resets it to 1. The implementation
+checks the PRIOR streak before dispatch (the hint lands on the dispatch
+after the 3rd identical success) — the full mapping is recorded in the
+plan document (kask/docs/plans/agent-loop-guardrails-plan.md §12). The
+model is the guard's contract, not a verification of the Rust
+implementation; the implementation is pinned by the tracker's Rust tests
+named in the plan document.
 
 Check: `lean_check` on this file (pinned toolchain lean-toolchain,
 Lean 4.34.0). Negative control, run separately and expected to FAIL:

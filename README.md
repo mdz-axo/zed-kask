@@ -43,7 +43,7 @@ The `media` MCP server is the fleet's largest (98 tools): image and video genera
 | `companies`          | FIBO-anchored financial forecasting, dual-provider routing, research notes, transcripts, screener | 40 |
 | `corpus`             | Gather→process→output document pipeline, QA generation, style replicas | 26 |
 | `curator`            | Curator memory, regulation query, algedonic signals, skill-use reporting | 15 |
-| `evolution`          | Experiment registry for the sharded evolution program: registered experiments with pre-registered predictions, variant lineages, grounded fitness, selection fossils | 6 |
+| `experimentation`   | Experiment registry for the sharded experimentation program: registered experiments with pre-registered predictions, variant lineages, grounded fitness, selection fossils | 6 |
 | `kata-kanban`        | Toyota-Kata task boards and persistent functional goals        | 27 |
 | `media`              | AI media generation (image, video, audio, gallery, educt transcripts, Reduct cloud) | 98 |
 | `portfolio`          | Transaction-ledger portfolio store (stocks, prediction-event portfolios, CMP indices) with holdings/returns views | 18 |

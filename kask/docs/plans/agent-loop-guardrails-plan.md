@@ -3,7 +3,7 @@ title: "Agent Loop Guardrails — Implementation Plan (Runaway Protection, Repet
 audience: [architects, developers, product]
 last_updated: 2026-10-02
 version: "0.1.0"
-status: "Proposed"
+status: "Closed — executed and audited 2026-10-02"
 domain: "Composition"
 mds_categories: [composition, lifecycle, trust]
 ---
@@ -174,11 +174,14 @@ citations are repeated here.
 
 Observable criteria — each is a test or a live check, not an intention:
 
-1. **[C1a]** A fake-model stream emitting only thinking deltas is aborted
+1. **[C1a — REMOVED 2026-10-02; see the execution record and its re-entry
+   bar. Do not re-implement against this item.]** A fake-model stream
+   emitting only thinking deltas is aborted
    within the reasoning-only bound; a typed error carries
    elapsed/tokens/trigger; the stream is dropped; no hang (clock-advance
    test, the `test_terminal_tool_timeout_expires` pattern).
-2. **[C1b]** A zero-visible-content MaxTokens stop triggers one bounded
+2. **[C1b — CHARTER DROPPED 2026-10-02; see §8. Not a target.]** A
+   zero-visible-content MaxTokens stop triggers one bounded
    recovery ladder per turn: retry with expanded thinking budget + a
    transient reminder that exists on the request copy only (pinned absent
    from `thread.messages`), then thinking-off; exhaustion falls through to
@@ -445,6 +448,11 @@ total (C1a 2–3 days incl. clock-advance tests; C1b 2–3 days).
 | 3 | C1b ladder | A zero-content MaxTokens fake recovers; the reminder is pinned absent from durable history; one ladder per turn | 2–3 days |
 | 4 | DIVERGENCE.md seams (one entry per workstream) + pins + this doc's status update | Same-change discipline holds; `check-*` scripts green | 0.5 day |
 
+**Status (2026-10-02):** Slices 0–1 landed (`1d4bff6fb2`); Slice 2 landed
+then was REMOVED the same day (see §1); Slice 3's charter was dropped
+(see §8); Slice 4's seam/pin discipline was applied per-slice as each
+landed.
+
 Each slice: red test → implement → green → pin. `./script/clippy` and
 `cargo check -p zed` before any green claim (full-repo build, per
 `.rules`). Slice 0 is independent and unblocks the skill system's
@@ -527,3 +535,13 @@ that fix.
    failure ladder (one consistent contract), or separate knobs?
 4. **Post-landing:** the falsifier log study (S10) — who runs it, over
    what window, and against which log sources?
+
+**Resolutions (2026-10-02).** (1) Chartered and landed (`1d4bff6fb2`).
+(2) Moot — C1a was removed the same day it landed (see the execution
+record); the defaults died with it. (3) Resolved — shared with the
+failure ladder, one contract. (4) Never run as designed; superseded by
+the operator-directed audit of 2026-10-02, which performed the log study
+retroactively and found C1a's falsifier had fired in the harmful
+direction (19 live aborts of working turns). The lesson: a falsifier
+assigned but never scheduled is decorative — a post-landing study needs
+an owner and a date at charter time.

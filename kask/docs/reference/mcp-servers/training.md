@@ -60,7 +60,7 @@ rejected, never silently queued.
   restarts", `hkask_mcp_training.rs:403-409`) and serves from memory. The
   degradation is surfaced with its consequence named, never silent — the
   deliberate contrast with the start-refusing durable stores (curator,
-  evolution, kata-kanban): training jobs are one-shot, so an ephemeral
+  experimentation, kata-kanban): training jobs are one-shot, so an ephemeral
   store is a usable degraded mode, not a broken record path.
 - **Hosts and providers**: RunPod and Nebius — `RUNPOD_API_KEY`,
   `NEBIUS_PROJECT_ID`, `NEBIUS_SUBNET_ID` optional, required only when the
