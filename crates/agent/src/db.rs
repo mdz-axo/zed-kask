@@ -479,10 +479,46 @@ impl ThreadsDatabase {
                 updated_at TEXT NOT NULL,
                 data_type TEXT NOT NULL,
                 data BLOB NOT NULL,
-                created_at TEXT
+                created_at TEXT,
+                format INTEGER NOT NULL DEFAULT 0
             )
         "})?()
         .map_err(|e| e.context("Failed to create threads table"))?;
+
+        // zed-kask: D28 — per-message thread storage. Messages live one row
+        // each in `thread_messages`; the `threads.data` blob carries only
+        // the thread metadata (a DbThread serialized with an empty
+        // messages list) for new-format threads. `threads.format` is the
+        // format marker: 0 = legacy whole-thread blob, 1 = per-message
+        // rows. Legacy threads migrate lazily on first load (idempotent
+        // upserts inside one transaction); the legacy blob is preserved
+        // until the thread's next save overwrites it with metadata, so a
+        // crash never loses data.
+        connection.exec(indoc! {"
+            CREATE TABLE IF NOT EXISTS thread_messages (
+                thread_id TEXT NOT NULL,
+                ix INTEGER NOT NULL,
+                data TEXT NOT NULL,
+                PRIMARY KEY (thread_id, ix)
+            )
+        "})?()
+        .map_err(|e| e.context("Failed to create thread_messages table"))?;
+
+        // Additive column migration for databases created before
+        // per-message storage (PRAGMA-checked, the D87 pattern). Scoped so
+        // the check statement drops before the connection moves into the
+        // database handle.
+        let has_format_column = {
+            let mut format_check = connection.select_bound::<(), i64>(indoc! {"
+                SELECT COUNT(*) FROM pragma_table_info('threads')
+                WHERE name = 'format'
+            "})?;
+            format_check(())?.first().copied().unwrap_or(0) > 0
+        };
+        if !has_format_column {
+            connection.exec("ALTER TABLE threads ADD COLUMN format INTEGER NOT NULL DEFAULT 0")?()
+                .map_err(|e| e.context("Failed to add format column"))?;
+        }
 
         let db = Self {
             executor,
@@ -509,6 +545,7 @@ impl ThreadsDatabase {
             version: &'static str,
         }
 
+        let mut thread = thread;
         let title = thread.title.to_string();
         let updated_at = thread.updated_at.to_rfc3339();
         let parent_id = thread
@@ -525,25 +562,95 @@ impl ThreadsDatabase {
                     Some(serialized_folder_paths.order),
                 )
             };
+
+        // zed-kask: D28 — per-message storage. The metadata blob is the
+        // thread serialized with an EMPTY messages list (every field except
+        // the messages); the messages are upserted one row each. Upserting
+        // all messages on every save is deliberate: messages mutate in
+        // place after being saved (tool results fill in mid-turn), so
+        // append-only incremental writes would leave stale rows. The
+        // dominant legacy save cost — zstd-compressing the whole thread
+        // on every save — is gone; the metadata blob is small.
+        let messages = std::mem::take(&mut thread.messages);
         let json_data = serde_json::to_string(&SerializedThread {
             thread,
             version: DbThread::VERSION,
         })?;
-
-        let connection = connection.lock();
 
         let compressed = zstd::encode_all(json_data.as_bytes(), COMPRESSION_LEVEL)?;
         let data_type = DataType::Zstd;
         let data = compressed;
 
         // Use the thread's updated_at as created_at for new threads.
-        // This ensures the creation time reflects when the thread was conceptually
+        // This ensures that the creation time reflects when the thread was conceptually
         // created, not when it was saved to the database.
         let created_at = updated_at.clone();
 
-        let mut insert = connection.exec_bound::<(Arc<str>, Option<Arc<str>>, Option<String>, Option<String>, String, String, DataType, Vec<u8>, String)>(indoc! {"
-            INSERT INTO threads (id, parent_id, folder_paths, folder_paths_order, summary, updated_at, data_type, data, created_at)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+        let connection = connection.lock();
+
+        // One transaction: the threads row and the message rows move
+        // together, so a crash mid-save can never leave a format marker
+        // pointing at partially-written rows.
+        connection.exec("BEGIN IMMEDIATE")?()
+            .map_err(|e| e.context("Failed to begin thread save transaction"))?;
+        match Self::save_thread_in_transaction(
+            &connection,
+            &id,
+            &title,
+            &updated_at,
+            parent_id,
+            folder_paths_str,
+            folder_paths_order_str,
+            data_type,
+            data,
+            &created_at,
+            &messages,
+        ) {
+            Ok(()) => {
+                connection.exec("COMMIT")?()
+                    .map_err(|e| e.context("Failed to commit thread save transaction"))?;
+                Ok(())
+            }
+            Err(error) => {
+                Self::rollback(&connection, "thread save");
+                Err(error)
+            }
+        }
+    }
+
+    /// Best-effort rollback on an already-failing path: the original error
+    /// is the one the caller sees; a rollback failure is logged, never
+    /// silently discarded (.rules).
+    fn rollback(connection: &Connection, operation: &str) {
+        match connection.exec("ROLLBACK") {
+            Ok(mut rollback) => {
+                if let Err(error) = rollback() {
+                    log::warn!("failed to roll back {operation} transaction: {error:?}");
+                }
+            }
+            Err(error) => {
+                log::warn!("failed to prepare {operation} rollback: {error:?}");
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn save_thread_in_transaction(
+        connection: &Connection,
+        id: &acp::SessionId,
+        title: &str,
+        updated_at: &str,
+        parent_id: Option<Arc<str>>,
+        folder_paths: Option<String>,
+        folder_paths_order: Option<String>,
+        data_type: DataType,
+        data: Vec<u8>,
+        created_at: &str,
+        messages: &[Arc<DbMessage>],
+    ) -> Result<()> {
+        let mut insert = connection.exec_bound::<(Arc<str>, Option<Arc<str>>, Option<String>, Option<String>, String, String, DataType, Vec<u8>, String, i64)>(indoc! {"
+            INSERT INTO threads (id, parent_id, folder_paths, folder_paths_order, summary, updated_at, data_type, data, created_at, format)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
             ON CONFLICT(id) DO UPDATE SET
                 parent_id = excluded.parent_id,
                 folder_paths = excluded.folder_paths,
@@ -551,21 +658,49 @@ impl ThreadsDatabase {
                 summary = excluded.summary,
                 updated_at = excluded.updated_at,
                 data_type = excluded.data_type,
-                data = excluded.data
+                data = excluded.data,
+                created_at = excluded.created_at,
+                format = excluded.format
         "})?;
-
         insert((
-            id.0,
+            id.0.clone(),
             parent_id,
-            folder_paths_str,
-            folder_paths_order_str,
-            title,
-            updated_at,
+            folder_paths,
+            folder_paths_order,
+            title.to_string(),
+            updated_at.to_string(),
             data_type,
             data,
-            created_at,
+            created_at.to_string(),
+            1,
         ))?;
 
+        Self::write_message_rows(connection, id, messages)
+    }
+
+    /// zed-kask: D28 — write one row per message (upsert all: messages
+    /// mutate in place after being saved, so append-only writes would
+    /// leave stale rows) and trim any rows at or beyond the new length.
+    fn write_message_rows(
+        connection: &Connection,
+        id: &acp::SessionId,
+        messages: &[Arc<DbMessage>],
+    ) -> Result<()> {
+        let mut trim = connection.exec_bound::<(Arc<str>, i64)>(indoc! {"
+            DELETE FROM thread_messages WHERE thread_id = ? AND ix >= ?
+        "})?;
+        trim((id.0.clone(), messages.len() as i64))?;
+
+        let mut upsert_message = connection.exec_bound::<(Arc<str>, i64, String)>(indoc! {"
+            INSERT INTO thread_messages (thread_id, ix, data)
+            VALUES (?1, ?2, ?3)
+            ON CONFLICT(thread_id, ix) DO UPDATE SET data = excluded.data
+        "})?;
+        for (ix, message) in messages.iter().enumerate() {
+            let json = serde_json::to_string(message)
+                .with_context(|| format!("failed to serialize message {ix} of thread {id:?}"))?;
+            upsert_message((id.0.clone(), ix as i64, json))?;
+        }
         Ok(())
     }
 
@@ -626,27 +761,110 @@ impl ThreadsDatabase {
             let lock_started = std::time::Instant::now();
             let connection = connection.lock();
             let lock_wait_ms = lock_started.elapsed().as_millis();
-            let mut select = connection.select_bound::<Arc<str>, (DataType, Vec<u8>)>(indoc! {"
-                SELECT data_type, data FROM threads WHERE id = ? LIMIT 1
+            let mut select = connection.select_bound::<Arc<str>, (DataType, Vec<u8>, i64)>(indoc! {"
+                SELECT data_type, data, format FROM threads WHERE id = ? LIMIT 1
             "})?;
 
             let rows = select(id.0.clone())?;
             let read_parse_started = std::time::Instant::now();
-            let blob_bytes = rows.iter().next().map(|(_, data)| data.len());
-            let result = if let Some((data_type, data)) = rows.into_iter().next() {
-                Ok(Some(Self::deserialize_thread(data_type, data)?))
+            let blob_bytes = rows.iter().next().map(|(_, data, _)| data.len());
+            let mut legacy_migrated = false;
+            let result = if let Some((data_type, data, format)) = rows.into_iter().next() {
+                if format > 0 {
+                    // zed-kask: D28 — per-message format: the blob is the
+                    // metadata (DbThread with an empty messages list) and
+                    // the messages are read row by row.
+                    Ok(Some(Self::load_thread_messages(
+                        &connection, &id, data_type, data,
+                    )?))
+                } else {
+                    // Legacy whole-thread blob: parse it, then migrate it
+                    // to per-message rows in place (idempotent; the blob
+                    // itself is preserved until the thread's next save).
+                    let thread = Self::deserialize_thread(data_type, data)?;
+                    Self::migrate_legacy_thread(&connection, &id, &thread)?;
+                    legacy_migrated = true;
+                    Ok(Some(thread))
+                }
             } else {
                 Ok(None)
             };
             log::info!(
-                "[DIAG-open] db_load thread_id={} lock_wait_ms={} read_parse_ms={} blob_bytes={}",
+                "[DIAG-open] db_load thread_id={} lock_wait_ms={} read_parse_ms={} blob_bytes={} legacy_migrated={}",
                 &*id.0,
                 lock_wait_ms,
                 read_parse_started.elapsed().as_millis(),
                 blob_bytes.unwrap_or(0),
+                legacy_migrated,
             );
             result
         })
+    }
+
+    /// zed-kask: D28 — read a per-message-format thread: the metadata blob
+    /// plus one row per message, in index order. A gap in the row indexes
+    /// cannot be produced by a save (saves are transactional), so it is
+    /// corruption and fails loudly instead of silently misassembling the
+    /// thread.
+    fn load_thread_messages(
+        connection: &Connection,
+        id: &acp::SessionId,
+        data_type: DataType,
+        data: Vec<u8>,
+    ) -> Result<DbThread> {
+        let mut thread = Self::deserialize_thread(data_type, data)?;
+        let mut select = connection.select_bound::<Arc<str>, (i64, String)>(indoc! {"
+            SELECT ix, data FROM thread_messages WHERE thread_id = ? ORDER BY ix
+        "})?;
+        let rows = select(id.0.clone())?;
+        let mut messages = Vec::with_capacity(rows.len());
+        for (ix, json) in rows {
+            if ix != messages.len() as i64 {
+                anyhow::bail!(
+                    "message row gap at index {ix} for thread {id:?} (expected {})",
+                    messages.len()
+                );
+            }
+            let message: Arc<DbMessage> = serde_json::from_str(&json)
+                .with_context(|| format!("failed to parse message {ix} of thread {id:?}"))?;
+            messages.push(message);
+        }
+        thread.messages = messages;
+        Ok(thread)
+    }
+
+    /// zed-kask: D28 — lazy legacy migration on first load: write one row
+    /// per message and set the format marker, in one transaction. The
+    /// legacy blob in `threads.data` is NOT touched — it is overwritten
+    /// with metadata by the thread's next save, and until then it is the
+    /// crash-recovery source (a crash mid-migration rolls back; the next
+    /// open re-migrates).
+    fn migrate_legacy_thread(
+        connection: &Connection,
+        id: &acp::SessionId,
+        thread: &DbThread,
+    ) -> Result<()> {
+        connection.exec("BEGIN IMMEDIATE")?()
+            .map_err(|e| e.context("Failed to begin thread migration transaction"))?;
+        let result = (|| -> Result<()> {
+            Self::write_message_rows(connection, id, &thread.messages)?;
+            let mut set_format = connection.exec_bound::<(i64, Arc<str>)>(indoc! {"
+                UPDATE threads SET format = ? WHERE id = ?
+            "})?;
+            set_format((1, id.0.clone()))?;
+            Ok(())
+        })();
+        match result {
+            Ok(()) => {
+                connection.exec("COMMIT")?()
+                    .map_err(|e| e.context("Failed to commit thread migration transaction"))?;
+                Ok(())
+            }
+            Err(error) => {
+                Self::rollback(connection, "thread migration");
+                Err(error)
+            }
+        }
     }
 
     pub fn save_thread(
@@ -738,6 +956,11 @@ impl ThreadsDatabase {
                     DELETE FROM threads WHERE id = ?
                 "})?;
 
+                // zed-kask: D28 — per-message rows go with their thread.
+                let mut delete_messages = connection.exec_bound::<Arc<str>>(indoc! {"
+                    DELETE FROM thread_messages WHERE thread_id = ?
+                "})?;
+
                 let mut sandboxed_terminal_temp_dirs = Vec::new();
                 for thread_id in ids_to_delete {
                     if let Some(temp_dir) = select(thread_id.clone())?.into_iter().next().and_then(
@@ -745,6 +968,7 @@ impl ThreadsDatabase {
                     ) {
                         sandboxed_terminal_temp_dirs.push(temp_dir);
                     }
+                    delete_messages(thread_id.clone())?;
                     delete(thread_id)?;
                 }
 
@@ -781,6 +1005,12 @@ impl ThreadsDatabase {
                     DELETE FROM threads
                 "})?;
 
+                // zed-kask: D28 — per-message rows go with their threads.
+                let mut delete_messages = connection.exec_bound::<()>(indoc! {"
+                    DELETE FROM thread_messages
+                "})?;
+
+                delete_messages(())?;
                 delete(())?;
 
                 sandboxed_terminal_temp_dirs
@@ -919,6 +1149,225 @@ mod tests {
         assert!(
             entries[0].created_at.is_some(),
             "created_at should be populated"
+        );
+    }
+
+    // zed-kask: D28 — per-message storage pins.
+
+    fn resume_messages(count: usize) -> Vec<Arc<DbMessage>> {
+        (0..count).map(|_| Arc::new(DbMessage::Resume)).collect()
+    }
+
+    fn thread_format(database: &ThreadsDatabase, id: &acp::SessionId) -> i64 {
+        let connection = database.connection.lock();
+        let mut select = connection
+            .select_bound::<Arc<str>, i64>("SELECT format FROM threads WHERE id = ?")
+            .unwrap();
+        select(id.0.clone()).unwrap().first().copied().unwrap_or(-1)
+    }
+
+    fn message_row_count(database: &ThreadsDatabase, id: &acp::SessionId) -> i64 {
+        let connection = database.connection.lock();
+        let mut select = connection
+            .select_bound::<Arc<str>, i64>(
+                "SELECT COUNT(*) FROM thread_messages WHERE thread_id = ?",
+            )
+            .unwrap();
+        select(id.0.clone()).unwrap().first().copied().unwrap_or(-1)
+    }
+
+    #[gpui::test]
+    async fn test_per_message_round_trip(cx: &mut TestAppContext) {
+        let database = ThreadsDatabase::new(cx.executor()).unwrap();
+        let thread_id = session_id("per-message");
+        let mut thread = make_thread(
+            "Per Message",
+            Utc.with_ymd_and_hms(2024, 2, 1, 0, 0, 0).unwrap(),
+        );
+        thread.messages = resume_messages(3);
+
+        database
+            .save_thread(thread_id.clone(), thread, PathList::default())
+            .await
+            .unwrap();
+
+        let loaded = database
+            .load_thread(thread_id.clone())
+            .await
+            .unwrap()
+            .expect("thread should load");
+        assert_eq!(loaded.title.as_ref(), "Per Message");
+        assert_eq!(loaded.messages.len(), 3);
+        assert!(
+            loaded
+                .messages
+                .iter()
+                .all(|m| matches!(**m, DbMessage::Resume)),
+            "messages should round-trip"
+        );
+        assert_eq!(thread_format(&database, &thread_id), 1, "format marker set");
+        assert_eq!(
+            message_row_count(&database, &thread_id),
+            3,
+            "one row per message"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_save_overwrites_message_rows_in_place(cx: &mut TestAppContext) {
+        // Messages mutate after being saved (tool results fill in mid-turn),
+        // so a save must overwrite existing rows, not append; and a
+        // shrinking message list must not leave orphan rows.
+        let database = ThreadsDatabase::new(cx.executor()).unwrap();
+        let thread_id = session_id("upsert-all");
+        let mut first = make_thread("Upsert", Utc.with_ymd_and_hms(2024, 2, 1, 0, 0, 0).unwrap());
+        first.messages = resume_messages(2);
+        database
+            .save_thread(thread_id.clone(), first, PathList::default())
+            .await
+            .unwrap();
+
+        let mut second = make_thread("Upsert", Utc.with_ymd_and_hms(2024, 2, 2, 0, 0, 0).unwrap());
+        second.messages = resume_messages(3);
+        database
+            .save_thread(thread_id.clone(), second, PathList::default())
+            .await
+            .unwrap();
+        assert_eq!(message_row_count(&database, &thread_id), 3);
+
+        let mut third = make_thread("Upsert", Utc.with_ymd_and_hms(2024, 2, 3, 0, 0, 0).unwrap());
+        third.messages = resume_messages(1);
+        database
+            .save_thread(thread_id.clone(), third, PathList::default())
+            .await
+            .unwrap();
+
+        let loaded = database
+            .load_thread(thread_id.clone())
+            .await
+            .unwrap()
+            .expect("thread should load");
+        assert_eq!(loaded.messages.len(), 1, "shrinking save trims rows");
+        assert_eq!(message_row_count(&database, &thread_id), 1);
+    }
+
+    #[gpui::test]
+    async fn test_legacy_thread_migrates_on_first_load(cx: &mut TestAppContext) {
+        let database = ThreadsDatabase::new(cx.executor()).unwrap();
+        let thread_id = session_id("legacy");
+        let mut thread = make_thread("Legacy", Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap());
+        thread.messages = resume_messages(2);
+
+        // Write a legacy whole-thread blob (format 0) by hand — the
+        // pre-D28 storage format.
+        #[derive(Serialize)]
+        struct LegacySerializedThread<'a> {
+            #[serde(flatten)]
+            thread: &'a DbThread,
+            version: &'static str,
+        }
+        let json = serde_json::to_string(&LegacySerializedThread {
+            thread: &thread,
+            version: DbThread::VERSION,
+        })
+        .unwrap();
+        let blob = zstd::encode_all(json.as_bytes(), 3).unwrap();
+        {
+            let connection = database.connection.lock();
+            let mut insert = connection
+                .exec_bound::<(Arc<str>, String, String, DataType, Vec<u8>, String)>(indoc! {"
+                    INSERT INTO threads (id, summary, updated_at, data_type, data, created_at)
+                    VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                "})
+                .unwrap();
+            insert((
+                thread_id.0.clone(),
+                "Legacy".to_string(),
+                thread.updated_at.to_rfc3339(),
+                DataType::Zstd,
+                blob,
+                thread.updated_at.to_rfc3339(),
+            ))
+            .unwrap();
+        }
+
+        // First load returns the thread AND migrates it to rows.
+        let loaded = database
+            .load_thread(thread_id.clone())
+            .await
+            .unwrap()
+            .expect("legacy thread should load");
+        assert_eq!(loaded.messages.len(), 2);
+        assert_eq!(
+            thread_format(&database, &thread_id),
+            1,
+            "migrated on first load"
+        );
+        assert_eq!(message_row_count(&database, &thread_id), 2);
+
+        // Second load reads the migrated rows.
+        let reloaded = database
+            .load_thread(thread_id.clone())
+            .await
+            .unwrap()
+            .expect("migrated thread should load");
+        assert_eq!(reloaded.messages.len(), 2);
+        assert_eq!(reloaded.title.as_ref(), "Legacy");
+    }
+
+    #[gpui::test]
+    async fn test_message_row_gap_fails_loudly(cx: &mut TestAppContext) {
+        // A gap in the row indexes is corruption (saves are transactional,
+        // so they cannot produce one); the load must fail loudly rather
+        // than silently misassemble the thread.
+        let database = ThreadsDatabase::new(cx.executor()).unwrap();
+        let thread_id = session_id("gap");
+        let mut thread = make_thread("Gap", Utc.with_ymd_and_hms(2024, 2, 1, 0, 0, 0).unwrap());
+        thread.messages = resume_messages(3);
+        database
+            .save_thread(thread_id.clone(), thread, PathList::default())
+            .await
+            .unwrap();
+
+        {
+            let connection = database.connection.lock();
+            let mut delete_middle = connection
+                .exec_bound::<(Arc<str>, i64)>(
+                    "DELETE FROM thread_messages WHERE thread_id = ? AND ix = ?",
+                )
+                .unwrap();
+            delete_middle((thread_id.0.clone(), 1)).unwrap();
+        }
+
+        let error = database
+            .load_thread(thread_id.clone())
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("message row gap"),
+            "a row gap must fail loudly, got: {error}"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_delete_thread_removes_message_rows(cx: &mut TestAppContext) {
+        let database = ThreadsDatabase::new(cx.executor()).unwrap();
+        let thread_id = session_id("delete-rows");
+        let mut thread = make_thread("Delete", Utc.with_ymd_and_hms(2024, 2, 1, 0, 0, 0).unwrap());
+        thread.messages = resume_messages(2);
+        database
+            .save_thread(thread_id.clone(), thread, PathList::default())
+            .await
+            .unwrap();
+        assert_eq!(message_row_count(&database, &thread_id), 2);
+
+        database.delete_thread(thread_id.clone()).await.unwrap();
+
+        assert_eq!(
+            message_row_count(&database, &thread_id),
+            0,
+            "message rows go with their thread"
         );
     }
 
