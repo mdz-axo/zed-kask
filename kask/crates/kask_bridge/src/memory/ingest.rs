@@ -75,7 +75,7 @@ pub(crate) struct WriteContext<'a> {
 }
 
 /// Durable per-chunk outcomes from one turn ingestion attempt.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct IngestionReport {
     /// Chunks produced by the validated chunk contract.
     pub(crate) attempted: usize,
@@ -89,10 +89,16 @@ pub(crate) struct IngestionReport {
     /// Chunks stored without semantic embeddings because the embedding
     /// capability itself was unavailable.
     pub(crate) degraded: usize,
+    /// Goal ids whose `kanban_goal_score` event was published this ingestion
+    /// (stored, or verified already-stored with its calibration receipt).
+    /// The thread acknowledgment path acknowledges exactly these; a score
+    /// event that failed to publish is absent from this set, leaving its
+    /// goal retryable in the kanban outbox (the D58 signal).
+    pub(crate) scored_goal_ids: Vec<String>,
 }
 
 impl IngestionReport {
-    pub(crate) fn degraded(self) -> bool {
+    pub(crate) fn degraded(&self) -> bool {
         self.failed > 0 || self.degraded > 0
     }
 }
@@ -243,6 +249,113 @@ fn calibrate_goal_prediction(
     Ok(())
 }
 
+/// Publish one goal event end-to-end: score dedup + semantic-publication
+/// verify (or embed + store), Brier calibration for scores, and the shared
+/// h_mem publication with embedding cleanup on failure.
+///
+/// The caller owns the failure policy: for score events a failure must block
+/// only that goal's acknowledgment (D58 per-goal strictness — the goal stays
+/// out of the publication set and retryable in the kanban outbox), never its
+/// siblings; for non-score events the existing leg-wide semantics apply.
+async fn publish_goal_event(
+    ctx: &WriteContext<'_>,
+    curator_store: &hkask_memory::MemoryStore,
+    thread_id: &str,
+    goal_id: &str,
+    goal_entity: &str,
+    event: &GoalEvent,
+    goal_ontology: HMemOntology,
+) -> Result<(), MemoryError> {
+    let is_score = event.tool_name == "kanban_goal_score";
+    // Score retries deduplicate against the stored score h_mem: an exact
+    // output match means publication already started; the idempotent
+    // calibration below resumes or no-ops on the receipt.
+    let already_stored = if is_score {
+        curator_store
+            .h_mems_by_entity_prefix(goal_entity)
+            .map_err(|e| {
+                MemoryError::Ingestion(format!(
+                    "failed to query resolved goal {goal_id} before ingest: {e}"
+                ))
+            })?
+            .into_iter()
+            .any(|h_mem| h_mem.attribute == event.tool_name && h_mem.value == event.output)
+    } else {
+        false
+    };
+    if already_stored {
+        let passage = event.semantic_text();
+        let semantically_visible = curator_store
+            .has_embedding_for_passage(goal_entity, &passage)
+            .map_err(|error| {
+                MemoryError::Ingestion(format!(
+                    "failed to verify resolved goal {goal_id} embedding: {error}"
+                ))
+            })?;
+        if !semantically_visible {
+            return Err(MemoryError::Ingestion(format!(
+                "stored goal score {goal_id} violates the semantic-publication invariant"
+            )));
+        }
+        // The score h_mem proves publication started. Its exact
+        // calibration receipt determines whether outcome processing also
+        // completed; the idempotent update below safely resumes or no-ops.
+        if is_score {
+            calibrate_goal_prediction(curator_store, thread_id, goal_id, &event.output)?;
+        }
+        return Ok(());
+    }
+
+    let (passage, vector) = embed_goal_event(ctx, event).await?;
+    let embedding_id = curator_store
+        .store_embedding(goal_entity, &vector, ctx.embedding_model, Some(&passage))
+        .map_err(|error| {
+            MemoryError::Ingestion(format!("failed to store goal {goal_id} embedding: {error}"))
+        })?;
+    if is_score
+        && let Err(error) =
+            calibrate_goal_prediction(curator_store, thread_id, goal_id, &event.output)
+    {
+        if let Err(cleanup_error) = curator_store.delete_embedding_by_id(&embedding_id) {
+            tracing::warn!(
+                target: "reg.memory",
+                thread_id,
+                goal_id,
+                embedding_id,
+                error = %cleanup_error,
+                "Failed to remove score embedding after calibration failure"
+            );
+        }
+        return Err(error);
+    }
+
+    let shared_goal = HMem::new(
+        goal_entity,
+        event.tool_name.as_str(),
+        event.output.clone(),
+        ctx.curator_webid,
+    )
+    .with_visibility(Visibility::Shared)
+    .with_ontology(goal_ontology)
+    .with_confidence(Confidence::new(0.5));
+    if let Err(error) = curator_store.store(shared_goal) {
+        if let Err(cleanup_error) = curator_store.delete_embedding_by_id(&embedding_id) {
+            tracing::warn!(
+                target: "reg.memory",
+                thread_id,
+                goal_id,
+                embedding_id,
+                error = %cleanup_error,
+                "Failed to remove orphan goal embedding after h_mem publication failure"
+            );
+        }
+        return Err(MemoryError::Ingestion(format!(
+            "failed to store goal {goal_id}: {error}"
+        )));
+    }
+    Ok(())
+}
+
 /// Write a completed turn into the curator's memory as cleaned, embedded,
 /// ontologically tagged chunks — one shared copy per turn.
 ///
@@ -310,9 +423,13 @@ pub(crate) async fn write_turn(
 
     // ── 1. Goal events — first-class goal memory, single shared copy ──
     // Resolved kanban goals remain durable outbox entries until a score event
-    // is stored here and the thread path acknowledges the handoff. Score writes
-    // therefore fail the ingestion and deduplicate retries; other goal events
-    // retain their existing best-effort behavior.
+    // is stored here and the thread path acknowledges the handoff. Score
+    // publication is strict PER GOAL: a score event that cannot publish is
+    // excluded from `scored_goal_ids` (so the acknowledgment path leaves
+    // exactly that goal retryable — the D58 signal) while sibling events and
+    // the turn's chunks still ingest; other goal events retain their existing
+    // best-effort behavior.
+    let mut scored_goal_ids: Vec<String> = Vec::new();
     // Each individual `kanban_goal_*` change becomes one structured goal h_mem so
     // therapy / algedonic-review find goal entities (text, criteria,
     // verdicts, Brier scores), not prose archaeology. One key convention:
@@ -343,13 +460,19 @@ pub(crate) async fn write_turn(
             // to abort its siblings (observed live 2026-10-01: one rejected
             // kanban_goal_create dropped the turn's real create and judge
             // events, leaving zero post-restart goal records in curator
-            // memory). Score events stay strict — their failure is the retry
-            // signal the resolved-goal acknowledgment path depends on.
+            // memory). Score events are strict per-goal — their exclusion from
+            // the publication set is the retry signal the resolved-goal
+            // acknowledgment path depends on; the leg-wide form of that
+            // strictness dropped a valid sibling score (observed live
+            // 2026-10-02, card b04a2ad7).
             if is_score {
-                return Err(MemoryError::Ingestion(format!(
-                    "{} result carried no goal_id",
-                    event.tool_name
-                )));
+                tracing::warn!(
+                    target: "reg.memory",
+                    thread_id = %thread_id,
+                    tool = %event.tool_name,
+                    "Score event carried no goal_id — not published, its goal stays unacknowledged (the D58 retry signal); sibling events still ingest"
+                );
+                continue;
             }
             tracing::warn!(
                 target: "reg.memory",
@@ -379,88 +502,36 @@ pub(crate) async fn write_turn(
                 "curator store unavailable for goal event {goal_id}"
             )));
         };
-        let already_stored = if is_score {
-            curator_store
-                .h_mems_by_entity_prefix(&goal_entity)
-                .map_err(|e| {
-                    MemoryError::Ingestion(format!(
-                        "failed to query resolved goal {goal_id} before ingest: {e}"
-                    ))
-                })?
-                .into_iter()
-                .any(|h_mem| h_mem.attribute == event.tool_name && h_mem.value == event.output)
-        } else {
-            false
-        };
-        if already_stored {
-            let passage = event.semantic_text();
-            let semantically_visible = curator_store
-                .has_embedding_for_passage(&goal_entity, &passage)
-                .map_err(|error| {
-                    MemoryError::Ingestion(format!(
-                        "failed to verify resolved goal {goal_id} embedding: {error}"
-                    ))
-                })?;
-            if !semantically_visible {
-                return Err(MemoryError::Ingestion(format!(
-                    "stored goal score {goal_id} violates the semantic-publication invariant"
-                )));
-            }
-            // The score h_mem proves publication started. Its exact
-            // calibration receipt determines whether outcome processing also
-            // completed; the idempotent update below safely resumes or no-ops.
-            if is_score {
-                calibrate_goal_prediction(curator_store, &thread_id, goal_id, &event.output)?;
-            }
-            continue;
-        }
-
-        let (passage, vector) = embed_goal_event(ctx, event).await?;
-        let embedding_id = curator_store
-            .store_embedding(&goal_entity, &vector, ctx.embedding_model, Some(&passage))
-            .map_err(|error| {
-                MemoryError::Ingestion(format!("failed to store goal {goal_id} embedding: {error}"))
-            })?;
-        if is_score
-            && let Err(error) =
-                calibrate_goal_prediction(curator_store, &thread_id, goal_id, &event.output)
-        {
-            if let Err(cleanup_error) = curator_store.delete_embedding_by_id(&embedding_id) {
-                tracing::warn!(
-                    target: "reg.memory",
-                    thread_id = %thread_id,
-                    goal_id,
-                    embedding_id,
-                    error = %cleanup_error,
-                    "Failed to remove score embedding after calibration failure"
-                );
-            }
-            return Err(error);
-        }
-
-        let shared_goal = HMem::new(
+        // Per-goal publication: a score event that cannot publish blocks
+        // only its own acknowledgment (by staying out of `scored_goal_ids`);
+        // sibling events and the turn's chunks still ingest. Non-score
+        // events keep the existing leg-wide semantics.
+        match publish_goal_event(
+            ctx,
+            curator_store,
+            &thread_id,
+            goal_id,
             &goal_entity,
-            event.tool_name.as_str(),
-            event.output.clone(),
-            ctx.curator_webid,
+            event,
+            goal_ontology,
         )
-        .with_visibility(Visibility::Shared)
-        .with_ontology(goal_ontology)
-        .with_confidence(Confidence::new(0.5));
-        if let Err(error) = curator_store.store(shared_goal) {
-            if let Err(cleanup_error) = curator_store.delete_embedding_by_id(&embedding_id) {
+        .await
+        {
+            Ok(()) => {
+                if is_score && !scored_goal_ids.iter().any(|id| id.as_str() == goal_id) {
+                    scored_goal_ids.push(goal_id.to_string());
+                }
+            }
+            Err(error) if is_score => {
                 tracing::warn!(
                     target: "reg.memory",
                     thread_id = %thread_id,
                     goal_id,
-                    embedding_id,
-                    error = %cleanup_error,
-                    "Failed to remove orphan goal embedding after h_mem publication failure"
+                    error = %error,
+                    "Score event not published — its goal stays unacknowledged (the D58 retry signal); sibling events still ingest"
                 );
             }
-            return Err(MemoryError::Ingestion(format!(
-                "failed to store goal {goal_id}: {error}"
-            )));
+            Err(error) => return Err(error),
         }
     }
 
@@ -474,7 +545,10 @@ pub(crate) async fn write_turn(
             thread_id = %thread_id,
             "Empty turn — no chunk h_mems written"
         );
-        return Ok(IngestionReport::default());
+        return Ok(IngestionReport {
+            scored_goal_ids,
+            ..Default::default()
+        });
     }
 
     let entity = format!("curator:thread:{thread_id}");
@@ -494,7 +568,10 @@ pub(crate) async fn write_turn(
         .map(|chunk| chunk.text)
         .collect();
     if chunk_texts.is_empty() {
-        return Ok(IngestionReport::default());
+        return Ok(IngestionReport {
+            scored_goal_ids,
+            ..Default::default()
+        });
     }
 
     // ── 3. Content tags — one batched classifier-model call per turn ──
@@ -572,6 +649,7 @@ pub(crate) async fn write_turn(
     // ── 5. Write one h_mem per chunk + its embedding ──────────────────
     let mut report = IngestionReport {
         attempted: chunk_texts.len(),
+        scored_goal_ids,
         ..Default::default()
     };
     let embedding_expected = ctx.embedding_port.is_some();

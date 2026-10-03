@@ -493,7 +493,7 @@ impl MemoryPort for RealMemoryPort {
     fn ingest_turn<'a>(
         &'a self,
         record: TurnRecord,
-    ) -> Pin<Box<dyn Future<Output = Result<(), MemoryError>> + Send + 'a>> {
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<String>, MemoryError>> + Send + 'a>> {
         Box::pin(async move {
             // Acquire an ingestion permit before touching the database. This
             // serializes concurrent ingestion futures (one per completing
@@ -532,8 +532,8 @@ impl MemoryPort for RealMemoryPort {
                 curator_consolidation: &self.curator_consolidation,
                 consolidation_cadence_secs: self.consolidation_cadence_secs,
             };
-            ingest::write_turn(&ctx, record).await?;
-            Ok(())
+            let report = ingest::write_turn(&ctx, record).await?;
+            Ok(report.scored_goal_ids)
         })
     }
 }
@@ -1202,7 +1202,7 @@ impl agent::ThreadMemoryPort for BridgeMemoryPort {
     fn ingest_turn(
         &self,
         record: agent::ThreadTurnRecord,
-    ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + '_>> {
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<String>, String>> + Send + '_>> {
         let inner = self.inner.clone();
         let user_message = !record.user_input.trim().is_empty();
         hkask_tool_invoker::correlate_reask(user_message);
@@ -1799,12 +1799,14 @@ pub(crate) mod tests {
         );
     }
 
-    /// expect: "An id-less score event still fails the ingestion — the resolved-goal
-    ///          acknowledgment path retries on that failure (D58)."
+    /// expect: "An id-less score event is skipped loudly and never acknowledged —
+    ///          the resolved-goal acknowledgment path retries on the empty
+    ///          publication set (D58)."
     /// pre: a turn whose only goal event is an id-less kanban_goal_score result.
-    /// post: ingestion errors and no goal h_mem is stored.
+    /// post: ingestion succeeds with an empty publication set and no goal h_mem
+    ///       is stored; the goal stays retryable in the kanban outbox.
     #[tokio::test]
-    async fn id_less_score_goal_event_still_fails_ingestion() {
+    async fn id_less_score_goal_event_is_skipped_loudly_and_never_acknowledged() {
         let port = in_memory_port_with_embed_fn(Arc::new(|_text: &str| vec![0.25; 1024]));
         let record = goal_event_turn(
             "goal-score-strict-thread",
@@ -1812,10 +1814,13 @@ pub(crate) mod tests {
             serde_json::json!("Tool invocation failed: server unavailable"),
         );
 
-        let result = port.ingest_turn(record).await;
+        let published = port
+            .ingest_turn(record)
+            .await
+            .expect("ingestion succeeds; the id-less score is excluded from the publication set");
         assert!(
-            result.is_err(),
-            "an id-less score event must fail the ingestion (retry signal)"
+            published.is_empty(),
+            "an id-less score event must never be acknowledged (retry signal)"
         );
         let curator_store = port.curator_store.get().expect("curator store");
         assert!(
@@ -1824,6 +1829,85 @@ pub(crate) mod tests {
                 .expect("query should succeed")
                 .is_empty(),
             "no goal h_mem may be stored from an id-less score event"
+        );
+    }
+
+    /// expect: "One failing score event cannot destroy its siblings' publications —
+    ///          score strictness is per-goal, never leg-wide (D58)."
+    /// [P2] Motivating: Transparent Imperfection — the failing goal's exclusion
+    ///      from the publication set is the retry signal, not a leg-wide error.
+    /// pre: one turn scores two goals — g-sibling-ok (create h_mem exists from
+    ///      a prior turn) then g-sibling-bad (no create h_mem, so calibration
+    ///      fails) — the live 2026-10-02 shape (card b04a2ad7).
+    /// post: ingestion succeeds; g-sibling-ok's score h_mem and embedding land
+    ///       and it is the only published id; g-sibling-bad leaves nothing
+    ///       (its failed embedding is cleaned up).
+    #[tokio::test]
+    async fn failing_score_event_does_not_poison_sibling_scores() {
+        let port = in_memory_port_with_embed_fn(Arc::new(|_text: &str| vec![0.25; 1024]));
+        port.ingest_turn(goal_event_turn(
+            "goal-sibling-setup",
+            "kanban_goal_create",
+            serde_json::json!({
+                "content": {"goal_id": "g-sibling-ok", "goal_text": "The user can filter by date", "prediction": 0.8}
+            }),
+        ))
+        .await
+        .expect("create ingest");
+
+        let record = TurnRecord {
+            thread_id: "goal-sibling-thread".to_string(),
+            user_input: String::new(),
+            agent_response: String::new(),
+            model: "test-model".to_string(),
+            thread_title: None,
+            agent_id: Some("zed".to_string()),
+            goal_events: vec![
+                hkask_types::GoalEvent {
+                    tool_name: "kanban_goal_score".to_string(),
+                    output: serde_json::json!({
+                        "content": {"goal_id": "g-sibling-ok", "achieved": true, "brier": 0.04}
+                    }),
+                },
+                hkask_types::GoalEvent {
+                    tool_name: "kanban_goal_score".to_string(),
+                    output: serde_json::json!({
+                        "content": {"goal_id": "g-sibling-bad", "achieved": true, "brier": 0.04}
+                    }),
+                },
+            ],
+        };
+        let published = port
+            .ingest_turn(record)
+            .await
+            .expect("one failing score event must not fail the ingestion");
+        assert_eq!(
+            published,
+            vec!["g-sibling-ok".to_string()],
+            "only the publishable sibling is acknowledged"
+        );
+
+        let curator_store = port.curator_store.get().expect("curator store");
+        let ok_records = curator_store
+            .h_mems_by_entity_prefix("curator:goal:g-sibling-ok")
+            .expect("goal query");
+        assert!(
+            ok_records
+                .iter()
+                .any(|h_mem| h_mem.attribute == "kanban_goal_score"),
+            "the valid sibling's score h_mem must land"
+        );
+        assert!(
+            curator_store
+                .h_mems_by_entity_prefix("curator:goal:g-sibling-bad")
+                .expect("goal query")
+                .is_empty(),
+            "the failing score must leave nothing behind"
+        );
+        assert_eq!(
+            curator_store.embedding_count().expect("embedding count"),
+            2,
+            "create + the valid sibling's score embed; the failed score's embedding is cleaned up"
         );
     }
 
@@ -1895,8 +1979,11 @@ pub(crate) mod tests {
                 "content": {"goal_id": "g-no-vector", "achieved": false, "brier": null}
             }),
         );
+        let published = port.ingest_turn(score).await.expect(
+            "ingestion succeeds; the unpublished score is excluded from the publication set",
+        );
         assert!(
-            port.ingest_turn(score).await.is_err(),
+            published.is_empty(),
             "a score must remain unacknowledged until semantic publication succeeds"
         );
         assert!(
@@ -1911,11 +1998,13 @@ pub(crate) mod tests {
     /// expect: "A non-null score cannot be acknowledged when its create memory is absent."
     /// [P9] Motivating: Homeostatic Self-Regulation — outcome evidence needs the prediction it calibrates.
     /// pre: embedding works but no kanban_goal_create h_mem exists
-    /// post: ingestion fails and leaves neither score h_mem nor score embedding
+    /// post: ingestion succeeds with an empty publication set and leaves
+    ///       neither score h_mem nor score embedding — the goal stays
+    ///       retryable in the kanban outbox (D58), and siblings are unaffected.
     #[tokio::test]
     async fn goal_score_with_brier_requires_a_create_record() {
         let port = in_memory_port_with_embeddings();
-        let result = port
+        let published = port
             .ingest_turn(goal_event_turn(
                 "goal-missing-create",
                 "kanban_goal_score",
@@ -1923,8 +2012,14 @@ pub(crate) mod tests {
                     "content": {"goal_id": "g-missing-create", "achieved": true, "brier": 0.04}
                 }),
             ))
-            .await;
-        assert!(result.is_err());
+            .await
+            .expect(
+                "ingestion succeeds; the unpublished score is excluded from the publication set",
+            );
+        assert!(
+            published.is_empty(),
+            "a score without its create record must never be acknowledged"
+        );
         let curator_store = port.curator_store.get().expect("curator store");
         assert!(
             curator_store
@@ -2059,7 +2154,8 @@ pub(crate) mod tests {
     /// expect: "A stored score without its required embedding is rejected, not repaired by a compatibility path."
     /// [P8] Motivating: Semantic Grounding — an incomplete publication cannot be acknowledged.
     /// pre: matching score h_mem exists without its passage embedding
-    /// post: retry fails, publishes nothing, and leaves calibration unapplied
+    /// post: the retry publishes nothing (excluded from the publication set,
+    ///       so never acknowledged) and leaves calibration unapplied
     #[tokio::test]
     async fn goal_score_retry_rejects_a_missing_embedding() {
         let port = in_memory_port_with_embeddings();
@@ -2092,9 +2188,13 @@ pub(crate) mod tests {
         }
 
         let retry = turn_record("goal-repair-thread", "", "", "zed", vec![event]);
+        let published = port
+            .ingest_turn(retry)
+            .await
+            .expect("ingestion succeeds; the embedding-incomplete score is excluded from the publication set");
         assert!(
-            port.ingest_turn(retry).await.is_err(),
-            "an embedding-incomplete stored score must fail closed"
+            published.is_empty(),
+            "an embedding-incomplete stored score must never be acknowledged (fail closed)"
         );
 
         let goals = curator_store

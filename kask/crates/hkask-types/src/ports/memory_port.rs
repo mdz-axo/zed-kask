@@ -140,7 +140,16 @@ pub trait MemoryPort: Send + Sync {
     ///
     /// This is fire-and-forget from the caller's perspective — the memory system
     /// handles classification, confidence scoring, and consolidation asynchronously.
-    fn ingest_turn<'a>(&'a self, record: TurnRecord) -> MemoryFuture<'a, Result<(), MemoryError>>;
+    ///
+    /// Returns the goal ids whose `kanban_goal_score` events were published
+    /// this ingestion. The turn-completion path acknowledges exactly these
+    /// (D58): a scored goal absent from the set was not published — its score
+    /// event failed per-goal — and stays retryable in the kanban outbox; its
+    /// failure never blocks a sibling's publication.
+    fn ingest_turn<'a>(
+        &'a self,
+        record: TurnRecord,
+    ) -> MemoryFuture<'a, Result<Vec<String>, MemoryError>>;
 
     /// Recall memory snippets relevant to a query for context injection.
     ///

@@ -346,29 +346,19 @@ async fn ingest_turn_and_acknowledge_goal_scores(
     record: crate::ThreadTurnRecord,
     tool_source: Option<Arc<dyn crate::KaskToolSource>>,
 ) -> Result<(), String> {
-    let goal_ids: HashSet<String> = record
-        .goal_events
-        .iter()
-        .filter(|event| event.tool_name == "kanban_goal_score")
-        .filter_map(|event| {
-            event
-                .output
-                .get("goal_id")
-                .or_else(|| event.output.pointer("/content/goal_id"))
-                .and_then(serde_json::Value::as_str)
-                .map(str::to_string)
-        })
-        .collect();
-
-    port.ingest_turn(record).await?;
-    if goal_ids.is_empty() {
+    // Only the goals whose score events were actually published are
+    // acknowledged (D58): a score event that failed per-goal stays out of
+    // the publication set and its goal remains retryable in the outbox —
+    // one failing score never blocks a sibling's acknowledgment.
+    let scored_goal_ids = port.ingest_turn(record).await?;
+    if scored_goal_ids.is_empty() {
         return Ok(());
     }
     let source = tool_source.ok_or_else(|| {
         "goal score stored in curator memory but kata-kanban acknowledgment is unavailable"
             .to_string()
     })?;
-    for goal_id in goal_ids {
+    for goal_id in scored_goal_ids {
         source
             .invoke(
                 "kata-kanban",
@@ -9063,18 +9053,31 @@ mod tests {
 
     struct GoalAckMemoryPort {
         fail: bool,
+        /// Simulates a turn where no score event published (per-goal
+        /// failure): ingestion succeeds but the publication set is empty.
+        partial: bool,
     }
 
     impl crate::ThreadMemoryPort for GoalAckMemoryPort {
         fn ingest_turn(
             &self,
-            _record: crate::ThreadTurnRecord,
-        ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + '_>> {
+            record: crate::ThreadTurnRecord,
+        ) -> Pin<Box<dyn Future<Output = Result<Vec<String>, String>> + Send + '_>> {
             Box::pin(async move {
                 if self.fail {
                     Err("injected memory failure".to_string())
+                } else if self.partial {
+                    // Per-goal publication failure: no score event landed,
+                    // so nothing may be acknowledged.
+                    Ok(Vec::new())
                 } else {
-                    Ok(())
+                    // Simulates full publication: every score event landed.
+                    Ok(record
+                        .goal_events
+                        .iter()
+                        .filter(|event| event.tool_name == "kanban_goal_score")
+                        .filter_map(|event| event.goal_id().map(str::to_string))
+                        .collect())
                 }
             })
         }
@@ -9134,7 +9137,10 @@ mod tests {
         });
 
         let failed = ingest_turn_and_acknowledge_goal_scores(
-            Arc::new(GoalAckMemoryPort { fail: true }),
+            Arc::new(GoalAckMemoryPort {
+                fail: true,
+                partial: false,
+            }),
             goal_score_turn_record(),
             Some(Arc::clone(&source)),
         )
@@ -9143,7 +9149,10 @@ mod tests {
         assert!(calls.lock().expect("calls lock").is_empty());
 
         ingest_turn_and_acknowledge_goal_scores(
-            Arc::new(GoalAckMemoryPort { fail: false }),
+            Arc::new(GoalAckMemoryPort {
+                fail: false,
+                partial: false,
+            }),
             goal_score_turn_record(),
             Some(source),
         )
@@ -9156,6 +9165,28 @@ mod tests {
                 "kanban_goal_memory_acknowledge".to_string(),
                 json!({"goal_id": "g-ack"}),
             )]
+        );
+
+        // Per-goal publication failure (D58): ingestion succeeds but the
+        // publication set is empty, so no acknowledgment may fire — the
+        // scored goal stays retryable in the kanban outbox.
+        let partial_calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let partial_source: Arc<dyn crate::KaskToolSource> = Arc::new(RecordingGoalAckSource {
+            calls: Arc::clone(&partial_calls),
+        });
+        ingest_turn_and_acknowledge_goal_scores(
+            Arc::new(GoalAckMemoryPort {
+                fail: false,
+                partial: true,
+            }),
+            goal_score_turn_record(),
+            Some(partial_source),
+        )
+        .await
+        .expect("ingestion succeeds with an empty publication set");
+        assert!(
+            partial_calls.lock().expect("partial calls lock").is_empty(),
+            "an unpublished score must never be acknowledged"
         );
     }
 
