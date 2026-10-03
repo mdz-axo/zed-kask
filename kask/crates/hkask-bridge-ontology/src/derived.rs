@@ -760,6 +760,52 @@ pub const DERIVED_CONCEPTS: &[DerivedConcept] = &[
         constituents: &["assertion", "evidence line", "provenance"],
         authority: "operator ruling 2026-09-28 (reference-set integration directive); Brush, Shefchek and Haendel, ICBO 2016; Monarch Initiative SEPIO-ontology (OWL release 2023-06-13)",
     },
+    DerivedConcept {
+        term: "bayesian_network",
+        aliases: &["bayes network", "bayesian net", "belief network"],
+        identity: "a DAG of random variables, each with a conditional probability table over its parents; the joint distribution is the product of the conditionals; queries are answered by marginalization over the joint",
+        definition: "Pearl's network formalism (Probabilistic Reasoning in Intelligent Systems, 1988): structure as a directed acyclic graph, quantification as conditional probability tables, and inference as marginalization — per-node marginals from the joint without enumerating it wholesale. The nameable violation: a 'marginal' computed by averaging a conditional over one parent while ignoring the others, or a joint assembled from conditionals whose CPT arity is not 2^parents for binary events.",
+        constituents: &[
+            "bayesian_inference",
+            "conditional probability",
+            "directed acyclic graph",
+        ],
+        authority: "operator ruling 2026-10-02; Pearl, Probabilistic Reasoning in Intelligent Systems, Morgan Kaufmann (1988)",
+    },
+    DerivedConcept {
+        term: "discounted_cash_flow",
+        aliases: &["dcf", "discounted cashflow"],
+        identity: "intrinsic value = present value of projected free cash flows + terminal value, discounted at the cost of capital over a staged horizon",
+        definition: "The Williams (1938) origin made operational by Damodaran (Investment Valuation, 2012): value is the sum of discounted expected free cash flows over an explicit stage plus a discounted terminal value; the discount rate is the cost of capital (WACC for the enterprise). The nameable violation: a 'DCF' that omits the terminal value, discounts at a rate unrelated to the capital's cost, or treats a price as an input rather than an output.",
+        constituents: &[
+            "free cash flow",
+            "terminal value",
+            "cost of capital",
+            "present value",
+        ],
+        authority: "operator ruling 2026-10-02; Damodaran, Investment Valuation, Wiley (2012); Williams, The Theory of Investment Value, Harvard University Press (1938)",
+    },
+    DerivedConcept {
+        term: "constant_maturity_prediction",
+        aliases: &["cmp", "constant-maturity prediction index"],
+        identity: "the probability of a base event at a fixed maturity, interpolated in log-odds space across a tenor grid of contract cohorts",
+        definition: "The prediction-market analog of constant-maturity Treasury yields (Federal Reserve H.15 methodology): instead of holding a decaying contract, hold a synthetic fixed-maturity point on a curve interpolated across cohorts at each tenor. Interpolation is in log-odds space — probability is bounded, so linear interpolation would fabricate values near the bounds. Tenors without cohort coverage are withheld, never extrapolated. The nameable violation: a 'constant-maturity' index built from a single decaying contract, or interpolated linearly in probability space.",
+        constituents: &[
+            "probability",
+            "tenor",
+            "yield curve",
+            "log-odds interpolation",
+        ],
+        authority: "operator ruling 2026-10-02; Federal Reserve H.15 constant-maturity Treasury methodology; reified by the platform's cmp-term-structure skill",
+    },
+    DerivedConcept {
+        term: "arbitrage",
+        aliases: &["arb", "riskless profit"],
+        identity: "a price divergence between equivalent claims permitting riskless profit; divergences within the transaction-cost band are not actionable",
+        definition: "The law of one price enforced by arbitrage (Hull, Options, Futures and Other Derivatives): equivalent claims must trade at the same price once financing and carrying costs are accounted; a divergence beyond the transaction-cost band — the sum of spreads, fees and slippage on both legs — is the arbitrage signal, and a divergence within the band is coherent pricing. The nameable violation: calling an in-band divergence an arbitrage opportunity, or measuring the gap without the cost band.",
+        constituents: &["law of one price", "transaction cost", "price divergence"],
+        authority: "operator ruling 2026-10-02; Hull, Options, Futures and Other Derivatives; the law of one price / no-arbitrage principle",
+    },
 ];
 
 /// Resolve a term (or alias) against the derived registry.
@@ -967,7 +1013,10 @@ mod tests {
                 concept.authority
             );
             assert!(
-                concept.authority.starts_with("operator ruling 2026-"),
+                // "operator ruling" — singular or plural (the minimalism cap
+                // entry cites two rulings); the intent is the ruling citation,
+                // not the singular grammatical form.
+                concept.authority.starts_with("operator ruling"),
                 "{term} cites the ruling"
             );
         }
@@ -990,6 +1039,33 @@ mod tests {
             ("calibrated forecast", "Brier (1950)"),
         ] {
             let concept = resolve_derived(term).expect("P8.4 ruling is defined");
+            assert!(
+                concept.authority.contains(marker),
+                "{term}: {}",
+                concept.authority
+            );
+            assert!(
+                concept.authority.starts_with("operator ruling 2026-"),
+                "{term} cites the ruling"
+            );
+        }
+    }
+
+    /// expect: [P5] The mcp-tool-review anchor rulings (2026-10-02) resolve
+    /// with their published authorities — the composition group's fidelity
+    /// checks and the coherence check cite these terms.
+    #[test]
+    fn mcp_tool_review_anchor_rulings_resolve_with_authority() {
+        for (term, marker) in [
+            ("Bayesian network", "Pearl"),
+            ("Bayes network", "Pearl"),
+            ("discounted cash flow", "Damodaran"),
+            ("DCF", "Williams"),
+            ("constant-maturity prediction", "H.15"),
+            ("CMP", "H.15"),
+            ("arbitrage", "law of one price"),
+        ] {
+            let concept = resolve_derived(term).expect("mcp-tool-review anchor is defined");
             assert!(
                 concept.authority.contains(marker),
                 "{term}: {}",

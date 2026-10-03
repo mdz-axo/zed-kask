@@ -1,0 +1,66 @@
+{# goal: The findings artifact contract: renders the JSON skeleton (reconciliation, per-tool records, findings with citations, gated-pending list, citation-check receipt, ask-first record) that the review fills and the citation script verifies. #}
+[inference]
+contract:
+  input:
+    server: string
+    run_date: string
+    tools: object[]
+    findings: object[]
+    reconciliation: object
+    gated_pending: string[]
+    notes: string[]
+  output:
+    artifact_json: object
+---
+You are assembling the mcp-tool-review findings artifact for server {{ server }} (run date {{ run_date }}).
+
+Run context: {{ tools|length }} tools reviewed, {{ findings|length }} findings, reconciliation {{ reconciliation }}, gated pending rulings: {{ gated_pending|join("; ") }}, notes: {{ notes|join("; ") }}.
+
+Emit ONE JSON object — the `artifact_json` output — with exactly these fields:
+
+{
+  "capability": "mcp-tool-review",
+  "server": "<server>",
+  "run_date": "<run_date>",
+  "reconciliation": {
+    "source_count": <int>, "live_count": <int>, "reviewed_count": <int>,
+    "instrument": "lisp_eval", "result": <bool>,
+    "statement": "<what the reconciliation form asserted>"
+  },
+  "efficiency_metric_space": {
+    "harness": "<the named harness the probes ran through>",
+    "axes": [ { "axis": "<name>", "type": "measured|judged|blocked", "instrument": "<named instrument or the blocking gap>" } ]
+  },
+  "anchor_registry": { "ruled": ["<term — authority, ruling date>"], "pending": ["<term — proposed authority, ask status>"] },
+  "tools": [
+    {
+      "name": "<tool>", "file": "<repo-relative path>", "line": <int>,
+      "anchor": "<reference model or platform-convention class>", "fidelity_label": "functional|technical|both|utility",
+      "dp_character": "D|P",
+      "axes": { "syntax": "<verdict>", "semantics": "<verdict>", "integration": "<verdict>", "use_patterns": "<verdict with search scope>" },
+      "probe": { "status": "probed|not-probed", "classification": "success|failure|n/a", "justification": "<why, when not probed>" },
+      "status": "reviewed|pending-rulings"
+    }
+  ],
+  "findings": [
+    {
+      "id": "<S-NN>", "tool": "<tool or server>", "axis": "<syntax|semantics|cybernetics|loops|use_patterns|observability|traceability|integration|divergence>",
+      "severity": "high|medium|low|info",
+      "claim": "<the falsifiable claim>",
+      "citations": [ { "file": "<repo-relative path>", "line": <int>, "excerpt": "<verbatim substring of the cited line>" } ],
+      "evidence": "<the observed evidence>", "proposal": "<the change proposed>", "actuator": "<kanban|algedonic|curator_directive|skill-maintenance|none>",
+      "status": "filed|pending-rulings"
+    }
+  ],
+  "gated_pending_rulings": [ "<check> — gated on <ruling>" ],
+  "citation_check": { "script": "kask/scripts/check-mcp-review-citations.sh", "result": "pass|fail", "checked": <int> },
+  "ask_first": { "batched_ask_presented": <bool>, "defaults_applied": ["<default and where flagged>"] },
+  "notes": [ "<free-text run notes>" ]
+}
+
+Rules:
+- Every excerpt is a verbatim substring of the cited line — the citation script checks it within ±3 lines and fails the run otherwise.
+- reviewed_count counts every enumerated tool, including gated ones (status pending-rulings); the reconciliation never drops a tool to make counts match.
+- A blocked efficiency axis is recorded with its harness gap as a finding — an asserted number without a measured invocation is a defect.
+- gated_pending_rulings names the ruling each gated check waits on; the run never deadlocks on them.
+- tools and findings reconcile: every findings[].tool appears in tools[] (or is the literal "server").
