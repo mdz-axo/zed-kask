@@ -223,7 +223,12 @@ pending source and execute bounded waves with disjoint output files. Reconcile a
 checkpoint each wave before scheduling the next. For conversions long enough that
 the transport can die mid-call, the per-source receipt (the written output plus
 its report companion) is the record — a lost transport response is not a lost
-conversion; reconcile waves from receipts, never from transport responses alone. A directory call is allowed only
+conversion; reconcile waves from receipts, never from transport responses alone. A wave
+driver must not export the host's inference socket at launch: the transport
+borrows it from the running host per call, so a host restart mid-wave re-points
+queued calls at the new socket instead of grinding them against the dead one.
+In-flight calls still die with their borrowed socket — kill, reconcile from
+receipts, relaunch; the receipt short-circuit makes relaunch cheap. A directory call is allowed only
 when the tool exposes observable progress, or a measured pilot shows the entire
 bounded set completes within the operator's reporting cadence and the operator has
 accepted final-only reporting. Directory convenience never overrides observability.
