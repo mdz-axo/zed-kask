@@ -71,7 +71,7 @@ required_model=
 if [[ -n "$required_model_var" ]]; then
     required_model=${!required_model_var:-}
 fi
-if [[ "$needs_inference" == true && ( -z ${HKASK_INFERENCE_SOCKET:-} || -z $required_model ) ]]; then
+if [[ "$needs_inference" == true && ( -z ${HKASK_INFERENCE_SOCKET:-} || ( -n "$required_model_var" && -z $required_model ) ) ]]; then
     host_pid=$(pgrep -f '^hkask-mcp-corpus$' | head -1)
     if [[ ! "$host_pid" =~ ^[0-9]+$ ]]; then
         echo "running host-managed hkask-mcp-corpus process not found" >&2
@@ -107,7 +107,7 @@ fi
 if [[ -n "$required_model_var" ]]; then
     required_model=${!required_model_var:-}
 fi
-if [[ "$needs_inference" == true && ( -z ${HKASK_INFERENCE_SOCKET:-} || -z $required_model ) ]]; then
+if [[ "$needs_inference" == true && ( -z ${HKASK_INFERENCE_SOCKET:-} || ( -n "$required_model_var" && -z $required_model ) ) ]]; then
     echo "$tool_name requires HKASK_INFERENCE_SOCKET and $required_model_var" >&2
     exit 69
 fi
