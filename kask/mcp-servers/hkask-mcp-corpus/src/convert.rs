@@ -97,12 +97,12 @@ pub(crate) fn decode_text_bytes(bytes: &[u8]) -> Result<(String, &'static str), 
     let head = String::from_utf8_lossy(&bytes[..head_len]).to_lowercase();
     let label = head
         .find("charset=")
-        .and_then(|at| {
+        .map(|at| {
             let rest = &head[at + "charset=".len()..];
             let end = rest
                 .find(|c: char| c == '"' || c == '\'' || c == ';' || c == '>' || c.is_whitespace())
                 .unwrap_or(rest.len());
-            Some(rest[..end].trim().to_string())
+            rest[..end].trim().to_string()
         })
         .filter(|label| !label.is_empty());
     let encoding = label
