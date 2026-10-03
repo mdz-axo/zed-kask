@@ -1828,10 +1828,11 @@ mod ocr_guards {
             "expected EmptyOcrOutput, got: {error}"
         );
 
-        // Five consecutive empty outputs open the breaker — the next call
-        // then fails fast with the typed BreakerOpen error instead of
-        // burning another doomed endpoint call. There is no fallback
-        // backend: the breaker state IS the page's verdict.
+        // Five consecutive empty outputs open the breaker — and the open
+        // breaker PAUSES the adaptive limiter: the next page waits out the
+        // cooldown instead of failing fast. No fallback backend exists and
+        // no page is lost to the quarantine — the limiter pause IS the
+        // verdict's actuation.
         for _ in 0..4 {
             let result = executor.execute(0, "mock-model", &image).await;
             assert!(result.is_err(), "empty output must stay an error");
@@ -1840,10 +1841,15 @@ mod ocr_guards {
             executor.breaker_open(),
             "circuit breaker must open after 5 consecutive empty outputs"
         );
-        match executor.execute(0, "mock-model", &image).await {
-            Err(OcrError::BreakerOpen { .. }) => {}
-            other => panic!("expected BreakerOpen while the breaker is open, got {other:?}"),
-        }
+        let blocked = tokio::time::timeout(
+            std::time::Duration::from_millis(300),
+            executor.execute(0, "mock-model", &image),
+        )
+        .await;
+        assert!(
+            blocked.is_err(),
+            "execute must block on the breaker pause, not fail the page fast"
+        );
     }
 
     /// The wired recorder must publish silent failures to the cross-process
