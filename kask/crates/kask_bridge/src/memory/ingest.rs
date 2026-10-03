@@ -423,12 +423,13 @@ pub(crate) async fn write_turn(
 
     // ── 1. Goal events — first-class goal memory, single shared copy ──
     // Resolved kanban goals remain durable outbox entries until a score event
-    // is stored here and the thread path acknowledges the handoff. Score
-    // publication is strict PER GOAL: a score event that cannot publish is
-    // excluded from `scored_goal_ids` (so the acknowledgment path leaves
-    // exactly that goal retryable — the D58 signal) while sibling events and
-    // the turn's chunks still ingest; other goal events retain their existing
-    // best-effort behavior.
+    // is stored here and the thread path acknowledges the handoff. Goal-event
+    // publication is per-event: a score that cannot publish is excluded from
+    // `scored_goal_ids` (so the acknowledgment path leaves exactly that goal
+    // retryable — the D58 signal); a create/judge that cannot publish is
+    // skipped loudly, unpublished. No goal-event failure aborts siblings or
+    // the turn's chunks (observed live 2026-10-02: the leg-wide form dropped
+    // a valid sibling score — card b04a2ad7).
     let mut scored_goal_ids: Vec<String> = Vec::new();
     // Each individual `kanban_goal_*` change becomes one structured goal h_mem so
     // therapy / algedonic-review find goal entities (text, criteria,
@@ -522,16 +523,24 @@ pub(crate) async fn write_turn(
                     scored_goal_ids.push(goal_id.to_string());
                 }
             }
-            Err(error) if is_score => {
+            Err(error) => {
+                // Per-event isolation for EVERY goal event (the loop header's
+                // best-effort contract, made true here): a publication
+                // failure — embedding, calibration, or store — skips this
+                // event loudly. For scores the skip also withholds the
+                // acknowledgment (the goal stays retryable, D58); for
+                // creates/judges the event is simply unpublished. Siblings
+                // and the turn's chunks always proceed.
                 tracing::warn!(
                     target: "reg.memory",
                     thread_id = %thread_id,
                     goal_id,
+                    tool = %event.tool_name,
+                    is_score,
                     error = %error,
-                    "Score event not published — its goal stays unacknowledged (the D58 retry signal); sibling events still ingest"
+                    "Goal event not published — skipped (best-effort); sibling events still ingest"
                 );
             }
-            Err(error) => return Err(error),
         }
     }
 

@@ -19,6 +19,7 @@
 
 //! | `tool_retry_tracker` | .rules | Tool retry death spiral prevention |
 //! | `deferred_tool_results` | — | Deferred tool result delivery across turn boundaries |
+//! | `turn_goal_events` | D6 | Turn-scoped goal-event capture, drained at every turn end so severed turns never lose goal events (card b04a2ad7) |
 //! | `last_completion_truncated` | D25 | Distinguish MaxTokens truncation from user cancel |
 //! | `cached_system_prompt` | — | System prompt digest caching |
 //! | `cached_filtered_context` | — | Filtered context caching |
@@ -52,6 +53,14 @@ pub(crate) struct KaskThreadState {
     // Deferred tool results
     deferred_tool_results: Vec<DeferredToolResult>,
 
+    // D6 — goal events captured at tool-result time for the CURRENT turn,
+    // drained at every turn end (Ok, error, cancelled). The message-boundary
+    // collection could not see a severed turn's events (the cancel path
+    // flushes the next user message before the old turn drains — observed
+    // live 2026-10-02/03, card b04a2ad7), so this buffer is the single
+    // turn-scoped source for goal-event ingestion.
+    turn_goal_events: Vec<hkask_types::GoalEvent>,
+
     // Truncation detection (D25)
     last_completion_truncated: bool,
 
@@ -74,6 +83,7 @@ impl KaskThreadState {
             agent_static_context: None,
             tool_retry_tracker: Rc::new(RefCell::new(ToolRetryTracker::default())),
             deferred_tool_results: Vec::new(),
+            turn_goal_events: Vec::new(),
             last_completion_truncated: false,
             cached_system_prompt: None,
             cached_filtered_context: None,
@@ -104,6 +114,25 @@ impl KaskThreadState {
 
     pub(crate) fn take_tool_trace(&mut self) -> Option<ToolTraceCapture> {
         self.tool_trace.take()
+    }
+
+    // ── Turn-scoped goal events (D6) ──────────────────────────────────
+
+    /// Record one durable goal event at tool-result time. Called from
+    /// `process_tool_result` and the deferred-result drain for every
+    /// completed `kanban_goal_*` call, so the event is captured before any
+    /// turn-end path can lose it. Events accumulate per-result across all
+    /// of the turn's tool rounds (the 2026-09-05 lesson: goal calls happen
+    /// in intermediate rounds, never only the final one).
+    pub(crate) fn record_turn_goal_event(&mut self, event: hkask_types::GoalEvent) {
+        self.turn_goal_events.push(event);
+    }
+
+    /// Take every goal event buffered for the current turn. Called at every
+    /// turn end — the Ok arm, the error arm, and `cancel` — so no path
+    /// leaves events behind and no path ingests them twice.
+    pub(crate) fn take_turn_goal_events(&mut self) -> Vec<hkask_types::GoalEvent> {
+        std::mem::take(&mut self.turn_goal_events)
     }
 
     // ── Truncation detection (D25) ────────────────────────────────────

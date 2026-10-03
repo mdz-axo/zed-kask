@@ -1948,7 +1948,9 @@ pub(crate) mod tests {
     /// [P2] Motivating: Transparent Imperfection — no embedding means no durable goal h_mem.
     /// [P8] Constraining: Semantic Grounding — score acknowledgment retries until visibility exists.
     /// pre: the embedding provider rejects every request
-    /// post: both create and score return errors and leave no goal h_mem
+    /// post: both create and score are skipped loudly (ingestion succeeds,
+    ///       nothing published, no goal h_mem) — a non-score publication
+    ///       failure no longer aborts the leg
     #[tokio::test]
     async fn goal_embedding_failure_blocks_persistence_and_score_acknowledgment() {
         let port = in_memory_port();
@@ -1959,9 +1961,13 @@ pub(crate) mod tests {
                 "content": {"goal_id": "g-no-vector", "goal_text": "must remain visible"}
             }),
         );
+        let published = port
+            .ingest_turn(create)
+            .await
+            .expect("a non-score publication failure skips loudly instead of aborting the leg");
         assert!(
-            port.ingest_turn(create).await.is_err(),
-            "every individual goal event fails closed when semantic publication is unavailable"
+            published.is_empty(),
+            "an unpublished create is never acknowledged"
         );
         let curator_store = port.curator_store.get().expect("curator store");
         assert!(
