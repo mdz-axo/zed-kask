@@ -76,6 +76,17 @@ pub struct LLMParameters {
     /// message rather than prepending to user content.
     #[serde(default)]
     pub system_prompt: Option<String>,
+
+    /// Admission-to-completion deadline hint (seconds) for this request,
+    /// honored by the server-side inference port up to its server maximum.
+    /// The workload class that knows its horizon sets it: batch OCR pages
+    /// queue at the provider past the chat-oriented global deadline
+    /// (2026-10-03 zk-ref build: pages completing <300s solo exceeded the
+    /// 600s global in full runs at every concurrency). `None` keeps the
+    /// host's configured global — chat, embeddings and every other
+    /// consumer unchanged.
+    #[serde(default)]
+    pub timeout_hint_secs: Option<u64>,
 }
 
 impl LLMParameters {
@@ -94,6 +105,7 @@ impl LLMParameters {
             thinking_allowed: false,
             adapter: None,
             system_prompt: None,
+            timeout_hint_secs: None,
         }
     }
 }

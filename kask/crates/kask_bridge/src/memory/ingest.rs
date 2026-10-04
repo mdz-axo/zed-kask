@@ -888,6 +888,7 @@ async fn tag_chunks_with_llm(
         thinking_allowed: false,
         adapter: None,
         system_prompt: None,
+        timeout_hint_secs: None,
     };
     match port
         .generate_with_model(&prompt, &parameters, Some(classifier_model), None)

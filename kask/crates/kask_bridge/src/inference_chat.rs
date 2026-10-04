@@ -629,7 +629,7 @@ impl LanguageModelInferencePort {
         }
     }
 
-    fn admit(&self) -> Result<RequestLifetime, InferenceError> {
+    fn admit(&self, timeout_hint_secs: Option<u64>) -> Result<RequestLifetime, InferenceError> {
         let circuit = self.resilience.admit().map_err(|retry_after| {
             InferenceError::CircuitOpen(format!(
                 "transient inference failure threshold reached; retry after {retry_after:?}"
@@ -640,10 +640,30 @@ impl LanguageModelInferencePort {
                 "inference admission capacity reached; request was not dispatched".into(),
             )
         })?;
-        let deadline = (!self.inference_timeout.is_zero()).then(|| RequestDeadline {
-            expires_at: self.background_executor.now() + self.inference_timeout,
+        // A request-scoped deadline hint lets the workload class that knows
+        // its horizon (batch OCR) budget for provider queueing past the
+        // chat-oriented global, without taxing every other consumer's
+        // hung-request detection. The server caps the hint so a misbehaving
+        // client cannot request unbounded waits.
+        let timeout = match timeout_hint_secs {
+            Some(hint) => {
+                let capped = hint.min(MAX_REQUEST_TIMEOUT_HINT_SECS);
+                if capped != hint {
+                    tracing::warn!(
+                        target: "hkask.inference",
+                        requested_secs = hint,
+                        capped_secs = capped,
+                        "request timeout hint exceeds the server maximum — capped"
+                    );
+                }
+                std::time::Duration::from_secs(capped)
+            }
+            None => self.inference_timeout,
+        };
+        let deadline = (!timeout.is_zero()).then(|| RequestDeadline {
+            expires_at: self.background_executor.now() + timeout,
             executor: self.background_executor.clone(),
-            timer: self.background_executor.timer(self.inference_timeout),
+            timer: self.background_executor.timer(timeout),
         });
         Ok(RequestLifetime {
             _admission: permit,
@@ -755,10 +775,11 @@ impl LanguageModelInferencePort {
         &self,
         request: LanguageModelRequest,
         model_override: Option<String>,
+        timeout_hint_secs: Option<u64>,
     ) -> std::pin::Pin<
         Box<dyn futures_util::Stream<Item = Result<InferenceStreamChunk, InferenceError>> + Send>,
     > {
-        let lifetime = match self.admit() {
+        let lifetime = match self.admit(timeout_hint_secs) {
             Ok(lifetime) => lifetime,
             Err(error) => return Box::pin(futures_util::stream::once(async { Err(error) })),
         };
@@ -792,6 +813,7 @@ impl LanguageModelInferencePort {
         &self,
         request: LanguageModelRequest,
         model_override: Option<String>,
+        timeout_hint_secs: Option<u64>,
     ) -> std::pin::Pin<
         Box<dyn std::future::Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>,
     > {
@@ -799,7 +821,7 @@ impl LanguageModelInferencePort {
         async move {
             self.tx
                 .send(InferenceRequest {
-                    lifetime: self.admit()?,
+                    lifetime: self.admit(timeout_hint_secs)?,
                     request,
                     model_override,
                     reply: tx_reply,
@@ -952,7 +974,11 @@ impl InferencePort for LanguageModelInferencePort {
         Box<dyn std::future::Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>,
     > {
         let request = self.build_request(messages, parameters, tools);
-        self.dispatch_completion(request, model_override.map(|s| s.to_string()))
+        self.dispatch_completion(
+            request,
+            model_override.map(|s| s.to_string()),
+            parameters.timeout_hint_secs,
+        )
     }
 
     /// Vision inference — send base64-encoded images to a multimodal model.
@@ -974,7 +1000,11 @@ impl InferencePort for LanguageModelInferencePort {
         // user-message contract rather than relying on a separate system instruction.
         let messages = vec![ChatMessage::user(prompt.to_string())];
         let request = self.build_request_with_images(&messages, images, parameters, None);
-        self.dispatch_completion(request, model_override.map(|s| s.to_string()))
+        self.dispatch_completion(
+            request,
+            model_override.map(|s| s.to_string()),
+            parameters.timeout_hint_secs,
+        )
     }
 
     /// Streaming override — forwards `InferenceStreamChunk`s as they arrive
@@ -1000,7 +1030,7 @@ impl InferencePort for LanguageModelInferencePort {
         >,
     > {
         let request = self.build_request(&prompt_messages(prompt), parameters, tools);
-        self.stream_request(request, None)
+        self.stream_request(request, None, parameters.timeout_hint_secs)
     }
 
     /// Stream with optional model override.
@@ -1028,7 +1058,11 @@ impl InferencePort for LanguageModelInferencePort {
             return self.generate_stream(prompt, parameters, tools);
         };
         let request = self.build_request(&prompt_messages(prompt), parameters, tools);
-        self.stream_request(request, Some(model_override.to_string()))
+        self.stream_request(
+            request,
+            Some(model_override.to_string()),
+            parameters.timeout_hint_secs,
+        )
     }
 
     /// F11: Streaming variant of `generate_with_messages`.
@@ -1058,9 +1092,13 @@ impl InferencePort for LanguageModelInferencePort {
     > {
         let request = self.build_request(messages, parameters, tools);
         let model_override = model_override.map(|s| s.to_string());
-        self.stream_request(request, model_override)
+        self.stream_request(request, model_override, parameters.timeout_hint_secs)
     }
 }
+
+/// The server-side cap on per-request timeout hints — a misbehaving client
+/// cannot request unbounded admission-to-completion waits.
+const MAX_REQUEST_TIMEOUT_HINT_SECS: u64 = 1800;
 
 /// Window for recent timeout tracking — timeouts older than this are evicted
 /// on each read. 5 minutes matches the cybernetics loop's tick cadence (10s)
@@ -1621,6 +1659,64 @@ mod tests {
                 .await,
             Err(InferenceError::CircuitOpen(_))
         ));
+    }
+
+    /// expect: "A request-scoped timeout hint overrides the global deadline"
+    /// [P1] Motivating: the workload class that knows its horizon sets its
+    ///       own budget — batch OCR queues past the chat-oriented global.
+    /// pre: the global deadline is 600s; the request hints 2s.
+    /// post: the request times out at the hint, not the global.
+    #[gpui::test]
+    async fn request_timeout_hint_overrides_the_global_deadline(cx: &mut gpui::TestAppContext) {
+        let model: Arc<dyn language_model::LanguageModel> = Arc::new(FakeLanguageModel::default());
+        let (port, _task) = super::LanguageModelInferencePort::new(
+            model,
+            Duration::from_secs(600),
+            1,
+            test_resilience_config(),
+            cx.to_async(),
+        );
+        let mut params = LLMParameters::default();
+        params.timeout_hint_secs = Some(2);
+        let attempt_port = port.clone();
+        let attempt =
+            cx.spawn(async move |_cx| attempt_port.generate("hinted", &params, None).await);
+        cx.run_until_parked();
+        cx.executor().advance_clock(Duration::from_secs(3));
+        cx.run_until_parked();
+        assert!(
+            matches!(attempt.await, Err(InferenceError::Timeout(_))),
+            "the 2s hint must fire before the 600s global"
+        );
+    }
+
+    /// expect: "A request timeout hint above the server maximum is capped"
+    /// [P2] Constraining: a misbehaving client cannot request unbounded waits.
+    /// pre: the hint requests 999999s.
+    /// post: the deadline fires at the 1800s server cap.
+    #[gpui::test]
+    async fn request_timeout_hint_is_capped_at_the_server_maximum(cx: &mut gpui::TestAppContext) {
+        let model: Arc<dyn language_model::LanguageModel> = Arc::new(FakeLanguageModel::default());
+        let (port, _task) = super::LanguageModelInferencePort::new(
+            model,
+            Duration::from_secs(600),
+            1,
+            test_resilience_config(),
+            cx.to_async(),
+        );
+        let mut params = LLMParameters::default();
+        params.timeout_hint_secs = Some(999_999);
+        let attempt_port = port.clone();
+        let attempt =
+            cx.spawn(async move |_cx| attempt_port.generate("uncapped-hint", &params, None).await);
+        cx.run_until_parked();
+        cx.executor().advance_clock(Duration::from_secs(1801));
+        cx.run_until_parked();
+        assert!(
+            matches!(attempt.await, Err(InferenceError::Timeout(_))),
+            "the hint must be capped at {}s, not the requested 999999s",
+            super::MAX_REQUEST_TIMEOUT_HINT_SECS
+        );
     }
 
     /// expect: "Permanent provider failures remain visible without tripping transient resilience"

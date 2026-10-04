@@ -45,6 +45,11 @@ pub(crate) async fn vision_ocr_bytes(
     let b64_data = base64::engine::general_purpose::STANDARD.encode(bytes);
     let params = LLMParameters {
         temperature: 0.1,
+        // Batch page OCR queues at the provider past the chat-oriented global
+        // deadline (2026-10-03 zk-ref build: pages completing <300s solo
+        // exceeded the 600s global in full runs at every concurrency); the
+        // workload class that knows its horizon sets it. Env-tunable per build.
+        timeout_hint_secs: Some(ocr_timeout_hint_secs()),
         ..Default::default()
     };
     let prompt = build_ocr_prompt()?;
@@ -59,6 +64,28 @@ pub(crate) async fn vision_ocr_bytes(
         });
     }
     Ok(result.text)
+}
+
+/// The OCR workload's admission-to-completion budget, honored by the
+/// server-side inference port up to its cap. Default 1200s (2x the typical
+/// 600s global) absorbs the observed provider-queue band; a malformed
+/// override warns naming the value rather than silently falling back.
+fn ocr_timeout_hint_secs() -> u64 {
+    const DEFAULT_HINT_SECS: u64 = 1200;
+    match std::env::var("HKASK_OCR_INFERENCE_TIMEOUT_SECS") {
+        Ok(value) => match value.parse::<u64>() {
+            Ok(secs) => secs,
+            Err(_) => {
+                tracing::warn!(
+                    target: "reg.pipeline.ocr",
+                    value = %value,
+                    "HKASK_OCR_INFERENCE_TIMEOUT_SECS malformed — using default {DEFAULT_HINT_SECS}"
+                );
+                DEFAULT_HINT_SECS
+            }
+        },
+        Err(_) => DEFAULT_HINT_SECS,
+    }
 }
 
 /// Encode a page image as PNG bytes — the input contract of
@@ -861,6 +888,82 @@ mod tests {
             port.calls.load(Ordering::SeqCst),
             2,
             "exactly one re-render retry"
+        );
+    }
+
+    /// The OCR vision call must budget its admission-to-completion horizon
+    /// past the chat-oriented global deadline — the request carries a timeout
+    /// hint the server-side port honors (batch OCR queues at the provider;
+    /// 2026-10-03 zk-ref build: pages completing <300s solo exceeded the
+    /// 600s global in full runs).
+    struct HintCapturingVisionPort {
+        hints: std::sync::Mutex<Vec<Option<u64>>>,
+    }
+
+    impl hkask_types::InferencePort for HintCapturingVisionPort {
+        fn generate(
+            &self,
+            _prompt: &str,
+            _parameters: &LLMParameters,
+            _tools: Option<&[hkask_types::ChatToolDefinition]>,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<
+                        Output = Result<hkask_types::InferenceResult, InferenceError>,
+                    > + Send
+                    + '_,
+            >,
+        > {
+            Box::pin(async {
+                Err(InferenceError::Connection(
+                    "noop — only generate_vision is under test".into(),
+                ))
+            })
+        }
+
+        fn generate_vision(
+            &self,
+            _prompt: &str,
+            _images: &[String],
+            parameters: &LLMParameters,
+            _model_override: Option<&str>,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<
+                        Output = Result<hkask_types::InferenceResult, InferenceError>,
+                    > + Send
+                    + '_,
+            >,
+        > {
+            self.hints
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push(parameters.timeout_hint_secs);
+            Box::pin(async {
+                Err(InferenceError::Connection(
+                    "the call outcome is irrelevant — the hint is the assertion".into(),
+                ))
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn ocr_vision_calls_carry_a_timeout_hint() {
+        crate::helpers::seed_registry_template_root();
+        let port = Arc::new(HintCapturingVisionPort {
+            hints: std::sync::Mutex::new(Vec::new()),
+        });
+        let executor = LlmOcrExecutor::new(port.clone());
+        let image = DynamicImage::new_rgb8(8, 8);
+        let _ = executor.execute(0, "RunPod/kask-ocr", &image).await;
+        let hints = port
+            .hints
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        assert_eq!(
+            hints.first(),
+            Some(&Some(1200)),
+            "the OCR workload must budget 1200s (2x the typical 600s global) for provider queueing"
         );
     }
 

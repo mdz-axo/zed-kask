@@ -498,6 +498,7 @@ impl ComposeService {
             thinking_allowed: true,
             adapter: None,
             system_prompt: None,
+            timeout_hint_secs: None,
         };
         let result = inference
             .generate_with_model(&system_prompt, &params, Some(&gen_model), None)
