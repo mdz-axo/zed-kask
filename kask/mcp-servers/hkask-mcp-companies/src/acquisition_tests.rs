@@ -3233,6 +3233,7 @@ fn extreme_sustainable_growth_is_model_sensitive() {
         &[],
         0.05,
         &[],
+        "excerpts",
         0,
         "fixture",
     );
@@ -3279,6 +3280,7 @@ fn expectations_gap_separates_revenue_performance_from_financing_capacity() {
         &[0.03, 0.05, 0.07],
         0.05,
         &["guidance narrative".to_string()],
+        "excerpts",
         9,
         "stock_quote",
     );
@@ -3366,6 +3368,7 @@ fn expectations_gap_separates_revenue_performance_from_financing_capacity() {
         &[],
         0.05,
         &[],
+        "excerpts",
         0,
         "stock_quote",
     );
@@ -3382,8 +3385,16 @@ fn expectations_gap_separates_revenue_performance_from_financing_capacity() {
     );
 
     // No solve: honest unavailability, both legs reported missing.
-    let report =
-        tools::expectations::build_gap_report("BROKEN", &None, &[], 0.05, &[], 0, "unavailable");
+    let report = tools::expectations::build_gap_report(
+        "BROKEN",
+        &None,
+        &[],
+        0.05,
+        &[],
+        "excerpts",
+        0,
+        "unavailable",
+    );
     assert_eq!(report["signal"], json!("insufficient_data"));
     assert_eq!(report["data_quality"]["capability_available"], json!(false));
     assert_eq!(report["data_quality"]["growth_leg_available"], json!(false));
@@ -3515,4 +3526,64 @@ fn sustainable_growth_reproduces_published_worked_example() {
     assert!((result.retention - 0.50).abs() < 1e-12);
     assert!((result.roe - 0.25).abs() < 1e-12);
     assert!((result.sustainable_growth_rate - 0.125).abs() < 1e-12);
+}
+
+// ── mcp-tool-review C-02: management_narrative head-excerpt default ─────
+
+/// C-02 pin: a long narrative document is capped to a head excerpt with a
+/// marker naming the opt-in; a short document passes through unchanged;
+/// the cap is char-based (multi-byte safe — never slices a boundary).
+#[test]
+fn narrative_capped_to_head_excerpt_by_default() {
+    let long: String = "x".repeat(1_000);
+    let capped = tools::expectations::cap_narrative_doc(&long);
+    let cap = tools::expectations::NARRATIVE_EXCERPT_CHARS;
+    assert!(
+        capped.starts_with(&"x".repeat(cap)),
+        "the head excerpt is the document's first {cap} chars"
+    );
+    assert!(
+        capped.contains("full_narrative: true"),
+        "the marker names the opt-in: {capped}"
+    );
+    assert!(capped.chars().count() < cap + 100, "the cap actually caps");
+
+    let short = "guidance narrative".to_string();
+    assert_eq!(
+        tools::expectations::cap_narrative_doc(&short),
+        short,
+        "short documents pass through unchanged"
+    );
+
+    let cjk: String = "漢".repeat(500);
+    let capped_cjk = tools::expectations::cap_narrative_doc(&cjk);
+    assert!(
+        capped_cjk.starts_with(&"漢".repeat(cap)),
+        "the char-based cap never slices a multi-byte boundary"
+    );
+}
+
+/// C-02 pin: the report states which narrative mode it used — the consumer
+/// distinguishes excerpts from full text without guessing, and the
+/// narrative itself passes through `build_gap_report` unchanged (the
+/// handler owns the capping; the median computation is untouched).
+#[test]
+fn narrative_mode_stated_in_report() {
+    let report = tools::expectations::build_gap_report(
+        "ACME",
+        &None,
+        &[0.03, 0.05],
+        0.05,
+        &["doc".to_string()],
+        "excerpts",
+        2,
+        "fixture",
+    );
+    assert_eq!(report["narrative_mode"], json!("excerpts"));
+    assert_eq!(report["management_narrative"][0], json!("doc"));
+    assert_eq!(
+        report["context"]["management_guidance_median"],
+        json!(0.04),
+        "the consumed quantity is unchanged by the narrative cap"
+    );
 }

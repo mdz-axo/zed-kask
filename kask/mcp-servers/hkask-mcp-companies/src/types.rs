@@ -62,6 +62,12 @@ pub(crate) struct ExpectationsGapRequest {
     /// annotation only — the gap axis is price-implied expectations vs
     /// demonstrated DuPont capability (operator ruling 2026-09-10).
     pub growth_estimate: Option<f64>,
+    /// Opt in to full `management_narrative` documents. Default
+    /// (absent/false): each document is capped to a head excerpt — the
+    /// narrative is context only and the consumed quantity is
+    /// `management_guidance_median` (mcp-tool-review C-02: the default
+    /// response previously embedded ~8 complete research documents).
+    pub full_narrative: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

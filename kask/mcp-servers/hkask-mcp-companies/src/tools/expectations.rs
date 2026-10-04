@@ -137,6 +137,23 @@ impl CompaniesServer {
                 .map(|c| c.text.clone())
                 .collect();
 
+            // mcp-tool-review C-02: the narrative is context-only (the
+            // consumed quantity is management_guidance_median), so the
+            // default response carries a head excerpt per document — the
+            // live AAPL probe embedded ~8 complete research documents in
+            // one 5692ms response. Full text is opt-in via
+            // `full_narrative: true`; the response states which mode it
+            // used via `narrative_mode`.
+            let narrative_full = req.full_narrative.unwrap_or(false);
+            let management_narrative: Vec<String> = if narrative_full {
+                management_narrative
+            } else {
+                management_narrative
+                    .iter()
+                    .map(|doc| cap_narrative_doc(doc))
+                    .collect()
+            };
+
             // ── 4. User estimate — context annotation only ─────────────
 
             let user_growth = req.growth_estimate.unwrap_or(0.05);
@@ -149,6 +166,11 @@ impl CompaniesServer {
                 &management_growth,
                 user_growth,
                 &management_narrative,
+                if narrative_full {
+                    "full"
+                } else {
+                    "excerpts"
+                },
                 claims.claims.len(),
                 &price_source,
             );
@@ -409,12 +431,34 @@ fn capability_quality_flags(analysis: &Option<ExpectationsSolve>) -> Vec<&'stati
 /// capability — management guidance never appears in gaps (operator ruling
 /// 2026-09-10); it is a context annotation only.
 /// dcterms:identifier: build_gap_report / solve_expectations
+///
+/// Head-excerpt cap for `management_narrative` documents (mcp-tool-review
+/// C-02): the narrative is context-only — the consumed quantity is
+/// `management_guidance_median` — so the default response carries a head
+/// excerpt per document instead of embedding complete research documents
+/// (~8 full docs in one response, live 2026-10-03). Char-based, never
+/// slicing a multi-byte boundary; short documents pass through unchanged.
+pub(crate) const NARRATIVE_EXCERPT_CHARS: usize = 400;
+
+pub(crate) fn cap_narrative_doc(doc: &str) -> String {
+    let char_count = doc.chars().count();
+    if char_count <= NARRATIVE_EXCERPT_CHARS {
+        doc.to_string()
+    } else {
+        let head: String = doc.chars().take(NARRATIVE_EXCERPT_CHARS).collect();
+        format!(
+            "{head} …[excerpt of {char_count} chars — full_narrative: true for the complete document]"
+        )
+    }
+}
+
 pub(crate) fn build_gap_report(
     symbol: &str,
     analysis: &Option<ExpectationsSolve>,
     management_growth: &[f64],
     user_growth: f64,
     narrative: &[String],
+    narrative_mode: &str,
     total_claims: usize,
     price_source: &str,
 ) -> serde_json::Value {
@@ -575,6 +619,7 @@ pub(crate) fn build_gap_report(
         "signal": signal,
         "interpretation": interpretation,
         "management_narrative": narrative,
+        "narrative_mode": narrative_mode,
         "data_quality": {
             "total_research_claims": total_claims,
             "guidance_claims_found": management_growth.len(),

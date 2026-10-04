@@ -1123,6 +1123,7 @@ async fn analyze_issuer_group(
         &[],
         0.05,
         &[],
+        "excerpts",
         0,
         "EODHD as-of close; single fundamentals payload",
     );
