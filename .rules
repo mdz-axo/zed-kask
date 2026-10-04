@@ -11,6 +11,10 @@
 * `training_assemble_dataset` reads the training server's DB by default, but `corpus_ingest_qa` stores to the corpus DB — pass `db_path` + `passphrase` or the assembler sees zero QA pairs.
 * QA quality verification checks SEMANTICS, not just structure: boilerplate contamination, grounding-verify provenance/substring discipline, Bloom distribution evenness, subject diversity.
 
+# Duplication ratchet
+
+* jscpd 5.4.0's JSON reporter emits file names as path SUFFIXES — bare basenames for explicitly-passed files, partial paths for directory-scanned ones — never repo-relative paths. Resolving a report name as a repo-root path silently fails the upstream existence check and misclassifies upstream files as fork-owned (observed live: the R5 triage's first pass read 1403 clusters as fork-owned vs the true 675). Resolve report names by unique-suffix match against the scan set; ambiguous suffixes surface as multiple visible candidates and need explicit disambiguation, never a repo-root guess.
+
 # Rust coding guidelines
 
 * Project scripts are bash, not Python — audit/build scripts live under `kask/scripts/` as bash (operator ruling 2026-09-09). An embedded `python3` heredoc inside a bash script is fine for what bash cannot do (TOML parsing in `check-build-profile.sh`); a standalone `.py` script is not.
