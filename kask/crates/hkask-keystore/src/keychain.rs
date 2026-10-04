@@ -13,7 +13,7 @@ use crate::passphrase::DEFAULT_PASSPHRASE;
 use hkask_types::NotFound;
 use hkask_types::secret::SecretRef;
 use thiserror::Error;
-use tracing::info;
+use tracing::{info, warn};
 use zeroize::Zeroizing;
 
 /// The label zed's `LinuxPlatform::write_credentials` uses for all keychain
@@ -23,6 +23,14 @@ const KEYRING_LABEL: &str = "zed-github-account";
 /// The URL prefix for kask-namespaced credentials. Matches
 /// `kask_bridge::credentials::KASK_CREDENTIAL_NAMESPACE`.
 const KASK_CREDENTIAL_NAMESPACE: &str = "kask://credentials";
+
+/// Bound for a single keychain read. A healthy keychain answers in
+/// milliseconds; a portal that neither answers nor errors within this
+/// window is wedged, and the read fails with the typed `Timeout` error
+/// instead of hanging the caller — a required credential then surfaces
+/// through the existing refuse-to-start path with a legible reason,
+/// never a silent stall.
+const KEYCHAIN_READ_TIMEOUT_SECS: u64 = 5;
 
 /// Build the credential URL for a key.
 fn credential_url(key: &str) -> String {
@@ -91,6 +99,28 @@ where
     F: std::future::Future + Send + 'static,
     F::Output: Send + 'static,
 {
+    spawn_keychain_future(future)
+        .recv()
+        .expect("Keychain thread panicked")
+}
+
+/// Run a future to completion on the dedicated keychain thread with a
+/// deadline. `None` means the future did not answer within `timeout` —
+/// the caller decides the typed error; the detached thread lingers on
+/// the wedged call (it cannot be cancelled, only outlived).
+fn block_on_with_timeout<F>(future: F, timeout: std::time::Duration) -> Option<F::Output>
+where
+    F: std::future::Future + Send + 'static,
+    F::Output: Send + 'static,
+{
+    spawn_keychain_future(future).recv_timeout(timeout).ok()
+}
+
+fn spawn_keychain_future<F>(future: F) -> std::sync::mpsc::Receiver<F::Output>
+where
+    F: std::future::Future + Send + 'static,
+    F::Output: Send + 'static,
+{
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::Builder::new()
         .name("hkask-keystore-keychain".to_string())
@@ -99,7 +129,7 @@ where
             let _ = tx.send(result);
         })
         .expect("Failed to spawn keychain thread");
-    rx.recv().expect("Keychain thread panicked")
+    rx
 }
 
 #[derive(Error, Debug)]
@@ -108,6 +138,15 @@ pub enum KeychainError {
     Platform(String),
     #[error("Secret not found: {0}")]
     NotFound(NotFound),
+    /// The keychain read did not answer within its deadline — the secret
+    /// portal may be wedged (the 2026-10-04 incident: a session restart
+    /// left the XDG portal accepting connections but never answering, and
+    /// the unbounded read hung every consumer). Distinct from `Platform`:
+    /// a wedged portal is a stall to outlive, not a break to report.
+    #[error(
+        "Keychain read for '{key}' did not answer within {timeout_secs}s — the secret portal may be wedged; set the credential via its env var to bypass"
+    )]
+    Timeout { key: String, timeout_secs: u64 },
 }
 
 impl From<NotFound> for KeychainError {
@@ -172,30 +211,47 @@ impl Keychain {
     pub fn retrieve_by_key(&self, key: &str) -> Result<Zeroizing<String>, KeychainError> {
         let url = credential_url(key);
         let key = key.to_string();
+        let log_key = key.clone();
         let keyring = open_keyring();
-        block_on(async move {
-            let keyring = keyring.await?;
-            keyring.unlock().await?;
-            let items = keyring.search_items(&[("url", url.as_str())]).await?;
-            for item in items {
-                if item.label().await.is_ok_and(|label| label == KEYRING_LABEL) {
-                    item.unlock().await?;
-                    let secret = item.secret().await?;
-                    let secret_str = String::from_utf8_lossy(&secret).into_owned();
-                    info!(
-                        target: "reg.keystore",
-                        operation = "retrieve_by_key",
-                        key = %key,
-                        "REG"
-                    );
-                    return Ok(Zeroizing::new(secret_str));
+        match block_on_with_timeout(
+            async move {
+                let keyring = keyring.await?;
+                keyring.unlock().await?;
+                let items = keyring.search_items(&[("url", url.as_str())]).await?;
+                for item in items {
+                    if item.label().await.is_ok_and(|label| label == KEYRING_LABEL) {
+                        item.unlock().await?;
+                        let secret = item.secret().await?;
+                        let secret_str = String::from_utf8_lossy(&secret).into_owned();
+                        info!(
+                            target: "reg.keystore",
+                            operation = "retrieve_by_key",
+                            key = %log_key,
+                            "REG"
+                        );
+                        return Ok(Zeroizing::new(secret_str));
+                    }
                 }
+                Err(KeychainError::NotFound(NotFound {
+                    entity_type: "secret".to_string(),
+                    id: format!("keychain entry not found at url={url}"),
+                }))
+            },
+            std::time::Duration::from_secs(KEYCHAIN_READ_TIMEOUT_SECS),
+        ) {
+            Some(result) => result,
+            None => {
+                warn!(
+                    key = %key,
+                    timeout_secs = KEYCHAIN_READ_TIMEOUT_SECS,
+                    "Keychain read did not answer — the secret portal may be wedged"
+                );
+                Err(KeychainError::Timeout {
+                    key,
+                    timeout_secs: KEYCHAIN_READ_TIMEOUT_SECS,
+                })
             }
-            Err(KeychainError::NotFound(NotFound {
-                entity_type: "secret".to_string(),
-                id: format!("keychain entry not found at url={url}"),
-            }))
-        })
+        }
     }
 
     /// Delete a secret from the OS keychain at `kask://credentials/<key>`.
@@ -440,6 +496,43 @@ pub fn resolve(secret_ref: &SecretRef) -> Result<Zeroizing<Vec<u8>>, KeychainErr
 #[cfg(test)]
 mod integration_tests {
     use super::*;
+
+    /// A future that answers inside the window resolves normally.
+    #[test]
+    fn bounded_keychain_read_returns_fast_results() {
+        let verdict = block_on_with_timeout(async { 7_u32 }, std::time::Duration::from_secs(5));
+        assert_eq!(verdict, Some(7));
+    }
+
+    /// A future that exceeds its deadline yields `None` — the caller
+    /// converts it to the typed `Timeout` error. A wedged secret portal
+    /// (the 2026-10-04 incident) is outlived, never waited on: this pins
+    /// the bounding mechanism without touching a real keyring.
+    #[test]
+    fn bounded_keychain_read_outlives_a_wedged_call() {
+        let verdict = block_on_with_timeout(
+            async {
+                async_std::task::sleep(std::time::Duration::from_secs(2)).await;
+                7_u32
+            },
+            std::time::Duration::from_millis(50),
+        );
+        assert_eq!(verdict, None, "a call past the deadline must yield None");
+    }
+
+    /// The typed `Timeout` error names the key and the deadline, so a
+    /// wedged portal reads differently from an unconfigured credential.
+    #[test]
+    fn timeout_error_message_distinguishes_wedged_from_unconfigured() {
+        let error = KeychainError::Timeout {
+            key: "hkask_db_passphrase".to_string(),
+            timeout_secs: KEYCHAIN_READ_TIMEOUT_SECS,
+        };
+        let message = error.to_string();
+        assert!(message.contains("did not answer"), "{message}");
+        assert!(message.contains("wedged"), "{message}");
+        assert!(message.contains("hkask_db_passphrase"), "{message}");
+    }
 
     /// expect: "Credential tests cannot open my real keyring or create a keyring file" [P1]
     #[test]

@@ -69,6 +69,22 @@ impl CredentialsProvider for KeychainCredentialsProvider {
                     );
                     None
                 }
+                // zed-kask: the keystore's sync read path is deadline-bounded
+                // (2026-10-04 wedged-portal incident); the async URL path this
+                // provider uses is not yet bounded, so this arm is
+                // forward-compatibility for that follow-up — same semantics as
+                // Platform: no credential, visible reason.
+                Err(hkask_keystore::KeychainError::Timeout {
+                    key,
+                    timeout_secs,
+                }) => {
+                    log::warn!(
+                        "Keychain read for credential at {} ({key}) did not answer within {timeout_secs}s — \
+                         the secret portal may be wedged; the key may exist but is unreachable",
+                        url
+                    );
+                    None
+                }
             }
             .filter(|s| !s.is_empty());
             if let Some(secret) = secret {
