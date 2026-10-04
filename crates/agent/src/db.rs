@@ -751,31 +751,23 @@ impl ThreadsDatabase {
         let connection = self.connection.clone();
 
         self.executor.spawn(async move {
-            // [DIAG-open] — the S1 first-open decomposition probe
-            // (two-symptom research doc §4 step 2): lock-wait (S1-H2 — a
-            // concurrent turn-end save holds this one shared connection
-            // while writing the whole-thread blob) split from
-            // read+deserialize (S1-H1 — the whole-thread zstd+JSON
-            // round-trip). One line per open; opens are user-initiated and
-            // infrequent. Remove with the S1 fix (grep DIAG-open).
-            let lock_started = std::time::Instant::now();
             let connection = connection.lock();
-            let lock_wait_ms = lock_started.elapsed().as_millis();
-            let mut select = connection.select_bound::<Arc<str>, (DataType, Vec<u8>, i64)>(indoc! {"
+            let mut select =
+                connection.select_bound::<Arc<str>, (DataType, Vec<u8>, i64)>(indoc! {"
                 SELECT data_type, data, format FROM threads WHERE id = ? LIMIT 1
             "})?;
 
             let rows = select(id.0.clone())?;
-            let read_parse_started = std::time::Instant::now();
-            let blob_bytes = rows.iter().next().map(|(_, data, _)| data.len());
-            let mut legacy_migrated = false;
-            let result = if let Some((data_type, data, format)) = rows.into_iter().next() {
+            if let Some((data_type, data, format)) = rows.into_iter().next() {
                 if format > 0 {
                     // zed-kask: D28 — per-message format: the blob is the
                     // metadata (DbThread with an empty messages list) and
                     // the messages are read row by row.
                     Ok(Some(Self::load_thread_messages(
-                        &connection, &id, data_type, data,
+                        &connection,
+                        &id,
+                        data_type,
+                        data,
                     )?))
                 } else {
                     // Legacy whole-thread blob: parse it, then migrate it
@@ -783,21 +775,11 @@ impl ThreadsDatabase {
                     // itself is preserved until the thread's next save).
                     let thread = Self::deserialize_thread(data_type, data)?;
                     Self::migrate_legacy_thread(&connection, &id, &thread)?;
-                    legacy_migrated = true;
                     Ok(Some(thread))
                 }
             } else {
                 Ok(None)
-            };
-            log::info!(
-                "[DIAG-open] db_load thread_id={} lock_wait_ms={} read_parse_ms={} blob_bytes={} legacy_migrated={}",
-                &*id.0,
-                lock_wait_ms,
-                read_parse_started.elapsed().as_millis(),
-                blob_bytes.unwrap_or(0),
-                legacy_migrated,
-            );
-            result
+            }
         })
     }
 
