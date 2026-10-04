@@ -547,6 +547,7 @@ impl MediaServer {
                     "start_sec must be less than end_sec.",
                 ));
             }
+            ensure_local_input_exists(&video_url)?;
 
             #[cfg(test)]
             let bypass_dns = pause_after_local_video_admission().await?;
@@ -612,6 +613,7 @@ impl MediaServer {
             if f == 0 {
                 return Err(McpToolError::invalid_argument("fps must be greater than 0"));
             }
+            ensure_local_input_exists(&video_url)?;
 
             #[cfg(test)]
             let bypass_dns = pause_after_local_video_admission().await?;
@@ -722,6 +724,7 @@ impl MediaServer {
                     "font_size must be greater than 0",
                 ));
             }
+            ensure_local_input_exists(&video_url)?;
 
             #[cfg(test)]
             let bypass_dns = pause_after_local_video_admission().await?;
@@ -777,6 +780,7 @@ impl MediaServer {
                     "start_sec must be less than end_sec.",
                 ));
             }
+            ensure_local_input_exists(&video_url)?;
 
             #[cfg(test)]
             let bypass_dns = pause_after_local_video_admission().await?;
@@ -941,6 +945,9 @@ impl MediaServer {
                 2,
                 hkask_types::media_limits::MAX_CONCAT_ITEMS,
             )?;
+            for url in &video_urls {
+                ensure_local_input_exists(url)?;
+            }
 
             #[cfg(test)]
             let bypass_dns = pause_after_local_video_admission().await?;
@@ -983,6 +990,7 @@ impl MediaServer {
     ) -> Result<String, McpToolError> {
         execute_tool(self, "video_caption", async {
             let _admission = self.admit_heavy_operation()?;
+            ensure_local_input_exists(&video_url)?;
             if !crate::is_local_media_path(&video_url) {
                 validate_tool_url_with_dns(&video_url).await?;
             }
@@ -1080,6 +1088,7 @@ impl MediaServer {
                 1,
                 hkask_types::media_limits::MAX_EXTRACTED_FRAMES as usize,
             )?;
+            ensure_local_input_exists(&video_url)?;
             if !crate::is_local_media_path(&video_url) {
                 validate_tool_url_with_dns(&video_url).await?;
             }
@@ -1276,6 +1285,7 @@ impl MediaServer {
     ) -> Result<String, McpToolError> {
         execute_tool(self, "video_info", async {
             let _admission = self.admit_heavy_operation()?;
+            ensure_local_input_exists(&video_url)?;
             if !crate::is_local_media_path(&video_url) {
                 validate_tool_url_with_dns(&video_url).await?;
             }

@@ -141,6 +141,27 @@ pub(crate) fn is_local_media_path(input: &str) -> bool {
     true
 }
 
+/// A local input path that does not exist is the caller's error, not a
+/// server fault — reject it as `not_found` before ffmpeg/ffprobe/provider
+/// calls surface it as `internal`/`unavailable` (mcp-tool-review M-02: a
+/// nonexistent local file previously classified as a server error kind —
+/// live probes 2026-10-04 returned `[internal] ffprobe … No such file or
+/// directory` and `[unavailable] Connection error: audio file read
+/// failed`). Remote inputs (URLs, data URIs) pass through untouched —
+/// their existence is the remote side's to discover.
+pub(crate) fn ensure_local_input_exists(input: &str) -> Result<(), McpToolError> {
+    if !is_local_media_path(input) {
+        return Ok(());
+    }
+    let path = input.strip_prefix("file://").unwrap_or(input);
+    if !std::path::Path::new(path).exists() {
+        return Err(McpToolError::not_found(format!(
+            "input file not found: {input}"
+        )));
+    }
+    Ok(())
+}
+
 /// Lock-free snapshot of gallery state — safe to hold across .await points.
 struct GalleryAccess {
     gallery_id: String,
@@ -1139,6 +1160,68 @@ mod tool_behavior_tests {
         assert!(error.to_string().contains("permission_denied"));
         assert!(error.to_string().contains("HKASK_SERPAPI_API_KEY"));
         Ok(())
+    }
+
+    /// M-02 pin (mcp-tool-review): a nonexistent local input path is the
+    /// caller's error — `not_found` naming the path, never `internal`
+    /// (ffprobe) or `unavailable` (STT transport) as before the fix.
+    #[tokio::test]
+    async fn video_info_missing_local_file_is_not_found() {
+        let error = make_server()
+            .video_info(Parameters(crate::types::VideoInfoRequest {
+                video_url: "/nonexistent/mcp-review-probe.mp4".to_string(),
+            }))
+            .await
+            .expect_err("missing file must fail");
+        assert!(
+            error.to_string().contains("not_found"),
+            "classified not_found: {error}"
+        );
+        assert!(
+            error
+                .to_string()
+                .contains("/nonexistent/mcp-review-probe.mp4"),
+            "names the missing path: {error}"
+        );
+    }
+
+    /// M-02 pin: the STT path classifies the same way — a missing local
+    /// audio file is not_found before any provider connection is attempted.
+    #[tokio::test]
+    async fn transcribe_bundle_missing_local_file_is_not_found() {
+        let error = make_server()
+            .transcribe_bundle(Parameters(crate::types::TranscribeBundleRequest {
+                audio_url: "/nonexistent/mcp-review-probe.wav".to_string(),
+                language: None,
+            }))
+            .await
+            .expect_err("missing file must fail");
+        assert!(
+            error.to_string().contains("not_found"),
+            "classified not_found: {error}"
+        );
+    }
+
+    /// Helper unit pins: remote URLs and data URIs pass untouched (their
+    /// existence is the remote side's to discover); an existing local file
+    /// and a file:// URI to it pass; a missing local path and a missing
+    /// file:// URI are not_found.
+    #[test]
+    fn ensure_local_input_exists_classifies_by_input_kind() {
+        ensure_local_input_exists("https://example.com/a.mp4").expect("remote URL passes");
+        ensure_local_input_exists("data:audio/wav;base64,AAAA").expect("data URI passes");
+        let existing = std::env::temp_dir().join("mcp-review-exists.txt");
+        std::fs::write(&existing, "x").expect("write temp");
+        ensure_local_input_exists(existing.to_str().expect("utf8 path"))
+            .expect("existing local file passes");
+        ensure_local_input_exists(&format!("file://{}", existing.to_str().expect("utf8 path")))
+            .expect("file:// URI to an existing file passes");
+        let missing = ensure_local_input_exists("/nonexistent/mcp-review-probe.wav")
+            .expect_err("missing file must fail");
+        assert!(missing.to_string().contains("not_found"));
+        let missing_uri = ensure_local_input_exists("file:///nonexistent/mcp-review-probe.wav")
+            .expect_err("missing file:// URI must fail");
+        assert!(missing_uri.to_string().contains("not_found"));
     }
 
     /// dcterms:identifier: `MediaServer` bounded batch tool admissions

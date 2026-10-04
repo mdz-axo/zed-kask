@@ -275,6 +275,7 @@ impl MediaServer {
     ) -> Result<String, McpToolError> {
         execute_tool(self, "transcribe_bundle", async {
             let _admission = self.admit_heavy_operation()?;
+            ensure_local_input_exists(&audio_url)?;
             // Local recordings and fetched media are the primary transcript
             // sources; the SSRF validator is for network URLs (see
             // `is_local_media_path`).
@@ -314,6 +315,7 @@ impl MediaServer {
     ) -> Result<String, McpToolError> {
         execute_tool(self, "transcribe_and_store", async {
             let _admission = self.admit_heavy_operation()?;
+            ensure_local_input_exists(&audio_url)?;
             // Same local-path rule as transcribe_bundle: the SSRF validator
             // is for network URLs (see `is_local_media_path`).
             if !crate::is_local_media_path(&audio_url) {
@@ -513,6 +515,7 @@ impl MediaServer {
                     "start_sec must be >= 0 and end_sec must be > start_sec",
                 ));
             }
+            ensure_local_input_exists(&audio_url)?;
             #[cfg(test)]
             pause_after_audio_admission().await?;
             if !crate::is_local_media_path(&audio_url) {
@@ -563,6 +566,9 @@ impl MediaServer {
                 1,
                 hkask_types::media_limits::MAX_CONCAT_ITEMS,
             )?;
+            for url in &audio_urls {
+                ensure_local_input_exists(url)?;
+            }
             #[cfg(test)]
             pause_after_audio_admission().await?;
             for url in &audio_urls {
