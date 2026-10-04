@@ -108,6 +108,8 @@ mod sanitize;
 pub mod schema_validate;
 mod spend_gate;
 mod task_board;
+#[cfg(test)]
+mod test_support;
 mod thread_store;
 #[cfg(test)]
 mod thread_tests;
@@ -636,62 +638,7 @@ mod smoke_tests {
                     .pop_front()
                     .expect("planned inference")
                     .to_string();
-                Box::pin(async move {
-                    Ok(hkask_types::InferenceResult {
-                        text,
-                        model: "fixture".into(),
-                        usage: Default::default(),
-                        finish_reason: "stop".into(),
-                        tool_calls: vec![],
-                        reasoning: None,
-                        cost_usd: None,
-                    })
-                })
-            }
-        }
-        struct NoTools;
-        impl hkask_types::ToolDispatchPort for NoTools {
-            fn tool_definition<'a>(
-                &'a self,
-                _: &'a str,
-                _: &'a str,
-                _: &'a [String],
-            ) -> std::pin::Pin<
-                Box<
-                    dyn std::future::Future<
-                            Output = Result<
-                                hkask_types::ChatToolDefinition,
-                                hkask_types::InferenceError,
-                            >,
-                        > + Send
-                        + 'a,
-                >,
-            > {
-                Box::pin(async {
-                    Err(hkask_types::InferenceError::Model(
-                        "no tools in fixture".into(),
-                    ))
-                })
-            }
-
-            fn invoke_tool<'a>(
-                &'a self,
-                _: &'a str,
-                _: &'a str,
-                _: Value,
-                _: &'a [String],
-            ) -> std::pin::Pin<
-                Box<
-                    dyn std::future::Future<Output = Result<Value, hkask_types::InferenceError>>
-                        + Send
-                        + 'a,
-                >,
-            > {
-                Box::pin(async {
-                    Err(hkask_types::InferenceError::Model(
-                        "no tools in fixture".into(),
-                    ))
-                })
+                Box::pin(async move { Ok(crate::test_support::fixture_result(text)) })
             }
         }
         let dir = tempfile::tempdir()?;
@@ -713,7 +660,7 @@ mod smoke_tests {
             server.local_runtime = Arc::new(LazyLocalSwarmRuntime::with_runtime(
                 LocalSwarmRuntime::new_for_test(
                     Arc::new(Replies(std::sync::Mutex::new(replies.into()))),
-                    Arc::new(NoTools),
+                    Arc::new(crate::test_support::NoTools),
                     String::new(),
                 ),
             ));

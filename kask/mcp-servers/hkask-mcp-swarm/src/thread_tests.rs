@@ -1,149 +1,17 @@
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use rmcp::handler::server::wrapper::Parameters;
-use serde_json::{Value, json};
+use serde_json::json;
 
-use crate::SwarmServer;
-use crate::abw_client::SwarmClient;
-use crate::config::SwarmConfig;
-use crate::consent::ConsentStore;
-use crate::local_knowledge::LazyLocalMemory;
-use crate::local_registry::LocalAgentRegistry;
-use crate::local_runtime::{LazyEventStore, LazyLocalSwarmRuntime, LocalSwarmRuntime};
-use crate::local_swarms::LocalSwarmRegistry;
 use crate::request_types::{DelegateInThreadLocalRequest, GetLocalSwarmRequest};
-
-#[derive(Default)]
-struct RecordingInference(Mutex<Vec<Vec<hkask_types::ChatMessage>>>);
-
-impl hkask_types::InferencePort for RecordingInference {
-    fn generate(
-        &self,
-        _: &str,
-        _: &hkask_types::LLMParameters,
-        _: Option<&[hkask_types::ChatToolDefinition]>,
-    ) -> std::pin::Pin<
-        Box<
-            dyn std::future::Future<
-                    Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
-                > + Send
-                + '_,
-        >,
-    > {
-        Box::pin(async {
-            Err(hkask_types::InferenceError::Model(
-                "expected structured messages".into(),
-            ))
-        })
-    }
-
-    fn generate_with_messages(
-        &self,
-        messages: &[hkask_types::ChatMessage],
-        _: &hkask_types::LLMParameters,
-        _: Option<&str>,
-        _: Option<&[hkask_types::ChatToolDefinition]>,
-    ) -> std::pin::Pin<
-        Box<
-            dyn std::future::Future<
-                    Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
-                > + Send
-                + '_,
-        >,
-    > {
-        let mut calls = self.0.lock().expect("recording lock");
-        calls.push(messages.to_vec());
-        let text = format!("reply {}", calls.len());
-        Box::pin(async move {
-            Ok(hkask_types::InferenceResult {
-                text,
-                model: "fixture".into(),
-                usage: Default::default(),
-                finish_reason: "stop".into(),
-                tool_calls: vec![],
-                reasoning: None,
-                cost_usd: None,
-            })
-        })
-    }
-}
-
-struct NoTools;
-impl hkask_types::ToolDispatchPort for NoTools {
-    fn tool_definition<'a>(
-        &'a self,
-        _: &'a str,
-        _: &'a str,
-        _: &'a [String],
-    ) -> std::pin::Pin<
-        Box<
-            dyn std::future::Future<
-                    Output = Result<hkask_types::ChatToolDefinition, hkask_types::InferenceError>,
-                > + Send
-                + 'a,
-        >,
-    > {
-        Box::pin(async { Err(hkask_types::InferenceError::Model("no tools".into())) })
-    }
-    fn invoke_tool<'a>(
-        &'a self,
-        _: &'a str,
-        _: &'a str,
-        _: Value,
-        _: &'a [String],
-    ) -> std::pin::Pin<
-        Box<
-            dyn std::future::Future<Output = Result<Value, hkask_types::InferenceError>>
-                + Send
-                + 'a,
-        >,
-    > {
-        Box::pin(async { Err(hkask_types::InferenceError::Model("no tools".into())) })
-    }
-}
-
-fn make_thread_server(dir: &std::path::Path, inference: Arc<RecordingInference>) -> SwarmServer {
-    let agents = dir.join("agents").to_string_lossy().into_owned();
-    let swarms = dir.join("swarms").to_string_lossy().into_owned();
-    let stats = Arc::new(crate::agent_stats::AgentStatsStore::load(&agents));
-    SwarmServer::new(
-        hkask_types::WebID::new(),
-        Arc::new(SwarmClient::new(
-            reqwest::Client::new(),
-            SwarmConfig::default(),
-        )),
-        Arc::new(ConsentStore::default()),
-        Arc::new(LocalAgentRegistry::new(agents)),
-        Arc::new(LazyLocalSwarmRuntime::with_runtime(
-            LocalSwarmRuntime::new_for_test(inference, Arc::new(NoTools), String::new()),
-        )),
-        Arc::new(LocalSwarmRegistry::new(swarms)),
-        Arc::new(LazyLocalMemory::lazy(
-            dir.join("semantic.db").to_string_lossy().into_owned(),
-            "test-passphrase".into(),
-            1024,
-        )),
-        stats,
-        Arc::new(LazyEventStore::lazy(
-            dir.join("events.db").to_string_lossy().into_owned(),
-        )),
-        Arc::new(crate::thread_store::SwarmThreadStore::new(
-            dir.join("threads.db").to_string_lossy().into_owned(),
-            "test-passphrase".into(),
-        )),
-    )
-}
-
-fn content(output: &str) -> Result<Value, Box<dyn std::error::Error>> {
-    Ok(serde_json::from_str::<Value>(output)?["content"].clone())
-}
+use crate::test_support::{RecordingInference, content, make_thread_server};
 
 #[tokio::test]
 async fn scoped_thread_is_structured_durable_isolated_and_archived()
 -> Result<(), Box<dyn std::error::Error>> {
     let dir = tempfile::tempdir()?;
     let recorder = Arc::new(RecordingInference::default());
-    let server = make_thread_server(dir.path(), recorder.clone());
+    let server = make_thread_server(dir.path(), recorder.clone(), "test-passphrase");
     for id in ["a", "b", "outsider"] {
         server
             .local_registry
@@ -264,7 +132,7 @@ async fn scoped_thread_is_structured_durable_isolated_and_archived()
         json!([])
     );
     drop(server);
-    let restarted = make_thread_server(dir.path(), recorder.clone());
+    let restarted = make_thread_server(dir.path(), recorder.clone(), "test-passphrase");
     assert_eq!(
         content(
             &restarted
@@ -293,7 +161,7 @@ async fn scoped_thread_is_structured_durable_isolated_and_archived()
     );
     assert_eq!(recorder.0.lock().expect("calls").len(), 3);
     drop(restarted);
-    let restarted_again = make_thread_server(dir.path(), recorder);
+    let restarted_again = make_thread_server(dir.path(), recorder, "test-passphrase");
     assert_eq!(
         content(
             &restarted_again
@@ -310,7 +178,7 @@ async fn malformed_roster_refuses_scoped_inference_instead_of_using_cached_membe
 -> Result<(), Box<dyn std::error::Error>> {
     let dir = tempfile::tempdir()?;
     let recorder = Arc::new(RecordingInference::default());
-    let server = make_thread_server(dir.path(), recorder.clone());
+    let server = make_thread_server(dir.path(), recorder.clone(), "test-passphrase");
     server
         .local_registry
         .write_card(&serde_json::from_value(json!({

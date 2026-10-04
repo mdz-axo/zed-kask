@@ -966,6 +966,7 @@ pub(crate) fn filter_config_env_for_server(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::MockCredentialsProvider;
 
     /// The experimentation server's registration entry is pinned: id, binary, the
     /// SQLCipher passphrase credential, and the config allowlist aligned with
@@ -1854,49 +1855,6 @@ mod tests {
     // function with a mock `CredentialsProvider` and pin the load-bearing
     // filter order: config filtered first, then credentials merged into the
     // already-filtered map (the two filters apply to disjoint key sets).
-
-    /// A mock `CredentialsProvider` that returns a canned secret for a
-    /// specific URL and `None` for everything else. Used to test the
-    /// composed `build_mcp_server_env` path without touching the real
-    /// keychain.
-    struct MockCredentialsProvider {
-        secrets: std::collections::HashMap<String, Vec<u8>>,
-    }
-
-    impl credentials_provider::CredentialsProvider for MockCredentialsProvider {
-        fn read_credentials<'a>(
-            &'a self,
-            url: &'a str,
-            _cx: &'a gpui::AsyncApp,
-        ) -> std::pin::Pin<
-            Box<dyn std::future::Future<Output = anyhow::Result<Option<(String, Vec<u8>)>>> + 'a>,
-        > {
-            let result = self
-                .secrets
-                .get(url)
-                .cloned()
-                .map(|pw| ("user".to_string(), pw));
-            Box::pin(async move { Ok(result) })
-        }
-
-        fn write_credentials<'a>(
-            &'a self,
-            _url: &'a str,
-            _username: &'a str,
-            _password: &'a [u8],
-            _cx: &'a gpui::AsyncApp,
-        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + 'a>> {
-            Box::pin(async { Ok(()) })
-        }
-
-        fn delete_credentials<'a>(
-            &'a self,
-            _url: &'a str,
-            _cx: &'a gpui::AsyncApp,
-        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + 'a>> {
-            Box::pin(async { Ok(()) })
-        }
-    }
 
     /// expect: "Settings unload revokes delegated authority before stopping the child" [P1]
     #[test]

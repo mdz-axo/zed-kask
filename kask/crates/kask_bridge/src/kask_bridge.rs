@@ -46,6 +46,8 @@ mod mcp_servers;
 mod memory;
 mod model_resolution;
 mod settings;
+#[cfg(test)]
+mod test_support;
 
 pub use condenser_bridge::BridgeThreadCondenser;
 pub use context_injector::BridgeContextInjector;

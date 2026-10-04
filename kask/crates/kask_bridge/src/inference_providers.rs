@@ -522,6 +522,7 @@ fn embedding_provider_descriptor(
 #[cfg(test)]
 mod tests {
     use super::INFERENCE_PROVIDERS;
+    use crate::test_support::MockCredentialsProvider;
 
     // zed-kask: pins the inference-provider credential consolidation (the
     // 2026-08-31 split-brain fix — successor to the D29 mirror contract):
@@ -678,50 +679,6 @@ mod tests {
                 super::embedding_provider_descriptor(model).is_none(),
                 "'{model}' must not resolve an embedding port (no /embeddings endpoint)"
             );
-        }
-    }
-
-    /// A mock `CredentialsProvider` that returns a canned secret for a
-    /// specific URL and `None` for everything else. Seeding keys for EVERY
-    /// keyed provider `api_url` slot makes the route-level eligibility test
-    /// discriminate against the missing-key failure mode: a rejection under
-    /// this mock is a rejection of the ROUTE, not of an absent credential.
-    struct MockCredentialsProvider {
-        secrets: std::collections::HashMap<String, Vec<u8>>,
-    }
-
-    impl credentials_provider::CredentialsProvider for MockCredentialsProvider {
-        fn read_credentials<'a>(
-            &'a self,
-            url: &'a str,
-            _cx: &'a gpui::AsyncApp,
-        ) -> std::pin::Pin<
-            Box<dyn std::future::Future<Output = anyhow::Result<Option<(String, Vec<u8>)>>> + 'a>,
-        > {
-            let result = self
-                .secrets
-                .get(url)
-                .cloned()
-                .map(|pw| ("user".to_string(), pw));
-            Box::pin(async move { Ok(result) })
-        }
-
-        fn write_credentials<'a>(
-            &'a self,
-            _url: &'a str,
-            _username: &'a str,
-            _password: &'a [u8],
-            _cx: &'a gpui::AsyncApp,
-        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + 'a>> {
-            Box::pin(async { Ok(()) })
-        }
-
-        fn delete_credentials<'a>(
-            &'a self,
-            _url: &'a str,
-            _cx: &'a gpui::AsyncApp,
-        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + 'a>> {
-            Box::pin(async { Ok(()) })
         }
     }
 
