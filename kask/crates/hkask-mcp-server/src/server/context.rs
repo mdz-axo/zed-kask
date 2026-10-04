@@ -107,18 +107,37 @@ impl CapabilityTier {
         }
     }
 
-    /// Probe whether the OS keychain is reachable.
+    /// Probe whether the OS keychain is reachable — bounded.
     ///
-    /// Attempts a lightweight keychain read with a sentinel key.
-    /// Returns `true` if the keychain responds (even with "not found"),
-    /// `false` only if the platform keychain itself is broken/unavailable.
+    /// Attempts a lightweight keychain read with a sentinel key. The probe
+    /// is a liveness check, not a correctness one: a keychain that neither
+    /// responds nor errors within the probe window is treated as
+    /// unavailable. The 2026-10-04 wedged-portal incident: a session restart
+    /// left the XDG secret portal accepting connections but never
+    /// answering, and this unbounded probe blocked every MCP child at
+    /// startup — `keystore_available=false` is the honest non-blocking
+    /// answer, and the timeout is logged so "wedged" stays visible, never
+    /// silent. A probe that answers (even "not found") means reachable.
     fn probe_keystore() -> bool {
-        match hkask_keystore::Keychain
-            .retrieve_by_key(hkask_keystore::keychain_keys::KEY_CAPABILITY_PROBE)
-        {
-            Ok(_) => true,
-            Err(hkask_keystore::KeychainError::NotFound(_)) => true,
-            Err(hkask_keystore::KeychainError::Platform(_)) => false,
+        const PROBE_TIMEOUT_SECS: u64 = 5;
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let verdict = matches!(
+                hkask_keystore::Keychain
+                    .retrieve_by_key(hkask_keystore::keychain_keys::KEY_CAPABILITY_PROBE),
+                Ok(_) | Err(hkask_keystore::KeychainError::NotFound(_))
+            );
+            let _ = tx.send(verdict);
+        });
+        match rx.recv_timeout(std::time::Duration::from_secs(PROBE_TIMEOUT_SECS)) {
+            Ok(verdict) => verdict,
+            Err(_) => {
+                tracing::warn!(
+                    timeout_secs = PROBE_TIMEOUT_SECS,
+                    "OS keychain probe did not answer — treating keystore as unavailable (a wedged secret portal must not block server startup)"
+                );
+                false
+            }
         }
     }
 }
