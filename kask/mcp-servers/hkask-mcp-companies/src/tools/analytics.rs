@@ -111,52 +111,17 @@ impl CompaniesServer {
         execute_tool(self, "reverse_dcf", async {
             validate_symbol(&req.symbol)?;
 
-            let income_result = self.fetch("income_statement", &req.symbol, &[("limit", "5")]).await;
-            let balance_result = self.fetch("balance_sheet", &req.symbol, &[("limit", "5")]).await;
-            let cf_result = self.fetch("cash_flow_statement", &req.symbol, &[("limit", "5")]).await;
-            let metrics_result = self.fetch("key_metrics", &req.symbol, &[("limit", "5")]).await;
-            let profile_result = self.fetch_profile(&req.symbol).await;
-
-            let (income, balance, cf, metrics, profile) =
-                match (income_result, balance_result, cf_result, metrics_result, profile_result) {
-                    (Ok(inc), Ok(bal), Ok(cf), Ok(m), Ok(p)) => (inc, bal, cf, m, p),
-                    (Err(e), _, _, _, _)
-                    | (_, Err(e), _, _, _)
-                    | (_, _, Err(e), _, _)
-                    | (_, _, _, Err(e), _)
-                    | (_, _, _, _, Err(e)) => {
-                        return Err(e);
-                    }
+            let crate::valuation_service::FinancialHistory { hist, profile, income } =
+                match crate::valuation_service::load_financial_history(
+                    self,
+                    &req.symbol,
+                    "reverse_dcf",
+                )
+                .await
+                {
+                    Ok(loaded) => loaded,
+                    Err(error) => return error.into_tool_result(),
                 };
-
-            let income_arr = income.as_array();
-            let balance_arr = balance.as_array();
-            let cf_arr = cf.as_array();
-            let metrics_arr = metrics.as_array();
-            let profile_obj = profile.raw().as_array().and_then(|a| a.first());
-
-            let (Some(income_data), Some(balance_data), Some(cf_data), Some(profile_data)) = (
-                income_arr.filter(|a| !a.is_empty()),
-                balance_arr.filter(|a| !a.is_empty()),
-                cf_arr.filter(|a| !a.is_empty()),
-                profile_obj,
-            )
-            else {
-                return Ok(serde_json::json!({"symbol": req.symbol, "error": "insufficient data"}));
-            };
-            let metrics_data: &[serde_json::Value] = metrics_arr.map_or(&[], |v| v);
-
-            let hist = financial_model::HistoricalSnapshot::from_api_json(
-                income_data, balance_data, cf_data, metrics_data, profile_data,
-            );
-
-            if hist.revenue.len() < 2 {
-                return Ok(serde_json::json!({"symbol": req.symbol, "error": "insufficient historical data - need at least 2 years of revenue"}));
-            }
-
-            if let Some(err) = financial_model::financial_sector_guard(&profile, &req.symbol, "reverse_dcf") {
-                return Ok(err);
-            }
 
             let signal_quality = hist.signal_quality();
             crate::data_quality::emit_data_quality_span(
@@ -270,52 +235,17 @@ impl CompaniesServer {
         execute_tool(self, "scenario_analysis", async {
             validate_symbol(&req.symbol)?;
 
-            let income_result = self.fetch("income_statement", &req.symbol, &[("limit", "5")]).await;
-            let balance_result = self.fetch("balance_sheet", &req.symbol, &[("limit", "5")]).await;
-            let cf_result = self.fetch("cash_flow_statement", &req.symbol, &[("limit", "5")]).await;
-            let metrics_result = self.fetch("key_metrics", &req.symbol, &[("limit", "5")]).await;
-            let profile_result = self.fetch_profile(&req.symbol).await;
-
-            let (income, balance, cf, metrics, profile) =
-                match (income_result, balance_result, cf_result, metrics_result, profile_result) {
-                    (Ok(inc), Ok(bal), Ok(cf), Ok(m), Ok(p)) => (inc, bal, cf, m, p),
-                    (Err(e), _, _, _, _)
-                    | (_, Err(e), _, _, _)
-                    | (_, _, Err(e), _, _)
-                    | (_, _, _, Err(e), _)
-                    | (_, _, _, _, Err(e)) => {
-                        return Err(e);
-                    }
+            let crate::valuation_service::FinancialHistory { hist, profile, .. } =
+                match crate::valuation_service::load_financial_history(
+                    self,
+                    &req.symbol,
+                    "scenario_analysis",
+                )
+                .await
+                {
+                    Ok(loaded) => loaded,
+                    Err(error) => return error.into_tool_result(),
                 };
-
-            let income_arr = income.as_array();
-            let balance_arr = balance.as_array();
-            let cf_arr = cf.as_array();
-            let metrics_arr = metrics.as_array();
-            let profile_obj = profile.raw().as_array().and_then(|a| a.first());
-
-            let (Some(income_data), Some(balance_data), Some(cf_data), Some(profile_data)) = (
-                income_arr.filter(|a| !a.is_empty()),
-                balance_arr.filter(|a| !a.is_empty()),
-                cf_arr.filter(|a| !a.is_empty()),
-                profile_obj,
-            )
-            else {
-                return Ok(serde_json::json!({"symbol": req.symbol, "error": "insufficient data"}));
-            };
-            let metrics_data: &[serde_json::Value] = metrics_arr.map_or(&[], |v| v);
-
-            let hist = financial_model::HistoricalSnapshot::from_api_json(
-                income_data, balance_data, cf_data, metrics_data, profile_data,
-            );
-
-            if hist.revenue.len() < 2 {
-                return Ok(serde_json::json!({"symbol": req.symbol, "error": "insufficient historical data - need at least 2 years of revenue"}));
-            }
-
-            if let Some(err) = financial_model::financial_sector_guard(&profile, &req.symbol, "scenario_analysis") {
-                return Ok(err);
-            }
 
             let assumptions = financial_model::ProjectionAssumptions::from_history_with_overrides(
                 &hist,

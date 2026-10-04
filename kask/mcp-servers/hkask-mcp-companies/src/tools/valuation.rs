@@ -315,41 +315,17 @@ impl CompaniesServer {
         execute_tool(self, "sensitivity_analysis", async {
             validate_symbol(&req.symbol)?;
 
-            let income_result = self.fetch("income_statement", &req.symbol, &[("limit", "5")]).await;
-            let balance_result = self.fetch("balance_sheet", &req.symbol, &[("limit", "5")]).await;
-            let cf_result = self.fetch("cash_flow_statement", &req.symbol, &[("limit", "5")]).await;
-            let metrics_result = self.fetch("key_metrics", &req.symbol, &[("limit", "5")]).await;
-            let profile_result = self.fetch_profile(&req.symbol).await;
-
-            let (income, balance, cf, metrics, profile) =
-                match (income_result, balance_result, cf_result, metrics_result, profile_result) {
-                    (Ok(inc), Ok(bal), Ok(cf), Ok(m), Ok(p)) => (inc, bal, cf, m, p),
-                    (Err(e), _, _, _, _)
-                    | (_, Err(e), _, _, _)
-                    | (_, _, Err(e), _, _)
-                    | (_, _, _, Err(e), _)
-                    | (_, _, _, _, Err(e)) => {
-                        return Err(e);
-                    }
+            let crate::valuation_service::FinancialHistory { hist, profile, .. } =
+                match crate::valuation_service::load_financial_history(
+                    self,
+                    &req.symbol,
+                    "sensitivity_analysis",
+                )
+                .await
+                {
+                    Ok(loaded) => loaded,
+                    Err(error) => return error.into_tool_result(),
                 };
-
-            let Some((income_data, balance_data, cf_data, metrics_data, profile_data)) =
-                extract_historical_arrays(&income, &balance, &cf, &metrics, &profile)
-            else {
-                return Ok(serde_json::json!({"symbol": req.symbol, "error": "insufficient data for sensitivity analysis"}));
-            };
-
-            let hist = financial_model::HistoricalSnapshot::from_api_json(
-                income_data, balance_data, cf_data, metrics_data, profile_data,
-            );
-
-            if hist.revenue.len() < 2 {
-                return Ok(serde_json::json!({"symbol": req.symbol, "error": "insufficient historical data — need at least 2 years of revenue"}));
-            }
-
-            if let Some(err) = financial_model::financial_sector_guard(&profile, &req.symbol, "sensitivity_analysis") {
-                return Ok(err);
-            }
 
             let assumptions = financial_model::ProjectionAssumptions::from_history_with_overrides(
                 &hist,
@@ -418,41 +394,17 @@ impl CompaniesServer {
         execute_tool(self, "equity_duration", async {
             validate_symbol(&req.symbol)?;
 
-            let income_result = self.fetch("income_statement", &req.symbol, &[("limit", "5")]).await;
-            let balance_result = self.fetch("balance_sheet", &req.symbol, &[("limit", "5")]).await;
-            let cf_result = self.fetch("cash_flow_statement", &req.symbol, &[("limit", "5")]).await;
-            let metrics_result = self.fetch("key_metrics", &req.symbol, &[("limit", "5")]).await;
-            let profile_result = self.fetch_profile(&req.symbol).await;
-
-            let (income, balance, cf, metrics, profile) =
-                match (income_result, balance_result, cf_result, metrics_result, profile_result) {
-                    (Ok(inc), Ok(bal), Ok(cf), Ok(m), Ok(p)) => (inc, bal, cf, m, p),
-                    (Err(e), _, _, _, _)
-                    | (_, Err(e), _, _, _)
-                    | (_, _, Err(e), _, _)
-                    | (_, _, _, Err(e), _)
-                    | (_, _, _, _, Err(e)) => {
-                        return Err(e);
-                    }
+            let crate::valuation_service::FinancialHistory { hist, .. } =
+                match crate::valuation_service::load_financial_history(
+                    self,
+                    &req.symbol,
+                    "equity_duration",
+                )
+                .await
+                {
+                    Ok(loaded) => loaded,
+                    Err(error) => return error.into_tool_result(),
                 };
-
-            let Some((income_data, balance_data, cf_data, metrics_data, profile_data)) =
-                extract_historical_arrays(&income, &balance, &cf, &metrics, &profile)
-            else {
-                return Ok(serde_json::json!({"symbol": req.symbol, "error": "insufficient data"}));
-            };
-
-            let hist = financial_model::HistoricalSnapshot::from_api_json(
-                income_data, balance_data, cf_data, metrics_data, profile_data,
-            );
-
-            if hist.revenue.len() < 2 {
-                return Ok(serde_json::json!({"symbol": req.symbol, "error": "insufficient historical data — need at least 2 years of revenue"}));
-            }
-
-            if let Some(err) = financial_model::financial_sector_guard(&profile, &req.symbol, "equity_duration") {
-                return Ok(err);
-            }
 
             let assumptions = financial_model::ProjectionAssumptions::from_history_with_overrides(
                 &hist,
@@ -526,41 +478,17 @@ impl CompaniesServer {
         execute_tool(self, "monte_carlo_dcf", async {
             validate_symbol(&req.symbol)?;
 
-            let income_result = self.fetch("income_statement", &req.symbol, &[("limit", "5")]).await;
-            let balance_result = self.fetch("balance_sheet", &req.symbol, &[("limit", "5")]).await;
-            let cf_result = self.fetch("cash_flow_statement", &req.symbol, &[("limit", "5")]).await;
-            let metrics_result = self.fetch("key_metrics", &req.symbol, &[("limit", "5")]).await;
-            let profile_result = self.fetch_profile(&req.symbol).await;
-
-            let (income, balance, cf, metrics, profile) =
-                match (income_result, balance_result, cf_result, metrics_result, profile_result) {
-                    (Ok(inc), Ok(bal), Ok(cf), Ok(m), Ok(p)) => (inc, bal, cf, m, p),
-                    (Err(e), _, _, _, _)
-                    | (_, Err(e), _, _, _)
-                    | (_, _, Err(e), _, _)
-                    | (_, _, _, Err(e), _)
-                    | (_, _, _, _, Err(e)) => {
-                        return Err(e);
-                    }
+            let crate::valuation_service::FinancialHistory { hist, profile, .. } =
+                match crate::valuation_service::load_financial_history(
+                    self,
+                    &req.symbol,
+                    "monte_carlo_dcf",
+                )
+                .await
+                {
+                    Ok(loaded) => loaded,
+                    Err(error) => return error.into_tool_result(),
                 };
-
-            let Some((income_data, balance_data, cf_data, metrics_data, profile_data)) =
-                extract_historical_arrays(&income, &balance, &cf, &metrics, &profile)
-            else {
-                return Ok(serde_json::json!({"symbol": req.symbol, "error": "insufficient data"}));
-            };
-
-            let hist = financial_model::HistoricalSnapshot::from_api_json(
-                income_data, balance_data, cf_data, metrics_data, profile_data,
-            );
-
-            if hist.revenue.len() < 2 {
-                return Ok(serde_json::json!({"symbol": req.symbol, "error": "insufficient historical data — need at least 2 years of revenue"}));
-            }
-
-            if let Some(err) = financial_model::financial_sector_guard(&profile, &req.symbol, "monte_carlo_dcf") {
-                return Ok(err);
-            }
 
             let current_price = profile.price().unwrap_or(0.0);
 
@@ -630,41 +558,17 @@ impl CompaniesServer {
         execute_tool(self, "scenario_impact_valuation", async {
             validate_symbol(&req.symbol)?;
 
-            let income_result = self.fetch("income_statement", &req.symbol, &[("limit", "5")]).await;
-            let balance_result = self.fetch("balance_sheet", &req.symbol, &[("limit", "5")]).await;
-            let cf_result = self.fetch("cash_flow_statement", &req.symbol, &[("limit", "5")]).await;
-            let metrics_result = self.fetch("key_metrics", &req.symbol, &[("limit", "5")]).await;
-            let profile_result = self.fetch_profile(&req.symbol).await;
-
-            let (income, balance, cf, metrics, profile) =
-                match (income_result, balance_result, cf_result, metrics_result, profile_result) {
-                    (Ok(inc), Ok(bal), Ok(cf), Ok(m), Ok(p)) => (inc, bal, cf, m, p),
-                    (Err(e), _, _, _, _)
-                    | (_, Err(e), _, _, _)
-                    | (_, _, Err(e), _, _)
-                    | (_, _, _, Err(e), _)
-                    | (_, _, _, _, Err(e)) => {
-                        return Err(e);
-                    }
+            let crate::valuation_service::FinancialHistory { hist, profile, .. } =
+                match crate::valuation_service::load_financial_history(
+                    self,
+                    &req.symbol,
+                    "scenario_impact_valuation",
+                )
+                .await
+                {
+                    Ok(loaded) => loaded,
+                    Err(error) => return error.into_tool_result(),
                 };
-
-            let Some((income_data, balance_data, cf_data, metrics_data, profile_data)) =
-                extract_historical_arrays(&income, &balance, &cf, &metrics, &profile)
-            else {
-                return Ok(serde_json::json!({"symbol": req.symbol, "error": "insufficient data"}));
-            };
-
-            let hist = financial_model::HistoricalSnapshot::from_api_json(
-                income_data, balance_data, cf_data, metrics_data, profile_data,
-            );
-
-            if hist.revenue.len() < 2 {
-                return Ok(serde_json::json!({"symbol": req.symbol, "error": "insufficient historical data — need at least 2 years of revenue"}));
-            }
-
-            if let Some(err) = financial_model::financial_sector_guard(&profile, &req.symbol, "scenario_impact_valuation") {
-                return Ok(err);
-            }
 
             let current_price = profile.price().unwrap_or(0.0);
 
@@ -906,39 +810,17 @@ impl CompaniesServer {
                 }
             }
 
-            let income_result = self.fetch("income_statement", &req.symbol, &[("limit", "5")]).await;
-            let balance_result = self.fetch("balance_sheet", &req.symbol, &[("limit", "5")]).await;
-            let metrics_result = self.fetch("key_metrics", &req.symbol, &[("limit", "5")]).await;
-            let profile_result = self.fetch_profile(&req.symbol).await;
-            let cf_result = self.fetch("cash_flow_statement", &req.symbol, &[("limit", "5")]).await;
-
-            let (income, balance, metrics, profile, cf) =
-                match (income_result, balance_result, metrics_result, profile_result, cf_result) {
-                    (Ok(inc), Ok(bal), Ok(m), Ok(p), Ok(c)) => (inc, bal, m, p, c),
-                    (Err(e), _, _, _, _)
-                    | (_, Err(e), _, _, _)
-                    | (_, _, Err(e), _, _)
-                    | (_, _, _, Err(e), _)
-                    | (_, _, _, _, Err(e)) => { return Err(e); }
+            let crate::valuation_service::FinancialHistory { hist, profile, .. } =
+                match crate::valuation_service::load_financial_history(
+                    self,
+                    &req.symbol,
+                    "calibrate_forecast",
+                )
+                .await
+                {
+                    Ok(loaded) => loaded,
+                    Err(error) => return error.into_tool_result(),
                 };
-
-            let Some((income_data, balance_data, cf_data, metrics_data, profile_data)) =
-                extract_historical_arrays(&income, &balance, &cf, &metrics, &profile)
-            else {
-                return Ok(serde_json::json!({"symbol": req.symbol, "error": "insufficient data"}));
-            };
-
-            let hist = financial_model::HistoricalSnapshot::from_api_json(
-                income_data, balance_data, cf_data, metrics_data, profile_data,
-            );
-
-            if hist.revenue.len() < 2 {
-                return Ok(serde_json::json!({"symbol": req.symbol, "error": "insufficient historical data — need at least 2 years of revenue"}));
-            }
-
-            if let Some(err) = financial_model::financial_sector_guard(&profile, &req.symbol, "calibrate_forecast") {
-                return Ok(err);
-            }
 
             let current_price = profile.price().unwrap_or(0.0);
             let hist_revenue_growth = hist.revenue_cagr();

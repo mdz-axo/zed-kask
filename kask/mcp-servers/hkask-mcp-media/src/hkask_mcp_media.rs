@@ -1929,6 +1929,76 @@ mod tool_behavior_tests {
         ))
     }
 
+    /// The two-gallery fixture every generated-gallery test uses: artifacts
+    /// dir under the env guard, galleries A and B, A active at admission,
+    /// and a server over the shared store. The admission gate and the
+    /// spawned operation stay at each call site — they are what the test
+    /// varies. The roots and artifacts dir are held so the fixture's
+    /// registrations outlive the test body.
+    #[cfg(unix)]
+    struct TwoGalleryArms {
+        _env: ArtifactsEnvGuard,
+        _artifacts: tempfile::TempDir,
+        gallery_a_root: tempfile::TempDir,
+        gallery_b_root: tempfile::TempDir,
+        store: Arc<GalleryStore>,
+        gallery_a: hkask_storage::GalleryRecord,
+        gallery_b: hkask_storage::GalleryRecord,
+        gallery_state: Arc<std::sync::Mutex<Option<GalleryState>>>,
+        server: Arc<MediaServer>,
+    }
+
+    #[cfg(unix)]
+    async fn two_gallery_arms() -> Result<TwoGalleryArms, Box<dyn std::error::Error>> {
+        let artifacts = tempfile::tempdir()?;
+        let _env = ArtifactsEnvGuard::set(artifacts.path());
+        let gallery_a_root = tempfile::tempdir()?;
+        let gallery_b_root = tempfile::tempdir()?;
+        let (store, _) = file_backed_gallery_store(&artifacts.path().join("gallery.db"))?;
+        let gallery_a = store.open(
+            gallery_a_root
+                .path()
+                .to_str()
+                .ok_or("gallery A root UTF-8")?,
+            GalleryMode::ReadOnly,
+        )?;
+        let gallery_b = store.open(
+            gallery_b_root
+                .path()
+                .to_str()
+                .ok_or("gallery B root UTF-8")?,
+            GalleryMode::ReadOnly,
+        )?;
+        let gallery_state = Arc::new(std::sync::Mutex::new(Some(GalleryState {
+            path: gallery_a_root.path().to_path_buf(),
+            mode: GalleryMode::ReadOnly,
+            gallery_id: Some(gallery_a.id.clone()),
+        })));
+        let server = Arc::new(MediaServer::new(
+            hkask_types::WebID::new(),
+            Arc::new(NoopInferencePort),
+            gallery_state.clone(),
+            store.clone(),
+            templates::create_env()?,
+            fake_successful_ffmpeg(artifacts.path())?,
+            video::ytdlp::YtDlpRunner::detect(),
+            jobs::new_job_store(),
+            None,
+            None,
+        ));
+        Ok(TwoGalleryArms {
+            _env,
+            _artifacts: artifacts,
+            gallery_a_root,
+            gallery_b_root,
+            store,
+            gallery_a,
+            gallery_b,
+            gallery_state,
+            server,
+        })
+    }
+
     #[cfg(unix)]
     fn fake_ytdlp(
         root: &std::path::Path,
@@ -2421,42 +2491,17 @@ mod tool_behavior_tests {
     async fn audio_capture_files_under_the_generated_gallery()
     -> Result<(), Box<dyn std::error::Error>> {
         let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
-        let artifacts = tempfile::tempdir()?;
-        let _env = ArtifactsEnvGuard::set(artifacts.path());
-        let gallery_a_root = tempfile::tempdir()?;
-        let gallery_b_root = tempfile::tempdir()?;
-        let (store, _) = file_backed_gallery_store(&artifacts.path().join("gallery.db"))?;
-        let gallery_a = store.open(
-            gallery_a_root
-                .path()
-                .to_str()
-                .ok_or("gallery A root UTF-8")?,
-            GalleryMode::ReadOnly,
-        )?;
-        let gallery_b = store.open(
-            gallery_b_root
-                .path()
-                .to_str()
-                .ok_or("gallery B root UTF-8")?,
-            GalleryMode::ReadOnly,
-        )?;
-        let gallery_state = Arc::new(std::sync::Mutex::new(Some(GalleryState {
-            path: gallery_a_root.path().to_path_buf(),
-            mode: GalleryMode::ReadOnly,
-            gallery_id: Some(gallery_a.id.clone()),
-        })));
-        let server = Arc::new(MediaServer::new(
-            hkask_types::WebID::new(),
-            Arc::new(NoopInferencePort),
-            gallery_state.clone(),
-            store.clone(),
-            templates::create_env()?,
-            fake_successful_ffmpeg(artifacts.path())?,
-            video::ytdlp::YtDlpRunner::detect(),
-            jobs::new_job_store(),
-            None,
-            None,
-        ));
+        let TwoGalleryArms {
+            _env,
+            _artifacts,
+            gallery_a_root: _gallery_a_root,
+            gallery_b_root,
+            store,
+            gallery_a,
+            gallery_b,
+            gallery_state,
+            server,
+        } = two_gallery_arms().await?;
         let entered = Arc::new(tokio::sync::Notify::new());
         let resume = Arc::new(tokio::sync::Notify::new());
         let _gate = crate::tools::audio::install_audio_admission_gate(
@@ -3379,42 +3424,17 @@ mod tool_behavior_tests {
     async fn local_video_output_files_under_the_generated_gallery()
     -> Result<(), Box<dyn std::error::Error>> {
         let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
-        let artifacts = tempfile::tempdir()?;
-        let _env = ArtifactsEnvGuard::set(artifacts.path());
-        let gallery_a_root = tempfile::tempdir()?;
-        let gallery_b_root = tempfile::tempdir()?;
-        let (store, _) = file_backed_gallery_store(&artifacts.path().join("gallery.db"))?;
-        let gallery_a = store.open(
-            gallery_a_root
-                .path()
-                .to_str()
-                .ok_or("gallery A root UTF-8")?,
-            GalleryMode::ReadOnly,
-        )?;
-        let gallery_b = store.open(
-            gallery_b_root
-                .path()
-                .to_str()
-                .ok_or("gallery B root UTF-8")?,
-            GalleryMode::ReadOnly,
-        )?;
-        let gallery_state = Arc::new(std::sync::Mutex::new(Some(GalleryState {
-            path: gallery_a_root.path().to_path_buf(),
-            mode: GalleryMode::ReadOnly,
-            gallery_id: Some(gallery_a.id.clone()),
-        })));
-        let server = Arc::new(MediaServer::new(
-            hkask_types::WebID::new(),
-            Arc::new(NoopInferencePort),
-            gallery_state.clone(),
-            store.clone(),
-            templates::create_env()?,
-            fake_successful_ffmpeg(artifacts.path())?,
-            video::ytdlp::YtDlpRunner::detect(),
-            jobs::new_job_store(),
-            None,
-            None,
-        ));
+        let TwoGalleryArms {
+            _env,
+            _artifacts,
+            gallery_a_root: _gallery_a_root,
+            gallery_b_root,
+            store,
+            gallery_a,
+            gallery_b,
+            gallery_state,
+            server,
+        } = two_gallery_arms().await?;
         let entered = Arc::new(tokio::sync::Notify::new());
         let resume = Arc::new(tokio::sync::Notify::new());
         let _gate = crate::tools::processing::install_local_video_validation_gate(
@@ -3467,46 +3487,21 @@ mod tool_behavior_tests {
     async fn video_from_images_reads_active_sources_and_files_output_under_generated()
     -> Result<(), Box<dyn std::error::Error>> {
         let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
-        let artifacts = tempfile::tempdir()?;
-        let _env = ArtifactsEnvGuard::set(artifacts.path());
-        let gallery_a_root = tempfile::tempdir()?;
-        let gallery_b_root = tempfile::tempdir()?;
-        let (store, _) = file_backed_gallery_store(&artifacts.path().join("gallery.db"))?;
-        let gallery_a = store.open(
-            gallery_a_root
-                .path()
-                .to_str()
-                .ok_or("gallery A root UTF-8")?,
-            GalleryMode::ReadOnly,
-        )?;
-        let gallery_b = store.open(
-            gallery_b_root
-                .path()
-                .to_str()
-                .ok_or("gallery B root UTF-8")?,
-            GalleryMode::ReadOnly,
-        )?;
+        let TwoGalleryArms {
+            _env,
+            _artifacts,
+            gallery_a_root,
+            gallery_b_root,
+            store,
+            gallery_a,
+            gallery_b,
+            gallery_state,
+            server,
+        } = two_gallery_arms().await?;
         let source_a = gallery_a_root.path().join("source-a.png");
         let source_b = gallery_b_root.path().join("source-b.png");
         add_test_image(&store, &gallery_a.id, &source_a, [255, 0, 0])?;
         add_test_image(&store, &gallery_b.id, &source_b, [0, 255, 0])?;
-        let gallery_state = Arc::new(std::sync::Mutex::new(Some(GalleryState {
-            path: gallery_a_root.path().to_path_buf(),
-            mode: GalleryMode::ReadOnly,
-            gallery_id: Some(gallery_a.id.clone()),
-        })));
-        let server = Arc::new(MediaServer::new(
-            hkask_types::WebID::new(),
-            Arc::new(NoopInferencePort),
-            gallery_state.clone(),
-            store.clone(),
-            templates::create_env()?,
-            fake_successful_ffmpeg(artifacts.path())?,
-            video::ytdlp::YtDlpRunner::detect(),
-            jobs::new_job_store(),
-            None,
-            None,
-        ));
         let entered = Arc::new(tokio::sync::Notify::new());
         let resume = Arc::new(tokio::sync::Notify::new());
         let _gate = crate::tools::processing::install_local_video_validation_gate(
@@ -5492,7 +5487,7 @@ mod gallery_lifecycle_tests {
             std::fs::write(&source, b"source audio")?;
             let server = server(
                 &fixture.path().join("gallery.sqlite"),
-                Arc::new(BarrierVision::new()),
+                Arc::new(BarrierVision::barrier(analysis_vision_text)),
             );
             server
                 .gallery_organize(Parameters(GalleryOrganizeRequest {
@@ -5602,7 +5597,7 @@ mod gallery_lifecycle_tests {
         std::fs::write(&source, b"source audio")?;
         let server = server(
             &fixture.path().join("gallery.sqlite"),
-            Arc::new(BarrierVision::new()),
+            Arc::new(BarrierVision::barrier(analysis_vision_text)),
         );
         server
             .gallery_organize(Parameters(GalleryOrganizeRequest {
@@ -5682,13 +5677,19 @@ mod gallery_lifecycle_tests {
         let database = fixture.path().join("gallery.sqlite");
         let original;
         {
-            let server = server(&database, Arc::new(BarrierVision::new()));
+            let server = server(
+                &database,
+                Arc::new(BarrierVision::barrier(analysis_vision_text)),
+            );
             organize(&server, &first, true).await?;
             original = server.access_gallery()?.gallery_id;
             organize(&server, &second, true).await?;
             assert_ne!(server.access_gallery()?.gallery_id, original);
         }
-        let server = server(&database, Arc::new(BarrierVision::new()));
+        let server = server(
+            &database,
+            Arc::new(BarrierVision::barrier(analysis_vision_text)),
+        );
         assert!(
             server.access_gallery().is_err(),
             "no automatic startup activation"
@@ -5744,7 +5745,7 @@ mod gallery_lifecycle_tests {
         let original_bytes = std::fs::read(&path)?;
         let server = server(
             &fixture.path().join("gallery.sqlite"),
-            Arc::new(BarrierVision::new()),
+            Arc::new(BarrierVision::barrier(analysis_vision_text)),
         );
         organize(&server, &root, true).await?;
         let gallery = server.access_gallery()?;
@@ -5843,7 +5844,7 @@ mod gallery_lifecycle_tests {
         png(&root.join("nested/c.png"), 1);
         let server = server(
             &fixture.path().join("gallery.sqlite"),
-            Arc::new(BarrierVision::new()),
+            Arc::new(BarrierVision::barrier(analysis_vision_text)),
         );
         organize(&server, &root, true).await?;
         let gallery = server.access_gallery()?;
@@ -5926,7 +5927,7 @@ mod gallery_lifecycle_tests {
         std::fs::create_dir_all(&active)?;
         let server = server(
             &fixture.path().join("gallery.sqlite"),
-            Arc::new(BarrierVision::new()),
+            Arc::new(BarrierVision::barrier(analysis_vision_text)),
         );
         organize(&server, &owner, false).await?;
         let owner_id = server.access_gallery()?.gallery_id;
@@ -5957,7 +5958,7 @@ mod gallery_lifecycle_tests {
         png(&root.join("b.png"), 2);
         let server = server(
             &fixture.path().join("gallery.sqlite"),
-            Arc::new(BarrierVision::new()),
+            Arc::new(BarrierVision::barrier(analysis_vision_text)),
         );
         organize(&server, &root, true).await?;
         let gallery = server.access_gallery()?;
@@ -5976,21 +5977,73 @@ mod gallery_lifecycle_tests {
         Ok(())
     }
 
-    struct BarrierVision {
+    /// The shared vision test double: `generate` and `list_models` are the
+    /// boilerplate every vision port repeats; `vision_response` supplies
+    /// the per-test `generate_vision` text. The `barrier` variant parks the
+    /// first call on `entered`/`resume` so a test can switch gallery state
+    /// mid-analysis.
+    struct StubVisionPort {
         entered: tokio::sync::Notify,
         resume: tokio::sync::Notify,
         calls: std::sync::atomic::AtomicUsize,
+        barrier: bool,
+        vision_response: fn(&str) -> String,
     }
-    impl BarrierVision {
-        fn new() -> Self {
+
+    impl StubVisionPort {
+        fn new(vision_response: fn(&str) -> String) -> Self {
             Self {
                 entered: tokio::sync::Notify::new(),
                 resume: tokio::sync::Notify::new(),
                 calls: std::sync::atomic::AtomicUsize::new(0),
+                barrier: false,
+                vision_response,
+            }
+        }
+
+        /// The first-call barrier variant — `BarrierVision` at the call sites.
+        fn barrier(vision_response: fn(&str) -> String) -> Self {
+            Self {
+                barrier: true,
+                ..Self::new(vision_response)
             }
         }
     }
-    impl InferencePort for BarrierVision {
+
+    /// The barrier vision port: parks the first analysis call so a test can
+    /// switch gallery state mid-inference.
+    type BarrierVision = StubVisionPort;
+
+    /// Well-formed analysis responses: empty detections, a neutral palette,
+    /// a centered composition, and a plain caption.
+    fn analysis_vision_text(prompt: &str) -> String {
+        if prompt.contains("Return ONLY a JSON array") {
+            "[]".to_string()
+        } else if prompt.contains("color palette") && prompt.contains("JSON object") {
+            r#"{"colors":[],"palette_style":"neutral","temperature":"balanced","saturation":"muted"}"#.to_string()
+        } else if prompt.contains("JSON object") {
+            r#"{"focal_point":"center","rule_of_thirds":"centered","leading_lines":"none","depth_of_field":"deep","perspective":"eye level","framing":"none","symmetry":"balanced","negative_space":"none"}"#.to_string()
+        } else {
+            "Test caption".to_string()
+        }
+    }
+
+    /// Structurally invalid analysis responses: a missing colors field, an
+    /// empty composition object, and a blank caption — while the empty
+    /// object list is a legitimate detection result.
+    fn invalid_analysis_vision_text(prompt: &str) -> String {
+        if prompt.contains("Return ONLY a JSON array") {
+            "[]".to_string()
+        } else if prompt.contains("color palette") && prompt.contains("JSON object") {
+            "{}".to_string()
+        } else if prompt.contains("JSON object") {
+            "{}".to_string()
+        } else {
+            "   ".to_string()
+        }
+    }
+
+    impl InferencePort for StubVisionPort {
         fn generate(
             &self,
             _prompt: &str,
@@ -6046,14 +6099,10 @@ mod gallery_lifecycle_tests {
             >,
         > {
             assert!(!images.is_empty());
-            let text = if prompt.contains("Return ONLY a JSON array") { "[]" }
-                else if prompt.contains("color palette") && prompt.contains("JSON object") {
-                    r#"{"colors":[],"palette_style":"neutral","temperature":"balanced","saturation":"muted"}"#
-                } else if prompt.contains("JSON object") {
-                    r#"{"focal_point":"center","rule_of_thirds":"centered","leading_lines":"none","depth_of_field":"deep","perspective":"eye level","framing":"none","symmetry":"balanced","negative_space":"none"}"#
-                } else { "Test caption" }.to_string();
+            let text = (self.vision_response)(prompt);
             Box::pin(async move {
-                if self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+                if self.barrier && self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0
+                {
                     self.entered.notify_one();
                     self.resume.notified().await;
                 }
@@ -6082,7 +6131,7 @@ mod gallery_lifecycle_tests {
             png(&first.join(name), 1);
             png(&second.join(name), 2);
         }
-        let vision = Arc::new(BarrierVision::new());
+        let vision = Arc::new(BarrierVision::barrier(analysis_vision_text));
         let server = Arc::new(server(
             &fixture.path().join("gallery.sqlite"),
             vision.clone(),
@@ -6117,7 +6166,7 @@ mod gallery_lifecycle_tests {
                 .is_empty()
         );
 
-        let vision = Arc::new(BarrierVision::new());
+        let vision = Arc::new(BarrierVision::barrier(analysis_vision_text));
         let changed_server = Arc::new(self::server(
             &fixture.path().join("gallery.sqlite"),
             vision.clone(),
@@ -6154,7 +6203,7 @@ mod gallery_lifecycle_tests {
         let root = fixture.path().join("root");
         std::fs::create_dir(&root)?;
         png(&root.join("a.png"), 1);
-        let vision = Arc::new(BarrierVision::new());
+        let vision = Arc::new(BarrierVision::barrier(analysis_vision_text));
         vision.resume.notify_one();
         let server = server(&fixture.path().join("gallery.sqlite"), vision);
         organize(&server, &root, true).await?;
@@ -6190,92 +6239,6 @@ mod gallery_lifecycle_tests {
         Ok(())
     }
 
-    /// A vision port whose responses parse but carry no usable structure:
-    /// a missing colors field, an empty composition object, and a blank
-    /// caption — while the empty object list is a legitimate detection
-    /// result. Structurally invalid output must surface as actionable
-    /// errors, never as a freshness certification.
-    struct InvalidAnalysisVision;
-    impl InferencePort for InvalidAnalysisVision {
-        fn generate(
-            &self,
-            _prompt: &str,
-            _parameters: &hkask_types::template::LLMParameters,
-            _tools: Option<&[hkask_types::ChatToolDefinition]>,
-        ) -> Pin<
-            Box<
-                dyn Future<
-                        Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
-                    > + Send
-                    + '_,
-            >,
-        > {
-            Box::pin(async {
-                Err(hkask_types::InferenceError::NotConfigured(
-                    "test only supports vision".into(),
-                ))
-            })
-        }
-        fn list_models(
-            &self,
-        ) -> Pin<
-            Box<
-                dyn Future<
-                        Output = Result<
-                            Vec<hkask_types::ports::ModelEntry>,
-                            hkask_types::InferenceError,
-                        >,
-                    > + Send
-                    + '_,
-            >,
-        > {
-            Box::pin(async {
-                Ok(vec![hkask_types::ports::ModelEntry {
-                    prefixed_name: "OpenRouter/test-vision".into(),
-                    model: "test-vision".into(),
-                    supports_vision: true,
-                }])
-            })
-        }
-        fn generate_vision(
-            &self,
-            prompt: &str,
-            images: &[String],
-            _parameters: &hkask_types::template::LLMParameters,
-            _model: Option<&str>,
-        ) -> Pin<
-            Box<
-                dyn Future<
-                        Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
-                    > + Send
-                    + '_,
-            >,
-        > {
-            assert!(!images.is_empty());
-            let text = if prompt.contains("Return ONLY a JSON array") {
-                "[]"
-            } else if prompt.contains("color palette") && prompt.contains("JSON object") {
-                "{}"
-            } else if prompt.contains("JSON object") {
-                "{}"
-            } else {
-                "   "
-            }
-            .to_string();
-            Box::pin(async move {
-                Ok(hkask_types::InferenceResult {
-                    text,
-                    model: "test-vision".into(),
-                    usage: Default::default(),
-                    finish_reason: "stop".into(),
-                    tool_calls: vec![],
-                    reasoning: None,
-                    cost_usd: None,
-                })
-            })
-        }
-    }
-
     /// expect: Structurally invalid analysis output never certifies freshness. [P1]
     #[tokio::test]
     async fn invalid_analysis_outputs_retain_staleness() -> TestResult {
@@ -6285,7 +6248,7 @@ mod gallery_lifecycle_tests {
         png(&root.join("a.png"), 1);
         let server = server(
             &fixture.path().join("gallery.sqlite"),
-            Arc::new(InvalidAnalysisVision),
+            Arc::new(StubVisionPort::new(invalid_analysis_vision_text)),
         );
         organize(&server, &root, true).await?;
         png(&root.join("a.png"), 2);

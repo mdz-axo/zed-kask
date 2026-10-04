@@ -38,6 +38,80 @@ pub(crate) fn extract_historical_arrays<'a>(
     ))
 }
 
+/// The acquired financial history every valuation and analytics tool shares.
+pub(crate) struct FinancialHistory {
+    pub hist: HistoricalSnapshot,
+    pub profile: crate::CompanyProfile,
+    /// Raw income-statement response — `reverse_dcf` feeds it to currency
+    /// normalization; the other tools read only `hist` and `profile`.
+    pub income: serde_json::Value,
+}
+
+/// Fetch the five financial inputs and build the guarded history — the one
+/// canonical preamble for every valuation and analytics tool: fetch
+/// fan-out with first-error propagation, the shared array extraction, the
+/// two-revenue-period floor, and the financial-sector guard. `Unavailable`
+/// carries the tool's verbatim Ok-response for the insufficient-data and
+/// sector-guard outcomes; `Tool` propagates fetch failures.
+pub(crate) async fn load_financial_history(
+    server: &crate::CompaniesServer,
+    symbol: &str,
+    tool: &'static str,
+) -> Result<FinancialHistory, DcfPreparationError> {
+    let income = server
+        .fetch("income_statement", symbol, &[("limit", "5")])
+        .await;
+    let balance = server
+        .fetch("balance_sheet", symbol, &[("limit", "5")])
+        .await;
+    let cf = server
+        .fetch("cash_flow_statement", symbol, &[("limit", "5")])
+        .await;
+    let metrics = server.fetch("key_metrics", symbol, &[("limit", "5")]).await;
+    let profile = server.fetch_profile(symbol).await;
+
+    let (income, balance, cf, metrics, profile) = match (income, balance, cf, metrics, profile) {
+        (Ok(inc), Ok(bal), Ok(cf), Ok(m), Ok(p)) => (inc, bal, cf, m, p),
+        (Err(e), _, _, _, _)
+        | (_, Err(e), _, _, _)
+        | (_, _, Err(e), _, _)
+        | (_, _, _, Err(e), _)
+        | (_, _, _, _, Err(e)) => return Err(DcfPreparationError::Tool(e)),
+    };
+
+    let Some((income_data, balance_data, cf_data, metrics_data, profile_data)) =
+        extract_historical_arrays(&income, &balance, &cf, &metrics, &profile)
+    else {
+        return Err(DcfPreparationError::Unavailable(
+            serde_json::json!({"symbol": symbol, "error": "insufficient data"}),
+        ));
+    };
+
+    let hist = HistoricalSnapshot::from_api_json(
+        income_data,
+        balance_data,
+        cf_data,
+        metrics_data,
+        profile_data,
+    );
+
+    if hist.revenue.len() < 2 {
+        return Err(DcfPreparationError::Unavailable(
+            serde_json::json!({"symbol": symbol, "error": "insufficient historical data - need at least 2 years of revenue"}),
+        ));
+    }
+
+    if let Some(err) = crate::financial_model::financial_sector_guard(&profile, symbol, tool) {
+        return Err(DcfPreparationError::Unavailable(err));
+    }
+
+    Ok(FinancialHistory {
+        hist,
+        profile,
+        income,
+    })
+}
+
 /// Build the `dcf_valuation` response body from the projected model and
 /// historical snapshot. Pure — no I/O, no API keys, no `CompaniesServer`.
 ///
