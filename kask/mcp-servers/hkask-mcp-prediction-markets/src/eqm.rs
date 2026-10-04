@@ -299,12 +299,19 @@ pub async fn score_rationale(
         thinking_allowed: true,
         adapter: None,
         system_prompt: None,
+        timeout_hint_secs: None,
     };
 
     let result = inference_port
         .generate(&prompt, &params, None)
         .await
         .map_err(|e| EqmError::InferenceFailed(e.to_string()))?;
+
+    // mcp-tool-review S-01 (token half): surface the measured per-call
+    // usage in the tool envelope so the billed-token axis is observable
+    // at the caller. The envelope aggregates every record a handler
+    // makes; this is the prediction-markets server's only inference call.
+    hkask_mcp_server::server::record_tool_usage(result.usage.clone(), result.cost_usd);
 
     // Parse the JSON response from the LLM. The LLM may wrap the JSON in
     // markdown or add prose; fall back to extracting the first {...} block.
