@@ -141,7 +141,7 @@ One pass per tool per cycle. For each tool:
 
 ## Findings artifact contract
 
-Render `mcp-tool-review/findings-artifact` for the JSON shape. Load-bearing fields: `reconciliation` (counts + instrument + result), `tools[]` (name, file, line, anchor, fidelity_label, dp_character, axes, probe, status), `findings[]` (id, tool, axis, severity, claim, citations[{file, line, excerpt}], evidence, proposal, actuator, status), `gated_pending_rulings[]`, `citation_check`, `ask_first`. Save durably via `report_save` (kind `report`).
+Render `mcp-tool-review/findings-artifact` for the JSON shape. Load-bearing fields: `reconciliation` (counts + instrument + result), `tools[]` (name, file, line, anchor, fidelity_label, dp_character, axes, probe, status), `findings[]` (id, tool, axis, severity, claim, citations[{file, line, excerpt}], evidence, proposal, actuator, status), `gated_pending_rulings[]`, `citation_check`, `ask_first`. Save durably via `report_save` (kind `report`), or — when the payload exceeds comfortable single-call size (large slices, 60+ tools) — by chunked direct write to the same reports directory (each chunk independently valid JSON, merged with jq, validated, then the citation script run): same artifact, same checks, no truncation risk.
 
 ## Acceptance checks (executed, not proposed)
 
