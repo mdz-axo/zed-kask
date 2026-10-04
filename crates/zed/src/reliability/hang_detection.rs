@@ -13,6 +13,8 @@ use crate::STARTUP_TIME;
 mod logging;
 mod task_traces;
 mod telemetry;
+// zed-kask: D89 — durable hang-incident record (see incident_log.rs).
+mod incident_log;
 
 gpui::actions!(
     dev,

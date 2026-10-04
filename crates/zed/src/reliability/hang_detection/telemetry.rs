@@ -77,6 +77,14 @@ impl Reporter {
             report_window_seconds,
             measurement_version = gpui::profiler::hang::MEASUREMENT_VERSION
         );
+        // zed-kask: D89 — telemetry.log is an upload spool that
+        // `Client::start` recreates (truncates) at every app launch, so a
+        // session's evidence dies with the restart that follows it. Append
+        // the same batch to the durable incident record; empty windows are
+        // not recorded.
+        if !incidents.is_empty() {
+            super::incident_log::record(&incidents, threshold_incidents, budget_incidents);
+        }
         self.stalls.reset();
     }
 }
