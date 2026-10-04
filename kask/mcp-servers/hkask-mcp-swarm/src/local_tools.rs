@@ -2804,8 +2804,16 @@ impl SwarmServer {
     async fn ai_assist_advisory(&self, json_task: &str) -> Result<Vec<String>, LocalSwarmError> {
         let runtime = self.local_runtime.get_or_init().await?;
         let inference = runtime.inference();
+        // The advisory is a small non-thinking generation task. The host
+        // session's default chat model can be thinking-mandatory (OpenRouter
+        // 400 "Reasoning is mandatory for this endpoint and cannot be
+        // disabled" — live 2026-10-03, every advisory call), which left the
+        // advisory layer dead while the deterministic verdict stood. Route
+        // through the classifier-class model, which accepts reasoning-off
+        // requests — the same fix class as the 2026-09-29 classifier-model
+        // repair, and the same resolution the eval runtime uses below.
         let result = inference
-            .generate(
+            .generate_with_model(
                 &format!(
                     "You are reviewing an AI agent or swarm composition form for \
                      quality issues a checklist cannot judge: prompt coherence, role \
@@ -2816,6 +2824,7 @@ impl SwarmServer {
                     json_task
                 ),
                 &hkask_types::LLMParameters::default(),
+                hkask_inference::model_constants::classifier_model().as_deref(),
                 None,
             )
             .await
