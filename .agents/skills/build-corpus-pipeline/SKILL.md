@@ -282,8 +282,20 @@ longest-processing-time-first by triage `ocr_pages`, and size total in-flight
 width (workers × per-file ceiling) to the endpoint's measured sustained
 capacity — probed, not assumed; a width above it burns roughly one failed
 page per probe past the edge even with the limiter pause absorbing the trips.
+A dead endpoint is not a capacity condition: three consecutive
+connection-refused outcomes (`InferenceError::Connection`) abort the run cleanly
+with a typed endpoint-unreachable error — the file stays pending (no receipt)
+and the driver relaunches when the host returns. Waiting out cooldown cycles
+against a dead socket is the wrong action (the 2026-10-03 grind: five hours of
+300s pause cycles against a severed socket); the receipt short-circuit makes
+relaunch nearly free.
 Source-confirmed blank pages can be recorded as such; never infer that every empty
-page is benign. `include_structure=true` is only needed for the block view.
+page is benign. The executor pre-detects confidently blank pages (`ocr::blank`,
+ink under 0.1% of pixels) and skips the vision call entirely — no limiter slot,
+no generation, no deadline risk; blanks surface as the named, non-failing
+`blank_pages` report category, never as empty-page failures. The threshold is
+conservative by design: stamps and sparse pages stay content-ambiguous and go
+to the model. `include_structure=true` is only needed for the block view.
 
 Audit every extraction for word counts, legibility, repetition, script/language
 consistency and deterministic OCR outcomes. Document-level counts are a conversion
