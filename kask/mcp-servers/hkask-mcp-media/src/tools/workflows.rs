@@ -122,20 +122,9 @@ mod tests {
 
     struct NoInference;
 
-    impl hkask_types::InferencePort for NoInference {
-        fn generate(
-            &self,
-            _: &str,
-            _: &hkask_types::template::LLMParameters,
-            _: Option<&[hkask_types::ChatToolDefinition]>,
-        ) -> std::pin::Pin<
-            Box<
-                dyn std::future::Future<
-                        Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
-                    > + Send
-                    + '_,
-            >,
-        > {
+    crate::test_support::media_inference_stub! {
+        NoInference,
+        generate(self, _prompt): {
             panic!("workflow tools must not invoke inference")
         }
     }

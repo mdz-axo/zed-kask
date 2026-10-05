@@ -22,6 +22,8 @@ pub mod jobs;
 pub mod media_block;
 pub mod omc;
 mod templates;
+#[cfg(test)]
+mod test_support;
 pub mod video;
 
 pub use error::{
@@ -1316,62 +1318,24 @@ mod tool_behavior_tests {
         struct BatchMedia {
             items: Vec<serde_json::Value>,
         }
-        impl hkask_types::InferencePort for BatchMedia {
-            fn generate(
-                &self,
-                _: &str,
-                _: &hkask_types::template::LLMParameters,
-                _: Option<&[hkask_types::ChatToolDefinition]>,
-            ) -> std::pin::Pin<
-                Box<
-                    dyn std::future::Future<
-                            Output = Result<
-                                hkask_types::InferenceResult,
-                                hkask_types::InferenceError,
-                            >,
-                        > + Send
-                        + '_,
-                >,
-            > {
+        crate::test_support::media_inference_stub! {
+            BatchMedia,
+            generate(self, _prompt): {
                 panic!("generation test must use media_generate")
-            }
-
-            fn media_generate<'a>(
-                &'a self,
-                _: &str,
-                _: &hkask_types::MediaGenerateParams,
-            ) -> hkask_types::MediaFuture<'a> {
+            },
+            media_generate(self, _op, _params): {
                 let items = self.items.clone();
                 Box::pin(async move { Ok(serde_json::json!({"data": items})) })
             }
         }
 
         struct FailingMedia;
-        impl hkask_types::InferencePort for FailingMedia {
-            fn generate(
-                &self,
-                _: &str,
-                _: &hkask_types::template::LLMParameters,
-                _: Option<&[hkask_types::ChatToolDefinition]>,
-            ) -> std::pin::Pin<
-                Box<
-                    dyn std::future::Future<
-                            Output = Result<
-                                hkask_types::InferenceResult,
-                                hkask_types::InferenceError,
-                            >,
-                        > + Send
-                        + '_,
-                >,
-            > {
+        crate::test_support::media_inference_stub! {
+            FailingMedia,
+            generate(self, _prompt): {
                 panic!("generation test must use media_generate")
-            }
-
-            fn media_generate<'a>(
-                &'a self,
-                _: &str,
-                _: &hkask_types::MediaGenerateParams,
-            ) -> hkask_types::MediaFuture<'a> {
+            },
+            media_generate(self, _op, _params): {
                 Box::pin(async {
                     Err(hkask_types::InferenceError::Connection(
                         "provider sentinel failure".to_string(),
@@ -1878,20 +1842,9 @@ mod tool_behavior_tests {
     /// reaches inference, so this only satisfies the struct field.
     struct NoopInferencePort;
 
-    impl hkask_types::ports::InferencePort for NoopInferencePort {
-        fn generate(
-            &self,
-            _: &str,
-            _: &hkask_types::template::LLMParameters,
-            _: Option<&[hkask_types::ChatToolDefinition]>,
-        ) -> std::pin::Pin<
-            Box<
-                dyn std::future::Future<
-                        Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
-                    > + Send
-                    + '_,
-            >,
-        > {
+    crate::test_support::media_inference_stub! {
+        NoopInferencePort,
+        generate(self, _prompt): {
             Box::pin(async {
                 Err(hkask_types::InferenceError::Connection(
                     "noop inference port — not configured for contract tests".into(),
@@ -3683,20 +3636,9 @@ mod tool_behavior_tests {
         media_response_is_json: bool,
     }
 
-    impl hkask_types::ports::InferencePort for MockInferencePort {
-        fn generate(
-            &self,
-            _: &str,
-            _: &hkask_types::template::LLMParameters,
-            _: Option<&[hkask_types::ChatToolDefinition]>,
-        ) -> std::pin::Pin<
-            Box<
-                dyn std::future::Future<
-                        Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
-                    > + Send
-                    + '_,
-            >,
-        > {
+    crate::test_support::media_inference_stub! {
+        MockInferencePort,
+        generate(self, _prompt): {
             let result = hkask_types::InferenceResult {
                 text: self.response.clone(),
                 model: "mock-model".to_string(),
@@ -3712,13 +3654,8 @@ mod tool_behavior_tests {
                 cost_usd: None,
             };
             Box::pin(async move { Ok(result) })
-        }
-
-        fn media_generate<'a>(
-            &'a self,
-            _op: &str,
-            _params: &hkask_types::MediaGenerateParams,
-        ) -> hkask_types::MediaFuture<'a> {
+        },
+        media_generate(self, _op, _params): {
             if self.media_response_is_json {
                 let value = serde_json::from_str::<serde_json::Value>(&self.media_response)
                     .expect("media_response_is_json requires valid JSON");
@@ -4319,27 +4256,13 @@ mod tool_behavior_tests {
         struct CapturingInference {
             prompt: Arc<std::sync::Mutex<Option<String>>>,
         }
-        impl hkask_types::ports::InferencePort for CapturingInference {
-            fn generate(
-                &self,
-                prompt: &str,
-                _: &hkask_types::template::LLMParameters,
-                _: Option<&[hkask_types::ChatToolDefinition]>,
-            ) -> std::pin::Pin<
-                Box<
-                    dyn std::future::Future<
-                            Output = Result<
-                                hkask_types::InferenceResult,
-                                hkask_types::InferenceError,
-                            >,
-                        > + Send
-                        + '_,
-                >,
-            > {
+        crate::test_support::media_inference_stub! {
+            CapturingInference,
+            generate(self, prompt): {
                 *self.prompt.lock().expect("capture prompt") = Some(prompt.to_string());
                 Box::pin(async {
                     Ok(hkask_types::InferenceResult {
-                        text: r#"{"highlights":[{"start_word":0,"end_word":1,"label":"corrected","note":""}]}"#.to_string(),
+                        text: r#"{"highlights":[{"start_word":0,"end_word":1,"label":"corrected","note":""}]}}"#.to_string(),
                         model: "mock-model".to_string(),
                         usage: Default::default(),
                         finish_reason: "stop".to_string(),

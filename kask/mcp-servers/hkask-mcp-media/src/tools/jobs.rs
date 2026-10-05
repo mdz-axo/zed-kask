@@ -438,28 +438,12 @@ mod tests {
 
     struct NoInference;
 
-    impl hkask_types::InferencePort for NoInference {
-        fn generate(
-            &self,
-            _: &str,
-            _: &hkask_types::template::LLMParameters,
-            _: Option<&[hkask_types::ChatToolDefinition]>,
-        ) -> std::pin::Pin<
-            Box<
-                dyn std::future::Future<
-                        Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
-                    > + Send
-                    + '_,
-            >,
-        > {
+    crate::test_support::media_inference_stub! {
+        NoInference,
+        generate(self, _prompt): {
             panic!("control and overloaded tool tests must not invoke inference")
-        }
-
-        fn media_generate<'a>(
-            &'a self,
-            _: &str,
-            _: &hkask_types::MediaGenerateParams,
-        ) -> hkask_types::MediaFuture<'a> {
+        },
+        media_generate(self, _op, _params): {
             panic!("an overloaded direct operation must fail before provider work")
         }
     }
@@ -469,28 +453,12 @@ mod tests {
         dropped: Arc<std::sync::atomic::AtomicBool>,
     }
 
-    impl hkask_types::InferencePort for BlockingMedia {
-        fn generate(
-            &self,
-            _: &str,
-            _: &hkask_types::template::LLMParameters,
-            _: Option<&[hkask_types::ChatToolDefinition]>,
-        ) -> std::pin::Pin<
-            Box<
-                dyn std::future::Future<
-                        Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
-                    > + Send
-                    + '_,
-            >,
-        > {
+    crate::test_support::media_inference_stub! {
+        BlockingMedia,
+        generate(self, _prompt): {
             panic!("media job tests must use media_generate")
-        }
-
-        fn media_generate<'a>(
-            &'a self,
-            _: &str,
-            _: &hkask_types::MediaGenerateParams,
-        ) -> hkask_types::MediaFuture<'a> {
+        },
+        media_generate(self, _op, _params): {
             let barrier = self.barrier.clone();
             let dropped = self.dropped.clone();
             Box::pin(async move {
@@ -510,28 +478,12 @@ mod tests {
 
     struct ImmediateMedia;
 
-    impl hkask_types::InferencePort for ImmediateMedia {
-        fn generate(
-            &self,
-            _: &str,
-            _: &hkask_types::template::LLMParameters,
-            _: Option<&[hkask_types::ChatToolDefinition]>,
-        ) -> std::pin::Pin<
-            Box<
-                dyn std::future::Future<
-                        Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
-                    > + Send
-                    + '_,
-            >,
-        > {
+    crate::test_support::media_inference_stub! {
+        ImmediateMedia,
+        generate(self, _prompt): {
             panic!("media job tests must use media_generate")
-        }
-
-        fn media_generate<'a>(
-            &'a self,
-            _: &str,
-            _: &hkask_types::MediaGenerateParams,
-        ) -> hkask_types::MediaFuture<'a> {
+        },
+        media_generate(self, _op, _params): {
             Box::pin(async {
                 Ok(serde_json::json!({
                     "data": [{"b64_json": "iVBORw0KGgo="}],
@@ -545,28 +497,12 @@ mod tests {
         message: &'static str,
     }
 
-    impl hkask_types::InferencePort for ErrorMedia {
-        fn generate(
-            &self,
-            _: &str,
-            _: &hkask_types::template::LLMParameters,
-            _: Option<&[hkask_types::ChatToolDefinition]>,
-        ) -> std::pin::Pin<
-            Box<
-                dyn std::future::Future<
-                        Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
-                    > + Send
-                    + '_,
-            >,
-        > {
+    crate::test_support::media_inference_stub! {
+        ErrorMedia,
+        generate(self, _prompt): {
             panic!("media job tests must use media_generate")
-        }
-
-        fn media_generate<'a>(
-            &'a self,
-            _: &str,
-            _: &hkask_types::MediaGenerateParams,
-        ) -> hkask_types::MediaFuture<'a> {
+        },
+        media_generate(self, _op, _params): {
             Box::pin(async move {
                 Err(hkask_types::InferenceError::Connection(
                     self.message.to_string(),
