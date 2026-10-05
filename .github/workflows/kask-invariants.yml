@@ -62,10 +62,18 @@
 #   mod.rs-free and the GPUI-side surface stays free of smol timers
 #   (both .rules conventions, machine-enforced).
 # - check-docs-count-gate.sh: the docs tree stays under the §3 cap with a
-#   working condensation target, the README's recorded corpus size matches
-#   the real count, and every gate reference carries the canonical numbers
+#   working condensation target, the README's recorded corpus size matches the
+#   real count, and every gate reference carries the canonical numbers
 #   — the 2026-09-30 drift (67 recorded against a 73-file tree) landed
 #   undetected while the gate was documentation-enforced only.
+# - check-docs-frontmatter.sh: every Markdown file under kask/docs carries
+#   the §2 seven-field header — the 2026-10-05 alignment run found two
+#   concurrent-stream additions landing without it (the compaction spec,
+#   the two-symptom findings); the addition class fails CI instead of the
+#   next alignment run.
+# - check-diagram-registry-parity.sh: mermaid fences == DIAGRAM_ALIGNMENT
+#   records == DIAGRAMS_INDEX rows — the same run found the compaction
+#   diagram unregistered and the index prose miscounting (107 vs 108).
 # - check-duplication-ratchet.sh: no net-new duplication clusters (jscpd,
 #   min-tokens 70, over kask/ + fork-diverged files vs the pinned scan
 #   base) beyond duplication-ratchet-baseline.txt — the simplification
@@ -190,6 +198,10 @@ jobs:
           bash kask/scripts/check-no-smol-timer.sh
       - name: Docs count gate — §3 cap, recorded-measurement parity, reference agreement
         run: bash kask/scripts/check-docs-count-gate.sh
+      - name: Docs frontmatter gate — seven-field header on every Markdown file
+        run: bash kask/scripts/check-docs-frontmatter.sh
+      - name: Diagram registry parity — fences, alignment records, index rows agree
+        run: bash kask/scripts/check-diagram-registry-parity.sh
       - name: Duplication ratchet — no net-new clone clusters beyond the baseline
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq jq
