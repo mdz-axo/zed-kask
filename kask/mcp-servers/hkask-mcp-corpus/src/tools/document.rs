@@ -231,6 +231,7 @@ impl CorpusServer {
                 "verification_passed": outcome.verification_passed,
                 "page_count_match": outcome.page_count_match,
                 "empty_pages": outcome.empty_pages,
+                "blank_pages": outcome.blank_pages,
                 "quality_failed_pages": outcome.quality_failed_pages,
                 "llm_breaker_open": outcome.llm_breaker_open,
                 "error_count": outcome.error_count,

@@ -1827,7 +1827,7 @@ mod ocr_guards {
             vision_text: String::new(),
         });
         let executor = LlmOcrExecutor::new(Arc::clone(&port));
-        let image = image::load_from_memory(TINY_PNG).expect("test fixture PNG must decode");
+        let image = crate::helpers::inked_page();
 
         let error = executor
             .execute(0, "mock-model", &image)
@@ -1881,7 +1881,7 @@ mod ocr_guards {
             health_path.clone(),
         ));
         let executor = LlmOcrExecutor::new(Arc::clone(&port)).with_health_recorder(recorder);
-        let image = image::load_from_memory(TINY_PNG).expect("test fixture PNG must decode");
+        let image = crate::helpers::inked_page();
 
         let result = executor.execute(0, "mock-model", &image).await;
         assert!(result.is_err(), "empty output must be an error");
@@ -1901,7 +1901,7 @@ mod ocr_guards {
     #[tokio::test]
     async fn llm_executor_reports_outcomes_to_the_adaptive_limiter() {
         crate::helpers::seed_registry_template_root();
-        let image = image::load_from_memory(TINY_PNG).expect("test fixture PNG must decode");
+        let image = crate::helpers::inked_page();
         let port = Arc::new(MutableVisionPort {
             vision_text: std::sync::Mutex::new("---\nprimary_language: en\nis_rotation_valid: true\nrotation_correction: 0\nis_table: false\nis_diagram: false\n---\nextracted page text".to_string()),
         });

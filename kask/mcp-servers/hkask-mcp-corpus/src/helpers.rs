@@ -526,6 +526,22 @@ pub(crate) fn seed_registry_template_root() {
     }
 }
 
+/// A non-blank page image for vision-path tests: white ground with a
+/// text-sized ink block. Uniform images (a 1x1 `TINY_PNG`, an all-black
+/// `new_rgb8`) are BLANK under `ocr::blank` — the executor's blank gate
+/// short-circuits them before the vision call, so tests exercising the
+/// vision path must send inked pages.
+#[cfg(test)]
+pub(crate) fn inked_page() -> image::DynamicImage {
+    let mut buffer = image::RgbImage::from_pixel(64, 64, image::Rgb([255, 255, 255]));
+    for y in 20..40 {
+        for x in 10..50 {
+            buffer.put_pixel(x, y, image::Rgb([30, 30, 30]));
+        }
+    }
+    image::DynamicImage::ImageRgb8(buffer)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

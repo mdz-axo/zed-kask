@@ -309,7 +309,7 @@ async fn ocr_protocol_separates_page_text_and_annotations() -> anyhow::Result<()
     crate::helpers::seed_registry_template_root();
     let dir = fixture()?;
     let input = dir.path().join("control.png");
-    image::DynamicImage::new_rgb8(8, 8).save(&input)?;
+    crate::helpers::inked_page().save(&input)?;
     let body = "The pump runs for seventeen minutes.\n\n![Pump diagram](page_0_0_100_100.png)\n\nThe gauge reads five bars.";
     let port: Arc<dyn InferencePort> = Arc::new(VisionPort {
         calls: 0.into(),
@@ -372,7 +372,7 @@ async fn ocr_protocol_rejects_bad_page_before_output() -> anyhow::Result<()> {
     crate::helpers::seed_registry_template_root();
     let dir = fixture()?;
     let input = dir.path().join("control.png");
-    image::DynamicImage::new_rgb8(8, 8).save(&input)?;
+    crate::helpers::inked_page().save(&input)?;
     for (index, response) in [
         "legacy plain text".to_string(),
         format!("{PAGE_HEADER}![Bad](https://example.com/fake.png)"),

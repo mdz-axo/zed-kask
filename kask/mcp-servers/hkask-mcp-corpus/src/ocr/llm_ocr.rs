@@ -729,7 +729,7 @@ mod tests {
     async fn http_error_failures_open_the_breaker() {
         crate::helpers::seed_registry_template_root();
         let executor = LlmOcrExecutor::new(Arc::new(HttpErrorVisionPort));
-        let image = DynamicImage::new_rgb8(8, 8);
+        let image = crate::helpers::inked_page();
         for _ in 0..5 {
             assert!(
                 executor
@@ -799,7 +799,7 @@ mod tests {
     async fn circuit_open_pauses_the_limiter_and_not_the_local_breaker() {
         crate::helpers::seed_registry_template_root();
         let executor = LlmOcrExecutor::new(Arc::new(CircuitOpenVisionPort));
-        let image = DynamicImage::new_rgb8(8, 8);
+        let image = crate::helpers::inked_page();
         let error = executor
             .execute(0, "RunPod/kask-ocr", &image)
             .await
@@ -905,13 +905,7 @@ mod tests {
         // A page with text-sized ink is content-ambiguous: it goes to the
         // model (the counting port refuses — the call count is the
         // assertion, not the outcome).
-        let mut buffer = image::RgbImage::from_pixel(64, 64, image::Rgb([255, 255, 255]));
-        for y in 20..40 {
-            for x in 10..50 {
-                buffer.put_pixel(x, y, image::Rgb([30, 30, 30]));
-            }
-        }
-        let text_page = DynamicImage::ImageRgb8(buffer);
+        let text_page = crate::helpers::inked_page();
         let outcome = executor.execute(1, "RunPod/kask-ocr", &text_page).await;
         assert!(
             matches!(outcome, Err(OcrError::Inference { .. })),
@@ -992,7 +986,7 @@ mod tests {
             calls: AtomicU64::new(0),
         });
         let executor = LlmOcrExecutor::new(port.clone());
-        let image = DynamicImage::new_rgb8(8, 8);
+        let image = crate::helpers::inked_page();
         let result = executor
             .execute(0, "RunPod/kask-ocr", &image)
             .await
@@ -1068,7 +1062,7 @@ mod tests {
             hints: std::sync::Mutex::new(Vec::new()),
         });
         let executor = LlmOcrExecutor::new(port.clone());
-        let image = DynamicImage::new_rgb8(8, 8);
+        let image = crate::helpers::inked_page();
         let _ = executor.execute(0, "RunPod/kask-ocr", &image).await;
         let hints = port
             .hints
@@ -1144,7 +1138,7 @@ mod tests {
             calls: AtomicU64::new(0),
         });
         let executor = LlmOcrExecutor::new(port.clone());
-        let image = DynamicImage::new_rgb8(8, 8);
+        let image = crate::helpers::inked_page();
         let error = executor
             .execute(0, "RunPod/kask-ocr", &image)
             .await
