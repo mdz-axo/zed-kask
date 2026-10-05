@@ -129,12 +129,17 @@ impl KanbanService {
     /// Resolve one goal's durable row by the goal's identity — enumerating
     /// the goal entity and matching the parsed `Goal`'s id, the same read
     /// shape `goal_list` uses. The row's attribute is a storage key, not
-    /// the identity: a row whose attribute drifted from its goal id
-    /// (observed live 2026-10-04 — three goals were list-visible while
-    /// every by-attribute lookup returned not-found, so
-    /// `goal_acknowledge_memory` reported `acknowledged:true` while
-    /// pruning nothing) still resolves here, and duplicate rows error
-    /// instead of silently picking one.
+    /// the identity: a row whose attribute drifted from its goal id still
+    /// resolves here, and duplicate rows error instead of silently picking
+    /// one. The identity read is also the robustness defense observed live
+    /// 2026-10-04/05: three goals were list-visible while every keyed
+    /// (by-attribute) lookup returned not-found, so
+    /// `goal_acknowledge_memory` reported `acknowledged:true` while pruning
+    /// nothing. A raw-column dump later showed the rows healthy and
+    /// canonical — the keyed misses were a server-process DB-view
+    /// divergence (a fresh process read the same rows correctly), not data
+    /// corruption — but resolving by identity works regardless of which
+    /// layer loses the storage-key invariant.
     fn goal_row(&self, goal_id: GoalID) -> Result<Option<(HMem, Goal)>, KanbanError> {
         let h_mems = self
             .store
@@ -658,20 +663,21 @@ mod goal_tests {
         Ok(())
     }
 
-    /// A goal row whose storage attribute drifted from its goal id (the
-    /// live 2026-10-04 zombie class: three goals were list-visible while
-    /// every by-attribute lookup returned not-found, so acknowledgment
-    /// reported success while pruning nothing) still resolves through the
-    /// identity read: get finds it, transitions land, and acknowledgment
-    /// prunes it.
+    /// A goal row whose storage attribute drifted from its goal id still
+    /// resolves through the identity read: get finds it, transitions land,
+    /// and acknowledgment prunes it. (The 2026-10-04 live incident that
+    /// motivated the identity read was later shown to be a server-process
+    /// DB-view divergence, not attribute drift — the rows were healthy —
+    /// but this robustness case stands on its own: the lifecycle must not
+    /// depend on the storage-key invariant.)
     #[test]
     fn drifted_attribute_goal_row_still_resolves_transitions_and_prunes() -> anyhow::Result<()> {
         let driver = hkask_storage::database::sqlite::SqliteDriver::in_memory_driver();
         let svc = KanbanService::new(HMemStore::from_driver(driver.clone())?);
         let owner = WebID::new();
         let goal = svc.goal_create("goal".into(), criteria(1), Some(0.7), None, owner)?;
-        // Simulate the observed drift: the storage key no longer equals the
-        // goal id, while the value still carries the goal.
+        // Simulate a drifted storage key: the attribute no longer equals
+        // the goal id, while the value still carries the goal.
         driver.execute_batch(&format!(
             "UPDATE hmems SET attribute = 'drifted-key'
              WHERE entity = 'kanban:goal' AND attribute = '{goal_id}';",
