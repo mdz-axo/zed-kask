@@ -42,6 +42,10 @@
 #   tests through the public `Parameters<T>` seam (ratchet completed
 #   2026-08-26 — an untested server now fails instead of being allowlisted).
 # - check-mcp-servers.sh: the installer inventory matches the runtime set.
+# - check-mcp-registration.sh: every server in mcp-servers.txt carries the
+#   tool_surface_pin! registration pin (count + TOOL_NAMES-vs-router) — a
+#   silent registration drop, unrouted #[tool] fn, or same-count rename
+#   fails CI instead of degrading to tool-not-found at dispatch.
 # - check-reg-canonical.sh: every `reg.*` tracing target is a canonical
 #   namespace (registered in CANONICAL_NAMESPACES).
 # - check-skill-crossrefs.sh, check-forecast-conformance.sh and
@@ -159,6 +163,8 @@ jobs:
         run: bash kask/scripts/check-mcp-tool-tests.sh
       - name: MCP packaging — installer inventory matches runtime
         run: bash kask/scripts/check-mcp-servers.sh
+      - name: MCP registration pins — every server carries tool_surface_pin!
+        run: bash kask/scripts/check-mcp-registration.sh
       - name: Regulation namespaces — reg.* spans are canonical
         run: bash kask/scripts/check-reg-canonical.sh
       - name: Skills — cross-references resolve; forecasting contract matches primitives; template contracts match bodies
