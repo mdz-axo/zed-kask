@@ -815,7 +815,7 @@ impl MediaServer {
                     .get_face(fid)
                     .map(|face| format!("{} {}", face.first_name, face.last_name))
                     .map_err(|e| {
-                        McpToolError::invalid_argument(format!("Face registry ID not found: {}", e))
+                        McpToolError::not_found(format!("Face registry ID not found: {e}"))
                     })?
             } else {
                 match name {
@@ -1001,7 +1001,7 @@ impl MediaServer {
         execute_tool(self, "face_remove", async {
             self.gallery_store
                 .remove_face(&face_id)
-                .map_err(|e| McpToolError::invalid_argument(format!("Face not found: {}", e)))?;
+                .map_err(|e| McpToolError::not_found(format!("Face not found: {e}")))?;
             Ok(serde_json::json!({
                 "status": "removed",
                 "face_id": face_id,

@@ -65,6 +65,14 @@ impl McpToolError {
     }
     /// Create an internal error.
     ///
+    /// Canonical classification (the cross-server contract, operator
+    /// ruling 2026-10-05): `internal` is for SERVER-side faults — storage
+    /// corruption, serialization failure, an internal dispatch reaching an
+    /// unknown route (a programming error, never the caller's). A
+    /// caller-named thing that is missing is [`Self::not_found`], not
+    /// internal (live 2026-10-05: training's unknown job id and media's
+    /// missing local file both shipped as internal before the contract).
+    ///
     /// expect: "The system reports tool dispatch failures with structured classification"
     /// post: returns McpToolError with Internal kind
     #[must_use]
@@ -72,6 +80,16 @@ impl McpToolError {
         Self::new(McpErrorKind::Internal, message)
     }
     /// Create a not-found error.
+    ///
+    /// Canonical classification (operator ruling 2026-10-05): `not_found`
+    /// is for a CALLER-NAMED resource that does not exist — an unknown id
+    /// (task, goal, job, forecast, face, experiment), a missing input
+    /// file, a nonexistent database path. The caller's reference is bad,
+    /// not their argument's shape: name the missing thing in the message.
+    /// Contrast [`Self::invalid_argument`] for malformed values against a
+    /// documented closed set (the error names the valid values), and
+    /// [`Self::failed_precondition`] for a well-formed request whose
+    /// required state is absent.
     ///
     /// expect: "The system reports tool dispatch failures with structured classification"
     /// post: returns McpToolError with NotFound kind
@@ -81,6 +99,13 @@ impl McpToolError {
     }
     /// Create an invalid-argument error.
     ///
+    /// Canonical classification (operator ruling 2026-10-05):
+    /// `invalid_argument` is for malformed caller INPUT — a value outside a
+    /// documented closed set (name the valid values), a bad shape, a
+    /// negative timestamp, an out-of-range count. A resource that is
+    /// missing despite a well-formed reference is
+    /// [`Self::not_found`], not invalid_argument.
+    ///
     /// expect: "The system reports tool dispatch failures with structured classification"
     /// post: returns McpToolError with InvalidArgument kind
     #[must_use]
@@ -88,6 +113,12 @@ impl McpToolError {
         Self::new(McpErrorKind::InvalidArgument, message)
     }
     /// Create an unavailable error.
+    ///
+    /// Canonical classification (operator ruling 2026-10-05):
+    /// `unavailable` is for TRANSIENT external failures — a provider
+    /// outage, a connection drop. A missing credential is
+    /// [`Self::permission_denied`] (fix your key, not retry later); a
+    /// permanent provider rejection is `internal` with the wire message.
     ///
     /// expect: "The system reports tool dispatch failures with structured classification"
     /// post: returns McpToolError with Unavailable kind
@@ -97,6 +128,12 @@ impl McpToolError {
     }
     /// Create a permission-denied error.
     ///
+    /// Canonical classification (operator ruling 2026-10-05):
+    /// `permission_denied` is for AUTHORIZATION failures — a missing
+    /// credential (name the env var), an invalid key, a refused operation.
+    /// Never `unavailable`: a missing key is "fix your configuration",
+    /// not "retry later".
+    ///
     /// expect: "The system reports tool dispatch failures with structured classification"
     /// post: returns McpToolError with PermissionDenied kind
     #[must_use]
@@ -105,6 +142,10 @@ impl McpToolError {
     }
     /// Create a rate-limited error.
     ///
+    /// Canonical classification (operator ruling 2026-10-05):
+    /// `rate_limited` is for admission control — the caller sent too much
+    /// too fast; backing off is the remedy.
+    ///
     /// expect: "The system reports tool dispatch failures with structured classification"
     /// post: returns McpToolError with RateLimited kind
     #[must_use]
@@ -112,6 +153,13 @@ impl McpToolError {
         Self::new(McpErrorKind::RateLimited, message)
     }
     /// Create a failed-precondition error.
+    ///
+    /// Canonical classification (operator ruling 2026-10-05):
+    /// `failed_precondition` is for a well-formed request whose required
+    /// STATE is absent — no stored forecasts for calibration, a sourceless
+    /// `completed` finish, a verify outside Review, an invalid state
+    /// transition. The request is fine; the world isn't ready for it. Name
+    /// the missing state and the remedy in the message.
     ///
     /// expect: "The system reports tool dispatch failures with structured classification"
     /// post: returns McpToolError with FailedPrecondition kind

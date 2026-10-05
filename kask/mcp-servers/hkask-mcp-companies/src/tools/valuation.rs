@@ -954,9 +954,7 @@ impl CompaniesServer {
             let forecast = self
                 .get_persisted_forecast(req.forecast_id)
                 .await?
-                .ok_or_else(|| {
-                    McpToolError::invalid_argument("forecast not found for this owner")
-                })?;
+                .ok_or_else(|| McpToolError::not_found("forecast not found for this owner"))?;
             Ok(serde_json::json!(forecast))
         })
         .await
@@ -1134,7 +1132,7 @@ impl CompaniesServer {
                 Some(
                     self.get_persisted_forecast(forecast_id.clone())
                         .await?
-                        .ok_or_else(|| McpToolError::invalid_argument("forecast not found for this owner"))?
+                        .ok_or_else(|| McpToolError::not_found("forecast not found for this owner"))?
                 )
             } else {
                 None

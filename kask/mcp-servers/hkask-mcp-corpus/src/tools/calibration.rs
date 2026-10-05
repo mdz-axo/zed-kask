@@ -200,7 +200,7 @@ fn embedding_inventory(
         ));
     }
     if !Path::new(&request.db_path).is_file() {
-        return Err(McpToolError::invalid_argument(format!(
+        return Err(McpToolError::not_found(format!(
             "embedding database does not exist: {}",
             request.db_path
         )));

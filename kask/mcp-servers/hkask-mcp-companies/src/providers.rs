@@ -328,8 +328,13 @@ pub async fn companies_get(
     extra_params: &[(&str, &str)],
     learning: Option<&super::LearningState>,
 ) -> Result<ProviderResponse, McpToolError> {
-    let mapping = endpoint_mapping(tool)
-        .ok_or_else(|| McpToolError::invalid_argument(format!("unknown tool: {tool}")))?;
+    let mapping = endpoint_mapping(tool).ok_or_else(|| {
+        // Internal dispatch miss — every fetch call site names a literal
+        // endpoint key, so an unknown key is a programming error, never
+        // the caller's (canonical classification, operator ruling
+        // 2026-10-05: server-side fault → internal).
+        McpToolError::internal(format!("unknown endpoint key: {tool}"))
+    })?;
     // Learning-aware routing: feedback state can override default provider.
     let primary = if let Some(learn) = learning {
         learn

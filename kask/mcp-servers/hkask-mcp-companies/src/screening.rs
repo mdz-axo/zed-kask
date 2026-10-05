@@ -1617,7 +1617,7 @@ fn load_job(store: &ResearchStore, job_id: &str) -> Result<ScreenJobRecord, McpT
     store
         .get_screen_job(job_id)
         .map_err(crate::map_portfolio_error)?
-        .ok_or_else(|| McpToolError::invalid_argument(format!("screen job {job_id:?} not found")))
+        .ok_or_else(|| McpToolError::not_found(format!("screen job {job_id:?} not found")))
 }
 
 fn resolve_definition(
@@ -1693,9 +1693,7 @@ fn render_template(
     let source = SCREEN_TEMPLATES
         .iter()
         .find_map(|(registered_name, source)| (*registered_name == name).then_some(*source))
-        .ok_or_else(|| {
-            McpToolError::invalid_argument(format!("unknown screen template {name:?}"))
-        })?;
+        .ok_or_else(|| McpToolError::not_found(format!("unknown screen template {name:?}")))?;
     let (metadata, body) = parse_template_source(name, source)?;
     let mut context = match context {
         Some(context) => serde_json::to_value(context).map_err(|error| {

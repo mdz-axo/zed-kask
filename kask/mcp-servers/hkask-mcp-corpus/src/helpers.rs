@@ -114,10 +114,13 @@ fn passphrase_unavailable() -> McpToolError {
 /// for `corpus_purge_qa`; mcp-tool-review CO-02, live 2026-10-04).
 /// Read-oriented corpus tools (centroid, compose, rewrite, dedup,
 /// consolidate, query hydration, purge, build_prompts context) never
-/// create a database. Mirrors the inventory precedent (calibration.rs).
+/// create a database. `not_found` per the canonical classification
+/// (operator ruling 2026-10-05): a caller-named resource that does not
+/// exist — the former `invalid_argument` followed the inventory
+/// precedent before the contract unified the class.
 pub(crate) fn ensure_db_exists(db_path: &str) -> Result<(), McpToolError> {
     if !std::path::Path::new(db_path).is_file() {
-        return Err(McpToolError::invalid_argument(format!(
+        return Err(McpToolError::not_found(format!(
             "embedding database does not exist: {db_path}"
         )));
     }
@@ -595,8 +598,8 @@ mod tests {
         };
         assert_eq!(
             error.kind,
-            hkask_types::McpErrorKind::InvalidArgument,
-            "matches the inventory precedent: {error:?}"
+            hkask_types::McpErrorKind::NotFound,
+            "a caller-named missing DB is not_found per the canonical classification: {error:?}"
         );
         assert!(
             error.message.contains("embedding database does not exist"),
