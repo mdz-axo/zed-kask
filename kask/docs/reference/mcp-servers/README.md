@@ -1,8 +1,8 @@
 ---
 title: "MCP Server Registry — Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-09-30
-version: "0.41.0"
+last_updated: 2026-10-05
+version: "0.42.0"
 status: "Active"
 domain: "Composition"
 mds_categories: [composition, domain]
@@ -28,7 +28,7 @@ mds_categories: [composition, domain]
 
 ## Server Catalog
 
-13 built-in MCP servers, **408 registered tools** fleet-wide (reconciled 2026-09-30 against the live pin tests and generated tool-name sets below — every server carries a count pin or a generated-name-set pin). `KaskMcpSettings::default()` sets `load_default: true`, so all thirteen auto-load unless the operator disables the fleet or an individual server (`kask/crates/kask_bridge/src/settings.rs:140-165`; `kask/crates/kask_bridge/src/mcp_servers.rs`).
+13 built-in MCP servers, **409 registered tools** fleet-wide (reconciled 2026-10-05 against the live `tool_surface_pin!` tests below — every server pins its exact count and generated tool-name set; unified by `ede1ba0ca8`, CI-gated by `kask/scripts/check-mcp-registration.sh`). `KaskMcpSettings::default()` sets `load_default: true`, so all thirteen auto-load unless the operator disables the fleet or an individual server (`kask/crates/kask_bridge/src/settings.rs:140-165`; `kask/crates/kask_bridge/src/mcp_servers.rs`).
 
 | Server | Crate | Purpose | Tools |
 |--------|-------|---------|------:|
@@ -40,25 +40,19 @@ mds_categories: [composition, domain]
 | [Media](media.md) | `kask/mcp-servers/hkask-mcp-media` | AI media generation (image, video, audio, gallery, educt transcripts, Reduct cloud) | 98 |
 | [Portfolio](portfolio.md) | `kask/mcp-servers/hkask-mcp-portfolio` | General-purpose transaction-ledger portfolio store (stocks, prediction-event portfolios, CMP indices) with materialized daily holdings and returns views | 18 |
 | [Prediction Markets](prediction-markets.md) | `kask/mcp-servers/hkask-mcp-prediction-markets` | Polymarket/Kalshi base rates, calibration, CMP curves and indices, residuals | 32 |
-| [Research](research.md) | `kask/mcp-servers/hkask-mcp-research` | Web search, extraction, browsing, RSS feeds, evidence scoring, research-run ledger, paper identity | 26 |
+| [Research](research.md) | `kask/mcp-servers/hkask-mcp-research` | Web search, extraction, browsing, RSS feeds, evidence scoring, research-run ledger, paper identity | 27 |
 | [Scenarios](scenarios.md) | `kask/mcp-servers/hkask-mcp-scenarios` | Event-tree forecasting (Tetlock/Schwartz/Chermack) | 19 |
 | [Spreadsheet](spreadsheet.md) | `kask/mcp-servers/hkask-mcp-spreadsheet` | Central mutation owner of the LogiSheets-backed spreadsheet capability: persisted spreadsheet edits and interrupted-operation reconciliation over immutable workbook revisions | 2 |
 | [Swarm](swarm.md) | `kask/mcp-servers/hkask-mcp-swarm` | Agent Bestiary World swarms + Xaman Ek curator + local swarm substrate (v2 §15) | 90 |
 | Training | `kask/mcp-servers/hkask-mcp-training` | LoRA training pipeline (dataset, submit, validate, evaluate) | 9 |
 
-### Count verification methods (per row)
+### Count verification (unified 2026-10-05)
 
-- **Companies = 40** — pinned end-to-end by `tool_surface_is_exactly_40_registered_tools`, which asserts the live nine-router sum (`kask/mcp-servers/hkask-mcp-companies/src/hkask_mcp_companies.rs:282-292,499-501`).
-- **Corpus = 26** — pinned end-to-end by `tool_surface_is_exactly_26_registered_tools` over its eight-router composition (`kask/mcp-servers/hkask-mcp-corpus/src/hkask_mcp_corpus.rs:262-272,278-288`).
-- **Media = 98** — pinned end-to-end by `tool_surface_is_exactly_98_registered_tools`; the generated `TOOL_NAMES` set is separately compared with the live ten-router surface (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:427-439,445-475`).
-- **Scenarios = 19** — pinned end-to-end by `tool_surface_is_exactly_19_registered_tools` over `scenario_router` (`kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs:262,1900-1912`). The only direct market-record bridge is `scenario_from_markets_set`; CMP indices use `scenario_from_cmp_indices`.
-- **Swarm = 90** — pinned end-to-end by `tool_surface_is_exactly_90_registered_tools`; generated-name equality and the cloud partition are pinned separately (`kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:1026-1075`). The live partition is 48 cloud plus 42 non-cloud: 32 local + 3 A2A + 4 knowledge + 3 swarm-scoped thread tools.
-- **Kata Kanban = 27 and Portfolio = 18** — each build generates `TOOL_NAMES` from the declared tool functions and pins name-set equality against the live router (`kask/mcp-servers/hkask-mcp-kata-kanban/src/hkask_mcp_kata_kanban.rs:39-47,1768-1778`; `kask/mcp-servers/hkask-mcp-portfolio/src/server.rs:397`; `kask/mcp-servers/hkask-mcp-portfolio/src/hkask_mcp_portfolio.rs:59-77`).
-- **Curator = 15, Prediction Markets = 32, Research = 26, Training = 9** — each pinned end-to-end by its `tool_surface_is_exactly_<n>_registered_tools` test over the live router (`kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.rs:2224-2244`; `kask/mcp-servers/hkask-mcp-prediction-markets/src/hkask_mcp_prediction_markets.rs:2070-2084`; `kask/mcp-servers/hkask-mcp-research/src/hkask_mcp_research.rs:2385-2436`; `kask/mcp-servers/hkask-mcp-training/src/hkask_mcp_training.rs:318-326`). The curator pin additionally asserts the removed escalation/advice-review tools stay unregistered (`curator_escalations`, `curator_escalation_resolve`, `curator_escalation_dismiss`, `curator_escalation_dismiss_by_pattern`, `curator_advice_mark_applied`, `curator_advice_reviews`).
-- **Spreadsheet = 2** — pinned by `tool_names_match_live_router` comparing the build-generated `TOOL_NAMES` set against the live `spreadsheet_router` surface (`kask/mcp-servers/hkask-mcp-spreadsheet/src/hkask_mcp_spreadsheet.rs:32-42`); the tool-behavior suite additionally drives both tools end-to-end over the real engine actor (`kask/mcp-servers/hkask-mcp-spreadsheet/tests/tool_behavior.rs`).
-- **Experimentation = 6** — pinned by `tool_names_match_live_router` comparing the build-generated `TOOL_NAMES` set against the live `experimentation_router` surface (`kask/mcp-servers/hkask-mcp-experimentation/src/hkask_mcp_experimentation.rs`); the store suite drives the full registry lifecycle on an in-memory driver, and the tool-behavior suite drives all six tools through their `Parameters` seams (`kask/mcp-servers/hkask-mcp-experimentation/tests/tool_behavior.rs`).
+Every server pins its exact tool surface with the shared `tool_surface_pin!` macro (landed `ede1ba0ca8`, 2026-10-05): one macro call pins the exact tool count and the generated `TOOL_NAMES` set against the live router, so additions, drops, and same-count renames fail CI instead of degrading to tool-not-found. `kask/scripts/check-mcp-registration.sh` gates on the pin's presence for every server in `mcp-servers.txt` (CI: `.github/workflows/kask-invariants.yml`). Live pin sites (generated test names, verified 2026-10-05): companies 40 (`hkask_mcp_companies.rs:509`), corpus 26 (`hkask_mcp_corpus.rs:323`), curator 15 (`hkask_mcp_curator.rs:2628`), experimentation 6 (`hkask_mcp_experimentation.rs:85`), kata-kanban 27 (`hkask_mcp_kata_kanban.rs:1776`), media 98 (`hkask_mcp_media.rs:487`), portfolio 18 (`hkask_mcp_portfolio.rs:83`), prediction-markets 32 (`hkask_mcp_prediction_markets.rs:2155`), research 27 (`hkask_mcp_research.rs:2650`), scenarios 19 (`hkask_mcp_scenarios.rs:1968`), spreadsheet 2 (`hkask_mcp_spreadsheet.rs:39`), swarm 90 (`hkask_mcp_swarm.rs:981`), training 9 (`hkask_mcp_training.rs:340`).
 
-Arithmetic: `40 + 26 + 15 + 6 + 27 + 98 + 18 + 32 + 26 + 19 + 2 + 90 + 9 = 408`.
+Per-server specifics that survive the unification: the curator pin additionally asserts the removed escalation/advice-review tools stay unregistered (`curator_escalations`, `curator_escalation_resolve`, `curator_escalation_dismiss`, `curator_escalation_dismiss_by_pattern`, `curator_advice_mark_applied`, `curator_advice_reviews`); the swarm pin's live partition is 48 cloud plus 42 non-cloud (32 local + 3 A2A + 4 knowledge + 3 swarm-scoped thread tools); the spreadsheet and experimentation tool-behavior suites drive every tool end-to-end over the real engine actor (`tests/tool_behavior.rs` in both crates).
+
+Arithmetic: `40 + 26 + 15 + 6 + 27 + 98 + 18 + 32 + 27 + 19 + 2 + 90 + 9 = 409`.
 
 ## Common Patterns
 

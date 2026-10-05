@@ -180,3 +180,42 @@ Cross-set edits (the count facts changed, so every carrier updates in the same c
 ### Metacognition gap (predicted vs measured)
 
 Predicted 1–2 metadata misses + possible count drift. Measured: exactly that — the compaction frontmatter + diagram record, three skills numbers + a missing row, and three wrong numbers in the diagram-index prose. The prediction held; the cause is confirmed systemic (additions landing without the docs-discipline touchpoints). Candidate process fix, recorded as a finding for the operator: a CI check that new `.md` files under kask/docs carry the 7-field header and that count-carrying registries are re-measured — `check-docs-count-gate.sh` already models the pattern for the file count.
+
+---
+
+## Docs-set 4: reference/ (22 docs)
+
+### Metacognition prediction (at set open, after the `939397ab19` commit-message observation, before the pin-sum measurement)
+
+- Predict: per-server docs current (maintained with their servers); 1–2 count drifts where the research 26→27 correction didn't propagate (the fleet total is the prime suspect); the 7 top reference docs verify via change-history. Confidence: 0.7.
+
+### Compare evidence
+
+- Pin-sum measurement: `40+26+15+6+27+98+18+32+27+19+2+90+9 = 409`; the fleet README claimed **408** with an arithmetic line carrying research at 26 — the `939397ab19` correction fixed `research.md` but not the fleet README (total, table row, verification bullet, arithmetic — four spots, one doc).
+- Per-server doc counts all match their pins (companies 40, corpus 26, curator 15, experimentation 6, kata-kanban 27, media 98, portfolio 18, prediction-markets 32, research 27, scenarios 19, spreadsheet 2, swarm 90, training 9).
+- The concurrent stream's pin unification (`ede1ba0ca8`, 2026-10-05 10:05 — landed mid-run) superseded the heterogeneous per-row verification methods with the shared `tool_surface_pin!` macro + CI gate (`check-mcp-registration.sh`, `kask-invariants.yml`) — the README's method section described the pre-unification landscape with line numbers the unification moved.
+- The evolution→experimentation rename sweep verified complete (zero stale references; the `evolution_sensor_returns_none_on_broken_source` citation in `loop-register.md:646` is the test's live name at `sensor_provider.rs:860`).
+- Top reference docs (kask-settings, lisp-eval-dialect, lora-training-catalog, ontology-bridge, regulation-spans, testing-protocol, upstream-rebase-process): `last_updated` 2026-09-28/09-30, last commits are sync commits, no drift signals.
+- High-churn server crates (corpus 22, research 17, companies 11 commits since 09-28): subjects are behavior-level with docs synced in-commit; no tool-surface changes (pin counts unchanged).
+
+### Decisions
+
+| Document | Decision | Basis |
+| --- | --- | --- |
+| `mcp-servers/README.md` | **RECOMPOSED** | Fleet total 408→409 (research 26→27 in the table row and arithmetic); the verification-method section rewritten to the unified `tool_surface_pin!` landscape with live pin-site citations (all 13 verified 2026-10-05); frontmatter 0.42.0. |
+| `research.md` | **VERIFIED-CURRENT** | "Tools: 27" — corrected by `939397ab19`; the drift was only in the fleet README. |
+| `companies.md`, `corpus.md`, `curator.md`, `experimentation.md`, `kata-kanban.md`, `media.md`, `portfolio.md`, `prediction-markets.md`, `scenarios.md`, `spreadsheet.md`, `swarm.md`, `training.md` | **VERIFIED-CURRENT** | Counts match pins; names pinned by the unified macro; behavior commits carried docs syncs; curator/training created 2026-10-01; experimentation current post-rename. |
+| `kask-settings.md`, `lisp-eval-dialect.md`, `lora-training-catalog.md`, `ontology-bridge.md`, `regulation-spans.md`, `testing-protocol.md`, `upstream-rebase-process.md` | **VERIFIED-CURRENT** | Change-history: sync commits through 09-28/09-30; no drift signals in targeted checks. |
+| `skills/README.md` | **RECOMPOSED** (set 3, cross-set) | Counts 61/57/276 + the `mcp-tool-review` row. |
+
+### Kata checkpoint (five questions)
+
+1. **Target**: 22 docs, one decision each; the fleet count reconciled. Met.
+2. **Actual**: 1 RECOMPOSED (fleet README), 21 VERIFIED-CURRENT; the concurrent pin-unification absorbed mid-set (the method section rewritten to the new landscape in the same pass).
+3. **Obstacles**: concurrent-stream coordination — the unification landed mid-run; its docs implications adopted rather than raced.
+4. **Next step**: diataxis + diagrams/root sets (change-history + registry parity, partially verified already).
+5. **Check point**: gates at commit; hash recorded.
+
+### Metacognition gap (predicted vs measured)
+
+Predicted 1–2 count drifts with the fleet total as prime suspect. Measured: exactly one drift cluster (four spots in one doc) plus the unification-driven method-section staleness (not predicted — a mid-run concurrent change). Lesson: in a shared tree, re-verify registry-style docs against the LIVE mechanism at edit time, not the mechanism at set-open.
