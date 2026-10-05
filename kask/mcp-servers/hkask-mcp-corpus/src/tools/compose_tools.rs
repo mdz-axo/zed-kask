@@ -196,6 +196,7 @@ impl crate::CorpusServer {
     ) -> Result<String, McpToolError> {
         execute_tool(self, "corpus_compose", async {
             let db_passphrase = crate::helpers::resolve_corpus_passphrase()?;
+            crate::helpers::ensure_db_exists(&params.db_path)?;
             let gen_model = generation_model();
             let config = resolve_cognition_config(params.config_path.as_deref(), &params.author)?;
 
@@ -257,6 +258,11 @@ impl crate::CorpusServer {
                 .as_deref()
                 .map(load_centroid_refs)
                 .transpose()?;
+            // Caller-input validation (dimension, refs) precedes the
+            // resource check — a refs error must not read as a DB problem
+            // (error-precedence pinned by
+            // centroid_refs_file_containment_and_empty_selection).
+            crate::helpers::ensure_db_exists(&params.db_path)?;
             let result = crate::compose::ComposeService::style_centroid(
                 crate::compose::CentroidComputeRequest {
                     db_path: PathBuf::from(&params.db_path),
@@ -292,6 +298,7 @@ impl crate::CorpusServer {
             "corpus_rewrite",
             async {
                 let db_passphrase = crate::helpers::resolve_corpus_passphrase()?;
+                crate::helpers::ensure_db_exists(&params.db_path)?;
                 let dimension = normalize_dimension(&params.dimension)?;
                 let dimension_guidance = match dimension.as_str() {
                     "gentle" => "Rewrite this text to maximize agent-correctness. Docs ARE code — ensure every statement is actionable and unambiguous. Remove any stale references or outdated information.",

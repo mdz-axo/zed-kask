@@ -107,6 +107,23 @@ fn passphrase_unavailable() -> McpToolError {
 /// (`invalid_argument`); `pdftotext`/`pdfimages` failures include spawn
 /// failures (binary missing — operator-fixable, `unavailable`); a page-count
 /// mismatch between the two tools is an internal inconsistency (`internal`).
+/// A `db_path` naming a database that does not exist is the caller's
+/// error — refuse it before any SQLCipher open, which creates-if-missing
+/// (a typo'd path otherwise leaves a stray empty DB and surfaces as a
+/// misleading "No embeddings found", or as a silent zero-purged no-op
+/// for `corpus_purge_qa`; mcp-tool-review CO-02, live 2026-10-04).
+/// Read-oriented corpus tools (centroid, compose, rewrite, dedup,
+/// consolidate, query hydration, purge, build_prompts context) never
+/// create a database. Mirrors the inventory precedent (calibration.rs).
+pub(crate) fn ensure_db_exists(db_path: &str) -> Result<(), McpToolError> {
+    if !std::path::Path::new(db_path).is_file() {
+        return Err(McpToolError::invalid_argument(format!(
+            "embedding database does not exist: {db_path}"
+        )));
+    }
+    Ok(())
+}
+
 pub(crate) fn map_triage_error(error: crate::ocr::triage::TriageError) -> McpToolError {
     use crate::ocr::triage::TriageError;
     let message = format!("triage failed: {error}");
@@ -533,6 +550,39 @@ mod tests {
     /// F1 pin: the resolver is fail-closed — it either returns a non-empty
     /// passphrase or an error naming the credential, never an empty string
     /// a caller could pass on to a DB open.
+    /// CO-02 pin (mcp-tool-review): a db_path naming a nonexistent
+    /// database is refused before any SQLCipher open — no stray DB file is
+    /// created behind a typo (the storage layer opens create-if-missing;
+    /// live 2026-10-04: corpus_centroid on a fresh path created a 128KB
+    /// empty DB and errored "No embeddings found").
+    #[test]
+    fn ensure_db_exists_refuses_before_any_db_creation() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let db_path = directory
+            .path()
+            .join("never-created.db")
+            .to_str()
+            .expect("utf-8 path")
+            .to_string();
+        let error = match ensure_db_exists(&db_path) {
+            Ok(()) => panic!("nonexistent db must be refused"),
+            Err(error) => error,
+        };
+        assert_eq!(
+            error.kind,
+            hkask_types::McpErrorKind::InvalidArgument,
+            "matches the inventory precedent: {error:?}"
+        );
+        assert!(
+            error.message.contains("embedding database does not exist"),
+            "the refusal names the condition: {error:?}"
+        );
+        assert!(
+            !std::path::Path::new(&db_path).exists(),
+            "no DB file may be created by the refusal path"
+        );
+    }
+
     #[test]
     fn seeded_resolution_never_returns_an_empty_passphrase() {
         seed_test_passphrase();

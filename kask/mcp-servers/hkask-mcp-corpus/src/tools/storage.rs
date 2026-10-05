@@ -126,6 +126,9 @@ impl CorpusServer {
                 )
             })?;
 
+            // The hydration path opens the DB create-if-missing only
+            // when the index is empty — the existence check lives inside
+            // hydrate_if_empty (CO-02), gated on actual use.
             self.index.hydrate_if_empty(db_path.as_deref())?;
 
             let query_batch = match self
@@ -261,6 +264,10 @@ impl CorpusServer {
     ) -> Result<String, McpToolError> {
         execute_tool(self, "corpus_purge_qa", async {
             let passphrase = crate::helpers::resolve_corpus_passphrase()?;
+            // Purge targets an existing DB — a typo'd path must refuse,
+            // not create an empty DB and report a silent zero-purged
+            // no-op (CO-02).
+            crate::helpers::ensure_db_exists(&req.db_path)?;
             self.index.purge(&req.db_path, &passphrase, &req.prefix)
         })
         .await

@@ -79,6 +79,7 @@ impl CorpusServer {
     ) -> Result<String, McpToolError> {
         execute_tool(self, "corpus_dedup_chunks", async {
             let passphrase = crate::helpers::resolve_corpus_passphrase()?;
+            crate::helpers::ensure_db_exists(&req.db_path)?;
             let input = crate::services::cluster::load_clusters(
                 &req.tagged_jsonl,
                 &req.db_path,
@@ -144,6 +145,7 @@ impl CorpusServer {
     ) -> Result<String, McpToolError> {
         execute_tool(self, "corpus_consolidate_chunks", async {
             let passphrase = crate::helpers::resolve_corpus_passphrase()?;
+            crate::helpers::ensure_db_exists(&req.db_path)?;
             ConsolidationService::new(
                 Arc::clone(&self.inference_router),
                 Arc::clone(&self.index),
@@ -184,6 +186,14 @@ impl CorpusServer {
             } else {
                 None
             };
+            // The DB is read only when context_k > 0 resolves neighbors —
+            // check existence exactly there (primary-only builds never
+            // touch it).
+            if req.context_k > 0
+                && let Some(path) = req.db_path.as_deref()
+            {
+                crate::helpers::ensure_db_exists(path)?;
+            }
             PromptBuilderService::new()
                 .build_prompts(ServiceBuildPromptsRequest {
                     tagged_jsonl: req.tagged_jsonl,

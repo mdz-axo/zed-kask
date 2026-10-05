@@ -273,6 +273,12 @@ impl PassageIndex {
         let Some(path) = path else {
             return Ok(());
         };
+        // The open below is create-if-missing — a nonexistent path must
+        // refuse here, never leave a stray empty DB behind a typo
+        // (mcp-tool-review CO-02). Fires only when hydration will
+        // actually run: a warm index ignores db_path by contract
+        // (pinned by retrieval_origin_isolation_and_path_aliases).
+        crate::helpers::ensure_db_exists(path)?;
         let passphrase = crate::helpers::resolve_corpus_passphrase()?;
         let store = open_memory_store(path, &passphrase)?;
         let origin = database_origin(path)?;
