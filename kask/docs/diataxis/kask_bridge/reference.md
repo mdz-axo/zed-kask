@@ -1,8 +1,8 @@
 ---
 title: "kask_bridge — Reference"
 audience: [developers, architects, agents working at the zed↔hKask seam]
-last_updated: 2026-09-28
-version: "1.5.1"
+last_updated: 2026-10-05
+version: "1.5.2"
 status: "Active"
 domain: "Integration"
 mds_categories: [domain, composition, trust, lifecycle]
@@ -247,10 +247,10 @@ views derive from the registry, so no companion list is maintained
 
 #### 2. Declare the credential boundary
 
-Use `Some(&[])` when the server reads no secrets, or `Some(&[...])` with only
-the exact credential environment names it consumes. New servers must not use
-`None`; that value means unfiltered backward-compatible access
-(`kask/crates/kask_bridge/src/mcp_servers.rs:37-49`).
+Declare `&[]` when the server reads no secrets, or `&[...]` with only the
+exact credential environment names it consumes — the allowlist is
+non-optional, so every server declares its credential boundary explicitly
+(`kask/crates/kask_bridge/src/mcp_servers.rs:37-44`).
 
 `filter_credentials_for_server` passes only the declared names and gives an
 unknown ID no credentials (`kask/crates/kask_bridge/src/mcp_servers.rs:623-645`).
@@ -260,10 +260,10 @@ Add an allowlist-alignment test beside the existing per-server tests, such as
 
 #### 3. Declare the non-secret configuration boundary
 
-Set `config_env` to `Some(&[])` or an exact list of non-secret variables emitted
+Set `config_env` to `&[]` or an exact list of non-secret variables emitted
 by `KaskSettings::mcp_env` (`kask/crates/kask_bridge/src/settings.rs:738`). The
 config filter also fails closed for unknown IDs
-(`kask/crates/kask_bridge/src/mcp_servers.rs:920-942`). Do not place database
+(`kask/crates/kask_bridge/src/mcp_servers.rs:929-946`). Do not place database
 passphrases or API keys in this list.
 
 The current `media` descriptor is the worked example: four credentials

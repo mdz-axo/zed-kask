@@ -37,16 +37,10 @@ pub struct BuiltinMcpServer {
     /// Credential env vars (secrets from the keychain) this server is allowed
     /// to receive. Only credentials in this list are injected into the
     /// server's child process env.
-    ///
-    /// `None` means "no credential filtering" (receives all credentials).
-    /// Prefer `Some(&[])` (receives no credentials) for new servers.
-    pub credentials: Option<&'static [&'static str]>,
+    pub credentials: &'static [&'static str],
     /// Config env vars (non-secret settings from `mcp_env()`) this server is
     /// allowed to receive. Only config vars in this list are injected.
-    ///
-    /// `None` means "no config filtering" (receives all config). Prefer
-    /// `Some(&[])` for new servers and add specific env vars as needed.
-    pub config_env: Option<&'static [&'static str]>,
+    pub config_env: &'static [&'static str],
 }
 
 /// The canonical list of built-in kask MCP servers.
@@ -57,8 +51,8 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
         id: "portfolio",
         binary: "hkask-mcp-portfolio",
         description: "Portfolio — general-purpose transaction-ledger portfolio store (stocks, prediction-event portfolios, CMP indices) with materialized daily holdings and returns views",
-        credentials: Some(&[]),
-        config_env: Some(&[
+        credentials: &[],
+        config_env: &[
             // Data dir — needed so `resolve_under_data_dir` in `store.rs`
             // resolves the portfolio DB (databases stay internal) under the
             // same root as the parent process. Without this, an operator
@@ -75,13 +69,13 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             // the artifacts dir as `portfolio-mcp/transactions/`; read by
             // the portfolio server's auto-loader (`server.rs:611`).
             "HKASK_TRANSACTIONS_DIR",
-        ]),
+        ],
     },
     BuiltinMcpServer {
         id: "companies",
         binary: "hkask-mcp-companies",
         description: "Companies — company research and filings",
-        credentials: Some(&[
+        credentials: &[
             // Each entry must have a read site in the crate (allowlist alignment).
             "HKASK_EODHD_API_KEY",
             "HKASK_FMP_API_KEY",
@@ -94,8 +88,8 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             // registry carried, so the key never arrived. Normalized on the
             // kask/.env spelling.
             "HKASK_SERPAPI_API_KEY",
-        ]),
-        config_env: Some(&[
+        ],
+        config_env: &[
             // Data dir — needed so the companies server resolves its
             // databases (fibo-cache, portfolio snapshot) under the same
             // root as the parent process. Databases stay internal.
@@ -109,20 +103,20 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             "HKASK_CHRONIC_STALENESS_DAYS",
             "HKASK_FERMI_DEFAULTS",
             "HKASK_INVESTOR_REQUIRED_RETURN",
-        ]),
+        ],
     },
     BuiltinMcpServer {
         id: "corpus",
         binary: "hkask-mcp-corpus",
         description: "Corpus — document corpus and QA generation",
-        credentials: Some(&[
+        credentials: &[
             // DB encryption passphrase — resolved server-side by
             // resolve_corpus_passphrase() in helpers.rs (fail-closed: an
             // unresolvable passphrase is permission_denied, never an
             // empty-key SQLCipher open).
             "HKASK_DB_PASSPHRASE",
-        ]),
-        config_env: Some(&[
+        ],
+        config_env: &[
             // Data dir — still needed for the skills-registry manifest
             // (`skills/registry/company-sources/`, read via
             // `resolve_under_data_dir` in `gather.rs`).
@@ -164,13 +158,13 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             // hkask_mcp_corpus.rs and std::env::var in corpus/embed/ocr.rs.
             // Without this, operator OCR model overrides are silently dropped.
             "HKASK_OCR_MODEL",
-        ]),
+        ],
     },
     BuiltinMcpServer {
         id: "curator",
         binary: "hkask-mcp-curator",
         description: "Curator — regulation cascade and algedonic signals",
-        credentials: Some(&[
+        credentials: &[
             // SQLCipher passphrase for the curator's sovereign `curator.db`.
             // Without this, `open_curator_stores` cannot decrypt the DB under
             // governed launch and every store-backed tool returns
@@ -179,8 +173,8 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             // `std::env::var` fallback, so the registry allowlist is the only
             // delivery path under governed launch.
             "HKASK_DB_PASSPHRASE",
-        ]),
-        config_env: Some(&[
+        ],
+        config_env: &[
             // NOTE: no email-transport vars here. The curator MCP server has
             // no email sink (it links `hkask-regulation`, not `hkask-email`,
             // and never reads `HKASK_SMTP_*`/`HKASK_MXROUTE_*`/etc.) — the
@@ -246,21 +240,21 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             // model configured" — the exact gap observed live 2026-09-04
             // (the allowlist must align with actual env-var reads).
             "HKASK_EMBEDDING_MODEL",
-        ]),
+        ],
     },
     BuiltinMcpServer {
         id: "kata-kanban",
         binary: "hkask-mcp-kata-kanban",
         description: "Kata Kanban — improvement kata board",
-        credentials: Some(&[
+        credentials: &[
             // `HKASK_DB_PASSPHRASE` is read via `ctx.credentials.get` in
             // `run()` for the SQLCipher store. `HKASK_KANBAN_DB` is a
             // non-secret DB path — moved to `config_env` and read via
             // `std::env::var` to match every other DB-path env var
             // (`HKASK_CURATOR_DB`, `HKASK_RESEARCH_DB`, etc.).
             "HKASK_DB_PASSPHRASE",
-        ]),
-        config_env: Some(&[
+        ],
+        config_env: &[
             // kata-kanban resolves its DB path via `resolve_under_data_dir`,
             // so it needs the data dir to match the parent process.
             "HKASK_DATA_DIR",
@@ -278,13 +272,13 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             // to defaults that diverge from the swarm server's.
             "HKASK_ABW_MAX_CREDITS",
             "HKASK_LOCAL_AGENTS_DIR",
-        ]),
+        ],
     },
     BuiltinMcpServer {
         id: "research",
         binary: "hkask-mcp-research",
         description: "Research — web research and paper search",
-        credentials: Some(&[
+        credentials: &[
             "HKASK_EXA_API_KEY",
             "HKASK_TAVILY_API_KEY",
             "HKASK_BRAVE_API_KEY",
@@ -294,8 +288,8 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             // the research SQLite DB. Without this, RSS and research-run
             // tools are silently unavailable under governed launch.
             "HKASK_DB_PASSPHRASE",
-        ]),
-        config_env: Some(&[
+        ],
+        config_env: &[
             // Data dir — needed so the research server's fallback
             // (`resolve_under_data_dir(mcp_server_db("research", "research"))`)
             // resolves under the same root as the parent process when
@@ -321,14 +315,14 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             // time. Without this, an operator override is silently stripped
             // under governed launch.
             "HKASK_RERANK_MODEL",
-        ]),
+        ],
     },
     BuiltinMcpServer {
         id: "scenarios",
         binary: "hkask-mcp-scenarios",
         description: "Scenarios — scenario planning and forecasting",
-        credentials: Some(&[]),
-        config_env: Some(&[
+        credentials: &[],
+        config_env: &[
             // Data dir — needed so the scenarios server's fallback
             // (`resolve_under_data_dir(MCP_DIR).join("scenarios")`) resolves
             // under the same root as the parent process when
@@ -336,14 +330,14 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             // `HKASK_DATA_DIR` override is silently dropped.
             "HKASK_DATA_DIR",
             "HKASK_SCENARIOS_DATA",
-        ]),
+        ],
     },
     BuiltinMcpServer {
         id: "prediction-markets",
         binary: "hkask-mcp-prediction-markets",
         description: "Prediction markets — annotated Polymarket/Kalshi market-implied probabilities",
-        credentials: Some(&["HKASK_FRED_API_KEY"]),
-        config_env: Some(&[
+        credentials: &["HKASK_FRED_API_KEY"],
+        config_env: &[
             // Data dir — needed so the prediction-markets server's fallback
             // (`resolve_under_data_dir(MCP_DIR).join("prediction-markets")`)
             // resolves under the same root as the parent process when
@@ -352,7 +346,7 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             "HKASK_PREDICTION_MARKETS_CACHE_TTL_SECS",
             "HKASK_PREDICTION_MARKETS_DATA",
             "HKASK_PREDICTION_MARKETS_BASE_EVENTS",
-        ]),
+        ],
     },
     BuiltinMcpServer {
         id: "swarm",
@@ -363,8 +357,8 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
         // (The separate HKASK_SWARM_MEMORY_PASSPHRASE was removed: two
         // passphrases for one system was a setup trap and a rotation
         // inconsistency — rotating one left the other unopenable.)
-        credentials: Some(&["HKASK_ABW_API_KEY", "HKASK_DB_PASSPHRASE"]),
-        config_env: Some(&[
+        credentials: &["HKASK_ABW_API_KEY", "HKASK_DB_PASSPHRASE"],
+        config_env: &[
             "HKASK_ABW_API_URL",
             "HKASK_ABW_MAX_CREDITS",
             "HKASK_ABW_CURATOR_CONSENT_DEFAULT",
@@ -421,21 +415,21 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             // to structural-only on every delegated turn.
             "HKASK_CLASSIFIER_MODEL",
             "HKASK_TEMPLATE_ROOT",
-        ]),
+        ],
     },
     BuiltinMcpServer {
         id: "training",
         binary: "hkask-mcp-training",
         description: "Training — LoRA training configuration and audit",
-        credentials: Some(&[
+        credentials: &[
             "RUNPOD_API_KEY",
             "HF_TOKEN",
             // DB encryption passphrase — read by the training server for its
             // job/adapter SQLite DB. Without this, the DB falls back to a
             // default or in-memory store under governed launch.
             "HKASK_DB_PASSPHRASE",
-        ]),
-        config_env: Some(&[
+        ],
+        config_env: &[
             "HKASK_TRAINING_HOST",
             "HKASK_TRAINING_CACHE_DIR",
             "HKASK_TEMPLATE_ROOT",
@@ -480,7 +474,7 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             "NEBIUS_GPU_PRESET",
             "NEBIUS_IMAGE_FAMILY",
             "NEBIUS_CLI_PATH",
-        ]),
+        ],
     },
     BuiltinMcpServer {
         id: "media",
@@ -490,14 +484,14 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
         // through the child-local MediaRouter, while SerpApi supplies structured
         // YouTube discovery metadata. yt-dlp is download-only and needs no key.
         // Vision/chat/embed cross the IPC bridge to zed's LanguageModelRegistry.
-        credentials: Some(&[
+        credentials: &[
             "OPENROUTER_API_KEY",
             "DEEPINFRA_API_KEY",
             "HKASK_SERPAPI_API_KEY",
             // Read by the Reduct connection-status tool and future cloud calls.
             "REDUCT_API_KEY",
-        ]),
-        config_env: Some(&[
+        ],
+        config_env: &[
             // IPC bridge socket — required for vision/chat/embed routing
             // through zed's LanguageModelRegistry (media generation is
             // child-local and does not use it).
@@ -524,7 +518,7 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             // this entry the per-server filter drops it and media embedding
             // fails with "no embedding model configured".
             "HKASK_EMBEDDING_MODEL",
-        ]),
+        ],
     },
     BuiltinMcpServer {
         id: "spreadsheet",
@@ -535,8 +529,8 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
         // HKASK_ARTIFACTS_DIR — the artifact root for immutable workbook
         // revisions resolves via `hkask_spreadsheet::artifact_store::
         // production_root` → `agent_paths::resolve_under_artifacts_dir`.
-        credentials: Some(&[]),
-        config_env: Some(&[
+        credentials: &[],
+        config_env: &[
             // Artifacts dir — needed so `production_root` resolves
             // `spreadsheet-mcp/workbooks/` under the same visible root as the
             // parent process. Without this, an operator
@@ -544,7 +538,7 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             // `filter_config_env_for_server` (the same trap the portfolio
             // entry documents).
             "HKASK_ARTIFACTS_DIR",
-        ]),
+        ],
     },
     BuiltinMcpServer {
         id: "experimentation",
@@ -555,8 +549,8 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
         // chain (same as curator/kata-kanban/research/swarm/training). A
         // missing passphrase fails startup visibly (Infrastructure), never
         // an empty-key open.
-        credentials: Some(&["HKASK_DB_PASSPHRASE"]),
-        config_env: Some(&[
+        credentials: &["HKASK_DB_PASSPHRASE"],
+        config_env: &[
             // Data dir — needed so the registry's default DB path
             // (`mcp_server_db("experimentation", "experimentation")` under the D28
             // layout) resolves under the same root as the parent process.
@@ -567,7 +561,7 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             // (the same non-secret DB-path pattern as HKASK_KANBAN_DB and
             // HKASK_RESEARCH_DB).
             "HKASK_EXPERIMENTATION_DB",
-        ]),
+        ],
     },
 ];
 
@@ -634,11 +628,8 @@ pub(crate) fn find_server(id: &str) -> Option<&'static BuiltinMcpServer> {
 }
 
 /// Filter a list of `(env_var, credential_url)` pairs to only those the
-/// specified server is allowed to receive.
-///
-/// When the server's `credentials` field is `Some(allowlist)`, only env vars
-/// in the allowlist are kept. When it's `None`, all credentials are kept
-/// (backward-compatible behavior for unaudited servers).
+/// specified server is allowed to receive — only env vars in the server's
+/// credential allowlist are kept.
 ///
 /// This limits the blast radius of a compromised MCP server — a server that
 /// only needs `OPENROUTER_API_KEY` won't receive `HKASK_SMTP_PASSWORD`.
@@ -656,14 +647,11 @@ pub fn filter_credentials_for_server(
         );
         return Vec::new();
     };
-    match server.credentials {
-        Some(allowlist) => credentials
-            .iter()
-            .filter(|(env_var, _)| allowlist.contains(&env_var.as_str()))
-            .cloned()
-            .collect(),
-        None => credentials.to_vec(),
-    }
+    credentials
+        .iter()
+        .filter(|(env_var, _)| server.credentials.contains(&env_var.as_str()))
+        .cloned()
+        .collect()
 }
 
 /// Tracks `(server_id, env_var)` pairs already warned about being missing.
@@ -932,10 +920,8 @@ async fn provision_default_passphrase(env_var: &str, cx: &gpui::AsyncApp) -> Opt
 }
 
 /// Filter a base config env map (`mcp_env()` output) to only the env vars the
-/// specified server is allowed to receive.
-///
-/// When the server's `config_env` field is `Some(allowlist)`, only env vars
-/// in the allowlist are kept. When it's `None`, all config is kept.
+/// specified server is allowed to receive — only env vars in the server's
+/// config allowlist are kept.
 ///
 /// This prevents the curator's email config (`HKASK_SMTP_USERNAME`,
 /// `HKASK_MXROUTE_SERVER`, etc.) from being injected into servers that don't
@@ -953,14 +939,11 @@ pub(crate) fn filter_config_env_for_server(
         );
         return std::collections::HashMap::new();
     };
-    match server.config_env {
-        Some(allowlist) => config_env
-            .iter()
-            .filter(|(env_var, _)| allowlist.contains(&env_var.as_str()))
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect(),
-        None => config_env.clone(),
-    }
+    config_env
+        .iter()
+        .filter(|(env_var, _)| server.config_env.contains(&env_var.as_str()))
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect()
 }
 
 #[cfg(test)]
@@ -984,8 +967,8 @@ mod tests {
         assert_eq!(server.binary, "hkask-mcp-experimentation");
         let expected_credentials: &[&str] = &["HKASK_DB_PASSPHRASE"];
         let expected_config: &[&str] = &["HKASK_DATA_DIR", "HKASK_EXPERIMENTATION_DB"];
-        assert_eq!(server.credentials, Some(expected_credentials));
-        assert_eq!(server.config_env, Some(expected_config));
+        assert_eq!(server.credentials, expected_credentials);
+        assert_eq!(server.config_env, expected_config);
     }
 
     #[test]
@@ -1098,7 +1081,7 @@ mod tests {
         // live reference-level fetches (FRED API). Optional — curated static
         // defaults used when absent.
         assert_eq!(
-            s.credentials.unwrap().to_vec(),
+            s.credentials.to_vec(),
             vec!["HKASK_FRED_API_KEY"],
             "prediction-markets credentials allowlist drifted — HKASK_FRED_API_KEY \
              is read in run() for live reference-level fetches; add a credential \
@@ -1112,7 +1095,7 @@ mod tests {
         // operator `HKASK_DATA_DIR` override is not silently dropped by
         // `filter_config_env_for_server`.
         assert_eq!(
-            s.config_env.unwrap().to_vec(),
+            s.config_env.to_vec(),
             vec![
                 "HKASK_DATA_DIR",
                 "HKASK_PREDICTION_MARKETS_CACHE_TTL_SECS",
@@ -1136,7 +1119,7 @@ mod tests {
         let s = server_by_id("portfolio");
         // Read sites: none — the portfolio store is provider-agnostic.
         assert_eq!(
-            s.credentials.unwrap().to_vec(),
+            s.credentials.to_vec(),
             Vec::<&str>::new(),
             "portfolio credentials allowlist drifted — the portfolio store is \
              provider-agnostic; add a credential only with a read site in \
@@ -1153,7 +1136,7 @@ mod tests {
         // (databases stay internal). Allowlisted so operator overrides are
         // not silently dropped by `filter_config_env_for_server`.
         assert_eq!(
-            s.config_env.unwrap().to_vec(),
+            s.config_env.to_vec(),
             vec![
                 "HKASK_DATA_DIR",
                 "HKASK_ARTIFACTS_DIR",
@@ -1173,7 +1156,7 @@ mod tests {
         let s = server_by_id("spreadsheet");
         // Read sites: none — spreadsheet mutation is provider-agnostic.
         assert_eq!(
-            s.credentials.unwrap().to_vec(),
+            s.credentials.to_vec(),
             Vec::<&str>::new(),
             "spreadsheet credentials allowlist drifted — the spreadsheet \
              capability is provider-agnostic; add a credential only with a \
@@ -1185,7 +1168,7 @@ mod tests {
         // Allowlisted so operator overrides are not silently dropped by
         // `filter_config_env_for_server`.
         assert_eq!(
-            s.config_env.unwrap().to_vec(),
+            s.config_env.to_vec(),
             vec!["HKASK_ARTIFACTS_DIR"],
             "spreadsheet config_env allowlist drifted — add an entry only \
              with a read site in hkask-mcp-spreadsheet (transitively \
@@ -1451,16 +1434,12 @@ mod tests {
     #[test]
     fn corpus_allowlist_excludes_deprecated_fal_ai() {
         let corpus = server_by_id("corpus");
-        let creds = corpus
-            .credentials
-            .expect("corpus has a credential allowlist");
+        let creds = corpus.credentials;
         assert!(
             !creds.contains(&"FALAI_API_KEY"),
             "FALAI_API_KEY must not be granted to the corpus server — fal.ai docres is removed"
         );
-        let cfg = corpus
-            .config_env
-            .expect("corpus has a config_env allowlist");
+        let cfg = corpus.config_env;
         assert!(
             !cfg.contains(&"HKASK_USE_FAL_DOCRES"),
             "HKASK_USE_FAL_DOCRES must not be granted to the corpus server — fal.ai docres is removed"
@@ -1489,7 +1468,7 @@ mod tests {
         // runs in the editor process, whose sink is wired from settings and
         // reads the SMTP password from the keychain via the editor's own
         // process env — never from MCP child delivery.
-        let creds = s.credentials.unwrap();
+        let creds = s.credentials;
         assert!(
             !creds.contains(&"HKASK_SMTP_PASSWORD"),
             "the curator server has no email sink — it must not receive \
@@ -1502,7 +1481,7 @@ mod tests {
              with no std::env::var fallback"
         );
         assert!(
-            !s.config_env.unwrap().is_empty(),
+            !s.config_env.is_empty(),
             "curator config_env should not be empty — the server reads the curator \
              DB path, memory-life and distillation model settings from it"
         );
@@ -1514,7 +1493,7 @@ mod tests {
         // reverts to the default 180 while the regulation sensor keeps
         // reporting the configured value — the exact misreport this check exists to end.
         assert!(
-            s.config_env.unwrap().contains(&"HKASK_MEMORY_LIFE_DAYS"),
+            s.config_env.contains(&"HKASK_MEMORY_LIFE_DAYS"),
             "curator must receive HKASK_MEMORY_LIFE_DAYS so the configured \
              decay constant reaches the store"
         );
@@ -1525,7 +1504,7 @@ mod tests {
         // (the live gap observed 2026-09-04).
         let s = server_by_id("curator");
         assert!(
-            s.config_env.unwrap().contains(&"HKASK_EMBEDDING_MODEL"),
+            s.config_env.contains(&"HKASK_EMBEDDING_MODEL"),
             "curator must receive HKASK_EMBEDDING_MODEL for semantic recall"
         );
     }
@@ -1535,7 +1514,7 @@ mod tests {
         let s = server_by_id("research");
         // ctx.credentials.get sites: EXA, TAVILY, BRAVE, SERPAPI, FIRECRAWL.
         // HKASK_DB_PASSPHRASE is read for the RSS store.
-        let creds = s.credentials.unwrap();
+        let creds = s.credentials;
         for key in [
             "HKASK_EXA_API_KEY",
             "HKASK_TAVILY_API_KEY",
@@ -1550,23 +1529,23 @@ mod tests {
             );
         }
         assert!(
-            s.config_env.unwrap().contains(&"HKASK_RESEARCH_DB"),
+            s.config_env.contains(&"HKASK_RESEARCH_DB"),
             "research reads HKASK_RESEARCH_DB via std::env::var but it is not allowlisted"
         );
         assert!(
-            s.config_env.unwrap().contains(&"HKASK_EMBEDDING_MODEL"),
+            s.config_env.contains(&"HKASK_EMBEDDING_MODEL"),
             "research reads HKASK_EMBEDDING_MODEL via model_constants::embedding_model() \
              but it is not allowlisted — the semantic duplication tier would silently \
              degrade to the shingle floor despite an operator override"
         );
         assert!(
-            s.config_env.unwrap().contains(&"HKASK_DATA_DIR"),
+            s.config_env.contains(&"HKASK_DATA_DIR"),
             "research resolves its default research DB via resolve_under_data_dir \
              but HKASK_DATA_DIR is not allowlisted — an operator override \
              would be silently dropped"
         );
         assert!(
-            s.config_env.unwrap().contains(&"HKASK_RERANK_MODEL"),
+            s.config_env.contains(&"HKASK_RERANK_MODEL"),
             "research reads HKASK_RERANK_MODEL via std::env::var (rerank model \
              resolution) but it is not allowlisted — an operator override \
              would be silently stripped under governed launch"
@@ -1578,7 +1557,7 @@ mod tests {
         let s = server_by_id("scenarios");
         // No secret read sites at all — the server is storage-only.
         assert!(
-            s.credentials.unwrap().is_empty(),
+            s.credentials.is_empty(),
             "scenarios has no credential read site; granting one would be an \
              unjustified secret grant"
         );
@@ -1588,7 +1567,7 @@ mod tests {
         // `HKASK_DATA_DIR` override is not silently dropped by
         // `filter_config_env_for_server`.
         assert_eq!(
-            s.config_env.unwrap().to_vec(),
+            s.config_env.to_vec(),
             vec!["HKASK_DATA_DIR", "HKASK_SCENARIOS_DATA"],
             "scenarios config_env allowlist drifted — HKASK_SCENARIOS_DATA is \
              its direct std::env::var read; HKASK_DATA_DIR is read transitively \
@@ -1603,7 +1582,7 @@ mod tests {
         // NEBIUS_SUBNET_ID, RUNPOD_API_KEY and HKASK_DB_PASSPHRASE. This is the
         // largest secret grant in the registry, so pin that every granted secret
         // has a read site.
-        let creds = s.credentials.unwrap();
+        let creds = s.credentials;
         assert!(
             creds.contains(&"HF_TOKEN"),
             "training reads HF_TOKEN but it is not allowlisted"
@@ -1624,7 +1603,7 @@ mod tests {
              it must not be in the credentials allowlist"
         );
         assert!(
-            s.config_env.unwrap().contains(&"RUNPOD_TEMPLATE_ID"),
+            s.config_env.contains(&"RUNPOD_TEMPLATE_ID"),
             "RUNPOD_TEMPLATE_ID was moved from credentials to config_env — \
              it must be in the config_env allowlist so the operator override \
              survives the governed launch's env_clear"
@@ -1639,14 +1618,14 @@ mod tests {
                  it must not be in the credentials allowlist"
             );
             assert!(
-                s.config_env.unwrap().contains(&id),
+                s.config_env.contains(&id),
                 "{id} was reclassified from credentials to config_env — \
                  it must be in the config_env allowlist so the operator override \
                  survives the governed launch's env_clear"
             );
         }
         assert!(
-            !s.config_env.unwrap().is_empty(),
+            !s.config_env.is_empty(),
             "training config_env should not be empty — it reads cache dir, host, \
              template root and GPU/pod config"
         );
@@ -1661,7 +1640,7 @@ mod tests {
     fn swarm_credentials_include_db_passphrase() {
         let s = server_by_id("swarm");
         assert!(
-            s.credentials.unwrap().contains(&"HKASK_DB_PASSPHRASE"),
+            s.credentials.contains(&"HKASK_DB_PASSPHRASE"),
             "HKASK_DB_PASSPHRASE is read by the swarm server (its memory DB is \
              one of the kask SQLCipher DBs) but is not allowlisted — the store \
              would fall back to the compiled-in default with no way for an \
@@ -1673,7 +1652,7 @@ mod tests {
     /// unallowlisted, so those overrides were silently dropped.
     #[test]
     fn swarm_config_env_includes_memory_store_and_a2a_toggle() {
-        let cfg = server_by_id("swarm").config_env.unwrap();
+        let cfg = server_by_id("swarm").config_env;
         for key in [
             "HKASK_SWARM_MEMORY_DB",
             "HKASK_SWARM_EMBEDDING_DIM",
@@ -1693,7 +1672,7 @@ mod tests {
     #[test]
     fn every_credential_grant_is_secret_shaped_or_documented() {
         for server in BUILT_IN_MCP_SERVERS {
-            for key in server.credentials.unwrap_or(&[]) {
+            for key in server.credentials {
                 let upper = key.to_uppercase();
                 assert!(
                     upper.contains("KEY")
@@ -1753,7 +1732,7 @@ mod tests {
             //   3. inference socket added
             //   4. inference timeout added
             let mut env = filter_config_env_for_server(server.id, &full_config);
-            for key in server.credentials.unwrap_or(&[]) {
+            for key in server.credentials {
                 if credential_keys.contains(&key) {
                     env.insert(key.to_string(), "secret-value".to_string());
                 }
@@ -1770,10 +1749,9 @@ mod tests {
             let allowed: std::collections::HashSet<&str> = std::collections::HashSet::from_iter(
                 server
                     .config_env
-                    .unwrap_or(&[])
                     .iter()
                     .copied()
-                    .chain(server.credentials.unwrap_or(&[]).iter().copied())
+                    .chain(server.credentials.iter().copied())
                     .chain(std::iter::once(
                         hkask_types::inference_ipc::INFERENCE_SOCKET_ENV,
                     ))
