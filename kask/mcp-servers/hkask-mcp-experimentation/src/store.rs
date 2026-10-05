@@ -18,14 +18,15 @@ use hkask_storage::database::types::DbError;
 use hkask_storage::database::value::{DbRow, DbValue};
 
 use crate::types::{
-    ExperimentationError, ExperimentationHealthSnapshot, ExperimentHealth, ExperimentRecord, FitnessRecord,
-    Prediction, STATUS_PROPOSED, STATUS_RESOLVED, STATUS_RUNNING, SelectionRecord,
+    ExperimentHealth, ExperimentRecord, ExperimentationError, ExperimentationHealthSnapshot,
+    FitnessRecord, Prediction, STATUS_PROPOSED, STATUS_RESOLVED, STATUS_RUNNING, SelectionRecord,
     VERDICT_REJECTED, VERDICT_SELECTED, VariantRecord,
 };
 
 /// Serialize a column value as canonical JSON text.
 fn value_column<T: serde::Serialize>(value: &T) -> Result<String, ExperimentationError> {
-    serde_json::to_string(value).map_err(|error| ExperimentationError::Serialization(error.to_string()))
+    serde_json::to_string(value)
+        .map_err(|error| ExperimentationError::Serialization(error.to_string()))
 }
 
 /// Optional key columns: an absent key is NULL (SQLite treats NULLs as
@@ -272,7 +273,9 @@ impl ExperimentationStore {
         )?;
         row.map(|row| experiment_from_row(&row))
             .transpose()?
-            .ok_or_else(|| ExperimentationError::ExperimentNotFound(format!("experiment_key {key}")))
+            .ok_or_else(|| {
+                ExperimentationError::ExperimentNotFound(format!("experiment_key {key}"))
+            })
     }
 
     // ── Variants ───────────────────────────────────────────────────────
@@ -388,7 +391,10 @@ impl ExperimentationStore {
     /// The variant's ancestry chain, oldest parent first, ending with the
     /// variant itself (§P8.1 lineage). Cycle-guarded: a malformed parent loop
     /// surfaces as an error, never an infinite walk.
-    pub fn variant_ancestry(&self, variant_id: &str) -> Result<Vec<VariantRecord>, ExperimentationError> {
+    pub fn variant_ancestry(
+        &self,
+        variant_id: &str,
+    ) -> Result<Vec<VariantRecord>, ExperimentationError> {
         let mut chain = Vec::new();
         let mut current = Some(variant_id.to_string());
         while let Some(id) = current {
@@ -908,11 +914,17 @@ mod tests {
         let error = store
             .record_selection(&experiment.id, VERDICT_SELECTED, None, &[], None)
             .expect_err("selected without a variant");
-        assert!(matches!(error, ExperimentationError::SelectedWithoutVariant));
+        assert!(matches!(
+            error,
+            ExperimentationError::SelectedWithoutVariant
+        ));
         let error = store
             .record_selection(&experiment.id, VERDICT_REJECTED, None, &[], None)
             .expect_err("rejected without reasons");
-        assert!(matches!(error, ExperimentationError::RejectedWithoutReasons));
+        assert!(matches!(
+            error,
+            ExperimentationError::RejectedWithoutReasons
+        ));
         let error = store
             .record_selection(&experiment.id, "maybe", None, &["reason".into()], None)
             .expect_err("unknown verdict");
@@ -1054,7 +1066,7 @@ mod tests {
 
     #[test]
     fn snapshot_stuck_and_void_exclusion_rules() {
-        use crate::types::{ExperimentationHealthSnapshot, ExperimentHealth};
+        use crate::types::{ExperimentHealth, ExperimentationHealthSnapshot};
         let old = (chrono::Utc::now() - chrono::Duration::days(30)).to_rfc3339();
         let fresh = chrono::Utc::now().to_rfc3339();
         let snapshot = ExperimentationHealthSnapshot {

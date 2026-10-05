@@ -270,7 +270,8 @@ pub struct CyberneticsLoop {
     /// count in the message cannot name WHICH experiments to unstick).
     /// The sensor registry holds an `ExperimentationHealthSensor` wrapping the
     /// same source for the sense phase.
-    experimentation_health_source: Option<Arc<dyn crate::sensor_provider::ExperimentationHealthSource>>,
+    experimentation_health_source:
+        Option<Arc<dyn crate::sensor_provider::ExperimentationHealthSource>>,
 }
 
 impl CyberneticsLoop {

@@ -107,9 +107,13 @@ impl super::CyberneticsLoop {
         let experimentation_stuck_related = recovery_signal
             .is_some_and(|signal| signal.metric == SignalMetric::ExperimentationStuckExperiments)
             || alert.domain.contains("experimentation_stuck");
-        if experimentation_stuck_related && let Some(source) = self.experimentation_health_source.as_ref() {
+        if experimentation_stuck_related
+            && let Some(source) = self.experimentation_health_source.as_ref()
+        {
             match source
-                .stuck_running_experiments(crate::sensor_provider::DEFAULT_EXPERIMENTATION_STALE_DAYS)
+                .stuck_running_experiments(
+                    crate::sensor_provider::DEFAULT_EXPERIMENTATION_STALE_DAYS,
+                )
                 .await
             {
                 Ok(ids) if !ids.is_empty() => {

@@ -8,7 +8,7 @@
 //! lifecycle — the in-process rehearsal of the §P8.5 run-one-through.
 
 use hkask_mcp_experimentation::server::{
-    ExperimentationServer, ExperimentProposeRequest, FitnessRecordRequest, LineageReadRequest,
+    ExperimentProposeRequest, ExperimentationServer, FitnessRecordRequest, LineageReadRequest,
     PopulationQueryRequest, SelectionRecordRequest, VariantRegisterRequest,
 };
 use hkask_mcp_experimentation::store::ExperimentationStore;

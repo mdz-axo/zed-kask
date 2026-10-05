@@ -60,7 +60,9 @@ impl RegulationReason {
             Self::ModelUnavailable => "model_unavailable",
             Self::ContextServerFleetDegraded => "context_server_fleet_degraded",
             Self::OcrSilentFailuresExceeded => "ocr_silent_failures_exceeded",
-            Self::ExperimentationStuckExperimentsExceeded => "experimentation_stuck_experiments_exceeded",
+            Self::ExperimentationStuckExperimentsExceeded => {
+                "experimentation_stuck_experiments_exceeded"
+            }
         }
     }
 }

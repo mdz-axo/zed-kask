@@ -48,7 +48,9 @@ pub fn map_experimentation_error(error: ExperimentationError) -> McpToolError {
         | ExperimentationError::SelectedWithoutVariant
         | ExperimentationError::RejectedWithoutReasons
         | ExperimentationError::Empty(_)
-        | ExperimentationError::BadTimestamp(_) => McpToolError::invalid_argument(error.to_string()),
+        | ExperimentationError::BadTimestamp(_) => {
+            McpToolError::invalid_argument(error.to_string())
+        }
         ExperimentationError::BudgetExhausted(..) => {
             McpToolError::new(McpErrorKind::FailedPrecondition, error.to_string())
         }
@@ -192,17 +194,21 @@ impl ExperimentationServer {
         execute_tool(self, "experiment_propose", async {
             require_non_empty("hypothesis", &hypothesis)?;
             if !LAYERS.contains(&layer.as_str()) {
-                return Err(map_experimentation_error(ExperimentationError::UnknownLayer(layer)));
+                return Err(map_experimentation_error(
+                    ExperimentationError::UnknownLayer(layer),
+                ));
             }
             if genotype_refs.is_empty() || genotype_refs.iter().any(|r| r.trim().is_empty()) {
-                return Err(map_experimentation_error(ExperimentationError::Empty("genotype_refs")));
+                return Err(map_experimentation_error(ExperimentationError::Empty(
+                    "genotype_refs",
+                )));
             }
             require_non_empty("fitness_fn", &fitness_fn)?;
             require_non_empty("prediction.claim", &prediction.claim)?;
             if !(0.0..=1.0).contains(&prediction.confidence) {
-                return Err(map_experimentation_error(ExperimentationError::ConfidenceOutOfRange(
-                    prediction.confidence,
-                )));
+                return Err(map_experimentation_error(
+                    ExperimentationError::ConfidenceOutOfRange(prediction.confidence),
+                ));
             }
             // §P8.9 step 2 (D-1: enforce): the declared budget must carry a
             // machine-readable run ceiling — the Layer-A set point.
@@ -211,7 +217,9 @@ impl ExperimentationServer {
                 .and_then(serde_json::Value::as_u64)
                 .filter(|value| *value > 0)
                 .ok_or_else(|| {
-                    map_experimentation_error(ExperimentationError::BudgetMissingMaxRuns(budget.to_string()))
+                    map_experimentation_error(ExperimentationError::BudgetMissingMaxRuns(
+                        budget.to_string(),
+                    ))
                 })?;
             let record = self
                 .store
@@ -279,12 +287,14 @@ impl ExperimentationServer {
             require_non_empty("experiment_id", &experiment_id)?;
             require_non_empty("variant_id", &variant_id)?;
             if runs.is_empty() || runs.iter().any(|r| r.trim().is_empty()) {
-                return Err(map_experimentation_error(ExperimentationError::Empty("runs")));
+                return Err(map_experimentation_error(ExperimentationError::Empty(
+                    "runs",
+                )));
             }
             if run_count == 0 {
-                return Err(map_experimentation_error(ExperimentationError::RunCountInvalid(
-                    run_count,
-                )));
+                return Err(map_experimentation_error(
+                    ExperimentationError::RunCountInvalid(run_count),
+                ));
             }
             let record = self
                 .store
@@ -411,16 +421,16 @@ impl ExperimentationServer {
         execute_tool(self, "population_query", async {
             if let Some(value) = &layer {
                 if !LAYERS.contains(&value.as_str()) {
-                    return Err(map_experimentation_error(ExperimentationError::UnknownLayer(
-                        value.clone(),
-                    )));
+                    return Err(map_experimentation_error(
+                        ExperimentationError::UnknownLayer(value.clone()),
+                    ));
                 }
             }
             if let Some(value) = &status {
                 if !STATUSES.contains(&value.as_str()) {
-                    return Err(map_experimentation_error(ExperimentationError::UnknownStatus(
-                        value.clone(),
-                    )));
+                    return Err(map_experimentation_error(
+                        ExperimentationError::UnknownStatus(value.clone()),
+                    ));
                 }
             }
             if let Some(value) = &created_since {
