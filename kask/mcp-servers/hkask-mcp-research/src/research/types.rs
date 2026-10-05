@@ -829,6 +829,13 @@ pub(crate) struct BrowseOutput {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderHealthEntry {
     pub kind: String,
+    /// Which pool surface this registration serves (search / extract /
+    /// browse / find_similar). The same provider kind registers once per
+    /// surface it serves (firecrawl: search+extract+browse; tavily and exa:
+    /// search+browse; serpapi: general+scholar+books engines) — without
+    /// the label, the ping's health list shows indistinguishable
+    /// duplicate kinds (mcp-tool-review R-03).
+    pub surface: String,
     pub healthy: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,

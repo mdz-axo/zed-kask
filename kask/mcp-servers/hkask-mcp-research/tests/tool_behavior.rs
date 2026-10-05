@@ -109,6 +109,7 @@ impl WebSearchPort for NoCredentialsPool {
     async fn health_check(&self) -> Vec<ProviderHealthEntry> {
         vec![ProviderHealthEntry {
             kind: "stub".to_string(),
+            surface: "search".to_string(),
             healthy: true,
             error: None,
         }]

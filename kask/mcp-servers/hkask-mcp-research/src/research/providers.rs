@@ -861,28 +861,29 @@ impl ProviderPool {
     pub async fn health_check_all(&self) -> Vec<ProviderHealthEntry> {
         let mut entries = Vec::new();
         macro_rules! health_them {
-            ($provs:expr) => {
+            ($surface:expr, $provs:expr) => {
                 for p in $provs {
                     let k = p.kind().to_string();
                     let r = p.health().await;
-                    entries.push(health_entry(k, r));
+                    entries.push(health_entry(k, $surface, r));
                 }
             };
         }
-        health_them!(&self.search_providers);
-        health_them!(&self.extract_providers);
-        health_them!(&self.browse_providers);
+        health_them!("search", &self.search_providers);
+        health_them!("extract", &self.extract_providers);
+        health_them!("browse", &self.browse_providers);
         if let Some(ref exa) = self.exa {
             let r = WebSearchProvider::health(exa).await;
-            entries.push(health_entry("exa-similar".into(), r));
+            entries.push(health_entry("exa-similar".into(), "find_similar", r));
         }
         entries
     }
 }
 
-fn health_entry(kind: String, result: Result<(), WebError>) -> ProviderHealthEntry {
+fn health_entry(kind: String, surface: &str, result: Result<(), WebError>) -> ProviderHealthEntry {
     ProviderHealthEntry {
         kind,
+        surface: surface.to_string(),
         healthy: result.is_ok(),
         error: result.err().map(|e| sanitize_health_error(&e.to_string())),
     }
@@ -1116,6 +1117,88 @@ mod tests {
         async fn health(&self) -> Result<(), WebError> {
             Ok(())
         }
+    }
+
+    /// Extract-surface stub — same fixed kind, for the pool-surface pin.
+    struct StubExtractProvider {
+        kind: &'static str,
+    }
+
+    #[async_trait]
+    impl WebExtractProvider for StubExtractProvider {
+        fn kind(&self) -> &str {
+            self.kind
+        }
+        async fn extract(
+            &self,
+            _url: &str,
+            _opts: &ExtractOptions,
+        ) -> Result<ExtractedContent, WebError> {
+            Err(WebError::NoProvider)
+        }
+        async fn health(&self) -> Result<(), WebError> {
+            Ok(())
+        }
+    }
+
+    /// Browse-surface stub — same fixed kind, for the pool-surface pin.
+    struct StubBrowseProvider {
+        kind: &'static str,
+    }
+
+    #[async_trait]
+    impl WebBrowseProvider for StubBrowseProvider {
+        fn kind(&self) -> &str {
+            self.kind
+        }
+        async fn browse(
+            &self,
+            _url: &str,
+            _instruction: &str,
+            _timeout: std::time::Duration,
+        ) -> Result<BrowseResult, WebError> {
+            Err(WebError::NoProvider)
+        }
+        async fn health(&self) -> Result<(), WebError> {
+            Ok(())
+        }
+    }
+
+    /// R-03 pin (mcp-tool-review): health entries carry the pool surface
+    /// they serve. The same provider kind registers once per surface it
+    /// serves (firecrawl: search+extract+browse; tavily/exa: search+browse)
+    /// — without the label, the ping's health list shows indistinguishable
+    /// duplicate kinds and the caller cannot tell which registration is
+    /// unhealthy.
+    #[tokio::test]
+    async fn health_entries_label_the_pool_surface() {
+        let pool = ProviderPool::new(
+            vec![Box::new(StubProvider { kind: "stub" })],
+            vec![Box::new(StubExtractProvider { kind: "stub" })],
+            vec![Box::new(StubBrowseProvider { kind: "stub" })],
+            None,
+            None,
+            None,
+        );
+        let entries = pool.health_check_all().await;
+        assert_eq!(entries.len(), 3, "one entry per surface registration");
+        let surfaces: Vec<&str> = entries.iter().map(|e| e.surface.as_str()).collect();
+        assert!(surfaces.contains(&"search"), "surfaces: {surfaces:?}");
+        assert!(surfaces.contains(&"extract"), "surfaces: {surfaces:?}");
+        assert!(surfaces.contains(&"browse"), "surfaces: {surfaces:?}");
+        // The distinguishability contract: every (kind, surface) pair is
+        // unique — three same-kind registrations are three distinct rows.
+        let mut pairs: Vec<(&str, &str)> = entries
+            .iter()
+            .map(|e| (e.kind.as_str(), e.surface.as_str()))
+            .collect();
+        pairs.sort();
+        pairs.dedup();
+        assert_eq!(
+            pairs.len(),
+            entries.len(),
+            "every (kind, surface) pair is unique: {pairs:?}"
+        );
     }
 
     /// `pick_best_provider` must select the lowest-cost, fastest-latency
