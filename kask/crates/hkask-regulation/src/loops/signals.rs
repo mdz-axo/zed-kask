@@ -65,7 +65,7 @@ pub enum SignalMetric {
     GoalExpiredCount,
     /// Metacognition critical alert count (Curation Loop 5)
     MetacognitionCriticalAlerts,
-    /// Stuck evolution-experiment count (Cybernetics Loop 6; §P8.9 step 1).
+    /// Stuck experimentation-registry experiment count (Cybernetics Loop 6; §P8.9 step 1).
     /// Running experiments unresolved past the stale set point (D-3:
     /// 7 days) or with their whole declared budget recorded but no verdict.
     /// Sensed from the experimentation registry's health snapshot via the bridge

@@ -810,12 +810,12 @@ mod tests {
         assert!(sensor.sense().await.is_none());
     }
 
-    struct MockEvolutionSource {
+    struct MockExperimentationSource {
         stuck: Result<Vec<String>, String>,
     }
 
     #[async_trait::async_trait]
-    impl ExperimentationHealthSource for MockEvolutionSource {
+    impl ExperimentationHealthSource for MockExperimentationSource {
         async fn stuck_running_experiments(&self, _stale_days: u32) -> Result<Vec<String>, String> {
             self.stuck.clone()
         }
@@ -827,7 +827,7 @@ mod tests {
     #[tokio::test]
     async fn evolution_sensor_signals_stuck_experiments() {
         let sensor = ExperimentationHealthSensor::new(
-            Arc::new(MockEvolutionSource {
+            Arc::new(MockExperimentationSource {
                 stuck: Ok(vec!["exp_stale".to_string(), "exp_spent".to_string()]),
             }),
             DEFAULT_EXPERIMENTATION_STALE_DAYS,
@@ -843,7 +843,7 @@ mod tests {
     #[tokio::test]
     async fn evolution_sensor_zero_when_healthy() {
         let sensor = ExperimentationHealthSensor::new(
-            Arc::new(MockEvolutionSource {
+            Arc::new(MockExperimentationSource {
                 stuck: Ok(Vec::new()),
             }),
             DEFAULT_EXPERIMENTATION_STALE_DAYS,
@@ -857,9 +857,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn evolution_sensor_returns_none_on_broken_source() {
+    async fn experimentation_sensor_returns_none_on_broken_source() {
         let sensor = ExperimentationHealthSensor::new(
-            Arc::new(MockEvolutionSource {
+            Arc::new(MockExperimentationSource {
                 stuck: Err("registry unreadable".to_string()),
             }),
             DEFAULT_EXPERIMENTATION_STALE_DAYS,
