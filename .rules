@@ -23,6 +23,7 @@
 * No `mod.rs` files — use `src/module.rs` instead (CI: `check-no-mod-rs.sh`, fork surface).
 * New crates: specify `[lib] path = "..."` in `Cargo.toml` (e.g., `gpui.rs`, not `lib.rs`).
 * Build: use `./script/clippy` instead of `cargo clippy`.
+* `str::split_once` CONSUMES the delimiter: `"500ms".split_once('m')` yields `("500", "s")` — the delimiter is in neither half. For (prefix, suffix) extraction use `find()` + `split_at()`. Hit live: retry-after parsing silently read 500ms as 500s.
 
 # Timers in tests
 
@@ -131,6 +132,8 @@ Use `cx.background_executor().timer(duration).await` in GPUI tests, not `smol::T
 * LLM-improves-against-LLM-scored-target loops can game the scorer. Three mitigations required: ground in real sources, preserve load-bearing properties, validate against external ground truth.
 * `grep -q` exits at the FIRST match — piping a large body into it under `set -o pipefail` SIGPIPEs the writer, and `if !` flips a successful match into a false flag (2026-09-10: ~35% per check on 41KB bodies, `PIPESTATUS: 141 0`). Feed grep from a file or herestring, never `printf | grep -q` on large strings.
 * Truncated sweep output silently hides results — a `| head` cap hid five stale doc claims, a byte-capped tool display hid ~14 more, and a single-line grep missed a multi-line call (2026-09-18). Count matches first (`grep -c`) and consume the full list, or page the saved output file; never report a sweep as clean from capped output.
+* `cp` onto a running executable fails ETXTBSY ("text file busy") — write to a `.new` file then `mv` (atomic rename): the running process keeps its inode, new execs pick up the new binary.
+* `pgrep -f` self-matches the invoking shell's own command text — match with a bracket pattern (`pgrep -f "run-conversion-[p]arallel"`) or an exact PID, never the literal command string.
 * Never read a file in the same parallel tool batch that edits it — the read races the write and returns pre-edit content (observed 2× 2026-09-10). Sequence reads and edits of the same file across batches.
 * In a shared tree, check the staged index (`git diff --cached --stat`) before any `git commit` — the operator's staged work rode into the agent's deletion commit under an unrelated message (2026-09-10, commit 3cf1f7e4a5).
 * Pathspec-limited commits (`git commit -m "..." -- <files>`) are the default in a shared tree — checking the index is necessary but not sufficient; a bare `git commit` sweeps whatever is staged into your message.
@@ -152,6 +155,7 @@ Use `cx.background_executor().timer(duration).await` in GPUI tests, not `smol::T
 # Concurrent-edit trap
 
 * A build-breaking half-edit left in the tree (e.g. an API change without its call sites) blocks every other agent's validation and is a release blocker, not work-in-progress. If you cannot finish a refactor in one pass, do not leave the tree broken — gate it, branch it, or revert it.
+* Inherited committed code must re-pass the FULL gate (`./script/clippy --deny warnings` over the touched scope), not just its own tests — a handoff that calls uncommitted-then-committed changes "validated" on tests alone ships clippy failures (convert.rs charset `and_then`, 2026-10-02).
 
 # Repository fragmentation (absolute prohibition)
 
