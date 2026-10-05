@@ -40,6 +40,7 @@ pub(crate) fn map_host_provider_error(e: HostProviderError) -> McpToolError {
             McpToolError::invalid_argument(message)
         }
         HostProviderError::MissingPrecondition(_) => McpToolError::failed_precondition(message),
+        HostProviderError::JobNotFound(_) => McpToolError::not_found(message),
         HostProviderError::JobFailed(_) | HostProviderError::Backend(_) => {
             McpToolError::internal(message)
         }
@@ -84,5 +85,42 @@ pub(crate) fn map_job_store_error(e: JobStoreError) -> McpToolError {
         JobStoreError::Storage(_) | JobStoreError::Serialization(_) => {
             McpToolError::internal(message)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// TR-01 pin (mcp-tool-review): an unknown job id classifies as
+    /// `not_found` — the caller named a job that was never created, so it
+    /// must never read as a server fault (`[internal] Training job failed:
+    /// No pod found for job ...`, live 2026-10-05).
+    #[test]
+    fn job_not_found_maps_to_not_found() {
+        let error = HostProviderError::JobNotFound("bogus-job-id".to_string());
+        let mapped = map_host_provider_error(error);
+        assert_eq!(
+            mapped.kind,
+            hkask_types::McpErrorKind::NotFound,
+            "an unknown job id is the caller's error: {mapped:?}"
+        );
+        assert!(
+            mapped.message.contains("bogus-job-id"),
+            "the refusal names the job: {mapped:?}"
+        );
+    }
+
+    /// Real job failures keep their classification — the new variant did
+    /// not widen the internal bucket's boundary.
+    #[test]
+    fn job_failures_still_map_to_internal() {
+        let error = HostProviderError::JobFailed("pod crashed".to_string());
+        let mapped = map_host_provider_error(error);
+        assert_eq!(
+            mapped.kind,
+            hkask_types::McpErrorKind::Internal,
+            "a genuine job failure stays internal: {mapped:?}"
+        );
     }
 }

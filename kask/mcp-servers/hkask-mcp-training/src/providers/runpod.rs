@@ -1093,9 +1093,7 @@ impl TrainingHost for RunpodHost {
         let pod_id = match pod_id {
             Some(id) => id,
             None => {
-                return Err(HostProviderError::JobFailed(format!(
-                    "No pod found for job {job_id}"
-                )));
+                return Err(HostProviderError::JobNotFound(job_id.to_string()));
             }
         };
 

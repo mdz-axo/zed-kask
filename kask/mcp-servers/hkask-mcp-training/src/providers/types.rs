@@ -585,6 +585,13 @@ pub(crate) enum HostProviderError {
     NotConfigured(String),
     #[error("Training job failed: {0}")]
     JobFailed(String),
+    /// The caller named a job id this provider never created (or whose pod
+    /// mapping is gone). A caller error, not a job failure — maps to
+    /// `not_found` so an unknown id never reads as a server fault
+    /// (mcp-tool-review TR-01: a bogus job id previously surfaced as
+    /// `[internal] Training job failed: No pod found for job ...`).
+    #[error("No pod found for job {0} — unknown job id")]
+    JobNotFound(String),
     #[error("Invalid configuration: {0}")]
     InvalidConfig(String),
     #[error("Dataset error: {0}")]
