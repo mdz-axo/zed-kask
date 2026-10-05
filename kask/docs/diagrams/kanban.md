@@ -112,8 +112,8 @@ the resolution but **retains** the row across restarts; only `kanban_goal_memory
 — after the production turn-ingestion path confirms the scored outcome is stored in
 curator memory — prunes it. Failed ingestion or acknowledgment leaves the row retryable.
 Scoring is idempotent for the same outcome and rejects a conflicting outcome
-(`goals.rs:275`). A judge verdict must judge every criterion exactly once; the
-verdict history is the learning record (`goals.rs:232`, `goals.rs:241`). The Brier score applies
+(`goals.rs:303`). A judge verdict must judge every criterion exactly once; the
+verdict history is the learning record (`goals.rs:247`, `goals.rs:260`). The Brier score applies
 the intake prediction to the realized outcome; no prediction stays `None` — a
 synthetic 0 would read as perfect calibration (`GoalResolution`,
 `types/goal.rs:161-175`).
@@ -133,8 +133,8 @@ stateDiagram-v2
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-STATE-GOAL-LIFECYCLE
-verified_date: 2026-09-28
-verified_against: kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/goals.rs (goal_create L51, goal_get L125, goal_judge L185, goal_score L258, goal_acknowledge_memory L319, transition_goal L341, goal_prune L369, conflicting-outcome rejection L275, judge-every-criterion L232/L241, outbox retention doc L1-23); kask/crates/hkask-storage/src/hmem.rs (update_value_atomic L429); kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/types/goal.rs (Goal L20, GoalVerdict L143, GoalResolution L161)
+verified_date: 2026-10-05
+verified_against: kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/goals.rs (goal_create L52, goal_get L125, goal_row L138 — the identity read every lifecycle lookup resolves through, goal_judge L216, goal_score L289, goal_acknowledge_memory L350, transition_goal L371, goal_prune L400, conflicting-outcome rejection L303, judge-every-criterion L247/L260, verdict append L274, outbox retention doc L1-23); kask/crates/hkask-storage/src/hmem.rs (update_value_atomic L429); kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/types/goal.rs (Goal L20, GoalVerdict L143, GoalResolution L161)
 status: VERIFIED
 -->
 

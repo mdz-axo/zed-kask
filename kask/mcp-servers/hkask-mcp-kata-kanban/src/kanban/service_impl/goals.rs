@@ -158,6 +158,16 @@ impl KanbanService {
         Ok(matching.into_iter().next())
     }
 
+    /// The typed not-found for a goal lifecycle lookup — one construction
+    /// for every row-absent arm (`transition_goal`'s resolve and its
+    /// atomic-update tail).
+    fn goal_not_found(goal_id: GoalID) -> KanbanError {
+        KanbanError::NotFound(hkask_types::NotFound {
+            entity_type: "goal".to_string(),
+            id: goal_id.to_string(),
+        })
+    }
+
     /// List all goals for a given owner, newest first.
     ///
     /// pre:  owner is a valid WebID
@@ -368,12 +378,7 @@ impl KanbanService {
         let attribute = self
             .goal_row(goal_id)?
             .map(|(row, _)| row.attribute)
-            .ok_or_else(|| {
-                KanbanError::NotFound(hkask_types::NotFound {
-                    entity_type: "goal".to_string(),
-                    id: goal_id.to_string(),
-                })
-            })?;
+            .ok_or_else(|| Self::goal_not_found(goal_id))?;
         self.store
             .update_value_atomic(GOAL_ENTITY, &attribute, |value| {
                 let current: Goal = serde_json::from_value(value).map_err(|error| {
@@ -388,12 +393,7 @@ impl KanbanService {
                     })?;
                 Ok::<_, KanbanError>((value, goal))
             })?
-            .ok_or_else(|| {
-                KanbanError::NotFound(hkask_types::NotFound {
-                    entity_type: "goal".to_string(),
-                    id: goal_id.to_string(),
-                })
-            })
+            .ok_or_else(|| Self::goal_not_found(goal_id))
     }
 
     /// Delete the one durable goal row. A missing row is already acknowledged.

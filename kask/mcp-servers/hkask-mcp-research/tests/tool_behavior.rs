@@ -1075,6 +1075,22 @@ fn deep_search_request() -> SearchRequest {
     }
 }
 
+/// The run-scoped stub search every run-ledger test issues — one request
+/// shape, varying only the strategy and the run it belongs to.
+fn run_scoped_stub_search(strategy: Option<&str>, run_id: &str) -> SearchRequest {
+    SearchRequest {
+        query: "stub query".to_string(),
+        num_results: Some(10),
+        include_domains: None,
+        exclude_domains: None,
+        freshness: None,
+        strategy: strategy.map(|s| s.to_string()),
+        intent: None,
+        provider: None,
+        run_id: Some(run_id.to_string()),
+    }
+}
+
 /// expect: A provider that ignores the requested domain filters cannot return
 /// off-domain search hits to the primary-disclosure consumer.
 #[tokio::test]
@@ -1824,17 +1840,7 @@ async fn web_search_with_run_id_records_sources_server_side() {
     let run_id = begun["run_id"].as_str().expect("run_id").to_string();
 
     let output = parse(&ok(server
-        .web_search(Parameters(SearchRequest {
-            query: "stub query".to_string(),
-            num_results: Some(10),
-            include_domains: None,
-            exclude_domains: None,
-            freshness: None,
-            strategy: Some("deep".to_string()),
-            intent: None,
-            provider: None,
-            run_id: Some(run_id.clone()),
-        }))
+        .web_search(Parameters(run_scoped_stub_search(Some("deep"), &run_id)))
         .await));
     assert_eq!(
         output["run_ledger"]["recorded"].as_u64(),
@@ -1847,17 +1853,7 @@ async fn web_search_with_run_id_records_sources_server_side() {
     // A repeat call in the same run keeps the first observation: the note
     // names the held rows instead of reporting a bare zero.
     let repeat = parse(&ok(server
-        .web_search(Parameters(SearchRequest {
-            query: "stub query".to_string(),
-            num_results: Some(10),
-            include_domains: None,
-            exclude_domains: None,
-            freshness: None,
-            strategy: Some("deep".to_string()),
-            intent: None,
-            provider: None,
-            run_id: Some(run_id.clone()),
-        }))
+        .web_search(Parameters(run_scoped_stub_search(Some("deep"), &run_id)))
         .await));
     assert_eq!(
         repeat["run_ledger"]["recorded"].as_u64(),
@@ -1898,17 +1894,7 @@ async fn web_search_with_unknown_run_id_surfaces_ledger_note() {
     let server = make_server_with_pool_and_db(Arc::new(FixedResultsPool), Some(research_db_pool()));
 
     let output = parse(&ok(server
-        .web_search(Parameters(SearchRequest {
-            query: "stub query".to_string(),
-            num_results: Some(10),
-            include_domains: None,
-            exclude_domains: None,
-            freshness: None,
-            strategy: None,
-            intent: None,
-            provider: None,
-            run_id: Some("deadbeefdeadbeef".to_string()),
-        }))
+        .web_search(Parameters(run_scoped_stub_search(None, "deadbeefdeadbeef")))
         .await));
     let note = &output["run_ledger"];
     assert_eq!(note["recorded"].as_u64(), Some(0), "note: {note}");
@@ -1964,17 +1950,7 @@ async fn annotate_verified_without_basis_is_invalid_argument() {
 
     // Record a source the server actually served.
     let search = parse(&ok(server
-        .web_search(Parameters(SearchRequest {
-            query: "stub query".to_string(),
-            num_results: Some(10),
-            include_domains: None,
-            exclude_domains: None,
-            freshness: None,
-            strategy: None,
-            intent: None,
-            provider: None,
-            run_id: Some(run_id.clone()),
-        }))
+        .web_search(Parameters(run_scoped_stub_search(None, &run_id)))
         .await));
     let served_url = search["results"][0]["url"]
         .as_str()
@@ -2008,17 +1984,7 @@ async fn annotate_verified_on_server_recorded_source_roundtrips() {
     let run_id = begun["run_id"].as_str().expect("run_id").to_string();
 
     let search = parse(&ok(server
-        .web_search(Parameters(SearchRequest {
-            query: "stub query".to_string(),
-            num_results: Some(10),
-            include_domains: None,
-            exclude_domains: None,
-            freshness: None,
-            strategy: None,
-            intent: None,
-            provider: None,
-            run_id: Some(run_id.clone()),
-        }))
+        .web_search(Parameters(run_scoped_stub_search(None, &run_id)))
         .await));
     let served_url = search["results"][0]["url"]
         .as_str()
