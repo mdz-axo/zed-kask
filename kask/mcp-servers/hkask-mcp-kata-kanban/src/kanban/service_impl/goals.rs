@@ -123,20 +123,39 @@ impl KanbanService {
     /// post: returns Some(Goal) if found, None otherwise
     #[must_use = "result must be used"]
     pub(crate) fn goal_get(&self, goal_id: GoalID) -> Result<Option<Goal>, KanbanError> {
+        Ok(self.goal_row(goal_id)?.map(|(_, goal)| goal))
+    }
+
+    /// Resolve one goal's durable row by the goal's identity — enumerating
+    /// the goal entity and matching the parsed `Goal`'s id, the same read
+    /// shape `goal_list` uses. The row's attribute is a storage key, not
+    /// the identity: a row whose attribute drifted from its goal id
+    /// (observed live 2026-10-04 — three goals were list-visible while
+    /// every by-attribute lookup returned not-found, so
+    /// `goal_acknowledge_memory` reported `acknowledged:true` while
+    /// pruning nothing) still resolves here, and duplicate rows error
+    /// instead of silently picking one.
+    fn goal_row(&self, goal_id: GoalID) -> Result<Option<(HMem, Goal)>, KanbanError> {
         let h_mems = self
             .store
-            .query_by_entity_attribute(GOAL_ENTITY, &goal_id.to_string())
+            .query_by_entity(GOAL_ENTITY)
             .map_err(|error| KanbanError::Internal(format!("h_mem query failed: {error}")))?;
-        match h_mems.as_slice() {
-            [] => Ok(None),
-            [h_mem] => serde_json::from_value::<Goal>(h_mem.value.clone())
-                .map(Some)
-                .map_err(|error| KanbanError::Internal(format!("deserialization failed: {error}"))),
-            rows => Err(KanbanError::Internal(format!(
-                "goal {goal_id} has {} durable rows; expected exactly one",
-                rows.len()
-            ))),
+        let mut matching: Vec<(HMem, Goal)> = Vec::new();
+        for row in h_mems {
+            let goal = serde_json::from_value::<Goal>(row.value.clone()).map_err(|error| {
+                KanbanError::Internal(format!("goal deserialization failed: {error}"))
+            })?;
+            if goal.id == goal_id {
+                matching.push((row, goal));
+            }
         }
+        if matching.len() > 1 {
+            return Err(KanbanError::Internal(format!(
+                "goal {goal_id} has {} durable rows; expected exactly one",
+                matching.len()
+            )));
+        }
+        Ok(matching.into_iter().next())
     }
 
     /// List all goals for a given owner, newest first.
@@ -343,8 +362,20 @@ impl KanbanService {
         goal_id: GoalID,
         change: impl FnOnce(Goal) -> Result<(bool, Goal), KanbanError>,
     ) -> Result<Goal, KanbanError> {
+        // The durable row's actual storage key — which may have drifted
+        // from the goal id (see `goal_row`) — locates the atomic update;
+        // the update itself re-reads and validates under the write lock.
+        let attribute = self
+            .goal_row(goal_id)?
+            .map(|(row, _)| row.attribute)
+            .ok_or_else(|| {
+                KanbanError::NotFound(hkask_types::NotFound {
+                    entity_type: "goal".to_string(),
+                    id: goal_id.to_string(),
+                })
+            })?;
         self.store
-            .update_value_atomic(GOAL_ENTITY, &goal_id.to_string(), |value| {
+            .update_value_atomic(GOAL_ENTITY, &attribute, |value| {
                 let current: Goal = serde_json::from_value(value).map_err(|error| {
                     KanbanError::Internal(format!("goal deserialization failed: {error}"))
                 })?;
@@ -367,20 +398,12 @@ impl KanbanService {
 
     /// Delete the one durable goal row. A missing row is already acknowledged.
     fn goal_prune(&self, goal_id: GoalID) -> Result<(), KanbanError> {
-        let rows = self
-            .store
-            .query_by_entity_attribute(GOAL_ENTITY, &goal_id.to_string())
-            .map_err(|error| KanbanError::Internal(format!("h_mem query failed: {error}")))?;
-        match rows.as_slice() {
-            [] => Ok(()),
-            [row] => self
+        match self.goal_row(goal_id)? {
+            None => Ok(()),
+            Some((row, _)) => self
                 .store
                 .delete_by_id(&row.id)
                 .map_err(|error| KanbanError::Internal(format!("h_mem delete failed: {error}"))),
-            rows => Err(KanbanError::Internal(format!(
-                "goal {goal_id} has {} durable rows; expected exactly one",
-                rows.len()
-            ))),
         }
     }
 }
@@ -632,6 +655,63 @@ mod goal_tests {
                 .resolution
                 .is_some()
         );
+        Ok(())
+    }
+
+    /// A goal row whose storage attribute drifted from its goal id (the
+    /// live 2026-10-04 zombie class: three goals were list-visible while
+    /// every by-attribute lookup returned not-found, so acknowledgment
+    /// reported success while pruning nothing) still resolves through the
+    /// identity read: get finds it, transitions land, and acknowledgment
+    /// prunes it.
+    #[test]
+    fn drifted_attribute_goal_row_still_resolves_transitions_and_prunes() -> anyhow::Result<()> {
+        let driver = hkask_storage::database::sqlite::SqliteDriver::in_memory_driver();
+        let svc = KanbanService::new(HMemStore::from_driver(driver.clone())?);
+        let owner = WebID::new();
+        let goal = svc.goal_create("goal".into(), criteria(1), Some(0.7), None, owner)?;
+        // Simulate the observed drift: the storage key no longer equals the
+        // goal id, while the value still carries the goal.
+        driver.execute_batch(&format!(
+            "UPDATE hmems SET attribute = 'drifted-key'
+             WHERE entity = 'kanban:goal' AND attribute = '{goal_id}';",
+            goal_id = goal.id
+        ))?;
+
+        let fetched = svc.goal_get(goal.id)?.expect("drifted row still resolves");
+        assert_eq!(fetched.goal_text, "goal");
+        svc.goal_judge(goal.id, one_criterion_verdict(), owner)?;
+        assert!(svc.goal_score(goal.id, true, owner)?.resolution.is_some());
+        svc.goal_acknowledge_memory(goal.id, owner)?;
+        assert!(svc.goal_get(goal.id)?.is_none());
+        assert!(svc.goal_list(&owner)?.is_empty());
+        Ok(())
+    }
+
+    /// Two durable rows carrying the same goal id error the identity read
+    /// instead of silently picking one — the duplicate-row guard travels
+    /// with the identity read shape.
+    #[test]
+    fn duplicate_goal_rows_error_the_identity_read() -> anyhow::Result<()> {
+        let driver = hkask_storage::database::sqlite::SqliteDriver::in_memory_driver();
+        let store = HMemStore::from_driver(driver)?;
+        let svc = KanbanService::new(store.clone());
+        let owner = WebID::new();
+        let goal = svc.goal_create("goal".into(), criteria(1), None, None, owner)?;
+        let row = store
+            .query_by_entity_attribute(GOAL_ENTITY, &goal.id.to_string())?
+            .into_iter()
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("created goal has no h_mem row"))?;
+        let duplicate = HMem::new(
+            GOAL_ENTITY,
+            "duplicate-key",
+            row.value.clone(),
+            row.access.owner_webid,
+        );
+        store.insert(&duplicate)?;
+
+        assert!(svc.goal_get(goal.id).is_err());
         Ok(())
     }
 
