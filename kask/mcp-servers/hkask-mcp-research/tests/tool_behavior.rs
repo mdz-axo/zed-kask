@@ -54,6 +54,92 @@ use async_trait::async_trait;
 
 // ── Stub WebSearchPort ─────────────────────────────────────────────────────
 
+/// The credential-missing arm every stub surface shares: a stub without a
+/// provider returns the structured `NoProviderConfigured` error — the
+/// mapping the tool-behavior tests pin (a missing credential surfaces as
+/// a structured error, never an empty result or silent fallback).
+macro_rules! no_provider {
+    ($msg:literal) => {
+        Err(WebError::NoProviderConfigured($msg.to_string()))
+    };
+}
+
+/// Generate the `WebSearchPort` impl for a test stub pool. The trait's
+/// method signatures, the `provider_fingerprint` wrapping, and the
+/// per-stub bodies are single-sourced here: each invocation supplies only
+/// the bodies that make its stub distinct. `resolve_title` is emitted only
+/// when supplied — otherwise the stub keeps the trait default
+/// (`WebError::NoProvider`).
+///
+/// `search` and `score_providers` take their parameter names from the
+/// invocation — macro hygiene: a body pasted from the call site can only
+/// reference bindings the call site named, so a body that uses the query
+/// or the provider passes the name it wants to bind. The other methods'
+/// signatures are fixed because no stub body references their parameters.
+macro_rules! stub_web_search_port {
+    (
+        $name:ident, $fingerprint:literal,
+        search($self:ident, $query:ident, $strategy:ident, $provider:ident): $search:block,
+        find_similar: $find_similar:block,
+        extract: $extract:block,
+        browse: $browse:block,
+        health: $health:block,
+        kinds: $kinds:block,
+        score($score_self:ident, $score_query:ident, $score_intent:ident): $score:block
+        $(, resolve_title: $resolve:block)?
+        $(,)?
+    ) => {
+        #[async_trait]
+        impl WebSearchPort for $name {
+            async fn search(
+                &$self,
+                $query: &SearchQuery,
+                $strategy: SearchStrategy,
+                $provider: Option<&str>,
+            ) -> Result<CompoundSearchResult, WebError> $search
+
+            async fn find_similar(
+                &self,
+                _url: &str,
+                _num_results: u32,
+            ) -> Result<ProviderSearchOutput, WebError> $find_similar
+
+            async fn extract(
+                &self,
+                _url: &str,
+                _opts: &ExtractOptions,
+            ) -> Result<ExtractedContent, WebError> $extract
+
+            async fn browse(
+                &self,
+                _url: &str,
+                _instruction: &str,
+                _timeout: Duration,
+            ) -> Result<BrowseResult, WebError> $browse
+
+            async fn health_check(&self) -> Vec<ProviderHealthEntry> $health
+
+            fn provider_fingerprint(&self) -> String {
+                $fingerprint.to_string()
+            }
+
+            fn provider_kinds(&self) -> Vec<String> $kinds
+
+            fn score_providers(
+                &$score_self,
+                $score_query: &str,
+                $score_intent: Option<&str>,
+            ) -> Vec<ProviderRecommendation> $score
+
+            $(async fn resolve_title(
+                &self,
+                _title: &str,
+                _rows: u32,
+            ) -> Result<Vec<CrossrefCandidate>, WebError> $resolve)?
+        }
+    };
+}
+
 /// Stub that simulates "no credentials configured" for all HTTP provider
 /// calls. The tool handler maps `WebError::NoProviderConfigured` to
 /// `McpToolError::permission_denied` — the test asserts that mapping,
@@ -61,71 +147,32 @@ use async_trait::async_trait;
 /// surface as a structured error, not an empty result or silent no-op.
 struct NoCredentialsPool;
 
-#[async_trait]
-impl WebSearchPort for NoCredentialsPool {
-    async fn search(
-        &self,
-        _query: &SearchQuery,
-        _strategy: SearchStrategy,
-        _provider: Option<&str>,
-    ) -> Result<CompoundSearchResult, WebError> {
-        Err(WebError::NoProviderConfigured(
+stub_web_search_port! {
+    NoCredentialsPool, "stub-no-credentials",
+    search(self, _query, _strategy, _provider): {
+        no_provider!(
             "No search provider configured. Set HKASK_BRAVE_API_KEY or HKASK_TAVILY_API_KEY."
-                .to_string(),
-        ))
-    }
-
-    async fn find_similar(
-        &self,
-        _url: &str,
-        _num_results: u32,
-    ) -> Result<ProviderSearchOutput, WebError> {
-        Err(WebError::NoProviderConfigured(
-            "Exa provider not configured. Set HKASK_EXA_API_KEY.".to_string(),
-        ))
-    }
-
-    async fn extract(
-        &self,
-        _url: &str,
-        _opts: &ExtractOptions,
-    ) -> Result<ExtractedContent, WebError> {
-        Err(WebError::NoProviderConfigured(
-            "No extract provider configured.".to_string(),
-        ))
-    }
-
-    async fn browse(
-        &self,
-        _url: &str,
-        _instruction: &str,
-        _timeout: Duration,
-    ) -> Result<BrowseResult, WebError> {
-        Err(WebError::NoProviderConfigured(
-            "No browse provider configured. Set HKASK_FIRECRAWL_API_KEY.".to_string(),
-        ))
-    }
-
-    async fn health_check(&self) -> Vec<ProviderHealthEntry> {
+        )
+    },
+    find_similar: {
+        no_provider!("Exa provider not configured. Set HKASK_EXA_API_KEY.")
+    },
+    extract: {
+        no_provider!("No extract provider configured.")
+    },
+    browse: {
+        no_provider!("No browse provider configured. Set HKASK_FIRECRAWL_API_KEY.")
+    },
+    health: {
         vec![ProviderHealthEntry {
             kind: "stub".to_string(),
             surface: "search".to_string(),
             healthy: true,
             error: None,
         }]
-    }
-
-    fn provider_fingerprint(&self) -> String {
-        "stub-no-credentials".to_string()
-    }
-
-    fn provider_kinds(&self) -> Vec<String> {
-        Vec::new()
-    }
-
-    fn score_providers(&self, _query: &str, _intent: Option<&str>) -> Vec<ProviderRecommendation> {
-        Vec::new()
-    }
+    },
+    kinds: { Vec::new() },
+    score(self, _query, _intent): { Vec::new() }
 }
 
 /// Stub whose `extract` returns a near-empty body — the JS-shell / bot-block
@@ -135,68 +182,24 @@ impl WebSearchPort for NoCredentialsPool {
 /// success, and is not cached.
 struct ChromeShellPool;
 
-#[async_trait]
-impl WebSearchPort for ChromeShellPool {
-    async fn search(
-        &self,
-        _query: &SearchQuery,
-        _strategy: SearchStrategy,
-        _provider: Option<&str>,
-    ) -> Result<CompoundSearchResult, WebError> {
-        Err(WebError::NoProviderConfigured(
-            "No search provider configured.".to_string(),
-        ))
-    }
-
-    async fn find_similar(
-        &self,
-        _url: &str,
-        _num_results: u32,
-    ) -> Result<ProviderSearchOutput, WebError> {
-        Err(WebError::NoProviderConfigured(
-            "Exa provider not configured.".to_string(),
-        ))
-    }
-
-    async fn extract(
-        &self,
-        _url: &str,
-        _opts: &ExtractOptions,
-    ) -> Result<ExtractedContent, WebError> {
+stub_web_search_port! {
+    ChromeShellPool, "stub-chrome-shell",
+    search(self, _query, _strategy, _provider): { no_provider!("No search provider configured.") },
+    find_similar: {
+        no_provider!("Exa provider not configured. Set HKASK_EXA_API_KEY.")
+    },
+    extract: {
         Ok(ExtractedContent {
             url: "https://example.com/js-shell".to_string(),
             content: "[Skip to content] × Copy link ✓".to_string(),
             format: "markdown".to_string(),
             metadata: Some(serde_json::json!({"title": "A JS shell", "statusCode": 200})),
         })
-    }
-
-    async fn browse(
-        &self,
-        _url: &str,
-        _instruction: &str,
-        _timeout: Duration,
-    ) -> Result<BrowseResult, WebError> {
-        Err(WebError::NoProviderConfigured(
-            "No browse provider configured.".to_string(),
-        ))
-    }
-
-    async fn health_check(&self) -> Vec<ProviderHealthEntry> {
-        Vec::new()
-    }
-
-    fn provider_fingerprint(&self) -> String {
-        "stub-chrome-shell".to_string()
-    }
-
-    fn provider_kinds(&self) -> Vec<String> {
-        Vec::new()
-    }
-
-    fn score_providers(&self, _query: &str, _intent: Option<&str>) -> Vec<ProviderRecommendation> {
-        Vec::new()
-    }
+    },
+    browse: { no_provider!("No browse provider configured.") },
+    health: { Vec::new() },
+    kinds: { Vec::new() },
+    score(self, _query, _intent): { Vec::new() }
 }
 
 /// Stub whose extraction returns a thin body with a non-2xx fetch status —
@@ -204,67 +207,41 @@ impl WebSearchPort for ChromeShellPool {
 /// (a gone/moved URL) instead of guessing the JS-shell cause list.
 struct GoneOriginPool;
 
-#[async_trait]
-impl WebSearchPort for GoneOriginPool {
-    async fn search(
-        &self,
-        _query: &SearchQuery,
-        _strategy: SearchStrategy,
-        _provider: Option<&str>,
-    ) -> Result<CompoundSearchResult, WebError> {
-        Err(WebError::NoProviderConfigured(
-            "No search provider configured.".to_string(),
-        ))
-    }
-
-    async fn find_similar(
-        &self,
-        _url: &str,
-        _num_results: u32,
-    ) -> Result<ProviderSearchOutput, WebError> {
-        Err(WebError::NoProviderConfigured(
-            "Exa provider not configured.".to_string(),
-        ))
-    }
-
-    async fn extract(
-        &self,
-        _url: &str,
-        _opts: &ExtractOptions,
-    ) -> Result<ExtractedContent, WebError> {
+stub_web_search_port! {
+    GoneOriginPool, "stub-gone-origin",
+    search(self, _query, _strategy, _provider): { no_provider!("No search provider configured.") },
+    find_similar: {
+        no_provider!("Exa provider not configured. Set HKASK_EXA_API_KEY.")
+    },
+    extract: {
         Ok(ExtractedContent {
             url: "https://example.com/gone".to_string(),
             content: "# 404 Not Found\n\n* * *\n\nnginx/1.24.0".to_string(),
             format: "markdown".to_string(),
             metadata: Some(serde_json::json!({"statusCode": 404, "error": "Not Found"})),
         })
-    }
+    },
+    browse: { no_provider!("No browse provider configured.") },
+    health: { Vec::new() },
+    kinds: { Vec::new() },
+    score(self, _query, _intent): { Vec::new() }
+}
 
-    async fn browse(
-        &self,
-        _url: &str,
-        _instruction: &str,
-        _timeout: Duration,
-    ) -> Result<BrowseResult, WebError> {
-        Err(WebError::NoProviderConfigured(
-            "No browse provider configured.".to_string(),
-        ))
-    }
-
-    async fn health_check(&self) -> Vec<ProviderHealthEntry> {
-        Vec::new()
-    }
-
-    fn provider_fingerprint(&self) -> String {
-        "stub-gone-origin".to_string()
-    }
-
-    fn provider_kinds(&self) -> Vec<String> {
-        Vec::new()
-    }
-
-    fn score_providers(&self, _query: &str, _intent: Option<&str>) -> Vec<ProviderRecommendation> {
-        Vec::new()
+/// One Crossref candidate for a `resolve_title` stub body — the repeated
+/// construction collapses to one line per candidate.
+fn crossref_candidate(
+    doi: &str,
+    title: &str,
+    publication_year: u64,
+    venue: &str,
+    first_author: Option<&str>,
+) -> CrossrefCandidate {
+    CrossrefCandidate {
+        doi: doi.to_string(),
+        title: title.to_string(),
+        publication_year: Some(publication_year),
+        venue: Some(venue.to_string()),
+        first_author: first_author.map(str::to_string),
     }
 }
 
@@ -273,87 +250,35 @@ impl WebSearchPort for GoneOriginPool {
 /// are surfaced in full, the top candidate resolves to the typed identity.
 struct TitleResolvePool;
 
-#[async_trait]
-impl WebSearchPort for TitleResolvePool {
-    async fn search(
-        &self,
-        _query: &SearchQuery,
-        _strategy: SearchStrategy,
-        _provider: Option<&str>,
-    ) -> Result<CompoundSearchResult, WebError> {
-        Err(WebError::NoProviderConfigured(
-            "No search provider configured.".to_string(),
-        ))
-    }
-
-    async fn find_similar(
-        &self,
-        _url: &str,
-        _num_results: u32,
-    ) -> Result<ProviderSearchOutput, WebError> {
-        Err(WebError::NoProviderConfigured(
-            "Exa provider not configured.".to_string(),
-        ))
-    }
-
-    async fn extract(
-        &self,
-        _url: &str,
-        _opts: &ExtractOptions,
-    ) -> Result<ExtractedContent, WebError> {
-        Err(WebError::NoProviderConfigured(
-            "No extract provider configured.".to_string(),
-        ))
-    }
-
-    async fn browse(
-        &self,
-        _url: &str,
-        _instruction: &str,
-        _timeout: Duration,
-    ) -> Result<BrowseResult, WebError> {
-        Err(WebError::NoProviderConfigured(
-            "No browse provider configured.".to_string(),
-        ))
-    }
-
-    async fn health_check(&self) -> Vec<ProviderHealthEntry> {
-        Vec::new()
-    }
-
-    fn provider_fingerprint(&self) -> String {
-        "stub-title-resolve".to_string()
-    }
-
-    fn provider_kinds(&self) -> Vec<String> {
-        Vec::new()
-    }
-
-    fn score_providers(&self, _query: &str, _intent: Option<&str>) -> Vec<ProviderRecommendation> {
-        Vec::new()
-    }
-
-    async fn resolve_title(
-        &self,
-        _title: &str,
-        _rows: u32,
-    ) -> Result<Vec<CrossrefCandidate>, WebError> {
+stub_web_search_port! {
+    TitleResolvePool, "stub-title-resolve",
+    search(self, _query, _strategy, _provider): { no_provider!("No search provider configured.") },
+    find_similar: {
+        no_provider!("Exa provider not configured. Set HKASK_EXA_API_KEY.")
+    },
+    extract: {
+        no_provider!("No extract provider configured.")
+    },
+    browse: { no_provider!("No browse provider configured.") },
+    health: { Vec::new() },
+    kinds: { Vec::new() },
+    score(self, _query, _intent): { Vec::new() },
+    resolve_title: {
         Ok(vec![
-            CrossrefCandidate {
-                doi: "10.18653/v1/2022.acl-short.94".to_string(),
-                title: "A Recipe For Arbitrary Text Style Transfer with Large Language Models"
-                    .to_string(),
-                publication_year: Some(2022),
-                venue: Some("ACL 2022".to_string()),
-                first_author: Some("Reif".to_string()),
-            },
-            CrossrefCandidate {
-                doi: "10.18653/v1/2022.acl-long.285".to_string(),
-                title: "Zero-Shot Cross-lingual Semantic Parsing".to_string(),
-                publication_year: Some(2022),
-                venue: Some("ACL 2022".to_string()),
-                first_author: Some("Sherborne".to_string()),
-            },
+            crossref_candidate(
+                "10.18653/v1/2022.acl-short.94",
+                "A Recipe For Arbitrary Text Style Transfer with Large Language Models",
+                2022,
+                "ACL 2022",
+                Some("Reif"),
+            ),
+            crossref_candidate(
+                "10.18653/v1/2022.acl-long.285",
+                "Zero-Shot Cross-lingual Semantic Parsing",
+                2022,
+                "ACL 2022",
+                Some("Sherborne"),
+            ),
         ])
     }
 }
@@ -363,127 +288,107 @@ impl WebSearchPort for TitleResolvePool {
 /// stable within groups.
 struct SuperstringFirstTitlePool;
 
-#[async_trait]
-impl WebSearchPort for SuperstringFirstTitlePool {
-    async fn search(
-        &self,
-        _query: &SearchQuery,
-        _strategy: SearchStrategy,
-        _provider: Option<&str>,
-    ) -> Result<CompoundSearchResult, WebError> {
-        Err(WebError::NoProviderConfigured(
-            "No search provider configured.".to_string(),
-        ))
-    }
-
-    async fn find_similar(
-        &self,
-        _url: &str,
-        _num_results: u32,
-    ) -> Result<ProviderSearchOutput, WebError> {
-        Err(WebError::NoProviderConfigured(
-            "Exa provider not configured.".to_string(),
-        ))
-    }
-
-    async fn extract(
-        &self,
-        _url: &str,
-        _opts: &ExtractOptions,
-    ) -> Result<ExtractedContent, WebError> {
-        Err(WebError::NoProviderConfigured(
-            "No extract provider configured.".to_string(),
-        ))
-    }
-
-    async fn browse(
-        &self,
-        _url: &str,
-        _instruction: &str,
-        _timeout: Duration,
-    ) -> Result<BrowseResult, WebError> {
-        Err(WebError::NoProviderConfigured(
-            "No browse provider configured.".to_string(),
-        ))
-    }
-
-    async fn health_check(&self) -> Vec<ProviderHealthEntry> {
-        Vec::new()
-    }
-
-    fn provider_fingerprint(&self) -> String {
-        "stub-superstring-first".to_string()
-    }
-
-    fn provider_kinds(&self) -> Vec<String> {
-        Vec::new()
-    }
-
-    fn score_providers(&self, _query: &str, _intent: Option<&str>) -> Vec<ProviderRecommendation> {
-        Vec::new()
-    }
-
-    async fn resolve_title(
-        &self,
-        _title: &str,
-        _rows: u32,
-    ) -> Result<Vec<CrossrefCandidate>, WebError> {
+stub_web_search_port! {
+    SuperstringFirstTitlePool, "stub-superstring-first",
+    search(self, _query, _strategy, _provider): { no_provider!("No search provider configured.") },
+    find_similar: {
+        no_provider!("Exa provider not configured. Set HKASK_EXA_API_KEY.")
+    },
+    extract: {
+        no_provider!("No extract provider configured.")
+    },
+    browse: { no_provider!("No browse provider configured.") },
+    health: { Vec::new() },
+    kinds: { Vec::new() },
+    score(self, _query, _intent): { Vec::new() },
+    resolve_title: {
         // The live 2026-10-01 observation: Crossref's relevance put the
         // superstring "Computing Machinery and Intelligence Amplification"
         // first, with Turing's exact-titled work (in two case variants)
         // behind it.
         Ok(vec![
-            CrossrefCandidate {
-                doi: "10.1109/9780470544297.ch3".to_string(),
-                title: "Computing Machinery and Intelligence Amplification".to_string(),
-                publication_year: Some(2009),
-                venue: Some("Computational Intelligence".to_string()),
-                first_author: None,
-            },
-            CrossrefCandidate {
-                doi: "10.7551/mitpress/4626.003.0002".to_string(),
-                title: "Computing Machinery and Intelligence".to_string(),
-                publication_year: Some(1997),
-                venue: Some("Mind Design II".to_string()),
-                first_author: Some("Turing".to_string()),
-            },
-            CrossrefCandidate {
-                doi: "10.1016/b978-1-4832-1446-7.50006-6".to_string(),
-                title: "COMPUTING MACHINERY AND INTELLIGENCE".to_string(),
-                publication_year: Some(1988),
-                venue: Some("Readings in Cognitive Science".to_string()),
-                first_author: Some("TURING".to_string()),
-            },
+            crossref_candidate(
+                "10.1109/9780470544297.ch3",
+                "Computing Machinery and Intelligence Amplification",
+                2009,
+                "Computational Intelligence",
+                None,
+            ),
+            crossref_candidate(
+                "10.7551/mitpress/4626.003.0002",
+                "Computing Machinery and Intelligence",
+                1997,
+                "Mind Design II",
+                Some("Turing"),
+            ),
+            crossref_candidate(
+                "10.1016/b978-1-4832-1446-7.50006-6",
+                "COMPUTING MACHINERY AND INTELLIGENCE",
+                1988,
+                "Readings in Cognitive Science",
+                Some("TURING"),
+            ),
         ])
     }
+}
+
+/// Generate the `InferencePort` impl for a test stub. `generate` is the
+/// surface these tests never exercise — one structured `Connection` error
+/// carrying the stub's own message, single-sourced here. `rerank` (and
+/// the optional `embed`) is the surface under test and is supplied per
+/// stub, with its parameter names taken from the invocation (macro
+/// hygiene — see `stub_web_search_port`); omitting `embed` keeps the
+/// trait default.
+macro_rules! stub_inference_port {
+    (
+        $name:ident,
+        generate_msg: $generate_msg:literal,
+        rerank($self:ident, $model:ident, $query:ident, $documents:ident): $rerank:block
+        $(, embed($embed_self:ident, $embed_model:ident, $embed_texts:ident): $embed:block)?
+        $(,)?
+    ) => {
+        impl InferencePort for $name {
+            fn generate(
+                &self,
+                _prompt: &str,
+                _parameters: &hkask_types::template::LLMParameters,
+                _tools: Option<&[hkask_types::ChatToolDefinition]>,
+            ) -> std::pin::Pin<
+                Box<
+                    dyn std::future::Future<Output = Result<InferenceResult, InferenceError>>
+                        + Send
+                        + '_,
+                >,
+            > {
+                Box::pin(async {
+                    Err(InferenceError::Connection($generate_msg.to_string()))
+                })
+            }
+
+            fn rerank<'a>(
+                &'a $self,
+                $model: &str,
+                $query: &str,
+                $documents: &[String],
+            ) -> hkask_types::RerankFuture<'a> $rerank
+
+            $(fn embed<'a>(
+                &'a $embed_self,
+                $embed_model: &str,
+                $embed_texts: &[String],
+            ) -> hkask_types::EmbedFuture<'a> $embed)?
+        }
+    };
 }
 
 /// Stub inference port that always fails — pins the degradation contract:
 /// the deep strategy must surface the failure reason, never collapse it.
 struct FailingInferencePort;
 
-impl InferencePort for FailingInferencePort {
-    fn generate(
-        &self,
-        _prompt: &str,
-        _parameters: &hkask_types::template::LLMParameters,
-        _tools: Option<&[hkask_types::ChatToolDefinition]>,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>,
-    > {
-        Box::pin(async {
-            Err(InferenceError::Connection(
-                "stub: inference bridge down".to_string(),
-            ))
-        })
-    }
-
-    fn rerank<'a>(
-        &'a self,
-        _model: &str,
-        _query: &str,
-        _documents: &[String],
-    ) -> hkask_types::RerankFuture<'a> {
+stub_inference_port! {
+    FailingInferencePort,
+    generate_msg: "stub: inference bridge down",
+    rerank(self, _model, _query, _documents): {
         Box::pin(async {
             Err(InferenceError::Connection(
                 "stub: rerank bridge down".to_string(),
@@ -497,29 +402,11 @@ impl InferencePort for FailingInferencePort {
 /// the caller and the output names `mode: "llm"` with no reason.
 struct ScoringInferencePort;
 
-impl InferencePort for ScoringInferencePort {
-    fn generate(
-        &self,
-        _prompt: &str,
-        _parameters: &hkask_types::template::LLMParameters,
-        _tools: Option<&[hkask_types::ChatToolDefinition]>,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>,
-    > {
-        Box::pin(async {
-            Err(InferenceError::Connection(
-                "stub: generate unused in rerank tests".to_string(),
-            ))
-        })
-    }
-
-    fn rerank<'a>(
-        &'a self,
-        _model: &str,
-        _query: &str,
-        documents: &[String],
-    ) -> hkask_types::RerankFuture<'a> {
-        let scores: Vec<hkask_types::inference_ipc::RerankScoreEntry> = documents
+stub_inference_port! {
+    ScoringInferencePort,
+    generate_msg: "stub: generate unused in rerank tests",
+    rerank(self, _model, _query, _documents): {
+        let scores: Vec<hkask_types::inference_ipc::RerankScoreEntry> = _documents
             .iter()
             .enumerate()
             .map(|(index, document)| {
@@ -542,27 +429,42 @@ impl InferencePort for ScoringInferencePort {
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
-fn make_server_without_db() -> ResearchServer {
-    make_server_with_pool(Arc::new(NoCredentialsPool))
-}
-
-fn make_server_with_pool(pool: Arc<dyn WebSearchPort>) -> ResearchServer {
+/// One constructor for every test server: the shared scaffolding —
+/// identity, cache, limiter, HTTP clients, and the default failing
+/// inference port — lives here once; each call site names only the parts
+/// its test exercises.
+fn test_server(
+    pool: Arc<dyn WebSearchPort>,
+    cache_capacity: usize,
+    database: Option<r2d2::Pool<hkask_storage::SqliteConnectionManager>>,
+    inference_port: Option<Arc<dyn InferencePort>>,
+    rerank_model: Option<&str>,
+    embedding_model: Option<&str>,
+) -> ResearchServer {
     ResearchServer::new(
         WebID::new(),
         pool,
-        Arc::new(ResponseCache::new(10, Duration::from_secs(60))),
+        Arc::new(ResponseCache::new(cache_capacity, Duration::from_secs(60))),
         RateLimiter::new(10000, 60),
-        None,
+        database,
         reqwest::Client::builder()
             .build()
             .expect("reqwest client build"),
         reqwest::Client::builder()
             .build()
             .expect("reqwest client build"),
-        Arc::new(FailingInferencePort),
-        None,
-        None,
+        inference_port.unwrap_or_else(|| Arc::new(FailingInferencePort)),
+        rerank_model.map(str::to_string),
+        embedding_model.map(str::to_string),
     )
+}
+
+fn make_server_without_db() -> ResearchServer {
+    test_server(Arc::new(NoCredentialsPool), 10, None, None, None, None)
+}
+
+fn make_server_with_pool(pool: Arc<dyn WebSearchPort>) -> ResearchServer {
+    test_server(pool, 10, None, None, None, None)
 }
 
 fn research_db_pool() -> r2d2::Pool<hkask_storage::SqliteConnectionManager> {
@@ -581,19 +483,11 @@ fn research_db_pool() -> r2d2::Pool<hkask_storage::SqliteConnectionManager> {
 }
 
 fn make_server_with_research_db() -> ResearchServer {
-    ResearchServer::new(
-        WebID::new(),
+    test_server(
         Arc::new(NoCredentialsPool),
-        Arc::new(ResponseCache::new(10, Duration::from_secs(60))),
-        RateLimiter::new(10000, 60),
+        10,
         Some(research_db_pool()),
-        reqwest::Client::builder()
-            .build()
-            .expect("reqwest client build"),
-        reqwest::Client::builder()
-            .build()
-            .expect("reqwest client build"),
-        Arc::new(FailingInferencePort),
+        None,
         None,
         None,
     )
@@ -1116,14 +1010,9 @@ async fn rss_get_entries_rejects_non_base64_continuation_token() {
 /// touching the network.
 struct FixedResultsPool;
 
-#[async_trait]
-impl WebSearchPort for FixedResultsPool {
-    async fn search(
-        &self,
-        query: &SearchQuery,
-        _strategy: SearchStrategy,
-        _provider: Option<&str>,
-    ) -> Result<CompoundSearchResult, WebError> {
+stub_web_search_port! {
+    FixedResultsPool, "stub-fixed-results",
+    search(self, _query, _strategy, _provider): {
         let result = |title: &str, url: &str| RankedResult {
             title: title.to_string(),
             url: url.to_string(),
@@ -1140,7 +1029,7 @@ impl WebSearchPort for FixedResultsPool {
             extracted_content: None,
         };
         Ok(CompoundSearchResult {
-            query: query.query.clone(),
+            query: _query.query.clone(),
             strategy: "deep".to_string(),
             results: vec![
                 result("Alpha", "https://example.com/alpha"),
@@ -1155,48 +1044,13 @@ impl WebSearchPort for FixedResultsPool {
             total_before_dedup: 3,
             duplicates_removed: 0,
         })
-    }
-
-    async fn find_similar(
-        &self,
-        _url: &str,
-        _num_results: u32,
-    ) -> Result<ProviderSearchOutput, WebError> {
-        Err(WebError::NoProviderConfigured("stub".to_string()))
-    }
-
-    async fn extract(
-        &self,
-        _url: &str,
-        _opts: &ExtractOptions,
-    ) -> Result<ExtractedContent, WebError> {
-        Err(WebError::NoProviderConfigured("stub".to_string()))
-    }
-
-    async fn browse(
-        &self,
-        _url: &str,
-        _instruction: &str,
-        _timeout: Duration,
-    ) -> Result<BrowseResult, WebError> {
-        Err(WebError::NoProviderConfigured("stub".to_string()))
-    }
-
-    async fn health_check(&self) -> Vec<ProviderHealthEntry> {
-        Vec::new()
-    }
-
-    fn provider_fingerprint(&self) -> String {
-        "stub-fixed-results".to_string()
-    }
-
-    fn provider_kinds(&self) -> Vec<String> {
-        Vec::new()
-    }
-
-    fn score_providers(&self, _query: &str, _intent: Option<&str>) -> Vec<ProviderRecommendation> {
-        Vec::new()
-    }
+    },
+    find_similar: { no_provider!("stub") },
+    extract: { no_provider!("stub") },
+    browse: { no_provider!("stub") },
+    health: { Vec::new() },
+    kinds: { Vec::new() },
+    score(self, _query, _intent): { Vec::new() }
 }
 
 fn make_server_with_pool_and_port(
@@ -1204,22 +1058,7 @@ fn make_server_with_pool_and_port(
     inference_port: Arc<dyn InferencePort>,
     rerank_model: Option<&str>,
 ) -> ResearchServer {
-    ResearchServer::new(
-        WebID::new(),
-        pool,
-        Arc::new(ResponseCache::new(10, Duration::from_secs(60))),
-        RateLimiter::new(10000, 60),
-        None,
-        reqwest::Client::builder()
-            .build()
-            .expect("reqwest client build"),
-        reqwest::Client::builder()
-            .build()
-            .expect("reqwest client build"),
-        inference_port,
-        rerank_model.map(str::to_string),
-        None,
-    )
+    test_server(pool, 10, None, Some(inference_port), rerank_model, None)
 }
 
 fn deep_search_request() -> SearchRequest {
@@ -1403,18 +1242,16 @@ struct FailThenSucceedPool {
     failed_once: std::sync::Mutex<bool>,
 }
 
-#[async_trait]
-impl WebSearchPort for FailThenSucceedPool {
-    async fn search(
-        &self,
-        query: &SearchQuery,
-        _strategy: SearchStrategy,
-        _provider: Option<&str>,
-    ) -> Result<CompoundSearchResult, WebError> {
-        let mut failed_once = self.failed_once.lock().unwrap_or_else(|e| e.into_inner());
+stub_web_search_port! {
+    FailThenSucceedPool, "stub-fail-then-succeed",
+    search(self, _query, _strategy, _provider): {
+        let mut failed_once = self
+            .failed_once
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         if *failed_once {
             return Ok(CompoundSearchResult {
-                query: query.query.clone(),
+                query: _query.query.clone(),
                 strategy: "quick".to_string(),
                 results: vec![RankedResult {
                     title: "Recovered".to_string(),
@@ -1442,7 +1279,7 @@ impl WebSearchPort for FailThenSucceedPool {
         }
         *failed_once = true;
         Ok(CompoundSearchResult {
-            query: query.query.clone(),
+            query: _query.query.clone(),
             strategy: "quick".to_string(),
             results: Vec::new(),
             answer_box: None,
@@ -1456,48 +1293,13 @@ impl WebSearchPort for FailThenSucceedPool {
             total_before_dedup: 0,
             duplicates_removed: 0,
         })
-    }
-
-    async fn find_similar(
-        &self,
-        _url: &str,
-        _num_results: u32,
-    ) -> Result<ProviderSearchOutput, WebError> {
-        Err(WebError::NoProviderConfigured("stub".to_string()))
-    }
-
-    async fn extract(
-        &self,
-        _url: &str,
-        _opts: &ExtractOptions,
-    ) -> Result<ExtractedContent, WebError> {
-        Err(WebError::NoProviderConfigured("stub".to_string()))
-    }
-
-    async fn browse(
-        &self,
-        _url: &str,
-        _instruction: &str,
-        _timeout: Duration,
-    ) -> Result<BrowseResult, WebError> {
-        Err(WebError::NoProviderConfigured("stub".to_string()))
-    }
-
-    async fn health_check(&self) -> Vec<ProviderHealthEntry> {
-        Vec::new()
-    }
-
-    fn provider_fingerprint(&self) -> String {
-        "stub-fail-then-succeed".to_string()
-    }
-
-    fn provider_kinds(&self) -> Vec<String> {
-        Vec::new()
-    }
-
-    fn score_providers(&self, _query: &str, _intent: Option<&str>) -> Vec<ProviderRecommendation> {
-        Vec::new()
-    }
+    },
+    find_similar: { no_provider!("stub") },
+    extract: { no_provider!("stub") },
+    browse: { no_provider!("stub") },
+    health: { Vec::new() },
+    kinds: { Vec::new() },
+    score(self, _query, _intent): { Vec::new() }
 }
 
 #[tokio::test]
@@ -1555,78 +1357,40 @@ struct IntentSelectionPool {
     selected_provider: std::sync::Mutex<Vec<Option<String>>>,
 }
 
-#[async_trait]
-impl WebSearchPort for IntentSelectionPool {
-    async fn search(
-        &self,
-        _query: &SearchQuery,
-        _strategy: SearchStrategy,
-        provider: Option<&str>,
-    ) -> Result<CompoundSearchResult, WebError> {
+stub_web_search_port! {
+    IntentSelectionPool, "intent-selection-stub",
+    search(self, _query, _strategy, _provider): {
         self.selected_provider
             .lock()
-            .unwrap()
-            .push(provider.map(str::to_string));
+            .expect("selected provider lock")
+            .push(_provider.map(str::to_string));
         Ok(CompoundSearchResult {
             query: _query.query.clone(),
             strategy: "quick".to_string(),
             results: Vec::new(),
             providers_queried: vec![ProviderInfo {
-                kind: provider.unwrap_or("default").to_string(),
+                kind: _provider.unwrap_or("default").to_string(),
                 capabilities: Vec::new(),
             }],
-            providers_succeeded: vec![provider.unwrap_or("default").to_string()],
+            providers_succeeded: vec![_provider.unwrap_or("default").to_string()],
             providers_failed: Vec::new(),
             answer_box: None,
             related_questions: Vec::new(),
             total_before_dedup: 0,
             duplicates_removed: 0,
         })
-    }
-
-    async fn find_similar(
-        &self,
-        _url: &str,
-        _num_results: u32,
-    ) -> Result<ProviderSearchOutput, WebError> {
-        Err(WebError::NoProviderConfigured("not configured".to_string()))
-    }
-
-    async fn extract(
-        &self,
-        _url: &str,
-        _opts: &ExtractOptions,
-    ) -> Result<ExtractedContent, WebError> {
-        Err(WebError::NoProviderConfigured("not configured".to_string()))
-    }
-
-    async fn browse(
-        &self,
-        _url: &str,
-        _instruction: &str,
-        _timeout: Duration,
-    ) -> Result<BrowseResult, WebError> {
-        Err(WebError::NoProviderConfigured("not configured".to_string()))
-    }
-
-    async fn health_check(&self) -> Vec<ProviderHealthEntry> {
-        Vec::new()
-    }
-
-    fn provider_fingerprint(&self) -> String {
-        "intent-selection-stub".to_string()
-    }
-
-    fn provider_kinds(&self) -> Vec<String> {
-        vec!["arxiv".to_string()]
-    }
-
-    fn score_providers(&self, _query: &str, intent: Option<&str>) -> Vec<ProviderRecommendation> {
+    },
+    find_similar: { no_provider!("not configured") },
+    extract: { no_provider!("not configured") },
+    browse: { no_provider!("not configured") },
+    health: { Vec::new() },
+    kinds: { vec!["arxiv".to_string()] },
+    score(self, _query, _intent): {
         vec![
             ProviderRecommendation {
                 kind: "arxiv".to_string(),
                 score: 1.0,
-                rationale: format!("best for {} intent", intent.unwrap_or("general")),
+                rationale: format!("best for {} intent", _intent.unwrap_or("general")),
                 cost_per_call_usd: 0.0,
                 latency_tier: LatencyTier::Fast,
                 strengths: Vec::new(),
@@ -1659,21 +1423,13 @@ impl WebSearchPort for IntentSelectionPool {
 
 #[tokio::test]
 async fn web_search_intent_selects_top_configured_provider_and_surfaces_ranking() {
-    let server = ResearchServer::new(
-        WebID::new(),
+    let server = test_server(
         Arc::new(IntentSelectionPool {
             selected_provider: std::sync::Mutex::new(Vec::new()),
         }),
-        Arc::new(ResponseCache::new(0, Duration::from_secs(60))),
-        RateLimiter::new(10000, 60),
+        0,
         None,
-        reqwest::Client::builder()
-            .build()
-            .expect("reqwest client build"),
-        reqwest::Client::builder()
-            .build()
-            .expect("reqwest client build"),
-        Arc::new(FailingInferencePort),
+        None,
         None,
         None,
     );
@@ -1980,22 +1736,7 @@ fn make_server_with_pool_and_db(
     pool: Arc<dyn WebSearchPort>,
     database: Option<r2d2::Pool<hkask_storage::SqliteConnectionManager>>,
 ) -> ResearchServer {
-    ResearchServer::new(
-        WebID::new(),
-        pool,
-        Arc::new(ResponseCache::new(10, Duration::from_secs(60))),
-        RateLimiter::new(10000, 60),
-        database,
-        reqwest::Client::builder()
-            .build()
-            .expect("reqwest client build"),
-        reqwest::Client::builder()
-            .build()
-            .expect("reqwest client build"),
-        Arc::new(FailingInferencePort),
-        None,
-        None,
-    )
+    test_server(pool, 10, database, None, None, None)
 }
 
 #[tokio::test]
@@ -2716,39 +2457,20 @@ async fn web_ping_carries_the_static_provider_profiles() {
 /// clusters them all.
 struct EmbeddingInferencePort;
 
-impl InferencePort for EmbeddingInferencePort {
-    fn generate(
-        &self,
-        _prompt: &str,
-        _parameters: &hkask_types::template::LLMParameters,
-        _tools: Option<&[hkask_types::ChatToolDefinition]>,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>,
-    > {
-        Box::pin(async {
-            Err(InferenceError::Connection(
-                "stub: inference bridge down".to_string(),
-            ))
-        })
-    }
-
-    fn rerank<'a>(
-        &'a self,
-        _model: &str,
-        _query: &str,
-        _documents: &[String],
-    ) -> hkask_types::RerankFuture<'a> {
+stub_inference_port! {
+    EmbeddingInferencePort,
+    generate_msg: "stub: inference bridge down",
+    rerank(self, _model, _query, _documents): {
         Box::pin(async {
             Err(InferenceError::Connection(
                 "stub: rerank bridge down".to_string(),
             ))
         })
-    }
-
-    fn embed<'a>(&'a self, _model: &str, texts: &[String]) -> hkask_types::EmbedFuture<'a> {
+    },
+    embed(self, _model, _texts): {
         // Collect before the async block so the future captures owned data
         // only — the borrowed `texts` cannot outlive the call.
-        let vectors: Vec<Vec<f32>> = texts.iter().map(|_| vec![1.0_f32, 0.0]).collect();
+        let vectors: Vec<Vec<f32>> = _texts.iter().map(|_| vec![1.0_f32, 0.0]).collect();
         Box::pin(async move { Ok(vectors) })
     }
 }
@@ -2757,21 +2479,13 @@ fn make_server_with_embedding(
     inference_port: Arc<dyn InferencePort>,
     embedding_model: Option<&str>,
 ) -> ResearchServer {
-    ResearchServer::new(
-        WebID::new(),
+    test_server(
         Arc::new(NoCredentialsPool),
-        Arc::new(ResponseCache::new(10, Duration::from_secs(60))),
-        RateLimiter::new(10000, 60),
+        10,
         None,
-        reqwest::Client::builder()
-            .build()
-            .expect("reqwest client build"),
-        reqwest::Client::builder()
-            .build()
-            .expect("reqwest client build"),
-        inference_port,
+        Some(inference_port),
         None,
-        embedding_model.map(str::to_string),
+        embedding_model,
     )
 }
 
