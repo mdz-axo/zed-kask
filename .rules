@@ -99,7 +99,7 @@ Use `cx.background_executor().timer(duration).await` in GPUI tests, not `smol::T
 
 * Kask settings defaults live in `Default` impls only — not in `#[serde(default)]`, `From<Content>` literals, or `mcp_env()` comparison literals.
 * Model-name constants must reference `hkask_inference::model_constants::DEFAULT_*_MODEL`, not re-declare literals across crates.
-* MCP server credentials/config are scoped per-server via allowlists. New servers use `Some(&[])` for both, never `None`. Allowlists must align with actual env-var reads.
+* MCP server credentials/config are scoped per-server via non-optional allowlists (`credentials`/`config_env` on `BuiltinMcpServer` — `&'static [&'static str]`, no `Option`); declare `&[]` when a server reads none. Allowlists must align with actual env-var reads.
 * After `INFERENCE_SOCKET_PATH` is set, call `sync_kask_mcp_servers` again so servers restart with updated env.
 * Passphrase rotation (`run_pending_db_passphrase_rotation`) writes the main keychain slot LAST, after every DB is rotated — a keychain write after a partial rotation leaves DBs unopenable (one `HKASK_DB_PASSPHRASE` for every SQLCipher DB — the full rule lives under MCP server patterns).
 
