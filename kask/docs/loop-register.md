@@ -76,7 +76,7 @@ below is retained: the admitted reference model (Pass 3) cites it.
 | L21 | GAP | no recorded model |
 | L22 | ANCHOR | `kask/docs/plans/logisheets-spreadsheet-capability-plan.md` (plan-form, chartered 2026-09-18) |
 | L23 | GAP | no recorded model |
-| L24 | PARTIAL | the repair plan's §P8 experiment protocol (plan-form, `kask/docs/plans/hkask-core-mcp-repair-improvement-plan.md`); no prior-art model recorded |
+| L24 | PARTIAL | the experimentation protocol (reference-model form, `kask/docs/research/experimentation-reference-model.md` — promoted from the repair plan §P8 on 2026-10-05, carrying the research anchors; the plan retains the execution records) |
 | L25 | PARTIAL | the admitted CNS reference model — the afferent-pathway structure is this row's own shape; no domain prior-art model recorded |
 
 (L24/L25 ledger rows added 2026-10-01, post-Pass-3, completing the

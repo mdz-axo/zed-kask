@@ -292,3 +292,19 @@ Predicted all-current with 0–1 stale-class hits. Measured: zero stale-class hi
 - `5182035b5b` — set 3 (architecture): compaction-spec frontmatter + diagram registration, skills registry 61/57/276 + mcp-tool-review row, diagram-index prose correction.
 - `c01ea06116` — set 4 (reference): fleet count 409, unified pin-verification section.
 - (set 5) The run's closing commit carries this report's final state and the README's refreshed verification-gate checklist — `git log -- kask/docs-alignment-run.md` names it.
+
+---
+
+## Follow-through (2026-10-05, operator proceeding with the recommendations)
+
+The operator reviewed the pending items one by one and authorized proceeding with the recommendations. Dispositions:
+
+- **Goal `f277c85d` (this run)**: scored **achieved** (Brier 0.04 against the 0.8 intake prediction); create-anchored memory chain verified (create + judge h_mems present); the score event's curator-memory landing verifies next turn, then `kanban_goal_memory_acknowledge` closes the D58 chain.
+- **Goal `3a5a7c2d` (zk-ref corpus follow-ups)**: scored **achieved** — criteria verified live this pass (typed `KeychainError::Timeout` on the async path at `kask/crates/hkask-keystore/src/keychain.rs:349-355`; `blank_pages` across the corpus OCR modules; `EndpointUnreachable` in `ocr/pipeline.rs`; 14 build-corpus-pipeline discipline lines; the four rules in the dedicated rules-only commit `0516f4f781`, 2026-10-04).
+- **Goals `c3bf3416`, `74cfe8a2`, `a13bfb09`** (resolved achieved, retained): create-less with zero curator-memory chains — the re-score loop is forbidden (`.rules`); no standing batch-record mechanism exists in the tree (the 2026-10-04 path left no script). Disposition: **findings for the operator**; left retained (harmless — the list is the only surface); pruning needs a one-time kanban-DB batch operation.
+- **Goals `16d13e68`, `38bc14e2`, `d3125ccd`, `75cf7ca5`**: in-flight (verdict `continue`) — not scoreable; owned by their active streams.
+- **P2**: confirmed — the deletion stands (veto = revert `af5680d1a1`).
+- **P3**: **ruled retain** — the Diataxis explanation layer stands; recorded in the pricing menu.
+- **P8 promotion**: **executed** — `research/experimentation-reference-model.md` created (the pattern, shard map, protocol, guardrails/anchors, decision log, CNS connection map); the plan retains the execution records; D86/loop-register/README repointed; count 73→74 under the cap.
+- **CI addition-class gate**: **executed** — `check-docs-frontmatter.sh` + `check-diagram-registry-parity.sh` (each with a failing-mode selftest) wired into `kask-invariants.yml`.
+- **60-file target**: stays a condensation direction (blocked by the P3 retain); recorded in the pricing menu.
