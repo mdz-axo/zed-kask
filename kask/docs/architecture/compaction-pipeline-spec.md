@@ -1,3 +1,13 @@
+---
+title: "Compaction Pipeline Specification"
+audience: [developers, architects, agents]
+last_updated: 2026-10-05
+version: "1.0.0"
+status: "Active"
+domain: "Core"
+mds_categories: [domain, trust, lifecycle]
+---
+
 # Compaction Pipeline Specification
 
 Status: ratified 2026-09-29 (operator direction: the deterministic
@@ -71,6 +81,13 @@ flowchart TD
     J --> L
     L --> M[Stored history NEVER modified<br/>markers name what was elided]
 ```
+
+<!-- DIAGRAM_ALIGNMENT
+id: DIAG-ARCH-COMPACTION-001
+verified_date: 2026-10-05
+verified_against: crates/agent/src/thread.rs:2892,3723,3792; crates/agent/src/kask_compaction.rs:930
+status: VERIFIED
+-->
 
 ## Stage specification
 

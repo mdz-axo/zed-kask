@@ -138,3 +138,45 @@ Cross-set edits: `DIVERGENCE.md:212` citation repointed; Lean spec comment repoi
 ### Metacognition gap (predicted vs measured)
 
 Predicted (post-status-observation, pre-read): guardrails DELETE, the other three VERIFIED-CURRENT, one metadata fix. Measured: exactly that — zero decision misses. Process miss outside the set: the set-1 commit initially failed on an untracked pathspec (`kask/docs-alignment-run.md` — pathspec commits need untracked files staged first); recovered by staging before the pathspec commit.
+
+---
+
+## Docs-set 3: architecture/ (11 docs)
+
+### Metacognition prediction (before compare)
+
+- Predict: the authorities (MDS, STANDARDS, zed-host plan) verify current via the 2026-09-28 realignment + active maintenance; 1–2 metadata/frontmatter misses from recent additions (the compaction spec, ratified 2026-09-29, is the prime suspect); possible count drift where the tree grew after 09-28 (skills, crates, servers). Confidence: 0.7.
+
+### Compare evidence
+
+- Frontmatter: 9 of 10 md carry the 7-field header; `compaction-pipeline-spec.md` carries none (ratified 2026-09-29 without it).
+- MDS counts verified against the tree: 19 crates (18 `hkask-*` + `kask_bridge`) ✓; 13 MCP servers ✓ (experimentation and spreadsheet both present in the tables).
+- Skills drift: tree holds 61 skills / 57 template namespaces / 276 `.j2` + 2 `.jinja`; the registry claimed 60/56/274 — `mcp-tool-review` (added 2026-10-02, `a353d629f5`) bumped all three counts and its registry row was absent.
+- Diagram registry: mechanical count — 108 mermaid blocks, 107 real records (108 `id: DIAG-` lines minus the standards' §4.2 format placeholder), 107 index rows. The gap: the compaction spec's own pipeline diagram (landed 2026-09-29 unregistered). The index prose claimed "109 blocks; 108 carry records; the one exception is STANDARDS §3" — wrong on all three counts (STANDARDS §3 carries `DIAG-STD-001`, verified 2026-09-28; the real exception was the compaction diagram).
+- Compaction spec content verified against code: `Thread::compact` (`thread.rs:2892`), `perform_compaction_if_needed` (`:3723`), `perform_prompt_too_large_rescue` (`:3792`) — the three entry points exist as specified; pin sample verified (`pre_shrink_windows_oversized_results_and_keeps_small_ones` at `kask_compaction.rs:930`, `test_manual_compact_forces_summary` at `thread.rs:10394`, `test_prompt_too_large_rescue_compacts_and_retries` at `:11417`).
+- `principle-constraints.yaml`: consumed by `check-principle-constraints.sh` — runs, reports "Inventory valid" — live.
+- Remaining docs (magna-carta, PRINCIPLES, functional-interaction-spec, memory-system-specification, skills-and-composition, standardized-artifact-storage, zed-host-architecture-plan, MDS, STANDARDS): `last_updated` 2026-09-28/09-30, subjects stable, no drifted claims in targeted checks (skills-and-composition carries no count claims; the zed-host plan's logisheets reference remains true).
+
+### Decisions
+
+| Document | Decision | Basis |
+| --- | --- | --- |
+| `compaction-pipeline-spec.md` | **RECOMPOSED** (metadata + diagram registration) | 7-field frontmatter added; the pipeline diagram registered as `DIAG-ARCH-COMPACTION-001` (verified against `thread.rs:2892,3723,3792` + `kask_compaction.rs:930`); content verified current (entry points + pin sample). |
+| `core/MDS.md` | **VERIFIED-CURRENT** | 19 crates + 13 servers match the tree exactly. |
+| `DOCUMENTATION_STANDARDS.md` | **VERIFIED-CURRENT** | §3 cap sentence parses (the gate reads it); §10 checklist current; no drift found. |
+| `core/PRINCIPLES.md`, `core/magna-carta.md`, `functional-interaction-spec.md`, `memory-system-specification.md`, `skills-and-composition.md`, `standardized-artifact-storage.md`, `zed-host-architecture-plan.md` | **VERIFIED-CURRENT** | `last_updated` 2026-09-28+; subjects stable; targeted checks found no drift. |
+| `principle-constraints.yaml` | **VERIFIED-CURRENT** | Live governance inventory; its check script runs and reports valid. |
+
+Cross-set edits (the count facts changed, so every carrier updates in the same change): `reference/skills/README.md` (counts 61/57/276, the `mcp-tool-review` row, frontmatter 0.41.0), `DIAGRAMS_INDEX.md` (row + corrected prose + frontmatter 2.7.0), README portal rows (skills, diagrams) + the checklist diagram-parity item (108, tree-verified 2026-10-05).
+
+### Kata checkpoint (five questions)
+
+1. **Target**: 11 docs, one decision each; the frontmatter gap closed; counts reconciled. Met.
+2. **Actual**: 1 RECOMPOSED, 10 VERIFIED-CURRENT; three registries reconciled (skills, diagrams, plus DIVERGENCE in set 1).
+3. **Obstacles**: the concurrent-stream addition class again — compaction spec (09-29: no frontmatter, no diagram record), mcp-tool-review (10-02: no registry row, no count bump). Four instances now: systemic.
+4. **Next step**: reference/ docs-set (22 docs; per-server tool counts vs pin tests).
+5. **Check point**: gates re-run below; commit hash recorded.
+
+### Metacognition gap (predicted vs measured)
+
+Predicted 1–2 metadata misses + possible count drift. Measured: exactly that — the compaction frontmatter + diagram record, three skills numbers + a missing row, and three wrong numbers in the diagram-index prose. The prediction held; the cause is confirmed systemic (additions landing without the docs-discipline touchpoints). Candidate process fix, recorded as a finding for the operator: a CI check that new `.md` files under kask/docs carry the 7-field header and that count-carrying registries are re-measured — `check-docs-count-gate.sh` already models the pattern for the file count.
