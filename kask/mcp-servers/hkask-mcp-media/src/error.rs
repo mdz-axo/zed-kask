@@ -102,14 +102,18 @@ impl From<GalleryStoreError> for MediaError {
 
 /// Map a `MediaError` to the appropriate `McpToolError` kind.
 ///
-/// - `GalleryNotInitialized`, `ImageNotFound` → `invalid_argument` (user error)
+/// Canonical classification (operator ruling 2026-10-05):
+/// - `ImageNotFound` → `not_found` (a caller-named image index/ID that
+///   does not exist — the same class as the face-registry lookups)
+/// - `GalleryNotInitialized` → `failed_precondition` (a well-formed request
+///   whose required state is absent — the message names the state and the
+///   remedy: "Use gallery_organize first")
 /// - `Io`, `FfmpegFailed`, `VisionApi`, `VisionParse`, `Template` → `internal` (system error)
 /// - `FfmpegUnavailable`, `YtDlpUnavailable` → `unavailable` (system unavailable)
 pub fn map_media_error(e: MediaError) -> McpToolError {
     match e {
-        MediaError::GalleryNotInitialized | MediaError::ImageNotFound(_) => {
-            McpToolError::invalid_argument(e.to_string())
-        }
+        MediaError::ImageNotFound(_) => McpToolError::not_found(e.to_string()),
+        MediaError::GalleryNotInitialized => McpToolError::failed_precondition(e.to_string()),
         MediaError::FfmpegUnavailable | MediaError::YtDlpUnavailable => {
             McpToolError::unavailable(e.to_string())
         }
@@ -376,5 +380,32 @@ mod tests {
             InferenceError::Connection("all providers failed".to_string()),
         );
         assert_eq!(connection.kind, McpErrorKind::Unavailable);
+    }
+}
+
+#[cfg(test)]
+mod classification_tests {
+    use super::*;
+    use hkask_types::McpErrorKind;
+
+    /// Canonical-classification pins (operator ruling 2026-10-05): a
+    /// caller-named image that does not exist is `not_found`; the
+    /// no-gallery state is `failed_precondition` (the message names the
+    /// state and the remedy). Both shipped as `invalid_argument` before
+    /// the contract — the last stragglers of the class the 2026-10-05
+    /// sweep conformed.
+    #[test]
+    fn missing_image_and_uninitialized_gallery_classify_per_contract() {
+        let missing = map_media_error(MediaError::ImageNotFound(
+            "image not found: 999".to_string(),
+        ));
+        assert_eq!(missing.kind, McpErrorKind::NotFound, "{missing:?}");
+
+        let uninit = map_media_error(MediaError::GalleryNotInitialized);
+        assert_eq!(uninit.kind, McpErrorKind::FailedPrecondition, "{uninit:?}");
+        assert!(
+            uninit.message.contains("gallery_organize"),
+            "the precondition names the remedy: {uninit:?}"
+        );
     }
 }

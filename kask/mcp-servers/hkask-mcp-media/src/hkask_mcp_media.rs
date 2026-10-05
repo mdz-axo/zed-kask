@@ -5454,8 +5454,9 @@ mod tool_behavior_tests {
             error.message
         );
         assert!(
-            matches!(error.kind, hkask_types::McpErrorKind::InvalidArgument),
-            "gallery-not-initialized is a caller-fixable error, got {:?}",
+            matches!(error.kind, hkask_types::McpErrorKind::FailedPrecondition),
+            "gallery-not-initialized is a caller-fixable precondition (organize a gallery \
+             first — the canonical classification, operator ruling 2026-10-05), got {:?}",
             error.kind
         );
     }
