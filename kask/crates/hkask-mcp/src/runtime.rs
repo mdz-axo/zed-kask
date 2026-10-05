@@ -624,6 +624,21 @@ impl McpRuntime {
     }
 
     /// Register an MCP server (metadata only, no live connection).
+    /// Register an MCP server (metadata only, no live connection).
+    ///
+    /// Registration is surface-preserving: a placeholder registration
+    /// (`tools: vec![]` — the pre-start shape every production caller
+    /// uses) never erases an already-discovered tool surface. The start
+    /// that follows a placeholder is a live-peer no-op for a running
+    /// server, so discovery does not re-run — a clobbering placeholder
+    /// left servers running with a zero-tool surface for the rest of the
+    /// session (live 2026-10-05: the settings-observer load path
+    /// re-registered the already-running research, curator, and
+    /// kata-kanban servers with `tools=0` two minutes after their tools
+    /// were discovered; companies recovered only because its process
+    /// had died, so the observer's start re-discovered). A registration
+    /// that carries tools still replaces the surface (the explicit
+    /// surface-update path).
     pub async fn register_server(&self, server: McpServer) {
         let mut entries = self.entries.write().await;
 
@@ -636,7 +651,14 @@ impl McpRuntime {
         );
 
         let entry = entries.entry(server.id.clone()).or_default();
-        entry.metadata = Some(server);
+        let preserves_discovered = server.tools.is_empty()
+            && entry
+                .metadata
+                .as_ref()
+                .is_some_and(|existing| !existing.tools.is_empty());
+        if !preserves_discovered {
+            entry.metadata = Some(server);
+        }
         // Registration is an event, not something consumers must poll for.
         // `send_replace` is infallible and wakes subscribers without running
         // them inline, so it is safe while the `entries` write guard is held.
@@ -2066,6 +2088,116 @@ mod env_isolation_tests {
                  allowlist in kask_bridge::mcp_servers instead"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod registration_surface_tests {
+    use super::*;
+
+    /// Phase-1 pin (registry-sync resilience): a placeholder
+    /// re-registration — the settings-observer load path registers
+    /// `tools: vec![]` for a server that is already running — must not
+    /// erase the discovered tool surface. The follow-up start is a
+    /// live-peer no-op, so discovery never re-runs (live 2026-10-05:
+    /// research, curator, and kata-kanban ran with zero tools for a
+    /// session after their surfaces were clobbered two minutes after
+    /// discovery).
+    #[tokio::test]
+    async fn placeholder_registration_preserves_a_discovered_surface() {
+        let runtime = McpRuntime::new();
+        runtime
+            .register_server(McpServer {
+                id: "srv".to_string(),
+                name: "srv".to_string(),
+                tools: vec![McpTool {
+                    server_id: "srv".to_string(),
+                    name: "web_ping".to_string(),
+                    description: "liveness probe".to_string(),
+                    input_schema: serde_json::json!({"type": "object"}),
+                }],
+            })
+            .await;
+        // The load-path placeholder: same id, empty tools.
+        runtime
+            .register_server(McpServer {
+                id: "srv".to_string(),
+                name: "srv".to_string(),
+                tools: vec![],
+            })
+            .await;
+        let tools = runtime
+            .registered_servers()
+            .await
+            .into_iter()
+            .find(|(id, _)| id == "srv")
+            .map(|(_, tools)| tools)
+            .unwrap_or_default();
+        assert_eq!(
+            tools.len(),
+            1,
+            "the discovered surface survives the placeholder: {tools:?}"
+        );
+        assert_eq!(tools[0].name, "web_ping");
+    }
+
+    /// The explicit-update path is unchanged: a registration carrying
+    /// tools replaces the surface (the settings-UI fixture pattern).
+    #[tokio::test]
+    async fn registration_with_tools_still_replaces_the_surface() {
+        let runtime = McpRuntime::new();
+        let tool = |name: &str| McpTool {
+            server_id: "srv".to_string(),
+            name: name.to_string(),
+            description: String::new(),
+            input_schema: serde_json::json!({"type": "object"}),
+        };
+        runtime
+            .register_server(McpServer {
+                id: "srv".to_string(),
+                name: "srv".to_string(),
+                tools: vec![tool("first")],
+            })
+            .await;
+        runtime
+            .register_server(McpServer {
+                id: "srv".to_string(),
+                name: "srv".to_string(),
+                tools: vec![tool("second")],
+            })
+            .await;
+        let tools = runtime
+            .registered_servers()
+            .await
+            .into_iter()
+            .find(|(id, _)| id == "srv")
+            .map(|(_, tools)| tools)
+            .unwrap_or_default();
+        assert_eq!(tools.len(), 1, "replacement, not accumulation: {tools:?}");
+        assert_eq!(tools[0].name, "second");
+    }
+
+    /// A placeholder registration for a server with NO discovered
+    /// surface still lands (the pre-start placeholder pattern — the
+    /// launch path registers empty before starting, and discovery fills
+    /// the surface in).
+    #[tokio::test]
+    async fn placeholder_registration_lands_when_no_surface_exists() {
+        let runtime = McpRuntime::new();
+        runtime
+            .register_server(McpServer {
+                id: "srv".to_string(),
+                name: "srv".to_string(),
+                tools: vec![],
+            })
+            .await;
+        let servers = runtime.registered_servers().await;
+        assert!(
+            servers
+                .iter()
+                .any(|(id, tools)| id == "srv" && tools.is_empty()),
+            "the placeholder registers: {servers:?}"
+        );
     }
 }
 
