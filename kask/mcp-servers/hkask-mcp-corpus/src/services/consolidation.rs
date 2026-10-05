@@ -220,6 +220,9 @@ impl ConsolidationService {
                 // The ONE outcome classifier: CircuitOpen pauses the limiter,
                 // any other failure halves it.
                 slot.report_inference_outcome(&response);
+                if let Ok(ref result) = response {
+                    crate::helpers::record_usage(result);
+                }
                 match response {
                     Ok(response) => {
                         let text = response.text.trim().to_string();

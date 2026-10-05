@@ -503,6 +503,7 @@ impl ComposeService {
         let result = inference
             .generate_with_model(&system_prompt, &params, Some(&gen_model), None)
             .await?;
+        crate::helpers::record_usage(&result);
         let generated_prose = result.text.trim().to_string();
 
         // 7. Only an absent centroid degrades validation; lookup failures are errors.

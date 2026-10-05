@@ -291,6 +291,12 @@ impl Keychain {
     // credential URLs use the same oo7 schema for both sync and async callers.
 
     /// Store a secret at an arbitrary URL; oo7 I/O runs on async-std's executor.
+    ///
+    /// Not yet deadline-bounded (the 2026-10-04 follow-up bounded the read
+    /// path — the high-frequency consumer): a wedged portal hangs this
+    /// await, but stores are operator-initiated and rare, so the hang is
+    /// visible in the settings action that triggered it rather than
+    /// stalling an invisible consumer.
     pub async fn store_by_url_async(
         &self,
         url: &str,
@@ -337,12 +343,40 @@ impl Keychain {
     }
 
     /// Async counterpart of `retrieve_by_url`; the returned secret is zeroized on drop.
+    ///
+    /// Bounded by [`KEYCHAIN_READ_TIMEOUT_SECS`] like the sync read path: a
+    /// portal that neither answers nor errors within the window is wedged,
+    /// and the read fails with the typed [`KeychainError::Timeout`] instead
+    /// of hanging the caller (the 2026-10-04 incident class — this is the
+    /// credentials provider's read path, so an unbounded read stalls every
+    /// host-side credential consumer). The spawned task is outlived, not
+    /// cancelled: a wedged portal call lingers on the async-std executor
+    /// until it answers, matching the sync path's detached-thread semantics.
     pub async fn retrieve_by_url_async(
         &self,
         url: &str,
     ) -> Result<Zeroizing<String>, KeychainError> {
         let keyring = open_keyring();
-        async_std::task::spawn(Self::retrieve_url(keyring, url.to_string())).await
+        let key = url.to_string();
+        match async_std::future::timeout(
+            std::time::Duration::from_secs(KEYCHAIN_READ_TIMEOUT_SECS),
+            async_std::task::spawn(Self::retrieve_url(keyring, key.clone())),
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(_elapsed) => {
+                warn!(
+                    key = %key,
+                    timeout_secs = KEYCHAIN_READ_TIMEOUT_SECS,
+                    "Keychain async URL read did not answer — the secret portal may be wedged"
+                );
+                Err(KeychainError::Timeout {
+                    key,
+                    timeout_secs: KEYCHAIN_READ_TIMEOUT_SECS,
+                })
+            }
+        }
     }
 
     async fn retrieve_url(
@@ -368,6 +402,9 @@ impl Keychain {
     }
 
     /// Delete a secret at an arbitrary URL; absent entries are a no-op.
+    ///
+    /// Not yet deadline-bounded, like [`Self::store_by_url_async`] — the
+    /// bound landed on the read path first (see the incident note there).
     pub async fn delete_by_url_async(&self, url: &str) -> Result<(), KeychainError> {
         let keyring = open_keyring();
         async_std::task::spawn(Self::delete_url(keyring, url.to_string())).await
@@ -518,6 +555,33 @@ mod integration_tests {
             std::time::Duration::from_millis(50),
         );
         assert_eq!(verdict, None, "a call past the deadline must yield None");
+    }
+
+    /// The async URL read's bounding mechanism: a spawned task that
+    /// outlives the read deadline times out instead of hanging — the
+    /// wedged task is outlived on the async-std executor, matching the
+    /// sync path's detached-thread semantics.
+    #[test]
+    fn async_url_read_outlives_a_wedged_call() {
+        let verdict = async_std::task::block_on(async_std::future::timeout(
+            std::time::Duration::from_millis(50),
+            async_std::task::spawn(async {
+                async_std::task::sleep(std::time::Duration::from_secs(2)).await;
+                7_u32
+            }),
+        ));
+        assert!(verdict.is_err(), "a call past the deadline must time out");
+    }
+
+    /// The async URL read passes a fast answer through unchanged — the
+    /// timeout wraps the spawned task without altering its result.
+    #[test]
+    fn async_url_read_returns_fast_results() {
+        let verdict = async_std::task::block_on(async_std::future::timeout(
+            std::time::Duration::from_secs(5),
+            async_std::task::spawn(async { 7_u32 }),
+        ));
+        assert_eq!(verdict.ok(), Some(7));
     }
 
     /// The typed `Timeout` error names the key and the deadline, so a

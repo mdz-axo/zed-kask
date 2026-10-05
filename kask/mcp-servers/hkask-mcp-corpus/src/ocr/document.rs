@@ -39,6 +39,12 @@ pub(crate) struct OcrResult {
     pub metadata: super::response::PageMetadata,
     /// Model-generated structural annotations, not transcribed source text.
     pub figure_annotations: Vec<super::response::FigureAnnotation>,
+    /// Pre-detected blank page (`ocr::blank`): the image carried no
+    /// recoverable ink, so no vision call was made and no text exists. A
+    /// blank page is a fact about the source, not a conversion failure —
+    /// verification counts it in `blank_pages`, never `empty_pages`.
+    #[serde(default)]
+    pub blank: bool,
 }
 
 impl OcrResult {
@@ -58,6 +64,29 @@ impl OcrResult {
             quality,
             metadata: response.metadata,
             figure_annotations: response.figures,
+            blank: false,
+        }
+    }
+
+    /// Construct the result of a pre-detected blank page: no model ran, no
+    /// text exists. Quality is still assessed at construction (empty text
+    /// passes the gates trivially) so every result carries an assessed
+    /// quality record — the single-place rule holds for blanks too.
+    pub fn blank_page(page_index: usize) -> Self {
+        Self {
+            page_index,
+            model: "blank-pre-detection".to_string(),
+            text: String::new(),
+            quality: quality::assess(""),
+            metadata: super::response::PageMetadata {
+                primary_language: None,
+                is_rotation_valid: true,
+                rotation_correction: 0,
+                is_table: false,
+                is_diagram: false,
+            },
+            figure_annotations: Vec::new(),
+            blank: true,
         }
     }
 
@@ -129,6 +158,13 @@ pub(crate) struct VerificationReport {
     pub page_count_match: bool,
     /// Indices of pages that produced zero text.
     pub empty_pages: Vec<usize>,
+    /// Indices (0-based) of pages pre-detected as blank (`ocr::blank`):
+    /// no vision call was made because the image carried no recoverable
+    /// ink. A blank page is a fact about the source, not a conversion
+    /// failure — `passed` does not depend on this list (blank pages are
+    /// expected in scanned books), unlike `empty_pages`, which names
+    /// non-blank pages that produced no text.
+    pub blank_pages: Vec<usize>,
     /// Indices (0-based) of pages whose output failed a deterministic
     /// quality gate (see `ocr::quality`): CJK hallucination, repetition
     /// loops, or symbol soup. The text is retained — the report names the
@@ -156,12 +192,14 @@ impl VerificationReport {
     pub fn new(
         page_count_match: bool,
         empty_pages: Vec<usize>,
+        blank_pages: Vec<usize>,
         quality_failed_pages: Vec<usize>,
         error_count: usize,
     ) -> Self {
         let mut report = Self {
             page_count_match,
             empty_pages,
+            blank_pages,
             quality_failed_pages,
             error_count,
             passed: false,

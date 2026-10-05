@@ -28,10 +28,18 @@ pub(crate) fn verify_output(
     let actual_pages = results.len();
     let page_count_match = actual_pages == expected_pages;
 
+    let mut blank_pages: Vec<usize> = Vec::new();
     let mut empty_pages: Vec<usize> = Vec::new();
     let mut quality_failed_pages: Vec<usize> = Vec::new();
 
     for result in results.iter().take(actual_pages) {
+        if result.blank {
+            // A pre-detected blank page is a fact about the source, not a
+            // conversion failure — named in `blank_pages`, never counted
+            // as an empty-page failure.
+            blank_pages.push(result.page_index);
+            continue;
+        }
         if result.text.trim().is_empty() {
             empty_pages.push(result.page_index);
         }
@@ -45,6 +53,7 @@ pub(crate) fn verify_output(
     VerificationReport::new(
         page_count_match,
         empty_pages,
+        blank_pages,
         quality_failed_pages,
         error_count,
     )

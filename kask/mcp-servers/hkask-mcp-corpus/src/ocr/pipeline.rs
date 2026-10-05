@@ -62,6 +62,18 @@ pub(crate) enum OcrError {
         "OCR model '{model}' returned no text for {input_bytes} bytes of input — empty output is a failure, not a success"
     )]
     EmptyOcrOutput { model: String, input_bytes: usize },
+    /// The inference endpoint was unreachable at the transport layer
+    /// (`InferenceError::Connection`: connection refused, closed channel,
+    /// or persistent HTTP transport failure) for
+    /// [`ENDPOINT_UNREACHABLE_CONSECUTIVE`] consecutive pages. The run
+    /// aborts cleanly: remaining pages fail fast without a vision call,
+    /// the file stays pending (no receipt), and the driver relaunches
+    /// when the host returns. Not a capacity signal — never counts
+    /// against the breaker.
+    #[error(
+        "inference endpoint unreachable after {consecutive} consecutive connection failures — run aborted; relaunch when the host returns"
+    )]
+    EndpointUnreachable { consecutive: u32 },
 }
 
 impl BreakerFeedback for OcrError {
@@ -91,6 +103,69 @@ pub(crate) trait OcrExecutor: Send + Sync {
         model: &str,
         image: &DynamicImage,
     ) -> Result<OcrResult, OcrError>;
+}
+
+/// Run-scoped consecutive-connection trip for [`OcrError::EndpointUnreachable`].
+///
+/// A dead socket or persistently failing transport cannot recover inside
+/// a cooldown cycle — waiting one out is the wrong action against it (the
+/// 2026-10-03 dead-socket grind: five hours of 300s pause cycles against
+/// a severed inference socket). Three bounded attempts absorb a
+/// briefly-restarting socket; a still-dead endpoint loses the run to a
+/// cheap relaunch (the receipt short-circuit makes pending files nearly
+/// free to retry). Any successful page resets the count; other failure
+/// classes neither count nor reset — only recovery clears distress.
+const ENDPOINT_UNREACHABLE_CONSECUTIVE: u32 = 3;
+
+#[derive(Default)]
+struct EndpointWatch {
+    consecutive: std::sync::atomic::AtomicU32,
+    tripped: std::sync::atomic::AtomicBool,
+}
+
+impl EndpointWatch {
+    fn record_success(&self) {
+        self.consecutive
+            .store(0, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Record a page failure. Returns `true` when this failure is the one
+    /// that trips the abort (first crossing only) — the caller logs it.
+    fn record_failure(&self, error: &OcrError) -> bool {
+        if !matches!(
+            error,
+            OcrError::Inference {
+                source: hkask_types::InferenceError::Connection(_),
+            }
+        ) {
+            return false;
+        }
+        let consecutive = self
+            .consecutive
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            + 1;
+        if consecutive >= ENDPOINT_UNREACHABLE_CONSECUTIVE {
+            self.tripped
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+        consecutive == ENDPOINT_UNREACHABLE_CONSECUTIVE
+    }
+
+    fn tripped(&self) -> bool {
+        self.tripped.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// The typed abort for a page short-circuited after the trip.
+    fn unreachable_error(&self, page_index: usize, model: &str) -> PipelineError {
+        PipelineError::OcrFailed {
+            page_index,
+            model: model.to_string(),
+            reason: OcrError::EndpointUnreachable {
+                consecutive: ENDPOINT_UNREACHABLE_CONSECUTIVE,
+            }
+            .to_string(),
+        }
+    }
 }
 
 /// Run the OCR pipeline on a set of page images.
@@ -138,9 +213,16 @@ async fn run_pipeline_sequential(
     let mut last_log = Instant::now();
     let mut results: Vec<OcrResult> = Vec::with_capacity(expected_pages);
     let mut errors: Vec<PipelineError> = Vec::new();
+    let watch = EndpointWatch::default();
 
     for (page_index, image) in pages.into_iter().enumerate() {
-        let (result, err) = process_single_page(page_index, &image, executor, model).await;
+        // A tripped endpoint watch fails the remaining pages fast — no
+        // vision call, no slot, no cooldown cycle against a dead endpoint.
+        if watch.tripped() {
+            errors.push(watch.unreachable_error(page_index, model));
+            continue;
+        }
+        let (result, err) = process_single_page(page_index, &image, executor, model, &watch).await;
 
         if let Some(e) = err {
             errors.push(e);
@@ -190,6 +272,7 @@ async fn run_pipeline_parallel(
     //   breaker cooldowns instead of failing pages into them. See
     //   `batch.rs::AdaptiveLimiter`.
     let semaphore = Arc::new(Semaphore::new(max_concurrency));
+    let watch = Arc::new(EndpointWatch::default());
 
     let mut join_set = tokio::task::JoinSet::new();
     let results_slots = Arc::new(tokio::sync::Mutex::new(vec![
@@ -210,10 +293,19 @@ async fn run_pipeline_parallel(
         let model = model.to_string();
         let completed = Arc::clone(&completed);
         let last_progress = Arc::clone(&last_progress);
+        let watch = Arc::clone(&watch);
 
         join_set.spawn(async move {
             let _permit = sem.acquire().await;
-            let (result, err) = process_single_page(page_index, &image, &*exec, &model).await;
+            // A tripped endpoint watch fails this page fast — no vision
+            // call, no slot, no cooldown cycle against a dead endpoint.
+            if watch.tripped() {
+                let mut errs_guard = errs.lock().await;
+                errs_guard.push(watch.unreachable_error(page_index, &model));
+                return;
+            }
+            let (result, err) =
+                process_single_page(page_index, &image, &*exec, &model, &watch).await;
 
             // Progress: check after each page completes
             let done = completed.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
@@ -270,17 +362,31 @@ async fn process_single_page(
     image: &DynamicImage,
     executor: &(dyn OcrExecutor + '_),
     model: &str,
+    watch: &EndpointWatch,
 ) -> (Option<OcrResult>, Option<PipelineError>) {
     match executor.execute(page_index, model, image).await {
-        Ok(result) => (Some(result), None),
-        Err(e) => (
-            None,
-            Some(PipelineError::OcrFailed {
-                page_index,
-                model: model.to_string(),
-                reason: e.to_string(),
-            }),
-        ),
+        Ok(result) => {
+            watch.record_success();
+            (Some(result), None)
+        }
+        Err(e) => {
+            if watch.record_failure(&e) {
+                tracing::error!(
+                    target: "reg.pipeline.ocr.unreachable",
+                    page_index,
+                    consecutive = ENDPOINT_UNREACHABLE_CONSECUTIVE,
+                    "inference endpoint unreachable — aborting the run; the file stays pending, relaunch when the host returns"
+                );
+            }
+            (
+                None,
+                Some(PipelineError::OcrFailed {
+                    page_index,
+                    model: model.to_string(),
+                    reason: e.to_string(),
+                }),
+            )
+        }
     }
 }
 
@@ -300,6 +406,7 @@ fn finalize_outcome_inner(
         total_pages = expected_pages,
         result_count = results.len(),
         error_count = errors.len(),
+        blank = report.blank_pages.len(),
         quality_failed = report.quality_failed_pages.len(),
         duration_ms = duration_ms,
         passed = report.passed,
@@ -343,6 +450,170 @@ mod tests {
 
     fn blank_page() -> DynamicImage {
         DynamicImage::new_rgb8(100, 100)
+    }
+
+    /// Scripted executor: consumes canned outcomes by CALL order (not
+    /// page index) and counts calls — the endpoint-watch tests need to
+    /// know exactly how many pages reached the executor.
+    struct ScriptedExecutor {
+        script: Vec<Result<String, OcrError>>,
+        calls: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait]
+    impl OcrExecutor for ScriptedExecutor {
+        async fn execute(
+            &self,
+            page_index: usize,
+            _model: &str,
+            _image: &DynamicImage,
+        ) -> Result<OcrResult, OcrError> {
+            let call = self
+                .calls
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            match self.script.get(call) {
+                Some(Ok(text)) => Ok(OcrResult::new(page_index, "scripted-model", text.clone())),
+                Some(Err(e)) => Err(e.clone()),
+                None => Ok(OcrResult::new(
+                    page_index,
+                    "scripted-model",
+                    "script exhausted".to_string(),
+                )),
+            }
+        }
+    }
+
+    fn connection_refusal() -> OcrError {
+        OcrError::Inference {
+            source: hkask_types::InferenceError::Connection(
+                "connection refused (test fixture)".into(),
+            ),
+        }
+    }
+
+    /// Three consecutive connection refusals abort the run: the trip
+    /// bounds executor calls, and every page still carries a typed
+    /// error. The dead-socket grind class (2026-10-03) dies here — the
+    /// run ends instead of cycling cooldowns against a dead endpoint.
+    #[tokio::test]
+    async fn persistent_connection_refusal_aborts_the_run() {
+        let executor = Arc::new(ScriptedExecutor {
+            script: vec![
+                Err(connection_refusal()),
+                Err(connection_refusal()),
+                Err(connection_refusal()),
+            ],
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let handle = Arc::clone(&executor);
+        let pages: Vec<DynamicImage> = (0..8).map(|_| blank_page()).collect();
+        let outcome = run_pipeline(pages, 8, executor, "scripted-model", None).await;
+
+        assert_eq!(
+            handle.calls.load(std::sync::atomic::Ordering::Relaxed),
+            3,
+            "exactly the bounded attempts reach the executor"
+        );
+        assert_eq!(outcome.errors.len(), 8, "every page carries an error");
+        assert!(
+            outcome.results.is_empty(),
+            "no page produces a result against a dead endpoint"
+        );
+        let unreachable = outcome
+            .errors
+            .iter()
+            .filter(|e| {
+                matches!(
+                    e,
+                    PipelineError::OcrFailed { reason, .. }
+                        if reason.contains("unreachable")
+                )
+            })
+            .count();
+        assert_eq!(
+            unreachable, 5,
+            "the five post-trip pages fail fast with the typed abort"
+        );
+        assert!(!outcome.report.passed);
+    }
+
+    /// A connection blip between successes does not trip the abort: only
+    /// consecutive connection failures count, and any successful page
+    /// resets the count — every page is still attempted.
+    #[tokio::test]
+    async fn connection_blips_between_successes_do_not_abort() {
+        let executor = Arc::new(ScriptedExecutor {
+            script: vec![
+                Err(connection_refusal()),
+                Ok("page one".to_string()),
+                Err(connection_refusal()),
+                Ok("page two".to_string()),
+                Err(connection_refusal()),
+            ],
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let handle = Arc::clone(&executor);
+        let pages: Vec<DynamicImage> = (0..5).map(|_| blank_page()).collect();
+        let outcome = run_pipeline(pages, 5, executor, "scripted-model", None).await;
+
+        assert_eq!(
+            handle.calls.load(std::sync::atomic::Ordering::Relaxed),
+            5,
+            "no page is short-circuited — blips never trip"
+        );
+        assert_eq!(outcome.errors.len(), 3, "the three blip pages fail");
+        assert_eq!(outcome.results.len(), 2);
+        assert!(
+            outcome.errors.iter().all(|e| {
+                !matches!(
+                    e,
+                    PipelineError::OcrFailed { reason, .. }
+                        if reason.contains("unreachable")
+                )
+            }),
+            "no typed abort is emitted for blips"
+        );
+    }
+
+    /// The parallel path trips too: a dead endpoint burns a bounded number
+    /// of executor calls (the trip count plus at most one in-flight wave),
+    /// never one per page.
+    #[tokio::test]
+    async fn parallel_connection_refusal_is_bounded() {
+        let executor = Arc::new(ScriptedExecutor {
+            script: std::iter::repeat_with(connection_refusal)
+                .map(Err)
+                .take(20)
+                .collect(),
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let handle = Arc::clone(&executor);
+        let pages: Vec<DynamicImage> = (0..20).map(|_| blank_page()).collect();
+        let outcome = run_pipeline(pages, 20, executor, "scripted-model", Some(2)).await;
+
+        let calls = handle.calls.load(std::sync::atomic::Ordering::Relaxed);
+        assert!(
+            (3..=4).contains(&calls),
+            "the abort bounds executor calls to the trip count plus one in-flight wave, got {calls}"
+        );
+        assert_eq!(outcome.errors.len(), 20, "every page carries an error");
+        assert!(!outcome.report.passed);
+    }
+
+    /// A pre-detected blank page is a named, non-failing report category:
+    /// verification counts it in `blank_pages`, never `empty_pages`, and
+    /// `passed` does not depend on it.
+    #[test]
+    fn blank_pages_are_named_not_failing() {
+        let results = vec![
+            OcrResult::new(0, "mock-model", "real text".to_string()),
+            OcrResult::blank_page(1),
+        ];
+        let report = verify_output(2, &results, &[]);
+        assert!(report.passed, "a blank page is not a conversion failure");
+        assert_eq!(report.blank_pages, vec![1]);
+        assert!(report.empty_pages.is_empty());
+        assert!(report.page_count_match);
     }
 
     fn clean_text() -> String {

@@ -355,6 +355,9 @@ impl CorpusServer {
                     // The ONE outcome classifier: CircuitOpen pauses the
                     // limiter, any other failure halves it.
                     slot.report_inference_outcome(&outcome);
+                    if let Ok(ref retry) = outcome {
+                        crate::helpers::record_usage(&retry.value);
+                    }
                     let response = match outcome {
                         Ok(outcome) => outcome.value,
                         Err(e) => {

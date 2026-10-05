@@ -87,6 +87,9 @@ async fn infer_with_retry_using(
                 // per-callsite transient/permanent split — one classifier,
                 // per the 2026-10-02 regulator unification.)
                 slot.report_inference_outcome(&response);
+                if let Ok(ref result) = response {
+                    crate::helpers::record_usage(result);
+                }
                 response
             }
         },

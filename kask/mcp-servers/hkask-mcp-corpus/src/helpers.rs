@@ -124,6 +124,15 @@ pub(crate) fn ensure_db_exists(db_path: &str) -> Result<(), McpToolError> {
     Ok(())
 }
 
+/// Record one inference call's measured usage into the executing
+/// tool's result envelope (S-01 token half). One line per generate*
+/// call site in this server; embed/rerank return raw vectors/scores and
+/// surface no usage at the port — those paths stay unrecorded by API
+/// shape, not by omission.
+pub(crate) fn record_usage(result: &hkask_types::ports::InferenceResult) {
+    hkask_mcp_server::server::record_tool_usage(result.usage.clone(), result.cost_usd);
+}
+
 pub(crate) fn map_triage_error(error: crate::ocr::triage::TriageError) -> McpToolError {
     use crate::ocr::triage::TriageError;
     let message = format!("triage failed: {error}");

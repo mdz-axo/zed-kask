@@ -227,6 +227,7 @@ impl CorpusServer {
 
                 match self.inference_router.generate(&prompt, &params, None).await {
                     Ok(response) => {
+                        crate::helpers::record_usage(&response);
                         result["answer"] = json!(response.text);
                         result["answer_tokens"] = json!(response.usage.total_tokens);
                     }

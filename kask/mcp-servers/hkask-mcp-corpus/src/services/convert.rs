@@ -84,6 +84,10 @@ pub(crate) struct PipelineOcrOutcome {
     pub(crate) verification_passed: bool,
     pub(crate) page_count_match: bool,
     pub(crate) empty_pages: Vec<usize>,
+    /// Pages pre-detected as blank (`ocr::blank`): no vision call was
+    /// made because the image carried no recoverable ink. A fact about
+    /// the source, not a conversion failure.
+    pub(crate) blank_pages: Vec<usize>,
     /// Pages whose output failed a deterministic quality gate (CJK
     /// hallucination, repetition loop, symbol soup). The text is retained;
     /// the page indices are surfaced so garbage can never merge silently.
@@ -122,6 +126,7 @@ fn page_reports(results: &[crate::ocr::OcrResult]) -> Vec<serde_json::Value> {
         .map(|page| {
             serde_json::json!({
                 "page_index": page.page_index,
+                "blank": page.blank,
                 "metadata": page.metadata,
                 "figure_annotations": page.figure_annotations,
                 "figure_annotations_provenance": "model_inference",
@@ -145,8 +150,9 @@ fn assemble_pipeline_outcome(
     let text = join_page_text(outcome.results.iter().map(|result| result.text.as_str()));
     if text.trim().is_empty() {
         return Err(McpToolError::unavailable(format!(
-            "OCR produced no text: pages={}, empty_pages={:?}, errors={}",
+            "OCR produced no text: pages={}, blank_pages={:?}, empty_pages={:?}, errors={}",
             outcome.results.len(),
+            outcome.report.blank_pages,
             outcome.report.empty_pages,
             outcome.errors.len()
         )));
@@ -157,6 +163,7 @@ fn assemble_pipeline_outcome(
         verification_passed: outcome.report.passed,
         page_count_match: outcome.report.page_count_match,
         empty_pages: outcome.report.empty_pages,
+        blank_pages: outcome.report.blank_pages,
         quality_failed_pages: outcome.report.quality_failed_pages,
         error_count: outcome.errors.len(),
         page_reports: page_reports(&outcome.results),
@@ -349,6 +356,7 @@ impl<'a> ConvertService<'a> {
             "verification_passed": outcome.report.passed,
             "page_count_match": outcome.report.page_count_match,
             "empty_pages": outcome.report.empty_pages,
+            "blank_pages": &outcome.report.blank_pages,
             "quality_failed_pages": &outcome.report.quality_failed_pages,
             "quality_failures": quality_failure_detail(&outcome.results),
             "llm_breaker_open": self.llm_ocr.breaker_open(),
@@ -422,6 +430,7 @@ impl<'a> ConvertService<'a> {
             "verification_passed": outcome.report.passed,
             "page_count_match": outcome.report.page_count_match,
             "empty_pages": outcome.report.empty_pages,
+            "blank_pages": outcome.report.blank_pages,
             "quality_failed_pages": outcome.report.quality_failed_pages,
         });
         tracing::debug!(
@@ -1723,6 +1732,7 @@ mod ocr_guards {
                 } else {
                     vec![]
                 },
+                blank_pages: vec![],
                 quality_failed_pages: vec![],
                 error_count: 0,
                 passed: !text.trim().is_empty(),

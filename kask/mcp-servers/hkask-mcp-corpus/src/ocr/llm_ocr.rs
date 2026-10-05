@@ -57,6 +57,7 @@ pub(crate) async fn vision_ocr_bytes(
         .generate_vision(&prompt, &[b64_data], &params, Some(model))
         .await
         .map_err(|e| OcrError::Inference { source: e })?;
+    crate::helpers::record_usage(&result);
     if result.text.trim().is_empty() {
         return Err(OcrError::EmptyOcrOutput {
             model: model.to_string(),
@@ -396,6 +397,22 @@ impl OcrExecutor for LlmOcrExecutor {
                 )
                 .to_rgb8(),
         );
+        // Pre-call blankness gate: a confidently blank page (no
+        // recoverable ink — `ocr::blank`) is a fact about the source, not
+        // a conversion failure. Skip the vision call entirely — no limiter
+        // slot, no generation, no deadline risk (the 2026-10-03 zk-ref
+        // class: empty and near-blank pages burned full deadline budgets
+        // under load for ~0 words). The threshold is deliberately
+        // conservative: stamps and sparse pages stay content-ambiguous
+        // and go to the model.
+        if crate::ocr::blank::is_blank_page(&normalized) {
+            tracing::info!(
+                target: "reg.pipeline.ocr.blank",
+                page_index,
+                "page pre-detected blank — skipping the vision call"
+            );
+            return Ok(OcrResult::blank_page(page_index));
+        }
         // Remote-service gate: the adaptive limiter ramps LLM concurrency
         // (floor → ceiling on success, halved on failure, paused while any
         // breaker is open) instead of launching every in-flight page at the
@@ -808,6 +825,103 @@ mod tests {
         )
         .await;
         assert!(blocked.is_err(), "execute must block on the limiter pause");
+    }
+
+    /// A vision port that counts calls and always refuses — the
+    /// blank-gate test asserts the call count stays at zero for blanks.
+    #[derive(Default)]
+    struct CountingVisionPort {
+        calls: std::sync::atomic::AtomicUsize,
+    }
+
+    impl hkask_types::InferencePort for CountingVisionPort {
+        fn generate(
+            &self,
+            _prompt: &str,
+            _parameters: &LLMParameters,
+            _tools: Option<&[hkask_types::ChatToolDefinition]>,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<
+                        Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
+                    > + Send
+                    + '_,
+            >,
+        > {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            Box::pin(async {
+                Err(hkask_types::InferenceError::NotConfigured(
+                    "counting port: only generate_vision is wired".into(),
+                ))
+            })
+        }
+
+        fn generate_vision(
+            &self,
+            _prompt: &str,
+            _images: &[String],
+            _parameters: &LLMParameters,
+            _model_override: Option<&str>,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<
+                        Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
+                    > + Send
+                    + '_,
+            >,
+        > {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            Box::pin(async {
+                Err(hkask_types::InferenceError::NotConfigured(
+                    "the blank gate must skip this call".into(),
+                ))
+            })
+        }
+    }
+
+    /// A blank page never reaches the vision call: the executor answers it
+    /// locally with a blank-flagged result — no limiter slot, no
+    /// generation. A page with text-sized ink still goes to the model.
+    #[tokio::test]
+    async fn blank_pages_skip_the_vision_call() {
+        crate::helpers::seed_registry_template_root();
+        let port = Arc::new(CountingVisionPort::default());
+        let executor = LlmOcrExecutor::new(Arc::clone(&port) as Arc<dyn InferencePort>);
+
+        let blank = DynamicImage::new_rgb8(64, 64);
+        let result = executor
+            .execute(0, "RunPod/kask-ocr", &blank)
+            .await
+            .expect("a blank page is a successful no-content observation");
+        assert!(result.blank, "the result must carry the blank flag");
+        assert!(result.text.is_empty());
+        assert_eq!(result.page_index, 0);
+        assert_eq!(
+            port.calls.load(Ordering::Relaxed),
+            0,
+            "a blank page must not reach the vision call"
+        );
+
+        // A page with text-sized ink is content-ambiguous: it goes to the
+        // model (the counting port refuses — the call count is the
+        // assertion, not the outcome).
+        let mut buffer = image::RgbImage::from_pixel(64, 64, image::Rgb([255, 255, 255]));
+        for y in 20..40 {
+            for x in 10..50 {
+                buffer.put_pixel(x, y, image::Rgb([30, 30, 30]));
+            }
+        }
+        let text_page = DynamicImage::ImageRgb8(buffer);
+        let outcome = executor.execute(1, "RunPod/kask-ocr", &text_page).await;
+        assert!(
+            matches!(outcome, Err(OcrError::Inference { .. })),
+            "the non-blank page reaches the (refusing) vision port, got: {outcome:?}"
+        );
+        assert_eq!(
+            port.calls.load(Ordering::Relaxed),
+            1,
+            "exactly the non-blank page reaches the vision call"
+        );
     }
 
     /// First call requests a 90° rotation; the retry on the re-rendered page
