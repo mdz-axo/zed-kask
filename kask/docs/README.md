@@ -203,7 +203,7 @@ The eight tutorial removals landed in `5881f1f406fafe12f4fc65a549dbf1eb0a62ca84`
 - [x] Current-state Mermaid alignment and the Proposed conceptual exception satisfy `DOCUMENTATION_STANDARDS.md`.
 - [x] Internal links target retained documents; the eight folded how-to documents' links were repointed to their set references (2026-09-28).
 - [x] Diagram metadata has unique-ID/location registry parity (108 records, tree-verified 2026-10-05).
-- [x] Edited citations use full repository-relative paths; 525 sampled citations across the recomposed artifacts resolve (2026-09-28).
+- [x] Edited citations use full repository-relative paths; 525 sampled citations resolved (2026-09-28), and the 2026-10-05 deep-alignment run re-verified every citation it touched against live code (the compaction entry points and pin sample, the d-seam DIVERGENCE rows, kanban R1, the 13 live tool-surface pin sites, `SignalMetric` at `signals.rs:14`) with the tree-wide relative-link sweep resolving.
 - [x] Document count is 73, under the fewer-than-75 cap with a working 60-file target (`find kask/docs -type f | wc -l`, measured 2026-10-05).
 
 ## See also

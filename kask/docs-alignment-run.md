@@ -219,3 +219,76 @@ Predicted 1–2 metadata misses + possible count drift. Measured: exactly that �
 ### Metacognition gap (predicted vs measured)
 
 Predicted 1–2 count drifts with the fleet total as prime suspect. Measured: exactly one drift cluster (four spots in one doc) plus the unification-driven method-section staleness (not predicted — a mid-run concurrent change). Lesson: in a shared tree, re-verify registry-style docs against the LIVE mechanism at edit time, not the mechanism at set-open.
+
+---
+
+## Docs-set 5: diataxis/ (20 files) and diagrams/ + root (8 files)
+
+### Metacognition prediction (before compare)
+
+- Predict: all diataxis sets VERIFIED-CURRENT via the 2026-09-28 realignment (frontmatter complete, subjects stable); 0–1 stale-class hits where the high-churn crates (kask_bridge 27, mcp-server 9, regulation 7 commits) deleted or renamed something the references document; the diagram files verify via registry parity (already established in set 3). Confidence: 0.75.
+
+### Compare evidence
+
+- Frontmatter: 20/20 diataxis files carry the 7-field header; all `last_updated` 2026-09-28.
+- Deleted-surface check: the strategy evaluator (deleted `3267b2df20`) appears in zero regulation docs — never documented, no stale claim. The pin unification's `build_support` module is out of the mcp-server docs' scope (they document the framework, not build pins).
+- Changed-default check: the inference reference's DeepInfra mentions are provider descriptors/adapters (legitimate), not the embedding default — no stale default.
+- Citation check: `SignalMetric` cited at `loops/signals.rs:14-112` — the enum lives at `:14` ✓ current.
+- INDEX claim "19 retained artifacts across 10 cross-cutting sets" verified by arithmetic: 19 set files (2+2+3+2+2+1+2+2+1+2) across 10 sets.
+- Diagrams: registry parity 108 records = 108 rows (set 3); the redraw-grid removal (`3f6f844703`) left zero doc claims (no `redraw` hits in diagrams/diataxis); the consolidated-files count 34 verified (13+3+4+6+8).
+- Loop register: 25 canonical loops (L1–L25; the `L14,L15` row is a combined row, not a 26th loop — the README's "25 system loops" claim is correct); L24/L25 current through 2026-10-01; the `evolution_sensor_returns_none_on_broken_source` citation is the test's live name (`sensor_provider.rs:860`).
+
+### Decisions
+
+| Document | Decision | Basis |
+| --- | --- | --- |
+| All 19 diataxis set files + `INDEX.md` | **VERIFIED-CURRENT** | Frontmatter complete; subjects stable; no deleted-surface or changed-default claims; citation spot-checks resolve; INDEX count verified. P3 (explanation folds) remains deferred to the operator. |
+| `DIAGRAMS_INDEX.md` | **RECOMPOSED** (set 3) | Row + corrected prose + parity 108=108. |
+| `diagrams/architecture.md`, `kanban.md`, `mcp-dispatch.md`, `swarm.md`, `ui-widgets.md` | **VERIFIED-CURRENT** | Registry parity holds; record/block 1:1 per file (mechanically counted); no orphaned claims from the redraw-grid removal. |
+| `loop-register.md` | **VERIFIED-CURRENT** | 25 canonical loops; L24/L25 current; the sensor-test citation is live. |
+| `README.md` | **RECOMPOSED** (across sets) | Corpus line 74→73 (measured 2026-10-05); checklist count 73; portal rows +2 plans +two-symptom −onboarding; ledger +2 tombstones; skills/diagrams rows reconciled; diagram-parity item 108; citations item refreshed with this run's verification. |
+
+### Kata checkpoint (five questions)
+
+1. **Target**: every remaining doc one decision; all gates green. Met.
+2. **Actual**: 25 VERIFIED-CURRENT, 2 RECOMPOSED (README across sets, DIAGRAMS_INDEX in set 3); zero deletions needed in these sets.
+3. **Obstacles**: none — the 09-28 realignment's quality held for the diataxis layer.
+4. **Next step**: final gates + convergence check + report.
+5. **Check point**: gates below; commit hash recorded.
+
+### Metacognition gap (predicted vs measured)
+
+Predicted all-current with 0–1 stale-class hits. Measured: zero stale-class hits — the prediction's uncertainty resolved to the clean side. The run's overall prediction (65–75% VERIFIED-CURRENT, 4–8 RECOMPOSED, 1–2 DELETED, final 73–74) measured: 68 VERIFIED-CURRENT, 5 RECOMPOSED, 2 DELETED, final 73 — inside every band.
+
+---
+
+## Final verification (executed 2026-10-05)
+
+| Gate | Result |
+| --- | --- |
+| Count | **75 → 73 files**; `check-docs-count-gate.sh` green (README measurement current, gate references consistent). |
+| Links | Tree-wide relative-link sweep: zero unresolved (one hit was an absolute GitHub archive URL — out of scope). |
+| Frontmatter | 73/73 `.md` files carry the 7-field header (was 71/73 — compaction spec and two-symptom fixed this run). |
+| No-deleted-surfaces | P2 and guardrails-plan sweeps: only ledger tombstones and decision-record mentions remain; the two live citations repointed. |
+| Diagram parity | 108 `DIAGRAM_ALIGNMENT` records = 108 registry rows (mechanically counted). |
+| Citations | Every recomposed claim re-verified against live code this run (compaction entry points + pins, d-seam DIVERGENCE rows, kanban R1, 13 pin sites, `SignalMetric`, the sensor test name); d-seam ledger script green (68 seams reconciled). |
+| Convergence | `lisp_eval` over the five gate results — recorded in the run's commit. |
+
+## Coverage-gap findings (recorded for the operator, not authored)
+
+1. **P8 promotion path unblocked by count**: the repair plan's §P8 records "split into `research/experimentation-reference-model.md` at the next docs condensation" — the tree now sits at 73 under the 75 cap; the promotion is an operator decision per the plan's own record.
+2. **The concurrent-stream addition class (4 instances this run)**: two-symptom (no frontmatter/portal/corpus), guardrails plan (no portal/corpus), compaction spec (no frontmatter/diagram record), mcp-tool-review (no registry row/count bump). A CI check that new `.md` files carry the 7-field header and that count-carrying registries re-measure — the pattern `check-docs-count-gate.sh` already models — would close the class.
+3. **The 60-file working target** remains blocked on the P3 taxonomy ruling (the 8 diataxis explanation folds — priced, recommended against) and any further plan retirements; at 73 the run closed every evidence-supported deletion.
+
+## Unclosed objectives (with blocking evidence)
+
+1. **The 60-file working target** — blocked by the P3 operator ruling (an OUGHT taxonomy change dissolving the standards-prescribed Diataxis explanation layer; successor pre-named: the set references' opening sections). Everything evidence-supported is done; 73 < 75 cap ✓.
+2. **P2's functional confirmation** — executed on role-closure evidence (zero live role presence, zero media-crate commits since 2026-09-25, all five focus areas untouched); vetoable by single-commit revert (`af5680d1a1` carries the tombstone). The operator's ground-truth confirmation arrives with the goal score.
+
+## Commit ledger
+
+- `4a6f81fcf4` — set 1 (research): P2 deletion, d-seam-audit recomposition, two-symptom frontmatter+annotation, DIVERGENCE header reconciliation, README corpus 74.
+- `af5680d1a1` — set 2 (plans): guardrails-plan deletion with repointed citations, repair-plan metadata fix, README corpus 73.
+- `5182035b5b` — set 3 (architecture): compaction-spec frontmatter + diagram registration, skills registry 61/57/276 + mcp-tool-review row, diagram-index prose correction.
+- `c01ea06116` — set 4 (reference): fleet count 409, unified pin-verification section.
+- (set 5) The run's closing commit carries this report's final state and the README's refreshed verification-gate checklist — `git log -- kask/docs-alignment-run.md` names it.
