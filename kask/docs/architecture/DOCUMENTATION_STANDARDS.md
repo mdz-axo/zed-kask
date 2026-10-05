@@ -1,8 +1,8 @@
 ---
 title: "Documentation Standards"
 audience: [all contributors authoring or editing documentation in `docs/`]
-last_updated: 2026-09-30
-version: "0.40.0"
+last_updated: 2026-10-05
+version: "0.40.1"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]
@@ -75,7 +75,7 @@ Conventions:
 | Last-Updated | ISO 8601 date on every content-bearing edit[^iso8601]. |
 | Status | Exactly one of five values: `Draft`, `Proposed`, `Active`, `Deprecated`, or `Superseded`. `Proposed` is reserved for an operator-retained, not-yet-authorized plan under `kask/docs/plans/`; it is not evidence of implementation. `Deprecated` and `Superseded` documents are removed from the active tree (`git rm`) at the next review; git history is the canonical archive of record. |
 | Audience | Named roles; avoid "everyone." |
-| MDS Categories | One or more of the 5 MDS categories defined in [`../architecture/MDS.md`](../architecture/core/MDS.md) §2: `domain`, `composition`, `trust`, `lifecycle`, `curation`. See [`MDS.md`](../architecture/core/MDS.md) §9.1 for category → directory mapping. Documents that spanned the deprecated 9-category DDMVSS taxonomy have been migrated; the old categories map as: `capability`→`trust`, `interface`→`composition`, `observability`→`lifecycle`, `persistence`→`lifecycle`. |
+| MDS Categories | One or more of the 5 MDS categories defined in [`../architecture/MDS.md`](../architecture/core/MDS.md) §2: `domain`, `composition`, `trust`, `lifecycle`, `curation`. See [`MDS.md`](../architecture/core/MDS.md) §9.1 for category → directory mapping. |
 | Domain | Optional for cross-cutting documents; mandatory for domain-specific documents. |
 
 ## 3. Lifecycle
@@ -368,8 +368,6 @@ All architecture documents MUST map to at least one of the 5 MDS categories defi
 3. **Trust** — Threat model, capability separation boundaries, keystore
 4. **Lifecycle** — Bootstrap, evolution, deprecation, Regulation spans, variety counters, storage schema, memory pipelines, encryption
 5. **Curation** — Evaluation gradient, coherence metric, curator authority, writing quality
-
-These 5 categories consolidate the previous 9-category DDMVSS taxonomy. The mapping is: `capability`→`trust`, `interface`→`composition`, `observability`→`lifecycle`, `persistence`→`lifecycle`. Documents that used the 9-category taxonomy have been migrated.
 
 ### 11.1 Metadata Extension
 
