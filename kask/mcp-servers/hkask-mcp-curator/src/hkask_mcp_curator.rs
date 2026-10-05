@@ -2620,10 +2620,20 @@ mod tests {
 mod tool_surface_tests {
     use super::CuratorServer;
 
+    include!(concat!(env!("OUT_DIR"), "/tool_names.gen.rs"));
+    hkask_mcp_server::tool_surface_pin!(
+        CuratorServer::tool_router(),
+        "tool_router",
+        15,
+        tool_surface_is_exactly_15_registered_tools,
+    );
+
+    /// The retired escalation/advice tool family must not reappear — the
+    /// algedonic-review board replaced it (2026-09-27). Split from the
+    /// count pin so a re-introduction fails with its own name.
     #[test]
-    fn tool_surface_is_exactly_15_registered_tools() {
+    fn retired_escalation_tools_stay_unregistered() {
         let tools = CuratorServer::tool_router().list_all();
-        assert_eq!(tools.len(), 15, "curator registered tool surface changed");
         for removed in [
             "curator_escalations",
             "curator_escalation_resolve",

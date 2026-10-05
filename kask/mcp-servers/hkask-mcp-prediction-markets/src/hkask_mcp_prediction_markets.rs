@@ -2147,12 +2147,11 @@ mod smoke {
 mod tool_surface_tests {
     use super::PredictionMarketsServer;
 
-    #[test]
-    fn tool_surface_is_exactly_32_registered_tools() {
-        let n = PredictionMarketsServer::combined_router().list_all().len();
-        assert_eq!(
-            n, 32,
-            "prediction-markets registered tool surface changed; got {n}"
-        );
-    }
+    include!(concat!(env!("OUT_DIR"), "/tool_names.gen.rs"));
+    hkask_mcp_server::tool_surface_pin!(
+        PredictionMarketsServer::combined_router(),
+        "combined_router",
+        32,
+        tool_surface_is_exactly_32_registered_tools,
+    );
 }

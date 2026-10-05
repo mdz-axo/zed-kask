@@ -332,11 +332,13 @@ impl rmcp::ServerHandler for TrainingServer {}
 mod tool_surface_tests {
     use super::TrainingServer;
 
-    #[test]
-    fn tool_surface_is_exactly_9_registered_tools() {
-        let n = TrainingServer::combined_router().list_all().len();
-        assert_eq!(n, 9, "training registered tool surface changed; got {n}");
-    }
+    include!(concat!(env!("OUT_DIR"), "/tool_names.gen.rs"));
+    hkask_mcp_server::tool_surface_pin!(
+        TrainingServer::combined_router(),
+        "combined_router",
+        9,
+        tool_surface_is_exactly_9_registered_tools,
+    );
 }
 
 // ── Entry point ───────────────────────────────────────────────────────────

@@ -1,12 +1,13 @@
 //! Build script — generates `tool_names.gen.rs` from `#[tool]` fn signatures.
 //!
 //! Scans `src/**/*.rs` for functions annotated with `#[tool(...)]` and emits
-//! a `pub const TOOL_NAMES: &[&str]` with their names. The media server's
-//! tools span multiple prefixes (gallery_, image_, video_, audio_, face_,
-//! generate_, voice_, transcribe, model_, job_, workflow_) and its submodules
-//! contain internal `pub async fn` helpers that are NOT tools — so we match
-//! the `#[tool` annotation, not the function signature alone. Mirrors
-//! `hkask-mcp-portfolio/build.rs` but annotation-based instead of prefix-based.
+//! a `pub const TOOL_NAMES: &[&str]` with their names. The generated set is
+//! pinned against the live router by `tool_surface_pin!` in the server's
+//! test module, so a tool added/renamed/unrouted fails the pin instead of
+//! degrading to "tool not found" at dispatch. The scan itself lives in the
+//! shared support module — one implementation for every server, not
+//! per-server copies (the former per-server scans drifted: fixed windows
+//! missed long doc blocks, local patterns captured non-tool fns).
 
 #[path = "../../crates/hkask-mcp-server/build_support/tool_names.rs"]
 mod tool_names;
@@ -22,17 +23,9 @@ fn main() {
     let out_dir = env::var("OUT_DIR").expect("OUT_DIR is set by cargo for build scripts");
     let out_path = Path::new(&out_dir).join("tool_names.gen.rs");
 
-    // Match `pub async fn <name>(` that are preceded (within a few lines) by
-    // a `#[tool` attribute. The media server uses `#[tool(router(...))]` on
-    // the impl block and `#[tool(description = "...")]` on individual fns.
-    // We scan for `#[tool` lines and then capture the next `pub async fn`
-    // that follows within the same file.
-    let tool_attr_pattern = regex::Regex::new(r"#\[tool").expect("valid regex");
-    let fn_pattern = regex::Regex::new(r"pub async fn (\w+)\s*\(").expect("valid regex");
-
     let mut names: BTreeSet<String> = BTreeSet::new();
     for source in tool_names::rust_sources(&src_dir, true) {
-        scan_source(&source, &tool_attr_pattern, &fn_pattern, &mut names);
+        tool_names::scan_tool_fns(&source, &mut names);
     }
 
     let entries = tool_names::entries(&names);
@@ -43,28 +36,4 @@ fn main() {
     );
 
     tool_names::write_if_changed(&out_path, &generated, &src_dir);
-}
-
-/// Select `#[tool]`-annotated `pub async fn` names from one Rust source file.
-///
-/// A function is a tool if a `#[tool` attribute appears on one of the lines
-/// immediately preceding the `pub async fn` line (within 5 lines, to allow
-/// for multi-line `#[tool(description = "...")]` attributes).
-fn scan_source(
-    source: &str,
-    tool_attr_pattern: &regex::Regex,
-    fn_pattern: &regex::Regex,
-    names: &mut BTreeSet<String>,
-) {
-    let lines: Vec<&str> = source.lines().collect();
-    for (i, line) in lines.iter().enumerate() {
-        if let Some(caps) = fn_pattern.captures(line) {
-            // Look backwards up to 5 lines for a `#[tool` attribute.
-            let start = i.saturating_sub(5);
-            let preceding = &lines[start..i];
-            if preceding.iter().any(|l| tool_attr_pattern.is_match(l)) {
-                names.insert(caps[1].to_string());
-            }
-        }
-    }
 }

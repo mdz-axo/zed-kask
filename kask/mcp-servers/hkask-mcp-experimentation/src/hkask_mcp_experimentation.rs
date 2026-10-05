@@ -75,9 +75,13 @@ mod registry_path_tests {
 }
 
 #[cfg(test)]
-mod tool_name_pin {
-    hkask_mcp_server::tool_name_pin_test!(
+mod tool_surface_tests {
+    use super::*;
+
+    hkask_mcp_server::tool_surface_pin!(
         crate::server::ExperimentationServer::experimentation_router(),
-        "experimentation_router"
+        "experimentation_router",
+        6,
+        tool_surface_is_exactly_6_registered_tools,
     );
 }

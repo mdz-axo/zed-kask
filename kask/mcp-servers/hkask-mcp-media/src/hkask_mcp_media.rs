@@ -470,23 +470,22 @@ impl rmcp::ServerHandler for MediaServer {}
 mod tool_surface_tests {
     use super::*;
 
-    // Pins the registered tool-surface count end-to-end. Catches silent
-    // registration drops — a `#[tool]` impl block without `#[tool_router]`, or
-    // a sub-router missing from `combined_router()`, silently registers nothing
-    // (`cargo check` passes on an unwired orphan). Mirrors the swarm pin.
-    #[test]
-    fn tool_surface_is_exactly_98_registered_tools() {
-        let n = MediaServer::combined_router().list_all().len();
-        assert_eq!(n, 98, "media registered tool surface changed; got {n}");
-    }
-
-    // Pins the generated TOOL_NAMES const against the live rmcp tool
-    // surface — a tool added/renamed/unrouted fails here instead of degrading
-    // to "tool not found" at dispatch. The Steer prompt's tool list is
-    // RENDERED from TOOL_NAMES (hkask_steer::render_grouped_tool_advertisement
-    // in media_panel), so this pin is the chain's integrity check: without it,
-    // an unrouted `#[tool]` fn would flow into the prompt as a dead name.
-    hkask_mcp_server::tool_name_pin_test!(MediaServer::combined_router(), "combined_router");
+    // One macro call pins the surface two ways: the exact count (98) and
+    // the generated TOOL_NAMES set against the live rmcp surface. Catches
+    // silent registration drops — a `#[tool]` impl block without
+    // `#[tool_router]`, or a sub-router missing from `combined_router()`,
+    // silently registers nothing (`cargo check` passes on an unwired
+    // orphan) — and same-count renames, which the count alone cannot. The
+    // Steer prompt's tool list is RENDERED from TOOL_NAMES
+    // (hkask_steer::render_grouped_tool_advertisement in media_panel), so
+    // the name pin is that chain's integrity check: without it, an unrouted
+    // `#[tool]` fn would flow into the prompt as a dead name.
+    hkask_mcp_server::tool_surface_pin!(
+        MediaServer::combined_router(),
+        "combined_router",
+        98,
+        tool_surface_is_exactly_98_registered_tools,
+    );
 
     // Coverage: every registered tool must map to an OMC concept. Catches
     // the silent-drop failure mode where a new tool is added to the router

@@ -498,13 +498,16 @@ mod tool_behavior_tests {
     // surface (portfolio_delete, ledger_import, ledger_export,
     // portfolio_comparison, portfolio_returns, transaction_note_append) was
     // removed from this server when the portfolio MCP server took ownership —
-    // this pin is what makes a re-introduction (or a silent registration drop)
-    // fail CI instead of shipping as an undocumented duplicate.
-    #[test]
-    fn tool_surface_is_exactly_40_registered_tools() {
-        let n = CompaniesServer::combined_router().list_all().len();
-        assert_eq!(n, 40, "companies registered tool surface changed; got {n}");
-    }
+    // this pin is what makes a re-introduction (or a silent registration drop,
+    // or a same-count rename) fail CI instead of shipping as an undocumented
+    // duplicate.
+    include!(concat!(env!("OUT_DIR"), "/tool_names.gen.rs"));
+    hkask_mcp_server::tool_surface_pin!(
+        CompaniesServer::combined_router(),
+        "combined_router",
+        40,
+        tool_surface_is_exactly_40_registered_tools,
+    );
 
     // Coverage: every registered tool must map to an ontology concept for
     // the output-JSON `"ontology"` field baked by `fibo::enrich_with_ontology`.

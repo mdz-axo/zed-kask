@@ -309,15 +309,26 @@ mod tool_surface_tests {
         );
     }
 
-    /// The corpus server registers exactly 26 tools. A `#[tool]` method in an
-    /// impl block WITHOUT `#[tool_router]` silently registers nothing while
-    /// `cargo check` passes — `corpus_prepare_training_dataset` shipped that
-    /// way (attributed, implemented, unreachable) until this pin caught the
-    /// class. Mirrors the media/scenarios pin tests.
+    // The corpus server registers exactly 26 tools. A `#[tool]` method in an
+    // impl block WITHOUT `#[tool_router]` silently registers nothing while
+    // `cargo check` passes — `corpus_prepare_training_dataset` shipped that
+    // way (attributed, implemented, unreachable) until this pin caught the
+    // class. One macro call: the count test plus the build.rs-generated
+    // TOOL_NAMES set against the live router (same-count renames included).
+    include!(concat!(env!("OUT_DIR"), "/tool_names.gen.rs"));
+    hkask_mcp_server::tool_surface_pin!(
+        CorpusServer::combined_router(),
+        "combined_router",
+        26,
+        tool_surface_is_exactly_26_registered_tools,
+    );
+
+    /// Schema-shape pins for the calibration/grounding tools — the
+    /// load-bearing required fields downstream stages depend on. Split
+    /// from the count pin so each invariant fails with its own name.
     #[test]
-    fn tool_surface_is_exactly_26_registered_tools() {
+    fn calibration_and_grounding_schemas_keep_required_fields() {
         let tools = CorpusServer::combined_router().list_all();
-        assert_eq!(tools.len(), 26, "corpus registered tool surface changed");
         let grounding = tools
             .iter()
             .find(|tool| tool.name == "corpus_ground_generated_qa")

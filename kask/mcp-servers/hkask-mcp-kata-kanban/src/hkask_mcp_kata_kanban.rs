@@ -1764,11 +1764,17 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
     .await
 }
 
-// Pins the generated TOOL_NAMES const against the live rmcp tool surface —
-// a tool added/renamed without regenerating (or a `name =` override the
+// Pins the registered tool surface end-to-end: the exact count (27) plus
+// the generated TOOL_NAMES const against the live rmcp surface — a tool
+// added/removed/renamed without regenerating (or a `name =` override the
 // build script can't see) fails here instead of degrading to "tool not
 // found" at dispatch time.
-hkask_mcp_server::tool_name_pin_test!(KanbanServer::tool_router(), "tool_router");
+hkask_mcp_server::tool_surface_pin!(
+    KanbanServer::tool_router(),
+    "tool_router",
+    27,
+    tool_surface_is_exactly_27_registered_tools,
+);
 
 /// expect: "Kanban refuses startup rather than accepting mutations without durable encrypted state."
 /// [P1] Motivating: User Sovereignty — the operator can trust persisted workflow state.

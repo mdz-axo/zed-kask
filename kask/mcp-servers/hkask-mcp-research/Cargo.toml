@@ -57,3 +57,6 @@ pdf-extract.workspace = true
 # web_ping happy path, web_* invalid-argument and credential-missing error
 # paths, and RSS DB in-process paths.
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+
+[build-dependencies]
+regex.workspace = true

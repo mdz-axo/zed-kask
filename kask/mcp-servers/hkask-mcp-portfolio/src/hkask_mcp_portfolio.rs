@@ -62,15 +62,24 @@ include!(concat!(env!("OUT_DIR"), "/tool_names.gen.rs"));
 pub use server::{map_portfolio_error, run};
 
 #[cfg(test)]
-mod tool_name_pin {
-    hkask_mcp_server::tool_name_pin_test!(
-        crate::server::PortfolioServer::portfolio_router(),
-        "portfolio_router"
-    );
-}
-
-#[cfg(test)]
 mod property_tests;
 
 #[cfg(test)]
 mod tests;
+
+/// One macro call pins the registered tool surface two ways: the exact
+/// count (18) and the build.rs-generated TOOL_NAMES set against the live
+/// router — a tool added/removed/renamed/unrouted fails here instead of
+/// degrading to "tool not found" at dispatch. TOOL_NAMES resolves via the
+/// crate-root include through `use super::*`.
+#[cfg(test)]
+mod tool_surface_tests {
+    use super::*;
+
+    hkask_mcp_server::tool_surface_pin!(
+        crate::server::PortfolioServer::portfolio_router(),
+        "portfolio_router",
+        18,
+        tool_surface_is_exactly_18_registered_tools,
+    );
+}

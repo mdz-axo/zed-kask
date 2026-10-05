@@ -972,33 +972,14 @@ mod smoke_tests {
 #[cfg(test)]
 mod tool_surface_tests {
     use super::SwarmServer;
+    use crate::TOOL_NAMES;
 
-    #[test]
-    fn tool_surface_is_exactly_90_registered_tools() {
-        let n = SwarmServer::combined_router().list_all().len();
-        assert_eq!(n, 90, "swarm registered tool surface changed; got {n}");
-    }
-
-    // The generated const and the live router must agree by NAME — a `name =`
-    // override or an unrouted `swarm_*` fn makes them diverge. Name-set
-    // equality, not count equality: an override keeps counts equal while
-    // breaking every consumer that renders or dispatches by the fn name
-    // (the swarm panel's Steer prompt renders from TOOL_NAMES).
-    #[test]
-    fn tool_names_const_matches_registered_surface() {
-        let mut live: Vec<String> = SwarmServer::combined_router()
-            .list_all()
-            .iter()
-            .map(|tool| tool.name.to_string())
-            .collect();
-        live.sort();
-        let mut generated = crate::TOOL_NAMES.to_vec();
-        generated.sort();
-        assert_eq!(
-            generated, live,
-            "TOOL_NAMES (build.rs-generated) must match the live combined_router surface"
-        );
-    }
+    hkask_mcp_server::tool_surface_pin!(
+        SwarmServer::combined_router(),
+        "combined_router",
+        90,
+        tool_surface_is_exactly_90_registered_tools,
+    );
 
     // The cloud partition must match the live cloud router — the swarm panel
     // renders its ABW/local Steer split from this const, so drift there

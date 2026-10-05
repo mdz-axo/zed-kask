@@ -42,3 +42,6 @@ proptest = { workspace = true }
 [lints]
 workspace = true
 
+
+[build-dependencies]
+regex.workspace = true

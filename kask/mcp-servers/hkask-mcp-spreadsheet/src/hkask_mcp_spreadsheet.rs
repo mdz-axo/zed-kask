@@ -29,9 +29,13 @@ include!(concat!(env!("OUT_DIR"), "/tool_names.gen.rs"));
 pub use server::run;
 
 #[cfg(test)]
-mod tool_name_pin {
-    hkask_mcp_server::tool_name_pin_test!(
+mod tool_surface_tests {
+    use super::*;
+
+    hkask_mcp_server::tool_surface_pin!(
         crate::server::SpreadsheetServer::spreadsheet_router(),
-        "spreadsheet_router"
+        "spreadsheet_router",
+        2,
+        tool_surface_is_exactly_2_registered_tools,
     );
 }

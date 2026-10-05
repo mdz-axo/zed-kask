@@ -1956,14 +1956,17 @@ fn emit_cmp_provenance(
 mod tests {
     use super::*;
 
-    /// The scenarios server registers exactly 19 tools. Adding or removing a
-    /// tool is an intentional surface change — this pin catches accidental
-    /// drift. Mirrors `hkask-mcp-media::tool_surface_is_exactly_98_registered_tools`.
-    #[test]
-    fn tool_surface_is_exactly_19_registered_tools() {
-        let n = ScenariosServer::scenario_router().list_all().len();
-        assert_eq!(n, 19, "scenarios registered tool surface changed; got {n}");
-    }
+    // The scenarios server registers exactly 19 tools. Adding, removing,
+    // or renaming a tool is an intentional surface change — the pin catches
+    // accidental drift. One macro call: the count test plus the
+    // build.rs-generated TOOL_NAMES set against the live router.
+    include!(concat!(env!("OUT_DIR"), "/tool_names.gen.rs"));
+    hkask_mcp_server::tool_surface_pin!(
+        ScenariosServer::scenario_router(),
+        "scenario_router",
+        19,
+        tool_surface_is_exactly_19_registered_tools,
+    );
 
     /// `emit_cmp_provenance` produces the full 7-field CMP index identity per
     /// root: id, family, tenor, orientation, venue, method, maturity_error_days.

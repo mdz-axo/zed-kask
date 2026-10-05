@@ -5,6 +5,45 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+/// Select `#[tool]`-annotated `pub async fn` names from one Rust source.
+///
+/// State-machine scan: a `#[tool` line arms the collector; the collector
+/// stays armed through the attribute's own continuation lines, multi-line
+/// descriptions, and contract-doc blocks of ANY length (a former
+/// fixed-window scan silently dropped `corpus_query`, whose 7-line doc
+/// block exceeded the window — the name pin caught it, live 2026-10-05);
+/// the first `pub async fn` while armed is captured and disarms. A block
+/// close (`}`) disarms without capture — the armed attribute's fn is gone.
+/// The `\b` boundary keeps `#[tool_router]` and `#[tool_handler]` from
+/// arming the collector (live 2026-10-05: prediction-markets' scan
+/// captured its `run` entry fn through `#[tool_handler]` — a false
+/// positive the name pin caught). The generated set is verified against
+/// the live router by `tool_surface_pin!`, so a mis-scan fails a test,
+/// never ships.
+pub fn scan_tool_fns(source: &str, names: &mut BTreeSet<String>) {
+    let tool_attr = regex::Regex::new(r"#\[tool\b").expect("valid regex");
+    let tool_fn = regex::Regex::new(r"(?:pub )?async fn (\w+)\s*\(").expect("valid regex");
+    let mut armed = false;
+    for line in source.lines() {
+        let trimmed = line.trim_start();
+        if tool_attr.is_match(trimmed) {
+            armed = true;
+            continue;
+        }
+        if !armed {
+            continue;
+        }
+        if let Some(name) = tool_fn.captures(trimmed).and_then(|c| c.get(1)) {
+            names.insert(name.as_str().to_string());
+            armed = false;
+            continue;
+        }
+        if trimmed.starts_with('}') {
+            armed = false;
+        }
+    }
+}
+
 pub fn rust_sources(dir: &Path, recursive: bool) -> Vec<String> {
     fn collect(dir: &Path, recursive: bool, sources: &mut Vec<String>) {
         for entry in fs::read_dir(dir).expect("src directory exists") {

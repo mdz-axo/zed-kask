@@ -2642,9 +2642,11 @@ mod tool_surface_tests {
         }
     }
 
-    #[test]
-    fn tool_surface_is_exactly_27_registered_tools() {
-        let n = ResearchServer::tool_router().list_all().len();
-        assert_eq!(n, 27, "research registered tool surface changed; got {n}");
-    }
+    include!(concat!(env!("OUT_DIR"), "/tool_names.gen.rs"));
+    hkask_mcp_server::tool_surface_pin!(
+        ResearchServer::tool_router(),
+        "tool_router",
+        27,
+        tool_surface_is_exactly_27_registered_tools,
+    );
 }

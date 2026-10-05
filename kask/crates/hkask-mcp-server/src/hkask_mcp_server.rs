@@ -87,28 +87,49 @@ macro_rules! impl_tool_context {
     };
 }
 
-/// Generate the `tool_names_match_live_router` pin — the test every
-/// build.rs-driven MCP server carries: the generated `TOOL_NAMES` const
-/// must match the live rmcp router surface, so a tool added/renamed (or a
-/// `name =` override the build script cannot see) fails here instead of
-/// degrading to "tool not found" at dispatch.
+/// Pin a server's registered tool surface with one macro call: the exact
+/// tool count AND the build.rs-generated `TOOL_NAMES` set against the live
+/// router. The count test catches additions/removals; the name test catches
+/// same-count renames (which the count alone cannot) — together they make
+/// silent registration drift fail a test instead of degrading to
+/// tool-not-found at dispatch.
 ///
-/// Invoked from the server's test module with the router expression and
-/// its name for the failure message:
+/// The invoking test module must bring `TOOL_NAMES` into scope: either a
+/// crate-root `include!(concat!(env!("OUT_DIR"), "/tool_names.gen.rs"))`
+/// re-exported through the module's `use super::*`, or a module-local
+/// include directly inside the test module. Unqualified `TOOL_NAMES` below
+/// resolves at the call site either way.
+///
+/// `$test_name` keeps each server's historical count-test name (docs cite
+/// them); the name test is fixed-shape everywhere.
+///
+/// # Example
 /// ```ignore
-/// tool_name_pin_test!(crate::server::EvolutionServer::evolution_router(), "evolution_router");
+/// #[cfg(test)]
+/// mod tool_surface_tests {
+///     use super::*;
+///     include!(concat!(env!("OUT_DIR"), "/tool_names.gen.rs"));
+///     hkask_mcp_server::tool_surface_pin!(
+///         TrainingServer::combined_router(),
+///         "combined_router",
+///         9,
+///         tool_surface_is_exactly_9_registered_tools,
+///     );
+/// }
 /// ```
-///
-/// `TOOL_NAMES` is read from the invoking crate's root (the build.rs
-/// `include!` site). Both sides are sorted before comparison — the pin is
-/// set equality, not build.rs emission order.
-// `crate::` below deliberately resolves at the macro CALL site (each
-// server's own TOOL_NAMES), not in this crate — clippy's crate_in_macro_def
-// guards against accidental self-references; this one is the mechanism.
-#[allow(clippy::crate_in_macro_def)]
 #[macro_export]
-macro_rules! tool_name_pin_test {
-    ($router:expr, $router_name:literal $(,)?) => {
+macro_rules! tool_surface_pin {
+    ($router:expr, $router_name:literal, $expected:literal, $test_name:ident $(,)?) => {
+        #[test]
+        fn $test_name() {
+            let n = $router.list_all().len();
+            assert_eq!(
+                n, $expected,
+                "{} registered tool surface changed; got {}",
+                $router_name, n
+            );
+        }
+
         #[test]
         fn tool_names_match_live_router() {
             let mut live: Vec<String> = $router
@@ -117,7 +138,7 @@ macro_rules! tool_name_pin_test {
                 .map(|tool| tool.name.to_string())
                 .collect();
             live.sort();
-            let mut generated: Vec<&str> = crate::TOOL_NAMES.to_vec();
+            let mut generated: Vec<&str> = TOOL_NAMES.to_vec();
             generated.sort();
             assert_eq!(
                 generated,
