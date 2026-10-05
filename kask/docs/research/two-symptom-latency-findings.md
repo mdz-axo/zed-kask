@@ -1,3 +1,13 @@
+---
+title: "Two-symptom latency investigation — findings report, hypothesis register, ranked plan"
+audience: [developers, operators, agents]
+last_updated: 2026-10-05
+version: "1.0.0"
+status: "Active"
+domain: "Cross-cutting"
+mds_categories: [domain, lifecycle]
+---
+
 # Two-symptom latency investigation — findings report, hypothesis register, ranked plan
 
 **Date:** 2026-10-01 · **Scope:** thread-load latency (symptom 1) and input-tracking freeze (symptom 2), the two user-observed symptoms in the goal `19b82d53-9a4e-43f6-a433-8270632dbc51`. Documents-only pass; no code changed. Composes, does not replace, P7a–P7f in `kask/docs/plans/hkask-core-mcp-repair-improvement-plan.md` — every prior measurement is cited where reused, and the P7g section of that plan is superseded by this report (see §7).
@@ -20,7 +30,7 @@
 | Instrument | Where | What it measures | Status |
 | --- | --- | --- | --- |
 | Per-window draw stats | `gpui::profiler::record_draw_duration` / `take_draw_stats`, surfaced as `ui frame health: w<id> draws=N avg_ms=A max_ms=M` in `crates/zed/src/reliability.rs` (30 s cadence) | draw **rate** vs draw **cost** per window (D84 follow-ups) | alive; **live data present in `~/.local/share/zed-kask/logs/Zed-Kask.log*` today** |
-| `[DIAG-anr]` event-window probe | `crates/agent/src/agent.rs:2505-2514, 2687-2714` (temporary; "remove with the fix") | per-event forwarding cost in the `ThreadEvent` → `AcpThread` event loop: window totals, avg, max | alive; live data present today, 2026-09-29→10-01 |
+| `[DIAG-anr]` event-window probe | `crates/agent/src/agent.rs:2505-2514, 2687-2714` (temporary; "remove with the fix") | per-event forwarding cost in the `ThreadEvent` → `AcpThread` event loop: window totals, avg, max | alive at report time, 2026-09-29→10-01; removed per its own contract 2026-10-02 once the event-path fix landed (§7.11) |
 | Foreground hang detector | `zed_kask::reliability::hang_detection::logging` | foreground stalls > threshold | alive; 3 `New foreground hang detected` entries today (10:45, 11:07, 15:03 sessions) |
 | Input-latency histograms | `gpui::profiler::InputLatencySnapshot` + `crates/input_latency_ui` | input→frame latency percentiles, events-coalesced-per-frame | compiled in; **no snapshot has been taken** (requires `zed: dump input latency histogram` / telemetry path) |
 | Built-in performance profiler | `instrumentation.performance_profiler.enabled` + `zed: open performance profiler` | per-task foreground/background timing | **off by default in the running profile** (see §1.3) |

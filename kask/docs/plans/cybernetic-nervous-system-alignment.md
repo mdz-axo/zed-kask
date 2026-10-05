@@ -1,8 +1,8 @@
 ---
 title: "Cybernetic Nervous System — Alignment Plan"
 audience: [architects, developers, operators, agents]
-last_updated: 2026-10-01
-version: "0.3.8"
+last_updated: 2026-10-05
+version: "0.3.9"
 status: "Active — reference model admitted (operator ruling 2026-09-30); S1–S6 recorded; §8 cleanup CU-1–CU-5/CU-7 complete, CU-6 gated on displacement; L25 classified; parking lot fully dispositioned — O3 closed as designed (2026-10-01)"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle]
@@ -517,7 +517,7 @@ reachable by orphan deletion.
 | # | Candidate | Price | Successor | Assessment |
 | --- | --- | --- | --- | --- |
 | P1 | Fold `research/navigating-the-region-space-collaboration.md` (344 ln) into its sibling `research/syntax-semantic-probabilistic-deterministic-space.md` | −1 file, ~−305 corpus lines | the sibling (its only inbound reference, `:170`); the reified machinery lives in the `region-routing` SKILL.md and the skills README row; git history archives the session narrative (the 2026-09-23 fold pattern) | **recommended** — low risk; the skill cites the sibling, not this doc |
-| P2 | Delete `research/media-server-lead-onboarding.md` (253 ln) | −1 file | `reference/mcp-servers/media.md` + the media diataxis set (the grounded inventory and architecture content is duplicated there); git history | **operator question** — a role document; deletable only if the media-lead onboarding role is closed (a functional call) |
+| P2 | Delete `research/media-server-lead-onboarding.md` (253 ln) | −1 file | `reference/mcp-servers/media.md` + the media diataxis set (the grounded inventory and architecture content is duplicated there); git history | **executed 2026-10-05** (docs deep-alignment run) on role-closure evidence: zero live role presence repo-wide, zero media-crate commits since 2026-09-25, all five §6 focus areas untouched; vetoable by single-commit revert |
 | P3 | Fold the 8 diataxis `explanation.md` files into their set references (condenser 102, inference 112, mcp-server 135, regulation 187, storage 156, types 155, kask_bridge 143, swarm_system 148 ln) | −8 files | the set references' opening sections (the hkask-tool-port precedent, 2026-09-28) | **priced, recommended against** — the explanations are substantial, and the fold dissolves the Diataxis explanation layer the standards prescribe; an OUGHT taxonomy change, not condensation |
 
 **Gap findings (additions the per-server discipline requires):**
