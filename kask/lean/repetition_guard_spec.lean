@@ -18,11 +18,11 @@ key, and its single `last`-state models the implementation's
 `last_dispatched` chain state: an identical consecutive dispatch advances
 the streak, any distinct dispatch resets it to 1. The implementation
 checks the PRIOR streak before dispatch (the hint lands on the dispatch
-after the 3rd identical success) — the full mapping is recorded in the
-plan document (kask/docs/plans/agent-loop-guardrails-plan.md §12). The
-model is the guard's contract, not a verification of the Rust
-implementation; the implementation is pinned by the tracker's Rust tests
-named in the plan document.
+after the 3rd identical success) — the full mapping is recorded in
+git history (the agent-loop guardrails plan §12, removed from the active
+tree 2026-10-05). The model is the guard's contract, not a verification
+of the Rust implementation; the implementation is pinned by the tracker's
+Rust tests named in the DIVERGENCE.md tool-retry row.
 
 Check: `lean_check` on this file (pinned toolchain lean-toolchain,
 Lean 4.34.0). Negative control, run separately and expected to FAIL:

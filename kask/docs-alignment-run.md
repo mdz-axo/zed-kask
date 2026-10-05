@@ -99,3 +99,42 @@ Cross-set edits in this cycle: README (corpus line → 74 measured 2026-10-05; c
 ### Metacognition gap (predicted vs measured)
 
 Predicted 8/10 VERIFIED-CURRENT, 1 DELETED, 0–1 RECOMPOSED (confidence 0.75). Measured: 7/10 VERIFIED-CURRENT, 1 DELETED, 2 RECOMPOSED. The d-seam-audit recomposition was the predicted 0–1; the two-symptom recomposition was not predicted — the missed class is concurrent-stream additions skipping docs discipline (frontmatter, portal row, corpus line). Correction for the remaining sets: check additions by add-date, not content alone.
+
+---
+
+## Docs-set 2: plans/ (4 docs → 3)
+
+### Metacognition prediction (recorded after the "Closed" status observation, before the §1/§10/§13 reads)
+
+- Predict: guardrails DELETE (implemented-design class — goedel/inference-plan precedent) if §13's four open questions carry resolutions; logisheets VERIFIED-CURRENT (Phase 5 record current with the shipped `WorkbookWhatIf` surface); repair VERIFIED-CURRENT via change-history with a possible `last_updated` metadata fix; cybernetic VERIFIED-CURRENT. Confidence: 0.7.
+
+### Compare evidence
+
+- Guardrails §1 execution record: Slice 0 (lisp_eval teaching) + Slice 1 (C2 repetition stop-loss) landed 2026-10-02 (`1d4bff6fb2`); Slice 2 (C1a watchdog) landed and was REMOVED the same day by operator directive (three live false positives killed working turns); Slice 3 (C1b ladder) charter dropped (root cause removed by D42; zero live occurrences). §13's four open questions all carry 2026-10-02 resolutions — (1) chartered+landed, (2) moot with C1a, (3) resolved (shared ladder contract), (4) superseded by the operator-directed audit. §12: Lean spec machine-checked (five theorems, axiom audit `[propext]` only).
+- Inbound references (2): `DIVERGENCE.md:212` (the tool-retry row cites "the plan §7" — the row itself carries the full design-revision narrative) and `kask/lean/repetition_guard_spec.lean` (§12 mapping + "tests named in the plan document"). Both repointed to git history + the DIVERGENCE row.
+- Logisheets: Phase 5 record "COMPLETE (2026-09-18)" at `:575` — `portfolio_what_if`'s presentation choice and §6's no-hidden-threshold rule recorded; last synced 2026-09-28 (`14becc23f2`); live design authority (MDS crate table + `hkask-spreadsheet` source comments cite §5.1).
+- Repair plan: 13 content commits since 2026-10-01 (through `5c68d3603b`, 2026-10-02), each code change carrying its docs sync; `last_updated` read 2026-09-30 — one content cycle stale.
+- Cybernetic: synced through 2026-10-02; P2 row updated by this run; `last_updated` 2026-10-05, version 0.3.9.
+
+### Decisions
+
+| Document | Decision | Basis |
+| --- | --- | --- |
+| `agent-loop-guardrails-plan.md` | **DELETED** | Status "Closed — executed and audited 2026-10-02"; every workstream shipped/removed/dropped; all §13 questions resolved. Successors: DIVERGENCE.md's tool-retry row (contract + design revision + pin names), `kask/lean/repetition_guard_spec.lean`, the lisp_eval teaching contract (hkask-lisp pins + `.rules`), git history (full kata record + C1a post-mortem). The C1a re-land bar is carried in the ledger tombstone. |
+| `logisheets-spreadsheet-capability-plan.md` | **VERIFIED-CURRENT** | Phase 5 COMPLETE record current with the shipped surface; live design authority; portal row added and enriched (Phases 0–5). |
+| `hkask-core-mcp-repair-improvement-plan.md` | **VERIFIED-CURRENT** | 13 synced content commits through 2026-10-02; frontmatter corrected (`last_updated` 2026-09-30 → 2026-10-02, version 0.10.0 → 0.10.1). |
+| `cybernetic-nervous-system-alignment.md` | **VERIFIED-CURRENT** | Synced through 2026-10-02; P2 row marked executed (this run); `last_updated` 2026-10-05, version 0.3.9. |
+
+Cross-set edits: `DIVERGENCE.md:212` citation repointed; Lean spec comment repointed; README corpus line → 73, checklist → 73, guardrails ledger tombstone (with the C1a re-land bar), LogiSheets portal row enriched.
+
+### Kata checkpoint (five questions)
+
+1. **Target**: one decision per plan; the closed-plan question resolved. Met.
+2. **Actual**: 1 DELETED (closed-on-arrival), 3 VERIFIED-CURRENT; 2 live citations repointed; 1 metadata correction.
+3. **Obstacles**: none new. Pattern noted: a plan that lands and closes the same day is a condensation candidate the moment it closes — and its addition bypassed the corpus-line discipline entirely (the gate was red before this run started).
+4. **Next step**: architecture docs-set (the authorities: MDS, STANDARDS, zed-host plan).
+5. **Check point**: count gate at 73 verified below; commit hash recorded in this report.
+
+### Metacognition gap (predicted vs measured)
+
+Predicted (post-status-observation, pre-read): guardrails DELETE, the other three VERIFIED-CURRENT, one metadata fix. Measured: exactly that — zero decision misses. Process miss outside the set: the set-1 commit initially failed on an untracked pathspec (`kask/docs-alignment-run.md` — pathspec commits need untracked files staged first); recovered by staging before the pathspec commit.
