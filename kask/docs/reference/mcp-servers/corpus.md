@@ -36,6 +36,7 @@ operator data has been rebuilt, ingested or used for training.
 | | `corpus_chunk` | Shared bounded word windows with real overlap; directory single-tier or file/text multi-tier |
 | | `corpus_build_chunk_representations` | Build source-faithful reference, current, fine-child, parent, and child-parent calibration artifacts |
 | | `corpus_embedding_inventory` | Reconcile exact shard refs against an existing DB and provider-confirmed actual model without embedding or DB creation |
+| | `corpus_export_bundle` | Export one sealed calibration run as a shippable corpus bundle: seal checks, public-bundle-key rekey, hash-pinned 1 GiB parts, and the git-pinned `bundle.json` federated admission consumes |
 | | `corpus_tag_chunks` | Identity-correlated ontology classification with explicit terminal outcomes |
 | | `corpus_embed` | Persist all selected embeddings, original passage text and source metadata |
 | | `corpus_extract_assertions` | Extract assertions from chunk text; optional tags guide predicates |
@@ -88,6 +89,7 @@ Schema sources: `kask/mcp-servers/hkask-mcp-corpus/src/tools/document.rs:843-945
 | `corpus_tag_chunks` | `chunks_jsonl`, `output`; `concurrency` from shared ceiling, `tag_batch_size=10`, `dry_run=false` |
 | `corpus_embed` | `chunks_jsonl`, optional `tagged_jsonl`, `db_path`, `passphrase`, optional embedding `model`, `batch_size`; durable rows retain provider-confirmed actual model identity when available; every batch requests `dimensions = HKASK_EMBEDDING_DIM` (default 1024) so MRL models (default `OpenRouter/qwen/qwen3-embedding-8b`) emit the store's width, and re-embedding replaces prior vectors per `entity_ref` (idempotent) |
 | `corpus_embedding_inventory` | `chunks_jsonl`, existing `db_path`, `passphrase`, required provider-confirmed `expected_model`; returns exact missing/mismatched/retry refs without writes |
+| `corpus_export_bundle` | `run_dir` (sealed run: `run-identity.json`, `representations/manifest.json`, `<index_name>.db`), `output_dir` (no existing `bundle.json`), `source_id`, `display_name`, `index_name`, `bundle_key` (public, ≥8 chars). Verifies the run's seal, rekeys a copy to the bundle key, measures content pins, splits into parts, writes `bundle.json`; the sealed run is never modified |
 | `corpus_build_prompts` | `tagged_jsonl`, `output`; `prefix` defaults `corpus:researcher:`, `context_k=0`, `qa_pairs_per_chunk=2`, `type_distribution="1,1,1,1,1"` (exactly 5 comma-separated nonnegative weights — factual, conceptual, analyze, evaluate, create — with at least one nonzero; anything else is rejected, never partially parsed), `max_pairs=0`; optional `db_path`/`passphrase` are required only for positive context_k |
 
 | `corpus_generate_qa_batch` | `prompts_jsonl`, `quality_adjudications_jsonl`, `output`, `concurrency`, optional QA `model` |

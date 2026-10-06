@@ -548,6 +548,169 @@ setup_environment() {
 }
 
 # ============================================================================
+# Corpus bundles — the distribution stage of the corpus pipeline
+# ============================================================================
+#
+# Every shippable corpus is exported by the `corpus_export_bundle` tool
+# (hkask-mcp-corpus) into a package of hash-pinned parts plus metadata,
+# described by a bundle.json committed at kask/registry/<corpus-id>/bundle.json.
+# The installer downloads each asset, verifies it against the committed
+# hashes, reassembles the database, writes the materialization receipt, and
+# registers the source for federated recall. The shipped database is locked
+# with the PUBLIC bundle key declared in bundle.json (the corpus is openly
+# licensed; the encryption is the transport wrapper the database format
+# requires) — so installation needs no per-machine rekey and passphrase
+# rotation can never orphan a shipped corpus.
+#
+# A corpus install failure is loud but not fatal to the product install:
+# the editor and MCP servers are already in place; re-running the installer
+# retries (verified assets are not re-downloaded).
+#
+# Escape: --skip-corpora stages nothing.
+
+CORPUS_REGISTRY_RELATIVE="kask/registry"
+CORPUS_URL_BASE_DEFAULT="https://github.com/mdz-axo/zed-kask/releases/download"
+
+# install_corpus_bundle <corpus-id> <bundle-json-path>
+install_corpus_bundle() {
+    local corpus_id="$1"
+    local bundle_json="$2"
+    command -v curl >/dev/null 2>&1 || {
+        log_error "corpus '$corpus_id': download requires curl (not found on PATH)"
+        return 1
+    }
+    command -v jq >/dev/null 2>&1 || {
+        log_error "corpus '$corpus_id': registration requires jq (not found on PATH)"
+        return 1
+    }
+
+    local source_id display_name bundle_key
+    source_id="$(jq -r '.source_id' "$bundle_json")"
+    display_name="$(jq -r '.display_name' "$bundle_json")"
+    bundle_key="$(jq -r '.bundle_key' "$bundle_json")"
+    if [ -z "$source_id" ] || [ "$source_id" = "null" ] \
+        || [ -z "$display_name" ] || [ "$display_name" = "null" ] \
+        || [ -z "$bundle_key" ] || [ "$bundle_key" = "null" ]; then
+        log_error "corpus '$corpus_id': bundle.json is missing source_id, display_name, or bundle_key"
+        return 1
+    fi
+
+    local home="${XDG_DATA_HOME:-$HOME/.local/share}/zed-kask/agents/curator/$corpus_id"
+    local staging="$home/.staging"
+    mkdir -p "$staging"
+
+    local url_base="${HKASK_CORPUS_URL_BASE:-$CORPUS_URL_BASE_DEFAULT}/corpus-$corpus_id"
+    local name hash actual
+    while IFS=$'\t' read -r name hash; do
+        [ -n "$name" ] || continue
+        if [ -f "$staging/$name" ] \
+            && [ "$(sha256sum "$staging/$name" | cut -d' ' -f1)" = "$hash" ]; then
+            log "corpus '$corpus_id': asset already verified: $name"
+            continue
+        fi
+        rm -f "$staging/$name"
+        log "corpus '$corpus_id': downloading $name"
+        curl -fL --retry 3 --progress-bar -o "$staging/$name" "$url_base/$name" \
+            || { log_error "corpus '$corpus_id': download failed: $url_base/$name"; return 1; }
+        actual="$(sha256sum "$staging/$name" | cut -d' ' -f1)"
+        if [ "$actual" != "$hash" ]; then
+            rm -f "$staging/$name"
+            log_error "corpus '$corpus_id': asset '$name' sha256 $actual != bundle pin $hash"
+            log_error "Transport corrupted or the release is inconsistent with the committed bundle.json — aborting this corpus."
+            return 1
+        fi
+    done < <(jq -r '.assets[] | "\(.name)\t\(.sha256)"' "$bundle_json")
+
+    # Reassemble the database parts (lexicographic part order is
+    # reassembly order — the export's zero-padded suffixes guarantee it).
+    local database="$home/$source_id.db"
+    : > "$database"
+    local part_count=0
+    for part in $(jq -r '.assets[].name' "$bundle_json" | grep "^${source_id}\\.db\\.part-" | sort); do
+        cat "$staging/$part" >> "$database"
+        part_count=$((part_count + 1))
+    done
+    if [ "$part_count" -eq 0 ]; then
+        log_error "corpus '$corpus_id': bundle declares no '${source_id}.db.part-NNN' database parts"
+        return 1
+    fi
+
+    # Place the metadata assets and the git-pinned manifest.
+    cp "$staging/run-identity.json" "$home/run-identity.json"
+    cp "$staging/representations-manifest.json" "$home/representations-manifest.json"
+    cp "$bundle_json" "$home/bundle.json"
+
+    # The receipt records the verified asset hashes in bundle order and the
+    # materialized database path — the provenance chain admission compares.
+    jq -n \
+        --arg database "$database" \
+        --slurpfile bundle "$bundle_json" \
+        '{schema_version: 1,
+          asset_sha256: $bundle[0].assets | map(.sha256),
+          database_path: $database}' > "$home/receipt.json"
+
+    # Register for federated recall: replace any entry with the same id,
+    # preserve every other source (the safe jq merge form — no select-as
+    # binding, which silently drops unpatched entries).
+    local manifest="${XDG_DATA_HOME:-$HOME/.local/share}/zed-kask/agents/curator/federated-sources.json"
+    local spec
+    spec="$(jq -n \
+        --arg id "$source_id" \
+        --arg name "$display_name" \
+        --arg database "$database" \
+        --arg identity "$home/run-identity.json" \
+        --arg representations "$home/representations-manifest.json" \
+        --arg bundle "$home/bundle.json" \
+        --arg receipt "$home/receipt.json" \
+        '{id: $id,
+          display_name: $name,
+          database_path: $database,
+          run_identity_path: $identity,
+          representations_manifest_path: $representations,
+          index_name: "fine",
+          materialized_provenance: {bundle_manifest_path: $bundle, receipt_path: $receipt}}')"
+    if [ -f "$manifest" ]; then
+        jq --argjson new "$spec" \
+            '.schema_version = (.schema_version // 1) | .sources = ((.sources // []) | map(select(.id != $new.id)) + [$new])' \
+            "$manifest" > "$manifest.tmp" && mv "$manifest.tmp" "$manifest"
+    else
+        jq -n --argjson new "$spec" '{schema_version: 1, sources: [$new]}' > "$manifest"
+    fi
+
+    # Verify the registration invariant itself, not the shape: the corpus
+    # is present exactly once and the manifest parses.
+    jq -e --arg id "$source_id" \
+        '(.sources | map(select(.id == $id)) | length) == 1' \
+        "$manifest" >/dev/null \
+        || { log_error "corpus '$corpus_id': registration merge failed verification"; return 1; }
+
+    rm -rf "$staging"
+    log_success "corpus '$corpus_id' installed and registered for federated recall ($part_count database parts)"
+    log "It appears as a federated recall option after the next curator-server launch."
+    return 0
+}
+
+install_corpus_bundles() {
+    local registry="$HKASK_SOURCE_DIR/$CORPUS_REGISTRY_RELATIVE"
+    if [ ! -d "$registry" ]; then
+        log "No corpus registry at $registry — nothing to install"
+        return 0
+    fi
+    local bundle_json corpus_id failed=0
+    while IFS= read -r bundle_json; do
+        corpus_id="$(basename "$(dirname "$bundle_json")")"
+        if ! install_corpus_bundle "$corpus_id" "$bundle_json"; then
+            failed=$((failed + 1))
+        fi
+    done < <(find "$registry" -name bundle.json | sort)
+    if [ "$failed" -gt 0 ]; then
+        log_error "$failed corpus bundle(s) failed to install — re-run the installer to retry (verified assets are not re-downloaded)"
+        return 1
+    fi
+    return 0
+}
+
+# ============================================================================
 # Verification
 # ============================================================================
 
@@ -655,6 +818,7 @@ Options:
     --system            Install system-wide (symlink in /usr/local/bin)
     --skip-deps         Skip system dependency installation
     --skip-rust         Skip Rust installation
+    --skip-corpora      Skip installing the corpus bundles (reference libraries)
     --install-dir DIR   Install to custom directory (default: \$HOME/.local)
     --help              Show this help message
 
@@ -668,6 +832,9 @@ Environment Variables:
     INSTALL_DIR           Installation directory (default: $HOME/.local)
     HKASK_SYSTEM_INSTALL  Force system-wide install (default: false)
     HKASK_REMOVE_CONFIG   Remove config and data on uninstall (default: false)
+    HKASK_CORPUS_URL_BASE Release URL base for corpus bundles
+                          (default: the zed-kask GitHub releases; each corpus
+                          reads from its corpus-<id> release tag)
 
 Examples:
     # Install hKask (latest release tag)
@@ -696,6 +863,7 @@ main() {
     local action="install"
     local skip_deps=false
     local skip_rust=false
+    local skip_corpora=false
     local saw_system=false
     local saw_install_dir=false
     local install_dir_arg=""
@@ -729,6 +897,16 @@ main() {
                 ;;
             --skip-rust)
                 skip_rust=true
+                shift
+                ;;
+            --skip-zk-ref)
+                # Legacy spelling of --skip-corpora from an unreleased session —
+                # accept both so in-flight operator muscle memory works.
+                skip_corpora=true
+                shift
+                ;;
+            --skip-corpora)
+                skip_corpora=true
                 shift
                 ;;
             --install-dir)
@@ -819,6 +997,12 @@ main() {
             install_desktop_entry
             setup_environment
             write_mcp_server_settings
+
+            if [ "$skip_corpora" = false ]; then
+                install_corpus_bundles
+            else
+                log "Skipping corpus bundle installation (--skip-corpora)"
+            fi
 
             verify_installation
 

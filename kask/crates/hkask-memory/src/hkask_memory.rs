@@ -31,9 +31,10 @@ pub mod text_chunking; // Pure chunking helpers (no store access)
 
 pub use consolidation_service::MemoryConsolidator;
 pub use federated_recall::{
-    ExternalPassageBatch, ExternalPassageHit, FederatedHit, FederatedRecallError,
-    FederatedSourceIdentity, FederatedSourceKind, FederatedSourceSpec, FederatedSourcesManifest,
-    RankedSourceBatch, ReadOnlyPassageSource, interleave_ranked_batches,
+    BundleAsset, BundleManifest, ExternalPassageBatch, ExternalPassageHit, FederatedHit,
+    FederatedRecallError, FederatedSourceIdentity, FederatedSourceKind, FederatedSourceSpec,
+    FederatedSourcesManifest, MaterializationReceipt, MaterializedProvenance, RankedSourceBatch,
+    ReadOnlyPassageSource, interleave_ranked_batches,
 };
 
 pub use memory_store::{

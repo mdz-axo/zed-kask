@@ -38,14 +38,28 @@ the flash skill's persist step cites the recorded fields). Verification
 receipts: 186 companies tests, 40 scenarios tests, 36 widget tests, 65
 forecast-crate tests green; scoped clippy clean over every touched crate;
 the MAIA anchor is in the derived registry (live `onto_anchor` resolution
-pending the operator's next server restart). **Remaining: PR-10** — the
-opt-in `WorkbookWhatIf` presentation for `scenario_impact_valuation`
-(wiring the `hkask-spreadsheet` engine into the companies server; the
-pattern to mirror is `portfolio_what_if`'s workbook branch,
-`hkask-mcp-portfolio/src/server.rs:759-784`: `ArtifactOrigin` +
-`PublishOptions { access: SpreadsheetAccess::WorkbookWhatIf }` +
-`spreadsheet_hint`, with the default output byte-identical and pinned).
-PR-13 and PR-15 stay deferred as operator decisions.
+pending the operator's next server restart). **PR-10 landed (2026-10-06,
+second pass):** `scenario_impact_valuation` gained the `presentation` field
+(`DataOnly` default | `WorkbookWhatIf`); the workbook mode publishes the
+FULL path grid — the JSON output caps at 50 paths, the workbook carries
+every one — as an editable workbook revision via the `hkask-spreadsheet`
+engine wired into the companies server (per-instance `WorkbookService`,
+mirroring the portfolio server), with a ```spreadsheet display hint. The
+default output is byte-identical (pinned by
+`scenario_impact_valuation_default_has_no_display_hint`; the workbook mode
+pinned by
+`scenario_impact_valuation_workbook_whatif_publishes_the_path_grid`).
+188 companies tests green; the crate compiles clean — the workspace clippy
+gate is currently blocked by a PARALLEL STREAM's in-flight `hkask-memory`
+edits (`redundant clone` in `federated_recall.rs`, files this stream never
+touched), reported, not fixed here. A cleanup sweep over the scenarios
+server confirmed: every redesign deletion verified gone, zero
+TODO/deprecated/dead-code markers, `paths` is consumed
+(`paths_from_root` in the quantify output), `CertaintyTier::from_probability`
+delegates to the shared thresholds — the one find was a stale
+module-header doc (Tools (19) + the renamed pin + the missing new tool),
+fixed in the same pass. PR-13 and PR-15 stay deferred as operator
+decisions.
 
 ## Slice 1 — Fidelity quick wins (no dependencies)
 

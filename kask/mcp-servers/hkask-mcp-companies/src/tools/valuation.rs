@@ -6,6 +6,10 @@ use crate::{
     superforecast, types, validate_symbol, valuation_service::extract_historical_arrays,
 };
 use hkask_mcp_server::server::{McpToolError, execute_tool};
+use hkask_spreadsheet::{PublishOptions, SpreadsheetError, SpreadsheetPublication};
+use hkask_types::spreadsheet::{
+    AnalyticalTable, ArtifactOrigin, ColumnKind, SpreadsheetAccess, TableColumn, TableValue,
+};
 use hkask_types::time::now_rfc3339;
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 use uuid::Uuid;
@@ -30,6 +34,101 @@ fn validate_finite(name: &str, value: f64) -> Result<(), McpToolError> {
 /// All variants are invalid-argument (malformed input tree/mappings).
 fn map_scenario_impact_error(err: financial_model::ScenarioImpactError) -> McpToolError {
     McpToolError::invalid_argument(err.to_string())
+}
+
+/// Map a spreadsheet publication error to the MCP taxonomy — mirrors
+/// `hkask-mcp-portfolio`'s `map_spreadsheet_error` (the portfolio crate
+/// exports only `map_portfolio_error`; the classification is per-server
+/// surface).
+fn map_spreadsheet_error(error: SpreadsheetError) -> McpToolError {
+    match &error {
+        SpreadsheetError::UnknownArtifact { .. } => McpToolError::not_found(error.to_string()),
+        SpreadsheetError::Conflict { .. } => McpToolError::new(
+            hkask_types::McpErrorKind::FailedPrecondition,
+            error.to_string(),
+        ),
+        SpreadsheetError::Engine { .. } => McpToolError::internal(error.to_string()),
+        _ => McpToolError::invalid_argument(error.to_string()),
+    }
+}
+
+/// Format a ```` ```spreadsheet ```` fenced display hint from a workbook
+/// publication — the D18 widget renders the block as an editable
+/// workbook. Mirrors the portfolio server's hint formatter.
+fn spreadsheet_hint(publication: SpreadsheetPublication) -> Result<String, McpToolError> {
+    match publication {
+        SpreadsheetPublication::Workbook { block, .. } => {
+            let body = serde_json::to_string(&block).map_err(|error| {
+                McpToolError::internal(format!("serialize spreadsheet block: {error}"))
+            })?;
+            Ok(format!("```spreadsheet\n{body}\n```"))
+        }
+        SpreadsheetPublication::Inline(_) => Err(McpToolError::internal(
+            "workbook publication produced an inline table — not an editable what-if",
+        )),
+    }
+}
+
+/// The scenario path grid as an editable workbook table (PR-10): one row
+/// per enumerated leaf path — the node-outcome set, the path's probability
+/// from the CPTs, the applied assumption deltas, and the path's intrinsic
+/// value. The FULL path set (the JSON output caps at 50 rows; the workbook
+/// is where the complete grid lives).
+fn scenario_impact_workbook_table(
+    symbol: &str,
+    paths: &[financial_model::PathResult],
+) -> AnalyticalTable {
+    let rows: Vec<Vec<TableValue>> = paths
+        .iter()
+        .map(|path| {
+            let outcomes = path
+                .outcomes
+                .iter()
+                .map(|o| format!("{}:{}", o.node_id, if o.outcome { "yes" } else { "no" }))
+                .collect::<Vec<_>>()
+                .join(" | ");
+            vec![
+                TableValue::Text(outcomes),
+                TableValue::Number(path.probability),
+                TableValue::Number(path.applied_growth),
+                TableValue::Number(path.applied_margin),
+                TableValue::Number(path.intrinsic_per_share),
+            ]
+        })
+        .collect();
+    AnalyticalTable::new(
+        format!("Scenario impact staging — {symbol}"),
+        "Scenario paths".into(),
+        vec![
+            TableColumn {
+                id: "outcomes".into(),
+                label: "Node outcomes".into(),
+                kind: ColumnKind::Text,
+            },
+            TableColumn {
+                id: "probability".into(),
+                label: "Probability".into(),
+                kind: ColumnKind::Number,
+            },
+            TableColumn {
+                id: "applied_growth".into(),
+                label: "Applied growth".into(),
+                kind: ColumnKind::Number,
+            },
+            TableColumn {
+                id: "applied_margin".into(),
+                label: "Applied margin".into(),
+                kind: ColumnKind::Number,
+            },
+            TableColumn {
+                id: "intrinsic_per_share".into(),
+                label: "Intrinsic/share".into(),
+                kind: ColumnKind::Number,
+            },
+        ],
+        rows,
+    )
+    .expect("the scenario path table is valid by construction")
 }
 
 fn validate_unit_interval(name: &str, value: f64) -> Result<(), McpToolError> {
@@ -533,7 +632,7 @@ impl CompaniesServer {
     }
 
     #[tool(
-        description = "Scenario impact valuation. Takes a resolved scenario event tree (from hkask-mcp-scenarios `scenario_quantify`) and per-node impact mappings, then runs DCF under each scenario path. For each scenario node, the user maps how its Yes/No outcome additively changes the company's DCF assumptions (revenue growth, gross margin, capex, etc.). Enumerates all 2^N leaf paths, computes each path's probability from the conditional probability tables, applies stacked deltas, runs DCF, and weights by path probability. Returns probability-weighted intrinsic value, per-node sensitivity (which scenario nodes drive the most valuation variance), the intrinsic value distribution (percentiles, prob-undervalued), the risk core (probability-weighted expected return and sigma_scenario over the paths, plus per-node beta loadings), and — when realized_volatility is supplied — the fused volatility (root-sum-square of realized and scenario-implied sigma). Max 12 scenario nodes. This is the scenario where events drive the company's financial forecast, not the other way around."
+        description = "Scenario impact valuation. Takes a resolved scenario event tree (from hkask-mcp-scenarios `scenario_quantify`) and per-node impact mappings, then runs DCF under each scenario path. For each scenario node, the user maps how its Yes/No outcome additively changes the company's DCF assumptions (revenue growth, gross margin, capex, etc.). Enumerates all 2^N leaf paths, computes each path's probability from the conditional probability tables, applies stacked deltas, runs DCF, and weights by path probability. Returns probability-weighted intrinsic value, per-node sensitivity (which scenario nodes drive the most valuation variance), the intrinsic value distribution (percentiles, prob-undervalued), the risk core (probability-weighted expected return and sigma_scenario over the paths, plus per-node beta loadings), and — when realized_volatility is supplied — the fused volatility (root-sum-square of realized and scenario-implied sigma). Max 12 scenario nodes. This is the scenario where events drive the company's financial forecast, not the other way around. Optional presentation choice: `DataOnly` (default) keeps the plain JSON report; `WorkbookWhatIf` additionally publishes the FULL scenario path grid (the JSON output caps at 50 paths; the workbook carries every one) as an editable workbook revision and appends its ```spreadsheet display hint for inline rendering."
     )]
     pub async fn scenario_impact_valuation(
         &self,
@@ -697,8 +796,9 @@ impl CompaniesServer {
                 })
                 .collect();
 
-            let output = serde_json::json!({
-                "symbol": req.symbol,
+            let response_symbol = req.symbol.clone();
+            let mut output = serde_json::json!({
+                "symbol": response_symbol,
                 "current_price": current_price,
                 "base_intrinsic": result.base_intrinsic,
                 "probability_weighted_intrinsic": result.probability_weighted_intrinsic,
@@ -745,6 +845,33 @@ impl CompaniesServer {
                 ],
                 "framework": "Scenario impact valuation. Exogenous scenario events drive the company's financial forecast via per-node additive deltas on DCF assumptions. Enumerates all 2^N leaf paths through the event tree, computes each path's probability from the conditional probability tables, applies stacked deltas, runs DCF under each modified assumption set, and weights by path probability. Returns probability-weighted intrinsic value, per-node sensitivity, and intrinsic value distribution.",
             });
+
+            // PR-10: the opt-in workbook presentation — publish the FULL
+            // path grid as an editable workbook revision and append its
+            // ```spreadsheet display hint. The default (DataOnly) output
+            // is unchanged: no key added, byte-identical.
+            if req.presentation == types::ImpactValuationPresentation::WorkbookWhatIf {
+                let origin = ArtifactOrigin::new(
+                    "hkask-mcp-companies".to_string(),
+                    "scenario_impact_valuation".to_string(),
+                    serde_json::json!({"symbol": response_symbol}),
+                )
+                .map_err(map_spreadsheet_error)?;
+                let table = scenario_impact_workbook_table(&response_symbol, &sorted_paths);
+                let publication = self
+                    .spreadsheet
+                    .publish(
+                        origin,
+                        table,
+                        PublishOptions {
+                            access: SpreadsheetAccess::WorkbookWhatIf,
+                        },
+                    )
+                    .await
+                    .map_err(map_spreadsheet_error)?;
+                output["display_hint"] =
+                    serde_json::Value::String(spreadsheet_hint(publication)?);
+            }
 
             Ok(fibo::enrich_with_ontology(output, "scenario_impact_valuation"))
         })

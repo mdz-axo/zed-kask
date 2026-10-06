@@ -892,8 +892,8 @@ pub(crate) use monte_carlo::{McRange, monte_carlo_dcf, validate_sensitivity_rang
 // ── Scenario impact valuation — extracted to `financial_model/scenario_impact.rs`
 mod scenario_impact;
 pub(crate) use scenario_impact::{
-    ScenarioImpactError, ScenarioNodeImpact, ScenarioTreeInput, normalize_scenario_tree_json,
-    scenario_impact_dcf,
+    PathResult, ScenarioImpactError, ScenarioNodeImpact, ScenarioTreeInput,
+    normalize_scenario_tree_json, scenario_impact_dcf,
 };
 
 // ── Authoritative driver-based financial model

@@ -588,6 +588,17 @@ pub struct ResearchSearchRequest {
 
 // ── Scenario impact valuation request ─────────────────────────────────────
 
+/// The explicit presentation choice for `scenario_impact_valuation`:
+/// `DataOnly` (default) keeps the plain JSON report; `WorkbookWhatIf`
+/// additionally publishes the scenario path grid as an editable workbook
+/// revision and appends its ```spreadsheet display hint.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, JsonSchema)]
+pub(crate) enum ImpactValuationPresentation {
+    #[default]
+    DataOnly,
+    WorkbookWhatIf,
+}
+
 bare_dcf_request!(ScenarioImpactValuationRequest {
     pub symbol: String,
     /// JSON string of the resolved scenario event tree from `scenario_quantify`
@@ -609,6 +620,13 @@ bare_dcf_request!(ScenarioImpactValuationRequest {
     /// probability mass (partial tree coverage down-weights the scenario
     /// channel). When omitted, no fusion is emitted (never fabricated).
     pub realized_volatility: Option<f64>,
+    /// The explicit presentation choice: `DataOnly` (default) keeps the
+    /// plain JSON report; `WorkbookWhatIf` additionally publishes the
+    /// scenario path grid (the full 2^N path set — the JSON output caps
+    /// at 50) as an editable workbook revision and appends its
+    /// ```spreadsheet display hint.
+    #[serde(default)]
+    pub presentation: ImpactValuationPresentation,
 });
 
 // ── Company transcript request (earnings + corpus modes) ──────────────

@@ -103,6 +103,8 @@ pub(super) fn server(directory: &std::path::Path) -> CompaniesServer {
         superforecast::FermiDefaults::from_env(),
         0.15,
         Some(fibo_cache::FiboDataCache::open(&directory.join("cache.db")).expect("cache fixture")),
+        hkask_spreadsheet::WorkbookService::start_with_root(directory.join("spreadsheet"))
+            .expect("spreadsheet fixture"),
     )
 }
 
@@ -1092,6 +1094,105 @@ async fn standalone_dcf(server: &CompaniesServer) -> Value {
             .await
             .expect("DCF tool"),
     )
+}
+
+// ── scenario_impact_valuation presentation (PR-10) ──────────────────────
+
+/// A minimal two-node scenario impact request: the flat tree format the
+/// tool normalizes, one growth delta and one margin delta.
+fn impact_valuation_request(presentation: Option<Value>) -> Value {
+    let mut request = json!({
+        "symbol": "ACME",
+        "scenario_tree": json!({
+            "nodes": [
+                {"id": "evt-launch", "marginal_probability": 0.6, "depends_on": []},
+                {"id": "evt-scale", "marginal_probability": 0.42, "depends_on": []}
+            ],
+            "topological_order": ["evt-launch", "evt-scale"]
+        }).to_string(),
+        "impact_mappings": json!([
+            {"node_id": "evt-launch", "yes_deltas": {"revenue_growth": 0.02}},
+            {"node_id": "evt-scale", "yes_deltas": {"gross_margin": 0.01}}
+        ]).to_string(),
+    });
+    if let Some(p) = presentation {
+        request["presentation"] = p;
+    }
+    request
+}
+
+/// PR-10: the default presentation is DataOnly — the output carries NO
+/// display_hint key. The default path is byte-identical to the
+/// pre-PR-10 shape: the presentation branch adds nothing.
+#[tokio::test]
+async fn scenario_impact_valuation_default_has_no_display_hint() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let fixture = FixtureHttp::start(financial_fixture).await;
+    providers::TEST_HTTP_ORIGIN
+        .scope(fixture.origin.clone(), async {
+            let server = server(directory.path());
+            let output = content(
+                &server
+                    .scenario_impact_valuation(Parameters(
+                        serde_json::from_value(impact_valuation_request(None)).expect("request"),
+                    ))
+                    .await
+                    .expect("scenario_impact_valuation tool"),
+            );
+            assert!(
+                output["probability_weighted_intrinsic"].is_number(),
+                "the valuation computes, got: {output}"
+            );
+            assert!(
+                output.get("display_hint").is_none(),
+                "the default presentation adds no display_hint key, got: {output}"
+            );
+        })
+        .await;
+}
+
+/// PR-10: the WorkbookWhatIf presentation publishes the path grid as an
+/// editable workbook revision and appends its ```spreadsheet display
+/// hint — a fenced block whose body carries the published table.
+#[tokio::test]
+async fn scenario_impact_valuation_workbook_whatif_publishes_the_path_grid() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let fixture = FixtureHttp::start(financial_fixture).await;
+    providers::TEST_HTTP_ORIGIN
+        .scope(fixture.origin.clone(), async {
+            let server = server(directory.path());
+            let output = content(
+                &server
+                    .scenario_impact_valuation(Parameters(
+                        serde_json::from_value(impact_valuation_request(Some(json!(
+                            "WorkbookWhatIf"
+                        ))))
+                        .expect("request"),
+                    ))
+                    .await
+                    .expect("scenario_impact_valuation tool"),
+            );
+            let hint = output["display_hint"].as_str().unwrap_or_else(|| {
+                panic!("the workbook presentation appends a display_hint, got: {output}")
+            });
+            assert!(
+                hint.starts_with("```spreadsheet\n"),
+                "the hint is a fenced spreadsheet block, got: {hint}"
+            );
+            assert!(
+                hint.contains("Scenario impact staging — ACME"),
+                "the published workbook carries the path-grid table, got: {hint}"
+            );
+            // The valuation output itself is unchanged by the presentation —
+            // the hint is additive.
+            assert!(output["probability_weighted_intrinsic"].is_number());
+            assert_eq!(
+                output["path_count"],
+                json!(4),
+                "2 nodes → 4 paths, got: {output}"
+            );
+        })
+        .await;
 }
 
 async fn assert_null_shares_fallback(basic: bool) {

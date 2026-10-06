@@ -1,6 +1,7 @@
 use hkask_memory::test_support::{reseal_fixture_identity, sha256_file};
 use hkask_memory::{
-    FederatedHit, FederatedSourceKind, FederatedSourcesManifest, RankedSourceBatch,
+    BundleAsset, BundleManifest, FederatedHit, FederatedRecallError, FederatedSourceKind,
+    FederatedSourcesManifest, MaterializationReceipt, MaterializedProvenance, RankedSourceBatch,
     ReadOnlyPassageSource, interleave_ranked_batches,
 };
 
@@ -348,4 +349,230 @@ fn ranked_interleave_is_balanced_and_curator_wins_exact_duplicates() {
             .collect::<Vec<_>>(),
         vec![1, 2, 3, 4, 5]
     );
+}
+
+// ── Materialized-provenance admission (the shipped-bundle path) ──
+
+/// Build a provenance-carrying spec over the sealed fixture: a bundle
+/// manifest (declaring `bundle_key` — the key the fixture database is
+/// actually locked with) and materialization receipt written into
+/// `directory`, carrying the given pins, with the receipt naming
+/// `receipt_database_path`.
+fn materialized_spec(
+    directory: &std::path::Path,
+    manifest_path: &std::path::Path,
+    run_id: &str,
+    expected_dimensions: usize,
+    expected_passage_count: usize,
+    asset_sha256: &str,
+    bundle_key: &str,
+    receipt_database_path: &std::path::Path,
+) -> anyhow::Result<hkask_memory::FederatedSourceSpec> {
+    let manifest = FederatedSourcesManifest::load(manifest_path)?;
+    let mut spec = manifest.sources[0].clone();
+    let bundle = BundleManifest {
+        schema_version: 1,
+        source_id: SOURCE_ID.to_string(),
+        display_name: "Fixture research library".to_string(),
+        run_id: run_id.to_string(),
+        expected_dimensions,
+        expected_passage_count,
+        bundle_key: bundle_key.to_string(),
+        assets: vec![BundleAsset {
+            name: "zk-ref-open-part-000".to_string(),
+            sha256: asset_sha256.to_string(),
+        }],
+    };
+    let bundle_path = directory.join("bundle.json");
+    std::fs::write(&bundle_path, serde_json::to_vec_pretty(&bundle)?)?;
+    let receipt = MaterializationReceipt {
+        schema_version: 1,
+        asset_sha256: vec![asset_sha256.to_string()],
+        database_path: receipt_database_path.display().to_string(),
+    };
+    let receipt_path = directory.join("materialization-receipt.json");
+    std::fs::write(&receipt_path, serde_json::to_vec_pretty(&receipt)?)?;
+    spec.materialized_provenance = Some(MaterializedProvenance {
+        bundle_manifest_path: bundle_path,
+        receipt_path,
+    });
+    Ok(spec)
+}
+
+fn fixture_run_id(directory: &std::path::Path) -> anyhow::Result<String> {
+    let identity: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(directory.join("run-identity.json"))?)?;
+    Ok(identity["run_id"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("missing run ID"))?
+        .to_string())
+}
+
+/// expect: "A materialized source admits by provenance chain — bundle pins,
+/// verified receipt, live content — without the passphrase-bound byte
+/// digest." [P8]
+/// The shipped-bundle case: the database is re-keyed under the target
+/// machine's passphrase, so the sealed digest can never match again; the
+/// seal's index digest here is deliberately corrupted (and re-sealed) to
+/// prove the materialized path never consults it.
+#[test]
+fn materialized_provenance_admits_without_the_sealed_byte_digest() -> anyhow::Result<()> {
+    let directory = tempfile::tempdir()?;
+    let manifest_path = fixture(directory.path())?;
+    let identity_path = directory.path().join("run-identity.json");
+    let mut identity: serde_json::Value = serde_json::from_slice(&std::fs::read(&identity_path)?)?;
+    identity["indexes"]["reference"] = serde_json::json!("f".repeat(64));
+    reseal_fixture_identity(&mut identity)?;
+    std::fs::write(&identity_path, serde_json::to_vec_pretty(&identity)?)?;
+
+    let spec = materialized_spec(
+        directory.path(),
+        &manifest_path,
+        &fixture_run_id(directory.path())?,
+        hkask_storage::embedding_dim(),
+        1,
+        &"a".repeat(64),
+        PASSPHRASE,
+        &directory.path().join("reference.db"),
+    )?;
+    let source = ReadOnlyPassageSource::open(&spec, PASSPHRASE)?;
+    assert_eq!(source.identity().source_id, SOURCE_ID);
+    assert_eq!(source.identity().passage_count, 1);
+    let batch = source.search(REQUESTED_MODEL, &fixture_vector(), 3)?;
+    assert_eq!(batch.hits.len(), 1);
+    assert_eq!(batch.hits[0].text, "grounded fixture passage");
+    Ok(())
+}
+
+/// expect: "A receipt whose asset hashes do not match the bundle manifest
+/// fails closed." [P8]
+#[test]
+fn materialized_receipt_hash_mismatch_is_rejected() -> anyhow::Result<()> {
+    let directory = tempfile::tempdir()?;
+    let manifest_path = fixture(directory.path())?;
+    let spec = materialized_spec(
+        directory.path(),
+        &manifest_path,
+        &fixture_run_id(directory.path())?,
+        hkask_storage::embedding_dim(),
+        1,
+        &"a".repeat(64),
+        PASSPHRASE,
+        &directory.path().join("reference.db"),
+    )?;
+    let receipt_path = directory.path().join("materialization-receipt.json");
+    let mut receipt: serde_json::Value = serde_json::from_slice(&std::fs::read(&receipt_path)?)?;
+    receipt["asset_sha256"][0] = serde_json::json!("b".repeat(64));
+    std::fs::write(&receipt_path, serde_json::to_vec_pretty(&receipt)?)?;
+    let error = ReadOnlyPassageSource::open(&spec, PASSPHRASE)
+        .err()
+        .expect("a receipt that does not match the bundle must fail closed");
+    assert!(
+        matches!(error, FederatedRecallError::DigestMismatch { .. }),
+        "{error}"
+    );
+    Ok(())
+}
+
+/// expect: "A materialized database whose live passage count differs from
+/// the bundle pin fails closed." [P8]
+#[test]
+fn materialized_content_pin_mismatch_is_rejected() -> anyhow::Result<()> {
+    let directory = tempfile::tempdir()?;
+    let manifest_path = fixture(directory.path())?;
+    let spec = materialized_spec(
+        directory.path(),
+        &manifest_path,
+        &fixture_run_id(directory.path())?,
+        hkask_storage::embedding_dim(),
+        2,
+        &"a".repeat(64),
+        PASSPHRASE,
+        &directory.path().join("reference.db"),
+    )?;
+    let error = ReadOnlyPassageSource::open(&spec, PASSPHRASE)
+        .err()
+        .expect("a passage count that differs from the bundle pin must fail closed");
+    assert!(
+        matches!(error, FederatedRecallError::SchemaMismatch { .. }),
+        "{error}"
+    );
+    Ok(())
+}
+
+/// expect: "A bundle manifest naming a different sealed run than the run
+/// identity fails closed." [P8]
+#[test]
+fn materialized_run_id_mismatch_is_rejected() -> anyhow::Result<()> {
+    let directory = tempfile::tempdir()?;
+    let manifest_path = fixture(directory.path())?;
+    let spec = materialized_spec(
+        directory.path(),
+        &manifest_path,
+        &"0".repeat(64),
+        hkask_storage::embedding_dim(),
+        1,
+        &"a".repeat(64),
+        PASSPHRASE,
+        &directory.path().join("reference.db"),
+    )?;
+    let error = ReadOnlyPassageSource::open(&spec, PASSPHRASE)
+        .err()
+        .expect("a bundle pinning a different run must fail closed");
+    assert!(
+        matches!(error, FederatedRecallError::RunIdentityMismatch { .. }),
+        "{error}"
+    );
+    Ok(())
+}
+
+/// expect: "A re-keyed database — the exact production materialization —
+/// fails the sealed byte check but admits through the provenance chain
+/// under the BUNDLE's declared key, not the caller's passphrase." [P8]
+#[test]
+fn rekeyed_database_admits_via_provenance_not_the_sealed_digest() -> anyhow::Result<()> {
+    let directory = tempfile::tempdir()?;
+    let manifest_path = fixture(directory.path())?;
+    let database = directory.path().join("reference.db");
+    {
+        let opened = hkask_storage::open_or_repair(&database.display().to_string(), PASSPHRASE)?;
+        let pool = opened.sqlite_pool()?;
+        pool.get()?
+            .execute_batch("PRAGMA rekey='materialized-passphrase';")?;
+    }
+    for suffix in [".maintenance-lock", "-wal", "-shm"] {
+        let sidecar = directory.path().join(format!("reference.db{suffix}"));
+        if sidecar.exists() {
+            std::fs::remove_file(sidecar)?;
+        }
+    }
+    let manifest = FederatedSourcesManifest::load(&manifest_path)?;
+    let error = ReadOnlyPassageSource::open(&manifest.sources[0], "materialized-passphrase")
+        .err()
+        .expect("a re-keyed database cannot reproduce the sealed bytes");
+    assert!(
+        matches!(error, FederatedRecallError::DigestMismatch { .. }),
+        "{error}"
+    );
+
+    let spec = materialized_spec(
+        directory.path(),
+        &manifest_path,
+        &fixture_run_id(directory.path())?,
+        hkask_storage::embedding_dim(),
+        1,
+        &"a".repeat(64),
+        // The bundle declares the key the database is actually locked with.
+        "materialized-passphrase",
+        &database,
+    )?;
+    // The caller passes the OLD passphrase — a key this database no longer
+    // accepts. Admission must open via the bundle's declared key anyway:
+    // the machine passphrase is never used for a materialized source.
+    let source = ReadOnlyPassageSource::open(&spec, PASSPHRASE)?;
+    assert_eq!(source.identity().passage_count, 1);
+    let batch = source.search(REQUESTED_MODEL, &fixture_vector(), 3)?;
+    assert_eq!(batch.hits.len(), 1);
+    assert_eq!(batch.hits[0].text, "grounded fixture passage");
+    Ok(())
 }

@@ -129,6 +129,12 @@ hkask_mcp_server::mcp_server!(
         pub fermi_defaults: superforecast::FermiDefaults,
         pub investor_required_return: f64,
         pub fibo_cache: Option<fibo_cache::FiboDataCache>,
+        /// The spreadsheet engine actor for the `WorkbookWhatIf`
+        /// presentation of `scenario_impact_valuation` — a per-instance
+        /// dependency like the store (mirroring the portfolio server),
+        /// so tests run against temp-dir artifact roots instead of the
+        /// production tree.
+        pub spreadsheet: std::sync::Arc<hkask_spreadsheet::WorkbookService>,
     }
 );
 
@@ -419,6 +425,14 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                     );
                     reqwest::Client::new()
                 });
+            let spreadsheet = hkask_spreadsheet::WorkbookService::start_with_root(
+                hkask_spreadsheet::artifact_store::production_root(),
+            )
+            .map_err(|error| {
+                hkask_mcp_server::McpError::Infrastructure(hkask_types::InfrastructureError::Io(
+                    error.to_string(),
+                ))
+            })?;
             let server = CompaniesServer::new(
                 ctx.webid,
                 http_client,
@@ -439,6 +453,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 superforecast::FermiDefaults::from_env(),
                 investor_required_return,
                 fibo_cache,
+                spreadsheet,
             );
             screening::resume_pending_jobs(&server);
             Ok(server)
@@ -512,6 +527,10 @@ mod tool_behavior_tests {
             superforecast::FermiDefaults::from_env(),
             0.15,
             None,
+            hkask_spreadsheet::WorkbookService::start_with_root(
+                store_dir.path().join("spreadsheet"),
+            )
+            .expect("spreadsheet test root"),
         );
         (server, store_dir)
     }

@@ -38,6 +38,7 @@ base64.workspace = true
 regex.workspace = true
 minijinja.workspace = true
 hkask-forecast.workspace = true
+hkask-spreadsheet.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]

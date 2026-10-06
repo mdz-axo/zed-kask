@@ -21,6 +21,8 @@ use sha2::{Digest, Sha256};
 const MANIFEST_SCHEMA_VERSION: u32 = 1;
 const RUN_IDENTITY_SCHEMA_VERSION: u32 = 3;
 const REPRESENTATIONS_SCHEMA_VERSION: u32 = 2;
+const BUNDLE_SCHEMA_VERSION: u32 = 1;
+const RECEIPT_SCHEMA_VERSION: u32 = 1;
 
 const CURRENT_HMEM_COLUMNS: &[&str] = &[
     "id",
@@ -112,6 +114,132 @@ pub enum FederatedRecallError {
     },
 }
 
+/// Provenance inputs for a materialized (shipped-bundle) federated source.
+///
+/// The sealed byte digest in `run_identity.indexes` is bound to the
+/// producing machine's passphrase: a database materialized from a release
+/// bundle under this machine's passphrase has different bytes by design.
+/// When this block is present, admission verifies the provenance chain
+/// instead — the git-pinned bundle manifest, the materialization receipt
+/// with its verified asset hashes, and the live content checks (model,
+/// dimensions, passage count) against the bundle's pins — while every
+/// other seal check (run identity shape and self-digest, representations
+/// manifest digest, schema, model identity, entity prefix) runs unchanged.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MaterializedProvenance {
+    /// The git-pinned bundle manifest naming the release assets and the
+    /// sealed run's expected content (run id, dimensions, passage count).
+    pub bundle_manifest_path: PathBuf,
+    /// The receipt written by the materialization script recording the
+    /// verified asset hashes and the materialized database path.
+    pub receipt_path: PathBuf,
+}
+
+/// One release asset of a shipped bundle: a split part of the database,
+/// identified by name and SHA-256.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct BundleAsset {
+    pub name: String,
+    pub sha256: String,
+}
+
+/// The git-pinned bundle manifest for a shipped corpus. The asset hashes
+/// are the transport integrity chain the materialization script verifies;
+/// the content pins are what admission verifies against the materialized
+/// database.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct BundleManifest {
+    pub schema_version: u32,
+    pub source_id: String,
+    /// Human-readable registration display name — the manifest is the one
+    /// artifact the installer reads, so the registration's self-description
+    /// rides it.
+    pub display_name: String,
+    pub run_id: String,
+    pub expected_dimensions: usize,
+    pub expected_passage_count: usize,
+    /// The openly-known key the shipped database is locked with. The corpus
+    /// is openly licensed — the encryption is a transport wrapper required
+    /// by the database format, not secrecy — so the key is public data,
+    /// pinned in this git-committed manifest. A materialized database
+    /// opens under THIS key, never the local machine's passphrase; a fresh
+    /// install therefore needs no per-machine rekey step.
+    pub bundle_key: String,
+    pub assets: Vec<BundleAsset>,
+}
+
+impl BundleManifest {
+    pub fn load(path: &Path) -> Result<Self, FederatedRecallError> {
+        let bytes = read_artifact("bundle manifest", path)?;
+        let manifest: Self = parse_artifact("bundle manifest", path, &bytes)?;
+        if manifest.schema_version != BUNDLE_SCHEMA_VERSION {
+            return Err(FederatedRecallError::UnsupportedSchema {
+                artifact: "bundle manifest",
+                expected: BUNDLE_SCHEMA_VERSION,
+                actual: manifest.schema_version,
+            });
+        }
+        if manifest.source_id.trim().is_empty()
+            || manifest.display_name.trim().is_empty()
+            || manifest.run_id.trim().is_empty()
+            || manifest.bundle_key.trim().is_empty()
+            || manifest.expected_dimensions == 0
+            || manifest.expected_passage_count == 0
+            || manifest.assets.is_empty()
+        {
+            return Err(FederatedRecallError::InvalidManifest(
+                "bundle manifest requires a non-empty source id, display name, run id, bundle key, positive dimensions and passage count, and at least one asset"
+                    .to_string(),
+            ));
+        }
+        for asset in &manifest.assets {
+            if asset.name.trim().is_empty() || asset.sha256.len() != 64 {
+                return Err(FederatedRecallError::InvalidManifest(format!(
+                    "bundle asset '{}' must carry a non-empty name and a 64-hex sha256",
+                    asset.name
+                )));
+            }
+        }
+        Ok(manifest)
+    }
+}
+
+/// The materialization receipt written by the materialization script: the
+/// asset hashes it verified (in bundle order) and the database path it
+/// produced. Admission compares these against the bundle manifest before
+/// trusting the materialized database.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MaterializationReceipt {
+    pub schema_version: u32,
+    pub asset_sha256: Vec<String>,
+    pub database_path: String,
+}
+
+impl MaterializationReceipt {
+    pub fn load(path: &Path) -> Result<Self, FederatedRecallError> {
+        let bytes = read_artifact("materialization receipt", path)?;
+        let receipt: Self = parse_artifact("materialization receipt", path, &bytes)?;
+        if receipt.schema_version != RECEIPT_SCHEMA_VERSION {
+            return Err(FederatedRecallError::UnsupportedSchema {
+                artifact: "materialization receipt",
+                expected: RECEIPT_SCHEMA_VERSION,
+                actual: receipt.schema_version,
+            });
+        }
+        if receipt.asset_sha256.is_empty() || receipt.database_path.trim().is_empty() {
+            return Err(FederatedRecallError::InvalidManifest(
+                "materialization receipt requires at least one verified asset hash and a database path"
+                    .to_string(),
+            ));
+        }
+        Ok(receipt)
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FederatedSourceSpec {
@@ -121,6 +249,10 @@ pub struct FederatedSourceSpec {
     pub run_identity_path: PathBuf,
     pub representations_manifest_path: PathBuf,
     pub index_name: String,
+    /// Materialized-provenance admission (the shipped-bundle path). Absent
+    /// on locally sealed sources, which keep the byte-digest check.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub materialized_provenance: Option<MaterializedProvenance>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -317,14 +449,77 @@ impl ReadOnlyPassageSource {
             }
         })?;
         ensure_checkpointed(&spec.id, &spec.database_path)?;
+        // Informational digest of the database bytes, reported on the
+        // identity record regardless of admission path.
         let actual_digest = sha256_file(&spec.database_path)?;
-        if !expected_digest.eq_ignore_ascii_case(&actual_digest) {
-            return Err(FederatedRecallError::DigestMismatch {
-                source_id: spec.id.clone(),
-                expected: expected_digest.clone(),
-                actual: actual_digest,
-            });
-        }
+        // Admission fork: a locally sealed source proves itself by byte
+        // digest (the seal is bound to this machine's passphrase). A
+        // materialized source — shipped as a release bundle and re-keyed
+        // under this machine's passphrase — cannot reproduce those bytes,
+        // so it proves itself by provenance chain: the git-pinned bundle
+        // manifest, the receipt of verified asset hashes, and (below, after
+        // the identity query) the content pins for dimensions and passage
+        // count. Every other seal check runs identically on both paths.
+        let bundle = match &spec.materialized_provenance {
+            Some(provenance) => {
+                let bundle = BundleManifest::load(&provenance.bundle_manifest_path)?;
+                if !bundle.run_id.eq_ignore_ascii_case(&run_identity.run_id) {
+                    return Err(FederatedRecallError::RunIdentityMismatch {
+                        source_id: spec.id.clone(),
+                        expected: bundle.run_id,
+                        actual: run_identity.run_id.clone(),
+                    });
+                }
+                let receipt = MaterializationReceipt::load(&provenance.receipt_path)?;
+                let receipt_assets: Vec<&str> =
+                    receipt.asset_sha256.iter().map(String::as_str).collect();
+                let bundle_assets: Vec<&str> = bundle
+                    .assets
+                    .iter()
+                    .map(|asset| asset.sha256.as_str())
+                    .collect();
+                if receipt_assets != bundle_assets {
+                    return Err(FederatedRecallError::DigestMismatch {
+                        source_id: spec.id.clone(),
+                        expected: format!("bundle asset hashes {bundle_assets:?}"),
+                        actual: format!("receipt asset hashes {receipt_assets:?}"),
+                    });
+                }
+                let receipt_db =
+                    std::fs::canonicalize(&receipt.database_path).map_err(|source| {
+                        FederatedRecallError::ReadArtifact {
+                            artifact: "materialization receipt database path",
+                            path: PathBuf::from(&receipt.database_path),
+                            source,
+                        }
+                    })?;
+                let spec_db = std::fs::canonicalize(&spec.database_path).map_err(|source| {
+                    FederatedRecallError::ReadArtifact {
+                        artifact: "materialized source database",
+                        path: spec.database_path.clone(),
+                        source,
+                    }
+                })?;
+                if receipt_db != spec_db {
+                    return Err(FederatedRecallError::InvalidManifest(format!(
+                        "materialization receipt names database '{}' but the spec registers '{}'",
+                        receipt_db.display(),
+                        spec_db.display()
+                    )));
+                }
+                Some(bundle)
+            }
+            None => {
+                if !expected_digest.eq_ignore_ascii_case(&actual_digest) {
+                    return Err(FederatedRecallError::DigestMismatch {
+                        source_id: spec.id.clone(),
+                        expected: expected_digest.clone(),
+                        actual: actual_digest,
+                    });
+                }
+                None
+            }
+        };
 
         let representation_bytes = read_artifact(
             "representations manifest",
@@ -400,12 +595,23 @@ impl ReadOnlyPassageSource {
             ))
         })?;
         ensure_checkpointed(&spec.id, &database_path)?;
-        let database = Database::open_read_only(database_str, passphrase).map_err(|source| {
-            FederatedRecallError::Database {
-                source_id: spec.id.clone(),
-                source,
-            }
-        })?;
+        // A materialized source opens under its bundle's openly-known key
+        // (see `BundleManifest::bundle_key`) — the shipped database is
+        // locked with the public wrapper key, so the local machine's
+        // passphrase is neither needed nor used. A locally sealed source
+        // keeps the caller's passphrase: its byte-digest seal is bound to
+        // this machine's key.
+        let open_passphrase = bundle
+            .as_ref()
+            .map(|bundle| bundle.bundle_key.as_str())
+            .unwrap_or(passphrase);
+        let database =
+            Database::open_read_only(database_str, open_passphrase).map_err(|source| {
+                FederatedRecallError::Database {
+                    source_id: spec.id.clone(),
+                    source,
+                }
+            })?;
         let pool = database
             .sqlite_pool()
             .map_err(|source| FederatedRecallError::Database {
@@ -468,6 +674,38 @@ impl ReadOnlyPassageSource {
                 source_id: spec.id.clone(),
                 reason: "embedding dimension and passage count must be positive".to_string(),
             });
+        }
+        // Materialized sources carry the bundle's content pins: the live
+        // database must hold exactly the dimensions and passage count the
+        // git-pinned bundle manifest declares for the sealed run. A
+        // truncated, partial, or tampered materialization fails here.
+        if let Some(bundle) = &bundle {
+            let (Ok(expected_dimensions), Ok(expected_count)) = (
+                i64::try_from(bundle.expected_dimensions),
+                i64::try_from(bundle.expected_passage_count),
+            ) else {
+                return Err(FederatedRecallError::InvalidManifest(
+                    "bundle content pins exceed the platform's row-integer range".to_string(),
+                ));
+            };
+            if stored.dimensions != expected_dimensions {
+                return Err(FederatedRecallError::SchemaMismatch {
+                    source_id: spec.id.clone(),
+                    reason: format!(
+                        "materialized dimensions {} differ from the bundle pin {expected_dimensions}",
+                        stored.dimensions
+                    ),
+                });
+            }
+            if stored.count != expected_count {
+                return Err(FederatedRecallError::SchemaMismatch {
+                    source_id: spec.id.clone(),
+                    reason: format!(
+                        "materialized passage count {} differs from the bundle pin {expected_count}",
+                        stored.count
+                    ),
+                });
+            }
         }
         if stored.matching_prefix != stored.count {
             return Err(FederatedRecallError::IncompatibleEntity {

@@ -309,7 +309,7 @@ mod tool_surface_tests {
         );
     }
 
-    // The corpus server registers exactly 26 tools. A `#[tool]` method in an
+    // The corpus server registers exactly 27 tools. A `#[tool]` method in an
     // impl block WITHOUT `#[tool_router]` silently registers nothing while
     // `cargo check` passes — `corpus_prepare_training_dataset` shipped that
     // way (attributed, implemented, unreachable) until this pin caught the
@@ -319,8 +319,8 @@ mod tool_surface_tests {
     hkask_mcp_server::tool_surface_pin!(
         CorpusServer::combined_router(),
         "combined_router",
-        26,
-        tool_surface_is_exactly_26_registered_tools,
+        27,
+        tool_surface_is_exactly_27_registered_tools,
     );
 
     /// Schema-shape pins for the calibration/grounding tools — the

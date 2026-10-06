@@ -37,7 +37,7 @@ The framework-level `execute_tool` span (`reg.tool.companies.*`, tool name + out
 
 The scenarios server and the companies server share the same math engine (`hkask-forecast`) but serve different domains. The companies server specializes in FIBO-anchored financial modeling (DCF, Schwartz 2×2 scenario analysis, intrinsic value distributions). The scenarios server specializes in Tetlock/Chermack forecast tracking (event trees, Brier scoring, calibration curves, project assessment).
 
-The correct bridge direction is **scenarios → companies**: exogenous scenario events (regulatory, competitive, macro, technology) are the drivers, and the company's financial forecast is the system being impacted. The `scenario_impact_valuation` tool on the companies server implements this — the user maps each scenario node's Yes/No outcome to additive deltas on DCF assumptions, the tool enumerates all 2^N leaf paths, computes path probabilities from the CPTs, runs DCF under each path, and weights by path probability.[^anthropic-mcp]
+The correct bridge direction is **scenarios → companies**: exogenous scenario events (regulatory, competitive, macro, technology) are the drivers, and the company's financial forecast is the system being impacted. The `scenario_impact_valuation` tool on the companies server implements this — the user maps each scenario node's Yes/No outcome to additive deltas on DCF assumptions, the tool enumerates all 2^N leaf paths, computes path probabilities from the CPTs, runs DCF under each path, and weights by path probability.[^anthropic-mcp] The optional `presentation: "WorkbookWhatIf"` mode publishes the full path grid — the JSON output caps at 50 paths, the workbook carries every one — as an editable workbook revision with a ```spreadsheet display hint (the default `DataOnly` output is unchanged). The bridge is recorded on the equity forecast: `forecast_persist` carries the scenario join fields (`scenario_project_id`, `scenario_tree`, `impact_mappings_ref`, `fused_volatility`), so the join is durable rather than agent-mediated.
 
 The `scenario_from_companies` tool (companies → scenarios) has been **deleted**. It fabricated tracking events from DCF output — "Will the stock trade within 20% of intrinsic value X?" — which are not causal drivers. Scenarios don't come from companies; company forecasts come from scenarios.
 
@@ -235,8 +235,8 @@ Primary screening reference: [FactSet Universal Screening API](https://developer
 | `equity_duration` | Equity duration (Macaulay-style, years) of projected FCFs plus terminal value; reports terminal/stage-1/stage-2 PV shares |
 | `monte_carlo_dcf` | N-simulation Monte Carlo; returns intrinsic-value distribution |
 | `calibrate_forecast` | Calibrate growth and margin estimates into scenario-weighted intrinsic value (Fermi + Bayesian) |
-| `scenario_impact_valuation` | Apply per-event Yes/No deltas to DCF assumptions across every event-tree path and return the probability-weighted valuation distribution |
-| `forecast_persist` | Persist a caller-computed price target and probability for later outcome scoring |
+| `scenario_impact_valuation` | Apply per-event Yes/No deltas to DCF assumptions across every event-tree path and return the probability-weighted valuation distribution; optional `presentation: "WorkbookWhatIf"` publishes the full path grid as an editable workbook |
+| `forecast_persist` | Persist a caller-computed price target and probability for later outcome scoring, with optional scenario join fields (project id, tree snapshot, impact-mappings ref, fused volatility) |
 | `forecast_get` | Retrieve one durable forecast and its recorded outcomes for the authenticated owner |
 | `forecast_list` | List an authenticated owner's durable forecasts for a symbol |
 | `forecast_record` | Record a forecast outcome, Brier scores, and optional return-gap decomposition |

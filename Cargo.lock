@@ -8888,6 +8888,7 @@ dependencies = [
  "hkask-lisp",
  "hkask-mcp-portfolio",
  "hkask-mcp-server",
+ "hkask-spreadsheet",
  "hkask-types",
  "minijinja",
  "rand 0.9.4",

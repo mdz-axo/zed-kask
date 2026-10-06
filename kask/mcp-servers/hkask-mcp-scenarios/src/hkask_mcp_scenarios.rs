@@ -14,22 +14,23 @@
 //! Shared engine: Fermi decomposition, outside/inside view, Bayesian updating,
 //! Brier scoring, dragonfly-eye synthesis, calibration tracking, cross-validation.
 //!
-//! ## Tools (19) — pinned by `tool_surface_is_exactly_19_registered_tools`
+//! ## Tools (20) — pinned by `tool_surface_is_exactly_20_registered_tools`
 //! - `scenario_status` — Server state: pipeline overview, calibration curve, cached tree
-//! - `scenario_frame_document` — Structure framing answers into FramingDocument
+//! - `scenario_frame_document` — Structure framing answers into FramingDocument, persisted under the project record
 //! - `scenario_frame` — 7-turn conversational framing interview
-//! - `scenario_triage` — Goldilocks zone classification
+//! - `scenario_triage` — Specification-quality classification (well_specified / goldilocks / needs_refinement)
 //! - `scenario_brainstorm` — 4-round temperature-shifting protocol
-//! - `scenario_build` — Construct event tree template from research
+//! - `scenario_build` — Construct event tree template from research context
 //! - `scenario_quantify` — Resolve conditional probability tree
 //! - `scenario_propagate` — Update one event's prior and propagate through descendants
+//! - `scenario_recompute_posteriors` — Evidence-posterior recomputation, both directions (shared engine with the graph widget)
 //! - `scenario_calibrate` — Fermi decomposition + outside/inside view
 //! - `scenario_update` — Bayesian evidence revision
 //! - `scenario_synthesize` — Dragonfly-eye multi-perspective aggregation
-//! - `scenario_score` — Brier scoring + forecast store + auto-update
+//! - `scenario_score` — Brier scoring on tree marginals + forecast store + auto-update
 //! - `scenario_calibration` — Calibration curve + overconfidence detection
 //! - `scenario_cross_validate` — LLM vs computation cross-validation
-//! - `scenario_assess` — Chermack five-phase project evaluation
+//! - `scenario_assess` — Chermack five-phase project evaluation, anchored on the project record
 //! - `scenario_full` — Tetlock core batch in a single call (no persist/propagate)
 //! - `scenario_from_markets_set` — Bridge from prediction-markets (multi-record EventTree)
 //! - `scenario_from_cmp_indices` — Bridge from prediction-markets CMP indices (EventTree)

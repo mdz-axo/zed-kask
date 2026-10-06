@@ -612,25 +612,43 @@ impl RealMemoryPort {
         let embedding_port = self
             .embedding_port
             .clone()
-            .ok_or("External passage search requires a configured embedding port".to_string())?;
+            .ok_or("External passage search requires a configured embedding port")?;
         let model = self.embedding_model.clone();
-        let dimensions = self.curator_store.embedding_dim() as u32;
         let text = query.to_string();
-        let vectors = self
+        // Embed the query once per distinct source width. Federated sources
+        // seal their own dimensions — a shipped bundle may be narrower or
+        // wider than the curator store — and each source rejects a query of
+        // another width, so the curator store's width cannot stand in for
+        // the source's.
+        let mut distinct_dims: Vec<u32> = registry
+            .sources
+            .iter()
+            .map(|source| source.identity().dimensions as u32)
+            .collect();
+        distinct_dims.sort_unstable();
+        distinct_dims.dedup();
+        let vectors_by_dims = self
             .tokio_handle
             .spawn(async move {
-                embedding_port
-                    .embed_with_dimensions(&model, &[text], Some(dimensions))
-                    .await
-                    .map(|batch| batch.vectors)
+                let mut embedded: std::collections::HashMap<u32, Vec<f32>> =
+                    std::collections::HashMap::new();
+                for dims in distinct_dims {
+                    let vector = embedding_port
+                        .embed_with_dimensions(&model, std::slice::from_ref(&text), Some(dims))
+                        .await
+                        .map_err(|error| {
+                            format!("External query embedding failed at {dims} dimensions: {error}")
+                        })?
+                        .vectors
+                        .into_iter()
+                        .next()
+                        .ok_or("External query embedding returned no vector")?;
+                    embedded.insert(dims, vector);
+                }
+                Ok::<std::collections::HashMap<u32, Vec<f32>>, String>(embedded)
             })
             .await
-            .map_err(|error| format!("External query embedding task failed: {error}"))?
-            .map_err(|error| format!("External query embedding failed: {error}"))?;
-        let vector = vectors
-            .into_iter()
-            .next()
-            .ok_or("External query embedding returned no vector".to_string())?;
+            .map_err(|error| format!("External query embedding task failed: {error}"))??;
         let model = self.embedding_model.clone();
         self.tokio_handle
             .spawn_blocking(move || {
@@ -638,7 +656,14 @@ impl RealMemoryPort {
                     .sources
                     .iter()
                     .map(|source| {
-                        source.search(&model, &vector, limit).map_err(|error| {
+                        let dims = source.identity().dimensions as u32;
+                        let vector = vectors_by_dims.get(&dims).ok_or_else(|| {
+                            format!(
+                                "External source '{}': no query embedding at its {dims} dimensions",
+                                source.identity().source_id
+                            )
+                        })?;
+                        source.search(&model, vector, limit).map_err(|error| {
                             format!("External source '{}': {error}", source.identity().source_id)
                         })
                     })
@@ -1553,6 +1578,7 @@ pub(crate) mod tests {
                     run_identity_path: directory.path().join("identity.json"),
                     representations_manifest_path: directory.path().join("representations.json"),
                     index_name: "passages".to_string(),
+                    materialized_provenance: None,
                 }],
             })?,
         )?;
@@ -1587,6 +1613,7 @@ pub(crate) mod tests {
                     run_identity_path: directory.path().join("missing-identity.json"),
                     representations_manifest_path: directory.path().join("representations.json"),
                     index_name: "passages".to_string(),
+                    materialized_provenance: None,
                 }],
             })?,
         )?;
@@ -1597,6 +1624,52 @@ pub(crate) mod tests {
             .expect_err("missing sealed identity must fail closed");
         assert!(error.contains("run identity"), "{error}");
         assert!(port.external_sources.lock().expect("cache lock").is_none());
+        Ok(())
+    }
+
+    /// A federated source sealed at a narrower width than the curator store
+    /// must receive its query embedded at the SOURCE's width — the shipped-
+    /// bundle case where the bundle's sealed dimensions differ from the
+    /// store's. Pins the per-source-width embedding in
+    /// `search_external_passages_at`: before the fix, the query was embedded
+    /// once at the curator store's width and the narrow source rejected it.
+    #[tokio::test]
+    async fn external_search_embeds_the_query_at_each_source_width() -> anyhow::Result<()> {
+        let directory = tempfile::tempdir()?;
+        let manifest_path = hkask_memory::test_support::sealed_federated_fixture_dimmed(
+            directory.path(),
+            "dimmed-source",
+            "Narrow sealed source",
+            "dimmed.txt",
+            "width-matched fixture passage",
+            "test-model",
+            "test-model",
+            512,
+        )?;
+        let embed_port = LanguageModelEmbeddingPort::for_tests_with_dim_embed_fn(
+            Arc::new(|_text: &str, dims: Option<u32>| {
+                // The test environment's configured width (HKASK_EMBEDDING_DIM
+                // unset) is 1024 — the file's existing test convention.
+                let width = usize::try_from(dims.unwrap_or(1024)).expect("width");
+                let mut vector = vec![0.0; width];
+                vector[0] = 1.0;
+                vector
+            }),
+            tokio::runtime::Handle::current(),
+        );
+        let mut port = port_with(in_memory_curator_store(), embed_port, None, 0, 0.3);
+        port.external_passphrase = "test-passphrase".to_string();
+        let batches = port
+            .search_external_passages_at(&manifest_path, "query", &["dimmed-source".to_string()], 3)
+            .await
+            .expect("the width-matched search must succeed");
+        assert_eq!(batches.len(), 1, "one source, one batch");
+        assert_eq!(
+            batches[0].hits.len(),
+            1,
+            "the width-matched passage is found"
+        );
+        assert_eq!(batches[0].hits[0].text, "width-matched fixture passage");
         Ok(())
     }
 

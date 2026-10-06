@@ -15,8 +15,9 @@ completed capability are different claims.
 ## When to Use
 
 Build or refresh a corpus from a user-selected folder, optionally producing
-classified passages, evidence-carrying QA, training exports or style centroids.
-The source set need not be literary, single-author or related to a previous run.
+classified passages, evidence-carrying QA, training exports, style centroids,
+or a shippable distribution bundle from a sealed calibration run. The source
+set need not be literary, single-author or related to a previous run.
 
 ## When NOT to Use
 
@@ -788,6 +789,41 @@ failures via `curator_report_skill_use_issue`, never silently bypass the engine.
 No claim of a rebuild, ingestion, centroid or training completion is valid without
 the corresponding run. Code/doc work cites its commit, or explicitly says
 **uncommitted**; training readiness is not evidence of trained capability.
+
+## Stage 11 — Distribute: export and ship the sealed corpus
+
+Distribution is a pipeline stage with one canonical path — never a hand-copied
+directory or a per-corpus script. `corpus_export_bundle` (hkask-mcp-corpus) turns
+one sealed calibration run into a shippable package: it verifies the run's seal
+(database and representations digests against `run-identity.json`), rekeys a
+copy from the machine passphrase to a caller-named PUBLIC bundle key, measures
+the content pins (model, dimensions, passage count), splits the database into
+hash-pinned 1 GiB parts, and writes `bundle.json` — the manifest federated
+admission consumes. The sealed run is never modified.
+
+The bundle key is public data, not a secret: the corpus is openly licensed, and
+the encryption is the transport wrapper the database format requires. Because
+the shipped database stays bundle-keyed forever, a fresh install performs no
+per-machine rekey and a passphrase rotation can never orphan a shipped corpus.
+
+Shipping a bundle (operator steps, outside tool execution):
+
+1. Commit the exported `bundle.json` as `kask/registry/<corpus-id>/bundle.json`
+   — the git-pinned trust root the installer verifies against.
+2. Upload the part files and metadata assets to the corpus's release
+   (`corpus-<corpus-id>` tag; override the base with `HKASK_CORPUS_URL_BASE`).
+3. The installer (`kask/scripts/build/install.sh`) downloads each asset,
+   verifies it against the committed hashes, reassembles the database, writes
+   the materialization receipt, and registers the source for federated recall.
+   `--skip-corpora` opts out. A failed corpus install is loud and retried by
+   re-running the installer; verified assets are not re-downloaded.
+
+Admission at query time verifies the provenance chain (receipt hashes against
+the bundle manifest, run-id binding, content pins) and opens the database under
+the bundle's declared key — the same checks for every shipped corpus. Updating a
+corpus flows through the same path: rebuild, re-seal, re-export, commit the new
+`bundle.json`, re-upload the release. Never hand-copy a sealed run to another
+machine or hand-edit `federated-sources.json`.
 
 ## Regression case
 

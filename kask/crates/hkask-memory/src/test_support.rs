@@ -51,12 +51,9 @@ pub fn sealed_federated_fixture(
     )
 }
 
-/// The parameterized core of [`sealed_federated_fixture`]. `manifest_prefix`
-/// and `index_name` are the producer's composition inputs, used verbatim:
-/// the entity ref is `{manifest_prefix}:{index_name}:utf8-<hex>:0` (a
-/// trailing-colon prefix such as the corpus pipeline's `corpus:researcher:`
-/// yields the producer's double-colon refs), the database digest lands under
-/// `indexes[{index_name}]`, and the database file is `{index_name}.db`.
+/// The parameterized core of [`sealed_federated_fixture`] — see
+/// [`sealed_federated_fixture_core`], which both public builders delegate
+/// to. (This doc comment is retained from the original single builder.)
 pub fn sealed_federated_fixture_indexed(
     directory: &Path,
     source_id: &str,
@@ -68,8 +65,68 @@ pub fn sealed_federated_fixture_indexed(
     manifest_prefix: &str,
     index_name: &str,
 ) -> anyhow::Result<PathBuf> {
+    sealed_federated_fixture_core(
+        directory,
+        source_id,
+        display_name,
+        source_filename,
+        passage,
+        requested_model,
+        actual_model,
+        manifest_prefix,
+        index_name,
+        hkask_storage::embedding_dim(),
+    )
+}
+
+/// A width-parameterized fixture: identical to [`sealed_federated_fixture`]
+/// but sealed at `dim` dimensions instead of the configured default. For
+/// tests that exercise a federated source whose sealed width differs from
+/// the curator store's (the shipped-bundle case).
+pub fn sealed_federated_fixture_dimmed(
+    directory: &Path,
+    source_id: &str,
+    display_name: &str,
+    source_filename: &str,
+    passage: &str,
+    requested_model: &str,
+    actual_model: &str,
+    dim: usize,
+) -> anyhow::Result<PathBuf> {
+    sealed_federated_fixture_core(
+        directory,
+        source_id,
+        display_name,
+        source_filename,
+        passage,
+        requested_model,
+        actual_model,
+        "calibration:fixture:sealed-v1",
+        "reference",
+        dim,
+    )
+}
+
+/// The parameterized core of [`sealed_federated_fixture`]. `manifest_prefix`,
+/// `index_name`, and `dim` are the producer's composition inputs, used
+/// verbatim: the entity ref is `{manifest_prefix}:{index_name}:utf8-<hex>:0`
+/// (a trailing-colon prefix such as the corpus pipeline's
+/// `corpus:researcher:` yields the producer's double-colon refs), the
+/// database digest lands under `indexes[{index_name}]`, the database file
+/// is `{index_name}.db`, and the sealed embedding width is `dim`.
+fn sealed_federated_fixture_core(
+    directory: &Path,
+    source_id: &str,
+    display_name: &str,
+    source_filename: &str,
+    passage: &str,
+    requested_model: &str,
+    actual_model: &str,
+    manifest_prefix: &str,
+    index_name: &str,
+    dim: usize,
+) -> anyhow::Result<PathBuf> {
     const PASSPHRASE: &str = "test-passphrase";
-    let dim = hkask_storage::embedding_dim();
     let database_path = directory.join(format!("{index_name}.db"));
     let database = database_path
         .to_str()
@@ -81,6 +138,25 @@ pub fn sealed_federated_fixture_indexed(
     let entity = format!("{manifest_prefix}:{index_name}:utf8-{hex}:0");
     let mut vector = vec![0.0; dim];
     vector[0] = 1.0;
+    if dim != hkask_storage::embedding_dim() {
+        // `MemoryStore::open`'s `dim` parameter configures only the
+        // Rust-side embedding validation; the schema's vec0 virtual table is
+        // created at the configured environment width on the pool's first
+        // connection (`initialize_schema` reads `embedding_dim()`, not the
+        // caller's dim). A fixture sealed at a different width must rebuild
+        // vec0 at that width before any embedding is stored: the
+        // `embeddings` BLOB table is width-agnostic, but vec0's width is
+        // fixed at creation. Later pools' `CREATE VIRTUAL TABLE IF NOT
+        // EXISTS` no-ops against the rebuilt table, so the sealed width
+        // stays `dim` for the store below.
+        let handle = hkask_storage::open_or_repair(database, PASSPHRASE)?;
+        let conn = handle.sqlite_pool()?.get()?;
+        conn.execute_batch("DROP TABLE vec_embeddings;")?;
+        conn.execute_batch(&format!(
+            "CREATE VIRTUAL TABLE vec_embeddings USING vec0(\
+             embedding float[{dim}] distance_metric=cosine);"
+        ))?;
+    }
     {
         let store = MemoryStore::open(database, PASSPHRASE, dim)?;
         store.store(hkask_storage::HMem::new(
@@ -166,6 +242,7 @@ pub fn sealed_federated_fixture_indexed(
                 run_identity_path,
                 representations_manifest_path: representations_path,
                 index_name: index_name.to_string(),
+                materialized_provenance: None,
             }],
         })?,
     )?;

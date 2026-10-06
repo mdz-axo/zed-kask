@@ -284,6 +284,45 @@ impl LanguageModelEmbeddingPort {
         Self { tx }
     }
 
+    /// Construct a port whose `embed` calls are answered by `embed_fn`,
+    /// which maps each input text AND the requested output width to a
+    /// vector (`None` = native width). For tests that exercise
+    /// dimension-aware embedding — a federated source sealed at a width
+    /// different from the curator store's must receive a query embedded at
+    /// the source's own width.
+    #[cfg(test)]
+    pub fn for_tests_with_dim_embed_fn<F>(
+        embed_fn: Arc<F>,
+        tokio_handle: tokio::runtime::Handle,
+    ) -> Self
+    where
+        F: Fn(&str, Option<u32>) -> Vec<f32> + Send + Sync + ?Sized + 'static,
+    {
+        let (tx, mut rx) = mpsc::unbounded_channel::<EmbedRequest>();
+        tokio_handle.spawn(async move {
+            while let Some(req) = rx.recv().await {
+                let vectors: Vec<Vec<f32>> = req
+                    .texts
+                    .iter()
+                    .map(|t| embed_fn(t, req.dimensions))
+                    .collect();
+                let result = if vectors.is_empty() {
+                    Err(EmbeddingGenerationError::EmptyResponse)
+                } else {
+                    Ok(EmbeddingBatch {
+                        vectors,
+                        requested_model: req.model,
+                        actual_model: None,
+                        usage: hkask_types::InferenceUsage::default(),
+                        cost_usd: None,
+                    })
+                };
+                let _ = req.reply.send(result);
+            }
+        });
+        Self { tx }
+    }
+
     /// Generate embeddings for a batch of texts.
     ///
     /// `model` is the provider-prefixed model string (e.g.

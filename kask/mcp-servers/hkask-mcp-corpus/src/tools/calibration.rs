@@ -5,6 +5,7 @@ use hkask_memory::text_chunking::{
     ChunkConfig, TextChunk, chunk_text_with_config, filter_boilerplate_pages_with_report,
     retained_boilerplate_signals, sanitize_text,
 };
+use hkask_memory::{BundleAsset, BundleManifest};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -16,6 +17,12 @@ use std::path::{Path, PathBuf};
 const REFERENCE_MIN_WORDS: usize = 50;
 const REFERENCE_MAX_WORDS: usize = 100;
 const REFERENCE_SENTENCE_BOUNDARY: &str = ".!?";
+
+/// Shipped-bundle part size (1 GiB). A sealed corpus database of up to
+/// ~1 TiB splits into at most 999 three-digit-suffixed parts, which is the
+/// naming ceiling the installer's reassembly relies on.
+const BUNDLE_PART_BYTES: usize = 1024 * 1024 * 1024;
+const BUNDLE_MAX_PARTS: usize = 999;
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
 pub struct AcceptedSource {
@@ -52,6 +59,28 @@ pub struct EmbeddingInventoryRequest {
     pub db_path: String,
     /// Provider-confirmed model identity required for every durable row.
     pub expected_model: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ExportBundleRequest {
+    /// Sealed calibration run directory holding run-identity.json,
+    /// representations/manifest.json, and <index_name>.db.
+    pub run_dir: String,
+    /// Directory the shippable package is written to; must not already
+    /// contain bundle.json.
+    pub output_dir: String,
+    /// Registration identity of the corpus (e.g. "zk-ref-open"); also the
+    /// shipped database's file stem.
+    pub source_id: String,
+    /// Human-readable registration display name carried by the bundle.
+    pub display_name: String,
+    /// The sealed index to ship (e.g. "fine").
+    pub index_name: String,
+    /// The openly-known key the shipped database is locked with. The corpus
+    /// is openly licensed — this is the transport wrapper the database
+    /// format requires, not secrecy — so the key is public data pinned in
+    /// the git-committed bundle.json. Minimum 8 characters.
+    pub bundle_key: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -189,6 +218,34 @@ impl CorpusServer {
         })
         .await
     }
+
+    /// expect: "A sealed corpus becomes a shippable package through one
+    /// verified path — seal checks, public-key rekey, hash-pinned parts."
+    /// [P3] Motivating: distribution is a pipeline stage, not a hand-copied
+    /// directory.
+    /// [P1] Constraining: the sealed run is never modified; every emitted
+    /// asset is hash-pinned in a manifest that round-trips through the
+    /// production admission loader.
+    /// [P4] Constraining: a seal mismatch, wrong key, or pin inconsistency
+    /// fails before the package is declared.
+    /// pre: run_dir holds a sealed calibration run (run-identity.json,
+    /// representations/manifest.json, <index_name>.db) under this machine's
+    /// DB passphrase; output_dir contains no bundle.json.
+    /// post: output_dir holds the split database parts, both metadata
+    /// assets, and bundle.json naming every asset hash plus the content
+    /// pins and the public bundle key.
+    #[tool(
+        description = "Export one sealed calibration run as a shippable corpus bundle: verify the run's seal (database and representations digests against run-identity.json), copy and rekey the database from this machine's passphrase to the caller-named PUBLIC bundle key, measure the content pins (model, dimensions, passage count), split into hash-pinned 1 GiB parts, and write bundle.json — the git-pinned manifest federated admission consumes. The sealed run is never modified. Fails closed on seal mismatch, missing artifacts, an existing bundle.json, or a bundle key under 8 characters."
+    )]
+    pub async fn corpus_export_bundle(
+        &self,
+        Parameters(request): Parameters<ExportBundleRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "corpus_export_bundle", async move {
+            export_bundle(request)
+        })
+        .await
+    }
 }
 
 fn embedding_inventory(
@@ -292,6 +349,429 @@ fn embedding_inventory(
         "complete": complete,
         "expected_model": request.expected_model,
     }))
+}
+
+/// The distribution stage of the corpus pipeline: turn one sealed calibration
+/// run into a shippable, hash-pinned bundle. The sealed run is never
+/// modified; the shipped copy is rekeyed to the caller-named PUBLIC bundle
+/// key (the corpus is openly licensed — the encryption is the transport
+/// wrapper the database format requires, not secrecy), so a fresh install
+/// opens it with zero per-machine processing and passphrase rotation can
+/// never orphan it.
+fn export_bundle(request: ExportBundleRequest) -> Result<serde_json::Value, McpToolError> {
+    for (field, value) in [
+        ("run_dir", &request.run_dir),
+        ("output_dir", &request.output_dir),
+        ("source_id", &request.source_id),
+        ("display_name", &request.display_name),
+        ("index_name", &request.index_name),
+        ("bundle_key", &request.bundle_key),
+    ] {
+        if value.trim().is_empty() {
+            return Err(McpToolError::invalid_argument(format!(
+                "{field} must be non-empty"
+            )));
+        }
+    }
+    if request.bundle_key.len() < 8 {
+        return Err(McpToolError::invalid_argument(
+            "bundle_key must be at least 8 characters (the rekey target's minimum)",
+        ));
+    }
+    let run_dir = PathBuf::from(&request.run_dir);
+    let database_path = run_dir.join(format!("{}.db", request.index_name));
+    let identity_path = run_dir.join("run-identity.json");
+    let representations_path = run_dir.join("representations").join("manifest.json");
+    for (artifact, path) in [
+        ("sealed database", &database_path),
+        ("run identity", &identity_path),
+        ("representations manifest", &representations_path),
+    ] {
+        if !path.is_file() {
+            return Err(McpToolError::not_found(format!(
+                "{artifact} not found in the run directory: {}",
+                path.display()
+            )));
+        }
+    }
+    let identity: serde_json::Value =
+        serde_json::from_slice(&fs::read(&identity_path).map_err(|error| {
+            crate::helpers::map_corpus_io_error(error, "Cannot read run identity")
+        })?)
+        .map_err(|error| {
+            McpToolError::invalid_argument(format!("run identity is not valid JSON: {error}"))
+        })?;
+    let string_field = |name: &str| -> Result<&str, McpToolError> {
+        identity[name].as_str().ok_or_else(|| {
+            McpToolError::invalid_argument(format!("run identity is missing {name}"))
+        })
+    };
+    let run_id = string_field("run_id")?;
+    let pinned_index = identity["indexes"][&request.index_name]
+        .as_str()
+        .ok_or_else(|| {
+            McpToolError::invalid_argument(format!(
+                "run identity has no index pin for '{}'",
+                request.index_name
+            ))
+        })?;
+    let pinned_representations = string_field("representations_manifest_sha256")?;
+    let actual_model = string_field("actual_embedding_model")?;
+
+    let database_digest = sha256_file(&database_path)?;
+    if !database_digest.eq_ignore_ascii_case(pinned_index) {
+        return Err(McpToolError::failed_precondition(format!(
+            "sealed database digest {database_digest} does not match the run identity's '{}' pin {pinned_index}",
+            request.index_name
+        )));
+    }
+    let representations_digest = sha256_file(&representations_path)?;
+    if !representations_digest.eq_ignore_ascii_case(pinned_representations) {
+        return Err(McpToolError::failed_precondition(format!(
+            "representations manifest digest {representations_digest} does not match the run identity pin {pinned_representations}"
+        )));
+    }
+
+    let output_dir = PathBuf::from(&request.output_dir);
+    let bundle_path = output_dir.join("bundle.json");
+    if bundle_path.exists() {
+        return Err(McpToolError::invalid_argument(format!(
+            "refusing to overwrite an existing bundle: {}",
+            bundle_path.display()
+        )));
+    }
+    fs::create_dir_all(&output_dir).map_err(|error| {
+        crate::helpers::map_corpus_io_error(error, "Cannot create the output dir")
+    })?;
+    let work_dir = output_dir.join(".export-work");
+    if work_dir.exists() {
+        fs::remove_dir_all(&work_dir).map_err(|error| {
+            crate::helpers::map_corpus_io_error(error, "Cannot clear a stale export work dir")
+        })?;
+    }
+    fs::create_dir_all(&work_dir).map_err(|error| {
+        crate::helpers::map_corpus_io_error(error, "Cannot create the export work dir")
+    })?;
+
+    let result = export_bundle_staged(
+        &request,
+        &run_dir,
+        &output_dir,
+        &work_dir,
+        &database_path,
+        run_id,
+        actual_model,
+    );
+    if let Err(error) = fs::remove_dir_all(&work_dir) {
+        tracing::warn!(
+            target: "hkask.mcp.corpus",
+            %error,
+            "export work dir cleanup failed — remove .export-work manually"
+        );
+    }
+    result
+}
+
+fn export_bundle_staged(
+    request: &ExportBundleRequest,
+    run_dir: &Path,
+    output_dir: &Path,
+    work_dir: &Path,
+    sealed_database: &Path,
+    run_id: &str,
+    actual_model: &str,
+) -> Result<serde_json::Value, McpToolError> {
+    let machine_passphrase = crate::helpers::resolve_corpus_passphrase()?;
+    let work_database = work_dir.join("bundle.db");
+    fs::copy(sealed_database, &work_database).map_err(|error| {
+        crate::helpers::map_corpus_io_error(error, "Cannot copy the sealed database")
+    })?;
+    let work_str = work_database.display().to_string();
+    hkask_storage::rotate_passphrase(&work_str, &machine_passphrase, &request.bundle_key).map_err(
+        |error| {
+            McpToolError::failed_precondition(format!(
+                "rekeying the shipped copy to the bundle key failed: {error}"
+            ))
+        },
+    )?;
+    hkask_storage::verify_database_key(&work_str, &request.bundle_key).map_err(|error| {
+        McpToolError::failed_precondition(format!(
+            "the rekeyed copy does not open under the bundle key: {error}"
+        ))
+    })?;
+    // Seal the copy explicitly: checkpoint, then a clean pool close removes
+    // the WAL, so admission's unsealed-WAL check can never fire on a shipped
+    // artifact.
+    {
+        let database =
+            hkask_storage::Database::open(&work_str, &request.bundle_key).map_err(|error| {
+                McpToolError::failed_precondition(format!(
+                    "opening the rekeyed copy for its checkpoint failed: {error}"
+                ))
+            })?;
+        database.checkpoint().map_err(|error| {
+            McpToolError::failed_precondition(format!(
+                "checkpointing the rekeyed copy failed: {error}"
+            ))
+        })?;
+    }
+    for suffix in ["-wal", "-shm"] {
+        let sidecar = work_dir.join(format!("bundle.db{suffix}"));
+        if sidecar.exists() {
+            let size = sidecar
+                .metadata()
+                .map_err(|error| {
+                    crate::helpers::map_corpus_io_error(error, "Cannot inspect an export sidecar")
+                })?
+                .len();
+            if size > 0 {
+                return Err(McpToolError::failed_precondition(format!(
+                    "the rekeyed copy left a non-empty {suffix} sidecar ({size} bytes) — not sealed"
+                )));
+            }
+            fs::remove_file(&sidecar).map_err(|error| {
+                crate::helpers::map_corpus_io_error(error, "Cannot remove an export sidecar")
+            })?;
+        }
+    }
+
+    // Content pins, measured from the rekeyed copy under the bundle key —
+    // exactly what admission later verifies against them.
+    let (model, dimensions, passage_count) = read_bundle_pins(&work_str, &request.bundle_key)?;
+    if model != actual_model {
+        return Err(McpToolError::failed_precondition(format!(
+            "stored model '{model}' differs from the run identity's actual model '{actual_model}'"
+        )));
+    }
+
+    let mut assets = split_into_parts(&work_database, output_dir, &request.source_id)?;
+    let part_count = assets.len();
+    let identity_asset = output_dir.join("run-identity.json");
+    let representations_asset = output_dir.join("representations-manifest.json");
+    fs::copy(run_dir.join("run-identity.json"), &identity_asset).map_err(|error| {
+        crate::helpers::map_corpus_io_error(error, "Cannot place the run identity asset")
+    })?;
+    fs::copy(
+        run_dir.join("representations").join("manifest.json"),
+        &representations_asset,
+    )
+    .map_err(|error| {
+        crate::helpers::map_corpus_io_error(error, "Cannot place the representations asset")
+    })?;
+    assets.push(BundleAsset {
+        name: "run-identity.json".to_string(),
+        sha256: sha256_file(&identity_asset)?,
+    });
+    assets.push(BundleAsset {
+        name: "representations-manifest.json".to_string(),
+        sha256: sha256_file(&representations_asset)?,
+    });
+
+    let bundle = BundleManifest {
+        schema_version: 1,
+        source_id: request.source_id.clone(),
+        display_name: request.display_name.clone(),
+        run_id: run_id.to_string(),
+        expected_dimensions: dimensions,
+        expected_passage_count: passage_count,
+        bundle_key: request.bundle_key.clone(),
+        assets,
+    };
+    let bundle_path = output_dir.join("bundle.json");
+    let serialized = serde_json::to_vec_pretty(&bundle)
+        .map_err(|error| McpToolError::internal(format!("bundle serialization failed: {error}")))?;
+    fs::write(&bundle_path, serialized)
+        .map_err(|error| crate::helpers::map_corpus_io_error(error, "Cannot write bundle.json"))?;
+    // Round-trip through the production loader: the emitted file must
+    // admit exactly as a later installation reads it.
+    let reloaded = BundleManifest::load(&bundle_path).map_err(|error| {
+        McpToolError::internal(format!(
+            "the emitted bundle failed its own production loader: {error}"
+        ))
+    })?;
+    if reloaded.bundle_key != request.bundle_key
+        || reloaded.expected_dimensions != dimensions
+        || reloaded.expected_passage_count != passage_count
+        || reloaded.assets.len() != part_count + 2
+    {
+        return Err(McpToolError::internal(
+            "the emitted bundle does not round-trip through its own loader",
+        ));
+    }
+
+    let mut total_bytes = 0_u64;
+    for asset in &reloaded.assets {
+        total_bytes += fs::metadata(output_dir.join(&asset.name))
+            .map_err(|error| {
+                crate::helpers::map_corpus_io_error(error, "Cannot measure a shipped asset")
+            })?
+            .len();
+    }
+    Ok(serde_json::json!({
+        "output_dir": output_dir.display().to_string(),
+        "bundle_manifest": bundle_path.display().to_string(),
+        "source_id": request.source_id,
+        "display_name": request.display_name,
+        "run_id": run_id,
+        "database_parts": part_count,
+        "assets": reloaded.assets.len(),
+        "expected_dimensions": dimensions,
+        "expected_passage_count": passage_count,
+        "total_bytes": total_bytes,
+    }))
+}
+
+/// The (model, dimensions, passage-count) identity of the rekeyed copy,
+/// read under the bundle key. Exactly one group must exist — the same
+/// single-identity invariant admission enforces.
+fn read_bundle_pins(
+    database_path: &str,
+    bundle_key: &str,
+) -> Result<(String, usize, usize), McpToolError> {
+    let database =
+        hkask_storage::Database::open_read_only(database_path, bundle_key).map_err(|error| {
+            McpToolError::failed_precondition(format!(
+                "opening the rekeyed copy read-only under the bundle key failed: {error}"
+            ))
+        })?;
+    let pool = database
+        .sqlite_pool()
+        .map_err(|error| McpToolError::internal(format!("bundle pin pool failed: {error}")))?;
+    let driver = hkask_storage::SqliteDriver::new_labeled(pool, database_path);
+    let rows = hkask_storage::database::DatabaseDriver::query(
+        &driver,
+        "SELECT model, dimensions, COUNT(*) FROM embeddings GROUP BY model, dimensions",
+        &[],
+    )
+    .map_err(|error| McpToolError::internal(format!("bundle pin query failed: {error}")))?;
+    if rows.len() != 1 {
+        return Err(McpToolError::failed_precondition(format!(
+            "expected exactly one model/dimension group in the rekeyed copy, found {}",
+            rows.len()
+        )));
+    }
+    let row = &rows[0];
+    let model = row
+        .get_str(0)
+        .map_err(|error| McpToolError::internal(format!("bundle pin model read failed: {error}")))?
+        .to_string();
+    let dimensions = row.get_int(1).map_err(|error| {
+        McpToolError::internal(format!("bundle pin dimensions read failed: {error}"))
+    })?;
+    let count = row.get_int(2).map_err(|error| {
+        McpToolError::internal(format!("bundle pin count read failed: {error}"))
+    })?;
+    if dimensions <= 0 || count <= 0 {
+        return Err(McpToolError::failed_precondition(
+            "the rekeyed copy's embedding dimensions and passage count must be positive",
+        ));
+    }
+    Ok((
+        model,
+        usize::try_from(dimensions)
+            .map_err(|_| McpToolError::internal("dimensions exceed the platform's usize"))?,
+        usize::try_from(count)
+            .map_err(|_| McpToolError::internal("passage count exceeds the platform's usize"))?,
+    ))
+}
+
+/// Split the rekeyed copy into hash-pinned parts of `BUNDLE_PART_BYTES`,
+/// streaming through an 8 MiB buffer so a multi-GB database is never
+/// held in memory. Part files are created lazily so a database ending
+/// exactly on a part boundary never emits a trailing empty part.
+fn split_into_parts(
+    source: &Path,
+    output_dir: &Path,
+    source_id: &str,
+) -> Result<Vec<BundleAsset>, McpToolError> {
+    use std::io::Read;
+    let io = |error: std::io::Error, what: &str| crate::helpers::map_corpus_io_error(error, what);
+    let mut source = fs::File::open(source)
+        .map_err(|error| io(error, "Cannot open the rekeyed copy for splitting"))?;
+    let mut assets: Vec<BundleAsset> = Vec::new();
+    let mut part_index: usize = 0;
+    let mut part: Option<fs::File> = None;
+    let mut hasher = Sha256::new();
+    let mut written: usize = 0;
+    let mut buffer = vec![0_u8; 8 * 1024 * 1024];
+    loop {
+        let read = source
+            .read(&mut buffer)
+            .map_err(|error| io(error, "Cannot read the rekeyed copy"))?;
+        if read == 0 {
+            break;
+        }
+        let mut remaining = &buffer[..read];
+        while !remaining.is_empty() {
+            if part.is_none() {
+                part = Some(
+                    fs::File::create(
+                        output_dir.join(format!("{source_id}.db.part-{part_index:03}")),
+                    )
+                    .map_err(|error| io(error, "Cannot create a bundle part"))?,
+                );
+                hasher = Sha256::new();
+                written = 0;
+            }
+            let space = BUNDLE_PART_BYTES - written;
+            let take = remaining.len().min(space);
+            let written_bytes = &remaining[..take];
+            part.as_mut()
+                .ok_or_else(|| McpToolError::internal("bundle part handle missing"))?
+                .write_all(written_bytes)
+                .map_err(|error| io(error, "Cannot write a bundle part"))?;
+            hasher.update(written_bytes);
+            written += take;
+            remaining = &remaining[take..];
+            if written == BUNDLE_PART_BYTES {
+                assets.push(BundleAsset {
+                    name: format!("{source_id}.db.part-{part_index:03}"),
+                    sha256: format!("{:x}", hasher.finalize_reset()),
+                });
+                part_index += 1;
+                part = None;
+                if part_index >= BUNDLE_MAX_PARTS && !remaining.is_empty() {
+                    return Err(McpToolError::failed_precondition(format!(
+                        "the database exceeds the {BUNDLE_MAX_PARTS}-part shipping ceiling"
+                    )));
+                }
+            }
+        }
+    }
+    if part.is_some() {
+        assets.push(BundleAsset {
+            name: format!("{source_id}.db.part-{part_index:03}"),
+            sha256: format!("{:x}", hasher.finalize_reset()),
+        });
+    } else if assets.is_empty() {
+        return Err(McpToolError::failed_precondition(
+            "the rekeyed copy is empty — refusing to ship an empty database",
+        ));
+    }
+    if assets.len() > BUNDLE_MAX_PARTS {
+        return Err(McpToolError::failed_precondition(format!(
+            "the database exceeds the {BUNDLE_MAX_PARTS}-part shipping ceiling"
+        )));
+    }
+    Ok(assets)
+}
+
+fn sha256_file(path: &Path) -> Result<String, McpToolError> {
+    let mut file = fs::File::open(path).map_err(|error| {
+        crate::helpers::map_corpus_io_error(error, "Cannot open a file for hashing")
+    })?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = std::io::Read::read(&mut file, &mut buffer).map_err(|error| {
+            crate::helpers::map_corpus_io_error(error, "Cannot read a file for hashing")
+        })?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
 }
 
 fn build_representations(
@@ -1181,6 +1661,185 @@ mod tests {
             .expect_err("changed source hash must fail");
         assert!(error.to_string().contains("canonical source hash changed"));
         assert!(!output_dir.exists());
+        Ok(())
+    }
+
+    /// Build a sealed calibration run under the server-resolved passphrase:
+    /// `fine.db` with one embedding, a representations manifest, and a run
+    /// identity pinning both digests — the shape `corpus_export_bundle`
+    /// consumes.
+    fn sealed_run(directory: &Path) -> anyhow::Result<PathBuf> {
+        // Seed the process-wide test passphrase BEFORE resolving it — the
+        // OnceLock is set by `server()`, but this fixture resolves first.
+        crate::helpers::seed_test_passphrase();
+        let run_dir = directory.join("run");
+        fs::create_dir_all(run_dir.join("representations"))?;
+        let passphrase = crate::helpers::resolve_corpus_passphrase()?;
+        let database = run_dir.join("fine.db").display().to_string();
+        let entity = "calibration:fixture:sealed-v1:fine:utf8-666978747572652e747874:0";
+        let mut vector = vec![0.0; crate::embedding_dim()];
+        vector[0] = 1.0;
+        {
+            let store =
+                hkask_memory::MemoryStore::open(&database, &passphrase, crate::embedding_dim())?;
+            store.store(hkask_storage::HMem::new(
+                entity,
+                "text",
+                serde_json::json!("export fixture passage"),
+                hkask_types::WebID::new(),
+            ))?;
+            store.store_embedding(
+                entity,
+                &vector,
+                "test-model",
+                Some("export fixture passage"),
+            )?;
+        }
+        {
+            let handle = hkask_storage::open_or_repair(&database, &passphrase)?;
+            handle
+                .sqlite_pool()?
+                .get()?
+                .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
+        }
+        for suffix in [".maintenance-lock", "-wal", "-shm"] {
+            let sidecar = run_dir.join(format!("fine.db{suffix}"));
+            if sidecar.exists() {
+                fs::remove_file(sidecar)?;
+            }
+        }
+        let manifest = serde_json::json!({
+            "schema_version": 2,
+            "entity_ref_prefix": "calibration:fixture:sealed-v1",
+            "boilerplate_exclusion_reports": {
+                "fixture.txt": {"input_words": 3, "retained_words": 3, "exclusions": []}
+            },
+            "validation": {"accepted_source_count": 1, "boilerplate_filter_applied": true}
+        });
+        fs::write(
+            run_dir.join("representations").join("manifest.json"),
+            serde_json::to_vec_pretty(&manifest)?,
+        )?;
+        let identity = serde_json::json!({
+            "schema_version": 3,
+            "run_id": "a".repeat(64),
+            "indexes": {"fine": sha256_of(&run_dir.join("fine.db"))?},
+            "representations_manifest_sha256": sha256_of(
+                &run_dir.join("representations").join("manifest.json")
+            )?,
+            "actual_embedding_model": "test-model",
+        });
+        fs::write(
+            run_dir.join("run-identity.json"),
+            serde_json::to_vec_pretty(&identity)?,
+        )?;
+        Ok(run_dir)
+    }
+
+    fn sha256_of(path: &Path) -> anyhow::Result<String> {
+        Ok(super::sha256_file(path)?)
+    }
+
+    fn export_request(run_dir: &Path, output_dir: &Path) -> ExportBundleRequest {
+        ExportBundleRequest {
+            run_dir: run_dir.display().to_string(),
+            output_dir: output_dir.display().to_string(),
+            source_id: "test-corpus".to_string(),
+            display_name: "Test corpus (fine)".to_string(),
+            index_name: "fine".to_string(),
+            bundle_key: "test-bundle-key-1234".to_string(),
+        }
+    }
+
+    /// expect: "A sealed run exports to a hash-pinned, bundle-keyed package
+    /// without touching the sealed run." [P8]
+    #[tokio::test]
+    async fn export_bundle_ships_a_verified_package() -> anyhow::Result<()> {
+        let directory = tempfile::tempdir()?;
+        let run_dir = sealed_run(directory.path())?;
+        let sealed_digest = sha256_of(&run_dir.join("fine.db"))?;
+        let output_dir = directory.path().join("package");
+        let response = server()
+            .corpus_export_bundle(Parameters(export_request(&run_dir, &output_dir)))
+            .await?;
+        let envelope: serde_json::Value = serde_json::from_str(&response)?;
+        let result = envelope
+            .get("content")
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("tool response missing its content envelope"))?;
+        assert_eq!(result["expected_dimensions"], crate::embedding_dim());
+        assert_eq!(result["expected_passage_count"], 1);
+        assert_eq!(result["database_parts"], 1);
+
+        let bundle = BundleManifest::load(&output_dir.join("bundle.json"))?;
+        assert_eq!(bundle.bundle_key, "test-bundle-key-1234");
+        assert_eq!(bundle.source_id, "test-corpus");
+        assert_eq!(bundle.assets.len(), 3);
+        assert_eq!(bundle.assets[0].name, "test-corpus.db.part-000");
+
+        // The parts reassemble to a database that opens under the BUNDLE key
+        // (never the machine passphrase) and carries the pinned identity.
+        let reassembled = directory.path().join("reassembled.db");
+        let mut assembled = Vec::new();
+        assembled.extend(fs::read(output_dir.join("test-corpus.db.part-000"))?);
+        fs::write(&reassembled, &assembled)?;
+        hkask_storage::verify_database_key(
+            &reassembled.display().to_string(),
+            "test-bundle-key-1234",
+        )?;
+        let (model, dimensions, count) =
+            read_bundle_pins(&reassembled.display().to_string(), "test-bundle-key-1234")?;
+        assert_eq!(model, "test-model");
+        assert_eq!(dimensions, crate::embedding_dim());
+        assert_eq!(count, 1);
+
+        // The sealed run is untouched and no work residue remains.
+        assert_eq!(sha256_of(&run_dir.join("fine.db"))?, sealed_digest);
+        assert!(!output_dir.join(".export-work").exists());
+        Ok(())
+    }
+
+    /// expect: "A run whose database no longer matches its seal fails before
+    /// any package artifact is emitted." [P8]
+    #[tokio::test]
+    async fn export_bundle_rejects_a_tampered_run() -> anyhow::Result<()> {
+        let directory = tempfile::tempdir()?;
+        let run_dir = sealed_run(directory.path())?;
+        let mut tampered = fs::read(&run_dir.join("fine.db"))?;
+        tampered.push(0);
+        fs::write(run_dir.join("fine.db"), tampered)?;
+        let output_dir = directory.path().join("package");
+        let error = server()
+            .corpus_export_bundle(Parameters(export_request(&run_dir, &output_dir)))
+            .await
+            .expect_err("a tampered run must fail the seal check");
+        assert!(
+            error
+                .to_string()
+                .contains("does not match the run identity"),
+            "{error}"
+        );
+        assert!(!output_dir.join("bundle.json").exists());
+        Ok(())
+    }
+
+    /// expect: "An existing bundle is never silently overwritten." [P8]
+    #[tokio::test]
+    async fn export_bundle_refuses_to_overwrite_an_existing_bundle() -> anyhow::Result<()> {
+        let directory = tempfile::tempdir()?;
+        let run_dir = sealed_run(directory.path())?;
+        let output_dir = directory.path().join("package");
+        server()
+            .corpus_export_bundle(Parameters(export_request(&run_dir, &output_dir)))
+            .await?;
+        let error = server()
+            .corpus_export_bundle(Parameters(export_request(&run_dir, &output_dir)))
+            .await
+            .expect_err("a second export into the same dir must refuse");
+        assert!(
+            error.to_string().contains("refusing to overwrite"),
+            "{error}"
+        );
         Ok(())
     }
 }

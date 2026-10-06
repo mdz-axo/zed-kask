@@ -2,7 +2,7 @@
 set -euo pipefail
 
 if [[ $# -ne 4 ]]; then
-    echo "usage: $0 <corpus_build_chunk_representations|corpus_embedding_inventory|corpus_embed|corpus_query|corpus_tag_chunks|corpus_generate_qa_batch|corpus_convert> <arguments-json> <response-json> <server-log>" >&2
+    echo "usage: $0 <corpus_build_chunk_representations|corpus_embedding_inventory|corpus_export_bundle|corpus_embed|corpus_query|corpus_tag_chunks|corpus_generate_qa_batch|corpus_convert> <arguments-json> <response-json> <server-log>" >&2
     exit 64
 fi
 
@@ -17,6 +17,13 @@ case "$tool_name" in
         needs_inference=false
         required_model_var=
         default_timeout=120
+        ;;
+    corpus_export_bundle)
+        # The distribution stage: seal checks + rekey + split of a multi-GB
+        # sealed database — long-blocking I/O, no inference.
+        needs_inference=false
+        required_model_var=
+        default_timeout=1800
         ;;
     corpus_embed|corpus_query)
         needs_inference=true
