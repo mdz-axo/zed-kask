@@ -19,8 +19,9 @@ use gpui::{
     IntoElement, KeyDownEvent, Keystroke, ParentElement, Render, Styled, Window, div,
 };
 use gpui_util::ResultExt as _;
-use hkask_spreadsheet::{ViewportContent, WorkbookDocument, WorkbookService};
+use hkask_spreadsheet::{ViewportContent, WorkbookDocument, WorkbookService, hint_body};
 use hkask_tool_invoker::{InvokeError, shared_tool_invoker};
+use hkask_types::McpErrorKind;
 use hkask_types::spreadsheet::{
     CellEdit, EditTransaction, SpreadsheetAccess, SpreadsheetBlock, SpreadsheetError,
     SpreadsheetViewport, TableValue,
@@ -73,8 +74,13 @@ enum SaveStatus {
     Saved,
     NotWired,
     Unavailable,
-    /// The outcome is unknown; the widget never auto-replays (§7).
-    Interrupted,
+    /// The outcome is unknown; the widget never auto-replays (§7). Carries
+    /// the reconciliation identity (SP-02): the artifact and idempotency
+    /// key the caller needs to reconcile via `spreadsheet_operation_get`.
+    Interrupted {
+        artifact_id: String,
+        idempotency_key: String,
+    },
     Failed(String),
 }
 
@@ -86,32 +92,39 @@ impl SaveStatus {
             SaveStatus::Saved => "Saved (new revision)".into(),
             SaveStatus::NotWired => "Not wired: MCP servers are not connected yet".into(),
             SaveStatus::Unavailable => "Unavailable: the request never left — retry is safe".into(),
-            SaveStatus::Interrupted => {
-                "Interrupted: outcome UNKNOWN — reconcile via spreadsheet_operation_get; \
-                 do not blindly retry"
-                    .into()
-            }
+            SaveStatus::Interrupted {
+                artifact_id,
+                idempotency_key,
+            } => format!(
+                "Interrupted: outcome UNKNOWN — reconcile via \
+                 spreadsheet_operation_get (artifact {artifact_id}, key \
+                 {idempotency_key}); do not blindly retry"
+            ),
             SaveStatus::Failed(message) => format!("Save failed: {message}"),
         }
     }
 
-    fn from_invoke_error(error: &InvokeError) -> Self {
+    fn from_invoke_error(error: &InvokeError, identity: (String, String)) -> Self {
         match error {
             InvokeError::NotWired => SaveStatus::NotWired,
             InvokeError::Unavailable(_) => SaveStatus::Unavailable,
-            InvokeError::Interrupted(_) => SaveStatus::Interrupted,
-            InvokeError::Failed(_) => {
-                let message = error.message();
-                // An apply-level conflict (stale base digest) surfaces as the
-                // spreadsheet server's failed_precondition envelope.
-                if message.contains("failed_precondition") || message.contains("Conflict") {
+            InvokeError::Interrupted(_) => SaveStatus::Interrupted {
+                artifact_id: identity.0,
+                idempotency_key: identity.1,
+            },
+            InvokeError::Failed { message, kind } => {
+                // An apply-level conflict (stale base digest) is the
+                // spreadsheet server's failed_precondition — matched
+                // structurally on the typed kind (SP-03), never by sniffing
+                // message text.
+                if matches!(kind, Some(McpErrorKind::FailedPrecondition)) {
                     SaveStatus::Failed(
                         "conflict — the base revision changed; re-open the current \
                          revision and restage"
                             .into(),
                     )
                 } else {
-                    SaveStatus::Failed(message)
+                    SaveStatus::Failed(message.clone())
                 }
             }
         }
@@ -488,9 +501,14 @@ impl SpreadsheetWidget {
             .iter()
             .flat_map(|(_, batch)| batch.iter().cloned())
             .collect();
+        // The reconciliation identity (SP-02): the artifact and the
+        // idempotency key travel with the dispatch so an `Interrupted`
+        // outcome can surface exactly what to reconcile.
+        let artifact_id = block.artifact.artifact_id.clone();
+        let idempotency_key = uuid::Uuid::new_v4().simple().to_string();
         let transaction = match EditTransaction::new(
             block.artifact,
-            uuid::Uuid::new_v4().simple().to_string(),
+            idempotency_key.clone(),
             SpreadsheetAccess::WorkbookWhatIf,
             edits,
         ) {
@@ -509,13 +527,14 @@ impl SpreadsheetWidget {
             }
             Some(invoker) => {
                 self.save_status = SaveStatus::Saving;
+                let identity = (artifact_id, idempotency_key);
                 let task = invoker.invoke_tool(SPREADSHEET_SERVER, SPREADSHEET_APPLY, args);
                 cx.spawn(async move |this, cx| {
                     let outcome = task.await;
                     this.update(cx, |widget, cx| match outcome {
                         Ok(text) => widget.apply_save_response(&text, cx),
                         Err(error) => {
-                            widget.save_status = SaveStatus::from_invoke_error(&error);
+                            widget.save_status = SaveStatus::from_invoke_error(&error, identity);
                             cx.notify();
                         }
                     })
@@ -558,10 +577,9 @@ impl SpreadsheetWidget {
             cx.notify();
             return;
         };
-        let Some(body) = hint
-            .strip_prefix("```spreadsheet\n")
-            .and_then(|rest| rest.strip_suffix("\n```"))
-        else {
+        // The fence format's one owner (SP-01): the engine's `hint_body`
+        // parses what `SpreadsheetPublication::display_hint` constructed.
+        let Some(body) = hint_body(hint) else {
             self.save_status = SaveStatus::Failed("display hint is not a spreadsheet block".into());
             cx.notify();
             return;
@@ -1059,32 +1077,70 @@ mod tests {
 
     #[test]
     fn interrupted_maps_to_the_reconciliation_status() {
-        let status =
-            SaveStatus::from_invoke_error(&InvokeError::Interrupted("spreadsheet_apply".into()));
-        assert_eq!(status, SaveStatus::Interrupted);
+        let status = SaveStatus::from_invoke_error(
+            &InvokeError::Interrupted("spreadsheet_apply".into()),
+            ("art-1".into(), "key-1".into()),
+        );
+        assert_eq!(
+            status,
+            SaveStatus::Interrupted {
+                artifact_id: "art-1".into(),
+                idempotency_key: "key-1".into(),
+            }
+        );
         assert!(status.label().contains("UNKNOWN"));
+        // SP-02's pin: the reconciliation identity is surfaced — the §7
+        // loop is actionable for widget-initiated saves.
+        assert!(status.label().contains("art-1"));
+        assert!(status.label().contains("key-1"));
     }
 
     #[test]
     fn not_wired_and_unavailable_remain_distinct() {
         assert_eq!(
-            SaveStatus::from_invoke_error(&InvokeError::NotWired),
+            SaveStatus::from_invoke_error(&InvokeError::NotWired, ("a".into(), "k".into())),
             SaveStatus::NotWired
         );
         assert_eq!(
-            SaveStatus::from_invoke_error(&InvokeError::Unavailable("x".into())),
+            SaveStatus::from_invoke_error(
+                &InvokeError::Unavailable("x".into()),
+                ("a".into(), "k".into()),
+            ),
             SaveStatus::Unavailable
         );
     }
 
     #[test]
     fn stale_digest_maps_to_the_conflict_status() {
-        let status = SaveStatus::from_invoke_error(&InvokeError::Failed(
-            "… failed_precondition … digest mismatch …".into(),
-        ));
+        let status = SaveStatus::from_invoke_error(
+            &InvokeError::Failed {
+                message: "… digest mismatch …".into(),
+                kind: Some(McpErrorKind::FailedPrecondition),
+            },
+            ("a".into(), "k".into()),
+        );
         match status {
             SaveStatus::Failed(message) => assert!(message.contains("conflict")),
             other => panic!("expected a conflict failure, got {other:?}"),
+        }
+    }
+
+    /// SP-03's anti-sniffing pin: a message that merely CONTAINS the kind
+    /// string does not classify as a conflict — only the typed kind does.
+    #[test]
+    fn conflict_detection_is_structural_not_textual() {
+        let status = SaveStatus::from_invoke_error(
+            &InvokeError::Failed {
+                message: "the words failed_precondition appear in prose".into(),
+                kind: None,
+            },
+            ("a".into(), "k".into()),
+        );
+        match status {
+            SaveStatus::Failed(message) => {
+                assert!(!message.contains("conflict"), "got: {message}");
+            }
+            other => panic!("expected a plain failure, got {other:?}"),
         }
     }
 

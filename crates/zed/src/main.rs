@@ -4062,10 +4062,16 @@ impl swarm_panel::ToolInvoker for PanelToolInvoker {
                         hkask_tool_port::ToolPortError::Interrupted(_) => {
                             InvokeError::Interrupted(message)
                         }
+                        // The tool's typed kind crosses the seam (SP-03):
+                        // panels classify structurally, never by message
+                        // text. Pre-dispatch refusals carry no tool kind.
                         hkask_tool_port::ToolPortError::EnergyBudgetExceeded(_)
-                        | hkask_tool_port::ToolPortError::NotFound(_)
-                        | hkask_tool_port::ToolPortError::InvocationFailed(_) => {
-                            InvokeError::Failed(message)
+                        | hkask_tool_port::ToolPortError::NotFound(_) => InvokeError::Failed {
+                            message,
+                            kind: None,
+                        },
+                        hkask_tool_port::ToolPortError::InvocationFailed { kind, .. } => {
+                            InvokeError::Failed { message, kind }
                         }
                     }
                 })?;
@@ -4088,7 +4094,10 @@ impl swarm_panel::ToolInvoker for PanelToolInvoker {
                 } else {
                     // `is_panic()` is true for panics; `tokio::task::JoinError`
                     // stringifies to the panic message in that case.
-                    InvokeError::Failed(format!("tokio task failed: {join_error}"))
+                    InvokeError::Failed {
+                        message: format!("tokio task failed: {join_error}"),
+                        kind: None,
+                    }
                 }
             })?
         })

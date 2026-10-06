@@ -104,8 +104,7 @@ The scenarios server implements three methodologies as an integrated pipeline:
 The pipeline flows from imagination (Schwartz: `scenario_frame`, `scenario_brainstorm`,
 `scenario_build`) through computation (Tetlock: `scenario_quantify`, `scenario_calibrate`,
 `scenario_update`, `scenario_synthesize`, `scenario_score`, `scenario_calibration`) to
-evaluation (Chermack: `scenario_assess`). The `scenario_full` tool compresses the Tetlock
-stages into a single call.
+evaluation (Chermack: `scenario_assess`).
 
 ### Event-tree model (MAIA)
 

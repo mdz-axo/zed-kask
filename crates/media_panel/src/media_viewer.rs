@@ -946,7 +946,7 @@ impl MediaViewer {
         cx.spawn(async move |this, cx| {
             match task.await.and_then(|response| {
                 parse_delete_acknowledgement(&response, &asset_id)
-                    .map_err(hkask_tool_invoker::InvokeError::Failed)
+                    .map_err(|message| hkask_tool_invoker::InvokeError::Failed { message, kind: None })
             }) {
                 Ok(transcripts_detached) => {
                     this.update(cx, |this, cx| {

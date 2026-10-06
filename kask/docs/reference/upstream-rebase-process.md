@@ -153,9 +153,7 @@ Update the D-seam row in `DIVERGENCE.md` to reflect the re-applied file:
 D7/D16 (icons, `.desktop` templates, bundle scripts, release workflows).
 `kask/scripts/build/check-zed-isolation.sh` is the enforcement point — it
 enumerates every forbidden path (from `kask/scripts/build/check-zed-isolation.sh:25`)
-and names the offending path on failure. `check-desktop-no-collision.sh` is a
-one-line `exec` alias for the same script (`kask/scripts/build/check-desktop-no-collision.sh:6`) —
-running either is sufficient; do not run both.
+and names the offending path on failure.
 
 1. `bash kask/scripts/build/check-zed-isolation.sh`
 2. If it fails, re-delete every path it names and re-run.
@@ -422,9 +420,8 @@ removal may satisfy multiple tests; classify by the one capturing the
 - **Decision test:** Does the retained upstream surface cause a
   desktop-environment, file-association, URL-scheme, auto-update, or
   install-path collision? **Mechanical check:**
-  `bash kask/scripts/build/check-desktop-no-collision.sh` and
-  `bash kask/scripts/build/check-zed-isolation.sh` both pass with the
-  surface removed and fail with it retained. Forbidden strings in any
+  `bash kask/scripts/build/check-zed-isolation.sh` passes with the
+  surface removed and fails with it retained. Forbidden strings in any
   `.desktop` template: `text/plain`, `application/x-zerosize`,
   `x-scheme-handler/zed`, `Keywords=zed` (`.rules:120`).
 - **Failure mode:** zed-kask silently hijacks the user's real Zed (or vice

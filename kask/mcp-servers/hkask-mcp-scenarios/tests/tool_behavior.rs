@@ -12,8 +12,8 @@
 
 use hkask_mcp_scenarios::requests::{
     AssessRequest, BrainstormRequest, CalibrateRequest, ContractCoherenceRequest,
-    FrameDocumentRequest, FullPipelineRequest, OutcomeEntry, PosteriorEvidenceEntry,
-    PosteriorsRequest, QuantifyRequest, ScoreRequest, StatusRequest, TriageRequest,
+    FrameDocumentRequest, OutcomeEntry, PosteriorEvidenceEntry, PosteriorsRequest, QuantifyRequest,
+    ScoreRequest, StatusRequest, TriageRequest,
 };
 use hkask_mcp_scenarios::types::{
     EventDependency, ScenarioEvent, ScenarioType, SubQuestion, TimeHorizon,
@@ -1557,55 +1557,4 @@ async fn quantified_tree_survives_a_server_restart_for_coherence() {
         "the persisted tree's joint (0.6 × 0.5 = 0.30) is the default after restart, got: {parsed}"
     );
     assert_eq!(parsed["coherent"].as_bool(), Some(true));
-}
-
-/// `scenario_full` passes its optional assessment metrics through unchanged:
-/// with every optional field omitted, the assessment names exactly the
-/// request-level metrics (plus unmeasured disagreement) as unreported —
-/// `event_count` and `events_with_dependencies` are genuinely measured from
-/// the event tree and must NOT appear — and the overall score stays a
-/// number averaged over the phases that did report.
-#[tokio::test]
-async fn scenario_full_reports_unreported_metrics_not_measured_ones() {
-    let server = make_server();
-    let output = server
-        .scenario_full(Parameters(FullPipelineRequest {
-            subject: "ACME".to_string(),
-            events: vec![independent_event("event", "durable event", 0.4)],
-            perspectives: None,
-            perspective_count: None,
-            strategies_generated: None,
-            strategies_implemented: None,
-            learning_events: None,
-            has_early_warning_indicators: None,
-        }))
-        .await
-        .expect("tool ok");
-    let parsed = parse(&output);
-
-    let mut unreported: Vec<String> = parsed["assessment"]["unreported_metrics"]
-        .as_array()
-        .unwrap_or_else(|| {
-            panic!("scenario_full assessment must carry unreported_metrics, got: {parsed}")
-        })
-        .iter()
-        .filter_map(|v| v.as_str().map(String::from))
-        .collect();
-    unreported.sort();
-    assert_eq!(
-        unreported,
-        vec![
-            "disagreement_score".to_string(),
-            "has_early_warning_indicators".to_string(),
-            "perspective_count".to_string(),
-            "strategies_generated".to_string(),
-            "strategies_implemented".to_string(),
-        ],
-        "exactly the unmeasured metrics are unreported — event_count and \
-         events_with_dependencies are measured from the event tree, got: {parsed}"
-    );
-    assert!(
-        parsed["assessment"]["overall"].is_number(),
-        "overall averages the phases that reported (development, project_assessment), got: {parsed}"
-    );
 }

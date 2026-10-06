@@ -34,7 +34,9 @@
 //! A widget that wants to dispatch therefore cannot reach `ToolInvoker` via
 //! `viz-core`, and depending on `swarm_panel` would pull `agent`, `editor`,
 //! `project`, … into a leaf widget. This crate is the minimal shared seam: it
-//! depends only on `gpui` (`Task`), `serde`, and `serde_json`.
+//! depends only on `gpui` (`Task`), `hkask-types` (`McpErrorKind` — the typed
+//! error classification panels match on structurally), `serde`, and
+//! `serde_json`.
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -68,7 +70,15 @@ pub enum InvokeError {
     Interrupted(String),
     /// The call reached the tool and failed there, or was refused before
     /// dispatch (call cap, unknown tool). Retrying repeats the same outcome.
-    Failed(String),
+    ///
+    /// `kind` is the tool's typed classification when the failure came from
+    /// the tool (SP-03: the typed kind crosses the seam — panels match
+    /// structurally instead of sniffing message text); `None` for
+    /// pre-dispatch refusals and transport-level failures.
+    Failed {
+        message: String,
+        kind: Option<hkask_types::McpErrorKind>,
+    },
 }
 
 impl InvokeError {
@@ -96,9 +106,8 @@ impl InvokeError {
     pub fn message(&self) -> String {
         match self {
             InvokeError::NotWired => NOT_WIRED_MESSAGE.to_string(),
-            InvokeError::Unavailable(detail)
-            | InvokeError::Interrupted(detail)
-            | InvokeError::Failed(detail) => detail.clone(),
+            InvokeError::Unavailable(detail) | InvokeError::Interrupted(detail) => detail.clone(),
+            InvokeError::Failed { message, .. } => message.clone(),
         }
     }
 }

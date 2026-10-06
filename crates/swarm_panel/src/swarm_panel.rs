@@ -2126,7 +2126,11 @@ mod tests {
             "a closed MCP transport is transient - the call never reached the tool"
         );
         assert!(
-            !InvokeError::Failed("ABW rejected the request".into()).is_retryable(),
+            !InvokeError::Failed {
+                message: "ABW rejected the request".into(),
+                kind: None,
+            }
+            .is_retryable(),
             "a tool that ran and failed must not be re-issued"
         );
         assert!(
@@ -2148,7 +2152,11 @@ mod tests {
             "confirm_hire relies on this to warn instead of offering a one-click retry"
         );
         assert!(
-            !InvokeError::Failed("insufficient credits".into()).is_outcome_unknown(),
+            !InvokeError::Failed {
+                message: "insufficient credits".into(),
+                kind: None,
+            }
+            .is_outcome_unknown(),
             "a refusal that reached ABW has a known outcome: nothing was spent"
         );
         assert!(

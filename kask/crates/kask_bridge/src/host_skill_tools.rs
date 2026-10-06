@@ -78,7 +78,7 @@ impl ToolPort for HostSkillToolPort {
             } else {
                 run_pure(tool, args)
             };
-            result.map_err(ToolPortError::InvocationFailed)
+            result.map_err(|detail| ToolPortError::InvocationFailed { detail, kind: None })
         })
     }
 

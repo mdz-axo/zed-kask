@@ -14,7 +14,7 @@
 //! Shared engine: Fermi decomposition, outside/inside view, Bayesian updating,
 //! Brier scoring, dragonfly-eye synthesis, calibration tracking, cross-validation.
 //!
-//! ## Tools (20) — pinned by `tool_surface_is_exactly_20_registered_tools`
+//! ## Tools (19) — pinned by `tool_surface_is_exactly_19_registered_tools`
 //! - `scenario_status` — Server state: pipeline overview, calibration curve, cached tree
 //! - `scenario_frame_document` — Structure framing answers into FramingDocument, persisted under the project record
 //! - `scenario_frame` — 7-turn conversational framing interview
@@ -31,7 +31,6 @@
 //! - `scenario_calibration` — Calibration curve + overconfidence detection
 //! - `scenario_cross_validate` — LLM vs computation cross-validation
 //! - `scenario_assess` — Chermack five-phase project evaluation, anchored on the project record
-//! - `scenario_full` — Tetlock core batch in a single call (no persist/propagate)
 //! - `scenario_from_markets_set` — Bridge from prediction-markets (multi-record EventTree)
 //! - `scenario_from_cmp_indices` — Bridge from prediction-markets CMP indices (EventTree)
 //! - `contract_price_coherence` — coherence: tree-implied joint vs contract price
@@ -419,133 +418,6 @@ impl ScenariosServer {
                 self.record_experience("scenario_status"),
             ))
         }).await
-    }
-
-    /// Run the full scenario pipeline in one call. Delegates computation to
-    /// the superforecast engine: triage_question, build_event_tree,
-    /// sensitivity_ranking, calibrate_from_fermi, outside_view_adjustment,
-    /// synthesize_perspectives, assess_project — same functions called by
-    /// individual tools. The pipeline assembles their outputs into one envelope.
-    #[tool(
-        description = "Run the Tetlock core batch in a single call: triage the question, calibrate via inline Fermi decomposition + outside view, quantify the event tree, and synthesize perspectives. NOT the complete pipeline — it persists nothing (use scenario_score to write the forecast journal), does not propagate updates (scenario_propagate) or cross-validate (scenario_cross_validate), and its triage/calibrate steps are weaker inline versions of the staged tools. Use the staged tools for anything you want to revisit or score."
-    )]
-    pub async fn scenario_full(
-        &self,
-        Parameters(req): Parameters<FullPipelineRequest>,
-    ) -> Result<String, McpToolError> {
-        execute_tool(self, "scenario_full", async {
-            let events = &req.events;
-            // The pipeline anchors synthesis on the first event, so an empty
-            // array is refused up front rather than indexed later. `build_event_tree`
-            // also rejects empty input, but the synthesis step at step 5 is
-            // reachable independently of it.
-            let Some(first_event_id) = events.first().map(|e| e.id.clone()) else {
-                return Err(McpToolError::invalid_argument(
-                    "events must contain at least one scenario event",
-                ));
-            };
-
-            // Step 1: Triage
-            let triage_results: Vec<_> = events.iter().map(|e| {
-                let t = superforecast::triage_question(&e.question, true, e.reference_class.is_some(), true);
-                serde_json::json!({"event_id": e.id, "difficulty": t.difficulty, "is_forecastable": t.is_forecastable})
-            }).collect();
-
-            // Step 2: Quantify
-            let tree = superforecast::build_event_tree(events)
-                .map_err(map_scenario_error)?;
-
-            // Step 3: Sensitivity
-            let sensitivity = superforecast::sensitivity_ranking(&tree);
-
-            // Step 4: Calibrate
-            let calibration: Vec<_> = events.iter().map(|e| {
-                let fermi = match superforecast::calibrate_from_fermi(&e.sub_questions) {
-                    Ok(fermi_estimate) => fermi_estimate,
-                    Err(error) => {
-                        tracing::warn!(
-                            target: "hkask.mcp.scenarios",
-                            %error,
-                            "Fermi calibration failed, defaulting to 0.5"
-                        );
-                        0.5
-                    }
-                };
-                let (cal, conf) = if let (Some(br), Some(_)) = (e.base_rate, e.reference_class.as_ref()) {
-                    superforecast::outside_view_adjustment(br, fermi, 1)
-                } else { (fermi, 0.5) };
-                serde_json::json!({"event_id": e.id, "calibrated": cal, "confidence": conf})
-            }).collect();
-
-            // Step 5: Synthesize (if perspectives provided)
-            let synth = req.perspectives.as_deref().and_then(|perspectives| {
-                if perspectives.len() < 2 {
-                    tracing::warn!(
-                        target: "hkask.mcp.scenarios",
-                        "scenario_full: fewer than 2 perspectives provided; skipping synthesis"
-                    );
-                    None
-                } else {
-                    match superforecast::synthesize_perspectives(&first_event_id, perspectives) {
-                        Ok(synthesis) => Some(synthesis),
-                        Err(error) => {
-                            tracing::warn!(
-                                target: "hkask.mcp.scenarios",
-                                %error,
-                                "scenario_full: perspective synthesis failed; skipping"
-                            );
-                            None
-                        }
-                    }
-                }
-            });
-
-            // Step 6: Assess — request Options pass through unchanged so an
-            // omitted metric is reported as unreported, never zero;
-            // event_count/events_with_deps are genuinely measured here.
-            let deps = events.iter().filter(|e| !e.depends_on.is_empty()).count();
-            let learning: Vec<String> = req.learning_events.as_deref()
-                .map(|s| s.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect())
-                .unwrap_or_default();
-            let curve = { let s = self.forecast_store.lock().unwrap_or_else(|e| e.into_inner()); superforecast::compute_calibration_curve(&s).ok() };
-            let assessment = superforecast::assess_project(&types::AssessInput {
-                project_id: &req.subject,
-                subject: &req.subject,
-                framing_document: None,
-                perspective_count: req.perspective_count,
-                disagreement_score: synth.as_ref().map(|s| s.disagreement_score),
-                event_count: Some(events.len()),
-                events_with_deps: Some(deps),
-                calibration_curve: curve.as_ref(),
-                strategies_generated: req.strategies_generated,
-                strategies_implemented: req.strategies_implemented,
-                learning_events: learning,
-                has_early_warning_indicators: req.has_early_warning_indicators,
-            });
-
-            let output = serde_json::json!({
-                "subject": req.subject, "pipeline": "full", "event_count": events.len(),
-                "triage": triage_results,
-                "quantify": {"joint_probability": tree.joint_probability},
-                "sensitivity": sensitivity.iter().map(|(id, s)| serde_json::json!({"event_id": id, "score": s})).collect::<Vec<_>>(),
-                "calibration": calibration,
-                "synthesis": synth.map(|s| serde_json::json!({"aggregated": s.aggregated_probability, "disagreement": s.disagreement_score})),
-                "assessment": {"overall": assessment.overall_score, "unreported_metrics": assessment.unreported_metrics, "recommendations": assessment.recommendations},
-                "provenance": provenance("scenario_full", {
-                    let mut m = serde_json::Map::new();
-                    m.insert("pipeline_steps".into(), serde_json::json!(["triage", "quantify", "sensitivity", "calibrate", "synthesize", "assess"]));
-                    m.insert("delegates_to".into(), serde_json::json!(["triage_question", "build_event_tree", "sensitivity_ranking", "calibrate_from_fermi", "outside_view_adjustment", "synthesize_perspectives", "assess_project"]));
-                    m
-                }),
-                "ontology": dc_bibo::DATASET
-            });
-
-            Ok(Self::with_sequence_note(
-                output,
-                self.record_experience("scenario_full"),
-            ))
-        })
-        .await
     }
 
     /// Bridge: compose a SET of prediction-market records into a dependent
@@ -2257,7 +2129,7 @@ fn emit_cmp_provenance(
 mod tests {
     use super::*;
 
-    // The scenarios server registers exactly 20 tools. Adding, removing,
+    // The scenarios server registers exactly 19 tools. Adding, removing,
     // or renaming a tool is an intentional surface change — the pin catches
     // accidental drift. One macro call: the count test plus the
     // build.rs-generated TOOL_NAMES set against the live router.
@@ -2265,8 +2137,8 @@ mod tests {
     hkask_mcp_server::tool_surface_pin!(
         ScenariosServer::scenario_router(),
         "scenario_router",
-        20,
-        tool_surface_is_exactly_20_registered_tools,
+        19,
+        tool_surface_is_exactly_19_registered_tools,
     );
 
     /// `emit_cmp_provenance` produces the full 7-field CMP index identity per

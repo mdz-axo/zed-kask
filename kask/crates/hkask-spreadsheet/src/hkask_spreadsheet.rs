@@ -47,6 +47,7 @@ pub use hkask_types::spreadsheet::{
 
 pub use service::{
     PublishOptions, SpreadsheetPublication, ViewportContent, WorkbookDocument, WorkbookService,
+    hint_body,
 };
 
 pub use artifact_store::{ArtifactMeta, OperationRecord};

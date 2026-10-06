@@ -181,32 +181,6 @@ pub struct PosteriorEvidenceEntry {
     pub likelihood_ratio: Option<f64>,
 }
 
-/// Request for `scenario_full`: the Tetlock core batch in one call.
-///
-/// The optional assessment metrics pass through to the Chermack
-/// assessment unchanged: omitted metrics are reported as unreported
-/// (never zero) and their dependent phase scores are withheld as
-/// insufficient data.
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct FullPipelineRequest {
-    /// Subject: company ticker, industry, country, or technology domain
-    pub subject: String,
-    /// Events (from scenario_brainstorm or manual construction)
-    pub events: Vec<ScenarioEvent>,
-    /// Optional: perspectives for dragonfly-eye synthesis
-    pub perspectives: Option<Vec<Perspective>>,
-    /// Optional: project-level metadata for assessment
-    pub perspective_count: Option<usize>,
-    /// Optional: how many strategies were generated from the scenarios
-    pub strategies_generated: Option<usize>,
-    /// Optional: how many strategies were actually implemented
-    pub strategies_implemented: Option<usize>,
-    /// Optional: learning events, newline-separated
-    pub learning_events: Option<String>,
-    /// Optional: whether early-warning indicators were defined
-    pub has_early_warning_indicators: Option<bool>,
-}
-
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct CrossValidateRequest {
     /// Event or question identifier

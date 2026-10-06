@@ -33,8 +33,17 @@ pub enum ToolPortError {
     #[error("Tool outcome unknown (connection lost mid-call): {0}")]
     Interrupted(String),
     /// The call reached the tool and the tool failed. Retrying repeats it.
-    #[error("Tool invocation failed: {0}")]
-    InvocationFailed(String),
+    ///
+    /// `kind` is the tool's own typed classification, extracted once from
+    /// the server's `structured_content` at dispatch (SP-03) — downstream
+    /// consumers match on it structurally instead of re-parsing the
+    /// `[kind] ` display marker. `None` when the failure predates the tool
+    /// (a pure-skill runner rejection, a transport-level error).
+    #[error("Tool invocation failed: {detail}")]
+    InvocationFailed {
+        detail: String,
+        kind: Option<hkask_types::McpErrorKind>,
+    },
 }
 
 impl ToolPortError {

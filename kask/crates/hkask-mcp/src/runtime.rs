@@ -1775,8 +1775,9 @@ impl McpRuntime {
         let handle = tokio::runtime::Handle::try_current()
             .ok()
             .or_else(configured_spawn_runtime)
-            .ok_or_else(|| {
-                DispatchError::Failed("MCP dispatch requires a live Tokio runtime".into())
+            .ok_or_else(|| DispatchError::Failed {
+                detail: "MCP dispatch requires a live Tokio runtime".into(),
+                kind: None,
             })?;
         // Tokio's supported cross-executor adapter enters only for each poll.
         // Construct the timer inside it; holding an EnterGuard across await is
@@ -1807,23 +1808,28 @@ impl McpRuntime {
                     interrupted_effect_note(server, tool)
                 )));
             }
-            Ok(Err(e)) => return Err(DispatchError::Failed(e.to_string())),
+            Ok(Err(e)) => {
+                return Err(DispatchError::Failed {
+                    detail: e.to_string(),
+                    kind: None,
+                });
+            }
         };
         let text = extract_text_content(&result);
         if result.is_error.unwrap_or(false) {
             // kask servers set `is_error` natively (rmcp's Result handling +
             // `McpToolError: IntoCallToolResult`) with the typed kind in
-            // `structured_content`. Format the detail as `[kind] message`
-            // (the `McpToolError` Display convention) so `invoke` can
-            // extract the kind for the ledger's per-kind breakdown.
-            let detail = result
+            // `structured_content`. The kind is extracted ONCE here and
+            // carried structurally (SP-03); the detail keeps the
+            // `[kind] message` Display convention so the ledger's per-kind
+            // breakdown (which parses the display marker) is unchanged.
+            let envelope = result
                 .structured_content
                 .as_ref()
-                .and_then(hkask_types::tool_response::parse_tool_error_value)
-                .and_then(|envelope| envelope.kind)
-                .map(|kind| format!("[{kind}] {text}"))
-                .unwrap_or(text);
-            return Err(DispatchError::Failed(detail));
+                .and_then(hkask_types::tool_response::parse_tool_error_value);
+            let kind = envelope.as_ref().and_then(|envelope| envelope.kind);
+            let detail = kind.map(|kind| format!("[{kind}] {text}")).unwrap_or(text);
+            return Err(DispatchError::Failed { detail, kind });
         }
         Ok(parse_call_result(&result))
     }
@@ -1870,8 +1876,14 @@ enum DispatchError {
     /// effect may or may not have been applied, so this must not be retried
     /// automatically.
     Interrupted(String),
-    /// The call reached the server and failed there. A retry would only repeat it.
-    Failed(String),
+    /// The call reached the server and failed there. A retry would only
+    /// repeat it. `kind` is the tool's typed classification when the
+    /// failure is the tool's own error (extracted once from
+    /// `structured_content` at dispatch).
+    Failed {
+        detail: String,
+        kind: Option<hkask_types::McpErrorKind>,
+    },
 }
 
 /// The standard suffix for `Interrupted` reports (repair-plan §8 #8, operator
@@ -1896,8 +1908,8 @@ impl DispatchError {
             DispatchError::Interrupted(detail) => {
                 hkask_tool_port::ToolPortError::Interrupted(detail)
             }
-            DispatchError::Failed(detail) => {
-                hkask_tool_port::ToolPortError::InvocationFailed(detail)
+            DispatchError::Failed { detail, kind } => {
+                hkask_tool_port::ToolPortError::InvocationFailed { detail, kind }
             }
         }
     }

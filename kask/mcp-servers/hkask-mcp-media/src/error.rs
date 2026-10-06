@@ -167,22 +167,6 @@ pub fn map_image_open_error(path: &std::path::Path, e: image::ImageError) -> Mcp
     }
 }
 
-/// Substrings that mark an embedding error as a missing-credential /
-/// missing-provider configuration failure rather than a transient outage.
-///
-/// NOTE: string-matching on "api key not configured" / "no provider
-/// configured" — `InferenceError` now carries a typed `NotConfigured` variant
-/// (see `classify_inference_error`), but `EmbeddingGenerationError` does not
-/// yet have one. No embedding backend currently emits a not-configured
-/// message, so this is purely defensive. If you add a not-configured
-/// construction site to an embedding backend, add a `NotConfigured(String)`
-/// variant to `EmbeddingGenerationError` in `hkask-types/src/ports/embedding.rs`
-/// and update `classify_embedding_error` to match on the variant instead.
-fn is_credential_missing_error(message: &str) -> bool {
-    let lower = message.to_ascii_lowercase();
-    lower.contains("api key not configured") || lower.contains("no provider configured")
-}
-
 /// Classify an `InferenceError` from a media/vision inference call into the
 /// MCP wire-level `McpToolError` kind.
 ///
@@ -214,15 +198,19 @@ pub fn classify_inference_error(prefix: &str, error: InferenceError) -> McpToolE
 
 /// Classify an `EmbeddingGenerationError` from an embedding call into the MCP
 /// wire-level `McpToolError` kind. Same credential-vs-transient split as
-/// [`classify_inference_error`], but `EmbeddingGenerationError` has no typed
-/// `NotConfigured` variant yet, so this falls back to string-matching via
-/// [`is_credential_missing_error`].
+/// [`classify_inference_error`], on the typed variant: a missing-credential /
+/// missing-provider configuration failure (the typed
+/// `EmbeddingGenerationError::NotConfigured` variant, emitted by
+/// `hkask-inference`'s direct-embedding fallback when the model string has no
+/// provider prefix or the provider's credential env var is unset) maps to
+/// `permission_denied`; every other failure (connection, API, JSON parse,
+/// empty response, dimension mismatch) stays `unavailable`. Classification
+/// follows the variant, never the message text. Messages are preserved.
 pub fn classify_embedding_error(prefix: &str, error: EmbeddingGenerationError) -> McpToolError {
     let message = format!("{}: {}", prefix, error);
-    if is_credential_missing_error(&message) {
-        McpToolError::permission_denied(message)
-    } else {
-        McpToolError::unavailable(message)
+    match error {
+        EmbeddingGenerationError::NotConfigured(_) => McpToolError::permission_denied(message),
+        _ => McpToolError::unavailable(message),
     }
 }
 
@@ -406,6 +394,43 @@ mod classification_tests {
         assert!(
             uninit.message.contains("gallery_organize"),
             "the precondition names the remedy: {uninit:?}"
+        );
+    }
+
+    /// MF-4 pin (target condition 4): a missing-credential embedding failure
+    /// classifies as `permission_denied` by VARIANT, never by substring
+    /// matching. The second assertion is the fails-without-fix direction: a
+    /// `Connection` error whose message happens to carry the old
+    /// credential-missing substring must stay `unavailable` — under the
+    /// deleted string-matcher it flipped to `permission_denied`.
+    #[test]
+    fn embedding_not_configured_classifies_by_variant_not_substring() {
+        use hkask_types::EmbeddingGenerationError;
+
+        let not_configured = classify_embedding_error(
+            "Embedding failed",
+            EmbeddingGenerationError::NotConfigured(
+                "embed model 'DeepInfra/x': DEEPINFRA_API_KEY not set".to_string(),
+            ),
+        );
+        assert_eq!(
+            not_configured.kind,
+            McpErrorKind::PermissionDenied,
+            "{not_configured:?}"
+        );
+        assert!(
+            not_configured.message.contains("DEEPINFRA_API_KEY"),
+            "the message names the env var: {not_configured:?}"
+        );
+
+        let connection = classify_embedding_error(
+            "Embedding failed",
+            EmbeddingGenerationError::Connection("api key not configured".to_string()),
+        );
+        assert_eq!(
+            connection.kind,
+            McpErrorKind::Unavailable,
+            "classification follows the variant, never the message text: {connection:?}"
         );
     }
 }

@@ -18,8 +18,8 @@ use std::sync::mpsc;
 use futures::channel::oneshot;
 use hkask_types::BlockProvenance;
 use hkask_types::spreadsheet::{
-    AnalyticalTable, ArtifactOrigin, CellEdit, SpreadsheetAccess, SpreadsheetArtifactRef,
-    SpreadsheetBlock, SpreadsheetError, SpreadsheetViewport, TableValue,
+    AnalyticalTable, ArtifactOrigin, CellEdit, SPREADSHEET_VIZ, SpreadsheetAccess,
+    SpreadsheetArtifactRef, SpreadsheetBlock, SpreadsheetError, SpreadsheetViewport, TableValue,
 };
 use hkask_types::spreadsheet::{InlineTableBlock, MAX_VIEWPORT_COLS, MAX_VIEWPORT_ROWS};
 
@@ -42,6 +42,42 @@ pub enum SpreadsheetPublication {
         artifact: SpreadsheetArtifactRef,
         block: SpreadsheetBlock,
     },
+}
+
+impl SpreadsheetPublication {
+    /// The server-authoritative fenced display hint (plan §6): the block
+    /// serialized into one ```` ```spreadsheet ```` fenced block. This is the
+    /// single owner of the fence format (§5.1's hidden-complexity list:
+    /// "SpreadsheetBlock and display-hint serialization") — servers append
+    /// the returned hint to their tool output; [`hint_body`] parses it back.
+    pub fn display_hint(&self) -> Result<String, SpreadsheetError> {
+        match self {
+            SpreadsheetPublication::Workbook { block, .. } => {
+                let body =
+                    serde_json::to_string(block).map_err(|error| SpreadsheetError::Engine {
+                        detail: format!("cannot serialize spreadsheet block: {error}"),
+                    })?;
+                Ok(format!("```{SPREADSHEET_VIZ}\n{body}\n```"))
+            }
+            // An inline table is not an editable what-if workbook; a caller
+            // asking a workbook presenter for a hint has the wrong mode.
+            SpreadsheetPublication::Inline(_) => Err(SpreadsheetError::Engine {
+                detail: "an inline table publication is not an editable what-if workbook".into(),
+            }),
+        }
+    }
+}
+
+/// The JSON body of one fenced ```` ```spreadsheet ```` display hint — the
+/// parse counterpart of [`SpreadsheetPublication::display_hint`] (one owner
+/// of the fence format, both directions). `None` when `hint` is not a fenced
+/// spreadsheet hint.
+#[must_use]
+pub fn hint_body(hint: &str) -> Option<&str> {
+    hint.strip_prefix("```")?
+        .strip_prefix(SPREADSHEET_VIZ)?
+        .strip_prefix('\n')?
+        .strip_suffix("\n```")
 }
 
 /// One bounded window of cell values, extracted from an open document.
@@ -689,6 +725,38 @@ mod tests {
         .expect("publish succeeds");
         match publication {
             SpreadsheetPublication::Workbook { artifact, block } => (artifact, block),
+            other => panic!("expected a workbook publication, got {other:?}"),
+        }
+    }
+
+    /// SP-01: the fence format has one owner — `display_hint` constructs
+    /// it, `hint_body` parses it back, and the body re-parses as the strict
+    /// wire contract.
+    #[test]
+    fn display_hint_round_trips_through_hint_body() {
+        let dir = tempfile::tempdir().expect("temp artifact root");
+        let service =
+            WorkbookService::start_with_root(dir.path().to_path_buf()).expect("service starts");
+        let publication = block_on(service.publish(
+            origin(),
+            sample_table(),
+            PublishOptions {
+                access: SpreadsheetAccess::WorkbookWhatIf,
+            },
+        ))
+        .expect("publish succeeds");
+        let hint = publication.display_hint().expect("hint formats");
+        assert!(hint.starts_with("```spreadsheet\n"));
+        assert!(hint.ends_with("\n```"));
+        let body = hint_body(&hint).expect("hint body parses");
+        let parsed: SpreadsheetBlock = serde_json::from_str(body).expect("body is the block JSON");
+        parsed.validate().expect("the parsed block revalidates");
+        match &publication {
+            SpreadsheetPublication::Workbook {
+                block: published, ..
+            } => {
+                assert_eq!(&parsed, published, "round trip must preserve the block");
+            }
             other => panic!("expected a workbook publication, got {other:?}"),
         }
     }

@@ -13,7 +13,7 @@ use crate::{
     returns,
 };
 use hkask_mcp_server::server::{McpToolError, execute_tool, map_join_error};
-use hkask_spreadsheet::{PublishOptions, SpreadsheetPublication, WorkbookService};
+use hkask_spreadsheet::{PublishOptions, WorkbookService};
 use hkask_types::spreadsheet::{
     AnalyticalTable, ArtifactOrigin, ColumnKind, SpreadsheetAccess, SpreadsheetError, TableColumn,
     TableValue,
@@ -50,18 +50,12 @@ pub fn map_portfolio_error(e: PortfolioError) -> McpToolError {
     }
 }
 
-/// Classify [`SpreadsheetError`] for MCP dispatch — the same per-variant
-/// discipline as [`map_portfolio_error`] (mirrors hkask-mcp-spreadsheet's
-/// mapper so the two surfaces classify identically).
-pub fn map_spreadsheet_error(e: SpreadsheetError) -> McpToolError {
-    match &e {
-        SpreadsheetError::UnknownArtifact { .. } => McpToolError::not_found(e.to_string()),
-        SpreadsheetError::Conflict { .. } => {
-            McpToolError::new(hkask_types::McpErrorKind::FailedPrecondition, e.to_string())
-        }
-        SpreadsheetError::Engine { .. } => McpToolError::internal(e.to_string()),
-        _ => McpToolError::invalid_argument(e.to_string()),
-    }
+/// Dispatch a [`SpreadsheetError`] through the canonical per-variant
+/// classification — [`SpreadsheetError::mcp_kind`] is the single owner of
+/// the taxonomy (SP-01); this delegation keeps the server's call sites
+/// named.
+fn map_spreadsheet_error(e: SpreadsheetError) -> McpToolError {
+    McpToolError::new(e.mcp_kind(), e.to_string())
 }
 
 /// The presentation choice for a what-if report (plan §6: callers
@@ -173,22 +167,6 @@ fn what_if_workbook_table(
         rows,
     )
     .expect("the what-if staging table is valid by construction")
-}
-
-/// Format a ```` ```spreadsheet ```` fenced display hint from a workbook
-/// publication.
-fn spreadsheet_hint(publication: SpreadsheetPublication) -> Result<String, McpToolError> {
-    match publication {
-        SpreadsheetPublication::Workbook { block, .. } => {
-            let body = serde_json::to_string(&block).map_err(|error| {
-                McpToolError::internal(format!("serialize spreadsheet block: {error}"))
-            })?;
-            Ok(format!("```spreadsheet\n{body}\n```"))
-        }
-        SpreadsheetPublication::Inline(_) => Err(McpToolError::internal(
-            "workbook publication produced an inline table — not an editable what-if",
-        )),
-    }
 }
 
 /// Run a blocking portfolio operation on the spawn-blocking pool.
@@ -781,7 +759,7 @@ impl PortfolioServer {
                     )
                     .await
                     .map_err(map_spreadsheet_error)?;
-                vec![spreadsheet_hint(publication)?]
+                vec![publication.display_hint().map_err(map_spreadsheet_error)?]
             } else {
                 Vec::new()
             };

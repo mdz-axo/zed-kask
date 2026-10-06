@@ -32,6 +32,13 @@ pub enum EmbeddingGenerationError {
     InvalidRequest(String),
     #[error("Connection error: {0}")]
     Connection(String),
+    /// No embedding backend is configured — the model string has no
+    /// recognized provider prefix, or the provider's credential env var is
+    /// unset. A configuration failure to fix, never a transient outage to
+    /// retry: downstream classifiers map this to `permission_denied`
+    /// (the typed twin of `InferenceError::NotConfigured`).
+    #[error("Not configured: {0}")]
+    NotConfigured(String),
     #[error("API error: status {0}: {1}")]
     Api(u16, String),
     #[error("JSON parse error: {0}")]

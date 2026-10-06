@@ -557,7 +557,7 @@ Non-tool modules hold shared implementation, re-exported for the `tools/` group 
 | `map_gallery_store_error` (`kask/mcp-servers/hkask-mcp-media/src/error.rs:136`) | `NotFound` → `not_found`; infra errors → shared `map_infra_error`; `InvalidMode`, `InvalidPath`, `Conflict` → `invalid_argument` (caller-fixable) |
 | `map_image_open_error` (`kask/mcp-servers/hkask-mcp-media/src/error.rs:154`) | missing file → `not_found`; permission failure → `permission_denied`; other I/O and decode failures → `internal` |
 | `classify_inference_error` (`kask/mcp-servers/hkask-mcp-media/src/error.rs:196-209`) | typed `InferenceError::NotConfigured`/`Auth` → `permission_denied` (missing or rejected credential, matching the canonical `hkask-mcp-swarm` pattern); `Model` → `invalid_argument`; `Overloaded` → `rate_limited`; `Timeout` → `timeout`; every other failure → `unavailable` |
-| `classify_embedding_error` (`kask/mcp-servers/hkask-mcp-media/src/error.rs:216-223`) | credential-missing substrings → `permission_denied` (string-matched — `EmbeddingGenerationError` has no typed `NotConfigured` variant yet, `kask/mcp-servers/hkask-mcp-media/src/error.rs:211-215`); otherwise → `unavailable` |
+| `classify_embedding_error` (`kask/mcp-servers/hkask-mcp-media/src/error.rs`) | the typed `EmbeddingGenerationError::NotConfigured` variant (emitted by `hkask-inference`'s direct-embedding fallback when the model has no provider prefix or the provider's credential env var is unset) → `permission_denied`; every other variant → `unavailable`. Classification follows the variant, never the message text (the string-matcher was deleted with the variant's arrival, 2026-10-06) |
 
 ## OMC ontology anchoring
 

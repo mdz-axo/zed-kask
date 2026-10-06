@@ -4,6 +4,7 @@
 # Sourced by install.sh. Provides:
 #   - log/log_success/log_warning/log_error
 #   - MCP_SERVERS array (loaded from mcp-servers.txt — single source of truth)
+#   - publish_binaries (staged, per-file-atomic binary publication)
 #   - add_to_path (symlink-then-shell-config strategy)
 #   - print_banner
 #
@@ -354,49 +355,164 @@ strip_jsonc_comments() {
     ' "$file"
 }
 
-# prepare_install_dir — remove stale zed-kask / hkask-mcp-* binaries from
-# BIN_DIR before installing fresh ones.
+# publish_binaries — stage, prepare, and atomically replace the zed-kask and
+# hkask-mcp-* binaries in BIN_DIR.
 #
-# cp would overwrite the current binaries, but stale copies of servers that
-# were renamed or removed between releases (and the CLI itself) would linger
-# in BIN_DIR otherwise. kask owns the hkask-mcp-* namespace in BIN_DIR, so
-# removing every match is safe — there are no user-owned files under that
-# prefix.
+# Replaces the former delete-first sequence (prepare_install_dir unlinked the
+# working installation BEFORE install_binary verified the replacements
+# existed — any failure after deletion removed a working install). The
+# publication order is: preflight the complete inventory → stage every
+# replacement as <name>.new inside BIN_DIR (same filesystem) → chmod/strip
+# with truthful status → atomic rename onto the final name → sweep stale
+# hkask-mcp-* binaries that are no longer in the inventory (the genuine
+# purpose of the former prepare_install_dir: servers renamed or removed
+# between releases must not linger).
 #
-# Idempotent: a fresh install dir produces a no-op with a single log line.
-# Args: expects BIN_DIR to be set by the caller.
-prepare_install_dir() {
+# This is PER-FILE atomicity, not whole-install atomicity: a failure between
+# renames leaves a mixed version set, reported loudly; re-running the
+# installer repairs it. A failure BEFORE the renames leaves the working
+# installation fully intact. Running processes keep their inode across the
+# rename (no ETXTBSY — the failure mode of a direct cp onto a live binary);
+# they pick up the new binary on next launch.
+#
+# Strip policy is the caller's ($3): release builds strip (binary size);
+# release-fast keeps the full debug symbols its profile promises (debugger
+# workflows — stripping at install would silently break that contract). A
+# strip failure is non-fatal but VISIBLE: log_warning names the binary and
+# strip's own error; the success line prints only on success (the former
+# `strip ... || true` + unconditional message reported failed strips as
+# done).
+#
+# Args: $1 = source dir of the zed-kask binary (target/release or
+#       target/release-fast), $2 = source dir of the MCP server binaries
+#       (target/release-mcp), $3 = "true" to strip, "false" to keep
+#       symbols. Expects BIN_DIR and MCP_SERVERS to be set by the caller.
+publish_binaries() {
+    local zed_src_dir="$1" mcp_src_dir="$2" do_strip="$3"
     if [ -z "${BIN_DIR:-}" ]; then
-        log_error "prepare_install_dir: BIN_DIR is not set"
+        log_error "publish_binaries: BIN_DIR is not set"
+        return 1
+    fi
+    if [ "${#MCP_SERVERS[@]}" -eq 0 ]; then
+        log_error "publish_binaries: MCP_SERVERS is empty"
         return 1
     fi
 
-    assert_not_zed_owned_path "$BIN_DIR" "install directory preparation" || return 1
+    assert_not_zed_owned_path "$BIN_DIR" "binary publication" || return 1
 
-    local removed=0
-    assert_kask_binary_destination "$BIN_DIR/zed-kask" || return 1
-    if [ -f "$BIN_DIR/zed-kask" ]; then
-        rm -f "$BIN_DIR/zed-kask"
-        log "Removed previous zed-kask binary"
-        removed=$((removed + 1))
+    local inventory=("zed-kask" "${MCP_SERVERS[@]}")
+
+    # Preflight the complete inventory BEFORE touching anything in BIN_DIR —
+    # a missing built binary must leave the working installation untouched.
+    local name src
+    for name in "${inventory[@]}"; do
+        if [ "$name" = "zed-kask" ]; then
+            src="$zed_src_dir/$name"
+        else
+            src="$mcp_src_dir/$name"
+        fi
+        if [ ! -x "$src" ]; then
+            log_error "Built binary not found or not executable: $src"
+            return 1
+        fi
+    done
+
+    log "Publishing zed-kask + ${#MCP_SERVERS[@]} MCP server(s) to $BIN_DIR (staged, atomic)..."
+    mkdir -p "$BIN_DIR"
+
+    # Stage every replacement as <name>.new in BIN_DIR (same filesystem, so
+    # the final rename is atomic). The destination membrane is asserted on
+    # the FINAL name — a staged "zed-kask.new" basename would not match the
+    # zed-kask|hkask-mcp-* destination pattern. cp overwrites any <name>.new
+    # left behind by a previous run killed mid-publication, so staging
+    # self-heals.
+    for name in "${inventory[@]}"; do
+        if [ "$name" = "zed-kask" ]; then
+            src="$zed_src_dir/$name"
+        else
+            src="$mcp_src_dir/$name"
+        fi
+        assert_kask_binary_destination "$BIN_DIR/$name" \
+            || { publish_cleanup "${inventory[@]}"; return 1; }
+        if ! cp "$src" "$BIN_DIR/$name.new"; then
+            log_error "Failed to stage $name into $BIN_DIR"
+            publish_cleanup "${inventory[@]}"
+            return 1
+        fi
+        chmod +x "$BIN_DIR/$name.new"
+    done
+
+    # Prepare symbols while everything is still staged. Truthful status: the
+    # success line prints only on success; a failure is a warning naming the
+    # binary and strip's own error — never a false "Stripped" message.
+    if [ "$do_strip" = "true" ]; then
+        if command -v strip >/dev/null 2>&1; then
+            local strip_err
+            for name in "${inventory[@]}"; do
+                if strip_err=$(strip "$BIN_DIR/$name.new" 2>&1); then
+                    log "Stripped debug symbols from $name"
+                else
+                    log_warning "strip failed on $name — publishing it unstripped: $strip_err"
+                fi
+            done
+        else
+            log_warning "strip not found on PATH — publishing unstripped binaries"
+        fi
+    else
+        log "Keeping debug symbols (release-fast build — debugger workflows)"
     fi
 
-    # Glob + guard instead of find: portable across GNU/BSD find and safe
-    # when BIN_DIR does not exist yet (fresh install).
-    local stale
+    # Atomic rename per file (mv within one filesystem is rename(2)).
+    local published=0
+    for name in "${inventory[@]}"; do
+        if mv "$BIN_DIR/$name.new" "$BIN_DIR/$name"; then
+            published=$((published + 1))
+        else
+            log_error "Failed to publish $name (rename failed in $BIN_DIR)"
+        fi
+    done
+    if [ "$published" -ne "${#inventory[@]}" ]; then
+        publish_cleanup "${inventory[@]}"
+        log_error "Publication incomplete: $published/${#inventory[@]} binaries published — $BIN_DIR holds a MIXED version set"
+        log_error "Re-run the installer to repair it; the binaries that remain are untouched."
+        return 1
+    fi
+
+    # Stale sweep — only after a fully successful publish, and never touching
+    # current inventory names. Glob + guard instead of find: portable and
+    # safe when BIN_DIR holds no hkask-mcp-* files.
+    local stale is_current removed=0
     for stale in "$BIN_DIR"/hkask-mcp-*; do
         [ -f "$stale" ] || continue
+        case "$stale" in *.new) continue ;; esac
+        is_current=false
+        for name in "${MCP_SERVERS[@]}"; do
+            if [ "$stale" = "$BIN_DIR/$name" ]; then
+                is_current=true
+                break
+            fi
+        done
+        if [ "$is_current" = "true" ]; then
+            continue
+        fi
         assert_kask_binary_destination "$stale" || return 1
         rm -f "$stale"
         log "Removed stale MCP server binary: $(basename "$stale")"
         removed=$((removed + 1))
     done
 
-    if [ "$removed" -eq 0 ]; then
-        log "No previous binaries found in $BIN_DIR"
-    else
-        log_success "Removed $removed stale binary(ies) from $BIN_DIR"
-    fi
+    log_success "Published zed-kask + ${#MCP_SERVERS[@]} MCP server(s) to $BIN_DIR (stale swept: $removed)"
+    return 0
+}
+
+# publish_cleanup — remove the staged <name>.new files of a publication
+# inventory. Idempotent; also removes the partial file a failed cp can leave
+# behind. Expects BIN_DIR to be set by the caller.
+publish_cleanup() {
+    local name
+    for name in "$@"; do
+        rm -f "$BIN_DIR/$name.new"
+    done
 }
 
 # add_to_path — make BIN_DIR reachable from the user's shell.
@@ -631,7 +747,7 @@ remove_mcp_server_settings() {
 # Lives in the shared helpers file (not install.sh) so it is in scope when
 # install-common.sh is sourced by the regression test
 # (kask/scripts/build/check-uninstall-paths.sh), the same way
-# prepare_install_dir / add_to_path / remove_mcp_server_settings are tested.
+# publish_binaries / add_to_path / remove_mcp_server_settings are tested.
 # install.sh's --uninstall dispatch calls this.
 #
 # Caller must set BIN_DIR, INSTALL_DIR, SYSTEM_BIN, MCP_SERVERS (the first
@@ -670,7 +786,7 @@ uninstall_hkask() {
     # (all release channels — dev/stable, nightly, preview) plus the icon.
     # This .desktop is the window→icon binding GNOME uses for the taskbar; it
     # is NoDisplay=true with no MimeType/Keywords, so it never collided with
-    # upstream Zed. Also remove any stale entry from pre-0.34 installs.
+    # upstream Zed.
     local data_root
     for data_root in "${XDG_DATA_HOME:-$HOME/.local/share}" "/usr/local/share"; do
         local desktop_app_id
@@ -702,9 +818,8 @@ uninstall_hkask() {
         update-desktop-database "${XDG_DATA_HOME:-$HOME/.local/share}/applications" 2>/dev/null || true
     fi
 
-    # Remove PATH entries from shell configs. Match both the current
-    # `# zed-kask` marker and the legacy `# hKask` marker so users who
-    # installed under the old name get cleaned up too.
+    # Remove PATH entries from shell configs (the `# zed-kask` marker
+    # written by add_to_path).
     #
     # Escape `/` in $BIN_DIR before interpolating into the sed regex (sed uses
     # `/` as its delimiter). Without this, a BIN_DIR like
@@ -715,8 +830,8 @@ uninstall_hkask() {
     local bin_dir_re
     bin_dir_re=$(printf '%s' "$BIN_DIR" | sed 's|/|\\/|g')
     for cfg in "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.zprofile" "$HOME/.profile"; do
-        if [ -f "$cfg" ] && grep -qE '# (zed-kask|hKask)' "$cfg" 2>/dev/null; then
-            sed -i -E '/# (zed-kask|hKask)/d' "$cfg"
+        if [ -f "$cfg" ] && grep -qF '# zed-kask' "$cfg" 2>/dev/null; then
+            sed -i -E '/# zed-kask/d' "$cfg"
             sed -i "/export PATH.*${bin_dir_re}/d" "$cfg"
             log "Cleaned PATH entry from $cfg"
         fi

@@ -1980,7 +1980,10 @@ mod tests {
             "an interrupted call on an unprotected tool must NOT be retried"
         );
         // A clean failure is never retried, protected or not.
-        let failed = InvokeError::Failed("rejected".into());
+        let failed = InvokeError::Failed {
+            message: "rejected".into(),
+            kind: None,
+        };
         assert!(!should_retry(&failed, TASK_CREATE_TOOL));
         assert!(!should_retry(&failed, TASK_UPDATE_TOOL));
     }

@@ -10,11 +10,9 @@
 use std::sync::Arc;
 
 use hkask_mcp_server::server::{McpToolError, execute_tool};
-use hkask_spreadsheet::SPREADSHEET_VIZ;
 use hkask_spreadsheet::SpreadsheetPublication;
 use hkask_spreadsheet::WorkbookService;
-use hkask_types::McpErrorKind;
-use hkask_types::spreadsheet::{EditTransaction, SpreadsheetBlock, SpreadsheetError};
+use hkask_types::spreadsheet::{EditTransaction, SpreadsheetError};
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::{tool, tool_handler, tool_router};
 use schemars::JsonSchema;
@@ -26,47 +24,12 @@ hkask_mcp_server::mcp_server!(
     }
 );
 
-/// Classify [`SpreadsheetError`] for MCP dispatch: each variant maps to a
-/// distinct `McpToolError` kind so callers can distinguish "bad input" from
-/// "no such artifact" from "stale base" from "engine failure".
-pub fn map_spreadsheet_error(e: SpreadsheetError) -> McpToolError {
-    match &e {
-        // Caller errors — rejected input shapes, mode mismatches, and
-        // containment refusals (a path-escaping id is invalid input; it is
-        // refused before any filesystem access).
-        SpreadsheetError::InvalidTable { .. }
-        | SpreadsheetError::NonRectangular { .. }
-        | SpreadsheetError::DuplicateColumn { .. }
-        | SpreadsheetError::InvalidCoordinate { .. }
-        | SpreadsheetError::InvalidArtifactRef { .. }
-        | SpreadsheetError::PathEscape { .. }
-        | SpreadsheetError::TooLargeForInline { .. }
-        | SpreadsheetError::IncompleteProvenance { .. }
-        | SpreadsheetError::FormulaInvalid { .. }
-        | SpreadsheetError::InvalidTransaction { .. }
-        | SpreadsheetError::AccessMismatch { .. }
-        | SpreadsheetError::InvalidBlock { .. } => McpToolError::invalid_argument(e.to_string()),
-        // The named base revision does not exist.
-        SpreadsheetError::UnknownArtifact { .. } => McpToolError::not_found(e.to_string()),
-        // Optimistic concurrency: the caller's base-digest precondition does
-        // not hold against the stored revision.
-        SpreadsheetError::Conflict { .. } => {
-            McpToolError::new(McpErrorKind::FailedPrecondition, e.to_string())
-        }
-        // Engine-side failure.
-        SpreadsheetError::Engine { .. } => McpToolError::internal(e.to_string()),
-        // `SpreadsheetError` is #[non_exhaustive]; a future variant surfaces
-        // as internal (visible, never swallowed) until classified here.
-        _ => McpToolError::internal(e.to_string()),
-    }
-}
-
-/// The server-authoritative ` ```spreadsheet ` display hint carrying a
-/// workbook block (§6: opaque identity, bounded viewport, mutation endpoint).
-fn block_display_hint(block: &SpreadsheetBlock) -> Result<String, McpToolError> {
-    let body = serde_json::to_string(block)
-        .map_err(|error| McpToolError::internal(format!("serialize spreadsheet block: {error}")))?;
-    Ok(format!("```{SPREADSHEET_VIZ}\n{body}\n```"))
+/// Dispatch a [`SpreadsheetError`] through the canonical per-variant
+/// classification — [`SpreadsheetError::mcp_kind`] is the single owner of
+/// the taxonomy (SP-01): this server, the portfolio server, and the
+/// companies server classify identically because they all delegate there.
+fn map_spreadsheet_error(e: SpreadsheetError) -> McpToolError {
+    McpToolError::new(e.mcp_kind(), e.to_string())
 }
 
 // ── Request types ───────────────────────────────────────────────────
@@ -101,15 +64,18 @@ impl SpreadsheetServer {
                 .apply(transaction)
                 .await
                 .map_err(map_spreadsheet_error)?;
+            // The fence format's one owner (SP-01): the publication formats
+            // its own display hint.
+            let display_hint = publication.display_hint().map_err(map_spreadsheet_error)?;
             match publication {
-                SpreadsheetPublication::Workbook { artifact, block } => {
-                    let display_hint = block_display_hint(&block)?;
-                    Ok(serde_json::json!({
-                        "status": "applied",
-                        "artifact": artifact,
-                        "display_hint": display_hint,
-                    }))
-                }
+                SpreadsheetPublication::Workbook { artifact, .. } => Ok(serde_json::json!({
+                    "status": "applied",
+                    "artifact": artifact,
+                    "display_hint": display_hint,
+                })),
+                // Unreachable in practice — `display_hint` rejects
+                // non-workbook publications above — but the response
+                // contract names the invariant.
                 other => Err(McpToolError::internal(format!(
                     "spreadsheet_apply must produce a workbook publication, got {other:?}"
                 ))),

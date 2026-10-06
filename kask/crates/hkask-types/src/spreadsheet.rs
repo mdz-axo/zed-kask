@@ -777,6 +777,40 @@ pub enum SpreadsheetError {
     Engine { detail: String },
 }
 
+impl SpreadsheetError {
+    /// The canonical MCP classification of this error — the ONE owner of the
+    /// spreadsheet error taxonomy (every server dispatches through this, so
+    /// the classification can never diverge per server; the `.rules` trap
+    /// "error classification must be per-variant" is enforced here).
+    ///
+    /// Caller-shape errors are `InvalidArgument`; a named-but-missing
+    /// artifact is `NotFound`; a stale base digest is `FailedPrecondition`
+    /// (optimistic concurrency); engine-side failures are `Internal`. The
+    /// match is exhaustive by construction: adding a variant is a compile
+    /// error here until it is classified — a future variant can never
+    /// silently inherit a wrong kind.
+    #[must_use]
+    pub fn mcp_kind(&self) -> crate::error::McpErrorKind {
+        match self {
+            Self::InvalidTable { .. }
+            | Self::NonRectangular { .. }
+            | Self::DuplicateColumn { .. }
+            | Self::InvalidCoordinate { .. }
+            | Self::InvalidArtifactRef { .. }
+            | Self::PathEscape { .. }
+            | Self::TooLargeForInline { .. }
+            | Self::IncompleteProvenance { .. }
+            | Self::FormulaInvalid { .. }
+            | Self::InvalidTransaction { .. }
+            | Self::AccessMismatch { .. }
+            | Self::InvalidBlock { .. } => crate::error::McpErrorKind::InvalidArgument,
+            Self::UnknownArtifact { .. } => crate::error::McpErrorKind::NotFound,
+            Self::Conflict { .. } => crate::error::McpErrorKind::FailedPrecondition,
+            Self::Engine { .. } => crate::error::McpErrorKind::Internal,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -794,6 +828,52 @@ mod tests {
         assert_eq!(&back, value, "round trip changed the value");
         let again = serde_json::to_string(&back).expect("reserialize");
         assert_eq!(json, again, "round trip changed the bytes");
+    }
+
+    /// The mapper-equivalence pin (SP-01): one classification for every
+    /// variant, asserted — the servers dispatch through `mcp_kind`, so this
+    /// table is the single source of the taxonomy and can never diverge per
+    /// server.
+    #[test]
+    fn mcp_kind_classifies_every_variant() {
+        use crate::error::McpErrorKind;
+        let caller_shape = [
+            SpreadsheetError::InvalidTable { detail: "d".into() },
+            SpreadsheetError::NonRectangular { detail: "d".into() },
+            SpreadsheetError::DuplicateColumn { id: "c".into() },
+            SpreadsheetError::InvalidCoordinate { detail: "d".into() },
+            SpreadsheetError::InvalidArtifactRef { detail: "d".into() },
+            SpreadsheetError::PathEscape { id: "a/b".into() },
+            SpreadsheetError::TooLargeForInline { detail: "d".into() },
+            SpreadsheetError::IncompleteProvenance { detail: "d".into() },
+            SpreadsheetError::FormulaInvalid { detail: "d".into() },
+            SpreadsheetError::InvalidTransaction { detail: "d".into() },
+            SpreadsheetError::AccessMismatch { detail: "d".into() },
+            SpreadsheetError::InvalidBlock { detail: "d".into() },
+        ];
+        for error in caller_shape {
+            assert_eq!(error.mcp_kind(), McpErrorKind::InvalidArgument, "{error}");
+        }
+        assert_eq!(
+            SpreadsheetError::UnknownArtifact {
+                artifact_id: "a".into()
+            }
+            .mcp_kind(),
+            McpErrorKind::NotFound
+        );
+        assert_eq!(
+            SpreadsheetError::Conflict {
+                artifact_id: "a".into(),
+                expected: "e".into(),
+                found: "f".into(),
+            }
+            .mcp_kind(),
+            McpErrorKind::FailedPrecondition
+        );
+        assert_eq!(
+            SpreadsheetError::Engine { detail: "d".into() }.mcp_kind(),
+            McpErrorKind::Internal
+        );
     }
 
     fn sample_table() -> AnalyticalTable {

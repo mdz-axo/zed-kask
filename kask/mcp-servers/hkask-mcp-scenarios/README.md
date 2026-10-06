@@ -10,15 +10,14 @@ Scenario-planning MCP server. It turns a framed decision into candidate events, 
 
 ## Tools
 
-Twenty registered tools (pinned against the live `scenario_router()` by
-`tool_surface_is_exactly_20_registered_tools` in the crate's tests).
+Nineteen registered tools (pinned against the live `scenario_router()` by
+`tool_surface_is_exactly_19_registered_tools` in the crate's tests).
 
 ### Frame and explore
 
 | Tool | Description |
 |---|---|
 | `scenario_status` | Return the current scenario-server state snapshot. |
-| `scenario_full` | Run the Tetlock core batch (triage, quantify, sensitivity, calibrate, synthesize, assess) in one call. |
 | `scenario_frame` | Start the seven-turn framing conversation. |
 | `scenario_frame_document` | Convert framing answers into a typed document, persisted under the project record (id defaults to the subject). |
 | `scenario_brainstorm` | Produce a four-round scenario brainstorming protocol. |

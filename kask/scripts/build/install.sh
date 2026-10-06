@@ -12,8 +12,9 @@
 #   bash kask/scripts/build/install.sh --fast --skip-deps
 #
 # Environment variables:
-#   HKASK_VERSION       Tag to clone (default: 0.40.2; falls back to main only
-#                       if HKASK_ALLOW_FALLBACK=true)
+#   HKASK_VERSION       Tag to clone (default: derived from the workspace
+#                       Cargo.toml version, or 0.40.2 if unreadable; falls back
+#                       to main only if HKASK_ALLOW_FALLBACK=true)
 #   HKASK_BUILD_TYPE    release or release-fast (default: release)
 #   HKASK_SOURCE_DIR    Use an existing source directory instead of cloning
 #   HKASK_REPO_URL      Git URL (default: https://github.com/mdz-axo/zed-kask.git)
@@ -202,12 +203,13 @@ build_hkask() {
     log "Building zed-kask in $workspace_root..."
     cd "$workspace_root"
 
-    # Cap concurrent rustc invocations. The release profile compiles the
-    # zed binary with codegen-units=1 + thin LTO, so each rustc pins one core
-    # for minutes; uncapped, cargo spawns one per core (24 on the dev box)
-    # and starves the machine. The cap is min(nproc, 16) — 2/3 of the dev
-    # box's cores, full parallelism without starving the foreground.
-    # Override with HKASK_BUILD_JOBS.
+    # Cap concurrent rustc invocations. The release profile links the zed
+    # binary with thin LTO — every package compiles at codegen-units=16 (the
+    # D50 override; the profile-level codegen-units=1 in Cargo.toml is fully
+    # overridden) — and uncapped, cargo still spawns one rustc per core
+    # (24 on the dev box) and starves the machine. The cap is min(nproc, 16)
+    # — 2/3 of the dev box's cores, full parallelism without starving the
+    # foreground. Override with HKASK_BUILD_JOBS.
     local default_jobs
     default_jobs=$(( $(nproc) < 16 ? $(nproc) : 16 ))
     local jobs="${HKASK_BUILD_JOBS:-$default_jobs}"
@@ -240,10 +242,10 @@ build_hkask() {
     local build_ok=0
     if [ "${HKASK_BUILD_TYPE:-release}" = "release" ]; then
         # Two profiles, two invocations (D46): only the zed binary keeps the
-        # full release profile (thin LTO + codegen-units=1 — worth it for
-        # the editor). The MCP servers are I/O daemons and build on
+        # full release profile (thin LTO; codegen-units=16 per package under
+        # the D50 override). The MCP servers are I/O daemons and build on
         # release-mcp (lto=false, codegen-units=16): parallel-friendly, no
-        # one-core-per-crate pin. Building all 11 servers on `release` was
+        # one-core-per-crate pin. Building every MCP server on `release` was
         # the install CPU-burn defect.
         log "Building zed binary in release mode (full LTO)..."
         log "Building with at most $jobs concurrent compile jobs..."
@@ -287,61 +289,31 @@ build_hkask() {
     log_success "Build complete"
 }
 
-install_binary() {
+# install_binaries — compute the profile output dirs for the configured
+# build type and publish them via publish_binaries (install-common.sh):
+# staged copies, per-file atomic rename, stale sweep — the working
+# installation is never deleted before its replacements are verified and
+# staged (the former prepare_install_dir + install_binary pair deleted
+# first, so a failure after deletion removed a working install).
+#
+# Strip policy: release builds strip (binary size); --fast (release-fast)
+# keeps the full debug symbols the profile builds — its documented purpose
+# is debugger workflows, and stripping at install would silently break
+# that promise.
+install_binaries() {
     local workspace_root="$HKASK_SOURCE_DIR"
-
-    log "Installing zed-kask binaries..."
-
-    assert_not_zed_owned_path "$BIN_DIR" "binary installation" || return 1
-    mkdir -p "$BIN_DIR"
-
-    # Profile dirs (D46): release mode takes the zed binary from
-    # target/release; --fast (release-fast) takes it from
-    # target/release-fast. The MCP servers always come from
-    # target/release-mcp.
-    local zed_profile_dir profile_dir
+    local zed_profile_dir strip_binaries
     if [ "${HKASK_BUILD_TYPE:-release}" = "release" ]; then
+        # Profile dirs (D46): release mode takes the zed binary from
+        # target/release. The MCP servers always come from target/release-mcp.
         zed_profile_dir="$workspace_root/target/release"
+        strip_binaries=true
     else
+        # --fast (release-fast) takes the zed binary from target/release-fast.
         zed_profile_dir="$workspace_root/target/release-fast"
+        strip_binaries=false
     fi
-    profile_dir="$workspace_root/target/release-mcp"
-
-    if [ ! -x "$zed_profile_dir/zed-kask" ]; then
-        log_error "Built CLI binary not found: $zed_profile_dir/zed-kask"
-        return 1
-    fi
-    for server in "${MCP_SERVERS[@]}"; do
-        if [ ! -x "$profile_dir/$server" ]; then
-            log_error "Built MCP server binary not found: $profile_dir/$server"
-            return 1
-        fi
-    done
-
-    # Install CLI binary
-    assert_kask_binary_destination "$BIN_DIR/zed-kask" || return 1
-    cp "$zed_profile_dir/zed-kask" "$BIN_DIR/zed-kask"
-    chmod +x "$BIN_DIR/zed-kask"
-
-    # Strip debug symbols (reduces binary size ~60%, non-fatal if missing)
-    if command -v strip >/dev/null 2>&1; then
-        strip "$BIN_DIR/zed-kask" 2>/dev/null || true
-        log "Stripped debug symbols from zed-kask"
-    fi
-
-    # Install MCP server binaries
-    local installed_servers=0
-    for server in "${MCP_SERVERS[@]}"; do
-        assert_kask_binary_destination "$BIN_DIR/$server" || return 1
-        cp "$profile_dir/$server" "$BIN_DIR/$server"
-        chmod +x "$BIN_DIR/$server"
-        if command -v strip >/dev/null 2>&1; then
-            strip "$BIN_DIR/$server" 2>/dev/null || true
-        fi
-        installed_servers=$((installed_servers + 1))
-    done
-
-    log_success "Installed zed-kask + $installed_servers MCP server(s) to $BIN_DIR"
+    publish_binaries "$zed_profile_dir" "$workspace_root/target/release-mcp" "$strip_binaries"
 }
 
 # install_icon — install the zed-kask icon into the hicolor theme so the
@@ -844,7 +816,7 @@ Options:
     --install           Install hKask (default)
     --uninstall         Remove hKask
     --build-only        Build without installing
-    --fast              Build on the release-fast profile (parity flags, no LTO)
+    --fast              Build on the release-fast profile (parity flags, no LTO; debug symbols kept)
     --system            Install system-wide (symlink in /usr/local/bin)
     --skip-deps         Skip system dependency installation
     --skip-rust         Skip Rust installation
@@ -927,12 +899,6 @@ main() {
                 ;;
             --skip-rust)
                 skip_rust=true
-                shift
-                ;;
-            --skip-zk-ref)
-                # Legacy spelling of --skip-corpora from an unreleased session —
-                # accept both so in-flight operator muscle memory works.
-                skip_corpora=true
                 shift
                 ;;
             --skip-corpora)
@@ -1021,8 +987,7 @@ main() {
 
             build_hkask
             install_lean_toolchain || return 1
-            prepare_install_dir
-            install_binary
+            install_binaries
             install_icon
             install_desktop_entry
             setup_environment

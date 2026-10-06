@@ -6,7 +6,7 @@ use crate::{
     superforecast, types, validate_symbol, valuation_service::extract_historical_arrays,
 };
 use hkask_mcp_server::server::{McpToolError, execute_tool};
-use hkask_spreadsheet::{PublishOptions, SpreadsheetError, SpreadsheetPublication};
+use hkask_spreadsheet::{PublishOptions, SpreadsheetError};
 use hkask_types::spreadsheet::{
     AnalyticalTable, ArtifactOrigin, ColumnKind, SpreadsheetAccess, TableColumn, TableValue,
 };
@@ -36,37 +36,11 @@ fn map_scenario_impact_error(err: financial_model::ScenarioImpactError) -> McpTo
     McpToolError::invalid_argument(err.to_string())
 }
 
-/// Map a spreadsheet publication error to the MCP taxonomy — mirrors
-/// `hkask-mcp-portfolio`'s `map_spreadsheet_error` (the portfolio crate
-/// exports only `map_portfolio_error`; the classification is per-server
-/// surface).
+/// Dispatch a [`SpreadsheetError`] through the canonical per-variant
+/// classification ([`SpreadsheetError::mcp_kind`] — the single owner of
+/// the taxonomy, SP-01); the delegation keeps the call sites named.
 fn map_spreadsheet_error(error: SpreadsheetError) -> McpToolError {
-    match &error {
-        SpreadsheetError::UnknownArtifact { .. } => McpToolError::not_found(error.to_string()),
-        SpreadsheetError::Conflict { .. } => McpToolError::new(
-            hkask_types::McpErrorKind::FailedPrecondition,
-            error.to_string(),
-        ),
-        SpreadsheetError::Engine { .. } => McpToolError::internal(error.to_string()),
-        _ => McpToolError::invalid_argument(error.to_string()),
-    }
-}
-
-/// Format a ```` ```spreadsheet ```` fenced display hint from a workbook
-/// publication — the D18 widget renders the block as an editable
-/// workbook. Mirrors the portfolio server's hint formatter.
-fn spreadsheet_hint(publication: SpreadsheetPublication) -> Result<String, McpToolError> {
-    match publication {
-        SpreadsheetPublication::Workbook { block, .. } => {
-            let body = serde_json::to_string(&block).map_err(|error| {
-                McpToolError::internal(format!("serialize spreadsheet block: {error}"))
-            })?;
-            Ok(format!("```spreadsheet\n{body}\n```"))
-        }
-        SpreadsheetPublication::Inline(_) => Err(McpToolError::internal(
-            "workbook publication produced an inline table — not an editable what-if",
-        )),
-    }
+    McpToolError::new(error.mcp_kind(), error.to_string())
 }
 
 /// The scenario path grid as an editable workbook table (PR-10): one row
@@ -869,8 +843,11 @@ impl CompaniesServer {
                     )
                     .await
                     .map_err(map_spreadsheet_error)?;
-                output["display_hint"] =
-                    serde_json::Value::String(spreadsheet_hint(publication)?);
+                output["display_hint"] = serde_json::Value::String(
+                    publication
+                        .display_hint()
+                        .map_err(map_spreadsheet_error)?,
+                );
             }
 
             Ok(fibo::enrich_with_ontology(output, "scenario_impact_valuation"))

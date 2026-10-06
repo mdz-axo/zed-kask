@@ -1495,9 +1495,10 @@ mod tests {
         let _restore = InvokerGuard;
         let mock = std::sync::Arc::new(ExplainMockInvoker {
             calls: std::sync::Mutex::new(Vec::new()),
-            result: std::sync::Mutex::new(Err(hkask_tool_invoker::InvokeError::Failed(
-                "research_search unavailable".to_string(),
-            ))),
+            result: std::sync::Mutex::new(Err(hkask_tool_invoker::InvokeError::Failed {
+                message: "research_search unavailable".to_string(),
+                kind: None,
+            })),
         });
         hkask_tool_invoker::set_tool_invoker(Some(mock));
 

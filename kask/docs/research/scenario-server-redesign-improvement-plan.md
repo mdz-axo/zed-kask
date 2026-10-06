@@ -18,8 +18,11 @@ implemented — this is the execution sequence for the proposal set.
 
 ## Execution status (2026-10-06)
 
-Slices 1–5 are landed (uncommitted in the working tree), plus PR-09 of
-Slice 6. Slice 1 (PR-03/04/06/12/14/16), Slice 2 (PR-05/11), Slice 3
+Slices 1–5 are landed, plus PR-09 of Slice 6 — committed in
+`8692a23520` (review documents + Slices 1–3), `64b2f4f6d5` (Slices 4–6:
+shared posterior engine, marginal scoring, scenario provenance),
+`c03cf4aa89` (the PR-10 second pass: workbook presentation wiring and
+pins), and `b252d88b3d` (post-restart follow-ups). Slice 1 (PR-03/04/06/12/14/16), Slice 2 (PR-05/11), Slice 3
 (PR-01/07 — plus a wiring fix found during PR-07: `run()` passed the data
 DIR as the forecast store's snapshot FILE path, so production compaction
 failed past the journal threshold and the journal landed outside the D28
@@ -197,11 +200,13 @@ default-output byte-identity pinned.
 
 ## Deferred / operator decisions
 
-- **PR-13 (`scenario_full` narrowing):** functional choice between
-  narrowing to the deterministic core and removing the tool — the
-  operator's call; both paths enumerated in the proposal.
-- **PR-15 (portfolio event-exposure report):** deferred until an operator
-  demands it; MAIA's post is the demand hypothesis, not demand.
+- **PR-13 (`scenario_full`):** decided — remove (operator, 2026-10-06).
+  Executed the same day: handler, `FullPipelineRequest`, its test, and
+  every live-surface doc row deleted; the pin moved 20 → 19 and stayed
+  green. The staged pipeline is the only path.
+- **PR-15 (portfolio event-exposure report):** decided — stay deferred
+  (operator, 2026-10-06). The PR-09 join fields keep it an M effort
+  when demand materializes.
 
 ## Net summary
 
@@ -225,8 +230,8 @@ Every deletion is enumerated in its proposal with the replacement path.
 
 **Migrates:** `StoredForecastRecord` schema (prior → marginal,
 version bump); the equity forecast record (additive scenario fields,
-versioned); the tool-surface pin (19 → 20 with PR-08; 19 → 18 if the
-operator chooses PR-13's removal option); the assess wire contract
+versioned); the tool-surface pin (19 → 20 with PR-08; 20 → 19 with
+PR-13's removal, executed 2026-10-06); the assess wire contract
 (metrics become overrides); the skill's Phase 1/5 steps (project-backed).
 
 **Sequencing rationale:** Slice 1 is risk-free and removes active
@@ -236,3 +241,102 @@ durability-related hangs on; Slice 4 changes learned-from semantics
 before the calibration history grows further; Slice 5 is the largest
 single change and lands on a stable spine; Slice 6 closes the
 cross-server loop last, when the ids it needs to record exist.
+
+## Loose-end closeout (2026-10-06, third pass)
+
+Terminal state: every loose end is closed with a receipt below or
+parked as an explicit operator decision. Nothing is silently open.
+
+### Closed receipts
+
+| Item | Receipt |
+|---|---|
+| Commits | `8692a23520` (review + Slices 1–3), `64b2f4f6d5` (Slices 4–6), `c03cf4aa89` (PR-10 second pass), `b252d88b3d` (follow-ups); the working tree carries no scenarios files |
+| Goal loop | `e82bf99d` scored achieved and acknowledged out of the retained list; `c2a23bc8`, `818afff3`, `5e1db9ad` judged done (scoring awaits operator confirmation) |
+| Live surface | 20 tools registered post-restart; descriptions current (marginal scoring on `scenario_score`, project record on `scenario_assess`, the posterior tool) |
+| Posterior engine | live probe on a two-node tree: LR 3.0 on a 0.5 prior → root posterior 0.75, child marginal 0.65 (hand-checked); method `polytree_backward_inference`, engine `hkask_forecast::posterior` shared with the graph widget |
+| Cleanup | zero TODO/FIXME/deprecated/dead-code markers in the scenarios + forecast crates; `variance_contribution` and `scenario_research` absent from skills, reference docs, and registry (the surviving `clocklike` mentions are the superforecasting skill's own Tetlock regularity axis, deliberately distinct from the renamed triage labels) |
+| Skill currency | 7 skills reference scenario terms. The three touching changed semantics carry their enrichments (`scenario-planning` steps 14/17, `superforecasting` audit trail, `company-research-flash` valuation step). The other four reference unchanged contracts: `company-research-deep` uses `scenario_build` (SKILL.md:207), `cmp-term-structure` uses `scenario_from_cmp_indices`/`contract_price_coherence` (SKILL.md:24,86), `metacognition` and `mcp-tool-review` cite tools incidentally (SKILL.md:149, :41). No gaps |
+
+### Operator decision PR-13 — `scenario_full`: narrow vs. remove
+
+Current state: the one-call Tetlock batch — triage, inline Fermi/outside
+view, quantification, synthesis, and an inline Chermack assessment — at
+`hkask_mcp_scenarios.rs:432-545`, request `FullPipelineRequest`
+(`requests.rs:184-208`). F14 holds at current lines: the "assessment"
+stage is a pass-through of five optional caller metrics
+(`perspective_count`, `strategies_generated`, `strategies_implemented`,
+`learning_events`, `has_early_warning_indicators` — omitted ones reported
+as unreported, never zero; pinned by
+`scenario_full_reports_unreported_metrics_not_measured_ones`,
+`tests/tool_behavior.rs:1562-1589`). Blast radius (grep, 27 hits): the
+handler, its request type, one test, the crate README row,
+`scenarios.md` (tool list, diagram, delegation note),
+`reference/mcp-servers/README.md:107`, and an aside in
+`registry/templates/superforecasting/README.md:54`. **No skill instructs
+calling it.**
+
+- **(a) Narrow to the deterministic core:** the tool becomes a pure
+  deterministic batch — triage + quantify + sensitivity ranking over
+  caller-supplied events. Deletes the inline calibrate/synthesize/assess
+  stages (each has a staged tool that persists and is revisitable), the
+  caller-metrics request fields, and the metrics test. The user keeps a
+  one-call raw-events → quantified-tree entry; the surface stays 20.
+- **(b) Remove:** deletes the handler (~113 lines),
+  `FullPipelineRequest`, the test, the README row, the `scenarios.md`
+  entries, the reference-README sentence, the superforecasting README
+  aside, and the pin entry (surface 20 → 19). The staged pipeline
+  (`scenario_triage` → `scenario_calibrate` → `scenario_quantify` →
+  `scenario_synthesize`) becomes the only path.
+
+Recommendation: **(b) remove.** Zero skill callers, a live description
+that already steers to the staged tools, and a deterministic core that
+is one `scenario_triage` plus one `scenario_quantify` call. The
+functional loss is a convenience no current workflow uses. Effort: S
+either way. Depends: none.
+
+**Decided (operator, 2026-10-06): remove — executed the same day.**
+Deleted: the handler (`hkask_mcp_scenarios.rs`), `FullPipelineRequest`
+(`requests.rs`), the metrics test (`tool_behavior.rs`), the crate
+README row, the `scenarios.md` entries (tool list, diagram node and
+edges, table row, key-paths bullet, DIAG-RF-005 record), the
+reference-README sentence, the superforecasting README aside, and the
+pin entry (renamed `tool_surface_is_exactly_19_registered_tools`).
+Receipts: 39 scenarios tests green (the 19-pin passing against the
+regenerated `TOOL_NAMES`), scoped clippy + machete clean, and the
+full-repo sweep showing `scenario_full`/`FullPipelineRequest` only in
+these research docs. The live 19-tool surface is pending the
+operator's rebuild+restart.
+
+### Operator decision PR-15 — portfolio event-exposure report
+
+Unchanged verdict, changed facts: still no consumer (F23 — the MAIA
+post's portfolio line is the demand hypothesis, not demand), but the
+join keys now exist — PR-01's project record and PR-09's recorded
+scenario fields on equity forecasts (`scenario_project_id`,
+`scenario_tree`, `fused_volatility`) make the bridge a join, not a new
+data model. What it would build: a portfolio-level event-exposure
+report — which holdings' scenario trees share which events, per-event
+marginals, event-risk concentration across the book. Seam: portfolio
+ledger × companies forecast records × scenarios store. Effort drops
+M-L → M. Depends: PR-01 ✓, PR-09 ✓, operator demand.
+
+Decision: stay deferred (recommended — no consumer has asked) or
+commission it (name a portfolio and a scenario project; it becomes a
+slice). Building it now would add surface with no caller — the
+essentialist bar that deferred it still holds.
+
+**Decided (operator, 2026-10-06): stay deferred.**
+
+### Remaining queue (updated 2026-10-06, decision pass)
+
+- PR-13 decided — remove; executed the same day (pin 20 → 19, green).
+- PR-15 decided — stay deferred.
+- `c2a23bc8`, `818afff3`, `5e1db9ad` scored achieved on the operator's
+  confirmation (Brier 0.16 / 0.20 / 0.023); curator-memory ingestion
+  verification and acknowledgment are the post-turn receipt.
+- The live 19-tool surface is pending the operator's rebuild+restart.
+- The spreadsheet capability plan executes in a parallel stream (goal
+  `11616a31`); its in-flight tree edits are that stream's.
+- The PR-13 execution edits (source, tests, docs) are uncommitted and
+  ride the next operator commit.

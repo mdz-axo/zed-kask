@@ -272,7 +272,11 @@ scope; no speculative generality). Nothing here is implemented.
 - **Breaking changes:** either option deletes surface; option (b) deletes
   the tool, its handler, and its pin entry; option (a) deletes the
   assessment stage from the output shape.
-- **Effort:** S. **Depends:** none. **Status: operator decision.**
+- **Effort:** S. **Depends:** none. **Status: decided — remove
+  (operator, 2026-10-06); executed the same day.**
+- **Expansion (2026-10-06):** decision memo with the live blast radius
+  (27 grep hits, zero skill callers) filed in
+  `scenario-server-redesign-improvement-plan.md` § Loose-end closeout.
 
 ## PR-14 — `variance_contribution` rename
 
@@ -301,7 +305,11 @@ scope; no speculative generality). Nothing here is implemented.
 - **Breaking changes:** n/a until built — the essentialist bar (no
   consumer) is why it is deferred.
 - **Effort:** M-L. **Depends:** PR-01 + operator demand. **Status:
-  deferred, operator decision.**
+  decided — stay deferred (operator, 2026-10-06).**
+- **Expansion (2026-10-06):** PR-09's recorded join fields
+  (`scenario_project_id`, `scenario_tree`) drop the effort estimate to M;
+  decision memo in `scenario-server-redesign-improvement-plan.md` §
+  Loose-end closeout.
 
 ## PR-16 — Schwartz-surface naming unification
 

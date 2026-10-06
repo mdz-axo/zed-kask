@@ -170,8 +170,7 @@ closes a fast loop (seconds) instead of waiting for the CI round-trip.
 2. If it fails, it names the offending path — re-delete that path and re-run.
 3. Repeat until it passes. Bound: max 3 sweep rounds; a fourth failure means
    the merge restored something structural — halt and report instead of
-   re-deleting. (`check-desktop-no-collision.sh` is a one-line alias
-   for the same script — running either is sufficient; do not run both.)
+   re-deleting.
 
 Do not re-list the forbidden paths here — the script is the authority and its
 list updates independently of this skill.
@@ -328,8 +327,7 @@ merge-level gate below runs over the whole tree. Order: cheap Prohibition-class
 invariants first, then compile, then tests.
 
 1. `bash kask/scripts/build/check-zed-isolation.sh` — Zed-isolation + desktop
-   no-collision (one script; `check-desktop-no-collision.sh` is a one-line alias
-   per its L6, so do not run both).
+   no-collision (one script).
 2. `bash kask/scripts/check-hkask-no-zed-deps.sh` — §13.1 invariant (DIVERGENCE.md's
    Governing invariant (§13.1) section; the rule itself is architecture plan
    §13.1).

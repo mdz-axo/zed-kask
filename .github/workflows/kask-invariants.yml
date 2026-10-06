@@ -19,9 +19,11 @@
 # - check-zed-isolation.sh: the D7 guards — deleted upstream packaging,
 #   updater, flatpak, and bundler surfaces stay deleted; fail-closed
 #   bundlers stay fail-closed.
-# - check-desktop-no-collision.sh: execs check-zed-isolation.sh; kept as an
-#   explicit step so the .desktop collision guard named in .rules is a
-#   visible, independently-failing CI step.
+# - check-publish-paths.sh: staged, per-file-atomic binary publication —
+#   a failed publish (missing built binary, staging failure) leaves the
+#   working installation intact, and strip status is truthful.
+# - check-uninstall-paths.sh: uninstall removes the real zed-kask config/data
+#   dirs (never the stale hkask name), opt-in only — previously manual-only.
 # - check-build-profile.sh: MCP servers stay cheap to build; installs are
 #   capped and traced.
 # - check-lean-toolchain.sh: the pinned-toolchain install is offline-tested
@@ -155,8 +157,10 @@ jobs:
         run: bash kask/scripts/check-hkask-no-zed-deps.sh
       - name: Zed isolation — upstream packaging/updater surfaces stay deleted
         run: bash kask/scripts/build/check-zed-isolation.sh
-      - name: Desktop file — no upstream collision
-        run: bash kask/scripts/build/check-desktop-no-collision.sh
+      - name: Installer publication — staged atomic publish; a failed publish preserves the working install
+        run: bash kask/scripts/build/check-publish-paths.sh
+      - name: Installer uninstall — removes zed-kask (not hkask) config/data; config removal is opt-in
+        run: bash kask/scripts/build/check-uninstall-paths.sh
       - name: Build profile seam — MCP servers build cheap, installs are capped and traced
         run: bash kask/scripts/build/check-build-profile.sh
       - name: Lean dependency — pinned toolchain install is offline-tested and failure-gated

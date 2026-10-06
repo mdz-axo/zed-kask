@@ -1,7 +1,7 @@
 ---
 title: "Scenarios MCP Server Reference"
 audience: [developers, architects]
-last_updated: 2026-09-28
+last_updated: 2026-10-06
 version: "0.39.1"
 status: "Active"
 domain: "Composition"
@@ -11,14 +11,14 @@ mds_categories: [composition, lifecycle]
 # Scenarios MCP Server Reference
 
 **Crate:** `kask/mcp-servers/hkask-mcp-scenarios`
-**Tools:** 20 — `scenario_frame`, `scenario_frame_document`, `scenario_brainstorm`, `scenario_build`, `scenario_quantify`, `scenario_propagate`, `scenario_recompute_posteriors`, `scenario_calibrate`, `scenario_update`, `scenario_synthesize`, `scenario_cross_validate`, `scenario_score`, `scenario_calibration`, `scenario_assess`, `scenario_triage`, `scenario_status`, `scenario_from_markets_set`, `scenario_from_cmp_indices`, `scenario_full`, `contract_price_coherence`. The direct market-record bridge is `scenario_from_markets_set`; a single record is passed as a set of one.
+**Tools:** 19 — `scenario_frame`, `scenario_frame_document`, `scenario_brainstorm`, `scenario_build`, `scenario_quantify`, `scenario_propagate`, `scenario_recompute_posteriors`, `scenario_calibrate`, `scenario_update`, `scenario_synthesize`, `scenario_cross_validate`, `scenario_score`, `scenario_calibration`, `scenario_assess`, `scenario_triage`, `scenario_status`, `scenario_from_markets_set`, `scenario_from_cmp_indices`, `contract_price_coherence`. The direct market-record bridge is `scenario_from_markets_set`; a single record is passed as a set of one.
 **Auto-start:** Yes by default with the full built-in set; operators can disable the fleet or this server through `kask.mcp` (`kask/crates/kask_bridge/src/settings.rs:140-165`; `kask/crates/kask_bridge/src/mcp_servers.rs:327-340,704`).
 
-Tool count is pinned against the live `scenario_router()` by `tool_surface_is_exactly_20_registered_tools` (the `mod tests` pin in `kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs`).
+Tool count is pinned against the live `scenario_router()` by `tool_surface_is_exactly_19_registered_tools` (the `mod tests` pin in `kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs`).
 
 ## Pipeline Architecture (DIAG-RF-005)
 
-This diagram shows the control flow between the 19 MCP tools in the scenarios server, grouped by pipeline phase. Solid arrows indicate the expected predecessor relationship enforced by the pipeline conventions. Dashed arrows indicate optional or independent paths. The `scenario_full` tool compresses the entire chain into a single call by delegating to the same engine functions.[^tetlock-scenarios-ref][^schwartz-scenarios-ref]
+This diagram shows the control flow between the 19 MCP tools in the scenarios server, grouped by pipeline phase. Solid arrows indicate the expected predecessor relationship enforced by the pipeline conventions. Dashed arrows indicate optional or independent paths.[^tetlock-scenarios-ref][^schwartz-scenarios-ref]
 
 ```mermaid
 flowchart TD
@@ -50,8 +50,7 @@ flowchart TD
         assess["scenario_assess"]
     end
 
-    subgraph Batch["Batch and state"]
-        full["scenario_full"]
+    subgraph State["Server state"]
         status["scenario_status"]
     end
 
@@ -67,10 +66,6 @@ flowchart TD
     quantify --> score --> calibration
     synthesize --> assess
     triage -.-> build
-    full -.-> quantify
-    full -.-> calibrate
-    full -.-> synthesize
-    full -.-> assess
     markets -.-> coherence
     quantify -.-> coherence
     status -.-> calibration
@@ -79,7 +74,7 @@ flowchart TD
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-RF-005
 verified_date: 2026-10-06
-verified_against: kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs (the 20 #[tool] handlers; tool_surface_is_exactly_20_registered_tools pin); kask/mcp-servers/hkask-mcp-scenarios/src/superforecast.rs; kask/mcp-servers/hkask-mcp-scenarios/src/types.rs
+verified_against: kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs (the 19 #[tool] handlers; tool_surface_is_exactly_19_registered_tools pin); kask/mcp-servers/hkask-mcp-scenarios/src/superforecast.rs; kask/mcp-servers/hkask-mcp-scenarios/src/types.rs
 status: VERIFIED
 -->
 
@@ -169,12 +164,11 @@ narrative phases are the skill layer's.
 | `scenario_assess` | Chermack Phase-5 project assessment anchored on the project record: Preparation from the framing document, event/dependency counts from the stored tree, calibration scoped to the project's subject; caller metrics override the derived values. Unknown project id → not found. | `project_id` + optional overrides |
 | `scenario_triage` | Triage a forecasting question (Tetlock Commandment 1): clarity, data availability, resolution criteria → well_specified / goldilocks / needs_refinement. | `question` |
 
-### Independent (2)
+### Independent (1)
 
 | Tool | Description | Key params |
 |------|-------------|------------|
 | `scenario_status` | Current server state: pipeline overview, calibration curve, cached event tree. | — |
-| `scenario_full` | Run the complete pipeline in a single call (delegates to the same engine functions). | `subject` |
 
 ## Key paths
 
@@ -183,7 +177,6 @@ narrative phases are the skill layer's.
 - **Companies bridge:** `scenario_quantify` → user authors per-node impact mappings → `scenario_impact_valuation` on `hkask-mcp-companies` (exogenous scenario events drive the company's DCF via additive assumption deltas, weighted by path probability). The optional `presentation: "WorkbookWhatIf"` publishes the FULL path grid (the JSON output caps at 50 paths; the workbook carries every one) as an editable workbook revision with a ```spreadsheet display hint — the default `DataOnly` output is unchanged
 - **Markets bridge:** `scenario_from_markets_set` (a single market is a set-of-1) → `scenario_quantify`; market records come from `hkask-mcp-prediction-markets` (`market_lookup` / `market_match`)
 - **Update loop:** `scenario_propagate` re-propagates a tree after a prior revision; `scenario_update` applies a one-off Bayesian revision; `scenario_recompute_posteriors` recomputes under evidence in both directions (the shared `hkask_forecast::posterior` engine — the graph widget delegates to the same implementation)
-- **Single-call:** `scenario_full` delegates to `triage_question`, `build_event_tree`, `sensitivity_ranking`, `calibrate_from_fermi`, `outside_view_adjustment`, `synthesize_perspectives`, `assess_project`
 - **Independent:** `scenario_triage`, `scenario_status` callable at any point
 
 ## Forecast persistence

@@ -195,19 +195,52 @@ export MCP_SERVERS_LIST_FILE="$script_dir/mcp-servers.txt"
 # shellcheck source=install-common.sh
 source "$script_dir/install-common.sh"
 
+# Publication confinement (publish_binaries replaced the former
+# prepare_install_dir + install_binary delete-first pair): a publish with a
+# missing built binary must leave the working installation in place, a
+# successful publish replaces the old zed-kask and sweeps stale hkask-mcp-*
+# servers, and Zed-owned bin dirs are refused directly and through symlinks.
+publish_src="$sandbox/publish-src"
+mkdir -p "$publish_src"
+printf 'new-kask\n' > "$publish_src/zed-kask"
+chmod +x "$publish_src/zed-kask"
+for server in "${MCP_SERVERS[@]}"; do
+    printf 'new-server\n' > "$publish_src/$server"
+    chmod +x "$publish_src/$server"
+done
+
 printf 'old-kask\n' > "$BIN_DIR/zed-kask"
 printf 'old-server\n' > "$BIN_DIR/hkask-mcp-test"
-prepare_install_dir
-[ ! -e "$BIN_DIR/zed-kask" ] || fail "safe cleanup left the old zed-kask binary"
-[ ! -e "$BIN_DIR/hkask-mcp-test" ] || fail "safe cleanup left an old MCP binary"
+rm -f "$publish_src/zed-kask"
+if publish_binaries "$publish_src" "$publish_src" false >/dev/null 2>&1; then
+    fail "publish_binaries ran with a missing built binary (delete-first regression)"
+fi
+[ "$(cat "$BIN_DIR/zed-kask")" = "old-kask" ] \
+    || fail "failed publish replaced the working zed-kask binary"
+[ -e "$BIN_DIR/hkask-mcp-test" ] || fail "failed publish removed a working MCP binary"
+if [ -n "$(compgen -G "$BIN_DIR/*.new")" ]; then
+    fail "failed publish left staged .new file(s) behind"
+fi
+
+printf 'new-kask\n' > "$publish_src/zed-kask"
+chmod +x "$publish_src/zed-kask"
+if ! publish_binaries "$publish_src" "$publish_src" false >/dev/null 2>&1; then
+    fail "publish_binaries failed on a clean fixture"
+fi
+[ "$(cat "$BIN_DIR/zed-kask")" = "new-kask" ] \
+    || fail "publish left the old zed-kask binary in place"
+[ ! -e "$BIN_DIR/hkask-mcp-test" ] || fail "publish left a stale MCP binary in place"
+for server in "${MCP_SERVERS[@]}"; do
+    [ -f "$BIN_DIR/$server" ] || fail "publish did not install MCP server: $server"
+done
 
 BIN_DIR="$fake_home/.local/zed.app/bin"
-if prepare_install_dir >/dev/null 2>&1; then
+if publish_binaries "$publish_src" "$publish_src" false >/dev/null 2>&1; then
     fail "installer accepted Zed's application bin directory"
 fi
 ln -s "$fake_home/.local/zed.app/bin" "$sandbox/aliased-bin"
 BIN_DIR="$sandbox/aliased-bin"
-if prepare_install_dir >/dev/null 2>&1; then
+if publish_binaries "$publish_src" "$publish_src" false >/dev/null 2>&1; then
     fail "installer accepted a symlink into Zed's application bundle"
 fi
 if assert_kask_binary_destination "$fake_home/.local/bin/zed" >/dev/null 2>&1; then

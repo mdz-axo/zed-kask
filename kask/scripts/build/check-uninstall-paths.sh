@@ -110,7 +110,7 @@ done
     || fail "config (credentials) survived HKASK_REMOVE_CONFIG=true — uninstall targeted the wrong dir (hkask vs zed-kask)"
 [ ! -d "$XDG_CONFIG_HOME/zed-kask" ] || fail "config dir survived HKASK_REMOVE_CONFIG=true"
 [ ! -d "$XDG_DATA_HOME/zed-kask" ]   || fail "data dir survived HKASK_REMOVE_CONFIG=true"
-if grep -qE '# (zed-kask|hKask)' "$fake_home/.bashrc" 2>/dev/null; then
+if grep -qF '# zed-kask' "$fake_home/.bashrc" 2>/dev/null; then
     fail "shell PATH marker survived uninstall"
 fi
 

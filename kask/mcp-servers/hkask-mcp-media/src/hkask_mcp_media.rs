@@ -406,12 +406,7 @@ impl MediaServer {
             .vision_port
             .embed(&model, std::slice::from_ref(&text.to_string()))
             .await
-            .map_err(|e| {
-                classify_embedding_error(
-                    "Embedding model unavailable. Configure a cloud provider",
-                    e,
-                )
-            })?;
+            .map_err(|e| classify_embedding_error("Embedding failed", e))?;
         batch
             .vectors
             .into_iter()

@@ -52,7 +52,10 @@ impl ToolInvoker for RealKanbanInvoker {
         args: Value,
     ) -> gpui::Task<Result<String, InvokeError>> {
         if server != KANBAN_SERVER_NAME {
-            return gpui::Task::ready(Err(InvokeError::Failed(format!("wrong server: {server}"))));
+            return gpui::Task::ready(Err(InvokeError::Failed {
+                message: format!("wrong server: {server}"),
+                kind: None,
+            }));
         }
         let kanban = self.server.clone();
         let tool = tool.to_owned();
@@ -61,8 +64,11 @@ impl ToolInvoker for RealKanbanInvoker {
             // implementation of board creation, listing or transitions.
             macro_rules! forward {
                 ($request:ty, $method:ident) => {{
-                    let request: $request = serde_json::from_value(args)
-                        .map_err(|error| InvokeError::Failed(error.to_string()))?;
+                    let request: $request =
+                        serde_json::from_value(args).map_err(|error| InvokeError::Failed {
+                            message: error.to_string(),
+                            kind: None,
+                        })?;
                     kanban.$method(Parameters(request)).await
                 }};
             }
@@ -74,9 +80,17 @@ impl ToolInvoker for RealKanbanInvoker {
                 "kanban_task_create" => forward!(TaskCreateRequest, kanban_task_create),
                 "kanban_task_comment" => forward!(TaskCommentRequest, kanban_task_comment),
                 "kanban_task_move" => forward!(TaskMoveRequest, kanban_task_move),
-                other => return Err(InvokeError::Failed(format!("unexpected tool: {other}"))),
+                other => {
+                    return Err(InvokeError::Failed {
+                        message: format!("unexpected tool: {other}"),
+                        kind: None,
+                    });
+                }
             };
-            result.map_err(|error| InvokeError::Failed(error.to_string()))
+            result.map_err(|error| InvokeError::Failed {
+                message: error.to_string(),
+                kind: None,
+            })
         })
     }
 }

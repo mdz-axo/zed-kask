@@ -145,13 +145,8 @@ impl LazyInferencePort {
                 configured
             }
         };
-        let port = DirectEmbeddingPort::try_new(&model).ok_or_else(|| {
-            hkask_types::InferenceError::Connection(format!(
-                "model '{model}': no provider prefix matched and no \
-                 provider credentials resolved — use a provider-prefixed \
-                 model or configure the provider"
-            ))
-        })?;
+        let port = DirectEmbeddingPort::try_new(&model)
+            .map_err(|error| direct_inference_error(&model, error))?;
         Ok((port, model))
     }
 }
@@ -313,13 +308,8 @@ impl hkask_types::InferencePort for LazyInferencePort {
             // actually embedded (the prior code built it from a separate
             // stored embedding model — a hidden default that could also
             // mismatch the endpoint).
-            let port = DirectEmbeddingPort::try_new(&model).ok_or_else(|| {
-                hkask_types::EmbeddingGenerationError::Connection(format!(
-                    "embed model '{model}': no provider prefix matched and no \
-                     provider credentials resolved — use a provider-prefixed \
-                     model or run under the zed bridge"
-                ))
-            })?;
+            let port = DirectEmbeddingPort::try_new(&model)
+                .map_err(|error| direct_embed_error(&model, error))?;
             port.embed_with_identity(&model, &texts).await
         })
     }
@@ -342,13 +332,8 @@ impl hkask_types::InferencePort for LazyInferencePort {
                 )
                 .await;
             }
-            let port = DirectEmbeddingPort::try_new(&model).ok_or_else(|| {
-                hkask_types::EmbeddingGenerationError::Connection(format!(
-                    "embed model '{model}': no provider prefix matched and no \
-                     provider credentials resolved — use a provider-prefixed \
-                     model or run under the zed bridge"
-                ))
-            })?;
+            let port = DirectEmbeddingPort::try_new(&model)
+                .map_err(|error| direct_embed_error(&model, error))?;
             port.embed_with_dimensions(&model, &texts, dimensions).await
         })
     }
@@ -486,29 +471,109 @@ static DIRECT_EMBEDDING_PROVIDERS: &[DirectEmbeddingProvider] = &[
     },
 ];
 
+/// Why the direct embedding fallback could not be constructed. Typed so
+/// each failure mode classifies honestly at the caller: the two
+/// configuration failures map to `NotConfigured` (permission_denied at the
+/// MCP boundary), the client-build failure stays `Connection`
+/// (unavailable) — the former `Option` collapse misclassified all three as
+/// `Connection` (live 2026-10-06: a missing credential surfaced as
+/// `unavailable`, the exact broken-feedback-loop class the canonical
+/// error contract closes).
+#[derive(Debug)]
+enum DirectEmbeddingPortError {
+    /// The model string has no recognized provider prefix.
+    NoProviderPrefix,
+    /// The provider requires an API key and its env var is not set.
+    MissingApiKey { env_var: &'static str },
+    /// The reqwest client could not be constructed (TLS backend failure).
+    ClientBuild(String),
+}
+
+/// Map a direct-fallback construction failure to the embedding error type,
+/// preserving the failure mode: configuration failures become the typed
+/// `NotConfigured` (credential case names the env var per the canonical
+/// contract), the client-build failure stays `Connection`.
+fn direct_embed_error(
+    model: &str,
+    error: DirectEmbeddingPortError,
+) -> hkask_types::EmbeddingGenerationError {
+    match error {
+        DirectEmbeddingPortError::NoProviderPrefix => {
+            hkask_types::EmbeddingGenerationError::NotConfigured(format!(
+                "embed model '{model}': no provider prefix matched — use a \
+                 provider-prefixed model or run under the zed bridge"
+            ))
+        }
+        DirectEmbeddingPortError::MissingApiKey { env_var } => {
+            hkask_types::EmbeddingGenerationError::NotConfigured(format!(
+                "embed model '{model}': {env_var} not set — set it or run \
+                 under the zed bridge"
+            ))
+        }
+        DirectEmbeddingPortError::ClientBuild(e) => {
+            hkask_types::EmbeddingGenerationError::Connection(format!(
+                "failed to construct reqwest client for direct embedding \
+                 fallback: {e}"
+            ))
+        }
+    }
+}
+
+/// Map a direct-fallback construction failure to the inference error type
+/// — the generate-path twin of [`direct_embed_error`] (same classification
+/// split, `InferenceError::NotConfigured` for the configuration failures).
+fn direct_inference_error(
+    model: &str,
+    error: DirectEmbeddingPortError,
+) -> hkask_types::InferenceError {
+    match error {
+        DirectEmbeddingPortError::NoProviderPrefix => {
+            hkask_types::InferenceError::NotConfigured(format!(
+                "model '{model}': no provider prefix matched — use a \
+                 provider-prefixed model or configure the provider"
+            ))
+        }
+        DirectEmbeddingPortError::MissingApiKey { env_var } => {
+            hkask_types::InferenceError::NotConfigured(format!(
+                "model '{model}': {env_var} not set — set it or run under \
+                 the zed bridge"
+            ))
+        }
+        DirectEmbeddingPortError::ClientBuild(e) => {
+            hkask_types::InferenceError::Connection(format!(
+                "failed to construct reqwest client for direct embedding \
+                 fallback: {e}"
+            ))
+        }
+    }
+}
+
 impl DirectEmbeddingPort {
     /// Attempt to construct the port for a provider-prefixed embedding model.
     ///
-    /// Returns `None` if:
+    /// Fails with a typed [`DirectEmbeddingPortError`] when:
     /// - The model string has no recognized provider prefix.
     /// - The provider requires an API key but the env var is not set.
     /// - The reqwest client cannot be constructed (TLS backend failure).
     ///
     /// For Ollama (empty `env_var`), no key is needed — the key is empty.
     #[must_use]
-    fn try_new(embedding_model: &str) -> Option<Self> {
+    fn try_new(embedding_model: &str) -> Result<Self, DirectEmbeddingPortError> {
         // Find the provider by matching the prefix (case-insensitive).
-        let provider = DIRECT_EMBEDDING_PROVIDERS.iter().find(|p| {
-            let prefix = format!("{}/", p.id);
-            embedding_model.len() >= prefix.len()
-                && embedding_model[..prefix.len()].eq_ignore_ascii_case(&prefix)
-        })?;
+        let provider = DIRECT_EMBEDDING_PROVIDERS
+            .iter()
+            .find(|p| {
+                let prefix = format!("{}/", p.id);
+                embedding_model.len() >= prefix.len()
+                    && embedding_model[..prefix.len()].eq_ignore_ascii_case(&prefix)
+            })
+            .ok_or(DirectEmbeddingPortError::NoProviderPrefix)?;
 
         // Resolve the API key. Local providers (empty env_var) need no key.
         let api_key = if provider.env_var.is_empty() {
             String::new()
         } else {
-            std::env::var(provider.env_var).ok().or_else(|| {
+            std::env::var(provider.env_var).map_err(|_| {
                 tracing::warn!(
                     target: "hkask.inference",
                     provider = provider.id,
@@ -516,7 +581,9 @@ impl DirectEmbeddingPort {
                     "Direct embedding fallback: env var not set — \
                      embedding will not work without the IPC bridge"
                 );
-                None
+                DirectEmbeddingPortError::MissingApiKey {
+                    env_var: provider.env_var,
+                }
             })?
         };
 
@@ -529,10 +596,10 @@ impl DirectEmbeddingPort {
                     error = %e,
                     "Failed to construct reqwest client for direct embedding fallback"
                 );
-            })
-            .ok()?;
+                DirectEmbeddingPortError::ClientBuild(e.to_string())
+            })?;
 
-        Some(Self {
+        Ok(Self {
             api_url: provider.api_url.to_string(),
             api_key,
             client,
@@ -1446,5 +1513,60 @@ mod tests {
                 "{wire}"
             );
         }
+    }
+
+    /// MF-4 pins: the direct-fallback construction failures classify by
+    /// failure mode, not as a blanket `Connection`. A missing credential
+    /// is `NotConfigured` naming the env var (permission_denied at the MCP
+    /// boundary per the canonical contract); a missing prefix is
+    /// `NotConfigured` too (a configuration failure); only the client-build
+    /// failure stays `Connection`. The former `Option` collapse mapped all
+    /// three to `Connection`, so a missing credential surfaced as
+    /// `unavailable` (live 2026-10-06).
+    #[test]
+    fn direct_fallback_errors_classify_by_failure_mode() {
+        use hkask_types::{EmbeddingGenerationError, InferenceError};
+
+        let embed = direct_embed_error(
+            "DeepInfra/x",
+            DirectEmbeddingPortError::MissingApiKey {
+                env_var: "DEEPINFRA_API_KEY",
+            },
+        );
+        assert!(
+            matches!(embed, EmbeddingGenerationError::NotConfigured(ref msg)
+                if msg.contains("DEEPINFRA_API_KEY")),
+            "credential failure must be NotConfigured naming the env var: {embed:?}"
+        );
+
+        let inference = direct_inference_error(
+            "DeepInfra/x",
+            DirectEmbeddingPortError::MissingApiKey {
+                env_var: "DEEPINFRA_API_KEY",
+            },
+        );
+        assert!(
+            matches!(inference, InferenceError::NotConfigured(ref msg)
+                if msg.contains("DEEPINFRA_API_KEY")),
+            "generate-path twin must classify the same: {inference:?}"
+        );
+
+        let no_prefix = direct_embed_error(
+            "unprefixed-model",
+            DirectEmbeddingPortError::NoProviderPrefix,
+        );
+        assert!(
+            matches!(no_prefix, EmbeddingGenerationError::NotConfigured(_)),
+            "prefix miss is a configuration failure: {no_prefix:?}"
+        );
+
+        let client_build = direct_embed_error(
+            "DeepInfra/x",
+            DirectEmbeddingPortError::ClientBuild("tls failure".into()),
+        );
+        assert!(
+            matches!(client_build, EmbeddingGenerationError::Connection(_)),
+            "client-build failure is a system error, not a config one: {client_build:?}"
+        );
     }
 }

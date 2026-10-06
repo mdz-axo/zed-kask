@@ -1764,9 +1764,10 @@ mod tests {
         let _restore = InvokerGuard;
         let mock = Arc::new(MockToolInvoker {
             calls: Mutex::new(Vec::new()),
-            result: Mutex::new(Err(hkask_tool_invoker::InvokeError::Failed(
-                "describe_image unavailable".to_string(),
-            ))),
+            result: Mutex::new(Err(hkask_tool_invoker::InvokeError::Failed {
+                message: "describe_image unavailable".to_string(),
+                kind: None,
+            })),
         });
         hkask_tool_invoker::set_tool_invoker(Some(mock));
 
