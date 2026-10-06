@@ -8728,7 +8728,7 @@ dependencies = [
 
 [[package]]
 name = "hkask-bridge-ontology"
-version = "0.40.1"
+version = "0.40.2"
 dependencies = [
  "oxrdf",
  "oxrdfio",
@@ -8740,7 +8740,7 @@ dependencies = [
 
 [[package]]
 name = "hkask-condenser"
-version = "0.40.1"
+version = "0.40.2"
 dependencies = [
  "criterion",
  "hkask-bridge-ontology",
@@ -8752,7 +8752,7 @@ dependencies = [
 
 [[package]]
 name = "hkask-email"
-version = "0.40.1"
+version = "0.40.2"
 dependencies = [
  "hkask-regulation",
  "serde",
@@ -8765,7 +8765,7 @@ dependencies = [
 
 [[package]]
 name = "hkask-event-store"
-version = "0.40.1"
+version = "0.40.2"
 dependencies = [
  "hkask-storage",
  "hkask-types",
@@ -8777,7 +8777,7 @@ dependencies = [
 
 [[package]]
 name = "hkask-forecast"
-version = "0.40.1"
+version = "0.40.2"
 dependencies = [
  "proptest",
  "serde",
@@ -8787,7 +8787,7 @@ dependencies = [
 
 [[package]]
 name = "hkask-graph-widget"
-version = "0.40.1"
+version = "0.40.2"
 dependencies = [
  "anyhow",
  "gpui",
@@ -8802,7 +8802,7 @@ dependencies = [
 
 [[package]]
 name = "hkask-inference"
-version = "0.40.1"
+version = "0.40.2"
 dependencies = [
  "base64 0.22.1",
  "bytes 1.11.1",
@@ -8820,7 +8820,7 @@ dependencies = [
 
 [[package]]
 name = "hkask-kanban-widget"
-version = "0.40.1"
+version = "0.40.2"
 dependencies = [
  "anyhow",
  "gpui",
@@ -8836,7 +8836,7 @@ dependencies = [
 
 [[package]]
 name = "hkask-keystore"
-version = "0.40.1"
+version = "0.40.2"
 dependencies = [
  "async-std",
  "hkask-types",
@@ -8848,7 +8848,7 @@ dependencies = [
 
 [[package]]
 name = "hkask-lisp"
-version = "0.40.1"
+version = "0.40.2"
 dependencies = [
  "criterion",
  "proptest",
@@ -8859,7 +8859,7 @@ dependencies = [
 
 [[package]]
 name = "hkask-mcp"
-version = "0.40.1"
+version = "0.40.2"
 dependencies = [
  "futures 0.3.34",
  "hkask-regulation",
@@ -8877,7 +8877,7 @@ dependencies = [
 
 [[package]]
 name = "hkask-mcp-companies"
-version = "0.40.1"
+version = "0.40.2"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -8910,7 +8910,7 @@ dependencies = [
 
 [[package]]
 name = "hkask-mcp-corpus"
-version = "0.40.1"
+version = "0.40.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -8947,7 +8947,7 @@ dependencies = [
 
 [[package]]
 name = "hkask-mcp-curator"
-version = "0.40.1"
+version = "0.40.2"
 dependencies = [
  "chrono",
  "hkask-inference",
@@ -8969,7 +8969,7 @@ dependencies = [
 
 [[package]]
 name = "hkask-mcp-experimentation"
-version = "0.40.1"
+version = "0.40.2"
 dependencies = [
  "chrono",
  "hkask-mcp-server",
@@ -8989,7 +8989,7 @@ dependencies = [
 
 [[package]]
 name = "hkask-mcp-kata-kanban"
-version = "0.40.1"
+version = "0.40.2"
 dependencies = [
  "anyhow",
  "chrono",
@@ -9012,7 +9012,7 @@ dependencies = [
 
 [[package]]
 name = "hkask-mcp-media"
-version = "0.40.1"
+version = "0.40.2"
 dependencies = [
  "ab_glyph",
  "base64 0.22.1",
@@ -9045,7 +9045,7 @@ dependencies = [
 
 [[package]]
 name = "hkask-mcp-portfolio"
-version = "0.40.1"
+version = "0.40.2"
 dependencies = [
  "chrono",
  "hkask-bridge-ontology",
@@ -9069,7 +9069,7 @@ dependencies = [
 
 [[package]]
 name = "hkask-mcp-prediction-markets"
-version = "0.40.1"
+version = "0.40.2"
 dependencies = [
  "async-tungstenite",
  "chrono",
@@ -9096,7 +9096,7 @@ dependencies = [
 
 [[package]]
 name = "hkask-mcp-research"
-version = "0.40.1"
+version = "0.40.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -9129,7 +9129,7 @@ dependencies = [
 
 [[package]]
 name = "hkask-mcp-scenarios"
-version = "0.40.1"
+version = "0.40.2"
 dependencies = [
  "chrono",
  "hkask-bridge-ontology",
@@ -9151,7 +9151,7 @@ dependencies = [
 
 [[package]]
 name = "hkask-mcp-server"
-version = "0.40.1"
+version = "0.40.2"
 dependencies = [
  "hkask-inference",
  "hkask-keystore",
@@ -9172,7 +9172,7 @@ dependencies = [
 
 [[package]]
 name = "hkask-mcp-spreadsheet"
-version = "0.40.1"
+version = "0.40.2"
 dependencies = [
  "hkask-mcp-server",
  "hkask-spreadsheet",
@@ -9188,7 +9188,7 @@ dependencies = [
 
 [[package]]
 name = "hkask-mcp-swarm"
-version = "0.40.1"
+version = "0.40.2"
 dependencies = [
  "a2a-lf",
  "chrono",
@@ -9218,7 +9218,7 @@ dependencies = [
 
 [[package]]
 name = "hkask-mcp-training"
-version = "0.40.1"
+version = "0.40.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -9252,7 +9252,7 @@ dependencies = [
 
 [[package]]
 name = "hkask-media-benchmarks"
-version = "0.40.1"
+version = "0.40.2"
 dependencies = [
  "anyhow",
  "criterion",
@@ -9269,7 +9269,7 @@ dependencies = [
 
 [[package]]
 name = "hkask-media-widget"
-version = "0.40.1"
+version = "0.40.2"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -9301,7 +9301,7 @@ dependencies = [
 
 [[package]]
 name = "hkask-memory"
-version = "0.40.1"
+version = "0.40.2"
 dependencies = [
  "anyhow",
  "blake3",
@@ -9318,7 +9318,7 @@ dependencies = [
 
 [[package]]
 name = "hkask-portfolio-widget"
-version = "0.40.1"
+version = "0.40.2"
 dependencies = [
  "anyhow",
  "gpui",
@@ -9334,7 +9334,7 @@ dependencies = [
 
 [[package]]
 name = "hkask-regulation"
-version = "0.40.1"
+version = "0.40.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -9353,7 +9353,7 @@ dependencies = [
 
 [[package]]
 name = "hkask-scenarios-widget"
-version = "0.40.1"
+version = "0.40.2"
 dependencies = [
  "anyhow",
  "gpui",
@@ -9369,7 +9369,7 @@ dependencies = [
 
 [[package]]
 name = "hkask-services-core"
-version = "0.40.1"
+version = "0.40.2"
 dependencies = [
  "dirs",
  "hkask-inference",
@@ -9385,7 +9385,7 @@ dependencies = [
 
 [[package]]
 name = "hkask-spreadsheet"
-version = "0.40.1"
+version = "0.40.2"
 dependencies = [
  "futures 0.3.34",
  "hkask-types",
@@ -9401,7 +9401,7 @@ dependencies = [
 
 [[package]]
 name = "hkask-spreadsheet-widget"
-version = "0.40.1"
+version = "0.40.2"
 dependencies = [
  "anyhow",
  "futures 0.3.34",
@@ -9421,7 +9421,7 @@ dependencies = [
 
 [[package]]
 name = "hkask-steer"
-version = "0.40.1"
+version = "0.40.2"
 dependencies = [
  "agent",
  "agent-client-protocol",
@@ -9440,14 +9440,14 @@ dependencies = [
 
 [[package]]
 name = "hkask-steer-core"
-version = "0.40.1"
+version = "0.40.2"
 dependencies = [
  "log",
 ]
 
 [[package]]
 name = "hkask-storage"
-version = "0.40.1"
+version = "0.40.2"
 dependencies = [
  "anyhow",
  "chrono",
@@ -9466,7 +9466,7 @@ dependencies = [
 
 [[package]]
 name = "hkask-swarm-widget"
-version = "0.40.1"
+version = "0.40.2"
 dependencies = [
  "anyhow",
  "gpui",
@@ -9478,7 +9478,7 @@ dependencies = [
 
 [[package]]
 name = "hkask-tool-invoker"
-version = "0.40.1"
+version = "0.40.2"
 dependencies = [
  "gpui",
  "serde",
@@ -9488,7 +9488,7 @@ dependencies = [
 
 [[package]]
 name = "hkask-tool-port"
-version = "0.40.1"
+version = "0.40.2"
 dependencies = [
  "hkask-types",
  "serde_json",
@@ -9497,7 +9497,7 @@ dependencies = [
 
 [[package]]
 name = "hkask-types"
-version = "0.40.1"
+version = "0.40.2"
 dependencies = [
  "chrono",
  "dirs",
@@ -9515,7 +9515,7 @@ dependencies = [
 
 [[package]]
 name = "hkask-viz-core"
-version = "0.40.1"
+version = "0.40.2"
 dependencies = [
  "anyhow",
  "gpui",
@@ -10893,7 +10893,7 @@ dependencies = [
 
 [[package]]
 name = "kask_bridge"
-version = "0.40.1"
+version = "0.40.2"
 dependencies = [
  "agent",
  "anyhow",
@@ -25702,7 +25702,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.40.1"
+version = "0.40.2"
 dependencies = [
  "acp_thread",
  "acp_tools",

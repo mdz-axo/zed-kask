@@ -2,7 +2,7 @@
 title: "Spreadsheet MCP Server Reference"
 audience: [developers, architects, agents]
 last_updated: 2026-09-18
-version: "0.40.1"
+version: "0.40.2"
 status: "Active"
 domain: "Composition"
 mds_categories: [domain, composition, lifecycle, trust]
