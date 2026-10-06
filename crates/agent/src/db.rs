@@ -492,10 +492,9 @@ impl ThreadsDatabase {
         // the thread metadata (a DbThread serialized with an empty
         // messages list) for new-format threads. `threads.format` is the
         // format marker: 0 = legacy whole-thread blob, 1 = per-message
-        // rows. Legacy threads migrate lazily on first load (idempotent
-        // upserts inside one transaction); the legacy blob is preserved
-        // until the thread's next save overwrites it with metadata, so a
-        // crash never loses data.
+        // rows. Legacy blobs are converged by the startup backfill
+        // (`backfill_legacy_threads`); loads accept only format 1 and
+        // fail loudly on any other marker.
         connection.exec(indoc! {"
             CREATE TABLE IF NOT EXISTS thread_messages (
                 thread_id TEXT NOT NULL,
@@ -782,7 +781,7 @@ impl ThreadsDatabase {
 
             let rows = select(id.0.clone())?;
             if let Some((data_type, data, format)) = rows.into_iter().next() {
-                if format > 0 {
+                if format == 1 {
                     // zed-kask: D28 — per-message format: the blob is the
                     // metadata (DbThread with an empty messages list) and
                     // the messages are read row by row.
@@ -793,12 +792,17 @@ impl ThreadsDatabase {
                         data,
                     )?))
                 } else {
-                    // Legacy whole-thread blob: parse it, then migrate it
-                    // to per-message rows in place (idempotent; the blob
-                    // itself is preserved until the thread's next save).
-                    let thread = Self::deserialize_thread(data_type, data)?;
-                    Self::migrate_legacy_thread(&connection, &id, &thread)?;
-                    Ok(Some(thread))
+                    // zed-kask: D28 — no legacy read path remains: the
+                    // startup backfill converges format-0 blobs, so any
+                    // other marker here is a blob the backfill skipped
+                    // (unparseable) or a database the backfill has not
+                    // reached. Fail loudly rather than misassemble the
+                    // thread as an empty metadata shell.
+                    anyhow::bail!(
+                        "thread {id:?} has format marker {format}, expected \
+                         per-message format 1 (legacy whole-thread blobs are \
+                         converted by the startup backfill)"
+                    );
                 }
             } else {
                 Ok(None)
@@ -836,27 +840,6 @@ impl ThreadsDatabase {
         }
         thread.messages = messages;
         Ok(thread)
-    }
-
-    /// zed-kask: D28 — lazy legacy migration on first load: write one row
-    /// per message and set the format marker, in one transaction. The
-    /// legacy blob in `threads.data` is NOT touched — it is overwritten
-    /// with metadata by the thread's next save, and until then it is the
-    /// crash-recovery source (a crash mid-migration rolls back; the next
-    /// open re-migrates).
-    fn migrate_legacy_thread(
-        connection: &Connection,
-        id: &acp::SessionId,
-        thread: &DbThread,
-    ) -> Result<()> {
-        Self::in_transaction(connection, "thread migration", || {
-            Self::write_message_rows(connection, id, &thread.messages)?;
-            let mut set_format = connection.exec_bound::<(i64, Arc<str>)>(indoc! {"
-                UPDATE threads SET format = ? WHERE id = ?
-            "})?;
-            set_format((1, id.0.clone()))?;
-            Ok(())
-        })
     }
 
     /// zed-kask: D28 — convert one legacy whole-thread blob to per-message
@@ -898,7 +881,7 @@ impl ThreadsDatabase {
     /// is one idempotent transaction; an interrupted backfill resumes on
     /// the next start (the walk selects only format-0 rows). A thread
     /// whose blob fails to parse is logged and skipped — it stays format
-    /// 0 and fails on open exactly as it would today, never blocking the
+    /// 0 and fails loudly on open at the format guard, never blocking the
     /// rest of the walk. Returns `(converted, failed)`.
     pub fn backfill_legacy_threads(&self) -> Task<Result<(usize, usize)>> {
         let connection = self.connection.clone();
@@ -1381,34 +1364,30 @@ mod tests {
         assert_eq!(message_row_count(&database, &thread_id), 1);
     }
 
+    /// zed-kask: D28 — with the lazy migration deleted, a format-0 row (a
+    /// blob the backfill skipped, or a database the backfill has not
+    /// reached) fails loudly on load instead of silently misassembling as
+    /// an empty metadata shell.
     #[gpui::test]
-    async fn test_legacy_thread_migrates_on_first_load(cx: &mut TestAppContext) {
+    async fn test_legacy_format_fails_loudly_on_load(cx: &mut TestAppContext) {
         let database = ThreadsDatabase::new(cx.executor()).unwrap();
-        let thread_id = session_id("legacy");
+        let thread_id = session_id("legacy-load");
         insert_legacy_blob(&database, &thread_id, "Legacy", 2);
 
-        // First load returns the thread AND migrates it to rows.
-        let loaded = database
+        let error = database
             .load_thread(thread_id.clone())
             .await
-            .unwrap()
-            .expect("legacy thread should load");
-        assert_eq!(loaded.messages.len(), 2);
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("format"),
+            "a legacy format-0 row must fail loudly naming the format, got: {error}"
+        );
         assert_eq!(
             thread_format(&database, &thread_id),
-            1,
-            "migrated on first load"
+            0,
+            "the row is untouched by the failed load"
         );
-        assert_eq!(message_row_count(&database, &thread_id), 2);
-
-        // Second load reads the migrated rows.
-        let reloaded = database
-            .load_thread(thread_id.clone())
-            .await
-            .unwrap()
-            .expect("migrated thread should load");
-        assert_eq!(reloaded.messages.len(), 2);
-        assert_eq!(reloaded.title.as_ref(), "Legacy");
     }
 
     /// zed-kask: D28 — the startup backfill converges legacy threads
@@ -1482,8 +1461,8 @@ mod tests {
     }
 
     /// zed-kask: D28 — an unparseable legacy blob is skipped, not fatal:
-    /// it stays format 0 (and keeps failing on open, exactly as before
-    /// the backfill existed) while the rest of the walk converts.
+    /// it stays format 0 (and fails loudly on open at the format guard)
+    /// while the rest of the walk converts.
     #[gpui::test]
     async fn test_backfill_skips_unparseable_blobs(cx: &mut TestAppContext) {
         let database = ThreadsDatabase::new(cx.executor()).unwrap();
@@ -1512,7 +1491,7 @@ mod tests {
         );
         assert!(
             database.load_thread(corrupt.clone()).await.is_err(),
-            "the corrupt blob still fails on open, as before the backfill"
+            "the corrupt blob still fails on open, loudly at the format guard"
         );
     }
 
