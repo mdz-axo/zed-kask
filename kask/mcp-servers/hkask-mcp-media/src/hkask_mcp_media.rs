@@ -2314,7 +2314,7 @@ mod tool_behavior_tests {
     #[tokio::test]
     async fn audio_trim_publishes_durable_asset_and_lineage_after_server_drop()
     -> Result<(), Box<dyn std::error::Error>> {
-        let (_env_lock, artifacts, _env, gallery_root, store, _driver, gallery) =
+        let (_env_lock, _artifacts, _env, gallery_root, store, _driver, gallery) =
             media_test_env().await?;
         let source = gallery_root.path().join("source.wav");
         create_real_audio(&source).await?;
@@ -2392,7 +2392,7 @@ mod tool_behavior_tests {
     #[tokio::test]
     async fn audio_concat_publishes_durable_asset_and_lineage_after_server_drop()
     -> Result<(), Box<dyn std::error::Error>> {
-        let (_env_lock, artifacts, _env, gallery_root, store, _driver, gallery) =
+        let (_env_lock, _artifacts, _env, gallery_root, store, _driver, gallery) =
             media_test_env().await?;
         let first = gallery_root.path().join("first.wav");
         let second = gallery_root.path().join("second.wav");
@@ -2582,7 +2582,7 @@ mod tool_behavior_tests {
     -> Result<(), Box<dyn std::error::Error>> {
         use hkask_storage::database::driver::DatabaseDriver;
 
-        let (_env_lock, artifacts, _env, gallery_root, store, driver, gallery) =
+        let (_env_lock, _artifacts, _env, gallery_root, store, driver, gallery) =
             media_test_env().await?;
         let source = gallery_root.path().join("source.wav");
         create_real_audio(&source).await?;
@@ -2784,7 +2784,7 @@ mod tool_behavior_tests {
     async fn video_clip_gallery_failure_rolls_back_real_ffmpeg_output()
     -> Result<(), Box<dyn std::error::Error>> {
         use hkask_storage::database::driver::DatabaseDriver;
-        let (_env_lock, artifacts, _env, gallery_root, store, driver, gallery) =
+        let (_env_lock, _artifacts, _env, gallery_root, store, driver, gallery) =
             media_test_env().await?;
         let source = gallery_root.path().join("source.mp4");
         create_real_video(&source).await?;
@@ -2877,7 +2877,7 @@ mod tool_behavior_tests {
     -> Result<(), Box<dyn std::error::Error>> {
         use hkask_storage::database::driver::DatabaseDriver;
 
-        let (_env_lock, artifacts, _env, gallery_root, store, driver, gallery) =
+        let (_env_lock, _artifacts, _env, gallery_root, store, driver, gallery) =
             media_test_env().await?;
         let source = gallery_root.path().join("source.mp4");
         create_real_video(&source).await?;
@@ -3036,7 +3036,7 @@ mod tool_behavior_tests {
     #[tokio::test]
     async fn video_to_gif_publishes_durable_asset_and_lineage_after_server_drop()
     -> Result<(), Box<dyn std::error::Error>> {
-        let (_env_lock, artifacts, _env, gallery_root, store, _driver, gallery) =
+        let (_env_lock, _artifacts, _env, gallery_root, store, _driver, gallery) =
             media_test_env().await?;
         let source = gallery_root.path().join("source.mp4");
         create_real_video(&source).await?;
@@ -3081,7 +3081,7 @@ mod tool_behavior_tests {
     #[tokio::test]
     async fn video_add_caption_publishes_durable_asset_and_lineage_after_server_drop()
     -> Result<(), Box<dyn std::error::Error>> {
-        let (_env_lock, artifacts, _env, gallery_root, store, _driver, gallery) =
+        let (_env_lock, _artifacts, _env, gallery_root, store, _driver, gallery) =
             media_test_env().await?;
         let source = gallery_root.path().join("source.mp4");
         create_real_video(&source).await?;
@@ -3124,7 +3124,7 @@ mod tool_behavior_tests {
     #[tokio::test]
     async fn video_remix_publishes_durable_asset_and_cleans_intermediates()
     -> Result<(), Box<dyn std::error::Error>> {
-        let (_env_lock, artifacts, _env, gallery_root, store, _driver, gallery) =
+        let (_env_lock, _artifacts, _env, gallery_root, store, _driver, gallery) =
             media_test_env().await?;
         let source = gallery_root.path().join("source.mp4");
         create_real_video(&source).await?;
@@ -3181,7 +3181,7 @@ mod tool_behavior_tests {
     #[tokio::test]
     async fn video_from_images_publishes_durable_asset_and_lineage_after_server_drop()
     -> Result<(), Box<dyn std::error::Error>> {
-        let (_env_lock, artifacts, _env, gallery_root, store, _driver, gallery) =
+        let (_env_lock, _artifacts, _env, gallery_root, store, _driver, gallery) =
             media_test_env().await?;
         let first = gallery_root.path().join("first.png");
         let second = gallery_root.path().join("second.png");
@@ -3231,7 +3231,7 @@ mod tool_behavior_tests {
     #[tokio::test]
     async fn video_concat_publishes_durable_asset_and_lineage_after_server_drop()
     -> Result<(), Box<dyn std::error::Error>> {
-        let (_env_lock, artifacts, _env, gallery_root, store, _driver, gallery) =
+        let (_env_lock, _artifacts, _env, gallery_root, store, _driver, gallery) =
             media_test_env().await?;
         let first = gallery_root.path().join("first.mp4");
         let second = gallery_root.path().join("second.mp4");
@@ -3272,7 +3272,7 @@ mod tool_behavior_tests {
     async fn local_video_publication_failure_rolls_back_gif_and_remix_intermediates()
     -> Result<(), Box<dyn std::error::Error>> {
         use hkask_storage::database::driver::DatabaseDriver;
-        let (_env_lock, artifacts, _env, gallery_root, store, driver, gallery) =
+        let (_env_lock, _artifacts, _env, gallery_root, store, driver, gallery) =
             media_test_env().await?;
         let source = gallery_root.path().join("source.mp4");
         create_real_video(&source).await?;
@@ -3326,7 +3326,7 @@ mod tool_behavior_tests {
     -> Result<(), Box<dyn std::error::Error>> {
         use hkask_storage::database::driver::DatabaseDriver;
 
-        let (_env_lock, artifacts, _env, gallery_root, store, driver, gallery) =
+        let (_env_lock, _artifacts, _env, gallery_root, store, driver, gallery) =
             media_test_env().await?;
         let source = gallery_root.path().join("source.mp4");
         create_real_video(&source).await?;
@@ -3506,7 +3506,7 @@ mod tool_behavior_tests {
     #[tokio::test]
     async fn video_from_images_rejects_invalid_and_webp_formats()
     -> Result<(), Box<dyn std::error::Error>> {
-        let (_env_lock, artifacts, _env, gallery_root, store, _driver, gallery) =
+        let (_env_lock, _artifacts, _env, gallery_root, store, _driver, gallery) =
             media_test_env().await?;
         let image = gallery_root.path().join("frame.png");
         add_test_image(&store, &gallery.id, &image, [255, 0, 0])?;
@@ -4603,7 +4603,7 @@ mod tool_behavior_tests {
             EductRenderEdlRequest, EductStoreLayerRequest, EductStoreTranscriptRequest,
         };
 
-        let (_env_lock, artifacts, _env, gallery_root, store, _driver, gallery) =
+        let (_env_lock, _artifacts, _env, gallery_root, store, _driver, gallery) =
             media_test_env().await?;
         let server = server_with_gallery(store.clone(), gallery.id, gallery_root.path());
         // Generate a real 2-second WAV via ffmpeg — the same binary the
