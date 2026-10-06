@@ -825,6 +825,14 @@ corpus flows through the same path: rebuild, re-seal, re-export, commit the new
 `bundle.json`, re-upload the release. Never hand-copy a sealed run to another
 machine or hand-edit `federated-sources.json`.
 
+The installer is idempotent by run identity: before downloading anything it
+checks the machine's existing federated registration — a registration naming
+the same `run_id` with an existing database IS the bundle's content (a prior
+install's materialized copy or the build machine's sealed registration), and
+the install skips the download entirely. Only a different `run_id` (a genuinely
+new corpus run) downloads. Never bypass this with a manual re-download when the
+run is unchanged.
+
 ## Regression case
 
 All receipts executed live through `lisp_eval` (2026-10-01, batch-13 audit):

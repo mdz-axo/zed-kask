@@ -288,6 +288,101 @@ pub fn rotate_passphrase(
     Ok(())
 }
 
+/// Export an existing database to a NEW file under a different
+/// passphrase, leaving the source untouched. This is the read-once,
+/// write-once form of [`rotate_passphrase`]'s export half: a copy followed
+/// by an in-place rotation reads and writes the bytes twice and peaks at
+/// three on-disk copies; this reads the source once and writes the
+/// destination once. The corpus pipeline's distribution stage uses it to
+/// ship a sealed run under the public bundle key without ever modifying
+/// the sealed original.
+///
+/// The source is quiesced (exclusive lease) for the duration of the export;
+/// read-only consumers (immutable-URI opens) are unaffected. The
+/// destination must not already exist — an export never overwrites.
+pub fn export_database_keyed(
+    source_path: &str,
+    source_passphrase: &str,
+    destination_path: &str,
+    destination_passphrase: &str,
+) -> Result<(), RotationError> {
+    if destination_passphrase.is_empty() {
+        return Err(RotationError::InvalidNewPassphrase(
+            "Destination passphrase cannot be empty".to_string(),
+        ));
+    }
+    if destination_passphrase.len() < 8 {
+        return Err(RotationError::InvalidNewPassphrase(format!(
+            "Destination passphrase must be at least 8 characters (got {})",
+            destination_passphrase.len()
+        )));
+    }
+    if Path::new(destination_path).exists() {
+        return Err(RotationError::Filesystem {
+            path: destination_path.to_string(),
+            error: std::io::Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                "export destination already exists — an export never overwrites",
+            ),
+        });
+    }
+    let canonical =
+        std::fs::canonicalize(source_path).map_err(|error| RotationError::Filesystem {
+            path: source_path.to_string(),
+            error,
+        })?;
+    let source = canonical
+        .to_str()
+        .ok_or_else(|| RotationError::Filesystem {
+            path: source_path.to_string(),
+            error: std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Canonical source path is not UTF-8",
+            ),
+        })?;
+    let quiesced = QuiescedDatabase::acquire(source).map_err(|source_error| {
+        RotationError::ConsumersActive {
+            path: source.into(),
+            source: source_error,
+        }
+    })?;
+    let source_db =
+        quiesced
+            .open(source_passphrase)
+            .map_err(|e| RotationError::OldPassphraseMismatch {
+                path: source.to_string(),
+                source: e,
+            })?;
+    let source_pool =
+        source_db
+            .sqlite_pool()
+            .map_err(|e| RotationError::OldPassphraseMismatch {
+                path: source.to_string(),
+                source: e,
+            })?;
+    let result = copy_all_tables(
+        &source_pool,
+        source,
+        destination_path,
+        destination_passphrase,
+    );
+    drop(source_pool);
+    drop(source_db);
+    if let Err(error) = result {
+        remove_artifact(destination_path);
+        remove_artifact(&format!("{destination_path}-wal"));
+        remove_artifact(&format!("{destination_path}-shm"));
+        return Err(error);
+    }
+    tracing::info!(
+        target: "reg.storage",
+        source = %source,
+        destination = %destination_path,
+        "Keyed database export complete — source untouched, destination under the new passphrase"
+    );
+    Ok(())
+}
+
 /// Verify that an existing database opens with the supplied passphrase.
 ///
 /// The probe mirrors `rotate_passphrase`'s source verification: open the
@@ -546,6 +641,64 @@ pub(crate) mod tests {
             verify_database_key(&missing, "any-passphrase").expect_err("missing file rejected");
         assert!(matches!(error, RotationError::Filesystem { .. }));
         assert!(!Path::new(&missing).exists());
+    }
+
+    /// expect: "Shipping a corpus under the public bundle key never touches
+    /// the sealed original, and the exported copy opens only under the new
+    /// key." [P8] The distribution stage's read-once/write-once export: the
+    /// source's bytes are unchanged (hash-equal), the destination carries
+    /// the data under the destination passphrase, a wrong key is rejected at
+    /// the pool boundary, and an existing destination is refused.
+    ///
+    /// Known limitation, reported not pinned: copy_all_tables-produced
+    /// destinations carry an all-zero header salt (the bundled SQLCipher's
+    /// attach path does not randomize it; the system sqlcipher CLI does).
+    /// The data is encrypted and key-bound — a wrong key fails the page
+    /// HMAC — but the fixed salt weakens the KDF's salting. Pre-existing in
+    /// rotate_passphrase; filed for a bundled-SQLCipher follow-up.
+    #[test]
+    fn export_database_keyed_leaves_the_source_untouched_and_rekeys_the_copy() {
+        let directory = tempfile::tempdir().expect("temporary database");
+        let source = make_test_db(directory.path(), "sealed.db", "old-passphrase");
+        let before = std::fs::read(&source).expect("read source");
+        let destination = directory
+            .path()
+            .join("shipped.db")
+            .to_string_lossy()
+            .into_owned();
+
+        export_database_keyed(&source, "old-passphrase", &destination, "bundle-key-1234")
+            .expect("keyed export");
+
+        assert_eq!(
+            std::fs::read(&source).expect("re-read source"),
+            before,
+            "the sealed source is byte-identical after the export"
+        );
+        let shipped = Database::open(&destination, "bundle-key-1234").expect("destination key");
+        let count: i64 = shipped
+            .sqlite_pool()
+            .expect("pool")
+            .get()
+            .expect("conn")
+            .query_row("SELECT COUNT(*) FROM embeddings", [], |row| row.get(0))
+            .expect("exported row count");
+        assert_eq!(count, 1, "the exported data survives the rekey");
+        // Key exclusivity is enforced at the pool boundary — Database::open
+        // itself is lazy and verifies nothing.
+        assert!(
+            verify_database_key(&destination, "old-passphrase").is_err(),
+            "the destination does not verify under the source key"
+        );
+        assert!(
+            verify_database_key(&destination, "bundle-key-1234").is_ok(),
+            "the destination verifies under the destination key"
+        );
+
+        let error =
+            export_database_keyed(&source, "old-passphrase", &destination, "bundle-key-1234")
+                .expect_err("an existing destination is refused");
+        assert!(matches!(error, RotationError::Filesystem { .. }));
     }
 
     /// expect: "Rotating my populated RSS database preserves feeds, search, and future updates" [P1]

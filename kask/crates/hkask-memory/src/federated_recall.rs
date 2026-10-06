@@ -300,7 +300,6 @@ pub struct FederatedSourceIdentity {
     pub source_id: String,
     pub display_name: String,
     pub database_path: PathBuf,
-    pub database_sha256: String,
     pub run_id: String,
     pub index_name: String,
     pub entity_ref_prefix: String,
@@ -449,17 +448,17 @@ impl ReadOnlyPassageSource {
             }
         })?;
         ensure_checkpointed(&spec.id, &spec.database_path)?;
-        // Informational digest of the database bytes, reported on the
-        // identity record regardless of admission path.
-        let actual_digest = sha256_file(&spec.database_path)?;
         // Admission fork: a locally sealed source proves itself by byte
         // digest (the seal is bound to this machine's passphrase). A
-        // materialized source — shipped as a release bundle and re-keyed
-        // under this machine's passphrase — cannot reproduce those bytes,
-        // so it proves itself by provenance chain: the git-pinned bundle
+        // materialized source — shipped as a release bundle under its
+        // manifest-declared public key — cannot reproduce those bytes, so
+        // it proves itself by provenance chain: the git-pinned bundle
         // manifest, the receipt of verified asset hashes, and (below, after
         // the identity query) the content pins for dimensions and passage
         // count. Every other seal check runs identically on both paths.
+        // The digest is hashed ONLY on the byte-digest path — a multi-GB
+        // hash per admission is the seal comparison itself there, and pure
+        // waste on the materialized path, where nothing consumes it.
         let bundle = match &spec.materialized_provenance {
             Some(provenance) => {
                 let bundle = BundleManifest::load(&provenance.bundle_manifest_path)?;
@@ -510,6 +509,7 @@ impl ReadOnlyPassageSource {
                 Some(bundle)
             }
             None => {
+                let actual_digest = sha256_file(&spec.database_path)?;
                 if !expected_digest.eq_ignore_ascii_case(&actual_digest) {
                     return Err(FederatedRecallError::DigestMismatch {
                         source_id: spec.id.clone(),
@@ -748,7 +748,6 @@ impl ReadOnlyPassageSource {
                 source_id: spec.id.clone(),
                 display_name: spec.display_name.clone(),
                 database_path,
-                database_sha256: actual_digest,
                 run_id: run_identity.run_id,
                 index_name: spec.index_name.clone(),
                 entity_ref_prefix,

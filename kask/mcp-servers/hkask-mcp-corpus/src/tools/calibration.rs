@@ -483,38 +483,22 @@ fn export_bundle_staged(
 ) -> Result<serde_json::Value, McpToolError> {
     let machine_passphrase = crate::helpers::resolve_corpus_passphrase()?;
     let work_database = work_dir.join("bundle.db");
-    fs::copy(sealed_database, &work_database).map_err(|error| {
-        crate::helpers::map_corpus_io_error(error, "Cannot copy the sealed database")
-    })?;
     let work_str = work_database.display().to_string();
-    hkask_storage::rotate_passphrase(&work_str, &machine_passphrase, &request.bundle_key).map_err(
-        |error| {
-            McpToolError::failed_precondition(format!(
-                "rekeying the shipped copy to the bundle key failed: {error}"
-            ))
-        },
-    )?;
-    hkask_storage::verify_database_key(&work_str, &request.bundle_key).map_err(|error| {
+    let sealed_str = sealed_database.display().to_string();
+    // Read-once/write-once: export directly from the sealed run to the
+    // bundle-keyed copy. A copy followed by an in-place rotation would read
+    // and write the multi-GB bytes twice and peak at three on-disk copies.
+    hkask_storage::export_database_keyed(
+        &sealed_str,
+        &machine_passphrase,
+        &work_str,
+        &request.bundle_key,
+    )
+    .map_err(|error| {
         McpToolError::failed_precondition(format!(
-            "the rekeyed copy does not open under the bundle key: {error}"
+            "exporting the sealed run under the bundle key failed: {error}"
         ))
     })?;
-    // Seal the copy explicitly: checkpoint, then a clean pool close removes
-    // the WAL, so admission's unsealed-WAL check can never fire on a shipped
-    // artifact.
-    {
-        let database =
-            hkask_storage::Database::open(&work_str, &request.bundle_key).map_err(|error| {
-                McpToolError::failed_precondition(format!(
-                    "opening the rekeyed copy for its checkpoint failed: {error}"
-                ))
-            })?;
-        database.checkpoint().map_err(|error| {
-            McpToolError::failed_precondition(format!(
-                "checkpointing the rekeyed copy failed: {error}"
-            ))
-        })?;
-    }
     for suffix in ["-wal", "-shm"] {
         let sidecar = work_dir.join(format!("bundle.db{suffix}"));
         if sidecar.exists() {

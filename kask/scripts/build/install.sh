@@ -584,15 +584,45 @@ install_corpus_bundle() {
         return 1
     }
 
-    local source_id display_name bundle_key
+    local source_id display_name bundle_key bundle_run_id
     source_id="$(jq -r '.source_id' "$bundle_json")"
     display_name="$(jq -r '.display_name' "$bundle_json")"
     bundle_key="$(jq -r '.bundle_key' "$bundle_json")"
+    bundle_run_id="$(jq -r '.run_id' "$bundle_json")"
     if [ -z "$source_id" ] || [ "$source_id" = "null" ] \
         || [ -z "$display_name" ] || [ "$display_name" = "null" ] \
-        || [ -z "$bundle_key" ] || [ "$bundle_key" = "null" ]; then
-        log_error "corpus '$corpus_id': bundle.json is missing source_id, display_name, or bundle_key"
+        || [ -z "$bundle_key" ] || [ "$bundle_key" = "null" ] \
+        || [ -z "$bundle_run_id" ] || [ "$bundle_run_id" = "null" ]; then
+        log_error "corpus '$corpus_id': bundle.json is missing source_id, display_name, bundle_key, or run_id"
         return 1
+    fi
+
+    local manifest="${XDG_DATA_HOME:-$HOME/.local/share}/zed-kask/agents/curator/federated-sources.json"
+
+    # Up-to-date check: a machine that already holds this corpus must not
+    # re-download gigabytes. The run_id seals the run identity including the
+    # database digest, so a registration naming the same run with an
+    # existing database IS this bundle's content — whether it is a prior
+    # install's materialized copy or the build machine's sealed registration.
+    # The registration's own admission chain (byte digest or provenance)
+    # remains the integrity check; this gate only detects presence.
+    if [ -f "$manifest" ]; then
+        local registered_identity registered_database registered_run_id
+        registered_identity="$(jq -r --arg id "$source_id" \
+            '([.sources[]? | select(.id == $id)] | first | .run_identity_path) // empty' \
+            "$manifest" 2>/dev/null)" || true
+        registered_database="$(jq -r --arg id "$source_id" \
+            '([.sources[]? | select(.id == $id)] | first | .database_path) // empty' \
+            "$manifest" 2>/dev/null)" || true
+        if [ -n "$registered_identity" ] && [ -f "$registered_identity" ] \
+            && [ -n "$registered_database" ] && [ -f "$registered_database" ]; then
+            registered_run_id="$(jq -r '.run_id // empty' "$registered_identity" 2>/dev/null)" || true
+            if [ -n "$registered_run_id" ] && [ "$registered_run_id" = "$bundle_run_id" ]; then
+                log "corpus '$corpus_id' already up to date (run ${registered_run_id:0:12}…) — skipping download"
+                log "  to force a fresh materialization, remove the '$source_id' entry from $manifest and re-run"
+                return 0
+            fi
+        fi
     fi
 
     local home="${XDG_DATA_HOME:-$HOME/.local/share}/zed-kask/agents/curator/$corpus_id"
@@ -651,8 +681,8 @@ install_corpus_bundle() {
 
     # Register for federated recall: replace any entry with the same id,
     # preserve every other source (the safe jq merge form — no select-as
-    # binding, which silently drops unpatched entries).
-    local manifest="${XDG_DATA_HOME:-$HOME/.local/share}/zed-kask/agents/curator/federated-sources.json"
+    # binding, which silently drops unpatched entries). `manifest` was
+    # bound by the up-to-date check above.
     local spec
     spec="$(jq -n \
         --arg id "$source_id" \
