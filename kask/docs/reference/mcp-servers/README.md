@@ -11,7 +11,7 @@ mds_categories: [composition, domain]
 # MCP Server Registry
 
 **Diataxis type:** Reference
-**Status:** Active (v0.40.0)
+**Status:** Active (v0.40.1)
 
 > Built-in MCP servers shipped with hKask and launched by the in-process governed
 > `McpRuntime` as child processes over stdio (D3 — single spawn authority since 2026-08-29; kask
