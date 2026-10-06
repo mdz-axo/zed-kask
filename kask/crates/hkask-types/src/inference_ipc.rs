@@ -218,6 +218,17 @@ pub enum InferenceOutcome {
         /// Exact model identity returned by the provider, when present.
         #[serde(default)]
         actual_model: Option<String>,
+        /// Token usage the provider reported for the embedding call.
+        /// `#[serde(default)]` for cross-binary wire compat: the zed-side
+        /// server and the MCP-server client are different binaries and can
+        /// be different versions across a rolling restart — an old
+        /// server's response deserializes with zeroed usage and
+        /// `reported: false` (honest absence, never a fabricated zero).
+        #[serde(default)]
+        usage: crate::ports::InferenceUsage,
+        /// The USD cost observed from the provider response, when present.
+        #[serde(default)]
+        cost_usd: Option<f64>,
     },
     /// Model list from `InferenceMethod::ListModels`.
     ModelList {
@@ -249,6 +260,14 @@ pub enum InferenceOutcome {
     RerankScores {
         #[serde(rename = "rerank_scores")]
         scores: Vec<RerankScoreEntry>,
+        /// Token usage the provider reported for the rerank call
+        /// (`#[serde(default)]` for cross-binary wire compat — see the
+        /// `Embeddings` variant).
+        #[serde(default)]
+        usage: crate::ports::InferenceUsage,
+        /// The USD cost observed from the provider response, when present.
+        #[serde(default)]
+        cost_usd: Option<f64>,
     },
     /// Error from the inference port.
     Error {
@@ -259,7 +278,7 @@ pub enum InferenceOutcome {
 
 /// A single reranked document's score — the provider's native relevance
 /// judgment, not a parsed LLM generation.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RerankScoreEntry {
     /// Index of the document in the original input list.
     pub index: usize,

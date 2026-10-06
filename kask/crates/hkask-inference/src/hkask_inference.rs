@@ -292,7 +292,7 @@ impl hkask_types::InferencePort for LazyInferencePort {
     fn embed<'a>(&'a self, model: &str, texts: &[String]) -> hkask_types::EmbedFuture<'a> {
         let model = model.to_string();
         let texts = texts.to_vec();
-        Box::pin(async move { Ok(self.embed_with_identity(&model, &texts).await?.vectors) })
+        Box::pin(async move { self.embed_with_identity(&model, &texts).await })
     }
 
     fn embed_with_identity<'a>(
@@ -794,7 +794,7 @@ impl hkask_types::InferencePort for DirectEmbeddingPort {
     fn embed<'a>(&'a self, model: &str, texts: &[String]) -> hkask_types::EmbedFuture<'a> {
         let model = model.to_string();
         let texts = texts.to_vec();
-        Box::pin(async move { Ok(self.embed_with_identity(&model, &texts).await?.vectors) })
+        Box::pin(async move { self.embed_with_identity(&model, &texts).await })
     }
 
     fn embed_with_identity<'a>(
@@ -872,6 +872,19 @@ impl hkask_types::InferencePort for DirectEmbeddingPort {
                 data: Vec<EmbeddingData>,
                 #[serde(default)]
                 model: Option<String>,
+                /// OpenAI-compatible embeddings responses carry `usage:
+                /// {prompt_tokens, total_tokens}` — parse it so the batch
+                /// reports measured cost (mcp-tool-review S-01 completion:
+                /// the embed axis was the last unmeasured inference surface).
+                #[serde(default)]
+                usage: Option<EmbeddingUsage>,
+            }
+
+            #[derive(serde::Deserialize)]
+            struct EmbeddingUsage {
+                prompt_tokens: u32,
+                #[serde(default)]
+                total_tokens: u32,
             }
 
             let parsed: EmbeddingResponse = response.json().await.map_err(|e| {
@@ -890,6 +903,19 @@ impl hkask_types::InferencePort for DirectEmbeddingPort {
                 vectors: embeddings,
                 requested_model,
                 actual_model: parsed.model,
+                usage: match parsed.usage {
+                    Some(EmbeddingUsage {
+                        prompt_tokens,
+                        total_tokens,
+                    }) => hkask_types::InferenceUsage {
+                        prompt_tokens,
+                        completion_tokens: 0,
+                        total_tokens,
+                        reported: true,
+                    },
+                    None => hkask_types::InferenceUsage::default(),
+                },
+                cost_usd: None,
             })
         })
     }

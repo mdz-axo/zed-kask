@@ -423,7 +423,13 @@ stub_inference_port! {
                 }
             })
             .collect();
-        Box::pin(async move { Ok(scores) })
+        Box::pin(async move {
+            Ok(hkask_types::RerankBatch {
+                scores,
+                usage: hkask_types::InferenceUsage::default(),
+                cost_usd: None,
+            })
+        })
     }
 }
 
@@ -2437,7 +2443,15 @@ stub_inference_port! {
         // Collect before the async block so the future captures owned data
         // only — the borrowed `texts` cannot outlive the call.
         let vectors: Vec<Vec<f32>> = _texts.iter().map(|_| vec![1.0_f32, 0.0]).collect();
-        Box::pin(async move { Ok(vectors) })
+        Box::pin(async move {
+            Ok(hkask_types::EmbeddingBatch {
+                vectors,
+                requested_model: String::new(),
+                actual_model: None,
+                usage: hkask_types::InferenceUsage::default(),
+                cost_usd: None,
+            })
+        })
     }
 }
 

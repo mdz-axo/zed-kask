@@ -83,7 +83,7 @@ pub enum InferenceError {
 /// with zeroed counts — readers that care about token/cost accounting
 /// check the flag before trusting the numbers. Mirrors `InferenceResult`'s
 /// `cost_usd: Option<f64>` absence modeling (D20).
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct InferenceUsage {
     pub prompt_tokens: u32,
     pub completion_tokens: u32,

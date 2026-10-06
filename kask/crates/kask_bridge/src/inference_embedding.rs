@@ -37,6 +37,19 @@ struct OpenAiEmbedResponse {
     data: Vec<OpenAiEmbeddingData>,
     #[serde(default)]
     model: Option<String>,
+    /// OpenAI-compatible embeddings responses carry `usage:
+    /// {prompt_tokens, total_tokens}` — parse it so the batch reports
+    /// measured cost (mcp-tool-review S-01 completion).
+    #[serde(default)]
+    usage: Option<OpenAiEmbedUsage>,
+}
+
+/// The usage block of an OpenAI-compatible embeddings response.
+#[derive(Debug, Deserialize)]
+struct OpenAiEmbedUsage {
+    prompt_tokens: u32,
+    #[serde(default)]
+    total_tokens: u32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -193,6 +206,19 @@ impl LanguageModelEmbeddingPort {
                                 vectors: embeddings,
                                 requested_model: req.model,
                                 actual_model: parsed.model,
+                                usage: match parsed.usage {
+                                    Some(OpenAiEmbedUsage {
+                                        prompt_tokens,
+                                        total_tokens,
+                                    }) => hkask_types::InferenceUsage {
+                                        prompt_tokens,
+                                        completion_tokens: 0,
+                                        total_tokens,
+                                        reported: true,
+                                    },
+                                    None => hkask_types::InferenceUsage::default(),
+                                },
+                                cost_usd: None,
                             })
                         }
                         .await;
@@ -245,6 +271,11 @@ impl LanguageModelEmbeddingPort {
                         vectors,
                         requested_model: req.model,
                         actual_model: None,
+                        // The local embed-fn path computes vectors in-process
+                        // — no provider, no tokens, no cost. `reported:
+                        // false` keeps the absence honest.
+                        usage: hkask_types::InferenceUsage::default(),
+                        cost_usd: None,
                     })
                 };
                 let _ = req.reply.send(result);

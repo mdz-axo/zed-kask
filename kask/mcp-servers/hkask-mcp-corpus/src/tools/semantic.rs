@@ -92,6 +92,8 @@ mod identity_tests {
             vectors: vec![vec![1.0]],
             requested_model: "requested/model".to_string(),
             actual_model: actual_model.map(str::to_string),
+            usage: hkask_types::InferenceUsage::default(),
+            cost_usd: None,
         }
     }
 

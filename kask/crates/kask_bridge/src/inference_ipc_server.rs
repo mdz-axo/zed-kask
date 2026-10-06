@@ -971,6 +971,8 @@ async fn dispatch(
                 embeddings: batch.vectors,
                 requested_model: batch.requested_model,
                 actual_model: batch.actual_model,
+                usage: batch.usage,
+                cost_usd: batch.cost_usd,
             },
             Err(e) => embed_error_outcome(e),
         };
@@ -1245,7 +1247,15 @@ async fn dispatch(
                     model = %clean_model,
                     "Rerank completed"
                 );
-                return InferenceOutcome::RerankScores { scores };
+                return InferenceOutcome::RerankScores {
+                    scores,
+                    // The rerank provider response does not carry a usage
+                    // block on the wire paths we call today — the batch
+                    // reports `reported: false` (honest absence, never a
+                    // fabricated zero; mcp-tool-review S-01 completion).
+                    usage: hkask_types::InferenceUsage::default(),
+                    cost_usd: None,
+                };
             }
             Err(e) => {
                 return ipc_error("Internal", format!("rerank API failed: {e}"));

@@ -6,6 +6,23 @@ pub struct EmbeddingBatch {
     pub requested_model: String,
     /// Exact model identity returned by the provider, when present.
     pub actual_model: Option<String>,
+    /// Token usage the provider reported for this embedding call.
+    /// `reported: false` means the provider omitted the usage wire field —
+    /// the counts are placeholders, nothing was measured (the same
+    /// honesty contract as `InferenceResult::usage`).
+    pub usage: crate::ports::InferenceUsage,
+    /// The USD cost observed from the provider response, when present.
+    pub cost_usd: Option<f64>,
+}
+
+/// Rerank scores plus the call's measured usage — the rerank twin of
+/// [`EmbeddingBatch`]. `reported: false` on `usage` means the provider
+/// omitted the usage wire field.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RerankBatch {
+    pub scores: Vec<crate::inference_ipc::RerankScoreEntry>,
+    pub usage: crate::ports::InferenceUsage,
+    pub cost_usd: Option<f64>,
 }
 
 /// Errors from embedding generation backends (OpenAI, local models, etc.).

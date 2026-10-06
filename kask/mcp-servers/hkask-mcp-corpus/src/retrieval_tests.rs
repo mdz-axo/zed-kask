@@ -51,6 +51,8 @@ impl InferencePort for IdentityPort {
                 vectors: vec![vec![1.0; crate::embedding_dim()]; count],
                 requested_model,
                 actual_model,
+                usage: hkask_types::InferenceUsage::default(),
+                cost_usd: None,
             })
         })
     }
@@ -108,33 +110,40 @@ impl InferencePort for RecordingPort {
 
     fn embed(
         &self,
-        _: &str,
+        model: &str,
         texts: &[String],
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<Vec<f32>>, EmbeddingGenerationError>> + Send + '_>>
+    ) -> hkask_types::EmbedFuture<'_>
     {
         self.inputs.lock().expect("inputs").extend_from_slice(texts);
         let count = texts.len();
+        let requested_model = model.to_string();
         Box::pin(async move {
             if let Some((entered, release)) = &self.pause {
                 entered.notify_one();
                 release.notified().await;
             }
-            Ok((0..if self.short {
-                count.saturating_sub(1)
-            } else {
-                count
-            })
-                .map(|_| {
-                    vec![
-                        1.0;
-                        if self.wrong_dimension {
-                            crate::embedding_dim() + 1
-                        } else {
-                            crate::embedding_dim()
-                        }
-                    ]
+            Ok(hkask_types::EmbeddingBatch {
+                vectors: (0..if self.short {
+                    count.saturating_sub(1)
+                } else {
+                    count
                 })
-                .collect())
+                    .map(|_| {
+                        vec![
+                            1.0;
+                            if self.wrong_dimension {
+                                crate::embedding_dim() + 1
+                            } else {
+                                crate::embedding_dim()
+                            }
+                        ]
+                    })
+                    .collect(),
+                requested_model,
+                actual_model: None,
+                usage: hkask_types::InferenceUsage::default(),
+                cost_usd: None,
+            })
         })
     }
 }

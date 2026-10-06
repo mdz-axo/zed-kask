@@ -351,7 +351,12 @@ pub(crate) async fn llm_rerank(
         .rerank(&rerank_model, query, &documents)
         .await
     {
-        Ok(scores) => scores,
+        Ok(batch) => {
+            // S-01 completion: the rerank call's measured usage flows to
+            // the executing tool's envelope (the deep-strategy web_search).
+            hkask_mcp_server::server::record_tool_usage(batch.usage.clone(), batch.cost_usd);
+            batch.scores
+        }
         Err(error) => {
             return RerankOutcome {
                 scored: 0,
@@ -530,7 +535,11 @@ mod rerank_tests {
                     scores.iter().all(|entry| entry.index < document_count),
                     "stub scores must be in range of the document list"
                 );
-                Ok(scores)
+                Ok(hkask_types::RerankBatch {
+                    scores,
+                    usage: hkask_types::InferenceUsage::default(),
+                    cost_usd: None,
+                })
             })
         }
     }

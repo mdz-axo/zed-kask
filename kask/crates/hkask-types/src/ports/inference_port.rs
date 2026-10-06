@@ -15,7 +15,7 @@ use std::sync::Arc;
 /// the object-safe `InferencePort` trait (we avoid `async_trait` deliberately —
 /// see the trait-level comment).
 pub type EmbedFuture<'a> =
-    Pin<Box<dyn Future<Output = Result<Vec<Vec<f32>>, EmbeddingGenerationError>> + Send + 'a>>;
+    Pin<Box<dyn Future<Output = Result<EmbeddingBatch, EmbeddingGenerationError>> + Send + 'a>>;
 
 /// Future returned by [`InferencePort::embed_with_identity`].
 pub type EmbedWithIdentityFuture<'a> =
@@ -31,13 +31,8 @@ pub type MediaFuture<'a> =
 /// Future returned by [`InferencePort::rerank`]. Same rationale as
 /// `EmbedFuture` — keeps the trait signature under clippy's
 /// `type_complexity` threshold.
-pub type RerankFuture<'a> = Pin<
-    Box<
-        dyn Future<Output = Result<Vec<crate::inference_ipc::RerankScoreEntry>, InferenceError>>
-            + Send
-            + 'a,
-    >,
->;
+pub type RerankFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<crate::ports::RerankBatch, InferenceError>> + Send + 'a>>;
 
 /// Parameters for [`InferencePort::media_generate`].
 ///
@@ -336,11 +331,13 @@ pub trait InferencePort: Send + Sync {
         let requested_model = model.to_string();
         let texts = texts.to_vec();
         Box::pin(async move {
-            let vectors = self.embed(&requested_model, &texts).await?;
+            let batch = self.embed(&requested_model, &texts).await?;
             Ok(EmbeddingBatch {
-                vectors,
+                vectors: batch.vectors,
                 requested_model,
-                actual_model: None,
+                actual_model: batch.actual_model,
+                usage: batch.usage,
+                cost_usd: batch.cost_usd,
             })
         })
     }

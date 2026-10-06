@@ -474,6 +474,8 @@ impl InferenceIpcClient {
                 embeddings,
                 requested_model,
                 actual_model,
+                usage,
+                cost_usd,
             } => Ok(hkask_types::EmbeddingBatch {
                 vectors: embeddings,
                 requested_model: if requested_model.is_empty() {
@@ -482,6 +484,8 @@ impl InferenceIpcClient {
                     requested_model
                 },
                 actual_model,
+                usage,
+                cost_usd,
             }),
             InferenceOutcome::Error { error } => Err(match error.code.as_str() {
                 "InvalidRequest" => EmbeddingGenerationError::InvalidRequest(error.message),
@@ -577,7 +581,7 @@ impl InferenceIpcClient {
         model: &str,
         query: &str,
         documents: &[String],
-    ) -> Result<Vec<hkask_types::inference_ipc::RerankScoreEntry>, InferenceError> {
+    ) -> Result<hkask_types::RerankBatch, InferenceError> {
         let method = InferenceMethod::Rerank;
         let params = InferenceParams {
             rerank_model: Some(model.to_string()),
@@ -587,7 +591,15 @@ impl InferenceIpcClient {
         };
         let response = self.ipc_roundtrip(&method, params).await?;
         match response.outcome {
-            InferenceOutcome::RerankScores { scores } => Ok(scores),
+            InferenceOutcome::RerankScores {
+                scores,
+                usage,
+                cost_usd,
+            } => Ok(hkask_types::RerankBatch {
+                scores,
+                usage,
+                cost_usd,
+            }),
             InferenceOutcome::Error { error } => Err(error.into()),
             InferenceOutcome::Result { .. } => Err(InferenceError::Connection(
                 unexpected_outcome_msg(&method, "Result"),
@@ -617,7 +629,7 @@ impl InferenceIpcClient {
         model: &str,
         query: &str,
         documents: &[String],
-    ) -> Result<Vec<hkask_types::inference_ipc::RerankScoreEntry>, InferenceError> {
+    ) -> Result<hkask_types::RerankBatch, InferenceError> {
         if documents.is_empty() {
             return Err(InferenceError::Generation(
                 "rerank requires at least one document".to_string(),
@@ -834,7 +846,7 @@ impl InferencePort for InferenceIpcClient {
         let model = model.to_string();
         let texts = texts.to_vec();
         let this = self;
-        async move { this.embed(&model, &texts).await }.boxed()
+        async move { this.embed_with_identity(&model, &texts).await }.boxed()
     }
 
     fn embed_with_identity<'a>(
@@ -1077,6 +1089,8 @@ mod tests {
                         embeddings: vec![vec![1.0, 0.0]],
                         requested_model: "Provider/requested-alias".to_string(),
                         actual_model: actual_model.clone(),
+                        usage: hkask_types::InferenceUsage::default(),
+                        cost_usd: None,
                     },
                     1,
                 )
@@ -1284,6 +1298,8 @@ mod tests {
                     embeddings: vec![vec![0.0]],
                     requested_model: "fixture/requested".to_string(),
                     actual_model: Some("fixture/actual".to_string()),
+                    usage: hkask_types::InferenceUsage::default(),
+                    cost_usd: None,
                 },
                 1,
             )

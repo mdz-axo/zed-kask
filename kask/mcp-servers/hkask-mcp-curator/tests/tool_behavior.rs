@@ -80,13 +80,19 @@ impl hkask_types::InferencePort for ConstantEmbedPort {
         let count = texts.len();
         let dim = test_dim();
         Box::pin(async move {
-            Ok((0..count)
-                .map(|_| {
-                    let mut vector = vec![0.0f32; dim];
-                    vector[0] = 1.0;
-                    vector
-                })
-                .collect())
+            Ok(hkask_types::EmbeddingBatch {
+                vectors: (0..count)
+                    .map(|_| {
+                        let mut vector = vec![0.0f32; dim];
+                        vector[0] = 1.0;
+                        vector
+                    })
+                    .collect(),
+                requested_model: String::new(),
+                actual_model: None,
+                usage: hkask_types::InferenceUsage::default(),
+                cost_usd: None,
+            })
         })
     }
 }
@@ -135,6 +141,8 @@ impl hkask_types::InferencePort for ActualFormEmbedPort {
                     .collect(),
                 requested_model,
                 actual_model: Some("provider/actual-form".to_string()),
+                usage: hkask_types::InferenceUsage::default(),
+                cost_usd: None,
             })
         })
     }

@@ -2116,15 +2116,22 @@ impl ResearchServer {
                         // touch a width-bound store, so the model's native
                         // width is correct here (no `dimensions` request).
                         match self.inference_port.embed(model, &texts).await {
-                            Ok(vectors) if vectors.len() == content_indices.len() => {
-                                Some(content_indices.into_iter().zip(vectors).collect())
+                            Ok(batch) if batch.vectors.len() == content_indices.len() => {
+                                // S-01 completion: the embedding call's
+                                // measured usage flows to the executing
+                                // tool's envelope.
+                                hkask_mcp_server::server::record_tool_usage(
+                                    batch.usage.clone(),
+                                    batch.cost_usd,
+                                );
+                                Some(content_indices.into_iter().zip(batch.vectors).collect())
                             }
-                            Ok(vectors) => {
+                            Ok(batch) => {
                                 duplication_reason = Some(format!(
                                     "embedding tier returned {} vectors for {} \
                                          content-bearing artifacts — the deterministic \
                                          shingle floor ran instead",
-                                    vectors.len(),
+                                    batch.vectors.len(),
                                     content_indices.len()
                                 ));
                                 None

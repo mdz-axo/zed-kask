@@ -1911,6 +1911,45 @@ mod tool_behavior_tests {
         Ok((store, driver))
     }
 
+    /// The single-gallery contract-test environment: the artifacts env
+    /// lock, the artifacts dir (under the env guard), the gallery root,
+    /// the file-backed store with its driver (the fault-injection sites
+    /// install triggers through it), and the opened gallery. Every
+    /// gallery contract test repeated this prologue; the source-material
+    /// creation and the server construction stay at each call site —
+    /// they are what the test varies.
+    async fn media_test_env() -> Result<
+        (
+            tokio::sync::MutexGuard<'static, ()>,
+            tempfile::TempDir,
+            ArtifactsEnvGuard,
+            tempfile::TempDir,
+            Arc<GalleryStore>,
+            Arc<hkask_storage::database::sqlite::SqliteDriver>,
+            hkask_storage::GalleryRecord,
+        ),
+        Box<dyn std::error::Error>,
+    > {
+        let env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
+        let artifacts = tempfile::tempdir()?;
+        let env = ArtifactsEnvGuard::set(artifacts.path());
+        let gallery_root = tempfile::tempdir()?;
+        let (store, driver) = file_backed_gallery_store(&artifacts.path().join("gallery.db"))?;
+        let gallery = store.open(
+            gallery_root.path().to_str().ok_or("gallery root UTF-8")?,
+            GalleryMode::ReadOnly,
+        )?;
+        Ok((
+            env_lock,
+            artifacts,
+            env,
+            gallery_root,
+            store,
+            driver,
+            gallery,
+        ))
+    }
+
     fn server_with_gallery_state(
         store: Arc<GalleryStore>,
         gallery_id: String,
@@ -2086,15 +2125,8 @@ mod tool_behavior_tests {
     /// [P1] Constraining: no unindexed file-only success is permitted.
     #[tokio::test]
     async fn video_fetch_publishes_one_canonical_asset() -> Result<(), Box<dyn std::error::Error>> {
-        let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
-        let artifacts = tempfile::tempdir()?;
-        let _env = ArtifactsEnvGuard::set(artifacts.path());
-        let gallery_root = tempfile::tempdir()?;
-        let (store, _) = file_backed_gallery_store(&artifacts.path().join("gallery.db"))?;
-        let gallery = store.open(
-            gallery_root.path().to_str().ok_or("gallery root UTF-8")?,
-            GalleryMode::ReadOnly,
-        )?;
+        let (_env_lock, artifacts, _env, gallery_root, store, _driver, gallery) =
+            media_test_env().await?;
         let gallery_id = gallery.id.clone();
         let runner = fake_ytdlp(
             artifacts.path(),
@@ -2155,18 +2187,11 @@ mod tool_behavior_tests {
     #[tokio::test]
     async fn video_fetch_rejects_unsafe_sources_before_downloader()
     -> Result<(), Box<dyn std::error::Error>> {
-        let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
-        let artifacts = tempfile::tempdir()?;
-        let _env = ArtifactsEnvGuard::set(artifacts.path());
-        let gallery_root = tempfile::tempdir()?;
+        let (_env_lock, artifacts, _env, gallery_root, store, _driver, gallery) =
+            media_test_env().await?;
         let marker = artifacts.path().join("downloader-started");
         let script = format!("touch '{}'; exit 0", marker.display());
         let runner = fake_ytdlp(artifacts.path(), &script)?;
-        let (store, _) = file_backed_gallery_store(&artifacts.path().join("gallery.db"))?;
-        let gallery = store.open(
-            gallery_root.path().to_str().ok_or("gallery root UTF-8")?,
-            GalleryMode::ReadOnly,
-        )?;
         let server = server_with_ytdlp(store, Some(gallery.id), gallery_root.path(), runner);
 
         for url in [
@@ -2199,15 +2224,8 @@ mod tool_behavior_tests {
             "while [ $# -gt 0 ]; do if [ \"$1\" = -o ]; then shift; output=$1; fi; shift; done; printf partial > \"$output\"; printf fragment > \"$output.part\"; echo 'ERROR: video unavailable' >&2; exit 1",
             "exit 0",
         ] {
-            let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
-            let artifacts = tempfile::tempdir()?;
-            let _env = ArtifactsEnvGuard::set(artifacts.path());
-            let gallery_root = tempfile::tempdir()?;
-            let (store, _) = file_backed_gallery_store(&artifacts.path().join("gallery.db"))?;
-            let gallery = store.open(
-                gallery_root.path().to_str().ok_or("gallery root UTF-8")?,
-                GalleryMode::ReadOnly,
-            )?;
+            let (_env_lock, artifacts, _env, gallery_root, store, _driver, gallery) =
+                media_test_env().await?;
             let gallery_id = gallery.id.clone();
             let runner = fake_ytdlp(artifacts.path(), body)?;
             let server =
@@ -2296,17 +2314,10 @@ mod tool_behavior_tests {
     #[tokio::test]
     async fn audio_trim_publishes_durable_asset_and_lineage_after_server_drop()
     -> Result<(), Box<dyn std::error::Error>> {
-        let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
-        let artifacts = tempfile::tempdir()?;
-        let _env = ArtifactsEnvGuard::set(artifacts.path());
-        let gallery_root = tempfile::tempdir()?;
+        let (_env_lock, artifacts, _env, gallery_root, store, _driver, gallery) =
+            media_test_env().await?;
         let source = gallery_root.path().join("source.wav");
         create_real_audio(&source).await?;
-        let (store, _) = file_backed_gallery_store(&artifacts.path().join("gallery.db"))?;
-        let gallery = store.open(
-            gallery_root.path().to_str().ok_or("gallery root UTF-8")?,
-            GalleryMode::ReadOnly,
-        )?;
         let server = server_with_gallery(store.clone(), gallery.id, gallery_root.path());
         let content = content_of(
             &server
@@ -2381,10 +2392,8 @@ mod tool_behavior_tests {
     #[tokio::test]
     async fn audio_concat_publishes_durable_asset_and_lineage_after_server_drop()
     -> Result<(), Box<dyn std::error::Error>> {
-        let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
-        let artifacts = tempfile::tempdir()?;
-        let _env = ArtifactsEnvGuard::set(artifacts.path());
-        let gallery_root = tempfile::tempdir()?;
+        let (_env_lock, artifacts, _env, gallery_root, store, _driver, gallery) =
+            media_test_env().await?;
         let first = gallery_root.path().join("first.wav");
         let second = gallery_root.path().join("second.wav");
         create_real_audio(&first).await?;
@@ -2393,11 +2402,6 @@ mod tool_behavior_tests {
             first.to_string_lossy().into_owned(),
             second.to_string_lossy().into_owned(),
         ];
-        let (store, _) = file_backed_gallery_store(&artifacts.path().join("gallery.db"))?;
-        let gallery = store.open(
-            gallery_root.path().to_str().ok_or("gallery root UTF-8")?,
-            GalleryMode::ReadOnly,
-        )?;
         let server = server_with_gallery(store.clone(), gallery.id, gallery_root.path());
         let content = content_of(
             &server
@@ -2448,15 +2452,8 @@ mod tool_behavior_tests {
     #[tokio::test]
     async fn audio_capture_publishes_canonical_asset_without_output_path()
     -> Result<(), Box<dyn std::error::Error>> {
-        let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
-        let artifacts = tempfile::tempdir()?;
-        let _env = ArtifactsEnvGuard::set(artifacts.path());
-        let gallery_root = tempfile::tempdir()?;
-        let (store, _) = file_backed_gallery_store(&artifacts.path().join("gallery.db"))?;
-        let gallery = store.open(
-            gallery_root.path().to_str().ok_or("gallery root UTF-8")?,
-            GalleryMode::ReadOnly,
-        )?;
+        let (_env_lock, artifacts, _env, gallery_root, store, _driver, gallery) =
+            media_test_env().await?;
         let gallery_state = Arc::new(std::sync::Mutex::new(Some(GalleryState {
             path: gallery_root.path().to_path_buf(),
             mode: GalleryMode::ReadOnly,
@@ -2585,17 +2582,10 @@ mod tool_behavior_tests {
     -> Result<(), Box<dyn std::error::Error>> {
         use hkask_storage::database::driver::DatabaseDriver;
 
-        let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
-        let artifacts = tempfile::tempdir()?;
-        let _env = ArtifactsEnvGuard::set(artifacts.path());
-        let gallery_root = tempfile::tempdir()?;
+        let (_env_lock, artifacts, _env, gallery_root, store, driver, gallery) =
+            media_test_env().await?;
         let source = gallery_root.path().join("source.wav");
         create_real_audio(&source).await?;
-        let (store, driver) = file_backed_gallery_store(&artifacts.path().join("gallery.db"))?;
-        let gallery = store.open(
-            gallery_root.path().to_str().ok_or("gallery root UTF-8")?,
-            GalleryMode::ReadOnly,
-        )?;
         driver.execute(
             "CREATE TRIGGER fail_audio_lineage BEFORE INSERT ON gallery_generation \
              WHEN NEW.op = 'audio_trim' BEGIN SELECT RAISE(ABORT, 'injected audio lineage failure'); END",
@@ -2643,15 +2633,8 @@ mod tool_behavior_tests {
     -> Result<(), Box<dyn std::error::Error>> {
         use hkask_storage::database::driver::DatabaseDriver;
 
-        let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
-        let artifacts = tempfile::tempdir()?;
-        let _env = ArtifactsEnvGuard::set(artifacts.path());
-        let gallery_root = tempfile::tempdir()?;
-        let (store, driver) = file_backed_gallery_store(&artifacts.path().join("gallery.db"))?;
-        let gallery = store.open(
-            gallery_root.path().to_str().ok_or("gallery root UTF-8")?,
-            GalleryMode::ReadOnly,
-        )?;
+        let (_env_lock, artifacts, _env, gallery_root, store, driver, gallery) =
+            media_test_env().await?;
         driver.execute(
             "CREATE TRIGGER fail_omc_graph BEFORE INSERT ON gallery_omc_creation_graph \
              BEGIN SELECT RAISE(ABORT, 'injected OMC graph failure'); END",
@@ -2801,20 +2784,10 @@ mod tool_behavior_tests {
     async fn video_clip_gallery_failure_rolls_back_real_ffmpeg_output()
     -> Result<(), Box<dyn std::error::Error>> {
         use hkask_storage::database::driver::DatabaseDriver;
-        let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
-        let artifacts = tempfile::tempdir()?;
-        let _env = ArtifactsEnvGuard::set(artifacts.path());
-        let gallery_root = tempfile::tempdir()?;
+        let (_env_lock, artifacts, _env, gallery_root, store, driver, gallery) =
+            media_test_env().await?;
         let source = gallery_root.path().join("source.mp4");
         create_real_video(&source).await?;
-        let (store, driver) = file_backed_gallery_store(&artifacts.path().join("gallery.db"))?;
-        let gallery = store.open(
-            gallery_root
-                .path()
-                .to_str()
-                .ok_or("gallery root is not UTF-8")?,
-            GalleryMode::ReadOnly,
-        )?;
         driver.execute(
             "CREATE TRIGGER fail_video_clip_asset BEFORE INSERT ON gallery_images \
              BEGIN SELECT RAISE(ABORT, 'injected gallery failure'); END",
@@ -2904,20 +2877,10 @@ mod tool_behavior_tests {
     -> Result<(), Box<dyn std::error::Error>> {
         use hkask_storage::database::driver::DatabaseDriver;
 
-        let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
-        let artifacts = tempfile::tempdir()?;
-        let _env = ArtifactsEnvGuard::set(artifacts.path());
-        let gallery_root = tempfile::tempdir()?;
+        let (_env_lock, artifacts, _env, gallery_root, store, driver, gallery) =
+            media_test_env().await?;
         let source = gallery_root.path().join("source.mp4");
         create_real_video(&source).await?;
-        let (store, driver) = file_backed_gallery_store(&artifacts.path().join("gallery.db"))?;
-        let gallery = store.open(
-            gallery_root
-                .path()
-                .to_str()
-                .ok_or("gallery root is not UTF-8")?,
-            GalleryMode::ReadOnly,
-        )?;
         driver.execute(
             "CREATE TRIGGER fail_video_clip_lineage BEFORE INSERT ON gallery_generation \
              WHEN NEW.op = 'video_clip' BEGIN SELECT RAISE(ABORT, 'injected lineage failure'); END",
@@ -3073,17 +3036,10 @@ mod tool_behavior_tests {
     #[tokio::test]
     async fn video_to_gif_publishes_durable_asset_and_lineage_after_server_drop()
     -> Result<(), Box<dyn std::error::Error>> {
-        let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
-        let artifacts = tempfile::tempdir()?;
-        let _env = ArtifactsEnvGuard::set(artifacts.path());
-        let gallery_root = tempfile::tempdir()?;
+        let (_env_lock, artifacts, _env, gallery_root, store, _driver, gallery) =
+            media_test_env().await?;
         let source = gallery_root.path().join("source.mp4");
         create_real_video(&source).await?;
-        let (store, _) = file_backed_gallery_store(&artifacts.path().join("gallery.db"))?;
-        let gallery = store.open(
-            gallery_root.path().to_str().ok_or("gallery root UTF-8")?,
-            GalleryMode::ReadOnly,
-        )?;
         let server = server_with_gallery(store.clone(), gallery.id, gallery_root.path());
         let content = content_of(
             &server
@@ -3125,17 +3081,10 @@ mod tool_behavior_tests {
     #[tokio::test]
     async fn video_add_caption_publishes_durable_asset_and_lineage_after_server_drop()
     -> Result<(), Box<dyn std::error::Error>> {
-        let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
-        let artifacts = tempfile::tempdir()?;
-        let _env = ArtifactsEnvGuard::set(artifacts.path());
-        let gallery_root = tempfile::tempdir()?;
+        let (_env_lock, artifacts, _env, gallery_root, store, _driver, gallery) =
+            media_test_env().await?;
         let source = gallery_root.path().join("source.mp4");
         create_real_video(&source).await?;
-        let (store, _) = file_backed_gallery_store(&artifacts.path().join("gallery.db"))?;
-        let gallery = store.open(
-            gallery_root.path().to_str().ok_or("gallery root UTF-8")?,
-            GalleryMode::ReadOnly,
-        )?;
         let server = server_with_gallery(store.clone(), gallery.id, gallery_root.path());
         let content = content_of(
             &server
@@ -3175,18 +3124,11 @@ mod tool_behavior_tests {
     #[tokio::test]
     async fn video_remix_publishes_durable_asset_and_cleans_intermediates()
     -> Result<(), Box<dyn std::error::Error>> {
-        let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
-        let artifacts = tempfile::tempdir()?;
-        let _env = ArtifactsEnvGuard::set(artifacts.path());
-        let gallery_root = tempfile::tempdir()?;
+        let (_env_lock, artifacts, _env, gallery_root, store, _driver, gallery) =
+            media_test_env().await?;
         let source = gallery_root.path().join("source.mp4");
         create_real_video(&source).await?;
         let before = temp_media_files()?;
-        let (store, _) = file_backed_gallery_store(&artifacts.path().join("gallery.db"))?;
-        let gallery = store.open(
-            gallery_root.path().to_str().ok_or("gallery root UTF-8")?,
-            GalleryMode::ReadOnly,
-        )?;
         let server = server_with_gallery(store.clone(), gallery.id, gallery_root.path());
         let content = content_of(
             &server
@@ -3239,15 +3181,8 @@ mod tool_behavior_tests {
     #[tokio::test]
     async fn video_from_images_publishes_durable_asset_and_lineage_after_server_drop()
     -> Result<(), Box<dyn std::error::Error>> {
-        let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
-        let artifacts = tempfile::tempdir()?;
-        let _env = ArtifactsEnvGuard::set(artifacts.path());
-        let gallery_root = tempfile::tempdir()?;
-        let (store, _) = file_backed_gallery_store(&artifacts.path().join("gallery.db"))?;
-        let gallery = store.open(
-            gallery_root.path().to_str().ok_or("gallery root UTF-8")?,
-            GalleryMode::ReadOnly,
-        )?;
+        let (_env_lock, artifacts, _env, gallery_root, store, _driver, gallery) =
+            media_test_env().await?;
         let first = gallery_root.path().join("first.png");
         let second = gallery_root.path().join("second.png");
         add_test_image(&store, &gallery.id, &first, [255, 0, 0])?;
@@ -3296,10 +3231,8 @@ mod tool_behavior_tests {
     #[tokio::test]
     async fn video_concat_publishes_durable_asset_and_lineage_after_server_drop()
     -> Result<(), Box<dyn std::error::Error>> {
-        let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
-        let artifacts = tempfile::tempdir()?;
-        let _env = ArtifactsEnvGuard::set(artifacts.path());
-        let gallery_root = tempfile::tempdir()?;
+        let (_env_lock, artifacts, _env, gallery_root, store, _driver, gallery) =
+            media_test_env().await?;
         let first = gallery_root.path().join("first.mp4");
         let second = gallery_root.path().join("second.mp4");
         create_real_video(&first).await?;
@@ -3308,11 +3241,6 @@ mod tool_behavior_tests {
             first.to_string_lossy().into_owned(),
             second.to_string_lossy().into_owned(),
         ];
-        let (store, _) = file_backed_gallery_store(&artifacts.path().join("gallery.db"))?;
-        let gallery = store.open(
-            gallery_root.path().to_str().ok_or("gallery root UTF-8")?,
-            GalleryMode::ReadOnly,
-        )?;
         let server = server_with_gallery(store.clone(), gallery.id, gallery_root.path());
         let content = content_of(
             &server
@@ -3344,18 +3272,11 @@ mod tool_behavior_tests {
     async fn local_video_publication_failure_rolls_back_gif_and_remix_intermediates()
     -> Result<(), Box<dyn std::error::Error>> {
         use hkask_storage::database::driver::DatabaseDriver;
-        let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
-        let artifacts = tempfile::tempdir()?;
-        let _env = ArtifactsEnvGuard::set(artifacts.path());
-        let gallery_root = tempfile::tempdir()?;
+        let (_env_lock, artifacts, _env, gallery_root, store, driver, gallery) =
+            media_test_env().await?;
         let source = gallery_root.path().join("source.mp4");
         create_real_video(&source).await?;
         let before = temp_media_files()?;
-        let (store, driver) = file_backed_gallery_store(&artifacts.path().join("gallery.db"))?;
-        let gallery = store.open(
-            gallery_root.path().to_str().ok_or("gallery root UTF-8")?,
-            GalleryMode::ReadOnly,
-        )?;
         driver.execute(
             "CREATE TRIGGER fail_remix_asset BEFORE INSERT ON gallery_images \
              BEGIN SELECT RAISE(ABORT, 'injected gallery failure'); END",
@@ -3405,17 +3326,10 @@ mod tool_behavior_tests {
     -> Result<(), Box<dyn std::error::Error>> {
         use hkask_storage::database::driver::DatabaseDriver;
 
-        let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
-        let artifacts = tempfile::tempdir()?;
-        let _env = ArtifactsEnvGuard::set(artifacts.path());
-        let gallery_root = tempfile::tempdir()?;
+        let (_env_lock, artifacts, _env, gallery_root, store, driver, gallery) =
+            media_test_env().await?;
         let source = gallery_root.path().join("source.mp4");
         create_real_video(&source).await?;
-        let (store, driver) = file_backed_gallery_store(&artifacts.path().join("gallery.db"))?;
-        let gallery = store.open(
-            gallery_root.path().to_str().ok_or("gallery root UTF-8")?,
-            GalleryMode::ReadOnly,
-        )?;
         driver.execute(
             "CREATE TRIGGER fail_local_video_lineage BEFORE INSERT ON gallery_generation \
              WHEN NEW.op = 'video_to_gif' BEGIN SELECT RAISE(ABORT, 'injected migrated lineage failure'); END",
@@ -3592,15 +3506,8 @@ mod tool_behavior_tests {
     #[tokio::test]
     async fn video_from_images_rejects_invalid_and_webp_formats()
     -> Result<(), Box<dyn std::error::Error>> {
-        let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
-        let artifacts = tempfile::tempdir()?;
-        let _env = ArtifactsEnvGuard::set(artifacts.path());
-        let gallery_root = tempfile::tempdir()?;
-        let (store, _) = file_backed_gallery_store(&artifacts.path().join("gallery.db"))?;
-        let gallery = store.open(
-            gallery_root.path().to_str().ok_or("gallery root UTF-8")?,
-            GalleryMode::ReadOnly,
-        )?;
+        let (_env_lock, artifacts, _env, gallery_root, store, _driver, gallery) =
+            media_test_env().await?;
         let image = gallery_root.path().join("frame.png");
         add_test_image(&store, &gallery.id, &image, [255, 0, 0])?;
         let server = server_with_gallery(store, gallery.id, gallery_root.path());
@@ -4696,15 +4603,8 @@ mod tool_behavior_tests {
             EductRenderEdlRequest, EductStoreLayerRequest, EductStoreTranscriptRequest,
         };
 
-        let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
-        let artifacts = tempfile::tempdir()?;
-        let _env = ArtifactsEnvGuard::set(artifacts.path());
-        let gallery_root = tempfile::tempdir()?;
-        let (store, _) = file_backed_gallery_store(&artifacts.path().join("gallery.db"))?;
-        let gallery = store.open(
-            gallery_root.path().to_str().ok_or("gallery root UTF-8")?,
-            GalleryMode::ReadOnly,
-        )?;
+        let (_env_lock, artifacts, _env, gallery_root, store, _driver, gallery) =
+            media_test_env().await?;
         let server = server_with_gallery(store.clone(), gallery.id, gallery_root.path());
         // Generate a real 2-second WAV via ffmpeg — the same binary the
         // render path uses; the test proves the full loop (EDL → clip plan

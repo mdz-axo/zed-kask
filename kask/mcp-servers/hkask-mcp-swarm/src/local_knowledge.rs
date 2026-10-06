@@ -870,8 +870,9 @@ mod tests {
             })
         }
 
-        fn embed<'a>(&'a self, _model: &str, texts: &[String]) -> hkask_types::EmbedFuture<'a> {
+        fn embed<'a>(&'a self, model: &str, texts: &[String]) -> hkask_types::EmbedFuture<'a> {
             let dim = self.dim;
+            let requested_model = model.to_string();
             let vectors = match self.mode {
                 EmbedMode::Exact => constant_vectors(texts.len(), dim),
                 EmbedMode::OneShort => constant_vectors(texts.len().saturating_sub(1), dim),
@@ -893,7 +894,15 @@ mod tests {
                     })
                     .collect(),
             };
-            Box::pin(async move { Ok(vectors) })
+            Box::pin(async move {
+                Ok(hkask_types::EmbeddingBatch {
+                    vectors,
+                    requested_model,
+                    actual_model: None,
+                    usage: hkask_types::InferenceUsage::default(),
+                    cost_usd: None,
+                })
+            })
         }
     }
 
