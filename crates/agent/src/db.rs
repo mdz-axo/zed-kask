@@ -426,6 +426,7 @@ impl ThreadsDatabase {
     }
 
     pub fn new(executor: BackgroundExecutor) -> Result<Self> {
+        let mut file_backed = false;
         let connection = if *ZED_STATELESS {
             Connection::open_memory(Some("THREAD_FALLBACK_DB"))
         } else if cfg!(any(feature = "test-support", test)) {
@@ -459,6 +460,7 @@ impl ThreadsDatabase {
             // Pre-release: no back-compat. The override is always wired early
             // in `main.rs` (user-independent), so this branch is the
             // production path.
+            file_backed = true;
             let kask_path = crate::threads_db_path_override().with_context(|| {
                 "threads_db_path_override not wired — main.rs must call \
                  set_threads_db_path_override before constructing ThreadsDatabase"
@@ -527,15 +529,23 @@ impl ThreadsDatabase {
             write_gate: Mutex::new(None),
         };
 
+        // zed-kask: D28 — converge legacy whole-thread blobs at startup on
+        // the real database: the lazy first-open migration only reaches
+        // threads someone opens, so the archived rest is walked here once
+        // (a no-op SELECT once the database is converged).
+        if file_backed {
+            db.backfill_legacy_threads().detach();
+        }
+
         Ok(db)
     }
 
-    fn save_thread_sync(
-        connection: &Arc<Mutex<Connection>>,
-        id: acp::SessionId,
-        thread: DbThread,
-        folder_paths: &PathList,
-    ) -> Result<()> {
+    /// zed-kask: D28 — serialize the metadata blob shared by the save
+    /// path and the legacy backfill: the thread with an EMPTY messages
+    /// list (every field except the messages), version-wrapped and
+    /// zstd-compressed. Returns the taken messages alongside the blob so
+    /// the caller writes them as rows.
+    fn serialize_metadata(thread: DbThread) -> Result<(Vec<Arc<DbMessage>>, DataType, Vec<u8>)> {
         const COMPRESSION_LEVEL: i32 = 3;
 
         #[derive(Serialize)]
@@ -546,6 +556,21 @@ impl ThreadsDatabase {
         }
 
         let mut thread = thread;
+        let messages = std::mem::take(&mut thread.messages);
+        let json_data = serde_json::to_string(&SerializedThread {
+            thread,
+            version: DbThread::VERSION,
+        })?;
+        let data = zstd::encode_all(json_data.as_bytes(), COMPRESSION_LEVEL)?;
+        Ok((messages, DataType::Zstd, data))
+    }
+
+    fn save_thread_sync(
+        connection: &Arc<Mutex<Connection>>,
+        id: acp::SessionId,
+        thread: DbThread,
+        folder_paths: &PathList,
+    ) -> Result<()> {
         let title = thread.title.to_string();
         let updated_at = thread.updated_at.to_rfc3339();
         let parent_id = thread
@@ -563,23 +588,12 @@ impl ThreadsDatabase {
                 )
             };
 
-        // zed-kask: D28 — per-message storage. The metadata blob is the
-        // thread serialized with an EMPTY messages list (every field except
-        // the messages); the messages are upserted one row each. Upserting
-        // all messages on every save is deliberate: messages mutate in
-        // place after being saved (tool results fill in mid-turn), so
-        // append-only incremental writes would leave stale rows. The
-        // dominant legacy save cost — zstd-compressing the whole thread
-        // on every save — is gone; the metadata blob is small.
-        let messages = std::mem::take(&mut thread.messages);
-        let json_data = serde_json::to_string(&SerializedThread {
-            thread,
-            version: DbThread::VERSION,
-        })?;
-
-        let compressed = zstd::encode_all(json_data.as_bytes(), COMPRESSION_LEVEL)?;
-        let data_type = DataType::Zstd;
-        let data = compressed;
+        // zed-kask: D28 — per-message storage: the metadata blob plus one
+        // row per message (upserted on every save — messages mutate in
+        // place after being saved, so append-only writes would leave stale
+        // rows; the dominant legacy save cost — zstd-compressing the whole
+        // thread on every save — is gone).
+        let (messages, data_type, data) = Self::serialize_metadata(thread)?;
 
         // Use the thread's updated_at as created_at for new threads.
         // This ensures that the creation time reflects when the thread was conceptually
@@ -587,35 +601,21 @@ impl ThreadsDatabase {
         let created_at = updated_at.clone();
 
         let connection = connection.lock();
-
-        // One transaction: the threads row and the message rows move
-        // together, so a crash mid-save can never leave a format marker
-        // pointing at partially-written rows.
-        connection.exec("BEGIN IMMEDIATE")?()
-            .map_err(|e| e.context("Failed to begin thread save transaction"))?;
-        match Self::save_thread_in_transaction(
-            &connection,
-            &id,
-            &title,
-            &updated_at,
-            parent_id,
-            folder_paths_str,
-            folder_paths_order_str,
-            data_type,
-            data,
-            &created_at,
-            &messages,
-        ) {
-            Ok(()) => {
-                connection.exec("COMMIT")?()
-                    .map_err(|e| e.context("Failed to commit thread save transaction"))?;
-                Ok(())
-            }
-            Err(error) => {
-                Self::rollback(&connection, "thread save");
-                Err(error)
-            }
-        }
+        Self::in_transaction(&connection, "thread save", || {
+            Self::save_thread_in_transaction(
+                &connection,
+                &id,
+                &title,
+                &updated_at,
+                parent_id,
+                folder_paths_str,
+                folder_paths_order_str,
+                data_type,
+                data,
+                &created_at,
+                &messages,
+            )
+        })
     }
 
     /// Best-effort rollback on an already-failing path: the original error
@@ -630,6 +630,29 @@ impl ThreadsDatabase {
             }
             Err(error) => {
                 log::warn!("failed to prepare {operation} rollback: {error:?}");
+            }
+        }
+    }
+
+    /// zed-kask: D28 — run one unit of thread-storage work in a single
+    /// transaction: BEGIN IMMEDIATE, the unit, then COMMIT — or ROLLBACK
+    /// with the original error propagated (a rollback failure is logged,
+    /// never silently discarded). Shared by saves, the lazy first-open
+    /// migration, and the legacy backfill so a crash can never leave a
+    /// format marker pointing at partially-written rows.
+    fn in_transaction(
+        connection: &Connection,
+        operation: &str,
+        unit: impl FnOnce() -> Result<()>,
+    ) -> Result<()> {
+        connection.exec("BEGIN IMMEDIATE")?()
+            .map_err(|e| e.context(format!("Failed to begin {operation} transaction")))?;
+        match unit() {
+            Ok(()) => connection.exec("COMMIT")?()
+                .map_err(|e| e.context(format!("Failed to commit {operation} transaction"))),
+            Err(error) => {
+                Self::rollback(connection, operation);
+                Err(error)
             }
         }
     }
@@ -826,27 +849,94 @@ impl ThreadsDatabase {
         id: &acp::SessionId,
         thread: &DbThread,
     ) -> Result<()> {
-        connection.exec("BEGIN IMMEDIATE")?()
-            .map_err(|e| e.context("Failed to begin thread migration transaction"))?;
-        let result = (|| -> Result<()> {
+        Self::in_transaction(connection, "thread migration", || {
             Self::write_message_rows(connection, id, &thread.messages)?;
             let mut set_format = connection.exec_bound::<(i64, Arc<str>)>(indoc! {"
                 UPDATE threads SET format = ? WHERE id = ?
             "})?;
             set_format((1, id.0.clone()))?;
             Ok(())
-        })();
-        match result {
-            Ok(()) => {
-                connection.exec("COMMIT")?()
-                    .map_err(|e| e.context("Failed to commit thread migration transaction"))?;
-                Ok(())
+        })
+    }
+
+    /// zed-kask: D28 — convert one legacy whole-thread blob to per-message
+    /// storage through the production parse path, in one transaction: the
+    /// message rows via the production row writer, and a metadata-only
+    /// blob replacing the fat one (once the rows and the format marker
+    /// commit together, the blob's crash-recovery role is done). Only
+    /// `data_type`, `data` and `format` are written — the row's own
+    /// summary, timestamps and folder paths stay untouched. A thread
+    /// deleted between the walk and its unit is already converged.
+    fn backfill_legacy_thread(connection: &Connection, id: &acp::SessionId) -> Result<()> {
+        let (data_type, data) = {
+            let mut select = connection.select_bound::<Arc<str>, (DataType, Vec<u8>)>(indoc! {"
+                    SELECT data_type, data FROM threads WHERE id = ? LIMIT 1
+                "})?;
+            match select(id.0.clone())?.into_iter().next() {
+                Some((data_type, data)) => (data_type, data),
+                None => return Ok(()),
             }
-            Err(error) => {
-                Self::rollback(connection, "thread migration");
-                Err(error)
+        };
+        let thread = Self::deserialize_thread(data_type, data)?;
+        let (messages, data_type, data) = Self::serialize_metadata(thread)?;
+
+        Self::in_transaction(connection, "thread backfill", || {
+            Self::write_message_rows(connection, id, &messages)?;
+            let mut update = connection.exec_bound::<(DataType, Vec<u8>, Arc<str>)>(indoc! {"
+                    UPDATE threads SET data_type = ?1, data = ?2, format = 1 WHERE id = ?3
+                "})?;
+            update((data_type, data, id.0.clone()))?;
+            Ok(())
+        })
+    }
+
+    /// zed-kask: D28 — backfill: convert every remaining legacy
+    /// whole-thread blob to per-message rows. The lazy first-open
+    /// migration only reaches threads someone opens; archived threads
+    /// nothing will ever open stay format 0 forever, so this walk runs at
+    /// startup on the file-backed database and converges them. Each unit
+    /// is one idempotent transaction; an interrupted backfill resumes on
+    /// the next start (the walk selects only format-0 rows). A thread
+    /// whose blob fails to parse is logged and skipped — it stays format
+    /// 0 and fails on open exactly as it would today, never blocking the
+    /// rest of the walk. Returns `(converted, failed)`.
+    pub fn backfill_legacy_threads(&self) -> Task<Result<(usize, usize)>> {
+        let connection = self.connection.clone();
+        let timer = self.executor.clone();
+        self.executor.spawn(async move {
+            let ids = {
+                let connection = connection.lock();
+                let mut select = connection.select_bound::<(), Arc<str>>(indoc! {"
+                        SELECT id FROM threads WHERE format = 0
+                    "})?;
+                select(())?
+            };
+            let mut converted = 0usize;
+            let mut failed = 0usize;
+            for id in ids {
+                let result = {
+                    let connection = connection.lock();
+                    Self::backfill_legacy_thread(&connection, &acp::SessionId::new(id))
+                };
+                match result {
+                    Ok(()) => converted += 1,
+                    Err(error) => {
+                        log::warn!("legacy thread backfill skipped a thread: {error:#}");
+                        failed += 1;
+                    }
+                }
+                // Throttle: hand the connection back to thread opens
+                // between units.
+                timer.timer(std::time::Duration::from_millis(1)).await;
             }
-        }
+            if converted > 0 || failed > 0 {
+                log::info!(
+                    "legacy thread backfill: {converted} converted, {failed} skipped \
+                     (unparseable blobs stay format 0 and fail on open, as before)"
+                );
+            }
+            Ok((converted, failed))
+        })
     }
 
     pub fn save_thread(
@@ -1140,6 +1230,64 @@ mod tests {
         (0..count).map(|_| Arc::new(DbMessage::Resume)).collect()
     }
 
+    /// Insert a raw legacy-format row (format 0) by hand — the pre-D28
+    /// storage format — for pins that need to control the blob bytes.
+    fn insert_legacy_row(
+        database: &ThreadsDatabase,
+        thread_id: &acp::SessionId,
+        summary: &str,
+        updated_at: String,
+        blob: Vec<u8>,
+    ) {
+        let connection = database.connection.lock();
+        let mut insert = connection
+            .exec_bound::<(Arc<str>, String, String, DataType, Vec<u8>, String)>(indoc! {"
+                INSERT INTO threads (id, summary, updated_at, data_type, data, created_at)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            "})
+            .unwrap();
+        insert((
+            thread_id.0.clone(),
+            summary.to_string(),
+            updated_at.clone(),
+            DataType::Zstd,
+            blob,
+            updated_at,
+        ))
+        .unwrap();
+    }
+
+    /// Insert a legacy whole-thread blob (format 0) built from a thread
+    /// with `message_count` messages — the pre-D28 storage format.
+    fn insert_legacy_blob(
+        database: &ThreadsDatabase,
+        thread_id: &acp::SessionId,
+        title: &str,
+        message_count: usize,
+    ) {
+        let mut thread = make_thread(title, Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap());
+        thread.messages = resume_messages(message_count);
+        #[derive(Serialize)]
+        struct LegacySerializedThread<'a> {
+            #[serde(flatten)]
+            thread: &'a DbThread,
+            version: &'static str,
+        }
+        let json = serde_json::to_string(&LegacySerializedThread {
+            thread: &thread,
+            version: DbThread::VERSION,
+        })
+        .unwrap();
+        let blob = zstd::encode_all(json.as_bytes(), 3).unwrap();
+        insert_legacy_row(
+            database,
+            thread_id,
+            title,
+            thread.updated_at.to_rfc3339(),
+            blob,
+        );
+    }
+
     fn thread_format(database: &ThreadsDatabase, id: &acp::SessionId) -> i64 {
         let connection = database.connection.lock();
         let mut select = connection
@@ -1237,41 +1385,7 @@ mod tests {
     async fn test_legacy_thread_migrates_on_first_load(cx: &mut TestAppContext) {
         let database = ThreadsDatabase::new(cx.executor()).unwrap();
         let thread_id = session_id("legacy");
-        let mut thread = make_thread("Legacy", Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap());
-        thread.messages = resume_messages(2);
-
-        // Write a legacy whole-thread blob (format 0) by hand — the
-        // pre-D28 storage format.
-        #[derive(Serialize)]
-        struct LegacySerializedThread<'a> {
-            #[serde(flatten)]
-            thread: &'a DbThread,
-            version: &'static str,
-        }
-        let json = serde_json::to_string(&LegacySerializedThread {
-            thread: &thread,
-            version: DbThread::VERSION,
-        })
-        .unwrap();
-        let blob = zstd::encode_all(json.as_bytes(), 3).unwrap();
-        {
-            let connection = database.connection.lock();
-            let mut insert = connection
-                .exec_bound::<(Arc<str>, String, String, DataType, Vec<u8>, String)>(indoc! {"
-                    INSERT INTO threads (id, summary, updated_at, data_type, data, created_at)
-                    VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-                "})
-                .unwrap();
-            insert((
-                thread_id.0.clone(),
-                "Legacy".to_string(),
-                thread.updated_at.to_rfc3339(),
-                DataType::Zstd,
-                blob,
-                thread.updated_at.to_rfc3339(),
-            ))
-            .unwrap();
-        }
+        insert_legacy_blob(&database, &thread_id, "Legacy", 2);
 
         // First load returns the thread AND migrates it to rows.
         let loaded = database
@@ -1295,6 +1409,111 @@ mod tests {
             .expect("migrated thread should load");
         assert_eq!(reloaded.messages.len(), 2);
         assert_eq!(reloaded.title.as_ref(), "Legacy");
+    }
+
+    /// zed-kask: D28 — the startup backfill converges legacy threads
+    /// nothing will ever open: a format-0 blob is converted to rows plus
+    /// a metadata-only blob without any load_thread call, and the thread
+    /// still opens afterwards.
+    #[gpui::test]
+    async fn test_backfill_converts_legacy_threads_without_opening(cx: &mut TestAppContext) {
+        let database = ThreadsDatabase::new(cx.executor()).unwrap();
+        let thread_id = session_id("backfill");
+        insert_legacy_blob(&database, &thread_id, "Backfill", 2);
+
+        let (converted, failed) = database.backfill_legacy_threads().await.unwrap();
+        assert_eq!((converted, failed), (1, 0));
+        assert_eq!(thread_format(&database, &thread_id), 1, "converted");
+        assert_eq!(message_row_count(&database, &thread_id), 2);
+
+        // The blob is now metadata-only (an empty messages list).
+        {
+            let connection = database.connection.lock();
+            let mut select = connection
+                .select_bound::<Arc<str>, (DataType, Vec<u8>)>(
+                    "SELECT data_type, data FROM threads WHERE id = ? LIMIT 1",
+                )
+                .unwrap();
+            let (data_type, data) = select(thread_id.0.clone())
+                .unwrap()
+                .into_iter()
+                .next()
+                .unwrap();
+            let metadata = ThreadsDatabase::deserialize_thread(data_type, data).unwrap();
+            assert!(
+                metadata.messages.is_empty(),
+                "the backfilled blob is metadata-only"
+            );
+        }
+
+        // The thread still opens through the per-message read path.
+        let loaded = database
+            .load_thread(thread_id.clone())
+            .await
+            .unwrap()
+            .expect("backfilled thread should load");
+        assert_eq!(loaded.messages.len(), 2);
+        assert_eq!(loaded.title.as_ref(), "Backfill");
+    }
+
+    /// zed-kask: D28 — the backfill is idempotent and resumable: a second
+    /// run is a no-op (the walk selects only format-0 rows), so an
+    /// interrupted backfill resumes cleanly on the next start.
+    #[gpui::test]
+    async fn test_backfill_is_idempotent(cx: &mut TestAppContext) {
+        let database = ThreadsDatabase::new(cx.executor()).unwrap();
+        let first = session_id("backfill-a");
+        let second = session_id("backfill-b");
+        insert_legacy_blob(&database, &first, "First", 2);
+        insert_legacy_blob(&database, &second, "Second", 3);
+
+        let (converted, failed) = database.backfill_legacy_threads().await.unwrap();
+        assert_eq!((converted, failed), (2, 0));
+        assert_eq!(thread_format(&database, &first), 1);
+        assert_eq!(thread_format(&database, &second), 1);
+        assert_eq!(message_row_count(&database, &first), 2);
+        assert_eq!(message_row_count(&database, &second), 3);
+
+        // Second run: nothing left to convert, nothing duplicated.
+        let (converted, failed) = database.backfill_legacy_threads().await.unwrap();
+        assert_eq!((converted, failed), (0, 0));
+        assert_eq!(message_row_count(&database, &first), 2);
+        assert_eq!(message_row_count(&database, &second), 3);
+    }
+
+    /// zed-kask: D28 — an unparseable legacy blob is skipped, not fatal:
+    /// it stays format 0 (and keeps failing on open, exactly as before
+    /// the backfill existed) while the rest of the walk converts.
+    #[gpui::test]
+    async fn test_backfill_skips_unparseable_blobs(cx: &mut TestAppContext) {
+        let database = ThreadsDatabase::new(cx.executor()).unwrap();
+        let good = session_id("backfill-good");
+        insert_legacy_blob(&database, &good, "Good", 2);
+        let corrupt = session_id("backfill-corrupt");
+        insert_legacy_row(
+            &database,
+            &corrupt,
+            "Corrupt",
+            "2024-01-01T00:00:00+00:00".to_string(),
+            b"not a zstd stream".to_vec(),
+        );
+
+        let (converted, failed) = database.backfill_legacy_threads().await.unwrap();
+        assert_eq!((converted, failed), (1, 1));
+        assert_eq!(
+            thread_format(&database, &good),
+            1,
+            "the good thread converted"
+        );
+        assert_eq!(
+            thread_format(&database, &corrupt),
+            0,
+            "the corrupt thread stays format 0 for the loud open failure"
+        );
+        assert!(
+            database.load_thread(corrupt.clone()).await.is_err(),
+            "the corrupt blob still fails on open, as before the backfill"
+        );
     }
 
     #[gpui::test]
