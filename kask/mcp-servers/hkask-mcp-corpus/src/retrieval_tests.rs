@@ -4,10 +4,7 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
 use hkask_types::template::LLMParameters;
-use hkask_types::{
-    ChatToolDefinition, EmbeddingGenerationError, InferenceError, InferencePort, InferenceResult,
-    WebID,
-};
+use hkask_types::{ChatToolDefinition, InferenceError, InferencePort, InferenceResult, WebID};
 use rmcp::handler::server::wrapper::Parameters;
 use serde_json::{Value, json};
 
@@ -108,12 +105,7 @@ impl InferencePort for RecordingPort {
         })
     }
 
-    fn embed(
-        &self,
-        model: &str,
-        texts: &[String],
-    ) -> hkask_types::EmbedFuture<'_>
-    {
+    fn embed(&self, model: &str, texts: &[String]) -> hkask_types::EmbedFuture<'_> {
         self.inputs.lock().expect("inputs").extend_from_slice(texts);
         let count = texts.len();
         let requested_model = model.to_string();

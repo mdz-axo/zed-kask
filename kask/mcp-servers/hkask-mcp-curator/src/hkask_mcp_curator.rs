@@ -565,6 +565,9 @@ impl CuratorServer {
             .into_iter()
             .next()
             .ok_or(SemanticRecallError::NoVector)?;
+        // S-01 completion: the embedding call's measured usage flows to the
+        // executing tool's envelope (the consult/search retrieval family).
+        hkask_mcp_server::server::record_tool_usage(batch.usage.clone(), batch.cost_usd);
         self.semantic_recall_fragments_for_vector(
             &query_vector,
             limit,
@@ -717,6 +720,9 @@ impl CuratorServer {
             let query_vector = batch.vectors.into_iter().next().ok_or_else(|| {
                 McpToolError::unavailable("Federated query embedding returned no vector")
             })?;
+            // S-01 completion: the federated embedding call's measured
+            // usage flows to the executing tool's envelope.
+            hkask_mcp_server::server::record_tool_usage(batch.usage.clone(), batch.cost_usd);
 
             let mut statuses = Vec::new();
             let mut batches = Vec::new();

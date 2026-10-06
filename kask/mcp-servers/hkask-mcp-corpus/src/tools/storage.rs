@@ -153,6 +153,12 @@ impl CorpusServer {
                 .into_iter()
                 .next()
                 .unwrap_or_default();
+            // S-01 completion: the query embedding call's measured usage
+            // flows to the executing tool's envelope.
+            hkask_mcp_server::server::record_tool_usage(
+                query_batch.usage.clone(),
+                query_batch.cost_usd,
+            );
 
             if query_embedding.is_empty() {
                 return Err(McpToolError::unavailable(
