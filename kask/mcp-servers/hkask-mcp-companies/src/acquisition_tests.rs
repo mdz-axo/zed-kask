@@ -2948,8 +2948,8 @@ async fn expectations_gap_data_unavailable_is_named_reason_report_not_error() {
 /// operator requirement 2026-10-05: every listed company gets an
 /// include-or-exclude verdict. One exchange's ticker-list outage excludes
 /// its securities with the outage named (distinct from a genuine
-/// ineligible-security-type exclusion); an issuer whose bulk AND fallback
-/// fundamentals both fail gets an unavailable row with the reason — and
+/// ineligible-security-type exclusion); an issuer whose per-symbol
+/// fundamentals fetch fails gets an unavailable row with the reason — and
 /// the job completes.
 /// dcterms:identifier: CompaniesServer::company_screener / screening::prepare_expectations_pass_set + enrich_pending_issuers
 #[tokio::test]
@@ -3003,12 +3003,9 @@ async fn screen_data_failures_exclude_with_reasons_and_complete() {
                 ]),
             );
         }
-        // The surviving issuer's fundamentals are down on BOTH paths —
-        // it must land as an unavailable row with the reason, and the job
-        // must still complete.
-        if path.starts_with("/eodhd/bulk-fundamentals/PA") {
-            return (500, json!({"error": "fixture bulk outage"}));
-        }
+        // The surviving issuer's fundamentals fetch is down — it must
+        // land as an unavailable row with the reason, and the job must
+        // still complete.
         if path.starts_with("/eodhd/fundamentals/PAR.PA") {
             return (500, json!({"error": "fixture fundamentals outage"}));
         }
@@ -3101,17 +3098,8 @@ async fn screen_data_failures_exclude_with_reasons_and_complete() {
                 "phase_timings must carry pass_set_ms: {phase_timings}"
             );
             assert!(
-                phase_timings["bulk_fetch_ms"].is_u64(),
-                "phase_timings must carry bulk_fetch_ms: {phase_timings}"
-            );
-            assert!(
                 phase_timings["enrichment_analysis_ms"].is_u64(),
                 "phase_timings must carry enrichment_analysis_ms: {phase_timings}"
-            );
-            assert_eq!(
-                phase_timings["fallback_attempts"],
-                json!(1),
-                "the bulk outage must drive exactly one per-issuer fallback fetch"
             );
             assert_eq!(phase_timings["deadline_exclusions"], json!(0));
             let exclusions = output["exclusions"].as_array().expect("exclusions");
@@ -3145,7 +3133,7 @@ async fn expectations_template_reduces_and_reconciles_the_universe() {
                 {"Code":"ILL","Name":"Illiquid Issuer","Exchange":"NASDAQ","Currency":"USD","Type":"Common Stock","Isin":"US0000000002"}
             ]));
         }
-        if path.starts_with("/eodhd/bulk-fundamentals/US") {
+        if path.starts_with("/eodhd/fundamentals/LIQADR.US") {
             let mut value = eodhd_fixture();
             value["General"]["Code"] = json!("LIQADR");
             value["General"]["Name"] = json!("Liquid Issuer ADR");
@@ -3162,19 +3150,6 @@ async fn expectations_template_reduces_and_reconciles_the_universe() {
                     "2024-12-31":{"totalCashFromOperatingActivities":"170000000.00","capitalExpenditures":"-28000000.00","dividendsPaid":"-18000000.00"}
                 }
             });
-            return (200, json!([value]));
-        }
-        if path.starts_with("/eodhd/fundamentals/LIQADR.US") {
-            let mut value = eodhd_fixture();
-            value["General"]["Code"] = json!("LIQADR");
-            value["General"]["Name"] = json!("Liquid Issuer ADR");
-            value["General"]["Type"] = json!("Common Stock");
-            value["General"]["CurrencyCode"] = json!("USD");
-            value["General"]["ISIN"] = json!("US0000000003");
-            value["General"]["PrimaryTicker"] = json!("LIQADR.US");
-            value["General"]["IsDelisted"] = json!(false);
-            value["Financials"]["Income_Statement"]["currency_symbol"] = json!("USD");
-            value["Financials"]["Balance_Sheet"]["currency_symbol"] = json!("USD");
             return (200, value);
         }
         if path.starts_with("/eodhd/fundamentals/LIQ.US") {
@@ -3303,11 +3278,11 @@ async fn expectations_template_reduces_and_reconciles_the_universe() {
             let fundamental_calls = fixture
                 .requests()
                 .iter()
-                .filter(|path| path.starts_with("/eodhd/bulk-fundamentals/"))
+                .filter(|path| path.starts_with("/eodhd/fundamentals/"))
                 .count();
             assert_eq!(
                 fundamental_calls, 1,
-                "financial filtering and issuer grouping must precede bounded bulk fundamentals acquisition"
+                "financial filtering and issuer grouping must precede the single per-issuer fundamentals fetch"
             );
             let history_calls = fixture
                 .requests()

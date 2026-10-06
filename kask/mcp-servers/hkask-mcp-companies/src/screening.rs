@@ -32,9 +32,15 @@ const LISP_MAX_DEPTH: u64 = 256;
 const SCREEN_PASS_DEADLINE: Duration = Duration::from_secs(60);
 const ENRICHMENT_DEADLINE: Duration = Duration::from_secs(110);
 
-const BULK_ANALYSIS_CONCURRENCY: usize = 96;
-const FALLBACK_ENRICHMENT_CONCURRENCY: usize = 12;
-const FALLBACK_ISSUER_TIMEOUT: Duration = Duration::from_secs(15);
+/// Per-issuer EODHD fundamentals fetch timeout — bounds a stuck request so
+/// one slow symbol cannot hold its enrichment slot.
+const ISSUER_FETCH_TIMEOUT: Duration = Duration::from_secs(15);
+/// Enrichment concurrency for the per-symbol EODHD fundamentals fetch.
+/// Provider-rate-bound, not CPU-bound: 12-way sustained 12.7 requests/s
+/// with zero throttled responses (measured 2026-10-06 — 1,387 fetches in
+/// 109s) against a plan limit of ~17 requests/s, so 16 sits one under it.
+/// The cold-run phase timings re-validate this after any change.
+const ENRICHMENT_CONCURRENCY: usize = 16;
 
 #[derive(Deserialize)]
 struct ScreenTemplateMetadata {
@@ -146,9 +152,7 @@ struct PreparedPassSet {
 /// pattern (`tools/expectations.rs` financial_fetches/research/assemble).
 struct EnrichmentTimings {
     issuers: usize,
-    bulk_fetch_ms: u64,
     enrichment_analysis_ms: u64,
-    fallback_attempts: usize,
     deadline_exclusions: usize,
 }
 
@@ -539,7 +543,7 @@ async fn run_screen_job(
         phase = "enrichment",
         elapsed_ms = enrichment_started.elapsed().as_millis() as u64,
         issuers = enrichment_timings.issuers,
-        "bulk fundamentals, per-issuer fallbacks, local analysis"
+        "per-issuer fundamentals fetches and local analysis"
     );
     if server
         .research
@@ -599,9 +603,7 @@ async fn run_screen_job(
     let phase_timings = json!({
         "universe_acquisition_ms": stage_timings.get("universe_acquisition_ms").cloned().unwrap_or(Value::Null),
         "pass_set_ms": stage_timings.get("pass_set_ms").cloned().unwrap_or(Value::Null),
-        "bulk_fetch_ms": enrichment_timings.bulk_fetch_ms,
         "enrichment_analysis_ms": enrichment_timings.enrichment_analysis_ms,
-        "fallback_attempts": enrichment_timings.fallback_attempts,
         "deadline_exclusions": enrichment_timings.deadline_exclusions,
         "assemble_ms": assemble_started.elapsed().as_millis() as u64,
     });
@@ -1223,19 +1225,8 @@ enum ScreeningError {
     MissingStatementCurrency,
     #[error("primary price currency conversion is invalid")]
     InvalidPriceConversion,
-    #[error("bulk fundamentals response is not an array")]
-    BulkResponseNotArray,
-    #[error("bulk fundamentals omitted {0}")]
-    BulkOmitted(String),
-    #[error("bulk fundamentals result missing issuer")]
-    BulkResultMissing,
-    #[error("bulk unavailable ({bulk_reason}); single-symbol fallback failed: {error}")]
-    BulkFallbackFailed {
-        bulk_reason: String,
-        error: McpToolError,
-    },
-    #[error("bulk unavailable ({bulk_reason}); single-symbol fallback exceeded 15 seconds")]
-    BulkFallbackTimeout { bulk_reason: String },
+    #[error("fundamentals fetch exceeded the per-issuer timeout")]
+    FundamentalsFetchTimeout,
     #[error("issuer group has no actionable security")]
     NoActionableSecurity,
 }
@@ -1463,116 +1454,6 @@ async fn wait_for_screen_cancel(store: &ResearchStore, job_id: &str) -> Result<(
     }
 }
 
-async fn fetch_bulk_fundamentals(
-    server: &CompaniesServer,
-    groups: &[IssuerGroup],
-) -> HashMap<String, Result<Value, ScreeningError>> {
-    let mut by_exchange: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
-    for group in groups {
-        let actionable = group.securities.iter().max_by(|left, right| {
-            left.average_daily_dollar_volume_usd
-                .partial_cmp(&right.average_daily_dollar_volume_usd)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
-        if let Some(security) = actionable {
-            let exchange = security
-                .symbol
-                .rsplit_once('.')
-                .map_or("US", |(_, exchange)| exchange);
-            by_exchange
-                .entry(exchange.to_string())
-                .or_default()
-                .push((group.issuer_key.clone(), security.symbol.clone()));
-        }
-    }
-    let mut batches = Vec::new();
-    for (exchange, issuers) in by_exchange {
-        for chunk in issuers.chunks(500) {
-            batches.push((exchange.clone(), chunk.to_vec()));
-        }
-    }
-    let outcomes = futures::stream::iter(batches.into_iter().map(|(exchange, issuers)| {
-        let client = server.client.clone();
-        let api_key = server.eodhd_api_key.clone();
-        async move {
-            let symbols: Vec<String> = issuers.iter().map(|(_, symbol)| symbol.clone()).collect();
-            let result =
-                providers::fetch_eodhd_bulk_fundamentals(&client, &api_key, &exchange, &symbols)
-                    .await;
-            // Operator directive 2026-10-06 (measure, then attribute): a
-            // failed bulk batch silently degrades every issuer in it to the
-            // 12-way per-symbol fallback — the dominant wall-time cost. The
-            // failure reason must be visible in the log, not inferred.
-            match &result {
-                Err(error) => {
-                    tracing::warn!(
-                        target: "hkask.mcp.companies",
-                        tool = "company_screener",
-                        exchange = %exchange,
-                        symbols = symbols.len(),
-                        "EODHD bulk fundamentals batch failed: {error}"
-                    );
-                }
-                Ok(value) if value.as_array().is_none() => {
-                    let body = serde_json::to_string(value).unwrap_or_default();
-                    tracing::warn!(
-                        target: "hkask.mcp.companies",
-                        tool = "company_screener",
-                        exchange = %exchange,
-                        symbols = symbols.len(),
-                        "EODHD bulk fundamentals response is not an array: {}",
-                        body.chars().take(200).collect::<String>()
-                    );
-                }
-                _ => {}
-            }
-            (issuers, result)
-        }
-    }))
-    .buffer_unordered(8)
-    .collect::<Vec<_>>()
-    .await;
-
-    let mut fundamentals = HashMap::new();
-    for (issuers, outcome) in outcomes {
-        match outcome {
-            Ok(value) => {
-                let Some(rows) = value.as_array() else {
-                    for (issuer_key, _) in issuers {
-                        fundamentals.insert(issuer_key, Err(ScreeningError::BulkResponseNotArray));
-                    }
-                    continue;
-                };
-                let by_code: HashMap<&str, &Value> = rows
-                    .iter()
-                    .filter_map(|row| {
-                        row.pointer("/General/Code")
-                            .and_then(Value::as_str)
-                            .map(|code| (code, row))
-                    })
-                    .collect();
-                for (issuer_key, symbol) in issuers {
-                    let code = symbol
-                        .split_once('.')
-                        .map_or(symbol.as_str(), |(code, _)| code);
-                    let result = by_code
-                        .get(code)
-                        .map(|row| (*row).clone())
-                        .ok_or_else(|| ScreeningError::BulkOmitted(symbol.clone()));
-                    fundamentals.insert(issuer_key, result);
-                }
-            }
-            Err(error) => {
-                for (issuer_key, _) in issuers {
-                    fundamentals
-                        .insert(issuer_key, Err(ScreeningError::Fundamentals(error.clone())));
-                }
-            }
-        }
-    }
-    fundamentals
-}
-
 async fn enrich_pending_issuers(
     server: &CompaniesServer,
     job_id: &str,
@@ -1603,73 +1484,34 @@ async fn enrich_pending_issuers(
         })?;
         decoded.push((item, group));
     }
-    let groups: Vec<IssuerGroup> = decoded.iter().map(|(_, group)| group.clone()).collect();
-    let issuer_count = groups.len();
-    let bulk_started = std::time::Instant::now();
-    let mut bulk = fetch_bulk_fundamentals(server, &groups).await;
-    let bulk_fetch_ms = bulk_started.elapsed().as_millis() as u64;
-    tracing::info!(
-        target: "hkask.mcp.companies",
-        tool = "company_screener",
-        job_id,
-        phase = "bulk_fetch",
-        elapsed_ms = bulk_fetch_ms,
-        issuers = issuer_count,
-        "EODHD bulk fundamentals fetch"
-    );
-    let bulk_available = bulk.values().any(Result::is_ok);
-    let concurrency = if bulk_available {
-        BULK_ANALYSIS_CONCURRENCY
-    } else {
-        FALLBACK_ENRICHMENT_CONCURRENCY
-    };
-    let fallback_attempts = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let issuer_count = decoded.len();
     let work = futures::stream::iter(decoded.into_iter().map(|(item, group)| {
         let client = server.client.clone();
         let api_key = server.eodhd_api_key.clone();
         let store = server.research.clone();
         let fx_rates = fx_rates.clone();
         let job_id = job_id.to_string();
-        let fallback_attempts = fallback_attempts.clone();
-        let fundamentals = bulk
-            .remove(&item.issuer_key)
-            .unwrap_or_else(|| Err(ScreeningError::BulkResultMissing));
         async move {
             if store.screen_cancel_requested(&job_id)? {
                 return Ok::<(), crate::screen_store::PortfolioError>(());
             }
-            let fundamentals = match fundamentals {
-                Ok(fundamentals) => Ok(fundamentals),
-                Err(bulk_reason) => {
-                    fallback_attempts.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    let actionable = group.securities.iter().max_by(|left, right| {
-                        left.average_daily_dollar_volume_usd
-                            .partial_cmp(&right.average_daily_dollar_volume_usd)
-                            .unwrap_or(std::cmp::Ordering::Equal)
-                    });
-                    match actionable {
-                        Some(security) => match tokio::time::timeout(
-                            FALLBACK_ISSUER_TIMEOUT,
-                            providers::fetch_eodhd_fundamentals(
-                                &client,
-                                &api_key,
-                                &security.symbol,
-                            ),
-                        )
-                        .await
-                        {
-                            Ok(Ok(fundamentals)) => Ok(fundamentals),
-                            Ok(Err(error)) => Err(ScreeningError::BulkFallbackFailed {
-                                bulk_reason: bulk_reason.to_string(),
-                                error,
-                            }),
-                            Err(_) => Err(ScreeningError::BulkFallbackTimeout {
-                                bulk_reason: bulk_reason.to_string(),
-                            }),
-                        },
-                        None => Err(ScreeningError::NoActionableSecurity),
-                    }
-                }
+            let actionable = group.securities.iter().max_by(|left, right| {
+                left.average_daily_dollar_volume_usd
+                    .partial_cmp(&right.average_daily_dollar_volume_usd)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            let fundamentals = match actionable {
+                Some(security) => match tokio::time::timeout(
+                    ISSUER_FETCH_TIMEOUT,
+                    providers::fetch_eodhd_fundamentals(&client, &api_key, &security.symbol),
+                )
+                .await
+                {
+                    Ok(Ok(fundamentals)) => Ok(fundamentals),
+                    Ok(Err(error)) => Err(ScreeningError::Fundamentals(error)),
+                    Err(_) => Err(ScreeningError::FundamentalsFetchTimeout),
+                },
+                None => Err(ScreeningError::NoActionableSecurity),
             };
             let (row, error) = match fundamentals {
                 Ok(fundamentals) => match analyze_issuer_group(
@@ -1706,7 +1548,7 @@ async fn enrich_pending_issuers(
             )
         }
     }))
-    .buffer_unordered(concurrency)
+    .buffer_unordered(ENRICHMENT_CONCURRENCY)
     .collect::<Vec<_>>();
     tokio::pin!(work);
     let deadline = tokio::time::sleep(ENRICHMENT_DEADLINE);
@@ -1739,7 +1581,6 @@ async fn enrich_pending_issuers(
             }
         }
     };
-    let fallback_attempts = fallback_attempts.load(std::sync::atomic::Ordering::Relaxed);
     tracing::info!(
         target: "hkask.mcp.companies",
         tool = "company_screener",
@@ -1747,15 +1588,12 @@ async fn enrich_pending_issuers(
         phase = "enrichment_analysis",
         elapsed_ms = enrichment_analysis_ms,
         issuers = issuer_count,
-        fallback_attempts,
         deadline_exclusions,
-        "per-issuer fallback fetches and local analysis"
+        "per-issuer fundamentals fetches and local analysis"
     );
     Ok(EnrichmentTimings {
         issuers: issuer_count,
-        bulk_fetch_ms,
         enrichment_analysis_ms,
-        fallback_attempts,
         deadline_exclusions,
     })
 }
