@@ -144,7 +144,9 @@ SKILL.md's stage instructions are the operating procedure):
   `scenario_update` itself is stateless: it computes and returns the
   posterior, and the durable record is the forecast journal below)
 - The forecast journal at resolution (`scenario_score` — the only writer;
-  Brier is computed there)
+  Brier is computed there, on the tree's resolved MARGINAL probabilities:
+  for a dependent event the scored belief is the marginal, not the raw
+  prior field; journal schema v3 marks those records `scored_from_marginal`)
 
 (An earlier revision of this README described a flow engine emitting
 `hkask.template.*` Regulation spans, variety counters, an algedonic alert,

@@ -1345,6 +1345,157 @@ impl ScenariosServer {
         .await
     }
 
+    /// Recompute event-tree posteriors under evidence, in BOTH directions
+    /// (PR-08): forward to descendants (causal) and backward to ancestors
+    /// (diagnostic) — answering "given the leaf was observed, what is the
+    /// posterior on the root?", which forward-only propagation cannot.
+    #[tool(
+        description = "Recompute event-tree posterior probabilities under evidence, in BOTH directions: forward to descendants (causal) and backward to ancestors (diagnostic) — answering 'given the leaf was observed, what is the posterior on the root?', which forward-only propagation cannot. Takes the same valid event tree scenario_quantify accepts plus evidence entries (exactly one of observed_probability, occurred, or likelihood_ratio per entry). Hard evidence clamps the node's marginal; soft evidence (a likelihood ratio) applies a Bayesian update. Exact on polytrees (singly-connected DAGs); on multiply-connected DAGs it degrades to forward-only marginalization with a note naming the limitation — never silently. Returns per-node prior marginal, posterior, certainty tier, and the method used. Shares its engine (hkask_forecast::posterior) with the graph widget's interactive re-propagation — one implementation."
+    )]
+    pub async fn scenario_recompute_posteriors(
+        &self,
+        Parameters(req): Parameters<PosteriorsRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "scenario_recompute_posteriors", async {
+            // Same validation contract as scenario_quantify: the events must
+            // form a valid tree (probabilities in [0,1], conditional lengths
+            // 2^parents, no cycles, no unknown parents).
+            let tree = superforecast::build_event_tree(&req.events)
+                .map_err(map_scenario_error)?;
+
+            // Convert to the shared posterior engine's neutral nodes — the
+            // same engine the graph widget delegates to.
+            let nodes: Vec<hkask_forecast::posterior::PosteriorNode> = tree
+                .nodes
+                .iter()
+                .map(|n| hkask_forecast::posterior::PosteriorNode {
+                    id: n.event.id.clone(),
+                    base_probability: n.event.probability,
+                    parents: {
+                        let mut seen = std::collections::HashSet::new();
+                        n.event
+                            .depends_on
+                            .iter()
+                            .flat_map(|d| d.parent_event_ids.iter())
+                            .filter(|p| seen.insert((*p).clone()))
+                            .cloned()
+                            .collect()
+                    },
+                    dependencies: n
+                        .event
+                        .depends_on
+                        .iter()
+                        .map(|d| hkask_forecast::posterior::PosteriorDependency {
+                            parent_ids: d.parent_event_ids.clone(),
+                            conditionals: d.conditionals.clone(),
+                        })
+                        .collect(),
+                })
+                .collect();
+            let id_index: std::collections::HashMap<&str, usize> = nodes
+                .iter()
+                .enumerate()
+                .map(|(i, n)| (n.id.as_str(), i))
+                .collect();
+            let topo: Vec<usize> = tree
+                .topo_order
+                .iter()
+                .filter_map(|id| id_index.get(id.as_str()).copied())
+                .collect();
+
+            // Evidence validation: exactly one of the three fields per entry,
+            // and the event must be among the request's events.
+            let mut evidence: std::collections::HashMap<usize, hkask_forecast::posterior::Evidence> =
+                std::collections::HashMap::new();
+            for entry in &req.evidence {
+                let idx = *id_index.get(entry.event_id.as_str()).ok_or_else(|| {
+                    McpToolError::invalid_argument(format!(
+                        "evidence event_id '{}' is not among the request's events",
+                        entry.event_id
+                    ))
+                })?;
+                let kind = match (
+                    entry.observed_probability,
+                    entry.occurred,
+                    entry.likelihood_ratio,
+                ) {
+                    (Some(p), None, None) => {
+                        if !(p.is_finite() && (0.0..=1.0).contains(&p)) {
+                            return Err(McpToolError::invalid_argument(format!(
+                                "observed_probability for event '{}' must be in [0, 1], got {p}",
+                                entry.event_id
+                            )));
+                        }
+                        hkask_forecast::posterior::Evidence::Hard(p)
+                    }
+                    (None, Some(occurred), None) => {
+                        hkask_forecast::posterior::Evidence::Hard(if occurred { 1.0 } else { 0.0 })
+                    }
+                    (None, None, Some(lr)) => {
+                        if !(lr.is_finite() && lr >= 0.0) {
+                            return Err(McpToolError::invalid_argument(format!(
+                                "likelihood_ratio for event '{}' must be finite and >= 0, got {lr}",
+                                entry.event_id
+                            )));
+                        }
+                        hkask_forecast::posterior::Evidence::Soft(lr)
+                    }
+                    _ => {
+                        return Err(McpToolError::invalid_argument(format!(
+                            "evidence for event '{}' must set exactly one of observed_probability, occurred, likelihood_ratio",
+                            entry.event_id
+                        )))
+                    }
+                };
+                evidence.insert(idx, kind);
+            }
+
+            let polytree = hkask_forecast::posterior::is_polytree(&nodes);
+            let (posteriors, method) = if polytree {
+                (
+                    hkask_forecast::posterior::recompute_posteriors(&nodes, &topo, &evidence),
+                    "polytree_backward_inference",
+                )
+            } else {
+                (
+                    hkask_forecast::posterior::forward_marginals(&nodes, &topo, &evidence),
+                    "forward_marginalization_only",
+                )
+            };
+
+            let output = serde_json::json!({
+                "subject": tree.subject,
+                "event_count": nodes.len(),
+                "evidence_count": evidence.len(),
+                "polytree": polytree,
+                "method": method,
+                "nodes": nodes.iter().enumerate().map(|(i, n)| serde_json::json!({
+                    "id": n.id,
+                    "question": tree.nodes[i].event.question,
+                    "prior_marginal": tree.nodes[i].marginal_probability,
+                    "posterior_probability": posteriors[i],
+                    "posterior_pct": format!("{:.1}%", posteriors[i] * 100.0),
+                    "certainty_tier": hkask_forecast::certainty_tier(posteriors[i]),
+                    "evidence_applied": evidence.contains_key(&i),
+                })).collect::<Vec<_>>(),
+                "note": if polytree { serde_json::Value::Null } else { serde_json::json!(
+                    "multiply-connected DAG: backward inference double-counts evidence on non-polytrees; forward marginals only"
+                )},
+                "provenance": provenance("scenario_recompute_posteriors", {
+                    let mut m = serde_json::Map::new();
+                    m.insert("engine".into(), "hkask_forecast::posterior (shared with the graph widget)".into());
+                    m
+                }),
+            });
+
+            Ok(Self::with_sequence_note(
+                output,
+                self.record_experience("scenario_recompute_posteriors"),
+            ))
+        })
+        .await
+    }
+
     /// Bayesian update: revise a probability with new evidence.
     #[tool(
         description = "Bayesian update for a scenario event. Apply Bayes' theorem: P(H|E) = P(E|H) × P(H) / P(E). Provide prior probability, evidence likelihood (how likely is the evidence if the hypothesis is true?), and evidence base rate (how common is this evidence in general?). Returns the posterior probability and the magnitude of the update."
@@ -1401,7 +1552,7 @@ impl ScenariosServer {
 
     /// Score a forecast against known outcomes using Brier scoring.
     #[tool(
-        description = "Score a scenario forecast against known outcomes using Brier scoring. Takes an array of ScenarioEvent objects and an array of outcomes (each with event_id and occurred boolean). Computes Brier score per event and aggregate. Provides human-readable interpretation: excellent (<0.05), good (<0.10), fair (<0.20), poor (<0.33), worse_than_climatology (≥0.33). Calibration tracking closes the superforecasting loop."
+        description = "Score a scenario forecast against known outcomes using Brier scoring. Takes an array of ScenarioEvent objects (the same valid tree scenario_quantify accepts) and an array of outcomes (each with event_id and occurred boolean). Resolves the tree and Brier-scores each event's MARGINAL probability — for a dependent event the marginal is the belief actually forecast, not the raw prior field. Computes Brier score per event and aggregate. Provides human-readable interpretation: excellent (<0.05), good (<0.10), fair (<0.20), poor (<0.33), worse_than_climatology (≥0.33). The journal records the marginal (schema v3, scored_from_marginal marker). Calibration tracking closes the superforecasting loop."
     )]
     pub async fn scenario_score(
         &self,
@@ -1414,17 +1565,25 @@ impl ScenariosServer {
                 .map(|o| (o.event_id, o.occurred))
                 .collect();
 
+            // Resolve the tree first (PR-02): the scored belief is each
+            // node's marginal, not the caller-supplied prior field. The
+            // events must form the same valid tree scenario_quantify
+            // accepts — a rejected tree is fixed at the input, never
+            // scored around.
+            let tree = superforecast::build_event_tree(events)
+                .map_err(map_scenario_error)?;
+
             let forecast_date = chrono::Utc::now().date_naive();
             let result = superforecast::score_forecast(
                 &req.forecast_id,
-                events,
+                &tree,
                 &outcome_pairs,
                 forecast_date,
             );
 
             let per_event: Vec<_> = result.event_outcomes.iter().map(|(eid, occurred)| {
-                let event = events.iter().find(|e| &e.id == eid);
-                let prob = event.map(|e| e.probability).unwrap_or(0.0);
+                let node = tree.nodes.iter().find(|n| &n.event.id == eid);
+                let prob = node.map(|n| n.marginal_probability).unwrap_or(0.0);
                 let bs = superforecast::brier_score(prob, *occurred);
                 serde_json::json!({
                     "event_id": eid,
@@ -1461,7 +1620,8 @@ impl ScenariosServer {
                         "No Brier score available — scoring failed (empty input or length mismatch). Record resolved outcomes and re-score."
                     }
                 },
-                "auto_update_suggestions": superforecast::auto_update_suggestions(events, &outcome_pairs),
+                "scored_quantity": "tree_marginal",
+                "auto_update_suggestions": superforecast::auto_update_suggestions(&tree.nodes, &outcome_pairs),
                 "update_guidance": "The auto_update_suggestions above show suggested probability adjustments based on forecast error direction. Apply them via scenario_update to close the feedback loop. Each adjustment is clamped to ±15% and respects [0.01, 0.99] bounds.",
                 "reference": "Brier (1950). Score = (p - o)² where p = forecast probability, o = outcome (1 if occurred, 0 if not). Lower is better."
             });
@@ -1472,17 +1632,19 @@ impl ScenariosServer {
             {
                 let mut store = self.forecast_store.lock().unwrap_or_else(|e| e.into_inner());
                 let now = chrono::Utc::now().date_naive();
-                for event in events {
+                for node in &tree.nodes {
+                    let event = &node.event;
                     let key = format!("{}:{}", req.forecast_id, event.id);
                     let event_outcome = outcome_pairs.iter().find(|(eid, _)| eid == &event.id);
                     if store.get(&key).is_none() {
                         store.insert(key.clone(), types::StoredForecastRecord {
-                            schema_version: 2,
+                            schema_version: 3,
                             forecast_id: req.forecast_id.clone(),
                             event_id: event.id.clone(),
                             event_name: event.name.clone(),
                             subject: event.subject.clone(),
-                            probability: event.probability,
+                            probability: node.marginal_probability,
+                            scored_from_marginal: true,
                             created_at: now,
                             outcome: None,
                             resolved_at: None,
@@ -1494,7 +1656,9 @@ impl ScenariosServer {
                     if let Some((_, occurred)) = event_outcome {
                         // Re-insert the record with the outcome set — this
                         // appends to the journal (durable), unlike `get_mut`
-                        // which only mutates in-memory.
+                        // which only mutates in-memory. The recorded
+                        // probability stays the FIRST score's marginal — a
+                        // re-score never rewrites the historical forecast.
                         if let Some(mut record) = store.get(&key).cloned() {
                             record.outcome = Some(*occurred);
                             record.resolved_at = Some(now);
@@ -2092,7 +2256,7 @@ fn emit_cmp_provenance(
 mod tests {
     use super::*;
 
-    // The scenarios server registers exactly 19 tools. Adding, removing,
+    // The scenarios server registers exactly 20 tools. Adding, removing,
     // or renaming a tool is an intentional surface change — the pin catches
     // accidental drift. One macro call: the count test plus the
     // build.rs-generated TOOL_NAMES set against the live router.
@@ -2100,8 +2264,8 @@ mod tests {
     hkask_mcp_server::tool_surface_pin!(
         ScenariosServer::scenario_router(),
         "scenario_router",
-        19,
-        tool_surface_is_exactly_19_registered_tools,
+        20,
+        tool_surface_is_exactly_20_registered_tools,
     );
 
     /// `emit_cmp_provenance` produces the full 7-field CMP index identity per

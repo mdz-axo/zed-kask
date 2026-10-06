@@ -29,7 +29,68 @@ fn persist_request(forecast_id: &str) -> types::ForecastPersistRequest {
         forecast_probability: Some(0.6),
         revision_of: None,
         forecast_id: Some(forecast_id.into()),
+        scenario_project_id: None,
+        scenario_tree: None,
+        impact_mappings_ref: None,
+        fused_volatility: None,
     }
+}
+
+/// PR-09: the scenario join is RECORDED on the equity forecast — the
+/// persisted snapshot carries the project id, the tree snapshot, the
+/// impact-mappings reference, and the fused volatility, and they survive
+/// the write→recall round trip. The join is no longer agent-mediated.
+#[tokio::test]
+async fn forecast_persist_records_the_scenario_join_fields() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let server = server(directory.path());
+
+    let request = types::ForecastPersistRequest {
+        scenario_project_id: Some("ACME".into()),
+        scenario_tree: Some(hkask_types::AnyJsonValue::from(json!({
+            "subject": "ACME",
+            "nodes": [
+                {"id": "evt-launch", "marginal_probability": 0.6},
+                {"id": "evt-scale", "marginal_probability": 0.42}
+            ],
+            "joint_probability": 0.252
+        }))),
+        impact_mappings_ref: Some("bull/base/bear per-node deltas v1".into()),
+        fused_volatility: Some(0.34),
+        ..persist_request("loop-scenario-join-1")
+    };
+    let persisted = content(
+        &server
+            .forecast_persist(Parameters(request))
+            .await
+            .expect("forecast_persist tool"),
+    );
+    assert_eq!(persisted["status"], json!("persisted"));
+
+    let read = content(
+        &server
+            .forecast_get(Parameters(types::ForecastGetRequest {
+                forecast_id: "loop-scenario-join-1".into(),
+            }))
+            .await
+            .expect("forecast_get tool"),
+    );
+    let snapshot = &read["snapshot"];
+    assert_eq!(snapshot["scenario_project_id"], json!("ACME"));
+    assert_eq!(
+        snapshot["scenario_tree"]["joint_probability"],
+        json!(0.252),
+        "the tree snapshot survives the round trip, got: {snapshot}"
+    );
+    assert_eq!(
+        snapshot["scenario_tree"]["nodes"].as_array().map(Vec::len),
+        Some(2)
+    );
+    assert_eq!(
+        snapshot["impact_mappings_ref"],
+        json!("bull/base/bear per-node deltas v1")
+    );
+    assert_eq!(snapshot["fused_volatility"], json!(0.34));
 }
 
 /// expect: a persisted pre-computed price target reads back complete through
@@ -238,6 +299,10 @@ async fn forecast_record_without_probability_uses_pinned_fallback() {
                 revision_of: None,
                 forecast_id: Some("loop-fallback-1".into()),
                 forecast_price: None,
+                scenario_project_id: None,
+                scenario_tree: None,
+                impact_mappings_ref: None,
+                fused_volatility: None,
                 current_price: None,
             }))
             .await
@@ -294,6 +359,10 @@ async fn forecast_persist_computes_price_change_from_prices() {
                 current_price: Some(100.0),
                 forecast_probability: Some(0.6),
                 revision_of: None,
+                scenario_project_id: None,
+                scenario_tree: None,
+                impact_mappings_ref: None,
+                fused_volatility: None,
                 forecast_id: Some("loop-price-derived-1".into()),
             }))
             .await

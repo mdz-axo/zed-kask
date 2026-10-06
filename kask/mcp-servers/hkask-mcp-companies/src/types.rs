@@ -400,6 +400,24 @@ pub(crate) struct ForecastPersistRequest {
     /// generates a UUID. Useful for skill steps that need a stable ID
     /// to thread to a later forecast_record call.
     pub forecast_id: Option<String>,
+    /// Scenario join (PR-09): the scenarios server's project record id
+    /// (defaults to the subject there) this price target was derived
+    /// under. Recorded so the equity forecast carries its scenario
+    /// provenance.
+    pub scenario_project_id: Option<String>,
+    /// Scenario join (PR-09): the resolved scenario tree snapshot (from
+    /// scenario_quantify — node ids and marginals) the valuation used.
+    /// Arbitrary JSON, typed as [`AnyJsonValue`] so the generated tool
+    /// input schema is object-typed, not the bare boolean `true`.
+    pub scenario_tree: Option<AnyJsonValue>,
+    /// Scenario join (PR-09): a reference to the per-node DCF impact
+    /// mappings used (the caller's description or digest of them — the
+    /// mappings themselves are agent-authored).
+    pub impact_mappings_ref: Option<String>,
+    /// Scenario join (PR-09): the fused volatility (root-sum-square of
+    /// realized and scenario-implied sigma) from scenario_impact_valuation,
+    /// when a realized volatility was supplied there.
+    pub fused_volatility: Option<f64>,
 }
 
 bare_dcf_request!(SensitivityAnalysisRequest {

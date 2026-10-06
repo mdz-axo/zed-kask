@@ -10,8 +10,8 @@ Scenario-planning MCP server. It turns a framed decision into candidate events, 
 
 ## Tools
 
-Nineteen registered tools (pinned against the live `scenario_router()` by
-`tool_surface_is_exactly_19_registered_tools` in the crate's tests).
+Twenty registered tools (pinned against the live `scenario_router()` by
+`tool_surface_is_exactly_20_registered_tools` in the crate's tests).
 
 ### Frame and explore
 
@@ -30,6 +30,7 @@ Nineteen registered tools (pinned against the live `scenario_router()` by
 |---|---|
 | `scenario_quantify` | Resolve event probabilities, dependency order, and sensitivity. |
 | `scenario_propagate` | Update one event's prior and recompute the tree, with a per-node journal. |
+| `scenario_recompute_posteriors` | Recompute posteriors under evidence, in both directions (shared engine with the graph widget). |
 | `scenario_update` | Apply a one-off Bayesian update (stateless — returns the posterior). |
 | `scenario_calibrate` | Calibrate a forecast with Fermi and outside/inside views. |
 | `scenario_synthesize` | Combine independent perspectives into one forecast (dragonfly-eye). |
@@ -38,7 +39,7 @@ Nineteen registered tools (pinned against the live `scenario_router()` by
 
 | Tool | Description |
 |---|---|
-| `scenario_score` | Score resolved forecasts with Brier scoring (the only journal writer). |
+| `scenario_score` | Score resolved forecasts with Brier scoring on the tree's resolved marginals (the only journal writer). |
 | `scenario_calibration` | Calculate a calibration curve from stored forecasts. |
 | `scenario_triage` | Classify a question as well_specified, goldilocks, or needs_refinement. |
 | `scenario_cross_validate` | Compare independent probability estimates. |

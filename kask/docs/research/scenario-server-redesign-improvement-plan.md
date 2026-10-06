@@ -18,16 +18,33 @@ implemented — this is the execution sequence for the proposal set.
 
 ## Execution status (2026-10-06)
 
-Slices 1–3 are landed (uncommitted in the working tree). Slice 1
-(PR-03/04/06/12/14/16), Slice 2 (PR-05/11), Slice 3 (PR-01/07 — plus a
-wiring fix found during PR-07: `run()` passed the data DIR as the
-forecast store's snapshot FILE path, so production compaction failed
-past the journal threshold and the journal landed outside the D28
-dir). Verification receipts: 36 scenarios tests + 62 ontology tests
-green; scoped clippy clean; the `type-framing` template conforms and
-renders per MAIA type; the MAIA anchor is in the derived registry (the
-live `onto_anchor` resolution is pending the operator's next server
-restart — the running binary predates the entry). Slices 4–6 remain;
+Slices 1–5 are landed (uncommitted in the working tree), plus PR-09 of
+Slice 6. Slice 1 (PR-03/04/06/12/14/16), Slice 2 (PR-05/11), Slice 3
+(PR-01/07 — plus a wiring fix found during PR-07: `run()` passed the data
+DIR as the forecast store's snapshot FILE path, so production compaction
+failed past the journal threshold and the journal landed outside the D28
+dir), Slice 4 (PR-02 — marginal scoring, journal schema v3 with the
+`scored_from_marginal` marker), Slice 5 (PR-08 — the posterior engine
+promoted to `hkask_forecast::posterior`, the `scenario_recompute_posteriors`
+tool exposed with the surface pin moved 19→20, the graph widget converted
+to a delegating adapter with its local engine deleted; the promotion also
+fixed a real divergence — the widget's multi-group PRODUCT combination
+silently disagreed with `scenario_quantify`'s documented noisy-OR rule, now
+unified on `hkask_forecast::combine_independent_channels` and pinned), and
+PR-09 (the scenario join recorded on equity forecasts: `forecast_persist`
+carries `scenario_project_id`, `scenario_tree`, `impact_mappings_ref`,
+`fused_volatility`, echoed into the durable snapshot and read back;
+the flash skill's persist step cites the recorded fields). Verification
+receipts: 186 companies tests, 40 scenarios tests, 36 widget tests, 65
+forecast-crate tests green; scoped clippy clean over every touched crate;
+the MAIA anchor is in the derived registry (live `onto_anchor` resolution
+pending the operator's next server restart). **Remaining: PR-10** — the
+opt-in `WorkbookWhatIf` presentation for `scenario_impact_valuation`
+(wiring the `hkask-spreadsheet` engine into the companies server; the
+pattern to mirror is `portfolio_what_if`'s workbook branch,
+`hkask-mcp-portfolio/src/server.rs:759-784`: `ArtifactOrigin` +
+`PublishOptions { access: SpreadsheetAccess::WorkbookWhatIf }` +
+`spreadsheet_hint`, with the default output byte-identical and pinned).
 PR-13 and PR-15 stay deferred as operator decisions.
 
 ## Slice 1 — Fidelity quick wins (no dependencies)

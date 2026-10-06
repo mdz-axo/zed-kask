@@ -12,8 +12,8 @@
 
 use hkask_mcp_scenarios::requests::{
     AssessRequest, BrainstormRequest, CalibrateRequest, ContractCoherenceRequest,
-    FrameDocumentRequest, FullPipelineRequest, OutcomeEntry, QuantifyRequest, ScoreRequest,
-    StatusRequest, TriageRequest,
+    FrameDocumentRequest, FullPipelineRequest, OutcomeEntry, PosteriorEvidenceEntry,
+    PosteriorsRequest, QuantifyRequest, ScoreRequest, StatusRequest, TriageRequest,
 };
 use hkask_mcp_scenarios::types::{
     EventDependency, ScenarioEvent, ScenarioType, SubQuestion, TimeHorizon,
@@ -21,7 +21,7 @@ use hkask_mcp_scenarios::types::{
 use hkask_mcp_scenarios::{ForecastStore, ProjectStore, ScenariosServer};
 use hkask_types::WebID;
 use rmcp::handler::server::wrapper::Parameters;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 /// Build a server backed by an empty in-memory store and empty caches — the
@@ -1141,7 +1141,279 @@ async fn scenario_assess_unreported_metrics_withhold_dependent_phases() {
     );
 }
 
-// ── Slice 3 project-record pins (scenario-server-redesign PR-01/PR-07) ─────
+// ── Slice 5 posterior-tool pins (scenario-server-redesign PR-08) ──────────
+
+/// PR-08 parity: the tool reproduces the shared engine's backward
+/// inference — the same chain the widget's engine test pins (a 0.5 →
+/// b [0.1, 0.6] → c [0.2, 0.7]; evidence c=0.9 raises P(b) above its
+/// forward 0.35 and P(a) above 0.5). One engine, two surfaces.
+#[tokio::test]
+async fn scenario_recompute_posteriors_updates_ancestors_on_leaf_evidence() {
+    let server = make_server();
+    let root = independent_event("evt-a", "root event", 0.5);
+    let mut mid = independent_event("evt-b", "middle event", 0.0);
+    mid.depends_on = vec![EventDependency {
+        parent_event_ids: vec!["evt-a".to_string()],
+        conditionals: vec![0.1, 0.6],
+    }];
+    let mut leaf = independent_event("evt-c", "leaf event", 0.0);
+    leaf.depends_on = vec![EventDependency {
+        parent_event_ids: vec!["evt-b".to_string()],
+        conditionals: vec![0.2, 0.7],
+    }];
+    let output = server
+        .scenario_recompute_posteriors(Parameters(PosteriorsRequest {
+            events: vec![root, mid, leaf],
+            evidence: vec![PosteriorEvidenceEntry {
+                event_id: "evt-c".to_string(),
+                observed_probability: Some(0.9),
+                occurred: None,
+                likelihood_ratio: None,
+            }],
+        }))
+        .await
+        .expect("tool ok");
+    let parsed = parse(&output);
+    assert_eq!(
+        parsed["method"].as_str(),
+        Some("polytree_backward_inference"),
+        "a chain is a polytree — backward inference runs, got: {parsed}"
+    );
+    let node = |id: &str| {
+        parsed["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|n| n["id"] == id)
+            .cloned()
+            .unwrap_or_else(|| panic!("node {id} present, got: {parsed}"))
+    };
+    let a = node("evt-a");
+    let b = node("evt-b");
+    let c = node("evt-c");
+    assert!(
+        (c["posterior_probability"].as_f64().unwrap() - 0.9).abs() < 1e-9,
+        "hard evidence clamps the observed node, got: {parsed}"
+    );
+    assert!(
+        b["posterior_probability"].as_f64().unwrap() > 0.35,
+        "backward inference raises P(b) above its forward 0.35, got: {parsed}"
+    );
+    assert!(
+        a["posterior_probability"].as_f64().unwrap() > 0.5,
+        "backward inference raises P(a) above 0.5, got: {parsed}"
+    );
+}
+
+/// PR-08: a multiply-connected DAG (diamond) degrades to forward-only
+/// marginalization with a note naming the limitation — never silently.
+#[tokio::test]
+async fn scenario_recompute_posteriors_degrades_on_non_polytree_with_note() {
+    let server = make_server();
+    let a = independent_event("evt-a", "root event", 0.5);
+    let mut b = independent_event("evt-b", "left event", 0.0);
+    b.depends_on = vec![EventDependency {
+        parent_event_ids: vec!["evt-a".to_string()],
+        conditionals: vec![0.1, 0.6],
+    }];
+    let mut c = independent_event("evt-c", "right event", 0.0);
+    c.depends_on = vec![EventDependency {
+        parent_event_ids: vec!["evt-a".to_string()],
+        conditionals: vec![0.2, 0.7],
+    }];
+    let mut d = independent_event("evt-d", "join event", 0.0);
+    d.depends_on = vec![
+        EventDependency {
+            parent_event_ids: vec!["evt-b".to_string()],
+            conditionals: vec![0.1, 0.6],
+        },
+        EventDependency {
+            parent_event_ids: vec!["evt-c".to_string()],
+            conditionals: vec![0.2, 0.7],
+        },
+    ];
+    let output = server
+        .scenario_recompute_posteriors(Parameters(PosteriorsRequest {
+            events: vec![a, b, c, d],
+            evidence: vec![PosteriorEvidenceEntry {
+                event_id: "evt-d".to_string(),
+                occurred: Some(true),
+                observed_probability: None,
+                likelihood_ratio: None,
+            }],
+        }))
+        .await
+        .expect("tool ok");
+    let parsed = parse(&output);
+    assert_eq!(
+        parsed["method"].as_str(),
+        Some("forward_marginalization_only"),
+        "a diamond is not a polytree — forward only, got: {parsed}"
+    );
+    assert_eq!(parsed["polytree"].as_bool(), Some(false));
+    assert!(
+        parsed["note"]
+            .as_str()
+            .is_some_and(|n| n.contains("multiply-connected")),
+        "the degradation is surfaced with a note, got: {parsed}"
+    );
+}
+
+/// PR-08: evidence validation — exactly one of the three fields, and the
+/// event must be among the request's events. Both/neither and unknown ids
+/// are invalid_argument naming the event.
+#[tokio::test]
+async fn scenario_recompute_posteriors_rejects_malformed_evidence() {
+    let server = make_server();
+    let events = vec![independent_event("evt-a", "root event", 0.5)];
+
+    // Both observed_probability and occurred set.
+    let error = server
+        .scenario_recompute_posteriors(Parameters(PosteriorsRequest {
+            events: events.clone(),
+            evidence: vec![PosteriorEvidenceEntry {
+                event_id: "evt-a".to_string(),
+                observed_probability: Some(0.9),
+                occurred: Some(true),
+                likelihood_ratio: None,
+            }],
+        }))
+        .await
+        .expect_err("two fields set must be rejected");
+    assert!(
+        matches!(error.kind, hkask_types::McpErrorKind::InvalidArgument),
+        "exactly-one-of-three is closed-set validation, got: {error:?}"
+    );
+
+    // Unknown event id.
+    let error = server
+        .scenario_recompute_posteriors(Parameters(PosteriorsRequest {
+            events: events.clone(),
+            evidence: vec![PosteriorEvidenceEntry {
+                event_id: "ghost".to_string(),
+                observed_probability: Some(0.9),
+                occurred: None,
+                likelihood_ratio: None,
+            }],
+        }))
+        .await
+        .expect_err("an unknown evidence event must be rejected");
+    assert!(
+        matches!(error.kind, hkask_types::McpErrorKind::InvalidArgument),
+        "an evidence id outside the request's events is a caller defect, got: {error:?}"
+    );
+    assert!(
+        error.to_string().contains("ghost"),
+        "the error names the unknown event, got: {error}"
+    );
+
+    // Out-of-range observed probability.
+    let error = server
+        .scenario_recompute_posteriors(Parameters(PosteriorsRequest {
+            events,
+            evidence: vec![PosteriorEvidenceEntry {
+                event_id: "evt-a".to_string(),
+                observed_probability: Some(1.5),
+                occurred: None,
+                likelihood_ratio: None,
+            }],
+        }))
+        .await
+        .expect_err("an out-of-range probability must be rejected");
+    assert!(
+        matches!(error.kind, hkask_types::McpErrorKind::InvalidArgument),
+        "observed_probability must be in [0,1], got: {error:?}"
+    );
+}
+
+// ── Slice 4 marginal-scoring pin (scenario-server-redesign PR-02) ─────────
+
+/// PR-02: the scored belief is the tree's resolved MARGINAL, not the
+/// caller-supplied prior. A dependent event (prior 0.5, conditionals
+/// [0.2, 0.8] under a 0.6 parent → marginal 0.56) scores 0.56, and the
+/// journal record carries the marginal with the v3 marker.
+#[tokio::test]
+async fn scenario_score_scores_the_tree_marginal_not_the_prior() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let snapshot_path = directory.path().join("forecasts.json");
+    let server = file_backed_server(&snapshot_path);
+
+    let root = independent_event("evt-root", "root event", 0.6);
+    let mut dependent = independent_event("evt-dep", "dependent event", 0.5);
+    dependent.depends_on = vec![EventDependency {
+        parent_event_ids: vec!["evt-root".to_string()],
+        conditionals: vec![0.2, 0.8],
+    }];
+    // marginal(evt-dep) = 0.4·0.2 + 0.6·0.8 = 0.56 ≠ prior 0.5
+    let output = server
+        .scenario_score(Parameters(ScoreRequest {
+            forecast_id: "marginal-scoring".to_string(),
+            events: vec![root, dependent],
+            outcomes: vec![OutcomeEntry {
+                event_id: "evt-dep".to_string(),
+                occurred: true,
+            }],
+        }))
+        .await
+        .expect("tool ok");
+    let parsed = parse(&output);
+
+    // The response scores the marginal: (0.56 − 1)² = 0.1936, not the
+    // prior's (0.5 − 1)² = 0.25.
+    let scored = &parsed["per_event"][0];
+    let prob = scored["forecast_probability"]
+        .as_f64()
+        .unwrap_or_else(|| panic!("per_event carries forecast_probability, got: {parsed}"));
+    assert!(
+        (prob - 0.56).abs() < 1e-9,
+        "the scored probability is the tree marginal 0.56, not the prior 0.5, got {prob}"
+    );
+    let brier = scored["brier_score"].as_f64().expect("brier present");
+    assert!(
+        (brier - 0.1936).abs() < 1e-9,
+        "Brier is (0.56 − 1)² = 0.1936, not the prior-based 0.25, got {brier}"
+    );
+    assert_eq!(
+        parsed["scored_quantity"].as_str(),
+        Some("tree_marginal"),
+        "the output names what was scored, got: {parsed}"
+    );
+
+    // The durable record carries the marginal with the v3 marker — the
+    // calibration loop learns from the belief actually forecast. (The
+    // handler's closing persist() compacts the journal into the snapshot,
+    // so the post-call durable state IS the snapshot.)
+    let snapshot: HashMap<String, serde_json::Value> =
+        serde_json::from_str(&std::fs::read_to_string(&snapshot_path).expect("snapshot readable"))
+            .expect("snapshot parses");
+    let resolved = snapshot
+        .get("marginal-scoring:evt-dep")
+        .unwrap_or_else(|| panic!("evt-dep must be recorded, got: {snapshot:?}"));
+    assert_eq!(
+        resolved["outcome"].as_bool(),
+        Some(true),
+        "the resolved entry carries the outcome, got: {resolved}"
+    );
+    let recorded = resolved["probability"]
+        .as_f64()
+        .expect("probability present");
+    assert!(
+        (recorded - 0.56).abs() < 1e-9,
+        "the journal records the marginal 0.56, got {recorded}"
+    );
+    assert_eq!(
+        resolved["scored_from_marginal"].as_bool(),
+        Some(true),
+        "the v3 marker distinguishes marginal records from prior-era records, got: {resolved}"
+    );
+    assert_eq!(
+        resolved["schema_version"].as_u64(),
+        Some(3),
+        "schema v3, got: {resolved}"
+    );
+}
+
+// ── Slice 3 project-record pins (scenario-server-redesign PR-01/PR-07) ──────
 
 /// PR-01: the project record is the assessment's anchor — an unknown
 /// project id is `not_found` naming it, never a phantom assessment.

@@ -152,6 +152,35 @@ pub struct CmpBridgeRequest {
     pub dependency_specs: Option<Vec<CmpDependencySpecRequest>>,
 }
 
+/// Request for `scenario_recompute_posteriors`: recompute the event tree's
+/// posterior probabilities under evidence, in both directions.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct PosteriorsRequest {
+    /// The event tree — the same valid tree `scenario_quantify` accepts
+    /// (probabilities in [0,1], conditional lengths 2^parents, no cycles).
+    pub events: Vec<ScenarioEvent>,
+    /// Evidence to apply before recomputation. Each entry attaches to one
+    /// event and must set exactly one of its three fields.
+    pub evidence: Vec<PosteriorEvidenceEntry>,
+}
+
+/// One evidence entry for `scenario_recompute_posteriors`.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct PosteriorEvidenceEntry {
+    /// The event the evidence attaches to (must be among the request's events).
+    pub event_id: String,
+    /// Hard evidence: the observed probability — clamps the node's marginal
+    /// to this value in [0, 1].
+    pub observed_probability: Option<f64>,
+    /// Hard evidence: the observed outcome — clamps the node's marginal to
+    /// 1.0 (true) or 0.0 (false).
+    pub occurred: Option<bool>,
+    /// Soft evidence: a likelihood ratio P(evidence | event true) /
+    /// P(evidence | event false); the posterior is
+    /// P·LR / (P·LR + (1−P)), then propagated. Finite and >= 0.
+    pub likelihood_ratio: Option<f64>,
+}
+
 /// Request for `scenario_full`: the Tetlock core batch in one call.
 ///
 /// The optional assessment metrics pass through to the Chermack

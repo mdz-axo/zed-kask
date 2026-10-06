@@ -173,6 +173,8 @@ After KATA/LENS and any consistency-driven revision, assemble the full CASCADE r
 
 ### persist-report
 
+0. Persist the note's price target with `forecast_persist`, passing the scenario join fields so the recorded forecast carries its scenario provenance (PR-09): `scenario_project_id` (the scenarios server's project id — the subject, by default), `scenario_tree` (the `scenario_quantify` tree snapshot: node ids + marginals + joint), `impact_mappings_ref` (a digest of the per-node DCF deltas the valuation used), and `fused_volatility` (from `scenario_impact_valuation` when a realized volatility was supplied). The join is recorded on the forecast, not left agent-mediated.
+
 1. After verify-before-publish and the final publication decision, write the full report as a **rich markdown file** with its actual status. A blocked/incomplete run may persist a clearly labelled draft, not a published note. Include the canonical verification report, source references, confidence band and scope limitations.
 2. Reports are stored in the user-facing artifacts directory: `~/Documents/zk-data/companies-mcp/reports/`. This is separate from the internal data dir (`~/.local/share/zed-kask/`) — reports are user-facing artifacts that should be visible, not buried in a hidden cache directory.
 3. Create the reports directory if it does not exist: `mkdir -p ~/Documents/zk-data/companies-mcp/reports` via `terminal`.

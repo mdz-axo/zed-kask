@@ -944,7 +944,7 @@ impl CompaniesServer {
     }
 
     #[tool(
-        description = "Persist a pre-computed price target for later Brier scoring. Unlike calibrate_forecast (which runs its own Fermi decomposition) and forecast_record (which requires the actual outcome), this tool stores a pending price target without an outcome and without a decomposition model. The stored forecast can later be resolved by forecast_record when the horizon passes — Brier scoring runs on the recorded multiple and price change; gap decomposition is unavailable (no projected model). Pass forecast_probability (the forecast's own confidence that the price change lands within the tolerance band) so Brier scoring measures the forecast's calibration — without it, forecast_record falls back to a hardcoded 0.7 prior. Use this when a skill valuation step (e.g., company-research-flash step 16) produces a price target that should be tracked for calibration."
+        description = "Persist a pre-computed price target for later Brier scoring. Unlike calibrate_forecast (which runs its own Fermi decomposition) and forecast_record (which requires the actual outcome), this tool stores a pending price target without an outcome and without a decomposition model. The stored forecast can later be resolved by forecast_record when the horizon passes — Brier scoring runs on the recorded multiple and price change; gap decomposition is unavailable (no projected model). Pass forecast_probability (the forecast's own confidence that the price change lands within the tolerance band) so Brier scoring measures the forecast's calibration — without it, forecast_record falls back to a hardcoded 0.7 prior. Use this when a skill valuation step (e.g., company-research-flash step 16) produces a price target that should be tracked for calibration. Optional scenario join fields record the price target's scenario provenance: scenario_project_id (the scenarios server's project record id), scenario_tree (the scenario_quantify tree snapshot), impact_mappings_ref (the per-node DCF impact mappings used), and fused_volatility (from scenario_impact_valuation) — so the equity forecast carries the scenario join instead of leaving it agent-mediated."
     )]
     pub async fn forecast_persist(
         &self,
@@ -967,6 +967,18 @@ impl CompaniesServer {
                     return Err(McpToolError::invalid_argument(format!(
                         "forecast_probability must be within [0, 1], got {probability}"
                     )));
+                }
+            }
+            // Scenario join fields (PR-09): the fused volatility must be a
+            // finite sigma; a blank project id is caller noise, not a join.
+            if let Some(sigma) = req.fused_volatility {
+                validate_finite("fused_volatility", sigma)?;
+            }
+            if let Some(project_id) = req.scenario_project_id.as_deref() {
+                if project_id.trim().is_empty() {
+                    return Err(McpToolError::invalid_argument(
+                        "scenario_project_id must be non-empty when provided",
+                    ));
                 }
             }
             // Resolve the forecast price change: prefer the direct field, else
@@ -1011,6 +1023,8 @@ impl CompaniesServer {
             // up this ID. Brier scoring on the recorded multiple and price
             // change still runs. The snapshot carries the forecast inputs so
             // forecast_list consumers can see what was persisted.
+            let scenario_tree: Option<serde_json::Value> =
+                req.scenario_tree.map(serde_json::Value::from);
             let snapshot = serde_json::json!({
                 "kind": "precomputed_price_target",
                 "symbol": req.symbol,
@@ -1021,6 +1035,12 @@ impl CompaniesServer {
                 "current_price": req.current_price,
                 "forecast_price_change": forecast_price_change,
                 "forecast_probability": req.forecast_probability,
+                // Scenario join (PR-09): the recorded forecast carries its
+                // scenario provenance — the join is recorded, not agent-mediated.
+                "scenario_project_id": req.scenario_project_id,
+                "scenario_tree": scenario_tree,
+                "impact_mappings_ref": req.impact_mappings_ref,
+                "fused_volatility": req.fused_volatility,
             });
 
             self.save_forecast(PersistedForecast {

@@ -105,25 +105,12 @@ pub(crate) fn compute_marginal_probabilities(
                 })
                 .collect();
 
-            let marginal = combine_independent_channels(&group_marginals);
+            let marginal = hkask_forecast::combine_independent_channels(&group_marginals);
             resolved.insert(id.clone(), marginal.clamp(0.0, 1.0));
         }
     }
 
     resolved
-}
-
-/// Noisy-OR combination of independent causal channels:
-/// P(E) = 1 - Product_g (1 - P_g(E)).
-///
-/// For a single channel this is (approximately) the identity: `1-(1-p)` differs
-/// from `p` by at most 1 ULP in IEEE-754, so single-dependency-group behavior is
-/// unchanged to within floating-point precision.
-fn combine_independent_channels(channel_probabilities: &[f64]) -> f64 {
-    let survival = channel_probabilities
-        .iter()
-        .fold(1.0, |acc, &probability| acc * (1.0 - probability));
-    1.0 - survival
 }
 
 /// Build a full event tree from a list of events.
@@ -177,7 +164,7 @@ pub(crate) fn build_event_tree(events: &[ScenarioEvent]) -> Result<EventTree, Sc
                 .iter()
                 .map(|dep| dep.conditionals.last().copied().unwrap_or(0.0))
                 .collect();
-            combine_independent_channels(&all_parents_true)
+            hkask_forecast::combine_independent_channels(&all_parents_true)
         };
 
         // Build path from root to this node
@@ -354,22 +341,30 @@ pub(crate) fn sensitivity_ranking(tree: &EventTree) -> Vec<(String, f64)> {
 
 /// Score a forecast against known outcomes and produce a ForecastOutcome.
 /// Also computes per-event update suggestions for closing the feedback loop.
+///
+/// Scores the tree's resolved MARGINAL probabilities (PR-02): for a
+/// dependent event the belief actually forecast is the marginal the tree
+/// propagates, not the caller-supplied prior field — and the calibration
+/// loop must learn from the belief that was forecast.
 pub(crate) fn score_forecast(
     forecast_id: &str,
-    events: &[ScenarioEvent],
+    tree: &EventTree,
     outcomes: &[(String, bool)],
     forecast_date: chrono::NaiveDate,
 ) -> ForecastOutcome {
-    let event_map: HashMap<&str, &ScenarioEvent> =
-        events.iter().map(|e| (e.id.as_str(), e)).collect();
+    let node_map: HashMap<&str, &EventTreeNode> = tree
+        .nodes
+        .iter()
+        .map(|n| (n.event.id.as_str(), n))
+        .collect();
 
     let mut probs = Vec::new();
     let mut outs = Vec::new();
     let mut event_outcomes = Vec::new();
 
     for (event_id, occurred) in outcomes {
-        if let Some(event) = event_map.get(event_id.as_str()) {
-            probs.push(event.probability);
+        if let Some(node) = node_map.get(event_id.as_str()) {
+            probs.push(node.marginal_probability);
             outs.push(*occurred);
             event_outcomes.push((event_id.clone(), *occurred));
         } else {
@@ -395,10 +390,7 @@ pub(crate) fn score_forecast(
 
     ForecastOutcome {
         forecast_id: forecast_id.to_string(),
-        subject: events
-            .first()
-            .map(|e| e.subject.clone())
-            .unwrap_or_default(),
+        subject: tree.subject.clone(),
         forecast_date,
         outcome_date: chrono::Utc::now().date_naive(),
         event_outcomes,
@@ -407,27 +399,30 @@ pub(crate) fn score_forecast(
     }
 }
 
-/// Compute per-event Bayesian update suggestions based on forecast error direction.
-/// Positive delta means probability should be raised; negative means lowered.
+/// Compute per-event Bayesian update suggestions based on forecast error
+/// direction, against the tree's resolved marginals (PR-02 — the scored
+/// belief is the marginal). Positive delta means probability should be
+/// raised; negative means lowered.
 pub(crate) fn auto_update_suggestions(
-    events: &[ScenarioEvent],
+    nodes: &[EventTreeNode],
     outcomes: &[(String, bool)],
 ) -> Vec<serde_json::Value> {
-    let event_map: HashMap<&str, &ScenarioEvent> =
-        events.iter().map(|e| (e.id.as_str(), e)).collect();
+    let node_map: HashMap<&str, &EventTreeNode> =
+        nodes.iter().map(|n| (n.event.id.as_str(), n)).collect();
 
     outcomes
         .iter()
         .filter_map(|(event_id, occurred)| {
-            let event = event_map.get(event_id.as_str())?;
-            let error = event.probability - if *occurred { 1.0 } else { 0.0 };
+            let node = node_map.get(event_id.as_str())?;
+            let marginal = node.marginal_probability;
+            let error = marginal - if *occurred { 1.0 } else { 0.0 };
             // Suggest a modest correction in the error's direction
             let adjustment = (-error * 0.25).clamp(-0.15, 0.15);
-            let suggested = (event.probability + adjustment).clamp(0.01, 0.99);
+            let suggested = (marginal + adjustment).clamp(0.01, 0.99);
             Some(serde_json::json!({
                 "event_id": event_id,
-                "event_name": event.name,
-                "forecast_probability": event.probability,
+                "event_name": node.event.name,
+                "forecast_probability": marginal,
                 "outcome": occurred,
                 "error": error,
                 "suggested_adjustment": adjustment,

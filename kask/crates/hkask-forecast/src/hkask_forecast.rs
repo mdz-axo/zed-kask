@@ -13,6 +13,16 @@
 
 use thiserror::Error;
 
+// ── Posterior engine (promoted from hkask-graph-widget, PR-08) ──────────
+// The shared evidence-posterior engine: the scenarios server's
+// `scenario_recompute_posteriors` tool and the graph widget's interactive
+// re-propagation both delegate here — one implementation, no drift.
+pub mod posterior;
+pub use posterior::{
+    Evidence, PosteriorDependency, PosteriorNode, forward_marginals, is_polytree,
+    recompute_posteriors,
+};
+
 // ── Error type ──────────────────────────────────────────────────────────────
 
 #[derive(Debug, Error)]
@@ -165,6 +175,22 @@ pub fn marginalize(parent_marginals: &[f64], conditionals: &[f64]) -> f64 {
         }
     }
     marginal
+}
+
+/// Noisy-OR combination of independent causal channels:
+/// `P(E) = 1 − Π_g (1 − P_g(E))`.
+///
+/// For a single channel this is (approximately) the identity: `1−(1−p)`
+/// differs from `p` by at most 1 ULP in IEEE-754. The scenarios server's
+/// multi-group marginalization and the posterior engine's group
+/// combination share this one implementation (PR-08) so the interactive
+/// re-propagation cannot drift from `scenario_quantify`.
+#[must_use = "combined probability should be used"]
+pub fn combine_independent_channels(channel_probabilities: &[f64]) -> f64 {
+    let survival = channel_probabilities
+        .iter()
+        .fold(1.0, |acc, &probability| acc * (1.0 - probability));
+    1.0 - survival
 }
 
 /// The MAIA three-level certainty tier for a probability, matching the

@@ -1,61 +1,61 @@
 //! Marginal-probability recomputation with evidence overrides.
 //!
-//! Mirrors `hkask_mcp_scenarios::superforecast::compute_marginal_probabilities`
-//! (full joint-table marginalization under parent independence) and adds an
-//! evidence override: a node in the `evidence` map is treated as observed (its
-//! marginal is fixed to the set value) rather than marginalized from parents.
-//! This lets the widget re-propagate the tree interactively when a user sets
-//! evidence on a node, without coupling the UI crate to the MCP server.
+//! The engine lives in `hkask_forecast::posterior` (promoted there by the
+//! scenario-server redesign, PR-08, so the MCP surface — the scenarios
+//! server's `scenario_recompute_posteriors` tool — and this widget run ONE
+//! implementation and cannot drift). This module is the widget-side
+//! adapter: `GraphBlockBody` → the engine's neutral posterior nodes,
+//! plus the block-level conditional-table validation warn (a widget
+//! concern — the server validates at its own boundary).
 //!
-//! The joint-marginalization formula itself is shared via
-//! `hkask_forecast::marginalize` (single source of truth for the math). This
-//! module owns only the evidence-override wrapper + topological traversal,
-//! which are widget-only concerns: the server has no `evidence` parameter,
-//! so there is nothing to consolidate at the formula level. The former TODO
-//! referencing a consolidation that already happened has been removed.
+//! The promotion also unifies multi-group combination on the server's
+//! documented noisy-OR rule (`hkask_forecast::combine_independent_channels`):
+//! the widget's former local product rule silently disagreed with
+//! `scenario_quantify` on multi-group nodes.
 
 use std::collections::HashMap;
 
+use hkask_forecast::posterior::{self as engine, Evidence, PosteriorDependency, PosteriorNode};
+
 use crate::block::{EvidenceKind, GraphBlockBody};
 
-/// Compute the forward marginalization for a single node, reading parent
-/// marginals from the `marginals` slice. Used by soft-evidence application
-/// (which needs the forward prior before applying the Bayesian update) and
-/// by the fixpoint forward sweep in `recompute_posteriors`.
-///
-/// Roots return their stored `marginal_probability`. Dependents marginalize
-/// over each `depends_on` entry and combine by independence (product).
-/// High-fan-in nodes (>20 parents) fall back to the base marginal.
-fn forward_marginal_for_node(body: &GraphBlockBody, idx: usize, marginals: &[f64]) -> f64 {
-    let node = &body.nodes[idx];
-    let parents = node.parent_ids();
-    if parents.is_empty() {
-        return node.marginal_probability.unwrap_or(0.0).clamp(0.0, 1.0);
-    }
-    if node.depends_on.is_empty() {
-        return node.marginal_probability.unwrap_or(0.0).clamp(0.0, 1.0);
-    }
-    let mut combined: f64 = 1.0;
-    for dep in &node.depends_on {
-        let parent_marginals: Vec<f64> = dep
-            .parent_event_ids
-            .iter()
-            .map(|pid| {
-                body.nodes
-                    .iter()
-                    .position(|n| &n.id == pid)
-                    .and_then(|pi| marginals.get(pi).copied())
-                    .unwrap_or(0.0)
-            })
-            .collect();
-        let n_parents = dep.parent_event_ids.len();
-        if n_parents > 20 {
-            return node.marginal_probability.unwrap_or(0.0).clamp(0.0, 1.0);
-        }
-        combined *=
-            hkask_forecast::marginalize(&parent_marginals, &dep.conditionals).clamp(0.0, 1.0);
-    }
-    combined.clamp(0.0, 1.0)
+/// Convert the parsed block body into the engine's neutral node list:
+/// `base_probability` is the block's last-propagated marginal (clamped),
+/// `parents` is the deduplicated parent-id set across both edge
+/// representations, `dependencies` are the conditional tables.
+fn neutral_nodes(body: &GraphBlockBody) -> Vec<PosteriorNode> {
+    body.nodes
+        .iter()
+        .map(|node| PosteriorNode {
+            id: node.id.clone(),
+            base_probability: node.marginal_probability.unwrap_or(0.0).clamp(0.0, 1.0),
+            parents: node.parent_ids(),
+            dependencies: node
+                .depends_on
+                .iter()
+                .map(|dep| PosteriorDependency {
+                    parent_ids: dep.parent_event_ids.clone(),
+                    conditionals: dep.conditionals.clone(),
+                })
+                .collect(),
+        })
+        .collect()
+}
+
+/// Convert the widget's evidence map to the engine's evidence.
+fn neutral_evidence(evidence: &HashMap<usize, EvidenceKind>) -> HashMap<usize, Evidence> {
+    evidence
+        .iter()
+        .map(|(&index, kind)| {
+            (
+                index,
+                match *kind {
+                    EvidenceKind::Hard(value) => Evidence::Hard(value),
+                    EvidenceKind::Soft(likelihood_ratio) => Evidence::Soft(likelihood_ratio),
+                },
+            )
+        })
+        .collect()
 }
 
 /// Recompute every node's marginal probability given the current base
@@ -64,15 +64,10 @@ fn forward_marginal_for_node(body: &GraphBlockBody, idx: usize, marginals: &[f64
 ///
 /// A node in `evidence` uses its set value verbatim (observed). A root node
 /// (no parents) uses its stored `marginal_probability`. A dependent node
-/// marginalizes over the full joint truth-assignment space of its
-/// `depends_on[0]` parents:
-///
-/// `P(E) = Σ_a P(E|a) · Π_i P(p_i)^a_i · (1 − P(p_i))^(1 − a_i)`
-///
-/// where `a` ranges over the `2^n` bitmap of parent truth assignments and
-/// parent marginals are assumed independent. This matches the server's
-/// computation. Only `depends_on[0]` is consumed (the engine's documented
-/// limitation).
+/// marginalizes over the full joint truth-assignment space of each
+/// `depends_on` group under parent independence and combines groups by
+/// the shared noisy-OR rule — matching the server's computation exactly.
+/// Delegates to `hkask_forecast::posterior::forward_marginals` (PR-08).
 pub fn recompute_marginals(
     body: &GraphBlockBody,
     topo_order: &[usize],
@@ -93,331 +88,47 @@ pub fn recompute_marginals(
             "conditional table length mismatch; missing entries contribute 0 to the marginal"
         );
     }
-    let n = body.nodes.len();
-    let mut marginals = vec![0.0f64; n];
-    for &idx in topo_order {
-        if let Some(&kind) = evidence.get(&idx) {
-            // Hard evidence clamps; soft evidence applies a Bayesian update to
-            // the node's base marginal (roots) or the forward-computed marginal
-            // (dependents). For soft evidence on a dependent node, the prior is
-            // the forward marginalization result — computed below, so we fall
-            // through and apply the update after. For roots, the prior is the
-            // stored marginal_probability.
-            let node = &body.nodes[idx];
-            let prior = if node.parent_ids().is_empty() {
-                node.marginal_probability.unwrap_or(0.0).clamp(0.0, 1.0)
-            } else {
-                // Fall through to forward computation, then apply soft update.
-                // Hard evidence can clamp immediately.
-                if matches!(kind, EvidenceKind::Hard(_)) {
-                    marginals[idx] = kind.apply(0.0);
-                    continue;
-                }
-                // Soft: compute forward first, then apply. We'll handle this by
-                // not continuing here — the forward path runs, and we apply the
-                // soft update at the end of the loop body. Mark for update.
-                // (Implemented by falling through and applying after forward.)
-                // For simplicity, compute forward inline for soft evidence.
-                forward_marginal_for_node(body, idx, &marginals)
-            };
-            marginals[idx] = kind.apply(prior);
-            continue;
-        }
-        let node = &body.nodes[idx];
-        let parents = node.parent_ids();
-        if parents.is_empty() {
-            marginals[idx] = node.marginal_probability.unwrap_or(0.0).clamp(0.0, 1.0);
-            continue;
-        }
-        // Consume every `depends_on` entry, not just the first. Each entry is a
-        // joint conditional table over its own parent set; the entries are
-        // combined by independence (product of per-entry marginals). This makes
-        // the engine match the schema (`Vec<DependencyBody>`), which previously
-        // promised multi-dep support the math silently ignored.
-        if node.depends_on.is_empty() {
-            marginals[idx] = node.marginal_probability.unwrap_or(0.0).clamp(0.0, 1.0);
-            continue;
-        }
-        let mut combined: f64 = 1.0;
-        for dep in &node.depends_on {
-            let parent_marginals: Vec<f64> = dep
-                .parent_event_ids
-                .iter()
-                .map(|pid| {
-                    body.nodes
-                        .iter()
-                        .position(|n| &n.id == pid)
-                        .and_then(|pi| marginals.get(pi).copied())
-                        .unwrap_or(0.0)
-                })
-                .collect();
-            let n_parents = dep.parent_event_ids.len();
-            // Guard against pathological fan-in (the bitmap would overflow).
-            if n_parents > 20 {
-                // Signal the degradation: the displayed marginal is the base prior,
-                // not a propagated posterior. Without this warn an operator reading
-                // logs cannot distinguish "propagated to 0.7" from "fell back to
-                // the 0.7 prior" — the same trap as a missing startup-failure signal
-                // (`.rules`: silent fallback on a computed value).
-                tracing::warn!(
-                    target: "hkask-graph-widget",
-                    node_id = %node.id,
-                    n_parents = n_parents,
-                    "node fan-in exceeds 20; falling back to base marginal (exact marginalization is O(2^n) and intractable here)"
-                );
-                combined = node.marginal_probability.unwrap_or(0.0).clamp(0.0, 1.0);
-                break;
-            }
-            // Delegate the joint-marginalization formula to the shared
-            // `hkask_forecast::marginalize` so this re-propagation cannot drift from
-            // `hkask-mcp-scenarios::compute_marginal_probabilities`.
-            let entry_marginal = hkask_forecast::marginalize(&parent_marginals, &dep.conditionals);
-            combined *= entry_marginal.clamp(0.0, 1.0);
-        }
-        marginals[idx] = combined.clamp(0.0, 1.0);
-    }
-    marginals
+    engine::forward_marginals(
+        &neutral_nodes(body),
+        topo_order,
+        &neutral_evidence(evidence),
+    )
 }
 
 /// Detect whether the DAG is a polytree (singly-connected: its underlying
-/// undirected graph has no cycles). Pearl's π-λ belief updating is exact and
-/// O(n) on polytrees; on multiply-connected DAGs it double-counts evidence
-/// along multiple paths, so we fall back to forward-only marginalization.
-///
-/// Implementation: union-find on the undirected edge set. If any edge
-/// connects two nodes already in the same connected component, the undirected
-/// graph has a cycle → not a polytree.
+/// undirected graph has no cycles). Backward inference is exact and linear
+/// on polytrees; on multiply-connected DAGs it double-counts evidence
+/// along multiple paths, so the caller falls back to forward-only
+/// marginalization. Delegates to `hkask_forecast::posterior::is_polytree`
+/// (PR-08).
 pub fn is_polytree(body: &GraphBlockBody) -> bool {
-    let mut parent: Vec<usize> = (0..body.nodes.len()).collect();
-    fn find(parent: &mut Vec<usize>, x: usize) -> usize {
-        if parent[x] != x {
-            let root = find(parent, parent[x]);
-            parent[x] = root;
-            root
-        } else {
-            x
-        }
-    }
-    let id_index: HashMap<String, usize> = body
-        .nodes
-        .iter()
-        .enumerate()
-        .map(|(i, n)| (n.id.clone(), i))
-        .collect();
-    for (child_idx, node) in body.nodes.iter().enumerate() {
-        for parent_id in node.parent_ids() {
-            if let Some(&parent_idx) = id_index.get(&parent_id) {
-                let ra = find(&mut parent, parent_idx);
-                let rb = find(&mut parent, child_idx);
-                if ra == rb {
-                    // Undirected cycle: not a polytree.
-                    return false;
-                }
-                parent[ra] = rb;
-            }
-        }
-    }
-    true
+    engine::is_polytree(&neutral_nodes(body))
 }
 
-/// Recompute node marginals with backward inference (Pearl π-λ belief
-/// updating) for polytree DAGs. Evidence on a node propagates both forward
-/// to children (causal) and backward to parents (diagnostic), answering the
-/// forecasting question "given the leaf was observed, what's the posterior on
-/// the root?" that forward-only marginalization cannot.
+/// Recompute node marginals with backward inference for polytree DAGs:
+/// evidence on a node propagates both forward to children (causal) and
+/// backward to parents (diagnostic), answering the forecasting question
+/// "given the leaf was observed, what's the posterior on the root?" that
+/// forward-only marginalization cannot.
 ///
-/// **Scope: polytrees only.** For multiply-connected DAGs the caller must fall
-/// back to [`recompute_marginals`] (forward-only) — this function will
-/// double-count evidence along multiple paths if called on a non-polytree.
+/// **Scope: polytrees only.** For multiply-connected DAGs the caller must
+/// fall back to [`recompute_marginals`] (forward-only) — this function
+/// double-counts evidence along multiple paths if called on a
+/// non-polytree.
 ///
-/// The algorithm: for each node in topological order, compute π (causal support:
-/// product of parent marginals marginalized through this node's conditional
-/// table) and λ (diagnostic support: product of child λ-messages). The belief
-/// is π·λ normalized. Evidence nodes have their marginal clamped to the
-/// observed value; their π and λ messages propagate the observation.
-///
-/// This is a simplified single-pass polytree updater: it computes posteriors
-/// by propagating evidence forward (causal) then backward (diagnostic) in two
-/// passes over the topological order. For strict Pearl π-λ message passing
-/// each node would maintain separate π and λ vectors per parent/child, but the
-/// two-pass marginal approximation is exact on polytrees because there is
-/// exactly one path between any two nodes.
+/// Delegates to `hkask_forecast::posterior::recompute_posteriors` (PR-08) —
+/// the same engine the scenarios server's `scenario_recompute_posteriors`
+/// tool exposes.
 pub fn recompute_posteriors(
     body: &GraphBlockBody,
     topo_order: &[usize],
     evidence: &HashMap<usize, EvidenceKind>,
 ) -> Vec<f64> {
-    let n = body.nodes.len();
-    if n == 0 {
-        return Vec::new();
-    }
-    // Precondition: this function is only exact on polytrees (singly-connected
-    // DAGs). The caller (`GraphWidget::repropagate`) guards with `is_polytree`;
-    // this debug_assert catches test-time misuse by a future caller. On a
-    // multiply-connected DAG the fixpoint below would double-count evidence
-    // along multiple paths.
-    debug_assert!(
-        is_polytree(body),
-        "recompute_posteriors called on a non-polytree; backward inference is exact only on polytrees"
-    );
-    // Forward pass: compute causal marginals (same as recompute_marginals).
-    let mut marginals = recompute_marginals(body, topo_order, evidence);
-
-    // Fixpoint iteration: alternate forward and backward sweeps until the
-    // marginals stabilize. On a polytree this converges in ≤ diameter sweeps
-    // because there is exactly one path between any two nodes (no double-
-    // counting). The forward sweep re-marginalizes children from the (updated)
-    // parent priors; the backward sweep re-updates parents from the (updated)
-    // child likelihoods. Without this iteration a single forward+backward pass
-    // leaves siblings of an evidence node stale — the parent gets updated by
-    // the evidence-bearing child, but the sibling's marginal is never
-    // recomputed from the updated parent.
-    let id_index: HashMap<String, usize> = body
-        .nodes
-        .iter()
-        .enumerate()
-        .map(|(i, node)| (node.id.clone(), i))
-        .collect();
-
-    const MAX_FIXPOINT_SWEEPS: usize = 100;
-    const CONVERGENCE_EPSILON: f64 = 1e-9;
-    for _sweep in 0..MAX_FIXPOINT_SWEEPS {
-        let prev = marginals.clone();
-
-        // Forward sweep: recompute children from current parent marginals.
-        // Evidence nodes stay clamped; roots use their current marginal (which
-        // the backward sweep may have updated away from the static prior).
-        for &idx in topo_order {
-            if evidence.contains_key(&idx) {
-                continue;
-            }
-            let node = &body.nodes[idx];
-            let parents = node.parent_ids();
-            if parents.is_empty() {
-                // Root: keep the current marginal (set by backward sweep or
-                // the initial forward pass). Do not reset to the static prior.
-                continue;
-            }
-            if node.depends_on.is_empty() {
-                continue;
-            }
-            let mut combined: f64 = 1.0;
-            for dep in &node.depends_on {
-                let parent_marginals: Vec<f64> = dep
-                    .parent_event_ids
-                    .iter()
-                    .map(|pid| {
-                        id_index
-                            .get(pid)
-                            .and_then(|&pi| marginals.get(pi).copied())
-                            .unwrap_or(0.0)
-                    })
-                    .collect();
-                let n_parents = dep.parent_event_ids.len();
-                if n_parents > 20 {
-                    combined = node.marginal_probability.unwrap_or(0.0).clamp(0.0, 1.0);
-                    break;
-                }
-                combined *= hkask_forecast::marginalize(&parent_marginals, &dep.conditionals)
-                    .clamp(0.0, 1.0);
-            }
-            marginals[idx] = combined.clamp(0.0, 1.0);
-        }
-
-        // Backward sweep: re-update parents from current child marginals.
-        for &idx in topo_order.iter().rev() {
-            let node = &body.nodes[idx];
-            let parents = node.parent_ids();
-            if parents.is_empty() {
-                continue;
-            }
-            for dep in &node.depends_on {
-                for (k, parent_id) in dep.parent_event_ids.iter().enumerate() {
-                    let Some(&parent_idx) = id_index.get(parent_id) else {
-                        continue;
-                    };
-                    let parent_prior = marginals[parent_idx];
-                    if parent_prior <= 0.0 || parent_prior >= 1.0 {
-                        continue;
-                    }
-                    let p_child_given_parent_true =
-                        conditional_for_parent(dep, k, true, &marginals, &id_index);
-                    let p_child_given_parent_false =
-                        conditional_for_parent(dep, k, false, &marginals, &id_index);
-                    let numerator = p_child_given_parent_true * parent_prior;
-                    let denominator = numerator + p_child_given_parent_false * (1.0 - parent_prior);
-                    if denominator > 1e-12 {
-                        let posterior = (numerator / denominator).clamp(0.0, 1.0);
-                        if !evidence.contains_key(&parent_idx) {
-                            marginals[parent_idx] = posterior;
-                        }
-                    }
-                }
-            }
-        }
-
-        // Convergence: max abs delta across all nodes.
-        let max_delta = marginals
-            .iter()
-            .zip(prev.iter())
-            .map(|(new, old)| (new - old).abs())
-            .fold(0.0_f64, f64::max);
-        if max_delta < CONVERGENCE_EPSILON {
-            break;
-        }
-    }
-    marginals
-}
-
-/// Compute P(child | parent_k = value) by marginalizing the conditional table
-/// over the other parents at their current marginals. For a single-parent
-/// dependency, this is just `conditionals[value as usize]`.
-fn conditional_for_parent(
-    dep: &crate::block::DependencyBody,
-    parent_k: usize,
-    parent_value: bool,
-    marginals: &[f64],
-    id_index: &HashMap<String, usize>,
-) -> f64 {
-    let n_parents = dep.parent_event_ids.len();
-    if n_parents == 0 {
-        return 0.0;
-    }
-    if n_parents == 1 {
-        return dep
-            .conditionals
-            .get(parent_value as usize)
-            .copied()
-            .unwrap_or(0.0);
-    }
-    // Multi-parent: marginalize over the other parents.
-    // Sum over all assignments where parent_k = parent_value.
-    let n_assignments = 1usize << n_parents;
-    let mut total = 0.0;
-    for assignment in 0..n_assignments {
-        let k_bit = (assignment >> parent_k) & 1 == 1;
-        if k_bit != parent_value {
-            continue;
-        }
-        let mut assignment_prob = 1.0;
-        for (j, parent_id) in dep.parent_event_ids.iter().enumerate() {
-            if j == parent_k {
-                continue;
-            }
-            let parent_marginal = id_index
-                .get(parent_id)
-                .and_then(|&pi| marginals.get(pi).copied())
-                .unwrap_or(0.0);
-            let bit_set = (assignment >> j) & 1 == 1;
-            assignment_prob *= if bit_set {
-                parent_marginal
-            } else {
-                1.0 - parent_marginal
-            };
-        }
-        total += dep.conditionals.get(assignment).copied().unwrap_or(0.0) * assignment_prob;
-    }
-    total
+    engine::recompute_posteriors(
+        &neutral_nodes(body),
+        topo_order,
+        &neutral_evidence(evidence),
+    )
 }
 
 #[cfg(test)]
@@ -546,7 +257,11 @@ mod tests {
         // Node c depends on two entries: one over parent a, one over parent b.
         // Entry 0: P(c|¬a)=0.1, P(c|a)=0.6, P(a)=0.8 → marginalize = 0.5.
         // Entry 1: P(c|¬b)=0.2, P(c|b)=0.7, P(b)=0.5 → marginalize = 0.45.
-        // Combined by independence (product): 0.5 * 0.45 = 0.225.
+        // Combined by the shared noisy-OR rule (PR-08 engine promotion):
+        // 1 − (1−0.5)(1−0.45) = 0.725 — matching scenario_quantify's
+        // documented multi-group marginalization. The widget's former
+        // local product rule (0.225) silently disagreed with the server's
+        // own marginal for the same tree.
         let a = node("a", 0.8, &[]);
         let b = node("b", 0.5, &[]);
         let mut c = node("c", 0.0, &[]);
@@ -562,7 +277,7 @@ mod tests {
         ];
         let (body, topo) = body(vec![a, b, c], vec![0, 1, 2]);
         let m = recompute_marginals(&body, &topo, &HashMap::new());
-        assert!((m[2] - 0.225).abs() < 1e-9, "got {}", m[2]);
+        assert!((m[2] - 0.725).abs() < 1e-9, "got {}", m[2]);
     }
 
     #[test]

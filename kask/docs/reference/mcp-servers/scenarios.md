@@ -11,10 +11,10 @@ mds_categories: [composition, lifecycle]
 # Scenarios MCP Server Reference
 
 **Crate:** `kask/mcp-servers/hkask-mcp-scenarios`
-**Tools:** 19 — `scenario_frame`, `scenario_frame_document`, `scenario_brainstorm`, `scenario_build`, `scenario_quantify`, `scenario_propagate`, `scenario_calibrate`, `scenario_update`, `scenario_synthesize`, `scenario_cross_validate`, `scenario_score`, `scenario_calibration`, `scenario_assess`, `scenario_triage`, `scenario_status`, `scenario_from_markets_set`, `scenario_from_cmp_indices`, `scenario_full`, `contract_price_coherence`. The direct market-record bridge is `scenario_from_markets_set`; a single record is passed as a set of one.
+**Tools:** 20 — `scenario_frame`, `scenario_frame_document`, `scenario_brainstorm`, `scenario_build`, `scenario_quantify`, `scenario_propagate`, `scenario_recompute_posteriors`, `scenario_calibrate`, `scenario_update`, `scenario_synthesize`, `scenario_cross_validate`, `scenario_score`, `scenario_calibration`, `scenario_assess`, `scenario_triage`, `scenario_status`, `scenario_from_markets_set`, `scenario_from_cmp_indices`, `scenario_full`, `contract_price_coherence`. The direct market-record bridge is `scenario_from_markets_set`; a single record is passed as a set of one.
 **Auto-start:** Yes by default with the full built-in set; operators can disable the fleet or this server through `kask.mcp` (`kask/crates/kask_bridge/src/settings.rs:140-165`; `kask/crates/kask_bridge/src/mcp_servers.rs:327-340,704`).
 
-Tool count is pinned against the live `scenario_router()` by `tool_surface_is_exactly_19_registered_tools` (the `mod tests` pin in `kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs`).
+Tool count is pinned against the live `scenario_router()` by `tool_surface_is_exactly_20_registered_tools` (the `mod tests` pin in `kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs`).
 
 ## Pipeline Architecture (DIAG-RF-005)
 
@@ -36,6 +36,7 @@ flowchart TD
     subgraph Computation["Quantification and updating"]
         quantify["scenario_quantify"]
         propagate["scenario_propagate"]
+        posteriors["scenario_recompute_posteriors"]
         calibrate["scenario_calibrate"]
         update["scenario_update"]
         cross_validate["scenario_cross_validate"]
@@ -58,6 +59,7 @@ flowchart TD
     markets --> quantify
     cmp --> quantify
     quantify --> propagate
+    quantify -.-> posteriors
     quantify --> calibrate
     calibrate --> update
     calibrate --> cross_validate
@@ -136,12 +138,13 @@ narrative phases are the skill layer's.
 | `scenario_from_cmp_indices` | Compose provenance-carrying constant-maturity prediction indices into an `EventTree`, optionally with caller-authored dependencies. | `cmp_indices`, `observation_date`, `dependency_specs` |
 | `contract_price_coherence` | Compare a tree-implied joint or marginal probability with an observed contract price and cost band. | `market_price`, `cost_band`, `tree_implied` |
 
-### Computation (4)
+### Computation (5)
 
 | Tool | Description | Key params |
 |------|-------------|------------|
 | `scenario_quantify` | Quantify an event tree: topological sort, marginal probabilities via conditional propagation, joint probability, per-event variance contribution, sensitivity ranking; detects cycles and missing parents. | `events` JSON |
 | `scenario_propagate` | Update one event's prior and propagate through the tree: descendant marginals and joint probability recomputed; returns the updated tree plus a per-node before/after propagation journal (tâtonnement record). CPTs untouched. | `events`, `event_id`, `new_prior` |
+| `scenario_recompute_posteriors` | Recompute posteriors under evidence, in BOTH directions (forward to descendants, backward to ancestors) via the shared `hkask_forecast::posterior` engine — the same implementation the graph widget delegates to. Exact on polytrees; degrades to forward-only with a note on multiply-connected DAGs. | `events`, `evidence` (one of `observed_probability` / `occurred` / `likelihood_ratio` per entry) |
 | `scenario_calibrate` | Four-stage calibration (Fermi decomposition → outside view → inside view → calibration feedback from ≥5 resolved forecasts); returns calibrated probability, bounds, and certainty tier. | Fermi sub-questions, base rate |
 | `scenario_update` | Bayesian update: P(H\|E) = P(E\|H) × P(H) / P(E); returns posterior and update magnitude. | `prior`, `likelihood`, `evidence_base_rate` |
 
@@ -179,7 +182,7 @@ narrative phases are the skill layer's.
 - **Research entry:** `scenario_build` with research text (skip brainstorming if events are extracted from web text)
 - **Companies bridge:** `scenario_quantify` → user authors per-node impact mappings → `scenario_impact_valuation` on `hkask-mcp-companies` (exogenous scenario events drive the company's DCF via additive assumption deltas, weighted by path probability)
 - **Markets bridge:** `scenario_from_markets_set` (a single market is a set-of-1) → `scenario_quantify`; market records come from `hkask-mcp-prediction-markets` (`market_lookup` / `market_match`)
-- **Update loop:** `scenario_propagate` re-propagates a tree after a prior revision; `scenario_update` applies a one-off Bayesian revision
+- **Update loop:** `scenario_propagate` re-propagates a tree after a prior revision; `scenario_update` applies a one-off Bayesian revision; `scenario_recompute_posteriors` recomputes under evidence in both directions (the shared `hkask_forecast::posterior` engine — the graph widget delegates to the same implementation)
 - **Single-call:** `scenario_full` delegates to `triage_question`, `build_event_tree`, `sensitivity_ranking`, `calibrate_from_fermi`, `outside_view_adjustment`, `synthesize_perspectives`, `assess_project`
 - **Independent:** `scenario_triage`, `scenario_status` callable at any point
 
@@ -190,6 +193,17 @@ narrative phases are the skill layer's.
 mutation, `fsync`ed before the record is admitted to memory) plus a full
 snapshot compacted from it. On load, the snapshot is applied first and the
 journal is replayed on top of it, last write wins.
+
+**Marginal scoring (schema v3, PR-02).** `scenario_score` resolves the
+event tree first and Brier-scores each node's resolved MARGINAL — for a
+dependent event the belief actually forecast is the marginal the tree
+propagates, not the caller-supplied prior field. The journal records the
+marginal with `scored_from_marginal: true` (schema v3); v2-and-earlier
+records hold the caller-supplied prior and are distinguished by the
+marker. The calibration curve and the domain-bias correction
+consequently learn from marginals on v3 records. A re-score never
+rewrites the historical forecast: the recorded probability stays the
+first score's marginal.
 
 Durability ordering — verified by regression (`kask/mcp-servers/hkask-mcp-scenarios/tests/tool_behavior.rs`):
 

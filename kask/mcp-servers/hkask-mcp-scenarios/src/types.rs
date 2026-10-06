@@ -344,9 +344,12 @@ pub(crate) struct DragonflySynthesis {
 /// A single stored forecast awaiting or having received an outcome.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct StoredForecastRecord {
-    /// Schema version for forward-compatible deserialization (current: 2).
+    /// Schema version for forward-compatible deserialization (current: 3).
     /// Old files without this field default to 0.
     /// v2 adds `category` for per-domain calibration.
+    /// v3 scores the tree MARGINAL (PR-02): `probability` is the node's
+    /// resolved marginal at scoring time, marked by `scored_from_marginal`.
+    /// v2-and-earlier records hold the caller-supplied prior.
     #[serde(default)]
     pub schema_version: u32,
     pub forecast_id: String,
@@ -354,6 +357,10 @@ pub(crate) struct StoredForecastRecord {
     pub event_name: String,
     pub subject: String,
     pub probability: f64,
+    /// v3 marker: `probability` is the tree's resolved marginal, not the
+    /// caller-supplied prior (PR-02). Defaults false on older records.
+    #[serde(default)]
+    pub scored_from_marginal: bool,
     pub created_at: NaiveDate,
     /// None = still pending, Some = outcome known
     pub outcome: Option<bool>,
