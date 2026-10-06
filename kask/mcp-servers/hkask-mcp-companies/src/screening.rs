@@ -412,14 +412,17 @@ async fn run_screen_job(
         .map_err(crate::map_portfolio_error)?;
     if definition.kind != "expectations_gap" {
         let universe = acquire_universe(server, definition).await?;
-        let result = calculate(
-            &server.client,
-            &server.eodhd_api_key,
-            definition,
-            verification,
-            universe,
-        )
-        .await?;
+        // Non-expectations screens carry no enrichment: the universe rows
+        // are the result, sorted and columnarized. The expectations-gap
+        // kind flows through the checkpointed pass-set + enrichment path
+        // below — the only fundamentals-fetching path, cache-first.
+        let mut calculation = ScreenCalculation {
+            candidate_count: universe.len(),
+            rows: universe,
+            exclusions: Vec::new(),
+        };
+        sort_rows(&mut calculation.rows, definition);
+        let result = build_calculation_result(definition, verification, calculation);
         server
             .research
             .finish_screen_job(job_id, "completed", Some(&result), None, None)
@@ -681,31 +684,6 @@ where
     }
 }
 
-async fn calculate(
-    _client: &reqwest::Client,
-    _eodhd_api_key: &str,
-    definition: &ScreenDefinition,
-    verification: Value,
-    universe_snapshot: Vec<Value>,
-) -> Result<Value, McpToolError> {
-    let calculation = if definition.kind == "expectations_gap" {
-        calculate_expectations_gap(_client, _eodhd_api_key, definition, universe_snapshot).await?
-    } else {
-        ScreenCalculation {
-            candidate_count: universe_snapshot.len(),
-            rows: universe_snapshot,
-            exclusions: Vec::new(),
-        }
-    };
-    let mut calculation = calculation;
-    sort_rows(&mut calculation.rows, definition);
-    Ok(build_calculation_result(
-        definition,
-        verification,
-        calculation,
-    ))
-}
-
 fn build_calculation_result(
     definition: &ScreenDefinition,
     verification: Value,
@@ -750,43 +728,6 @@ fn build_calculation_result(
         },
         "table": columnar_table(&calculation.rows, definition),
         "exclusions": calculation.exclusions,
-    })
-}
-
-async fn calculate_expectations_gap(
-    client: &reqwest::Client,
-    eodhd_api_key: &str,
-    definition: &ScreenDefinition,
-    universe: Vec<Value>,
-) -> Result<ScreenCalculation, McpToolError> {
-    let prepared =
-        prepare_expectations_pass_set(client, eodhd_api_key, definition, universe).await?;
-    let investor_target_return = definition
-        .logic_env
-        .get("investor_target_return")
-        .and_then(Value::as_f64)
-        .ok_or_else(|| McpToolError::invalid_argument("screen has no investor_target_return"))?;
-    let mut rows = Vec::with_capacity(prepared.groups.len());
-    for group in prepared.groups {
-        let row = match analyze_issuer_group(
-            client,
-            eodhd_api_key,
-            &prepared.fx_rates,
-            &group,
-            None,
-            investor_target_return,
-        )
-        .await
-        {
-            Ok(row) => row,
-            Err(reason) => unavailable_issuer_row(&group, &reason.to_string()),
-        };
-        rows.push(row);
-    }
-    Ok(ScreenCalculation {
-        rows,
-        candidate_count: prepared.candidate_count,
-        exclusions: prepared.exclusions,
     })
 }
 
@@ -1238,7 +1179,7 @@ async fn analyze_issuer_group(
     eodhd_api_key: &str,
     fx_rates: &HashMap<String, f64>,
     issuer_group: &IssuerGroup,
-    fundamentals: Option<Value>,
+    fundamentals: Value,
     investor_target_return: f64,
 ) -> Result<Value, ScreeningError> {
     let group = &issuer_group.securities;
@@ -1251,10 +1192,6 @@ async fn analyze_issuer_group(
         })
         .ok_or(ScreeningError::EmptyIssuerGroup)?;
     let analysis_symbol = actionable.symbol.as_str();
-    let fundamentals = match fundamentals {
-        Some(fundamentals) => fundamentals,
-        None => providers::fetch_eodhd_fundamentals(client, eodhd_api_key, analysis_symbol).await?,
-    };
     let primary = fundamentals
         .pointer("/General/PrimaryTicker")
         .and_then(Value::as_str)
@@ -1554,7 +1491,7 @@ async fn enrich_pending_issuers(
                     &api_key,
                     &fx_rates,
                     &group,
-                    Some(fundamentals),
+                    fundamentals,
                     investor_target_return,
                 )
                 .await

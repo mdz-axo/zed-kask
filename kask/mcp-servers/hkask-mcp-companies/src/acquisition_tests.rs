@@ -3123,7 +3123,7 @@ async fn screen_data_failures_exclude_with_reasons_and_complete() {
         .await;
 }
 
-/// dcterms:identifier: CompaniesServer::company_screener / screening::calculate_expectations_gap
+/// dcterms:identifier: CompaniesServer::company_screener / screening::run_screen_job
 #[tokio::test]
 async fn expectations_template_reduces_and_reconciles_the_universe() {
     let directory = tempfile::tempdir().expect("temporary directory");
