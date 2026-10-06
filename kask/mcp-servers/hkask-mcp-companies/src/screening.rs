@@ -465,12 +465,7 @@ async fn run_screen_job(
         let prepared = tokio::select! {
             result = tokio::time::timeout(
                 SCREEN_PASS_DEADLINE,
-                prepare_expectations_pass_set(
-                    &server.client,
-                    &server.eodhd_api_key,
-                    definition,
-                    universe.clone(),
-                ),
+                prepare_expectations_pass_set(server, definition, universe.clone()),
             ) => {
                 match result {
                     Ok(inner) => inner?,
@@ -759,8 +754,7 @@ fn deadline_exclusions(universe: Vec<Value>) -> PreparedPassSet {
 }
 
 async fn prepare_expectations_pass_set(
-    client: &reqwest::Client,
-    eodhd_api_key: &str,
+    server: &CompaniesServer,
     definition: &ScreenDefinition,
     universe: Vec<Value>,
 ) -> Result<PreparedPassSet, McpToolError> {
@@ -786,8 +780,9 @@ async fn prepare_expectations_pass_set(
         .exchanges
         .iter()
         .map(|exchange| async move {
-            let result =
-                providers::fetch_eodhd_common_stocks(client, eodhd_api_key, exchange).await;
+            // 24h ticker-list cache: a warm re-run of the same universe
+            // skips the per-exchange symbol-list fetch.
+            let result = server.cached_common_stocks(exchange).await;
             (exchange.clone(), result)
         });
     let mut ticker_inventory = HashMap::new();
@@ -831,7 +826,9 @@ async fn prepare_expectations_pass_set(
     currencies.sort();
     currencies.dedup();
     let fx_fetches = currencies.iter().cloned().map(|currency| async move {
-        let result = providers::fetch_eodhd_forex_rate(client, eodhd_api_key, &currency).await;
+        // 24h FOREX cache — the same entries the ad-hoc screener and
+        // valuation price normalization read and write.
+        let result = server.cached_forex_rate(&currency).await;
         (currency, result)
     });
     let mut fx_rates = HashMap::from([("USD".to_string(), 1.0)]);
@@ -1175,8 +1172,7 @@ enum ScreeningError {
 }
 
 async fn analyze_issuer_group(
-    client: &reqwest::Client,
-    eodhd_api_key: &str,
+    server: &CompaniesServer,
     fx_rates: &HashMap<String, f64>,
     issuer_group: &IssuerGroup,
     fundamentals: Value,
@@ -1211,8 +1207,7 @@ async fn analyze_issuer_group(
     let raw_price = actionable.adjusted_close;
     let listing_currency_symbol = Some(actionable.currency_symbol.as_str());
     let current_price = normalize_primary_price(
-        client,
-        eodhd_api_key,
+        server,
         fx_rates,
         &fundamentals,
         raw_price,
@@ -1426,15 +1421,11 @@ async fn enrich_pending_issuers(
     let issuer_count = decoded.len();
     let cache_hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let work = futures::stream::iter(decoded.into_iter().map(|(item, group)| {
-        let client = server.client.clone();
-        let api_key = server.eodhd_api_key.clone();
-        let store = server.research.clone();
         let fx_rates = fx_rates.clone();
         let job_id = job_id.to_string();
-        let fibo_cache = server.fibo_cache.clone();
         let cache_hits = cache_hits.clone();
         async move {
-            if store.screen_cancel_requested(&job_id)? {
+            if server.research.screen_cancel_requested(&job_id)? {
                 return Ok::<(), crate::screen_store::PortfolioError>(());
             }
             let actionable = group.securities.iter().max_by(|left, right| {
@@ -1442,53 +1433,52 @@ async fn enrich_pending_issuers(
                     .partial_cmp(&right.average_daily_dollar_volume_usd)
                     .unwrap_or(std::cmp::Ordering::Equal)
             });
-            let fundamentals = match actionable {
-                Some(security) => {
-                    // 24h fundamentals cache (`fibo_cache`): a warm re-run of
-                    // the same universe skips the per-symbol fetch entirely —
-                    // the dominant wall-time cost of a cold run. Misses fall
-                    // through to the live fetch and populate the cache.
-                    match fibo_cache
-                        .as_ref()
-                        .and_then(|cache| cache.get_raw(&security.symbol, "fundamentals", "none"))
-                    {
-                        Some(cached) => {
-                            cache_hits.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                            Ok(cached)
-                        }
-                        None => match tokio::time::timeout(
-                            ISSUER_FETCH_TIMEOUT,
-                            providers::fetch_eodhd_fundamentals(
-                                &client,
-                                &api_key,
-                                &security.symbol,
-                            ),
-                        )
-                        .await
-                        {
-                            Ok(Ok(fundamentals)) => {
-                                if let Some(cache) = fibo_cache.as_ref() {
-                                    cache.store_raw(
-                                        &security.symbol,
-                                        "fundamentals",
-                                        "none",
-                                        &fundamentals,
-                                        "EODHD",
-                                    );
-                                }
-                                Ok(fundamentals)
+            let fundamentals =
+                match actionable {
+                    Some(security) => {
+                        // 24h fundamentals cache (`fibo_cache`): a warm re-run of
+                        // the same universe skips the per-symbol fetch entirely —
+                        // the dominant wall-time cost of a cold run. Misses fall
+                        // through to the live fetch and populate the cache.
+                        match server.fibo_cache.as_ref().and_then(|cache| {
+                            cache.get_raw(&security.symbol, "fundamentals", "none")
+                        }) {
+                            Some(cached) => {
+                                cache_hits.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                Ok(cached)
                             }
-                            Ok(Err(error)) => Err(ScreeningError::Fundamentals(error)),
-                            Err(_) => Err(ScreeningError::FundamentalsFetchTimeout),
-                        },
+                            None => match tokio::time::timeout(
+                                ISSUER_FETCH_TIMEOUT,
+                                providers::fetch_eodhd_fundamentals(
+                                    &server.client,
+                                    &server.eodhd_api_key,
+                                    &security.symbol,
+                                ),
+                            )
+                            .await
+                            {
+                                Ok(Ok(fundamentals)) => {
+                                    if let Some(cache) = server.fibo_cache.as_ref() {
+                                        cache.store_raw(
+                                            &security.symbol,
+                                            "fundamentals",
+                                            "none",
+                                            &fundamentals,
+                                            "EODHD",
+                                        );
+                                    }
+                                    Ok(fundamentals)
+                                }
+                                Ok(Err(error)) => Err(ScreeningError::Fundamentals(error)),
+                                Err(_) => Err(ScreeningError::FundamentalsFetchTimeout),
+                            },
+                        }
                     }
-                }
-                None => Err(ScreeningError::NoActionableSecurity),
-            };
+                    None => Err(ScreeningError::NoActionableSecurity),
+                };
             let (row, error) = match fundamentals {
                 Ok(fundamentals) => match analyze_issuer_group(
-                    &client,
-                    &api_key,
+                    server,
                     &fx_rates,
                     &group,
                     fundamentals,
@@ -1511,7 +1501,7 @@ async fn enrich_pending_issuers(
                 .get("data_quality_status")
                 .and_then(Value::as_str)
                 .unwrap_or("unavailable");
-            store.complete_screen_item(
+            server.research.complete_screen_item(
                 &job_id,
                 &item.issuer_key,
                 classification,
@@ -1859,8 +1849,7 @@ fn verify_assertions(definition: &ScreenDefinition) -> Result<Value, McpToolErro
 }
 
 async fn normalize_primary_price(
-    client: &reqwest::Client,
-    eodhd_api_key: &str,
+    server: &CompaniesServer,
     fx_rates: &HashMap<String, f64>,
     fundamentals: &Value,
     raw_price: f64,
@@ -1879,11 +1868,11 @@ async fn normalize_primary_price(
         quote_unit = 0.01;
     }
     let (statement_major, statement_unit) = currency_code_unit(statement_code);
-    let quote_rate = current_rate(client, eodhd_api_key, fx_rates, &quote_major).await?;
+    let quote_rate = current_rate(server, fx_rates, &quote_major).await?;
     let statement_rate = if statement_major == quote_major {
         quote_rate
     } else {
-        current_rate(client, eodhd_api_key, fx_rates, &statement_major).await?
+        current_rate(server, fx_rates, &statement_major).await?
     };
     let normalized = raw_price * quote_unit / quote_rate * statement_rate / statement_unit;
     if normalized.is_finite() && normalized > 0.0 {
@@ -1893,9 +1882,12 @@ async fn normalize_primary_price(
     }
 }
 
+/// USD-per-unit lookup for `currency`: the pass set's collected rates
+/// first, then the canonical 24h FOREX cache (the same entries the ad-hoc
+/// screener and valuation normalization use), so a warm re-run never
+/// refetches a fallback currency.
 async fn current_rate(
-    client: &reqwest::Client,
-    eodhd_api_key: &str,
+    server: &CompaniesServer,
     fx_rates: &HashMap<String, f64>,
     currency: &str,
 ) -> Result<f64, ScreeningError> {
@@ -1905,7 +1897,8 @@ async fn current_rate(
     if let Some(rate) = fx_rates.get(currency).copied() {
         return Ok(rate);
     }
-    providers::fetch_eodhd_forex_rate(client, eodhd_api_key, currency)
+    server
+        .cached_forex_rate(currency)
         .await
         .map(|(_, rate)| rate)
         .map_err(ScreeningError::from)

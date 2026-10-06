@@ -36,6 +36,7 @@ const TTL_HISTORICAL_PRICE: u64 = 60 * 60; // 1h
 const TTL_STOCK_QUOTE: u64 = 5 * 60; // 5 min — near real-time
 const TTL_SCREENER_EXCHANGES_LIST: u64 = 24 * 60 * 60; // 24h — exchange inventory changes rarely
 const TTL_SCREENER_FOREX_RATE: u64 = 24 * 60 * 60; // 24h — daily FOREX close
+const TTL_SCREENER_TICKER_LIST: u64 = 24 * 60 * 60; // 24h — listings change rarely
 const TTL_FUNDAMENTALS: u64 = 24 * 60 * 60; // 24h — EODHD full fundamentals payload, annual data
 const TTL_DEFAULT: u64 = 60 * 60; // 1h
 
@@ -48,6 +49,7 @@ fn ttl_for_endpoint(endpoint: &str) -> u64 {
         "stock_quote" => TTL_STOCK_QUOTE,
         "screener_exchanges_list" => TTL_SCREENER_EXCHANGES_LIST,
         "screener_forex_rate" => TTL_SCREENER_FOREX_RATE,
+        "screener_ticker_list" => TTL_SCREENER_TICKER_LIST,
         "fundamentals" => TTL_FUNDAMENTALS,
         _ => TTL_DEFAULT,
     }

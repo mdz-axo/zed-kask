@@ -735,8 +735,30 @@ impl CompaniesServer {
         Ok(list)
     }
 
+    /// The EODHD common-stock ticker list for one exchange, cached 24h.
+    /// Shared by the saved-screen pass set (security-type eligibility).
+    pub(crate) async fn cached_common_stocks(
+        &self,
+        exchange: &str,
+    ) -> Result<serde_json::Value, McpToolError> {
+        const ENDPOINT: &str = "screener_ticker_list";
+        if let Some(cache) = self.fibo_cache.as_ref()
+            && let Some(cached) = cache.get_raw(exchange, ENDPOINT, "none")
+        {
+            return Ok(cached);
+        }
+        let list =
+            providers::fetch_eodhd_common_stocks(&self.client, &self.eodhd_api_key, exchange)
+                .await?;
+        if let Some(cache) = self.fibo_cache.as_ref() {
+            cache.store_raw(exchange, ENDPOINT, "none", &list, "EODHD");
+        }
+        Ok(list)
+    }
+
     /// The latest USD→currency FOREX close, cached 24h. Shared by the
-    /// screener's market-cap conversion and valuation price normalization.
+    /// screener's market-cap conversion, valuation price normalization,
+    /// and the saved-screen pass set and enrichment fallback.
     pub(crate) async fn cached_forex_rate(
         &self,
         currency: &str,
