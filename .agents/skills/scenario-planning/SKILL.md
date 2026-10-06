@@ -130,7 +130,13 @@ quantified backbone.
    and reuse it for every update and score call (the journal is keyed by
    it; calibrate and propagate take no forecast_id). The propagation
    journal is the audit
-   record — report the deltas.
+   record — report the deltas. When the evidence is an OBSERVATION (an
+   observed probability, an occurred/not-occurred outcome, or a likelihood
+   ratio) rather than a prior revision, call
+   `scenario_recompute_posteriors` instead — it recomputes in BOTH
+   directions (backward to ancestors as well as forward to descendants),
+   exact on polytrees, degrading to forward-only with a note on
+   multiply-connected DAGs.
 15. When multiple independent perspectives exist, collect them and call
    `scenario_synthesize` (dragonfly-eye, inverse-Brier weighting).
 16. Call `scenario_cross_validate` comparing your estimate against
@@ -146,7 +152,10 @@ quantified backbone.
     and their outcomes. This is the ONLY step that writes the forecast
     journal — persistence happens here, not at build time. Report the
     Brier score and its interpretation, then close each event's board
-    task with its observed outcome as the verification evidence.
+    task with its observed outcome as the verification evidence. The
+    score is computed on each event's tree MARGINAL — the resolved
+    belief the tree propagates, not the raw prior field — so for
+    dependent events the Brier measures the belief actually forecast.
 18. Call `scenario_calibration` to compute the calibration curve over
     resolved forecasts. Report bias direction (too high / too low);
     below 10 resolved forecasts, say the curve is thin — the server

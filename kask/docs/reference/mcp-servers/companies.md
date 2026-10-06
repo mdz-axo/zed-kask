@@ -59,34 +59,16 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-RF-004A
-verified_date: 2026-09-28
-verified_against: kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs:1108-1174; kask/mcp-servers/hkask-mcp-companies/src/tools/valuation.rs:626; kask/mcp-servers/hkask-mcp-companies/src/financial_model/scenario_impact.rs
+verified_date: 2026-10-06
+verified_against: kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs (scenario_quantify handler); kask/mcp-servers/hkask-mcp-companies/src/tools/valuation.rs (scenario_impact_valuation handler); kask/mcp-servers/hkask-mcp-companies/src/financial_model/scenario_impact.rs
 status: VERIFIED
 -->
 
 [^gamma-adapter]
 
-## Ontology Translation
-
-| Companies (FIBO) | Scenarios (Dublin Core) |
-|-------------------|------------------------|
-| `scenarios[].name` | `ScenarioEvent.name` |
-| `intrinsic_per_share` | Drives `probability` via upside heuristic |
-| `applied_growth` | `SubQuestion` — "Will revenue growth reach X%?" |
-| `applied_margin` | `SubQuestion` — "Will gross margins hold at X%?" |
-| `current_price` | Used to compute `upside` → probability bucket |
-| — | `ScenarioEvent.basis = "financial_model"` |
-| Schwartz 2×2 | `reference_class = "Company DCF scenario analysis, 2×2 Schwartz matrix"` |
-
-[^fibo]
-
 ## Design Decisions
 
-1. **Probability heuristic:** When Fermi sub-questions are available, `calibrate_from_fermi` determines the probability. Otherwise, a simple upside-based bucketing heuristic applies: `upside > 20% → 0.65`, `0-20% → 0.55`, `-20-0% → 0.40`, `< -20% → 0.25`.
-
-2. **Deadline derivation:** Deadlines are computed from the `TimeHorizon` enum: Tactical = +540 days, Strategic = +1460 days, LongTerm = +2920 days.
-
-3. **Scenario impact valuation (primary bridge):** The `scenario_impact_valuation` tool on the companies server is the primary bridge — exogenous scenario events drive the company's financial forecast. The user maps each scenario node's Yes/No outcome to additive deltas on DCF assumptions (revenue growth, gross margin, capex, etc.). The tool enumerates all 2^N leaf paths, computes each path's probability from the CPTs, applies stacked deltas, runs DCF, and weights by path probability. This is the natural composition direction: scenarios are the exogenous drivers, company financials are the endogenous system being impacted. The former forward bridge (`scenario_from_companies`) is deprecated — it fabricated tracking events from DCF output, which is the wrong direction.[^tetlock-superforecasting]
+1. **Scenario impact valuation (primary bridge):** The `scenario_impact_valuation` tool on the companies server is the primary bridge — exogenous scenario events drive the company's financial forecast. The user maps each scenario node's Yes/No outcome to additive deltas on DCF assumptions (revenue growth, gross margin, capex, etc.). The tool enumerates all 2^N leaf paths, computes each path's probability from the CPTs, applies stacked deltas, runs DCF, and weights by path probability. This is the natural composition direction: scenarios are the exogenous drivers, company financials are the endogenous system being impacted. The former forward bridge (`scenario_from_companies`) is deprecated — it fabricated tracking events from DCF output, which is the wrong direction.[^tetlock-superforecasting]
 
 ## Cross-links
 
@@ -105,7 +87,7 @@ status: VERIFIED
     Cited for the Adapter and Bridge patterns underlying the cross-server bridging architecture.
 
 [^fibo]: Object Management Group. (2024). *Financial Industry Business Ontology (FIBO) specification*. EDM Council. https://spec.edmcouncil.org/fibo/
-    Cited as the ontology anchor for the companies server side of the translation table.
+    Cited as the ontology anchor for the companies server's FIBO enrichment (`fibo.rs`).
 
 [^tetlock-superforecasting]: Tetlock, P. E., & Gardner, D. (2015). *Superforecasting: The art and science of prediction*. Crown Publishers. https://www.penguinrandomhouse.com/books/317711/superforecasting-by-philip-e-tetlock-and-dan-gardner/
     Cited for the Brier-scoring and probability-heuristic design decisions drawn from superforecasting methodology.

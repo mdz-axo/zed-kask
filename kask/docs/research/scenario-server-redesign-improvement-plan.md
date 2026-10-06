@@ -61,6 +61,21 @@ module-header doc (Tools (19) + the renamed pin + the missing new tool),
 fixed in the same pass. PR-13 and PR-15 stay deferred as operator
 decisions.
 
+**Follow-up pass (2026-10-06, post-restart):** the servers were rebuilt
+and restarted, closing both pending-restart receipts live — `onto_anchor`
+resolves `maia_event_based_scenario_template` at the derived tier, and
+`scenario_recompute_posteriors` is registered on the live surface. The
+skill enrichments landed: `scenario-planning` step 14 names
+`scenario_recompute_posteriors` as the both-directions evidence tool and
+step 17 notes that scoring is on tree marginals; `company-research-flash`'s
+valuation step surfaces the `WorkbookWhatIf` presentation. The
+`companies.md` pre-existing staleness is fixed: the deleted
+`scenario_from_companies` bridge's Ontology Translation table and its
+probability/deadline heuristics are removed (design decisions renumbered),
+and both DIAGRAM_ALIGNMENT records (DIAG-RF-004A, DIAG-RF-005) are
+current. The workspace clippy gate is green over all touched crates
+(the parallel `hkask-memory` stream landed its fix).
+
 ## Slice 1 — Fidelity quick wins (no dependencies)
 
 **Proposals:** PR-03, PR-04, PR-06, PR-12, PR-14, PR-16.
