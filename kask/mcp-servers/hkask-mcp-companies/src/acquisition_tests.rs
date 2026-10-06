@@ -3102,6 +3102,11 @@ async fn screen_data_failures_exclude_with_reasons_and_complete() {
                 "phase_timings must carry enrichment_analysis_ms: {phase_timings}"
             );
             assert_eq!(phase_timings["deadline_exclusions"], json!(0));
+            assert_eq!(
+                phase_timings["cache_hits"],
+                json!(0),
+                "a failed fundamentals fetch must not be served from the cache"
+            );
             let exclusions = output["exclusions"].as_array().expect("exclusions");
             assert!(
                 exclusions.iter().any(|exclusion| {
@@ -3293,6 +3298,143 @@ async fn expectations_template_reduces_and_reconciles_the_universe() {
                 history_calls, 0,
                 "avgvol_200d screening must not fetch history"
             );
+        })
+        .await;
+}
+
+/// expect: [P5] The 24h fundamentals cache makes a warm re-run of the
+/// same universe skip the per-symbol EODHD fetch entirely — the dominant
+/// wall-time cost of a cold run (measured 2026-10-06: the cold 18-exchange
+/// run spent 108.9s of its 145s wall on 1,387 per-symbol fetches). The
+/// second run serves every issuer from the cache and the fixture sees no
+/// new fundamentals requests.
+/// dcterms:identifier: CompaniesServer::company_screener / screening::enrich_pending_issuers + fibo_cache
+#[tokio::test]
+async fn fundamentals_cache_skips_refetches_on_rerun() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let fixture = FixtureHttp::start(|path| {
+        if path.starts_with("/eodhd/screener") {
+            return (200, json!({"data":[
+                {"code":"LIQ","name":"Liquid Issuer","exchange":"US","currency_symbol":"$","market_capitalization":9_000_000_000.0,"adjusted_close":30.0,"avgvol_200d":100_000.0},
+                {"code":"LIQADR","name":"Liquid Issuer ADR","exchange":"US","currency_symbol":"$","market_capitalization":9_100_000_000.0,"adjusted_close":40.0,"avgvol_200d":100_000.0}
+            ]}));
+        }
+        if path.starts_with("/eodhd/exchange-symbol-list/US") {
+            return (200, json!([
+                {"Code":"LIQ","Name":"Liquid Issuer","Exchange":"NYSE","Currency":"USD","Type":"Common Stock","Isin":"US0000000001"},
+                {"Code":"LIQADR","Name":"Liquid Issuer ADR","Exchange":"NYSE","Currency":"USD","Type":"Common Stock","Isin":"US0000000003"}
+            ]));
+        }
+        if path.starts_with("/eodhd/fundamentals/LIQADR.US") {
+            let mut value = eodhd_fixture();
+            value["General"]["Code"] = json!("LIQADR");
+            value["General"]["Name"] = json!("Liquid Issuer ADR");
+            value["General"]["Type"] = json!("Common Stock");
+            value["General"]["CurrencyCode"] = json!("USD");
+            value["General"]["ISIN"] = json!("US0000000003");
+            value["General"]["PrimaryTicker"] = json!("LIQADR.US");
+            value["General"]["IsDelisted"] = json!(false);
+            value["Financials"]["Income_Statement"]["currency_symbol"] = json!("USD");
+            value["Financials"]["Balance_Sheet"]["currency_symbol"] = json!("USD");
+            value["Financials"]["Cash_Flow"] = json!({
+                "currency_symbol":"USD","yearly":{
+                    "2025-12-31":{"totalCashFromOperatingActivities":"180000000.00","capitalExpenditures":"-30000000.00","dividendsPaid":"-20000000.00"},
+                    "2024-12-31":{"totalCashFromOperatingActivities":"170000000.00","capitalExpenditures":"-28000000.00","dividendsPaid":"-18000000.00"}
+                }
+            });
+            return (200, value);
+        }
+        (404, json!({"error":"unexpected endpoint","path":path}))
+    }).await;
+    async fn run_screen(server: &CompaniesServer) -> (Value, Value) {
+        let calculate = serde_json::from_value::<types::ScreenerRequest>(json!({
+            "action":"calculate","template":"expectations_gap",
+            "template_context":{
+                "exchanges":["US"],
+                "market_cap_min":5_000_000_000.0,"market_cap_max":10_000_000_000.0,
+                "liquidity_min_usd":1_000_000.0
+            },
+            "prompt":"","limit":10,"criteria_overrides":{}
+        }))
+        .expect("calculate request");
+        let submitted = content(
+            &server
+                .company_screener(Parameters(calculate))
+                .await
+                .expect("submit"),
+        );
+        let job_id = submitted["job_id"].as_str().expect("job id").to_string();
+        for _ in 0..150 {
+            let request = serde_json::from_value::<types::ScreenerRequest>(json!({
+                "action":"status","job_id":job_id,"prompt":"","limit":10,"criteria_overrides":{}
+            }))
+            .expect("status request");
+            let status = content(
+                &server
+                    .company_screener(Parameters(request))
+                    .await
+                    .expect("status"),
+            );
+            assert_ne!(status["status"], json!("failed"), "screen failed: {status}");
+            if status["status"] == json!("completed") {
+                let request = serde_json::from_value::<types::ScreenerRequest>(json!({
+                    "action":"results","job_id":job_id,"cursor":0,"prompt":"","limit":10,
+                    "criteria_overrides":{}
+                }))
+                .expect("results request");
+                let results = content(
+                    &server
+                        .company_screener(Parameters(request))
+                        .await
+                        .expect("results"),
+                );
+                return (status, results);
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        panic!("screen did not complete");
+    }
+    providers::TEST_HTTP_ORIGIN
+        .scope(fixture.origin.clone(), async {
+            let server = server(directory.path());
+            let (first_status, first) = run_screen(&server).await;
+            let fundamentals_calls = fixture
+                .requests()
+                .iter()
+                .filter(|path| path.starts_with("/eodhd/fundamentals/"))
+                .count();
+            assert_eq!(fundamentals_calls, 1, "cold run fetches once: {first}");
+            assert_eq!(
+                first["phase_timings"]["cache_hits"],
+                json!(0),
+                "cold run must not report cache hits: {first}"
+            );
+            let (second_status, second) = run_screen(&server).await;
+            let fundamentals_calls = fixture
+                .requests()
+                .iter()
+                .filter(|path| path.starts_with("/eodhd/fundamentals/"))
+                .count();
+            assert_eq!(
+                fundamentals_calls, 1,
+                "warm run must not refetch fundamentals: {second}"
+            );
+            assert_eq!(
+                second["phase_timings"]["cache_hits"],
+                json!(1),
+                "warm run serves the issuer from the cache: {second}"
+            );
+            assert_eq!(
+                second["metadata"]["analysis_state_counts"],
+                first["metadata"]["analysis_state_counts"],
+                "warm run must produce the same verdicts as the cold run"
+            );
+            for status in [&first_status, &second_status] {
+                let artifact_path = status["artifact_path"]
+                    .as_str()
+                    .expect("canonical report path");
+                std::fs::remove_file(artifact_path).expect("remove test report artifact");
+            }
         })
         .await;
 }

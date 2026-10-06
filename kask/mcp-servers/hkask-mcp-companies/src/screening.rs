@@ -152,6 +152,7 @@ struct PreparedPassSet {
 /// pattern (`tools/expectations.rs` financial_fetches/research/assemble).
 struct EnrichmentTimings {
     issuers: usize,
+    cache_hits: usize,
     enrichment_analysis_ms: u64,
     deadline_exclusions: usize,
 }
@@ -604,6 +605,7 @@ async fn run_screen_job(
         "universe_acquisition_ms": stage_timings.get("universe_acquisition_ms").cloned().unwrap_or(Value::Null),
         "pass_set_ms": stage_timings.get("pass_set_ms").cloned().unwrap_or(Value::Null),
         "enrichment_analysis_ms": enrichment_timings.enrichment_analysis_ms,
+        "cache_hits": enrichment_timings.cache_hits,
         "deadline_exclusions": enrichment_timings.deadline_exclusions,
         "assemble_ms": assemble_started.elapsed().as_millis() as u64,
     });
@@ -1485,12 +1487,15 @@ async fn enrich_pending_issuers(
         decoded.push((item, group));
     }
     let issuer_count = decoded.len();
+    let cache_hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let work = futures::stream::iter(decoded.into_iter().map(|(item, group)| {
         let client = server.client.clone();
         let api_key = server.eodhd_api_key.clone();
         let store = server.research.clone();
         let fx_rates = fx_rates.clone();
         let job_id = job_id.to_string();
+        let fibo_cache = server.fibo_cache.clone();
+        let cache_hits = cache_hits.clone();
         async move {
             if store.screen_cancel_requested(&job_id)? {
                 return Ok::<(), crate::screen_store::PortfolioError>(());
@@ -1501,16 +1506,46 @@ async fn enrich_pending_issuers(
                     .unwrap_or(std::cmp::Ordering::Equal)
             });
             let fundamentals = match actionable {
-                Some(security) => match tokio::time::timeout(
-                    ISSUER_FETCH_TIMEOUT,
-                    providers::fetch_eodhd_fundamentals(&client, &api_key, &security.symbol),
-                )
-                .await
-                {
-                    Ok(Ok(fundamentals)) => Ok(fundamentals),
-                    Ok(Err(error)) => Err(ScreeningError::Fundamentals(error)),
-                    Err(_) => Err(ScreeningError::FundamentalsFetchTimeout),
-                },
+                Some(security) => {
+                    // 24h fundamentals cache (`fibo_cache`): a warm re-run of
+                    // the same universe skips the per-symbol fetch entirely —
+                    // the dominant wall-time cost of a cold run. Misses fall
+                    // through to the live fetch and populate the cache.
+                    match fibo_cache
+                        .as_ref()
+                        .and_then(|cache| cache.get_raw(&security.symbol, "fundamentals", "none"))
+                    {
+                        Some(cached) => {
+                            cache_hits.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            Ok(cached)
+                        }
+                        None => match tokio::time::timeout(
+                            ISSUER_FETCH_TIMEOUT,
+                            providers::fetch_eodhd_fundamentals(
+                                &client,
+                                &api_key,
+                                &security.symbol,
+                            ),
+                        )
+                        .await
+                        {
+                            Ok(Ok(fundamentals)) => {
+                                if let Some(cache) = fibo_cache.as_ref() {
+                                    cache.store_raw(
+                                        &security.symbol,
+                                        "fundamentals",
+                                        "none",
+                                        &fundamentals,
+                                        "EODHD",
+                                    );
+                                }
+                                Ok(fundamentals)
+                            }
+                            Ok(Err(error)) => Err(ScreeningError::Fundamentals(error)),
+                            Err(_) => Err(ScreeningError::FundamentalsFetchTimeout),
+                        },
+                    }
+                }
                 None => Err(ScreeningError::NoActionableSecurity),
             };
             let (row, error) = match fundamentals {
@@ -1581,6 +1616,7 @@ async fn enrich_pending_issuers(
             }
         }
     };
+    let cache_hits = cache_hits.load(std::sync::atomic::Ordering::Relaxed);
     tracing::info!(
         target: "hkask.mcp.companies",
         tool = "company_screener",
@@ -1588,11 +1624,13 @@ async fn enrich_pending_issuers(
         phase = "enrichment_analysis",
         elapsed_ms = enrichment_analysis_ms,
         issuers = issuer_count,
+        cache_hits,
         deadline_exclusions,
         "per-issuer fundamentals fetches and local analysis"
     );
     Ok(EnrichmentTimings {
         issuers: issuer_count,
+        cache_hits,
         enrichment_analysis_ms,
         deadline_exclusions,
     })
