@@ -12,10 +12,13 @@
 
 use hkask_mcp_scenarios::requests::{
     AssessRequest, BrainstormRequest, CalibrateRequest, ContractCoherenceRequest,
-    FullPipelineRequest, OutcomeEntry, QuantifyRequest, ScoreRequest, StatusRequest, TriageRequest,
+    FrameDocumentRequest, FullPipelineRequest, OutcomeEntry, QuantifyRequest, ScoreRequest,
+    StatusRequest, TriageRequest,
 };
-use hkask_mcp_scenarios::types::{ScenarioEvent, ScenarioType, SubQuestion, TimeHorizon};
-use hkask_mcp_scenarios::{ForecastStore, ScenariosServer};
+use hkask_mcp_scenarios::types::{
+    EventDependency, ScenarioEvent, ScenarioType, SubQuestion, TimeHorizon,
+};
+use hkask_mcp_scenarios::{ForecastStore, ProjectStore, ScenariosServer};
 use hkask_types::WebID;
 use rmcp::handler::server::wrapper::Parameters;
 use std::collections::HashSet;
@@ -27,7 +30,14 @@ fn make_server() -> ScenariosServer {
     let forecast_store = Arc::new(Mutex::new(ForecastStore::new(None)));
     let tree_cache = Mutex::new(None);
     let called_tools = Mutex::new(HashSet::new());
-    ScenariosServer::new(WebID::new(), forecast_store, tree_cache, called_tools)
+    let project_store = Mutex::new(ProjectStore::new(None));
+    ScenariosServer::new(
+        WebID::new(),
+        forecast_store,
+        tree_cache,
+        called_tools,
+        project_store,
+    )
 }
 
 fn file_backed_server(path: &std::path::Path) -> ScenariosServer {
@@ -36,6 +46,19 @@ fn file_backed_server(path: &std::path::Path) -> ScenariosServer {
         Arc::new(Mutex::new(ForecastStore::new(Some(path.to_path_buf())))),
         Mutex::new(None),
         Mutex::new(HashSet::new()),
+        Mutex::new(ProjectStore::new(None)),
+    )
+}
+
+/// A server whose project store is file-backed at `path` — the restart
+/// seam for the durable tree cache (PR-07).
+fn project_backed_server(path: &std::path::Path) -> ScenariosServer {
+    ScenariosServer::new(
+        WebID::new(),
+        Arc::new(Mutex::new(ForecastStore::new(None))),
+        Mutex::new(None),
+        Mutex::new(HashSet::new()),
+        Mutex::new(ProjectStore::new(Some(path.to_path_buf()))),
     )
 }
 
@@ -384,10 +407,10 @@ async fn scenario_quantify_resolves_single_independent_event() {
 }
 
 /// `scenario_triage` classifies a well-specified question (deadline, reference
-/// class, clear resolution, enough words) as clocklike and forecastable — the
-/// top of the Goldilocks triage band.
+/// class, clear resolution, enough words) as well_specified and forecastable —
+/// the top of the Goldilocks triage band.
 #[tokio::test]
-async fn scenario_triage_marks_well_specified_question_clocklike() {
+async fn scenario_triage_classifies_fully_specified_question_as_well_specified() {
     let server = make_server();
     let output = server
         .scenario_triage(Parameters(TriageRequest {
@@ -402,13 +425,13 @@ async fn scenario_triage_marks_well_specified_question_clocklike() {
 
     assert_eq!(
         parsed["difficulty"].as_str(),
-        Some("clocklike"),
-        "a fully-specified question is clocklike, got: {parsed}"
+        Some("well_specified"),
+        "a fully-specified question is well_specified, got: {parsed}"
     );
     assert_eq!(
         parsed["is_forecastable"].as_bool(),
         Some(true),
-        "a clocklike question is forecastable"
+        "a well_specified question is forecastable"
     );
     assert_eq!(
         parsed["scores"]["overall"]
@@ -422,10 +445,10 @@ async fn scenario_triage_marks_well_specified_question_clocklike() {
 // ── Boundary / edge cases ────────────────────────────────────────────────────
 
 /// `scenario_triage` with no deadline, no reference class, and a terse question
-/// falls below the goldilocks floor into cloudlike and is not forecastable —
-/// the bottom of the triage band.
+/// falls below the goldilocks floor into needs_refinement and is not
+/// forecastable — the bottom of the triage band.
 #[tokio::test]
-async fn scenario_triage_marks_vague_question_cloudlike() {
+async fn scenario_triage_classifies_vague_question_as_needs_refinement() {
     let server = make_server();
     let output = server
         .scenario_triage(Parameters(TriageRequest {
@@ -440,13 +463,168 @@ async fn scenario_triage_marks_vague_question_cloudlike() {
 
     assert_eq!(
         parsed["difficulty"].as_str(),
-        Some("cloudlike"),
-        "an under-specified question is cloudlike, got: {parsed}"
+        Some("needs_refinement"),
+        "an under-specified question is needs_refinement, got: {parsed}"
     );
     assert_eq!(
         parsed["is_forecastable"].as_bool(),
         Some(false),
-        "a cloudlike question is not forecastable"
+        "a needs_refinement question is not forecastable"
+    );
+}
+
+// ── Slice 1 fidelity pins (scenario-server-redesign PR-03/04/06/12/14) ──────
+
+/// PR-03: the Phase-5 calibration evidence is scoped to the project's
+/// subject — a multi-subject store must not leak other projects'
+/// forecasts into the assessment. The projects are created by
+/// `scenario_frame_document` (PR-01); their ids default to their subjects.
+#[tokio::test]
+async fn scenario_assess_calibration_curve_is_subject_scoped() {
+    let server = make_server();
+    // Two projects (one per subject), one resolved forecast each.
+    for subject in ["alpha", "beta"] {
+        server
+            .scenario_frame_document(Parameters(FrameDocumentRequest {
+                subject: subject.to_string(),
+                project_id: None,
+                answers: serde_json::json!({
+                    "focal_question": format!("What is next for {subject}?")
+                })
+                .into(),
+            }))
+            .await
+            .expect("frame_document ok");
+        let mut event = independent_event("evt", "durable event", 0.9);
+        event.subject = subject.to_string();
+        let occurred = subject == "alpha";
+        server
+            .scenario_score(Parameters(ScoreRequest {
+                forecast_id: format!("scope-{subject}"),
+                events: vec![event],
+                outcomes: vec![OutcomeEntry {
+                    event_id: "evt".to_string(),
+                    occurred,
+                }],
+            }))
+            .await
+            .expect("score ok");
+    }
+    let output = server
+        .scenario_assess(Parameters(AssessRequest {
+            project_id: "alpha".to_string(),
+            perspective_count: None,
+            disagreement_score: None,
+            event_count: None,
+            events_with_dependencies: None,
+            strategies_generated: None,
+            strategies_implemented: None,
+            learning_events: None,
+            has_early_warning_indicators: None,
+        }))
+        .await
+        .expect("tool ok");
+    let parsed = parse(&output);
+    assert_eq!(
+        parsed["calibration"]["resolved_forecasts"].as_u64(),
+        Some(1),
+        "the assessment curve must count only the assessed project's subject records, got: {parsed}"
+    );
+}
+
+/// PR-06: the brainstorm default research string must not instruct agents to
+/// call `scenario_research` — a tool that no longer exists on the surface.
+#[tokio::test]
+async fn scenario_brainstorm_default_context_never_names_removed_scenario_research() {
+    let server = make_server();
+    let output = server
+        .scenario_brainstorm(Parameters(BrainstormRequest {
+            subject: "ACME".to_string(),
+            time_horizon: None,
+            research_context: None,
+            personas: None,
+            start_round: None,
+        }))
+        .await
+        .expect("tool ok");
+    assert!(
+        !output.contains("scenario_research"),
+        "the default research string must not name the removed scenario_research tool, got: {output}"
+    );
+}
+
+/// PR-12: the sequence advisory fires only on the one hard wire dependency.
+/// `scenario_quantify` accepts caller-supplied trees from multiple
+/// legitimate entries (market bridges, superforecasting, manual
+/// construction) — a cold call must not warn.
+#[tokio::test]
+async fn scenario_quantify_called_cold_emits_no_sequence_note() {
+    let server = make_server();
+    let event = independent_event("evt-cold", "cold entry event", 0.4);
+    let output = server
+        .scenario_quantify(Parameters(QuantifyRequest {
+            events: vec![event],
+        }))
+        .await
+        .expect("tool ok");
+    let parsed = parse(&output);
+    assert!(
+        parsed.get("sequence_note").is_none(),
+        "a cold quantify with a caller-supplied tree is a legitimate entry — no advisory, got: {parsed}"
+    );
+}
+
+/// PR-12's legitimate-case pin: the one hard wire dependency still advises.
+/// `scenario_frame_document`'s answers come from the framing conversation,
+/// so a cold call carries the advisory naming `scenario_frame`.
+#[tokio::test]
+async fn scenario_frame_document_called_cold_advises_scenario_frame() {
+    let server = make_server();
+    let output = server
+        .scenario_frame_document(Parameters(FrameDocumentRequest {
+            subject: "ACME".to_string(),
+            project_id: None,
+            answers: serde_json::json!({
+                "focal_question": "Will ACME's new product reach scale by 2027?"
+            })
+            .into(),
+        }))
+        .await
+        .expect("tool ok");
+    let parsed = parse(&output);
+    assert!(
+        parsed["sequence_note"]
+            .as_str()
+            .is_some_and(|note| note.contains("scenario_frame")),
+        "the one hard wire dependency still advises its predecessor, got: {parsed}"
+    );
+}
+
+/// PR-14: the tree-node certainty field is named for what it measures —
+/// |P − 0.5| × 2 is a certainty distance (1 = most certain). The old
+/// `variance_contribution` misnomer is deleted, not aliased.
+#[tokio::test]
+async fn scenario_quantify_emits_certainty_distance_not_variance_contribution() {
+    let server = make_server();
+    let event = independent_event("evt-cd", "certainty distance event", 0.9);
+    let output = server
+        .scenario_quantify(Parameters(QuantifyRequest {
+            events: vec![event],
+        }))
+        .await
+        .expect("tool ok");
+    let parsed = parse(&output);
+    let node = &parsed["nodes"][0];
+    let distance = node["certainty_distance"]
+        .as_f64()
+        .unwrap_or_else(|| panic!("the node carries certainty_distance, got: {parsed}"));
+    assert!(
+        (distance - 0.8).abs() < 1e-9,
+        "|0.9 − 0.5| × 2 = 0.8 — the value is unchanged, only the name, got {distance}"
+    );
+    assert!(
+        node.get("variance_contribution").is_none(),
+        "the old misnomer is deleted, not aliased, got: {parsed}"
     );
 }
 
@@ -831,18 +1009,34 @@ async fn from_cmp_indices_caches_tree_for_coherence_default() {
 
 // ── scenario_assess unreported-metrics contract ─────────────────────────────
 
-/// `scenario_assess` with every quantitative metric omitted must not fabricate
-/// measurements: the four phases whose scores depend on unreported metrics are
-/// withheld as insufficient data (null score + a gap naming the missing
-/// metric), the output names every unreported metric, and the overall score
-/// averages only the reported phases. An unreported metric is not a zero.
+/// `scenario_assess` with every caller metric omitted must not fabricate
+/// measurements: the phases whose scores depend on metrics that are
+/// neither supplied nor derivable from the project record are withheld as
+/// insufficient data (null score + a gap naming the missing metric), the
+/// output names every such metric, and the overall score averages only the
+/// reported phases. An unreported metric is not a zero. Preparation is
+/// scored from the project's framing document (PR-01) — reported even
+/// with every caller metric omitted.
 #[tokio::test]
 async fn scenario_assess_unreported_metrics_withhold_dependent_phases() {
     let server = make_server();
+    // The project exists with a framing document but no quantified tree:
+    // event/dependency counts are not derivable, and the framing scores
+    // Preparation directly.
+    server
+        .scenario_frame_document(Parameters(FrameDocumentRequest {
+            subject: "ACME".to_string(),
+            project_id: None,
+            answers: serde_json::json!({
+                "focal_question": "What should we watch at ACME over the next year?"
+            })
+            .into(),
+        }))
+        .await
+        .expect("frame_document ok");
     let output = server
         .scenario_assess(Parameters(AssessRequest {
-            project_id: "unreported-project".to_string(),
-            subject: "ACME".to_string(),
+            project_id: "ACME".to_string(),
             perspective_count: None,
             disagreement_score: None,
             event_count: None,
@@ -856,7 +1050,9 @@ async fn scenario_assess_unreported_metrics_withhold_dependent_phases() {
         .expect("tool ok");
     let parsed = parse(&output);
 
-    // Every unreported quantitative metric is named — all seven were omitted.
+    // Every metric that is neither supplied nor derivable is named — six
+    // of the seven (perspective_count is not required: the framing
+    // document scores Preparation).
     let unreported: Vec<String> = parsed["unreported_metrics"]
         .as_array()
         .unwrap_or_else(|| panic!("assessment must carry unreported_metrics, got: {parsed}"))
@@ -864,7 +1060,6 @@ async fn scenario_assess_unreported_metrics_withhold_dependent_phases() {
         .filter_map(|v| v.as_str().map(String::from))
         .collect();
     for metric in [
-        "perspective_count",
         "disagreement_score",
         "event_count",
         "events_with_dependencies",
@@ -879,14 +1074,21 @@ async fn scenario_assess_unreported_metrics_withhold_dependent_phases() {
     }
     assert_eq!(
         unreported.len(),
-        7,
-        "all seven quantitative metrics were omitted, got: {unreported:?}"
+        6,
+        "exactly the six non-derivable metrics were omitted, got: {unreported:?}"
     );
 
-    // Phases 1-4 depend on the unreported metrics: their scores are withheld
-    // (null), never zero-derived, and their gaps name the missing metrics.
+    // Preparation is scored from the framing document — reported, not
+    // withheld, even with every caller metric omitted.
+    assert!(
+        parsed["phases"]["preparation"]["score"].is_number(),
+        "preparation scores from the framing document, got: {parsed}"
+    );
+
+    // Phases 2-4 depend on the unreported metrics: their scores are
+    // withheld (null), never zero-derived, and their gaps name the
+    // missing metrics.
     let withheld = [
-        ("preparation", &["perspective_count"][..]),
         ("exploration", &["event_count", "disagreement_score"][..]),
         (
             "development",
@@ -930,14 +1132,159 @@ async fn scenario_assess_unreported_metrics_withhold_dependent_phases() {
         }
     }
 
-    // The overall score averages only the reported phases: with phases 1-4
-    // withheld, overall equals the one reported phase (project_assessment,
-    // scored from learning events + calibration) — not the zero-derived
-    // (0.3 + 0.2 + 0.3 + 0.1 + 0.2) / 5 = 0.22 the defaults fabricated.
-    assert_eq!(
-        parsed["overall_score"], parsed["phase_scores"]["project_assessment"],
+    // The overall score averages only the reported phases (preparation
+    // from the framing document, project_assessment from learning events
+    // + calibration) — never the zero-derived average of withheld phases.
+    assert!(
+        parsed["overall_score"].is_number(),
         "overall must average only the reported phases, got: {parsed}"
     );
+}
+
+// ── Slice 3 project-record pins (scenario-server-redesign PR-01/PR-07) ─────
+
+/// PR-01: the project record is the assessment's anchor — an unknown
+/// project id is `not_found` naming it, never a phantom assessment.
+#[tokio::test]
+async fn scenario_assess_unknown_project_is_not_found() {
+    let server = make_server();
+    let error = server
+        .scenario_assess(Parameters(AssessRequest {
+            project_id: "ghost-project".to_string(),
+            perspective_count: None,
+            disagreement_score: None,
+            event_count: None,
+            events_with_dependencies: None,
+            strategies_generated: None,
+            strategies_implemented: None,
+            learning_events: None,
+            has_early_warning_indicators: None,
+        }))
+        .await
+        .expect_err("an unknown project must be rejected");
+    assert!(
+        matches!(error.kind, hkask_types::McpErrorKind::NotFound),
+        "an unknown project id is a missing caller-named resource, not an internal error, got: {error:?}"
+    );
+    assert!(
+        error.to_string().contains("ghost-project"),
+        "the error must name the missing project, got: {error}"
+    );
+}
+
+/// PR-01: the project record derives what the caller used to recall —
+/// event and dependency counts from the stored tree, Preparation from the
+/// framing document. With every caller metric omitted, Development is
+/// still scored (derived) and Preparation scores from the framing.
+#[tokio::test]
+async fn scenario_assess_derives_counts_and_preparation_from_the_project() {
+    let server = make_server();
+    // A complete framing document: focal question, both-side scope, two
+    // stakeholders, an action deadline — Preparation's four components.
+    server
+        .scenario_frame_document(Parameters(FrameDocumentRequest {
+            subject: "ACME".to_string(),
+            project_id: None,
+            answers: serde_json::json!({
+                "focal_question": "What should we watch at ACME over the next year?",
+                "in_scope": ["product launches", "margin trajectory"],
+                "out_of_scope": ["macro policy"],
+                "stakeholders": [
+                    {"role": "portfolio manager", "primary_concern": "drawdown"},
+                    {"role": "analyst", "primary_concern": "thesis drift"}
+                ],
+                "action_deadline": "2027-01-31"
+            })
+            .into(),
+        }))
+        .await
+        .expect("frame_document ok");
+    // A two-event tree with one dependency edge: derived counts 2 and 1.
+    let root = independent_event("evt-root", "root event", 0.6);
+    let mut dependent = independent_event("evt-dep", "dependent event", 0.5);
+    dependent.depends_on = vec![EventDependency {
+        parent_event_ids: vec!["evt-root".to_string()],
+        conditionals: vec![0.2, 0.8],
+    }];
+    server
+        .scenario_quantify(Parameters(QuantifyRequest {
+            events: vec![root, dependent],
+        }))
+        .await
+        .expect("quantify ok");
+    let output = server
+        .scenario_assess(Parameters(AssessRequest {
+            project_id: "ACME".to_string(),
+            perspective_count: None,
+            disagreement_score: None,
+            event_count: None,
+            events_with_dependencies: None,
+            strategies_generated: None,
+            strategies_implemented: None,
+            learning_events: None,
+            has_early_warning_indicators: None,
+        }))
+        .await
+        .expect("tool ok");
+    let parsed = parse(&output);
+    // Preparation: scored from the framing document — all four components
+    // present, so the full 1.0.
+    assert_eq!(
+        parsed["phases"]["preparation"]["score"].as_f64(),
+        Some(1.0),
+        "a complete framing document scores Preparation at 1.0, got: {parsed}"
+    );
+    // Development: derived from the stored tree — 2 events, 1 with
+    // dependencies — so scored, not withheld.
+    assert!(
+        parsed["phases"]["development"]["score"].is_number(),
+        "development derives its counts from the project's tree — reported, not withheld, got: {parsed}"
+    );
+    // Exploration still withholds: disagreement_score is neither
+    // supplied nor derivable.
+    assert_eq!(
+        parsed["phases"]["exploration"]["score"],
+        serde_json::Value::Null,
+        "exploration needs disagreement_score — neither supplied nor derivable, got: {parsed}"
+    );
+}
+
+/// PR-07: the durable tree cache — the last-quantified tree persists with
+/// the project record, and `contract_price_coherence`'s `tree_implied`
+/// default reads it after a server restart.
+#[tokio::test]
+async fn quantified_tree_survives_a_server_restart_for_coherence() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let projects_path = directory.path().join("projects.json");
+    let events = vec![
+        independent_event("evt-a", "event a", 0.6),
+        independent_event("evt-b", "event b", 0.5),
+    ];
+    {
+        let server = project_backed_server(&projects_path);
+        server
+            .scenario_quantify(Parameters(QuantifyRequest { events }))
+            .await
+            .expect("quantify ok");
+    }
+    // A fresh server on the same project store: the memory cache is
+    // empty, the persisted tree is the documented default.
+    let restarted = project_backed_server(&projects_path);
+    let output = restarted
+        .contract_price_coherence(Parameters(ContractCoherenceRequest {
+            market_price: 0.31,
+            cost_band: 0.05,
+            tree_implied: None,
+        }))
+        .await
+        .expect("tool ok");
+    let parsed = parse(&output);
+    assert_eq!(
+        parsed["tree_implied"].as_f64(),
+        Some(0.30),
+        "the persisted tree's joint (0.6 × 0.5 = 0.30) is the default after restart, got: {parsed}"
+    );
+    assert_eq!(parsed["coherent"].as_bool(), Some(true));
 }
 
 /// `scenario_full` passes its optional assessment metrics through unchanged:

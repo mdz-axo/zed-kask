@@ -73,10 +73,10 @@ pub struct NodeBody {
     pub question: Option<String>,
     #[serde(default)]
     pub marginal_probability: Option<f64>,
-    // `certainty_tier` and `variance_contribution` are intentionally NOT parsed
+    // `certainty_tier` and `certainty_distance` are intentionally NOT parsed
     // here: the widget derives the tier from `marginal_probability` via
     // `hkask_forecast::certainty_tier` (one source of truth, no drift from the
-    // server), and never displays variance contribution. Any such fields the
+    // server), and never displays the certainty distance. Any such fields the
     // agent emits are silently ignored (no `deny_unknown_fields`).
     #[serde(default)]
     pub depends_on: Vec<DependencyBody>,

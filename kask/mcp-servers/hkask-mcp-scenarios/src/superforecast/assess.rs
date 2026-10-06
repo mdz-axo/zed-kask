@@ -51,7 +51,9 @@ mod assess_tiers {
 /// `AssessInput` declaration order.
 fn unreported_metric_names(input: &AssessInput) -> Vec<&'static str> {
     let mut missing = Vec::new();
-    if input.perspective_count.is_none() {
+    // With a framing document, Phase 1 scores from its typed fields —
+    // perspective_count is not required (PR-01).
+    if input.perspective_count.is_none() && input.framing_document.is_none() {
         missing.push("perspective_count");
     }
     if input.disagreement_score.is_none() {
@@ -105,7 +107,10 @@ fn insufficient_data_gap(missing: &[&str]) -> String {
 /// measurement: the phase whose score depends on it is withheld as
 /// insufficient data (null score + a gap naming the metric), the output
 /// names every unreported metric, and the overall score averages only the
-/// phases with reported data.
+/// phases with reported data. Phase 1 (Preparation) is scored from the
+/// project's framing document when one is supplied — the typed fields are
+/// the preparation evidence — with perspective_count as the fallback
+/// proxy when no framing document exists.
 ///
 /// Reference: Chermack, T.J. (2011). Scenario Planning in Organizations:
 /// How to Create, Use, and Assess Scenarios. Berrett-Koehler.
@@ -117,38 +122,84 @@ pub(crate) fn assess_project(input: &AssessInput) -> ProjectAssessment {
     let unreported = unreported_metric_names(input);
 
     // ── Phase 1: Preparation ──────────────────────────────────
-    // (Chermack, Ch. 5): Scope clarity, stakeholder engagement, resource allocation
-    let (prep_score, prep_strengths, prep_gaps) = match input.perspective_count {
-        Some(perspective_count) => {
-            let score = if perspective_count >= assess_tiers::PREP_PERSPECTIVE_HIGH {
-                assess_tiers::PREP_STRONG
-            } else if perspective_count >= 2 {
-                0.6
-            } else {
-                0.3
-            };
-            let mut strengths = Vec::new();
-            let mut gaps = Vec::new();
-            if perspective_count >= 3 {
-                strengths.push("Multiple perspectives engaged".into());
-            } else if perspective_count == 0 {
-                gaps.push(
-                    "No perspectives recorded — project may lack stakeholder engagement (Chermack Phase 1)"
-                        .into(),
-                );
-            } else {
-                gaps.push(format!("Only {} perspective(s) — consider engaging more diverse viewpoints (Chermack: stakeholder dialogue)", perspective_count));
-            }
-            (Some(score), strengths, gaps)
+    // (Chermack, Ch. 5): Scope clarity, stakeholder engagement, resource
+    // allocation. Scored from the project's framing document when present
+    // (PR-01) — the typed fields ARE the preparation evidence;
+    // perspective_count remains the fallback proxy when no framing
+    // document exists.
+    let (prep_score, prep_strengths, prep_gaps) = if let Some(framing) = input.framing_document {
+        let mut score = 0.0_f64;
+        let mut strengths: Vec<String> = Vec::new();
+        let mut gaps: Vec<String> = Vec::new();
+        // Scope clarity: a framed focal question with both-side bounds.
+        if !framing.focal_question.trim().is_empty() {
+            score += 0.3;
+            strengths.push("Focal question framed".into());
+        } else {
+            gaps.push(
+                "No focal question — the project lacks a decision anchor (Chermack Phase 1)".into(),
+            );
         }
-        None => (
-            None,
-            Vec::new(),
-            vec![insufficient_data_gap(&unreported_subset(
-                &unreported,
-                &["perspective_count"],
-            ))],
-        ),
+        if !framing.in_scope.is_empty() && !framing.out_of_scope.is_empty() {
+            score += 0.3;
+            strengths.push("Scope bounded on both sides (in and out)".into());
+        } else {
+            gaps.push("Scope not bounded on both sides — in_scope/out_of_scope incomplete".into());
+        }
+        // Stakeholder engagement.
+        if framing.stakeholders.len() >= 2 {
+            score += 0.2;
+            strengths.push(format!(
+                "{} stakeholders engaged",
+                framing.stakeholders.len()
+            ));
+        } else {
+            gaps.push(
+                "Fewer than 2 stakeholders — limited engagement diversity (Chermack: stakeholder dialogue)"
+                    .into(),
+            );
+        }
+        // Decision timing.
+        if framing.action_deadline.is_some() {
+            score += 0.2;
+            strengths.push("Action deadline set".into());
+        } else {
+            gaps.push("No action deadline — the decision timing is unbounded".into());
+        }
+        (Some(score), strengths, gaps)
+    } else {
+        match input.perspective_count {
+            Some(perspective_count) => {
+                let score = if perspective_count >= assess_tiers::PREP_PERSPECTIVE_HIGH {
+                    assess_tiers::PREP_STRONG
+                } else if perspective_count >= 2 {
+                    0.6
+                } else {
+                    0.3
+                };
+                let mut strengths = Vec::new();
+                let mut gaps = Vec::new();
+                if perspective_count >= 3 {
+                    strengths.push("Multiple perspectives engaged".into());
+                } else if perspective_count == 0 {
+                    gaps.push(
+                        "No perspectives recorded — project may lack stakeholder engagement (Chermack Phase 1)"
+                            .into(),
+                    );
+                } else {
+                    gaps.push(format!("Only {} perspective(s) — consider engaging more diverse viewpoints (Chermack: stakeholder dialogue)", perspective_count));
+                }
+                (Some(score), strengths, gaps)
+            }
+            None => (
+                None,
+                Vec::new(),
+                vec![insufficient_data_gap(&unreported_subset(
+                    &unreported,
+                    &["perspective_count"],
+                ))],
+            ),
+        }
     };
 
     // ── Phase 2: Exploration ─────────────────────────────
@@ -364,7 +415,7 @@ pub(crate) fn assess_project(input: &AssessInput) -> ProjectAssessment {
         recommendations.push("Phase 1 (Preparation): Engage at least 3 diverse perspectives. Chermack: 'The quality of the conversation determines the quality of the scenarios.'".into());
     }
     if exp_score.is_some_and(|score| score < assess_tiers::RECOMMENDATION_THRESHOLD) {
-        recommendations.push("Phase 2 (Exploration): Map more driving forces. Use scenario_research to gather external data. Chermack: systematic STEEP analysis prevents blind spots.".into());
+        recommendations.push("Phase 2 (Exploration): Map more driving forces. Run web searches to gather external data. Chermack: systematic STEEP analysis prevents blind spots.".into());
     }
     if dev_score.is_some_and(|score| score < assess_tiers::RECOMMENDATION_THRESHOLD) {
         recommendations.push("Phase 3 (Development): Link events with conditional dependencies. Scenarios must form causal chains, not lists. Chermack: internal consistency is the quality gate.".into());
@@ -633,7 +684,7 @@ pub(crate) fn triage_question(
 
     let (difficulty, recommend, forecastable) = if overall >= assess_tiers::OVERALL_STRONG {
         (
-            "clocklike",
+            "well_specified",
             "Well-specified with clear resolution criteria. Simple base-rate extrapolation may suffice — consider whether the full superforecasting pipeline is worth the effort.",
             true,
         )
@@ -645,7 +696,7 @@ pub(crate) fn triage_question(
         )
     } else {
         (
-            "cloudlike",
+            "needs_refinement",
             "Too vague or lacks clear resolution criteria. Refine: add a specific deadline, define what counts as 'yes', and identify a reference class.",
             false,
         )

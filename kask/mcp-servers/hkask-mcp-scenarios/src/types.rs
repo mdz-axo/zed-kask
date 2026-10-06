@@ -236,7 +236,11 @@ pub struct ScenarioEvent {
     // Probabilistic
     /// Current calibrated probability that the event occurs (0.0–1.0)
     pub probability: f64,
-    /// Basis for probability estimate: "technical_feasibility" or "scaling_distribution"
+    /// Basis for the probability estimate. Two semantics flow through this
+    /// field: the MAIA estimate basis ("technical_feasibility" or
+    /// "scaling_distribution" — the event-based scenario template's fifth
+    /// component) and the market bridges' provenance strings
+    /// ("prediction_market:{source}", "cmp_index:{method}").
     pub basis: Option<String>,
 
     // Dependencies (tree structure)
@@ -476,6 +480,11 @@ pub(crate) struct BrainstormProtocol {
 pub(crate) struct AssessInput<'a> {
     pub project_id: &'a str,
     pub subject: &'a str,
+    /// The project's framing document. When present, Chermack Phase 1
+    /// (Preparation) is scored from its typed fields directly; the
+    /// `perspective_count` proxy is the fallback when no framing
+    /// document exists.
+    pub framing_document: Option<&'a FramingDocument>,
     pub perspective_count: Option<usize>,
     pub disagreement_score: Option<f64>,
     pub event_count: Option<usize>,
@@ -552,8 +561,10 @@ pub(crate) struct EventTreeNode {
     /// For single-parent events, this is a one-element Vec.
     /// For multi-parent events, each parent produces a separate path.
     pub paths: Vec<Vec<String>>,
-    /// Contribution to uncertainty (sensitivity proxy)
-    pub variance_contribution: f64,
+    /// Certainty distance: |P − 0.5| × 2, scaled to [0, 1] — 1 = most
+    /// certain, 0 = a coin flip. The sensitivity ranking inverts this
+    /// (1 − certainty_distance) to rank uncertainty.
+    pub certainty_distance: f64,
 }
 
 /// Full event tree with resolved probabilities.
@@ -570,6 +581,46 @@ pub struct EventTree {
     /// Approximate probability that all events occur, using parent-true
     /// conditionals. Multi-parent nodes use the documented average proxy.
     pub joint_probability: f64,
+}
+
+// ── Scenario project record ─────────────────────────────────────────────
+
+/// The scenario project record — Chermack's unit of assessment.
+///
+/// One project per subject by default: `scenario_frame_document` defaults
+/// the project id to the subject, and re-running a subject's project
+/// updates it in place. Carries the framing document (Phase 1 evidence),
+/// the last quantified tree (the durable tree cache), and the assessment
+/// history (Phase 5 evidence).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct ScenarioProject {
+    /// The project key — defaults to the subject.
+    pub project_id: String,
+    /// The domain the project's events apply to (MAIA: the company or
+    /// domain/issue).
+    pub subject: String,
+    /// The structured framing document (Chermack Phase 1 evidence).
+    #[serde(default)]
+    pub framing_document: Option<FramingDocument>,
+    /// The last quantified/propagated tree — the durable tree cache
+    /// (`contract_price_coherence`'s `tree_implied` default survives a
+    /// server restart through it).
+    #[serde(default)]
+    pub last_tree: Option<EventTree>,
+    /// One record per `scenario_assess` call (Phase 5 history).
+    #[serde(default)]
+    pub assessment_history: Vec<AssessmentRecord>,
+    pub created_at: NaiveDate,
+    pub updated_at: NaiveDate,
+}
+
+/// One `scenario_assess` call's headline result, for the project's history.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct AssessmentRecord {
+    pub date: NaiveDate,
+    /// The overall score; `None` when every phase was withheld as
+    /// insufficient data.
+    pub overall_score: Option<f64>,
 }
 
 // ── Forecast outcome and Brier scoring ─────────────────────────────────────

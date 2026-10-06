@@ -14,7 +14,7 @@ mds_categories: [composition, lifecycle]
 **Tools:** 19 — `scenario_frame`, `scenario_frame_document`, `scenario_brainstorm`, `scenario_build`, `scenario_quantify`, `scenario_propagate`, `scenario_calibrate`, `scenario_update`, `scenario_synthesize`, `scenario_cross_validate`, `scenario_score`, `scenario_calibration`, `scenario_assess`, `scenario_triage`, `scenario_status`, `scenario_from_markets_set`, `scenario_from_cmp_indices`, `scenario_full`, `contract_price_coherence`. The direct market-record bridge is `scenario_from_markets_set`; a single record is passed as a set of one.
 **Auto-start:** Yes by default with the full built-in set; operators can disable the fleet or this server through `kask.mcp` (`kask/crates/kask_bridge/src/settings.rs:140-165`; `kask/crates/kask_bridge/src/mcp_servers.rs:327-340,704`).
 
-Tool count is pinned against the live `scenario_router()` by `tool_surface_is_exactly_19_registered_tools` (`kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs:262,1900-1912`).
+Tool count is pinned against the live `scenario_router()` by `tool_surface_is_exactly_19_registered_tools` (the `mod tests` pin in `kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs`).
 
 ## Pipeline Architecture (DIAG-RF-005)
 
@@ -81,6 +81,32 @@ verified_against: kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.r
 status: VERIFIED
 -->
 
+## The three Schwartz surfaces
+
+Three distinct "Schwartz scenario" semantics live across the stack; they
+share the reference model (Schwartz, *The Art of the Long View*, 1991)
+and nothing else — each has its own contract:
+
+1. **Valuation 2×2** — `scenario_analysis` on the companies server
+   (`hkask-mcp-companies`): four growth×margin quadrants (Bull, Land
+   Grab, Cash Cow, Bear), each run through DCF. A valuation instrument;
+   the quadrants are assumption sets, not narratives.
+2. **Divergent-futures narratives** — the `scenario-planning` skill's
+   Phase 2b templates (`scenario-planning/axes-and-narratives` and
+   siblings): Schwartz's steps 5–8 — two critical-uncertainty axes, four
+   quadrant stories, implications, early-warning indicators. LLM
+   judgment in skill templates; the scenarios server quantifies the
+   event-tree backbone underneath them.
+3. **Probability-weighted four-scenario distribution** —
+   `calibrate_forecast` on the companies server: Tetlock-calibrated
+   probabilities distributed across four Schwartz scenarios to produce
+   a probability-weighted intrinsic value.
+
+The scenarios server itself implements the MAIA event-based template
+(event sets as yes/no questions over fixed horizons; four scenario
+types, three time horizons) and the Tetlock quantification; the Schwartz
+narrative phases are the skill layer's.
+
 ## Tool reference
 
 ### Framing (2)
@@ -88,7 +114,7 @@ status: VERIFIED
 | Tool | Description | Key params |
 |------|-------------|------------|
 | `scenario_frame` | Start a conversational framing session: a 7-turn protocol with behavioral-psychology openings and improv mode guidance. Run FIRST, before `scenario_brainstorm`. | `subject` |
-| `scenario_frame_document` | Structure completed framing answers into a typed `FramingDocument` (focal question, decision at stake, horizon, scope, stakeholders, constraints). Feeds `scenario_brainstorm`. | `subject`, answers JSON |
+| `scenario_frame_document` | Structure completed framing answers into a typed `FramingDocument` and persist it under the scenario project record (id defaults to the subject; a re-run updates in place). Feeds `scenario_brainstorm`. | `subject`, answers JSON, optional `project_id` |
 
 ### Ideation (1)
 
@@ -137,8 +163,8 @@ status: VERIFIED
 
 | Tool | Description | Key params |
 |------|-------------|------------|
-| `scenario_assess` | Chermack Phase-5 project assessment across all five phases; combines quantitative metrics (Brier, disagreement, event count) with qualitative assessment; returns per-phase scores, gaps, and recommendations. | project data |
-| `scenario_triage` | Triage a forecasting question (Tetlock Commandment 1): clarity, data availability, resolution criteria → clocklike / goldilocks / cloudlike. | `question` |
+| `scenario_assess` | Chermack Phase-5 project assessment anchored on the project record: Preparation from the framing document, event/dependency counts from the stored tree, calibration scoped to the project's subject; caller metrics override the derived values. Unknown project id → not found. | `project_id` + optional overrides |
+| `scenario_triage` | Triage a forecasting question (Tetlock Commandment 1): clarity, data availability, resolution criteria → well_specified / goldilocks / needs_refinement. | `question` |
 
 ### Independent (2)
 
@@ -189,6 +215,31 @@ failed write cannot touch the published file), but it has no deterministic
 failure-injection fixture: the only publication failure that is
 privilege-independent — a directory at the destination — cannot coexist with
 a prior snapshot file at that path. It is design-reviewed, not test-pinned.
+
+## Project persistence
+
+Scenario projects (the framing document, the last quantified tree, the
+assessment history) persist in `ProjectStore`
+(`kask/mcp-servers/hkask-mcp-scenarios/src/superforecast/project.rs`):
+a single `projects.json` snapshot under the server's data dir
+(`{kask_data_dir}/mcp/scenarios/projects.json`), published by atomic
+rename per write — the same ordering as the forecast snapshot, with no
+journal (projects are low-volume by design).
+
+- `scenario_frame_document` creates/updates the project (id defaults
+  to the subject; a re-run updates in place) and persists the framing
+  document — Chermack Phase 1 evidence.
+- The tree-caching tools (`scenario_quantify`, `scenario_propagate`,
+  `scenario_from_cmp_indices`) persist the tree into the project record
+  — the durable tree cache. `contract_price_coherence`'s `tree_implied`
+  default falls back to it when the in-memory cache is empty, so the
+  documented default survives a server restart (pinned by
+  `quantified_tree_survives_a_server_restart_for_coherence`).
+- `scenario_assess` is anchored on the project record: an unknown
+  project id is `not_found` naming it; event/dependency counts derive
+  from the stored tree, Preparation from the framing document, and the
+  calibration curve is scoped to the project's subject.
+  Caller-supplied metrics override the derived values.
 
 ## Testing
 

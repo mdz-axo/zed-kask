@@ -40,12 +40,18 @@ pub(crate) use assess::{
     assess_project, compute_calibration_curve, synthesize_perspectives, triage_question,
 };
 
-// ── Persistence ──────────────────────────────────────────────────────────
+// ── Persistence ──────────────────────────────────────────────────────
 // Extracted to `superforecast/store.rs` (deep-module split: the persistence
 // concern — journal + snapshot compaction — is independent of the forecast
 // math and composition concerns that remain in this file).
 mod store;
 pub use store::ForecastStore;
+
+// ── Project records ──────────────────────────────────────────────────────
+// Extracted to `superforecast/project.rs` (the scenario project record's
+// file-backed store — Chermack's unit of assessment, PR-01/PR-07).
+mod project;
+pub use project::ProjectStore;
 
 // ── Bridge: cross-validation + companies/market conversion ────────────────
 // Extracted to `superforecast/bridge.rs` (deep-module split: adapting external

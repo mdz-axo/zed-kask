@@ -183,14 +183,16 @@ pub(crate) fn build_event_tree(events: &[ScenarioEvent]) -> Result<EventTree, Sc
         // Build path from root to this node
         let paths = build_path(id, events);
 
-        // Variance contribution: |P - 0.5| — how far from coin-flip
-        let variance_contribution = (marginal - 0.5).abs() * 2.0; // scale to [0, 1]
+        // Certainty distance: |P - 0.5| × 2 — how far from coin-flip
+        // (1 = most certain, 0 = coin-flip). The sensitivity ranking
+        // inverts this to rank uncertainty.
+        let certainty_distance = (marginal - 0.5).abs() * 2.0; // scale to [0, 1]
 
         nodes.push(EventTreeNode {
             event: (*event).clone(),
             marginal_probability: marginal,
             paths,
-            variance_contribution,
+            certainty_distance,
         });
 
         // For dependent events, the all-events-occur joint factor is
@@ -342,7 +344,7 @@ pub(crate) fn sensitivity_ranking(tree: &EventTree) -> Vec<(String, f64)> {
     let mut ranked: Vec<(String, f64)> = tree
         .nodes
         .iter()
-        .map(|n| (n.event.id.clone(), 1.0 - n.variance_contribution))
+        .map(|n| (n.event.id.clone(), 1.0 - n.certainty_distance))
         .collect();
     ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
     ranked

@@ -52,6 +52,7 @@ pub mod types;
 // `Parameters<T>` tool seam — the testing standard
 // (docs/reference/mcp-servers/README.md §Testing standard) requires this.
 pub use superforecast::ForecastStore;
+pub use superforecast::ProjectStore;
 
 use types::*;
 
@@ -105,6 +106,7 @@ hkask_mcp_server::mcp_server!(
         pub forecast_store: std::sync::Arc<std::sync::Mutex<superforecast::ForecastStore>>,
         pub tree_cache: std::sync::Mutex<Option<types::EventTree>>,
         pub called_tools: std::sync::Mutex<HashSet<String>>,
+        pub project_store: std::sync::Mutex<superforecast::ProjectStore>,
     }
 );
 
@@ -125,26 +127,23 @@ impl ScenariosServer {
     /// Expected predecessor for each pipeline-stage tool.
     /// Returns None for tools that can be called independently.
     ///
-    /// The chain encodes the analyst maturity ladder: frame → brainstorm →
-    /// build → quantify → calibrate → synthesize → score → calibration.
-    /// The tree-based tools (`scenario_from_markets_set`, `scenario_propagate`)
-    /// sit at the *top* of this ladder — an analyst earns the full event tree
-    /// by working through the simpler modes first (2x2 matrix, single-market
-    /// bridges, research-grounded framing). They have no predecessor enforced
-    /// here (they are entry points for already-mature analyses), but the
-    /// maturity note in their descriptions points at the ladder.
+    /// Only the one hard wire dependency carries a predecessor: the framing
+    /// answers `scenario_frame_document` consumes come from the framing
+    /// conversation (`scenario_frame`'s 7-turn protocol, or its
+    /// `prior_answers` re-supply). Every other tool accepts caller-supplied
+    /// inputs from multiple legitimate entries — the market bridges
+    /// (`scenario_from_markets_set` / `scenario_from_cmp_indices`),
+    /// superforecasting's own tree, manual construction, or a store
+    /// populated by a previous session — and an advisory that warns on
+    /// those entries is a broken feedback signal (PR-12: the former
+    /// frame → brainstorm → build → quantify → … chain warned on every
+    /// legitimate alternate path). The process ladder lives in the skills
+    /// (`scenario-planning`'s phases, `superforecasting`'s stages), where
+    /// the entry context is known.
     fn expected_predecessor(tool: &str) -> Option<&'static str> {
         match tool {
             "scenario_frame_document" => Some("scenario_frame"),
-            "scenario_brainstorm" => Some("scenario_frame_document"),
-            "scenario_build" => Some("scenario_brainstorm"),
-            "scenario_quantify" => Some("scenario_build"),
-            "scenario_calibrate" => Some("scenario_quantify"),
-            "scenario_synthesize" => Some("scenario_calibrate"),
-            "scenario_score" => Some("scenario_quantify"),
-            "scenario_calibration" => Some("scenario_score"),
-            "scenario_assess" => Some("scenario_synthesize"),
-            _ => None, // status, frame, triage, update, cross_validate, full, from_markets_set, from_cmp_indices, contract_price_coherence
+            _ => None,
         }
     }
 
@@ -170,7 +169,7 @@ impl ScenariosServer {
                 tool, expected
             );
             note = Some(format!(
-                "called without prior {expected} — the pipeline ladder is frame → brainstorm → build → quantify → calibrate → synthesize → score → calibration; exploratory and bypass workflows remain supported (this note advises, it never blocks)"
+                "called without prior {expected} — the answers parameter comes from the framing conversation; run {expected} first or supply prior_answers from a previous session (this note advises, it never blocks)"
             ));
         }
 
@@ -191,6 +190,34 @@ impl ScenariosServer {
             obj.insert("sequence_note".to_string(), serde_json::Value::String(note));
         }
         output
+    }
+
+    /// Persist a tree into the project record (PR-07): upsert the project
+    /// (created when absent, keyed by the tree's subject) with the tree as
+    /// its last quantified state — the durable tree cache. Persistence
+    /// failures surface as tool errors: the durable cache is part of the
+    /// caching tools' contract, not a best-effort side effect.
+    fn persist_tree(&self, tree: &types::EventTree) -> Result<(), McpToolError> {
+        let today = chrono::Utc::now().date_naive();
+        let mut store = self.project_store.lock().unwrap_or_else(|e| e.into_inner());
+        let mut project =
+            store
+                .get(&tree.subject)
+                .cloned()
+                .unwrap_or_else(|| types::ScenarioProject {
+                    project_id: tree.subject.clone(),
+                    subject: tree.subject.clone(),
+                    framing_document: None,
+                    last_tree: None,
+                    assessment_history: Vec::new(),
+                    created_at: today,
+                    updated_at: today,
+                });
+        project.last_tree = Some(tree.clone());
+        project.updated_at = today;
+        store
+            .upsert(project)
+            .map_err(|error| McpToolError::internal(format!("project persistence failed: {error}")))
     }
 }
 
@@ -276,7 +303,7 @@ fn tree_nodes_json(tree: &EventTree, include_basis: bool) -> Vec<serde_json::Val
                     "conditionals": d.conditionals,
                 })).collect::<Vec<_>>(),
                 "base_rate": n.event.base_rate,
-                "variance_contribution": n.variance_contribution,
+                "certainty_distance": n.certainty_distance,
             });
             if include_basis {
                 node["basis"] = n.event.basis.clone().into();
@@ -483,6 +510,7 @@ impl ScenariosServer {
             let assessment = superforecast::assess_project(&types::AssessInput {
                 project_id: &req.subject,
                 subject: &req.subject,
+                framing_document: None,
                 perspective_count: req.perspective_count,
                 disagreement_score: synth.as_ref().map(|s| s.disagreement_score),
                 event_count: Some(events.len()),
@@ -638,8 +666,10 @@ impl ScenariosServer {
             // Cache the composed tree so contract_price_coherence's
             // tree_implied default (documented to read the cached joint
             // probability) works after this tool — pre-fix only
-            // scenario_quantify wrote the cache.
+            // scenario_quantify wrote the cache. Persisted into the
+            // project record (PR-07: the durable tree cache).
             *self.tree_cache.lock().unwrap_or_else(|e| e.into_inner()) = Some(tree.clone());
+            self.persist_tree(&tree)?;
 
             let nodes = tree_nodes_json(&tree, true);
 
@@ -705,8 +735,20 @@ impl ScenariosServer {
             let tree_implied = match req.tree_implied {
                 Some(p) => p,
                 None => {
-                    let tree =
-                        self.tree_cache.lock().unwrap_or_else(|e| e.into_inner()).clone();
+                    let tree = self
+                        .tree_cache
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .clone()
+                        // PR-07: the durable tree cache — after a restart
+                        // the memory cache is empty and the last-updated
+                        // project's tree is the documented default.
+                        .or_else(|| {
+                            self.project_store
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner())
+                                .last_tree()
+                        });
                     match tree {
                         Some(t) => t.joint_probability,
                         None => {
@@ -865,7 +907,7 @@ impl ScenariosServer {
 
     /// Structure completed framing conversation answers into a FramingDocument.
     #[tool(
-        description = "Structure completed framing conversation answers into a typed FramingDocument. Accepts the subject and an object with answers from the 7-turn conversational protocol (from scenario_frame). Produces a validated FramingDocument with: focal_question, decision_at_stake, time_horizon, action_deadline, in_scope, out_of_scope, stakeholders (as personas for brainstorming), use_case, success_criteria, constraints, surfaced_assumptions, and exploration_prompts. The output feeds directly into scenario_brainstorm as the frame. Run AFTER the framing conversation is complete and BEFORE scenario_brainstorm."
+        description = "Structure completed framing conversation answers into a typed FramingDocument. Accepts the subject and an object with answers from the 7-turn conversational protocol (from scenario_frame). Produces a validated FramingDocument with: focal_question, decision_at_stake, time_horizon, action_deadline, in_scope, out_of_scope, stakeholders (as personas for brainstorming), use_case, success_criteria, constraints, surfaced_assumptions, and exploration_prompts. The output feeds directly into scenario_brainstorm as the frame. Run AFTER the framing conversation is complete and BEFORE scenario_brainstorm. Persists the document under the scenario project record — the project id defaults to the subject, and a re-run updates the same project in place."
     )]
     pub async fn scenario_frame_document(
         &self,
@@ -877,8 +919,42 @@ impl ScenariosServer {
             let document = superforecast::structure_framing_document(&req.subject, &answers)
                 .map_err(map_scenario_error)?;
 
+            // Persist the framing document under the project record
+            // (PR-01): the project id defaults to the subject, and a
+            // re-run updates the same project in place.
+            let project_id = req
+                .project_id
+                .clone()
+                .unwrap_or_else(|| req.subject.clone());
+            let today = chrono::Utc::now().date_naive();
+            {
+                let mut store = self.project_store.lock().unwrap_or_else(|e| e.into_inner());
+                let mut project = store
+                    .get(&project_id)
+                    .cloned()
+                    .unwrap_or_else(|| types::ScenarioProject {
+                        project_id: project_id.clone(),
+                        subject: req.subject.clone(),
+                        framing_document: None,
+                        last_tree: None,
+                        assessment_history: Vec::new(),
+                        created_at: today,
+                        updated_at: today,
+                    });
+                project.subject = req.subject.clone();
+                project.framing_document = Some(document.clone());
+                project.updated_at = today;
+                store
+                    .upsert(project)
+                    .map_err(|error| McpToolError::internal(format!(
+                        "project persistence failed: {error}"
+                    )))?;
+            }
+
             let output = serde_json::json!({
                 "subject": req.subject,
+                "project_id": project_id,
+                "persisted": true,
                 "framing_document": {
                     "focal_question": document.focal_question,
                     "decision_at_stake": document.decision_at_stake,
@@ -928,7 +1004,7 @@ impl ScenariosServer {
     ) -> Result<String, McpToolError> {
         execute_tool(self, "scenario_brainstorm", async {
             let horizon = parse_time_horizon(req.time_horizon.as_deref());
-            let research = req.research_context.as_deref().unwrap_or("No research context provided. Use scenario_research to gather web search results first, or provide context manually.");
+            let research = req.research_context.as_deref().unwrap_or("No research context provided. Run web searches first and pass the results as research_context, or provide context manually.");
 
             let persona_names: Vec<String> = req
                 .personas
@@ -1022,9 +1098,9 @@ impl ScenariosServer {
     /// Returns a scenario event-tree scaffold/template for LLM completion.
     /// Always returns an extraction template (event schema, dependency format,
     /// certainty tiers, Tetlock commandments); the agent fills it against
-    /// research_text if provided. Does not itself parse research into final events.
+    /// the `context` field if provided. Does not itself parse research into final events.
     #[tool(
-        description = "Build a scenario event tree scaffold from web research. Returns an extraction template (not final events) with: event schema, dependency format, certainty tier definitions, and Tetlock's 10 commandments as methodology. The agent (LLM) fills in the event_extraction_prompt against research_text to produce ScenarioEvent objects. Without research_text, returns a structural template. The ultimate pipeline artifact: events with calibrated probabilities, conditional dependency chains, and connections to driver/decision factors from the framing document. Feeds into scenario_quantify for probability resolution."
+        description = "Build a scenario event tree scaffold from web research. Returns an extraction template (not final events) with: event schema, dependency format, certainty tier definitions, and Tetlock's 10 commandments as methodology. The agent (LLM) fills in event_extraction_prompt against the provided context to produce ScenarioEvent objects. Without context, returns a structural template. The ultimate pipeline artifact: events with calibrated probabilities, conditional dependency chains, and connections to driver/decision factors from the framing document. Feeds into scenario_quantify for probability resolution."
     )]
     pub async fn scenario_build(
         &self,
@@ -1154,8 +1230,10 @@ impl ScenariosServer {
             let tree = superforecast::build_event_tree(&req.events)
                 .map_err(map_scenario_error)?;
 
-            // Cache for TUI status queries
+            // Cache for TUI status queries, and persist into the project
+            // record (PR-07: the durable tree cache).
             *self.tree_cache.lock().unwrap_or_else(|e| e.into_inner()) = Some(tree.clone());
+            self.persist_tree(&tree)?;
 
             let sensitivity = superforecast::sensitivity_ranking(&tree);
             let most_uncertain = sensitivity.first().map(|(id, _)| format!("Event '{}' contributes the most uncertainty", id));
@@ -1178,7 +1256,7 @@ impl ScenariosServer {
                     "marginal_probability": n.marginal_probability,
                     "probability_pct": format!("{:.1}%", n.marginal_probability * 100.0),
                     "certainty_tier": serde_json::to_value(n.event.certainty_tier()).unwrap_or_default(),
-                    "variance_contribution": n.variance_contribution,
+                    "certainty_distance": n.certainty_distance,
                     "depends_on": n.event.depends_on.iter().map(|d| serde_json::json!({
                         "parent_event_ids": d.parent_event_ids,
                         "conditionals": d.conditionals,
@@ -1224,9 +1302,11 @@ impl ScenariosServer {
             // Cache the propagated tree so contract_price_coherence's
             // tree_implied default (documented to read the cached joint
             // probability) reflects the post-update tree — pre-fix only
-            // scenario_quantify wrote the cache.
+            // scenario_quantify wrote the cache. Persisted into the
+            // project record (PR-07: the durable tree cache).
             *self.tree_cache.lock().unwrap_or_else(|e| e.into_inner()) =
                 Some(result.tree.clone());
+            self.persist_tree(&result.tree)?;
 
             let nodes: Vec<serde_json::Value> = result
                 .tree
@@ -1712,7 +1792,7 @@ impl ScenariosServer {
 
     /// Triage a forecasting question for the Goldilocks zone.
     #[tool(
-        description = "Triage a forecasting question (Tetlock Commandment 1). Evaluates whether a question is worth the full superforecasting pipeline. Scores three dimensions: clarity (specificity + deadline), data availability (reference class exists?), and resolution criteria (will we know the answer?). Classifies into: clocklike (easy, base-rate suffices), goldilocks (worth full pipeline), cloudlike (too vague, refine the question)."
+        description = "Triage a forecasting question (Tetlock Commandment 1). Evaluates whether a question is worth the full superforecasting pipeline. Scores three dimensions: clarity (specificity + deadline), data availability (reference class exists?), and resolution criteria (will we know the answer?). Classifies specification quality into: well_specified (clear question and resolution — a base-rate estimate may suffice), goldilocks (worth the full pipeline), needs_refinement (too vague — sharpen the question)."
     )]
     pub async fn scenario_triage(
         &self,
@@ -1738,7 +1818,7 @@ impl ScenariosServer {
                 },
                 "recommendation": assessment.recommendation,
                 "next_steps": match assessment.difficulty.as_str() {
-                    "clocklike" => "Use simple base-rate extrapolation or scenario_calibrate with a well-known reference class. The full pipeline may be overkill.",
+                    "well_specified" => "Use simple base-rate extrapolation or scenario_calibrate with a well-known reference class. The full pipeline may be overkill.",
                     "goldilocks" => "Run the full pipeline: scenario_build → scenario_calibrate → scenario_quantify. Use Fermi decomposition to break into sub-questions. Set up Bayesian updating via scenario_update.",
                     _ => "Refine the question: (1) add a specific deadline, (2) define clear resolution criteria, (3) identify a reference class. Then re-triage.",
                 },
@@ -1755,35 +1835,72 @@ impl ScenariosServer {
 
     /// Assess a scenario project across Chermack's five performance phases.
     #[tool(
-        description = "Assess a scenario project's effectiveness (Chermack Phase 5). Evaluates the project across all five phases: Preparation (stakeholder engagement), Exploration (perspective diversity), Development (causal structure), Implementation (strategies applied), and Project Assessment (learning + calibration). Combines quantitative metrics (Brier scores, disagreement, event count, dependency ratio) with qualitative assessment. Omitted quantitative metrics are reported as unreported (unreported_metrics) and the phase scores that depend on them are withheld as insufficient data (null) — never defaulted to zero. Answers Chermack's core question: did the scenario project improve decision quality? Returns per-phase scores, gaps, strengths, learning evidence, and actionable recommendations."
+        description = "Assess a scenario project's effectiveness (Chermack Phase 5), anchored on the project record created by scenario_frame_document (the project id defaults to the subject there; an unknown project id is not found). Assesses the project across all five phases: Preparation (scored from the project's framing document), Exploration (perspective diversity), Development (causal structure — event and dependency counts derived from the project's last quantified tree), Implementation (strategies applied), and Project Assessment (learning + calibration, the curve scoped to the project's subject). Caller-supplied metrics override the derived values; omitted metrics that are neither supplied nor derivable are reported as unreported (unreported_metrics) and their phase scores withheld as insufficient data (null) — never defaulted to zero. Answers Chermack's core question: did the scenario project improve decision quality? Returns per-phase scores, gaps, strengths, learning evidence, and actionable recommendations."
     )]
     pub async fn scenario_assess(
         &self,
         Parameters(req): Parameters<AssessRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "scenario_assess", async {
+            // The project record is the assessment's anchor (PR-01): an
+            // unknown project id is not_found naming it — assessing a
+            // phantom recalls nothing.
+            let project = {
+                let store = self.project_store.lock().unwrap_or_else(|e| e.into_inner());
+                store.get(&req.project_id).cloned()
+            };
+            let Some(project) = project else {
+                return Err(McpToolError::not_found(format!(
+                    "scenario project '{}' not found — create it with scenario_frame_document (the project id defaults to the subject)",
+                    req.project_id
+                )));
+            };
+
             let learning_events: Vec<String> = req
                 .learning_events
                 .as_deref()
                 .map(|s| s.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect())
                 .unwrap_or_default();
 
-            // Get calibration curve from the store if available
+            // Calibration evidence is scoped to the project's subject
+            // (PR-03): a multi-subject store must not contaminate the
+            // Phase-5 assessment with other projects' forecasts.
             let curve = {
                 let store = self.forecast_store.lock().unwrap_or_else(|e| e.into_inner());
-                superforecast::compute_calibration_curve(&store).ok()
+                superforecast::compute_calibration_curve(
+                    &store.filtered_by_subject(&project.subject),
+                )
+                .ok()
             };
 
-            // Caller-omitted metrics pass through as None: assess_project
-            // reports them as unreported and withholds the dependent phase
-            // scores as insufficient data — an omission is not a zero.
+            // Caller-supplied metrics override; the project record derives
+            // the rest (PR-01): event and dependency counts come from the
+            // stored tree, Phase 1 from the framing document. An omission
+            // is not a zero — what is neither supplied nor derivable is
+            // reported as unreported and withholds its phase.
+            let event_count = req
+                .event_count
+                .or_else(|| project.last_tree.as_ref().map(|tree| tree.nodes.len()));
+            let events_with_deps = req.events_with_dependencies.or_else(|| {
+                project
+                    .last_tree
+                    .as_ref()
+                    .map(|tree| {
+                        tree.nodes
+                            .iter()
+                            .filter(|node| !node.event.depends_on.is_empty())
+                            .count()
+                    })
+            });
+
             let assessment = superforecast::assess_project(&types::AssessInput {
                 project_id: &req.project_id,
-                subject: &req.subject,
+                subject: &project.subject,
+                framing_document: project.framing_document.as_ref(),
                 perspective_count: req.perspective_count,
                 disagreement_score: req.disagreement_score,
-                event_count: req.event_count,
-                events_with_deps: req.events_with_dependencies,
+                event_count,
+                events_with_deps,
                 calibration_curve: curve.as_ref(),
                 strategies_generated: req.strategies_generated,
                 strategies_implemented: req.strategies_implemented,
@@ -1849,10 +1966,29 @@ impl ScenariosServer {
                         "Phase 4: Scenario Implementation — strategies, wind-tunneling, early warning (Chermack, Ch. 8)",
                         "Phase 5: Project Assessment — learning, performance improvement (Chermack, Ch. 9)",
                     ],
-                    "integration": "Combines Chermack (project effectiveness) with Tetlock (forecast accuracy via calibration curve) and Schwartz (scenario narratives via event trees)",
+                    "integration": "Combines Chermack (project effectiveness) with Tetlock (forecast accuracy via calibration curve); the Schwartz narrative phases (driving forces, axes, quadrant stories, indicators) live in the scenario-planning skill's template set, quantified here as event trees",
                     "reference": "Chermack, T.J. (2011). Scenario Planning in Organizations: How to Create, Use, and Assess Scenarios. Berrett-Koehler."
                 }
             });
+
+            // Record the assessment in the project's history (PR-01) —
+            // persistence failure surfaces; history is part of the record.
+            {
+                let mut store = self.project_store.lock().unwrap_or_else(|e| e.into_inner());
+                if let Some(mut project_record) = store.get(&req.project_id).cloned() {
+                    project_record
+                        .assessment_history
+                        .push(types::AssessmentRecord {
+                            date: chrono::Utc::now().date_naive(),
+                            overall_score: assessment.overall_score,
+                        });
+                    store
+                        .upsert(project_record)
+                        .map_err(|error| McpToolError::internal(format!(
+                            "project persistence failed: {error}"
+                        )))?;
+                }
+            }
 
             Ok(Self::with_sequence_note(
                 output,
@@ -2055,10 +2191,17 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
             Ok(ScenariosServer::new(
                 ctx.webid,
                 std::sync::Arc::new(std::sync::Mutex::new(superforecast::ForecastStore::new(
-                    Some(scenarios_data_dir),
+                    // The store wants the snapshot FILE path — passing the
+                    // dir alone made production compaction rename onto a
+                    // directory (failing past the journal threshold) and
+                    // dropped the journal outside the D28 scenarios dir.
+                    Some(scenarios_data_dir.join("forecasts.json")),
                 ))),
                 std::sync::Mutex::new(None),
                 std::sync::Mutex::new(HashSet::new()),
+                std::sync::Mutex::new(superforecast::ProjectStore::new(Some(
+                    scenarios_data_dir.join("projects.json"),
+                ))),
             ))
         },
         vec![],

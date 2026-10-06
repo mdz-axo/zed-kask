@@ -47,9 +47,12 @@ pub(crate) struct FrameRequest {
 
 /// Request to structure a completed framing conversation into a FramingDocument.
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct FrameDocumentRequest {
+pub struct FrameDocumentRequest {
     /// Subject for the scenario project
     pub subject: String,
+    /// Project id for the persisted project record. Defaults to the
+    /// subject — a re-run updates the same project in place.
+    pub project_id: Option<String>,
     /// JSON object with answers from the 7-turn framing conversation.
     /// Expected keys: focal_question, decision_at_stake, time_horizon,
     /// action_deadline, in_scope, out_of_scope, stakeholders, use_case,
@@ -283,10 +286,11 @@ pub struct TriageRequest {
 /// scores that depend on them as insufficient data (null).
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct AssessRequest {
-    /// Project identifier
+    /// Project identifier — the project record created by
+    /// scenario_frame_document (where the id defaults to the subject).
+    /// An unknown project id is not found; the project's own subject
+    /// scopes the calibration evidence.
     pub project_id: String,
-    /// Subject domain
-    pub subject: String,
     /// How many perspectives were engaged
     pub perspective_count: Option<usize>,
     /// Disagreement score from dragonfly-eye synthesis

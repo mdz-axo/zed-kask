@@ -455,6 +455,14 @@ pub const DERIVED_CONCEPTS: &[DerivedConcept] = &[
         authority: "operator ruling 2026-09-25; Schwartz, The Art of the Long View, Doubleday (1991); Chermack, Scenario Planning in Organizations, Berrett-Koehler (2011)",
     },
     DerivedConcept {
+        term: "maia_event_based_scenario_template",
+        aliases: &["maia scenario template", "event-based scenario template"],
+        identity: "type -> subject -> events (binomial yes/no questions with deadlines) -> path dependence -> probability with basis (technical feasibility or scaling/distribution), over fixed time horizons",
+        definition: "The Merchant Adventures (MAIA) event-based scenario process: construct sets of key future events as yes/no questions over fixed time horizons in different contexts, each event carrying a name, a dated yes/no question, path dependence, a probability estimate, and a basis in terms of technical feasibility or scaling/distribution issues. Four scenario types (company update, company analysis, emerging economic potential, economic potential analysis) crossed with three time horizons (tactical 12-18 months, strategic 3-5 years, long-term 7-10 years); the events can function as a forward-looking basis for thinking about portfolio risks. Source: MAIA, 'Time Horizons, Expected Events and the Scenario Process' (zk-reference/maia-corpus); the post itself builds on Tetlock's Superforecasting and Schwartz's call for imagination and analytical realism.",
+        constituents: &["scenario_planning", "superforecasting"],
+        authority: "operator ruling 2026-10-06 (scenario-server redesign PR-05, authorized by the implementation-plan grant); MAIA, Time Horizons, Expected Events and the Scenario Process, zk-reference/maia-corpus",
+    },
+    DerivedConcept {
         term: "falsifiability",
         aliases: &[
             "falsifiable",

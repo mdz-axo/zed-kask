@@ -88,7 +88,8 @@ and Chermack's assessment framework.[^tetlock][^schwartz][^chermack]
 The scenarios server implements three methodologies as an integrated pipeline:
 
 - **Tetlock — forecast accuracy** (Tetlock & Gardner, 2015): the calibration engine —
-  triage (clocklike/Goldilocks/cloudlike), Fermi decomposition, outside-view base rates
+  triage (well_specified/goldilocks/needs_refinement specification-quality
+  classification), Fermi decomposition, outside-view base rates
   with a shrinkage estimator, Bayesian updating, dragonfly-eye synthesis
   (inverse-Brier weighting), Brier scoring, calibration tracking.
 - **Schwartz — scenario imagination** (Schwartz, 1991): the construction approach —

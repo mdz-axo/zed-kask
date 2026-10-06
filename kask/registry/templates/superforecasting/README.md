@@ -139,8 +139,10 @@ SKILL.md's stage instructions are the operating procedure):
 
 - The forecast record (stage 7's output: tracking ID, question, resolution
   criteria, probability, confidence, expiration)
-- The scenarios server's propagation journal (when the forecast is tracked
-  in the event tree — `scenario_update` writes it)
+- The scenarios server's propagation journal (`scenario_propagate` writes
+  it — the per-node before/after record of a prior revision;
+  `scenario_update` itself is stateless: it computes and returns the
+  posterior, and the durable record is the forecast journal below)
 - The forecast journal at resolution (`scenario_score` — the only writer;
   Brier is computed there)
 
