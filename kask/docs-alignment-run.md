@@ -75,7 +75,7 @@ Goal record: `f277c85d-2621-4161-803f-14e6e36b6cb9` (intake prediction 0.8).
 
 | Document | Decision | Basis |
 | --- | --- | --- |
-| `media-server-lead-onboarding.md` | **DELETED** (P2 executed) | Role-closure evidence: 0 live role presence repo-wide, 0 media-crate commits since 2026-09-25, all five §6 focus areas untouched; content duplicated in `media.md` + crate README + `.rules`/skills. Successors named in the README ledger tombstone. Vetoable by single-commit revert. |
+| `media-server-lead-onboarding.md` | **DELETED** (P2 executed) | Role-closure evidence: 0 live role presence repo-wide, 0 media-crate commits since 2026-09-25, all five §6 focus areas untouched; content duplicated in `media.md` + crate README + `.rules`/skills. Successors named in the README ledger tombstone. Vetoable by single-commit revert. *(Reversed 2026-10-06 — operator ruling; the record was restored verbatim and the tombstone removed.)* |
 | `d-seam-audit.md` | **RECOMPOSED** | D85 retired row removed; D86/D87/D89 registered `pending` per the doc's own registration pattern (pins named from the DIVERGENCE rows, no inherited verdicts); snapshot updated to live count 68; frontmatter 1.0.2→1.0.3, last_updated 2026-10-05. |
 | `two-symptom-latency-findings.md` | **RECOMPOSED** | 7-field frontmatter added (was absent); §1.1 `[DIAG-anr]` status cell annotated with its 2026-10-02 contract removal (cross-ref §7.11); README portal row added (was unportaled). |
 | `syntax-semantic-probabilistic-deterministic-space.md` | **VERIFIED-CURRENT** | P1 fold target; §4 overlay present (:314); last_updated 2026-10-01; structure + change-history verified. |
