@@ -1,5 +1,4 @@
 //! Valuation and forecasting tools.
-use super::notes::run_store;
 use crate::{
     CompaniesServer, CompanyProfile, KeyMetrics, Provider, StoredForecast,
     current_price_from_multiple, fibo, financial_model, parse_symbol_from_query,
@@ -315,24 +314,19 @@ impl CompaniesServer {
         execute_tool(self, "sensitivity_analysis", async {
             validate_symbol(&req.symbol)?;
 
-            let crate::valuation_service::FinancialHistory { hist, profile, .. } =
-                match crate::valuation_service::load_financial_history(
+            let (history, assumptions) =
+                match crate::valuation_service::load_projection(
                     self,
                     &req.symbol,
                     "sensitivity_analysis",
+                    &req,
                 )
                 .await
                 {
                     Ok(loaded) => loaded,
                     Err(error) => return error.into_tool_result(),
                 };
-
-            let assumptions = financial_model::ProjectionAssumptions::from_history_with_overrides(
-                &hist,
-                types::ProjectionAssumptionOverrides::from(&req),
-                self.investor_required_return,
-            )
-            .map_err(|err| McpToolError::invalid_argument(err.to_string()))?;
+            let crate::valuation_service::FinancialHistory { hist, profile, .. } = history;
 
             financial_model::validate_sensitivity_range(req.range_pct)
                 .map_err(|err| McpToolError::invalid_argument(err.to_string()))?;
@@ -394,24 +388,19 @@ impl CompaniesServer {
         execute_tool(self, "equity_duration", async {
             validate_symbol(&req.symbol)?;
 
-            let crate::valuation_service::FinancialHistory { hist, .. } =
-                match crate::valuation_service::load_financial_history(
+            let (history, assumptions) =
+                match crate::valuation_service::load_projection(
                     self,
                     &req.symbol,
                     "equity_duration",
+                    &req,
                 )
                 .await
                 {
                     Ok(loaded) => loaded,
                     Err(error) => return error.into_tool_result(),
                 };
-
-            let assumptions = financial_model::ProjectionAssumptions::from_history_with_overrides(
-                &hist,
-                types::ProjectionAssumptionOverrides::from(&req),
-                self.investor_required_return,
-            )
-            .map_err(|err| McpToolError::invalid_argument(err.to_string()))?;
+            let crate::valuation_service::FinancialHistory { hist, .. } = history;
             let model = financial_model::project_financial_model(&hist, &assumptions)
                 .map_err(|error| McpToolError::invalid_argument(error.to_string()))?;
 
@@ -478,26 +467,21 @@ impl CompaniesServer {
         execute_tool(self, "monte_carlo_dcf", async {
             validate_symbol(&req.symbol)?;
 
-            let crate::valuation_service::FinancialHistory { hist, profile, .. } =
-                match crate::valuation_service::load_financial_history(
+            let (history, assumptions) =
+                match crate::valuation_service::load_projection(
                     self,
                     &req.symbol,
                     "monte_carlo_dcf",
+                    &req,
                 )
                 .await
                 {
                     Ok(loaded) => loaded,
                     Err(error) => return error.into_tool_result(),
                 };
+            let crate::valuation_service::FinancialHistory { hist, profile, .. } = history;
 
             let current_price = profile.price().unwrap_or(0.0);
-
-            let assumptions = financial_model::ProjectionAssumptions::from_history_with_overrides(
-                &hist,
-                types::ProjectionAssumptionOverrides::from(&req),
-                self.investor_required_return,
-            )
-            .map_err(|err| McpToolError::invalid_argument(err.to_string()))?;
             let ranges = financial_model::McRange {
                 revenue_growth: req.range_revenue_growth,
                 gross_margin: req.range_gross_margin,
@@ -558,26 +542,21 @@ impl CompaniesServer {
         execute_tool(self, "scenario_impact_valuation", async {
             validate_symbol(&req.symbol)?;
 
-            let crate::valuation_service::FinancialHistory { hist, profile, .. } =
-                match crate::valuation_service::load_financial_history(
+            let (history, assumptions) =
+                match crate::valuation_service::load_projection(
                     self,
                     &req.symbol,
                     "scenario_impact_valuation",
+                    &req,
                 )
                 .await
                 {
                     Ok(loaded) => loaded,
                     Err(error) => return error.into_tool_result(),
                 };
+            let crate::valuation_service::FinancialHistory { hist, profile, .. } = history;
 
             let current_price = profile.price().unwrap_or(0.0);
-
-            let assumptions = financial_model::ProjectionAssumptions::from_history_with_overrides(
-                &hist,
-                types::ProjectionAssumptionOverrides::from(&req),
-                self.investor_required_return,
-            )
-            .map_err(|err| McpToolError::invalid_argument(err.to_string()))?;
 
             // Parse the scenario tree JSON from scenario_quantify.
             // Normalize the scenario server's EventTree format (nested
@@ -781,14 +760,8 @@ impl CompaniesServer {
     ) -> Result<String, McpToolError> {
         execute_tool(self, "calibrate_forecast", async {
             validate_symbol(&req.symbol)?;
-            if let Some(ref revision_of) = req.revision_of {
-                let revision_of = revision_of.clone();
-                let symbol = req.symbol.clone();
-                run_store(self.research.clone(), move |portfolio| {
-                    portfolio.validate_forecast_revision(&revision_of, &symbol)
-                })
+            self.validate_revision_of(&req.symbol, req.revision_of.as_deref())
                 .await?;
-            }
             for (name, value) in [
                 ("growth_estimate", req.growth_estimate),
                 ("margin_estimate", req.margin_estimate),
@@ -810,27 +783,22 @@ impl CompaniesServer {
                 }
             }
 
-            let crate::valuation_service::FinancialHistory { hist, profile, .. } =
-                match crate::valuation_service::load_financial_history(
+            let (history, mut assumptions) =
+                match crate::valuation_service::load_projection(
                     self,
                     &req.symbol,
                     "calibrate_forecast",
+                    &req,
                 )
                 .await
                 {
                     Ok(loaded) => loaded,
                     Err(error) => return error.into_tool_result(),
                 };
+            let crate::valuation_service::FinancialHistory { hist, profile, .. } = history;
 
             let current_price = profile.price().unwrap_or(0.0);
             let hist_revenue_growth = hist.revenue_cagr();
-
-            let mut assumptions = financial_model::ProjectionAssumptions::from_history_with_overrides(
-                &hist,
-                types::ProjectionAssumptionOverrides::from(&req),
-                self.investor_required_return,
-            )
-            .map_err(|err| McpToolError::invalid_argument(err.to_string()))?;
 
             // Run scenarios
             let matrix = scenarios::ScenarioMatrix::growth_x_margin(hist_revenue_growth, assumptions.gross_margin);
@@ -1030,14 +998,8 @@ impl CompaniesServer {
                     (fp - cp) / cp
                 }
             };
-            if let Some(ref revision_of) = req.revision_of {
-                let revision_of = revision_of.clone();
-                let symbol = req.symbol.clone();
-                run_store(self.research.clone(), move |portfolio| {
-                    portfolio.validate_forecast_revision(&revision_of, &symbol)
-                })
+            self.validate_revision_of(&req.symbol, req.revision_of.as_deref())
                 .await?;
-            }
 
             let forecast_id = req
                 .forecast_id

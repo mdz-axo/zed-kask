@@ -112,6 +112,31 @@ pub(crate) async fn load_financial_history(
     })
 }
 
+/// Load the shared financial history and build the projection assumptions
+/// from the request's overrides in one step — the preamble every
+/// projection-based valuation and analytics tool runs between symbol
+/// validation and its engine-specific work. Assumption-construction
+/// failures classify as `Tool` (`invalid_argument`), matching the inline
+/// form this replaces.
+pub(crate) async fn load_projection<Req>(
+    server: &crate::CompaniesServer,
+    symbol: &str,
+    tool: &'static str,
+    request: &Req,
+) -> Result<(FinancialHistory, ProjectionAssumptions), DcfPreparationError>
+where
+    for<'a> crate::types::ProjectionAssumptionOverrides: From<&'a Req>,
+{
+    let history = load_financial_history(server, symbol, tool).await?;
+    let assumptions = ProjectionAssumptions::from_history_with_overrides(
+        &history.hist,
+        crate::types::ProjectionAssumptionOverrides::from(request),
+        server.investor_required_return,
+    )
+    .map_err(|err| hkask_mcp_server::server::McpToolError::invalid_argument(err.to_string()))?;
+    Ok((history, assumptions))
+}
+
 /// Build the `dcf_valuation` response body from the projected model and
 /// historical snapshot. Pure — no I/O, no API keys, no `CompaniesServer`.
 ///

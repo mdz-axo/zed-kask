@@ -238,6 +238,26 @@ impl CompaniesServer {
         ))
     }
 
+    /// Validate that a `revision_of` reference names a stored forecast for
+    /// the same symbol — the revision-integrity preamble `dcf_valuation`,
+    /// `calibrate_forecast`, and `forecast_persist` share. A `None` revision
+    /// is a new forecast and skips the store read.
+    async fn validate_revision_of(
+        &self,
+        symbol: &str,
+        revision_of: Option<&str>,
+    ) -> Result<(), McpToolError> {
+        if let Some(revision_of) = revision_of {
+            let revision_of = revision_of.to_string();
+            let symbol = symbol.to_string();
+            crate::tools::notes::run_store(self.research.clone(), move |portfolio| {
+                portfolio.validate_forecast_revision(&revision_of, &symbol)
+            })
+            .await?;
+        }
+        Ok(())
+    }
+
     async fn save_forecast(&self, forecast: PersistedForecast) -> Result<(), McpToolError> {
         let research = self.research.clone();
         tokio::task::spawn_blocking(move || research.save_forecast(&forecast))

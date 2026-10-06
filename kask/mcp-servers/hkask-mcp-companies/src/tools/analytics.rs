@@ -1,5 +1,4 @@
 //! Company DCF valuation and scenario tools.
-use super::notes::run_store;
 use crate::{
     CompaniesServer, StoredForecast, fibo, financial_model, resolve_current_price, scenarios,
     screen_store::PersistedForecast, superforecast, types, validate_symbol,
@@ -20,14 +19,8 @@ impl CompaniesServer {
     ) -> Result<String, McpToolError> {
         execute_tool(self, "dcf_valuation", async {
             validate_symbol(&req.symbol)?;
-            if let Some(ref revision_of) = req.revision_of {
-                let revision_of = revision_of.clone();
-                let symbol = req.symbol.clone();
-                run_store(self.research.clone(), move |portfolio| {
-                    portfolio.validate_forecast_revision(&revision_of, &symbol)
-                })
+            self.validate_revision_of(&req.symbol, req.revision_of.as_deref())
                 .await?;
-            }
 
             let profile = self.fetch_profile(&req.symbol).await?;
             let prepared = match crate::valuation_service::prepare_dcf(
@@ -111,29 +104,24 @@ impl CompaniesServer {
         execute_tool(self, "reverse_dcf", async {
             validate_symbol(&req.symbol)?;
 
-            let crate::valuation_service::FinancialHistory { hist, profile, income } =
-                match crate::valuation_service::load_financial_history(
+            let (history, assumptions) =
+                match crate::valuation_service::load_projection(
                     self,
                     &req.symbol,
                     "reverse_dcf",
+                    &req,
                 )
                 .await
                 {
                     Ok(loaded) => loaded,
                     Err(error) => return error.into_tool_result(),
                 };
+            let crate::valuation_service::FinancialHistory { hist, profile, income } = history;
 
             let signal_quality = hist.signal_quality();
             crate::data_quality::emit_data_quality_span(
                 &req.symbol, "reverse_dcf", &signal_quality,
             );
-
-            let assumptions = financial_model::ProjectionAssumptions::from_history_with_overrides(
-                &hist,
-                types::ProjectionAssumptionOverrides::from(&req),
-                self.investor_required_return,
-            )
-            .map_err(|err| McpToolError::invalid_argument(err.to_string()))?;
 
             // FMP profiles can carry a current price; EODHD-routed profiles
             // generally require the quote fallback. The raw security price is
@@ -235,24 +223,19 @@ impl CompaniesServer {
         execute_tool(self, "scenario_analysis", async {
             validate_symbol(&req.symbol)?;
 
-            let crate::valuation_service::FinancialHistory { hist, profile, .. } =
-                match crate::valuation_service::load_financial_history(
+            let (history, assumptions) =
+                match crate::valuation_service::load_projection(
                     self,
                     &req.symbol,
                     "scenario_analysis",
+                    &req,
                 )
                 .await
                 {
                     Ok(loaded) => loaded,
                     Err(error) => return error.into_tool_result(),
                 };
-
-            let assumptions = financial_model::ProjectionAssumptions::from_history_with_overrides(
-                &hist,
-                types::ProjectionAssumptionOverrides::from(&req),
-                self.investor_required_return,
-            )
-            .map_err(|err| McpToolError::invalid_argument(err.to_string()))?;
+            let crate::valuation_service::FinancialHistory { hist, profile, .. } = history;
 
             let current_price = profile.price().unwrap_or(0.0);
 
