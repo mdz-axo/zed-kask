@@ -322,9 +322,10 @@ impl rmcp::ServerHandler for CompaniesServer {}
 
 // ── Entry point ─────────────────────────────────────────────────────
 
-// Fail fast before the 60s MCP `tools/call` cap kills and restarts the
-// server: a hung FMP/EODHD/web-search upstream surfaces as a request error
-// inside the cap, not a server restart that loses in-flight work.
+// Fail fast so a hung FMP/EODHD/web-search upstream surfaces as a request
+// error inside the call instead of stalling past the MCP client's
+// tools/call timeout (observed 300s in zed-kask) — a stall there risks a
+// transport restart that loses in-flight work.
 const HTTP_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 const HTTP_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 
@@ -396,12 +397,13 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 }
             };
             // zed-kask: HTTP client with explicit connect+request timeouts.
-            // The MCP client caps any `tools/call` at 60s; without these,
-            // `expectations_gap` (which fans out to 5 FMP/EODHD fetches plus
-            // 3 parallel web-search calls) can stall on a single slow upstream
-            // and hit the 60s cap, triggering a server restart + retry that
-            // never converges. A 20s request timeout keeps each upstream call
-            // well under the cap so a stalled provider surfaces as
+            // Without these, `expectations_gap` (which fans out to FMP/EODHD
+            // fetches plus parallel web-search calls) can stall on a single
+            // slow upstream and hang the tool past the MCP client's
+            // tools/call timeout (observed 300s in zed-kask — the transport
+            // bound, not a 60s server-side cap), triggering a restart +
+            // retry that never converges. A 20s request timeout keeps each
+            // upstream call bounded so a stalled provider surfaces as
             // `McpToolError::unavailable` and routes to the fallback provider
             // via `companies_get`, instead of dragging the whole tool down.
             // `unwrap_or_else` fallback to `Client::new()` matches the
@@ -546,7 +548,8 @@ mod tool_behavior_tests {
 
     /// Pin: the HTTP client built in `run()` carries explicit connect and
     /// request timeouts so a hung FMP/EODHD/web-search upstream fails fast
-    /// before the 60s MCP `tools/call` cap kills and restarts the server.
+    /// before the MCP client's tools/call timeout (observed 300s in
+    /// zed-kask) can stall the call into a transport restart.
     /// reqwest exposes no client-config inspection, so this pins the named
     /// consts the construction reads — dropping the timeouts means removing
     /// or rename-breaking a const this test references. It does NOT verify the
@@ -557,12 +560,12 @@ mod tool_behavior_tests {
         assert_eq!(
             HTTP_CONNECT_TIMEOUT,
             std::time::Duration::from_secs(10),
-            "connect timeout changed; re-verify against the 60s MCP tools/call cap"
+            "connect timeout changed; re-verify against the MCP client's tools/call timeout"
         );
         assert_eq!(
             HTTP_REQUEST_TIMEOUT,
             std::time::Duration::from_secs(20),
-            "request timeout changed; must stay well under the 60s MCP tools/call cap \
+            "request timeout changed; must stay well under the MCP client's tools/call timeout \
              (see the construction-site comment in `run`)"
         );
     }

@@ -20,7 +20,8 @@
 //! Mauboussin & Rappaport (2001) Expectations Investing; DuPont analysis;
 //! Higgins (1977) sustainable growth.
 use crate::{
-    CompaniesServer, fibo, financial_model, research, resolve_current_price, types, validate_symbol,
+    CompaniesServer, fibo, financial_model, providers, research, resolve_current_price, types,
+    validate_symbol,
 };
 use hkask_mcp_server::server::{McpToolError, execute_tool};
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
@@ -28,7 +29,7 @@ use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 #[tool_router(router = expectations_router, vis = "pub")]
 impl CompaniesServer {
     #[tool(
-        description = "Expectations gap analysis from the investor perspective. The investor target return (MAIA default 15%, request-overridable) replaces CAPM cost of equity in modified WACC. For non-financials, compare reverse-DCF-implied revenue growth with demonstrated full-period revenue CAGR and compare implied net margin at that demonstrated growth with demonstrated net margin. DuPont ROE and Higgins sustainable growth are surfaced separately as profitability decomposition and financing capacity. Financial-sector companies use the equity-based implied-ROE solve (justified P/B). Management guidance is context only."
+        description = "Expectations gap analysis from the investor perspective. The investor target return (MAIA default 15%, request-overridable) replaces CAPM cost of equity in modified WACC. For non-financials, compare reverse-DCF-implied revenue growth with demonstrated full-period revenue CAGR and compare implied net margin at that demonstrated growth with demonstrated net margin. DuPont ROE and Higgins sustainable growth are surfaced separately as profitability decomposition and financing capacity. Financial-sector companies use the equity-based implied-ROE solve (justified P/B). Management guidance is context only. compact=true skips research-narrative collection for screening workflows — identical capability/gaps blocks, narrative_mode=compact, no research credentials needed."
     )]
     pub async fn expectations_gap(
         &self,
@@ -39,24 +40,111 @@ impl CompaniesServer {
 
             // ── 1. Fetch financial data ────────────────────────────────
             //
-            // All six fetches are independent (no data dependency between
-            // them) and run concurrently via `tokio::join!`. This is not
-            // `try_join!` — we intentionally tolerate partial failures:
-            // a failed income_statement must not prevent fetching
-            // balance_sheet. The match below handles the Ok/Err cases
-            // per-fetch. Running them concurrently keeps the total under
-            // the 60s MCP `tools/call` cap (worst case = max single
-            // fetch timeout, not sum of all fetch timeouts). The stock
-            // quote is the price fallback: EODHD-routed profiles (every
-            // exchange-qualified symbol) carry no `price` field.
+            // Provider-aware acquisition (EODHD API shape, operator steer
+            // 2026-10-05): EODHD's /fundamentals is ONE endpoint — 10
+            // API-call units per request — that carries every statement,
+            // the ratios, and the profile. The per-tool path would fetch
+            // that identical payload five times concurrently (50 units,
+            // five multi-MB transfers) for one international symbol —
+            // the load driver behind the batch stalls observed 2026-10-05.
+            // International (EODHD-routed) symbols fetch fundamentals
+            // once and derive the five views locally — the same pattern
+            // the saved-screen job path uses
+            // (screening::analyze_issuer_group). US (FMP-routed) symbols
+            // keep the six light per-endpoint FMP fetches — FMP's API is
+            // per-statement. The stock quote stays separate on both
+            // paths (EODHD /real-time is a light 1-unit endpoint;
+            // EODHD-routed profiles carry no `price` field, so the quote
+            // is the price fallback). FMP fetches tolerate partial
+            // failures — a failed income_statement must not prevent
+            // fetching balance_sheet; the consolidated EODHD path has
+            // one payload and therefore one failure mode, returned fast
+            // with the provider's own classification instead of spinning
+            // the research phase on a dead symbol.
+            let fetch_started = std::time::Instant::now();
             let (req_income, req_balance, req_cf, req_metrics, req_profile, req_quote) =
-                tokio::join! {
-                    self.fetch("income_statement", &req.symbol, &[("limit", "5")]),
-                    self.fetch("balance_sheet", &req.symbol, &[("limit", "5")]),
-                    self.fetch("cash_flow_statement", &req.symbol, &[("limit", "5")]),
-                    self.fetch_key_metrics(&req.symbol, 5),
-                    self.fetch_profile(&req.symbol),
-                    self.fetch("stock_quote", &req.symbol, &[]),
+                if providers::is_international_symbol(&req.symbol) {
+                    let (fundamentals, quote) = tokio::join!(
+                        providers::fetch_eodhd_fundamentals(
+                            &self.client,
+                            &self.eodhd_api_key,
+                            &req.symbol,
+                        ),
+                        self.fetch("stock_quote", &req.symbol, &[]),
+                    );
+                    tracing::info!(
+                        target: "hkask.mcp.companies",
+                        tool = "expectations_gap",
+                        symbol = %req.symbol,
+                        phase = "financial_fetches",
+                        elapsed_ms = fetch_started.elapsed().as_millis() as u64,
+                        "consolidated EODHD fundamentals fetch"
+                    );
+                    let payload = fundamentals.map_err(|error| {
+                        tracing::warn!(
+                            target: "hkask.mcp.companies",
+                            tool = "expectations_gap",
+                            symbol = %req.symbol,
+                            error = %error,
+                            "EODHD fundamentals fetch failed"
+                        );
+                        error
+                    })?;
+                    let limit: &[(&str, &str)] = &[("limit", "5")];
+                    (
+                        Ok(providers::truncate_to_limit(
+                            providers::normalize_eodhd("income_statement", &payload, &req.symbol),
+                            limit,
+                        )),
+                        Ok(providers::truncate_to_limit(
+                            providers::normalize_eodhd("balance_sheet", &payload, &req.symbol),
+                            limit,
+                        )),
+                        Ok(providers::truncate_to_limit(
+                            providers::normalize_eodhd(
+                                "cash_flow_statement",
+                                &payload,
+                                &req.symbol,
+                            ),
+                            limit,
+                        )),
+                        Ok(providers::KeyMetrics::from_raw(
+                            providers::truncate_to_limit(
+                                providers::normalize_eodhd("key_metrics", &payload, &req.symbol),
+                                limit,
+                            ),
+                        )),
+                        Ok(providers::CompanyProfile::from_response(
+                            providers::ProviderResponse {
+                                value: providers::normalize_eodhd(
+                                    "company_profile",
+                                    &payload,
+                                    &req.symbol,
+                                ),
+                                provider: providers::Provider::Eodhd,
+                                warnings: Vec::new(),
+                            },
+                        )),
+                        quote,
+                    )
+                } else {
+                    let joined = tokio::join! {
+                        self.fetch("income_statement", &req.symbol, &[("limit", "5")]),
+                        self.fetch("balance_sheet", &req.symbol, &[("limit", "5")]),
+                        self.fetch("cash_flow_statement", &req.symbol, &[("limit", "5")]),
+                        self.fetch_key_metrics(&req.symbol, 5),
+                        self.fetch_profile(&req.symbol),
+                        self.fetch("stock_quote", &req.symbol, &[]),
+                    };
+                    tracing::info!(
+                        target: "hkask.mcp.companies",
+                        tool = "expectations_gap",
+                        symbol = %req.symbol,
+                        phase = "financial_fetches",
+                        elapsed_ms = fetch_started.elapsed().as_millis() as u64,
+                        "FMP per-endpoint fetches"
+                    );
+                    joined
                 };
 
             // ── 2. Price-implied expectations vs demonstrated capability ──
@@ -90,9 +178,8 @@ impl CompaniesServer {
                                     )
                                 }
                                 Err(error) => {
-                                    price_source = format!(
-                                        "{source}; currency_normalization_failed: {error}"
-                                    );
+                                    price_source =
+                                        format!("{source}; currency_normalization_failed: {error}");
                                     None
                                 }
                             }
@@ -110,48 +197,76 @@ impl CompaniesServer {
                 _ => req.symbol.clone(),
             };
 
-            let research = research::search_fundamental(
-                &self.client,
-                &req.symbol,
-                &company_name,
-                "revenue guidance forecast growth outlook",
-                self.exa_api_key.as_deref(),
-                self.tavily_api_key.as_deref(),
-                self.brave_api_key.as_deref(),
-            )
-            .await?;
-
-            let claims = research::ResearchClaimClassifier::classify_all(&research);
-
-            let management_growth = extract_management_growth(&claims.claims);
-            let management_narrative: Vec<String> = claims
-                .claims
-                .iter()
-                .filter(|c| {
-                    matches!(
-                        c.category,
-                        research::ClaimCategory::RevenueGuidance
-                            | research::ClaimCategory::EarningsGuidance
-                    )
-                })
-                .map(|c| c.text.clone())
-                .collect();
-
-            // mcp-tool-review C-02: the narrative is context-only (the
-            // consumed quantity is management_guidance_median), so the
-            // default response carries a head excerpt per document — the
-            // live AAPL probe embedded ~8 complete research documents in
-            // one 5692ms response. Full text is opt-in via
-            // `full_narrative: true`; the response states which mode it
-            // used via `narrative_mode`.
-            let narrative_full = req.full_narrative.unwrap_or(false);
-            let management_narrative: Vec<String> = if narrative_full {
-                management_narrative
+            // compact: skip research entirely — screening workflows rank
+            // on the gap math, not the context. The saved-screen job path
+            // already builds this report with no research
+            // (screening::analyze_issuer_group), so the compact shape is a
+            // proven configuration, and it needs no research credentials
+            // (search_fundamental errors permission_denied without keys).
+            let compact = req.compact.unwrap_or(false);
+            let (management_growth, management_narrative, total_claims, narrative_mode) = if compact
+            {
+                (Vec::new(), Vec::new(), 0, "compact")
             } else {
-                management_narrative
+                let research_started = std::time::Instant::now();
+                let research = research::search_fundamental(
+                    &self.client,
+                    &req.symbol,
+                    &company_name,
+                    "revenue guidance forecast growth outlook",
+                    self.exa_api_key.as_deref(),
+                    self.tavily_api_key.as_deref(),
+                    self.brave_api_key.as_deref(),
+                )
+                .await?;
+                tracing::info!(
+                    target: "hkask.mcp.companies",
+                    tool = "expectations_gap",
+                    symbol = %req.symbol,
+                    phase = "research",
+                    elapsed_ms = research_started.elapsed().as_millis() as u64,
+                    claims = research.claims.len(),
+                    "research collection"
+                );
+
+                let claims = research::ResearchClaimClassifier::classify_all(&research);
+
+                let management_growth = extract_management_growth(&claims.claims);
+                let management_narrative: Vec<String> = claims
+                    .claims
                     .iter()
-                    .map(|doc| cap_narrative_doc(doc))
-                    .collect()
+                    .filter(|c| {
+                        matches!(
+                            c.category,
+                            research::ClaimCategory::RevenueGuidance
+                                | research::ClaimCategory::EarningsGuidance
+                        )
+                    })
+                    .map(|c| c.text.clone())
+                    .collect();
+
+                // mcp-tool-review C-02: the narrative is context-only (the
+                // consumed quantity is management_guidance_median), so the
+                // default response carries a head excerpt per document — the
+                // live AAPL probe embedded ~8 complete research documents in
+                // one 5692ms response. Full text is opt-in via
+                // `full_narrative: true`; the response states which mode it
+                // used via `narrative_mode`.
+                let narrative_full = req.full_narrative.unwrap_or(false);
+                let management_narrative: Vec<String> = if narrative_full {
+                    management_narrative
+                } else {
+                    management_narrative
+                        .iter()
+                        .map(|doc| cap_narrative_doc(doc))
+                        .collect()
+                };
+                (
+                    management_growth,
+                    management_narrative,
+                    claims.claims.len(),
+                    if narrative_full { "full" } else { "excerpts" },
+                )
             };
 
             // ── 4. User estimate — context annotation only ─────────────
@@ -160,19 +275,25 @@ impl CompaniesServer {
 
             // ── 5. Assemble the report ─────────────────────────────────
 
+            let assemble_started = std::time::Instant::now();
             let output = build_gap_report(
                 &req.symbol,
                 &analysis,
                 &management_growth,
                 user_growth,
                 &management_narrative,
-                if narrative_full {
-                    "full"
-                } else {
-                    "excerpts"
-                },
-                claims.claims.len(),
+                narrative_mode,
+                total_claims,
                 &price_source,
+            );
+            tracing::info!(
+                target: "hkask.mcp.companies",
+                tool = "expectations_gap",
+                symbol = %req.symbol,
+                phase = "assemble",
+                elapsed_ms = assemble_started.elapsed().as_millis() as u64,
+                total_ms = fetch_started.elapsed().as_millis() as u64,
+                "report assembled"
             );
 
             Ok(fibo::enrich_with_ontology(
@@ -505,6 +626,42 @@ pub(crate) fn build_gap_report(
                         (
                             "price_demands_less_than_demonstrated",
                             "The price demands less growth and less profitability than demonstrated — the market prices decay below the demonstrated envelope. If the capability is durable, this is the value candidate; if the market sees decay the DuPont history misses (secular decline, margin normalization), the discount is earned.",
+                        )
+                    }
+                    // One leg beyond its threshold, both legs the same
+                    // direction: the verdict follows the consistent
+                    // direction (live-observed 2026-10-05: the screen's
+                    // value candidates — growth −1.8..−2.4pp within the
+                    // ±3.0 gate, margin −0.6..−1.0pp beyond the −0.5
+                    // gate — fell into the old catch-all "mixed" arm
+                    // with opposite-direction text, mislabeling every
+                    // both-legs-negative name the screen found).
+                    (Some(growth), Some(profitability))
+                        if (growth > 3.0 || profitability > 0.5)
+                            && (growth >= 0.0) == (profitability >= 0.0) =>
+                    {
+                        (
+                            "price_demands_more_than_demonstrated",
+                            "The price demands more than demonstrated on one leg beyond its threshold while the other sits within it — the direction is consistent (both legs at or above demonstrated), led by the beyond-threshold leg. Weaker than the both-legs signal: weigh the leading leg before forming a thesis.",
+                        )
+                    }
+                    (Some(growth), Some(profitability))
+                        if (growth < -3.0 || profitability < -0.5)
+                            && (growth >= 0.0) == (profitability >= 0.0) =>
+                    {
+                        (
+                            "price_demands_less_than_demonstrated",
+                            "The price demands less than demonstrated on one leg beyond its threshold while the other sits within it — the direction is consistent (both legs at or below demonstrated), led by the beyond-threshold leg. If the capability is durable, this is the value candidate; if the market sees decay the DuPont history misses, the discount is earned. Weaker than the both-legs signal.",
+                        )
+                    }
+                    // Same direction, both legs within their thresholds:
+                    // the residual gaps are immaterial, not zero.
+                    (Some(growth), Some(profitability))
+                        if (growth >= 0.0) == (profitability >= 0.0) =>
+                    {
+                        (
+                            "aligned",
+                            "Price-implied growth and margin both sit inside the demonstrated capability envelope (each within its threshold of demonstrated) — fairly priced relative to demonstrated economics; the residual gaps are immaterial, not zero. Edge must come from a differentiated view on the trajectory.",
                         )
                     }
                     (Some(_), Some(_)) => (

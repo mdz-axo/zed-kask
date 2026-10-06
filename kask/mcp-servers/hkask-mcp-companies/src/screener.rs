@@ -166,8 +166,12 @@ const EUROPE_CODES: &[&str] = &[
 /// against the live Exchanges API list; JP, T, CNQ, IL, MI are ABSENT from
 /// it. EODHD has no Japanese exchange — Japanese companies enter the
 /// screener only as ¥-denominated London IOB lines (kept and JPY-converted
-/// by the handler's row-currency rules). Italy has no EODHD exchange code.
-/// A wrong code surfaces as a zero-match exchange in `exchange_match_counts`.
+/// by the handler's row-currency rules). Italy has no EODHD exchange code
+/// (named in the screener's exchange error via `no_screener_exchange_note`).
+/// Caller-supplied codes with a known correct form are aliased first
+/// (`EXCHANGE_CODE_ALIASES`: IE→IR, WA→WAR); remaining unknown codes
+/// surface in `exchange_errors` when an FX context is active, or as
+/// zero-match counts in `exchange_match_counts` without one.
 ///
 /// "US" is matched case-sensitively so the pronoun "us" cannot select US
 /// listings; every other pattern matches case-insensitively.
@@ -575,11 +579,46 @@ pub(crate) fn split_criteria(
     )
 }
 
+/// Caller-supplied exchange codes that do not match EODHD's list but have
+/// an unambiguous correct form. Aliased mechanically instead of teaching
+/// every caller the code table (live-observed 2026-10-05: IE and WA were
+/// supplied where EODHD uses IR and WAR — the country-name path already
+/// maps correctly; raw-code callers hit a silent zero-match).
+const EXCHANGE_CODE_ALIASES: &[(&str, &str)] = &[("IE", "IR"), ("WA", "WAR")];
+
+/// Exchange codes with no EODHD screener exchange — surfaced as a named
+/// note appended to the exchange error so the caller learns the coverage
+/// fact (the GEOGRAPHY table's verified gap) and the workaround in one
+/// read, instead of a bare unmapped-code message.
+const NO_SCREENER_EXCHANGE: &[(&str, &str)] = &[(
+    "MI",
+    "Italy has no EODHD exchange code — Italian issuers are reachable via \
+     cross-listings on covered exchanges (e.g. Telecom Italia on XETRA)",
+)];
+
+fn alias_exchange_code(code: &str) -> String {
+    EXCHANGE_CODE_ALIASES
+        .iter()
+        .find(|(from, _)| *from == code)
+        .map(|(_, to)| (*to).to_string())
+        .unwrap_or_else(|| code.to_string())
+}
+
+/// The named coverage note for a code with no EODHD screener exchange,
+/// appended to the exchange error by the screener handler.
+pub(crate) fn no_screener_exchange_note(code: &str) -> Option<&'static str> {
+    NO_SCREENER_EXCHANGE
+        .iter()
+        .find(|(from, _)| *from == code)
+        .map(|(_, note)| *note)
+}
+
 /// Extract the exchange codes to screen: the `exchanges` array unioned with
 /// a singular `exchange` value (criteria_overrides may supply either form).
 pub(crate) fn extract_exchange_codes(criteria: &serde_json::Value) -> Vec<String> {
     let mut codes: Vec<String> = Vec::new();
     let push = |code: String, codes: &mut Vec<String>| {
+        let code = alias_exchange_code(&code);
         if !code.is_empty() && !codes.contains(&code) {
             codes.push(code);
         }
@@ -1246,6 +1285,18 @@ mod tests {
         assert_eq!(
             extract_exchange_codes(&criteria),
             vec!["US".to_string(), "JP".to_string()]
+        );
+    }
+
+    #[test]
+    fn extract_exchange_codes_aliases_known_wrong_codes() {
+        // Live-observed 2026-10-05: IE and WA were supplied where EODHD
+        // uses IR and WAR; the alias rescues raw-code callers mechanically
+        // and dedupes against the correct form when both appear.
+        let criteria = json!({"exchanges": ["IE", "WA", "IR", "US"]});
+        assert_eq!(
+            extract_exchange_codes(&criteria),
+            vec!["IR".to_string(), "WAR".to_string(), "US".to_string()]
         );
     }
 }

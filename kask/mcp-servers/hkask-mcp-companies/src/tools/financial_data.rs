@@ -90,9 +90,22 @@ impl CompaniesServer {
         execute_tool(self, "key_metrics", async {
             validate_symbol(&symbol)?;
             let limit_str = limit.unwrap_or(5).to_string();
-            let result = self
+            let mut result = self
                 .fetch_response("key_metrics", &symbol, &[("limit", &limit_str)])
                 .await?;
+            // Silent-empty guard (live-observed 2026-10-05: bare "ATD"
+            // returned data:[] with warnings:[] — indistinguishable from
+            // a genuine no-metrics case, leaving the caller to guess).
+            // Zero rows on the Ok path means the provider has no data
+            // for this symbol form: name it and point at the fix.
+            if result.value.as_array().is_some_and(|rows| rows.is_empty()) {
+                result.warnings.push(format!(
+                    "Provider {} returned no key-metrics rows for '{symbol}' — the symbol may \
+                     be unresolvable in this form; try the exchange-suffixed form (e.g. \
+                     ATD.TO) or resolve_symbol first",
+                    result.provider,
+                ));
+            }
             Ok(fibo::enrich_with_ontology(
                 serde_json::json!({
                     "data": result.value,

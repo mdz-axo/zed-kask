@@ -329,9 +329,11 @@ async fn comparable(server: &CompaniesServer, request: Value) -> Value {
 /// EODHD-routed, exchange-qualified symbol — live-observed 2026-09-10:
 /// `expectations_gap` and `reverse_dcf` returned no market-implied growth
 /// for DNB.OL, PKN.WAR, NTDOY on exactly this shape) — the implied growth
-/// resolves and the price source is surfaced. (Tested through `reverse_dcf`
-/// because `expectations_gap` additionally requires research-search
-/// credentials, which the fixture server does not carry.)
+/// resolves and the price source is surfaced. (Historically tested through
+/// `reverse_dcf` because `expectations_gap` required research-search
+/// credentials the fixture server does not carry; since compact mode,
+/// `expectations_gap` is fixture-testable directly — see the consolidated
+/// EODHD acquisition test.)
 /// dcterms:identifier: CompaniesServer::reverse_dcf / forecast::resolve_current_price
 #[tokio::test]
 async fn reverse_dcf_price_falls_back_to_quote_close() {
@@ -2124,6 +2126,101 @@ async fn screener_mixed_currency_exchange_queries_unbounded() {
         .await;
 }
 
+/// expect: [P5] Exchanges whose EODHD server-side cap filters are
+/// unreliable (Stockholm, Mexico — live-observed 2026-10-05: bounded
+/// queries returned zero rows for bands matching dozens of issuers) are
+/// queried unbounded like mixed-currency venues, with the band enforced
+/// client-side; bounded exchanges (US) keep their converted server-side
+/// bounds.
+/// dcterms:identifier: CompaniesServer::company_screener / SERVER_BOUNDS_UNRELIABLE_EXCHANGES
+#[tokio::test]
+async fn screener_server_bounds_unreliable_exchange_queries_unbounded() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let fixture = FixtureHttp::start(|path| {
+        if path.starts_with("/eodhd/exchanges-list") {
+            return (
+                200,
+                json!([
+                    {"Code": "US", "Currency": "USD"},
+                    {"Code": "ST", "Currency": "SEK"}
+                ]),
+            );
+        }
+        if path.starts_with("/eodhd/eod/USDSEK.FOREX") {
+            return (200, json!([{"date": "2026-10-05", "close": 10.0}]));
+        }
+        if path.starts_with("/eodhd/screener") {
+            return match decode_screener_exchange(path).as_deref() {
+                Some("US") => (
+                    200,
+                    json!({ "data": [{
+                        "code": "US0", "name": "US Zero", "exchange": "US",
+                        "currency_symbol": "$", "market_capitalization": 8_000_000_000.0
+                    }] }),
+                ),
+                Some("ST") => (
+                    200,
+                    json!({ "data": [
+                        {"code": "SEK1", "name": "Sweden One", "exchange": "ST",
+                         "currency_symbol": "kr", "market_capitalization": 300_000_000_000.0},
+                        {"code": "SEK2", "name": "Sweden Two", "exchange": "ST",
+                         "currency_symbol": "kr", "market_capitalization": 2_000_000_000_000.0}
+                    ] }),
+                ),
+                _ => (200, json!({ "data": [] })),
+            };
+        }
+        (404, json!({ "error": "unexpected endpoint", "path": path }))
+    })
+    .await;
+    providers::TEST_HTTP_ORIGIN
+        .scope(fixture.origin.clone(), async {
+            let server = server(directory.path());
+            let request = serde_json::from_value::<types::ScreenerRequest>(json!({
+                "prompt": "US and Sweden listed companies with market capitalization between 5 billion and 50 billion",
+                "limit": 10
+            }))
+            .expect("request");
+            let output = content(
+                &server
+                    .company_screener(Parameters(request))
+                    .await
+                    .expect("screener tool"),
+            );
+
+            // The ST query carries NO cap bounds (EODHD's server-side
+            // filter returns zero rows there); the US query is bounded.
+            let mut st_bounds = Vec::new();
+            let mut us_bounds = Vec::new();
+            for request_path in fixture.requests() {
+                match decode_screener_exchange(&request_path).as_deref() {
+                    Some("ST") => st_bounds = decode_screener_cap_bounds(&request_path),
+                    Some("US") => us_bounds = decode_screener_cap_bounds(&request_path),
+                    _ => {}
+                }
+            }
+            assert!(st_bounds.is_empty(), "ST must be queried unbounded: {st_bounds:?}");
+            assert!(us_bounds.contains(&(">=".to_string(), 5_000_000_000.0)));
+
+            // The client-side band keeps the in-band SEK row ($30B) and
+            // drops the out-of-band one ($200B), counted. Rows rank by USD
+            // cap, so the $30B SEK row outranks the $8B US row.
+            let results = output["results"].as_array().expect("results");
+            assert_eq!(results.len(), 2);
+            let codes: Vec<&str> = results
+                .iter()
+                .map(|row| row["code"].as_str().expect("code"))
+                .collect();
+            assert_eq!(codes, ["SEK1", "US0"]);
+            assert_eq!(
+                results[0]["market_capitalization_usd"],
+                json!(30_000_000_000.0)
+            );
+            assert_eq!(output["out_of_band_dropped"], json!(1));
+        })
+        .await;
+}
+
 /// expect: [P5] The exchanges list and FOREX rates are cached — a second
 /// screen the same day re-fetches only the screener queries (including the
 /// pass-2 rate for a foreign-currency line).
@@ -2605,6 +2702,196 @@ async fn saved_screen_calculates_and_pages_one_universe_result() {
 /// expect: [P5] The expectations-gap template reduces an immutable universe as
 /// a set: liquidity filters rows before fundamentals, issuer projection emits
 /// one result row, and every candidate reconciles to result or exclusion.
+/// expect: [P5] A provider Ok-with-zero-rows result surfaces a warning
+/// naming the symbol and pointing at resolve_symbol — live-observed
+/// 2026-10-05: bare "ATD" returned data:[] with warnings:[], leaving
+/// "unresolvable symbol" indistinguishable from "no metrics".
+/// dcterms:identifier: CompaniesServer::key_metrics / silent-empty guard
+#[tokio::test]
+async fn key_metrics_empty_provider_result_warns_naming_symbol() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let fixture = FixtureHttp::start(|path| {
+        if path.starts_with("/eodhd/fundamentals/EMPTY.PA") {
+            return (
+                200,
+                json!({
+                    "General": {"Code": "EMPTY.PA"},
+                    "Highlights": {},
+                    "Financials": {
+                        "Income_Statement": {"yearly": {}},
+                        "Balance_Sheet": {"yearly": {}}
+                    }
+                }),
+            );
+        }
+        (404, json!({ "error": "unexpected endpoint", "path": path }))
+    })
+    .await;
+    providers::TEST_HTTP_ORIGIN
+        .scope(fixture.origin.clone(), async {
+            let server = server(directory.path());
+            let request = serde_json::from_value::<types::SymbolLimitRequest>(json!({
+                "symbol": "EMPTY.PA", "limit": null
+            }))
+            .expect("request");
+            let output = content(
+                &server
+                    .key_metrics(Parameters(request))
+                    .await
+                    .expect("key metrics tool"),
+            );
+            assert_eq!(output["data"], json!([]));
+            let warnings = output["warnings"].as_array().expect("warnings");
+            assert!(
+                warnings.iter().any(|warning| {
+                    warning.as_str().is_some_and(|text| {
+                        text.contains("EMPTY.PA") && text.contains("resolve_symbol")
+                    })
+                }),
+                "the silent-empty guard must name the symbol and the fix: {warnings:?}"
+            );
+        })
+        .await;
+}
+
+/// expect: [P5] A code with no EODHD screener exchange (MI — Italy) is
+/// dropped with a named coverage note, not a bare unmapped-code error —
+/// live-observed 2026-10-05: the screen run supplied MI and read only
+/// "not in the EODHD exchange list", learning neither the coverage fact
+/// nor the cross-listing workaround.
+/// dcterms:identifier: CompaniesServer::company_screener / no_screener_exchange_note
+#[tokio::test]
+async fn screener_known_gap_exchange_names_the_coverage_fact() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let fixture = FixtureHttp::start(|path| {
+        if path.starts_with("/eodhd/exchanges-list") {
+            return (200, json!([{ "Code": "US", "Currency": "USD" }]));
+        }
+        if path.starts_with("/eodhd/screener") {
+            return (
+                200,
+                json!({ "data": [{
+                    "code": "US0", "name": "US Zero", "exchange": "US",
+                    "currency_symbol": "$", "market_capitalization": 8_000_000_000.0
+                }] }),
+            );
+        }
+        (404, json!({ "error": "unexpected endpoint", "path": path }))
+    })
+    .await;
+    providers::TEST_HTTP_ORIGIN
+        .scope(fixture.origin.clone(), async {
+            let server = server(directory.path());
+            let request = serde_json::from_value::<types::ScreenerRequest>(json!({
+                "prompt": "US listed companies with market capitalization between 2 billion and 200 billion",
+                "limit": 10,
+                "criteria_overrides": {"exchanges": ["US", "MI"]}
+            }))
+            .expect("request");
+            let output = content(
+                &server
+                    .company_screener(Parameters(request))
+                    .await
+                    .expect("screener tool"),
+            );
+            let error = output["exchange_errors"]["MI"]
+                .as_str()
+                .expect("MI must be named in exchange_errors");
+            assert!(
+                error.contains("Italy has no EODHD exchange code"),
+                "the named coverage note must reach the caller: {error}"
+            );
+        })
+        .await;
+}
+
+/// expect: [P5] An EODHD-routed expectations_gap call fetches the
+/// fundamentals payload ONCE — EODHD's /fundamentals is one 10-API-call
+/// endpoint carrying every statement, and the per-tool path fetched the
+/// identical payload five times concurrently (50 units, five multi-MB
+/// transfers; the load driver behind the 2026-10-05 batch stalls) — and
+/// compact=true skips research entirely (no credentials needed; the
+/// saved-screen job path's proven shape) with narrative_mode="compact".
+/// dcterms:identifier: CompaniesServer::expectations_gap / consolidated EODHD acquisition + compact mode
+#[tokio::test]
+async fn expectations_gap_consolidates_eodhd_fundamentals_and_compact_skips_research() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let fixture = FixtureHttp::start(|path| {
+        if path.starts_with("/eodhd/fundamentals/GAP.PA") {
+            let mut value = eodhd_fixture();
+            value["General"]["Code"] = json!("GAP");
+            value["General"]["Name"] = json!("Gap SA");
+            value["General"]["Type"] = json!("Common Stock");
+            value["General"]["CurrencyCode"] = json!("USD");
+            value["General"]["PrimaryTicker"] = json!("GAP.PA");
+            value["General"]["IsDelisted"] = json!(false);
+            value["Financials"]["Income_Statement"]["currency_symbol"] = json!("USD");
+            // Live EODHD yearly entries carry currency_symbol per row —
+            // statement_currency() reads it from the normalized rows.
+            value["Financials"]["Income_Statement"]["yearly"]["2025-12-31"]["currency_symbol"] = json!("USD");
+            value["Financials"]["Income_Statement"]["yearly"]["2024-12-31"]["currency_symbol"] = json!("USD");
+            value["Financials"]["Balance_Sheet"]["currency_symbol"] = json!("USD");
+            value["Financials"]["Cash_Flow"] = json!({
+                "currency_symbol":"USD","yearly":{
+                    "2025-12-31":{"totalCashFromOperatingActivities":"180000000.00","capitalExpenditures":"-30000000.00","dividendsPaid":"-20000000.00"},
+                    "2024-12-31":{"totalCashFromOperatingActivities":"170000000.00","capitalExpenditures":"-28000000.00","dividendsPaid":"-18000000.00"}
+                }
+            });
+            return (200, value);
+        }
+        if path.starts_with("/eodhd/real-time/GAP.PA") {
+            return (200, json!({"code": "GAP.PA", "close": 50.0}));
+        }
+        (404, json!({ "error": "unexpected endpoint", "path": path }))
+    })
+    .await;
+    providers::TEST_HTTP_ORIGIN
+        .scope(fixture.origin.clone(), async {
+            let server = server(directory.path());
+            let request = serde_json::from_value::<types::ExpectationsGapRequest>(json!({
+                "symbol": "GAP.PA", "compact": true
+            }))
+            .expect("request");
+            let output = content(
+                &server
+                    .expectations_gap(Parameters(request))
+                    .await
+                    .expect("expectations gap tool"),
+            );
+
+            // ONE fundamentals request supplies all five statement views
+            // (the per-tool path made five); one light /real-time quote.
+            let fundamentals_calls = fixture
+                .requests()
+                .iter()
+                .filter(|path| path.starts_with("/eodhd/fundamentals/"))
+                .count();
+            assert_eq!(
+                fundamentals_calls, 1,
+                "the consolidated EODHD path must fetch fundamentals once"
+            );
+            let quote_calls = fixture
+                .requests()
+                .iter()
+                .filter(|path| path.starts_with("/eodhd/real-time/"))
+                .count();
+            assert_eq!(quote_calls, 1);
+
+            // Compact mode: no research (the fixture server carries no
+            // research credentials — a research call would have errored),
+            // the mode is surfaced, and the gap math is intact.
+            assert_eq!(output["narrative_mode"], json!("compact"));
+            assert_eq!(output["context"]["guidance_samples"], json!(0));
+            assert_eq!(output["data_quality"]["capability_available"], json!(true));
+            assert_eq!(output["data_quality"]["total_research_claims"], json!(0));
+            assert!(
+                output["signal"].as_str().is_some(),
+                "the consolidated views must feed the solve: {output}"
+            );
+        })
+        .await;
+}
+
 /// dcterms:identifier: CompaniesServer::company_screener / screening::calculate_expectations_gap
 #[tokio::test]
 async fn expectations_template_reduces_and_reconciles_the_universe() {
@@ -2803,7 +3090,9 @@ async fn expectations_template_reduces_and_reconciles_the_universe() {
 
 /// expect: [P5] Non-common instruments (ETFs, preferreds, notes, CDRs) are
 /// dropped client-side and counted — EODHD's screener has no type filter.
-/// ADRs and European dual-class tickers are deliberately kept.
+/// ADRs and European dual-class tickers are deliberately kept. Fund-family
+/// names without the literal ETF word (SPDR sector funds, QQQ trust) drop
+/// too — live-observed 2026-10-05: XLY survived the pattern list.
 /// dcterms:identifier: CompaniesServer::screener_row_currency_pass / is_non_common_instrument
 #[tokio::test]
 async fn screener_non_common_instruments_dropped() {
@@ -2833,7 +3122,13 @@ async fn screener_non_common_instruments_dropped() {
                      "market_capitalization": 48_000_000_000.0},
                     {"code": "SIEGY", "name": "Siemens AG ADR",
                      "exchange": "US", "currency_symbol": "$",
-                     "market_capitalization": 46_000_000_000.0}
+                     "market_capitalization": 46_000_000_000.0},
+                    {"code": "XLY", "name": "Consumer Discretionary Select Sector SPDR® Fund",
+                     "exchange": "US", "currency_symbol": "$",
+                     "market_capitalization": 24_500_000_000.0},
+                    {"code": "QQQ", "name": "Invesco QQQ Trust, Series 1",
+                     "exchange": "US", "currency_symbol": "$",
+                     "market_capitalization": 25_000_000_000.0}
                 ] }),
             );
         }
@@ -2854,7 +3149,7 @@ async fn screener_non_common_instruments_dropped() {
                     .await
                     .expect("screener tool"),
             );
-            assert_eq!(output["non_common_dropped"], json!(4));
+            assert_eq!(output["non_common_dropped"], json!(6));
             assert_eq!(output["count"], json!(2));
             let results = output["results"].as_array().expect("results");
             assert!(results.iter().all(|row| {
@@ -2871,6 +3166,8 @@ async fn screener_non_common_instruments_dropped() {
             assert!(!codes.contains(&"MFC-PK"));
             assert!(!codes.contains(&"PFH"));
             assert!(!codes.contains(&"NKE"));
+            assert!(!codes.contains(&"XLY"), "SPDR sector fund must drop");
+            assert!(!codes.contains(&"QQQ"), "QQQ trust must drop");
         })
         .await;
 }
@@ -3402,6 +3699,58 @@ fn expectations_gap_separates_revenue_performance_from_financing_capacity() {
         report["data_quality"]["profitability_leg_available"],
         json!(false)
     );
+}
+
+/// expect: [P5] The signal classifier is sign-aware: same-direction gap
+/// pairs get the direction-consistent verdict when at least one leg is
+/// beyond its threshold, opposite-sign pairs keep "mixed", and same-sign
+/// pairs within both thresholds read "aligned" — live-observed
+/// 2026-10-05: the screen's value candidates (growth −1.8..−2.4pp within
+/// the ±3.0 gate, margin −0.6..−1.0pp beyond the −0.5 gate) fell into the
+/// old catch-all "mixed" arm with opposite-direction text, mislabeling
+/// every both-legs-negative name the screen found.
+#[test]
+fn expectations_gap_signal_classifier_is_sign_aware() {
+    let solve = |growth: f64, profitability: f64| tools::expectations::ExpectationsSolve {
+        capability: hand_built_capability(),
+        headline: "net_margin",
+        implied_growth: Some(0.05),
+        implied_net_margin_at_demonstrated_growth: Some(0.05),
+        implied_roe: None,
+        demonstrated_revenue_growth: Some(0.03),
+        growth_gap_pp: Some(growth),
+        financing_growth_gap_pp: Some(growth),
+        profitability_gap_pp: Some(profitability),
+        book_value_per_share: None,
+        sustainable_growth_rate: 0.06864,
+        investor_target_return: 0.15,
+        modified_wacc: 0.12,
+        equity_weight: 0.75,
+        debt_weight: 0.25,
+    };
+    let signal = |growth: f64, profitability: f64| {
+        let report = tools::expectations::build_gap_report(
+            "ACME",
+            &Some(solve(growth, profitability)),
+            &[],
+            0.05,
+            &[],
+            "excerpts",
+            0,
+            "stock_quote",
+        );
+        report["signal"].as_str().expect("signal").to_string()
+    };
+    // Both legs beyond, negative — the strong value-candidate verdict.
+    assert_eq!(signal(-4.0, -1.5), "price_demands_less_than_demonstrated");
+    // One leg beyond (margin), both negative — the live-observed shape.
+    assert_eq!(signal(-2.1, -0.6), "price_demands_less_than_demonstrated");
+    // One leg beyond (growth), both positive.
+    assert_eq!(signal(3.5, 0.3), "price_demands_more_than_demonstrated");
+    // Same sign, both within thresholds — envelope, not zero.
+    assert_eq!(signal(-0.2, -0.3), "aligned");
+    // Opposite signs — the genuine mixed case.
+    assert_eq!(signal(4.0, -0.7), "mixed");
 }
 
 /// expect: [P5] Financial-sector profiles route to the equity-based

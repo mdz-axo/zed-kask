@@ -68,6 +68,15 @@ pub(crate) struct ExpectationsGapRequest {
     /// `management_guidance_median` (mcp-tool-review C-02: the default
     /// response previously embedded ~8 complete research documents).
     pub full_narrative: Option<bool>,
+    /// Skip research-narrative collection entirely — screening workflows
+    /// rank on the gap math, not the context. Returns identical
+    /// capability/price_implied/gaps blocks with `narrative_mode:
+    /// "compact"`, `guidance_samples: 0`, and zero research-provider
+    /// calls (the saved-screen job path already builds this report with
+    /// no research — screening::analyze_issuer_group). Default
+    /// (absent/false): research runs and the narrative is excerpt-capped
+    /// per the full_narrative contract.
+    pub compact: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

@@ -251,21 +251,6 @@ fn endpoint_mapping(tool: &str) -> Option<EndpointMapping> {
             eodhd_path: "/eod",
             normalize_eodhd: true,
         }),
-        "ratios" => Some(EndpointMapping {
-            fmp_path: "/ratios",
-            eodhd_path: "/fundamentals",
-            normalize_eodhd: true,
-        }),
-        "financial_growth" => Some(EndpointMapping {
-            fmp_path: "/financial-growth",
-            eodhd_path: "/fundamentals",
-            normalize_eodhd: true,
-        }),
-        "symbol_search" => Some(EndpointMapping {
-            fmp_path: "/search-name",
-            eodhd_path: "/search",
-            normalize_eodhd: false,
-        }),
         _ => None,
     }
 }
@@ -275,7 +260,7 @@ fn endpoint_mapping(tool: &str) -> Option<EndpointMapping> {
 // Symbols with exchange suffix (e.g., VOD.L, BMW.DE) → EODHD primary.
 // Plain symbols (e.g., AAPL) → FMP primary, EODHD fallback.
 
-fn is_international_symbol(symbol: &str) -> bool {
+pub(crate) fn is_international_symbol(symbol: &str) -> bool {
     // Symbols with an exchange suffix (e.g., VOD.LSE, 0700.HK) are
     // international. The .US suffix is a US listing (FMP primary).
     if let Some(exchange) = symbol.split('.').nth(1) {
@@ -826,7 +811,7 @@ fn coerce_eodhd_numeric_strings(fundamentals: &Value) -> Value {
 /// full yearly history — while FMP honors `limit`. Truncate the normalized
 /// array so identical requests produce identical shapes regardless of
 /// provider.
-fn truncate_to_limit(value: Value, extra_params: &[(&str, &str)]) -> Value {
+pub(crate) fn truncate_to_limit(value: Value, extra_params: &[(&str, &str)]) -> Value {
     let Some(limit) = extra_params
         .iter()
         .find(|(key, _)| *key == "limit")
@@ -848,13 +833,11 @@ pub(crate) fn normalize_eodhd(tool: &str, eodhd_value: &Value, symbol: &str) -> 
         "income_statement" => normalize_eodhd_income_statement(eodhd_value),
         "balance_sheet" => normalize_eodhd_balance_sheet(eodhd_value),
         "cash_flow_statement" => normalize_eodhd_cash_flow(eodhd_value),
-        "key_metrics" | "ratios" | "financial_growth" => {
-            // EODHD fundamentals is a single endpoint — ratios and growth data
-            // are computed from the same financial statements. The key_metrics
-            // normalizer already computes grossProfitMargin, roic, DPO, DSO,
-            // and merges Highlights fields (dividendYield, marketCap, etc.).
-            normalize_eodhd_key_metrics(eodhd_value)
-        }
+        // EODHD fundamentals is a single endpoint — key metrics are
+        // computed from the same financial statements (grossProfitMargin,
+        // roic, DPO, DSO) and merge Highlights fields (dividendYield,
+        // marketCap, etc.).
+        "key_metrics" => normalize_eodhd_key_metrics(eodhd_value),
         "historical_price" => normalize_eodhd_historical(eodhd_value, symbol),
         _ => eodhd_value.clone(),
     }
