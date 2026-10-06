@@ -402,7 +402,7 @@ impl MediaServer {
                      hidden code constant",
             )
         })?;
-        let vectors = self
+        let batch = self
             .vision_port
             .embed(&model, std::slice::from_ref(&text.to_string()))
             .await
@@ -412,7 +412,8 @@ impl MediaServer {
                     e,
                 )
             })?;
-        vectors
+        batch
+            .vectors
             .into_iter()
             .next()
             .ok_or_else(|| McpToolError::unavailable("Embedding model returned an empty response"))
