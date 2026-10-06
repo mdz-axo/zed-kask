@@ -291,6 +291,18 @@ async fn acquire_universe(
     let output: Value = serde_json::from_str(&output)
         .map_err(|error| McpToolError::internal(format!("parse universe result: {error}")))?;
     let output = hkask_types::tool_response::unwrap_tool_envelope(output);
+    // Partial universe coverage is not a failure: the ad-hoc screener
+    // keeps the surviving exchanges and names the failed ones in
+    // exchange_errors — surface them so the operator sees the coverage
+    // gap (the job artifact does not carry them; filed for a follow-up).
+    if let Some(errors) = output.get("exchange_errors").and_then(Value::as_object)
+        && !errors.is_empty()
+    {
+        tracing::warn!(
+            "screen universe partial coverage — failed exchanges: {:?}",
+            errors.keys().collect::<Vec<_>>()
+        );
+    }
     output
         .get("results")
         .and_then(Value::as_array)
@@ -399,21 +411,45 @@ async fn run_screen_job(
 
     let job = load_job(&server.research, job_id)?;
     if job.checkpoint.is_none() {
-        let pass_stage = async {
-            let universe = acquire_universe(server, definition).await?;
-            prepare_expectations_pass_set(
-                &server.client,
-                &server.eodhd_api_key,
-                definition,
-                universe,
-            )
-            .await
+        // Stage 1 — universe acquisition: cancelable, bounded per request
+        // by the HTTP timeouts. No aggregate deadline: the fan-out is
+        // concurrent and heartbeated, and a deadline here would cancel the
+        // universe with nothing left to exclude (operator requirement
+        // 2026-10-05: the screen produces a verdict for every company).
+        let universe = tokio::select! {
+            acquired = acquire_universe(server, definition) => acquired?,
+            cancellation = wait_for_screen_cancel(&server.research, job_id) => {
+                cancellation?;
+                server.research.finish_screen_job(job_id, "cancelled", None, None, None)
+                    .map_err(crate::map_portfolio_error)?;
+                return Ok(());
+            }
         };
+        // Stage 2 — the pass set: cancelable and deadline-bounded. On
+        // deadline expiry the screen still completes — every candidate is
+        // excluded with a named reason instead of the job failing, the
+        // same per-item degradation the enrichment stage applies.
         let prepared = tokio::select! {
-            result = tokio::time::timeout(SCREEN_PASS_DEADLINE, pass_stage) => {
-                result.map_err(|_| {
-                    McpToolError::unavailable("financial screen did not complete within 60 seconds")
-                })??
+            result = tokio::time::timeout(
+                SCREEN_PASS_DEADLINE,
+                prepare_expectations_pass_set(
+                    &server.client,
+                    &server.eodhd_api_key,
+                    definition,
+                    universe.clone(),
+                ),
+            ) => {
+                match result {
+                    Ok(inner) => inner?,
+                    Err(_elapsed) => {
+                        tracing::warn!(
+                            job_id,
+                            "screen pass stage exceeded {SCREEN_PASS_DEADLINE:?} — \
+                             excluding every candidate with a named reason"
+                        );
+                        deadline_exclusions(universe)
+                    }
+                }
             }
             cancellation = wait_for_screen_cancel(&server.research, job_id) => {
                 cancellation?;
@@ -662,6 +698,33 @@ async fn calculate_expectations_gap(
     })
 }
 
+/// Deadline-expiry pass set: every candidate excluded with a named
+/// reason. The screen completes with a verdict for every company — it
+/// never fails on a stage timeout (operator requirement 2026-10-05;
+/// the enrichment stage applies the same degradation per issuer).
+fn deadline_exclusions(universe: Vec<Value>) -> PreparedPassSet {
+    let candidate_count = universe.len();
+    let exclusions = universe
+        .into_iter()
+        .map(|row| {
+            let code = row.get("code").and_then(Value::as_str).unwrap_or("");
+            let exchange = row.get("exchange").and_then(Value::as_str).unwrap_or("");
+            screen_exclusion(
+                &format!("{code}.{exchange}"),
+                "pass_stage_deadline_exceeded",
+                None,
+            )
+        })
+        .collect();
+    PreparedPassSet {
+        groups: Vec::new(),
+        candidate_count,
+        financial_passing_security_count: 0,
+        exclusions,
+        fx_rates: HashMap::from([("USD".to_string(), 1.0)]),
+    }
+}
+
 async fn prepare_expectations_pass_set(
     client: &reqwest::Client,
     eodhd_api_key: &str,
@@ -690,16 +753,33 @@ async fn prepare_expectations_pass_set(
         .exchanges
         .iter()
         .map(|exchange| async move {
-            let tickers =
-                providers::fetch_eodhd_common_stocks(client, eodhd_api_key, exchange).await?;
-            Ok::<_, McpToolError>((exchange.clone(), tickers))
+            let result =
+                providers::fetch_eodhd_common_stocks(client, eodhd_api_key, exchange).await;
+            (exchange.clone(), result)
         });
     let mut ticker_inventory = HashMap::new();
-    for outcome in futures::future::join_all(ticker_fetches).await {
-        let (exchange, tickers) = outcome?;
-        let rows = tickers.as_array().ok_or_else(|| {
-            McpToolError::unavailable(format!("{exchange} ticker list is not an array"))
-        })?;
+    let mut ticker_list_failures: HashMap<String, String> = HashMap::new();
+    for (exchange, outcome) in futures::future::join_all(ticker_fetches).await {
+        // One exchange's ticker-list outage must not abort the screen:
+        // its securities are excluded with a named reason below (the
+        // inventory miss would otherwise mislabel them
+        // "ineligible_security_type" — operator requirement 2026-10-05).
+        let tickers = match outcome {
+            Ok(tickers) => tickers,
+            Err(error) => {
+                tracing::warn!(exchange = %exchange, "ticker list fetch failed: {error}");
+                ticker_list_failures.insert(exchange, error.to_string());
+                continue;
+            }
+        };
+        let rows = match tickers.as_array() {
+            Some(rows) => rows,
+            None => {
+                tracing::warn!(exchange = %exchange, "ticker list is not an array");
+                ticker_list_failures.insert(exchange, "ticker list is not an array".to_string());
+                continue;
+            }
+        };
         for row in rows {
             if row.get("Type").and_then(Value::as_str) == Some("Common Stock")
                 && let Some(code) = row.get("Code").and_then(Value::as_str)
@@ -718,18 +798,42 @@ async fn prepare_expectations_pass_set(
     currencies.sort();
     currencies.dedup();
     let fx_fetches = currencies.iter().cloned().map(|currency| async move {
-        let (_, rate) = providers::fetch_eodhd_forex_rate(client, eodhd_api_key, &currency).await?;
-        Ok::<_, McpToolError>((currency, rate))
+        let result = providers::fetch_eodhd_forex_rate(client, eodhd_api_key, &currency).await;
+        (currency, result)
     });
     let mut fx_rates = HashMap::from([("USD".to_string(), 1.0)]);
-    for outcome in futures::future::join_all(fx_fetches).await {
-        let (currency, rate) = outcome?;
-        fx_rates.insert(currency, rate);
+    for (currency, outcome) in futures::future::join_all(fx_fetches).await {
+        // One currency's FOREX outage must not abort the screen: the
+        // missing rate excludes that currency's securities through the
+        // existing "fx_rate_unavailable" reason in materialize_security
+        // (operator requirement 2026-10-05).
+        match outcome {
+            Ok((_, rate)) => {
+                fx_rates.insert(currency, rate);
+            }
+            Err(error) => {
+                tracing::warn!(currency = %currency, "forex rate fetch failed: {error}");
+            }
+        }
     }
 
     let mut materialized = Vec::new();
     let mut exclusions = Vec::new();
     for row in universe {
+        // A failed ticker list excludes the exchange's securities with
+        // the outage named — distinct from a genuine
+        // ineligible-security-type exclusion (the inventory was never
+        // consulted, not consulted and absent).
+        let exchange = row.get("exchange").and_then(Value::as_str).unwrap_or("");
+        if let Some(error) = ticker_list_failures.get(exchange) {
+            let code = row.get("code").and_then(Value::as_str).unwrap_or("");
+            exclusions.push(json!({
+                "symbol": format!("{code}.{exchange}"),
+                "reason": "ticker_list_unavailable",
+                "detail": error,
+            }));
+            continue;
+        }
         match materialize_security(
             row,
             &ticker_inventory,

@@ -58,10 +58,12 @@ impl CompaniesServer {
             // is the price fallback). FMP fetches tolerate partial
             // failures — a failed income_statement must not prevent
             // fetching balance_sheet; the consolidated EODHD path has
-            // one payload and therefore one failure mode, returned fast
-            // with the provider's own classification instead of spinning
-            // the research phase on a dead symbol.
+            // one payload and therefore one failure mode — degraded to
+            // a named-reason insufficient_data report (never a tool
+            // error) with research skipped, so a dead symbol never
+            // spins the providers.
             let fetch_started = std::time::Instant::now();
+            let mut financial_fetch_error: Option<String> = None;
             let (req_income, req_balance, req_cf, req_metrics, req_profile, req_quote) =
                 if providers::is_international_symbol(&req.symbol) {
                     let (fundamentals, quote) = tokio::join!(
@@ -80,16 +82,29 @@ impl CompaniesServer {
                         elapsed_ms = fetch_started.elapsed().as_millis() as u64,
                         "consolidated EODHD fundamentals fetch"
                     );
-                    let payload = fundamentals.map_err(|error| {
-                        tracing::warn!(
-                            target: "hkask.mcp.companies",
-                            tool = "expectations_gap",
-                            symbol = %req.symbol,
-                            error = %error,
-                            "EODHD fundamentals fetch failed"
-                        );
-                        error
-                    })?;
+                    // Data-unavailable degrade (operator requirement
+                    // 2026-10-05): a failed fetch is a named-reason
+                    // insufficient_data report, never a tool error. The
+                    // empty payload flows through the same derivation —
+                    // every normalizer's missing-data guard yields empty
+                    // views, the solve's insufficient-data guard yields
+                    // None — and research is skipped below so a dead
+                    // symbol never spins the providers.
+                    let payload = match fundamentals {
+                        Ok(payload) => payload,
+                        Err(error) => {
+                            tracing::warn!(
+                                target: "hkask.mcp.companies",
+                                tool = "expectations_gap",
+                                symbol = %req.symbol,
+                                error = %error,
+                                "EODHD fundamentals fetch failed"
+                            );
+                            financial_fetch_error =
+                                Some(format!("EODHD fundamentals fetch failed: {error}"));
+                            serde_json::Value::Object(serde_json::Map::new())
+                        }
+                    };
                     let limit: &[(&str, &str)] = &[("limit", "5")];
                     (
                         Ok(providers::truncate_to_limit(
@@ -146,6 +161,21 @@ impl CompaniesServer {
                     );
                     joined
                 };
+
+            // First failed leg, for the report's unavailable_reason — the
+            // analysis match degrades to None; the reason must be named
+            // (operator requirement 2026-10-05: every company gets a
+            // data-based verdict, never a silent or failed one).
+            let financial_fetch_error = financial_fetch_error.or_else(|| {
+                req_income
+                    .as_ref()
+                    .err()
+                    .or_else(|| req_balance.as_ref().err())
+                    .or_else(|| req_cf.as_ref().err())
+                    .or_else(|| req_metrics.as_ref().err())
+                    .or_else(|| req_profile.as_ref().err())
+                    .map(|error| format!("financial data fetch failed: {error}"))
+            });
 
             // ── 2. Price-implied expectations vs demonstrated capability ──
 
@@ -207,6 +237,10 @@ impl CompaniesServer {
             let (management_growth, management_narrative, total_claims, narrative_mode) = if compact
             {
                 (Vec::new(), Vec::new(), 0, "compact")
+            } else if financial_fetch_error.is_some() {
+                // Dead-symbol guard: financials unavailable → research
+                // would spin on a name the financials could not resolve.
+                (Vec::new(), Vec::new(), 0, "skipped_unavailable_financials")
             } else {
                 let research_started = std::time::Instant::now();
                 let research = research::search_fundamental(
@@ -276,7 +310,7 @@ impl CompaniesServer {
             // ── 5. Assemble the report ─────────────────────────────────
 
             let assemble_started = std::time::Instant::now();
-            let output = build_gap_report(
+            let mut output = build_gap_report(
                 &req.symbol,
                 &analysis,
                 &management_growth,
@@ -286,6 +320,15 @@ impl CompaniesServer {
                 total_claims,
                 &price_source,
             );
+            if let Some(reason) = &financial_fetch_error
+                && let Some(data_quality) = output
+                    .get_mut("data_quality")
+                    .and_then(serde_json::Value::as_object_mut)
+            {
+                // Named-reason degrade: which fetch failed. The price
+                // failure path already names itself via price_source.
+                data_quality.insert("unavailable_reason".to_string(), serde_json::json!(reason));
+            }
             tracing::info!(
                 target: "hkask.mcp.companies",
                 tool = "expectations_gap",

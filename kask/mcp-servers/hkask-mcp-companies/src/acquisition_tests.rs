@@ -2892,6 +2892,213 @@ async fn expectations_gap_consolidates_eodhd_fundamentals_and_compact_skips_rese
         .await;
 }
 
+/// expect: [P5] Data unavailability is a named-reason insufficient_data
+/// report, never a tool error — operator requirement 2026-10-05: the
+/// screen works on every company to include or exclude it based on data.
+/// A failed fundamentals fetch degrades through the empty-payload path
+/// (every normalizer's missing-data guard), research is skipped (no
+/// dead-symbol spin), and data_quality.unavailable_reason names the
+/// failed fetch.
+/// dcterms:identifier: CompaniesServer::expectations_gap / data-unavailable degrade
+#[tokio::test]
+async fn expectations_gap_data_unavailable_is_named_reason_report_not_error() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let fixture = FixtureHttp::start(|path| {
+        if path.starts_with("/eodhd/fundamentals/DEAD.PA") {
+            return (500, json!({"error": "fixture fundamentals outage"}));
+        }
+        if path.starts_with("/eodhd/real-time/DEAD.PA") {
+            return (200, json!({"code": "DEAD.PA", "close": 10.0}));
+        }
+        (404, json!({ "error": "unexpected endpoint", "path": path }))
+    })
+    .await;
+    providers::TEST_HTTP_ORIGIN
+        .scope(fixture.origin.clone(), async {
+            let server = server(directory.path());
+            let request = serde_json::from_value::<types::ExpectationsGapRequest>(json!({
+                "symbol": "DEAD.PA"
+            }))
+            .expect("request");
+            let output = content(
+                &server
+                    .expectations_gap(Parameters(request))
+                    .await
+                    .expect("data unavailability must be a report, not an error"),
+            );
+            assert_eq!(output["signal"], json!("insufficient_data"));
+            assert_eq!(output["data_quality"]["capability_available"], json!(false));
+            let reason = output["data_quality"]["unavailable_reason"]
+                .as_str()
+                .expect("unavailable_reason must name the failed fetch");
+            assert!(
+                reason.contains("EODHD fundamentals fetch failed"),
+                "the reason names the failed fetch: {reason}"
+            );
+            assert_eq!(
+                output["narrative_mode"],
+                json!("skipped_unavailable_financials")
+            );
+            assert_eq!(output["context"]["guidance_samples"], json!(0));
+        })
+        .await;
+}
+
+/// expect: [P5] Per-company data failures never abort the screen —
+/// operator requirement 2026-10-05: every listed company gets an
+/// include-or-exclude verdict. One exchange's ticker-list outage excludes
+/// its securities with the outage named (distinct from a genuine
+/// ineligible-security-type exclusion); an issuer whose bulk AND fallback
+/// fundamentals both fail gets an unavailable row with the reason — and
+/// the job completes.
+/// dcterms:identifier: CompaniesServer::company_screener / screening::prepare_expectations_pass_set + enrich_pending_issuers
+#[tokio::test]
+async fn screen_data_failures_exclude_with_reasons_and_complete() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let fixture = FixtureHttp::start(|path| {
+        if path.starts_with("/eodhd/exchanges-list") {
+            return (
+                200,
+                json!([
+                    {"Code": "US", "Currency": "USD"},
+                    {"Code": "PA", "Currency": "EUR"}
+                ]),
+            );
+        }
+        if path.starts_with("/eodhd/eod/USDEUR.FOREX") {
+            return (200, json!([{"date": "2026-10-05", "close": 0.9}]));
+        }
+        if path.starts_with("/eodhd/screener") {
+            return match decode_screener_exchange(path).as_deref() {
+                Some("US") => (
+                    200,
+                    json!({ "data": [{
+                        "code": "LIQ", "name": "Liquid Issuer", "exchange": "US",
+                        "currency_symbol": "$", "market_capitalization": 9_000_000_000.0,
+                        "adjusted_close": 30.0, "avgvol_200d": 1_000_000.0
+                    }] }),
+                ),
+                Some("PA") => (
+                    200,
+                    json!({ "data": [{
+                        "code": "PAR", "name": "Paris Issuer", "exchange": "PA",
+                        "currency_symbol": "€", "market_capitalization": 8_000_000_000.0,
+                        "adjusted_close": 40.0, "avgvol_200d": 2_000_000.0
+                    }] }),
+                ),
+                _ => (200, json!({ "data": [] })),
+            };
+        }
+        // The US ticker list is down — its securities must be excluded
+        // with the outage named, not abort the screen.
+        if path.starts_with("/eodhd/exchange-symbol-list/US") {
+            return (500, json!({"error": "fixture ticker-list outage"}));
+        }
+        if path.starts_with("/eodhd/exchange-symbol-list/PA") {
+            return (
+                200,
+                json!([
+                    {"Code": "PAR", "Name": "Paris Issuer", "Exchange": "PA",
+                     "Currency": "EUR", "Type": "Common Stock", "Isin": "FR0000000001"}
+                ]),
+            );
+        }
+        // The surviving issuer's fundamentals are down on BOTH paths —
+        // it must land as an unavailable row with the reason, and the job
+        // must still complete.
+        if path.starts_with("/eodhd/bulk-fundamentals/PA") {
+            return (500, json!({"error": "fixture bulk outage"}));
+        }
+        if path.starts_with("/eodhd/fundamentals/PAR.PA") {
+            return (500, json!({"error": "fixture fundamentals outage"}));
+        }
+        (404, json!({ "error": "unexpected endpoint", "path": path }))
+    })
+    .await;
+    providers::TEST_HTTP_ORIGIN
+        .scope(fixture.origin.clone(), async {
+            let server = server(directory.path());
+            let calculate = serde_json::from_value::<types::ScreenerRequest>(json!({
+                "action":"calculate","template":"expectations_gap",
+                "template_context":{
+                    "exchanges":["US","PA"],
+                    "market_cap_min":5_000_000_000.0,"market_cap_max":10_000_000_000.0,
+                    "liquidity_min_usd":1_000_000.0
+                },
+                "prompt":"","limit":10,"criteria_overrides":{}
+            }))
+            .expect("calculate request");
+            let submitted = content(
+                &server
+                    .company_screener(Parameters(calculate))
+                    .await
+                    .expect("submit"),
+            );
+            let job_id = submitted["job_id"].as_str().expect("job id").to_string();
+            let mut completed_status = None;
+            for _ in 0..150 {
+                let request = serde_json::from_value::<types::ScreenerRequest>(json!({
+                    "action":"status","job_id":job_id,"prompt":"","limit":10,"criteria_overrides":{}
+                }))
+                .expect("status request");
+                let status = content(
+                    &server
+                        .company_screener(Parameters(request))
+                        .await
+                        .expect("status"),
+                );
+                assert_ne!(status["status"], json!("failed"), "screen failed: {status}");
+                if status["status"] == json!("completed") {
+                    completed_status = Some(status);
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+            let completed_status =
+                completed_status.expect("the screen must complete despite the outages");
+            assert_eq!(completed_status["processed"], json!(1));
+            assert_eq!(completed_status["total"], json!(1));
+            let artifact_path = completed_status["artifact_path"]
+                .as_str()
+                .expect("canonical report path");
+            assert!(std::path::Path::new(artifact_path).is_file());
+            std::fs::remove_file(artifact_path).expect("remove test report artifact");
+            let request = serde_json::from_value::<types::ScreenerRequest>(json!({
+                "action":"results","job_id":job_id,"cursor":0,"prompt":"","limit":10,
+                "criteria_overrides":{}
+            }))
+            .expect("results request");
+            let output = content(
+                &server
+                    .company_screener(Parameters(request))
+                    .await
+                    .expect("results"),
+            );
+            assert_eq!(output["metadata"]["candidate_count"], json!(2));
+            assert_eq!(output["table"]["row_count"], json!(1));
+            assert_eq!(output["table"]["row_ids"], json!(["PAR.PA"]));
+            assert_eq!(
+                output["table"]["columns"]["data_quality_status"]["values"],
+                json!(["unavailable"])
+            );
+            assert!(
+                output["table"]["columns"]["unavailable_reason"]["values"][0]
+                    .as_str()
+                    .is_some(),
+                "the unavailable row must name its reason"
+            );
+            let exclusions = output["exclusions"].as_array().expect("exclusions");
+            assert!(
+                exclusions.iter().any(|exclusion| {
+                    exclusion["symbol"] == json!("LIQ.US")
+                        && exclusion["reason"] == json!("ticker_list_unavailable")
+                }),
+                "the ticker-list outage must exclude its securities with the outage named: {exclusions:?}"
+            );
+        })
+        .await;
+}
+
 /// dcterms:identifier: CompaniesServer::company_screener / screening::calculate_expectations_gap
 #[tokio::test]
 async fn expectations_template_reduces_and_reconciles_the_universe() {
