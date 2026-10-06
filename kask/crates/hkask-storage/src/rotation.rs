@@ -445,6 +445,32 @@ fn copy_all_tables(
             Some(format!("source pool get: {error}")),
         ),
     })?;
+    // Pre-create the destination with a random header salt. The bundled
+    // SQLCipher's ATTACH-created databases get an all-zero salt (the system
+    // sqlcipher CLI randomizes it; the bundled build does not — and
+    // PRAGMA rekey preserves the existing salt, verified live 2026-10-06).
+    // A zero salt would collapse every rotated/exported database onto one
+    // shared KDF salt, defeating the salt's per-database purpose. A keyed
+    // standalone connection that writes and drops a stub table generates
+    // the random salt at creation — the same mechanism the connection
+    // pools use — so the export below ATTACHes an existing keyed empty
+    // destination instead of creating one.
+    {
+        let escaped_key = new_passphrase.replace('\'', "''");
+        let stub = rusqlite::Connection::open(new_path).map_err(|error| RotationError::Sql {
+            path: new_path.to_string(),
+            error,
+        })?;
+        stub.execute_batch(&format!(
+            "PRAGMA key = '{escaped_key}';
+             CREATE TABLE _salt_stub(x);
+             DROP TABLE _salt_stub;"
+        ))
+        .map_err(|error| RotationError::Sql {
+            path: new_path.to_string(),
+            error,
+        })?;
+    }
     let export = || -> rusqlite::Result<()> {
         // Export must be free to create/load mutually dependent tables. Check
         // the complete destination afterwards rather than relying on row order.
@@ -647,15 +673,11 @@ pub(crate) mod tests {
     /// the sealed original, and the exported copy opens only under the new
     /// key." [P8] The distribution stage's read-once/write-once export: the
     /// source's bytes are unchanged (hash-equal), the destination carries
-    /// the data under the destination passphrase, a wrong key is rejected at
-    /// the pool boundary, and an existing destination is refused.
-    ///
-    /// Known limitation, reported not pinned: copy_all_tables-produced
-    /// destinations carry an all-zero header salt (the bundled SQLCipher's
-    /// attach path does not randomize it; the system sqlcipher CLI does).
-    /// The data is encrypted and key-bound — a wrong key fails the page
-    /// HMAC — but the fixed salt weakens the KDF's salting. Pre-existing in
-    /// rotate_passphrase; filed for a bundled-SQLCipher follow-up.
+    /// the data under the destination passphrase with a RANDOM header salt
+    /// (the shared-zero-salt regression pin — the bundled SQLCipher's
+    /// ATTACH-created databases carried an all-zero salt before the
+    /// stub-pre-creation fix), a wrong key is rejected at the pool boundary,
+    /// and an existing destination is refused.
     #[test]
     fn export_database_keyed_leaves_the_source_untouched_and_rekeys_the_copy() {
         let directory = tempfile::tempdir().expect("temporary database");
@@ -674,6 +696,15 @@ pub(crate) mod tests {
             std::fs::read(&source).expect("re-read source"),
             before,
             "the sealed source is byte-identical after the export"
+        );
+        let header = std::fs::read(&destination).expect("read destination");
+        assert!(
+            header.len() >= 16,
+            "the destination carries a database header"
+        );
+        assert!(
+            header[..16].iter().any(|byte| *byte != 0),
+            "the destination's salt is random, not the shared zero-salt regression"
         );
         let shipped = Database::open(&destination, "bundle-key-1234").expect("destination key");
         let count: i64 = shipped
@@ -699,6 +730,30 @@ pub(crate) mod tests {
             export_database_keyed(&source, "old-passphrase", &destination, "bundle-key-1234")
                 .expect_err("an existing destination is refused");
         assert!(matches!(error, RotationError::Filesystem { .. }));
+    }
+
+    /// expect: "A rotated database never shares a fixed salt with every
+    /// other rotated database." [P1] SQLCipher's header salt exists so a
+    /// passphrase dictionary must be recomputed per database; the bundled
+    /// attach path leaves it all-zero, collapsing every rotated/exported
+    /// database onto one shared salt. The pin: the destination's first 16
+    /// bytes are not all zero.
+    #[test]
+    fn rotate_destination_salt_is_random() {
+        let directory = tempfile::tempdir().expect("temporary database");
+        let source = make_test_db(directory.path(), "sealed.db", "old-passphrase");
+        let copy = directory
+            .path()
+            .join("copy.db")
+            .to_string_lossy()
+            .into_owned();
+        std::fs::copy(&source, &copy).expect("copy");
+        rotate_passphrase(&copy, "old-passphrase", "new-key-12345").expect("rotate");
+        let header = std::fs::read(&copy).expect("read rotated");
+        assert!(
+            header[..16].iter().any(|byte| *byte != 0),
+            "the rotated database's salt is random, not the shared zero salt"
+        );
     }
 
     /// expect: "Rotating my populated RSS database preserves feeds, search, and future updates" [P1]
