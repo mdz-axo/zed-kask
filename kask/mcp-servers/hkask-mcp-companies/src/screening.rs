@@ -1674,13 +1674,18 @@ async fn status(server: &CompaniesServer, job_id: &str) -> Result<Value, McpTool
         (job.processed > 0 && job.processed < job.total).then(|| {
             let remaining = i64::try_from(job.total - job.processed).unwrap_or(i64::MAX);
             let processed = i64::try_from(job.processed).unwrap_or(1);
-            let throughput_eta = stage_elapsed.saturating_mul(remaining) / processed;
-            let deadline_remaining = i64::try_from(ENRICHMENT_DEADLINE.as_secs())
-                .unwrap_or(i64::MAX)
-                .saturating_sub(stage_elapsed)
-                .max(0);
-            throughput_eta.min(deadline_remaining)
+            stage_elapsed.saturating_mul(remaining) / processed
         })
+    });
+    // Deadline headroom is reported separately: capping the throughput ETA
+    // at it (the former min()) made healthy runs display deadline-flavored
+    // ETAs — a run near the deadline read as "ETA ~107 seconds" regardless
+    // of its actual throughput (operator directive 2026-10-06).
+    let enrichment_deadline_remaining_seconds = enrichment_elapsed_seconds.map(|stage_elapsed| {
+        i64::try_from(ENRICHMENT_DEADLINE.as_secs())
+            .unwrap_or(i64::MAX)
+            .saturating_sub(stage_elapsed)
+            .max(0)
     });
     if job.status == "queued" && job.stage != "queued" {
         let definition: ScreenDefinition =
@@ -1708,6 +1713,7 @@ async fn status(server: &CompaniesServer, job_id: &str) -> Result<Value, McpTool
         "heartbeat_age_seconds": heartbeat_age_seconds,
         "elapsed_seconds": elapsed_seconds,
         "eta_seconds": eta_seconds,
+        "enrichment_deadline_remaining_seconds": enrichment_deadline_remaining_seconds,
         "phase_timings": job
             .checkpoint
             .as_ref()

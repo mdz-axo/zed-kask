@@ -3055,6 +3055,10 @@ async fn screen_data_failures_exclude_with_reasons_and_complete() {
                 completed_status.expect("the screen must complete despite the outages");
             assert_eq!(completed_status["processed"], json!(1));
             assert_eq!(completed_status["total"], json!(1));
+            assert!(
+                completed_status["enrichment_deadline_remaining_seconds"].is_u64(),
+                "status must report enrichment deadline headroom separately from the ETA: {completed_status}"
+            );
             let artifact_path = completed_status["artifact_path"]
                 .as_str()
                 .expect("canonical report path");
