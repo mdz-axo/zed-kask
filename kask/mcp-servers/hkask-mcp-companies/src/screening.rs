@@ -140,6 +140,18 @@ struct PreparedPassSet {
     fx_rates: HashMap<String, f64>,
 }
 
+/// Enrichment-stage phase measurements (operator directive 2026-10-06:
+/// measure, then attribute — the wall-time profile is recorded per phase,
+/// never inferred). Mirrors the ad-hoc `expectations_gap` phase-tracing
+/// pattern (`tools/expectations.rs` financial_fetches/research/assemble).
+struct EnrichmentTimings {
+    issuers: usize,
+    bulk_fetch_ms: u64,
+    enrichment_analysis_ms: u64,
+    fallback_attempts: usize,
+    deadline_exclusions: usize,
+}
+
 pub(crate) fn resume_pending_jobs(server: &CompaniesServer) {
     let jobs = match server.research.pending_screen_jobs() {
         Ok(jobs) => jobs,
@@ -388,6 +400,7 @@ async fn run_screen_job(
     definition: &ScreenDefinition,
     verification: Value,
 ) -> Result<(), McpToolError> {
+    let job_started = std::time::Instant::now();
     server
         .research
         .mark_screen_job_executing(job_id)
@@ -416,6 +429,7 @@ async fn run_screen_job(
         // concurrent and heartbeated, and a deadline here would cancel the
         // universe with nothing left to exclude (operator requirement
         // 2026-10-05: the screen produces a verdict for every company).
+        let universe_started = std::time::Instant::now();
         let universe = tokio::select! {
             acquired = acquire_universe(server, definition) => acquired?,
             cancellation = wait_for_screen_cancel(&server.research, job_id) => {
@@ -425,10 +439,21 @@ async fn run_screen_job(
                 return Ok(());
             }
         };
+        let universe_elapsed_ms = universe_started.elapsed().as_millis() as u64;
+        tracing::info!(
+            target: "hkask.mcp.companies",
+            tool = "company_screener",
+            job_id,
+            phase = "universe_acquisition",
+            elapsed_ms = universe_elapsed_ms,
+            candidates = universe.len(),
+            "EODHD screener universe acquisition"
+        );
         // Stage 2 — the pass set: cancelable and deadline-bounded. On
         // deadline expiry the screen still completes — every candidate is
         // excluded with a named reason instead of the job failing, the
         // same per-item degradation the enrichment stage applies.
+        let pass_set_started = std::time::Instant::now();
         let prepared = tokio::select! {
             result = tokio::time::timeout(
                 SCREEN_PASS_DEADLINE,
@@ -458,6 +483,19 @@ async fn run_screen_job(
                 return Ok(());
             }
         };
+        let pass_set_elapsed_ms = pass_set_started.elapsed().as_millis() as u64;
+        tracing::info!(
+            target: "hkask.mcp.companies",
+            tool = "company_screener",
+            job_id,
+            phase = "pass_set",
+            elapsed_ms = pass_set_elapsed_ms,
+            candidates = prepared.candidate_count,
+            passing_securities = prepared.financial_passing_security_count,
+            issuers = prepared.groups.len(),
+            exclusions = prepared.exclusions.len(),
+            "ticker lists, FX rates, materialization, issuer grouping"
+        );
         let mut items = Vec::with_capacity(prepared.groups.len());
         for (ordinal, group) in prepared.groups.iter().enumerate() {
             let payload = serde_json::to_value(group).map_err(|error| {
@@ -477,6 +515,10 @@ async fn run_screen_job(
             "logic_verification": verification,
             "investor_target_return": definition.logic_env.get("investor_target_return").cloned(),
             "pass_set_persisted_at": now_rfc3339(),
+            "phase_timings": {
+                "universe_acquisition_ms": universe_elapsed_ms,
+                "pass_set_ms": pass_set_elapsed_ms,
+            },
         });
         server
             .research
@@ -488,7 +530,17 @@ async fn run_screen_job(
             .map_err(crate::map_portfolio_error)?;
     }
 
-    enrich_pending_issuers(server, job_id).await?;
+    let enrichment_started = std::time::Instant::now();
+    let enrichment_timings = enrich_pending_issuers(server, job_id).await?;
+    tracing::info!(
+        target: "hkask.mcp.companies",
+        tool = "company_screener",
+        job_id,
+        phase = "enrichment",
+        elapsed_ms = enrichment_started.elapsed().as_millis() as u64,
+        issuers = enrichment_timings.issuers,
+        "bulk fundamentals, per-issuer fallbacks, local analysis"
+    );
     if server
         .research
         .screen_cancel_requested(job_id)
@@ -506,6 +558,7 @@ async fn run_screen_job(
         .checkpoint
         .as_ref()
         .ok_or_else(|| McpToolError::internal("screen checkpoint missing"))?;
+    let assemble_started = std::time::Instant::now();
     let mut rows: Vec<Value> = server
         .research
         .all_screen_items(job_id)
@@ -524,7 +577,7 @@ async fn run_screen_job(
         .and_then(Value::as_u64)
         .and_then(|value| usize::try_from(value).ok())
         .unwrap_or(0);
-    let result = build_calculation_result(
+    let mut result = build_calculation_result(
         definition,
         checkpoint
             .get("logic_verification")
@@ -535,6 +588,33 @@ async fn run_screen_job(
             candidate_count,
             exclusions,
         },
+    );
+    // Phase measurements ride on the persisted result and artifact so the
+    // wall-time profile is durable on the job record, not only in server
+    // logs (operator directive 2026-10-06: measure, then attribute).
+    let stage_timings = checkpoint
+        .get("phase_timings")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    let phase_timings = json!({
+        "universe_acquisition_ms": stage_timings.get("universe_acquisition_ms").cloned().unwrap_or(Value::Null),
+        "pass_set_ms": stage_timings.get("pass_set_ms").cloned().unwrap_or(Value::Null),
+        "bulk_fetch_ms": enrichment_timings.bulk_fetch_ms,
+        "enrichment_analysis_ms": enrichment_timings.enrichment_analysis_ms,
+        "fallback_attempts": enrichment_timings.fallback_attempts,
+        "deadline_exclusions": enrichment_timings.deadline_exclusions,
+        "assemble_ms": assemble_started.elapsed().as_millis() as u64,
+    });
+    if let Some(result_object) = result.as_object_mut() {
+        result_object.insert("phase_timings".to_string(), phase_timings);
+    }
+    tracing::info!(
+        target: "hkask.mcp.companies",
+        tool = "company_screener",
+        job_id,
+        phase = "assemble",
+        elapsed_ms = assemble_started.elapsed().as_millis() as u64,
+        "row assembly, sort, result build"
     );
     let artifact_name = format!("expectations-gap-{}-{job_id}", definition.as_of);
     let artifact_path =
@@ -549,6 +629,14 @@ async fn run_screen_job(
             Some(&artifact_path.to_string_lossy()),
         )
         .map_err(crate::map_portfolio_error)?;
+    tracing::info!(
+        target: "hkask.mcp.companies",
+        tool = "company_screener",
+        job_id,
+        phase = "total",
+        elapsed_ms = job_started.elapsed().as_millis() as u64,
+        "screen job complete"
+    );
     Ok(())
 }
 
@@ -1411,6 +1499,33 @@ async fn fetch_bulk_fundamentals(
             let result =
                 providers::fetch_eodhd_bulk_fundamentals(&client, &api_key, &exchange, &symbols)
                     .await;
+            // Operator directive 2026-10-06 (measure, then attribute): a
+            // failed bulk batch silently degrades every issuer in it to the
+            // 12-way per-symbol fallback — the dominant wall-time cost. The
+            // failure reason must be visible in the log, not inferred.
+            match &result {
+                Err(error) => {
+                    tracing::warn!(
+                        target: "hkask.mcp.companies",
+                        tool = "company_screener",
+                        exchange = %exchange,
+                        symbols = symbols.len(),
+                        "EODHD bulk fundamentals batch failed: {error}"
+                    );
+                }
+                Ok(value) if value.as_array().is_none() => {
+                    let body = serde_json::to_string(value).unwrap_or_default();
+                    tracing::warn!(
+                        target: "hkask.mcp.companies",
+                        tool = "company_screener",
+                        exchange = %exchange,
+                        symbols = symbols.len(),
+                        "EODHD bulk fundamentals response is not an array: {}",
+                        body.chars().take(200).collect::<String>()
+                    );
+                }
+                _ => {}
+            }
             (issuers, result)
         }
     }))
@@ -1461,7 +1576,7 @@ async fn fetch_bulk_fundamentals(
 async fn enrich_pending_issuers(
     server: &CompaniesServer,
     job_id: &str,
-) -> Result<(), McpToolError> {
+) -> Result<EnrichmentTimings, McpToolError> {
     let pending = server
         .research
         .pending_screen_items(job_id)
@@ -1489,19 +1604,33 @@ async fn enrich_pending_issuers(
         decoded.push((item, group));
     }
     let groups: Vec<IssuerGroup> = decoded.iter().map(|(_, group)| group.clone()).collect();
+    let issuer_count = groups.len();
+    let bulk_started = std::time::Instant::now();
     let mut bulk = fetch_bulk_fundamentals(server, &groups).await;
+    let bulk_fetch_ms = bulk_started.elapsed().as_millis() as u64;
+    tracing::info!(
+        target: "hkask.mcp.companies",
+        tool = "company_screener",
+        job_id,
+        phase = "bulk_fetch",
+        elapsed_ms = bulk_fetch_ms,
+        issuers = issuer_count,
+        "EODHD bulk fundamentals fetch"
+    );
     let bulk_available = bulk.values().any(Result::is_ok);
     let concurrency = if bulk_available {
         BULK_ANALYSIS_CONCURRENCY
     } else {
         FALLBACK_ENRICHMENT_CONCURRENCY
     };
+    let fallback_attempts = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let work = futures::stream::iter(decoded.into_iter().map(|(item, group)| {
         let client = server.client.clone();
         let api_key = server.eodhd_api_key.clone();
         let store = server.research.clone();
         let fx_rates = fx_rates.clone();
         let job_id = job_id.to_string();
+        let fallback_attempts = fallback_attempts.clone();
         let fundamentals = bulk
             .remove(&item.issuer_key)
             .unwrap_or_else(|| Err(ScreeningError::BulkResultMissing));
@@ -1512,6 +1641,7 @@ async fn enrich_pending_issuers(
             let fundamentals = match fundamentals {
                 Ok(fundamentals) => Ok(fundamentals),
                 Err(bulk_reason) => {
+                    fallback_attempts.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     let actionable = group.securities.iter().max_by(|left, right| {
                         left.average_daily_dollar_volume_usd
                             .partial_cmp(&right.average_daily_dollar_volume_usd)
@@ -1582,19 +1712,22 @@ async fn enrich_pending_issuers(
     let deadline = tokio::time::sleep(ENRICHMENT_DEADLINE);
     tokio::pin!(deadline);
     let mut cancellation_poll = tokio::time::interval(Duration::from_secs(1));
-    loop {
+    let analysis_started = std::time::Instant::now();
+    let (enrichment_analysis_ms, deadline_exclusions) = loop {
         tokio::select! {
             outcomes = &mut work => {
                 for outcome in outcomes { outcome.map_err(crate::map_portfolio_error)?; }
-                return Ok(());
+                break (analysis_started.elapsed().as_millis() as u64, 0);
             }
             _ = cancellation_poll.tick() => {
                 if server.research.screen_cancel_requested(job_id).map_err(crate::map_portfolio_error)? {
-                    return Ok(());
+                    break (analysis_started.elapsed().as_millis() as u64, 0);
                 }
             }
             _ = &mut deadline => {
-                for item in server.research.pending_screen_items(job_id).map_err(crate::map_portfolio_error)? {
+                let remaining = server.research.pending_screen_items(job_id).map_err(crate::map_portfolio_error)?;
+                let deadline_exclusions = remaining.len();
+                for item in remaining {
                     let group: IssuerGroup = serde_json::from_value(item.payload)
                         .map_err(|error| McpToolError::internal(format!("decode timed-out issuer checkpoint: {error}")))?;
                     let row = unavailable_issuer_row(&group, "enrichment deadline exceeded");
@@ -1602,10 +1735,29 @@ async fn enrich_pending_issuers(
                         job_id, &item.issuer_key, "unavailable", &row, Some("enrichment deadline exceeded"),
                     ).map_err(crate::map_portfolio_error)?;
                 }
-                return Ok(());
+                break (analysis_started.elapsed().as_millis() as u64, deadline_exclusions);
             }
         }
-    }
+    };
+    let fallback_attempts = fallback_attempts.load(std::sync::atomic::Ordering::Relaxed);
+    tracing::info!(
+        target: "hkask.mcp.companies",
+        tool = "company_screener",
+        job_id,
+        phase = "enrichment_analysis",
+        elapsed_ms = enrichment_analysis_ms,
+        issuers = issuer_count,
+        fallback_attempts,
+        deadline_exclusions,
+        "per-issuer fallback fetches and local analysis"
+    );
+    Ok(EnrichmentTimings {
+        issuers: issuer_count,
+        bulk_fetch_ms,
+        enrichment_analysis_ms,
+        fallback_attempts,
+        deadline_exclusions,
+    })
 }
 
 fn screen_exclusion(symbol: &str, reason: &str, detail: Option<&str>) -> Value {
@@ -1680,6 +1832,12 @@ async fn status(server: &CompaniesServer, job_id: &str) -> Result<Value, McpTool
         "heartbeat_age_seconds": heartbeat_age_seconds,
         "elapsed_seconds": elapsed_seconds,
         "eta_seconds": eta_seconds,
+        "phase_timings": job
+            .checkpoint
+            .as_ref()
+            .and_then(|checkpoint| checkpoint.get("phase_timings"))
+            .cloned()
+            .unwrap_or(Value::Null),
         "cancel_requested": job.cancel_requested,
         "artifact_path": job.artifact_path,
         "error": job.error,

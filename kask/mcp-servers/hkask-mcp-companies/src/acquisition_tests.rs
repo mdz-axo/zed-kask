@@ -3087,6 +3087,33 @@ async fn screen_data_failures_exclude_with_reasons_and_complete() {
                     .is_some(),
                 "the unavailable row must name its reason"
             );
+            // Phase instrumentation (operator directive 2026-10-06: measure,
+            // then attribute): the completed result carries the measured
+            // wall-time profile — durable on the job record and artifact,
+            // not only in server logs.
+            let phase_timings = &output["phase_timings"];
+            assert!(
+                phase_timings["universe_acquisition_ms"].is_u64(),
+                "phase_timings must carry universe_acquisition_ms: {phase_timings}"
+            );
+            assert!(
+                phase_timings["pass_set_ms"].is_u64(),
+                "phase_timings must carry pass_set_ms: {phase_timings}"
+            );
+            assert!(
+                phase_timings["bulk_fetch_ms"].is_u64(),
+                "phase_timings must carry bulk_fetch_ms: {phase_timings}"
+            );
+            assert!(
+                phase_timings["enrichment_analysis_ms"].is_u64(),
+                "phase_timings must carry enrichment_analysis_ms: {phase_timings}"
+            );
+            assert_eq!(
+                phase_timings["fallback_attempts"],
+                json!(1),
+                "the bulk outage must drive exactly one per-issuer fallback fetch"
+            );
+            assert_eq!(phase_timings["deadline_exclusions"], json!(0));
             let exclusions = output["exclusions"].as_array().expect("exclusions");
             assert!(
                 exclusions.iter().any(|exclusion| {
