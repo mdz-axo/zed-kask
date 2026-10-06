@@ -3,6 +3,16 @@
 //! Routes tool calls to the appropriate provider and normalizes responses
 //! so that analysis functions in `analysis.rs` work transparently with
 //! either data source.
+//!
+//! Plan-gating contract: every EODHD endpoint wired into a default tool
+//! path must be available on a self-serve plan listed at eodhd.com/pricing
+//! (the union this server consumes is All-In-One). Support-only SKUs —
+//! Extended Fundamentals (`/bulk-fundamentals`, plan-gated 403, deleted
+//! 2026-10-06) — and marketplace add-ons must never be load-bearing for
+//! basic functionality: users provision their own subscriptions, so a
+//! custom-plan dependency silently breaks every default path. Check an
+//! endpoint's plan requirement against EODHD's published docs before
+//! wiring it in.
 
 use hkask_mcp_server::server::{McpToolError, classify_http_error};
 use serde_json::Value;
