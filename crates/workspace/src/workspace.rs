@@ -46,7 +46,7 @@ pub use toast_layer::{ToastAction, ToastLayer, ToastView};
 use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result, anyhow};
 use client::{
-    ChannelId, Client, ErrorExt, ParticipantIndex, Status, TypedEnvelope, User, UserStore,
+    ChannelId, Client, ErrorExt, ParticipantIndex, TypedEnvelope, User, UserStore,
     proto::{self, ErrorCode, PanelId, PeerId},
 };
 use collections::{HashMap, HashSet, TypeIdHashMap, hash_map};

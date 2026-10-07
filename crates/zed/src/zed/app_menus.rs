@@ -1,6 +1,5 @@
 use gpui::{App, Menu, MenuItem, OsAction};
 use project::DisableAiSettings;
-use project_panel;
 use release_channel::ReleaseChannel;
 use settings::Settings;
 use terminal_view::terminal_panel;
