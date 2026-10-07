@@ -219,36 +219,34 @@ its method, not a prerequisite re-run.
   `Connection`, `Api`, `Json`, `EmptyResponse`, `DimensionMismatch`
   (`kask/crates/hkask-types/src/ports/embedding.rs:30-42`).
 
-### MF-5 — DNS-rebinding limitation (condition 5) — **DECISION-READY 2026-10-06; the accepted-risk word remains the operator's**
+### MF-5 — DNS-rebinding limitation (condition 5) — **CLOSED 2026-10-06: accepted risk (operator ruling)**
 
-- **Current condition (verified 2026-10-06):** the widget's preflight treats
-  every block locator as untrusted (local media under the artifacts root or
-  exact gallery-observed paths; symlink escapes fail; inline data
-  MIME-checked and capped at 32 MiB; public fetches validate DNS and reject
-  redirects). **Verified scope:** exactly two subprocess paths make outbound
-  connections in this server's usage — yt-dlp (`video_fetch`) and ffprobe
-  (`video_info` on a remote URL; ffprobe is bundled with FFmpeg, whose
-  transcode invocations receive only local, preflight-validated paths —
-  `src/tools/processing.rs:1281-1300` runs `validate_tool_url_with_dns`
+- **Current condition (at close):** the README paragraph states the ruling,
+  not an open limitation. **Verified scope:** exactly two subprocess paths
+  make outbound connections in this server's usage — yt-dlp (`video_fetch`)
+  and ffprobe (`video_info` on a remote URL; ffprobe is bundled with FFmpeg,
+  whose transcode invocations receive only local, preflight-validated
+  paths — `src/tools/processing.rs:1281-1300` runs `validate_tool_url_with_dns`
   before the remote probe). Both paths preflight-validate DNS; the residual
   gap is the connect-time TOCTOU window between the preflight's validated
   resolution and the subprocess's own DNS lookup.
 - **Mitigation priced out (verified 2026-10-06):** neither yt-dlp nor
   ffprobe exposes a resolve-style flag; URL-to-IP rewriting breaks TLS
   certificate validation (no SNI override); hosts-file mutation is global
-  system state. A pin requires upstream tool support or sandbox-grade
-  networking — not implementable with current tooling.
-- **Target condition:** either a documented accepted-risk ruling from the
-  operator, or a mitigation with tests.
-- **Reached when:** the README paragraph states a ruling or a mitigation,
-  never an open limitation.
-- **Decision status:** the README paragraph now states the verified scope
-  and the priced-out mitigation — the option space has collapsed to one:
-  the operator's accepted-risk ruling over the named TOCTOU window. The
-  word `accept` closes this condition; it was not manufactured here because
-  a risk acceptance is constitutively the operator's to make. Presented
-  three times (2026-10-06); each time the operator directed proceeding
-  without a ruling.
+  system state. The only implementable mitigation is refusing remote URLs
+  in those two tools — amputating the media-ingestion workflow.
+- **Ruling (operator, 2026-10-06): accepted risk**, on the media-lead's
+  recommendation — narrow exposure (preflight-validated inputs,
+  agent-mediated callers, a targeted timing attack), small blast radius
+  (low-grade SSRF on a workstation; yt-dlp output media-validated before
+  FFmpeg; local gallery), and the remove-vs-accept trade favoring acceptance.
+  **Revisit condition:** a server deployment with valuable internal
+  services, or a workflow feeding URLs from untrusted content without
+  agent mediation, voids the acceptance and reopens the mitigation
+  question.
+- **Reached-when check:** the README paragraph states a ruling ✓ (the
+  DNS-rebinding paragraph, updated 2026-10-06 — scope, priced-out
+  mitigation, the ruling, and the revisit condition).
 
 ## Phase 1 — Primitives derivation (opened, pending)
 

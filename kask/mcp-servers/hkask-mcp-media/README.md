@@ -91,10 +91,19 @@ the subprocess's own DNS lookup. The mitigation is priced out with current
 tooling: neither yt-dlp nor ffprobe exposes a resolve-style flag, URL-to-IP
 rewriting breaks TLS certificate validation (no SNI override), and
 hosts-file mutation is global system state — a pin would require upstream
-tool support or sandbox-grade networking. The one remaining closure is the
-operator's accepted-risk ruling over that named TOCTOU window; until the
-word lands, this paragraph states the verified scope and the priced-out
-mitigation, not a vague limitation.
+tool support or sandbox-grade networking. **Ruling (operator, 2026-10-06):
+accepted risk.** The named TOCTOU window is accepted as a residual risk on
+the media-lead's recommendation: the exposure is narrow (two
+preflight-validated subprocess paths, agent-mediated callers, a targeted
+timing attack against this toolchain), the blast radius is small (a
+low-grade SSRF on a workstation — yt-dlp's output is media-validated before
+FFmpeg, the gallery is local, ffprobe leaks at most response-shape hints),
+and the only implementable mitigation is refusing remote URLs in those two
+tools, which would amputate the media-ingestion workflow. **Revisit
+condition:** a server deployment with valuable internal services, or a
+workflow feeding URLs from untrusted content without agent mediation, voids
+this acceptance and reopens the mitigation question (then worth the
+sandbox-grade cost).
 
 `youtube_search` performs exactly one paid SerpApi request and reads one provider
 page. `max_results` caps that page; it does not trigger paid continuation calls.
