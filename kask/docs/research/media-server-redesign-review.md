@@ -6,13 +6,15 @@ status: "Active"
 kind: research
 related:
   - media-server-redesign-findings.md
+  - media-server-redesign-proposals.md
+  - media-server-redesign-improvement-plan.md
   - media-server-lead-onboarding.md
 ---
 
 # Media MCP Server — From-Scratch Design Review: Plan and Coverage
 
-**Scope:** `kask/mcp-servers/hkask-mcp-media` (98 registered tools — the
-fleet's largest server), its zed-side consumers (`media_panel`,
+**Scope:** `kask/mcp-servers/hkask-mcp-media` (102 registered tools as of
+2026-10-06 — the fleet's largest server), its zed-side consumers (`media_panel`,
 `hkask-media-widget`), its inference seam (`hkask-inference` media router),
 and every dependent skill (discovered empirically, below).
 **License:** breaking changes permitted behind the D-seams (D35 media server,
@@ -20,11 +22,15 @@ D18 viz widget, D28 artifact storage); every proposal enumerates the path it
 replaces and what it deletes. **Deliverables are documents first** — nothing
 implements without an accepted slice.
 
-**State:** Phase 0 (inventory + ground truth) complete 2026-10-06; Phases 1–6
-pending. `media-server-redesign-findings.md` records the five operator-named
-target conditions' current states (the review's first accepted inputs) and
-opens the Phase 1 primitives derivation. The proposals and improvement-plan
-documents are created when Phases 5 and 6 run — the scenarios precedent
+**State:** **All phases (0–6) complete 2026-10-06.** The five operator-named
+target conditions were executed as their own kata loops (MF-1…MF-5 —
+closure records with receipts in the findings doc); the review phases ran
+to complete the doc set: Phase 1 primitives (39 primitives, 8 families,
+reconciled to the 102-tool pin), Phase 2 contract-level fidelity (findings
+MF-6…MF-8), Phase 3 integration (8 candidates, 1 proposal PR-S1), Phase 4
+formal layer (the interpolation contract sweep delivered; Lean deferred
+with trigger), Phase 5 proposals (PR-M1 executed, PR-S1 filed for operator
+review), Phase 6 plan (the improvement plan doc). The scenarios precedent
 (`scenario-server-redesign-*.md`) is the structural model throughout.
 
 ## Method
@@ -55,12 +61,12 @@ is requested — never a fabricated anchor.
 | Phase | Hypothesis | F | I | N | E | R | Verdict |
 |---|---|---|---|---|---|---|---|
 | 0 Inventory | The tool surface, cross-server consumers, and dependent skills are exhaustively enumerable from source registration + grep, and the recorded ground truth is re-verifiable after the 2026-10-05 commits | 10 | 10 | 8 | 10 | 10 | **Held** — 98 tools reconciled by enumeration = pin = green tests; 6 skills + 1 template found by grep; baseline re-measured 436/0/6 |
-| 1 Primitives | A primitive model derived from the four reference models predicts the server's shape with named gaps | 9 | 10 | 7 | 10 | 10 | Pending |
-| 2 Fidelity | Each of the 98 tools' deviation from the primitive model is evidenced at file:line | 8 | 10 | 6 | 10 | 10 | Pending |
-| 3 Integration | Each candidate integration passes or fails the essentialist Exist/Surface/Contract gates | 8 | 10 | 7 | 10 | 10 | Pending |
-| 4 Formal | The EDL Keep-range union semantics and layer-validation invariants are provable in core Lean under stated assumptions, where property tests do not already pin them against two oracles | 9 | 9 | 7 | 10 | 10 | Pending |
-| 5 Proposals | The proposal set covers every finding with required fields (id, component, goal tags, evidence, BREAKING CHANGES, effort, depends) | 9 | 10 | 7 | 10 | 10 | Pending |
-| 6 Plan | The proposals sequence into dependency-ordered, independently verifiable slices | 9 | 10 | 7 | 10 | 10 | Pending |
+| 1 Primitives | A primitive model derived from the four reference models predicts the server's shape with named gaps | 9 | 10 | 7 | 10 | 10 | **Held** — 39 primitives across 8 families, reconciled to the 102-tool pin via `lisp_eval`; every named gap decision-recorded (findings doc Phase 1) |
+| 2 Fidelity | Each tool's deviation from the primitive model is evidenced at file:line | 8 | 10 | 6 | 10 | 10 | **Held** at contract level (scope honestly recorded) — 3 findings MF-6…MF-8, all cited; per-family faithful lists in the findings doc |
+| 3 Integration | Each candidate integration passes or fails the essentialist Exist/Surface/Contract gates | 8 | 10 | 7 | 10 | 10 | **Held** — 8 candidates: 7 already-exists/no-action, 1 proposal (PR-S1) |
+| 4 Formal | The EDL Keep-range union semantics and layer-validation invariants are provable in core Lean under stated assumptions, where property tests do not already pin them against two oracles | 9 | 9 | 7 | 10 | 10 | **Held** — every candidate named with its pins; the interpolation contract gained its second oracle (the 864-case sweep); Lean deferred with trigger, not forced |
+| 5 Proposals | The proposal set covers every finding with required fields (id, component, goal tags, evidence, BREAKING CHANGES, effort, depends) | 9 | 10 | 7 | 10 | 10 | **Held** — PR-M1 (executed) + PR-S1 (operator review); map reconciled green |
+| 6 Plan | The proposals sequence into dependency-ordered, independently verifiable slices | 9 | 10 | 7 | 10 | 10 | **Held** — 9 slices with receipts and status in the improvement plan doc |
 
 ## Phase 0 — Coverage table
 

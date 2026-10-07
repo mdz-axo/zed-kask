@@ -479,13 +479,65 @@ as a persistence proposal.
 | MF-7 | Watched — live probe before first production publish |
 | MF-8 | No-action — documented ephemerality; trigger recorded |
 
-## Phases 3–4 — pending
+## Phase 3 — Integration review (COMPLETE 2026-10-06)
 
-**Phase 3 (next):** integration candidates through the essentialist gates
-(Exist / Surface / Contract) — the cross-server surface enumerated in the
-review doc's coverage table is the candidate list. **Phase 4:** the formal
-layer — EDL Keep-range union semantics and layer-validation invariants as
-Lean candidates (the re-anchored interpolation's monotonicity/confinement
-invariants, proven in `reanchored_corrected_words`'s tests, are the first
-candidates), finite structural checks via `lisp_eval`. Phase 5 (proposals:
-PR-M1 and successors) and Phase 6 (plan) follow their own loops.
+**Hypothesis (FINER-gated):** each cross-server integration candidate
+passes or fails the essentialist gates (Exist / Surface / Contract).
+F 9, I 9, N 8, E 10, R 9. **Verdict: HELD** — 8 candidates, 7 "already
+exists", 1 proposal (PR-S1).
+
+| Candidate | Exist | Surface | Contract | Verdict |
+|---|---|---|---|---|
+| `media_panel` (TOOL_NAMES re-export, Steer prompt rendering) | ✓ live | none new | the name pin is the chain's integrity check | **already exists** — the pin macro covers it |
+| `hkask-media-widget` (D18) | ✓ live | none new | shared OMC concept→explain dispatch, single implementation (`hkask-bridge-ontology/src/omc.rs`) | **already exists** — the duplication trap is already closed |
+| `hkask-inference` media router (D35) | ✓ live | none new | two-route routing contract, operator decision recorded in its README | **already exists** |
+| `kask_bridge` registration | ✓ live | none new | `id: "media"`, env allowlists | **already exists** |
+| Shared pin macro (`ede1ba0ca8`) | ✓ live | none new | one implementation for every server | **already exists** |
+| Corpus server | ✓ composition-level | **none — deliberately** | `educt_export` `corpus_text` → `transcript-reel` skill → corpus ingestion; grep found no direct code reference (the apparent hits were `reduction_pct` false positives) | **no action** — the composition path IS the contract; a direct API would couple the servers |
+| Spreadsheet what-if | ✓ contract-shape sibling | none | both ```media and ```spreadsheet display-hint blocks are D18 panel widgets | **no action** — a sibling shape, not a consumer |
+| `transcript-reel` skill | ✓ the skill exists; the realignment path it should name does too (`educt_realign_transcript`, MF-2) | one line in the skill's correction step (`SKILL.md:61-68` names `educt_correction_pass` → `educt_apply_corrections`; the realignment path after cardinality-changing corrections is absent) | the skill's process text | **proposal PR-S1** — skills are the operator's algedonic-review surface; filed, not executed |
+
+## Phase 4 — Formal layer (COMPLETE 2026-10-06, honestly scoped)
+
+**Hypothesis (FINER-gated):** the EDL union semantics and interpolation
+invariants are either provable in core Lean under stated assumptions or
+already pinned by two test oracles — and the choice is recorded, never
+forced. F 9, I 8, N 8, E 10, R 9. **Verdict: HELD** — every candidate
+named with its pin; the Lean layer deferred with its trigger.
+
+| Candidate | Already pins it | Verdict |
+|---|---|---|
+| EDL Keep-range union coverage ("the union covers exactly the words any input range covered") | `union_ranges_covers_exactly_the_input_words` (`transcript_select.rs:701-717`) — the merge implementation against an independent HashSet-distinct-words oracle | **Two oracles already** — Lean would verify the same contract the set oracle pins; not forced |
+| Keep-op disjointness (EDL validation) | `edl_to_keep_ranges` rejects overlapping Keeps (`SelectionError`, `transcript_select.rs:82-83`) + the EDL validation delegate (`transcript_layers.rs:234-244`) + tests | **Two oracles already** — validation rejects, composition asserts |
+| Re-anchored interpolation monotone/confined/exact-endpoints | WAS single-oracle (the four MF-2 unit cases pin concrete outputs) — **now two**: `reanchored_interpolation_contract_holds_across_a_sweep` (`transcript_layers.rs`) asserts the contract identities (valid, monotone, non-overlapping, confined, exact endpoints) over an exhaustive span×token sweep (864 cases), independent of the slicing formula | **Two oracles now** — the sweep is the Phase-4 deliverable |
+
+**The Lean layer, deferred with its trigger (attempted, not forced):** a
+spec-pin file (`reanchored_interpolation.lean`) was drafted over Nat with
+stated assumptions and `#print axioms` receipts; `lean_check` (Lean
+4.34.0, core — no Mathlib in `kask/lean/lakefile.toml`) showed the needed
+core lemma formulations require positivity the contract does not carry
+(`Nat.mul_div_cancel_left` wants positivity proofs on both operands —
+span may be 0; `Nat.div_le_div_left` wants `0 < numerator`). The gluing
+cost exceeds the contract's oracle value, and the bound says do not force
+proofs where tests pin against two oracles — the sweep delivers the same
+contract pin in the project's own pattern. The file was deleted (it did
+not check; a non-checking spec pin is a broken artifact). **Trigger:** if
+the interpolation contract gains algebraic structure the sweep cannot
+express (e.g. cross-edit global timing invariants, or a move to rational
+slices), the formal layer reopens — with Mathlib as a prerequisite
+decision.
+
+## Phase 5 — Proposals (COMPLETE 2026-10-06)
+
+In `media-server-redesign-proposals.md` (created this session): PR-M1
+(executed — receipts in the findings doc), PR-S1 (the transcript-reel
+skill realignment line — operator review). The findings-to-proposals map
+reconciles via `lisp_eval` → green (every finding MF-1…MF-8 in exactly
+one proposal or no-action record).
+
+## Phase 6 — Plan (COMPLETE 2026-10-06)
+
+In `media-server-redesign-improvement-plan.md` (created this session):
+slices with execution status and receipts, net summary, operator
+decisions enumerated. The review's doc set now matches the scenarios
+precedent's shape: review, findings, proposals, improvement plan.
