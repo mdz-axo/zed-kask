@@ -27,8 +27,9 @@
 #   also pins jq locality (dispatch/uninstall not jq-blocked; the settings
 #   write fails loudly at its consumer).
 # - check-build-monitor.sh: the CPU/RSS sampler attributes only the
-#   build-owned process tree (out-of-tree decoys excluded) and reports
-#   interval utilization, not lifetime ps pcpu.
+#   build-owned process tree (out-of-tree decoys excluded), reports
+#   interval utilization (not lifetime ps pcpu), and skips a pid that
+#   vanishes between listing and read without stderr noise.
 # - check-build-profile.sh: MCP servers stay cheap to build; installs are
 #   capped and traced.
 # - check-lean-toolchain.sh: the pinned-toolchain install is offline-tested

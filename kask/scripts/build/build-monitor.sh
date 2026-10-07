@@ -22,9 +22,15 @@
 #     elapsed wall time, in percent-of-one-core summed over the tree —
 #     comparable to the old summed pcpu, but measured per interval.
 # A process that exits mid-interval is undercounted by its final partial
-# interval (negligible at the default 2s cadence). Column rename: the old
-# n_compile_procs (name-matched) is now n_build_procs (tree members) —
-# pre-rewrite traces carry the old column name.
+# interval (negligible at the default 2s cadence). A pid that vanishes
+# between the tree listing and its stat read (constant under cargo — the
+# build spawns short-lived children) is skipped silently: the read silences
+# stderr BEFORE the input redirect, because bash applies redirections left
+# to right and a failed `< /proc/...` would otherwise print ENOENT to the
+# install shell's stderr, interleaving with cargo's output (observed
+# 2026-10-06). Column rename: the old n_compile_procs (name-matched) is now
+# n_build_procs (tree members) — pre-rewrite traces carry the old column
+# name.
 #
 # Self-terminating: exits when the parent shell (install.sh) is gone, so a
 # crashed build never leaks the sampler. install.sh stops the sampler with
@@ -105,7 +111,10 @@ while kill -0 "$PPID" 2>/dev/null; do
 
     for pid in $(sample_tree); do
         line=""
-        read -r line < "/proc/$pid/stat" 2>/dev/null || continue
+        # stderr silenced before the input redirect: bash applies
+        # redirections left to right, so `< file 2>/dev/null` would leak the
+        # shell's ENOENT for a pid that exited after listing.
+        read -r line 2>/dev/null < "/proc/$pid/stat" || continue
         line="${line#*) }"          # strip "pid (comm) " — comm may contain spaces
         [ -n "$line" ] || continue
         set -- $line
@@ -124,7 +133,7 @@ while kill -0 "$PPID" 2>/dev/null; do
     busiest="-"
     if [ -n "$busiest_pid" ]; then
         bline=""
-        if read -r bline < "/proc/$busiest_pid/stat" 2>/dev/null; then
+        if read -r bline 2>/dev/null < "/proc/$busiest_pid/stat"; then
             bcomm="${bline#*\(}"
             busiest="${bcomm%%\)*}"
         fi
