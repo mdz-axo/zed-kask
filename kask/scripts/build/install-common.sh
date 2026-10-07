@@ -47,14 +47,6 @@ if [ "${#MCP_SERVERS[@]}" -eq 0 ]; then
     exit 1
 fi
 
-# jq is required for JSONC settings.json parsing/merging. The previous python3
-# fallback was removed (no Python shipped with the installer). Fail loudly here
-# so a missing jq is caught before any settings write is attempted.
-if ! command -v jq >/dev/null 2>&1; then
-    log_error "jq is required but not found on PATH. Install jq (e.g. 'apt install jq' or 'brew install jq') and re-run."
-    exit 1
-fi
-
 # System bin path for optional symlink.
 SYSTEM_BIN="/usr/local/bin"
 
@@ -635,6 +627,14 @@ write_mcp_server_settings() {
         log_error "write_mcp_server_settings: MCP_SERVERS is empty"
         return 1
     fi
+    # jq is required for the settings merge (no Python fallback ships with the
+    # installer). Checked HERE — at the actual consumer — not at source time,
+    # so --help and --build-only work on machines without jq; the install
+    # fails loudly at its real dependency, before any settings write.
+    command -v jq >/dev/null 2>&1 || {
+        log_error "write_mcp_server_settings: jq is required but not found on PATH. Install jq (e.g. 'apt install jq') and re-run."
+        return 1
+    }
 
     # Resolve the zed-kask config directory (matches paths::config_dir).
     # Linux: $XDG_CONFIG_HOME/zed-kask  (default ~/.config/zed-kask)
@@ -670,7 +670,8 @@ write_mcp_server_settings() {
             continue
         fi
         # Use jq to build the JSON entry safely (no string interpolation into
-        # JSON — avoids quoting bugs). jq is required (checked at source time).
+        # JSON — avoids quoting bugs). jq is required (checked at the top of
+        # this function).
         kask_servers_json=$(jq --arg id "$server_id" --arg path "$binary_path" \
             '. + {($id): {"command": $path, "args": [], "env": {}}}' <<< "$kask_servers_json")
     done
@@ -723,10 +724,17 @@ remove_mcp_server_settings() {
     if [ ! -f "$settings_file" ]; then
         return 0
     fi
+    # jq is required to clean the context_servers entries. A missing jq must
+    # NOT block uninstall (the binaries are still removed) — the skipped
+    # cleanup is surfaced loudly instead of passing silently.
+    command -v jq >/dev/null 2>&1 || {
+        log_warning "jq not found on PATH — cannot clean kask MCP entries from $settings_file (binaries are still removed)"
+        return 0
+    }
 
     # Remove entries whose command basename matches hkask-mcp-*.
     # jq is strict JSON, so strip JSONC comments first (Zed writes settings.json
-    # as JSONC). jq is required (checked at source time).
+    # as JSONC). jq is required (checked at the top of this function).
     local stripped
     if ! stripped=$(strip_jsonc_comments "$settings_file"); then
         log_warning "Could not parse $settings_file; leaving kask MCP entries in place"

@@ -215,6 +215,15 @@ report. All arithmetic is pure and deterministic (the G3 no-LLM-relay
 contract); the weight model IS the const table (`DEFAULT_PROFILE` — no
 weight literal lives in a code path).
 
+**Inline-table presentation (SP-05, 2026-10-06).** The optional
+`presentation: "InlineTable"` publishes the per-artifact evaluation matrix
+(title, URL, confidence, corroborations, published age) as a bounded inline
+table block and appends its ```spreadsheet display hint for inline
+rendering — the first research producer on the spreadsheet capability's
+InlineTable arm (plan §10 Phase 7). The default (`DataOnly`) output is
+unchanged: no key added. Pinned by
+`evaluate_evidence_inline_table_publishes_the_matrix`.
+
 **Syndication-aware corroboration.** Corroboration counts independent
 evidence units, not raw domains: content-bearing artifacts are clustered
 by 4-word shingle similarity (Jaccard ≥ 0.5, transitively closed), and a

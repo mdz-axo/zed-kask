@@ -103,7 +103,7 @@ The original 16 MCP servers were pruned to 10, then the **media** server was rec
 | --------------------------------------------------------------------------------------------------------------------- |
 | `companies`, `corpus`, `curator`, `kata-kanban`, `media`, `portfolio`, `prediction-markets`, `research`, `scenarios`, `spreadsheet`, `swarm`, `training` |
 
-> The Curator MCP server is distinct from the native Curator agent and may be disabled by settings. The media server is pinned at exactly 99 registered tools by `tool_surface_is_exactly_99_registered_tools` (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:453`); its OMC mapping is checked across the same registered set at `:483-489`.
+> The Curator MCP server is distinct from the native Curator agent and may be disabled by settings. The media server is pinned at exactly 101 registered tools by `tool_surface_is_exactly_101_registered_tools` (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:453`); its OMC mapping is checked across the same registered set at `:483-489`.
 
 ---
 
@@ -296,7 +296,7 @@ sets without duplicating their implementation prose. In particular:
 - D10 is retired because the Kask panel is deleted.
 - D25 is a shared `ChatCompletionEventMapper` mapping.
 - D34 is absent from the active table; no `generate_batch` bridge exists.
-- D35 is the child-local media path and 99-tool media server (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:453,483-489`).
+- D35 is the child-local media path and 101-tool media server (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:453,483-489`).
 - D38, D49, D50, and D53 are folded into D37, D42, D46, and D54.
 - The latest active numbered seam is the final row of `DIVERGENCE.md`'s table.
 

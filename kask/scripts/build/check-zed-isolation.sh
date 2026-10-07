@@ -196,10 +196,13 @@ export MCP_SERVERS_LIST_FILE="$script_dir/mcp-servers.txt"
 source "$script_dir/install-common.sh"
 
 # Publication confinement (publish_binaries replaced the former
-# prepare_install_dir + install_binary delete-first pair): a publish with a
-# missing built binary must leave the working installation in place, a
-# successful publish replaces the old zed-kask and sweeps stale hkask-mcp-*
-# servers, and Zed-owned bin dirs are refused directly and through symlinks.
+# prepare_install_dir + install_binary delete-first pair): a successful
+# publish replaces the old zed-kask, sweeps stale hkask-mcp-* servers, and
+# leaves the Zed-owned sentinels untouched; Zed-owned bin dirs are refused
+# directly and through symlinks. (The failed-publish contract — preflight
+# and staging failures preserve the working installation — is pinned by
+# kask/scripts/build/check-publish-paths.sh, the dedicated publication
+# regression test; one invariant, one home.)
 publish_src="$sandbox/publish-src"
 mkdir -p "$publish_src"
 printf 'new-kask\n' > "$publish_src/zed-kask"
@@ -211,19 +214,6 @@ done
 
 printf 'old-kask\n' > "$BIN_DIR/zed-kask"
 printf 'old-server\n' > "$BIN_DIR/hkask-mcp-test"
-rm -f "$publish_src/zed-kask"
-if publish_binaries "$publish_src" "$publish_src" false >/dev/null 2>&1; then
-    fail "publish_binaries ran with a missing built binary (delete-first regression)"
-fi
-[ "$(cat "$BIN_DIR/zed-kask")" = "old-kask" ] \
-    || fail "failed publish replaced the working zed-kask binary"
-[ -e "$BIN_DIR/hkask-mcp-test" ] || fail "failed publish removed a working MCP binary"
-if [ -n "$(compgen -G "$BIN_DIR/*.new")" ]; then
-    fail "failed publish left staged .new file(s) behind"
-fi
-
-printf 'new-kask\n' > "$publish_src/zed-kask"
-chmod +x "$publish_src/zed-kask"
 if ! publish_binaries "$publish_src" "$publish_src" false >/dev/null 2>&1; then
     fail "publish_binaries failed on a clean fixture"
 fi

@@ -185,7 +185,7 @@ mod tests {
                 "title": "Evidence evaluation",
                 "sheet_name": "Evidence",
                 "columns": [{"id": "v", "label": "V", "kind": "Number"}],
-                "rows": [[1.0]],
+                "rows": [[{"Number": 1.0}]],
             },
         })
         .to_string();

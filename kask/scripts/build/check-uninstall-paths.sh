@@ -1,7 +1,8 @@
 #!/bin/bash
 # Regression test: zed-kask uninstall paths.
 #
-# Pins three properties of uninstall_hkask (now in install-common.sh):
+# Pins four properties of the installer (uninstall_hkask and the jq
+# consumers, now in install-common.sh):
 #
 #   1. HKASK_REMOVE_CONFIG=true removes the REAL runtime dirs
 #      ~/.config/zed-kask and ~/.local/share/zed-kask — NOT the stale,
@@ -22,6 +23,12 @@
 #      does no linking (rm/sed/jq only), so applying the guard there would
 #      block uninstall from Zed's own integrated terminal. The install) and
 #      build-only) cases must STILL be guarded.
+#
+#   4. jq is a consumer-side dependency, not a source-time one (the
+#      source-time exit was removed): --help works without jq, the
+#      install-side settings write fails loudly at its actual dependency,
+#      and uninstall degrades loudly (settings cleanup skipped, binaries
+#      still removed).
 
 set -euo pipefail
 
@@ -162,6 +169,39 @@ printf '%s\n' "$install_block" | grep -vE '^[[:space:]]*#' | grep -q 'assert_not
 build_block=$(awk '/^[[:space:]]+build-only\)/{f=1} f{print} f&&/^[[:space:]]+;;/{exit}' "$install_sh")
 printf '%s\n' "$build_block" | grep -vE '^[[:space:]]*#' | grep -q 'assert_not_zed_contaminated_env' \
     || fail "build-only) case lost its assert_not_zed_contaminated_env guard"
+
+# --- Test 4: jq locality ---------------------------------------------------
+# The source-time jq requirement was removed (it killed --help, --build-only
+# AND --uninstall on jq-less machines). jq is now checked at its consumers:
+# fatally in write_mcp_server_settings, loudly-skipped in
+# remove_mcp_server_settings.
+jq_shim="$sandbox/path-without-jq"
+mkdir -p "$jq_shim"
+for tool in cat dirname grep readlink sed; do
+    ln -s "$(command -v "$tool")" "$jq_shim/$tool"
+done
+
+# (a) install.sh --help dispatches without jq (previously dead at source time).
+if ! PATH="$jq_shim" bash "$install_sh" --help >"$sandbox/help.log" 2>&1; then
+    fail "--help failed without jq on PATH"
+    cat "$sandbox/help.log" >&2
+fi
+grep -q "Usage" "$sandbox/help.log" || fail "--help output missing without jq"
+
+# (b) The install-side settings write fails loudly at its real dependency.
+if (PATH="$jq_shim" write_mcp_server_settings) >"$sandbox/write.log" 2>&1; then
+    fail "write_mcp_server_settings succeeded without jq"
+fi
+grep -q "jq is required" "$sandbox/write.log" || fail "missing-jq error did not name jq"
+
+# (c) The uninstall-side cleanup degrades loudly, never blocks uninstall.
+printf '{"context_servers":{"kask-server":{"command":"%s/hkask-mcp-swarm"}}}' "$BIN_DIR" \
+    > "$XDG_CONFIG_HOME/zed-kask/settings.json"
+if ! (PATH="$jq_shim" remove_mcp_server_settings) >"$sandbox/remove.log" 2>&1; then
+    fail "remove_mcp_server_settings failed without jq (must degrade, not block)"
+fi
+grep -q "cannot clean kask MCP entries" "$sandbox/remove.log" \
+    || fail "the jq skip was not surfaced loudly"
 
 if [ "$errors" -gt 0 ]; then
     echo "REGRESSION: $errors uninstall path failure(s) detected." >&2

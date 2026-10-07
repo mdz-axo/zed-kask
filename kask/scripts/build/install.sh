@@ -230,10 +230,10 @@ build_hkask() {
 
     # CPU/RSS trace — the build observes itself (D46). Every install leaves
     # a quantified record of what it did to the machine: a per-sample CSV
-    # (compile-proc count, CPU%, RSS, busiest proc) — a burn shows up as
-    # sustained high rows in the trace, not a user report. The sampler is
-    # stopped with SIGTERM below, so the trace covers exactly the build.
-    # Override the trace location with HKASK_BUILD_TRACE.
+    # (build-tree proc count, interval CPU%, RSS, busiest proc) — a burn
+    # shows up as sustained high rows in the trace, not a user report. The
+    # sampler is stopped with SIGTERM below, so the trace covers exactly the
+    # build. Override the trace location with HKASK_BUILD_TRACE.
     local trace_file="${HKASK_BUILD_TRACE:-$workspace_root/target/build-cpu-trace.log}"
     mkdir -p "$(dirname "$trace_file")"
     bash "$(dirname "${BASH_SOURCE[0]}")/build-monitor.sh" "$trace_file" &
@@ -316,6 +316,34 @@ install_binaries() {
     publish_binaries "$zed_profile_dir" "$workspace_root/target/release-mcp" "$strip_binaries"
 }
 
+# release_channel — the release channel the source tree carries
+# (crates/zed/RELEASE_CHANNEL; RELEASE_CHANNEL env or "dev" fallback). One
+# home for the channel read shared by install_icon, install_desktop_entry,
+# and verify_installation.
+release_channel() {
+    local workspace_root="$1"
+    if [ -f "$workspace_root/crates/zed/RELEASE_CHANNEL" ]; then
+        echo "$(< "$workspace_root/crates/zed/RELEASE_CHANNEL")"
+    else
+        echo "${RELEASE_CHANNEL:-dev}"
+    fi
+}
+
+# kask_app_id_for_channel — the release-channel app_id (must match
+# ReleaseChannel::app_id in crates/release_channel). One home for the
+# channel→app_id mapping shared by install_icon, install_desktop_entry, and
+# verify_installation — the former per-function case blocks drifted from
+# verify_installation's hardcoded stable name, which failed nightly/preview
+# channel trees after a successful install.
+kask_app_id_for_channel() {
+    case "$1" in
+        stable)  echo "dev.zed-kask.Zed-Kask" ;;
+        nightly) echo "dev.zed-kask.Zed-Kask-Nightly" ;;
+        preview) echo "dev.zed-kask.Zed-Kask-Preview" ;;
+        *)       echo "dev.zed-kask.Zed-Kask" ;;
+    esac
+}
+
 # install_icon — install the zed-kask icon into the hicolor theme so the
 # running application's window has a proper icon in the taskbar/dock.
 #
@@ -357,11 +385,7 @@ install_icon() {
     mkdir -p "$icon_dir_512" "$icon_dir_1024"
 
     local channel
-    if [ -f "$workspace_root/crates/zed/RELEASE_CHANNEL" ]; then
-        channel="$(< "$workspace_root/crates/zed/RELEASE_CHANNEL")"
-    else
-        channel="${RELEASE_CHANNEL:-dev}"
-    fi
+    channel="$(release_channel "$workspace_root")"
     local icon_suffix=""
     if [ "$channel" != "stable" ]; then
         icon_suffix="-$channel"
@@ -379,12 +403,7 @@ install_icon() {
 
     # app_id must match ReleaseChannel::app_id() in crates/release_channel.
     local app_id_name
-    case "$channel" in
-        stable)  app_id_name="dev.zed-kask.Zed-Kask" ;;
-        nightly) app_id_name="dev.zed-kask.Zed-Kask-Nightly" ;;
-        preview) app_id_name="dev.zed-kask.Zed-Kask-Preview" ;;
-        *)       app_id_name="dev.zed-kask.Zed-Kask" ;;
-    esac
+    app_id_name="$(kask_app_id_for_channel "$channel")"
 
     local name
     for name in "$app_id_name" "zed-kask"; do
@@ -443,19 +462,8 @@ install_desktop_entry() {
         data_root="${XDG_DATA_HOME:-$HOME/.local/share}"
     fi
 
-    local channel
-    if [ -f "$workspace_root/crates/zed/RELEASE_CHANNEL" ]; then
-        channel="$(< "$workspace_root/crates/zed/RELEASE_CHANNEL")"
-    else
-        channel="${RELEASE_CHANNEL:-dev}"
-    fi
     local app_id_name
-    case "$channel" in
-        stable)  app_id_name="dev.zed-kask.Zed-Kask" ;;
-        nightly) app_id_name="dev.zed-kask.Zed-Kask-Nightly" ;;
-        preview) app_id_name="dev.zed-kask.Zed-Kask-Preview" ;;
-        *)       app_id_name="dev.zed-kask.Zed-Kask" ;;
-    esac
+    app_id_name="$(kask_app_id_for_channel "$(release_channel "$workspace_root")")"
 
     local apps_dir="$data_root/applications"
     local desktop_file="$apps_dir/$app_id_name.desktop"
@@ -718,6 +726,11 @@ install_corpus_bundles() {
 
 verify_installation() {
     log "Verifying installation..."
+    # Every check names its evidence class: [installed] = file presence,
+    # [runtime-tested] = a process probe, [skipped] = not exercised here.
+    # An unperformed check is never reported as success — the final
+    # "Installation complete!" refers to the file layout and the CLI smoke
+    # probe only.
 
     if [ ! -f "$BIN_DIR/zed-kask" ]; then
         log_error "Binary not found at $BIN_DIR/zed-kask"
@@ -728,7 +741,18 @@ verify_installation() {
     # report the file size as a sanity check that the binary is non-empty.
     local binary_size
     binary_size=$(stat -c%s "$BIN_DIR/zed-kask" 2>/dev/null || echo "unknown")
-    log "CLI: $BIN_DIR/zed-kask (${binary_size} bytes)"
+    log "[installed] CLI: $BIN_DIR/zed-kask (${binary_size} bytes)"
+
+    # Runtime smoke probe: --help exercises the binary's CLI path (bounded,
+    # no GUI). A presence check cannot catch a wrong-architecture or
+    # otherwise unrunnable binary; this can.
+    local help_rc=0
+    "$BIN_DIR/zed-kask" --help >/dev/null 2>&1 || help_rc=$?
+    if [ "$help_rc" -ne 0 ]; then
+        log_error "[runtime-tested] CLI --help failed (exit $help_rc) — the binary is present but not runnable"
+        return 1
+    fi
+    log "[runtime-tested] CLI --help exited 0"
 
     local icon_data_root
     if [ "${HKASK_SYSTEM_INSTALL:-false}" = "true" ]; then
@@ -737,24 +761,27 @@ verify_installation() {
         icon_data_root="${XDG_DATA_HOME:-$HOME/.local/share}"
     fi
     # The app_id-named icon is the one the Wayland compositor resolves for the
-    # taskbar/dock (see install_icon). Verify it exists; the friendly
-    # "zed-kask" alias is installed alongside but is not load-bearing.
-    local installed_icon="$icon_data_root/icons/hicolor/512x512/apps/dev.zed-kask.Zed-Kask.png"
+    # taskbar/dock (see install_icon). The app_id is channel-derived — a
+    # nightly/preview tree installs under a different name than stable, so
+    # verifying a hardcoded stable name would fail those channels.
+    local app_id_name
+    app_id_name="$(kask_app_id_for_channel "$(release_channel "$HKASK_SOURCE_DIR")")"
+    local installed_icon="$icon_data_root/icons/hicolor/512x512/apps/${app_id_name}.png"
     if [ ! -s "$installed_icon" ]; then
         log_error "Icon not found or empty at $installed_icon"
         return 1
     fi
-    log "Icon: $installed_icon ($(stat -c%s "$installed_icon" 2>/dev/null || echo "unknown") bytes)"
+    log "[installed] Icon: $installed_icon ($(stat -c%s "$installed_icon" 2>/dev/null || echo "unknown") bytes)"
 
     # The NoDisplay .desktop entry is what GNOME actually uses to bind the
     # window's app_id to the icon (see install_desktop_entry). Without it the
     # taskbar shows a generic icon even though the hicolor icon is present.
-    local installed_desktop="$icon_data_root/applications/dev.zed-kask.Zed-Kask.desktop"
+    local installed_desktop="$icon_data_root/applications/${app_id_name}.desktop"
     if [ ! -s "$installed_desktop" ]; then
         log_error "Desktop entry not found or empty at $installed_desktop"
         return 1
     fi
-    log "Desktop entry: $installed_desktop"
+    log "[installed] Desktop entry: $installed_desktop"
 
     # Check MCP server binaries
     local mcp_count=0
@@ -762,10 +789,10 @@ verify_installation() {
         if [ -x "$BIN_DIR/$server" ]; then
             mcp_count=$((mcp_count + 1))
         else
-            log_error "MCP server missing or not executable: $server"
+            log_error "[installed] MCP server missing or not executable: $server"
         fi
     done
-    log "MCP servers: $mcp_count/${#MCP_SERVERS[@]} available"
+    log "[installed] MCP servers: $mcp_count/${#MCP_SERVERS[@]} available"
     if [ "$mcp_count" -ne "${#MCP_SERVERS[@]}" ]; then
         return 1
     fi
@@ -775,11 +802,17 @@ verify_installation() {
         log_error "Pinned Lean/Lake toolchain launcher missing: $elan_home/bin/lake"
         return 1
     fi
+    log "[installed] Lean/Lake launcher: $elan_home/bin/lake"
 
     # Check symlink in /usr/local/bin
     if [ -L "$SYSTEM_BIN/zed-kask" ]; then
-        log "Symlink: $SYSTEM_BIN/zed-kask → $(readlink "$SYSTEM_BIN/zed-kask")"
+        log "[installed] Symlink: $SYSTEM_BIN/zed-kask → $(readlink "$SYSTEM_BIN/zed-kask")"
     fi
+
+    # Honest coverage: what this verification did NOT exercise. Functional
+    # checks beyond the CLI smoke probe belong to the runtime's own startup,
+    # not the installer.
+    log "[skipped] MCP server function, TLS, and corpus recall are not exercised by the installer"
 
     # Check if zed-kask is reachable via PATH
     if command -v zed-kask >/dev/null 2>&1; then

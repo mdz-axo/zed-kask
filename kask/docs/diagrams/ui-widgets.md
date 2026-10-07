@@ -700,7 +700,12 @@ terms for forecast identifiers, Brier scores, or scenario probabilities
 `hkask-spreadsheet-widget` renders ```` ```spreadsheet ```` fenced blocks — the
 server-authoritative display hints emitted by `spreadsheet_apply` and by
 analytical publishers such as `portfolio_what_if` (the `SpreadsheetBlock`
-wire contract, `kask/crates/hkask-types/src/spreadsheet.rs`). Parsing is
+wire contract, `kask/crates/hkask-types/src/spreadsheet.rs`). Since SP-05
+(2026-10-06) the same widget renders inline table blocks
+(`SpreadsheetBlockKind::Inline`, the `InlineTableBlock` wire contract) as a
+bounded, read-only, sortable table — no formula bar, no staging, no save
+(§6: no persistence, no mutation endpoint); the first producer is the
+research server's `evaluate_evidence` (`presentation: "InlineTable"`). Parsing is
 two-stage, matching the viz-widget contract in `hkask-viz-core`: the
 tolerant `SpreadsheetBlockBody`
 (`crates/hkask-spreadsheet-widget/src/block.rs:23-46`) parses any foreign

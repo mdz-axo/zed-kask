@@ -668,6 +668,20 @@ Candidates:
 
 Research outputs initially use InlineTable. WorkbookWhatIf is enabled only where annotation, scoring, or derived formulas provide a concrete user benefit.
 
+**Phase 7 record (2026-10-06): first research producer COMPLETE.**
+`evaluate_evidence` gained the explicit presentation choice
+(`EvidencePresentation`: `DataOnly` default — the plain JSON report — or
+`InlineTable`), the first producer on the InlineTable arm (SP-05 of the
+from-scratch design review): under `InlineTable` the server publishes the
+per-artifact evaluation matrix (title, URL, confidence, corroborations,
+published age) as a bounded inline table block through the per-instance
+engine actor and appends its ` ```spreadsheet ` display hint
+(`kask/mcp-servers/hkask-mcp-research/src/hkask_mcp_research.rs`, pinned by
+`evaluate_evidence_inline_table_publishes_the_matrix`). The D18 widget
+renders inline blocks as a bounded, read-only, sortable table
+(`SpreadsheetBlockKind::Inline`, `crates/hkask-spreadsheet-widget/src/block.rs`).
+The remaining Phase 7 candidates remain unchartered.
+
 ## 11. Verification requirements
 
 ### Core behavior

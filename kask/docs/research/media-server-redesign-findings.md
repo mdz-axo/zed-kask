@@ -26,24 +26,62 @@ proposals feed them, and the plan's slices execute them. When the operator
 directs a specific condition, its kata loop runs directly — the phases are
 its method, not a prerequisite re-run.
 
-### MF-1 — Reduct cloud write surface (condition 1)
+### MF-1 — Reduct cloud write surface (condition 1) — **CLOSED 2026-10-06, commit `f66b136fe2`**
 
-- **Current condition:** strikethroughs, highlight **writes**, redactions,
-  publishing, media download, and transcript correction remain unimplemented
-  (`kask/mcp-servers/hkask-mcp-media/README.md:340-344`). Page 41 of the
-  v3 reference lists strikethrough paths without body/response schema, and
-  there is no private Reel render/download contract. Publication never
-  happens by default — a share token creates a publicly accessible link
-  (`README.md:338`).
-- **Target condition:** each unimplemented capability is either implemented
-  against the pinned provider contract (fixture-tested request path/body,
-  parsed acknowledgement, HTTP refusal — the way `reduct_create_reel` et
-  al. were) or explicitly documented as out of scope with the reason.
-- **Reached when:** the capability has contract tests and a docs-reference
-  row, or the README's unimplemented list no longer names it.
-- **Decision status:** technical execution (no operator decision required
-  beyond slice acceptance); the publication-never-by-default invariant is
-  non-negotiable in every slice.
+- **Current condition (at close):** every capability on the unimplemented
+  list is adjudicated against the pinned v3 reference
+  (`~/Downloads/Reduct-Video.pdf`, 55 pages, operator-supplied, not
+  committed). **Implemented** (fixture-tested request path/body, X-Auth-Key
+  header, parsed acknowledgement, HTTP refusal):
+  - `reduct_add_recording_highlight` — v3 pages 23-24: POST
+    `.../highlight` with `start_time`/`end_time` seconds and optional
+       labels (a color tag like `#orange` selects a non-yellow color);
+    acknowledgement `{"highlight": id}`.
+  - `reduct_publish_reel` — v3 pages 33-34: POST `.../publish` with an
+       explicit bool (never defaulted — `true` asks the provider to create
+       a share token, a publicly accessible link); acknowledgement carries
+       `publish` + `share_token`, and the token VALUE is never returned
+       (publish state and token presence only — the surface's token
+       discipline). A publish=true ack without a token is surfaced as
+       failed_precondition ("may have succeeded; inspect"), never claimed.
+    The body parameter name follows the reference's own field-name
+       convention (GET and acknowledgement both carry `publish`; the PDF's
+       body-name line is one of its OCR-flagged gaps) — the inference is
+       documented at the construction site.
+- **Out of scope, with reasons** (README's per-capability adjudication):
+  strikethroughs (page 41 lists paths without body/response schema —
+  implementing would guess the wire format); redactions (pages 21-22 list
+  paths without body/response schema, and the reference's own warning says
+  API audio redactions only redact audio, never transcript text); media
+  download (page 21 lists the path without body/response schema; no private
+  Reel render/download contract); transcript correction (the v3 API exposes
+  no transcript-correction endpoint at all — verified across the reference;
+  local re-alignment exists since MF-2).
+- **Pinned but unimplemented (follow-up slices, not out of scope):**
+  highlight edit/delete (v3 pages 24-25) and unpublish via
+  `DELETE .../share_token` (v3 page 33).
+- **Reached-when check:** both tools have loopback contract tests
+  (`highlight_and_publish_writes_send_only_the_v3_contract`,
+  `publish_ack_without_token_is_surfaced_not_claimed`,
+  `publish_http_refusal_is_classified_never_claimed`,
+  `highlight_input_sanity_is_refused_before_any_request` —
+  `src/tools/reduct.rs` tests) and docs-reference rows (media.md Reduct
+  table); the README's unimplemented list is replaced by the per-capability
+  adjudication.
+- **Receipts:** `./script/clippy -p hkask-mcp-media` green (0 errors);
+  `cargo test -p hkask-mcp-media` 446/0/6 (320 main + 125 deser + 1 doc;
+  +4 over the MF-2 baseline). Three-piece sync: pin 99→101
+  (`tool_surface_is_exactly_101_registered_tools`), OMC arms
+  (`reduct_add_recording_highlight` → VERSION_INFO,
+  `reduct_publish_reel` → SEQUENCE), docs rows (media.md count + history +
+  Reduct table, README adjudication + publication prose, fleet table,
+  diataxis, architecture plan).
+- **Original condition record (2026-10-06 re-grasp, for the history):**
+  strikethroughs, highlight **writes**, redactions, publishing, media
+  download, and transcript correction remained unimplemented
+  (`README.md:340-344`); page 41 listed strikethrough paths without
+  body/response schema; no private Reel render/download contract;
+  publication never happens by default.
 
 ### MF-2 — Transcript re-alignment (condition 2) — **CLOSED 2026-10-06, commit `c9a5c3b855`**
 

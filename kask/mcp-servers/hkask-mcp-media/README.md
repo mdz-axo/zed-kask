@@ -2,9 +2,9 @@
 
 Media generation MCP server — image, video, and audio generation via the configured media providers.
 
-## Tools (99)
+## Tools (101)
 
-The full surface is pinned end-to-end by `tool_surface_is_exactly_99_registered_tools` (`src/hkask_mcp_media.rs`) and documented per-tool in [`kask/docs/reference/mcp-servers/media.md`](../../docs/reference/mcp-servers/media.md). The table below is a partial quick-reference.
+The full surface is pinned end-to-end by `tool_surface_is_exactly_101_registered_tools` (`src/hkask_mcp_media.rs`) and documented per-tool in [`kask/docs/reference/mcp-servers/media.md`](../../docs/reference/mcp-servers/media.md). The table below is a partial quick-reference.
 
 | Tool | Description |
 |------|-------------|
@@ -277,10 +277,15 @@ unknown). `reduct_recording_status`, `reduct_recording_transcript`, and
 transcript, and provider-native bounded highlight map, respectively.
 `reduct_reels_snapshot` projects bounded reel IDs/titles from project detail;
 `reduct_reel_detail` reads an existing reel's title and blocks while removing
-all nested `share_token` fields. The v3 reference (pages 29â30) says a Reel
+all nested `share_token` fields. The v3 reference (pages 29â30) says a Reel
 GET omits `publish` and presence of a share token determines publication;
 source now projects `publication_state` as `published`, `unpublished`, or
-`undetermined` for malformed token shapes, without returning the token. The logged-in v3 API
+`undetermined` for malformed token shapes, without returning the token.
+`reduct_publish_reel` (2026-10-06, MF-1) sets the publication flag against
+the pinned pages 33-34 contract — an explicit bool, never defaulted — and the
+share token VALUE stays unreturned there too (publish state and token
+presence only). The reference still provides no private Reel render/download
+contract. The logged-in v3 API
 reference excerpt supplied by the operator on 2026-09-23 pins the X-Auth-Key
 header, root URL, these recording paths, and the mutating calls below. A live
 OS-keychain-based test retrieved a project, project-scoped recordings, recording
@@ -347,11 +352,34 @@ running child as `unpublished` for the Axolotl throwaway Reel; its sixteen
 ordered blocks remained intact, and no token value was returned. Never
 publish by default: a share token creates a publicly accessible link.
 
-Strikethroughs, highlight **writes**, redactions, publishing, media download
-and transcript correction remain unimplemented. Page 41 lists strikethrough
-paths without body/response schema. DELETE is irreversible; POST can overwrite
-named fields; API audio redaction does not redact transcript text. Enter/reset
-the key in Settings â Kask â Data Services; writes/deletes refresh the child.
+The Reduct write surface is adjudicated per capability against the pinned
+v3 reference (2026-10-06, MF-1). **Implemented:** highlight creation
+(`reduct_add_recording_highlight`, v3 pages 23-24 — POST `.../highlight`
+with `start_time`/`end_time` seconds and optional labels; a color tag like
+`#orange` selects a non-yellow color) and reel publication
+(`reduct_publish_reel`, v3 pages 33-34 — POST `.../publish` with an explicit
+bool; the body parameter name follows the reference's own field-name
+convention, the PDF's body-name line being one of its OCR-flagged gaps). The
+publish parameter is never defaulted — `true` asks the provider to create a
+share token, a publicly accessible link — and the token VALUE is never
+returned (the response reports publish state and token presence; the link is
+visible in the Reduct app). Both tools carry loopback fixture tests for
+request path/body, X-Auth-Key header, parsed acknowledgement, and HTTP
+refusal. **Out of scope, with reasons:** strikethroughs — v3 page 41 lists
+the paths without body/response schema, so implementing would guess the wire
+format; redactions — v3 pages 21-22 list the paths without body/response
+schema (the page 47-48 use case describes start/end times but pins no formal
+body), and the reference's own warning says API audio redactions only redact
+the audio, never the transcript text; media download — v3 page 21 lists the
+`media-download` path without body/response schema, and the reference
+provides no private Reel render/download contract; transcript correction —
+the v3 API exposes no transcript-correction endpoint at all (verified across
+the 55-page reference; Reduct's in-app re-alignment has no API surface, and
+local re-alignment exists since 2026-10-06 via `educt_realign_transcript`).
+**Pinned but unimplemented (available as follow-up slices):** highlight
+edit/delete (v3 pages 24-25) and unpublish via `DELETE .../share_token`
+(v3 page 33). DELETE is irreversible; POST can overwrite
+named fields. Enter/reset the key in Settings â Kask â Data Services; writes/deletes refresh the child.
 
 ## Configuration
 

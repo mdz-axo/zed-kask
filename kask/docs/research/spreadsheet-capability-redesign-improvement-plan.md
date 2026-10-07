@@ -137,6 +137,56 @@ has either a consumer or a plan-recorded reservation with a charter.
 **Checkpoint:** every documentation claim about the capability is true of
 the shipped tree; no evidence gap remains open except by explicit ruling.
 
+## Execution record (2026-10-06)
+
+Slices 1–5 executed the same day, chartered by the operator's "proceed
+with the recommended implementation plan". Landing commits (the operator
+bundled concurrent streams into each):
+
+- **Slice 1 (SP-01)** — commit `1a8c500c12`: `SpreadsheetError::mcp_kind()`
+  is the single owner of the taxonomy (exhaustive by construction — a new
+  variant is a compile error until classified); `SpreadsheetPublication::
+  display_hint()` + `hint_body()` own the fence format; the three
+  classification tables and three hint formatters are deleted; the
+  mapper-equivalence pin (`mcp_kind_classifies_every_variant`) and the
+  fence round-trip pin (`display_hint_round_trips_through_hint_body`)
+  are green.
+- **Slice 2 (SP-03, SP-02)** — commit `1a8c500c12`: the typed kind crosses
+  the ToolInvoker seam (`ToolPortError::InvocationFailed { detail, kind }`
+  → `InvokeError::Failed { message, kind }`, extracted once at dispatch);
+  the widget's conflict detection is structural
+  (`conflict_detection_is_structural_not_textual` pins the anti-sniffing
+  invariant); `SaveStatus::Interrupted` carries the reconciliation
+  identity and the label renders it.
+- **Slice 3 (SP-04, SP-11)** — commit `c9a5c3b855`: residency capped at
+  `MAX_OPEN_DOCUMENTS = 16` with LRU eviction that pins staged documents;
+  `WorkbookDocument::close()` releases superseded revisions (the widget
+  closes on save); publish writes metadata before the revision, both
+  atomically; pins `document_residency_is_bounded_and_staged_documents_
+  are_pinned` and `metadata_only_artifact_window_is_unknown_but_consistent`.
+- **Slice 4 (SP-06, SP-12, SP-05)** — SP-06/SP-12 in commit `c9a5c3b855`
+  (`expected_access` enforced with an `AccessMismatch` rejection pin; the
+  tautological `access` fields deleted from both block types, plan §6
+  amended in the same change). SP-05 COMPLETE per the recommended option:
+  the widget renders inline blocks as a bounded, read-only, sortable table
+  (`SpreadsheetBlockKind::Inline`; `sort_rows`/`compare_values` pure and
+  pinned); `evaluate_evidence` is the first research producer
+  (`presentation: "InlineTable"` → the evidence matrix, pinned by
+  `evaluate_evidence_inline_table_publishes_the_matrix`); the research
+  server's `config_env` gained `HKASK_ARTIFACTS_DIR` with its allowlist
+  pin.
+- **Slice 5 (SP-07, SP-08, SP-10)** — commits `c9a5c3b855` and later: the
+  display-hint bullet is emitter-agnostic (agent 1032-test pin green);
+  the plan's Phase 6 record (companies slice) and Phase 7 record (research
+  slice) are present; the formula inventory is probe-verified
+  (`kask/scripts/probe-spreadsheet-formula-inventory.sh`: 96 candidates,
+  82 evaluate, 14 error under every probed shape) and documented in
+  `reference/mcp-servers/spreadsheet.md`.
+
+**Remaining:** SP-09 (the derived-ontology ruling for the six contract
+ terms) is operator-gated by design — the ruling is the operator's to
+ issue; every other proposal in the set is executed.
+
 ## Net summary
 
 **Built:** one canonical display-hint fence and error classifier (Slice 1);

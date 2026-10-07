@@ -315,6 +315,13 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             // time. Without this, an operator override is silently stripped
             // under governed launch.
             "HKASK_RERANK_MODEL",
+            // Artifacts dir — read by the spreadsheet engine actor's
+            // production root (`hkask_spreadsheet::artifact_store::
+            // production_root` → `agent_paths::resolve_under_artifacts_dir`)
+            // for `evaluate_evidence`'s InlineTable presentation (SP-05).
+            // Without this, an operator override of the artifacts tree is
+            // silently dropped under governed launch.
+            "HKASK_ARTIFACTS_DIR",
         ],
     },
     BuiltinMcpServer {
@@ -1543,6 +1550,13 @@ mod tests {
             "research resolves its default research DB via resolve_under_data_dir \
              but HKASK_DATA_DIR is not allowlisted — an operator override \
              would be silently dropped"
+        );
+        assert!(
+            s.config_env.contains(&"HKASK_ARTIFACTS_DIR"),
+            "research resolves the spreadsheet artifact root via \
+             hkask_spreadsheet::artifact_store::production_root (the InlineTable \
+             presentation, SP-05) but HKASK_ARTIFACTS_DIR is not allowlisted — \
+             an operator override would be silently dropped"
         );
         assert!(
             s.config_env.contains(&"HKASK_RERANK_MODEL"),

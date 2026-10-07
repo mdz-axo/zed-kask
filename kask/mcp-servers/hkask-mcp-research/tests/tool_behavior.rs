@@ -448,11 +448,9 @@ fn test_server(
     embedding_model: Option<&str>,
 ) -> ResearchServer {
     // A per-test spreadsheet actor over a persistent temp root (SP-05):
-    // `into_path` keeps the directory — the server outlives this helper's
+    // `keep()` retains the directory — the server outlives this helper's
     // scope, and the InlineTable presentation never writes anyway.
-    let spreadsheet_dir = tempfile::tempdir()
-        .expect("spreadsheet temp root")
-        .into_path();
+    let spreadsheet_dir = tempfile::tempdir().expect("spreadsheet temp root").keep();
     let spreadsheet = hkask_spreadsheet::WorkbookService::start_with_root(spreadsheet_dir)
         .expect("spreadsheet engine actor");
     ResearchServer::new(
