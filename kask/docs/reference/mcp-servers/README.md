@@ -112,7 +112,9 @@ The scenarios server uses a binomial event-tree model (MAIA methodology):[^bayes
 each event is a yes/no question with a deadline; events can depend on other events via
 conditional probability tables; marginal probabilities are computed via full joint-table
 marginalization under parent independence; the "all events occur" path probability is the
-product of all-node-occur conditionals.
+product of all-node-occur conditionals. The validation-and-marginalization contract is
+machine-checked in `kask/lean/event_tree_marginalization.lean` (see the scenarios
+reference's Formal specification section).
 
 ### The layer diagram
 

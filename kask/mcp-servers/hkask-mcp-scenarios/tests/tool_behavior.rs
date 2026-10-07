@@ -473,7 +473,7 @@ async fn scenario_triage_classifies_vague_question_as_needs_refinement() {
     );
 }
 
-// ── Slice 1 fidelity pins (scenario-server-redesign PR-03/04/06/12/14) ──────
+// ── Slice 1 fidelity pins (PR-03/04/06/12/14) ──────
 
 /// PR-03: the Phase-5 calibration evidence is scoped to the project's
 /// subject — a multi-subject store must not leak other projects'
@@ -1141,7 +1141,7 @@ async fn scenario_assess_unreported_metrics_withhold_dependent_phases() {
     );
 }
 
-// ── Slice 5 posterior-tool pins (scenario-server-redesign PR-08) ──────────
+// ── Slice 5 posterior-tool pins (PR-08) ──────────
 
 /// PR-08 parity: the tool reproduces the shared engine's backward
 /// inference — the same chain the widget's engine test pins (a 0.5 →
@@ -1326,7 +1326,7 @@ async fn scenario_recompute_posteriors_rejects_malformed_evidence() {
     );
 }
 
-// ── Slice 4 marginal-scoring pin (scenario-server-redesign PR-02) ─────────
+// ── Slice 4 marginal-scoring pin (PR-02) ─────────
 
 /// PR-02: the scored belief is the tree's resolved MARGINAL, not the
 /// caller-supplied prior. A dependent event (prior 0.5, conditionals
@@ -1413,7 +1413,7 @@ async fn scenario_score_scores_the_tree_marginal_not_the_prior() {
     );
 }
 
-// ── Slice 3 project-record pins (scenario-server-redesign PR-01/PR-07) ──────
+// ── Slice 3 project-record pins (PR-01/PR-07) ──────
 
 /// PR-01: the project record is the assessment's anchor — an unknown
 /// project id is `not_found` naming it, never a phantom assessment.

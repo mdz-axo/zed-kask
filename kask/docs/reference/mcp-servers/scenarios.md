@@ -1,7 +1,7 @@
 ---
 title: "Scenarios MCP Server Reference"
 audience: [developers, architects]
-last_updated: 2026-10-06
+last_updated: 2026-10-07
 version: "0.39.1"
 status: "Active"
 domain: "Composition"
@@ -101,8 +101,32 @@ and nothing else — each has its own contract:
 
 The scenarios server itself implements the MAIA event-based template
 (event sets as yes/no questions over fixed horizons; four scenario
-types, three time horizons) and the Tetlock quantification; the Schwartz
+types, three horizons) and the Tetlock quantification; the Schwartz
 narrative phases are the skill layer's.
+
+## Design model
+
+Twelve primitives, derived from the four reference models in the
+2026-10 redesign review, define the server's shape (the review's
+from-scratch verdict kept the event, tree, synthesis, journal,
+calibration, impact-mapping, market-bridge, and certainty-tier
+primitives substantially as built and added the project record; the
+full derivation is in git history — see the Redesign record):
+
+| Primitive | Contract | Reference-model source | Lives in |
+|---|---|---|---|
+| FramingDocument | the project charter: focal question, decision at stake, horizon, scope, stakeholders, success criteria, constraints, assumptions | Chermack Phase 1; Schwartz step 1 | `scenario_frame` → `scenario_frame_document`, persisted under the project record |
+| BinomialEvent | yes/no question + deadline + probability + basis + Fermi sub-questions + base rate | MAIA event composition; Tetlock question discipline | `ScenarioEvent` |
+| DependencyEdge | parent ids + bitmap-ordered conditional table, length 2^\|parents\| | MAIA path dependence; Bayesian-network CPT | `depends_on` |
+| EventTree | marginals, topological order, joint = P(all events occur) | MAIA template; Tetlock inside view | `scenario_quantify` and the market bridges |
+| Perspective + Synthesis | inverse-Brier-weighted aggregation with disagreement score | Tetlock dragonfly-eye | `scenario_synthesize` |
+| ForecastRecord + journal | append-only journal + snapshot; Brier on tree marginals (schema v3) | Tetlock record/score | `ForecastStore` — `scenario_score` is the only journal writer |
+| CalibrationObservation | 10-bin curve, weighted bias, isotonic second channel | Tetlock calibration | `scenario_calibration` |
+| ScenarioProject | the spine: framing document, trees, assessment history, journal linkage | Chermack's unit of assessment | `ProjectStore` (see Project persistence) |
+| Narrative / Implications / Indicators | quadrant stories, strategies, early-warning indicators | Schwartz steps 5–8 | the skill layer (`scenario-planning` templates) — a ruled contract, not a server primitive |
+| ImpactMapping | per-node yes/no DCF deltas; 2^N paths weighted by probability | MAIA "events drive the financial forecast" | `scenario_impact_valuation` (companies server) |
+| MarketBridge | market records / CMP indices → root events with provenance and gates | the CMP term-structure program | `scenario_from_markets_set` / `scenario_from_cmp_indices` |
+| CertaintyTier | proximate ≥67% / probable 33–66% / possible <33% | MAIA three-level tier | `hkask_forecast` |
 
 ## Tool reference
 
@@ -262,6 +286,78 @@ multi-group trees. The parent-independence approximation itself (marginals
 computed over parent *marginals*, per `types.rs` — exact only under
 disjoint ancestries) is pinned as intentional by
 `correlated_parents_keep_the_documented_independence_approximation`.
+
+## Formal specification
+
+The event-tree contract is machine-checked in core Lean (4.34.0, no
+Mathlib) at
+[`kask/lean/event_tree_marginalization.lean`](../../../lean/event_tree_marginalization.lean):
+eight theorems over an abstract `OrdField` — CPT completeness and
+soundness (a marginalizing table has exactly 2^|parents| entries, and
+every 2^|parents|-entry table marginalizes), the bitmap order for one
+and two parents, probability bounds (parents and entries in [0,1] →
+marginal in [0,1]), mass conservation (the all-ones table marginalizes
+to 1 whatever the parents), and noisy-OR exactness and bounds.
+`lean_check` exit 0, no `sorryAx`; `noisyOr_single` depends on no
+axioms. Stated assumptions: the `OrdField` class fields (the theorems
+are parametric), parent independence (the same factorization the Rust
+makes — its approximation character under shared ancestry is pinned
+by `correlated_parents_keep_the_documented_independence_approximation`),
+exact arithmetic (the f64 clamp is not modeled), and `none` = the
+server's validation rejection. The property layer pins the f64
+implementation against two independent oracles; the Lean pin proves
+the contract for every ordered field — contract proven, implementation
+property-tested.
+
+## Redesign record (2026-10-06/07)
+
+The server was reviewed from scratch against its four reference models
+(MAIA "Time Horizons", Schwartz 1991, Tetlock & Gardner 2015, Chermack
+2011) and rebuilt per a 16-proposal set. The review artifacts (plan,
+findings, proposals, improvement plan) were consolidated into this
+reference on 2026-10-07 and live in git history
+(`8692a23520`..`e677993804`).
+
+**Decisions with standing force:**
+
+- **`scenario_full` removed** (operator decision, 2026-10-06): the
+  one-call Tetlock batch had zero skill callers and its inline
+  assessment stage was a pass-through of caller metrics; the staged
+  pipeline is the only path (surface pin 20 → 19).
+- **Portfolio event-exposure report deferred** (operator decision,
+  2026-10-06): no consumer demands it; the recorded scenario join on
+  equity forecasts (`scenario_project_id`, `scenario_tree`,
+  `fused_volatility`) makes it an M effort when demand materializes.
+- **Narratives and indicators live in the skill layer** (ruled): the
+  server stores the project record, trees, and assessments; Schwartz's
+  narrative phases are the `scenario-planning` skill's templates.
+
+**Accepted limitations (ruled, watched):**
+
+- The calibration curve's empty bins surface as `null` hit rates with
+  bin-midpoint expecteds — cosmetic, surfaced rather than hidden.
+- `scenario_score` persists a full snapshot per resolution event — a
+  minor durability-ordering cost, accepted.
+- `hkask_forecast::marginalize` zero-fills missing table entries while
+  the server's validation rejects wrong lengths first — the lenient
+  path is shielded; a future caller that skips validation inherits
+  silent zero-fill (documented seam).
+- `compute_marginal_probabilities` defaults a missing parent to 0.0
+  with a warn — unreachable through the public path (the topological
+  sort rejects unknown parents first); watched.
+- Ontology anchoring is coarse (protocol tools → `pko:PROCEDURE`,
+  everything else → `dc_bibo:DATASET`) — functional.
+
+**Commit ledger:** `8692a23520` (review + Slices 1–3) → `64b2f4f6d5`
+(Slices 4–6: shared posterior engine, marginal scoring, scenario
+provenance) → `c03cf4aa89` (PR-10 workbook presentation) →
+`b252d88b3d` (post-restart follow-ups) → `1a8c500c12` (PR-13 removal,
+pin 20 → 19) → `e677993804` (closeout receipts). Live receipts: the
+19-tool surface verified post-restart (`list_mcp_tools`); 39 scenarios
+tests green; scoped clippy + machete clean. The execution goal
+(`c84339e0`) closed through the batch-record path — its durable record
+is this section plus the commits (the curator-memory batch record
+`kanban:goal-retention`/`batch_prune_2026-10-07` cites this location).
 
 ## Cross-links
 

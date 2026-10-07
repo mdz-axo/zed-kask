@@ -1,8 +1,12 @@
 ---
 title: "Media MCP Server — From-Scratch Design Review (Plan and Coverage)"
 audience: [operators, developers, architects]
+last_updated: 2026-10-07
+version: "1.0.0"
 date: 2026-10-06
 status: "Active"
+domain: "Composition"
+mds_categories: [composition, domain]
 kind: research
 related:
   - media-server-redesign-findings.md
@@ -31,7 +35,9 @@ MF-6…MF-8), Phase 3 integration (8 candidates, 1 proposal PR-S1), Phase 4
 formal layer (the interpolation contract sweep delivered; Lean deferred
 with trigger), Phase 5 proposals (PR-M1 executed, PR-S1 filed for operator
 review), Phase 6 plan (the improvement plan doc). The scenarios precedent
-(`scenario-server-redesign-*.md`) is the structural model throughout.
+(the 2026-10 scenarios-server redesign, consolidated into
+`reference/mcp-servers/scenarios.md` § Redesign record) is the structural model
+throughout.
 
 ## Method
 
