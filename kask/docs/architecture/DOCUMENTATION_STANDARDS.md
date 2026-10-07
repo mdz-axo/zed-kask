@@ -1,8 +1,8 @@
 ---
 title: "Documentation Standards"
 audience: [all contributors authoring or editing documentation in `docs/`]
-last_updated: 2026-10-05
-version: "0.40.1"
+last_updated: 2026-10-07
+version: "0.40.2"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]
@@ -110,7 +110,7 @@ status: VERIFIED
 
 **Git history is the archive of record.** No archive index or migration guide is required. Superseded documents are removed from the active tree via lifecycle policy; their content is recoverable from git history. An operator-retained `Proposed` plan is not an archive: it remains under `kask/docs/plans/` while the product decision is open and explicitly states that it is a plan rather than an implementation record. No current-state document may include backward-compatibility references, migration notes, or `formerly`/`previously known as` annotations — git history serves that purpose.
 
-**Condensation requirement (2026-08-28; count basis aligned 2026-09-28; cap and target set 2026-09-30; cap raised 2026-10-07):** The docs tree is capped at **fewer than 79 files** (all files, not only Markdown — the two plain-text evidence companions and the YAML inventory count against the cap; `find kask/docs -type f | wc -l`), with a working **target of 60 files** on the same all-files basis — the cap is the hard gate, the target is the condensation direction (operator ruling 2026-09-30; cap raised from fewer-than-75 by operator ruling 2026-10-07 to accommodate the post-consolidation corpus: 77 Markdown documents plus the YAML inventory = 78 files). A leaf document without a formal role — one that no other document links to, that duplicates an active document's coverage, or that describes a deleted surface — is folded into its successor or deleted. Stale plans and stale prompts are deleted, not archived; each deletion records its successor in the **Document lifecycle ledger** in [`kask/docs/README.md`](../README.md) (the working example: the 2026-08-28 condensation reduced the tree from 120 to under 70, with every deletion's successor recorded there). Git history preserves full content; the ledger preserves the mapping.
+**Condensation requirement (2026-08-28; count basis aligned 2026-09-28; cap and target set 2026-09-30; cap raised 2026-10-07; cap raised 79 → 85 and target raised 60 → 75 by operator ruling 2026-10-07):** The docs tree is capped at **fewer than 85 files** (all files, not only Markdown — the two plain-text evidence companions and the YAML inventory count against the cap; `find kask/docs -type f | wc -l`), with a working **target of 75 files** on the same all-files basis — the cap is the hard gate, the target is the condensation direction (operator ruling 2026-09-30; cap raised from fewer-than-75 by operator ruling 2026-10-07 to accommodate the post-consolidation corpus: 77 Markdown documents plus the YAML inventory = 78 files; cap raised 79 → 85 by operator ruling 2026-10-07, justified by the experimentation and spreadsheet MCP servers' reference documentation and the Magnifica Humanitas values charter ([`core/magnifica-humanitas.md`](core/magnifica-humanitas.md)) grounding P1–P12; target raised 60 → 75 on the same ruling). A leaf document without a formal role — one that no other document links to, that duplicates an active document's coverage, or that describes a deleted surface — is folded into its successor or deleted. Stale plans and stale prompts are deleted, not archived; each deletion records its successor in the **Document lifecycle ledger** in [`kask/docs/README.md`](../README.md) (the working example: the 2026-08-28 condensation reduced the tree from 120 to under 70, with every deletion's successor recorded there). Git history preserves full content; the ledger preserves the mapping.
 
 Git history is the project's Architecture Repository[^archrepo]. Retired
 documents are recoverable through `git log --all --diff-filter=D -- <path>`
@@ -347,7 +347,7 @@ Before a document is merged:
 - [ ] Every `##` section has ≥ 1 footnoted citation with URL
 - [ ] Every current-state Mermaid block has implementation `DIAGRAM_ALIGNMENT` metadata; a conceptual block is exempt only when its document satisfies all three `status: "Proposed"` conditions in §4.2
 - [ ] All internal links resolve (broken-link sweep: every relative link in the document resolves to a file in the tree — links to deleted documents fail this gate)
-- [ ] Document-count gate: the tree holds fewer than 79 files (`find kask/docs -type f | wc -l`); if this document is new, a fold-or-delete candidate is named to hold the count (working target: 60 files)
+- [ ] Document-count gate: the tree holds fewer than 85 files (`find kask/docs -type f | wc -l`); if this document is new, a fold-or-delete candidate is named to hold the count (working target: 75 files)
 - [ ] No aspirational content is presented as current state; future-state material is confined to an operator-retained Proposed plan and explicitly marked under §4.2
 - [ ] `Last-Updated` date reflects the date of the final edit
 - [ ] Writing Excellence: document passes ≥ 3 of 4 perspective tests (see Appendix A §A.5)
@@ -620,7 +620,7 @@ The [`kask/docs/README.md`](../README.md) lifecycle ledger records fold-and-dele
 ```bash
 # The docs tree holds no handoff class — the count gate is enforced by
 # kask/scripts/check-docs-count-gate.sh (CI: kask-invariants); manual form:
-find kask/docs -type f | wc -l     # must stay < 79 (working target: 60)
+find kask/docs -type f | wc -l     # must stay < 85 (working target: 75)
 
 # Anything durable from a handoff must be traceable to the ledger:
 grep -n "lifecycle ledger" kask/docs/README.md
