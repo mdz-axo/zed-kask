@@ -406,6 +406,7 @@ pub(crate) enum LocalMediaFormat {
     Mp4,
     Gif,
     Wav,
+    Png,
 }
 
 impl From<LocalVideoFormat> for LocalMediaFormat {
@@ -423,6 +424,7 @@ impl LocalMediaFormat {
             Self::Mp4 => "mp4",
             Self::Gif => "gif",
             Self::Wav => "wav",
+            Self::Png => "png",
         }
     }
 
@@ -431,6 +433,7 @@ impl LocalMediaFormat {
             Self::Mp4 => "video",
             Self::Gif => "image",
             Self::Wav => "audio",
+            Self::Png => "image",
         }
     }
 

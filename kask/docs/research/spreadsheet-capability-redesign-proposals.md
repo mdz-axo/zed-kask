@@ -21,8 +21,12 @@ a proposal that only adds is incomplete) · **effort** (XS/S/M/L) ·
 **depends**. Every proposal that specifies code was run through code-review
 IS/OUGHT adjudication (each finding in the review states what IS, cited, and
 what OUGHT to be, anchored to a plan section or `.rules` trap) and
-coding-guidelines (surgical scope; no speculative generality). Nothing here
-is implemented; nothing here is committed.
+coding-guidelines (surgical scope; no speculative generality).
+
+**Executed 2026-10-06** — every proposal in this set landed (commits
+`1a8c500c12`, `c9a5c3b855`, `f66b136fe2`+`2bcf794dc8`, `87b673285`); the
+per-proposal ledger lives in the improvement plan's execution record. The
+text below is the original Phase 5 output, preserved as the review record.
 
 ---
 

@@ -289,3 +289,11 @@ applied), grill-me (the self-challenge embedded in code-review's adjudicate
 phase), coding-guidelines (surgical scope on every code-specifying
 proposal), mcp-tool-review (its inventory-reconciliation method shaped
 Phase 0), skill-maintenance (the company-research-flash audit ran — F14).
+
+**Execution postscript (2026-10-06/07):** every "remains proposed" check
+above has since run or landed — the improvement plan's execution record
+names each (all twelve proposals SP-01..SP-12, commits `1a8c500c12`,
+`c9a5c3b855`, `f66b136fe2`+`2bcf794dc8`, `87b673285`; the operator ruled
+SP-05 complete, SP-06 enforce, SP-09 the Dublin Core/SUMO/PKO anchors;
+the Lean spec pins now re-check in CI via `check-lean-spec-pins.sh`). This
+document is the review-time record; the live state is the tree.

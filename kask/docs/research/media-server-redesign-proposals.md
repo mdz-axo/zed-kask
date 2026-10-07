@@ -78,6 +78,33 @@ finding MF-1…MF-8 appears in exactly one proposal or no-action record
   after an `unaligned` `educt_apply_corrections`, in the skill's terse step
   style; `check-skill-crossrefs.sh` green.
 
+## PR-M2 — Route the collage through canonical storage
+
+- **Component:** `hkask-mcp-media/src/tools/processing.rs`
+(`image_create_collage`, `:480-516`) + `src/assets.rs` (a PNG arm in the
+local-media publish path, if absent).
+- **Goal tags:** fidelity (the Phase 1 Asset primitive — every derived form
+gets the storage contract), integration (gallery identity → search,
+lineage, panel).
+- **Evidence:** MF-13 — the collage writes to OS temp and returns a bare
+path; no gallery row, no stable identity, no lineage, no rollback-armed
+publication; the only asset-producing tool that bypasses
+`publish_local_media`/`persist_slim_and_enrich`.
+- **BREAKING CHANGES:** replaces the temp-dir write + bare-path result
+(`:480-489`, `:504`) — the temp output and unpersisted path are deleted in
+the same change; the result gains gallery identity (id, display hint) and
+loses nothing callers were promised (the `output` path survives as the
+published asset's path). Result shape changes: adds `image_id`/`gallery_id`
+fields.
+- **Effort:** S.
+- **Depends:** none.
+- **Status:** **FILED 2026-10-06 — operator acceptance pending.** Not
+executed in-tranche: the result-shape change is a functional change, not a
+residue-class correction. Acceptance criteria when executed: the collage
+output is gallery-indexed with lineage (op `image_create_collage`),
+rollback-armed; a test pins the gallery row + lineage; the temp-dir write
+is gone.
+
 ## Coverage check
 
 Every finding in exactly one record (reconciled via `lisp_eval` → green):

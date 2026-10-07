@@ -92,6 +92,15 @@
 # - Gate selftests: the loop step below runs every
 #   kask/scripts/check-*-selftest.sh — see its comment for scope.
 #
+# lean-spec-pins (minutes, every push + PR): the Lean spec pins in kask/lean
+#   re-check on every merge, not just when an agent runs lean_check — every
+#   positive pin checks clean under the pinned toolchain (exit 0, no sorry)
+#   and every negative control FAILS (a checker that accepts a negative
+#   control is not an oracle). The gate installs the toolchain via the
+#   shared install_lean_toolchain (cached on ~/.elan); its logic is
+#   offline-pinned by check-lean-spec-pins-selftest.sh in the check job's
+#   selftest loop (fake elan/lean fixtures — no toolchain download).
+#
 # kask-tests (minutes, every push + PR): the runbook's verification gate —
 #   cargo test over every hkask-* crate plus the kask_bridge seam. Serial
 #   execution per the .rules live-mutation trap: deterministic beats fast.
@@ -232,6 +241,19 @@ jobs:
             [ "$selftest" = kask/scripts/check-goal-traceability-selftest.sh ] && continue
             bash "$selftest"
           done
+
+  lean-spec-pins:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lean toolchain cache — elan v4.2.4 + the pinned leanprover/lean4:v4.34.0
+        uses: actions/cache@v4
+        with:
+          path: ~/.elan
+          key: elan-${{ runner.os }}-${{ hashFiles('kask/lean/lean-toolchain', 'kask/scripts/build/install-common.sh') }}
+      - name: Spec pins — every positive checks clean; every negative control fails
+        run: bash kask/scripts/check-lean-spec-pins.sh
 
   kask-tests:
     runs-on: ubuntu-latest

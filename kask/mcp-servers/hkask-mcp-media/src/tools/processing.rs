@@ -116,6 +116,17 @@ struct ConcatEffectiveParams<'a> {
 }
 
 #[derive(serde::Serialize)]
+struct CollageEffectiveParams {
+    layout: String,
+    image_count: usize,
+    cols: u32,
+    rows: u32,
+    canvas_width: u32,
+    canvas_height: u32,
+    spacing: u32,
+}
+
+#[derive(serde::Serialize)]
 #[serde(untagged)]
 enum LocalVideoEffectiveParams<'a> {
     Clip(ClipEffectiveParams<'a>),
@@ -477,43 +488,44 @@ impl MediaServer {
                 image::imageops::overlay(&mut canvas, &scaled, x as i64, y as i64);
             }
 
+            // Scratch write consumed by the canonical publication below —
+            // the publish path stages the bytes durably, removes the scratch
+            // (rollback-armed on every failure path), and returns the durable
+            // asset's path with its gallery identity (PR-M2: the collage is no
+            // longer the one asset-producing tool outside the storage
+            // contract — no bare temp path, no orphan subject to OS cleanup).
             let temp_dir = std::env::temp_dir().join("hkask-media");
             if let Err(error) = std::fs::create_dir_all(&temp_dir) {
                 tracing::warn!(
                     target: "hkask.mcp.media",
                     path = %temp_dir.display(),
                     %error,
-                    "Failed to create collage temp directory — the subsequent write will surface the failure"
+                    "Failed to create collage scratch directory — the subsequent write will surface the failure"
                 );
             }
-            let output_path = temp_dir.join(format!("collage_{}.png", uuid::Uuid::new_v4()));
+            let scratch_path = temp_dir.join(format!("collage_{}.png", uuid::Uuid::new_v4()));
 
             canvas
-                .save(&output_path)
-                .map_err(|e| map_image_open_error(&output_path, e))?;
+                .save(&scratch_path)
+                .map_err(|e| map_image_open_error(&scratch_path, e))?;
 
-            let result = serde_json::json!({
-                "status": "created",
-                "image_count": images.len(),
-                "layout": layout,
-                "cols": cols,
-                "rows": rows,
-                "canvas_width": canvas_w,
-                "canvas_height": canvas_h,
-                "spacing": spacing,
-                "output": output_path.display().to_string(),
-            });
-            let args = serde_json::json!({
-                "layout": layout,
-                "image_count": images.len(),
-            });
-            Ok(crate::media_block::enrich_with_omc_and_provenance(
-                result,
+            let effective_params = CollageEffectiveParams {
+                layout: layout.clone(),
+                image_count: images.len(),
+                cols,
+                rows,
+                canvas_width: canvas_w,
+                canvas_height: canvas_h,
+                spacing,
+            };
+            crate::assets::publish_local_media(
+                &self.gallery_store,
+                &scratch_path,
                 "image_create_collage",
-                "image",
-                args,
-                None,
-            ))
+                "created",
+                crate::assets::LocalMediaFormat::Png,
+                &effective_params,
+            )
         })
         .await
     }

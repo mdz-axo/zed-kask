@@ -575,12 +575,87 @@ bounded by the capture cap (≤ 3600 s at 16 kHz mono ≈ 154 MiB base64 at the
 extreme). If IPC size limits surface in practice, the fix is passing the
 local path (the file exists); recorded as the trigger.
 
+### Depth pass — tranche 3: cloud/Reduct family (COMPLETE 2026-10-06)
+
+20 tools audited line-by-line (full read of `tools/reduct.rs`) against the
+Phase 1 cloud primitives and the pinned v3 contracts. **Faithful: 20/20,
+zero findings** — the honest result for the freshest code: the write
+surface was built against the pinned contracts with the loopback fixture
+battery (MF-1 receipts), and the depth pass confirms rather than finds.
+
+Per-primitive verification: **Connection** — status checks the key
+(permission_denied naming the env var and the Settings path, `:1327-1332`)
+and reports honest `not_checked` states; probe returns only the HTTP
+outcome, never the body (`:583-594`). **Snapshots** — limit 1-100
+validated on all three (`:667`, `:737`); bounded reads (2 MiB); the parse
+extracts id+title only, discloses `provider_returned_count` /
+`returned_count` / `truncated` / `pagination: "unknown"` — the honest
+no-pagination-claim contract (`:722-726`). **Recording lifecycle** —
+create (title validation), import (URL ≤ 4096 + `validate_tool_url_with_dns`
+SSRF preflight before Reduct fetches it, `:1109-1114`), upload_gallery
+(indexed-asset-only; missing/media-type check; canonicalize-vs-indexed-path
+symlink check `:1674-1682`; size cap from `media_limits` (PR-M1); hash
+verified before transfer `:1701`), upload_local (absolute path, streamed),
+status (512 KiB), transcript (format validation, 8 MiB, provider structure
+not re-timed). **Reel composition** — text/range validation
+(`validate_reel_text` `:821-828`, `validate_reel_range` `:830-837`); the
+clip edit reads back the block type before POST and refuses title blocks
+(`:937-945`). **Highlight writes + publication** — MF-1 + follow-up
+receipts. **Token discipline, verified on every read path:**
+`redact_share_tokens` strips `share_token` recursively from any object
+shape (`:748-763`); `parse_reel_detail` redacts blocks and projects
+`publication_state` (published/unpublished/undetermined) instead of the
+token (`:787-794`); `publish_reel` reports presence only; the snapshots
+extract id+title only, so no token can flow. The invariant holds with no
+exception site.
+
+### Depth pass — tranche 4: processing family (COMPLETE 2026-10-06)
+
+15 tools audited line-by-line (full read of `tools/processing.rs`) against the
+Phase 1 Sequence/Shot primitives. **Faithful: 14** — every ffmpeg tool
+validates before dispatch (clip/gif/caption/remix range checks `:539-549`,
+`:603-615`, `:722-726`, `:778-782`), preflights remote URLs
+(`validate_tool_url_with_dns` at `:556-558`, `:622-624`, `:733-735`,
+`:789-791`, `:957-960`, `:994-996`, `:1289-1291`, `:1318`), and composes
+through the canonical publishers (`publish_local_media` /
+`persist_slim_and_enrich`). Cardinality limits import from `media_limits`
+(`video_from_images` `:870-875`, `video_concat` `:942-947`,
+`video_extract_frames` `:1085-1090`). `video_remix` tracks intermediates and
+cleans them on every path, with a final-rollback guard for the gif
+(`:806-844`). `video_extract_frames` promotes scratch frames durably with
+per-frame failure cleanup and honest completed/failed/partial status
+(`:1110-1166`). `video_caption` surfaces frame-read failures
+(`:1022-1032`). `video_fetch` validates + preflights the URL, cleans an
+empty yt-dlp output with the cleanup failure appended (`:1338-1349`), and
+surfaces the provider warning (`:1359-1363`). `video_meme` names the font
+fallback unavailable with the install remedy (`:1201-1206`). The test-only
+local-video validation gate is `#[cfg(test)]`-scoped with a Drop guard
+(`:10-65`). Not verified at this boundary (the runner module's own scope):
+`video/ffmpeg.rs`'s scratch-directory lifecycle for `extract_keyframes` —
+the tool-boundary contracts (read-failure surfacing, durable promotion,
+status) are what this tranche pins.
+
+**MF-13 — `image_create_collage` bypasses the canonical storage contract
+(deviation → proposal PR-M2).** IS: the collage composes locally (image
+crate, `:432-478`), writes its output to `std::env::temp_dir()`
+(`:480-489`), and returns the bare path in its result (`:504`) — the ONLY
+asset-producing tool in the server that does not compose through
+`publish_local_media` or `persist_slim_and_enrich`: no gallery row, no
+stable identity, no lineage, no rollback-armed publication. The output
+lives in OS temp (subject to tmpwatch/cleanup) with no gallery identity to
+find it again. OUGHT: the Phase 1 Asset primitive — every derived form
+gets the storage contract (one transaction: file, Asset row, lineage, OMC
+graph). **Filed as PR-M2 (effort S — needs a PNG arm in the local-media
+publish path plus the gallery resolution), not executed in-tranche:** the
+fix changes the tool's result shape (adds gallery identity) — a functional
+change the operator accepts as a slice, not a residue-class correction.
+Trigger for acting without a ruling: none — it is on the proposals docket.
+
 ### Depth pass — remaining tranches (scoped, pending)
 
-Per the multi-session boundary: generation (6), processing (15),
-cloud/Reduct (20), async & workflow (8), model & discovery (3), audio &
-voice (5) — 57 tools remaining, family by family. The cloud family (20,
-this session's MF-1 work) is the natural next tranche.
+Per the multi-session boundary: generation (6), async & workflow (8),
+model & discovery (3), audio & voice (5) — 22 tools remaining, family by
+family. Generation (6, the provider surface) is the natural next tranche.
 
 ## Phase 3 — Integration review (COMPLETE 2026-10-06)
 
