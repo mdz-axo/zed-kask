@@ -80,9 +80,21 @@ under the artifacts root or be an exact path observed through a successful
 gallery result; symlink escapes fail. Inline data is MIME-checked and capped at
 32 MiB decoded. Public image/audio fetches validate DNS, reject redirects, and
 read through the cap. Platform inputs and yt-dlp stream outputs are validated
-before FFmpeg. This preflight cannot pin opaque yt-dlp/FFmpeg connect-time DNS,
-so DNS rebinding inside those subprocesses remains an explicitly documented
-transport limitation rather than a claimed guarantee.
+before FFmpeg. **DNS-rebinding scope and decision state (verified 2026-10-06,
+MF-5):** exactly two subprocess paths make outbound connections in this
+server's usage — yt-dlp (`video_fetch`) and ffprobe (`video_info` on a
+remote URL; ffprobe is bundled with FFmpeg, and FFmpeg's transcode
+invocations receive only local, preflight-validated paths). Both paths run
+`validate_tool_url_with_dns` at preflight; the residual gap is the
+connect-time TOCTOU window between the preflight's validated resolution and
+the subprocess's own DNS lookup. The mitigation is priced out with current
+tooling: neither yt-dlp nor ffprobe exposes a resolve-style flag, URL-to-IP
+rewriting breaks TLS certificate validation (no SNI override), and
+hosts-file mutation is global system state — a pin would require upstream
+tool support or sandbox-grade networking. The one remaining closure is the
+operator's accepted-risk ruling over that named TOCTOU window; until the
+word lands, this paragraph states the verified scope and the priced-out
+mitigation, not a vague limitation.
 
 `youtube_search` performs exactly one paid SerpApi request and reads one provider
 page. `max_results` caps that page; it does not trigger paid continuation calls.
@@ -376,15 +388,18 @@ provides no private Reel render/download contract; transcript correction —
 the v3 API exposes no transcript-correction endpoint at all (verified across
 the 55-page reference; Reduct's in-app re-alignment has no API surface, and
 local re-alignment exists since 2026-10-06 via `educt_realign_transcript`).
-**Pinned but unimplemented — the cloud-DELETE posture (operator decision
-pending):** the remaining pinned write paths are both DELETE operations —
-highlight delete (v3 page 25, fully pinned including the
+**Pinned but unimplemented — the cloud-DELETE posture (ruled 2026-10-06,
+media-lead design decision):** the remaining pinned write paths are both
+DELETE operations — highlight delete (v3 page 25, fully pinned including the
 `{"<highlight id>": "deleted"}` acknowledgement) and unpublish via
 `DELETE .../share_token` (v3 page 33, path pinned; the response shape is
 undocumented — the reference lists property-delete endpoints without a
-return spec). This surface has never exposed a DELETE tool (20 tools, zero
-deletes): whether irreversible cloud deletes belong on it at all is an
-operator decision, not a unilateral one. Highlight edit (v3 pages 24-25,
+return spec). This surface does not expose irreversible cloud DELETE
+operations: the zero-DELETE posture (20 tools, zero deletes) is deliberate —
+deletes stay in the Reduct app, where confirmation and trash UX live — and
+it is revisitable on operator demand (highlight delete's contract remains
+pinned for the day the posture changes; unpublish additionally needs its
+response shape pinned). Highlight edit (v3 pages 24-25,
 fully pinned) was implemented 2026-10-06 as the MF-1 follow-up, completing
 the highlight-write symmetry with the block surface's create+edit pattern.
 DELETE is irreversible; POST can overwrite
@@ -425,7 +440,7 @@ model overrides for background removal/upscale. See the
 
 ## Face recognition — design decision
 
-Face recognition relies on vision-LLM calls, not local code. The implementation surface is the minijinja (j2) prompt templates — `validate_face_ref` (reference validation) and `match_faces` (two-image same-person comparison) in `src/templates.rs` — dispatched through the inference port, the same pattern as every other vision capability in this server. There is no local embedding model and no local geometric matching; a previous LLM-produced-"embedding" cosine path was removed because LLMs cannot emit geometrically consistent vectors, and its store column was dropped with it (the forward schema update removes `face_registry.embedding` from pre-existing DBs). Full build-out of the face-recognition feature is **deferred** — the current templates are the working core, and any future expansion (e.g. better matching prompts, multi-reference voting) stays on the LLM-template surface.
+Face recognition relies on vision-LLM calls, not local code. The implementation surface is the minijinja (j2) prompt templates — `validate_face_ref` (reference validation) and `match_faces` (two-image same-person comparison) in `src/templates.rs` — dispatched through the inference port, the same pattern as every other vision capability in this server. There is no local embedding model and no local geometric matching; a previous LLM-produced-"embedding" cosine path was removed because LLMs cannot emit geometrically consistent vectors, and its store column was dropped with it (the forward schema update removes `face_registry.embedding` from pre-existing DBs). Full build-out of the face-recognition feature is **deferred — decision recorded 2026-10-06**: the build-out was presented for ruling twice (2026-10-06, options: keep deferred / build on the LLM-template surface with acceptance criteria) and the operator directed proceeding without a build directive, so the deferral stands and reopens on an explicit build directive. Triggering condition: a workflow needing multi-reference voting or match reliability beyond the current two-template core. Any future expansion (e.g. better matching prompts, multi-reference voting) stays on the LLM-template surface.
 
 ## Quick Start
 

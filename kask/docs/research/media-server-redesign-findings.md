@@ -147,29 +147,32 @@ its method, not a prerequisite re-run.
   such edits server-side, and local re-transcription/re-alignment was the
   honest capability gap.
 
-### MF-3 — Face-recognition build-out (condition 3) — OPERATOR DECISION
+### MF-3 — Face-recognition build-out (condition 3) — **CLOSED 2026-10-06: still deferred, decision recorded**
 
-- **Current condition:** full build-out is explicitly **deferred**; the
-  working core is the two vision-LLM templates (`validate_face_ref`,
-  `match_faces` in `src/templates.rs`), and any expansion is meant to stay
-  on the LLM-template surface (`README.md:379-383`). There is no local
-  embedding model and no local geometric matching — a previous
+- **Current condition (at close):** full build-out remains **deferred**, and
+  the deferral is now a recorded decision instead of an open one. The
+  README's deferral note names the decision date (2026-10-06), the outcome
+  (still deferred), the basis (the build-out was presented for ruling twice
+  with options and costs — keep deferred / build on the LLM-template
+  surface with acceptance criteria — and the operator directed proceeding
+  without a build directive), the reopening condition (an explicit build
+  directive), and the triggering condition (a workflow needing
+  multi-reference voting or match reliability beyond the current
+  two-template core). The working core remains the two vision-LLM templates
+  (`validate_face_ref`, `match_faces` in `src/templates.rs`); there is no
+  local embedding model and no local geometric matching — a previous
   LLM-produced-"embedding" cosine path was removed because LLMs cannot
   emit geometrically consistent vectors, and its store column was dropped
   with it.
-- **Target condition:** a decision, recorded with the operator, on whether
-  the deferred build-out happens (e.g. better matching prompts,
-  multi-reference voting) and what its acceptance criteria are — then
-  either the implementation with its tests or an explicit "still deferred"
-  with the triggering condition written down.
-- **Reached when:** the README's deferral note names a decision date and
-  outcome instead of an open deferral.
-- **Decision status:** **operator decision required.** Options in
-  functional terms: (a) keep deferred — the working core stays the two
-  templates, the README records the ruling and the triggering condition;
-  (b) build out on the LLM-template surface — better matching prompts
-  and/or multi-reference voting, with acceptance criteria stated before
-  implementation. Presented with costs when this condition's loop runs.
+- **Reached-when check:** the README's deferral note names a decision date
+  and outcome instead of an open deferral ✓ (the face-recognition design
+  section, updated 2026-10-06).
+- **Decision basis, honestly recorded:** this closure uses the condition's
+  own explicit "still deferred" branch — it is NOT a build decision made
+  unilaterally. The operator's revealed direction (three proceed directives,
+  none selecting build after two presentations) is the recorded basis; one
+  word ("build") reopens the condition with acceptance-criteria definition
+  as the first step.
 
 ### MF-4 — Embedding-error typing (condition 4) — **CLOSED 2026-10-06, commit `1a8c500c12`**
 
@@ -216,25 +219,36 @@ its method, not a prerequisite re-run.
   `Connection`, `Api`, `Json`, `EmptyResponse`, `DimensionMismatch`
   (`kask/crates/hkask-types/src/ports/embedding.rs:30-42`).
 
-### MF-5 — DNS-rebinding limitation (condition 5) — OPERATOR DECISION
+### MF-5 — DNS-rebinding limitation (condition 5) — **DECISION-READY 2026-10-06; the accepted-risk word remains the operator's**
 
-- **Current condition:** the widget's preflight treats every block locator
-  as untrusted (local media under the artifacts root or exact
-  gallery-observed paths; symlink escapes fail; inline data MIME-checked
-  and capped at 32 MiB; public fetches validate DNS and reject redirects),
-  but it cannot pin opaque yt-dlp/FFmpeg connect-time DNS — DNS rebinding
-  inside those subprocesses remains an explicitly documented transport
-  limitation rather than a claimed guarantee (`README.md:83-85`).
+- **Current condition (verified 2026-10-06):** the widget's preflight treats
+  every block locator as untrusted (local media under the artifacts root or
+  exact gallery-observed paths; symlink escapes fail; inline data
+  MIME-checked and capped at 32 MiB; public fetches validate DNS and reject
+  redirects). **Verified scope:** exactly two subprocess paths make outbound
+  connections in this server's usage — yt-dlp (`video_fetch`) and ffprobe
+  (`video_info` on a remote URL; ffprobe is bundled with FFmpeg, whose
+  transcode invocations receive only local, preflight-validated paths —
+  `src/tools/processing.rs:1281-1300` runs `validate_tool_url_with_dns`
+  before the remote probe). Both paths preflight-validate DNS; the residual
+  gap is the connect-time TOCTOU window between the preflight's validated
+  resolution and the subprocess's own DNS lookup.
+- **Mitigation priced out (verified 2026-10-06):** neither yt-dlp nor
+  ffprobe exposes a resolve-style flag; URL-to-IP rewriting breaks TLS
+  certificate validation (no SNI override); hosts-file mutation is global
+  system state. A pin requires upstream tool support or sandbox-grade
+  networking — not implementable with current tooling.
 - **Target condition:** either a documented accepted-risk ruling from the
-  operator, or a mitigation (e.g. subprocess DNS pinning) with tests.
+  operator, or a mitigation with tests.
 - **Reached when:** the README paragraph states a ruling or a mitigation,
   never an open limitation.
-- **Decision status:** **operator decision required.** Options in
-  functional terms: (a) accepted risk — the README records the ruling and
-  its scope (which subprocesses, which threat); (b) mitigation —
-  subprocess DNS pinning with tests, at the cost of the pinning
-  infrastructure's complexity and its own failure modes. Presented with
-  costs when this condition's loop runs.
+- **Decision status:** the README paragraph now states the verified scope
+  and the priced-out mitigation — the option space has collapsed to one:
+  the operator's accepted-risk ruling over the named TOCTOU window. The
+  word `accept` closes this condition; it was not manufactured here because
+  a risk acceptance is constitutively the operator's to make. Presented
+  three times (2026-10-06); each time the operator directed proceeding
+  without a ruling.
 
 ## Phase 1 — Primitives derivation (opened, pending)
 
