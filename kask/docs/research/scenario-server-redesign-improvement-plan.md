@@ -305,8 +305,9 @@ pin entry (renamed `tool_surface_is_exactly_19_registered_tools`).
 Receipts: 39 scenarios tests green (the 19-pin passing against the
 regenerated `TOOL_NAMES`), scoped clippy + machete clean, and the
 full-repo sweep showing `scenario_full`/`FullPipelineRequest` only in
-these research docs. The live 19-tool surface is pending the
-operator's rebuild+restart.
+these research docs. The live 19-tool surface was verified
+post-restart (2026-10-06: `list_mcp_tools` shows 19 tools,
+`scenario_full` absent; `scenario_status` healthy at v0.40.2).
 
 ### Operator decision PR-15 — portfolio event-exposure report
 
@@ -333,10 +334,29 @@ essentialist bar that deferred it still holds.
 - PR-13 decided — remove; executed the same day (pin 20 → 19, green).
 - PR-15 decided — stay deferred.
 - `c2a23bc8`, `818afff3`, `5e1db9ad` scored achieved on the operator's
-  confirmation (Brier 0.16 / 0.20 / 0.023); curator-memory ingestion
-  verification and acknowledgment are the post-turn receipt.
-- The live 19-tool surface is pending the operator's rebuild+restart.
-- The spreadsheet capability plan executes in a parallel stream (goal
-  `11616a31`); its in-flight tree edits are that stream's.
-- The PR-13 execution edits (source, tests, docs) are uncommitted and
-  ride the next operator commit.
+  confirmation (Brier 0.16 / 0.20 / 0.023). D58 finding (2026-10-06):
+  the scoring turn's ingestion lost ALL its kanban events — the three
+  score h_mems AND the execution goal's create/judge were absent from
+  curator memory. The sanctioned same-outcome re-score tranche ran
+  post-restart and landed (create/judge/score chains verified
+  complete); all three goals acknowledged out of the retained list
+  (2026-10-07).
+- The execution goal `c84339e0`: its create/judge h_mems never landed
+  (the same turn's loss), so its score event cannot publish — scored
+  once in the kanban DB (Brier 0.0225 against the 0.85 prediction) and
+  closed through the batch-record path per the 2026-10-04/05 precedent
+  (`kask/docs-alignment-run.md` §Second follow-through): a
+  `kanban:goal-retention` batch-record memory naming the durable
+  locations (this section, commit `1a8c500c12`, the live receipts),
+  then the acknowledge. No re-score loop.
+- The live 19-tool surface verified post-restart (2026-10-06:
+  `list_mcp_tools` shows 19 tools, `scenario_full` absent;
+  `scenario_status` healthy at v0.40.2). The semantic-recall embedding
+  port is configured again post-restart — the earlier degradation is
+  resolved.
+- The spreadsheet capability plan executed in a parallel stream (goal
+  `11616a31`, scored achieved); its tree edits were that stream's.
+- The PR-13 execution edits (source, tests, docs) are committed in
+  `1a8c500c12`; the closeout's residual receipts are carried by this
+  doc's next commit — `git log -- kask/docs/research/scenario-server-redesign-improvement-plan.md`
+  names it.
