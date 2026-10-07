@@ -1,7 +1,7 @@
 ---
 title: "The Magna Carta of hKask"
 audience: [architects, users, agents]
-last_updated: 2026-09-28
+last_updated: 2026-10-07
 version: "0.40.1"
 status: "Active"
 domain: "Cross-cutting"
@@ -563,6 +563,8 @@ The Magna Carta is not aspirational. It is enforced:
 [^miller-ocap]: Miller, M. S. (2006). *Robust composition: Towards a unified approach to access control and concurrency control* [Doctoral dissertation, Johns Hopkins University].
 [^westin-data]: Westin, A. F. (1967). *Privacy and Freedom*. Atheneum. Foundational framework for data sovereignty and informational self-determination.
 [^solove-taxonomy]: Solove, D. J. (2006). A taxonomy of privacy. *University of Pennsylvania Law Review*, 154(3), 477–560. https://doi.org/10.2307/40041379
+
+- Companion charter: [`magnifica-humanitas.md`](magnifica-humanitas.md) — the values charter. This charter limits the system's power over the **user**; that charter grounds architecture principles P1–P12 in the dignity of the human **person**, distilled from *Magnifica Humanitas* (Leo XIV, 2026).
 
 ---
 

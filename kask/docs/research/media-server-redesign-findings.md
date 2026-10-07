@@ -401,9 +401,9 @@ held as the scoring instrument.
 **Scope, honestly stated:** this pass verified each family's load-bearing
 contracts at file:line (the storage contract, the routing contract, the
 transcript discipline's invariants, the v3 write contracts, the admission
-contracts) — the fidelity check a Phase 2 owes the primitive model. A
-line-by-line audit of all 102 tools is a follow-on depth pass, not this
-record's claim.
+contracts) — the fidelity check a Phase 2 owes the primitive model. The
+line-by-line audit of all 102 tools ran as the depth pass (five tranches,
+below — complete 2026-10-06, 102/102).
 
 ### Faithful (verified at file:line)
 
@@ -708,7 +708,7 @@ exists", 1 proposal (PR-S1).
 | Shared pin macro (`ede1ba0ca8`) | ✓ live | none new | one implementation for every server | **already exists** |
 | Corpus server | ✓ composition-level | **none — deliberately** | `educt_export` `corpus_text` → `transcript-reel` skill → corpus ingestion; grep found no direct code reference (the apparent hits were `reduction_pct` false positives) | **no action** — the composition path IS the contract; a direct API would couple the servers |
 | Spreadsheet what-if | ✓ contract-shape sibling | none | both ```media and ```spreadsheet display-hint blocks are D18 panel widgets | **no action** — a sibling shape, not a consumer |
-| `transcript-reel` skill | ✓ the skill exists; the realignment path it should name does too (`educt_realign_transcript`, MF-2) | one line in the skill's correction step (`SKILL.md:61-68` names `educt_correction_pass` → `educt_apply_corrections`; the realignment path after cardinality-changing corrections is absent) | the skill's process text | **proposal PR-S1** — skills are the operator's algedonic-review surface; filed, not executed |
+| `transcript-reel` skill | ✓ the skill exists; the realignment path it should name does too (`educt_realign_transcript`, MF-2) | one line in the skill's correction step (`SKILL.md:61-68` names `educt_correction_pass` → `educt_apply_corrections`; the realignment path after cardinality-changing corrections was absent) | the skill's process text | **PR-S1 — executed 2026-10-06** (commit `fb22b0b4d5`; the step now names `educt_realign_transcript`; reclassified from operator-review filing as a stale-doc correction) |
 
 ## Phase 4 — Formal layer (COMPLETE 2026-10-06, honestly scoped)
 
@@ -744,7 +744,9 @@ decision.
 
 In `media-server-redesign-proposals.md` (created this session): PR-M1
 (executed — receipts in the findings doc), PR-S1 (the transcript-reel
-skill realignment line — operator review). The findings-to-proposals map
+skill realignment line — executed 2026-10-06, commit `fb22b0b4d5`, after the
+operator's proceed directive; reclassified as a stale-doc correction, vetoable
+at algedonic review). The findings-to-proposals map
 reconciles via `lisp_eval` → green (every finding MF-1…MF-8 in exactly
 one proposal or no-action record).
 

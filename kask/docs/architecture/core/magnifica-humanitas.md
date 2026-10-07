@@ -63,7 +63,7 @@ This is a **grounding charter, not a gate**: it supplies the *why* beneath princ
 
 **Grounds:** P3.1 (Social Generativity) — the Generative Space operates within the social conventions of its jurisdiction; criminal or systemically harmful use is destructive to the space itself.
 
-**Live expression:** Design decisions are recorded as choices (D-seams in [`DIVERGENCE.md`](../../DIVERGENCE.md), ADRs), never as inevitabilities.
+design decisions are recorded as choices (D-seams in [`DIVERGENCE.md`](../../../../DIVERGENCE.md), ADRs), never as inevitabilities.
 
 ### V6 — The Dignity of Work: Augment, Don't De-Skill
 
@@ -120,6 +120,7 @@ The charter's one-line discernment test, taken from the encyclical's own closing
 - [`README.md`](../../README.md) — Architecture table row (this document).
 - [`PRINCIPLES.md`](PRINCIPLES.md) §1.1 — values-grounding cross-reference.
 - [`MDS.md`](MDS.md) §9.1 — Trust-category key documents; `Related` line.
+- [`magna-carta.md`](magna-carta.md) References — companion-charter cross-link (the liberties charter → this charter), completing the two-charter loop.
 
 ## References
 

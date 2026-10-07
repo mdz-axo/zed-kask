@@ -79,7 +79,9 @@ set to the scenarios precedent's four-doc shape.
 - **MF-7** publish body-name: live probe before the first production
   publish (authorized-throwaway shape).
 - **MF-8** job ephemerality: no action; trigger recorded.
-- **Phase 2 depth pass**: the contract-level fidelity check is complete;
-  a line-by-line per-tool audit is a follow-on depth pass, family by family.
+- **Phase 2 depth pass**: **complete 2026-10-06** — all 102 tools audited
+  line-by-line across five tranches (gallery 26, transcript 19, cloud 20,
+  processing 15, generation + async/workflow + model/discovery + audio 22);
+  findings MF-9…MF-15, all closed.
 - **Unregistered-model watch**: none open — both ontology-tier models
   resolve (OMC at domain_supplement, `transcript_linked_media` at derived).
