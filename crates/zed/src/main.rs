@@ -2964,6 +2964,10 @@ fn main() {
         settings_profile_selector::init(cx);
         language_tools::init(cx);
         notifications::init(app_state.client.clone(), app_state.user_store.clone(), cx);
+        // zed-kask: D90 — upstream called this from collab_ui::init, which this
+        // fork deleted; without it no TitleBar mounts and the workspace renders
+        // without a title bar or the application (File/App) menus.
+        title_bar::init(cx);
         git_ui::init(cx);
         feedback::init(cx);
         markdown_preview::init(cx);
