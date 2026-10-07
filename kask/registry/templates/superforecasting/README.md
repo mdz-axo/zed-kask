@@ -1,7 +1,7 @@
 # Superforecasting Pipeline
 
 **Templates:** `registry/templates/superforecasting/`
-**Version:** 0.40.0
+**Version:** 0.40.2
 
 ## Overview
 
