@@ -20,14 +20,6 @@ pub struct OpenBrowser {
     pub url: Arc<str>,
 }
 
-/// Opens an application URL (zed-kask://) within the application.
-#[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
-#[action(namespace = zed)]
-#[serde(deny_unknown_fields)]
-pub struct OpenZedUrl {
-    pub url: Arc<str>,
-}
-
 /// Opens the keymap to either add a keybinding or change an existing one
 #[derive(PartialEq, Clone, Default, Action, JsonSchema, Serialize, Deserialize)]
 #[action(namespace = zed, no_json, no_register)]

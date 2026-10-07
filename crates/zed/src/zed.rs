@@ -107,7 +107,7 @@ use workspace::{CloseProject, CloseWindow, RestoreBanner, with_active_or_new_wor
 use workspace::{Pane, notifications::DetachAndPromptErr};
 use zed_actions::{
     About, GetMerch, OpenAccountSettings, OpenBrowser, OpenDocs, OpenProjectTasks,
-    OpenServerSettings, OpenSettingsFile, OpenStatusPage, OpenZedUrl, Quit,
+    OpenServerSettings, OpenSettingsFile, OpenStatusPage, Quit,
 };
 
 const DOCS_URL: &str = "https://zed.dev/docs/";
@@ -1051,12 +1051,6 @@ fn register_actions(
                 window.reset_debug_frame_overlay_stats();
             },
         )
-        .register_action(|_, action: &OpenZedUrl, _, cx| {
-            OpenListener::global(cx).open(RawOpenRequest {
-                urls: vec![String::from(&*action.url)],
-                ..Default::default()
-            })
-        })
         .register_action(|workspace, _: &OpenUrlPrompt, window, cx| {
             workspace.toggle_modal(window, cx, |window, cx| {
                 open_url_modal::OpenUrlModal::new(window, cx)
