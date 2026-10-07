@@ -32,6 +32,17 @@ for s in bundle-linux bundle-mac snap-build bundle-windows.ps1; do
   cp "$KASK_ROOT/../script/$s" "$fixture/script/$s"
 done
 
+# The gate's D90 title-bar pin greps main.rs for the re-homed
+# title_bar::init call (upstream chains it inside the deleted
+# collab_ui::init). The clean fixture carries a minimal main.rs so the
+# positive check has a file to read; case 3 below removes the call to pin
+# the gate's failure mode.
+write_clean_main_rs() {
+  mkdir -p "$fixture/crates/zed/src"
+  printf 'title_bar::init(cx);\n' > "$fixture/crates/zed/src/main.rs"
+}
+write_clean_main_rs
+
 failures=0
 
 # Case 1: a reintroduced upstream packaging surface fails the gate.
@@ -54,6 +65,7 @@ fi
 
 # Case 2: the clean fixture passes.
 rm -rf "$fixture/crates"
+write_clean_main_rs
 set +e
 out="$(REPO_ROOT="$fixture" ZED_ISOLATION_SKIP_INSTALLER_SUITE=1 bash "$GATE" 2>&1)"
 rc=$?
@@ -66,8 +78,25 @@ else
   echo "OK (case 2 — clean fixture): gate exited 0 with the skip announced"
 fi
 
+# Case 3: main.rs losing the re-homed title_bar::init fails the gate.
+printf '// no title bar init here\n' > "$fixture/crates/zed/src/main.rs"
+set +e
+out="$(REPO_ROOT="$fixture" ZED_ISOLATION_SKIP_INSTALLER_SUITE=1 bash "$GATE" 2>&1)"
+rc=$?
+set -e
+if [ "$rc" -eq 0 ]; then
+  echo "FAIL (case 3 — title bar init): gate exited 0 on a main.rs without title_bar::init"
+  failures=$((failures + 1))
+elif ! printf '%s\n' "$out" | grep -q "main.rs lost title_bar::init"; then
+  echo "FAIL (case 3 — title bar init): exit $rc but the violation was not identified"
+  printf '%s\n' "$out" | tail -5
+  failures=$((failures + 1))
+else
+  echo "OK (case 3 — title bar init): gate detected the dropped title_bar::init"
+fi
+
 if [ "$failures" -eq 0 ]; then
-  echo "SELFTEST OK: zed-isolation gate is alive (forbidden surface + clean fixture both pinned)"
+  echo "SELFTEST OK: zed-isolation gate is alive (forbidden surface + clean fixture + title-bar init all pinned)"
   exit 0
 fi
 echo "SELFTEST FAIL: $failures case(s) did not behave as expected"

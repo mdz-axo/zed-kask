@@ -84,6 +84,17 @@ assert_no_match "$repo_root/crates/zed/src/zed.rs" '\bcollab_ui::init|\bcall::in
 assert_no_match "$repo_root/Cargo.toml" 'livekit-rust-sdks|webrtc-sys|libwebrtc' \
     "the workspace re-pins the deleted LiveKit/webrtc SDKs"
 
+# zed-kask: D90 — upstream chains title_bar::init inside collab_ui::init,
+# which this fork deleted. Removing the collab_ui::init call from main.rs
+# silently dropped the title bar init with it: no TitleBar mounts, so the
+# workspace renders without a title bar and without the application
+# (File/App) menus (observed live 2026-10-06). The call is re-homed directly
+# in main.rs; this pins it against the same silent drop on future removals
+# or upstream merges.
+if ! grep -q 'title_bar::init' "$repo_root/crates/zed/src/main.rs"; then
+    fail "main.rs lost title_bar::init (D90 re-home from deleted collab_ui::init — no title bar or application menus without it)"
+fi
+
 # zed-kask is not distributed as a flatpak. Upstream's CLI flatpak module
 # hard-codes upstream Zed's app ID (`dev.zed.Zed`) and binary layout, so a
 # zed-kask CLI running inside upstream Zed's sandbox would re-exec and
