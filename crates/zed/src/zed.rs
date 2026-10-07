@@ -5503,6 +5503,27 @@ mod tests {
 
     actions!(test_only, [ActionA, ActionB]);
 
+    /// Every built-in keymap asset must only bind registered actions. The default,
+    /// vim, specific-override and base keymaps are all loaded through `unwrap` in
+    /// `load_default_keymap`, so a binding to an action whose defining crate was
+    /// removed (e.g. the collab/channel removal) panics at startup. The keymap
+    /// list is derived from the asset tree at test time so new keymap files are
+    /// covered automatically.
+    #[gpui::test]
+    fn test_keymap_assets_only_bind_registered_actions(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let keymap_paths: Vec<_> = settings::SettingsAssets::iter()
+                .filter(|path| path.starts_with("keymaps/") && path.ends_with(".json"))
+                .collect();
+            assert!(!keymap_paths.is_empty(), "no keymap assets found");
+
+            for path in keymap_paths {
+                KeymapFile::load_asset(&path, None, cx)
+                    .unwrap_or_else(|error| panic!("error loading keymap asset {path}: {error}"));
+            }
+        })
+    }
+
     /// The actions the emacs keymap resolves for `keystroke` in `context`.
     fn emacs_bindings_for(keystroke: &str, context: &str, cx: &mut TestAppContext) -> Vec<String> {
         cx.update(|cx| {
