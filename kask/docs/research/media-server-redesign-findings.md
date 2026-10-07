@@ -248,51 +248,244 @@ its method, not a prerequisite re-run.
   DNS-rebinding paragraph, updated 2026-10-06 — scope, priced-out
   mitigation, the ruling, and the revisit condition).
 
-## Phase 1 — Primitives derivation (opened, pending)
+## Phase 1 — Primitives derivation (COMPLETE 2026-10-06)
 
-Derive the primitive model from the four verified reference models BEFORE
-scoring the implementation against it:
+**Hypothesis (FINER-gated):** a primitive model derived from the four
+verified reference models predicts the server's shape with named gaps.
+F 9 (all four models verified and read — OMC at domain_supplement, the v3
+reference page-by-page for the write surface, the transcript discipline at
+derived, the README contracts ratified), I 10 (the model structures Phase
+2's per-tool scoring), N 8 (composition over verified sources), E 10, R 9
+(each primitive names its source and its exists? status — checkable).
+**Verdict: HELD** — 39 primitives across 8 families; every gap the model
+names is decision-recorded (ruled or documented with reasons), none
+accidental.
 
-1. **OMC creation vocabulary** — the tool→concept mapping's source: for
-   each primitive, which OMC concept carries it across the server's seams
-   (the shared concept→explain dispatch is the widget contract).
-2. **Reduct.video v3 API** — the cloud-surface primitives: project,
-   recording, reel, block, highlight, publication state; which are
-   read-only vs. write, and what the unimplemented capabilities would add.
-3. **Transcript discipline** (`transcript_linked_media`, ruling
-   2026-09-25) — the educt primitives: the immutable word-anchored source
-   bundle, the validated layer kinds (speaker, paragraph, correction,
-   highlight, EDL), the working-transcript projection, the Keep-range
-   union composition, and the re-alignment boundary (MF-2).
-4. **Ratified README contracts** — the storage primitive
-   (`persist_slim_and_enrich`: one SQLite transaction for file, Asset
-   row, lineage, OMC graph), the error-classification contract, the
-   publication-never-by-default invariant, and the unencrypted-gallery-DB
-   startup contract.
+### The primitive model (derived from the reference models, scored against the implementation)
 
-For each primitive: properties and methods, reference-model source,
-exists?, and what carries across the seams. The derivation's output seeds
-Phase 2's per-tool fidelity review (102 tools, findings numbered MF-6
-onward).
+**1. Asset & gallery** — source: OMC (CreativeWork = the root artifact;
+Scene = rendered media; the creation graph = lineage; Participant =
+models) + the README storage contract (`persist_slim_and_enrich`: one
+SQLite transaction for file, Asset row, lineage, OMC graph).
 
-**Primitive-family skeleton (scoped 2026-10-06 — the derivation's working
-structure; per-primitive depth is the phase's remaining work):**
-
-| Family | Reference-model source | Covers (tool groups) |
+| Primitive | Properties / methods | Exists? |
 |---|---|---|
-| Asset & gallery | OMC CreativeWork/Scene/Shot + README storage contract | gallery_* (26), face_* |
-| Generation | OMC CreativeWork + inference routing contract | generate_*, transform, upscale, expand_prompt, image_edit_region |
-| Processing | OMC Sequence (contiguous segments) | video_*, image_to_video, collages, memes, captions |
-| Transcript (educt) | `transcript_linked_media` (ruling 2026-09-25) | transcribe*, educt_* (16), record_and_transcribe |
-| Cloud (Reduct) | v3 API reference (pinned) | reduct_* (20) |
-| Async & workflow | README contracts (admission control) | job_*, workflow_* |
-| Model & discovery | inference routing contract | model_*, youtube_search |
-| Audio & voice | OMC CreativeWork (audio) + transcript discipline | audio_*, voice_design, generate_speech |
+| Asset (CreativeWork) | stable identity, bytes at a path, media kind, dimensions/hash; add, list, detail, delete | ✓ `gallery_add_media`, `gallery_list_assets`, `gallery_asset_detail`, `gallery_delete_image` |
+| Index | organize a folder into the store; refresh (rescan + re-analyze); status | ✓ `gallery_organize`, `gallery_refresh`, `gallery_status` |
+| Retrieval | tag search, semantic search (embedding), timeline grouping | ✓ `gallery_search`, `gallery_timeline` |
+| Analysis (Scene) | faces, objects, colors, composition, scene pipelines; single-image description | ✓ `gallery_analyze`, `describe_image` |
+| Lineage (creation graph) | record generation (op, prompt, model, seed, parents); read; reproduce | ✓ `gallery_record_generation`, `gallery_lineage`, `gallery_reproduce` |
+| Album | metadata-only grouping; create/list/move/remove/delete/members | ✓ six album tools |
+| Face registry (Participant) | validate reference, register, scan folder, list, remove, name group | ✓ `face_*`; build-out deferred (MF-3 ruling) |
 
-## Phases 2–4 — pending
+*Seam-carriage:* results carry paths + display hints (```media blocks),
+never payloads; the OMC concept mapping carries to the widget's shared
+concept→explain dispatch.
 
-Phase 2 (fidelity, per tool with file:line), Phase 3 (integration,
-essentialist gates), and Phase 4 (formal layer — EDL Keep-range union
-semantics and layer-validation invariants as Lean candidates, finite
-structural checks via `lisp_eval`) fill in as their PDCA loops run. No
-findings recorded yet beyond MF-1…MF-5.
+**2. Generation** — source: OMC CreativeWork production + the inference
+routing contract (two routes: IPC bridge / child-local router; configured
+models only, no hidden defaults).
+
+| Primitive | Properties / methods | Exists? |
+|---|---|---|
+| Generate | prompt → provider → new asset with lineage; variants via num_images | ✓ `generate_image`, `generate_video` |
+| Transform (derived form) | image-to-image with strength; region-selective edit; style transfer | ✓ `transform_image`, `image_edit_region`, `image_apply_style` |
+| Upscale | higher-resolution derived form | ✓ `upscale_image` |
+| Prompt expansion | short → rich prompt (Fooctor V2 pattern) | ✓ `expand_prompt` |
+
+**3. Processing** — source: OMC Sequence (a contiguous segment of a
+creative work) and Shot (a single capture/frame).
+
+| Primitive | Properties / methods | Exists? |
+|---|---|---|
+| Sequence ops | clip (subsequence), concat (join), from-images (synthesize), to-gif (format), remix (composite) | ✓ `video_clip`, `video_concat`, `video_from_images`, `video_to_gif`, `video_remix` |
+| Overlay | caption text over sequence; video description; meme (text + motion) | ✓ `video_add_caption`, `video_caption`, `video_meme` |
+| Frame extraction (Shot) | keyframes as searchable gallery assets with lineage | ✓ `video_extract_frames` |
+| Image ops | background removal; collage | ✓ `image_remove_background`, `image_create_collage` |
+| Probe | metadata read (duration, codec, fps) | ✓ `video_info` |
+| Ingest | external URL → local asset, preflight-validated | ✓ `video_fetch` |
+| Animation | image → video | ✓ `image_to_video` |
+
+**4. Transcript / educt** — source: `transcript_linked_media` (ruling
+2026-09-25): "a transcript bundled with its media, word-aligned, so
+editing or selecting text edits the media and correcting the transcript
+never moves its timings."
+
+| Primitive | Properties / methods | Exists? |
+|---|---|---|
+| Bundle (immutable source) | word-anchored timings; transcribe, store, list, get, delete; untimed storage is a surfaced degradation | ✓ `transcribe_bundle`, `transcribe_and_store`, `educt_store/list/get/delete_transcript` |
+| Layer | typed kinds (speaker, paragraph, correction, highlight, EDL, realignment), provenance-carrying, validated before storage; store, list | ✓ `educt_store_layer`, `educt_list_layers` |
+| Pass (LLM over working transcript) | paragraph, speaker (audio/text), correction, highlight | ✓ four pass tools |
+| Working transcript (projection) | apply corrections; alignment states original/aligned/re_anchored/unaligned/untimed | ✓ `educt_apply_corrections` + the shared projection |
+| Re-alignment | store the decision; equal-slice interpolation; precondition retained | ✓ `educt_realign_transcript` (MF-2) |
+| Locate | deterministic quote → word/time ranges; ambiguity surfaced | ✓ `educt_locate` |
+| EDL composition + render | Keep-range union from highlights; render → durable gallery media | ✓ `educt_edl_from_highlights`, `educt_render_edl` |
+| Export | durable documents: SRT, highlights CSV, corpus text | ✓ `educt_export` |
+
+*Seam-carriage:* the corpus_text export feeds corpus ingestion by
+composition (the transcript-reel skill); SRT/highlights CSV are durable
+documents with provenance.
+
+**5. Cloud (Reduct)** — source: the pinned v3 reference.
+
+| Primitive | Properties / methods | Exists? |
+|---|---|---|
+| Connection | key delivery report; read-only probe | ✓ `reduct_connection_status`, `reduct_connection_probe` |
+| Snapshots | bounded provider-supplied reads: projects, recordings, reels | ✓ three snapshot tools |
+| Recording lifecycle | create, import URL, upload (gallery/local), status, transcript read, highlight read | ✓ six tools |
+| Reel composition | create reel, add doc-range clip, add title, edit clip range, detail | ✓ five tools |
+| Highlight writes | create, partial edit | ✓ `reduct_add/edit_recording_highlight` (MF-1 + follow-up) |
+| Publication | explicit bool; token value never returned | ✓ `reduct_publish_reel` (MF-1) |
+
+*Seam-carriage:* local educt never uploads or falls back from a cloud
+request — the local/cloud separation is a contract; acknowledgements mean
+submission, never verified composition.
+
+**6. Async & workflow** — source: README admission-control contracts.
+
+| Primitive | Properties / methods | Exists? |
+|---|---|---|
+| Job | queued heavy op: submit, list, status, cancel | ✓ four job tools |
+| Workflow | saved generation graph: save, list, load, delete | ✓ four workflow tools |
+
+**7. Model & discovery** — source: the inference routing contract
+(configured-only listing; no hidden models).
+
+| Primitive | Properties / methods | Exists? |
+|---|---|---|
+| Model catalog | configured-only list; per-model info | ✓ `model_list`, `model_info` |
+| Discovery | paid single-page YouTube search with disclosed fetch accounting | ✓ `youtube_search` |
+
+**8. Audio & voice** — source: OMC CreativeWork (audio) + the transcript
+discipline (the bundle's audio source).
+
+| Primitive | Properties / methods | Exists? |
+|---|---|---|
+| Capture | microphone recording; record + transcribe in one call | ✓ `audio_capture`, `record_and_transcribe` |
+| Speech | voice design; TTS | ✓ `voice_design`, `generate_speech` |
+| Audio sequence ops | trim, concat (lossless) | ✓ `audio_trim`, `audio_concat` |
+
+### Named gaps (the model's predictive output)
+
+Every gap the from-scratch model names is decision-recorded — none is an
+accidental absence:
+
+1. **Face build-out** (Participant refinement) — deferred, MF-3 ruling
+   2026-10-06, reopening condition recorded.
+2. **Cloud DELETEs** (highlight delete, unpublish) — ruled out by the
+   zero-DELETE posture 2026-10-06; highlight delete's contract stays
+   pinned for a posture change.
+3. **Contractless cloud capabilities** (strikethroughs, redactions, media
+   download, transcript correction) — out of scope with per-capability
+   contract-status reasons (MF-1 adjudication).
+4. **DNS-rebinding TOCTOU window** — accepted risk, operator ruling
+   2026-10-06, revisit condition recorded (MF-5).
+
+The model is COMPLETE at the primitive level: nothing the four reference
+models imply is missing beyond the four ruled/documented gaps above. The
+finer deviations — per-tool fidelity to these primitives — are Phase 2's
+scope.
+
+## Phase 2 — Fidelity review (COMPLETE 2026-10-06, contract-level)
+
+**Hypothesis (FINER-gated):** each tool's deviation from the Phase 1
+primitive model is evidenced at file:line. F 8 (contract-level per
+family, not line-by-line per tool — stated scope), I 10, N 7, E 10, R 9.
+**Verdict: HELD** — 3 findings (MF-6…MF-8), all cited; the primitive model
+held as the scoring instrument.
+
+**Scope, honestly stated:** this pass verified each family's load-bearing
+contracts at file:line (the storage contract, the routing contract, the
+transcript discipline's invariants, the v3 write contracts, the admission
+contracts) — the fidelity check a Phase 2 owes the primitive model. A
+line-by-line audit of all 102 tools is a follow-on depth pass, not this
+record's claim.
+
+### Faithful (verified at file:line)
+
+- **Asset & gallery (26):** `delete_file=true` requires destructive mode
+  (`tools/gallery.rs:1406-1409`); `gallery_reproduce` errors on corrupt
+  lineage params, never defaults (`:1322-1333`); every asset-producing path
+  composes through the rollback-armed `persist_slim_and_enrich`
+  (`src/assets.rs:804-816`, rollback `:179-248`).
+- **Generation (6):** all six tools compose through `persist_slim_and_enrich`
+  (`tools/generation.rs:62,117,213,246,291,411`) — lineage recorded on every
+  derived form.
+- **Processing (15):** `video_info` preflights remote URLs
+  (`validate_tool_url_with_dns`, `tools/processing.rs:1281-1300`);
+  `video_fetch`'s yt-dlp output is media-validated before FFmpeg (README
+  contract, verified in MF-5's scope pass).
+- **Transcript/educt (18):** EDL Keep-range union semantics — Keep ops
+  disjoint, Cut ops union, the union covers exactly the covered words
+  (`src/transcript_select.rs:189,231,258-261`); `educt_render_edl` cleans
+  temp clips on error paths too (`tools/educt.rs:217-221,245`); the
+  realignment path is honored consistently by every timed consumer (MF-2
+  receipts).
+- **Cloud/Reduct (20):** acknowledgements mean submission, never verified
+  composition; token values never returned (reel detail strips, publication
+  reports presence only — MF-1 receipts); read bounds enforced
+  (`read_bounded` 2/4/8 MiB per tool).
+- **Async & workflow (8):** workflows persist in the gallery DB
+  (`gallery_workflow` table, `tools/workflows.rs:3-6`); jobs' ephemerality is
+  documented and surfaced (MF-8).
+- **Model & discovery (3):** configured-only listing, unset modality absent
+  (`tools/models.rs:15-25`); `youtube_search` reads exactly one paid page
+  with disclosed accounting (`tools/youtube.rs:121,148-149`).
+- **Audio & voice (6):** `audio_trim`/`audio_concat` lossless stream copy
+  (`tools/audio.rs:499-501`); `audio_concat` imports its cardinality limit
+  (`MAX_CONCAT_ITEMS`, `:567`) — the correct pattern MF-6's sites lack.
+
+### Findings
+
+**MF-6 — Copied cardinality limits outside `media_limits` (deviation →
+PR-M1).** IS: the capture-duration cap is a hardcoded `3600.0` literal at
+`tools/audio.rs:368` and `:412` (`audio_capture`, `record_and_transcribe`),
+and the Reduct upload cap is a function-local `MAX_UPLOAD_BYTES`
+(`tools/reduct.rs:1686`) — neither imports from
+`hkask_types::media_limits`, the contract's single source for cardinality
+limits ("Cardinality limits import from hkask_types::media_limits, never
+copied" — onboarding record §contracts). `audio_concat` shows the correct
+pattern (`MAX_CONCAT_ITEMS` import, `audio.rs:567`). OUGHT: the caps
+belong in `media_limits` (`MAX_CAPTURE_DURATION_SECS`,
+`MAX_REDUCT_UPLOAD_BYTES`) and import at the sites — a copied limit drifts
+silently when the canonical changes (the feedback loop's fidelity property:
+the enforcement site no longer reads the policy source). Effort XS.
+
+**MF-7 — The publish body-name inference (watched, no action now).** IS:
+`reduct_publish_reel`'s body parameter name (`publish`) is inferred from the
+reference's field-name convention because the v3 PDF's body-name line is an
+OCR-flagged gap; the inference is documented at the construction site
+(`tools/reduct.rs`, `publish_reel` doc comment). OUGHT: a live authorized
+publish probe would pin the actual wire name — but a live publish creates a
+public link (the never-publish-by-default invariant makes casual probing
+the wrong trade). Watched, trigger: pin it before the first production
+publish, in the same authorized-throwaway session shape the reel-composition
+probes used.
+
+**MF-8 — Job-history ephemerality (no action, documented).** IS: the job
+controller is in-memory (`src/jobs.rs:55`, `HashMap`), documented and
+surfaced (`jobs.rs:3-5` — "a missing record is therefore surfaced as possible
+server restart data loss"; tool descriptions carry "History is ephemeral and
+lost when the media server restarts"). The primitive model's Job primitive
+requires submit/list/status/cancel, not persistence — no deviation. Watched,
+trigger: a workflow that depends on job history across restarts reopens this
+as a persistence proposal.
+
+### Findings-to-proposal mapping (reconciled via `lisp_eval` → green)
+
+| Finding | Record |
+|---|---|
+| MF-6 | PR-M1 — move the two copied caps into `media_limits`, import at sites (XS) |
+| MF-7 | Watched — live probe before first production publish |
+| MF-8 | No-action — documented ephemerality; trigger recorded |
+
+## Phases 3–4 — pending
+
+**Phase 3 (next):** integration candidates through the essentialist gates
+(Exist / Surface / Contract) — the cross-server surface enumerated in the
+review doc's coverage table is the candidate list. **Phase 4:** the formal
+layer — EDL Keep-range union semantics and layer-validation invariants as
+Lean candidates (the re-anchored interpolation's monotonicity/confinement
+invariants, proven in `reanchored_corrected_words`'s tests, are the first
+candidates), finite structural checks via `lisp_eval`. Phase 5 (proposals:
+PR-M1 and successors) and Phase 6 (plan) follow their own loops.

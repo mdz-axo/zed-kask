@@ -183,9 +183,20 @@ bundled concurrent streams into each):
   82 evaluate, 14 error under every probed shape) and documented in
   `reference/mcp-servers/spreadsheet.md`.
 
-**Remaining:** SP-09 (the derived-ontology ruling for the six contract
- terms) is operator-gated by design — the ruling is the operator's to
- issue; every other proposal in the set is executed.
+**Remaining:** none. SP-09 (the derived-ontology ruling for the six
+ contract terms) landed 2026-10-06 — the operator ruled the anchors draw on
+ Dublin Core, SUMO, and PKO: `analytical_table` on `dcmitype:Dataset` (the
+ RDF Data Cube `qb:DataSet` shape), `spreadsheet_viewport` on `qb:Slice`,
+ `spreadsheet_artifact` on `sumo:Artifact`/`sumo:version`, `spreadsheet_block`
+ on `dcterms:description`/`dcterms:identifier`/`pko:Procedure`,
+ `edit_transaction` on `pko:Procedure`/`pplan:Step`, `spreadsheet_error` on
+ `pko:Error`/`pko:errorCode` — recorded in
+ `kask/crates/hkask-bridge-ontology/src/derived.rs` (six entries, every
+ constituent verified to resolve above core via `onto_anchor` at
+ registration), pinned by `spreadsheet_contract_terms_resolve_with_authority`
+ and `spreadsheet_contract_terms_resolve_on_the_derived_rung`; plan §2 and
+ the Phase 1 record updated in the same change. Every proposal in the set
+ is executed.
 
 ## Net summary
 

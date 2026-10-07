@@ -549,4 +549,45 @@ mod tests {
                 .is_some_and(|value| value.contains("Jaynes (1957)"))
         );
     }
+
+    /// The spreadsheet capability's six public-contract terms (LogiSheets
+    /// plan §2; the 2026-10-06 operator ruling) resolve on the derived rung
+    /// through the full ladder — the path onto_anchor walks — never the
+    /// coarse core ground, and every constituent of every spreadsheet entry
+    /// resolves above core (a derived entry never fabricates a constituent
+    /// anchor).
+    #[test]
+    fn spreadsheet_contract_terms_resolve_on_the_derived_rung() {
+        for term in [
+            "AnalyticalTable",
+            "SpreadsheetViewport",
+            "SpreadsheetArtifact",
+            "SpreadsheetBlock",
+            "EditTransaction",
+            "SpreadsheetError",
+        ] {
+            let resolved = resolve_term(term);
+            assert_eq!(resolved.tier, "derived", "{term}: {resolved:?}");
+            assert_eq!(resolved.namespace, "derived", "{term}: {resolved:?}");
+            assert!(
+                resolved.identity.is_some() && resolved.authority.is_some(),
+                "{term}: derived rung carries identity and authority"
+            );
+        }
+        for concept in derived::DERIVED_CONCEPTS.iter().filter(|concept| {
+            concept.term.starts_with("spreadsheet")
+                || concept.term == "analytical_table"
+                || concept.term == "edit_transaction"
+        }) {
+            for constituent in concept.constituents {
+                let resolved = resolve_term(constituent);
+                assert_ne!(
+                    resolved.tier, "core",
+                    "{constituent} (constituent of {}): a derived entry never \
+                     fabricates a coarse constituent",
+                    concept.term
+                );
+            }
+        }
+    }
 }

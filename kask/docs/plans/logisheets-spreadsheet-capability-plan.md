@@ -37,7 +37,7 @@ The plan uses the following distinctions:
 - **WorkbookService** — the deep LogiSheets-backed module that validates analytical tables, creates workbooks, extracts viewports, applies edits, recalculates formulas, and publishes immutable revisions.
 - **SpreadsheetWidget** — the native GPUI adapter that renders a SpreadsheetBlock and stages user interaction.
 
-The ontology resolver currently places these terms at the coarse `5w1h_core` rung. Before implementation names become public contracts, derived ontology concepts should be registered for the meanings above.
+Derived ontology concepts for these terms are registered (operator ruling 2026-10-06, recorded in `kask/crates/hkask-bridge-ontology/src/derived.rs`): the six public-contract terms anchor on Dublin Core, SUMO, and PKO — `analytical_table` on `dcmitype:Dataset` (the RDF Data Cube `qb:DataSet` shape), `spreadsheet_viewport` on `qb:Slice`, `spreadsheet_artifact` on `sumo:Artifact`/`sumo:version`, `spreadsheet_block` on `dcterms:description`/`dcterms:identifier`/`pko:Procedure`, `edit_transaction` on `pko:Procedure`/`pplan:Step`, `spreadsheet_error` on `pko:Error`/`pko:errorCode` — and resolve on the derived rung with cited identities and authorities, never the coarse `5w1h_core` ground.
 
 ### Authoritative-state boundary
 
@@ -414,8 +414,14 @@ provenance contract tests), `cargo test -p hkask-tool-invoker` 3 passed,
 hkask-types` and `-p hkask-tool-invoker` clean, `cargo fmt --all -- --check`
 clean. The six public-contract terms (AnalyticalTable, SpreadsheetBlock,
 SpreadsheetArtifact, SpreadsheetViewport, EditTransaction, SpreadsheetError)
-anchor at the coarse `5w1h_core` rung (§2); a derived-concept ruling has
-been requested from the operator. Shared-tree note: this work landed inside
+anchored at the coarse `5w1h_core` rung (§2) at Phase 1; the derived-concept
+ruling landed 2026-10-06 (SP-09 of the from-scratch design review,
+`kask/docs/research/spreadsheet-capability-redesign-proposals.md`): all six
+now resolve on the derived rung with cited authorities (Dublin Core, SUMO,
+PKO; `kask/crates/hkask-bridge-ontology/src/derived.rs`, pinned by
+`spreadsheet_contract_terms_resolve_with_authority` and
+`spreadsheet_contract_terms_resolve_on_the_derived_rung`). Shared-tree note:
+this work landed inside
 the operator's commit `90ca4a1ffa`, mixed with corpus changes this program
 did not author or validate.
 

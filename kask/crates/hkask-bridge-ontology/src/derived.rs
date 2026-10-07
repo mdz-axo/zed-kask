@@ -814,6 +814,59 @@ pub const DERIVED_CONCEPTS: &[DerivedConcept] = &[
         constituents: &["law of one price", "transaction cost", "price divergence"],
         authority: "operator ruling 2026-10-02; Hull, Options, Futures and Other Derivatives; the law of one price / no-arbitrage principle",
     },
+    DerivedConcept {
+        term: "analytical_table",
+        aliases: &[],
+        identity: "a rectangular dataset: typed columns (identity, label, kind) and rows of typed cell values, one value per column — observations conforming to a common dimensional structure, produced by an analytical operation",
+        definition: "The producer-side wire contract of the spreadsheet capability (LogiSheets plan §2, kask/docs/plans/logisheets-spreadsheet-capability-plan.md): data encoded in a defined structure (DCMI dcmitype:Dataset) — the RDF Data Cube qb:DataSet shape, a collection of observations organized under a common dimensional structure, the typed columns. Rectangular by construction; admission limits reject over-cap shapes (never clamp); non-finite numbers are rejected at validation (the wire cannot carry them). Carries no GPUI or LogiSheets implementation types — the deep module's input, never its internals.",
+        constituents: &["dataset", "observation"],
+        authority: "operator ruling 2026-10-06; DCMI Metadata Terms 2020-01-20 (dcmitype:Dataset); W3C RDF Data Cube (2014 Recommendation) qb:DataSet",
+    },
+    DerivedConcept {
+        term: "spreadsheet_viewport",
+        aliases: &[],
+        identity: "a bounded rectangular window of rows and columns into one sheet — a subset of the dataset's observations, never a whole-sheet dump",
+        definition: "The transport form of the widget's initial window (LogiSheets plan §2/§6): a slice of the dataset — the RDF Data Cube qb:Slice shape, a subset of a DataSet's observations fixed by bounding row and column offsets and counts. Admission limits reject over-cap windows (never truncate); the widget virtualizes beyond the initial window.",
+        constituents: &["slice", "dataset"],
+        authority: "operator ruling 2026-10-06; W3C RDF Data Cube (2014 Recommendation) qb:Slice; DCMI Metadata Terms 2020-01-20 (dcmitype:Dataset)",
+    },
+    DerivedConcept {
+        term: "spreadsheet_artifact",
+        aliases: &["what_if_workbook", "workbook revision"],
+        identity: "a portable, user-visible workbook revision — an artifact published as one discrete immutable version of a revision chain, digest-identified, for inspection or editing",
+        definition: "The persisted unit of the spreadsheet capability (LogiSheets plan §2/§7): a sumo:Artifact — an Object that is the product of a Making — whose life cycle has discrete versions (sumo:version): each revision an immutable, atomically published, SHA-256-digest-identified XLSX file resolved beneath the canonical artifact root by opaque single-segment ids. A WhatIfWorkbook is a derived spreadsheet artifact whose edits never mutate its source domain state (the authoritative-state boundary, plan §2).",
+        constituents: &["artifact", "version"],
+        authority: "operator ruling 2026-10-06; SUMO (Merge.kif) sumo:Artifact, sumo:version",
+    },
+    DerivedConcept {
+        term: "spreadsheet_block",
+        aliases: &[],
+        identity: "a bounded, server-authored description of a workbook revision for inline transport — opaque artifact identity, a bounded initial viewport, the analytical origin, and a mutation procedure — never complete workbook bytes",
+        definition: "The fenced-block transport contract (LogiSheets plan §2/§6, divergence D18): a dcterms:description — an account of the resource — carrying a dcterms:identifier (an unambiguous reference: the opaque artifact and revision ids with their content digest), a bounded spreadsheet viewport, the analytical origin, and a server-authored mutation endpoint (a pko:Procedure: the spreadsheet_apply dispatch contract, tool + server + args). Must never carry absolute filesystem paths, complete workbook bytes, unbounded row arrays, or model-authored mutation authority; incomplete mutation provenance is rejected at the contract.",
+        constituents: &[
+            "description",
+            "identifier",
+            "spreadsheet viewport",
+            "procedure",
+        ],
+        authority: "operator ruling 2026-10-06; DCMI Metadata Terms 2020-01-20 (dcterms:description, dcterms:identifier); PKO 2.0.0 pko:Procedure",
+    },
+    DerivedConcept {
+        term: "edit_transaction",
+        aliases: &[],
+        identity: "a mutation procedure against a base workbook revision: the base artifact identifier with content digest (optimistic concurrency), typed cell edits as the procedure's steps, an idempotency identifier for interrupted-execution reconciliation, and the expected access mode",
+        definition: "The mutation request contract (LogiSheets plan §7): a pko:Procedure — a sequence of actions executed to achieve an outcome — whose steps (pplan:Step) are typed cell edits (SetCell, SetFormula, ClearCell) applied against a named base revision. The base content digest makes application optimistic-concurrent: a mismatch is a conflict, never a silent overwrite of a stale base. The idempotency identifier makes interrupted executions reconcilable: a repeated identity returns the recorded result; a key reused against a different base is rejected. The expected access mode is enforced — only workbook revisions accept mutations.",
+        constituents: &["procedure", "step", "identifier"],
+        authority: "operator ruling 2026-10-06; PKO 2.0.0 pko:Procedure; P-Plan 1.3 pplan:Step; DCMI Metadata Terms 2020-01-20 (dcterms:identifier)",
+    },
+    DerivedConcept {
+        term: "spreadsheet_error",
+        aliases: &[],
+        identity: "the typed error vocabulary of the spreadsheet capability — every variant a distinct recovery category with its error code, never a catch-all",
+        definition: "The error contract of the capability (LogiSheets plan §2): a pko:Error — an Error encountered while executing an activity — per recovery category: rejected input shapes, path-escape containment refusals, unknown artifacts, digest conflicts, engine failures, each carrying its pko:errorCode. #[non_exhaustive]: a future variant is a compile error at the canonical classifier (SpreadsheetError::mcp_kind, the single owner of the MCP taxonomy) until classified. The canonical classification: caller-shape errors → invalid_argument, unknown artifact → not_found, digest conflict → failed_precondition, engine failure → internal.",
+        constituents: &["error", "error code"],
+        authority: "operator ruling 2026-10-06; PKO 2.0.0 pko:Error, pko:errorCode",
+    },
 ];
 
 /// Resolve a term (or alias) against the derived registry.
@@ -1096,6 +1149,51 @@ mod tests {
                 !concept.authority.is_empty(),
                 "{} must cite its authority",
                 concept.term
+            );
+        }
+    }
+
+    /// expect: [P5] The spreadsheet capability's six public-contract terms
+    /// (LogiSheets plan §2) resolve as derived concepts with identity and
+    /// authority — the 2026-10-06 operator ruling (SP-09 of the from-scratch
+    /// design review: Dublin Core, SUMO, PKO) — never the coarse 5W1H core.
+    /// The CamelCase Rust contract names normalize to the same entries.
+    #[test]
+    fn spreadsheet_contract_terms_resolve_with_authority() {
+        for (term, anchor) in [
+            ("AnalyticalTable", "dcmitype:Dataset"),
+            ("SpreadsheetViewport", "qb:Slice"),
+            ("SpreadsheetArtifact", "sumo:Artifact"),
+            ("SpreadsheetBlock", "dcterms:description"),
+            ("EditTransaction", "pko:Procedure"),
+            ("SpreadsheetError", "pko:Error"),
+        ] {
+            let concept = resolve_derived(term).expect("spreadsheet contract term is defined");
+            assert!(
+                concept.authority.contains(anchor),
+                "{term}: {}",
+                concept.authority
+            );
+            assert!(
+                concept.authority.starts_with("operator ruling 2026-10-06"),
+                "{term} cites the ruling"
+            );
+        }
+        // The spaced, snake_case, and CamelCase forms all normalize to the
+        // same entries.
+        for (form, term) in [
+            ("analytical table", "analytical_table"),
+            ("spreadsheet viewport", "spreadsheet_viewport"),
+            ("spreadsheet artifact", "spreadsheet_artifact"),
+            ("what if workbook", "spreadsheet_artifact"),
+            ("spreadsheet block", "spreadsheet_block"),
+            ("edit transaction", "edit_transaction"),
+            ("spreadsheet error", "spreadsheet_error"),
+        ] {
+            assert_eq!(
+                resolve_derived(form).map(|concept| concept.term),
+                Some(term),
+                "{form} resolves to {term}"
             );
         }
     }
