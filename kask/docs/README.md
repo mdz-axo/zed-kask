@@ -38,6 +38,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 | [`compaction-pipeline-spec.md`](architecture/compaction-pipeline-spec.md) | **Compaction pipeline specification** — ratified 2026-09-29: the three entry points and the always-succeed, deterministic-stage-first pipeline contract. |
 | [`core/PRINCIPLES.md`](architecture/core/PRINCIPLES.md) | Architecture principles P1–P12. |
 | [`core/magna-carta.md`](architecture/core/magna-carta.md) | The Magna Carta — four sovereignty principles. |
+| [`core/magnifica-humanitas.md`](architecture/core/magnifica-humanitas.md) | Magnifica Humanitas — the values charter grounding P1–P12 in human dignity (source: Leo XIV, 2026). |
 | [`core/MDS.md`](architecture/core/MDS.md) | Minimal Domain Specification — five-category taxonomy, 19 library/composition crates, and 13 MCP servers. |
 | [`DOCUMENTATION_STANDARDS.md`](architecture/DOCUMENTATION_STANDARDS.md) | Metadata, lifecycle, Mermaid alignment, citation, and writing standards, including operator-retained Proposed plans. |
 
@@ -213,7 +214,7 @@ The eight tutorial removals landed in `5881f1f406fafe12f4fc65a549dbf1eb0a62ca84`
 - [x] Internal links target retained documents; the eight folded how-to documents' links were repointed to their set references (2026-09-28).
 - [x] Diagram metadata has unique-ID/location registry parity (108 records, tree-verified 2026-10-05).
 - [x] Edited citations use full repository-relative paths; 525 sampled citations resolved (2026-09-28), and the 2026-10-05 deep-alignment run re-verified every citation it touched against live code (the compaction entry points and pin sample, the d-seam DIVERGENCE rows, kanban R1, the 13 live tool-surface pin sites, `SignalMetric` at `signals.rs:14`) with the tree-wide relative-link sweep resolving.
-- [ ] Document count is 82, over the fewer-than-79 cap (raised from fewer-than-75 by operator ruling 2026-10-07 to accommodate the post-consolidation corpus) with a working 60-file target — under the cap once the media redesign plan set consolidates (the proven scenarios pattern, −4 files → 78); measured 2026-10-07 (`find kask/docs -type f | wc -l`).
+- [ ] Document count is 83, over the fewer-than-79 cap (raised from fewer-than-75 by operator ruling 2026-10-07 to accommodate the post-consolidation corpus) with a working 60-file target — the media redesign plan set consolidation (the proven scenarios pattern, −4 files) now lands at 79, still one over, because the `core/magnifica-humanitas.md` values charter (added 2026-10-07) consumed the recovery margin; measured 2026-10-07 (`find kask/docs -type f | wc -l`).
 
 ## See also
 

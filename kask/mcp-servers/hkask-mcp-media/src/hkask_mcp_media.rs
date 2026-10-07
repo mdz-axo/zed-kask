@@ -1561,6 +1561,76 @@ mod tool_behavior_tests {
         Ok(())
     }
 
+    /// PR-M2 pin (MF-13): the collage routes through the canonical storage
+    /// contract — the output is gallery-indexed with lineage
+    /// (op `image_create_collage`) at a durable path, never a bare temp
+    /// path; the scratch write is consumed by the publication.
+    #[tokio::test]
+    async fn collage_publishes_through_canonical_storage() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
+        let artifacts = tempfile::tempdir()?;
+        let _env = ArtifactsEnvGuard::set(artifacts.path());
+        let server = make_server();
+        let directory = tempfile::tempdir()?;
+        image::RgbImage::new(2, 2).save(directory.path().join("one.png"))?;
+        image::RgbImage::new(2, 2).save(directory.path().join("two.png"))?;
+        server
+            .gallery_organize(Parameters(GalleryOrganizeRequest {
+                path: directory.path().to_string_lossy().into_owned(),
+                mode: "read-only".into(),
+                recursive: true,
+                auto_analyze: false,
+            }))
+            .await?;
+        let result = server
+            .image_create_collage(Parameters(crate::types::CreateCollageRequest {
+                search_terms: None,
+                similar_to_index: None,
+                image_indices: Some(vec![0, 1]),
+                max_items: 6,
+                layout: "horizontal".into(),
+                spacing: 8,
+                canvas_size: "1200x900".into(),
+            }))
+            .await?;
+        let content = content_of(&result);
+        assert_eq!(content["status"], serde_json::json!("created"));
+        assert_eq!(content["image_count"], serde_json::json!(2));
+        let asset_id = content["gallery_asset_id"]
+            .as_str()
+            .expect("the collage result carries gallery identity")
+            .to_string();
+        // The gallery row exists and is an image.
+        let row = server.gallery_store.get_by_id(&asset_id)?;
+        assert_eq!(row.media_type, "image");
+        // The lineage is recorded under the collage op.
+        let lineage = server
+            .gallery_store
+            .get_generation(&asset_id)?
+            .expect("lineage recorded for the collage publication");
+        assert_eq!(lineage.op, "image_create_collage");
+        // The output is the durable published path — under the artifacts
+        // root, never the OS temp dir — and the file exists there.
+        let output = content["output"].as_str().expect("output path");
+        let artifacts_root = crate::assets::generated_assets_dir();
+        assert!(
+            std::path::Path::new(output).starts_with(&artifacts_root),
+            "the collage publishes durably: {output} (artifacts root {})",
+            artifacts_root.display()
+        );
+        assert!(std::path::Path::new(output).is_file());
+        // The display hint connects the published asset to the widget.
+        assert!(
+            content["display_hint"]
+                .as_str()
+                .expect("display hint")
+                .contains(&asset_id),
+            "the hint carries the gallery asset id"
+        );
+        Ok(())
+    }
+
     /// Extension-fidelity round trip: a persisted image's file extension
     /// must match the format sniffed from its bytes. Regression pin for the
     /// JPEG-saved-as-.png defect — DeepInfra's FLUX serve returns JPEG and

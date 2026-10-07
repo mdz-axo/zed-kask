@@ -98,12 +98,7 @@ published asset's path). Result shape changes: adds `image_id`/`gallery_id`
 fields.
 - **Effort:** S.
 - **Depends:** none.
-- **Status:** **FILED 2026-10-06 — operator acceptance pending.** Not
-executed in-tranche: the result-shape change is a functional change, not a
-residue-class correction. Acceptance criteria when executed: the collage
-output is gallery-indexed with lineage (op `image_create_collage`),
-rollback-armed; a test pins the gallery row + lineage; the temp-dir write
-is gone.
+- **Status:** **EXECUTED 2026-10-06** (operator-accepted in the same session; uncommitted, rides with the operator's batch). Receipts: `LocalMediaFormat::Png` arm (extension `png`, media_type `image`); the collage composes to a scratch write that `publish_local_media` consumes (rollback-armed on every failure path) into the durable artifacts dir with the gallery row + lineage (op `image_create_collage`) + OMC graph; the temp-dir write and bare-path result are deleted; the result gains `gallery_asset_id` + `display_hint` and keeps `output` (now the durable path), `status`, `layout`, `image_count`, `cols`, `rows`, canvas dims, `spacing` (merged from effective params). Pin test: `collage_publishes_through_canonical_storage` (gallery row, lineage op, durable path under the artifacts root, hint carries the asset id). Clippy 0 errors; tests 451/0/6.
 
 ## Coverage check
 

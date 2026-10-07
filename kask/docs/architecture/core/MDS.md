@@ -1,7 +1,7 @@
 ---
 title: "MDS — Minimal Domain Specification"
 audience: [architects, developers, agents]
-last_updated: 2026-09-28
+last_updated: 2026-10-07
 version: "0.42.1"
 status: "Active"
 domain: "Cross-cutting"
@@ -18,7 +18,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 
 **Architecture anchor:** [`zed-host-architecture-plan.md`](../zed-host-architecture-plan.md) §2 (essentialist split). hKask is compiled in-process inside zed-kask. The standalone `hkask-api`, `hkask-cli`, `hkask-repl`, `hkask-identity`, `hkask-communication`, `hkask-acp`, and the `hkask-services-*` subcrates (`chat`, `onboarding`, `skill`, `wallet`) are **removed**. Their jobs move to zed-kask surfaces: zed's agent panel (chat), zed's first-launch (onboarding), upstream-Zed body injection via the project-aware `SkillTool` resolver → `render_skill_envelope` (skill execution — see `crates/agent/src/tools/skill_tool.rs:150,194-240`; resolver at `crates/agent/src/agent.rs:4641-4680`, registered at `:1029-1031`), and the wallet subsystem was deleted outright (2026-08-30) — governed tool-call bounding lives in `hkask-regulation::CallCapManager` (see §1.4). The 19 surviving hKask crates (18 `hkask-*` + `kask_bridge`) and 13 MCP servers are listed in the architecture plan §2.2/§2.4.
 
-**Related:** [`PRINCIPLES.md`](PRINCIPLES.md), [`magna-carta.md`](magna-carta.md)
+**Related:** [`PRINCIPLES.md`](PRINCIPLES.md), [`magna-carta.md`](magna-carta.md), [`magnifica-humanitas.md`](magnifica-humanitas.md)
 
 ---
 
@@ -423,7 +423,7 @@ Where each MDS category's authoritative documents live:
 |---|--------------|-------------------|---------------|
 | 1 | **Domain** | `architecture/` | MDS.md, zed-host-architecture-plan.md |
 | 2 | **Composition** | `architecture/` | MDS.md, zed-host-architecture-plan.md §13 (Composition & Connection Surfaces) |
-| 3 | **Trust** | `architecture/core/` | magna-carta.md, PRINCIPLES.md |
+| 3 | **Trust** | `architecture/core/` | magna-carta.md, PRINCIPLES.md, magnifica-humanitas.md |
 | 4 | **Lifecycle** | `architecture/` (lifecycle ledger in `README.md`) | MDS.md, zed-host-architecture-plan.md |
 | 5 | **Curation** | `architecture/` | DOCUMENTATION_STANDARDS.md (includes Writing Excellence protocol in Appendix A) |
 

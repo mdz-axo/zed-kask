@@ -203,11 +203,14 @@ impl MediaServer {
             match serde_json::from_str::<serde_json::Value>(&r.text) {
                 Ok(v) => Ok(serde_json::json!({
                     "voice_design": v,
-                    "model": "llama-3.3-70b",
+                    // The resolved model that actually ran — never a hardcoded
+                    // label (the result must not claim a model the call did
+                    // not use).
+                    "model": model.as_str(),
                 })),
                 Err(_) => Ok(serde_json::json!({
                     "voice_design": {"description": r.text.trim()},
-                    "model": "llama-3.3-70b",
+                    "model": model.as_str(),
                     "warning": "LLM did not return valid JSON; using raw description."
                 })),
             }
@@ -230,9 +233,17 @@ impl MediaServer {
             let voice = if let Some(ref vd_json) = voice_design {
                 match serde_json::from_str::<VoiceDesign>(vd_json) {
                     Ok(vd) => vd.to_elevenlabs_voice().to_string(),
-                    Err(_) => "Rachel".to_string(),
+                    // No silent fallback: a malformed voice_design is a caller
+                    // error surfaced with its parse cause — never a silent
+                    // default voice masking the rejected input.
+                    Err(error) => {
+                        return Err(McpToolError::invalid_argument(format!(
+                            "voice_design must be valid VoiceDesign JSON (as returned by voice_design): {error}"
+                        )));
+                    }
                 }
             } else {
+                // No voice design provided — the documented default voice.
                 "Rachel".to_string()
             };
 

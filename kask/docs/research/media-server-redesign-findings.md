@@ -636,26 +636,61 @@ the tool-boundary contracts (read-failure surfacing, durable promotion,
 status) are what this tranche pins.
 
 **MF-13 — `image_create_collage` bypasses the canonical storage contract
-(deviation → proposal PR-M2).** IS: the collage composes locally (image
-crate, `:432-478`), writes its output to `std::env::temp_dir()`
-(`:480-489`), and returns the bare path in its result (`:504`) — the ONLY
-asset-producing tool in the server that does not compose through
-`publish_local_media` or `persist_slim_and_enrich`: no gallery row, no
-stable identity, no lineage, no rollback-armed publication. The output
-lives in OS temp (subject to tmpwatch/cleanup) with no gallery identity to
-find it again. OUGHT: the Phase 1 Asset primitive — every derived form
-gets the storage contract (one transaction: file, Asset row, lineage, OMC
-graph). **Filed as PR-M2 (effort S — needs a PNG arm in the local-media
-publish path plus the gallery resolution), not executed in-tranche:** the
-fix changes the tool's result shape (adds gallery identity) — a functional
-change the operator accepts as a slice, not a residue-class correction.
-Trigger for acting without a ruling: none — it is on the proposals docket.
+(deviation → proposal PR-M2 → EXECUTED 2026-10-06, operator-accepted).** IS
+(at finding): the collage composed locally (image crate, `:432-478`), wrote
+its output to `std::env::temp_dir()` (`:480-489`), and returned the bare
+path (`:504`) — the ONLY asset-producing tool in the server that did not
+compose through `publish_local_media` or `persist_slim_and_enrich`: no
+gallery row, no stable identity, no lineage, no rollback-armed publication.
+OUGHT: the Phase 1 Asset primitive — every derived form gets the storage
+contract. **Executed (PR-M2):** `LocalMediaFormat::Png` arm added; the
+collage now composes to a scratch write that `publish_local_media` consumes
+into the durable artifacts dir with the gallery row + lineage
+(op `image_create_collage`) + OMC graph, rollback-armed on every failure
+path; the result gains `gallery_asset_id` + `display_hint`, keeps `output`
+(now the durable path) and the layout fields (merged from effective
+params); the temp-dir write and bare-path result are deleted. Pin:
+`collage_publishes_through_canonical_storage` (gallery row, lineage op,
+durable path under the artifacts root, hint carries the asset id).
 
-### Depth pass — remaining tranches (scoped, pending)
+### Depth pass — tranche 5: generation, async & workflow, model & discovery, audio & voice (COMPLETE 2026-10-06 — the depth pass closes at 102/102)
 
-Per the multi-session boundary: generation (6), async & workflow (8),
-model & discovery (3), audio & voice (5) — 22 tools remaining, family by
-family. Generation (6, the provider surface) is the natural next tranche.
+22 tools audited line-by-line (full read of `tools/generation.rs`, `tools/jobs.rs`, `tools/workflows.rs`, `tools/models.rs`, `tools/youtube.rs`, and the remaining `tools/audio.rs` regions) against the Phase 1 primitives. **Faithful: 20.**
+
+- **Generation (6):** `generate_image` validates prompt + count against `MAX_GENERATION_VARIANTS` (`generation.rs:22-31`), persists each variant individually with causal per-variant failures and honest completed/failed/partial status (`:72-142`), one display hint per variant; `transform_image`/`upscale_image`/`image_edit_region` validate + preflight + persist slim; `expand_prompt` validates and surfaces the preset list on unknown style. **Observed boundary, not a deviation:** generation's transform/upscale/edit_region preflight unconditionally (`validate_tool_url_with_dns` rejects non-http(s) schemes, `hkask-mcp-server/src/security.rs:78-85`), so they accept only URLs — local paths fail visibly at preflight, and the gallery-index equivalents live in the gallery/processing families (`image_apply_style`), so the surface is coherent.
+- **Async & workflow (8):** `job_submit` validates op against the asset-producing allowlist (a non-generation op has no asset to persist, `jobs.rs:107-118`), admission owns a slot BEFORE the record becomes visible (`:134-147`), cancellation is honored at every stage (biased selects at `:184-188`, `:207-211`), publication is rollback-armed on every failure path (`:296-320`), per-stage failures surface with warnings; `job_list`/`job_status` surface `history_scope`/`restart_behavior` (the MF-8 honest ephemerality) and `job_status`'s not_found names the remedy; `workflow_save` validates empty/size (`MAX_WORKFLOW_GRAPH_BYTES`)/JSON validity, `workflow_list` uses `DEFAULT_/MAX_WORKFLOW_LIST_LIMIT` from `media_limits`.
+- **Model & discovery (3):** configured-only listing (unset modality absent), `model_info` not_found names `model_list`; `youtube_search` validates query + range, `permission_denied` naming `HKASK_SERPAPI_API_KEY`, single-page disclosure (`result_scope`, `provider_pages_fetched: 1`, `provider_request_limit`).
+- **Audio & voice (5):** `audio_trim`/`audio_concat` validate ranges/cardinality (`MAX_CONCAT_ITEMS`), preflight remote URLs, publish through the canonical path as WAV; `audio_capture`'s cap is PR-M1's canonical constant.
+
+**MF-14 — `voice_design` hardcoded the model label (found → executed same
+change).** IS: the result reported `"model": "llama-3.3-70b"` regardless of
+the model that actually ran (`tools/audio.rs:206,210`) — while the call
+passes the RESOLVED STT model (`:188-199`). A hardcoded label that can
+disagree with the resolved model is active misinformation (the
+hallucinated-model-id class, incident catalog #1) and a re-declared model
+literal (the model_constants rule). OUGHT: the result reports the resolved
+model. **Executed 2026-10-06** (uncommitted): both branches report
+`model.as_str()`; no test pinned the old label (verified by sweep); gates
+green.
+
+**MF-15 — `generate_speech` silently fell back on malformed voice_design
+(found → executed same change).** IS: a `voice_design` JSON that failed to
+parse silently became the default voice "Rachel"
+(`tools/audio.rs:230-237`) — the no-silent-fallbacks class ("a default
+substitution" is the rule's own wording): the caller could not tell their
+voice design was rejected. OUGHT: malformed input surfaces as a caller
+error with its parse cause; the no-voice-design-provided branch keeps the
+documented default. **Executed 2026-10-06** (uncommitted):
+`invalid_argument` naming the parse error; the optional-param default
+branch unchanged; gates green.
+
+**Depth pass coverage reconciliation:** 26 (gallery) + 19 (transcript) +
+20 (cloud) + 15 (processing) + 6 (generation) + 8 (async & workflow) + 3
+(model & discovery) + 5 (audio & voice) = **102/102** — every registered
+tool audited line-by-line against the Phase 1 primitive model. Findings
+across the pass: MF-9…MF-15 (7 executed in-change, 1 proposal PR-M2
+executed on operator acceptance, 1 watched MF-10, plus the pre-tranche
+MF-6/7/8 records).
 
 ## Phase 3 — Integration review (COMPLETE 2026-10-06)
 

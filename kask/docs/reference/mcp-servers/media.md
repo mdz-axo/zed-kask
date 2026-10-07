@@ -417,7 +417,7 @@ No routing or layout change is part of this repair.
 |------|-------------|
 | `image_remove_background` | Remove background from a gallery image; delegates to the configured background-removal provider. |
 | `image_apply_style` | Apply style transfer to a gallery image through the configured image-to-image provider (DeepInfra or OpenRouter). |
-| `image_create_collage` | Create a collage from gallery images (local composition via `image` crate); three modes: `search_terms`, `similar_to_index`, or `image_indices`. |
+| `image_create_collage` | Create a collage from gallery images (local composition via `image` crate); three modes: `search_terms`, `similar_to_index`, or `image_indices`. Published through the canonical storage contract (PR-M2, 2026-10-06): the output is gallery-indexed with lineage (op `image_create_collage`) at a durable artifacts path — the result carries `gallery_asset_id` + `display_hint`; the scratch write is consumed by the publication. |
 | `video_clip` | Trim a video to start/end times using local ffmpeg, then durably publish and index the result in the generated gallery. |
 | `video_to_gif` | Convert a video segment to GIF using local ffmpeg, then durably publish it in the generated gallery. |
 | `image_to_video` | Animate a gallery image into a short video clip through the configured image-to-video provider (DeepInfra or OpenRouter). |

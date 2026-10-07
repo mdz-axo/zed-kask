@@ -37,7 +37,8 @@ surface), MF-2 second (the transcript discipline's honest gap), MF-1 third
 | 7 | PR-M1 canonical caps | **DONE** | uncommitted — `media_limits` constants, three sites import, sweep clean, tests green |
 | 8 | PR-S1 transcript-reel skill line | **DONE** | uncommitted — the skill's Phase 2 step 3 names `educt_realign_transcript` after an unaligned apply; reclassification basis recorded in the proposals doc; `check-skill-crossrefs.sh` green |
 | 9 | Phase 4 formal layer | **DELIVERED (sweep) / Lean deferred** | `reanchored_interpolation_contract_holds_across_a_sweep` (864-case sweep, second oracle); Lean trigger recorded in the findings doc |
-| 10 | Depth pass tranches 1-4 | **DONE** (gallery 26, transcript 19, cloud 20, processing 15 — 80/102 tools) | findings MF-9…MF-13; MF-9/11/12 executed in-change; PR-M2 filed (collage storage) |
+| 10 | Depth pass (all 5 tranches) | **DONE — 102/102** (gallery 26, transcript 19, cloud 20, processing 15, generation 6, async & workflow 8, model & discovery 3, audio & voice 5) | findings MF-9…MF-15; MF-9/11/12/14/15 executed in-change; MF-10 watched; PR-M2 executed on operator acceptance (slice 11) |
+| 11 | PR-M2 collage storage routing | **DONE** (operator-accepted) | uncommitted — `LocalMediaFormat::Png`, publish through `publish_local_media`, pin test green; clippy 0, tests 451/0/6 |
 
 ## Net summary
 
@@ -70,8 +71,8 @@ set to the scenarios precedent's four-doc shape.
    at algedonic review).
 6. ~~**Phase 4 Lean layer** — deferred with trigger~~ (unchanged: deferred
    with trigger; Mathlib as the prerequisite decision if reopened).
-7. **PR-M2 collage storage routing** — awaiting the operator's acceptance
-   (S effort; result-shape change: the collage gains gallery identity).
+7. ~~**PR-M2 collage storage routing** — awaiting the operator's acceptance~~
+   **Executed 2026-10-06** (operator-accepted; receipts in the proposals doc).
 
 ## Deferred / watched
 
