@@ -105,6 +105,21 @@ pub struct EdlLayer {
     pub ops: Vec<crate::transcript_select::EdlEntry>,
 }
 
+/// A recorded decision to project a correction layer with re-anchored
+/// timings: the working transcript interpolates each cardinality-changing
+/// edit's replacement tokens across its source range's span (equal
+/// slices), restoring timed consumers after insert/delete corrections.
+/// The layer names the correction it re-anchors; a newer correction
+/// supersedes it (the decision is per-correction). The projection is pure
+/// — recomputable from the source bundle and the correction at any time —
+/// so the layer records only the decision and its provenance.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct RealignmentLayer {
+    pub provenance: LayerProvenance,
+    /// The correction layer this realignment re-anchors.
+    pub correction_layer_id: String,
+}
+
 /// A transcript layer of any kind — the storage and tool-surface unit.
 /// Internally tagged by `kind` so one JSON value round-trips through the
 /// store and the `educt_store_layer` tool input.
@@ -116,6 +131,7 @@ pub enum TranscriptLayer {
     Correction(CorrectionLayer),
     Highlight(HighlightLayer),
     Edl(EdlLayer),
+    Realignment(RealignmentLayer),
 }
 
 /// Named layer-validation failures — every variant names the broken
@@ -145,7 +161,7 @@ pub enum LayerValidationError {
 
 impl TranscriptLayer {
     /// The storage kind tag (`speaker` | `paragraph` | `correction` |
-    /// `highlight` | `edl`).
+    /// `highlight` | `edl` | `realignment`).
     pub fn kind(&self) -> &'static str {
         match self {
             Self::Speaker(_) => "speaker",
@@ -153,6 +169,7 @@ impl TranscriptLayer {
             Self::Correction(_) => "correction",
             Self::Highlight(_) => "highlight",
             Self::Edl(_) => "edl",
+            Self::Realignment(_) => "realignment",
         }
     }
 
@@ -164,6 +181,7 @@ impl TranscriptLayer {
             Self::Correction(layer) => &layer.provenance,
             Self::Highlight(layer) => &layer.provenance,
             Self::Edl(layer) => &layer.provenance,
+            Self::Realignment(layer) => &layer.provenance,
         }
     }
 
@@ -241,6 +259,13 @@ impl TranscriptLayer {
                 {
                     return Err(LayerValidationError::EdlSelection(error));
                 }
+            }
+            Self::Realignment(_) => {
+                // The realignment decision anchors no word ranges itself —
+                // it names a correction layer, whose own ranges were
+                // validated at its store time. Only the timing precondition
+                // applies: a realignment cannot anchor on an untimed
+                // transcript any more than the correction it re-anchors.
             }
         }
         Ok(())
@@ -331,6 +356,79 @@ pub fn aligned_corrected_words(
             word.word = replacement.to_string();
         }
     }
+    Ok(projected)
+}
+
+/// Project correction text onto cloned timed words WITHOUT mutating the
+/// stored transcript and WITHOUT requiring one-for-one cardinality — the
+/// re-anchoring path (MF-2). For each edit replacing the source range
+/// `[start_word, end_word]` (span `words[start].start_ms` …
+/// `words[end].end_ms`) with `M` tokens:
+///
+/// - `M == N` (the range's word count): one-for-one, identical to
+///   [`aligned_corrected_words`] (source confidences retained).
+/// - `M != N`: the `M` replacement tokens slice the source span equally —
+///   token `k` gets `[start + k·span/M, start + (k+1)·span/M]` (floor ms).
+///   Monotone, non-overlapping, confined to the source span. `M == 0`
+///   (a pure deletion) contributes no tokens. Interpolated tokens carry
+///   no STT confidence (`None` — never a fabricated measurement).
+///
+/// Source words outside edited ranges are cloned untouched — source
+/// timings never move (the `transcript_linked_media` identity). The only
+/// failure is an out-of-bounds range (defensive: store-validated layers
+/// cannot produce it); cardinality never fails here by design.
+pub fn reanchored_corrected_words(
+    words: &[TimedWord],
+    edits: &[CorrectionEdit],
+) -> Result<Vec<TimedWord>, CorrectionAlignmentError> {
+    let mut projected: Vec<TimedWord> = Vec::with_capacity(words.len());
+    let mut source_index = 0usize;
+    let mut sorted: Vec<&CorrectionEdit> = edits.iter().collect();
+    sorted.sort_by_key(|edit| edit.start_word);
+    for edit in sorted {
+        if edit.start_word > edit.end_word || edit.end_word >= words.len() {
+            return Err(CorrectionAlignmentError::InvalidRange {
+                start_word: edit.start_word,
+                end_word: edit.end_word,
+                words_count: words.len(),
+            });
+        }
+        if edit.start_word < source_index {
+            // Overlapping edit — unreachable through the validated store
+            // path; skip rather than double-apply (same safety net as
+            // [`corrected_text_view`]).
+            continue;
+        }
+        // Clone the untouched words before the edited range.
+        projected.extend(words[source_index..edit.start_word].iter().cloned());
+        let range = &words[edit.start_word..=edit.end_word];
+        let replacement_tokens = edit.replacement.split_whitespace().collect::<Vec<_>>();
+        if replacement_tokens.len() == range.len() {
+            // One-for-one: identical to the aligned projection.
+            for (word, replacement) in range.iter().zip(replacement_tokens) {
+                let mut word = word.clone();
+                word.word = replacement.to_string();
+                projected.push(word);
+            }
+        } else {
+            // Equal-slice interpolation across the source range's span.
+            let span_start = range[0].start_ms;
+            let span_end = range[range.len() - 1].end_ms;
+            let span = span_end.saturating_sub(span_start);
+            let count = replacement_tokens.len() as u64;
+            for (token_index, token) in replacement_tokens.iter().enumerate() {
+                let token_index = token_index as u64;
+                projected.push(TimedWord {
+                    word: token.to_string(),
+                    start_ms: span_start + token_index * span / count,
+                    end_ms: span_start + (token_index + 1) * span / count,
+                    confidence: None,
+                });
+            }
+        }
+        source_index = edit.end_word + 1;
+    }
+    projected.extend(words[source_index..].iter().cloned());
     Ok(projected)
 }
 
@@ -775,6 +873,122 @@ mod tests {
                 actual: 1,
             }
         );
+    }
+
+    /// dcterms:identifier: `transcript_layers::reanchored_corrected_words`
+    /// expect: The re-anchoring projection restores a timed working
+    /// transcript after a cardinality-changing correction — replacement
+    /// tokens slice the edited range's source span equally, never leave
+    /// it, and the words outside edited ranges keep their exact source
+    /// timings.
+    /// [P1] Motivating: timed consumers (locate, highlight, SRT) must work
+    /// again after an insert/delete correction, without moving any source
+    /// timing (MF-2).
+    #[test]
+    fn reanchored_insertion_slices_the_source_span_equally() {
+        let words = timed_words(&["the", "cinder", "ela", "curve"]);
+        // Replaces word 2 (span 2000..2500) with two tokens.
+        let edits = vec![edit(2, 2, "Cinder ella")];
+
+        let projected = reanchored_corrected_words(&words, &edits).expect("re-anchoring succeeds");
+
+        assert_eq!(
+            projected
+                .iter()
+                .map(|word| word.word.as_str())
+                .collect::<Vec<_>>(),
+            ["the", "cinder", "Cinder", "ella", "curve"],
+            "insertion grows the word list"
+        );
+        // Equal slices of the 500ms source span: [2000, 2500] → [2000, 2500].
+        assert_eq!(projected[2].start_ms, 2000);
+        assert_eq!(projected[2].end_ms, 2250);
+        assert_eq!(projected[3].start_ms, 2250);
+        assert_eq!(projected[3].end_ms, 2500);
+        // Interpolated tokens carry no STT confidence — never fabricated.
+        assert_eq!(projected[2].confidence, None);
+        assert_eq!(projected[3].confidence, None);
+        // Untouched words keep their exact source timings.
+        assert_eq!(projected[0].start_ms, words[0].start_ms);
+        assert_eq!(projected[0].end_ms, words[0].end_ms);
+        assert_eq!(projected[4].start_ms, words[3].start_ms);
+        assert_eq!(projected[4].end_ms, words[3].end_ms);
+    }
+
+    /// dcterms:identifier: `transcript_layers::reanchored_corrected_words`
+    /// expect: A deletion correction (empty replacement) drops its range
+    /// from the projection; a many-to-few rewrite slices the span across
+    /// the surviving tokens.
+    #[test]
+    fn reanchored_deletion_and_many_to_few_slice_the_span() {
+        let words = timed_words(&["um", "uh", "so", "right"]);
+
+        // Pure deletion: words 0-1 vanish.
+        let deleted = reanchored_corrected_words(&words, &[edit(0, 1, "")]).expect("deletion");
+        assert_eq!(
+            deleted
+                .iter()
+                .map(|word| word.word.as_str())
+                .collect::<Vec<_>>(),
+            ["so", "right"]
+        );
+        assert_eq!(deleted[0].start_ms, words[2].start_ms);
+
+        // Many-to-few: three words (span 0..2500) become one token spanning
+        // the whole source range.
+        let rewritten =
+            reanchored_corrected_words(&words, &[edit(0, 2, "Hello")]).expect("rewrite");
+        assert_eq!(
+            rewritten
+                .iter()
+                .map(|word| word.word.as_str())
+                .collect::<Vec<_>>(),
+            ["Hello", "right"]
+        );
+        assert_eq!(rewritten[0].start_ms, 0);
+        assert_eq!(rewritten[0].end_ms, 2500);
+    }
+
+    /// dcterms:identifier: `transcript_layers::reanchored_corrected_words`
+    /// expect: A one-for-one edit inside a re-anchored projection keeps the
+    /// aligned path's exact semantics — source confidence retained, timing
+    /// untouched — so re-anchoring never degrades an already-aligned edit.
+    #[test]
+    fn reanchored_one_for_one_edit_keeps_aligned_semantics() {
+        let words = vec![TimedWord {
+            word: "alpa".to_string(),
+            start_ms: 100,
+            end_ms: 600,
+            confidence: Some(hkask_types::Confidence::new(0.9)),
+        }];
+        let projected =
+            reanchored_corrected_words(&words, &[edit(0, 0, "alpha")]).expect("one-for-one");
+        assert_eq!(projected[0].word, "alpha");
+        assert_eq!(
+            projected[0].confidence,
+            Some(hkask_types::Confidence::new(0.9))
+        );
+        assert_eq!(projected[0].start_ms, 100);
+        assert_eq!(projected[0].end_ms, 600);
+    }
+
+    /// dcterms:identifier: `transcript_layers::reanchored_corrected_words`
+    /// expect: A zero-duration source span is degenerate but deterministic
+    /// — every replacement token gets the same instant, never an error,
+    /// never a negative or reversed range.
+    #[test]
+    fn reanchored_zero_duration_span_is_degenerate_but_deterministic() {
+        let words = vec![TimedWord {
+            word: "ela".to_string(),
+            start_ms: 2000,
+            end_ms: 2000,
+            confidence: None,
+        }];
+        let projected = reanchored_corrected_words(&words, &[edit(0, 0, "Cinder ella")])
+            .expect("zero-duration re-anchors");
+        assert_eq!(projected.len(), 2);
+        assert_eq!((projected[0].start_ms, projected[0].end_ms), (2000, 2000));
+        assert_eq!((projected[1].start_ms, projected[1].end_ms), (2000, 2000));
     }
 
     #[test]

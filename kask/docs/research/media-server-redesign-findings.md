@@ -89,31 +89,50 @@ its method, not a prerequisite re-run.
   and/or multi-reference voting, with acceptance criteria stated before
   implementation. Presented with costs when this condition's loop runs.
 
-### MF-4 — Embedding-error typing (condition 4)
+### MF-4 — Embedding-error typing (condition 4) — **CLOSED 2026-10-06, commit `1a8c500c12`**
 
-- **Current condition:** `classify_embedding_error` string-matches
-  credential-missing substrings via `is_credential_missing_error`
-  (`src/error.rs:181-184`, used at `:220-227`) because
-  `EmbeddingGenerationError` has no typed `NotConfigured` variant — its
-  variants are `InvalidRequest`, `Connection`, `Api`, `Json`,
-  `EmptyResponse`, `DimensionMismatch`
-  (`kask/crates/hkask-types/src/ports/embedding.rs:30-42`). The doc comment
-  at `src/error.rs:174-181` names the migration path: add a
-  `NotConfigured(String)` variant to `EmbeddingGenerationError` and match
-  on the variant instead.
-- **Target condition:** the typed variant exists and the string-matching is
-  deleted, with the per-variant `permission_denied` classification
-  preserved.
-- **Reached when:** `classify_embedding_error` matches on variants, and a
-  test pins missing-credential → `permission_denied` without substring
-  matching.
-- **Decision status:** technical execution. Note the adjacent 2026-10-05
-  commit `d17d9e7a92` fixed `ImageNotFound` → `not_found` and
-  `GalleryNotInitialized` → `failed_precondition` — a different slice of
-  the error contract; this condition remains open. The change touches
-  `hkask-types` (shared), so its sweep covers every
-  `EmbeddingGenerationError` consumer, and the deletion removes
-  `is_credential_missing_error` outright.
+- **Current condition (at close):** the typed variant exists and the
+  string-matching is deleted. `EmbeddingGenerationError::NotConfigured(String)`
+  lives at `kask/crates/hkask-types/src/ports/embedding.rs` (doc comment
+  names the permission_denied mapping); `hkask-inference`'s direct-embedding
+  fallback constructs it — `DirectEmbeddingPort::try_new` now returns
+  `Result<Self, DirectEmbeddingPortError>` with the three failure modes
+  typed (`NoProviderPrefix`, `MissingApiKey { env_var }`, `ClientBuild`),
+  mapped by `direct_embed_error` / `direct_inference_error` so a missing
+  credential is `NotConfigured` **naming the env var** (the former `Option`
+  collapse misclassified all three modes as `Connection` — a live bug:
+  the missing-credential case surfaced as `unavailable`, and the deleted
+  string-matcher's patterns matched no live message at all).
+  `classify_embedding_error` matches on the variant
+  (`kask/mcp-servers/hkask-mcp-media/src/error.rs`);
+  `is_credential_missing_error` and its stale doc comment are deleted; the
+  `embed_text` call-site prefix changed from "Embedding model unavailable.
+  Configure a cloud provider" (wrong on a permission_denied error) to
+  "Embedding failed"; `media.md`'s classifier row updated.
+- **Reached-when check:** `classify_embedding_error` matches on variants ✓;
+  the pin test
+  `embedding_not_configured_classifies_by_variant_not_substring`
+  (media `error.rs` classification_tests) asserts missing-credential →
+  `permission_denied` naming the env var AND the fails-without-fix
+  direction — a `Connection` error carrying the old credential substring
+  stays `unavailable`. The construction-side mapping is pinned by
+  `direct_fallback_errors_classify_by_failure_mode` (hkask-inference).
+- **Receipts:** `./script/clippy -p hkask-types -p hkask-inference -p
+  hkask-mcp-media` green; consumer sweep compiled clean
+  (`-p hkask-services-core -p hkask-mcp-corpus -p hkask-mcp-curator -p
+  kask_bridge` — the variant lands non-transient in corpus's retry/breaker
+  matches and non-retryable in services-core's `From` impl, both correct);
+  `cargo test -p hkask-inference` 56/0/0 (+1), `cargo test -p hkask-mcp-media`
+  437/0/6 (+1 over the 436 baseline). Residue sweep: zero references to
+  `is_credential_missing_error` or the old collapsed message anywhere
+  (code and docs).
+- **Original condition record (2026-10-06 re-grasp, for the history):**
+  `classify_embedding_error` string-matched credential-missing substrings
+  via `is_credential_missing_error` (`src/error.rs:181-184`, used at
+  `:220-227`) because `EmbeddingGenerationError` had no typed
+  `NotConfigured` variant — its variants were `InvalidRequest`,
+  `Connection`, `Api`, `Json`, `EmptyResponse`, `DimensionMismatch`
+  (`kask/crates/hkask-types/src/ports/embedding.rs:30-42`).
 
 ### MF-5 — DNS-rebinding limitation (condition 5) — OPERATOR DECISION
 

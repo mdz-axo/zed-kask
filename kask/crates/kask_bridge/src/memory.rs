@@ -3633,6 +3633,130 @@ pub(crate) mod tests {
         );
     }
 
+    /// Pin the recall injection gate's one-way door and its recovery path —
+    /// the setting the UI labels "Recall Injection Gate (Decayed
+    /// Confidence)". A memory at the 0.5 insert floor under a 0.6 gate is
+    /// excluded from injection (the trap a gate above the floor springs:
+    /// every fresh memory invisible until calibrated), stays excluded on a
+    /// second attempt with no update (the gate compares confidence, which
+    /// only outcome calibration raises), and re-enters once a calibrated
+    /// update lifts it above the gate.
+    ///
+    /// Also pins the touch interaction, correcting the earlier analysis:
+    /// `recall_from` touches its top-limit survivors BEFORE the injector's
+    /// confidence filter, so a recalled-but-gated-out memory keeps its decay
+    /// clock — the door is stable exclusion, not a decaying spiral.
+    #[tokio::test]
+    async fn recall_gate_excludes_until_a_calibrated_update_lifts_it() {
+        use crate::context_injector::BridgeContextInjector;
+        use agent::ContextInjector;
+        use language_model_core::MessageContent;
+
+        // Constant embedding: the memory matches every query at distance 0.
+        let embed_fn = Arc::new(|_text: &str| -> Vec<f32> {
+            let mut v = vec![0.0f32; 1024];
+            v[0] = 1.0;
+            v
+        });
+        let port = in_memory_port_with_embed_fn(embed_fn);
+        let curator_webid = port.curator_webid;
+
+        let gated = hkask_storage::HMem::new(
+            "test:gate:memory",
+            "fact",
+            serde_json::json!("gated passage content"),
+            curator_webid,
+        )
+        .with_confidence(hkask_types::Confidence::new(0.5));
+        let unit_vec = {
+            let mut v = vec![0.0f32; 1024];
+            v[0] = 1.0;
+            v
+        };
+        let curator_store = port.curator_store.get().expect("curator store");
+        curator_store
+            .store_embedding(
+                "test:gate:memory",
+                &unit_vec,
+                "test-model",
+                Some("gated passage content"),
+            )
+            .expect("store embedding");
+        curator_store.store(gated).expect("store gated");
+
+        // The gate sits ABOVE the 0.5 insert floor — the configuration the
+        // settings UI refuses, exercised here directly to pin its behavior.
+        let injector = BridgeContextInjector::new_curator(Arc::new(port), 10, 0.6, true);
+        let prompt =
+            "a sufficiently long prompt about gated memory content for the recall gate test";
+
+        let before = curator_store
+            .query_deduped_untouched("test:gate:memory")
+            .expect("untouched query");
+        assert_eq!(before.len(), 1);
+        let recalled_at_before = before[0].recalled_at;
+        std::thread::sleep(std::time::Duration::from_millis(10));
+
+        let messages = injector.inject_context("gate-test-thread", prompt).await;
+        let content = match &messages[0].content[0] {
+            MessageContent::Text(t) => t.as_str(),
+            _ => panic!("expected text content"),
+        };
+        assert!(
+            !content.contains("gated passage content"),
+            "a below-gate memory must not be injected: {content}"
+        );
+        assert!(
+            content.contains("No relevant memory"),
+            "the gate's visible outcome is the absence message: {content}"
+        );
+
+        // The touch interaction: recall_from touched its survivor even though
+        // the injector gated it out — the decay clock keeps resetting while
+        // the memory keeps ranking, so exclusion is stable, not a spiral.
+        let after = curator_store
+            .query_deduped_untouched("test:gate:memory")
+            .expect("untouched query");
+        assert_eq!(after.len(), 1);
+        assert!(
+            after[0].recalled_at > recalled_at_before,
+            "a recalled-but-gated-out memory keeps its decay clock \
+             (touch happens in recall_from, before the injector's filter)"
+        );
+
+        // Second attempt with no update: still excluded — the one-way door.
+        let messages_again = injector.inject_context("gate-test-thread", prompt).await;
+        let content_again = match &messages_again[0].content[0] {
+            MessageContent::Text(t) => t.as_str(),
+            _ => panic!("expected text content"),
+        };
+        assert!(
+            !content_again.contains("gated passage content"),
+            "without a confidence update the memory stays below the gate: {content_again}"
+        );
+
+        // A calibrated update (what a Brier-scored outcome does to a record)
+        // lifts it above the gate — the recovery path.
+        let lifted = hkask_storage::HMem::new(
+            "test:gate:memory",
+            "fact",
+            serde_json::json!("gated passage content"),
+            curator_webid,
+        )
+        .with_confidence(hkask_types::Confidence::new(0.7));
+        curator_store.store(lifted).expect("store lifted");
+
+        let messages_lifted = injector.inject_context("gate-test-thread", prompt).await;
+        let content_lifted = match &messages_lifted[0].content[0] {
+            MessageContent::Text(t) => t.as_str(),
+            _ => panic!("expected text content"),
+        };
+        assert!(
+            content_lifted.contains("gated passage content"),
+            "a calibrated update above the gate is the recovery path: {content_lifted}"
+        );
+    }
+
     /// Pin that the ingestion semaphore serializes concurrent ingestions.
     /// Two concurrent ingestions should both complete successfully, but the
     /// second should wait for the first to release its permit.

@@ -105,7 +105,8 @@ chmod +x "$src/zed-kask"
 # --- Test 2: staging failure mid-inventory preserves the working install --
 seed_installed
 cp_fail_dest="$BIN_DIR/${MCP_SERVERS[0]}.new"
-# shellcheck disable=SC2329 -- invoked indirectly by publish_binaries
+# Invoked indirectly by publish_binaries (shellcheck cannot see the call).
+# shellcheck disable=SC2329
 cp() {
     if [ "$2" = "$cp_fail_dest" ]; then
         echo "injected cp failure" >&2

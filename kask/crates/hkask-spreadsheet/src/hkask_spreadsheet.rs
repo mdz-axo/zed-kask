@@ -61,6 +61,12 @@ mod property_tests;
 /// took 17.2s).
 pub const BULK_APPLY_CHUNK_CELLS: usize = 1_000;
 
+/// Maximum documents resident in one engine actor (SP-04). Opening beyond
+/// the cap evicts the least-recently-use clean document; a document with
+/// staged edits is pinned until explicitly closed (or the process ends) —
+/// evicting it would silently destroy its staged state.
+pub const MAX_OPEN_DOCUMENTS: usize = 16;
+
 /// The MCP server id of the central spreadsheet mutation owner (plan §4).
 pub const SPREADSHEET_MCP_SERVER_ID: &str = "spreadsheet";
 

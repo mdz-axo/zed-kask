@@ -23,11 +23,11 @@ use futures::executor::block_on;
 use proptest::prelude::*;
 
 use crate::WorkbookService;
-use crate::artifact_store::{ArtifactStore, digest_of};
+use crate::artifact_store::{ArtifactMeta, ArtifactStore, digest_of};
 use crate::{PublishOptions, SpreadsheetPublication};
 use hkask_types::spreadsheet::{
     AnalyticalTable, ArtifactOrigin, CellCoordinate, CellEdit, ColumnKind, EditTransaction,
-    SpreadsheetAccess, SpreadsheetArtifactRef, TableColumn, TableValue,
+    SpreadsheetAccess, SpreadsheetArtifactRef, SpreadsheetError, TableColumn, TableValue,
 };
 
 // ── Fixtures ────────────────────────────────────────────────────────────────
@@ -302,6 +302,53 @@ fn crash_leftover_temp_file_is_never_readable_as_a_revision() {
         .read_revision(&base.artifact_id, &base.revision_id)
         .expect("the published revision is unaffected by residue");
     assert_eq!(digest_of(&bytes), base.content_digest);
+}
+
+/// SP-11: the publish metadata window, constructed directly — the
+/// metadata is durably written and the revision is not (the window
+/// between `write_metadata` and `write_revision` in the reordered
+/// publish). The artifact is unknown but CONSISTENT: no revision is
+/// readable, no operation is recorded. The pre-SP-11 ordering (revision
+/// first) left the opposite — a revision whose block construction fails
+/// (`read_metadata` → `UnknownArtifact`).
+#[test]
+fn metadata_only_artifact_window_is_unknown_but_consistent() {
+    let dir = tempfile::tempdir().expect("temp artifact root");
+    let store = ArtifactStore::at(dir.path().to_path_buf()).expect("store opens");
+    let meta = ArtifactMeta {
+        origin: origin(),
+        title: "Crash window".into(),
+        sheet_name: "Main".into(),
+        rows: 2,
+        cols: 2,
+    };
+    store
+        .write_metadata("crash-window-artifact", &meta)
+        .expect("metadata written, revision not");
+
+    // No revision exists: reads are UnknownArtifact, never a half state.
+    let error = store
+        .read_revision("crash-window-artifact", "rev-1")
+        .expect_err("no revision was published");
+    assert!(
+        matches!(error, SpreadsheetError::UnknownArtifact { .. }),
+        "got: {error:?}"
+    );
+    // No operation is recorded.
+    assert!(
+        store
+            .find_operation("crash-window-artifact", "any-key")
+            .expect("op lookup ok")
+            .is_none()
+    );
+    // The metadata itself is readable (the artifact is identifiable).
+    assert_eq!(
+        store
+            .read_metadata("crash-window-artifact")
+            .expect("metadata readable")
+            .title,
+        "Crash window"
+    );
 }
 
 /// Immutability at the store boundary: a second `write_revision` under

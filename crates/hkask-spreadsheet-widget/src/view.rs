@@ -610,6 +610,15 @@ impl SpreadsheetWidget {
         self.active_sheet = new_block.active_sheet.clone();
         self.window = Some(new_block.viewport);
         self.content = None;
+        // Release the superseded revision's resident document (SP-04): its
+        // staged state was the save payload, now persisted as the new
+        // revision.
+        if let Some(superseded) = self.document.clone() {
+            cx.spawn(async move |_, _| {
+                superseded.close().await.log_err();
+            })
+            .detach();
+        }
         self.reload_document(cx);
     }
 

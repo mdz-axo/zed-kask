@@ -233,10 +233,11 @@ fenced tag. The prompt must disambiguate the two, not deny either.
 
 - **zed-kask** `:59`: copy the ` ```media ` block from a `display_hint`
   tool-result field verbatim into the reply.
-- **zed-kask** `:60`: copy the ` ```spreadsheet ` block from a
-  `spreadsheet`/`portfolio` tool result's `display_hint` verbatim into the
-  reply — an editable workbook what-if from `spreadsheet_apply` or
-  `portfolio_what_if`.
+- **zed-kask** `:60`: copy the ` ```spreadsheet ` block from any tool
+  result's `display_hint` verbatim into the reply — an editable workbook
+  what-if. The rule is field-based (no emitter enumeration): the structural
+  path (`context_server_registry.rs`) renders hints as tool content
+  regardless; the bullet puts the block in the assistant's reply.
 - **zed-kask** `:61`: copy the ` ```media ` blocks from a `display_hints`
   array verbatim into the reply.
 - **Upstream** has none of these bullets.

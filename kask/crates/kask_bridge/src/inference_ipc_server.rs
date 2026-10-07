@@ -915,6 +915,7 @@ fn embed_error_outcome(error: hkask_types::EmbeddingGenerationError) -> Inferenc
     let (code, message, status) = match error {
         hkask_types::EmbeddingGenerationError::InvalidRequest(m) => ("InvalidRequest", m, None),
         hkask_types::EmbeddingGenerationError::Connection(m) => ("Connection", m, None),
+        hkask_types::EmbeddingGenerationError::NotConfigured(m) => ("NotConfigured", m, None),
         hkask_types::EmbeddingGenerationError::Api(status, m) => ("Api", m, Some(status)),
         hkask_types::EmbeddingGenerationError::Json(m) => ("Json", m, None),
         hkask_types::EmbeddingGenerationError::EmptyResponse => (

@@ -185,6 +185,7 @@ pub fn tool_to_omc(tool: &str) -> Option<OmcConcept> {
         | "educt_speaker_pass"
         | "educt_correction_pass"
         | "educt_apply_corrections"
+        | "educt_realign_transcript"
         | "educt_highlight_pass"
         | "educt_edl_from_highlights"
         | "educt_export"

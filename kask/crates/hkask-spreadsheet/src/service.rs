@@ -25,7 +25,7 @@ use hkask_types::spreadsheet::{InlineTableBlock, MAX_VIEWPORT_COLS, MAX_VIEWPORT
 
 use crate::artifact_store::{ArtifactMeta, ArtifactStore, OperationRecord, digest_of};
 use crate::engine;
-use crate::{SPREADSHEET_APPLY_TOOL, SPREADSHEET_MCP_SERVER_ID};
+use crate::{MAX_OPEN_DOCUMENTS, SPREADSHEET_APPLY_TOOL, SPREADSHEET_MCP_SERVER_ID};
 
 /// The presentation choice for a publication (§6: callers explicitly choose;
 /// there is no hidden threshold and no default).
@@ -135,6 +135,13 @@ enum Command {
     Sheets {
         key: DocumentKey,
         respond: oneshot::Sender<Result<Vec<String>, SpreadsheetError>>,
+    },
+    Close {
+        key: DocumentKey,
+        respond: oneshot::Sender<Result<(), SpreadsheetError>>,
+    },
+    ResidentCount {
+        respond: oneshot::Sender<Result<usize, SpreadsheetError>>,
     },
 }
 
@@ -263,6 +270,15 @@ impl WorkbookService {
         })?;
         receiver.await.map_err(|_| actor_down())?
     }
+
+    /// The number of documents currently resident in the engine actor
+    /// (SP-04's observability probe: bounded residency is checkable, and an
+    /// operator can distinguish "cached" from "leaking").
+    pub async fn resident_documents(&self) -> Result<usize, SpreadsheetError> {
+        let (respond, receiver) = oneshot::channel();
+        self.send(Command::ResidentCount { respond })?;
+        receiver.await.map_err(|_| actor_down())?
+    }
 }
 
 // The `Arc<Self>` reborrow note: `open` uses the `&Arc<Self>` receiver so
@@ -366,18 +382,97 @@ impl WorkbookDocument {
         })?;
         receiver.await.map_err(|_| actor_down())?
     }
+
+    /// Release this revision's resident document in the engine actor
+    /// (SP-04). Idempotent: releasing an already-released revision holds.
+    /// Staged state in the released document is discarded — callers close a
+    /// revision only when its staged state no longer matters (the widget
+    /// closes a superseded revision after a successful save).
+    pub async fn close(&self) -> Result<(), SpreadsheetError> {
+        let (respond, receiver) = oneshot::channel();
+        self.service.send(Command::Close {
+            key: (
+                self.artifact.artifact_id.clone(),
+                self.artifact.revision_id.clone(),
+            ),
+            respond,
+        })?;
+        receiver.await.map_err(|_| actor_down())?
+    }
 }
 
-/// The actor's on-thread state: the store and every open document.
+/// One open document in the actor's cache: the workbook, whether it has
+/// staged (undoable) edits — a staged document is never evicted, because
+/// eviction would silently destroy its staged state — and its LRU clock.
+struct CachedDocument {
+    workbook: logisheets_rs::Workbook,
+    staged: bool,
+    last_used: u64,
+}
+
+/// The actor's on-thread state: the store and the bounded open-document
+/// cache (SP-04: residency is capped at [`MAX_OPEN_DOCUMENTS`]; staged
+/// documents are pinned).
 struct ActorState {
     store: ArtifactStore,
-    documents: HashMap<DocumentKey, logisheets_rs::Workbook>,
+    documents: HashMap<DocumentKey, CachedDocument>,
+    next_used: u64,
+}
+
+impl ActorState {
+    /// Refresh a document's LRU clock (whether or not it is open).
+    fn touch(&mut self, key: &DocumentKey) {
+        self.next_used += 1;
+        if let Some(entry) = self.documents.get_mut(key) {
+            entry.last_used = self.next_used;
+        }
+    }
+
+    /// The open document for `key` (read path), refreshing its LRU clock.
+    fn document(&mut self, key: &DocumentKey) -> Option<&logisheets_rs::Workbook> {
+        self.touch(key);
+        self.documents.get(key).map(|entry| &entry.workbook)
+    }
+
+    /// The open document for `key` (mutation path), refreshing its clock.
+    fn document_mut(&mut self, key: &DocumentKey) -> Option<&mut logisheets_rs::Workbook> {
+        self.touch(key);
+        self.documents.get_mut(key).map(|entry| &mut entry.workbook)
+    }
+
+    /// Mark a document as carrying staged edits (pinned against eviction).
+    fn mark_staged(&mut self, key: &DocumentKey) {
+        if let Some(entry) = self.documents.get_mut(key) {
+            entry.staged = true;
+        }
+    }
+
+    /// Evict the least-recently-used clean document while over the cap
+    /// (SP-04). Staged documents are pinned — evicting one would silently
+    /// destroy its staged state; while every entry is staged the cache
+    /// exceeds the cap until a caller closes a document or the process
+    /// ends.
+    fn evict_over_cap(&mut self) {
+        while self.documents.len() > MAX_OPEN_DOCUMENTS {
+            let Some(victim) = self
+                .documents
+                .iter()
+                .filter(|(_, entry)| !entry.staged)
+                .min_by_key(|(_, entry)| entry.last_used)
+                .map(|(key, _)| key.clone())
+            else {
+                return;
+            };
+            self.documents.remove(&victim);
+        }
+    }
 }
 
 fn actor_loop(store: ArtifactStore, rx: mpsc::Receiver<Command>) {
     let mut state = ActorState {
         store,
         documents: HashMap::new(),
+        next_used: 0,
     };
     while let Ok(command) = rx.recv() {
         match command {
@@ -414,7 +509,7 @@ fn actor_loop(store: ArtifactStore, rx: mpsc::Receiver<Command>) {
                 window,
                 respond,
             } => {
-                let result = match state.documents.get(&key) {
+                let result = match state.document(&key) {
                     Some(workbook) => engine::extract_viewport(workbook, &window),
                     None => Err(SpreadsheetError::UnknownArtifact { artifact_id: key.0 }),
                 };
@@ -425,34 +520,52 @@ fn actor_loop(store: ArtifactStore, rx: mpsc::Receiver<Command>) {
                 edits,
                 respond,
             } => {
-                let result = match state.documents.get_mut(&key) {
+                let result = match state.document_mut(&key) {
                     Some(workbook) => engine::apply_edits(workbook, &edits, true),
-                    None => Err(SpreadsheetError::UnknownArtifact { artifact_id: key.0 }),
+                    None => Err(SpreadsheetError::UnknownArtifact {
+                        artifact_id: key.0.clone(),
+                    }),
                 };
+                // Staged edits pin the document against eviction (SP-04).
+                if result.is_ok() {
+                    state.mark_staged(&key);
+                }
                 deliver(respond, result);
             }
             Command::Undo { key, respond } => {
-                let result = match state.documents.get_mut(&key) {
+                let result = match state.document_mut(&key) {
                     Some(workbook) => Ok(workbook.undo()),
                     None => Err(SpreadsheetError::UnknownArtifact { artifact_id: key.0 }),
                 };
                 deliver(respond, result);
             }
             Command::Redo { key, respond } => {
-                let result = match state.documents.get_mut(&key) {
+                let result = match state.document_mut(&key) {
                     Some(workbook) => Ok(workbook.redo()),
                     None => Err(SpreadsheetError::UnknownArtifact { artifact_id: key.0 }),
                 };
                 deliver(respond, result);
             }
             Command::Sheets { key, respond } => {
-                let result = match state.documents.get(&key) {
+                let result = match state.document(&key) {
                     Some(workbook) => Ok((0..workbook.get_sheet_count())
                         .filter_map(|index| workbook.get_sheet_name_by_idx(index).ok())
                         .collect()),
                     None => Err(SpreadsheetError::UnknownArtifact { artifact_id: key.0 }),
                 };
                 deliver(respond, result);
+            }
+            Command::Close { key, respond } => {
+                // Explicit close is authoritative: the entry is dropped even
+                // if staged — the caller knows the staged state's fate (the
+                // widget closes a superseded revision after a successful
+                // save). Idempotent: releasing an already-released revision
+                // holds (it is not resident).
+                state.documents.remove(&key);
+                deliver(respond, Ok(()));
+            }
+            Command::ResidentCount { respond } => {
+                deliver(respond, Ok(state.documents.len()));
             }
         }
     }
@@ -513,9 +626,10 @@ fn handle_publish(
             let revision_id = uuid::Uuid::new_v4().simple().to_string();
             let artifact =
                 SpreadsheetArtifactRef::new(artifact_id.clone(), revision_id.clone(), digest)?;
-            state
-                .store
-                .write_revision(&artifact_id, &revision_id, &bytes)?;
+            // Metadata precedes the first revision (SP-11): a crash between
+            // the two writes leaves a metadata-only artifact — unknown but
+            // consistent — never a revision whose block construction fails
+            // (`read_metadata` → `UnknownArtifact`).
             let meta = ArtifactMeta {
                 origin,
                 title: table.title.clone(),
@@ -524,6 +638,9 @@ fn handle_publish(
                 cols: table.columns.len(),
             };
             state.store.write_metadata(&artifact_id, &meta)?;
+            state
+                .store
+                .write_revision(&artifact_id, &revision_id, &bytes)?;
             let block = build_block(&meta, &artifact)?;
             tracing::info!(
                 target: "hkask.spreadsheet",
@@ -543,12 +660,13 @@ fn handle_open(
 ) -> Result<(), SpreadsheetError> {
     let key = (artifact.artifact_id.clone(), artifact.revision_id.clone());
     // Idempotent open: a document for this (artifact, revision) pair may
-    // already be open (a second widget for the same block body, a cache-evict
-    // re-render). Revisions are immutable and the digest was verified at the
-    // first open, so re-opening must keep the existing workbook — an
-    // unconditional insert would silently destroy another handle's staged
-    // state.
+    // already be open (a second widget for the same block body, a
+    // cache-evict re-render). Revisions are immutable and the digest was
+    // verified at the first open, so re-opening must keep the existing
+    // workbook — an unconditional insert would silently destroy another
+    // handle's staged state — and refresh its LRU clock.
     if state.documents.contains_key(&key) {
+        state.touch(&key);
         return Ok(());
     }
     let bytes = state
@@ -566,7 +684,19 @@ fn handle_open(
         .map_err(|error| SpreadsheetError::Engine {
             detail: format!("engine open failed: {error}"),
         })?;
-    state.documents.insert(key, workbook);
+    // The fresh document enters as most-recently-used (a zero clock would
+    // make it the eviction victim at its own insert).
+    state.next_used += 1;
+    let clock = state.next_used;
+    state.documents.insert(
+        key,
+        CachedDocument {
+            workbook,
+            staged: false,
+            last_used: clock,
+        },
+    );
+    state.evict_over_cap();
     Ok(())
 }
 
@@ -574,6 +704,17 @@ fn handle_apply(
     state: &mut ActorState,
     transaction: hkask_types::spreadsheet::EditTransaction,
 ) -> Result<SpreadsheetPublication, SpreadsheetError> {
+    // §7: the mutation's expected access mode is enforced (SP-06) — only
+    // workbook artifacts exist, so any other mode on a mutation is caller
+    // confusion worth a typed rejection before any store access.
+    if transaction.expected_access != SpreadsheetAccess::WorkbookWhatIf {
+        return Err(SpreadsheetError::AccessMismatch {
+            detail: format!(
+                "edit transactions apply to WorkbookWhatIf revisions, got {:?}",
+                transaction.expected_access
+            ),
+        });
+    }
     let artifact_id = transaction.base_artifact.artifact_id.clone();
 
     // Idempotency (§7): a repeated identity returns the recorded result; a
@@ -759,6 +900,85 @@ mod tests {
             }
             other => panic!("expected a workbook publication, got {other:?}"),
         }
+    }
+
+    /// SP-04: residency is bounded — opening more revisions than the cap
+    /// evicts the least-recently-used clean document; a staged document is
+    /// pinned and survives eviction pressure; explicit close releases it.
+    #[test]
+    fn document_residency_is_bounded_and_staged_documents_are_pinned() {
+        let dir = tempfile::tempdir().expect("temp artifact root");
+        let service =
+            WorkbookService::start_with_root(dir.path().to_path_buf()).expect("service starts");
+
+        // Open the first artifact and stage an edit (pinned against eviction).
+        let (first, _) = publish_workbook(&service, sample_table());
+        let first_doc = block_on(service.open(&first)).expect("open first");
+        block_on(first_doc.stage(vec![CellEdit::SetCell {
+            coordinate: hkask_types::spreadsheet::CellCoordinate::new("Main".into(), 1, 0)
+                .expect("coordinate"),
+            value: hkask_types::spreadsheet::TableValue::Text("staged".into()),
+        }]))
+        .expect("stage");
+
+        // Apply eviction pressure: open cap+2 more distinct artifacts, each
+        // touched so it is the most-recently-used.
+        for _ in 0..(MAX_OPEN_DOCUMENTS + 2) {
+            let (artifact, _) = publish_workbook(&service, sample_table());
+            let document = block_on(service.open(&artifact)).expect("open");
+            block_on(document.sheets()).expect("sheets");
+        }
+
+        let resident = block_on(service.resident_documents()).expect("count");
+        assert!(
+            resident <= MAX_OPEN_DOCUMENTS,
+            "residency must be bounded by the cap, got {resident}"
+        );
+
+        // The staged document survived the pressure with its staged state.
+        let viewport = block_on(first_doc.viewport(full_viewport("Main", 3, 3)))
+            .expect("staged document survived");
+        assert_eq!(
+            cell(&viewport, 1, 0),
+            &hkask_types::spreadsheet::TableValue::Text("staged".into())
+        );
+
+        // Explicit close releases the resident entry: the next viewport is
+        // UnknownArtifact until the document is re-opened.
+        block_on(first_doc.close()).expect("close");
+        let error = block_on(first_doc.viewport(full_viewport("Main", 3, 3)))
+            .expect_err("closed document is not resident");
+        assert!(
+            matches!(error, SpreadsheetError::UnknownArtifact { .. }),
+            "got: {error:?}"
+        );
+    }
+
+    /// SP-06: the mutation's expected access mode is enforced — only
+    /// workbook artifacts exist, so a non-workbook mode is a typed rejection
+    /// before any store access.
+    #[test]
+    fn apply_rejects_a_non_workbook_expected_access() {
+        let dir = tempfile::tempdir().expect("temp artifact root");
+        let service =
+            WorkbookService::start_with_root(dir.path().to_path_buf()).expect("service starts");
+        let (base, _) = publish_workbook(&service, sample_table());
+        let transaction = EditTransaction::new(
+            base,
+            "idem-access".into(),
+            SpreadsheetAccess::DataOnly,
+            vec![CellEdit::SetCell {
+                coordinate: hkask_types::spreadsheet::CellCoordinate::new("Main".into(), 1, 1)
+                    .expect("coordinate"),
+                value: hkask_types::spreadsheet::TableValue::Number(1.0),
+            }],
+        )
+        .expect("transaction is valid");
+        let error = block_on(service.apply(transaction)).expect_err("wrong access mode");
+        assert!(
+            matches!(error, SpreadsheetError::AccessMismatch { .. }),
+            "got: {error:?}"
+        );
     }
 
     fn full_viewport(sheet: &str, rows: usize, cols: usize) -> SpreadsheetViewport {

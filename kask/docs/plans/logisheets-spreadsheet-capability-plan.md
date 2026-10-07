@@ -229,12 +229,18 @@ A SpreadsheetBlock carries:
 - `viz: "spreadsheet"`.
 - Schema version.
 - Title and active sheet.
-- Access mode.
 - Opaque artifact and revision IDs.
 - Content digest.
 - Bounded initial viewport.
 - Analytical origin.
 - Server-authored mutation endpoint.
+
+(The former "Access mode" field was deleted 2026-10-06 — SP-12 of the
+from-scratch design review
+(`kask/docs/research/spreadsheet-capability-redesign-proposals.md`): the
+block *type* is the access mode, so the field was a tautology — hardcoded at
+construction and rejected when different. The presentation choice lives in
+the caller's `SpreadsheetAccess` and the publication, not in the block.)
 
 It must not carry:
 
@@ -637,6 +643,19 @@ Scenarios candidates:
 - Scenario-assessment phases.
 
 Event trees remain in the graph widget.
+
+**Phase 6 record (2026-10-06): companies slice COMPLETE.**
+`scenario_impact_valuation` gained the explicit presentation choice
+(`ImpactValuationPresentation`: `DataOnly` default — the plain JSON report —
+or `WorkbookWhatIf`), mirroring the portfolio proving slice: under
+`WorkbookWhatIf` the server publishes the FULL scenario path grid (the JSON
+output caps at 50 paths; the workbook carries every one) as an editable
+workbook revision through the per-instance engine actor and appends its
+` ```spreadsheet ` display hint
+(`kask/mcp-servers/hkask-mcp-companies/src/tools/valuation.rs`, pinned by
+`scenario_impact_valuation_workbook_whatif_publishes_the_path_grid` in
+`acquisition_tests.rs`). The remaining Phase 6 candidates above and Phase 7
+remain unchartered.
 
 ### Phase 7 — Research and remaining producers
 

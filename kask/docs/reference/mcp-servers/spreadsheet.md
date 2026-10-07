@@ -1,7 +1,7 @@
 ---
 title: "Spreadsheet MCP Server Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-09-18
+last_updated: 2026-10-06
 version: "0.40.2"
 status: "Active"
 domain: "Composition"
@@ -76,6 +76,38 @@ No credentials; no database; no provider feeds. Reads only
 `hkask_spreadsheet::artifact_store::production_root`). The allowlists are
 pinned by `spreadsheet_allowlist_matches_actual_reads`
 (`kask/crates/kask_bridge/src/mcp_servers.rs`).
+
+## Formula support (probe-verified 2026-10-06)
+
+The engine gates formulas at apply time (`check_formula`, `engine.rs`) and
+surfaces unevaluable formulas as visible `#` error values — the spreadsheet
+convention (pinned by `unsupported_formula_surfaces_as_error`). The
+inventory below is **probe-verified** against the pinned `logisheets-rs
+=1.15.1` by `kask/scripts/probe-spreadsheet-formula-inventory.sh` (a
+scratch harness built outside the workspace; 96 candidate functions × 5
+simple invocation shapes; a function is listed as supported when at least
+one shape evaluates without an error value).
+
+**Evaluates (82):** ABS, AND, AVERAGE, AVERAGEIF, AVERAGEIFS, CEILING,
+COLUMN, CONCAT, CONCATENATE, COUNT, COUNTA, COUNTBLANK, COUNTIF, COUNTIFS,
+DATE, DAY, EOMONTH, EXACT, EXP, FIND, FLOOR, FV, HLOOKUP, IF, IFERROR,
+INDEX, INT, ISBLANK, ISERROR, ISNUMBER, ISTEXT, LARGE, LEFT, LEN, LN, LOG,
+LOG10, LOWER, MATCH, MAX, MEDIAN, MID, MIN, MOD, MODE, MONTH, NOT, NPV,
+OFFSET, OR, PERCENTILE, PMT, POWER, PV, RANK, RATE, REPLACE, RIGHT, ROUND,
+ROUNDDOWN, ROUNDUP, ROW, SEARCH, SIGN, SMALL, SQRT, STDEV, STDEVP,
+SUBSTITUTE, SUM, SUMIF, SUMIFS, SUMPRODUCT, TEXT, TRIM, TRUNC, UPPER,
+VALUE, VAR, VARP, VLOOKUP, YEAR.
+
+**Errors under every probed shape (14):** CORREL, FALSE, INDIRECT,
+INTERCEPT, IRR, LOOKUP, NA, NOW, RAND, RANDBETWEEN, SLOPE, TODAY,
+TRANSPOSE, TRUE. `TRUE`/`FALSE` are literals, not functions; the volatile
+family (`TODAY`, `NOW`, `RAND`, `RANDBETWEEN`) and `INDIRECT`, `LOOKUP`,
+`TRANSPOSE`, `NA` do not evaluate under the probed shapes.
+
+Caveat: the probe classifies by five simple shapes — an arity-sensitive
+function (e.g. `CORREL`, which wants two arrays) may be under-classified.
+Re-run the probe before relying on a specific function, and treat an
+unevaluable formula's visible `#` error value as the ground truth.
 
 ## Testing
 

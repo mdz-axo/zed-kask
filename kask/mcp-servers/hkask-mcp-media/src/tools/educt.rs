@@ -18,8 +18,8 @@ use crate::types::{
     EductApplyCorrectionsRequest, EductCorrectionPassRequest, EductDeleteTranscriptRequest,
     EductEdlFromHighlightsRequest, EductExportRequest, EductGetTranscriptRequest,
     EductHighlightPassRequest, EductListLayersRequest, EductLocateRequest,
-    EductParagraphPassRequest, EductRenderEdlRequest, EductSpeakerPassRequest,
-    EductStoreLayerRequest, EductStoreTranscriptRequest,
+    EductParagraphPassRequest, EductRealignTranscriptRequest, EductRenderEdlRequest,
+    EductSpeakerPassRequest, EductStoreLayerRequest, EductStoreTranscriptRequest,
 };
 use crate::*;
 
@@ -61,6 +61,7 @@ struct CorpusExportEffectiveParams<'a> {
 enum WorkingTranscriptAlignment {
     Original,
     Aligned,
+    ReAnchored,
     Unaligned,
     Untimed,
 }
@@ -71,6 +72,9 @@ struct WorkingTranscript {
     words: Option<Vec<TimedWord>>,
     alignment: WorkingTranscriptAlignment,
     correction_layer_id: Option<String>,
+    /// The realignment layer whose decision the projection honors, when
+    /// present (the re-anchored path, MF-2).
+    realignment_layer_id: Option<String>,
     alignment_error: Option<String>,
 }
 
@@ -80,7 +84,7 @@ impl WorkingTranscript {
             McpToolError::new(
                 hkask_types::McpErrorKind::FailedPrecondition,
                 format!(
-                    "{operation} requires a timing-aligned working transcript; correction layer {} is unaligned: {}. Re-transcribe the corrected range or use one replacement token per original timed word",
+                    "{operation} requires a timing-aligned working transcript; correction layer {} is unaligned: {}. Re-transcribe the corrected range, use one replacement token per original timed word, or store a realignment layer via educt_realign_transcript",
                     self.correction_layer_id.as_deref().unwrap_or("unknown"),
                     self.alignment_error.as_deref().unwrap_or("unknown alignment error")
                 ),
@@ -96,7 +100,7 @@ fn working_transcript(
 ) -> Result<WorkingTranscript, McpToolError> {
     let layers = transcript_store::list_layers(driver, transcript_id).map_err(map_store_error)?;
     let mut corrections = layers
-        .into_iter()
+        .iter()
         .filter(|record| record.layer.kind() == "correction")
         .collect::<Vec<_>>();
     corrections.sort_by(|left, right| {
@@ -111,6 +115,7 @@ fn working_transcript(
                 words: None,
                 alignment: WorkingTranscriptAlignment::Untimed,
                 correction_layer_id: None,
+                realignment_layer_id: None,
                 alignment_error: Some("source transcript has no word-level timings".to_string()),
             });
         }
@@ -119,27 +124,78 @@ fn working_transcript(
             words: Some(bundle.words.clone()),
             alignment: WorkingTranscriptAlignment::Original,
             correction_layer_id: None,
+            realignment_layer_id: None,
             alignment_error: None,
         });
     };
-    let TranscriptLayer::Correction(correction) = record.layer else {
+    let TranscriptLayer::Correction(correction) = &record.layer else {
         return Err(McpToolError::internal(
             "layer kind mismatch after correction filter",
         ));
     };
+    // The re-anchored path (MF-2): a realignment layer naming THIS
+    // correction records the decision to project with interpolated
+    // timings. Newest realignment wins (created_at, then id — the same
+    // deterministic tie-break as the correction lookup); a realignment
+    // naming an older correction is inert here.
+    let mut realignments = layers
+        .iter()
+        .filter(|candidate| {
+            matches!(
+                &candidate.layer,
+                TranscriptLayer::Realignment(layer)
+                    if layer.correction_layer_id == record.id
+            )
+        })
+        .collect::<Vec<_>>();
+    realignments.sort_by(|left, right| {
+        left.created_at
+            .cmp(&right.created_at)
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    if let Some(realignment) = realignments.pop() {
+        return match crate::transcript_layers::reanchored_corrected_words(
+            &bundle.words,
+            &correction.edits,
+        ) {
+            Ok(words) => Ok(WorkingTranscript {
+                text: crate::transcript_select::rendered_transcript(&words),
+                words: Some(words),
+                alignment: WorkingTranscriptAlignment::ReAnchored,
+                correction_layer_id: Some(record.id.clone()),
+                realignment_layer_id: Some(realignment.id.clone()),
+                alignment_error: None,
+            }),
+            // Unreachable through validated layers (re-anchoring fails
+            // only on an out-of-bounds range); surfaced, never swallowed.
+            Err(error) => Ok(WorkingTranscript {
+                text: crate::transcript_layers::corrected_text_view(
+                    &bundle.words,
+                    &correction.edits,
+                ),
+                words: None,
+                alignment: WorkingTranscriptAlignment::Unaligned,
+                correction_layer_id: Some(record.id.clone()),
+                realignment_layer_id: Some(realignment.id.clone()),
+                alignment_error: Some(error.to_string()),
+            }),
+        };
+    }
     match crate::transcript_layers::aligned_corrected_words(&bundle.words, &correction.edits) {
         Ok(words) => Ok(WorkingTranscript {
             text: crate::transcript_select::rendered_transcript(&words),
             words: Some(words),
             alignment: WorkingTranscriptAlignment::Aligned,
-            correction_layer_id: Some(record.id),
+            correction_layer_id: Some(record.id.clone()),
+            realignment_layer_id: None,
             alignment_error: None,
         }),
         Err(error) => Ok(WorkingTranscript {
             text: crate::transcript_layers::corrected_text_view(&bundle.words, &correction.edits),
             words: None,
             alignment: WorkingTranscriptAlignment::Unaligned,
-            correction_layer_id: Some(record.id),
+            correction_layer_id: Some(record.id.clone()),
+            realignment_layer_id: None,
             alignment_error: Some(error.to_string()),
         }),
     }
@@ -421,7 +477,7 @@ impl MediaServer {
     }
 
     #[tool(
-        description = "Store a layer over a transcript's words: {\"kind\": \"speaker\"|\"paragraph\"|\"correction\"|\"highlight\"|\"edl\", ...}. The layer is validated against the transcript's word count before storage — a layer that fails validation is rejected with the named failing invariant and nothing is persisted. Layers anchor to word indices, never timestamps."
+        description = "Store a layer over a transcript's words: {\"kind\": \"speaker\"|\"paragraph\"|\"correction\"|\"highlight\"|\"edl\"|\"realignment\", ...}. The layer is validated against the transcript's word count before storage — a layer that fails validation is rejected with the named failing invariant and nothing is persisted. Layers anchor to word indices, never timestamps."
     )]
     pub async fn educt_store_layer(
         &self,
@@ -435,7 +491,7 @@ impl MediaServer {
             let parsed: TranscriptLayer = serde_json::from_value(value).map_err(|e| {
                 McpToolError::invalid_argument(format!(
                     "layer must be a tagged layer JSON object {{\"kind\": \
-                     \"speaker\"|\"paragraph\"|\"correction\"|\"highlight\"|\"edl\", \
+                     \"speaker\"|\"paragraph\"|\"correction\"|\"highlight\"|\"edl\"|\"realignment\", \
                      ...}}: {e}"
                 ))
             })?;
@@ -692,8 +748,9 @@ impl MediaServer {
             let layers =
                 transcript_store::list_layers(driver, &transcript_id).map_err(map_store_error)?;
             let mut correction_layers: Vec<_> = layers
-                .into_iter()
+                .iter()
                 .filter(|record| record.layer.kind() == "correction")
+                .cloned()
                 .collect();
             // Newest first; the ID breaks timestamp ties deterministically.
             correction_layers.sort_by(|a, b| {
@@ -717,27 +774,156 @@ impl MediaServer {
             };
             let corrected =
                 crate::transcript_layers::corrected_text_view(&bundle.words, &correction.edits);
-            let (alignment, working_words, alignment_error) =
-                match crate::transcript_layers::aligned_corrected_words(
-                    &bundle.words,
-                    &correction.edits,
-                ) {
-                    Ok(words) => (WorkingTranscriptAlignment::Aligned, Some(words), None),
-                    Err(error) => (
-                        WorkingTranscriptAlignment::Unaligned,
-                        None,
-                        Some(error.to_string()),
-                    ),
-                };
+            // Consistency with the working transcript every timed consumer
+            // reads: a realignment layer naming THIS correction projects the
+            // re-anchored view here too (MF-2) — apply and consumers must
+            // never disagree on the same layer.
+            let realignment_layer_id = layers
+                .iter()
+                .filter(|candidate| {
+                    matches!(
+                        &candidate.layer,
+                        TranscriptLayer::Realignment(layer)
+                            if layer.correction_layer_id == record.id
+                    )
+                })
+                .max_by(|a, b| {
+                    a.created_at
+                        .cmp(&b.created_at)
+                        .then_with(|| a.id.cmp(&b.id))
+                })
+                .map(|candidate| candidate.id.clone());
+            let (alignment, working_words, alignment_error) = match realignment_layer_id {
+                Some(_) => {
+                    match crate::transcript_layers::reanchored_corrected_words(
+                        &bundle.words,
+                        &correction.edits,
+                    ) {
+                        Ok(words) => (WorkingTranscriptAlignment::ReAnchored, Some(words), None),
+                        Err(error) => (
+                            WorkingTranscriptAlignment::Unaligned,
+                            None,
+                            Some(error.to_string()),
+                        ),
+                    }
+                }
+                None => {
+                    match crate::transcript_layers::aligned_corrected_words(
+                        &bundle.words,
+                        &correction.edits,
+                    ) {
+                        Ok(words) => (WorkingTranscriptAlignment::Aligned, Some(words), None),
+                        Err(error) => (
+                            WorkingTranscriptAlignment::Unaligned,
+                            None,
+                            Some(error.to_string()),
+                        ),
+                    }
+                }
+            };
             Ok(serde_json::json!({
                 "corrected_text": corrected,
                 "alignment": alignment,
                 "alignment_error": alignment_error,
+                "realignment_layer_id": realignment_layer_id,
                 "working_words": working_words,
                 "applied_layer": {
                     "id": record.id,
                     "provenance": record.layer.provenance(),
                     "edits": correction.edits.len(),
+                },
+            }))
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Store a realignment layer recording the decision to project a correction with re-anchored timings: each cardinality-changing edit's replacement tokens are sliced equally across its source range's span, restoring timed consumers (educt_locate, highlighting, SRT) after insert/delete corrections. The immutable source bundle and its timings are never modified; interpolated tokens carry no STT confidence. Refuses an untimed transcript; a no-op on an already-aligned correction. Defaults to the latest correction layer."
+    )]
+    pub async fn educt_realign_transcript(
+        &self,
+        Parameters(EductRealignTranscriptRequest {
+            transcript_id,
+            layer_id,
+        }): Parameters<EductRealignTranscriptRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "educt_realign_transcript", async {
+            let driver = &**self.gallery_store.driver();
+            let Some((summary, bundle)) = transcript_store::load_transcript(driver, &transcript_id)
+                .map_err(map_store_error)?
+            else {
+                return Err(McpToolError::not_found(format!(
+                    "transcript {transcript_id} not found"
+                )));
+            };
+            if !summary.has_word_timings {
+                return Err(McpToolError::invalid_argument(
+                    "transcript has no word-level timings; a realignment cannot \
+                     anchor interpolation on an untimed source (NoWordTimings)",
+                ));
+            }
+            let layers =
+                transcript_store::list_layers(driver, &transcript_id).map_err(map_store_error)?;
+            let mut correction_layers: Vec<_> = layers
+                .iter()
+                .filter(|record| record.layer.kind() == "correction")
+                .collect();
+            correction_layers.sort_by(|a, b| {
+                b.created_at
+                    .cmp(&a.created_at)
+                    .then_with(|| b.id.cmp(&a.id))
+            });
+            let record = match layer_id {
+                Some(id) => correction_layers.into_iter().find(|record| record.id == id),
+                None => correction_layers.into_iter().next(),
+            };
+            let Some(record) = record else {
+                return Err(McpToolError::not_found(format!(
+                    "no correction layer found for transcript {transcript_id}"
+                )));
+            };
+            let TranscriptLayer::Correction(correction) = &record.layer else {
+                return Err(McpToolError::internal(
+                    "layer kind mismatch after correction filter",
+                ));
+            };
+            // An already-aligned correction needs no re-anchoring — an
+            // honest no-op, not an error.
+            if crate::transcript_layers::aligned_corrected_words(&bundle.words, &correction.edits)
+                .is_ok()
+            {
+                return Ok(serde_json::json!({
+                    "alignment": "aligned",
+                    "note": "correction is already one-for-one aligned; no re-anchoring needed",
+                    "applied_layer": {"id": record.id.clone()},
+                }));
+            }
+            let realignment =
+                TranscriptLayer::Realignment(crate::transcript_layers::RealignmentLayer {
+                    provenance: LayerProvenance {
+                        model: "deterministic".to_string(),
+                        prompt_template: "educt_realign_transcript".to_string(),
+                        created_at: hkask_types::time::now_rfc3339(),
+                    },
+                    correction_layer_id: record.id.clone(),
+                });
+            let stored = transcript_store::store_layer(driver, &transcript_id, &realignment)
+                .map_err(map_store_error)?;
+            let working_words = crate::transcript_layers::reanchored_corrected_words(
+                &bundle.words,
+                &correction.edits,
+            )
+            .map_err(|error| {
+                McpToolError::internal(format!("re-anchoring failed on a validated layer: {error}"))
+            })?;
+            Ok(serde_json::json!({
+                "alignment": "re_anchored",
+                "working_words": working_words,
+                "stored": stored,
+                "reanchored": {
+                    "correction_layer_id": record.id.clone(),
+                    "interpolation": "equal-slice across each edited range's source span",
+                    "source_timings": "unchanged — the immutable source bundle is never modified",
                 },
             }))
         })

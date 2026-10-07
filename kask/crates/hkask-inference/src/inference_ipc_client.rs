@@ -490,6 +490,11 @@ impl InferenceIpcClient {
             InferenceOutcome::Error { error } => Err(match error.code.as_str() {
                 "InvalidRequest" => EmbeddingGenerationError::InvalidRequest(error.message),
                 "Json" => EmbeddingGenerationError::Json(error.message),
+                // A configuration failure must survive the boundary as
+                // NotConfigured — the `_` fallback would rebuild it as
+                // Connection and make a config failure retryable, exactly
+                // what the variant forbids.
+                "NotConfigured" => EmbeddingGenerationError::NotConfigured(error.message),
                 // The server carries the provider's original status
                 // structurally; reconstructing it keeps retry policy
                 // status-accurate (a 401 is not retryable, a 429 is).
@@ -1168,6 +1173,40 @@ mod tests {
                     if *status == 429 && message == "rate limited"
             ),
             "the provider's original status must survive the IPC boundary: {error:?}"
+        );
+    }
+
+    /// A configuration failure must survive the IPC boundary as
+    /// `NotConfigured` — reconstructing it as `Connection` would classify a
+    /// config gap as a transient, retryable outage, exactly what the
+    /// variant's contract forbids.
+    #[tokio::test]
+    async fn embedding_ipc_preserves_not_configured_class() {
+        let bridge = TestBridge::with_response(
+            response_line(
+                InferenceOutcome::Error {
+                    error: hkask_types::inference_ipc::InferenceErrorPayload {
+                        code: "NotConfigured".into(),
+                        message: "DEEPINFRA_API_KEY not set".into(),
+                        status: None,
+                    },
+                },
+                1,
+            )
+            .into_bytes(),
+        );
+        let error = bridge
+            .client()
+            .embed("provider/model", &["text".to_string()])
+            .await
+            .expect_err("embedding error");
+        assert!(
+            matches!(
+                &error,
+                EmbeddingGenerationError::NotConfigured(message)
+                    if message == "DEEPINFRA_API_KEY not set"
+            ),
+            "a config failure must not degrade to Connection: {error:?}"
         );
     }
 

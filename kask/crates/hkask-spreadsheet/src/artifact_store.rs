@@ -164,17 +164,41 @@ impl ArtifactStore {
         })
     }
 
+    /// Atomically write the artifact metadata (SP-11: the same temp +
+    /// fsync + rename discipline as [`Self::write_revision`]) and create
+    /// the artifact directory, so metadata can precede the first revision.
+    /// A crash mid-write leaves at most a dot-tmp file — never a readable
+    /// `artifact.json` in a half state.
     pub fn write_metadata(
         &self,
         artifact_id: &str,
         meta: &ArtifactMeta,
     ) -> Result<(), SpreadsheetError> {
-        let path = self.artifact_dir(artifact_id).join("artifact.json");
+        let dir = self.artifact_dir(artifact_id);
+        std::fs::create_dir_all(&dir).map_err(|error| SpreadsheetError::Engine {
+            detail: format!("cannot create artifact dir {}: {error}", dir.display()),
+        })?;
         let bytes = serde_json::to_vec(meta).map_err(|error| SpreadsheetError::Engine {
             detail: format!("cannot serialize artifact metadata: {error}"),
         })?;
-        std::fs::write(path, bytes).map_err(|error| SpreadsheetError::Engine {
-            detail: format!("cannot write artifact metadata: {error}"),
+        let path = dir.join("artifact.json");
+        let tmp = dir.join(".artifact.json.tmp");
+        {
+            let mut file =
+                std::fs::File::create(&tmp).map_err(|error| SpreadsheetError::Engine {
+                    detail: format!(
+                        "cannot create temp metadata file {}: {error}",
+                        tmp.display()
+                    ),
+                })?;
+            file.write_all(&bytes)
+                .and_then(|()| file.sync_all())
+                .map_err(|error| SpreadsheetError::Engine {
+                    detail: format!("cannot write temp metadata file {}: {error}", tmp.display()),
+                })?;
+        }
+        std::fs::rename(&tmp, &path).map_err(|error| SpreadsheetError::Engine {
+            detail: format!("cannot publish artifact metadata: {error}"),
         })
     }
 

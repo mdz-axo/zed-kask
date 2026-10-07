@@ -552,7 +552,6 @@ pub struct InlineTableBlock {
     pub viz: String,
     pub schema_version: u32,
     pub title: String,
-    pub access: SpreadsheetAccess,
     pub origin: ArtifactOrigin,
     pub table: AnalyticalTable,
 }
@@ -594,7 +593,6 @@ impl InlineTableBlock {
             viz: SPREADSHEET_VIZ.to_string(),
             schema_version: SPREADSHEET_BLOCK_SCHEMA_VERSION,
             title: table.title.clone(),
-            access: SpreadsheetAccess::InlineTable,
             origin,
             table,
         })
@@ -617,11 +615,6 @@ impl InlineTableBlock {
                 ),
             });
         }
-        if self.access != SpreadsheetAccess::InlineTable {
-            return Err(SpreadsheetError::InvalidBlock {
-                detail: "inline table block must carry the InlineTable access mode".into(),
-            });
-        }
         self.origin.validate()?;
         self.table.validate()?;
         Ok(())
@@ -639,7 +632,6 @@ pub struct SpreadsheetBlock {
     pub schema_version: u32,
     pub title: String,
     pub active_sheet: String,
-    pub access: SpreadsheetAccess,
     pub artifact: SpreadsheetArtifactRef,
     pub viewport: SpreadsheetViewport,
     pub origin: ArtifactOrigin,
@@ -663,7 +655,6 @@ impl SpreadsheetBlock {
             schema_version: SPREADSHEET_BLOCK_SCHEMA_VERSION,
             title,
             active_sheet,
-            access: SpreadsheetAccess::WorkbookWhatIf,
             artifact,
             viewport,
             origin,
@@ -693,11 +684,6 @@ impl SpreadsheetBlock {
         if self.title.trim().is_empty() || self.active_sheet.trim().is_empty() {
             return Err(SpreadsheetError::InvalidBlock {
                 detail: "block requires a title and an active sheet".into(),
-            });
-        }
-        if self.access != SpreadsheetAccess::WorkbookWhatIf {
-            return Err(SpreadsheetError::InvalidBlock {
-                detail: "workbook block must carry the WorkbookWhatIf access mode".into(),
             });
         }
         self.artifact.validate()?;
@@ -1016,7 +1002,6 @@ mod tests {
         let block =
             InlineTableBlock::from_table(sample_origin(), sample_table()).expect("fits inline");
         assert_round_trips(&block);
-        assert_eq!(block.access, SpreadsheetAccess::InlineTable);
         assert_eq!(block.viz, SPREADSHEET_VIZ);
         assert_eq!(block.schema_version, SPREADSHEET_BLOCK_SCHEMA_VERSION);
     }

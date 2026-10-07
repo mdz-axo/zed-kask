@@ -11,6 +11,16 @@ fn federated_source_selection(source_id: Option<String>) -> (Option<bool>, Optio
     )
 }
 
+/// Both memory confidence knobs refuse values at or above the 0.5 insert
+/// floor. Memories are inserted at confidence 0.5: the deletion floor
+/// deletes at-or-below its value (0.5 would delete every new memory on the
+/// next consolidation pass), and the recall gate compares DECAYED confidence
+/// (0.5 hides every new memory once any decay elapses). The deliberate
+/// calibrated-only policy, if ever wanted, is set via settings.json.
+fn refuses_above_insert_floor(parsed: f64) -> bool {
+    parsed >= 0.5
+}
+
 pub(crate) fn render_memory_page(
     _settings_window: &SettingsWindow,
     scroll_handle: &ScrollHandle,
@@ -138,11 +148,25 @@ pub(crate) fn render_memory_page(
         .tab_index(0)
         .with_initial_text(confidence_floor)
         .with_placeholder("0.3")
-        .aria_label("Confidence Floor")
+        .aria_label("Consolidation Deletion Floor")
         .confirm_on_focus_out()
         .on_confirm(move |value, _window, cx| {
             if let Some(text) = value {
                 if let Ok(parsed) = text.parse::<f64>() {
+                    // Memories are inserted at the 0.5 floor; consolidation
+                    // deletes at-or-below this value. A floor at or above 0.5
+                    // would delete every newly-inserted memory on the next
+                    // pass — refuse it here. The deliberate policy, if ever
+                    // wanted, is set via settings.json.
+                    if refuses_above_insert_floor(parsed) {
+                        log::warn!(
+                            "Refusing confidence_floor {parsed}: consolidation deletes \
+                             at-or-below it, and memories insert at 0.5 — this value \
+                             would delete every new memory on the next pass. \
+                             Valid range: 0.0 (inclusive) to just under 0.5."
+                        );
+                        return;
+                    }
                     SettingsStore::global(cx).update_settings_file(
                         <dyn fs::Fs>::global(cx),
                         move |settings, _| {
@@ -220,11 +244,17 @@ pub(crate) fn render_memory_page(
         .child(
             v_flex()
                 .gap_1()
-                .child(Label::new("Confidence Floor"))
+                .child(Label::new("Consolidation Deletion Floor"))
                 .child(
-                    Label::new("Confidence floor for memory retention (0.0–1.0).")
-                        .size(LabelSize::Small)
-                        .color(Color::Muted),
+                    Label::new(
+                        "Deletes memories at or below this STORED confidence on each \
+                         consolidation pass (0.0–1.0, default 0.3). Distinct from the recall \
+                         gate below, which compares DECAYED confidence and only filters \
+                         injection — this one permanently deletes. Values at or above 0.5 \
+                         (the insert floor) are refused: they would delete every new memory.",
+                    )
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
                 )
                 .child(confidence_input),
         )
@@ -288,10 +318,17 @@ pub(crate) fn render_memory_page(
         .child(
             v_flex()
                 .gap_1()
-                .child(Label::new("Recall Minimum Confidence"))
+                .child(Label::new("Recall Injection Gate (Decayed Confidence)"))
                 .child(
                     Label::new(
-                        "Minimum confidence for a memory to be injected into context (0.0–1.0).",
+                        "Minimum DECAYED confidence for a memory to be injected into \
+                         context (0.0–1.0, default 0.3). Memories are inserted at 0.5: a \
+                         gate above 0.5 hides every new memory until outcome calibration \
+                         lifts it above the gate — refused here; set that policy via \
+                         settings.json if deliberately wanted. With the defaults, a \
+                         memory fades from injection after ~92 days without use. This gate \
+                         filters injection only — it never deletes (the deletion floor \
+                         above does).",
                     )
                     .size(LabelSize::Small)
                     .color(Color::Muted),
@@ -301,11 +338,28 @@ pub(crate) fn render_memory_page(
                         .tab_index(0)
                         .with_initial_text(recall_min_confidence)
                         .with_placeholder("0.3")
-                        .aria_label("Recall Minimum Confidence")
+                        .aria_label("Recall Injection Gate (Decayed Confidence)")
                         .confirm_on_focus_out()
                         .on_confirm(move |value, _window, cx| {
                             if let Some(text) = value {
                                 if let Ok(parsed) = text.parse::<f64>() {
+                                    // Memories insert at the 0.5 floor; the gate
+                                    // compares decayed confidence. A gate at or
+                                    // above 0.5 makes every newly-inserted
+                                    // memory invisible until calibrated above it
+                                    // — recall looks broken, silently. Refuse;
+                                    // the deliberate calibrated-only policy is
+                                    // set via settings.json.
+                                    if refuses_above_insert_floor(parsed) {
+                                        log::warn!(
+                                            "Refusing recall_min_confidence {parsed}: memories \
+                                             insert at the 0.5 floor, so this gate would hide \
+                                             every new memory until outcome calibration lifts \
+                                             it above the gate. Valid range: 0.0 (inclusive) \
+                                             to just under 0.5."
+                                        );
+                                        return;
+                                    }
                                     SettingsStore::global(cx).update_settings_file(
                                         <dyn fs::Fs>::global(cx),
                                         move |settings, _| {
@@ -380,7 +434,7 @@ pub(crate) fn render_memory_page(
 
 #[cfg(test)]
 mod tests {
-    use super::federated_source_selection;
+    use super::{federated_source_selection, refuses_above_insert_floor};
 
     #[test]
     fn dropdown_selection_sets_one_source_and_memory_only_disables_federation() {
@@ -392,5 +446,22 @@ mod tests {
             federated_source_selection(None),
             (Some(false), Some(Vec::new()))
         );
+    }
+
+    /// The 0.5 boundary is inclusive: memories insert AT 0.5, the deletion
+    /// floor deletes at-or-below, and the recall gate's decayed comparison
+    /// drops a 0.5-floor memory below a 0.5 gate as soon as any time
+    /// elapses — so 0.5 itself springs both traps and is refused.
+    #[test]
+    fn confidence_knobs_refuse_values_at_or_above_the_insert_floor() {
+        assert!(!refuses_above_insert_floor(0.0));
+        assert!(!refuses_above_insert_floor(0.3), "the default must pass");
+        assert!(!refuses_above_insert_floor(0.4999));
+        assert!(
+            refuses_above_insert_floor(0.5),
+            "0.5 is the insert floor — inclusive refusal"
+        );
+        assert!(refuses_above_insert_floor(0.7));
+        assert!(refuses_above_insert_floor(1.0));
     }
 }

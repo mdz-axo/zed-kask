@@ -2,9 +2,9 @@
 
 Media generation MCP server — image, video, and audio generation via the configured media providers.
 
-## Tools (98)
+## Tools (99)
 
-The full surface is pinned end-to-end by `tool_surface_is_exactly_98_registered_tools` (`src/hkask_mcp_media.rs`) and documented per-tool in [`kask/docs/reference/mcp-servers/media.md`](../../docs/reference/mcp-servers/media.md). The table below is a partial quick-reference.
+The full surface is pinned end-to-end by `tool_surface_is_exactly_99_registered_tools` (`src/hkask_mcp_media.rs`) and documented per-tool in [`kask/docs/reference/mcp-servers/media.md`](../../docs/reference/mcp-servers/media.md). The table below is a partial quick-reference.
 
 | Tool | Description |
 |------|-------------|
@@ -254,9 +254,19 @@ projection replaces text one-for-one over cloned `TimedWord`s, retaining every
 source timestamp. If a correction changes token cardinality, its corrected text
 remains readable and corpus-exportable, but timing-dependent navigation,
 highlighting, and SRT fail with an explicit unaligned precondition instead of
-silently using stale source text or inventing timestamps. Reduct can re-align such
-edits server-side; local re-transcription/re-alignment remains the honest capability
-gap. The immutable source bundle remains available for audit. Local educt never
+silently using stale source text or inventing timestamps. The local re-alignment
+closes that gap (2026-10-06): `educt_realign_transcript` stores a realignment
+layer recording the decision to project the correction with re-anchored
+timings — each cardinality-changing edit's replacement tokens slice its source
+range's span equally, interpolated tokens carry no STT confidence, and the
+immutable source bundle and its timings are never modified. After the
+realignment layer exists, the working transcript is `re_anchored` and every
+timed consumer (locate, highlighting, SRT) works again; the unaligned
+precondition is retained as the failure mode for the cases re-anchoring
+genuinely cannot handle (an untimed source, or a cardinality-changing
+correction with no realignment layer). Reduct can re-align such edits
+server-side too; the local path no longer depends on it. The immutable source
+bundle remains available for audit. Local educt never
 uploads to Reduct or silently falls back from a cloud request. The separate
 `reduct_connection_status` reports key delivery without contacting Reduct;
 `reduct_connection_probe` makes a read-only project request without returning

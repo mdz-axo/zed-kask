@@ -230,7 +230,7 @@ pub struct EductDeleteTranscriptRequest {
 pub struct EductStoreLayerRequest {
     pub transcript_id: String,
     /// The layer as a tagged JSON object:
-    /// {"kind": "speaker"|"paragraph"|"correction"|"highlight"|"edl", ...}.
+    /// {"kind": "speaker"|"paragraph"|"correction"|"highlight"|"edl"|"realignment", ...}.
     /// Validated against the transcript's word count before storage; a
     /// layer that fails validation is rejected with the named invariant.
     pub layer: hkask_types::AnyJsonValue,
@@ -287,6 +287,13 @@ pub struct EductCorrectionPassRequest {
 pub struct EductApplyCorrectionsRequest {
     pub transcript_id: String,
     /// Apply a specific correction layer by ID; defaults to the latest.
+    pub layer_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EductRealignTranscriptRequest {
+    pub transcript_id: String,
+    /// Re-anchor a specific correction layer by ID; defaults to the latest.
     pub layer_id: Option<String>,
 }
 

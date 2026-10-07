@@ -481,8 +481,8 @@ mod tool_surface_tests {
     hkask_mcp_server::tool_surface_pin!(
         MediaServer::combined_router(),
         "combined_router",
-        98,
-        tool_surface_is_exactly_98_registered_tools,
+        99,
+        tool_surface_is_exactly_99_registered_tools,
     );
 
     // Coverage: every registered tool must map to an OMC concept. Catches
@@ -5049,6 +5049,173 @@ mod tool_behavior_tests {
                 "start_ms": 0,
                 "end_ms": 900,
             })
+        );
+    }
+
+    /// MF-2 reached-when pin (target condition 2): a correction that
+    /// inserts words leaves timed consumers failing with the unaligned
+    /// precondition (retained by design); storing a realignment layer
+    /// via educt_realign_transcript restores them — the same corrected
+    /// text subsequently drives educt_locate, the highlight pass, and SRT
+    /// export over re-anchored timings.
+    #[tokio::test]
+    async fn realignment_restores_timed_consumers_after_cardinality_change() {
+        use crate::transcript::{TimedWord, TranscriptBundle};
+        use crate::types::{
+            EductExportRequest, EductHighlightPassRequest, EductLocateRequest,
+            EductRealignTranscriptRequest, EductStoreLayerRequest, EductStoreTranscriptRequest,
+        };
+
+        let _artifacts = IsolatedArtifacts::new().await;
+        let server = make_pass_server(
+            r#"{"highlights": [{"start_word": 0, "end_word": 1, "label": "key", "note": ""}]}"#
+                .to_string(),
+        );
+        // Four timed words at 1000ms intervals: "the cinder ela curve".
+        let bundle = TranscriptBundle {
+            words: ["the", "cinder", "ela", "curve"]
+                .iter()
+                .enumerate()
+                .map(|(index, text)| TimedWord {
+                    word: text.to_string(),
+                    start_ms: index as u64 * 1000,
+                    end_ms: index as u64 * 1000 + 500,
+                    confidence: None,
+                })
+                .collect(),
+            ..TranscriptBundle::new(
+                "/tmp/realign.wav".to_string(),
+                4.0,
+                "the cinder ela curve".to_string(),
+            )
+        };
+        let stored = server
+            .educt_store_transcript(Parameters(EductStoreTranscriptRequest {
+                transcript: hkask_types::AnyJsonValue(
+                    serde_json::to_value(&bundle).expect("serialize bundle"),
+                ),
+                gallery_asset_id: None,
+            }))
+            .await
+            .expect("store succeeds");
+        let transcript_id = content_of(&stored)["id"]
+            .as_str()
+            .expect("id present")
+            .to_string();
+
+        // A cardinality-changing correction: word 2 ("ela") becomes two
+        // tokens — an insertion.
+        let correction = server
+            .educt_store_layer(Parameters(EductStoreLayerRequest {
+                transcript_id: transcript_id.clone(),
+                layer: hkask_types::AnyJsonValue(serde_json::json!({
+                    "kind": "correction",
+                    "provenance": {
+                        "model": "test-model",
+                        "prompt_template": "test",
+                        "created_at": "2026-10-06T00:00:00Z"
+                    },
+                    "edits": [{
+                        "start_word": 2,
+                        "end_word": 2,
+                        "replacement": "Cinder ella",
+                        "reason": "misheard"
+                    }]
+                })),
+            }))
+            .await
+            .expect("correction stores");
+        let correction_layer_id = content_of(&correction)["stored"]["id"]
+            .as_str()
+            .expect("correction layer id")
+            .to_string();
+
+        // The unaligned precondition is RETAINED: locate on the corrected
+        // text fails visibly until a realignment layer exists.
+        let unaligned = server
+            .educt_locate(Parameters(EductLocateRequest {
+                transcript_id: transcript_id.clone(),
+                text: "the cinder Cinder ella curve".to_string(),
+            }))
+            .await
+            .expect_err("unaligned locate must fail");
+        assert_eq!(
+            unaligned.kind,
+            hkask_types::McpErrorKind::FailedPrecondition,
+            "{unaligned:?}"
+        );
+        assert!(
+            unaligned.message.contains("educt_realign_transcript"),
+            "the precondition names the re-alignment path: {unaligned:?}"
+        );
+
+        // The re-alignment path: store the realignment layer.
+        let realigned = server
+            .educt_realign_transcript(Parameters(EductRealignTranscriptRequest {
+                transcript_id: transcript_id.clone(),
+                layer_id: None,
+            }))
+            .await
+            .expect("realign succeeds");
+        let realigned = content_of(&realigned);
+        assert_eq!(realigned["alignment"], serde_json::json!("re_anchored"));
+        assert_eq!(
+            realigned["reanchored"]["correction_layer_id"],
+            serde_json::json!(correction_layer_id)
+        );
+        assert_eq!(
+            realigned["stored"]["layer"]["kind"],
+            serde_json::json!("realignment")
+        );
+
+        // Reached-when (a): locate drives the corrected text to word and
+        // time ranges over the re-anchored timings.
+        let located = server
+            .educt_locate(Parameters(EductLocateRequest {
+                transcript_id: transcript_id.clone(),
+                text: "the cinder Cinder ella curve".to_string(),
+            }))
+            .await
+            .expect("locate succeeds after realignment");
+        let located = content_of(&located);
+        assert_eq!(located["status"], serde_json::json!("located"));
+        assert_eq!(located["count"].as_u64(), Some(1));
+        assert_eq!(located["ranges"][0]["start_word"], serde_json::json!(0));
+        assert_eq!(located["ranges"][0]["end_word"], serde_json::json!(4));
+        assert_eq!(located["ranges"][0]["start_ms"], serde_json::json!(0));
+        assert_eq!(located["ranges"][0]["end_ms"], serde_json::json!(3500));
+
+        // Reached-when (b): the highlight pass runs over the re-anchored
+        // working transcript.
+        let highlighted = server
+            .educt_highlight_pass(Parameters(EductHighlightPassRequest {
+                transcript_id: transcript_id.clone(),
+                request: "the key moment".to_string(),
+                model: Some("test-stt-model".to_string()),
+                structured: None,
+            }))
+            .await
+            .expect("highlight pass succeeds after realignment");
+        assert_eq!(
+            content_of(&highlighted)["stored"]["layer"]["kind"],
+            serde_json::json!("highlight")
+        );
+
+        // Reached-when (c): SRT export produces cues carrying the
+        // corrected text over the re-anchored timings.
+        let srt = server
+            .educt_export(Parameters(EductExportRequest {
+                transcript_id: transcript_id.clone(),
+                format: "srt".to_string(),
+            }))
+            .await
+            .expect("SRT export succeeds after realignment");
+        let srt_content = content_of(&srt);
+        let output = srt_content["output"].as_str().expect("output path");
+        let srt_body = std::fs::read_to_string(output).expect("read SRT");
+        assert!(
+            srt_body.contains("Cinder ella"),
+            "SRT carries the corrected text: {srt_body}"
         );
     }
 

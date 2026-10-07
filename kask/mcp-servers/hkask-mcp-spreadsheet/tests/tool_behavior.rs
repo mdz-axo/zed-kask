@@ -137,7 +137,6 @@ async fn apply_creates_immutable_revision_with_display_hint() {
         .expect("hint is a fenced spreadsheet block");
     let block: serde_json::Value = serde_json::from_str(body).expect("block body is JSON");
     assert_eq!(block["viz"], "spreadsheet");
-    assert_eq!(block["access"], "WorkbookWhatIf");
     assert_eq!(
         block["mutation"]["tool"].as_str(),
         Some("spreadsheet_apply")
