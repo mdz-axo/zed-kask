@@ -19,16 +19,14 @@ use agent_ui::AgentPanel;
 use anyhow::{Context as _, Result};
 use clap::Parser;
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
-use client::{
-    Client, ProxySettings, RefreshLlmTokenListener, UserStore, ZED_URL_SCHEME, parse_zed_link,
-};
+use client::{Client, ProxySettings, RefreshLlmTokenListener, UserStore, ZED_URL_SCHEME};
 use collections::HashMap;
 use crashes::InitCrashHandler;
 use db::kvp::{GlobalKeyValueStore, KeyValueStore};
 use editor::Editor;
 use extension::ExtensionHostProxy;
 use fs::{Fs, RealFs};
-use futures::{FutureExt, StreamExt, channel::oneshot, future};
+use futures::{FutureExt, StreamExt, channel::oneshot};
 use git::GitHostingProviderRegistry;
 use git_ui::clone::clone_and_open;
 use gpui::{
