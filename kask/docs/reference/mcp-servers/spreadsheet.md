@@ -1,8 +1,8 @@
 ---
 title: "Spreadsheet MCP Server Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-10-06
-version: "0.40.2"
+last_updated: 2026-10-07
+version: "0.40.3"
 status: "Active"
 domain: "Composition"
 mds_categories: [domain, composition, lifecycle, trust]
@@ -129,3 +129,61 @@ windows of the apply ordering are pinned directly — an orphan revision
 (published, unrecorded) reconciles as unknown and re-applies fresh;
 a crash-leftover temp file is never readable as a revision; a same-id
 rewrite is rejected with the original bytes unchanged.
+
+## Redesign record (2026-10-06/07)
+
+The capability was reviewed from scratch against its verified reference
+models — the ratified plan (§5.1/§6/§7), DIVERGENCE.md D18, the portfolio
+what-if precedent, and the engine's actual formula semantics — then rebuilt
+per a twelve-proposal set (SP-01..SP-12). Each review phase ran as one
+FINER-gated PDCA loop; the coverage table reconciled 54 rows (2 tools + 30
+engine public items + 13 contract re-exports + 9 consumers,
+`lisp_eval`-checked), and the fidelity phase closed with 16 findings
+(F1–F16), every one cited at file:line. The review artifacts (review,
+proposals, improvement plan) were consolidated into this reference on
+2026-10-07 and live in git history (`b252d88b3d`..`87b8673285`).
+
+**Proposal ledger** — every proposal landed; the code and its pins are the
+successors:
+
+- **SP-01** one owner for the display-hint fence and the error classifier;
+**SP-03** the typed error kind across the ToolInvoker seam; **SP-02** the
+interrupted save surfaces its reconciliation identity — commit
+`1a8c500c12` (pins `mcp_kind_classifies_every_variant`,
+`display_hint_round_trips_through_hint_body`,
+`conflict_detection_is_structural_not_textual`).
+- **SP-04** bounded LRU document residency with staged documents pinned;
+**SP-11** metadata-first atomic publish; **SP-06** `expected_access`
+enforced; **SP-07** the emitter-agnostic display-hint bullet; **SP-10**
+the probe-verified formula inventory (above); **SP-12** the tautological
+`access` fields deleted — commit `c9a5c3b855` (pins
+`document_residency_is_bounded_and_staged_documents_are_pinned`,
+`metadata_only_artifact_window_is_unknown_but_consistent`,
+`apply_rejects_a_non_workbook_expected_access`).
+- **SP-05** InlineTable completed end-to-end — the widget's bounded
+read-only sortable table, `evaluate_evidence` the first producer —
+commits `f66b136fe2` + `2bcf794dc8` (pin
+`evaluate_evidence_inline_table_publishes_the_matrix`).
+- **SP-09** the derived-ontology ruling: the six public-contract terms
+(`AnalyticalTable`, `SpreadsheetBlock`, `SpreadsheetArtifact`,
+`SpreadsheetViewport`, `EditTransaction`, `SpreadsheetError`) anchored on
+Dublin Core, SUMO, and PKO in
+`kask/crates/hkask-bridge-ontology/src/derived.rs` — commit `87b8673285`
+(pins `spreadsheet_contract_terms_resolve_with_authority`,
+`spreadsheet_contract_terms_resolve_on_the_derived_rung`).
+
+**Execution record:** Remaining: none — every proposal in the set executed;
+the per-slice execution record was consolidated here from the improvement
+plan (2026-10-07).
+
+**Live receipts:** 1035 tests green across the 15 touched crates; scoped
+clippy + machete clean; `cargo check -p zed` clean; the 548-test
+spreadsheet surface re-verified at `770b61c958`; the Lean
+revision-invariant spec (`kask/lean/spreadsheet_revision_invariants.lean`
+— five theorems plus helper, axioms `[propext]` only, negative control
+failing as required) re-checks in CI via
+`kask/scripts/check-lean-spec-pins.sh`. The execution goal (`11616a31`)
+closed through the batch-record path — its durable record is this section
+plus the commits (the curator-memory batch record
+`kanban:goal-retention`/`batch_prune_2026-10-07_spreadsheet` cites this
+location).

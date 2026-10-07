@@ -102,6 +102,14 @@ The LogiSheets plan's future-state block converted to a registered implementatio
 
 Git history is the archive of record. Every removed document names its active successor here. The dated Corpus size measurement above, not this lifecycle ledger, applies the document-count gate (all files, per [`DOCUMENTATION_STANDARDS.md`](architecture/DOCUMENTATION_STANDARDS.md) §3) and identifies the live YAML inventory.
 
+### Consolidated 2026-10-07 (spreadsheet-capability redesign set — operator instruction)
+
+| Artifact | Successor |
+| --- | --- |
+| `research/spreadsheet-capability-redesign-review.md` | `reference/mcp-servers/spreadsheet.md` § Redesign record (the method summary — FINER-gated PDCA phases, the 54-row coverage, the 16 cited findings, the Lean spec pin and structural checks); the live state is the tree. |
+| `research/spreadsheet-capability-redesign-proposals.md` | The landed proposals are the code and its pins (the SP-01..SP-12 commit ledger in the Redesign record); the standing operator rulings (SP-05 complete, SP-06 enforce, SP-09 the Dublin Core/SUMO/PKO anchors) are recorded there. |
+| `research/spreadsheet-capability-redesign-improvement-plan.md` | `reference/mcp-servers/spreadsheet.md` § Redesign record (the execution record — Remaining: none — and the live receipts); git history (`b252d88b3d`..`87b8673285`) holds the full execution narrative. |
+
 ### Consolidated 2026-10-07 (scenario redesign plan set — operator instruction)
 
 | Artifact | Successor |

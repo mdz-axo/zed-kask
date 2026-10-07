@@ -1,8 +1,8 @@
 ---
 title: "LogiSheets Spreadsheet Capability — Refactor Architecture Plan"
 audience: [architects, developers, product]
-last_updated: 2026-09-28
-version: "0.2.1"
+last_updated: 2026-10-07
+version: "0.2.2"
 status: "Active"
 domain: "Composition"
 mds_categories: [composition, domain, lifecycle, trust]
@@ -236,10 +236,10 @@ A SpreadsheetBlock carries:
 - Server-authored mutation endpoint.
 
 (The former "Access mode" field was deleted 2026-10-06 — SP-12 of the
-from-scratch design review
-(`kask/docs/research/spreadsheet-capability-redesign-proposals.md`): the
-block *type* is the access mode, so the field was a tautology — hardcoded at
-construction and rejected when different. The presentation choice lives in
+from-scratch design review (proposal ledger:
+[`reference/mcp-servers/spreadsheet.md`](../reference/mcp-servers/spreadsheet.md)
+§ Redesign record): the block *type* is the access mode, so the field was a
+tautology — hardcoded at construction and rejected when different. The presentation choice lives in
 the caller's `SpreadsheetAccess` and the publication, not in the block.)
 
 It must not carry:
@@ -415,9 +415,10 @@ hkask-types` and `-p hkask-tool-invoker` clean, `cargo fmt --all -- --check`
 clean. The six public-contract terms (AnalyticalTable, SpreadsheetBlock,
 SpreadsheetArtifact, SpreadsheetViewport, EditTransaction, SpreadsheetError)
 anchored at the coarse `5w1h_core` rung (§2) at Phase 1; the derived-concept
-ruling landed 2026-10-06 (SP-09 of the from-scratch design review,
-`kask/docs/research/spreadsheet-capability-redesign-proposals.md`): all six
-now resolve on the derived rung with cited authorities (Dublin Core, SUMO,
+ruling landed 2026-10-06 (SP-09 of the from-scratch design review —
+[`reference/mcp-servers/spreadsheet.md`](../reference/mcp-servers/spreadsheet.md)
+§ Redesign record): all six now resolve on the derived rung with cited
+authorities (Dublin Core, SUMO,
 PKO; `kask/crates/hkask-bridge-ontology/src/derived.rs`, pinned by
 `spreadsheet_contract_terms_resolve_with_authority` and
 `spreadsheet_contract_terms_resolve_on_the_derived_rung`). Shared-tree note:
