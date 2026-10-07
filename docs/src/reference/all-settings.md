@@ -6010,28 +6010,6 @@ Visit [AI Quick Start](../ai/quick-start.md) under the AI section to learn more 
 
 `boolean` values
 
-## Collaboration Panel
-
-- Description: Customizations for the collaboration panel.
-- Setting: `collaboration_panel`
-- Default:
-
-```json [settings]
-{
-  "collaboration_panel": {
-    "button": true,
-    "dock": "right",
-    "default_width": 240
-  }
-}
-```
-
-**Options**
-
-- `button`: Whether to show the collaboration panel button in the status bar
-- `dock`: Where to dock the collaboration panel. Can be `left` or `right`
-- `default_width`: Default width of the collaboration panel
-
 ## Debugger
 
 - Description: Configuration for debugger panel and settings
@@ -6182,23 +6160,6 @@ You can define these in user or project settings; project settings are merged on
       "show": null
     },
     "multi_buffer_hide_symbols": false
-  }
-}
-```
-
-## Calls
-
-- Description: Customize behavior when participating in a call
-- Setting: `calls`
-- Default:
-
-```json [settings]
-{
-  "calls": {
-    // Join calls with the microphone live by default
-    "mute_on_join": false,
-    // Share your project when you are the first to join a channel
-    "share_on_join": false
   }
 }
 ```

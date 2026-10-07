@@ -22,7 +22,6 @@ use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
 use client::{
     Client, ProxySettings, RefreshLlmTokenListener, UserStore, ZED_URL_SCHEME, parse_zed_link,
 };
-use collab_ui::channel_view::ChannelView;
 use collections::HashMap;
 use crashes::InitCrashHandler;
 use db::kvp::{GlobalKeyValueStore, KeyValueStore};
@@ -580,7 +579,7 @@ fn main() {
         // launches, embedding HTTP calls, inference IPC, skill manifest
         // execution) now routes through Tokio::spawn(cx, ...) /
         // Tokio::handle(cx), the same pattern zed's own code uses
-        // (livekit_client, extension_host).
+        // (extension_host).
         //
         // The runtime is multi-threaded with more workers than gpui_tokio's
         // default 2, because kask drives MCP server I/O, embedding HTTP calls,
@@ -2705,7 +2704,7 @@ fn main() {
         //   identity if Zed user hasn't resolved)
         // - Regulation archive (needs passphrase), board sink (governed tool invoker)
         // - IPC server (needs embedding port from provisioning)
-        // - MCP server launch, email sink, collab server
+        // - MCP server launch, email sink
         {
             let app_state_for_model_task = app_state.clone();
             cx.spawn(async move |cx| {
@@ -2946,7 +2945,6 @@ fn main() {
         outline_panel::init(cx);
         tasks_ui::init(cx);
         snippets_ui::init(cx);
-        channel::init(&app_state.client.clone(), app_state.user_store.clone(), cx);
         search::init(cx);
         lsp_locations::init(cx);
         cx.set_global(workspace::PaneSearchBarCallbacks {
@@ -2969,9 +2967,7 @@ fn main() {
         theme_selector::init(cx);
         settings_profile_selector::init(cx);
         language_tools::init(cx);
-        call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
         notifications::init(app_state.client.clone(), app_state.user_store.clone(), cx);
-        collab_ui::init(&app_state, cx);
         git_ui::init(cx);
         feedback::init(cx);
         markdown_preview::init(cx);
@@ -4476,59 +4472,6 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
         }));
     }
 
-    if !request.open_channel_notes.is_empty() || request.join_channel.is_some() {
-        cx.spawn(async move |cx| {
-            let result = maybe!(async {
-                if let Some(task) = task {
-                    task.await?;
-                }
-                let client = app_state.client.clone();
-                // we continue even if connection fails as join_channel/ open channel notes will
-                // show a visible error message.
-                client.connect(true, cx).await.into_response().log_err();
-
-                if let Some(channel_id) = request.join_channel {
-                    cx.update(|cx| {
-                        workspace::join_channel(
-                            client::ChannelId(channel_id),
-                            app_state.clone(),
-                            None,
-                            None,
-                            cx,
-                        )
-                    })
-                    .await?;
-                }
-
-                let workspace_window =
-                    workspace::get_any_active_multi_workspace(app_state, cx.clone()).await?;
-
-                let workspace = workspace_window.read_with(cx, |mw, _| mw.workspace().clone())?;
-                let weak_workspace = workspace.downgrade();
-
-                let mut promises = Vec::new();
-                for (channel_id, heading) in request.open_channel_notes {
-                    promises.push(cx.update_window(workspace_window.into(), |_, window, cx| {
-                        ChannelView::open(
-                            client::ChannelId(channel_id),
-                            heading,
-                            workspace.clone(),
-                            window,
-                            cx,
-                        )
-                    })?)
-                }
-                for result in future::join_all(promises).await {
-                    result.notify_workspace_async_err(weak_workspace.clone(), cx);
-                }
-                anyhow::Ok(())
-            })
-            .await;
-            if let Err(err) = result {
-                fail_to_open_window_async(err, cx);
-            }
-        })
-        .detach()
     } else if let Some(task) = task {
         cx.spawn(async move |cx| {
             if let Err(err) = task.await {

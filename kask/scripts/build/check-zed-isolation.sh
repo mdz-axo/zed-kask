@@ -35,9 +35,15 @@ for path in \
     "$repo_root/crates/zed/resources/info" \
     "$repo_root/crates/zed/resources/windows" \
     "$repo_root/.github/actions/run_tests_windows" \
-    "$repo_root/crates/auto_update" \
-    "$repo_root/crates/auto_update_helper" \
-    "$repo_root/crates/auto_update_ui"; do
+    "$repo_root/crates/auto_update"
+    "$repo_root/crates/auto_update_helper"
+    "$repo_root/crates/auto_update_ui"
+    "$repo_root/crates/collab"
+    "$repo_root/crates/call"
+    "$repo_root/crates/collab_ui"
+    "$repo_root/crates/livekit_api"
+    "$repo_root/crates/livekit_client"
+    "$repo_root/crates/channel"; do
     assert_absent "$path"
 done
 
@@ -62,6 +68,21 @@ assert_no_match "$repo_root/crates/title_bar/src/title_bar.rs" \
     "title bar presents a simulated upstream Zed update"
 assert_no_match "$repo_root/crates/zed/src/main.rs" 'auto_update::init|auto_update_ui::init' \
     "zed-kask initializes upstream Zed's updater"
+
+# zed-kask: D90 — the collab/call/LiveKit stack is deleted (operator ruling
+# 2026-10-06: never uses real-time collab/calls/screen-sharing; the stack
+# embedded a second crypto system — libwebrtc's BoringSSL — alongside the
+# editor's system OpenSSL). These pins hold the deletion against upstream
+# merges re-introducing the crates or the wiring.
+for stack_crate in collab call collab_ui livekit_api livekit_client channel; do
+    assert_absent "$repo_root/crates/$stack_crate"
+done
+assert_no_match "$repo_root/crates/zed/src/main.rs" 'collab_ui::init|call::init|channel::init|livekit' \
+    "zed-kask initializes the deleted collab/call stack"
+assert_no_match "$repo_root/crates/zed/src/zed.rs" 'collab_ui::init|call::init|channel::init' \
+    "zed-kask's alternate init path initializes the deleted collab/call stack"
+assert_no_match "$repo_root/Cargo.toml" 'livekit-rust-sdks|webrtc-sys|libwebrtc' \
+    "the workspace re-pins the deleted LiveKit/webrtc SDKs"
 
 # zed-kask is not distributed as a flatpak. Upstream's CLI flatpak module
 # hard-codes upstream Zed's app ID (`dev.zed.Zed`) and binary layout, so a
