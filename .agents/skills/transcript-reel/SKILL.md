@@ -62,7 +62,11 @@ Reduct.video — the transcript bundled with its video as one linked artifact: c
    word-range replacements for likely speech-to-text errors. Review the
    pass stats; then call `educt_apply_corrections` to get the corrected
    text view. The original words stay immutable — corrections are a
-   derived view.
+   derived view. If the alignment comes back `unaligned` (a correction
+   changed word cardinality), call `educt_realign_transcript` to store
+   the realignment layer — it re-anchors the corrected text onto the
+   source timeline so the timed phases below (highlight pass, locate,
+   SRT) work; without it they fail with the unaligned precondition.
 4. Call `educt_paragraph_pass` for paragraph boundaries. Check the
    rejection_rate in the pass stats — a high rate means the model
    struggled; consider re-running after corrections.

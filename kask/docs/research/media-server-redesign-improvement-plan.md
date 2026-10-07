@@ -1,8 +1,12 @@
 ---
 title: "Media MCP Server — Redesign Improvement Plan"
 audience: [operators, developers, architects]
+last_updated: 2026-10-07
+version: "1.0.0"
 date: 2026-10-06
 status: "Active"
+domain: "Composition"
+mds_categories: [composition, domain]
 kind: research
 related:
   - media-server-redesign-review.md
@@ -31,7 +35,7 @@ surface), MF-2 second (the transcript discipline's honest gap), MF-1 third
 | 5 | MF-3 face-recognition decision | **CLOSED** | still deferred, decision recorded with reopening condition — `3602bf7a08` |
 | 6 | MF-5 DNS-rebinding ruling | **CLOSED** | accepted risk (operator ruling), revisit condition recorded — `2b43f6ca29` |
 | 7 | PR-M1 canonical caps | **DONE** | uncommitted — `media_limits` constants, three sites import, sweep clean, tests green |
-| 8 | PR-S1 transcript-reel skill line | **OPERATOR REVIEW** | filed in the proposals doc |
+| 8 | PR-S1 transcript-reel skill line | **DONE** | uncommitted — the skill's Phase 2 step 3 names `educt_realign_transcript` after an unaligned apply; reclassification basis recorded in the proposals doc; `check-skill-crossrefs.sh` green |
 | 9 | Phase 4 formal layer | **DELIVERED (sweep) / Lean deferred** | `reanchored_interpolation_contract_holds_across_a_sweep` (864-case sweep, second oracle); Lean trigger recorded in the findings doc |
 
 ## Net summary
@@ -60,7 +64,9 @@ set to the scenarios precedent's four-doc shape.
 3. **Cloud-DELETE posture** — zero-DELETE posture ruled (media-lead design
    decision 2026-10-06; revisitable on demand, highlight delete's contract
    stays pinned).
-4. **PR-S1 transcript-reel skill line** — awaiting the operator's review.
+4. ~~**PR-S1 transcript-reel skill line** — awaiting the operator's review.~~
+   **Executed 2026-10-06** (reclassified as a stale-doc correction; vetoable
+   at algedonic review).
 5. **Phase 4 Lean layer** — deferred with trigger (Mathlib as a prerequisite
    decision if reopened).
 

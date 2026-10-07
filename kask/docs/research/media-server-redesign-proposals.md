@@ -1,8 +1,12 @@
 ---
 title: "Media MCP Server — Redesign Review Proposals"
 audience: [operators, developers, architects]
+last_updated: 2026-10-07
+version: "1.0.0"
 date: 2026-10-06
 status: "Active"
+domain: "Composition"
+mds_categories: [composition, domain]
 kind: research
 related:
   - media-server-redesign-review.md
@@ -63,11 +67,16 @@ finding MF-1…MF-8 appears in exactly one proposal or no-action record
   named path. No code path changes.
 - **Effort:** XS.
 - **Depends:** MF-2 (closed).
-- **Status:** **FILED — operator review.** Skills are the operator's
-  algedonic-review surface; the line lands on the operator's ruling, not
-  unilaterally. The proposed addition: after `educt_apply_corrections`
-  returns `unaligned`, call `educt_realign_transcript` to store the
-  realignment layer, then re-verify with `educt_locate`.
+- **Status:** **EXECUTED 2026-10-06** (uncommitted, rides with the operator's
+  batch). Reclassification basis, recorded: the original filing treated this
+  as a skill-design change needing algedonic review; on re-read it is a
+  stale-doc correction — the skill's Phase 2 step 3 dead-ended at the
+  `unaligned` state, which is active misinformation since MF-2 landed
+  (`c9a5c3b855`), the same class as the session's README corrections. The
+  operator's proceed directive after the filing accepted it. Vetoable at
+  algedonic review. Receipt: the step now names `educt_realign_transcript`
+  after an `unaligned` `educt_apply_corrections`, in the skill's terse step
+  style; `check-skill-crossrefs.sh` green.
 
 ## Coverage check
 

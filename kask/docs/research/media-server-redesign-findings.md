@@ -1,8 +1,12 @@
 ---
 title: "Media MCP Server — Redesign Review Findings"
 audience: [operators, developers, architects]
+last_updated: 2026-10-07
+version: "1.0.0"
 date: 2026-10-06
 status: "Active"
+domain: "Composition"
+mds_categories: [composition, domain]
 kind: research
 related:
   - media-server-redesign-review.md
@@ -478,6 +482,105 @@ as a persistence proposal.
 | MF-6 | PR-M1 — move the two copied caps into `media_limits`, import at sites (XS) |
 | MF-7 | Watched — live probe before first production publish |
 | MF-8 | No-action — documented ephemerality; trigger recorded |
+
+### Depth pass — tranche 1: gallery family (COMPLETE 2026-10-06)
+
+26 tools audited line-by-line against the Phase 1 primitives (full read of
+`tools/gallery.rs`). **Faithful:** 24 — organize (mode validation, activation-after-persistence, `mode_preserved` surfaced), status (no_gallery surfaced as status), search (per-mode input requirements), refresh (faces off by default, per-stage error surfacing, `images_pending_after_bound`), analyze (pipeline/target validation, `nothing_to_analyze` surfaced), name_face (face_id → not_found), the five face tools (force skips the vision call and thus admission; missing face → not_found), timeline (store failures propagate — comment at `:1037-1038`; display hints per image), record_generation/lineage (op validation; `lineage: null` surfaced), list_assets (limit clamped 1-500), asset_detail (exactly-one-of; corrupt OMC graph → internal), reproduce (no lineage → not_found; corrupt params → internal, never defaults; image-ops re-resolve the source), delete_image (delete_file gated on destructive mode → permission_denied; file-first ordering with the already-deleted failure message), add_media (containing-gallery resolution, not active gallery; failed_precondition naming the remedy), the six album tools (name validation; idempotency documented).
+
+**MF-9 — Misplaced doc comment (found → executed same change).** IS: the
+asset-detail doc text ("Get complete details … the inspector-panel data
+source") sat above `gallery_list_assets` (`tools/gallery.rs:1183-1187`),
+merging into its rustdoc — the stale/misplaced-comment misinformation class:
+an agent reading the doc above `gallery_list_assets` sees the wrong tool's
+contract. OUGHT: the doc sits above `gallery_asset_detail`. **Executed
+2026-10-06** (uncommitted): the comment moved to `gallery_asset_detail`;
+zero behavior change; clippy 0 errors; tests 450/0/6 green.
+
+**MF-10 — Unknown-date timeline period keys (watched).** IS: for images
+without EXIF dates, `gallery_timeline` derives the period key from the
+literal `"unknown"` (`tools/gallery.rs:1052-1065`): month mode →
+`"unknown"` (7 chars, correct), but year mode → `"unkn"` (`take(4)`) and
+decade mode → `"unk0s"` (`get(..3)` + `"0s"`) — odd labels surfaced in the
+result's `period` field. The grouping stays deterministic and correct (all
+unknown dates group together); the labels are cosmetic. OUGHT (if acted on):
+unknown dates group under `"unknown"` in every mode — an XS fix at the
+period-key match. **Watched, no action:** the trigger is an operator or
+workflow presenting decade/year timelines of undated images where the
+`unk0s` label is user-visible friction.
+
+### Depth pass — tranche 2: transcript/educt family (COMPLETE 2026-10-06)
+
+19 tools audited line-by-line (full read of the educt regions and the
+transcription tools in `tools/audio.rs`) against the
+`transcript_linked_media` primitive. **Family-boundary correction:** the
+Phase 1 reconciliation env used `transcript_educt 18 / audio_voice 6`; the
+Phase 1 family table assigns `record_and_transcribe` to the transcript
+family, so the boundary is **19 / 5** (both sum to 102, so the green held,
+but the boundary was off by one tool — corrected here).
+
+**Faithful: 17** — transcribe_bundle (local-input check, SSRF for network
+URLs, `audio.rs:277-284`), transcribe_and_store (summary-only return,
+NoWordTimings degradation surfaced, `audio.rs:348-353`),
+record_and_transcribe (capture cap from `media_limits` — PR-M1; honest
+`partial` state preserving the audio path on transcription failure,
+`audio.rs:476-485`), store_transcript (stringified-form tolerance
+documented, `educt.rs:312-328`; degradation surfaced), list_transcripts
+(limit clamped 50/500, per-record degradation visibility), get_transcript
+(not_found; working transcript included), delete_transcript (not_found on
+zero removals; exports/renders preserved with detached identities),
+store_layer (validated against word count, named-invariant rejection),
+list_layers (oldest first), paragraph/speaker/correction passes
+(NoWordTimings preconditions; speaker source dispatch rejects structured on
+the audio path, never a silent no-op, `educt.rs:610-618`; unknown source →
+invalid_argument), apply_corrections (realignment honored consistently
+with the working transcript), realign_transcript (MF-2 receipts),
+highlight_pass (unaligned fails visibly before inference),
+edl_from_highlights (empty selection → not_found; union merge),
+render_edl (whole-transcript-cut rejection; intermediates tracked and
+cleaned on error paths; audio/video path selection), export (format
+validation; SRT requires timed words; corpus_text degradations surfaced
+per alignment state), locate (no_match surfaced with the
+quote-the-rendered-form note; unaligned fails visibly).
+
+**MF-11 — Unaligned corpus-text degradation message unnamed the remedy
+(found → executed same change).** IS: the corpus_text export's unaligned
+degradation message (`tools/educt.rs`, the `CorpusText` arm) said only
+"hits cannot map back to word ranges" — while the parallel
+`require_timed_words` message (updated in MF-2) names
+`educt_realign_transcript`. The MF-2 message sweep missed this parallel
+site — the same residue class as stale comments. OUGHT: both messages name
+the remedy. **Executed 2026-10-06** (uncommitted): the degradation message
+now names `educt_realign_transcript`; zero behavior change; gates green.
+
+**MF-12 — Highlight/EDL layer sorts lacked the ID tie-break (found →
+executed same change).** IS: `educt_edl_from_highlights` and
+`educt_render_edl` sorted their layer selections by `created_at` only
+(`tools/educt.rs`, both sort sites), while the correction-layer
+selections (apply_corrections, realign) break timestamp ties with
+`.then_with(id)` — among same-timestamp layers the highlight/EDL path
+picked the OLDEST of the tied newest group (stable sort over the store's
+oldest-first order), the correction paths the newest-by-ID. OUGHT: one
+tie-break discipline across the family — the ID tie-break, matching the
+correction selections. **Executed 2026-10-06** (uncommitted): both sorts
+carry `.then_with(|| b.id.cmp(&a.id))` with the rationale documented;
+zero wire change (ties are rare and the store order was deterministic);
+gates green.
+
+**Observed-fine, no finding:** `record_and_transcribe` relays the captured
+audio as a base64 data URI (`audio.rs:435-437`) rather than the file path —
+a deliberate choice (the data URI carries bytes to cloud STT providers;
+`transcribe_bundle` passes paths/URLs for the caller-controlled source),
+bounded by the capture cap (≤ 3600 s at 16 kHz mono ≈ 154 MiB base64 at the
+extreme). If IPC size limits surface in practice, the fix is passing the
+local path (the file exists); recorded as the trigger.
+
+### Depth pass — remaining tranches (scoped, pending)
+
+Per the multi-session boundary: generation (6), processing (15),
+cloud/Reduct (20), async & workflow (8), model & discovery (3), audio &
+voice (5) — 57 tools remaining, family by family. The cloud family (20,
+this session's MF-1 work) is the natural next tranche.
 
 ## Phase 3 — Integration review (COMPLETE 2026-10-06)
 

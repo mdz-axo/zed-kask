@@ -1026,8 +1026,16 @@ impl MediaServer {
                 .into_iter()
                 .filter(|record| record.layer.kind() == "highlight")
                 .collect();
-            // Newest first (RFC 3339 timestamps sort lexicographically).
-            highlight_layers.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+            // Newest first (RFC 3339 timestamps sort lexicographically);
+            // the ID breaks timestamp ties deterministically — the same
+            // tie-break the correction-layer selections use, so a tied
+            // newest group resolves to its newest member, never an
+            // arbitrary one.
+            highlight_layers.sort_by(|a, b| {
+                b.created_at
+                    .cmp(&a.created_at)
+                    .then_with(|| b.id.cmp(&a.id))
+            });
             let record = match layer_id {
                 Some(id) => highlight_layers.into_iter().find(|record| record.id == id),
                 None => highlight_layers.into_iter().next(),
@@ -1131,7 +1139,13 @@ impl MediaServer {
                 .into_iter()
                 .filter(|record| record.layer.kind() == "edl")
                 .collect();
-            edl_layers.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+            // Newest first with the same ID tie-break as every layer
+            // selection in this family (deterministic among ties).
+            edl_layers.sort_by(|a, b| {
+                b.created_at
+                    .cmp(&a.created_at)
+                    .then_with(|| b.id.cmp(&a.id))
+            });
             let record = match layer_id {
                 Some(id) => edl_layers.into_iter().find(|record| record.id == id),
                 None => edl_layers.into_iter().next(),
@@ -1349,7 +1363,7 @@ impl MediaServer {
                                 working.correction_layer_id,
                                 working.alignment,
                                 Some(format!(
-                                    "working transcript is unaligned — {}. Corpus text was exported, but hits cannot map back to word ranges",
+                                    "working transcript is unaligned — {}. Corpus text was exported, but hits cannot map back to word ranges; store a realignment layer via educt_realign_transcript to restore range mapping",
                                     working.alignment_error.as_deref().unwrap_or("unknown alignment error")
                                 )),
                             ),

@@ -1180,10 +1180,6 @@ impl MediaServer {
         .await
     }
 
-    /// Get complete details for a gallery asset in a single call — the image
-    /// record (path, dimensions, format, media_type), all AI-generated tags,
-    /// generation lineage (if recorded), and face registry entries. This is
-    /// the inspector-panel data source.
     /// List gallery assets in index order — the library/panel data source.
     #[tool(
         description = "List gallery assets in index order (0-based — index `offset + i` in the result is the image_index other gallery tools accept), paginated. Returns each asset's index, path, media type, and dimensions. Requires gallery_organize first."
@@ -1234,6 +1230,10 @@ impl MediaServer {
         .await
     }
 
+    /// Get complete details for a gallery asset in a single call — the image
+    /// record (path, dimensions, format, media_type), all AI-generated tags,
+    /// generation lineage (if recorded), and face registry entries. This is
+    /// the inspector-panel data source.
     #[tool(
         description = "Get complete details for a gallery asset — record, tags, lineage, OMC creation graph, transcript-render origin, and face associations in a single call. The inspector-panel data source."
     )]
