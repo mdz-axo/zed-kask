@@ -1683,11 +1683,12 @@ impl MediaServer {
         let metadata = tokio::fs::metadata(&path)
             .await
             .map_err(|_| McpToolError::not_found("Indexed media file cannot be read"))?;
-        const MAX_UPLOAD_BYTES: u64 = 128 * 1024 * 1024;
-        if !metadata.is_file() || metadata.len() == 0 || metadata.len() > MAX_UPLOAD_BYTES {
-            return Err(McpToolError::failed_precondition(
-                "Cloud upload accepts regular nonempty gallery media up to 128 MiB; use Reduct media-import for larger remote files",
-            ));
+        let max_upload = hkask_types::media_limits::MAX_REDUCT_UPLOAD_BYTES;
+        if !metadata.is_file() || metadata.len() == 0 || metadata.len() > max_upload {
+            return Err(McpToolError::failed_precondition(format!(
+                "Cloud upload accepts regular nonempty gallery media up to {} MiB; use Reduct media-import for larger remote files",
+                max_upload / (1024 * 1024)
+            )));
         }
         let filename = path
             .file_name()

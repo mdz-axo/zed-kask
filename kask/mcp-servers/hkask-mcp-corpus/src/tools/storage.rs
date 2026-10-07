@@ -1,6 +1,6 @@
 //! Storage and query tools — cache, passage query, similarity.
 use crate::helpers::map_corpus_io_error;
-use crate::index::RetrievedPassage;
+use crate::index::{IndexedPassage, Retrieval, RetrievedPassage};
 use crate::{
     CorpusServer, LLMParameters, McpToolError, Parameters, execute_tool, json,
     render_docproc_template, tool, tool_router,
@@ -72,7 +72,7 @@ impl CorpusServer {
     }
 
     #[tool(
-        description = "Search indexed passages by plain natural-language or Lisp query. db_path hydrates stored passage text only when the index is empty; it does not switch DBs on a nonempty index. include_text defaults to false and controls only returned results, not grounded answer context. Missing stored text and model-mismatched rows (stored under a different embedding model than the query) are skipped and surfaced with counts; no usable context yields answer_error without generation."
+        description = "Search indexed passages by plain natural-language or Lisp query. db_path queries the named durable database through disk KNN only when the in-memory index is empty; a nonempty index (same-process published passages) ignores db_path. include_text defaults to false and controls only returned results, not grounded answer context. Missing stored text and model-mismatched rows (stored under a different embedding model than the query) are skipped and surfaced with counts; no usable context yields answer_error without generation."
     )]
     /// Query the in-memory vector index for top-k relevant passages.
     ///
@@ -126,11 +126,6 @@ impl CorpusServer {
                 )
             })?;
 
-            // The hydration path opens the DB create-if-missing only
-            // when the index is empty — the existence check lives inside
-            // hydrate_if_empty (CO-02), gated on actual use.
-            self.index.hydrate_if_empty(db_path.as_deref())?;
-
             let query_batch = match self
                 .inference_router
                 .embed_with_dimensions(
@@ -166,19 +161,42 @@ impl CorpusServer {
                 ));
             }
 
-            let crate::index::Retrieval {
-                matches,
-                total_indexed,
-                missing_text,
-                dimension_mismatch,
-                model_mismatch,
-            } = self.index.retrieve(
+            let ram = self.index.retrieve(
                 &query_embedding,
                 k,
                 min_score_val,
                 &model_name,
                 query_batch.actual_model.as_deref(),
             )?;
+            // A nonempty in-memory index — same-process published passages,
+            // ephemeral or durable — owns the query; db_path is ignored
+            // (pinned by retrieval_origin_isolation_and_path_aliases). An
+            // empty index with a db_path queries the named durable database
+            // through the disk KNN, read-only, per query — never by hydrating
+            // its every passage into RAM. At zk-ref-open scale (279,730
+            // passages, 3.3 GB) hydration held ~1.5 GB of permanent server RSS
+            // (measured 2026-10-06) to make repeat scans instant, while the
+            // disk path costs one read-only open (~180ms KDF) and one vec0
+            // KNN (~3s) per query — noise beside the embed call every query
+            // already pays.
+            let retrieval = match db_path.as_deref() {
+                Some(path) if ram.total_indexed == 0 => durable_retrieval(
+                    path,
+                    &query_embedding,
+                    k,
+                    min_score_val,
+                    &model_name,
+                    query_batch.actual_model.as_deref(),
+                )?,
+                _ => ram,
+            };
+            let crate::index::Retrieval {
+                matches,
+                total_indexed,
+                missing_text,
+                dimension_mismatch,
+                model_mismatch,
+            } = retrieval;
             let results: Vec<_> = matches.iter().map(|matched| matched.project(include_text_flag)).collect();
 
             let mut result = json!({
@@ -188,7 +206,7 @@ impl CorpusServer {
             });
 
             if total_indexed == 0 {
-                result["note"] = json!("Index empty. Provide db_path for empty-index hydration, or embed passages.");
+                result["note"] = json!("Index empty. Provide db_path to query a durable corpus database, or embed passages.");
             }
             if missing_text > 0 {
                 result["missing_passage_text"] = json!(missing_text);
@@ -249,7 +267,7 @@ impl CorpusServer {
     }
 
     #[tool(
-        description = "Clear all in-memory passages and cancel pending publications. Does not delete stored DB embeddings. Call before selecting a different DB with corpus_query's empty-index fallback."
+        description = "Clear all in-memory passages and cancel pending publications. Does not delete stored DB embeddings. Call before selecting a different DB with corpus_query's db_path — a nonempty in-memory index ignores db_path."
     )]
     pub async fn corpus_clear_index(
         &self,
@@ -282,6 +300,105 @@ impl CorpusServer {
 }
 
 // ── Request structs ────────────────────────────────────────────────────────
+
+/// Query a durable corpus database through the disk KNN — the empty-index
+/// `db_path` path of `corpus_query`. Read-only and per-query: the same vec0
+/// MATCH search the federated recall path runs in production, with the same
+/// model gate (mismatched rows excluded and counted, never silently ranked
+/// cross-model). Nothing is published into the in-memory index — the database
+/// is opened and searched per call, so no corpus-sized RAM cache accrues and
+/// switching databases needs no clear between queries.
+fn durable_retrieval(
+    db_path: &str,
+    query: &[f32],
+    k: usize,
+    min_score: f32,
+    query_model: &str,
+    query_actual_model: Option<&str>,
+) -> Result<Retrieval, McpToolError> {
+    // CO-02: a typo'd path must refuse, never leave a stray empty DB behind it.
+    crate::helpers::ensure_db_exists(db_path)?;
+    let passphrase = crate::helpers::resolve_corpus_passphrase()?;
+    let database =
+        hkask_storage::Database::open_read_only(db_path, &passphrase).map_err(|error| {
+            McpToolError::failed_precondition(format!(
+                "Cannot open the corpus database '{db_path}' read-only: {error}"
+            ))
+        })?;
+    let pool = database
+        .sqlite_pool()
+        .map_err(|error| McpToolError::internal(format!("Corpus database pool failed: {error}")))?;
+    let driver: std::sync::Arc<dyn hkask_storage::DatabaseDriver> =
+        std::sync::Arc::new(hkask_storage::SqliteDriver::new_labeled(pool, db_path));
+    let store = hkask_storage::EmbeddingStore::from_driver(
+        std::sync::Arc::clone(&driver),
+        crate::embedding_dim(),
+    )
+    .map_err(|error| McpToolError::internal(format!("Embedding store failed: {error}")))?;
+    let total_indexed = store
+        .count()
+        .map_err(|error| McpToolError::internal(format!("Embedding count failed: {error}")))?;
+    let missing_text: i64 = driver
+        .query(
+            "SELECT COUNT(*) FROM embeddings WHERE passage_text IS NULL OR trim(passage_text) = ''",
+            &[],
+        )
+        .map_err(|error| McpToolError::internal(format!("Missing-text count failed: {error}")))?
+        .first()
+        .map(|row| row.get_int(0))
+        .transpose()
+        .map_err(|error| {
+            McpToolError::internal(format!("Missing-text count read failed: {error}"))
+        })?
+        .unwrap_or(0);
+    let outcome = store
+        .search(query, k, query_model, query_actual_model)
+        .map_err(|error| match error {
+            hkask_storage::EmbeddingError::DimensionMismatch { expected, actual } => {
+                McpToolError::unavailable(format!(
+                    "Query embedding has dimension {actual} but the stored embeddings have \
+                     dimension {expected}; no stored passage can match. The configured embedding \
+                     model or HKASK_EMBEDDING_DIM changed — re-embed the corpus."
+                ))
+            }
+            error => McpToolError::internal(format!("Disk KNN search failed: {error}")),
+        })?;
+    let mut matches: Vec<RetrievedPassage> = outcome
+        .results
+        .into_iter()
+        .map(|result| RetrievedPassage {
+            // vec0 cosine distance: score = 1 − distance, the same similarity
+            // the in-memory scan reports (and the federated path's
+            // relevance_score).
+            score: (1.0 - result.distance) as f32,
+            passage: IndexedPassage {
+                text: result
+                    .embedding
+                    .passage_text
+                    .filter(|text| !text.trim().is_empty()),
+                metadata: json!({"entity_ref": result.embedding.entity_ref}),
+                embedding: result.embedding.vector,
+                model: result.embedding.model,
+            },
+        })
+        .collect();
+    // The vec0 KNN has no threshold parameter; apply the caller's floor
+    // post hoc, the same filter the in-memory scan applies.
+    if min_score > 0.0 {
+        matches.retain(|matched| matched.score >= min_score);
+    }
+    Ok(Retrieval {
+        total_indexed,
+        missing_text: usize::try_from(missing_text)
+            .map_err(|_| McpToolError::internal("missing-text count exceeds usize"))?,
+        // The disk schema fixes one dimension per database (vec0 float[N]);
+        // a query of another width fails the search above instead of
+        // producing a partial mismatch count.
+        dimension_mismatch: 0,
+        model_mismatch: outcome.excluded_model_mismatch,
+        matches,
+    })
+}
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct CacheRequest {

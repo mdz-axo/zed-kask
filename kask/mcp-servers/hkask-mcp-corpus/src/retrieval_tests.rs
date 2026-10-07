@@ -1380,10 +1380,15 @@ async fn retrieval_inflight_embed_is_cancelled() {
     }
 }
 
-/// expect: A query loading a cold DB cannot restore a cleared/purged cache after its inference finishes.
-/// [P8] Motivating: no stale hydration; pre: cold query blocked at embedding barrier; post: invalidation wins.
+/// expect: An in-flight db_path query reads the durable database, not the
+/// cache — a cache clear cannot hide a durable row from it, a durable purge
+/// is what it sees, and it publishes nothing into the in-memory index.
+/// [P8] Motivating: no hidden corpus-sized RAM cache behind a query.
+/// pre: cold query blocked at the embedding barrier while clear/purge runs;
+/// post: clear leaves the durable row visible and the index empty; purge
+/// leaves nothing to read.
 #[tokio::test]
-async fn retrieval_inflight_hydration_cannot_republish() {
+async fn retrieval_inflight_db_path_query_reads_durable_state() {
     for clear in [true, false] {
         let directory = fixture();
         let database = directory.path().join("memory.db");
@@ -1416,8 +1421,8 @@ async fn retrieval_inflight_hydration_cannot_republish() {
                             .await,
                     );
                     assert_eq!(
-                        cleared["cleared"], 1,
-                        "hydration linearized before inference"
+                        cleared["cleared"], 0,
+                        "the db_path query publishes nothing into the in-memory index"
                     );
                 } else {
                     purge(&fresh, &database).await;
@@ -1428,15 +1433,41 @@ async fn retrieval_inflight_hydration_cannot_republish() {
         )
         .expect("query and invalidation complete");
         let result = content(Ok(result.0));
-        assert_eq!(result["results"], json!([]));
-        assert!(result.get("answer_error").is_some());
-        assert!(port.prompts.lock().expect("prompts").is_empty());
         let store =
             crate::helpers::open_memory_store(&database.to_string_lossy(), PASSPHRASE).expect("DB");
+        if clear {
+            // Clear is cache-only: the durable row survives and the disk query
+            // reads it — its text grounding the generated answer.
+            assert_eq!(
+                result["results"].as_array().map(Vec::len),
+                Some(1),
+                "a cache clear cannot hide a durable row from a db_path query"
+            );
+            assert!(
+                result.get("answer").is_some(),
+                "the durable passage text grounds the generated answer"
+            );
+            assert_eq!(
+                store.embedding_count().expect("count"),
+                1,
+                "clear is cache-only"
+            );
+        } else {
+            // Purge is durable and precedes the query's disk read: nothing to read.
+            assert_eq!(result["results"], json!([]), "purge precedes the disk read");
+            assert!(result.get("answer_error").is_some());
+            assert_eq!(store.embedding_count().expect("count"), 0);
+        }
+        // Either way the query left the in-memory index empty — no hidden
+        // hydration cache accrues behind db_path queries.
+        let after = content(
+            fresh
+                .corpus_query(Parameters(query(None, false, true)))
+                .await,
+        );
         assert_eq!(
-            store.embedding_count().expect("count"),
-            usize::from(clear),
-            "clear is cache-only"
+            after["total_indexed"], 0,
+            "a db_path query never publishes into the in-memory index"
         );
     }
 }

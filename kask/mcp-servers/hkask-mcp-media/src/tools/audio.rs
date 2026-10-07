@@ -365,10 +365,13 @@ impl MediaServer {
     ) -> Result<String, McpToolError> {
         execute_tool(self, "audio_capture", async {
             let _admission = self.admit_heavy_operation()?;
-            if duration_secs <= 0.0 || duration_secs > 3600.0 {
-                return Err(McpToolError::invalid_argument(
-                    "duration_secs must be between 0.1 and 3600 (1 hour).",
-                ));
+            if duration_secs <= 0.0
+                || duration_secs > hkask_types::media_limits::MAX_CAPTURE_DURATION_SECS
+            {
+                return Err(McpToolError::invalid_argument(format!(
+                    "duration_secs must be between 0.1 and {} (1 hour).",
+                    hkask_types::media_limits::MAX_CAPTURE_DURATION_SECS
+                )));
             }
 
             #[cfg(test)]
@@ -409,10 +412,13 @@ impl MediaServer {
     ) -> Result<String, McpToolError> {
         execute_tool(self, "record_and_transcribe", async {
             let _admission = self.admit_heavy_operation()?;
-            if duration_secs <= 0.0 || duration_secs > 3600.0 {
-                return Err(McpToolError::invalid_argument(
-                    "duration_secs must be between 0.1 and 3600 (1 hour).",
-                ));
+            if duration_secs <= 0.0
+                || duration_secs > hkask_types::media_limits::MAX_CAPTURE_DURATION_SECS
+            {
+                return Err(McpToolError::invalid_argument(format!(
+                    "duration_secs must be between 0.1 and {} (1 hour).",
+                    hkask_types::media_limits::MAX_CAPTURE_DURATION_SECS
+                )));
             }
 
             self.require_ffmpeg()?;

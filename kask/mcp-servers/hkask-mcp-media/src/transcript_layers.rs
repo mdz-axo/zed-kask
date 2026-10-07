@@ -991,6 +991,81 @@ mod tests {
         assert_eq!((projected[1].start_ms, projected[1].end_ms), (2000, 2000));
     }
 
+    /// dcterms:identifier: `transcript_layers::reanchored_corrected_words`
+    /// expect: The interpolation contract holds across an exhaustive sweep
+    /// — every token valid (start ≤ end), monotone, non-overlapping, and
+    /// confined to the source range's span, with the span's endpoints exact
+    /// (first token starts at the range start, last ends at the range end)
+    /// — for every span and replacement-token count in the sweep.
+    /// [P1] Motivating: the equal-slice interpolation is the timed consumers'
+    /// restoration path (MF-2); the unit tests pin concrete cases, this
+    /// sweep is the contract's second oracle (the identities asserted are
+    /// the Phase-4 spec candidates, independent of the slicing formula).
+    #[test]
+    fn reanchored_interpolation_contract_holds_across_a_sweep() {
+        for span in (0..=500usize).step_by(7) {
+            for token_count in 1..=12usize {
+                let range_start = 1000u64;
+                let range_end = range_start + span as u64;
+                let words = vec![
+                    TimedWord {
+                        word: "src".to_string(),
+                        start_ms: range_start,
+                        end_ms: range_end,
+                        confidence: None,
+                    },
+                    TimedWord {
+                        word: "after".to_string(),
+                        start_ms: 9000,
+                        end_ms: 9500,
+                        confidence: None,
+                    },
+                ];
+                let replacement = (0..token_count)
+                    .map(|index| format!("t{index}"))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                let projected = reanchored_corrected_words(&words, &[edit(0, 0, &replacement)])
+                    .expect("sweep re-anchors");
+                assert_eq!(
+                    projected.len(),
+                    token_count + 1,
+                    "span={span} tokens={token_count}"
+                );
+                let tokens = &projected[..token_count];
+                assert_eq!(
+                    tokens[0].start_ms, range_start,
+                    "first token starts at the range start: span={span} tokens={token_count}"
+                );
+                assert_eq!(
+                    tokens[token_count - 1].end_ms,
+                    range_end,
+                    "last token ends at the range end: span={span} tokens={token_count}"
+                );
+                for (index, token) in tokens.iter().enumerate() {
+                    assert!(
+                        token.start_ms <= token.end_ms,
+                        "valid token: span={span} tokens={token_count} at {index}"
+                    );
+                    assert!(
+                        token.start_ms >= range_start && token.end_ms <= range_end,
+                        "confined to the source span: span={span} tokens={token_count} at {index}"
+                    );
+                    if index > 0 {
+                        let prev = &tokens[index - 1];
+                        assert!(
+                            prev.start_ms <= token.start_ms && prev.end_ms <= token.start_ms,
+                            "monotone and non-overlapping: span={span} tokens={token_count} at {index}"
+                        );
+                    }
+                }
+                let tail = &projected[token_count];
+                assert_eq!(tail.word, "after");
+                assert_eq!((tail.start_ms, tail.end_ms), (9000, 9500));
+            }
+        }
+    }
+
     #[test]
     fn corrected_view_handles_whole_transcript_replacement() {
         let words = timed_words(&["um", "uh", "so"]);

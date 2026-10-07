@@ -1,4 +1,4 @@
-//! One owner for passage identity, durable publication, hydration and invalidation.
+//! One owner for passage identity, durable publication, and invalidation.
 //! Store operations are synchronous and serialized with cache mutations. Inference
 //! runs outside the lock; scoped publication permits let clear/purge cancel old work.
 use std::collections::BTreeMap;
@@ -256,45 +256,6 @@ impl PassageIndex {
             return Err(McpToolError::failed_precondition(
                 "Passage publication cancelled by corpus_clear_index or an overlapping corpus_purge_qa; rerun the operation to publish new data",
             ));
-        }
-        Ok(())
-    }
-
-    /// Hydration is an empty-index fallback, never a per-query database selector.
-    /// It finishes synchronously before query inference; clear/purge cannot race a
-    /// detached DB snapshot back into the cache. The DB passphrase resolves
-    /// server-side (fail-closed) only when an actual open is needed — a warm
-    /// index never requires the credential.
-    pub fn hydrate_if_empty(&self, path: Option<&str>) -> Result<(), McpToolError> {
-        let mut state = self.lock()?;
-        if !state.passages.is_empty() {
-            return Ok(());
-        }
-        let Some(path) = path else {
-            return Ok(());
-        };
-        // The open below is create-if-missing — a nonexistent path must
-        // refuse here, never leave a stray empty DB behind a typo
-        // (mcp-tool-review CO-02). Fires only when hydration will
-        // actually run: a warm index ignores db_path by contract
-        // (pinned by retrieval_origin_isolation_and_path_aliases).
-        crate::helpers::ensure_db_exists(path)?;
-        let passphrase = crate::helpers::resolve_corpus_passphrase()?;
-        let store = open_memory_store(path, &passphrase)?;
-        let origin = database_origin(path)?;
-        let entries = store
-            .all_embeddings_with_text()
-            .map_err(|error| map_memory_store_error(error, "DB hydration failed"))?;
-        for (entity_ref, embedding, text, model) in entries {
-            state.passages.insert(
-                (origin.clone(), entity_ref.clone()),
-                IndexedPassage {
-                    text: text.filter(|text| !text.trim().is_empty()),
-                    metadata: json!({"entity_ref":entity_ref}),
-                    embedding,
-                    model,
-                },
-            );
         }
         Ok(())
     }

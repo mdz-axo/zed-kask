@@ -22,3 +22,11 @@ pub const MAX_WORKFLOW_GRAPH_BYTES: usize = 1_048_576;
 pub const DEFAULT_WORKFLOW_LIST_LIMIT: usize = 100;
 /// Maximum number of workflow summaries returned by `workflow_list`.
 pub const MAX_WORKFLOW_LIST_LIMIT: usize = 256;
+/// Maximum duration in seconds accepted by microphone capture
+/// (`audio_capture`, `record_and_transcribe`). One hour. `f32` to match
+/// the request fields it caps.
+pub const MAX_CAPTURE_DURATION_SECS: f32 = 3600.0;
+/// Maximum byte size of a gallery asset accepted by the Reduct cloud upload
+/// (`reduct_upload_gallery_media`). 128 MiB — larger remote files use
+/// `reduct_import_media` instead.
+pub const MAX_REDUCT_UPLOAD_BYTES: u64 = 128 * 1024 * 1024;
