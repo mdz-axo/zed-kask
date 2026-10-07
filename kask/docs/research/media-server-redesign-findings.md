@@ -45,25 +45,56 @@ its method, not a prerequisite re-run.
   beyond slice acceptance); the publication-never-by-default invariant is
   non-negotiable in every slice.
 
-### MF-2 — Transcript re-alignment (condition 2)
+### MF-2 — Transcript re-alignment (condition 2) — **CLOSED 2026-10-06, commit `c9a5c3b855`**
 
-- **Current condition:** a correction that changes token cardinality leaves
-  the corrected text readable and corpus-exportable, but timing-dependent
-  navigation (`educt_locate`), highlighting, and SRT export fail with an
-  explicit unaligned precondition instead of silently using stale source
-  text or inventing timestamps (`README.md:252-259`). Reduct can re-align
-  such edits server-side; local re-transcription/re-alignment remains the
-  honest capability gap. The immutable source bundle remains available for
-  audit.
-- **Target condition:** a re-alignment path (re-transcription or word-level
-  re-anchoring) that restores timed consumers after cardinality-changing
-  corrections, with the unaligned precondition retained as the failure mode
-  for the cases it genuinely cannot handle.
-- **Reached when:** a correction that inserts/deletes words can
-  subsequently drive `educt_locate`, highlighting, and SRT export — pinned
-  by a test that does exactly that.
-- **Decision status:** technical execution; the unaligned precondition must
-  survive as the honest failure mode, not be deleted by the fix.
+- **Current condition (at close):** the local re-alignment path exists as
+  word-level re-anchoring. `educt_realign_transcript` (the 99th tool,
+  `src/tools/educt.rs`) stores a `realignment` layer recording the decision
+  to project a correction with re-anchored timings;
+  `reanchored_corrected_words`
+  (`src/transcript_layers.rs`) is the pure projection: each
+  cardinality-changing edit's replacement tokens slice its source range's
+  span equally (floor-ms, monotone, confined to the span), M==N edits keep
+  the aligned path's one-for-one semantics (source confidence retained),
+  interpolated tokens carry no STT confidence, and the immutable source
+  bundle and its timings are never modified. The working transcript gains
+  the `re_anchored` alignment state, honored consistently by every timed
+  consumer (locate, highlight pass, SRT, corpus export) and by
+  `educt_apply_corrections`; the unaligned precondition's message now names
+  the re-alignment path. The precondition itself is RETAINED: without a
+  realignment layer a cardinality-changing correction still fails timed
+  consumers (the existing
+  `cardinality_changing_correction_is_explicitly_unaligned` pin still
+  passes), and an untimed source cannot be re-anchored (the tool refuses
+  with the NoWordTimings reason).
+- **Reached-when check:** the pin
+  `realignment_restores_timed_consumers_after_cardinality_change`
+  (`src/hkask_mcp_media.rs` tool_behavior_tests) does exactly the
+  condition's sentence: stores a timed transcript, applies an insert
+  correction (1 word → 2 tokens), asserts locate fails with
+  `FailedPrecondition` naming `educt_realign_transcript`, stores the
+  realignment layer, then drives `educt_locate` (word range 0-4, time
+  range 0-3500ms over the re-anchored timings), the highlight pass, and
+  SRT export carrying the corrected text. Four unit tests pin the
+  projection algebra (insertion slicing, deletion/many-to-few,
+  one-for-one passthrough, zero-duration degenerate).
+- **Receipts:** `./script/clippy -p hkask-mcp-media -p hkask-inference`
+  green (0 errors); `cargo test -p hkask-mcp-media` 442/0/6 (316 main +
+  125 deser + 1 doc; +5 over the MF-4 baseline), `cargo test -p
+  hkask-inference` 57/0/0. Three-piece sync: pin 98→99
+  (`tool_surface_is_exactly_99_registered_tools`), `omc::tool_to_omc`
+  arm (VERSION_INFO), docs rows updated (media.md count + tool list +
+  Reduct pin refs, README re-alignment paragraph, fleet table in
+  mcp-servers/README.md, diataxis reference, architecture plan). Residue
+  sweep: zero live references to the 98 pin or count (the loop-register
+  98/98 is a dated historical review record).
+- **Original condition record (2026-10-06 re-grasp, for the history):** a
+  correction that changes token cardinality left the corrected text
+  readable and corpus-exportable, but timing-dependent navigation
+  (`educt_locate`), highlighting, and SRT export failed with an explicit
+  unaligned precondition (`README.md:252-259`); Reduct could re-align
+  such edits server-side, and local re-transcription/re-alignment was the
+  honest capability gap.
 
 ### MF-3 — Face-recognition build-out (condition 3) — OPERATOR DECISION
 

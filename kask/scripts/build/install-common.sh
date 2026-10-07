@@ -479,12 +479,14 @@ publish_binaries() {
     fi
 
     # Stale sweep — only after a fully successful publish, and never touching
-    # current inventory names. Glob + guard instead of find: portable and
-    # safe when BIN_DIR holds no hkask-mcp-* files.
+    # current inventory names. Also removes <name>.new orphans of NON-inventory
+    # servers left by a killed prior run — current-inventory .new files cannot
+    # exist here (every staged file was renamed above), so no skip is needed.
+    # Glob + guard instead of find: portable and safe when BIN_DIR holds no
+    # hkask-mcp-* files.
     local stale is_current removed=0
     for stale in "$BIN_DIR"/hkask-mcp-*; do
         [ -f "$stale" ] || continue
-        case "$stale" in *.new) continue ;; esac
         is_current=false
         for name in "${MCP_SERVERS[@]}"; do
             if [ "$stale" = "$BIN_DIR/$name" ]; then

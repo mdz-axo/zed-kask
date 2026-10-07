@@ -50,21 +50,17 @@ impl SpreadsheetPublication {
     /// single owner of the fence format (§5.1's hidden-complexity list:
     /// "SpreadsheetBlock and display-hint serialization") — servers append
     /// the returned hint to their tool output; [`hint_body`] parses it back.
+    /// Both publication kinds carry a hint (SP-05): the workbook block as an
+    /// editable what-if, the inline block as a bounded read-only table.
     pub fn display_hint(&self) -> Result<String, SpreadsheetError> {
-        match self {
-            SpreadsheetPublication::Workbook { block, .. } => {
-                let body =
-                    serde_json::to_string(block).map_err(|error| SpreadsheetError::Engine {
-                        detail: format!("cannot serialize spreadsheet block: {error}"),
-                    })?;
-                Ok(format!("```{SPREADSHEET_VIZ}\n{body}\n```"))
-            }
-            // An inline table is not an editable what-if workbook; a caller
-            // asking a workbook presenter for a hint has the wrong mode.
-            SpreadsheetPublication::Inline(_) => Err(SpreadsheetError::Engine {
-                detail: "an inline table publication is not an editable what-if workbook".into(),
-            }),
+        let body = match self {
+            SpreadsheetPublication::Workbook { block, .. } => serde_json::to_string(block),
+            SpreadsheetPublication::Inline(block) => serde_json::to_string(block),
         }
+        .map_err(|error| SpreadsheetError::Engine {
+            detail: format!("cannot serialize spreadsheet block: {error}"),
+        })?;
+        Ok(format!("```{SPREADSHEET_VIZ}\n{body}\n```"))
     }
 }
 

@@ -481,8 +481,8 @@ mod tool_surface_tests {
     hkask_mcp_server::tool_surface_pin!(
         MediaServer::combined_router(),
         "combined_router",
-        99,
-        tool_surface_is_exactly_99_registered_tools,
+        101,
+        tool_surface_is_exactly_101_registered_tools,
     );
 
     // Coverage: every registered tool must map to an OMC concept. Catches

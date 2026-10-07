@@ -379,6 +379,22 @@ pub struct EvaluateEvidenceRequest {
     /// the floor with a surfaced reason — never silent.
     #[schemars(schema_with = "duplication_schema")]
     pub duplication: Option<String>,
+    /// The explicit presentation choice (plan §6: callers explicitly
+    /// choose; no hidden mode switches). `DataOnly` (default) keeps the
+    /// plain JSON report; `InlineTable` additionally publishes the
+    /// per-artifact evaluation matrix as a bounded inline table block and
+    /// appends its ```spreadsheet display hint for inline rendering
+    /// (SP-05, plan §10 Phase 7 — evidence-evaluation matrix).
+    #[serde(default)]
+    pub presentation: EvidencePresentation,
+}
+
+/// The presentation choice for an evidence evaluation (plan §6).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, JsonSchema)]
+pub enum EvidencePresentation {
+    #[default]
+    DataOnly,
+    InlineTable,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

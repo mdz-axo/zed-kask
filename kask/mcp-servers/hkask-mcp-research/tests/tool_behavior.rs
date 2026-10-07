@@ -33,8 +33,8 @@ use hkask_mcp_research::research::rss_types::{
 };
 use hkask_mcp_research::research::types::{
     AnnotateResearchRunRequest, BeginResearchRunRequest, BrowseRequest, BrowseResult,
-    CompoundSearchResult, EvaluateArtifact, EvaluateEvidenceRequest, ExtractOptions,
-    ExtractRequest, ExtractedContent, FindSimilarRequest, FinishResearchRunRequest,
+    CompoundSearchResult, EvaluateArtifact, EvaluateEvidenceRequest, EvidencePresentation,
+    ExtractOptions, ExtractRequest, ExtractedContent, FindSimilarRequest, FinishResearchRunRequest,
     GetResearchRunRequest, LatencyTier, ProviderFailureRecord, ProviderHealthEntry, ProviderInfo,
     ProviderRecommendation, RankedResult, RateLimiter, ResolvePaperRequest, SearchQuery,
     SearchRequest, SearchStrategy, WebError,
@@ -447,6 +447,14 @@ fn test_server(
     rerank_model: Option<&str>,
     embedding_model: Option<&str>,
 ) -> ResearchServer {
+    // A per-test spreadsheet actor over a persistent temp root (SP-05):
+    // `into_path` keeps the directory — the server outlives this helper's
+    // scope, and the InlineTable presentation never writes anyway.
+    let spreadsheet_dir = tempfile::tempdir()
+        .expect("spreadsheet temp root")
+        .into_path();
+    let spreadsheet = hkask_spreadsheet::WorkbookService::start_with_root(spreadsheet_dir)
+        .expect("spreadsheet engine actor");
     ResearchServer::new(
         WebID::new(),
         pool,
@@ -462,6 +470,7 @@ fn test_server(
         inference_port.unwrap_or_else(|| Arc::new(FailingInferencePort)),
         rerank_model.map(str::to_string),
         embedding_model.map(str::to_string),
+        spreadsheet,
     )
 }
 
@@ -1504,6 +1513,63 @@ fn evidence_artifact(
     }
 }
 
+/// SP-05 (plan §10 Phase 7 — evidence-evaluation matrix): the InlineTable
+/// presentation publishes the per-artifact evaluation matrix as a bounded
+/// inline table block; the default (DataOnly) output carries no display
+/// hint.
+#[tokio::test]
+async fn evaluate_evidence_inline_table_publishes_the_matrix() {
+    let server = make_server_without_db();
+    let inline = parse(&ok(server
+        .evaluate_evidence(Parameters(EvaluateEvidenceRequest {
+            question: "is the claim corroborated?".to_string(),
+            duplication: None,
+            presentation: EvidencePresentation::InlineTable,
+            artifacts: vec![
+                evidence_artifact(
+                    "https://a.example/1",
+                    Some("a.example"),
+                    None,
+                    Some("alpha one two three four"),
+                ),
+                evidence_artifact(
+                    "https://b.example/2",
+                    Some("b.example"),
+                    None,
+                    Some("beta five six seven eight"),
+                ),
+            ],
+        }))
+        .await));
+    let hint = inline["display_hint"].as_str().expect("inline hint");
+    let body = hkask_spreadsheet::hint_body(hint).expect("fenced spreadsheet block");
+    let block: hkask_types::spreadsheet::InlineTableBlock =
+        serde_json::from_str(body).expect("inline block body");
+    assert_eq!(block.viz, "spreadsheet");
+    assert_eq!(block.table.rows.len(), 2, "one row per artifact");
+    assert_eq!(block.table.columns.len(), 5);
+    block.validate().expect("the block revalidates");
+
+    // The default (DataOnly) output is unchanged: no display hint key.
+    let plain = parse(&ok(server
+        .evaluate_evidence(Parameters(EvaluateEvidenceRequest {
+            question: "is the claim corroborated?".to_string(),
+            duplication: None,
+            presentation: EvidencePresentation::default(),
+            artifacts: vec![evidence_artifact(
+                "https://a.example/1",
+                Some("a.example"),
+                None,
+                Some("alpha one two three four"),
+            )],
+        }))
+        .await));
+    assert!(
+        plain.get("display_hint").is_none(),
+        "the DataOnly default must not grow a hint"
+    );
+}
+
 #[tokio::test]
 async fn evaluate_evidence_rejects_empty_question() {
     let server = make_server_without_db();
@@ -1511,6 +1577,7 @@ async fn evaluate_evidence_rejects_empty_question() {
         .evaluate_evidence(Parameters(EvaluateEvidenceRequest {
             question: "  ".to_string(),
             duplication: None,
+            presentation: EvidencePresentation::default(),
             artifacts: vec![evidence_artifact(
                 "https://a.example/1",
                 Some("a.example"),
@@ -1529,6 +1596,7 @@ async fn evaluate_evidence_rejects_empty_artifacts() {
         .evaluate_evidence(Parameters(EvaluateEvidenceRequest {
             question: "what is the evidence?".to_string(),
             duplication: None,
+            presentation: EvidencePresentation::default(),
             artifacts: Vec::new(),
         }))
         .await);
@@ -1542,6 +1610,7 @@ async fn evaluate_evidence_emits_signal_model() {
         .evaluate_evidence(Parameters(EvaluateEvidenceRequest {
             question: "is the claim corroborated?".to_string(),
             duplication: None,
+            presentation: EvidencePresentation::default(),
             artifacts: vec![
                 evidence_artifact(
                     "https://a.example/1",
@@ -1637,6 +1706,7 @@ async fn evaluate_evidence_syndication_visible_in_clusters() {
         .evaluate_evidence(Parameters(EvaluateEvidenceRequest {
             question: "did the wire story spread?".to_string(),
             duplication: None,
+            presentation: EvidencePresentation::default(),
             artifacts: vec![
                 evidence_artifact(
                     "https://a.example/1",
@@ -2472,6 +2542,7 @@ fn make_server_with_embedding(
 fn semantic_request(duplication: Option<&str>) -> EvaluateEvidenceRequest {
     EvaluateEvidenceRequest {
         question: "is it duplicated?".to_string(),
+        presentation: EvidencePresentation::default(),
         artifacts: vec![
             evidence_artifact(
                 "https://a.example/1",

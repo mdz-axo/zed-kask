@@ -23,15 +23,15 @@ use hkask_spreadsheet::{ViewportContent, WorkbookDocument, WorkbookService, hint
 use hkask_tool_invoker::{InvokeError, shared_tool_invoker};
 use hkask_types::McpErrorKind;
 use hkask_types::spreadsheet::{
-    CellEdit, EditTransaction, SpreadsheetAccess, SpreadsheetBlock, SpreadsheetError,
-    SpreadsheetViewport, TableValue,
+    CellEdit, EditTransaction, InlineTableBlock, SpreadsheetAccess, SpreadsheetBlock,
+    SpreadsheetError, SpreadsheetViewport, TableValue,
 };
 use ui::prelude::*;
 
-use crate::block::{BlockError, SpreadsheetBlockBody};
+use crate::block::{BlockError, SpreadsheetBlockBody, SpreadsheetBlockKind};
 use crate::logic::{
     Nav, Rect, commit_to_edit, editor_text, move_active, selection_rect, selection_to_tsv,
-    tsv_to_edits, value_to_text, window_contains, window_covering,
+    sort_rows, tsv_to_edits, value_to_text, window_contains, window_covering,
 };
 
 /// The spreadsheet MCP server's settings id — the mutation endpoint the
@@ -141,7 +141,9 @@ struct EditorState {
 
 pub struct SpreadsheetWidget {
     focus_handle: FocusHandle,
-    block: Result<SpreadsheetBlock, BlockError>,
+    /// The strict block kind (SP-05): workbook (an editable what-if) or
+    /// inline (a bounded read-only table carried directly).
+    kind: Result<SpreadsheetBlockKind, BlockError>,
     service_error: Option<String>,
     document: Option<WorkbookDocument>,
     sheets: Vec<String>,
@@ -166,6 +168,8 @@ pub struct SpreadsheetWidget {
     redo_buffer: Vec<(u64, Vec<CellEdit>)>,
     save_status: SaveStatus,
     load_error: Option<String>,
+    /// The inline table's sort state (SP-05): (column, ascending).
+    sort: Option<(usize, bool)>,
 }
 
 impl SpreadsheetWidget {
@@ -173,18 +177,18 @@ impl SpreadsheetWidget {
     pub fn new(body: SpreadsheetBlockBody, cx: &mut Context<Self>) -> Self {
         match shared_spreadsheet_service() {
             Ok(service) => Self::new_with_service(body, Arc::clone(service), cx),
-            Err(error) => Self::degraded(body.strict_block(), error.to_string(), cx),
+            Err(error) => Self::degraded(body.strict_kind(), error.to_string(), cx),
         }
     }
 
     fn degraded(
-        block: Result<SpreadsheetBlock, BlockError>,
+        kind: Result<SpreadsheetBlockKind, BlockError>,
         error: String,
         cx: &mut Context<Self>,
     ) -> Self {
         Self {
             focus_handle: cx.focus_handle(),
-            block,
+            kind,
             service_error: Some(error),
             document: None,
             sheets: Vec::new(),
@@ -201,6 +205,7 @@ impl SpreadsheetWidget {
             redo_buffer: Vec::new(),
             save_status: SaveStatus::Idle,
             load_error: None,
+            sort: None,
         }
     }
 
@@ -210,21 +215,27 @@ impl SpreadsheetWidget {
         service: Arc<WorkbookService>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let block = body.strict_block();
-        let active_sheet = match &block {
-            Ok(block) => block.active_sheet.clone(),
-            Err(_) => String::new(),
+        let kind = body.strict_kind();
+        // A workbook block opens its revision asynchronously; an inline
+        // block carries its rows directly (SP-05) — nothing to open.
+        let (active_sheet, loading, artifact) = match &kind {
+            Ok(SpreadsheetBlockKind::Workbook(block)) => (
+                block.active_sheet.clone(),
+                true,
+                Some(block.artifact.clone()),
+            ),
+            _ => (String::new(), false, None),
         };
         let widget = Self {
             focus_handle: cx.focus_handle(),
-            block: block.clone(),
+            kind,
             service_error: None,
             document: None,
             sheets: Vec::new(),
             active_sheet,
             window: None,
             content: None,
-            loading: block.is_ok(),
+            loading,
             active_cell: (0, 0),
             selection_anchor: None,
             selection_extent: None,
@@ -234,9 +245,9 @@ impl SpreadsheetWidget {
             redo_buffer: Vec::new(),
             save_status: SaveStatus::Idle,
             load_error: None,
+            sort: None,
         };
-        if let Ok(block) = &block {
-            let artifact = block.artifact.clone();
+        if let Some(artifact) = artifact {
             cx.spawn(async move |this, cx| {
                 let outcome = service.open(&artifact).await;
                 this.update(cx, |widget, cx| {
@@ -490,7 +501,7 @@ impl SpreadsheetWidget {
     /// governed `ToolInvoker` (§8: persisted changes always dispatch
     /// through ToolInvoker; the four failure states are visible).
     fn dispatch_save(&mut self, cx: &mut Context<Self>) {
-        let Ok(block) = self.block.clone() else {
+        let Ok(SpreadsheetBlockKind::Workbook(block)) = self.kind.clone() else {
             return;
         };
         if self.staged_batches.is_empty() {
@@ -599,7 +610,7 @@ impl SpreadsheetWidget {
             cx.notify();
             return;
         }
-        self.block = Ok(new_block.clone());
+        self.kind = Ok(SpreadsheetBlockKind::Workbook(new_block.clone()));
         self.staged_batches.clear();
         self.redo_buffer.clear();
         self.save_status = SaveStatus::Saved;
@@ -624,7 +635,7 @@ impl SpreadsheetWidget {
 
     /// Open the (post-save) current artifact as the widget's document.
     fn reload_document(&mut self, cx: &mut Context<Self>) {
-        let Ok(block) = self.block.clone() else {
+        let Ok(SpreadsheetBlockKind::Workbook(block)) = self.kind.clone() else {
             return;
         };
         let Ok(service) = shared_spreadsheet_service().map(Arc::clone) else {
@@ -703,8 +714,9 @@ impl SpreadsheetWidget {
     // ── rendering ───────────────────────────────────────────────────────
 
     fn render_header(&self, cx: &mut Context<Self>) -> AnyElement {
-        let title = match &self.block {
-            Ok(block) => block.title.clone(),
+        let title = match &self.kind {
+            Ok(SpreadsheetBlockKind::Workbook(block)) => block.title.clone(),
+            Ok(SpreadsheetBlockKind::Inline(block)) => block.title.clone(),
             Err(_) => "Spreadsheet".to_string(),
         };
         h_flex()
@@ -1018,11 +1030,26 @@ impl SpreadsheetWidget {
 
 impl Render for SpreadsheetWidget {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let error_banner = self.block.as_ref().err().map(|error| {
+        let error_banner = self.kind.as_ref().err().map(|error| {
             Label::new(format!("Spreadsheet block error: {error}"))
                 .size(LabelSize::Small)
                 .color(Color::Error)
         });
+        // The inline presentation (SP-05): a bounded, read-only, sortable
+        // table — no formula bar, no staging, no save (§6: no persistence,
+        // no mutation endpoint).
+        if let Ok(SpreadsheetBlockKind::Inline(block)) = &self.kind {
+            return v_flex()
+                .size_full()
+                .min_h_0()
+                .min_w_0()
+                .gap_1()
+                .p_2()
+                .child(self.render_header(cx))
+                .children(error_banner)
+                .child(self.render_inline(block, cx))
+                .into_any_element();
+        }
         v_flex()
             .size_full()
             .min_h_0()
@@ -1045,6 +1072,101 @@ impl Render for SpreadsheetWidget {
                     .child(self.render_grid(cx)),
             )
             .child(self.render_status(cx))
+            .into_any_element()
+    }
+}
+
+impl SpreadsheetWidget {
+    /// The inline-table presentation (SP-05): a bounded, read-only,
+    /// sortable table. The block itself is the paint bound (the contract's
+    /// admission caps: ≤1,000 rows / 64 cols / 10,000 cells — research
+    /// tables are tens of rows).
+    fn render_inline(&self, block: &InlineTableBlock, cx: &mut Context<Self>) -> AnyElement {
+        let rows = match self.sort {
+            Some((column, ascending)) => sort_rows(&block.table, column, ascending),
+            None => block.table.rows.clone(),
+        };
+        let mut table = v_flex().min_w_0().min_h_0().flex_1().gap_1();
+        // Column headers — clickable to sort (SP-05).
+        let mut header = h_flex().flex_shrink_0().gap_1();
+        for (index, column) in block.table.columns.iter().enumerate() {
+            let handle = cx.entity().downgrade();
+            let label = column.label.clone();
+            let marker = match self.sort {
+                Some((sorted, true)) if sorted == index => " ▲",
+                Some((sorted, false)) if sorted == index => " ▼",
+                _ => "",
+            };
+            header = header.child(
+                div()
+                    .id(("inline-col-header", index as u64))
+                    .flex_1()
+                    .min_w_0()
+                    .px_2()
+                    .py_1()
+                    .border_1()
+                    .rounded_sm()
+                    .on_click(move |_event, _window, cx| {
+                        if let Some(handle) = handle.upgrade() {
+                            handle.update(cx, |widget, cx| {
+                                widget.toggle_sort(index);
+                                cx.notify();
+                            });
+                        }
+                    })
+                    .child(
+                        Label::new(format!("{label}{marker}"))
+                            .size(LabelSize::XSmall)
+                            .color(Color::Muted)
+                            .truncate(),
+                    ),
+            );
+        }
+        table = table.child(header);
+        // Data rows inside a scroll container; ids are unique per cell
+        // (row × 64 + col — the contract's 64-column cap keeps this unique).
+        let mut body = v_flex().min_w_0();
+        for (row_index, row) in rows.iter().enumerate() {
+            let mut row_el = h_flex().flex_shrink_0().gap_1();
+            for (col_index, value) in row.iter().enumerate() {
+                row_el = row_el.child(
+                    div()
+                        .id(("inline-cell", (row_index as u64) * 64 + col_index as u64))
+                        .flex_1()
+                        .min_w_0()
+                        .px_2()
+                        .py_1()
+                        .border_1()
+                        .child(
+                            Label::new(value_to_text(value))
+                                .size(LabelSize::XSmall)
+                                .truncate(),
+                        ),
+                );
+            }
+            body = body.child(row_el);
+        }
+        table = table.child(
+            v_flex()
+                .id("inline-table-scroll")
+                .min_h_0()
+                .flex_1()
+                .overflow_y_scroll()
+                .track_focus(&self.focus_handle)
+                .child(body),
+        );
+        table.into_any_element()
+    }
+
+    /// Toggle the inline table's sort state (SP-05): clicking a column sorts
+    /// ascending; clicking again flips the direction; a third click clears
+    /// it; clicking another column starts fresh ascending.
+    fn toggle_sort(&mut self, column: usize) {
+        self.sort = match self.sort {
+            Some((sorted, true)) if sorted == column => Some((column, false)),
+            Some((sorted, false)) if sorted == column => None,
+            _ => Some((column, true)),
+        };
     }
 }
 

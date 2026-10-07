@@ -43,13 +43,13 @@ pub(crate) use types::RateLimiter;
 pub(crate) use types::{
     AnnotateResearchRunRequest, BeginResearchRunRequest, BrowseOutput, BrowseRequest,
     CiteSourcesRequest, CiteStyle, DEFAULT_CACHE_MAX_ENTRIES, DEFAULT_CACHE_TTL_SECS,
-    EvaluateEvidenceRequest, ExtractOptions, ExtractOutput, ExtractRequest, FindSimilarOutput,
-    FindSimilarRequest, FindSimilarResultOutput, FinishResearchRunRequest, GetResearchRunRequest,
-    MAX_CACHE_MAX_ENTRIES, MAX_CACHE_TTL_SECS, MAX_INSTRUCTION_LENGTH, MAX_JSON_PROMPT_LENGTH,
-    MAX_JSON_SCHEMA_BYTES, MAX_QUERY_LENGTH, MAX_URL_LENGTH, PingOutput, ProviderProfileOutput,
-    ProviderRecommendation, RerankInfo, RerankOutcome, ResolvePaperRequest, SearchMetadata,
-    SearchOutput, SearchQuery, SearchRequest, SearchResultOutput, SearchStrategy, WebError,
-    llm_rerank, provider_profile,
+    EvaluateEvidenceRequest, EvidencePresentation, ExtractOptions, ExtractOutput, ExtractRequest,
+    FindSimilarOutput, FindSimilarRequest, FindSimilarResultOutput, FinishResearchRunRequest,
+    GetResearchRunRequest, MAX_CACHE_MAX_ENTRIES, MAX_CACHE_TTL_SECS, MAX_INSTRUCTION_LENGTH,
+    MAX_JSON_PROMPT_LENGTH, MAX_JSON_SCHEMA_BYTES, MAX_QUERY_LENGTH, MAX_URL_LENGTH, PingOutput,
+    ProviderProfileOutput, ProviderRecommendation, RerankInfo, RerankOutcome, ResolvePaperRequest,
+    SearchMetadata, SearchOutput, SearchQuery, SearchRequest, SearchResultOutput, SearchStrategy,
+    WebError, llm_rerank, provider_profile,
 };
 
 /// Build a `ProviderPool` from a credential map.

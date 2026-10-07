@@ -78,6 +78,29 @@ fn recording_create_url(project_id: &str) -> Result<String, McpToolError> {
     Ok(format!("{API_ROOT}project/{project_id}/recording"))
 }
 
+/// v3 page 23: `POST project/{id}/recording/{id}/highlight` — the
+/// highlight-create path (root-parameterized so loopback fixtures exercise
+/// the production URL builder).
+fn recording_highlight_create_url(
+    root: &str,
+    project_id: &str,
+    recording_id: &str,
+) -> Result<String, McpToolError> {
+    validate_reduct_id("project_id", project_id)?;
+    validate_reduct_id("recording_id", recording_id)?;
+    Ok(format!(
+        "{root}project/{project_id}/recording/{recording_id}/highlight"
+    ))
+}
+
+/// v3 pages 33-34: `POST project/{id}/reel/{id}/publish` — the
+/// reel-publication path (root-parameterized for loopback fixtures).
+fn reel_publish_url(root: &str, project_id: &str, reel_id: &str) -> Result<String, McpToolError> {
+    validate_reduct_id("project_id", project_id)?;
+    validate_reduct_id("reel_id", reel_id)?;
+    Ok(format!("{root}project/{project_id}/reel/{reel_id}/publish"))
+}
+
 fn media_import_url(project_id: &str, recording_id: &str) -> Result<String, McpToolError> {
     validate_reduct_id("project_id", project_id)?;
     validate_reduct_id("recording_id", recording_id)?;
@@ -209,6 +232,62 @@ fn parse_recording_create_response(body: &[u8]) -> Result<serde_json::Value, Mcp
         )
     })?;
     Ok(serde_json::json!({"source": "reduct_cloud", "recording_id": id}))
+}
+
+/// v3 pages 23-24: highlight creation acknowledges with
+/// `{"highlight": "<new highlight id>"}`.
+fn parse_highlight_create_response(body: &[u8]) -> Result<serde_json::Value, McpToolError> {
+    let response: serde_json::Value = serde_json::from_slice(body).map_err(|_| {
+        McpToolError::failed_precondition("Reduct highlight creation may have succeeded but returned invalid JSON; inspect recording highlights before retrying")
+    })?;
+    let id = response.get("highlight").and_then(serde_json::Value::as_str).ok_or_else(|| {
+        McpToolError::failed_precondition("Reduct highlight creation may have succeeded but omitted the highlight ID; inspect recording highlights before retrying")
+    })?;
+    validate_reduct_id("highlight_id", id).map_err(|_| {
+        McpToolError::failed_precondition(
+            "Reduct highlight creation returned an unusable ID; inspect recording highlights before retrying",
+        )
+    })?;
+    Ok(
+        serde_json::json!({"source": "reduct_cloud", "highlight_id": id, "state": "submitted; read recording highlights to verify"}),
+    )
+}
+
+/// v3 pages 33-34: publication acknowledges with
+/// `{"<reel id>": {"publish": <bool>, "share_token": <str>}}` — the
+/// share token appears only when publish is true. The token VALUE is never
+/// returned to the caller (the surface's token discipline: reel detail
+/// strips tokens, publication_state never returns them); the parse records
+/// its presence so the caller knows the link exists.
+fn parse_reel_publish_response(
+    body: &[u8],
+    reel_id: &str,
+) -> Result<serde_json::Value, McpToolError> {
+    let response: serde_json::Value = serde_json::from_slice(body).map_err(|_| {
+        McpToolError::failed_precondition("Reduct publication may have succeeded but returned invalid JSON; inspect the reel before retrying")
+    })?;
+    let ack = response.get(reel_id).ok_or_else(|| {
+        McpToolError::failed_precondition("Reduct publication may have succeeded but omitted the reel acknowledgement; inspect the reel before retrying")
+    })?;
+    let publish = ack.get("publish").and_then(serde_json::Value::as_bool).ok_or_else(|| {
+        McpToolError::failed_precondition("Reduct publication may have succeeded but omitted the publish flag; inspect the reel before retrying")
+    })?;
+    let share_token_present = ack
+        .get("share_token")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|token| !token.is_empty());
+    if publish && !share_token_present {
+        return Err(McpToolError::failed_precondition(
+            "Reduct publication acknowledged publish=true without a share token; the reel may be published — inspect it in the Reduct app before retrying",
+        ));
+    }
+    Ok(serde_json::json!({
+        "source": "reduct_cloud",
+        "reel_id": reel_id,
+        "publish": publish,
+        "share_token_present": share_token_present,
+        "note": "the share token value is never returned; the public link is visible in the Reduct app",
+    }))
 }
 
 fn parse_media_import_response(body: &[u8]) -> Result<serde_json::Value, McpToolError> {
@@ -834,6 +913,63 @@ async fn edit_reel_clip_range(
     parse_reel_block_edit_response(&body, block_id)
 }
 
+/// v3 pages 23-24: create a highlight on a recording — body
+/// `{"start_time": <float>, "end_time": <float>, "labels": [<str>]}`
+/// (labels optional; the comment parameter is an empty dictionary at
+/// creation and is changed only via the provider's comment endpoint, which
+/// this surface does not expose). Acknowledgement `{"highlight": id}`.
+async fn create_recording_highlight(
+    key: Option<&str>,
+    root: &str,
+    project_id: &str,
+    recording_id: &str,
+    start_time: f64,
+    end_time: f64,
+    labels: Option<Vec<String>>,
+) -> Result<serde_json::Value, McpToolError> {
+    let url = recording_highlight_create_url(root, project_id, recording_id)?;
+    if !start_time.is_finite() || !end_time.is_finite() || start_time < 0.0 || end_time < start_time
+    {
+        return Err(McpToolError::invalid_argument(
+            "highlight start_time/end_time must be finite non-negative seconds with start_time <= end_time",
+        ));
+    }
+    let mut payload = serde_json::json!({"start_time": start_time, "end_time": end_time});
+    if let Some(labels) = labels {
+        if labels.iter().any(|label| label.trim().is_empty()) {
+            return Err(McpToolError::invalid_argument(
+                "highlight labels must be nonempty strings",
+            ));
+        }
+        payload["labels"] = serde_json::json!(labels);
+    }
+    let body = reel_post_body(key, &url, payload, "highlight creation").await?;
+    parse_highlight_create_response(&body)
+}
+
+/// v3 pages 33-34: set a reel's publication flag — body
+/// `{"publish": <bool>}` (the body parameter name follows the reference's
+/// own field-name convention — the GET response and the acknowledgement
+/// both carry `publish`; the PDF's body-name line is one of its OCR-flagged
+/// gaps). Acknowledgement `{"<reel id>": {"publish": ..., "share_token": ...}}`.
+async fn publish_reel(
+    key: Option<&str>,
+    root: &str,
+    project_id: &str,
+    reel_id: &str,
+    publish: bool,
+) -> Result<serde_json::Value, McpToolError> {
+    let url = reel_publish_url(root, project_id, reel_id)?;
+    let body = reel_post_body(
+        key,
+        &url,
+        serde_json::json!({"publish": publish}),
+        "reel publication",
+    )
+    .await?;
+    parse_reel_publish_response(&body, reel_id)
+}
+
 async fn create_recording(
     key: Option<&str>,
     project_id: &str,
@@ -1019,6 +1155,29 @@ struct ReductEditReelClipRequest {
     block_id: String,
     start: f64,
     end: f64,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+struct ReductCreateRecordingHighlightRequest {
+    project_id: String,
+    recording_id: String,
+    /// Highlight start in seconds (finite, non-negative; start_time <= end_time).
+    start_time: f64,
+    /// Highlight end in seconds.
+    end_time: f64,
+    /// Optional labels; a color tag like "#orange" selects a non-yellow
+    /// highlight color per the v3 reference's notes.
+    labels: Option<Vec<String>>,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+struct ReductPublishReelRequest {
+    project_id: String,
+    reel_id: String,
+    /// Explicit publication decision — never defaulted. `true` asks the
+    /// provider to create a share token, which makes the reel publicly
+    /// accessible; `false` clears the publish flag.
+    publish: bool,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
@@ -1247,6 +1406,58 @@ impl MediaServer {
                 &block_id,
                 start,
                 end,
+            )
+            .await
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Create a highlight on a Reduct recording (v3 pages 23-24: POST .../highlight with start_time/end_time seconds and optional labels; acknowledgement carries the new highlight ID). A color tag like #orange selects a non-yellow highlight color. Returns a submitted ID; read recording highlights to verify. Does not edit local educt."
+    )]
+    pub async fn reduct_add_recording_highlight(
+        &self,
+        Parameters(ReductCreateRecordingHighlightRequest {
+            project_id,
+            recording_id,
+            start_time,
+            end_time,
+            labels,
+        }): Parameters<ReductCreateRecordingHighlightRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "reduct_add_recording_highlight", async {
+            create_recording_highlight(
+                self.reduct_api_key.as_deref(),
+                API_ROOT,
+                &project_id,
+                &recording_id,
+                start_time,
+                end_time,
+                labels,
+            )
+            .await
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Set a Reduct reel's publication flag (v3 pages 33-34: POST .../publish with a bool; the provider creates a share token when true). The publish parameter is explicit — never defaulted: publishing creates a publicly accessible link. The share token VALUE is never returned (visible in the Reduct app); the response reports the publish state and token presence."
+    )]
+    pub async fn reduct_publish_reel(
+        &self,
+        Parameters(ReductPublishReelRequest {
+            project_id,
+            reel_id,
+            publish,
+        }): Parameters<ReductPublishReelRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "reduct_publish_reel", async {
+            publish_reel(
+                self.reduct_api_key.as_deref(),
+                API_ROOT,
+                &project_id,
+                &reel_id,
+                publish,
             )
             .await
         })
@@ -2665,5 +2876,226 @@ mod tests {
         assert_eq!(status["provider_connection"], "not_checked");
         assert_eq!(status["cloud_editing"], "not_checked");
         Ok(())
+    }
+
+    /// MF-1 pins (target condition 1): the highlight-write and publication
+    /// tools send exactly their pinned v3 contracts — request path, body,
+    /// X-Auth-Key header, parsed acknowledgement — and the publication
+    /// response NEVER carries the share token value (the surface's token
+    /// discipline: reel detail strips tokens, publication_state never
+    /// returns them).
+    #[tokio::test]
+    async fn highlight_and_publish_writes_send_only_the_v3_contract()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let labeled = reel_post_fixture(
+            "/project/p_fixture/recording/recording_fixture/highlight",
+            serde_json::json!({"start_time":2.5,"end_time":4.0,"labels":["key-moment"]}),
+            r#"{"highlight":"highlight_fixture"}"#,
+            |root| async move {
+                create_recording_highlight(
+                    Some("fixture-key"),
+                    &root,
+                    "p_fixture",
+                    "recording_fixture",
+                    2.5,
+                    4.0,
+                    Some(vec!["key-moment".to_string()]),
+                )
+                .await
+            },
+        )
+        .await?;
+        assert_eq!(labeled["highlight_id"], "highlight_fixture");
+
+        let unlabeled = reel_post_fixture(
+            "/project/p_fixture/recording/recording_fixture/highlight",
+            serde_json::json!({"start_time":1.0,"end_time":2.0}),
+            r#"{"highlight":"highlight_plain"}"#,
+            |root| async move {
+                create_recording_highlight(
+                    Some("fixture-key"),
+                    &root,
+                    "p_fixture",
+                    "recording_fixture",
+                    1.0,
+                    2.0,
+                    None,
+                )
+                .await
+            },
+        )
+        .await?;
+        assert_eq!(unlabeled["highlight_id"], "highlight_plain");
+
+        let published = reel_post_fixture(
+            "/project/p_fixture/reel/reel_fixture/publish",
+            serde_json::json!({"publish":true}),
+            r#"{"reel_fixture":{"publish":true,"share_token":"tok_fixture_never_echo"}}"#,
+            |root| async move {
+                publish_reel(
+                    Some("fixture-key"),
+                    &root,
+                    "p_fixture",
+                    "reel_fixture",
+                    true,
+                )
+                .await
+            },
+        )
+        .await?;
+        assert_eq!(published["publish"], serde_json::json!(true));
+        assert_eq!(published["share_token_present"], serde_json::json!(true));
+        assert!(
+            !published.to_string().contains("tok_fixture_never_echo"),
+            "the share token value is never returned: {published}"
+        );
+
+        let unpublished = reel_post_fixture(
+            "/project/p_fixture/reel/reel_fixture/publish",
+            serde_json::json!({"publish":false}),
+            r#"{"reel_fixture":{"publish":false}}"#,
+            |root| async move {
+                publish_reel(
+                    Some("fixture-key"),
+                    &root,
+                    "p_fixture",
+                    "reel_fixture",
+                    false,
+                )
+                .await
+            },
+        )
+        .await?;
+        assert_eq!(unpublished["publish"], serde_json::json!(false));
+        assert_eq!(unpublished["share_token_present"], serde_json::json!(false));
+        Ok(())
+    }
+
+    /// MF-1 pin: a publish=true acknowledgement that omits the share token
+    /// is a contract deviation on a high-stakes mutation — surfaced as
+    /// failed_precondition ("may have succeeded; inspect"), never as a
+    /// claimed publication.
+    #[tokio::test]
+    async fn publish_ack_without_token_is_surfaced_not_claimed()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let boxed = reel_post_fixture(
+            "/project/p_fixture/reel/reel_fixture/publish",
+            serde_json::json!({"publish":true}),
+            r#"{"reel_fixture":{"publish":true}}"#,
+            |root| async move {
+                publish_reel(
+                    Some("fixture-key"),
+                    &root,
+                    "p_fixture",
+                    "reel_fixture",
+                    true,
+                )
+                .await
+            },
+        )
+        .await
+        .expect_err("publish=true without a token must not claim publication");
+        let error = boxed
+            .downcast::<McpToolError>()
+            .expect("the fixture error is an McpToolError");
+        assert_eq!(error.kind, hkask_types::McpErrorKind::FailedPrecondition);
+        assert!(error.message.contains("inspect"), "{error}");
+        Ok(())
+    }
+
+    /// MF-1 pin: the new write tools refuse provider-refusal statuses with
+    /// the shared classification (never a claimed mutation) — pinned on the
+    /// publication path, the highest-stakes write.
+    #[tokio::test]
+    async fn publish_http_refusal_is_classified_never_claimed()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+        let root = format!("http://{}/", listener.local_addr()?);
+        let peer = std::thread::spawn(move || -> std::io::Result<String> {
+            let (mut stream, _) = listener.accept()?;
+            stream.set_read_timeout(Some(std::time::Duration::from_secs(5)))?;
+            let mut buffer = [0_u8; 4096];
+            let mut request = String::new();
+            loop {
+                let n = stream.read(&mut buffer)?;
+                if n == 0 || request.len() > 16 * 1024 {
+                    return Err(std::io::Error::other("incomplete refusal fixture"));
+                }
+                request.push_str(&String::from_utf8_lossy(&buffer[..n]));
+                if request.contains("\r\n\r\n") && request.contains("\"publish\"") {
+                    break;
+                }
+            }
+            write!(
+                stream,
+                "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            )?;
+            Ok(request)
+        });
+        let error = publish_reel(
+            Some("fixture-key"),
+            &root,
+            "p_fixture",
+            "reel_fixture",
+            true,
+        )
+        .await
+        .expect_err("provider refusal is not a publication");
+        assert_eq!(error.kind, hkask_types::McpErrorKind::PermissionDenied);
+        let request = peer
+            .join()
+            .map_err(|_| std::io::Error::other("fixture server panicked"))??;
+        assert!(request.starts_with("POST /project/p_fixture/reel/reel_fixture/publish HTTP/1.1"));
+        assert!(
+            request
+                .to_ascii_lowercase()
+                .contains("x-auth-key: fixture-key")
+        );
+        Ok(())
+    }
+
+    /// MF-1 pin: local input sanity refuses a reversed or negative highlight
+    /// range and empty labels before any cloud request is sent.
+    #[tokio::test]
+    async fn highlight_input_sanity_is_refused_before_any_request() {
+        let reversed = create_recording_highlight(
+            Some("fixture-key"),
+            "https://fixture.invalid/",
+            "p_fixture",
+            "recording_fixture",
+            4.0,
+            2.5,
+            None,
+        )
+        .await
+        .expect_err("reversed range must be refused");
+        assert_eq!(reversed.kind, hkask_types::McpErrorKind::InvalidArgument);
+
+        let negative = create_recording_highlight(
+            Some("fixture-key"),
+            "https://fixture.invalid/",
+            "p_fixture",
+            "recording_fixture",
+            -1.0,
+            2.5,
+            None,
+        )
+        .await
+        .expect_err("negative start must be refused");
+        assert_eq!(negative.kind, hkask_types::McpErrorKind::InvalidArgument);
+
+        let empty_label = create_recording_highlight(
+            Some("fixture-key"),
+            "https://fixture.invalid/",
+            "p_fixture",
+            "recording_fixture",
+            1.0,
+            2.0,
+            Some(vec!["  ".to_string()]),
+        )
+        .await
+        .expect_err("empty label must be refused");
+        assert_eq!(empty_label.kind, hkask_types::McpErrorKind::InvalidArgument);
     }
 }

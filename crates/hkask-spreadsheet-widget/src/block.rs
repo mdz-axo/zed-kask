@@ -10,6 +10,8 @@
 //! fails the strict parse surfaces as a visible widget error state, never a
 //! panic.
 
+use hkask_types::spreadsheet::InlineTableBlock;
+use hkask_types::spreadsheet::SPREADSHEET_BLOCK_SCHEMA_VERSION;
 use hkask_types::spreadsheet::SPREADSHEET_VIZ;
 use hkask_types::spreadsheet::SpreadsheetBlock;
 use hkask_types::spreadsheet::SpreadsheetError;
@@ -35,6 +37,16 @@ pub enum BlockError {
     Contract(#[from] SpreadsheetError),
 }
 
+/// The strict wire contract a claimed body parses into (SP-05): the
+/// workbook block (an editable what-if) or the inline table block (a
+/// bounded, read-only table carried directly — no artifact identity, no
+/// mutation endpoint).
+#[derive(Debug, Clone, PartialEq)]
+pub enum SpreadsheetBlockKind {
+    Workbook(SpreadsheetBlock),
+    Inline(InlineTableBlock),
+}
+
 /// The tolerant discriminator-tagged body of a ```` ```spreadsheet ```` block.
 ///
 /// `viz` selects the renderer; `"spreadsheet"` renders this widget. All other
@@ -58,6 +70,10 @@ pub struct SpreadsheetBlockBody {
     pub origin: Option<hkask_types::spreadsheet::ArtifactOrigin>,
     #[serde(default)]
     pub mutation: hkask_types::BlockProvenance,
+    /// An inline table body carries its rows directly (SP-05) — its
+    /// presence discriminates the inline block from the workbook block.
+    #[serde(default)]
+    pub table: Option<hkask_types::spreadsheet::AnalyticalTable>,
 }
 
 /// Parse a block body tolerantly (viz discriminator read). Foreign-shaped
@@ -72,8 +88,29 @@ impl SpreadsheetBlockBody {
         self.viz.as_deref() == Some(SPREADSHEET_VIZ)
     }
 
-    /// The strict wire contract, parsed after the claim. Errors carry the
-    /// reason for the widget's visible error state.
+    /// The strict wire contract, parsed after the claim (SP-05): a body
+    /// carrying a table parses as the inline block; a workbook body
+    /// (artifact + viewport + mutation) as the workbook block. Errors carry
+    /// the reason for the widget's visible error state.
+    pub fn strict_kind(&self) -> Result<SpreadsheetBlockKind, BlockError> {
+        if let Some(table) = self.table.clone() {
+            let title = self.title.clone().ok_or(BlockError::MissingTitle)?;
+            let origin = self.origin.clone().ok_or(BlockError::MissingOrigin)?;
+            let block = InlineTableBlock {
+                viz: SPREADSHEET_VIZ.to_string(),
+                schema_version: SPREADSHEET_BLOCK_SCHEMA_VERSION,
+                title,
+                origin,
+                table,
+            };
+            block.validate().map_err(BlockError::Contract)?;
+            return Ok(SpreadsheetBlockKind::Inline(block));
+        }
+        self.strict_block().map(SpreadsheetBlockKind::Workbook)
+    }
+
+    /// The strict workbook contract, parsed after the claim. Errors carry
+    /// the reason for the widget's visible error state.
     pub fn strict_block(&self) -> Result<SpreadsheetBlock, BlockError> {
         let artifact = self.artifact.clone().ok_or(BlockError::MissingArtifact)?;
         let viewport = self.viewport.clone().ok_or(BlockError::MissingViewport)?;
@@ -131,6 +168,45 @@ mod tests {
         let parsed = parse_spreadsheet_body(r#"{"gallery_asset_id": "x"}"#)
             .expect("media-shaped body parses tolerantly");
         assert!(!parsed.claims());
+    }
+
+    #[test]
+    fn inline_body_claims_and_parses_as_the_inline_kind() {
+        let table = serde_json::json!({
+            "viz": "spreadsheet",
+            "schema_version": 1,
+            "title": "Evidence evaluation",
+            "origin": {
+                "server": "hkask-mcp-research",
+                "tool": "evaluate_evidence",
+                "arguments": {},
+            },
+            "table": {
+                "title": "Evidence evaluation",
+                "sheet_name": "Evidence",
+                "columns": [{"id": "v", "label": "V", "kind": "Number"}],
+                "rows": [[1.0]],
+            },
+        })
+        .to_string();
+        let parsed = parse_spreadsheet_body(&table).expect("inline body parses");
+        assert!(parsed.claims());
+        let kind = parsed.strict_kind().expect("inline kind");
+        match kind {
+            SpreadsheetBlockKind::Inline(block) => {
+                assert_eq!(block.table.rows.len(), 1);
+                assert!(block.validate().is_ok());
+            }
+            other => panic!("expected the inline kind, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn workbook_body_still_parses_as_the_workbook_kind() {
+        let parsed =
+            parse_spreadsheet_body(&body(Some("spreadsheet"))).expect("spreadsheet body parses");
+        let kind = parsed.strict_kind().expect("workbook kind");
+        assert!(matches!(kind, SpreadsheetBlockKind::Workbook(_)));
     }
 
     #[test]

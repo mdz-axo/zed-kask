@@ -13,7 +13,8 @@
 //! construction, the viewport-performance invariant.
 
 use hkask_types::spreadsheet::{
-    CellCoordinate, CellEdit, MAX_SHEET_COLS, MAX_SHEET_ROWS, SpreadsheetViewport, TableValue,
+    AnalyticalTable, CellCoordinate, CellEdit, MAX_SHEET_COLS, MAX_SHEET_ROWS, SpreadsheetViewport,
+    TableValue,
 };
 
 use hkask_spreadsheet::ViewportContent;
@@ -204,6 +205,56 @@ pub fn tsv_to_edits(tsv: &str, at: (usize, usize), sheet: &str) -> Vec<CellEdit>
     edits
 }
 
+/// The sort order of one cell value against another (SP-05's inline-table
+/// sorting): numbers, then booleans, then text — Excel's broad convention.
+/// Non-finite numbers cannot occur (the contract rejects them at
+/// validation), so the numeric comparison is total; empties are handled by
+/// [`sort_rows`], which always sorts them last.
+pub fn compare_values(a: &TableValue, b: &TableValue) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    fn rank(value: &TableValue) -> u8 {
+        match value {
+            TableValue::Number(_) => 0,
+            TableValue::Boolean(_) => 1,
+            TableValue::Text(_) => 2,
+            TableValue::Empty => 3,
+        }
+    }
+    match (a, b) {
+        (TableValue::Number(x), TableValue::Number(y)) => {
+            x.partial_cmp(y).unwrap_or(Ordering::Equal)
+        }
+        (TableValue::Boolean(x), TableValue::Boolean(y)) => x.cmp(y),
+        (TableValue::Text(x), TableValue::Text(y)) => x.cmp(y),
+        _ => rank(a).cmp(&rank(b)),
+    }
+}
+
+/// Sort the table's rows by one column (SP-05): ascending or descending,
+/// stable for equal keys, blanks always last (the spreadsheet convention).
+/// The column index is the caller's (a header click) and is within the
+/// table's columns by construction.
+pub fn sort_rows(table: &AnalyticalTable, column: usize, ascending: bool) -> Vec<Vec<TableValue>> {
+    let mut rows = table.rows.clone();
+    rows.sort_by(|a, b| {
+        let (x, y) = (&a[column], &b[column]);
+        match (x, y) {
+            (TableValue::Empty, TableValue::Empty) => std::cmp::Ordering::Equal,
+            (TableValue::Empty, _) => std::cmp::Ordering::Greater,
+            (_, TableValue::Empty) => std::cmp::Ordering::Less,
+            _ => {
+                let ordering = compare_values(x, y);
+                if ascending {
+                    ordering
+                } else {
+                    ordering.reverse()
+                }
+            }
+        }
+    });
+    rows
+}
+
 /// The editor text for a cell: the formula when one exists (editing
 /// `=SUM(B2:B3)` as its evaluated number would silently destroy the
 /// formula), otherwise the value's display text.
@@ -391,6 +442,41 @@ mod tests {
             &edits[2],
             CellEdit::SetCell { value: TableValue::Number(n), .. } if *n == 2.0
         ));
+    }
+
+    #[test]
+    fn sort_rows_orders_numbers_then_text_with_blanks_last() {
+        let table = AnalyticalTable::new(
+            "T".into(),
+            "Main".into(),
+            vec![hkask_types::spreadsheet::TableColumn {
+                id: "v".into(),
+                label: "V".into(),
+                kind: hkask_types::spreadsheet::ColumnKind::Text,
+            }],
+            vec![
+                vec![TableValue::Text("b".into())],
+                vec![TableValue::Number(3.0)],
+                vec![TableValue::Empty],
+                vec![TableValue::Number(1.0)],
+                vec![TableValue::Text("a".into())],
+            ],
+        )
+        .expect("table");
+        let texts = |rows: &[Vec<TableValue>]| {
+            rows.iter()
+                .map(|row| value_to_text(&row[0]))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            texts(&sort_rows(&table, 0, true)),
+            vec!["1", "3", "a", "b", ""]
+        );
+        // Descending flips the order but keeps blanks last.
+        assert_eq!(
+            texts(&sort_rows(&table, 0, false)),
+            vec!["b", "a", "3", "1", ""]
+        );
     }
 
     #[test]

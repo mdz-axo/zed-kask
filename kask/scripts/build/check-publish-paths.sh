@@ -166,6 +166,10 @@ grep -q "Keeping debug symbols" "$sandbox/t4.log" \
 
 # --- Test 5: successful publish replaces, sweeps, and handles fresh dirs ---
 seed_installed
+# An orphaned staged file of a NON-inventory server (a SIGKILLed prior run
+# whose server has since left the inventory): the sweep must remove it —
+# current-inventory .new files cannot exist at sweep time.
+printf 'orphan\n' > "$BIN_DIR/hkask-mcp-stale-old-server.new"
 if ! publish_binaries "$src" "$src" false >"$sandbox/t5.log" 2>&1; then
     fail "publish_binaries failed on a clean fixture"
 fi
@@ -173,6 +177,8 @@ fi
     || fail "publish left the old zed-kask binary in place"
 [ ! -e "$BIN_DIR/hkask-mcp-stale-old-server" ] \
     || fail "publish left a stale (non-inventory) MCP binary"
+[ ! -e "$BIN_DIR/hkask-mcp-stale-old-server.new" ] \
+    || fail "publish left an orphaned staged .new file behind (no-orphan rule)"
 for server in "${MCP_SERVERS[@]}"; do
     [ "$(cat "$BIN_DIR/$server")" = "new-server" ] \
         || fail "publish did not replace MCP server: $server"

@@ -163,12 +163,14 @@ pub fn tool_to_omc(tool: &str) -> Option<OmcConcept> {
         "reduct_recording_status" => Some(STATE),
         "reduct_recording_transcript" => Some(CAPTURE),
         "reduct_recording_highlights" => Some(VERSION_INFO),
+        "reduct_add_recording_highlight" => Some(VERSION_INFO),
         "reduct_reels_snapshot"
         | "reduct_reel_detail"
         | "reduct_create_reel"
         | "reduct_add_reel_clip"
         | "reduct_add_reel_title"
-        | "reduct_edit_reel_clip_range" => Some(SEQUENCE),
+        | "reduct_edit_reel_clip_range"
+        | "reduct_publish_reel" => Some(SEQUENCE),
         // Generation job queue — async job tracking (OMC Task).
         "job_submit" | "job_list" | "job_status" | "job_cancel" | "workflow_save"
         | "workflow_list" | "workflow_load" | "workflow_delete" => Some(TASK),

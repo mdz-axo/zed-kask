@@ -22,6 +22,10 @@ hkask-mcp-server.workspace = true
 hkask-types.workspace = true
 hkask-inference.workspace = true
 hkask-storage.workspace = true
+# The spreadsheet engine actor for `evaluate_evidence`'s InlineTable
+# presentation (SP-05, plan §10 Phase 7) — per-instance, mirroring the
+# portfolio/companies producers.
+hkask-spreadsheet.workspace = true
 # Ontology vocabulary bridge — fixture-guarded concept URIs (the
 # `pko:StepVerification` / `dcterms:references` result keys route through
 # its constants, never string literals).
@@ -57,6 +61,7 @@ pdf-extract.workspace = true
 # web_ping happy path, web_* invalid-argument and credential-missing error
 # paths, and RSS DB in-process paths.
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+tempfile.workspace = true
 
 [build-dependencies]
 regex.workspace = true
