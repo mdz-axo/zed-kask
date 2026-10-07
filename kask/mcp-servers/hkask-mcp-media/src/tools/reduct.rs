@@ -93,6 +93,23 @@ fn recording_highlight_create_url(
     ))
 }
 
+/// v3 pages 24-25: `POST project/{id}/recording/{id}/highlight/{id}` —
+/// the partial highlight-edit path (root-parameterized for loopback
+/// fixtures).
+fn recording_highlight_edit_url(
+    root: &str,
+    project_id: &str,
+    recording_id: &str,
+    highlight_id: &str,
+) -> Result<String, McpToolError> {
+    validate_reduct_id("project_id", project_id)?;
+    validate_reduct_id("recording_id", recording_id)?;
+    validate_reduct_id("highlight_id", highlight_id)?;
+    Ok(format!(
+        "{root}project/{project_id}/recording/{recording_id}/highlight/{highlight_id}"
+    ))
+}
+
 /// v3 pages 33-34: `POST project/{id}/reel/{id}/publish` — the
 /// reel-publication path (root-parameterized for loopback fixtures).
 fn reel_publish_url(root: &str, project_id: &str, reel_id: &str) -> Result<String, McpToolError> {
@@ -250,6 +267,29 @@ fn parse_highlight_create_response(body: &[u8]) -> Result<serde_json::Value, Mcp
     })?;
     Ok(
         serde_json::json!({"source": "reduct_cloud", "highlight_id": id, "state": "submitted; read recording highlights to verify"}),
+    )
+}
+
+/// v3 pages 24-25: highlight edit acknowledges with
+/// `{"<highlight id>": "<user-altered data>"}` — the ID-keyed acknowledgement
+/// pattern the block edit shares.
+fn parse_highlight_edit_response(
+    body: &[u8],
+    highlight_id: &str,
+) -> Result<serde_json::Value, McpToolError> {
+    let response: serde_json::Value = serde_json::from_slice(body).map_err(|_| {
+        McpToolError::failed_precondition("Reduct highlight edit may have succeeded but returned invalid JSON; inspect recording highlights before retrying")
+    })?;
+    if response
+        .get(highlight_id)
+        .is_none_or(serde_json::Value::is_null)
+    {
+        return Err(McpToolError::failed_precondition(
+            "Reduct highlight edit may have succeeded but omitted the highlight acknowledgement; inspect recording highlights before retrying",
+        ));
+    }
+    Ok(
+        serde_json::json!({"source": "reduct_cloud", "highlight_id": highlight_id, "state": "submitted; read recording highlights to verify"}),
     )
 }
 
@@ -947,6 +987,70 @@ async fn create_recording_highlight(
     parse_highlight_create_response(&body)
 }
 
+/// v3 pages 24-25: partially edit an existing highlight — body carries only
+/// the provided fields (`start_time`/`end_time`/`labels`, each optional);
+/// per the reference's own warning, a provided `labels` list OVERWRITES the
+/// existing labels (append requires a read-modify-write the caller composes).
+/// Acknowledgement `{"<highlight id>": "<user-altered data>"}`.
+async fn edit_recording_highlight(
+    key: Option<&str>,
+    root: &str,
+    project_id: &str,
+    recording_id: &str,
+    highlight_id: &str,
+    start_time: Option<f64>,
+    end_time: Option<f64>,
+    labels: Option<Vec<String>>,
+) -> Result<serde_json::Value, McpToolError> {
+    let url = recording_highlight_edit_url(root, project_id, recording_id, highlight_id)?;
+    if start_time.is_none() && end_time.is_none() && labels.is_none() {
+        return Err(McpToolError::invalid_argument(
+            "highlight edit requires at least one of start_time, end_time, or labels",
+        ));
+    }
+    for (name, value) in [("start_time", start_time), ("end_time", end_time)] {
+        if let Some(value) = value {
+            if !value.is_finite() || value < 0.0 {
+                return Err(McpToolError::invalid_argument(format!(
+                    "highlight {name} must be finite non-negative seconds"
+                )));
+            }
+        }
+    }
+    if let (Some(start), Some(end)) = (start_time, end_time) {
+        if end < start {
+            return Err(McpToolError::invalid_argument(
+                "highlight end_time must be >= start_time",
+            ));
+        }
+    }
+    if let Some(labels) = &labels {
+        if labels.iter().any(|label| label.trim().is_empty()) {
+            return Err(McpToolError::invalid_argument(
+                "highlight labels must be nonempty strings",
+            ));
+        }
+    }
+    let mut payload = serde_json::Map::new();
+    if let Some(start_time) = start_time {
+        payload.insert("start_time".into(), serde_json::json!(start_time));
+    }
+    if let Some(end_time) = end_time {
+        payload.insert("end_time".into(), serde_json::json!(end_time));
+    }
+    if let Some(labels) = labels {
+        payload.insert("labels".into(), serde_json::json!(labels));
+    }
+    let body = reel_post_body(
+        key,
+        &url,
+        serde_json::Value::Object(payload),
+        "highlight edit",
+    )
+    .await?;
+    parse_highlight_edit_response(&body, highlight_id)
+}
+
 /// v3 pages 33-34: set a reel's publication flag — body
 /// `{"publish": <bool>}` (the body parameter name follows the reference's
 /// own field-name convention — the GET response and the acknowledgement
@@ -1178,6 +1282,23 @@ struct ReductPublishReelRequest {
     /// provider to create a share token, which makes the reel publicly
     /// accessible; `false` clears the publish flag.
     publish: bool,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+struct ReductEditRecordingHighlightRequest {
+    project_id: String,
+    recording_id: String,
+    highlight_id: String,
+    /// New start in seconds (finite, non-negative). Omitted fields keep
+    /// their provider-side values.
+    start_time: Option<f64>,
+    /// New end in seconds (finite, non-negative; >= start_time when both
+    /// are provided).
+    end_time: Option<f64>,
+    /// New label list — OVERWRITES the existing labels per the v3
+    /// reference's overwrite warning (a color tag like "#orange" selects a
+    /// non-yellow highlight color).
+    labels: Option<Vec<String>>,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
@@ -1431,6 +1552,36 @@ impl MediaServer {
                 API_ROOT,
                 &project_id,
                 &recording_id,
+                start_time,
+                end_time,
+                labels,
+            )
+            .await
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Partially edit an existing Reduct recording highlight (v3 pages 24-25: POST .../highlight/<id> with only the provided fields). A provided labels list OVERWRITES the existing labels per the reference's overwrite warning. Returns a submitted acknowledgement; read recording highlights to verify. Does not edit local educt."
+    )]
+    pub async fn reduct_edit_recording_highlight(
+        &self,
+        Parameters(ReductEditRecordingHighlightRequest {
+            project_id,
+            recording_id,
+            highlight_id,
+            start_time,
+            end_time,
+            labels,
+        }): Parameters<ReductEditRecordingHighlightRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "reduct_edit_recording_highlight", async {
+            edit_recording_highlight(
+                self.reduct_api_key.as_deref(),
+                API_ROOT,
+                &project_id,
+                &recording_id,
+                &highlight_id,
                 start_time,
                 end_time,
                 labels,
@@ -3097,5 +3248,148 @@ mod tests {
         .await
         .expect_err("empty label must be refused");
         assert_eq!(empty_label.kind, hkask_types::McpErrorKind::InvalidArgument);
+    }
+
+    /// MF-1 follow-up pin: the highlight edit sends ONLY the provided
+    /// fields (the v3 partial-edit contract) — a full edit and a single-field
+    /// edit both pinned by exact request body.
+    #[tokio::test]
+    async fn highlight_edit_sends_only_the_provided_fields()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let full = reel_post_fixture(
+            "/project/p_fixture/recording/recording_fixture/highlight/highlight_fixture",
+            serde_json::json!({"start_time":3.0,"end_time":5.0,"labels":["revised"]}),
+            r#"{"highlight_fixture":{"start_time":3.0}}"#,
+            |root| async move {
+                edit_recording_highlight(
+                    Some("fixture-key"),
+                    &root,
+                    "p_fixture",
+                    "recording_fixture",
+                    "highlight_fixture",
+                    Some(3.0),
+                    Some(5.0),
+                    Some(vec!["revised".to_string()]),
+                )
+                .await
+            },
+        )
+        .await?;
+        assert_eq!(full["highlight_id"], "highlight_fixture");
+        assert_eq!(
+            full["state"],
+            "submitted; read recording highlights to verify"
+        );
+
+        let partial = reel_post_fixture(
+            "/project/p_fixture/recording/recording_fixture/highlight/highlight_fixture",
+            serde_json::json!({"end_time":6.0}),
+            r#"{"highlight_fixture":{"end_time":6.0}}"#,
+            |root| async move {
+                edit_recording_highlight(
+                    Some("fixture-key"),
+                    &root,
+                    "p_fixture",
+                    "recording_fixture",
+                    "highlight_fixture",
+                    None,
+                    Some(6.0),
+                    None,
+                )
+                .await
+            },
+        )
+        .await?;
+        assert_eq!(partial["highlight_id"], "highlight_fixture");
+        Ok(())
+    }
+
+    /// MF-1 follow-up pin: an edit with no fields and a reversed range (when
+    /// both bounds are provided) are refused locally before any request.
+    #[tokio::test]
+    async fn highlight_edit_input_sanity_is_refused_before_any_request() {
+        let empty = edit_recording_highlight(
+            Some("fixture-key"),
+            "https://fixture.invalid/",
+            "p_fixture",
+            "recording_fixture",
+            "highlight_fixture",
+            None,
+            None,
+            None,
+        )
+        .await
+        .expect_err("fieldless edit must be refused");
+        assert_eq!(empty.kind, hkask_types::McpErrorKind::InvalidArgument);
+
+        let reversed = edit_recording_highlight(
+            Some("fixture-key"),
+            "https://fixture.invalid/",
+            "p_fixture",
+            "recording_fixture",
+            "highlight_fixture",
+            Some(5.0),
+            Some(3.0),
+            None,
+        )
+        .await
+        .expect_err("reversed edit range must be refused");
+        assert_eq!(reversed.kind, hkask_types::McpErrorKind::InvalidArgument);
+    }
+
+    /// MF-1 follow-up pin: the edit path refuses provider-refusal statuses
+    /// with the shared classification — never a claimed edit.
+    #[tokio::test]
+    async fn highlight_edit_http_refusal_is_classified_never_claimed()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+        let root = format!("http://{}/", listener.local_addr()?);
+        let peer = std::thread::spawn(move || -> std::io::Result<String> {
+            let (mut stream, _) = listener.accept()?;
+            stream.set_read_timeout(Some(std::time::Duration::from_secs(5)))?;
+            let mut buffer = [0_u8; 4096];
+            let mut request = String::new();
+            loop {
+                let n = stream.read(&mut buffer)?;
+                if n == 0 || request.len() > 16 * 1024 {
+                    return Err(std::io::Error::other("incomplete refusal fixture"));
+                }
+                request.push_str(&String::from_utf8_lossy(&buffer[..n]));
+                if request.contains("\r\n\r\n") && request.contains("end_time") {
+                    break;
+                }
+            }
+            write!(
+                stream,
+                "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            )?;
+            Ok(request)
+        });
+        let error = edit_recording_highlight(
+            Some("fixture-key"),
+            &root,
+            "p_fixture",
+            "recording_fixture",
+            "highlight_fixture",
+            None,
+            Some(6.0),
+            None,
+        )
+        .await
+        .expect_err("provider refusal is not an edit");
+        assert_eq!(error.kind, hkask_types::McpErrorKind::NotFound);
+        let request = peer
+            .join()
+            .map_err(|_| std::io::Error::other("fixture server panicked"))??;
+        assert!(request.starts_with(
+            "POST /project/p_fixture/recording/recording_fixture/highlight/highlight_fixture HTTP/1.1"
+        ));
+        assert!(
+            request
+                .to_ascii_lowercase()
+                .contains("x-auth-key: fixture-key")
+        );
+        Ok(())
     }
 }

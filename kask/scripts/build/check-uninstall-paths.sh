@@ -182,7 +182,9 @@ for tool in cat dirname grep readlink sed; do
 done
 
 # (a) install.sh --help dispatches without jq (previously dead at source time).
-if ! PATH="$jq_shim" bash "$install_sh" --help >"$sandbox/help.log" 2>&1; then
+# ($BASH: the env-prefix PATH applies to the command lookup too, so bash
+# must be invoked by absolute path.)
+if ! PATH="$jq_shim" "$BASH" "$install_sh" --help >"$sandbox/help.log" 2>&1; then
     fail "--help failed without jq on PATH"
     cat "$sandbox/help.log" >&2
 fi

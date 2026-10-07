@@ -184,7 +184,7 @@ quoted env-var names inside each `credentials` / `config_env` array).
 | `media` | 4 | 10 |
 | `spreadsheet` | 0 | 1 |
 
-The media server's live router is pinned at 101 tools
+The media server's live router is pinned at 102 tools
 (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:453-456`).
 
 ## Child environment lifecycle
@@ -292,7 +292,7 @@ startup-coordinated via the pending slot and is documented in
 
 A router can compile while silently omitting a sub-router. Add an end-to-end
 count/name pin in the server crate. The current media server pins exactly 99
-registered tools in `tool_surface_is_exactly_101_registered_tools`
+registered tools in `tool_surface_is_exactly_102_registered_tools`
 (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs`).
 
 #### 6. Validate

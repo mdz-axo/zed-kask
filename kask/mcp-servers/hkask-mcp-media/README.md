@@ -2,9 +2,9 @@
 
 Media generation MCP server — image, video, and audio generation via the configured media providers.
 
-## Tools (101)
+## Tools (102)
 
-The full surface is pinned end-to-end by `tool_surface_is_exactly_101_registered_tools` (`src/hkask_mcp_media.rs`) and documented per-tool in [`kask/docs/reference/mcp-servers/media.md`](../../docs/reference/mcp-servers/media.md). The table below is a partial quick-reference.
+The full surface is pinned end-to-end by `tool_surface_is_exactly_102_registered_tools` (`src/hkask_mcp_media.rs`) and documented per-tool in [`kask/docs/reference/mcp-servers/media.md`](../../docs/reference/mcp-servers/media.md). The table below is a partial quick-reference.
 
 | Tool | Description |
 |------|-------------|
@@ -376,9 +376,18 @@ provides no private Reel render/download contract; transcript correction —
 the v3 API exposes no transcript-correction endpoint at all (verified across
 the 55-page reference; Reduct's in-app re-alignment has no API surface, and
 local re-alignment exists since 2026-10-06 via `educt_realign_transcript`).
-**Pinned but unimplemented (available as follow-up slices):** highlight
-edit/delete (v3 pages 24-25) and unpublish via `DELETE .../share_token`
-(v3 page 33). DELETE is irreversible; POST can overwrite
+**Pinned but unimplemented — the cloud-DELETE posture (operator decision
+pending):** the remaining pinned write paths are both DELETE operations —
+highlight delete (v3 page 25, fully pinned including the
+`{"<highlight id>": "deleted"}` acknowledgement) and unpublish via
+`DELETE .../share_token` (v3 page 33, path pinned; the response shape is
+undocumented — the reference lists property-delete endpoints without a
+return spec). This surface has never exposed a DELETE tool (20 tools, zero
+deletes): whether irreversible cloud deletes belong on it at all is an
+operator decision, not a unilateral one. Highlight edit (v3 pages 24-25,
+fully pinned) was implemented 2026-10-06 as the MF-1 follow-up, completing
+the highlight-write symmetry with the block surface's create+edit pattern.
+DELETE is irreversible; POST can overwrite
 named fields. Enter/reset the key in Settings â Kask â Data Services; writes/deletes refresh the child.
 
 ## Configuration

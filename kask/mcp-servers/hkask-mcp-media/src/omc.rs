@@ -164,6 +164,7 @@ pub fn tool_to_omc(tool: &str) -> Option<OmcConcept> {
         "reduct_recording_transcript" => Some(CAPTURE),
         "reduct_recording_highlights" => Some(VERSION_INFO),
         "reduct_add_recording_highlight" => Some(VERSION_INFO),
+        "reduct_edit_recording_highlight" => Some(VERSION_INFO),
         "reduct_reels_snapshot"
         | "reduct_reel_detail"
         | "reduct_create_reel"

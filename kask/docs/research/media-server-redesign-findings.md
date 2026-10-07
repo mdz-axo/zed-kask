@@ -57,9 +57,22 @@ its method, not a prerequisite re-run.
   Reel render/download contract); transcript correction (the v3 API exposes
   no transcript-correction endpoint at all — verified across the reference;
   local re-alignment exists since MF-2).
-- **Pinned but unimplemented (follow-up slices, not out of scope):**
-  highlight edit/delete (v3 pages 24-25) and unpublish via
-  `DELETE .../share_token` (v3 page 33).
+- **Pinned but unimplemented — the cloud-DELETE posture (operator decision
+  pending, 2026-10-06):** the remaining pinned write paths are both DELETE
+  operations — highlight delete (v3 page 25, fully pinned including the
+  `{"<highlight id>": "deleted"}` acknowledgement) and unpublish via
+  `DELETE .../share_token` (v3 page 33, path pinned; response shape
+  undocumented). The surface has never exposed a DELETE tool (20 tools,
+  zero deletes); whether irreversible cloud deletes belong on it is an
+  operator decision. **Follow-up implemented 2026-10-06 (uncommitted at
+  record time):** `reduct_edit_recording_highlight` (v3 pages 24-25, fully
+  pinned — POST only the provided fields, labels overwrite per the
+  reference's warning; acknowledgement `{"<highlight id>": ...
+  }`) completes the highlight-write symmetry with the block surface's
+  create+edit pattern. Pin 101→102; fixture tests
+  (`highlight_edit_sends_only_the_provided_fields`, input sanity, HTTP
+  refusal); receipts: clippy 0 errors, `cargo test -p hkask-mcp-media`
+  449/0/6 (323 main + 125 deser + 1 doc).
 - **Reached-when check:** both tools have loopback contract tests
   (`highlight_and_publish_writes_send_only_the_v3_contract`,
   `publish_ack_without_token_is_surfaced_not_claimed`,
@@ -247,8 +260,22 @@ scoring the implementation against it:
 
 For each primitive: properties and methods, reference-model source,
 exists?, and what carries across the seams. The derivation's output seeds
-Phase 2's per-tool fidelity review (98 tools, findings numbered MF-6
+Phase 2's per-tool fidelity review (102 tools, findings numbered MF-6
 onward).
+
+**Primitive-family skeleton (scoped 2026-10-06 — the derivation's working
+structure; per-primitive depth is the phase's remaining work):**
+
+| Family | Reference-model source | Covers (tool groups) |
+|---|---|---|
+| Asset & gallery | OMC CreativeWork/Scene/Shot + README storage contract | gallery_* (26), face_* |
+| Generation | OMC CreativeWork + inference routing contract | generate_*, transform, upscale, expand_prompt, image_edit_region |
+| Processing | OMC Sequence (contiguous segments) | video_*, image_to_video, collages, memes, captions |
+| Transcript (educt) | `transcript_linked_media` (ruling 2026-09-25) | transcribe*, educt_* (16), record_and_transcribe |
+| Cloud (Reduct) | v3 API reference (pinned) | reduct_* (20) |
+| Async & workflow | README contracts (admission control) | job_*, workflow_* |
+| Model & discovery | inference routing contract | model_*, youtube_search |
+| Audio & voice | OMC CreativeWork (audio) + transcript discipline | audio_*, voice_design, generate_speech |
 
 ## Phases 2–4 — pending
 
