@@ -35,14 +35,14 @@ for path in \
     "$repo_root/crates/zed/resources/info" \
     "$repo_root/crates/zed/resources/windows" \
     "$repo_root/.github/actions/run_tests_windows" \
-    "$repo_root/crates/auto_update"
-    "$repo_root/crates/auto_update_helper"
-    "$repo_root/crates/auto_update_ui"
-    "$repo_root/crates/collab"
-    "$repo_root/crates/call"
-    "$repo_root/crates/collab_ui"
-    "$repo_root/crates/livekit_api"
-    "$repo_root/crates/livekit_client"
+    "$repo_root/crates/auto_update" \
+    "$repo_root/crates/auto_update_helper" \
+    "$repo_root/crates/auto_update_ui" \
+    "$repo_root/crates/collab" \
+    "$repo_root/crates/call" \
+    "$repo_root/crates/collab_ui" \
+    "$repo_root/crates/livekit_api" \
+    "$repo_root/crates/livekit_client" \
     "$repo_root/crates/channel"; do
     assert_absent "$path"
 done
@@ -77,9 +77,9 @@ assert_no_match "$repo_root/crates/zed/src/main.rs" 'auto_update::init|auto_upda
 for stack_crate in collab call collab_ui livekit_api livekit_client channel; do
     assert_absent "$repo_root/crates/$stack_crate"
 done
-assert_no_match "$repo_root/crates/zed/src/main.rs" 'collab_ui::init|call::init|channel::init|livekit' \
+assert_no_match "$repo_root/crates/zed/src/main.rs" '\bcollab_ui::init|\bcall::init|\bchannel::init|livekit' \
     "zed-kask initializes the deleted collab/call stack"
-assert_no_match "$repo_root/crates/zed/src/zed.rs" 'collab_ui::init|call::init|channel::init' \
+assert_no_match "$repo_root/crates/zed/src/zed.rs" '\bcollab_ui::init|\bcall::init|\bchannel::init' \
     "zed-kask's alternate init path initializes the deleted collab/call stack"
 assert_no_match "$repo_root/Cargo.toml" 'livekit-rust-sdks|webrtc-sys|libwebrtc' \
     "the workspace re-pins the deleted LiveKit/webrtc SDKs"
