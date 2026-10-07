@@ -207,16 +207,24 @@ file:line** — full records in `media-server-redesign-findings.md`:
   prediction 0.85 — the operator's `kanban_goal_score` is the only Brier
   signal; this report is the measurement the score closes over.
 
-**Proposed, not run (by design — deliverables are documents until a slice
-is accepted):**
+**Proposed, not run — updated 2026-10-06 (the original Phase 0 report's
+not-run list is preserved below for the record; the operator's subsequent
+"proceed" directives accepted the slices):**
 
-- Phases 1–6 of the review (primitives → fidelity → integration → formal
-  → proposals → plan). The findings doc opens Phase 1.
-- The five target conditions' kata loops. Two are operator decisions
-  (face-recognition build-out; DNS-rebinding ruling) — presented in
-  functional terms with costs when their loops run, never decided here.
-- Implementation of anything: nothing implemented, nothing committed this
-  session.
+- ~~Phases 1–6 of the review~~ — **all ran to completion** (closure records
+  with receipts in the findings, proposals, and improvement-plan docs).
+- ~~The five target conditions' kata loops~~ — **all executed or closed**
+  (MF-1/2/4 implemented; MF-3 still-deferred decision recorded; MF-5
+  accepted-risk ruling recorded — the operator's word, never manufactured).
+- ~~Implementation of anything~~ — the accepted slices implemented and
+  committed (`1a8c500c12`, `c9a5c3b855`, `f66b136fe2`, `f371a75a74`,
+  `3602bf7a08`, `2b43f6ca29`) plus the PR-M1 slice and the Phase 4 sweep
+  test (uncommitted, riding with the operator's batch).
+- **Still open, with owners:** PR-S1 (the transcript-reel skill line —
+  operator review), MF-7 (publish body-name live probe — before first
+  production publish), MF-8 (job ephemerality — trigger recorded), the
+  Phase 2 depth pass (line-by-line per-tool audit — follow-on), and the
+  Phase 4 Lean layer (deferred with trigger).
 
 **Skill battery:** loaded and followed — `program-manager` (the governing
 rubric), `kata-improvement` (the per-phase PDCA loop), `hypothesis-framer`
