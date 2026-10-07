@@ -247,8 +247,6 @@
   // ${appName}, ${branch}, and ${separator}.
   // ${separator} is omitted when adjacent variables are empty,
   // but literal text is preserved.
-  // The collaboration indicator, when present, is appended after the
-  // rendered template.
   // If the template renders to nothing, the default template is used instead.
   //
   // Default: "${projectName}${separator}${fileName}"
@@ -576,13 +574,6 @@
     "space": "•",
     "tab": "→",
   },
-  // Settings related to calls in Zed
-  "calls": {
-    // Join calls with the microphone live by default
-    "mute_on_join": false,
-    // Share your project when you are the first to join a channel
-    "share_on_join": false,
-  },
   // Toolbar related settings
   "toolbar": {
     // Whether to show breadcrumbs.
@@ -634,10 +625,6 @@
     // `null` means use system default.
     // Any unrecognized output device will fall back to system default.
     "experimental.output_audio_device": null,
-    // Select specific input audio device.
-    // `null` means use system default.
-    // Any unrecognized input device will fall back to system default.
-    "experimental.input_audio_device": null,
   },
   // Scrollbar related settings
   "scrollbar": {
@@ -1059,14 +1046,6 @@
     // Does not affect single-file views.
     "multi_buffer_hide_symbols": false,
   },
-  "collaboration_panel": {
-    // Whether to show the collaboration panel button in the status bar.
-    "button": true,
-    // Where to dock the collaboration panel. Can be 'left' or 'right'.
-    "dock": "right",
-    // Default width of the collaboration panel.
-    "default_width": 240,
-  },
   "git_panel": {
     // Whether to show the git panel button in the status bar.
     "button": true,
@@ -1416,8 +1395,6 @@
     // Default: true
     "show_merge_conflict_indicator": true,
   },
-  // Whether the screen sharing icon is shown in the os status bar.
-  "show_call_status_icon": true,
   // Whether to use language servers to provide code intelligence.
   "enable_language_server": true,
   // Whether to perform linked edits of associated ranges, if the language server supports it.
@@ -1592,8 +1569,6 @@
     //   * "indexed": Use only the files Zed had indexed
     //   * "smart": Be smart and search for ignored when called from a gitignored worktree
     "include_ignored": "smart",
-    // Whether to include text channels in file finder results.
-    "include_channels": false,
   },
   // Whether or not to remove any trailing whitespace from lines of a buffer
   // before saving it.

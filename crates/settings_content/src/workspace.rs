@@ -37,10 +37,6 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: false
     pub confirm_quit: Option<bool>,
-    /// Whether or not to show the call status icon in the status bar.
-    ///
-    /// Default: true
-    pub show_call_status_icon: Option<bool>,
     /// When to automatically save edited buffers.
     ///
     /// Default: off
@@ -154,8 +150,6 @@ pub struct WorkspaceSettingsContent {
     /// and `${separator}`.
     /// `${separator}` is omitted when adjacent variables are empty,
     /// but literal text is preserved.
-    /// The collaboration indicator, when present, is appended after the
-    /// rendered template.
     /// If the template renders to nothing, the default template is used instead.
     ///
     /// Default: `${projectName}${separator}${fileName}`

@@ -26,12 +26,6 @@ pub enum Notification {
         #[serde(rename = "entity_id")]
         responder_id: u64,
     },
-    ChannelInvitation {
-        #[serde(rename = "entity_id")]
-        channel_id: u64,
-        channel_name: String,
-        inviter_id: u64,
-    },
 }
 
 impl Notification {
@@ -80,11 +74,6 @@ mod tests {
         for notification in [
             Notification::ContactRequest { sender_id: 1 },
             Notification::ContactRequestAccepted { responder_id: 2 },
-            Notification::ChannelInvitation {
-                channel_id: 100,
-                channel_name: "the-channel".into(),
-                inviter_id: 50,
-            },
         ] {
             let message = notification.to_proto();
             let deserialized = Notification::from_proto(&message).unwrap();

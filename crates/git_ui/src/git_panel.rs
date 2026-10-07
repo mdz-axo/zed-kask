@@ -32,9 +32,8 @@ use git::Oid;
 use git::commit::ParsedCommitMessage;
 use git::repository::{
     Branch, CommitData, CommitDetails, CommitOptions, CommitSummary, DiffType, FetchOptions,
-    GitCommitTemplate, GitCommitter, InitialGraphCommitData, LogOrder, LogSource, PushOptions,
-    Remote, RemoteCommandOutput, ResetMode, Upstream, UpstreamTracking, UpstreamTrackingStatus,
-    get_git_committer,
+    GitCommitTemplate, InitialGraphCommitData, LogOrder, LogSource, PushOptions, Remote,
+    RemoteCommandOutput, ResetMode, Upstream, UpstreamTracking, UpstreamTrackingStatus,
 };
 use git::stash::GitStash;
 use git::status::{DiffStat, StageStatus};
@@ -137,8 +136,6 @@ actions!(
         FirstEntry,
         /// Select last git panel menu item, and show it in the diff view
         LastEntry,
-        /// Toggles automatic co-author suggestions.
-        ToggleFillCoAuthors,
         /// Sorts entries by path.
         SetSortByPath,
         /// Sorts entries by name.
@@ -1108,7 +1105,6 @@ pub struct GitPanel {
     commit_editor_expanded: bool,
     conflicted_count: usize,
     conflicted_staged_count: usize,
-    add_coauthors: bool,
     generate_commit_message_task: Option<Task<Option<()>>>,
     entries: Vec<GitListEntry>,
     collapsed_sections: HashSet<Section>,
@@ -1147,10 +1143,6 @@ pub struct GitPanel {
     context_menu: Option<GitPanelContextMenu>,
     modal_open: bool,
     show_placeholders: bool,
-    // Only read to compute collaborative co-authors, which requires the `call` feature.
-    #[cfg_attr(not(feature = "call"), allow(dead_code))]
-    local_committer: Option<GitCommitter>,
-    local_committer_task: Option<Task<()>>,
     commit_template: Option<GitCommitTemplate>,
     bulk_staging: Option<BulkStaging>,
     stash_entries: GitStash,
@@ -1424,7 +1416,6 @@ impl GitPanel {
                 commit_editor_expanded: false,
                 conflicted_count: 0,
                 conflicted_staged_count: 0,
-                add_coauthors: true,
                 generate_commit_message_task: None,
                 entries: Vec::new(),
                 collapsed_sections: HashSet::default(),
@@ -1459,8 +1450,6 @@ impl GitPanel {
                 update_visible_entries_task: Task::ready(()),
                 reopen_commit_buffer_task: Task::ready(()),
                 show_placeholders: false,
-                local_committer: None,
-                local_committer_task: None,
                 commit_template: None,
                 context_menu: None,
                 workspace: workspace.weak_handle(),
@@ -3665,17 +3654,13 @@ impl GitPanel {
         let askpass = self.askpass_delegate("git commit", window, cx);
         let commit_message = self.custom_or_suggested_commit_message(window, cx);
 
-        let Some(mut message) = commit_message else {
+        let Some(message) = commit_message else {
             self.commit_editor
                 .read(cx)
                 .focus_handle(cx)
                 .focus(window, cx);
             return;
         };
-
-        if self.add_coauthors {
-            self.fill_co_authors(&mut message, cx);
-        }
 
         let task = if self.has_staged_changes() {
             // Repository serializes all git operations, so we can just send a commit immediately
@@ -4806,89 +4791,6 @@ impl GitPanel {
         }
     }
 
-    pub fn load_local_committer(&mut self, cx: &Context<Self>) {
-        if self.local_committer_task.is_none() {
-            self.local_committer_task = Some(cx.spawn(async move |this, cx| {
-                let committer = get_git_committer(cx).await;
-                this.update(cx, |this, cx| {
-                    this.local_committer = Some(committer);
-                    cx.notify()
-                })
-                .ok();
-            }));
-        }
-    }
-
-    #[cfg(not(feature = "call"))]
-    fn potential_co_authors(&self, _cx: &App) -> Vec<(String, String)> {
-        Vec::new()
-    }
-
-    #[cfg(feature = "call")]
-    fn potential_co_authors(&self, cx: &App) -> Vec<(String, String)> {
-        let mut new_co_authors = Vec::new();
-        let project = self.project.read(cx);
-
-        let Some(room) =
-            call::ActiveCall::try_global(cx).and_then(|call| call.read(cx).room().cloned())
-        else {
-            return Vec::default();
-        };
-
-        let room = room.read(cx);
-
-        for (peer_id, collaborator) in project.collaborators() {
-            if collaborator.is_host {
-                continue;
-            }
-
-            let Some(participant) = room.remote_participant_for_peer_id(*peer_id) else {
-                continue;
-            };
-            if !participant.can_write() {
-                continue;
-            }
-            if let Some(email) = &collaborator.committer_email {
-                let name = collaborator
-                    .committer_name
-                    .clone()
-                    .or_else(|| participant.user.name.clone())
-                    .unwrap_or_else(|| participant.user.username.clone().to_string());
-                new_co_authors.push((name.clone(), email.clone()))
-            }
-        }
-        if !project.is_local()
-            && !project.is_read_only(cx)
-            && let Some(local_committer) = self.local_committer(room, cx)
-        {
-            new_co_authors.push(local_committer);
-        }
-        new_co_authors
-    }
-
-    #[cfg(feature = "call")]
-    fn local_committer(&self, room: &call::Room, cx: &App) -> Option<(String, String)> {
-        let user = room.local_participant_user(cx)?;
-        let committer = self.local_committer.as_ref()?;
-        let email = committer.email.clone()?;
-        let name = committer
-            .name
-            .clone()
-            .or_else(|| user.name.clone())
-            .unwrap_or_else(|| user.username.clone().to_string());
-        Some((name, email))
-    }
-
-    fn toggle_fill_co_authors(
-        &mut self,
-        _: &ToggleFillCoAuthors,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.add_coauthors = !self.add_coauthors;
-        cx.notify();
-    }
-
     fn set_sort_by_path(&mut self, _: &SetSortByPath, _: &mut Window, cx: &mut Context<Self>) {
         if let Some(workspace) = self.workspace.upgrade() {
             let workspace = workspace.read(cx);
@@ -5066,54 +4968,6 @@ impl GitPanel {
         } else {
             util::debug_panic!("Attempted to toggle directory in flat Git Panel state");
         }
-    }
-
-    fn fill_co_authors(&mut self, message: &mut String, cx: &mut Context<Self>) {
-        const CO_AUTHOR_PREFIX: &str = "Co-authored-by: ";
-
-        let existing_text = message.to_ascii_lowercase();
-        let lowercase_co_author_prefix = CO_AUTHOR_PREFIX.to_lowercase();
-        let mut ends_with_co_authors = false;
-        let existing_co_authors = existing_text
-            .lines()
-            .filter_map(|line| {
-                let line = line.trim();
-                if line.starts_with(&lowercase_co_author_prefix) {
-                    ends_with_co_authors = true;
-                    Some(line)
-                } else {
-                    ends_with_co_authors = false;
-                    None
-                }
-            })
-            .collect::<HashSet<_>>();
-
-        let new_co_authors = self
-            .potential_co_authors(cx)
-            .into_iter()
-            .filter(|(_, email)| {
-                !existing_co_authors
-                    .iter()
-                    .any(|existing| existing.contains(email.as_str()))
-            })
-            .collect::<Vec<_>>();
-
-        if new_co_authors.is_empty() {
-            return;
-        }
-
-        if !ends_with_co_authors {
-            message.push('\n');
-        }
-        for (name, email) in new_co_authors {
-            message.push('\n');
-            message.push_str(CO_AUTHOR_PREFIX);
-            message.push_str(&name);
-            message.push_str(" <");
-            message.push_str(&email);
-            message.push('>');
-        }
-        message.push('\n');
     }
 
     fn schedule_update(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -6187,49 +6041,6 @@ impl GitPanel {
         Some(button.into_any_element())
     }
 
-    pub(crate) fn render_co_authors(&self, cx: &Context<Self>) -> Option<AnyElement> {
-        let potential_co_authors = self.potential_co_authors(cx);
-
-        let (tooltip_label, icon) = if self.add_coauthors {
-            ("Remove co-authored-by", IconName::Person)
-        } else {
-            ("Add co-authored-by", IconName::UserCheck)
-        };
-
-        if potential_co_authors.is_empty() {
-            None
-        } else {
-            Some(
-                IconButton::new("co-authors", icon)
-                    .shape(ui::IconButtonShape::Square)
-                    .icon_color(Color::Disabled)
-                    .selected_icon_color(Color::Selected)
-                    .toggle_state(self.add_coauthors)
-                    .tooltip(move |_, cx| {
-                        let title = format!(
-                            "{}:{}{}",
-                            tooltip_label,
-                            if potential_co_authors.len() == 1 {
-                                ""
-                            } else {
-                                "\n"
-                            },
-                            potential_co_authors
-                                .iter()
-                                .map(|(name, email)| format!(" {} <{}>", name, email))
-                                .join("\n")
-                        );
-                        Tooltip::simple(title, cx)
-                    })
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.add_coauthors = !this.add_coauthors;
-                        cx.notify();
-                    }))
-                    .into_any_element(),
-            )
-        }
-    }
-
     fn render_git_commit_menu(
         &self,
         id: impl Into<ElementId>,
@@ -6564,7 +6375,6 @@ impl GitPanel {
         let settings = ThemeSettings::get_global(cx);
         let panel_editor_style =
             git_commit_editor_style(settings.git_commit_buffer_font_size(cx), cx);
-        let enable_coauthors = self.render_co_authors(cx);
         let editor_focus_handle = self.commit_editor.focus_handle(cx);
         let branch = active_repository.read(cx).branch.clone();
         let head_commit = active_repository.read(cx).head_commit.clone();
@@ -6725,12 +6535,7 @@ impl GitPanel {
                                 self.render_generate_commit_message_button(cx)
                                     .unwrap_or_else(|| div().into_any_element()),
                             )
-                            .child(
-                                h_flex()
-                                    .gap_0p5()
-                                    .children(enable_coauthors)
-                                    .child(self.render_commit_button(cx)),
-                            ),
+                            .child(h_flex().gap_0p5().child(self.render_commit_button(cx))),
                     ),
             );
 
@@ -9004,23 +8809,6 @@ impl Render for GitPanel {
         let has_entries = !self.entries.is_empty();
         let has_write_access = self.has_write_access(cx);
 
-        #[cfg(feature = "call")]
-        let has_co_authors = self
-            .workspace
-            .upgrade()
-            .and_then(|_workspace| {
-                call::ActiveCall::try_global(cx).and_then(|call| call.read(cx).room().cloned())
-            })
-            .is_some_and(|room| {
-                self.load_local_committer(cx);
-                let room = room.read(cx);
-                room.remote_participants()
-                    .values()
-                    .any(|remote_participant| remote_participant.can_write())
-            });
-        #[cfg(not(feature = "call"))]
-        let has_co_authors = false;
-
         v_flex()
             .id("git_panel")
             .key_context(self.dispatch_context(window, cx))
@@ -9071,9 +8859,6 @@ impl Render for GitPanel {
             .on_action(cx.listener(Self::focus_changes_list))
             .on_action(cx.listener(Self::focus_editor))
             .on_action(cx.listener(Self::expand_commit_editor))
-            .when(has_write_access && has_co_authors, |git_panel| {
-                git_panel.on_action(cx.listener(Self::toggle_fill_co_authors))
-            })
             .on_action(cx.listener(Self::set_sort_by_path))
             .on_action(cx.listener(Self::set_sort_by_name))
             .on_action(cx.listener(Self::set_group_by_none))

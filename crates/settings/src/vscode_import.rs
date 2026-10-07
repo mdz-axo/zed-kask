@@ -186,8 +186,6 @@ impl VsCodeSettings {
             audio: None,
             auto_update: None,
             base_keymap: Some(BaseKeymapContent::VSCode),
-            calls: None,
-            collaboration_panel: None,
             command_palette: self
                 .read_u64("workbench.commandPalette.history")
                 .map(|history| CommandPaletteSettingsContent {
@@ -1088,7 +1086,6 @@ impl VsCodeSettings {
             reveal_if_open: self.read_bool("workbench.editor.revealIfOpen"),
             restore_on_startup: None,
             window_decorations: None,
-            show_call_status_icon: None,
             use_system_path_prompts: self.read_bool("files.simpleDialog.enable").map(|b| !b),
             use_system_prompts: None,
             use_system_window_tabs: self.read_bool("window.nativeTabs"),
@@ -1128,7 +1125,6 @@ impl VsCodeSettings {
 
     fn worktree_settings_content(&self) -> WorktreeSettingsContent {
         WorktreeSettingsContent {
-            prevent_sharing_in_public_channels: false,
             file_scan_depth: None,
             file_scan_exclusions: Self::enabled_patterns(self.read_value("files.exclude")),
             // `files.watcherInclude` adds watch roots, not Git-ignore overrides
