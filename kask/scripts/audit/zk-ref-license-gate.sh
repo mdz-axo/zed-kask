@@ -4,7 +4,11 @@
 # Every source in the census must carry a license entry in the license map,
 # and every license must be a member of the zk-ref-open allowlist (decision
 # D10, 2026-10-05: PD, CC0/CC BY/CC BY-SA, arXiv non-exclusive, W3C/IETF,
-# open-project docs, vendored ontology mirrors, operator-owned). NC and ND
+# open-project docs, vendored ontology mirrors, operator-owned; amended
+# 2026-10-07: Vatican free-use — Libreria Editrice Vaticana's published terms
+# permit reproduction of the Holy Father's texts for non-commercial use with
+# attribution of the source, the class covering the encyclical quotations
+# embedded in the Magnifica Humanitas values charter). NC and ND
 # variants are excluded by construction: they are not in the allowlist, so
 # any source carrying them fails here.
 #
@@ -32,7 +36,9 @@ for f in "$MAP" "$CENSUS"; do
     fi
 done
 
-# The D10 allowlist (T3 decisions, 2026-10-05). Membership is exact.
+# The D10 allowlist (T3 decisions, 2026-10-05; amended 2026-10-07 — the
+# operator's D10-a ruling adding the Vatican free-use class). Membership is
+# exact.
 declare -A ALLOWED=(
     [public_domain]=1
     [cc_open]=1
@@ -41,6 +47,7 @@ declare -A ALLOWED=(
     [open_project_docs]=1
     [vendored_ontology_mirror]=1
     [operator_owned]=1
+    [vatican_free_use]=1
 )
 
 # Load the license map (name -> license), rejecting malformed rows.

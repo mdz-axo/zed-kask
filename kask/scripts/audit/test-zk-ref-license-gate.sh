@@ -92,4 +92,14 @@ make_census "$TMP/census-nc.tsv" \
     "cccc:maia-essay.html"
 expect_fail "NC variant rejected" "$TMP/map-nc.tsv" "$TMP/census-nc.tsv"
 
+# Control 6 (D10-a amendment, 2026-10-07): the Vatican free-use class is
+# allowlisted — an encyclical-quoting charter under it passes.
+printf 'source\tlicense\n' > "$TMP/map-vatican.tsv"
+printf 'magnifica-humanitas.md\tvatican_free_use\n' >> "$TMP/map-vatican.tsv"
+printf 'maia-essay.html\toperator_owned\n' >> "$TMP/map-vatican.tsv"
+make_census "$TMP/census-vatican.tsv" \
+    "aaaa:magnifica-humanitas.md" \
+    "cccc:maia-essay.html"
+expect_pass "Vatican free-use class admitted" "$TMP/map-vatican.tsv" "$TMP/census-vatican.tsv"
+
 echo "test-zk-ref-license-gate: $pass_count expected passes, $fail_count expected failures — all controls pinned"
