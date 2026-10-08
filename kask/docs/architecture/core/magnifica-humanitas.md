@@ -1,7 +1,7 @@
 ---
 title: "Magnifica Humanitas — The Values Charter of hKask"
 audience: [architects, users, agents]
-last_updated 2026-10-08
+last_updated: 2026-10-08
 version: "0.1.0"
 status: "Active"
 domain: "Cross-cutting"
