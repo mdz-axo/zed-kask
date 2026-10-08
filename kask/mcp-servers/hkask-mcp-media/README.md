@@ -378,9 +378,11 @@ v3 reference (2026-10-06, MF-1). **Implemented:** highlight creation
 (`reduct_add_recording_highlight`, v3 pages 23-24 — POST `.../highlight`
 with `start_time`/`end_time` seconds and optional labels; a color tag like
 `#orange` selects a non-yellow color) and reel publication
-(`reduct_publish_reel`, v3 pages 33-34 — POST `.../publish` with an explicit
-bool; the body parameter name follows the reference's own field-name
-convention, the PDF's body-name line being one of its OCR-flagged gaps). The
+(`reduct_publish_reel`, v3 pages 33-34 — POST `.../publish` with the bool as
+the BARE JSON body, the reference's property-endpoint payload convention
+(page 39: "request payload equal to the new value"); the object form
+`{"publish": true}` was REFUTED by a live probe 2026-10-07 — HTTP 400
+twice, on an empty reel and one with a block, isolating the body shape). The
 publish parameter is never defaulted — `true` asks the provider to create a
 share token, a publicly accessible link — and the token VALUE is never
 returned (the response reports publish state and token presence; the link is

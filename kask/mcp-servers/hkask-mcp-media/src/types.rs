@@ -928,3 +928,147 @@ pub struct VideoFetchRequest {
     /// URL of the video to download (YouTube, Vimeo, direct file URL, etc.).
     pub url: String,
 }
+
+// ── Reduct cloud request structs ─────────────────────────────────────────
+//
+// Moved here from tools/reduct.rs (2026-10-06): every request struct lives
+// in types.rs — the crate's own convention, and the one the schema-compliance
+// battery imports through. The reduct family's local definitions were the
+// deviation; the battery gap was its symptom.
+
+#[derive(Deserialize, JsonSchema)]
+pub struct ReductRecordingRequest {
+    pub project_id: String,
+    pub recording_id: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct ReductTranscriptRequest {
+    pub project_id: String,
+    pub recording_id: String,
+    /// json (timing-bearing provider structure) or txt (plain text).
+    pub format: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct ReductProjectsRequest {
+    /// Maximum projects to return from the provider response (1–100). This
+    /// does not request server-side pagination; that contract is unknown.
+    pub limit: usize,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct ReductProjectItemsRequest {
+    pub project_id: String,
+    pub limit: usize,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct ReductReelRequest {
+    pub project_id: String,
+    pub reel_id: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct ReductCreateRecordingRequest {
+    pub project_id: String,
+    pub title: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct ReductCreateReelRequest {
+    pub project_id: String,
+    pub title: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct ReductCreateReelClipRequest {
+    pub project_id: String,
+    pub reel_id: String,
+    pub recording_id: String,
+    /// Position among the reel's blocks (Reduct accepts a finite float or integer).
+    pub order: f64,
+    pub start: f64,
+    pub end: f64,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct ReductCreateReelTitleRequest {
+    pub project_id: String,
+    pub reel_id: String,
+    pub order: f64,
+    pub duration: f64,
+    pub title: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct ReductEditReelClipRequest {
+    pub project_id: String,
+    pub reel_id: String,
+    pub block_id: String,
+    pub start: f64,
+    pub end: f64,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct ReductCreateRecordingHighlightRequest {
+    pub project_id: String,
+    pub recording_id: String,
+    /// Highlight start in seconds (finite, non-negative; start_time <= end_time).
+    pub start_time: f64,
+    /// Highlight end in seconds.
+    pub end_time: f64,
+    /// Optional labels; a color tag like "#orange" selects a non-yellow
+    /// highlight color per the v3 reference's notes.
+    pub labels: Option<Vec<String>>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct ReductPublishReelRequest {
+    pub project_id: String,
+    pub reel_id: String,
+    /// Explicit publication decision — never defaulted. `true` asks the
+    /// provider to create a share token, which makes the reel publicly
+    /// accessible; `false` clears the publish flag.
+    pub publish: bool,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct ReductEditRecordingHighlightRequest {
+    pub project_id: String,
+    pub recording_id: String,
+    pub highlight_id: String,
+    /// New start in seconds (finite, non-negative). Omitted fields keep
+    /// their provider-side values.
+    pub start_time: Option<f64>,
+    /// New end in seconds (finite, non-negative; >= start_time when both
+    /// are provided).
+    pub end_time: Option<f64>,
+    /// New label list — OVERWRITES the existing labels per the v3
+    /// reference's overwrite warning (a color tag like "#orange" selects a
+    /// non-yellow highlight color).
+    pub labels: Option<Vec<String>>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct ReductImportMediaRequest {
+    pub project_id: String,
+    pub recording_id: String,
+    pub url: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct ReductUploadMediaRequest {
+    pub project_id: String,
+    pub recording_id: String,
+    /// Stable ID of an indexed gallery video/audio asset; never an arbitrary path.
+    pub gallery_asset_id: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct ReductUploadLocalMediaRequest {
+    pub project_id: String,
+    pub recording_id: String,
+    /// Absolute path to a local audio/video file. The file is sent to Reduct, not indexed in the gallery.
+    pub path: String,
+}

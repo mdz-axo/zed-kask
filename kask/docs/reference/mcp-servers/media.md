@@ -542,7 +542,7 @@ The Reduct group implements the cloud transcript/reel surface described in the T
 | `reduct_recording_highlights` | Read the provider's ID-keyed highlight JSON for one recording (up to 2 MiB); keeps labels, text and timing fields as returned |
 | `reduct_add_recording_highlight` | Create a highlight on a Reduct recording (v3 pages 23-24: POST start_time/end_time seconds, optional labels; a color tag like #orange selects a non-yellow color); returns a submitted highlight ID — MF-1 |
 | `reduct_edit_recording_highlight` | Partially edit an existing Reduct recording highlight (v3 pages 24-25: POST only the provided fields; a provided labels list OVERWRITES per the reference's warning); returns a submitted acknowledgement — MF-1 follow-up |
-| `reduct_publish_reel` | Set a Reduct reel's publication flag (v3 pages 33-34: POST an explicit bool; true asks the provider to create a share token, a publicly accessible link); the token VALUE is never returned — the response reports publish state and token presence — MF-1 |
+| `reduct_publish_reel` | Set a Reduct reel's publication flag (v3 pages 33-34: POST the bool as the bare JSON body — the property-endpoint payload convention, live-probe-corrected 2026-10-07; true asks the provider to create a share token, a publicly accessible link); the token VALUE is never returned — the response reports publish state and token presence — MF-1 |
 | `reduct_recording_status` | Get Reduct's JSON transcription/recording status for a known project and recording ID; read-only |
 | `reduct_recording_transcript` | Read an existing Reduct recording transcript in json or txt format (up to 8 MiB); provider structure is not re-timed or substituted |
 

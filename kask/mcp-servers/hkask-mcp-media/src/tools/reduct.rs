@@ -1051,11 +1051,15 @@ async fn edit_recording_highlight(
     parse_highlight_edit_response(&body, highlight_id)
 }
 
-/// v3 pages 33-34: set a reel's publication flag — body
-/// `{"publish": <bool>}` (the body parameter name follows the reference's
-/// own field-name convention — the GET response and the acknowledgement
-/// both carry `publish`; the PDF's body-name line is one of its OCR-flagged
-/// gaps). Acknowledgement `{"<reel id>": {"publish": ..., "share_token": ...}}`.
+/// v3 pages 33-34: set a reel's publication flag — the body is the BARE
+/// bool value (the reference's property-endpoint convention, page 39:
+/// "request payload equal to the new value"; the PDF's publish section shows
+/// an unnamed `<class 'bool'>` body parameter — not a lost name, the
+/// bare-value shape). LIVE-PINNED 2026-10-07: the object form
+/// `{"publish": true}` was refuted by the provider (HTTP 400, twice —
+/// empty reel and with a block, so the body shape, not the reel state);
+/// the bare-bool form is the re-probe's confirmation target.
+/// Acknowledgement `{"<reel id>": {"publish": ..., "share_token": ...}}`.
 async fn publish_reel(
     key: Option<&str>,
     root: &str,
@@ -1064,13 +1068,7 @@ async fn publish_reel(
     publish: bool,
 ) -> Result<serde_json::Value, McpToolError> {
     let url = reel_publish_url(root, project_id, reel_id)?;
-    let body = reel_post_body(
-        key,
-        &url,
-        serde_json::json!({"publish": publish}),
-        "reel publication",
-    )
-    .await?;
+    let body = reel_post_body(key, &url, serde_json::json!(publish), "reel publication").await?;
     parse_reel_publish_response(&body, reel_id)
 }
 
@@ -1185,143 +1183,6 @@ async fn recording_transcript(
     let response = read_response(key, &url, "transcript read").await?;
     let body = read_bounded(response, 8 * 1024 * 1024).await?;
     parse_transcript_body(&body, format)
-}
-
-#[derive(serde::Deserialize, schemars::JsonSchema)]
-struct ReductRecordingRequest {
-    project_id: String,
-    recording_id: String,
-}
-
-#[derive(serde::Deserialize, schemars::JsonSchema)]
-struct ReductTranscriptRequest {
-    project_id: String,
-    recording_id: String,
-    /// json (timing-bearing provider structure) or txt (plain text).
-    format: String,
-}
-
-#[derive(serde::Deserialize, schemars::JsonSchema)]
-struct ReductProjectsRequest {
-    /// Maximum projects to return from the provider response (1–100). This
-    /// does not request server-side pagination; that contract is unknown.
-    limit: usize,
-}
-
-#[derive(serde::Deserialize, schemars::JsonSchema)]
-struct ReductProjectItemsRequest {
-    project_id: String,
-    limit: usize,
-}
-
-#[derive(serde::Deserialize, schemars::JsonSchema)]
-struct ReductReelRequest {
-    project_id: String,
-    reel_id: String,
-}
-
-#[derive(serde::Deserialize, schemars::JsonSchema)]
-struct ReductCreateRecordingRequest {
-    project_id: String,
-    title: String,
-}
-
-#[derive(serde::Deserialize, schemars::JsonSchema)]
-struct ReductCreateReelRequest {
-    project_id: String,
-    title: String,
-}
-
-#[derive(serde::Deserialize, schemars::JsonSchema)]
-struct ReductCreateReelClipRequest {
-    project_id: String,
-    reel_id: String,
-    recording_id: String,
-    /// Position among the reel's blocks (Reduct accepts a finite float or integer).
-    order: f64,
-    start: f64,
-    end: f64,
-}
-
-#[derive(serde::Deserialize, schemars::JsonSchema)]
-struct ReductCreateReelTitleRequest {
-    project_id: String,
-    reel_id: String,
-    order: f64,
-    duration: f64,
-    title: String,
-}
-
-#[derive(serde::Deserialize, schemars::JsonSchema)]
-struct ReductEditReelClipRequest {
-    project_id: String,
-    reel_id: String,
-    block_id: String,
-    start: f64,
-    end: f64,
-}
-
-#[derive(serde::Deserialize, schemars::JsonSchema)]
-struct ReductCreateRecordingHighlightRequest {
-    project_id: String,
-    recording_id: String,
-    /// Highlight start in seconds (finite, non-negative; start_time <= end_time).
-    start_time: f64,
-    /// Highlight end in seconds.
-    end_time: f64,
-    /// Optional labels; a color tag like "#orange" selects a non-yellow
-    /// highlight color per the v3 reference's notes.
-    labels: Option<Vec<String>>,
-}
-
-#[derive(serde::Deserialize, schemars::JsonSchema)]
-struct ReductPublishReelRequest {
-    project_id: String,
-    reel_id: String,
-    /// Explicit publication decision — never defaulted. `true` asks the
-    /// provider to create a share token, which makes the reel publicly
-    /// accessible; `false` clears the publish flag.
-    publish: bool,
-}
-
-#[derive(serde::Deserialize, schemars::JsonSchema)]
-struct ReductEditRecordingHighlightRequest {
-    project_id: String,
-    recording_id: String,
-    highlight_id: String,
-    /// New start in seconds (finite, non-negative). Omitted fields keep
-    /// their provider-side values.
-    start_time: Option<f64>,
-    /// New end in seconds (finite, non-negative; >= start_time when both
-    /// are provided).
-    end_time: Option<f64>,
-    /// New label list — OVERWRITES the existing labels per the v3
-    /// reference's overwrite warning (a color tag like "#orange" selects a
-    /// non-yellow highlight color).
-    labels: Option<Vec<String>>,
-}
-
-#[derive(serde::Deserialize, schemars::JsonSchema)]
-struct ReductImportMediaRequest {
-    project_id: String,
-    recording_id: String,
-    url: String,
-}
-
-#[derive(serde::Deserialize, schemars::JsonSchema)]
-struct ReductUploadMediaRequest {
-    project_id: String,
-    recording_id: String,
-    /// Stable ID of an indexed gallery video/audio asset; never an arbitrary path.
-    gallery_asset_id: String,
-}
-
-#[derive(serde::Deserialize, schemars::JsonSchema)]
-struct ReductUploadLocalMediaRequest {
-    project_id: String,
-    recording_id: String,
-    /// Absolute path to a local audio/video file. The file is sent to Reduct, not indexed in the gallery.
-    path: String,
 }
 
 fn connection_status(key: Option<&str>) -> Result<serde_json::Value, McpToolError> {
@@ -1592,7 +1453,7 @@ impl MediaServer {
     }
 
     #[tool(
-        description = "Set a Reduct reel's publication flag (v3 pages 33-34: POST .../publish with a bool; the provider creates a share token when true). The publish parameter is explicit — never defaulted: publishing creates a publicly accessible link. The share token VALUE is never returned (visible in the Reduct app); the response reports the publish state and token presence."
+        description = "Set a Reduct reel's publication flag (v3 pages 33-34: POST .../publish with the bool as the bare JSON body — the property-endpoint payload convention; the provider creates a share token when true). The publish parameter is explicit — never defaulted: publishing creates a publicly accessible link. The share token VALUE is never returned (visible in the Reduct app); the response reports the publish state and token presence."
     )]
     pub async fn reduct_publish_reel(
         &self,
@@ -3081,7 +2942,7 @@ mod tests {
 
         let published = reel_post_fixture(
             "/project/p_fixture/reel/reel_fixture/publish",
-            serde_json::json!({"publish":true}),
+            serde_json::json!(true),
             r#"{"reel_fixture":{"publish":true,"share_token":"tok_fixture_never_echo"}}"#,
             |root| async move {
                 publish_reel(
@@ -3104,7 +2965,7 @@ mod tests {
 
         let unpublished = reel_post_fixture(
             "/project/p_fixture/reel/reel_fixture/publish",
-            serde_json::json!({"publish":false}),
+            serde_json::json!(false),
             r#"{"reel_fixture":{"publish":false}}"#,
             |root| async move {
                 publish_reel(
@@ -3132,7 +2993,7 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let boxed = reel_post_fixture(
             "/project/p_fixture/reel/reel_fixture/publish",
-            serde_json::json!({"publish":true}),
+            serde_json::json!(true),
             r#"{"reel_fixture":{"publish":true}}"#,
             |root| async move {
                 publish_reel(
@@ -3175,7 +3036,12 @@ mod tests {
                     return Err(std::io::Error::other("incomplete refusal fixture"));
                 }
                 request.push_str(&String::from_utf8_lossy(&buffer[..n]));
-                if request.contains("\r\n\r\n") && request.contains("\"publish\"") {
+                // The publish body is the bare bool (the property-endpoint
+                // payload convention) — wait for a parseable JSON body, the
+                // same robust condition the main fixture uses.
+                if request.split_once("\r\n\r\n").is_some_and(|(_, body)| {
+                    serde_json::from_str::<serde_json::Value>(body).is_ok()
+                }) {
                     break;
                 }
             }

@@ -48,10 +48,10 @@ its method, not a prerequisite re-run.
        (publish state and token presence only — the surface's token
        discipline). A publish=true ack without a token is surfaced as
        failed_precondition ("may have succeeded; inspect"), never claimed.
-    The body parameter name follows the reference's own field-name
-       convention (GET and acknowledgement both carry `publish`; the PDF's
-       body-name line is one of its OCR-flagged gaps) — the inference is
-       documented at the construction site.
+    The body is the BARE bool (the reference's property-endpoint payload
+       convention, page 39) — the object form `{"publish": true}` was
+       refuted by the live probe 2026-10-07 (HTTP 400 twice, isolating the
+       body shape); corrected and documented at the construction site.
 - **Out of scope, with reasons** (README's per-capability adjudication):
   strikethroughs (page 41 lists paths without body/response schema —
   implementing would guess the wire format); redactions (pages 21-22 list
@@ -455,16 +455,25 @@ belong in `media_limits` (`MAX_CAPTURE_DURATION_SECS`,
 silently when the canonical changes (the feedback loop's fidelity property:
 the enforcement site no longer reads the policy source). Effort XS.
 
-**MF-7 — The publish body-name inference (watched, no action now).** IS:
-`reduct_publish_reel`'s body parameter name (`publish`) is inferred from the
-reference's field-name convention because the v3 PDF's body-name line is an
-OCR-flagged gap; the inference is documented at the construction site
-(`tools/reduct.rs`, `publish_reel` doc comment). OUGHT: a live authorized
-publish probe would pin the actual wire name — but a live publish creates a
-public link (the never-publish-by-default invariant makes casual probing
-the wrong trade). Watched, trigger: pin it before the first production
-publish, in the same authorized-throwaway session shape the reel-composition
-probes used.
+**MF-7 — The publish wire contract (live-probed 2026-10-07: the object
+body REFUTED, the bare-bool body is the corrected shape; re-probe pending
+rebuild).** IS (at the probe): `reduct_publish_reel` sent
+`{"publish": true}` — the body parameter name inferred from the
+reference's field-name convention (the PDF's publish section shows an
+unnamed `<class 'bool'>` body parameter, read as a lost name). The live
+probe (operator-authorized, the Axolotl throwaway project, reel
+`c1a49628a0`) REFUTED it: HTTP 400 twice — on an empty reel and on a reel
+with a title card — isolating the body shape, not the reel state. The
+corrected reading: the unnamed parameter was never a lost name — the
+publish endpoint follows the reference's own property-endpoint payload
+convention (page 39: "request payload equal to the new value"), so the
+body is the BARE bool. **Fix executed 2026-10-07** (uncommitted): the body
+is `serde_json::json!(publish)`; the three fixtures updated to the bare
+shape; the doc comments and README record the refutation evidence. The
+re-probe (post-rebuild) is the confirmation: a 200 with the documented
+acknowledgement (publish=true, share_token present) closes this item; the
+probe reel `c1a49628a0` remains in the throwaway project (unpublished,
+removable in the Reduct app).
 
 **MF-8 — Job-history ephemerality (no action, documented).** IS: the job
 controller is in-memory (`src/jobs.rs:55`, `HashMap`), documented and

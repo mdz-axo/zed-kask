@@ -39,6 +39,8 @@ surface), MF-2 second (the transcript discipline's honest gap), MF-1 third
 | 9 | Phase 4 formal layer | **DELIVERED (sweep) / Lean deferred** | `reanchored_interpolation_contract_holds_across_a_sweep` (864-case sweep, second oracle); Lean trigger recorded in the findings doc |
 | 10 | Depth pass (all 5 tranches) | **DONE — 102/102** (gallery 26, transcript 19, cloud 20, processing 15, generation 6, async & workflow 8, model & discovery 3, audio & voice 5) | findings MF-9…MF-15; MF-9/11/12/14/15 executed in-change; MF-10 watched; PR-M2 executed on operator acceptance (slice 11) |
 | 11 | PR-M2 collage storage routing | **DONE** (operator-accepted) | uncommitted — `LocalMediaFormat::Png`, publish through `publish_local_media`, pin test green; clippy 0, tests 451/0/6 |
+| 12 | Schema/deser battery completion (the follow-up inventory's item 1) | **DONE** | uncommitted — the 16 reduct request structs moved to `types.rs` (the crate convention; the local definitions were the deviation), 34 structs wired into the battery (16 educt + 16 reduct + 2 pre-existing gaps: `TranscribeAndStoreRequest`, `WorkflowListRequest`); battery 125 → 193 tests, all green; clippy 0 |
+| 13 | MF-7 live publish probe (the follow-up inventory's item 2) | **PROBED — object body REFUTED; corrected shape awaits re-probe** | live probe 2026-10-07 (Axolotl throwaway, reel `c1a49628a0`): HTTP 400 twice (empty reel + with block) on `{"publish": true}` — the body is the BARE bool per the reference's property-endpoint convention (page 39); fix executed (body + 3 fixtures + docs), re-probe pending rebuild+restart |
 
 ## Net summary
 
