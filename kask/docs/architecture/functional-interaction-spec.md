@@ -280,13 +280,16 @@ then learning, then trust.
 
 **Setting and prompt effect.** The user selects `kask.curator.interaction_mode`
 (`control` / `collaboration` / `learning_collaboration`) in Settings > Kask >
-Curator. The default is `collaboration` (Level 2). `NativeAgent::new_session`
-reads the setting for each *new Curator thread* and appends the matching
+Curator. The default is `collaboration` (Level 2).
+`NativeAgent::apply_session_surface` — called from `new_session` for fresh
+threads and from the resume path (`open_thread`) for re-loaded ones — reads
+the setting for each Curator thread, new or resumed, and appends the matching
 `interaction_mode_context` from `crates/agent/src/curator_agent_server.rs` to
 the Curator overlay. `Thread::render_system_prompt` renders that overlay in
 the system prompt's Session Context; it does not replace the common agent
-prompt. Changing the setting does not rewrite existing threads or alter
-non-Curator sessions. The user alone changes the setting; at Level 3 the
+prompt. Changing the setting does not rewrite stored threads or alter
+non-Curator sessions; a resumed Curator thread picks up the current level at
+its next load. The user alone changes the setting; at Level 3 the
 Curator may argue for a different level with evidence, but cannot set it.
 
 **Boundary and verification.** These are instructions for conduct, not an

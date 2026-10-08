@@ -915,6 +915,28 @@ impl NativeAgent {
             )
         });
 
+        self.apply_session_surface(&thread, cx);
+
+        self.register_session(thread, project_id, cx)
+    }
+
+    /// Apply the per-session surface every native agent session carries: the
+    /// read-only `CuratorStatusTool`, and — when this agent carries the
+    /// Curator overlay (`CuratorAgentServer::connect`) — the overlay static
+    /// context with the user's dyad level, the Curator agent ID (D6), and
+    /// the curator action tools.
+    ///
+    /// Called from BOTH session paths: `new_session` (fresh threads) and
+    /// `open_thread` (threads re-loaded from the store). `Thread::from_db`
+    /// restores neither the session tools nor the kask thread state
+    /// (`KaskThreadState::new()` defaults), so without this a Curator thread
+    /// resumed across a restart renders without `CURATOR_STATIC_CONTEXT`,
+    /// misroutes its turns to user memory (D6), and loses the curator tools
+    /// — while `register_session` still tags it `CURATOR_AGENT_ID`, so the
+    /// UI keeps saying Curator. Subagent threads bypass this
+    /// (`create_subagent_thread` registers directly) and never receive the
+    /// curator action tools (D59).
+    fn apply_session_surface(&self, thread: &Entity<Thread>, cx: &mut Context<Self>) {
         // One read-only system-status tool for every native agent session.
         // Curator-specific action tools remain behind the Curator overlay.
         thread.update(cx, |thread, _| thread.add_tool(CuratorStatusTool));
@@ -924,8 +946,9 @@ impl NativeAgent {
         // The curator context is appended via `static_context`.
         // zed-kask: D2 — Curator agent wiring. See DIVERGENCE.md D2.
         if let Some(ref curator_context) = self.curator_static_context {
-            // The user's dyad level is read per new Curator thread, so a
-            // changed setting applies to the next thread without reconnecting.
+            // The user's dyad level is read per Curator thread (fresh or
+            // resumed), so a changed setting applies to the next thread
+            // without reconnecting.
             let interaction_mode = cx
                 .global::<settings::SettingsStore>()
                 .merged_settings()
@@ -956,8 +979,6 @@ impl NativeAgent {
                 thread.add_tool(RecordSkillFeedbackTool::new());
             });
         }
-
-        self.register_session(thread, project_id, cx)
     }
 
     fn register_session(
@@ -1924,6 +1945,11 @@ impl NativeAgent {
                         .update(cx, |this, cx| {
                             let project_id = this.get_or_create_project_state(&project, cx);
                             this.pending_sessions.remove(&id);
+                            // zed-kask: D2 — a resumed thread re-loads through
+                            // `Thread::from_db`, which starts from default
+                            // kask state with no session tools; re-apply the
+                            // per-session surface the thread had at creation.
+                            this.apply_session_surface(&thread, cx);
                             this.register_session(thread.clone(), project_id, cx)
                         })
                         .map_err(Arc::new)?;
@@ -10202,6 +10228,196 @@ mod internal_tests {
         let control_context = static_context_of_new_session(cx).await;
         assert!(control_context.contains("Level 1 — control"));
         assert!(!control_context.contains("Level 2 — collaboration"));
+    }
+
+    /// A Curator thread resumed across a restart re-renders with the Curator
+    /// overlay. `Thread::from_db` starts from default `KaskThreadState` with
+    /// no session tools, so the resume path (`open_thread`) must re-apply
+    /// the session surface `new_session` applied at creation — otherwise
+    /// the thread keeps its `CURATOR_AGENT_ID` tag (from `register_session`)
+    /// but renders without `CURATOR_STATIC_CONTEXT`, misroutes its turns
+    /// (D6), and loses the curator action tools.
+    #[gpui::test]
+    async fn test_resumed_curator_thread_reapplies_the_overlay(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/", json!({ "a": {} })).await;
+        let project = Project::test(fs.clone(), [Path::new("/a")], cx).await;
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let server = CuratorAgentServer::new(fs.clone(), thread_store);
+        let first_connection = cx
+            .update(|cx| {
+                server.connect(
+                    agent_servers::AgentServerDelegate::new(
+                        project.read(cx).agent_server_store().clone(),
+                        None,
+                        None,
+                    ),
+                    project.clone(),
+                    cx,
+                )
+            })
+            .await
+            .expect("connect");
+        let acp_thread = cx
+            .update(|cx| {
+                first_connection.clone().new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new("/a")]),
+                    cx,
+                )
+            })
+            .await
+            .expect("new_session");
+        let session_id = cx.update(|cx| acp_thread.read(cx).session_id().clone());
+        let first_agent = first_connection
+            .downcast::<NativeAgentConnection>()
+            .expect("curator connection is NativeAgentConnection");
+        let thread = cx.update(|cx| native_thread_for_session(&first_agent.0, &session_id, cx));
+        cx.update(|cx| {
+            thread.read_with(cx, |thread, _| {
+                assert!(
+                    thread
+                        .agent_static_context()
+                        .expect("fresh curator thread carries the overlay")
+                        .contains("## Curator Role")
+                );
+            })
+        });
+
+        // Persist the thread, then simulate the restart: a second `connect`
+        // builds a fresh serving agent (empty session map) whose only source
+        // for the thread is the store — the cross-restart resume path.
+        let db_thread = thread.read_with(cx, |thread, cx| thread.to_db(cx)).await;
+        let database = cx
+            .update(|cx| ThreadsDatabase::connect(cx))
+            .await
+            .expect("thread database should connect");
+        database
+            .save_thread(
+                session_id.clone(),
+                db_thread,
+                PathList::new(&[Path::new("/a")]),
+            )
+            .await
+            .expect("curator thread should save");
+
+        let second_connection = cx
+            .update(|cx| {
+                server.connect(
+                    agent_servers::AgentServerDelegate::new(
+                        project.read(cx).agent_server_store().clone(),
+                        None,
+                        None,
+                    ),
+                    project.clone(),
+                    cx,
+                )
+            })
+            .await
+            .expect("reconnect");
+        let resumed = cx
+            .update(|cx| {
+                second_connection.clone().load_session(
+                    session_id.clone(),
+                    project.clone(),
+                    PathList::new(&[Path::new("/a")]),
+                    None,
+                    cx,
+                )
+            })
+            .await
+            .expect("curator thread should resume");
+        cx.run_until_parked();
+        let resumed_session_id = cx.update(|cx| resumed.read(cx).session_id().clone());
+        assert_eq!(resumed_session_id, session_id);
+        let second_agent = second_connection
+            .downcast::<NativeAgentConnection>()
+            .expect("curator connection is NativeAgentConnection");
+        let resumed_thread =
+            cx.update(|cx| native_thread_for_session(&second_agent.0, &session_id, cx));
+        cx.update(|cx| {
+            resumed_thread.read_with(cx, |thread, _| {
+                let static_context = thread
+                    .agent_static_context()
+                    .expect("resumed curator thread must re-carry the overlay");
+                assert!(static_context.contains("## Curator Role"));
+                assert!(static_context.contains("### Learning loop"));
+                assert_eq!(thread.agent_id(), &*CURATOR_AGENT_ID);
+                assert!(thread.has_registered_tool("curator_status"));
+                assert!(thread.has_registered_tool("curator_directive"));
+                assert!(thread.has_registered_tool("curator_clear_algedonic_log"));
+                assert!(
+                    thread.has_registered_tool("record_skill_feedback"),
+                    "the resumed Curator session keeps its evaluation-recording surface (D59)"
+                );
+            })
+        });
+    }
+
+    /// A resumed native thread regains the shared read-only status tool but
+    /// never the curator action tools — the D59 boundary holds on the resume
+    /// path, not only at creation.
+    #[gpui::test]
+    async fn test_resumed_native_thread_keeps_curator_tools_out(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (_connection, agent, project, acp_thread) = setup_native_agent_session(cx).await;
+        let session_id = cx.update(|cx| acp_thread.read(cx).session_id().clone());
+        let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
+        let db_thread = thread.read_with(cx, |thread, cx| thread.to_db(cx)).await;
+        let database = cx
+            .update(|cx| ThreadsDatabase::connect(cx))
+            .await
+            .expect("thread database should connect");
+        database
+            .save_thread(
+                session_id.clone(),
+                db_thread,
+                PathList::new(&[Path::new("/a")]),
+            )
+            .await
+            .expect("native thread should save");
+
+        // A second connection is a fresh serving agent — the restart shape.
+        let fs = FakeFs::new(cx.executor());
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let resumed_agent =
+            cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs, cx));
+        let resumed_connection = Rc::new(NativeAgentConnection(
+            resumed_agent.clone(),
+            ZED_AGENT_ID.clone(),
+        ));
+        let resumed = cx
+            .update(|cx| {
+                resumed_connection.clone().load_session(
+                    session_id.clone(),
+                    project.clone(),
+                    PathList::new(&[Path::new("/a")]),
+                    None,
+                    cx,
+                )
+            })
+            .await
+            .expect("native thread should resume");
+        cx.run_until_parked();
+        let resumed_session_id = cx.update(|cx| resumed.read(cx).session_id().clone());
+        assert_eq!(resumed_session_id, session_id);
+        let resumed_thread =
+            cx.update(|cx| native_thread_for_session(&resumed_agent, &session_id, cx));
+        cx.update(|cx| {
+            resumed_thread.read_with(cx, |thread, _| {
+                assert!(
+                    thread.has_registered_tool("curator_status"),
+                    "the shared read-only status tool is restored on resume"
+                );
+                assert!(!thread.has_registered_tool("curator_directive"));
+                assert!(!thread.has_registered_tool("curator_clear_algedonic_log"));
+                assert!(
+                    !thread.has_registered_tool("record_skill_feedback"),
+                    "an executing session must not evaluate skills (Goodhart, D59)"
+                );
+            })
+        });
     }
 
     /// Native sessions share the one read-only Curator status tool, while
