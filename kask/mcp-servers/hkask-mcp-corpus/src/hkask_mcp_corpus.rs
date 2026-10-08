@@ -1029,6 +1029,11 @@ mod smoke {
                 )),
             )?;
         }
+        // The read-only context open sees the checkpointed database, not a
+        // live writer's unmerged WAL — drop the seeding pool so the fixture
+        // matches the pipeline's shape (corpus_embed finishes before
+        // corpus_build_prompts reads).
+        drop(store);
 
         // Source context is loaded from stored passages and their provenance.
         let doc1 = serde_json::json!({

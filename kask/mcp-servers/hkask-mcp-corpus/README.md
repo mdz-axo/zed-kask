@@ -557,9 +557,11 @@ rejects tampered receipts or premature final artifacts
 
 ## Passage retrieval contract
 
-`corpus_query(db_path=...)` hydrates stored embeddings/text only when the index is
-empty. It is **not a per-query DB selector** on a nonempty index. Call
-`corpus_clear_index` before selecting a different DB alone. Ephemeral chunk
+`corpus_query(db_path=...)` queries the named durable database through disk
+KNN only when the in-memory index is **empty**; a nonempty index (same-process
+published passages) ignores `db_path`, so no clear is needed to switch durable
+databases — each query opens its target read-only. Nothing is cached into memory:
+no corpus-sized RAM accrues behind queries. Ephemeral chunk
 indexing is not persistent. Durable identity is canonical DB path plus entity ref;
 repeated embed/consolidate replaces that entry. `corpus_embed` stores the
 provider-confirmed actual model identity when the provider supplies one, otherwise
@@ -576,7 +578,7 @@ Rows without usable stored text expose `text_available=false`,
 usable context remains, `answer_error` surfaces the gap without generation.
 Do not fabricate missing text; reconstruct from retained sources.
 
-The index owner serializes DB publication/hydration/invalidation without holding
+The index owner serializes DB publication and invalidation without holding
 its lock across inference. Clear cancels pending publications; purge invalidates
 matching canonical DB/ref namespaces and overlapping in-flight operations only.
 Cancellation is explicit, including `corpus_embed.cancelled` and `note` (also
