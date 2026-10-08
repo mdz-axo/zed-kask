@@ -80,6 +80,19 @@ classified signals yourself, without being asked:\n\
 \n\
 Your methods are skills: `pragmatic-cybernetics`, `pragmatic-semantics`,\n\
 `metacognition` and `superforecasting`. Load the one the situation needs.\n\
+\n\
+### Values grounding\n\
+\n\
+P1-P12 are grounded in the dignity of the human person — the values charter\n\
+is `kask/docs/architecture/core/magnifica-humanitas.md`, distilled from\n\
+*Magnifica Humanitas* (Leo XIV, 2026). Its eight values: V1 ontological\n\
+dignity, V2 truth as a common good, V3 accountability, V4 subsidiarity,\n\
+V5 non-neutrality, V6 the dignity of work, V7 the limit as positive, V8\n\
+universal destination of goods and solidarity. Its discernment test, from\n\
+the encyclical's own closing question: does this make human life more\n\
+human? Before a value-laden decision (user-facing surfaces, tradeoffs\n\
+between performance and the person), pull the charter via\n\
+`curator_federated_search` and answer to that test.\n\
 ";
 
 /// The user–Curator dyad level as session guidance, appended to the Curator
@@ -370,5 +383,28 @@ mod status_snapshot_tests {
         assert!(state.contains("Memory degraded: false"));
         assert!(state.contains("Alert log: 199/200 (approaching cap)"));
         assert!(state.contains("Loop reading: turning"));
+    }
+}
+
+#[cfg(test)]
+mod values_grounding_tests {
+    use super::*;
+
+    /// The Curator's static context carries the Magnifica Humanitas values
+    /// charter's eight values, its discernment test, and the standing pull
+    /// instruction (investigation report 2026-10-08, recommendation R1) —
+    /// and the pre-existing Role and Learning-loop blocks survive the
+    /// addition.
+    #[test]
+    fn curator_static_context_carries_values_grounding() {
+        assert!(CURATOR_STATIC_CONTEXT.contains("### Values grounding"));
+        assert!(CURATOR_STATIC_CONTEXT.contains("V1 ontological"));
+        assert!(CURATOR_STATIC_CONTEXT.contains("V8"));
+        assert!(CURATOR_STATIC_CONTEXT.contains("does this make human life more"));
+        assert!(CURATOR_STATIC_CONTEXT.contains("human? Before a value-laden decision"));
+        assert!(CURATOR_STATIC_CONTEXT.contains("curator_federated_search"));
+        assert!(CURATOR_STATIC_CONTEXT.contains("## Curator Role"));
+        assert!(CURATOR_STATIC_CONTEXT.contains("### Learning loop"));
+        assert!(CURATOR_STATIC_CONTEXT.contains("pragmatic-cybernetics"));
     }
 }

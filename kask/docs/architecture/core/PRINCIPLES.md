@@ -1,7 +1,7 @@
 ---
 title: "hKask Architecture Principles"
 audience: [architects, developers, agents]
-last_updated: 2026-10-07
+last_updated 2026-10-08
 version: "0.43.1"
 status: "Active"
 domain: "Cross-cutting"
@@ -40,7 +40,7 @@ Everything below is the architectural expression of this lazy-universe grounding
 
 ### 1.1 Magna Carta Principles (Foundational)
 
-**Values grounding (2026-10-07):** P1–P12 are grounded in the dignity of the human person — the values charter is [`magnifica-humanitas.md`](magnifica-humanitas.md), distilled from *Magnifica Humanitas* (Leo XIV, 2026); the liberties charter is [`magna-carta.md`](magna-carta.md).
+**Values grounding (2026-10-07):** P1–P12 are grounded in the dignity of the human person — the values charter is [`magnifica-humanitas.md`](magnifica-humanitas.md), distilled from *Magnifica Humanitas* (Leo XIV, 2026); the liberties charter is [`magna-carta.md`](magna-carta.md). The charter's eight values: V1 ontological dignity, V2 truth as common good, V3 accountability, V4 subsidiarity, V5 non-neutrality, V6 dignity of work, V7 the limit as positive, V8 universal destination & solidarity. Its discernment test, from the encyclical's own closing question: **does this make human life more human?**
 
 #### P1 — User Sovereignty
 Users own their data and delegation boundaries. Data categorization, control, and portability are first-class guarantees.

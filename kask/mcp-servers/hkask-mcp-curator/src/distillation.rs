@@ -597,11 +597,25 @@ pub(crate) async fn distill_store(
             for candidate in &mut candidates {
                 recover_evidence_ids(candidate, batch);
             }
-            let mut prepared = Vec::new();
+            let mut prepared: Vec<PreparedLesson> = Vec::new();
             let mut preparation_failed = false;
             for candidate in candidates.into_iter().take(MAX_LESSONS_PER_THREAD) {
                 match prepare_lesson(memory, &candidate, &thread_id, webid) {
-                    Ok(Some(lesson)) => prepared.push(lesson),
+                    Ok(Some(lesson)) => {
+                        // Within-batch dedup (therapy 2026-10-08, F001):
+                        // identical candidates in one extraction batch are
+                        // one lesson — measured live as an identical pair
+                        // published 8 seconds apart from the same batch.
+                        if prepared.iter().any(|existing| {
+                            existing.entity == lesson.entity
+                                && existing.attribute == lesson.attribute
+                                && existing.text == lesson.text
+                        }) {
+                            outcome.lessons_skipped += 1;
+                        } else {
+                            prepared.push(lesson);
+                        }
+                    }
                     Ok(None) => outcome.lessons_skipped += 1,
                     Err(error) => {
                         tracing::warn!(
@@ -642,6 +656,42 @@ pub(crate) async fn distill_store(
             )
             .with_confidence(hkask_types::Confidence::new(0.5))
             .with_visibility(hkask_types::Visibility::Private);
+            // Embed-at-publish — the goal-event contract (therapy 2026-10-08,
+            // F002): every lesson is embedded BEFORE the atomic publication,
+            // and an embedding failure fails the batch (watermark unadvanced,
+            // thread pending, retried next pass) so no lesson can land
+            // invisible to curator_semantic_search. The prior
+            // publish-then-embed ordering discarded the embed result after
+            // the rows were durable — 27 lessons measured embedding-invisible
+            // on 2026-10-08. An embedding stored for a batch that then fails
+            // to publish is a harmless orphan (KNN drops entity refs with no
+            // h_mem; the retry re-embeds).
+            let mut embedding_failed = false;
+            for lesson in &prepared {
+                if !crate::embed_for_semantic_recall(
+                    inference_port,
+                    memory,
+                    &lesson.entity,
+                    &lesson.recall_text,
+                )
+                .await
+                {
+                    tracing::warn!(
+                        target: "hkask.mcp.curator.distillation",
+                        thread_id = %thread_id,
+                        entity = %lesson.entity,
+                        "Lesson embedding failed — batch retried next pass (watermark not advanced; no lesson publishes without its embedding)"
+                    );
+                    embedding_failed = true;
+                    break;
+                }
+            }
+            if embedding_failed {
+                outcome.publication_failures += 1;
+                outcome.threads_pending.insert(thread_id.clone(), now);
+                thread_distilled = false;
+                break;
+            }
             let mut publication: Vec<HMem> =
                 prepared.iter().map(|lesson| lesson.h_mem.clone()).collect();
             publication.push(watermark);
@@ -669,13 +719,6 @@ pub(crate) async fn distill_store(
                     lesson.attribute.clone(),
                     lesson.text.clone(),
                 ));
-                crate::embed_for_semantic_recall(
-                    inference_port,
-                    memory,
-                    &lesson.entity,
-                    &lesson.recall_text,
-                )
-                .await;
             }
         }
         if thread_distilled {
@@ -927,6 +970,34 @@ fn prepare_lesson(
         }
     }
     let text = truncate_chars(text, MAX_TEXT_CHARS);
+    // Exact-match dedup guard (therapy 2026-10-08, F001): a lesson with the
+    // same entity+attribute+text already in the store is the same lesson —
+    // re-extraction from another thread or a later pass over this one must
+    // not publish it again (measured: decision-gating written 3x identical,
+    // 11 exact-duplicate values across >=25 entity+attribute pairs).
+    // Near-duplicate formulations stay out of scope by design — no global
+    // semantic-similarity threshold here; therapy condenses those.
+    let already_distilled = memory
+        .h_mems_by_entity_prefix(entity)?
+        .into_iter()
+        .filter(|existing| existing.entity == entity)
+        .any(|existing| {
+            existing.attribute == attribute
+                && existing
+                    .value
+                    .get("text")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|existing_text| existing_text == text)
+        });
+    if already_distilled {
+        tracing::debug!(
+            target: "hkask.mcp.curator.distillation",
+            entity,
+            attribute,
+            "Skipping duplicate lesson — identical entity+attribute+text already stored"
+        );
+        return Ok(None);
+    }
     let recall_text = if mutable_state {
         let Some(provenance) = candidate.state_provenance.as_ref() else {
             return Ok(None);
@@ -1069,7 +1140,21 @@ mod tests {
     use std::pin::Pin;
     use std::sync::Arc;
 
+    /// Distillation publishes only lessons that embedded (the
+    /// embed-at-publish contract, therapy 2026-10-08 F002), so every test
+    /// that expects publication needs the embedding model env resolved —
+    /// the documented one-shot set_var pattern (crate header;
+    /// tool_behavior.rs precedent). `Once` keeps it a single process-wide
+    /// set; no other unit test in this binary reads the variable.
+    static EMBEDDING_MODEL_ENV: std::sync::Once = std::sync::Once::new();
+    fn ensure_embedding_model_env() {
+        EMBEDDING_MODEL_ENV.call_once(|| {
+            unsafe { std::env::set_var("HKASK_EMBEDDING_MODEL", "test-embedding-model") };
+        });
+    }
+
     fn test_store() -> hkask_memory::MemoryStore {
+        ensure_embedding_model_env();
         test_store_with_driver().0
     }
 
@@ -1119,16 +1204,47 @@ mod tests {
             .expect("stored turn id")
     }
 
+    /// A fixed embedding batch for the scripted ports — one 1024-wide
+    /// vector per text, mirroring what the real embedding port returns.
+    fn scripted_embedding_batch(texts: &[String]) -> hkask_types::EmbeddingBatch {
+        hkask_types::EmbeddingBatch {
+            vectors: texts.iter().map(|_| vec![0.25; 1024]).collect(),
+            requested_model: "test-embedding-model".to_string(),
+            actual_model: Some("test-embedding-model".to_string()),
+            usage: InferenceUsage {
+                prompt_tokens: 0,
+                completion_tokens: 0,
+                total_tokens: 0,
+                reported: false,
+            },
+            cost_usd: None,
+        }
+    }
+
+    /// Embedding impl shared by the scripted test ports: publication
+    /// requires a working embed (the embed-at-publish contract, therapy
+    /// 2026-10-08 F002), so every port used by a test that expects lessons
+    /// to publish carries it.
+    macro_rules! impl_scripted_embed {
+        () => {
+            fn embed<'a>(&'a self, _model: &str, texts: &[String]) -> hkask_types::EmbedFuture<'a> {
+                let batch = scripted_embedding_batch(texts);
+                Box::pin(async move { Ok(batch) })
+            }
+        };
+    }
+
     /// Scripted distillation port: returns a fixed response for every
-    /// `generate` call after `failures` transient errors; `embed` uses the
-    /// trait default (unavailable), which the insert path treats as
-    /// non-fatal.
+    /// `generate` call after `failures` transient errors; `embed` returns a
+    /// fixed vector batch (publication requires it — the embed-at-publish
+    /// contract, therapy 2026-10-08 F002).
     struct ScriptedDistillPort {
         response: String,
         failures: std::sync::atomic::AtomicUsize,
     }
 
     impl hkask_types::InferencePort for ScriptedDistillPort {
+        impl_scripted_embed!();
         fn generate(
             &self,
             _prompt: &str,
@@ -1167,6 +1283,62 @@ mod tests {
                     cost_usd: None,
                 })
             })
+        }
+    }
+
+    /// Port with a bounded failing embed path (the F002 pin): `generate`
+    /// always works; `embed` errors for the first `embed_failures` calls
+    /// then succeeds — publication must block on the failures and retry
+    /// with the watermark unadvanced.
+    struct FlakyEmbedPort {
+        response: String,
+        embed_failures: std::sync::atomic::AtomicUsize,
+    }
+
+    impl hkask_types::InferencePort for FlakyEmbedPort {
+        fn generate(
+            &self,
+            _prompt: &str,
+            _parameters: &LLMParameters,
+            _tools: Option<&[hkask_types::ChatToolDefinition]>,
+        ) -> Pin<Box<dyn Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>>
+        {
+            let text = self.response.clone();
+            Box::pin(async move {
+                Ok(InferenceResult {
+                    text,
+                    model: "test-model".to_string(),
+                    usage: InferenceUsage {
+                        prompt_tokens: 0,
+                        completion_tokens: 0,
+                        total_tokens: 0,
+                        reported: false,
+                    },
+                    finish_reason: "stop".to_string(),
+                    tool_calls: Vec::new(),
+                    reasoning: None,
+                    cost_usd: None,
+                })
+            })
+        }
+
+        fn embed<'a>(&'a self, _model: &str, texts: &[String]) -> hkask_types::EmbedFuture<'a> {
+            if self
+                .embed_failures
+                .fetch_update(
+                    std::sync::atomic::Ordering::SeqCst,
+                    std::sync::atomic::Ordering::SeqCst,
+                    |remaining| remaining.checked_sub(1),
+                )
+                .is_ok()
+            {
+                let error = hkask_types::EmbeddingGenerationError::Connection(
+                    "transient test embed failure".to_string(),
+                );
+                return Box::pin(async move { Err(error) });
+            }
+            let batch = scripted_embedding_batch(texts);
+            Box::pin(async move { Ok(batch) })
         }
     }
 
@@ -1349,6 +1521,7 @@ mod tests {
     }
 
     impl hkask_types::InferencePort for ModelRecordingPort {
+        impl_scripted_embed!();
         fn generate(
             &self,
             _prompt: &str,
@@ -1490,6 +1663,7 @@ mod tests {
     }
 
     impl hkask_types::InferencePort for CallCountingPort {
+        impl_scripted_embed!();
         fn generate(
             &self,
             _prompt: &str,
@@ -1560,14 +1734,27 @@ mod tests {
         let webid = WebID::from_persona(b"curator");
         let now = chrono::Utc::now();
         let turns = seed_turns(&store, "t-batch", 15, webid, now);
-        let port = ScriptedDistillPort {
-            failures: std::sync::atomic::AtomicUsize::new(0),
-            response: lesson_response(
-                "batch-entity",
-                "batch-attribute",
-                "batch lesson",
-                &[&turns[14].to_string()],
-            ),
+        // Two batches extract two DISTINCT lessons — the dedup guard
+        // (therapy 2026-10-08 F001) skips identical re-extractions, so the
+        // batching intent (every turn shown exactly once, per-batch
+        // watermarks) is pinned with different texts per batch.
+        let port = ScriptedResponsesPort {
+            responses: vec![
+                lesson_response(
+                    "batch-entity",
+                    "batch-attribute",
+                    "batch lesson one",
+                    &[&turns[11].to_string()],
+                ),
+                lesson_response(
+                    "batch-entity",
+                    "batch-attribute",
+                    "batch lesson two",
+                    &[&turns[14].to_string()],
+                ),
+            ],
+            calls: std::sync::atomic::AtomicUsize::new(0),
+            prompts: std::sync::Mutex::new(Vec::new()),
         };
         let outcome = distill_store(
             &store,
@@ -1794,6 +1981,7 @@ mod tests {
     }
 
     impl hkask_types::InferencePort for ScriptedResponsesPort {
+        impl_scripted_embed!();
         fn generate(
             &self,
             prompt: &str,
@@ -2251,6 +2439,216 @@ mod tests {
         );
     }
 
+    /// Therapy 2026-10-08 F001 pin: a lesson identical (entity+attribute+text)
+    /// to one already in the store is skipped, not republished — the extract
+    /// path previously inserted without checking (decision-gating written 3x
+    /// identical, twice within 8 seconds).
+    #[tokio::test]
+    async fn duplicate_lesson_against_the_store_is_skipped_not_republished() {
+        let store = test_store();
+        let webid = WebID::from_persona(b"curator");
+        let now = chrono::Utc::now();
+        let turn_id = turn_h_mem(
+            &store,
+            "t-dedup-store",
+            "the fix-first regime applies to every tool slice",
+            "understood — implement, pin, verify live",
+            now - chrono::Duration::seconds(600),
+            webid,
+        );
+        // Seed the store with the lesson a previous pass (or another
+        // thread's distillation) already published.
+        let existing = HMem::new(
+            "user-preference-fix-first",
+            "action-orientation",
+            serde_json::json!({
+                "text": "The user expects the fix-first regime applied consistently.",
+                "recall_text": "The user expects the fix-first regime applied consistently.",
+                "evidence": [turn_id.to_string()],
+                "source_thread": "t-dedup-store",
+                "mutable_state": false,
+                "state_provenance": null,
+            }),
+            webid,
+        )
+        .with_confidence(hkask_types::Confidence::new(0.5));
+        store.store(existing).expect("seed existing lesson");
+
+        let port = ScriptedDistillPort {
+            failures: std::sync::atomic::AtomicUsize::new(0),
+            response: lesson_response(
+                "user-preference-fix-first",
+                "action-orientation",
+                "The user expects the fix-first regime applied consistently.",
+                &[&turn_id.to_string()],
+            ),
+        };
+        let outcome = distill_store(
+            &store,
+            &port,
+            webid,
+            now,
+            DEFAULT_DISTILLATION_IDLE_SECS,
+            now - chrono::Duration::seconds(3600),
+            &[],
+            None,
+        )
+        .await;
+        assert_eq!(
+            outcome.lessons_inserted, 0,
+            "the duplicate must not publish"
+        );
+        assert_eq!(
+            outcome.lessons_skipped, 1,
+            "the duplicate is counted as skipped"
+        );
+        let lessons = store
+            .h_mems_by_entity_prefix("user-preference-fix-first")
+            .expect("query lessons");
+        assert_eq!(lessons.len(), 1, "exactly one row — the seeded original");
+    }
+
+    /// Therapy 2026-10-08 F001 pin: two identical candidates in ONE
+    /// extraction batch publish once (measured live: an identical pair
+    /// written 8 seconds apart).
+    #[tokio::test]
+    async fn duplicate_lessons_within_one_batch_publish_once() {
+        let store = test_store();
+        let webid = WebID::from_persona(b"curator");
+        let now = chrono::Utc::now();
+        let turn_id = turn_h_mem(
+            &store,
+            "t-dedup-batch",
+            "pause the refactor pending a ruling",
+            "paused until the functional ruling lands",
+            now - chrono::Duration::seconds(600),
+            webid,
+        );
+        let one = serde_json::json!({
+            "entity": "decision-gating",
+            "attribute": "functional-ruling-for-design-changes",
+            "text": "Pause architectural changes involving new scope until an explicit functional ruling is obtained.",
+            "evidence": [turn_id.to_string()],
+            "mutable_state": false,
+            "state_provenance": null,
+        });
+        let port = ScriptedDistillPort {
+            failures: std::sync::atomic::AtomicUsize::new(0),
+            response: serde_json::json!([one, one]).to_string(),
+        };
+        let outcome = distill_store(
+            &store,
+            &port,
+            webid,
+            now,
+            DEFAULT_DISTILLATION_IDLE_SECS,
+            now - chrono::Duration::seconds(3600),
+            &[],
+            None,
+        )
+        .await;
+        assert_eq!(outcome.lessons_inserted, 1, "one lesson publishes");
+        assert_eq!(outcome.lessons_skipped, 1, "the twin is counted as skipped");
+        let lessons = store
+            .h_mems_by_entity_prefix("decision-gating")
+            .expect("query lessons");
+        assert_eq!(lessons.len(), 1, "exactly one row for the lesson");
+    }
+
+    /// Therapy 2026-10-08 F002 pin: embedding failure blocks lesson
+    /// publication — the batch is retried with the watermark unadvanced, so
+    /// no lesson lands invisible to curator_semantic_search (the prior
+    /// publish-then-embed ordering left 27 rows embedding-invisible).
+    #[tokio::test]
+    async fn embedding_failure_blocks_lesson_publication_and_retries_next_pass() {
+        let store = test_store();
+        let webid = WebID::from_persona(b"curator");
+        let now = chrono::Utc::now();
+        let turn_id = turn_h_mem(
+            &store,
+            "t-embed-block",
+            "the installer fix needs the tag",
+            "tagged on main with the fix",
+            now - chrono::Duration::seconds(600),
+            webid,
+        );
+        let port = FlakyEmbedPort {
+            response: lesson_response(
+                "release-hygiene",
+                "tag-main-parity",
+                "Installer fixes land on main with a tag, never only on a branch.",
+                &[&turn_id.to_string()],
+            ),
+            embed_failures: std::sync::atomic::AtomicUsize::new(1),
+        };
+        // First pass: the embed fails — nothing publishes, no watermark.
+        let outcome = distill_store(
+            &store,
+            &port,
+            webid,
+            now,
+            DEFAULT_DISTILLATION_IDLE_SECS,
+            now - chrono::Duration::seconds(3600),
+            &[],
+            None,
+        )
+        .await;
+        assert_eq!(
+            outcome.lessons_inserted, 0,
+            "no lesson publishes without its embedding"
+        );
+        assert_eq!(outcome.publication_failures, 1);
+        assert!(
+            outcome.threads_pending.contains_key("t-embed-block"),
+            "the thread stays pending for retry"
+        );
+        assert!(
+            store
+                .h_mems_by_entity_prefix("release-hygiene")
+                .expect("query lessons")
+                .is_empty(),
+            "no lesson row landed"
+        );
+        assert!(
+            store
+                .h_mems_by_entity_prefix("curator:distilled:t-embed-block")
+                .expect("query watermarks")
+                .is_empty(),
+            "the watermark did not advance"
+        );
+
+        // Second pass: the embed works — the lesson publishes WITH its
+        // embedding (the retry re-extracts because the watermark never
+        // covered the turn).
+        let outcome = distill_store(
+            &store,
+            &port,
+            webid,
+            now,
+            DEFAULT_DISTILLATION_IDLE_SECS,
+            now - chrono::Duration::seconds(3600),
+            &[],
+            None,
+        )
+        .await;
+        assert_eq!(
+            outcome.lessons_inserted, 1,
+            "the retry publishes the lesson"
+        );
+        let lessons = store
+            .h_mems_by_entity_prefix("release-hygiene")
+            .expect("query lessons");
+        assert_eq!(lessons.len(), 1);
+        let passage =
+            hkask_memory::semantic_passage_for_h_mem(&lessons[0]).expect("canonical passage");
+        assert!(
+            store
+                .has_embedding_for_passage("release-hygiene", &passage)
+                .expect("embedding check"),
+            "the published lesson is semantically visible"
+        );
+    }
+
     #[tokio::test]
     async fn distillation_pass_is_additive_only() {
         let store = test_store();
@@ -2680,14 +3078,23 @@ mod tests {
             chrono::Utc::now() - chrono::Duration::seconds(600),
             webid,
         );
-        let port = ScriptedDistillPort {
-            response: lesson_response(
-                "subject",
-                "lesson",
-                "Once per thread.",
-                &[&t1_turn.to_string()],
-            ),
-            failures: std::sync::atomic::AtomicUsize::new(0),
+        // Each thread extracts a DISTINCT lesson — the dedup guard
+        // (therapy 2026-10-08 F001) skips identical cross-thread
+        // re-extractions, so the cursor intent (no replay of t1, t2 picked
+        // up) is pinned with different texts per thread. The second
+        // response is filled in below, once t2's turn id exists.
+        let mut port = ScriptedResponsesPort {
+            responses: vec![
+                lesson_response(
+                    "subject",
+                    "lesson",
+                    "Once per thread.",
+                    &[&t1_turn.to_string()],
+                ),
+                String::new(),
+            ],
+            calls: std::sync::atomic::AtomicUsize::new(0),
+            prompts: std::sync::Mutex::new(Vec::new()),
         };
         let mut cursor = DistillationCursor::new();
         let pass1_now = chrono::Utc::now();
@@ -2703,13 +3110,19 @@ mod tests {
         .await;
         assert_eq!(first.threads_distilled, 1);
         // A new turn is OBSERVED after pass 1 — ahead of the cursor.
-        turn_h_mem(
+        let t2_turn = turn_h_mem(
             &store,
             "t2",
             "second thread",
             "response",
             pass1_now + chrono::Duration::seconds(60),
             webid,
+        );
+        port.responses[1] = lesson_response(
+            "subject",
+            "lesson",
+            "Twice is a pattern.",
+            &[&t2_turn.to_string()],
         );
         let pass2_now = pass1_now + chrono::Duration::seconds(400);
         let second = run_pass(

@@ -1360,15 +1360,12 @@ impl CuratorServer {
                 McpToolError::internal("skill-use report has no canonical semantic passage")
             })?;
 
-            memory
-                .store(h_mem)
-                .map_err(|e| map_memory_store_error(e, "Failed to store skill-use issue report"))?;
-
-            RegulationSpan::Curation.emit("skill_use_issue_reported");
-
-            // Semantic recallability — the same canonical passage identity
-            // writer, backfill, and production recall use. Non-fatal;
-            // degradation is surfaced below.
+            // Embed-at-publish — the same contract as `memory_insert`,
+            // goal events, and distillation (therapy 2026-10-08 F002): the
+            // embedding is stored BEFORE the report h_mem, and an embedding
+            // failure fails the report — the gemba walk reads these rows
+            // semantically, so no report may land invisible to
+            // `curator_semantic_search`.
             let embedded = embed_for_semantic_recall(
                 self.inference_port.as_ref(),
                 memory,
@@ -1376,6 +1373,20 @@ impl CuratorServer {
                 &embed_text,
             )
             .await;
+            if !embedded {
+                return Err(McpToolError::failed_precondition(
+                    "embedding failed — the skill-use issue was NOT stored; no row lands \
+                     invisible to curator_semantic_search. See the curator warn log for \
+                     the specific reason (embedding model not configured, embed call \
+                     failed, or embedding store failed)",
+                ));
+            }
+
+            memory
+                .store(h_mem)
+                .map_err(|e| map_memory_store_error(e, "Failed to store skill-use issue report"))?;
+
+            RegulationSpan::Curation.emit("skill_use_issue_reported");
 
             Ok(json!({
                 "reported": true,
@@ -1385,7 +1396,7 @@ impl CuratorServer {
                 "step_ordinal": req.step_ordinal,
                 "failure_type": req.failure_type,
                 "failure_origin": req.failure_origin.as_str(),
-                "semantic_recall": if embedded { "embedded" } else { DEGRADED_EMBEDDING_NOTE },
+                "semantic_recall": "embedded",
                 "guidance": "The issue has been recorded in the curator's memory store. Use curator_memory_recall with entity 'skill_use_issue:<skill_name>' or curator_semantic_search to retrieve accumulated reports."
             }))
         })
@@ -1501,19 +1512,18 @@ impl CuratorServer {
                 )
             })?;
 
-            memory
-                .store(h_mem)
-                .map_err(|e| map_memory_store_error(e, "Failed to store curator memory"))?;
-
-            RegulationSpan::Curation.emit("memory_inserted");
-
-            // Semantic recallability — the entity_ref invariant. Without
-            // this, every agent-inserted memory (operator rulings, verified
-            // code status — the knowledge layer) is invisible to
-            // `curator_semantic_search` and the semantic leg of
-            // `curator_consult`: recallable only by exact entity name, and
-            // a semantic search that found nothing was read as "no memory
-            // exists". Non-fatal; the degradation is surfaced below.
+            // Embed-at-publish — the same contract as goal events and
+            // distillation (therapy 2026-10-08 F002): the embedding is
+            // stored BEFORE the h_mem, and an embedding failure fails the
+            // insert, so no knowledge row can land invisible to
+            // `curator_semantic_search` (the entity_ref invariant — without
+            // it, every agent-inserted memory is recallable only by exact
+            // entity name, and a semantic search that found nothing was
+            // read as "no memory exists"). The prior publish-then-embed
+            // ordering kept the row and stamped a degraded note — the
+            // 27-row embedding-invisible class measured 2026-10-08. An
+            // embedding stored for an h_mem whose store then fails is a
+            // harmless orphan (KNN drops entity refs with no h_mem).
             let embedded = embed_for_semantic_recall(
                 self.inference_port.as_ref(),
                 memory,
@@ -1521,6 +1531,20 @@ impl CuratorServer {
                 &embed_text,
             )
             .await;
+            if !embedded {
+                return Err(McpToolError::failed_precondition(
+                    "embedding failed — the memory was NOT stored; no row lands invisible \
+                     to curator_semantic_search. See the curator warn log for the specific \
+                     reason (embedding model not configured, embed call failed, or \
+                     embedding store failed)",
+                ));
+            }
+
+            memory
+                .store(h_mem)
+                .map_err(|e| map_memory_store_error(e, "Failed to store curator memory"))?;
+
+            RegulationSpan::Curation.emit("memory_inserted");
 
             Ok(json!({
                 "inserted": true,
@@ -1528,7 +1552,7 @@ impl CuratorServer {
                 "attribute": req.attribute,
                 "confidence": 0.5,
                 "evidence_h_mem_id": req.evidence_h_mem_id,
-                "semantic_recall": if embedded { "embedded" } else { DEGRADED_EMBEDDING_NOTE },
+                "semantic_recall": "embedded",
                 "guidance": "Memory stored at confidence 0.5 with a semantic embedding. Use memory_update to adjust confidence after outcome observation. Retrieve via curator_memory_recall with this entity, or curator_semantic_search by meaning."
             }))
         })
@@ -1939,37 +1963,33 @@ impl CuratorServer {
 
 // ── Server startup ─────────────────────────────────────────────────────
 
-/// Output note surfaced by the insert paths when the semantic embedding
-/// could not be stored — the degradation must be visible in the tool
-/// result, never a silent success.
-pub(crate) const DEGRADED_EMBEDDING_NOTE: &str = "degraded (embedding unavailable — warn logged)";
-
 /// The curator server's embedding model: the env-resolved model when
 /// configured, else `None`. `None` is NOT a fallback to a hidden constant
 /// (the operator's no-hidden-models spec) — the semantic paths degrade
 /// VISIBLY: `curator_semantic_search` returns a typed
 /// `EmbeddingNotConfigured` error naming the setting, and the insert
-/// paths stamp `DEGRADED_EMBEDDING_NOTE` + warn. The 2026-09-04
-/// regression this note previously guarded against was the degradation
-/// firing under default settings; the ratified fix is to surface it (the
-/// operator sets `kask.models.embedding_model`), not to hide a constant
-/// model behind it.
+/// paths fail with `failed_precondition` + warn (the embed-at-publish
+/// contract, therapy 2026-10-08 — no row lands without its embedding).
+/// The 2026-09-04 regression this previously guarded against was the
+/// degradation firing under default settings; the ratified fix is to
+/// surface it (the operator sets `kask.models.embedding_model`), not to
+/// hide a constant model behind it.
 pub(crate) fn curator_embedding_model() -> Option<String> {
     hkask_inference::model_constants::embedding_model()
 }
 
-/// Embed `text` under `entity` so semantic recall finds the h_mem just
+/// Embed `text` under `entity` so semantic recall finds the h_mem being
 /// stored — the entity_ref invariant (memory-system-specification.md §3).
-/// Non-fatal on failure, matching the ingest path's degradation contract
-/// (write-side invariant 3): the h_mem is already durable in SQL; only
-/// semantic recall degrades, with a warn naming the cause. Returns whether
-/// the embedding landed, so callers can surface the degradation.
-///
-/// The one insert-path embedding contract, shared by `memory_insert`,
-/// `curator_report_skill_use_issue`, and the distillation pass after its
-/// atomic lesson-plus-watermark commit. Consolidated 2026-09-04: `memory_insert` and the
-/// skill-use path stored h_mems without embeddings, leaving the entire
-/// agent-inserted knowledge layer invisible to `curator_semantic_search`.
+/// Returns whether the embedding landed; the CALLER owns the failure
+/// contract. The insert paths (`memory_insert`,
+/// `curator_report_skill_use_issue`, the distillation pass before its
+/// atomic lesson-plus-watermark commit) treat `false` as a hard failure —
+/// nothing lands invisible to `curator_semantic_search` (the
+/// embed-at-publish contract, therapy 2026-10-08 F002; the prior
+/// publish-then-embed ordering left the 27-row embedding-invisible
+/// class, consolidated 2026-09-04 from the original no-embedding inserts).
+/// The backfill sweeps treat `false` as a per-row failure surfaced in
+/// their results. Every failure path warns naming the cause.
 pub(crate) async fn embed_for_semantic_recall(
     inference_port: &dyn hkask_types::InferencePort,
     memory: &hkask_memory::MemoryStore,

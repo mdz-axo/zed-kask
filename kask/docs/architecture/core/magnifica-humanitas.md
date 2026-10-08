@@ -1,7 +1,7 @@
 ---
 title: "Magnifica Humanitas — The Values Charter of hKask"
 audience: [architects, users, agents]
-last_updated: 2026-10-07
+last_updated 2026-10-08
 version: "0.1.0"
 status: "Active"
 domain: "Cross-cutting"
@@ -121,6 +121,7 @@ The charter's one-line discernment test, taken from the encyclical's own closing
 - [`PRINCIPLES.md`](PRINCIPLES.md) §1.1 — values-grounding cross-reference.
 - [`MDS.md`](MDS.md) §9.1 — Trust-category key documents; `Related` line.
 - [`magna-carta.md`](magna-carta.md) References — companion-charter cross-link (the liberties charter → this charter), completing the two-charter loop.
+- The Curator's static context (`crates/agent/src/curator_agent_server.rs`, `CURATOR_STATIC_CONTEXT`) — the eight values and the discernment test carried into every Curator turn (2026-10-08).
 
 ## References
 

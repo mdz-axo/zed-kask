@@ -1872,6 +1872,62 @@ pub(crate) mod tests {
         );
     }
 
+    /// expect: "An acknowledge re-invocation is idempotent at the memory
+    ///          layer: the event publishes once no matter how many turns
+    ///          re-verify the resolved goal."
+    /// pre: a turn carrying two identical kanban_goal_memory_acknowledge
+    ///      results for one goal (the live shape, therapy 2026-10-08 F004:
+    ///      the thread path re-acknowledges on every turn that re-verifies
+    ///      a resolved goal's score — the service-level prune is a no-op
+    ///      after the first — and each re-invocation published a fresh event
+    ///      row: 24 acknowledge rows on 3 goals, 7 identical payloads for
+    ///      one goal).
+    /// post: exactly one acknowledge h_mem exists for the goal.
+    #[tokio::test]
+    async fn duplicate_acknowledge_events_publish_once() {
+        let port = in_memory_port_with_embed_fn(Arc::new(|_text: &str| vec![0.25; 1024]));
+        let record = TurnRecord {
+            thread_id: "goal-ack-dedup-thread".to_string(),
+            user_input: String::new(),
+            agent_response: String::new(),
+            model: "test-model".to_string(),
+            thread_title: None,
+            agent_id: Some("zed".to_string()),
+            goal_events: vec![
+                hkask_types::GoalEvent {
+                    tool_name: "kanban_goal_memory_acknowledge".to_string(),
+                    output: serde_json::json!({
+                        "content": { "goal_id": "g-ack-dedup", "acknowledged": true }
+                    }),
+                },
+                hkask_types::GoalEvent {
+                    tool_name: "kanban_goal_memory_acknowledge".to_string(),
+                    output: serde_json::json!({
+                        "content": { "goal_id": "g-ack-dedup", "acknowledged": true }
+                    }),
+                },
+            ],
+        };
+
+        port.ingest_turn(record)
+            .await
+            .expect("ingest should succeed");
+        let curator_store = port.curator_store.get().expect("curator store");
+        // Raw prefix read — the recall path's dedup would mask a stored
+        // duplicate, so the pin must count actual rows.
+        let all = curator_store
+            .h_mems_by_entity_prefix("curator:goal:g-ack-dedup")
+            .expect("query should succeed");
+        let acknowledges = all
+            .iter()
+            .filter(|h_mem| h_mem.attribute == "kanban_goal_memory_acknowledge")
+            .count();
+        assert_eq!(
+            acknowledges, 1,
+            "the re-invocation must not publish a duplicate acknowledge event"
+        );
+    }
+
     /// expect: "An id-less score event is skipped loudly and never acknowledged —
     ///          the resolved-goal acknowledgment path retries on the empty
     ///          publication set (D58)."

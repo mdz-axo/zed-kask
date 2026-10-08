@@ -162,9 +162,11 @@ fn failing_inference_port() -> Arc<dyn hkask_types::InferencePort> {
 
 /// The semantic paths resolve the embedding model from
 /// `HKASK_EMBEDDING_MODEL` (an `Option` since the model_constants
-/// refactor — unset means degraded). The test binary sets it once so the
-/// semantic leg exercises; the write is one-shot and test-only (the
-/// crate root allows `unsafe` in test builds for exactly this pattern).
+/// refactor — unset means the semantic paths fail visibly: search errors
+/// with `EmbeddingNotConfigured`, inserts fail with `failed_precondition`).
+/// The test binary sets it once so the semantic leg exercises; the
+/// write is one-shot and test-only (the crate root allows `unsafe` in
+/// test builds for exactly this pattern).
 fn ensure_embedding_model_env() {
     static SET: std::sync::Once = std::sync::Once::new();
     SET.call_once(|| {
@@ -1051,12 +1053,14 @@ async fn skill_use_issue_stores_at_floor_and_is_semantically_recallable() {
     );
 }
 
-/// The insert paths' embedding degradation contract (write-side invariant
-/// 3): with no embedding store and a failing inference port, inserts still
-/// succeed and the degradation is surfaced in the output — never a failed
-/// insert, never a silent success.
+/// The insert paths' embedding contract (therapy 2026-10-08 F002, the
+/// goal-event precedent): with no embedding store and a failing inference
+/// port, the insert FAILS and nothing lands — no knowledge row can exist
+/// invisible to `curator_semantic_search`. The prior contract (insert
+/// succeeds, degradation stamped in the output) produced the 27-row
+/// embedding-invisible class measured 2026-10-08.
 #[tokio::test]
-async fn insert_path_embedding_failure_is_non_fatal_and_surfaced() {
+async fn insert_path_embedding_failure_fails_the_insert_and_lands_nothing() {
     // The degraded shape: a live memory store with NO embedding store and a
     // failing inference port.
     let driver = SqliteDriver::in_memory_driver();
@@ -1075,7 +1079,7 @@ async fn insert_path_embedding_failure_is_non_fatal_and_surfaced() {
     memory.store(seed).expect("seed evidence h_mem");
     let stores = CuratorStores {
         regulation_store: None,
-        memory: Some(memory),
+        memory: Some(memory.clone()),
     };
     let server = CuratorServer::new(
         WebID::new(),
@@ -1083,52 +1087,61 @@ async fn insert_path_embedding_failure_is_non_fatal_and_surfaced() {
         failing_inference_port(),
     );
 
-    let insert = parse(
-        &server
-            .memory_insert(Parameters(MemoryInsertRequest {
-                entity: "zed-kask".to_string(),
-                attribute: "mcp_tool_surface".to_string(),
-                value: serde_json::json!("full surface, no router").into(),
-                evidence_h_mem_id: seed_id,
-                note: None,
-            }))
-            .await
-            .expect("insert must succeed without embeddings"),
+    let error = server
+        .memory_insert(Parameters(MemoryInsertRequest {
+            entity: "zed-kask".to_string(),
+            attribute: "mcp_tool_surface".to_string(),
+            value: serde_json::json!("full surface, no router").into(),
+            evidence_h_mem_id: seed_id,
+            note: None,
+        }))
+        .await
+        .expect_err("embedding failure must fail the insert");
+    assert!(
+        matches!(error.kind, hkask_types::McpErrorKind::FailedPrecondition),
+        "an embedding failure is a failed precondition — the insert cannot meet \
+         its recallability contract — got: {error:?}",
     );
-    assert_eq!(
-        insert["inserted"].as_bool(),
-        Some(true),
-        "the h_mem is durable SQL — embedding failure must not fail the insert — got: {insert}",
+    assert!(
+        error.message.contains("NOT stored"),
+        "the error must say nothing landed — got: {error:?}",
     );
+    let landed = memory
+        .h_mems_by_entity_prefix("zed-kask")
+        .expect("query store")
+        .into_iter()
+        .filter(|h_mem| h_mem.entity == "zed-kask")
+        .count();
     assert_eq!(
-        insert["semantic_recall"].as_str(),
-        Some("degraded (embedding unavailable — warn logged)"),
-        "the degradation must be surfaced in the output — got: {insert}",
+        landed, 0,
+        "no h_mem may land without its embedding — got: {landed}"
     );
 
-    let report = parse(
-        &server
-            .curator_report_skill_use_issue(Parameters(ReportSkillUseIssueRequest {
-                skill_name: "therapy".to_string(),
-                tool_name: "memory_insert".to_string(),
-                step_ordinal: 5,
-                error: "announce-then-stop".to_string(),
-                tool_input: None,
-                failure_type: None,
-                failure_origin: SkillUseFailureOrigin::ToolImplementation,
-            }))
-            .await
-            .expect("report must succeed without embeddings"),
+    let error = server
+        .curator_report_skill_use_issue(Parameters(ReportSkillUseIssueRequest {
+            skill_name: "therapy".to_string(),
+            tool_name: "memory_insert".to_string(),
+            step_ordinal: 5,
+            error: "announce-then-stop".to_string(),
+            tool_input: None,
+            failure_type: None,
+            failure_origin: SkillUseFailureOrigin::ToolImplementation,
+        }))
+        .await
+        .expect_err("embedding failure must fail the skill-use report");
+    assert!(
+        matches!(error.kind, hkask_types::McpErrorKind::FailedPrecondition),
+        "an embedding failure is a failed precondition — got: {error:?}",
     );
+    let reported = memory
+        .h_mems_by_entity_prefix("skill_use_issue:therapy")
+        .expect("query store")
+        .into_iter()
+        .filter(|h_mem| h_mem.entity == "skill_use_issue:therapy")
+        .count();
     assert_eq!(
-        report["reported"].as_bool(),
-        Some(true),
-        "the report is durable SQL — embedding failure must not fail it — got: {report}",
-    );
-    assert_eq!(
-        report["semantic_recall"].as_str(),
-        Some("degraded (embedding unavailable — warn logged)"),
-        "the degradation must be surfaced in the output — got: {report}",
+        reported, 0,
+        "no report row may land without its embedding — got: {reported}"
     );
 }
 

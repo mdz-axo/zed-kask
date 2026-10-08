@@ -269,8 +269,16 @@ async fn publish_goal_event(
     let is_score = event.tool_name == "kanban_goal_score";
     // Score retries deduplicate against the stored score h_mem: an exact
     // output match means publication already started; the idempotent
-    // calibration below resumes or no-ops on the receipt.
-    let already_stored = if is_score {
+    // calibration below resumes or no-ops on the receipt. Acknowledge
+    // re-invocations deduplicate the same way (therapy 2026-10-08, F004):
+    // the acknowledge tool fires again on every turn that re-verifies a
+    // resolved goal's score — the service-level prune is a no-op by then —
+    // and each re-invocation published a fresh event row (measured: 24
+    // acknowledge rows across 3 goals, 7 identical payloads for one goal).
+    // Creates and judges stay publish-always; their outputs carry distinct
+    // per-call content.
+    let is_acknowledge = event.tool_name == "kanban_goal_memory_acknowledge";
+    let already_stored = if is_score || is_acknowledge {
         curator_store
             .h_mems_by_entity_prefix(goal_entity)
             .map_err(|e| {
