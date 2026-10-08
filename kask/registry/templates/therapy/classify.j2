@@ -87,6 +87,14 @@ After a lesson has been reified into a skill/template/rule AND the user has appr
 
 This is a hygiene side-effect of successful reification, not part of the learning loop.
 
+### Values alignment (the values pass — grounding, not a gate)
+
+For charter_alignment findings, propose one of four resolutions (every option requires operator approval; nothing auto-modifies):
+- **Annotate** — a true record that steers badly: `memory_update` to lower confidence and mark the tension, keeping the row as history.
+- **Amend** — `memory_update` with a new_value that rewrites the lesson to respect the cited value.
+- **Escalate to board** — the conflict indicates live system behavior: file an algedonic card instead of editing memory.
+- **Record practice gap** — a thin/unpracticed value with no conflicting lesson: card the gap for the operator.
+
 ## Output format
 
 Produce a JSON object:
@@ -97,8 +105,8 @@ Produce a JSON object:
   "proposals": [
     {
       "finding_id": "F001",
-      "process": "hygiene|reification|post_reification_hygiene",
-      "strategy": "reduce_importance|add_consonant|remove_dissonant|merge|link|keep|raise_confidence|lower_confidence|reset_confidence|create_skill|create_template|create_rule|purge|condense|keep_sources",
+      "process": "hygiene|reification|post_reification_hygiene|values_alignment",
+      "strategy": "reduce_importance|add_consonant|remove_dissonant|merge|link|keep|raise_confidence|lower_confidence|reset_confidence|create_skill|create_template|create_rule|purge|condense|keep_sources|annotate|amend|escalate_to_board|record_practice_gap",
       "action": "<specific tool call(s)>",
       "h_mem_ids": ["<ID>"],
       "failure_origin": "<skill-use attribution value; omit for other findings>",

@@ -70,6 +70,12 @@ Prefer a complete read-only SQL audit (sqlcipher, mode=ro) over sampling via rec
 
 Each wiring finding records the data symptom, the root cause (file:line in the writer), and the proposed fix (code edit + pinning test). Wiring defects are fixed before or alongside memory hygiene — a writer bug re-corrupts cleaned rows.
 
+### 6. Charter alignment (the values pass)
+
+Run on operator request or on charter version change, not every session. Scope: the normative layer only (reified lessons, preferences, rulings, process guidance — rows that steer behavior); the raw episodic layer is evidence and is explicitly out of scope. Two checks:
+- **Guidance check** — one batched model pass over the normative rows: does this guidance steer behavior in a way that conflicts with a charter value (V1–V8, `kask/docs/architecture/core/magnifica-humanitas.md`)? Each candidate conflict cites the lesson h_mem, the charter value, and the discernment-test reasoning (*does this make human life more human?*).
+- **Practice check** — per charter value, search lessons and history for evidence the system practices it; values with no practice evidence are flagged.
+
 ### Skill-use attribution gate
 
 Before using a `skill_use_issue` as evidence for changing a skill, classify its `failure_origin` as `skill_contract`, `agent_execution`, `tool_implementation`, `provider_transport`, `environment_or_baseline`, `operator_interruption`, `expected_absence`, or `unknown`. Preserve the raw incident and total count. Only `skill_contract` and repeated `agent_execution` failures directly justify skill changes; route other origins to their owning subsystem. Keep `unknown` unresolved rather than averaging it into skill reliability.
@@ -88,7 +94,7 @@ Produce a JSON object:
       "h_mem_id": "<h_mem ID>",
       "entity": "<entity>",
       "attribute": "<attribute>",
-      "issue_type": "contradiction|fragmentation|miscalibrated_confidence|reification_candidate|system_defect",
+      "issue_type": "contradiction|fragmentation|miscalibrated_confidence|reification_candidate|system_defect|charter_alignment",
       "failure_origin": "<skill-use attribution value; omit for other findings>",
       "description": "<what the issue is>",
       "root_cause": "<for system_defect findings: file:line of the writing path>",

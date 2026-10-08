@@ -49,11 +49,18 @@ You are producing the therapy session report for "{{ target }}".
 - Templates created: <count>
 - Rules created: <count>
 
+### Values alignment summary (when the values pass ran)
+
+- Charter version reviewed: <version>
+- Values practiced / thin / conflicted: <counts per value>
+- Conflicts found: {{ findings | selectattr("issue_type", "equalto", "charter_alignment") | list | length }} (each with lesson + value citations)
+- Practice gaps carded: <count>
+
 ### Per-issue detail
 
 For each finding, report:
 - **Finding**: ID, issue type, entity, description.
-- **Process**: hygiene | reification | post-reification hygiene.
+- **Process**: hygiene | reification | post-reification hygiene | values alignment.
 - **Proposal**: strategy, action, reason.
 - **User decision**: approved / modified / rejected.
 - **Execution**: success / failure, outcome.

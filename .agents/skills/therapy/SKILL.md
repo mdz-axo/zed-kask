@@ -33,7 +33,7 @@ The scan's counts, the approved-proposal count, the execution check and the post
 
 ## When to Use
 
-- When the user wants to run a therapy session on the curator's memory database — **must be run from a Curator agent panel session**, not from the zed agent. The curator must remember the act of therapy (the forgetting, the reification, the lessons learned) so the cybernetic loop closes. Therapy run from the zed agent would modify curator memory without the curator's awareness — that defeats the cybernetic design.
+- When the user wants to run a therapy session on the curator's memory database — run from a Curator agent panel session by default. Therapy from the zed agent is a contract deviation permitted only under explicit operator approval and only with the mitigations that preserve the curator's awareness: the session records a `curator-process|therapy_session_<date>` awareness row, and zed-agent turns ingest into curator memory (verified 2026-10-08; the pre-2026-10-08 text claimed the curator would never observe a zed-agent session, which is false). The curator must remember the act of therapy (the forgetting, the reification, the lessons learned) so the cybernetic loop closes — the awareness row is what carries that memory when the session runs outside the Curator panel.
 - When the user wants to run a therapy session on a replica/corpus chunk memory database — can be run from a curator panel session or a corpus-scoped kask panel tab.
 - When the user wants to run a therapy session on a swarm's shared memory database — should be run from a curator panel session or a swarm-scoped kask panel tab.
 - When recall is misleading agents by returning old code status or pre-solution configurations.
@@ -42,10 +42,11 @@ The scan's counts, the approved-proposal count, the execution check and the post
 - When the user wants to extract lessons from accumulated memory and reify them as skills, templates, or rules.
 - When memory is bloated with episodic detail that has been superseded by learned habits (skills/rules).
 - When the memory system's own wiring is suspect — confidence values escaping the floor, memories invisible to semantic search, unbounded episodic growth. The scan doubles as a wiring audit: systematic patterns in the data are wiring symptoms, and hygiene executed on buggy wiring is re-corrupted by the next write.
+- When the operator requests a values pass, or the charter's `version:` field has changed since the last recorded pass — memory hygiene reviewed against the Magnifica Humanitas values charter (scan category f).
 
 ## When NOT to Use
 
-- **From the zed agent (non-curator mode).** Therapy on curator memory must run from a curator panel session so the curator remembers the therapy. The zed agent has no memory and the curator won't observe the session.
+- **From the zed agent without explicit operator approval.** Therapy on curator memory runs from a Curator panel session by default; a zed-agent session is a permitted deviation only under explicit operator approval with the awareness row recorded (see When to Use). The zed agent still has no in-session recall of curator memory — the approval and the awareness row are what keep the loop closed.
 - For routine memory consolidation (that runs automatically on the timer).
 - For adding new memories (use `memory_insert` directly).
 - For single-memory updates (use `memory_update` directly).
@@ -81,6 +82,12 @@ The scan's counts, the approved-proposal count, the execution check and the post
 - **Reification** is the process of converting abstract experience (episodic memory) into concrete, reusable guidance (skills, templates, rules). It is the memory-to-learning bridge: the past becomes useful not by being recalled, but by being embedded in the system that guides future action.
 - **Therapy is the step that closes the learning loop**: experience → memory → therapy (extract meaning + reify) → proactive guidance → new experience. Without therapy, memory accumulates but never becomes learning — the past is stored but not applied.
 - **Forgetting is NOT learning.** Purging or condensing source memories after reification is memory hygiene, not part of the learning loop. It is shedding low-value information so it doesn't obstruct future learning. The goldfish principle: once the lesson is reified, forget the episodic detail — but the forgetting is a side-effect of successful reification, not the learning step itself.
+
+### The values charter (Magnifica Humanitas)
+
+- **The guidance layer is values-laden.** The memory system is the guidance layer — saved lessons and preferences are recalled and shape future behavior. A lesson can be factually true and still be values-corrupting: a learned "preference" that is actually attention-capture amplifies on every recall. Therapy's other checks review memories against each other (consistency), their evidence (calibration), and their usefulness (dedup) — the values pass reviews them against what the system stands for.
+- **The reference is the values charter** (`kask/docs/architecture/core/magnifica-humanitas.md`): eight values (V1–V8) and the one-line discernment test (§129): *does this make human life more human?* Cite the charter's own vocabulary — never paraphrase it into a private one.
+- **Grounding, not a gate.** The charter adds no enforcement surface: the pass surfaces candidates, the operator is the values judge, nothing auto-modifies. The raw episodic layer is evidence and stays out of review scope — history is what happened, not what the system stands for.
 
 ## Instructions
 
@@ -126,6 +133,11 @@ The scan's counts, the approved-proposal count, the execution check and the post
 
    Each wiring finding records the data symptom (from the scan), the root cause (file:line in the writer), and the proposed fix (code edit + pinning test). Wiring defects are fixed BEFORE or alongside memory hygiene — a writer bug re-corrupts cleaned rows (the 2026-09-01 recalibration set every row to 0.5; the skill-use reporting path then re-created 1.0 rows because the recalibration fixed the rows, not the writer).
 
+   **f. Charter alignment (the values pass)** — run on operator request or on charter version change (compare the charter's `version:` field against the version recorded in the latest values-pass awareness row — a deterministic trigger, not habit), not every session; it is a heavier semantic pass than the mechanical checks. Scope: the normative layer only (reified lessons, preferences, rulings, process guidance — the rows that steer behavior); the raw episodic layer is evidence and explicitly out of scope. Two checks:
+   - **Guidance check** — one batched model pass (the distillation-port pattern) over the normative rows: does this guidance steer behavior in a way that conflicts with a charter value? Each candidate conflict cites the lesson h_mem, the charter value (V1–V8), and the discernment-test reasoning. A factually-true lesson can still be values-corrupting.
+   - **Practice check** — per charter value, search lessons and history for evidence the system practices it; values with no practice evidence are flagged (the memory-level analog of the charter's IS vs OUGHT table).
+   Record the pass in a `curator-process|therapy_values_pass_<date>` awareness row carrying the charter version reviewed.
+
    **Skill-use attribution gate:** before using a `skill_use_issue` as evidence for changing a skill, classify its `failure_origin` as `skill_contract`, `agent_execution`, `tool_implementation`, `provider_transport`, `environment_or_baseline`, `operator_interruption`, `expected_absence`, or `unknown`. Preserve the raw incident and total count. Only `skill_contract` and repeated `agent_execution` failures directly justify skill changes; route other origins to their owning subsystem. Keep `unknown` unresolved rather than averaging it into skill reliability.
 
    Scan technique: prefer a complete read-only audit over sampling via recall tools — `sqlcipher "file:<db>?mode=ro" "PRAGMA key='<passphrase>'; ..."` against the live DB (WAL allows concurrent readers; the passphrase resolves via `HKASK_DB_PASSPHRASE`, default `allostery` on first run). Sampling through `curator_memory_recall`/`curator_semantic_search` misses systemic patterns and cannot see embedding-less entities at all. The MCP write tools remain the modification path. Direct SQL WRITES to `hmems` bypass the `value` column's JSON serialization — the 2026-09-01 session's bare-string values corrupted 4 rows and broke the first full-store scan (2026-09-04, surfaced by the backfill tool's dry run); if a SQL write is ever unavoidable, `json_quote` the value, and audit prior SQL-written rows with `json_valid(value)` before any full-store scan.
@@ -135,7 +147,7 @@ The scan's counts, the approved-proposal count, the execution check and the post
    - `h_mem_id`: the ID of the problematic h_mem (or the cluster ID for reification candidates).
    - `entity`: the entity of the h_mem.
    - `attribute`: the attribute.
-   - `issue_type`: "contradiction" | "fragmentation" | "miscalibrated_confidence" | "reification_candidate" | "system_defect".
+   - `issue_type`: "contradiction" | "fragmentation" | "miscalibrated_confidence" | "reification_candidate" | "system_defect" | "charter_alignment".
    - `failure_origin`: for skill-use findings, the attribution-gate value; omit for other findings.
    - `root_cause`: for system_defect findings, the file:line of the writing path that produces the bad rows.
    - `description`: what the issue is.
@@ -193,9 +205,15 @@ The scan's counts, the approved-proposal count, the execution check and the post
 
    **For system wiring defects** — these are not contradictions between memories and take no Festinger strategy. The proposal is a code fix: correct the writing path to enforce the invariant it violates (confidence floor, embedding contract, key convention), with a pinning test in the same change. Grounding: the operator's standing rule — fix the tool, never work around the tool failure — applied to the memory system itself.
 
+   **For charter-alignment findings** — the values pass's resolution options (the charter is grounding, not a gate: every option requires operator approval, nothing auto-modifies):
+   - **Annotate**: a true record that steers badly — `memory_update` to lower confidence and mark the tension in the value, keeping the row as history.
+   - **Amend**: `memory_update` with a new_value that rewrites the lesson to respect the cited value.
+   - **Escalate to board**: the conflict indicates live system behavior, not just a stored lesson — file an algedonic card on the review board instead of editing memory.
+   - **Record practice gap**: a thin or unpracticed value with no conflicting lesson — card the gap for the operator.
+
 3. Produce a structured proposal list. Each proposal includes:
    - `finding_id`: the ID of the finding being addressed.
-   - `process`: hygiene | reification | post_reification_hygiene.
+   - `process`: hygiene | reification | post_reification_hygiene | values_alignment.
    - `strategy`: the resolution strategy.
    - `action`: the specific tool call(s) to execute.
    - `h_mem_ids`: the h_mems involved.
@@ -234,6 +252,10 @@ The scan's counts, the approved-proposal count, the execution check and the post
    - `memory_insert` for "add_consonant" and "link" strategies.
    - `memory_update` for "reduce_importance", "raise_confidence", "lower_confidence", "reset_confidence" strategies.
    - `memory_resolve_contradiction` for "remove_dissonant", "merge" strategies.
+
+   **Values-alignment proposals:**
+   - `memory_update` for "annotate" and "amend" strategies.
+   - `kanban_task_create` on the Algedonic review board for "escalate_to_board" and "record_practice_gap" strategies.
 
    **Reification proposals (the learning step):**
    - Create the skill/template/rule as approved by the user. Use `write_file` to write SKILL.md, .j2 templates, or .rules entries.
@@ -283,6 +305,7 @@ the operator approved only partial merges is expected, not a failure.
 2. Following the template's guidance, produce a therapy session report:
    - **Memory hygiene summary**: how many contradictions resolved, how many fragmented memories merged/linked, how many confidence values recalibrated.
    - **Reification summary**: how many skills/templates/rules created, how many source memories purged or condensed, the cognitive load shed (estimated reduction in memory database size or retrieval noise).
+   - **Values alignment summary** (when the values pass ran): values practiced / thin / conflicted, conflicts found with their lesson + value citations, practice gaps carded, and the charter version reviewed.
    - **Per-issue detail**: what was found, what was proposed, what was approved, what was executed, what was the outcome.
    - **Recommendations**: follow-up actions for the user (e.g., "run another therapy session after the next consolidation cycle", "review the new skill's effectiveness after N invocations", "consider reifying the remaining reification candidates in a future session").
 
@@ -320,6 +343,7 @@ The skill's forms are executed at audit and use time, never anchored in code.
 - **Evidence-grounded proposals.** Every proposal must cite the specific h_mems and data that support the finding. No free-association.
 - **Two distinct processes — do not conflate.** Memory hygiene (resolving contradictions, purging, condensing) is forgetting, not learning. Reification (extracting meaning, creating skills/templates/rules) is learning. Forgetting is a hygiene side-effect of successful reification, not part of the learning loop.
 - **Festinger's three strategies only for contradictions.** Every contradiction resolution must use one of: reduce importance, add consonant, remove dissonant.
+- **The values pass is grounding, not a gate.** The charter adds no enforcement surface: the pass surfaces candidates, the operator judges, nothing auto-modifies. The charter-version trigger is deterministic (compare the charter's `version:` field to the latest values-pass awareness row); the alignment judgments are semantic and route through Phase-4 approval like every other proposal.
 - **Fix the writer, not just the written.** When a hygiene finding has a wiring root cause (a code path producing bad rows), the code fix lands in the same session, before or alongside the hygiene execution. Hygiene executed on buggy wiring is re-corrupted by the next write — the 2026-09-01 recalibration set every row to the 0.5 floor, and the skill-use reporting path (which defaulted to 1.0) re-created above-floor rows within days.
 - **Reification requires user review of the proposed skill/template/rule content.** The user must see and approve the actual content before it is written.
 - **Post-reification forgetting requires separate approval.** The user approves reification and forgetting as separate decisions — they may reify a lesson but choose to keep the source memories.
