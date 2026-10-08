@@ -411,11 +411,14 @@ Compose `no_validate=true` explicitly skips; other lookup errors propagate.
 Optional `embedding.retrieval.declared_method.signal` thresholds all must match;
 missing method signals exclude passages and increment `method_signals_missing`.
 
-`corpus_query(db_path=...)` hydrates only an **empty** index. Clear it before
-selecting a different DB; a nonempty index does not switch DBs. Durable identity
-is canonical DB path plus entity ref. Original stored text supports warm/restarted
-retrieval; ephemeral passages do not survive restart. `include_text=false` hides
-returned text only. Missing usable text surfaces `text_available=false`,
+`corpus_query(db_path=...)` queries the named durable database through disk
+KNN only when the in-memory index is **empty**; a nonempty index (same-process
+published passages) ignores `db_path`, so no clear is needed to switch durable
+databases — each query opens its target read-only. Nothing is cached into
+memory: no corpus-sized RAM accrues behind queries. Durable identity is
+canonical DB path plus entity ref. Original stored text grounds answers;
+ephemeral passages do not survive restart. `include_text=false` hides returned
+text only. Missing usable text surfaces `text_available=false`,
 `missing_passage_text`/note and, if no answer context remains, `answer_error`.
 
 Clear/purge invalidate pending overlapping publications; errors and cancellation

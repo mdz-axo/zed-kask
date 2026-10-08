@@ -1458,15 +1458,14 @@ async fn retrieval_inflight_db_path_query_reads_durable_state() {
             assert!(result.get("answer_error").is_some());
             assert_eq!(store.embedding_count().expect("count"), 0);
         }
-        // Either way the query left the in-memory index empty — no hidden
-        // hydration cache accrues behind db_path queries.
-        let after = content(
-            fresh
-                .corpus_query(Parameters(query(None, false, true)))
-                .await,
-        );
+        // Either way the query published nothing into the in-memory index —
+        // no hidden hydration cache accrues behind db_path queries. Asserted
+        // directly via clear()'s returned passage count: a second corpus_query
+        // here would deadlock on this fixture's paused embed port (its release
+        // barrier is spent), and the count is the same evidence without it.
         assert_eq!(
-            after["total_indexed"], 0,
+            fresh.index.clear().expect("index clear"),
+            0,
             "a db_path query never publishes into the in-memory index"
         );
     }

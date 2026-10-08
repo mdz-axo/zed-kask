@@ -742,9 +742,10 @@ evidence and correction findings, not duplicate corpus versions.
 
 ## Stage 10 — Verify and report actual state
 
-Clear the in-memory index before testing a different DB; query with explicit
-`db_path`, `include_text=true` and a relevant question. DB hydration
-occurs only when the index is empty; a nonempty index is not switched by `db_path`.
+Query with explicit `db_path`, `include_text=true` and a relevant question.
+An empty in-memory index queries the durable database through disk KNN;
+a nonempty index (same-process published passages) ignores `db_path` —
+clear it to re-verify from a fresh index. Nothing is cached into memory.
 Verify source/text identity and relevant retrieval, not merely a positive count.
 
 Use `lisp_eval` to check measured stage equalities and a separately evidenced
