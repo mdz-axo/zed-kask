@@ -1,8 +1,8 @@
 ---
 title: "Memory System Specification"
 audience: [developers, architects, agents, operators]
-last_updated: 2026-09-28
-version: "5.2.2"
+last_updated: 2026-10-08
+version: "5.3.0"
 status: "Active"
 domain: "Lifecycle"
 mds_categories: [lifecycle, domain, curation, trust]
@@ -283,6 +283,59 @@ enforced by:
 A future `EntityRef(String)` newtype shared between `HMemStore` and
 `EmbeddingStore` would make this compile-time-enforced, but that is a
 cross-crate refactor deferred until a third embedding call site appears.
+
+### Canonical entity keys (the key-space protocol)
+
+**Design decision 2026-10-08 (operator instruction; algedonic card
+ba0ac90d) — one canonical key form per knowledge class, enforced at the
+writer.** Different agents invented per-session key standards before
+this existed; the live audit (2026-10-08) measured 56 pipe-concatenated
+entities (`category | lesson`), 68 space-containing entities (11 of them
+Capitalized With Spaces), and one stringified-JSON value against 881
+canonical/namespaced entities.
+
+The canonical form: an entity key is **lowercase `[a-z0-9:_-]+`** — no
+spaces, no pipes (`|`), no uppercase, no slashes. Per knowledge class:
+
+| Class | Form | Examples |
+| --- | --- | --- |
+| System records | `<namespace>:…` | `curator:thread:{id}`, `curator:goal:{goal_id}`, `skill_use_issue:{skill}`, `kanban:{id}`, `agent:{id}:turn:{uuid}` |
+| Skill knowledge | the BARE skill name (ruling ac85c2c8, 2026-09-28) | `company-research-deep`, `therapy` |
+| Lessons / knowledge | bare lowercase-hyphen slug | `verification-protocol`, `workflow-gating`, `release-hygiene` |
+| Curator process records | `curator-process` (the attribute carries the record type) | see below |
+
+**Enforcement:** `MemoryStore::store` and
+`MemoryStore::store_batch_replacing_key_atomic` reject a non-canonical
+entity with a teaching error naming the canonical form per class
+(`hkask-memory/src/memory_store.rs`, pinned by
+`store_rejects_non_canonical_entity_keys`; classified `invalid_argument`
+at the MCP boundary). Every curator.db writer flows through these two
+entry points — the bridge's turn chunks and goal events, the curator
+MCP tools, and distillation. `update_confidence` replaces an existing
+key and is deliberately unvalidated: existing rows are grandfathered
+until the mass-normalization session (algedonic card 7d17d334). The
+gate stops new drift; it does not migrate history.
+
+### Curator process records (the record protocol)
+
+The curator's own process records — therapy sessions, values passes,
+decisions — live under entity `curator-process` with a canonical
+attribute and value shape (unified 2026-10-08; the pre-unification rows
+used two date formats and both string and object values):
+
+- **Attribute:** `<record_type>_<yyyy-mm-dd>` — hyphenated dates only
+  (the `2026_09_09` underscore form is retired). Known record types:
+  `therapy_session_*`, `therapy_values_pass_*`, `*_decision_*`,
+  `*_followups_*`.
+- **Value:** a JSON **object** carrying `text` (the record) and
+  `recall_text` (the recall summary); optional `note`. Never a bare
+  string, never stringified JSON (the 2026-09-01 corruption class).
+- **Consumers that depend on these forms:** the regulation-loop growth
+  sensor reads `therapy_session_*` rows (card c148d75d); the
+  values-pass charter-version trigger reads `therapy_values_pass_*`
+  rows carrying `charter_version` (therapy skill, card 49e44a76).
+  Changing these forms requires updating both consumers in the same
+  change.
 
 ### Memory Store ERD
 

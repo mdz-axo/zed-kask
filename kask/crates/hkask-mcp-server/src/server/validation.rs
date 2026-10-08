@@ -157,6 +157,12 @@ pub fn map_memory_store_error(
         MemoryStoreError::NoEmbeddingsForCentroid(_) => {
             McpToolError::not_found(format!("{context}: {error}"))
         }
+        // Closed-set validation (canonical contract, operator ruling
+        // 2026-10-05): a non-canonical entity key is an invalid argument —
+        // the error text itself names the canonical form per class.
+        MemoryStoreError::InvalidEntityKey(_) => {
+            McpToolError::invalid_argument(format!("{context}: {error}"))
+        }
 
         MemoryStoreError::Embedding(_) => McpToolError::internal(format!("{context}: {error}")),
     }

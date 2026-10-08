@@ -2655,7 +2655,7 @@ mod tests {
         let webid = WebID::from_persona(b"curator");
         let now = chrono::Utc::now();
         // Pre-existing memories the pass must not touch.
-        for entity in ["company:AAPL", "company:MSFT", "note:keep"] {
+        for entity in ["company:aapl", "company:msft", "note:keep"] {
             store
                 .store(HMem::new(
                     entity,
@@ -2666,7 +2666,7 @@ mod tests {
                 .expect("seed h_mem");
         }
         let before: Vec<(String, String, serde_json::Value)> =
-            ["company:AAPL", "company:MSFT", "note:keep"]
+            ["company:aapl", "company:msft", "note:keep"]
                 .iter()
                 .flat_map(|entity| {
                     store
@@ -2708,7 +2708,7 @@ mod tests {
         assert_eq!(outcome.lessons_inserted, 1);
         // Every pre-existing h_mem is byte-identical.
         let after: Vec<(String, String, serde_json::Value)> =
-            ["company:AAPL", "company:MSFT", "note:keep"]
+            ["company:aapl", "company:msft", "note:keep"]
                 .iter()
                 .flat_map(|entity| {
                     store

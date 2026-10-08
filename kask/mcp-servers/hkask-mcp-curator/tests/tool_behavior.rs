@@ -1155,7 +1155,7 @@ async fn insert_path_embedding_failure_fails_the_insert_and_lands_nothing() {
 async fn resolve_contradiction_finds_target_by_id() {
     let (server, memory) = make_server_with_embeddings();
     let forget_target = hkask_storage::HMem::new(
-        "zed-kask/duplicate-ruling",
+        "zed-kask-duplicate-ruling",
         "operator_ruling",
         serde_json::Value::String("ruling A".to_string()),
         WebID::new(),
@@ -1182,14 +1182,14 @@ async fn resolve_contradiction_finds_target_by_id() {
     );
     assert!(
         memory
-            .h_mems_by_entity_prefix("zed-kask/duplicate-ruling")
+            .h_mems_by_entity_prefix("zed-kask-duplicate-ruling")
             .expect("query after forget")
             .is_empty(),
         "the forgotten target must be deleted from the database"
     );
 
     let confidence_target = hkask_storage::HMem::new(
-        "zed-kask/confidence-target",
+        "zed-kask-confidence-target",
         "policy",
         serde_json::Value::String("policy text".to_string()),
         WebID::new(),
@@ -1217,7 +1217,7 @@ async fn resolve_contradiction_finds_target_by_id() {
         "update_confidence must resolve — got: {response}",
     );
     let updated = memory
-        .h_mems_by_entity_prefix("zed-kask/confidence-target")
+        .h_mems_by_entity_prefix("zed-kask-confidence-target")
         .expect("query after update");
     assert_eq!(updated.len(), 1);
     assert!(
@@ -1271,7 +1271,7 @@ async fn backfill_embeddings_covers_knowledge_layer_and_excludes_turns() {
     let (server, memory) = make_server_with_embeddings();
 
     let ruling = hkask_storage::HMem::new(
-        "zed-kask/provider_budget_blocks",
+        "zed-kask-provider_budget_blocks",
         "operator_ruling",
         serde_json::Value::String("do not touch the provider files".to_string()),
         WebID::new(),
@@ -1839,7 +1839,7 @@ async fn curator_memory_prune_defaults_to_turn_storage_scope() {
     memory.store(aged_turn).expect("seed aged turn");
 
     let mut aged_ruling = hkask_storage::HMem::new(
-        "zed-kask/prune-scope-test-ruling",
+        "zed-kask-prune-scope-test-ruling",
         "operator_ruling",
         serde_json::Value::String("durable ruling".to_string()),
         WebID::new(),
@@ -1863,7 +1863,7 @@ async fn curator_memory_prune_defaults_to_turn_storage_scope() {
     assert_eq!(scoped["deleted_count"].as_u64(), Some(1));
     assert_eq!(
         memory
-            .h_mems_by_entity_prefix("zed-kask/prune-scope-test-ruling")
+            .h_mems_by_entity_prefix("zed-kask-prune-scope-test-ruling")
             .expect("query ruling")
             .len(),
         1,
@@ -1886,7 +1886,7 @@ async fn curator_memory_prune_defaults_to_turn_storage_scope() {
     assert_eq!(full["deleted_count"].as_u64(), Some(1));
     assert!(
         memory
-            .h_mems_by_entity_prefix("zed-kask/prune-scope-test-ruling")
+            .h_mems_by_entity_prefix("zed-kask-prune-scope-test-ruling")
             .expect("query ruling")
             .is_empty(),
         "all_layers=true must reach knowledge rows — got: {full}",
@@ -1921,7 +1921,7 @@ async fn curator_memory_prune_scoped_prefixes_prune_only_matching_rows() {
     memory.store(aged_turn).expect("seed aged turn");
 
     let mut aged_ruling = hkask_storage::HMem::new(
-        "zed-kask/prune-prefix-test-ruling",
+        "zed-kask-prune-prefix-test-ruling",
         "operator_ruling",
         serde_json::Value::String("durable ruling".to_string()),
         WebID::new(),
@@ -1965,7 +1965,7 @@ async fn curator_memory_prune_scoped_prefixes_prune_only_matching_rows() {
     );
     assert_eq!(
         memory
-            .h_mems_by_entity_prefix("zed-kask/prune-prefix-test-ruling")
+            .h_mems_by_entity_prefix("zed-kask-prune-prefix-test-ruling")
             .expect("query ruling")
             .len(),
         1,
@@ -2008,7 +2008,7 @@ async fn curator_memory_prune_scoped_prefixes_prune_only_matching_rows() {
 async fn memory_update_finds_target_by_id() {
     let (server, memory) = make_server_with_embeddings();
     let seed = hkask_storage::HMem::new(
-        "zed-kask/update-target",
+        "zed-kask-update-target",
         "policy",
         serde_json::Value::String("old value".to_string()),
         WebID::new(),
@@ -2034,7 +2034,7 @@ async fn memory_update_finds_target_by_id() {
     );
 
     let updated = memory
-        .h_mems_by_entity_prefix("zed-kask/update-target")
+        .h_mems_by_entity_prefix("zed-kask-update-target")
         .expect("query after update");
     assert_eq!(updated.len(), 1);
     assert_eq!(

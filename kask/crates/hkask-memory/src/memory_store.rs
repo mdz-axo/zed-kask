@@ -39,6 +39,38 @@ pub enum MemoryStoreError {
     Embedding(#[from] EmbeddingError),
     #[error("No embeddings found for centroid: {0}")]
     NoEmbeddingsForCentroid(String),
+    #[error("Invalid entity key: {0}")]
+    InvalidEntityKey(String),
+}
+
+/// Canonical entity-key validation (operator instruction 2026-10-08;
+/// algedonic card ba0ac90d — different agents invented per-session key
+/// standards before this existed). A curator entity key is lowercase
+/// `[a-z0-9:_-]+`: no spaces, no pipes, no uppercase. The live audit
+/// (2026-10-08) measured the drift this closes — 56 pipe-concatenated
+/// entities (`category | lesson`), 68 space-containing entities (11 of
+/// them Capitalized With Spaces) against 881 canonical/namespaced keys.
+/// Existing rows are grandfathered until the normalization session
+/// (card 7d17d334); `update_confidence` replaces an existing key and is
+/// deliberately unvalidated — this gate stops new drift, it does not
+/// migrate history.
+fn validate_entity_key(entity: &str) -> Result<(), MemoryStoreError> {
+    let canonical = !entity.is_empty()
+        && entity.bytes().all(|b| {
+            b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b':' | b'_' | b'-')
+        });
+    if canonical {
+        return Ok(());
+    }
+    Err(MemoryStoreError::InvalidEntityKey(format!(
+        "'{entity}' is not a canonical curator entity key — keys are lowercase [a-z0-9:_-] \
+         (no spaces, pipes, or uppercase). Namespaced system records use '<namespace>:…' \
+         (curator:, curator:goal:, curator:thread:, skill_use_issue:, kanban:, skill:, agent:); \
+         skill knowledge uses the BARE skill name (ruling ac85c2c8); lessons use bare \
+         lowercase-hyphen slugs; the curator's own process records use 'curator-process'. \
+         Never concatenate category and slug with ' | '. See \
+         kask/docs/architecture/memory-system-specification.md §3."
+    )))
 }
 
 /// Reconstruct the exact semantic passage a supported h_mem writer embeds.
@@ -283,20 +315,29 @@ impl MemoryStore {
     /// ontology (state-anchored h_mems get `HMemOntology::state()`,
     /// process-anchored h_mems get `HMemOntology::process()`).
     ///
+    /// Rejects a non-canonical entity key (see `validate_entity_key`).
+    ///
     /// Emits a `reg.memory.encode` span for observability.
     pub fn store(&self, h_mem: HMem) -> Result<(), MemoryStoreError> {
+        validate_entity_key(&h_mem.entity)?;
         self.h_mem_store.insert(&h_mem)?;
         self.emit_store_event(&h_mem);
         Ok(())
     }
 
     /// Publish related h_mems while atomically replacing one EAV control key.
+    /// Every h_mem in the batch must carry a canonical entity key (see
+    /// `validate_entity_key`); the control key identifies a row the batch
+    /// replaces, so it is covered by the batch's own validation.
     pub fn store_batch_replacing_key_atomic(
         &self,
         h_mems: &[HMem],
         entity: &str,
         attribute: &str,
     ) -> Result<(), MemoryStoreError> {
+        for h_mem in h_mems {
+            validate_entity_key(&h_mem.entity)?;
+        }
         self.h_mem_store
             .insert_batch_replacing_key_atomic(h_mems, entity, attribute)?;
         for h_mem in h_mems {
@@ -1327,6 +1368,48 @@ mod tests {
         store.store(h_mem).expect("store h_mem");
     }
 
+    /// algedonic card ba0ac90d: the store rejects non-canonical entity keys
+    /// at insert — the pipe-concatenation, space, and uppercase forms
+    /// measured live (2026-10-08: 56 pipe / 68 space / 11 uppercase
+    /// entities) — with an error that teaches the canonical form, while
+    /// every canonical class (namespaced system record, bare skill name,
+    /// bare lesson slug, curator process entity) passes. Existing rows are
+    /// grandfathered: `update_confidence` and the direct `HMemStore` path
+    /// are deliberately unvalidated.
+    #[test]
+    fn store_rejects_non_canonical_entity_keys() {
+        let store = test_store();
+        let webid = WebID::from_persona(b"curator");
+
+        for malformed in [
+            "configuration-safety | semantic-naming-collision-risk",
+            "Operator Interaction Protocol",
+            "verification protocol",
+        ] {
+            let h_mem = hkask_storage::HMem::new(
+                malformed,
+                "lesson",
+                serde_json::Value::String("text".to_string()),
+                webid,
+            );
+            let err = store
+                .store(h_mem)
+                .expect_err("malformed key must be rejected");
+            assert!(matches!(err, MemoryStoreError::InvalidEntityKey(_)));
+            assert!(err.to_string().contains("canonical curator entity key"));
+        }
+
+        // Every canonical class passes.
+        for canonical in [
+            "curator:thread:9c8d4a2e-1f2b-4c3d-8e5f-6a7b8c9d0e1f",
+            "company-research-deep",
+            "verification-protocol",
+            "curator-process",
+        ] {
+            store_h_mem(&store, canonical, "lesson", "text", webid);
+        }
+    }
+
     /// expect: "The configured memory life changes how memories decay — the
     /// setting is behavior, not monitoring decoration." [P1]
     /// pre: two stores over in-memory drivers hold an identical h_mem whose
@@ -1439,7 +1522,7 @@ mod tests {
         let webid = WebID::from_persona(b"curator");
         // Insert an old h_mem by backdating its observed_at via direct store access.
         let mut old = hkask_storage::HMem::new(
-            "company:AAPL",
+            "company:aapl",
             "sector",
             serde_json::Value::String("technology".to_string()),
             webid,
@@ -1450,7 +1533,7 @@ mod tests {
         store.h_mem_store.insert(&old).expect("insert old h_mem");
 
         // Insert a recent h_mem.
-        store_h_mem(&store, "company:MSFT", "sector", "technology", webid);
+        store_h_mem(&store, "company:msft", "sector", "technology", webid);
 
         let outcome = store.prune_by_age(50, None).expect("prune succeeds");
         assert_eq!(outcome.candidates, 1, "one h_mem is older than 50 days");
@@ -1460,14 +1543,14 @@ mod tests {
         // The recent h_mem survives.
         let remaining = store
             .h_mem_store
-            .query_by_entity("company:MSFT")
+            .query_by_entity("company:msft")
             .expect("query");
         assert_eq!(remaining.len(), 1);
 
         // The old h_mem is gone.
         let old_remaining = store
             .h_mem_store
-            .query_by_entity("company:AAPL")
+            .query_by_entity("company:aapl")
             .expect("query");
         assert!(old_remaining.is_empty(), "old h_mem was pruned");
         assert!(store.get_by_id(&old.id).expect("query pruned ID").is_none());
@@ -1539,7 +1622,7 @@ mod tests {
         let webid = WebID::from_persona(b"curator");
         // Old h_mem that was recalled recently.
         let mut old_recalled = hkask_storage::HMem::new(
-            "company:AAPL",
+            "company:aapl",
             "sector",
             serde_json::Value::String("technology".to_string()),
             webid,
@@ -1550,7 +1633,7 @@ mod tests {
 
         // Old h_mem that was NOT recalled recently.
         let mut old_stale = hkask_storage::HMem::new(
-            "company:GOOG",
+            "company:goog",
             "sector",
             serde_json::Value::String("technology".to_string()),
             webid,
@@ -1570,14 +1653,14 @@ mod tests {
         // The recalled one survives.
         let survived = store
             .h_mem_store
-            .query_by_entity("company:AAPL")
+            .query_by_entity("company:aapl")
             .expect("query");
         assert_eq!(survived.len(), 1, "recently-recalled old h_mem was spared");
 
         // The stale one is gone.
         let gone = store
             .h_mem_store
-            .query_by_entity("company:GOOG")
+            .query_by_entity("company:goog")
             .expect("query");
         assert!(gone.is_empty(), "stale old h_mem was pruned");
     }
@@ -1587,14 +1670,14 @@ mod tests {
         let store = test_store();
         let webid = WebID::from_persona(b"curator");
         // Three h_mems for the same entity+attribute with near-duplicate values.
-        store_h_mem(&store, "company:AAPL", "ticker", "AAPL", webid);
-        store_h_mem(&store, "company:AAPL", "ticker", "aapl.", webid);
-        store_h_mem(&store, "company:AAPL", "ticker", " AAPL ", webid);
+        store_h_mem(&store, "company:aapl", "ticker", "AAPL", webid);
+        store_h_mem(&store, "company:aapl", "ticker", "aapl.", webid);
+        store_h_mem(&store, "company:aapl", "ticker", " AAPL ", webid);
         // A distinct value that should NOT be deleted.
-        store_h_mem(&store, "company:AAPL", "ticker", "MSFT", webid);
+        store_h_mem(&store, "company:aapl", "ticker", "MSFT", webid);
         // A non-string value that should be skipped.
         let numeric = hkask_storage::HMem::new(
-            "company:AAPL",
+            "company:aapl",
             "price",
             serde_json::Value::Number(serde_json::Number::from(150)),
             webid,
@@ -1615,7 +1698,7 @@ mod tests {
         // The remaining h_mems for ticker: one of the AAPL variants + MSFT.
         let remaining = store
             .h_mem_store
-            .query_by_entity_attribute("company:AAPL", "ticker")
+            .query_by_entity_attribute("company:aapl", "ticker")
             .expect("query");
         // query_by_entity_attribute returns all current h_mems — forgetting
         // deletes rows; there is no validity filter.
@@ -1651,7 +1734,7 @@ mod tests {
         let webid = WebID::from_persona(b"curator");
         // Low-confidence duplicate inserted first.
         let mut low = hkask_storage::HMem::new(
-            "company:AAPL",
+            "company:aapl",
             "sector",
             serde_json::Value::String("technology".to_string()),
             webid,
@@ -1661,7 +1744,7 @@ mod tests {
 
         // High-confidence duplicate inserted second.
         let mut high = hkask_storage::HMem::new(
-            "company:AAPL",
+            "company:aapl",
             "sector",
             serde_json::Value::String("Technology".to_string()),
             webid,
@@ -1677,7 +1760,7 @@ mod tests {
         // The high-confidence one survives.
         let remaining = store
             .h_mem_store
-            .query_by_entity_attribute("company:AAPL", "sector")
+            .query_by_entity_attribute("company:aapl", "sector")
             .expect("query");
         assert_eq!(remaining.len(), 1);
         assert!((remaining[0].confidence.value() - 0.9).abs() < 1e-9);
@@ -1971,8 +2054,15 @@ mod tests {
         let store = test_store();
         let owner = WebID::new();
         let prefix = "qa:%_Case:";
+        // The entities here are deliberately non-canonical (LIKE wildcards,
+        // case variants) — they pin that prefix deletion matches literally.
+        // They are seeded through the direct HMemStore path because
+        // MemoryStore::store now rejects non-canonical keys (card ba0ac90d):
+        // legacy rows like these exist in the live store (124 entities,
+        // 2026-10-08 audit) and the deletion/cleanup paths must keep
+        // handling them — grandfathered, not migrated.
         let bulk = HMem::new("qa:%_Case:bulk", "qa", serde_json::json!("bulk"), owner);
-        store.store(bulk.clone())?;
+        store.h_mem_store.insert(&bulk)?;
         // One bulk entity fills the entire old discovery window; the oldest
         // row belongs to another entity whose coupled references must go too.
         store.h_mem_store.driver().execute(
@@ -1986,11 +2076,13 @@ mod tests {
         )?;
         let mut tail = HMem::new("qa:%_Case:tail", "qa", serde_json::json!("tail"), owner);
         tail.observed_at = chrono::Utc::now() - chrono::Duration::days(1);
-        store.store(tail.clone())?;
+        store.h_mem_store.insert(&tail)?;
         let retained = ["qa:%_case:keep", "qa:X_Case:keep", "qa:%XCase:keep"];
         let vector = vec![0.2; hkask_storage::embedding_dim()];
         for entity in &retained {
-            store.store(HMem::new(entity, "qa", serde_json::json!("keep"), owner))?;
+            store
+                .h_mem_store
+                .insert(&HMem::new(entity, "qa", serde_json::json!("keep"), owner))?;
             store.store_embedding(entity, &vector, "test-model", Some("keep"))?;
         }
         for entity in [&bulk.entity, &tail.entity] {
@@ -2061,8 +2153,10 @@ mod tests {
                 WebID::new(),
             );
             let retained = HMem::new(unrelated, "qa", serde_json::json!("keep"), WebID::new());
-            store.store(target.clone())?;
-            store.store(retained.clone())?;
+            // Deliberately non-canonical keys (wildcards, case) seeded via
+            // the direct path — same grandfathering as the query-cap test.
+            store.h_mem_store.insert(&target)?;
+            store.h_mem_store.insert(&retained)?;
             let vector = vec![0.2; hkask_storage::embedding_dim()];
             store.store_embedding(&target.entity, &vector, "test-model", None)?;
             store.store_embedding(&retained.entity, &vector, "test-model", None)?;
