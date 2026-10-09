@@ -83,6 +83,24 @@ pub fn classifier_model() -> Option<String> {
         .filter(|m| !m.trim().is_empty())
 }
 
+/// Resolve the classifier model or refuse: `HKASK_CLASSIFIER_MODEL` unset is
+/// a typed error naming the setting — never a silent fallback to the host
+/// default chat model, which can be thinking-mandatory (OpenRouter 400
+/// "Reasoning is mandatory for this endpoint and cannot be disabled" — the
+/// d58fd87b class; operator ruling 2026-10-09: remove the fallback). The
+/// settings chain injects this env var for MCP server children, so `None`
+/// means the env was not injected (direct CLI callers).
+pub fn resolve_classifier_model() -> Result<String, hkask_types::InferenceError> {
+    classifier_model().ok_or_else(|| {
+        hkask_types::InferenceError::NotConfigured(
+            "kask.models.classifier_model (HKASK_CLASSIFIER_MODEL) is not set — the \
+             classifier-class routes refuse rather than serve the default chat model \
+             (which can be thinking-mandatory); set kask.models.classifier_model"
+                .to_string(),
+        )
+    })
+}
+
 /// Read the embedding model from the env layer: `HKASK_EMBEDDING_MODEL`
 /// → `None` when unset. The settings chain (which carries the code
 /// default) injects this env var for MCP server children.

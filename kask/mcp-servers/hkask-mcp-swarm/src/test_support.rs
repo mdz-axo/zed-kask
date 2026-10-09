@@ -283,3 +283,36 @@ pub(crate) fn make_thread_server(
 pub(crate) fn content(output: &str) -> Result<Value, Box<dyn std::error::Error>> {
     Ok(serde_json::from_str::<Value>(output)?["content"].clone())
 }
+
+/// The probe classifier-model value the env-dependent legs set — distinct
+/// from every real model id so a leaked value reads as a fixture bug.
+pub(crate) const PROBE_CLASSIFIER_MODEL: &str = "probe/classifier-model";
+
+/// Spawn the test binary as a subprocess for an env-dependent test leg (the
+/// corpus retrieval_tests precedent): in-process env mutation is unsafe
+/// (edition 2024) and racy under parallel test threads. `set_classifier`
+/// sets `HKASK_CLASSIFIER_MODEL` to the probe value; `false` removes it (the
+/// refusal legs).
+pub(crate) async fn spawn_env_leg(
+    leg_env: &str,
+    test: &str,
+    set_classifier: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut command = tokio::process::Command::new(std::env::current_exe()?);
+    command
+        .args(["--exact", test, "--nocapture"])
+        .env(leg_env, "1");
+    if set_classifier {
+        command.env("HKASK_CLASSIFIER_MODEL", PROBE_CLASSIFIER_MODEL);
+    } else {
+        command.env_remove("HKASK_CLASSIFIER_MODEL");
+    }
+    let out = command.output().await?;
+    assert!(
+        out.status.success(),
+        "{leg_env} run failed\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    Ok(())
+}

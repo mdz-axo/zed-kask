@@ -806,19 +806,18 @@ pub(crate) async fn one_shot_generate(
         ..hkask_types::template::LLMParameters::default()
     };
     // Route through the classifier-class model (`kask.models.classifier_model`,
-    // env `HKASK_CLASSIFIER_MODEL`), which accepts reasoning-off requests:
-    // the host session's default chat model can be thinking-mandatory
-    // (OpenRouter 400 "Reasoning is mandatory for this endpoint and cannot be
-    // disabled" — the d58fd87b class), which left both one-shot authoring
-    // aids dead. The same resolution the ai-assist paths and the eval
-    // runtime use.
+    // env `HKASK_CLASSIFIER_MODEL`), resolved or refused — never a silent
+    // None fallback to the host default chat model, which can be
+    // thinking-mandatory (OpenRouter 400 — the d58fd87b class;
+    // refuse-on-None ruling 2026-10-09). The same resolution the ai-assist
+    // paths and the eval runtime use.
+    let classifier = hkask_inference::model_constants::resolve_classifier_model().map_err(|e| {
+        LocalSwarmError::Unavailable(format!(
+            "one-shot generate requires the classifier model: {e}"
+        ))
+    })?;
     let result = inference
-        .generate_with_model(
-            prompt,
-            &params,
-            hkask_inference::model_constants::classifier_model().as_deref(),
-            None,
-        )
+        .generate_with_model(prompt, &params, Some(classifier.as_str()), None)
         .await
         .map_err(|e| {
             LocalSwarmError::Unavailable(format!("local inference generate failed: {e}"))
@@ -838,35 +837,79 @@ mod tests {
 
     const TEST_PASSPHRASE: &str = "test-passphrase";
 
-    /// Card d58fd87b class completion: `one_shot_generate` (the shared helper
-    /// behind `swarm_generate_prompt_local` / `swarm_generate_ontology_local`)
-    /// must route through `generate_with_model` with the classifier override —
-    /// the same drop shape the ai-assist suggest branch had (bare
-    /// `generate()` + default params lands on the host default chat model,
-    /// which can be thinking-mandatory → OpenRouter 400, both authoring
-    /// aids dead).
+    /// Card d58fd87b class + the 2026-10-09 refuse-on-None ruling:
+    /// `one_shot_generate` (the shared helper behind
+    /// `swarm_generate_prompt_local` / `swarm_generate_ontology_local`)
+    /// routes through `generate_with_model` with the env-resolved classifier
+    /// override, and refuses when the classifier model is unset — never a
+    /// silent None fallback to the host default chat model (which can be
+    /// thinking-mandatory → OpenRouter 400, both authoring aids dead).
+    /// Both pins run as subprocess legs (the corpus retrieval_tests
+    /// precedent): in-process env mutation is unsafe (edition 2024) and racy
+    /// under parallel test threads.
     #[tokio::test]
-    async fn one_shot_generate_routes_through_the_classifier_override() {
-        let recorder = Arc::new(crate::test_support::OverrideRecordingInference::default());
-        let inference: Arc<dyn hkask_types::InferencePort> = recorder.clone();
-        let text = one_shot_generate(&inference, "probe prompt", 0.4)
-            .await
-            .expect("one-shot generate must succeed through the override-bearing arm");
-        assert!(!text.is_empty(), "the stub's fixture text must come back");
-        let calls = recorder.calls.lock().expect("calls");
-        assert_eq!(calls.len(), 1, "one inference call per one-shot generate");
-        assert_eq!(
-            calls[0].0, "generate_with_model",
-            "one_shot_generate must route through generate_with_model — bare generate() lands \
-             on the host default chat model, which can be thinking-mandatory (the d58fd87b \
-             drop shape)"
-        );
-        assert_eq!(
-            calls[0].1,
-            hkask_inference::model_constants::classifier_model(),
-            "the override must be the classifier model resolved at call time — never \
-             silently absent"
-        );
+    async fn one_shot_generate_routes_through_the_classifier_override()
+    -> Result<(), Box<dyn std::error::Error>> {
+        const LEG: &str = "KASS_ONESHOT_ROUTE_LEG";
+        if std::env::var_os(LEG).is_some() {
+            let recorder = Arc::new(crate::test_support::OverrideRecordingInference::default());
+            let inference: Arc<dyn hkask_types::InferencePort> = recorder.clone();
+            let text = one_shot_generate(&inference, "probe prompt", 0.4).await?;
+            assert!(!text.is_empty(), "the stub's fixture text must come back");
+            let calls = recorder.calls.lock().expect("calls");
+            assert_eq!(calls.len(), 1, "one inference call per one-shot generate");
+            assert_eq!(
+                calls[0].0, "generate_with_model",
+                "one_shot_generate must route through generate_with_model — bare generate() \
+                 lands on the host default chat model, which can be thinking-mandatory (the \
+                 d58fd87b drop shape)"
+            );
+            assert_eq!(
+                calls[0].1.as_deref(),
+                Some(crate::test_support::PROBE_CLASSIFIER_MODEL),
+                "the override must be the env-resolved classifier value — never silently absent"
+            );
+            return Ok(());
+        }
+        crate::test_support::spawn_env_leg(
+            LEG,
+            "local_knowledge::tests::one_shot_generate_routes_through_the_classifier_override",
+            true,
+        )
+        .await
+    }
+
+    /// An unset classifier model refuses: a typed error naming the setting,
+    /// zero port calls — the default chat model is never served (RED on the
+    /// pre-ruling tree, where the None arm silently succeeded).
+    #[tokio::test]
+    async fn one_shot_generate_refuses_without_the_classifier_model()
+    -> Result<(), Box<dyn std::error::Error>> {
+        const LEG: &str = "KASS_ONESHOT_REFUSE_LEG";
+        if std::env::var_os(LEG).is_some() {
+            let recorder = Arc::new(crate::test_support::OverrideRecordingInference::default());
+            let inference: Arc<dyn hkask_types::InferencePort> = recorder.clone();
+            let error = one_shot_generate(&inference, "probe prompt", 0.4)
+                .await
+                .expect_err("one-shot generate must refuse when the classifier model is unset");
+            let message = error.to_string();
+            assert!(
+                message.contains("HKASK_CLASSIFIER_MODEL")
+                    || message.contains("kask.models.classifier_model"),
+                "the refusal must name the setting, got: {message}"
+            );
+            assert!(
+                recorder.calls.lock().expect("calls").is_empty(),
+                "no port call on refusal — the default chat model is never served"
+            );
+            return Ok(());
+        }
+        crate::test_support::spawn_env_leg(
+            LEG,
+            "local_knowledge::tests::one_shot_generate_refuses_without_the_classifier_model",
+            false,
+        )
+        .await
     }
 
     #[derive(Clone, Copy)]

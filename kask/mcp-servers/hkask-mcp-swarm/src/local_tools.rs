@@ -2859,12 +2859,18 @@ impl SwarmServer {
             // Use the inference port directly for AI-assisted composition
             // guidance. Route through the classifier-class model
             // (`kask.models.classifier_model`, env `HKASK_CLASSIFIER_MODEL`),
-            // which accepts reasoning-off requests: the host session's default
-            // chat model can be thinking-mandatory (OpenRouter 400 "Reasoning
-            // is mandatory for this endpoint and cannot be disabled" — live
-            // 2026-10-08, card d58fd87b), which left every suggest call
-            // unavailable. The same fix class as the validate advisory's
-            // reroute (f8ba3c40d8).
+            // resolved or refused — never a silent None fallback to the host
+            // default chat model, which can be thinking-mandatory (OpenRouter
+            // 400 "Reasoning is mandatory for this endpoint and cannot be
+            // disabled" — live 2026-10-08, card d58fd87b; refuse-on-None
+            // ruling 2026-10-09). The same resolution the validate advisory
+            // and the eval runtime use.
+            let classifier = hkask_inference::model_constants::resolve_classifier_model()
+                .map_err(|e| {
+                    map_local_swarm_error(LocalSwarmError::Unavailable(format!(
+                        "AI assist requires the classifier model: {e}"
+                    )))
+                })?;
             let runtime = self
                 .local_runtime
                 .get_or_init()
@@ -2875,7 +2881,7 @@ impl SwarmServer {
                 .generate_with_model(
                     &format!("You are an expert at composing AI agent teams. Based on the following request, generate a JSON response with suggested agent/swarm configuration:\n\n{}", json_task),
                     &hkask_types::LLMParameters::default(),
-                    hkask_inference::model_constants::classifier_model().as_deref(),
+                    Some(classifier.as_str()),
                     None,
                 )
                 .await
@@ -2944,9 +2950,15 @@ impl SwarmServer {
         // 400 "Reasoning is mandatory for this endpoint and cannot be
         // disabled" — live 2026-10-03, every advisory call), which left the
         // advisory layer dead while the deterministic verdict stood. Route
-        // through the classifier-class model, which accepts reasoning-off
-        // requests — the same fix class as the 2026-09-29 classifier-model
-        // repair, and the same resolution the eval runtime uses below.
+        // through the classifier-class model, resolved or refused — never a
+        // silent None fallback (refuse-on-None ruling 2026-10-09) — the same
+        // resolution the suggest path and the eval runtime use.
+        let classifier =
+            hkask_inference::model_constants::resolve_classifier_model().map_err(|e| {
+                LocalSwarmError::Unavailable(format!(
+                    "AI assist advisory requires the classifier model: {e}"
+                ))
+            })?;
         let result = inference
             .generate_with_model(
                 &format!(
@@ -2959,7 +2971,7 @@ impl SwarmServer {
                     json_task
                 ),
                 &hkask_types::LLMParameters::default(),
-                hkask_inference::model_constants::classifier_model().as_deref(),
+                Some(classifier.as_str()),
                 None,
             )
             .await

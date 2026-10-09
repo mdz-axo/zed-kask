@@ -104,6 +104,8 @@ pub(crate) struct DistillationConfig {
     pub cadence_secs: u64,
     pub idle_secs: u64,
     /// Non-thinking model for lesson extraction (`HKASK_CLASSIFIER_MODEL`).
+    /// `None` (env not injected) refuses the pass — never the default chat
+    /// model (the refuse-on-None ruling, 2026-10-09).
     pub model: Option<String>,
 }
 
@@ -130,7 +132,7 @@ impl DistillationConfig {
                 "HKASK_MEMORY_DISTILLATION_IDLE_SECS",
                 DEFAULT_DISTILLATION_IDLE_SECS,
             ),
-            model: std::env::var("HKASK_CLASSIFIER_MODEL").ok(),
+            model: hkask_inference::model_constants::classifier_model(),
         }
     }
 }
@@ -381,8 +383,10 @@ pub(crate) struct DistillationOutcome {
     pub threads_distilled: usize,
     pub lessons_inserted: usize,
     pub lessons_skipped: usize,
-    /// The pass could not read the store — the caller's cursor must not
-    /// advance, or turns stored during the outage would fall behind it.
+    /// The pass could not read the store — or refused for missing
+    /// configuration (unset classifier model) — the caller's cursor must not
+    /// advance, or turns stored during the outage (or left un-distilled by
+    /// the refusal) would fall behind it.
     pub scan_failed: bool,
     /// Threads still holding un-distilled turns after this pass (skipped
     /// as active, or failed before the watermark advanced), mapped to
@@ -411,6 +415,23 @@ pub(crate) async fn distill_store(
     revisit: &[String],
     model: Option<&str>,
 ) -> DistillationOutcome {
+    // Refuse, never fall back (operator ruling 2026-10-09, the d58fd87b
+    // class): lesson extraction needs the non-thinking classifier model; an
+    // unset `HKASK_CLASSIFIER_MODEL` must not fall back to the port-default
+    // chat model, which can be thinking-mandatory (OpenRouter 400) and
+    // failed every batch per pass. The refusal holds the cursor
+    // (`scan_failed`) so un-distilled turns stay visible to a healed pass.
+    let Some(model) = model else {
+        tracing::warn!(
+            target: "hkask.mcp.curator.distillation",
+            "Distillation pass refused — kask.models.classifier_model \
+             (HKASK_CLASSIFIER_MODEL) is not set; set the setting to enable lesson \
+             extraction (the default chat model is never substituted)"
+        );
+        let mut outcome = DistillationOutcome::default();
+        outcome.scan_failed = true;
+        return outcome;
+    };
     let mut outcome = DistillationOutcome::default();
     // Turn discovery is the shared contract (`thread_turns`): the scan runs
     // over the shared-copy prefix, which ingest writes for EVERY turn —
@@ -555,12 +576,11 @@ pub(crate) async fn distill_store(
         };
         for batch in pending.chunks(MAX_TURNS_PER_PROMPT) {
             let prompt = build_distillation_prompt(&thread_id, batch, &prior_lessons);
-            // Route to the non-thinking model: the port default is
-            // reasoning-mandatory and rejects `thinking_allowed: false`.
-            // `generate_with_model` falls back to the port default when
-            // `model` is None (unset `HKASK_CLASSIFIER_MODEL`).
+            // `model` is resolved above (the pass refused at the top when
+            // unset) — the extraction call always carries the non-thinking
+            // classifier model, never the port-default chat model.
             let generated = match inference_port
-                .generate_with_model(&prompt, &LLMParameters::default(), model, None)
+                .generate_with_model(&prompt, &LLMParameters::default(), Some(model), None)
                 .await
             {
                 Ok(result) => result,
@@ -1613,6 +1633,57 @@ mod tests {
         );
     }
 
+    /// The refuse-on-None ruling (operator 2026-10-09, the d58fd87b class):
+    /// an unset classifier model refuses the pass — never a silent fallback
+    /// to the port-default chat model (which can be thinking-mandatory →
+    /// every batch failed per pass). The refusal holds the cursor
+    /// (scan_failed) so un-distilled turns stay visible to a healed pass,
+    /// and makes no generate call.
+    #[tokio::test]
+    async fn distill_store_refuses_without_a_model_and_never_serves_the_default() {
+        let store = test_store();
+        let webid = WebID::from_persona(b"curator");
+        let now = chrono::Utc::now();
+        turn_h_mem(
+            &store,
+            "t-refuse",
+            "please proceed",
+            "done — all green",
+            now - chrono::Duration::seconds(600),
+            webid,
+        );
+        let port = ModelRecordingPort {
+            response: lesson_response(
+                "refused-entity",
+                "refused-attribute",
+                "must never be distilled without a model",
+                &["00000000-0000-0000-0000-000000000000"],
+            ),
+            seen_model: std::sync::Mutex::new(Vec::new()),
+        };
+        let outcome = distill_store(
+            &store,
+            &port,
+            webid,
+            now,
+            DEFAULT_DISTILLATION_IDLE_SECS,
+            now - chrono::Duration::seconds(3600),
+            &[],
+            None,
+        )
+        .await;
+        assert!(
+            outcome.scan_failed,
+            "an unset model must refuse the pass (the cursor must not advance past \
+             un-distilled turns)"
+        );
+        assert!(
+            port.seen_model.lock().expect("recorder mutex").is_empty(),
+            "no generate call on refusal — the default chat model is never served"
+        );
+        assert_eq!(outcome.lessons_inserted, 0);
+    }
+
     /// A generate failure is counted as an extraction failure so the
     /// stalled-pass regulation span has a real signal, and the thread
     /// stays pending for retry (watermark not advanced).
@@ -1641,7 +1712,7 @@ mod tests {
             DEFAULT_DISTILLATION_IDLE_SECS,
             now - chrono::Duration::seconds(3600),
             &[],
-            None,
+            Some("test-model"),
         )
         .await;
         assert_eq!(outcome.extraction_failures, 1);
@@ -1749,7 +1820,7 @@ mod tests {
             DEFAULT_DISTILLATION_IDLE_SECS,
             now - chrono::Duration::seconds(3600),
             &[],
-            None,
+            Some("test-model"),
         )
         .await;
         assert_eq!(outcome.threads_examined, 1);
@@ -1823,7 +1894,7 @@ mod tests {
             DEFAULT_DISTILLATION_IDLE_SECS,
             now - chrono::Duration::seconds(3600),
             &[],
-            None,
+            Some("test-model"),
         )
         .await;
         assert!(outcome.threads_pending.contains_key("t-duplicate-markers"));
@@ -1870,7 +1941,7 @@ mod tests {
             DEFAULT_DISTILLATION_IDLE_SECS,
             now - chrono::Duration::seconds(3600),
             &[],
-            None,
+            Some("test-model"),
         )
         .await;
         assert_eq!(outcome.extraction_failures, 1);
@@ -1919,7 +1990,7 @@ mod tests {
             DEFAULT_DISTILLATION_IDLE_SECS,
             now - chrono::Duration::seconds(3600),
             &[],
-            None,
+            Some("test-model"),
         )
         .await;
         assert_eq!(second.threads_distilled, 1);
@@ -2020,7 +2091,7 @@ mod tests {
             DEFAULT_DISTILLATION_IDLE_SECS,
             now - chrono::Duration::seconds(3600),
             &[],
-            None,
+            Some("test-model"),
         )
         .await;
         assert_eq!(outcome.lessons_inserted, 1);
@@ -2090,7 +2161,7 @@ mod tests {
             DEFAULT_DISTILLATION_IDLE_SECS,
             now - chrono::Duration::seconds(3600),
             &[],
-            None,
+            Some("test-model"),
         )
         .await;
         assert_eq!(outcome.extraction_failures, 0);
@@ -2141,7 +2212,7 @@ mod tests {
             DEFAULT_DISTILLATION_IDLE_SECS,
             now - chrono::Duration::seconds(3600),
             &[],
-            None,
+            Some("test-model"),
         )
         .await;
         assert_eq!(outcome.lessons_inserted, 0);
@@ -2210,7 +2281,7 @@ mod tests {
             DEFAULT_DISTILLATION_IDLE_SECS,
             now - chrono::Duration::seconds(3600),
             &[],
-            None,
+            Some("test-model"),
         )
         .await;
         assert_eq!(outcome.lessons_inserted, 0);
@@ -2256,7 +2327,7 @@ mod tests {
             DEFAULT_DISTILLATION_IDLE_SECS,
             now - chrono::Duration::seconds(3600),
             &[],
-            None,
+            Some("test-model"),
         )
         .await;
         assert_eq!(outcome.lessons_inserted, 1);
@@ -2327,7 +2398,7 @@ mod tests {
             DEFAULT_DISTILLATION_IDLE_SECS,
             now - chrono::Duration::seconds(3600),
             &[],
-            None,
+            Some("test-model"),
         )
         .await;
         assert_eq!(
@@ -2384,7 +2455,7 @@ mod tests {
             DEFAULT_DISTILLATION_IDLE_SECS,
             now - chrono::Duration::seconds(3600),
             &[],
-            None,
+            Some("test-model"),
         )
         .await;
         assert_eq!(outcome.threads_examined, 1);
@@ -2461,7 +2532,7 @@ mod tests {
             DEFAULT_DISTILLATION_IDLE_SECS,
             now - chrono::Duration::seconds(3600),
             &[],
-            None,
+            Some("test-model"),
         )
         .await;
         assert_eq!(
@@ -2514,7 +2585,7 @@ mod tests {
             DEFAULT_DISTILLATION_IDLE_SECS,
             now - chrono::Duration::seconds(3600),
             &[],
-            None,
+            Some("test-model"),
         )
         .await;
         assert_eq!(outcome.lessons_inserted, 1, "one lesson publishes");
@@ -2574,7 +2645,7 @@ mod tests {
             DEFAULT_DISTILLATION_IDLE_SECS,
             now - chrono::Duration::seconds(3600),
             &[],
-            None,
+            Some("test-model"),
         )
         .await;
         assert_eq!(
@@ -2658,7 +2729,7 @@ mod tests {
             DEFAULT_DISTILLATION_IDLE_SECS,
             now - chrono::Duration::seconds(3600),
             &[],
-            None,
+            Some("test-model"),
         )
         .await;
         assert_eq!(
@@ -2696,7 +2767,7 @@ mod tests {
             DEFAULT_DISTILLATION_IDLE_SECS,
             now - chrono::Duration::seconds(3600),
             &[],
-            None,
+            Some("test-model"),
         )
         .await;
         assert_eq!(
@@ -2770,7 +2841,7 @@ mod tests {
             DEFAULT_DISTILLATION_IDLE_SECS,
             now - chrono::Duration::seconds(3600),
             &[],
-            None,
+            Some("test-model"),
         )
         .await;
         assert_eq!(outcome.lessons_inserted, 1);
@@ -2822,7 +2893,7 @@ mod tests {
             DEFAULT_DISTILLATION_IDLE_SECS,
             now - chrono::Duration::seconds(3600),
             &[],
-            None,
+            Some("test-model"),
         )
         .await;
         assert_eq!(first.lessons_inserted, 1);
@@ -2836,7 +2907,7 @@ mod tests {
             DEFAULT_DISTILLATION_IDLE_SECS,
             chrono::DateTime::from_timestamp(0, 0).expect("epoch"),
             &[],
-            None,
+            Some("test-model"),
         )
         .await;
         assert_eq!(second.threads_distilled, 0);
@@ -2877,7 +2948,7 @@ mod tests {
             DEFAULT_DISTILLATION_IDLE_SECS,
             now - chrono::Duration::seconds(3600),
             &[],
-            None,
+            Some("test-model"),
         )
         .await;
         assert_eq!(outcome.threads_examined, 1);
@@ -2922,7 +2993,7 @@ mod tests {
             DEFAULT_DISTILLATION_IDLE_SECS,
             now - chrono::Duration::seconds(3600),
             &[],
-            None,
+            Some("test-model"),
         )
         .await;
         assert_eq!(outcome.lessons_inserted, 0);
@@ -3025,7 +3096,7 @@ mod tests {
             &mut cursor,
             pass1_now,
             DEFAULT_DISTILLATION_IDLE_SECS,
-            None,
+            Some("test-model"),
         )
         .await;
         assert_eq!(first.threads_examined, 1);
@@ -3040,7 +3111,7 @@ mod tests {
             &mut cursor,
             pass2_now,
             DEFAULT_DISTILLATION_IDLE_SECS,
-            None,
+            Some("test-model"),
         )
         .await;
         assert_eq!(
@@ -3097,7 +3168,7 @@ mod tests {
             &mut cursor,
             pass1_now,
             DEFAULT_DISTILLATION_IDLE_SECS,
-            None,
+            Some("test-model"),
         )
         .await;
         assert_eq!(first.threads_distilled, 0);
@@ -3117,7 +3188,7 @@ mod tests {
             &mut cursor,
             pass2_now,
             DEFAULT_DISTILLATION_IDLE_SECS,
-            None,
+            Some("test-model"),
         )
         .await;
         assert_eq!(second.threads_distilled, 1, "failed thread must be retried");
@@ -3173,7 +3244,7 @@ mod tests {
             &mut cursor,
             pass1_now,
             DEFAULT_DISTILLATION_IDLE_SECS,
-            None,
+            Some("test-model"),
         )
         .await;
         assert_eq!(first.threads_distilled, 1);
@@ -3200,7 +3271,7 @@ mod tests {
             &mut cursor,
             pass2_now,
             DEFAULT_DISTILLATION_IDLE_SECS,
-            None,
+            Some("test-model"),
         )
         .await;
         // Only the new thread is examined: t1 is behind the cursor and not
@@ -3265,7 +3336,7 @@ mod tests {
             &mut cursor,
             pass1_now,
             DEFAULT_DISTILLATION_IDLE_SECS,
-            None,
+            Some("test-model"),
         )
         .await;
         assert!(first.scan_failed);
@@ -3279,7 +3350,7 @@ mod tests {
             &mut cursor,
             pass2_now,
             DEFAULT_DISTILLATION_IDLE_SECS,
-            None,
+            Some("test-model"),
         )
         .await;
         assert_eq!(
@@ -3322,7 +3393,7 @@ mod tests {
             &mut cursor,
             pass1_now,
             DEFAULT_DISTILLATION_IDLE_SECS,
-            None,
+            Some("test-model"),
         )
         .await;
         assert_eq!(first.threads_pending.len(), MAX_PENDING_THREADS);
@@ -3344,7 +3415,7 @@ mod tests {
             &mut cursor,
             pass2_now,
             DEFAULT_DISTILLATION_IDLE_SECS,
-            None,
+            Some("test-model"),
         )
         .await;
         // All 129 examined threads are still active: the pass reports one
@@ -3369,7 +3440,7 @@ mod tests {
             &mut cursor,
             pass3_now,
             DEFAULT_DISTILLATION_IDLE_SECS,
-            None,
+            Some("test-model"),
         )
         .await;
         assert_eq!(third.threads_distilled, MAX_PENDING_THREADS);
@@ -3443,7 +3514,7 @@ mod tests {
             DistillationConfig {
                 cadence_secs: 60,
                 idle_secs: 0,
-                model: None,
+                model: Some("test-model".to_string()),
             },
         );
         // Before the first interval: nothing.
@@ -3512,7 +3583,7 @@ mod tests {
             DistillationConfig {
                 cadence_secs: 7200,
                 idle_secs: 0,
-                model: None,
+                model: Some("test-model".to_string()),
             },
         );
         // One hour in: the old clamp would have fired a pass here.
