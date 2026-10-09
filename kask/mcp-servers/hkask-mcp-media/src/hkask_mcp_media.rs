@@ -5551,9 +5551,7 @@ mod gallery_lifecycle_tests {
     use crate::test_support::read_only_organize_request;
     use hkask_storage::database::sqlite::SqliteDriver;
     use rmcp::handler::server::wrapper::Parameters;
-    use std::future::Future;
     use std::path::Path;
-    use std::pin::Pin;
     type TestResult = Result<(), Box<dyn std::error::Error>>;
 
     fn server(database: &Path, inference: Arc<dyn InferencePort>) -> MediaServer {
@@ -6107,11 +6105,11 @@ mod gallery_lifecycle_tests {
         Ok(())
     }
 
-    /// The shared vision test double: `generate` and `list_models` are the
-    /// boilerplate every vision port repeats; `vision_response` supplies
-    /// the per-test `generate_vision` text. The `barrier` variant parks the
-    /// first call on `entered`/`resume` so a test can switch gallery state
-    /// mid-analysis.
+    /// The shared vision test double: `vision_response` supplies the
+    /// per-test `generate_vision` text and `list_models` advertises the
+    /// vision-capable test model the analysis path resolves. The `barrier`
+    /// variant parks the first call on `entered`/`resume` so a test can
+    /// switch gallery state mid-analysis.
     struct StubVisionPort {
         entered: tokio::sync::Notify,
         resume: tokio::sync::Notify,
@@ -6173,39 +6171,16 @@ mod gallery_lifecycle_tests {
         }
     }
 
-    impl InferencePort for StubVisionPort {
-        fn generate(
-            &self,
-            _prompt: &str,
-            _parameters: &hkask_types::template::LLMParameters,
-            _tools: Option<&[hkask_types::ChatToolDefinition]>,
-        ) -> Pin<
-            Box<
-                dyn Future<
-                        Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
-                    > + Send
-                    + '_,
-            >,
-        > {
+    crate::test_support::media_inference_stub! {
+        StubVisionPort,
+        generate(self, _prompt): {
             Box::pin(async {
                 Err(hkask_types::InferenceError::NotConfigured(
                     "test only supports vision".into(),
                 ))
             })
-        }
-        fn list_models(
-            &self,
-        ) -> Pin<
-            Box<
-                dyn Future<
-                        Output = Result<
-                            Vec<hkask_types::ports::ModelEntry>,
-                            hkask_types::InferenceError,
-                        >,
-                    > + Send
-                    + '_,
-            >,
-        > {
+        },
+        list_models(self): {
             Box::pin(async {
                 Ok(vec![hkask_types::ports::ModelEntry {
                     prefixed_name: "OpenRouter/test-vision".into(),
@@ -6213,21 +6188,8 @@ mod gallery_lifecycle_tests {
                     supports_vision: true,
                 }])
             })
-        }
-        fn generate_vision(
-            &self,
-            prompt: &str,
-            images: &[String],
-            _parameters: &hkask_types::template::LLMParameters,
-            _model: Option<&str>,
-        ) -> Pin<
-            Box<
-                dyn Future<
-                        Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
-                    > + Send
-                    + '_,
-            >,
-        > {
+        },
+        generate_vision(self, prompt, images): {
             assert!(!images.is_empty());
             let text = (self.vision_response)(prompt);
             Box::pin(async move {
@@ -6442,39 +6404,16 @@ mod gallery_lifecycle_tests {
             }
         }
     }
-    impl InferencePort for GenerateBarrierVision {
-        fn generate(
-            &self,
-            _prompt: &str,
-            _parameters: &hkask_types::template::LLMParameters,
-            _tools: Option<&[hkask_types::ChatToolDefinition]>,
-        ) -> Pin<
-            Box<
-                dyn Future<
-                        Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
-                    > + Send
-                    + '_,
-            >,
-        > {
+    crate::test_support::media_inference_stub! {
+        GenerateBarrierVision,
+        generate(self, _prompt): {
             Box::pin(async {
                 Err(hkask_types::InferenceError::NotConfigured(
                     "test only supports media_generate".into(),
                 ))
             })
-        }
-        fn list_models(
-            &self,
-        ) -> Pin<
-            Box<
-                dyn Future<
-                        Output = Result<
-                            Vec<hkask_types::ports::ModelEntry>,
-                            hkask_types::InferenceError,
-                        >,
-                    > + Send
-                    + '_,
-            >,
-        > {
+        },
+        list_models(self): {
             Box::pin(async {
                 Ok(vec![hkask_types::ports::ModelEntry {
                     prefixed_name: "OpenRouter/test-vision".into(),
@@ -6482,32 +6421,15 @@ mod gallery_lifecycle_tests {
                     supports_vision: true,
                 }])
             })
-        }
-        fn generate_vision(
-            &self,
-            _prompt: &str,
-            _images: &[String],
-            _parameters: &hkask_types::template::LLMParameters,
-            _model: Option<&str>,
-        ) -> Pin<
-            Box<
-                dyn Future<
-                        Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
-                    > + Send
-                    + '_,
-            >,
-        > {
+        },
+        generate_vision(self, _prompt, _images): {
             Box::pin(async {
                 Err(hkask_types::InferenceError::NotConfigured(
                     "test only supports media_generate".into(),
                 ))
             })
-        }
-        fn media_generate<'a>(
-            &'a self,
-            _op: &str,
-            _params: &hkask_types::MediaGenerateParams,
-        ) -> hkask_types::ports::MediaFuture<'a> {
+        },
+        media_generate(self, _op, _params): {
             let index = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             let url = self
                 .urls
