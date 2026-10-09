@@ -40,7 +40,7 @@ Before editing, establish or derive:
 
 Ask only for inputs that cannot be derived from the repository, issue, trace, or existing benchmark.
 
-## Step types
+## Step types (D/P labelling)
 
 | Step | Type | Oracle / critique |
 |------|------|-------------------|

@@ -16,7 +16,8 @@
 #      read-triage (a complete unpunctuated goal is a benign flag).
 #   5. D/P labelling presence (body-side, P8.4) — every
 #      computation-prescribing SKILL.md (it names an oracle: lisp_eval,
-#      lean_check, cargo, scenario_* tool calls) carries a D/P labelling
+#      lean_check, cargo — test/check/clippy/bench/tree — criterion,
+#      scenario_* tool calls) carries a D/P labelling
 #      section. Presence is the audit floor; the routing correctness of
 #      any label is judgment (P), critiqued in review. Codified here
 #      2026-09-28 after the filesystem walk ran repeatedly as a re-typed
@@ -138,12 +139,20 @@ done
 # and its accepted-flags ledger govern templates only. Grep reads each
 # SKILL.md directly (no pipe — grep -q's early exit is safe on a file).
 SKILLS_DIR="$SCRIPT_DIR/../../../.agents/skills"
+# The oracle vocabulary that makes a SKILL.md computation-prescribing (P8.4).
+# Widened 2026-10-08 with the benchmark vocabulary (cargo bench / cargo tree /
+# criterion) after the D/P audit found gpui-bench escaping the presence floor
+# (measured: 21 skills match the vocabulary, 20 already admitted). The bare
+# `criterion` alternative can prose-match ("a criterion is...") —
+# over-inclusion is adjudicated at prescreen time; under-inclusion was the
+# audit's gap.
+dp_oracle_pattern='lisp_eval|lean_check|`cargo`|cargo (test|check|clippy|bench|tree)|criterion|scenario_[a-z_]+\('
 dp_total=0
 dp_labeled=0
 dp_flagged=0
 for skill_md in "$SKILLS_DIR"/*/SKILL.md; do
     [ -f "$skill_md" ] || continue
-    if grep -qE 'lisp_eval|lean_check|`cargo`|cargo (test|check|clippy)|scenario_[a-z_]+\(' "$skill_md"; then
+    if grep -qE "$dp_oracle_pattern" "$skill_md"; then
         dp_total=$((dp_total + 1))
         if grep -qE '\*\*D/P|^#+ D/P|D/P labell?ing' "$skill_md"; then
             dp_labeled=$((dp_labeled + 1))
