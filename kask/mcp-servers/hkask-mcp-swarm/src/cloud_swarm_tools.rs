@@ -170,6 +170,47 @@ fn collect_unresolved_ports(
     }
 }
 
+/// Refuse empty request fields by name — the admission validation every
+/// cloud tool runs after [`SwarmServer::require_abw_auth`]. One call per
+/// combined check reproduces the combined message ("workspace_id,
+/// agent_name, and task must be non-empty"); one call per field
+/// reproduces the sequential per-field messages. The message names every
+/// checked field, matching the per-site diagnostics this file has always
+/// emitted.
+fn require_non_empty(fields: &[(&str, &str)]) -> Result<(), McpToolError> {
+    if fields.iter().any(|(_, value)| value.trim().is_empty()) {
+        return Err(McpToolError::invalid_argument(format!(
+            "{} must be non-empty",
+            join_field_names(&fields.iter().map(|(name, _)| *name).collect::<Vec<_>>())
+        )));
+    }
+    Ok(())
+}
+
+/// The field-name list of a non-empty message: "agent_name",
+/// "workspace_id and agent_name", "workspace_id, agent_name, and task".
+fn join_field_names(names: &[&str]) -> String {
+    match names.split_last() {
+        None => String::new(),
+        Some((last, [])) => last.to_string(),
+        Some((last, [head])) => format!("{head} and {last}"),
+        Some((last, rest)) => format!("{}, and {}", rest.join(", "), last),
+    }
+}
+
+impl SwarmServer {
+    /// Require the ABW API key — the admission preamble every cloud tool
+    /// runs first. The mapped error keeps the `permission_denied`
+    /// classification (naming the missing env var) visible to the MCP
+    /// client instead of a raw transport error.
+    fn require_abw_auth(&self) -> Result<(), McpToolError> {
+        self.client
+            .require_auth()
+            .map_err(SwarmError::into_tool_error)?;
+        Ok(())
+    }
+}
+
 #[tool_router(router = cloud_swarm_router, vis = "pub")]
 impl SwarmServer {
     /// Browse the ABW agent catalogue. Works without an API key.
@@ -238,9 +279,7 @@ impl SwarmServer {
         parameters: Parameters<GetSwarmRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "swarm_get_swarm", async {
-            self.client
-                .require_auth()
-                .map_err(SwarmError::into_tool_error)?;
+            self.require_abw_auth()?;
             let req = parameters.0;
 
             match req.workspace_id {
@@ -289,15 +328,9 @@ impl SwarmServer {
         parameters: Parameters<GetAgentRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "swarm_get_agent", async {
-            self.client
-                .require_auth()
-                .map_err(SwarmError::into_tool_error)?;
+            self.require_abw_auth()?;
             let req = parameters.0;
-            if req.agent_name.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "agent_name must be non-empty".to_string(),
-                ));
-            }
+            require_non_empty(&[("agent_name", &req.agent_name)])?;
             // The catalogue carries the full card; filter to the one agent.
             let data = self
                 .client
@@ -345,15 +378,9 @@ impl SwarmServer {
         parameters: Parameters<UpdateAgentRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "swarm_update_agent", async {
-            self.client
-                .require_auth()
-                .map_err(SwarmError::into_tool_error)?;
+            self.require_abw_auth()?;
             let req = parameters.0;
-            if req.agent_name.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "agent_name must be non-empty".to_string(),
-                ));
-            }
+            require_non_empty(&[("agent_name", &req.agent_name)])?;
             let mut payload = serde_json::json!({});
             insert_optional_field(&mut payload, "description", req.description)?;
             insert_optional_field(&mut payload, "system_prompt", req.system_prompt)?;
@@ -401,9 +428,7 @@ impl SwarmServer {
         parameters: Parameters<ListAppsRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "swarm_list_apps", async {
-            self.client
-                .require_auth()
-                .map_err(SwarmError::into_tool_error)?;
+            self.require_abw_auth()?;
             let limit = parameters.0.limit.unwrap_or(50);
             // Apps live under the catalogue's app projection.
             let data = self
@@ -438,9 +463,7 @@ impl SwarmServer {
         _parameters: Parameters<OntologyTemplatesRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "swarm_ontology_templates", async {
-            self.client
-                .require_auth()
-                .map_err(SwarmError::into_tool_error)?;
+            self.require_abw_auth()?;
             let data = self
                 .client
                 .get("/ontology-templates")
@@ -478,15 +501,9 @@ impl SwarmServer {
         parameters: Parameters<ExecuteAgentRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "swarm_execute_agent", async {
-            self.client
-                .require_auth()
-                .map_err(SwarmError::into_tool_error)?;
+            self.require_abw_auth()?;
             let req = parameters.0;
-            if req.agent_name.trim().is_empty() || req.query.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "agent_name and query must be non-empty".to_string(),
-                ));
-            }
+            require_non_empty(&[("agent_name", &req.agent_name), ("query", &req.query)])?;
             // Same consent gate as @mention delegation: the execute route
             // charges the caller's wallet (fermi's execute_agent_handler
             // checks the wallet before running), so the operator's
@@ -541,15 +558,9 @@ impl SwarmServer {
         parameters: Parameters<HireCostRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "swarm_hire_cost", async {
-            self.client
-                .require_auth()
-                .map_err(SwarmError::into_tool_error)?;
+            self.require_abw_auth()?;
             let req = parameters.0;
-            if req.agent_name.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "agent_name must be non-empty".to_string(),
-                ));
-            }
+            require_non_empty(&[("agent_name", &req.agent_name)])?;
 
             let data = self
                 .client
@@ -621,15 +632,9 @@ impl SwarmServer {
             // Auth required: without this, a prompt-injected agent could mint
             // consent tokens and self-authorize credit spends. Every spend tool
             // calls `require_auth()`; the token minter must too.
-            self.client
-                .require_auth()
-                .map_err(SwarmError::into_tool_error)?;
+            self.require_abw_auth()?;
             let req = parameters.0;
-            if req.action.trim().is_empty() || req.target.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "action and target must be non-empty".to_string(),
-                ));
-            }
+            require_non_empty(&[("action", &req.action), ("target", &req.target)])?;
             // Curator calls (action "curate") read task content but spend no
             // credits, so a zero ceiling is correct for them. Spend actions
             // ("hire", "delegate") must authorize a positive ceiling — a zero
@@ -699,15 +704,12 @@ impl SwarmServer {
         parameters: Parameters<HireRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "swarm_hire", async {
-            self.client
-                .require_auth()
-                .map_err(SwarmError::into_tool_error)?;
+            self.require_abw_auth()?;
             let req = parameters.0;
-            if req.workspace_id.trim().is_empty() || req.agent_name.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "workspace_id and agent_name must be non-empty".to_string(),
-                ));
-            }
+            require_non_empty(&[
+                ("workspace_id", &req.workspace_id),
+                ("agent_name", &req.agent_name),
+            ])?;
 
             // The consent gate is the enforcement point. The two-phase shape
             // (authorize → complete) makes the refund invariant structural:
@@ -761,18 +763,13 @@ impl SwarmServer {
         parameters: Parameters<DelegateRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "swarm_delegate", async {
-            self.client
-                .require_auth()
-                .map_err(SwarmError::into_tool_error)?;
+            self.require_abw_auth()?;
             let req = parameters.0;
-            if req.workspace_id.trim().is_empty()
-                || req.agent_name.trim().is_empty()
-                || req.task.trim().is_empty()
-            {
-                return Err(McpToolError::invalid_argument(
-                    "workspace_id, agent_name, and task must be non-empty".to_string(),
-                ));
-            }
+            require_non_empty(&[
+                ("workspace_id", &req.workspace_id),
+                ("agent_name", &req.agent_name),
+                ("task", &req.task),
+            ])?;
 
             // The consent gate + per-dispatch ceiling live in `spend_gate`.
             // Design tradeoff (R8): the consent ceiling gates the operator's
@@ -825,18 +822,13 @@ impl SwarmServer {
         parameters: Parameters<DelegateAndWaitRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "swarm_delegate_and_wait", async {
-            self.client
-                .require_auth()
-                .map_err(SwarmError::into_tool_error)?;
+            self.require_abw_auth()?;
             let req = parameters.0;
-            if req.workspace_id.trim().is_empty()
-                || req.agent_name.trim().is_empty()
-                || req.task.trim().is_empty()
-            {
-                return Err(McpToolError::invalid_argument(
-                    "workspace_id, agent_name, and task must be non-empty".to_string(),
-                ));
-            }
+            require_non_empty(&[
+                ("workspace_id", &req.workspace_id),
+                ("agent_name", &req.agent_name),
+                ("task", &req.task),
+            ])?;
             let timeout_secs = req.timeout_secs.unwrap_or(60).min(300);
             // Step 1: post the @mention via the spend gate. A session token
             // (from `swarm_authorize_session`) may be used in place of a
@@ -938,15 +930,9 @@ impl SwarmServer {
         parameters: Parameters<SwarmRunRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "swarm_run_status", async {
-            self.client
-                .require_auth()
-                .map_err(SwarmError::into_tool_error)?;
+            self.require_abw_auth()?;
             let req = parameters.0;
-            if req.workspace_id.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "workspace_id must be non-empty".to_string(),
-                ));
-            }
+            require_non_empty(&[("workspace_id", &req.workspace_id)])?;
             let limit = req.limit.unwrap_or(50);
             let data = self
                 .client
@@ -990,15 +976,12 @@ impl SwarmServer {
         parameters: Parameters<GeneratePromptRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "swarm_generate_prompt", async {
-            self.client
-                .require_auth()
-                .map_err(SwarmError::into_tool_error)?;
+            self.require_abw_auth()?;
             let req = parameters.0;
-            if req.description.trim().is_empty() || req.agent_name.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "description and agent_name must be non-empty".to_string(),
-                ));
-            }
+            require_non_empty(&[
+                ("description", &req.description),
+                ("agent_name", &req.agent_name),
+            ])?;
             let data = self
                 .client
                 .post(
@@ -1035,15 +1018,9 @@ impl SwarmServer {
         parameters: Parameters<GenerateOntologyRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "swarm_generate_ontology", async {
-            self.client
-                .require_auth()
-                .map_err(SwarmError::into_tool_error)?;
+            self.require_abw_auth()?;
             let req = parameters.0;
-            if req.domain_description.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "domain_description must be non-empty".to_string(),
-                ));
-            }
+            require_non_empty(&[("domain_description", &req.domain_description)])?;
             let data = self
                 .client
                 .post(
@@ -1075,15 +1052,9 @@ impl SwarmServer {
         parameters: Parameters<CreateAgentRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "swarm_create_agent", async {
-            self.client
-                .require_auth()
-                .map_err(SwarmError::into_tool_error)?;
+            self.require_abw_auth()?;
             let req = parameters.0;
-            if req.agent_name.trim().is_empty() || req.system_prompt.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "agent_name and system_prompt must be non-empty".to_string(),
-                ));
-            }
+            require_non_empty(&[("agent_name", &req.agent_name), ("system_prompt", &req.system_prompt)])?;
             // ABW agent names are slugs ([a-z0-9_], 3–64) — reject invalid
             // names here so ABW's confusing 400 becomes a clear argument error
             // (verified live 2026-08-13).
@@ -1172,15 +1143,9 @@ impl SwarmServer {
         parameters: Parameters<CreateSwarmRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "swarm_create_swarm", async {
-            self.client
-                .require_auth()
-                .map_err(SwarmError::into_tool_error)?;
+            self.require_abw_auth()?;
             let req = parameters.0;
-            if req.name.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "name must be non-empty".to_string(),
-                ));
-            }
+            require_non_empty(&[("name", &req.name)])?;
 
             // Create the workspace (free).
             // ABW slugs allow only lowercase letters, digits, and underscores.
@@ -1318,15 +1283,9 @@ impl SwarmServer {
         parameters: Parameters<XamanRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "swarm_xaman", async {
-            self.client
-                .require_auth()
-                .map_err(SwarmError::into_tool_error)?;
+            self.require_abw_auth()?;
             let req = parameters.0;
-            if req.message.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "message must be non-empty".to_string(),
-                ));
-            }
+            require_non_empty(&[("message", &req.message)])?;
 
             // Consent gate: Xaman Ek is a third-party curator that reads user
             // task content. Per the plan's §3.7, sending content to it requires
@@ -1400,15 +1359,9 @@ impl SwarmServer {
         parameters: Parameters<CreateAppRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "swarm_create_app", async {
-            self.client
-                .require_auth()
-                .map_err(SwarmError::into_tool_error)?;
+            self.require_abw_auth()?;
             let req = parameters.0;
-            if req.session_id.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "session_id must be non-empty".to_string(),
-                ));
-            }
+            require_non_empty(&[("session_id", &req.session_id)])?;
             let data = self
                 .client
                 .post(
@@ -1464,15 +1417,9 @@ impl SwarmServer {
         parameters: Parameters<FanoutRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "swarm_fanout", async {
-            self.client
-                .require_auth()
-                .map_err(SwarmError::into_tool_error)?;
+            self.require_abw_auth()?;
             let req = parameters.0;
-            if req.workspace_id.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "workspace_id must be non-empty".to_string(),
-                ));
-            }
+            require_non_empty(&[("workspace_id", &req.workspace_id)])?;
             if req.delegations.is_empty() {
                 return Err(McpToolError::invalid_argument(
                     "delegations must be non-empty".to_string(),
@@ -1568,15 +1515,12 @@ impl SwarmServer {
         parameters: Parameters<FireRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "swarm_fire", async {
-            self.client
-                .require_auth()
-                .map_err(SwarmError::into_tool_error)?;
+            self.require_abw_auth()?;
             let req = parameters.0;
-            if req.workspace_id.trim().is_empty() || req.agent_name.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "workspace_id and agent_name must be non-empty".to_string(),
-                ));
-            }
+            require_non_empty(&[
+                ("workspace_id", &req.workspace_id),
+                ("agent_name", &req.agent_name),
+            ])?;
             let data = self
                 .client
                 .delete(&format!(
@@ -1612,15 +1556,9 @@ impl SwarmServer {
         parameters: Parameters<DeleteAgentRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "swarm_delete_agent", async {
-            self.client
-                .require_auth()
-                .map_err(SwarmError::into_tool_error)?;
+            self.require_abw_auth()?;
             let req = parameters.0;
-            if req.agent_name.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "agent_name must be non-empty".to_string(),
-                ));
-            }
+            require_non_empty(&[("agent_name", &req.agent_name)])?;
             // DELETE /agents/{id} accepts the agent_id (uuid for owned agents)
             // and the agent_name (slug). If the direct delete 404s, the caller
             // may have passed the slug while ABW keys the agent by uuid —
@@ -1698,15 +1636,9 @@ impl SwarmServer {
         parameters: Parameters<DeleteSwarmRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "swarm_delete_swarm", async {
-            self.client
-                .require_auth()
-                .map_err(SwarmError::into_tool_error)?;
+            self.require_abw_auth()?;
             let req = parameters.0;
-            if req.workspace_id.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "workspace_id must be non-empty".to_string(),
-                ));
-            }
+            require_non_empty(&[("workspace_id", &req.workspace_id)])?;
             let data = self
                 .client
                 .delete(&format!("/teams/{}", url_encode_segment(&req.workspace_id)))
@@ -1753,20 +1685,10 @@ impl SwarmServer {
         parameters: Parameters<SearchKnowledgeRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "swarm_search_knowledge", async {
-            self.client
-                .require_auth()
-                .map_err(SwarmError::into_tool_error)?;
+            self.require_abw_auth()?;
             let req = parameters.0;
-            if req.agent_name.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "agent_name must be non-empty".to_string(),
-                ));
-            }
-            if req.query.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "query must be non-empty".to_string(),
-                ));
-            }
+            require_non_empty(&[("agent_name", &req.agent_name)])?;
+            require_non_empty(&[("query", &req.query)])?;
             let agent_segment = url_encode_segment(&req.agent_name);
             let query_lower = req.query.to_lowercase();
             let query_terms: Vec<&str> = query_lower.split_whitespace().collect();
@@ -1873,15 +1795,9 @@ impl SwarmServer {
         parameters: Parameters<PublishChecksRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "swarm_publish_checks", async {
-            self.client
-                .require_auth()
-                .map_err(SwarmError::into_tool_error)?;
+            self.require_abw_auth()?;
             let req = parameters.0;
-            if req.agent_name.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "agent_name must be non-empty".to_string(),
-                ));
-            }
+            require_non_empty(&[("agent_name", &req.agent_name)])?;
             let data = self
                 .client
                 .get(&format!(
@@ -1907,15 +1823,9 @@ impl SwarmServer {
         parameters: Parameters<PublishAgentRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "swarm_publish_agent", async {
-            self.client
-                .require_auth()
-                .map_err(SwarmError::into_tool_error)?;
+            self.require_abw_auth()?;
             let req = parameters.0;
-            if req.agent_name.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "agent_name must be non-empty".to_string(),
-                ));
-            }
+            require_non_empty(&[("agent_name", &req.agent_name)])?;
             let force = req.force.unwrap_or(false);
             let reason = req.reason.unwrap_or_default();
             if force && reason.trim().is_empty() {
@@ -1972,15 +1882,9 @@ impl SwarmServer {
         parameters: Parameters<ForkAgentRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "swarm_fork_agent", async {
-            self.client
-                .require_auth()
-                .map_err(SwarmError::into_tool_error)?;
+            self.require_abw_auth()?;
             let req = parameters.0;
-            if req.agent_name.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "agent_name must be non-empty".to_string(),
-                ));
-            }
+            require_non_empty(&[("agent_name", &req.agent_name)])?;
             let payload = serde_json::json!({
                 "include_ontology": req.include_ontology.unwrap_or(false),
                 "include_embeddings": req.include_embeddings.unwrap_or(false),
@@ -2020,15 +1924,9 @@ impl SwarmServer {
         parameters: Parameters<GetAppRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "swarm_get_app", async {
-            self.client
-                .require_auth()
-                .map_err(SwarmError::into_tool_error)?;
+            self.require_abw_auth()?;
             let req = parameters.0;
-            if req.slug.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "slug must be non-empty".to_string(),
-                ));
-            }
+            require_non_empty(&[("slug", &req.slug)])?;
             let data = self
                 .client
                 .get(&format!("/apps/{}", url_encode_segment(&req.slug)))
@@ -2053,15 +1951,9 @@ impl SwarmServer {
         parameters: Parameters<CreateAppDirectRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "swarm_create_app_direct", async {
-            self.client
-                .require_auth()
-                .map_err(SwarmError::into_tool_error)?;
+            self.require_abw_auth()?;
             let req = parameters.0;
-            if req.slug.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "slug must be non-empty".to_string(),
-                ));
-            }
+            require_non_empty(&[("slug", &req.slug)])?;
             let mut payload = serde_json::json!({
                 "slug": req.slug,
             });
@@ -2098,15 +1990,9 @@ impl SwarmServer {
         parameters: Parameters<UpdateAppRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "swarm_update_app", async {
-            self.client
-                .require_auth()
-                .map_err(SwarmError::into_tool_error)?;
+            self.require_abw_auth()?;
             let req = parameters.0;
-            if req.slug.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "slug must be non-empty".to_string(),
-                ));
-            }
+            require_non_empty(&[("slug", &req.slug)])?;
             let mut payload = serde_json::json!({});
             insert_optional_field(&mut payload, "name", req.name)?;
             insert_optional_field(&mut payload, "tagline", req.tagline)?;
@@ -2147,15 +2033,9 @@ impl SwarmServer {
         parameters: Parameters<PublishAppRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "swarm_publish_app", async {
-            self.client
-                .require_auth()
-                .map_err(SwarmError::into_tool_error)?;
+            self.require_abw_auth()?;
             let req = parameters.0;
-            if req.slug.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "slug must be non-empty".to_string(),
-                ));
-            }
+            require_non_empty(&[("slug", &req.slug)])?;
             let data = self
                 .client
                 .post(
@@ -2185,15 +2065,9 @@ impl SwarmServer {
         parameters: Parameters<ArchiveAppRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "swarm_archive_app", async {
-            self.client
-                .require_auth()
-                .map_err(SwarmError::into_tool_error)?;
+            self.require_abw_auth()?;
             let req = parameters.0;
-            if req.slug.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "slug must be non-empty".to_string(),
-                ));
-            }
+            require_non_empty(&[("slug", &req.slug)])?;
             let data = self
                 .client
                 .post(
@@ -2223,15 +2097,9 @@ impl SwarmServer {
         parameters: Parameters<SpawnAppWorkspaceRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "swarm_spawn_app_workspace", async {
-            self.client
-                .require_auth()
-                .map_err(SwarmError::into_tool_error)?;
+            self.require_abw_auth()?;
             let req = parameters.0;
-            if req.slug.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "slug must be non-empty".to_string(),
-                ));
-            }
+            require_non_empty(&[("slug", &req.slug)])?;
             let mut payload = serde_json::json!({});
             insert_optional_field(&mut payload, "name", req.name)?;
             insert_optional_field(&mut payload, "description", req.description)?;
@@ -2264,15 +2132,9 @@ impl SwarmServer {
         parameters: Parameters<ListAppWorkspacesRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "swarm_list_app_workspaces", async {
-            self.client
-                .require_auth()
-                .map_err(SwarmError::into_tool_error)?;
+            self.require_abw_auth()?;
             let req = parameters.0;
-            if req.slug.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "slug must be non-empty".to_string(),
-                ));
-            }
+            require_non_empty(&[("slug", &req.slug)])?;
             let data = self
                 .client
                 .get(&format!(
@@ -2298,15 +2160,9 @@ impl SwarmServer {
         parameters: Parameters<GetAppSchemaRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "swarm_get_app_schema", async {
-            self.client
-                .require_auth()
-                .map_err(SwarmError::into_tool_error)?;
+            self.require_abw_auth()?;
             let req = parameters.0;
-            if req.slug.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "slug must be non-empty".to_string(),
-                ));
-            }
+            require_non_empty(&[("slug", &req.slug)])?;
             let data = self
                 .client
                 .get(&format!("/apps/{}/schema", url_encode_segment(&req.slug)))
@@ -2331,15 +2187,9 @@ impl SwarmServer {
         parameters: Parameters<ForkWorkspaceToAppRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "swarm_fork_workspace_to_app", async {
-            self.client
-                .require_auth()
-                .map_err(SwarmError::into_tool_error)?;
+            self.require_abw_auth()?;
             let req = parameters.0;
-            if req.workspace_id.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "workspace_id must be non-empty".to_string(),
-                ));
-            }
+            require_non_empty(&[("workspace_id", &req.workspace_id)])?;
             let data = self
                 .client
                 .post(
@@ -2375,15 +2225,9 @@ impl SwarmServer {
         parameters: Parameters<ListWorkspaceActionsRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "swarm_workspace_list_actions", async {
-            self.client
-                .require_auth()
-                .map_err(SwarmError::into_tool_error)?;
+            self.require_abw_auth()?;
             let req = parameters.0;
-            if req.workspace_id.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "workspace_id must be non-empty".to_string(),
-                ));
-            }
+            require_non_empty(&[("workspace_id", &req.workspace_id)])?;
             let data = self
                 .client
                 .get(&format!(
@@ -2410,15 +2254,9 @@ impl SwarmServer {
         parameters: Parameters<ListPendingActionsRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "swarm_workspace_pending_actions", async {
-            self.client
-                .require_auth()
-                .map_err(SwarmError::into_tool_error)?;
+            self.require_abw_auth()?;
             let req = parameters.0;
-            if req.workspace_id.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "workspace_id must be non-empty".to_string(),
-                ));
-            }
+            require_non_empty(&[("workspace_id", &req.workspace_id)])?;
             let data = self
                 .client
                 .get(&format!(
@@ -2446,20 +2284,10 @@ impl SwarmServer {
         parameters: Parameters<MutateDocumentRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "swarm_workspace_mutate_document", async {
-            self.client
-                .require_auth()
-                .map_err(SwarmError::into_tool_error)?;
+            self.require_abw_auth()?;
             let req = parameters.0;
-            if req.workspace_id.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "workspace_id must be non-empty".to_string(),
-                ));
-            }
-            if req.path.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "path must be non-empty".to_string(),
-                ));
-            }
+            require_non_empty(&[("workspace_id", &req.workspace_id)])?;
+            require_non_empty(&[("path", &req.path)])?;
             let mut payload = serde_json::json!({
                 "path": req.path,
                 "patch": req.patch,
@@ -2499,20 +2327,10 @@ impl SwarmServer {
         parameters: Parameters<ForkStateRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "swarm_workspace_fork_state", async {
-            self.client
-                .require_auth()
-                .map_err(SwarmError::into_tool_error)?;
+            self.require_abw_auth()?;
             let req = parameters.0;
-            if req.workspace_id.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "workspace_id must be non-empty".to_string(),
-                ));
-            }
-            if req.name.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "name must be non-empty".to_string(),
-                ));
-            }
+            require_non_empty(&[("workspace_id", &req.workspace_id)])?;
+            require_non_empty(&[("name", &req.name)])?;
             let mut payload = serde_json::json!({
                 "name": req.name,
                 "patch": req.patch,
@@ -2549,20 +2367,10 @@ impl SwarmServer {
         parameters: Parameters<AcceptActionRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "swarm_workspace_accept_action", async {
-            self.client
-                .require_auth()
-                .map_err(SwarmError::into_tool_error)?;
+            self.require_abw_auth()?;
             let req = parameters.0;
-            if req.workspace_id.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "workspace_id must be non-empty".to_string(),
-                ));
-            }
-            if req.action_id.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "action_id must be non-empty".to_string(),
-                ));
-            }
+            require_non_empty(&[("workspace_id", &req.workspace_id)])?;
+            require_non_empty(&[("action_id", &req.action_id)])?;
             let mut payload = serde_json::json!({});
             insert_optional_field(&mut payload, "content", req.content)?;
             insert_optional_field(&mut payload, "apply_result", req.apply_result)?;
@@ -2595,20 +2403,10 @@ impl SwarmServer {
         parameters: Parameters<RejectActionRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "swarm_workspace_reject_action", async {
-            self.client
-                .require_auth()
-                .map_err(SwarmError::into_tool_error)?;
+            self.require_abw_auth()?;
             let req = parameters.0;
-            if req.workspace_id.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "workspace_id must be non-empty".to_string(),
-                ));
-            }
-            if req.action_id.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "action_id must be non-empty".to_string(),
-                ));
-            }
+            require_non_empty(&[("workspace_id", &req.workspace_id)])?;
+            require_non_empty(&[("action_id", &req.action_id)])?;
             let mut payload = serde_json::json!({});
             insert_optional_field(&mut payload, "note", req.note)?;
             let data = self
@@ -2641,23 +2439,14 @@ impl SwarmServer {
         parameters: Parameters<AnnotateWorkspaceRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "swarm_workspace_annotate", async {
-            self.client
-                .require_auth()
-                .map_err(SwarmError::into_tool_error)?;
+            self.require_abw_auth()?;
             let req = parameters.0;
-            if req.workspace_id.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "workspace_id must be non-empty".to_string(),
-                ));
-            }
-            if req.kind.trim().is_empty()
-                || req.target.trim().is_empty()
-                || req.body.trim().is_empty()
-            {
-                return Err(McpToolError::invalid_argument(
-                    "kind, target, and body must be non-empty".to_string(),
-                ));
-            }
+            require_non_empty(&[("workspace_id", &req.workspace_id)])?;
+            require_non_empty(&[
+                ("kind", &req.kind),
+                ("target", &req.target),
+                ("body", &req.body),
+            ])?;
             let mut payload = serde_json::json!({
                 "kind": req.kind,
                 "target": req.target,
@@ -2694,15 +2483,9 @@ impl SwarmServer {
         parameters: Parameters<ListAnnotationsRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "swarm_workspace_list_annotations", async {
-            self.client
-                .require_auth()
-                .map_err(SwarmError::into_tool_error)?;
+            self.require_abw_auth()?;
             let req = parameters.0;
-            if req.workspace_id.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "workspace_id must be non-empty".to_string(),
-                ));
-            }
+            require_non_empty(&[("workspace_id", &req.workspace_id)])?;
             let data = self
                 .client
                 .get(&format!(
@@ -2734,15 +2517,9 @@ impl SwarmServer {
         parameters: Parameters<ListWorkspaceFilesRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "swarm_workspace_list_files", async {
-            self.client
-                .require_auth()
-                .map_err(SwarmError::into_tool_error)?;
+            self.require_abw_auth()?;
             let req = parameters.0;
-            if req.workspace_id.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "workspace_id must be non-empty".to_string(),
-                ));
-            }
+            require_non_empty(&[("workspace_id", &req.workspace_id)])?;
             let data = self
                 .client
                 .get(&format!(
@@ -2768,20 +2545,10 @@ impl SwarmServer {
         parameters: Parameters<ReadWorkspaceFileRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "swarm_workspace_read_file", async {
-            self.client
-                .require_auth()
-                .map_err(SwarmError::into_tool_error)?;
+            self.require_abw_auth()?;
             let req = parameters.0;
-            if req.workspace_id.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "workspace_id must be non-empty".to_string(),
-                ));
-            }
-            if req.path.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "path must be non-empty".to_string(),
-                ));
-            }
+            require_non_empty(&[("workspace_id", &req.workspace_id)])?;
+            require_non_empty(&[("path", &req.path)])?;
             let data = self
                 .client
                 .get(&format!(
@@ -2810,20 +2577,10 @@ impl SwarmServer {
         parameters: Parameters<WriteWorkspaceFileRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "swarm_workspace_write_file", async {
-            self.client
-                .require_auth()
-                .map_err(SwarmError::into_tool_error)?;
+            self.require_abw_auth()?;
             let req = parameters.0;
-            if req.workspace_id.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "workspace_id must be non-empty".to_string(),
-                ));
-            }
-            if req.path.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "path must be non-empty".to_string(),
-                ));
-            }
+            require_non_empty(&[("workspace_id", &req.workspace_id)])?;
+            require_non_empty(&[("path", &req.path)])?;
             let payload = serde_json::json!({
                 "content": req.content,
             });
