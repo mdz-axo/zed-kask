@@ -2382,6 +2382,44 @@ mod tool_behavior_tests {
         Ok(())
     }
 
+    /// The real-video server environment shared by the video publication and
+    /// rollback tests: the media test env (env lock, artifacts dir, env
+    /// guard, gallery root), a real source.mp4, and a server over the
+    /// gallery. The driver is exposed for the rollback tests' trigger
+    /// injection — the trigger SQL stays at each call site, it is what the
+    /// test varies. The holders stay bound in the struct so the env outlives
+    /// the test body.
+    struct VideoServerEnv {
+        _env_lock: tokio::sync::MutexGuard<'static, ()>,
+        _artifacts: tempfile::TempDir,
+        _env: ArtifactsEnvGuard,
+        _gallery_root: tempfile::TempDir,
+        source: std::path::PathBuf,
+        store: Arc<GalleryStore>,
+        driver: Arc<hkask_storage::database::sqlite::SqliteDriver>,
+        gallery_id: String,
+        server: MediaServer,
+    }
+
+    async fn video_server_env() -> Result<VideoServerEnv, Box<dyn std::error::Error>> {
+        let (env_lock, artifacts, env, gallery_root, store, driver, gallery) =
+            media_test_env().await?;
+        let source = gallery_root.path().join("source.mp4");
+        create_real_video(&source).await?;
+        let server = server_with_gallery(store.clone(), gallery.id.clone(), gallery_root.path());
+        Ok(VideoServerEnv {
+            _env_lock: env_lock,
+            _artifacts: artifacts,
+            _env: env,
+            _gallery_root: gallery_root,
+            source,
+            store,
+            driver,
+            gallery_id: gallery.id,
+            server,
+        })
+    }
+
     fn media_hint_body(hint: &str) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
         let body = hint
             .strip_prefix("```media\n")
@@ -2848,21 +2886,17 @@ mod tool_behavior_tests {
     async fn video_clip_gallery_failure_rolls_back_real_ffmpeg_output()
     -> Result<(), Box<dyn std::error::Error>> {
         use hkask_storage::database::driver::DatabaseDriver;
-        let (_env_lock, _artifacts, _env, gallery_root, store, driver, gallery) =
-            media_test_env().await?;
-        let source = gallery_root.path().join("source.mp4");
-        create_real_video(&source).await?;
-        driver.execute(
+        let env = video_server_env().await?;
+        env.driver.execute(
             "CREATE TRIGGER fail_video_clip_asset BEFORE INSERT ON gallery_images \
              BEGIN SELECT RAISE(ABORT, 'injected gallery failure'); END",
             &[],
         )?;
-        let gallery_id = gallery.id.clone();
-        let server = server_with_gallery(store.clone(), gallery.id, gallery_root.path());
 
-        let error = server
+        let error = env
+            .server
             .video_clip(Parameters(VideoClipRequest {
-                video_url: source.to_string_lossy().into_owned(),
+                video_url: env.source.to_string_lossy().into_owned(),
                 start_sec: 0.0,
                 end_sec: 1.0,
             }))
@@ -2873,8 +2907,8 @@ mod tool_behavior_tests {
             error.to_string().contains("injected gallery failure"),
             "original gallery failure cause was not preserved: {error}"
         );
-        assert_eq!(store.count_assets(&gallery_id)?, 0);
-        assert_eq!(store.count_assets(&generated_gallery(&store))?, 0);
+        assert_eq!(env.store.count_assets(&env.gallery_id)?, 0);
+        assert_eq!(env.store.count_assets(&generated_gallery(&env.store))?, 0);
         let generated = crate::assets::generated_assets_dir();
         assert_eq!(std::fs::read_dir(generated)?.count(), 0);
         Ok(())
@@ -2941,21 +2975,17 @@ mod tool_behavior_tests {
     -> Result<(), Box<dyn std::error::Error>> {
         use hkask_storage::database::driver::DatabaseDriver;
 
-        let (_env_lock, _artifacts, _env, gallery_root, store, driver, gallery) =
-            media_test_env().await?;
-        let source = gallery_root.path().join("source.mp4");
-        create_real_video(&source).await?;
-        driver.execute(
+        let env = video_server_env().await?;
+        env.driver.execute(
             "CREATE TRIGGER fail_video_clip_lineage BEFORE INSERT ON gallery_generation \
              WHEN NEW.op = 'video_clip' BEGIN SELECT RAISE(ABORT, 'injected lineage failure'); END",
             &[],
         )?;
-        let gallery_id = gallery.id.clone();
-        let server = server_with_gallery(store.clone(), gallery.id, gallery_root.path());
 
-        let error = server
+        let error = env
+            .server
             .video_clip(Parameters(VideoClipRequest {
-                video_url: source.to_string_lossy().into_owned(),
+                video_url: env.source.to_string_lossy().into_owned(),
                 start_sec: 0.0,
                 end_sec: 1.0,
             }))
@@ -2966,7 +2996,7 @@ mod tool_behavior_tests {
             error.to_string().contains("injected lineage failure"),
             "original lineage failure cause was not preserved: {error}"
         );
-        assert_eq!(store.count_assets(&gallery_id)?, 0);
+        assert_eq!(env.store.count_assets(&env.gallery_id)?, 0);
         let generated = crate::assets::generated_assets_dir();
         assert_eq!(std::fs::read_dir(generated)?.count(), 0);
         Ok(())
@@ -3100,15 +3130,11 @@ mod tool_behavior_tests {
     #[tokio::test]
     async fn video_to_gif_publishes_durable_asset_and_lineage_after_server_drop()
     -> Result<(), Box<dyn std::error::Error>> {
-        let (_env_lock, _artifacts, _env, gallery_root, store, _driver, gallery) =
-            media_test_env().await?;
-        let source = gallery_root.path().join("source.mp4");
-        create_real_video(&source).await?;
-        let server = server_with_gallery(store.clone(), gallery.id, gallery_root.path());
+        let env = video_server_env().await?;
         let content = content_of(
-            &server
+            &env.server
                 .video_to_gif(Parameters(VideoToGifRequest {
-                    video_url: source.to_string_lossy().into_owned(),
+                    video_url: env.source.to_string_lossy().into_owned(),
                     start_sec: Some(0.25),
                     duration_sec: Some(1.0),
                     width: Some(48),
@@ -3116,16 +3142,16 @@ mod tool_behavior_tests {
                 }))
                 .await?,
         );
-        drop(server);
+        drop(env.server);
 
         assert_local_publication(
             &content,
-            &store,
+            &env.store,
             "video_to_gif",
             "gif",
             "image",
             &serde_json::json!({
-                "source": source.to_string_lossy(),
+                "source": env.source.to_string_lossy(),
                 "start_sec": 0.25,
                 "duration_sec": 1.0,
                 "width": 48,
@@ -3145,31 +3171,27 @@ mod tool_behavior_tests {
     #[tokio::test]
     async fn video_add_caption_publishes_durable_asset_and_lineage_after_server_drop()
     -> Result<(), Box<dyn std::error::Error>> {
-        let (_env_lock, _artifacts, _env, gallery_root, store, _driver, gallery) =
-            media_test_env().await?;
-        let source = gallery_root.path().join("source.mp4");
-        create_real_video(&source).await?;
-        let server = server_with_gallery(store.clone(), gallery.id, gallery_root.path());
+        let env = video_server_env().await?;
         let content = content_of(
-            &server
+            &env.server
                 .video_add_caption(Parameters(VideoAddCaptionRequest {
-                    video_url: source.to_string_lossy().into_owned(),
+                    video_url: env.source.to_string_lossy().into_owned(),
                     text: "durable caption".to_string(),
                     position: Some("top".to_string()),
                     font_size: Some(18),
                 }))
                 .await?,
         );
-        drop(server);
+        drop(env.server);
 
         assert_local_publication(
             &content,
-            &store,
+            &env.store,
             "video_add_caption",
             "mp4",
             "video",
             &serde_json::json!({
-                "source": source.to_string_lossy(),
+                "source": env.source.to_string_lossy(),
                 "text": "durable caption",
                 "position": "top",
                 "font_size": 18,
@@ -3188,16 +3210,12 @@ mod tool_behavior_tests {
     #[tokio::test]
     async fn video_remix_publishes_durable_asset_and_cleans_intermediates()
     -> Result<(), Box<dyn std::error::Error>> {
-        let (_env_lock, _artifacts, _env, gallery_root, store, _driver, gallery) =
-            media_test_env().await?;
-        let source = gallery_root.path().join("source.mp4");
-        create_real_video(&source).await?;
+        let env = video_server_env().await?;
         let before = temp_media_files()?;
-        let server = server_with_gallery(store.clone(), gallery.id, gallery_root.path());
         let content = content_of(
-            &server
+            &env.server
                 .video_remix(Parameters(VideoRemixRequest {
-                    video_url: source.to_string_lossy().into_owned(),
+                    video_url: env.source.to_string_lossy().into_owned(),
                     start_sec: 0.0,
                     end_sec: 1.0,
                     caption_text: Some("remix caption".to_string()),
@@ -3206,12 +3224,12 @@ mod tool_behavior_tests {
         );
         let output = assert_local_publication(
             &content,
-            &store,
+            &env.store,
             "video_remix",
             "gif",
             "image",
             &serde_json::json!({
-                "source": source.to_string_lossy(),
+                "source": env.source.to_string_lossy(),
                 "start_sec": 0.0,
                 "end_sec": 1.0,
                 "caption_text": "remix caption",
@@ -3231,7 +3249,7 @@ mod tool_behavior_tests {
             "remix left FFmpeg intermediates: {:?}",
             after.difference(&before).collect::<Vec<_>>()
         );
-        drop(server);
+        drop(env.server);
         assert!(output.is_file(), "server drop removed remixed publication");
         Ok(())
     }
@@ -3336,22 +3354,18 @@ mod tool_behavior_tests {
     async fn local_video_publication_failure_rolls_back_gif_and_remix_intermediates()
     -> Result<(), Box<dyn std::error::Error>> {
         use hkask_storage::database::driver::DatabaseDriver;
-        let (_env_lock, _artifacts, _env, gallery_root, store, driver, gallery) =
-            media_test_env().await?;
-        let source = gallery_root.path().join("source.mp4");
-        create_real_video(&source).await?;
+        let env = video_server_env().await?;
         let before = temp_media_files()?;
-        driver.execute(
+        env.driver.execute(
             "CREATE TRIGGER fail_remix_asset BEFORE INSERT ON gallery_images \
              BEGIN SELECT RAISE(ABORT, 'injected gallery failure'); END",
             &[],
         )?;
-        let gallery_id = gallery.id.clone();
-        let server = server_with_gallery(store.clone(), gallery.id, gallery_root.path());
 
-        let error = server
+        let error = env
+            .server
             .video_remix(Parameters(VideoRemixRequest {
-                video_url: source.to_string_lossy().into_owned(),
+                video_url: env.source.to_string_lossy().into_owned(),
                 start_sec: 0.0,
                 end_sec: 1.0,
                 caption_text: Some("rollback caption".to_string()),
@@ -3363,8 +3377,8 @@ mod tool_behavior_tests {
             error.to_string().contains("injected gallery failure"),
             "original gallery cause was not preserved: {error}"
         );
-        assert_eq!(store.count_assets(&gallery_id)?, 0);
-        assert_eq!(store.count_assets(&generated_gallery(&store))?, 0);
+        assert_eq!(env.store.count_assets(&env.gallery_id)?, 0);
+        assert_eq!(env.store.count_assets(&generated_gallery(&env.store))?, 0);
         assert_eq!(
             std::fs::read_dir(crate::assets::generated_assets_dir())?.count(),
             0
@@ -3390,21 +3404,17 @@ mod tool_behavior_tests {
     -> Result<(), Box<dyn std::error::Error>> {
         use hkask_storage::database::driver::DatabaseDriver;
 
-        let (_env_lock, _artifacts, _env, gallery_root, store, driver, gallery) =
-            media_test_env().await?;
-        let source = gallery_root.path().join("source.mp4");
-        create_real_video(&source).await?;
-        driver.execute(
+        let env = video_server_env().await?;
+        env.driver.execute(
             "CREATE TRIGGER fail_local_video_lineage BEFORE INSERT ON gallery_generation \
              WHEN NEW.op = 'video_to_gif' BEGIN SELECT RAISE(ABORT, 'injected migrated lineage failure'); END",
             &[],
         )?;
-        let gallery_id = gallery.id.clone();
-        let server = server_with_gallery(store.clone(), gallery.id, gallery_root.path());
 
-        let error = server
+        let error = env
+            .server
             .video_to_gif(Parameters(VideoToGifRequest {
-                video_url: source.to_string_lossy().into_owned(),
+                video_url: env.source.to_string_lossy().into_owned(),
                 start_sec: Some(0.0),
                 duration_sec: Some(1.0),
                 width: Some(48),
@@ -3419,7 +3429,7 @@ mod tool_behavior_tests {
                 .contains("injected migrated lineage failure"),
             "original lineage failure cause was not preserved: {error}"
         );
-        assert_eq!(store.count_assets(&gallery_id)?, 0);
+        assert_eq!(env.store.count_assets(&env.gallery_id)?, 0);
         assert_eq!(
             std::fs::read_dir(crate::assets::generated_assets_dir())?.count(),
             0
