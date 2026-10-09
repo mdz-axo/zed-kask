@@ -29,6 +29,40 @@ fn sample_tx(
     }
 }
 
+/// A tempdir-backed store with the stock portfolio `name` and `txs`
+/// applied in order. Bind the returned TempDir for the test's lifetime —
+/// the store's database lives under it and is deleted when it drops.
+fn stock_store(name: &str, txs: &[Transaction]) -> (tempfile::TempDir, PortfolioStore) {
+    let dir = tempfile::tempdir().unwrap();
+    let store = PortfolioStore::with_dir(dir.path().to_path_buf());
+    store.create(name, AssetType::Stock).unwrap();
+    for tx in txs {
+        store.apply(name, tx).unwrap();
+    }
+    (dir, store)
+}
+
+/// The standard AAPL fixture the snapshot, returns, and rebuild tests
+/// share: a "test" stock portfolio with a 2024-01-02 $20,000 deposit and
+/// a 2024-01-15 buy of 100 AAPL @ $150 — 100 shares plus $5,000 cash from
+/// 2024-01-15 on.
+fn standard_aapl_store() -> (tempfile::TempDir, PortfolioStore) {
+    stock_store(
+        "test",
+        &[
+            sample_tx("2024-01-02", "deposit", None, None, None, Some(20000.0)),
+            sample_tx(
+                "2024-01-15",
+                "buy",
+                Some("AAPL"),
+                Some(100.0),
+                Some(150.0),
+                None,
+            ),
+        ],
+    )
+}
+
 #[test]
 fn owner_namespaces_are_isolated() {
     let dir = tempfile::tempdir().unwrap();
@@ -122,28 +156,7 @@ fn ledger_filter_by_asset_type() {
 
 #[test]
 fn snapshot_materializes_holdings_and_caches() {
-    let dir = tempfile::tempdir().unwrap();
-    let store = PortfolioStore::with_dir(dir.path().to_path_buf());
-    store.create("test", AssetType::Stock).unwrap();
-    store
-        .apply(
-            "test",
-            &sample_tx("2024-01-02", "deposit", None, None, None, Some(20000.0)),
-        )
-        .unwrap();
-    store
-        .apply(
-            "test",
-            &sample_tx(
-                "2024-01-15",
-                "buy",
-                Some("AAPL"),
-                Some(100.0),
-                Some(150.0),
-                None,
-            ),
-        )
-        .unwrap();
+    let (_dir, store) = standard_aapl_store();
 
     let snap = store.snapshot("test", "2024-02-01").unwrap();
     assert_eq!(snap.holdings.len(), 1);
@@ -160,15 +173,17 @@ fn snapshot_materializes_holdings_and_caches() {
 
 #[test]
 fn apply_invalidates_cached_view() {
-    let dir = tempfile::tempdir().unwrap();
-    let store = PortfolioStore::with_dir(dir.path().to_path_buf());
-    store.create("test", AssetType::Stock).unwrap();
-    store
-        .apply(
-            "test",
-            &sample_tx("2024-01-02", "deposit", None, None, None, Some(20000.0)),
-        )
-        .unwrap();
+    let (_dir, store) = stock_store(
+        "test",
+        &[sample_tx(
+            "2024-01-02",
+            "deposit",
+            None,
+            None,
+            None,
+            Some(20000.0),
+        )],
+    );
     let _ = store.snapshot("test", "2024-02-01").unwrap();
 
     // A later transaction at an earlier date invalidates the cache.
@@ -192,28 +207,7 @@ fn apply_invalidates_cached_view() {
 
 #[test]
 fn rebuild_views_from_ledger() {
-    let dir = tempfile::tempdir().unwrap();
-    let store = PortfolioStore::with_dir(dir.path().to_path_buf());
-    store.create("test", AssetType::Stock).unwrap();
-    store
-        .apply(
-            "test",
-            &sample_tx("2024-01-02", "deposit", None, None, None, Some(20000.0)),
-        )
-        .unwrap();
-    store
-        .apply(
-            "test",
-            &sample_tx(
-                "2024-01-15",
-                "buy",
-                Some("AAPL"),
-                Some(100.0),
-                Some(150.0),
-                None,
-            ),
-        )
-        .unwrap();
+    let (_dir, store) = standard_aapl_store();
     let _ = store.snapshot("test", "2024-02-01").unwrap();
 
     // Seed the price cache before rebuilding — a held stock position
@@ -391,28 +385,7 @@ fn roll_transaction_round_trips_through_ledger() {
 
 #[test]
 fn returns_with_cached_prices() {
-    let dir = tempfile::tempdir().unwrap();
-    let store = PortfolioStore::with_dir(dir.path().to_path_buf());
-    store.create("test", AssetType::Stock).unwrap();
-    store
-        .apply(
-            "test",
-            &sample_tx("2024-01-02", "deposit", None, None, None, Some(20000.0)),
-        )
-        .unwrap();
-    store
-        .apply(
-            "test",
-            &sample_tx(
-                "2024-01-15",
-                "buy",
-                Some("AAPL"),
-                Some(100.0),
-                Some(150.0),
-                None,
-            ),
-        )
-        .unwrap();
+    let (_dir, store) = standard_aapl_store();
 
     let resolver = CachedPriceResolver::new(&store, "test");
     resolver
@@ -585,21 +558,13 @@ fn cached_price_resolver_seeds_and_reads() {
 
 #[test]
 fn ledger_date_filter_bounds() {
-    let dir = tempfile::tempdir().unwrap();
-    let store = PortfolioStore::with_dir(dir.path().to_path_buf());
-    store.create("test", AssetType::Stock).unwrap();
-    store
-        .apply(
-            "test",
-            &sample_tx("2024-01-02", "deposit", None, None, None, Some(1000.0)),
-        )
-        .unwrap();
-    store
-        .apply(
-            "test",
-            &sample_tx("2024-06-01", "deposit", None, None, None, Some(1000.0)),
-        )
-        .unwrap();
+    let (_dir, store) = stock_store(
+        "test",
+        &[
+            sample_tx("2024-01-02", "deposit", None, None, None, Some(1000.0)),
+            sample_tx("2024-06-01", "deposit", None, None, None, Some(1000.0)),
+        ],
+    );
     let early = store
         .ledger(
             "test",
@@ -624,19 +589,11 @@ fn snapshot_before_any_transactions_is_empty() {
 
 #[test]
 fn snapshot_only_counts_transactions_up_to_date() {
-    let dir = tempfile::tempdir().unwrap();
-    let store = PortfolioStore::with_dir(dir.path().to_path_buf());
-    store.create("test", AssetType::Stock).unwrap();
-    store
-        .apply(
-            "test",
-            &sample_tx("2024-01-02", "deposit", None, None, None, Some(10000.0)),
-        )
-        .unwrap();
-    store
-        .apply(
-            "test",
-            &sample_tx(
+    let (_dir, store) = stock_store(
+        "test",
+        &[
+            sample_tx("2024-01-02", "deposit", None, None, None, Some(10000.0)),
+            sample_tx(
                 "2024-06-01",
                 "buy",
                 Some("AAPL"),
@@ -644,8 +601,8 @@ fn snapshot_only_counts_transactions_up_to_date() {
                 Some(100.0),
                 None,
             ),
-        )
-        .unwrap();
+        ],
+    );
     let mid = store.snapshot("test", "2024-03-01").unwrap();
     // The June buy is after the snapshot date — not reflected.
     assert!(mid.holdings.is_empty());
@@ -654,15 +611,17 @@ fn snapshot_only_counts_transactions_up_to_date() {
 
 #[test]
 fn delete_cascades_to_transactions_and_views() {
-    let dir = tempfile::tempdir().unwrap();
-    let store = PortfolioStore::with_dir(dir.path().to_path_buf());
-    store.create("test", AssetType::Stock).unwrap();
-    store
-        .apply(
-            "test",
-            &sample_tx("2024-01-02", "deposit", None, None, None, Some(1000.0)),
-        )
-        .unwrap();
+    let (_dir, store) = stock_store(
+        "test",
+        &[sample_tx(
+            "2024-01-02",
+            "deposit",
+            None,
+            None,
+            None,
+            Some(1000.0),
+        )],
+    );
     let _ = store.snapshot("test", "2024-02-01").unwrap();
     store.delete("test").unwrap();
     let err = store.ledger("test", LedgerFilter::all()).unwrap_err();
@@ -700,28 +659,7 @@ fn daily_returns_materialized_from_ledger() {
     // The daily_returns view is populated by materialize_returns: each
     // day in the range gets a row with market_value, cash, total, and
     // the day-over-day return.
-    let dir = tempfile::tempdir().unwrap();
-    let store = PortfolioStore::with_dir(dir.path().to_path_buf());
-    store.create("test", AssetType::Stock).unwrap();
-    store
-        .apply(
-            "test",
-            &sample_tx("2024-01-02", "deposit", None, None, None, Some(20000.0)),
-        )
-        .unwrap();
-    store
-        .apply(
-            "test",
-            &sample_tx(
-                "2024-01-15",
-                "buy",
-                Some("AAPL"),
-                Some(100.0),
-                Some(150.0),
-                None,
-            ),
-        )
-        .unwrap();
+    let (_dir, store) = standard_aapl_store();
 
     // Seed prices so market value is non-zero.
     let resolver = CachedPriceResolver::new(&store, "test");
@@ -762,28 +700,7 @@ fn rebuild_views_materializes_both_holdings_and_returns() {
     // rebuild_views recomputes daily_holdings AND daily_returns from the
     // ledger. After a simulated corruption (drop both tables), rebuild
     // repopulates them.
-    let dir = tempfile::tempdir().unwrap();
-    let store = PortfolioStore::with_dir(dir.path().to_path_buf());
-    store.create("test", AssetType::Stock).unwrap();
-    store
-        .apply(
-            "test",
-            &sample_tx("2024-01-02", "deposit", None, None, None, Some(20000.0)),
-        )
-        .unwrap();
-    store
-        .apply(
-            "test",
-            &sample_tx(
-                "2024-01-15",
-                "buy",
-                Some("AAPL"),
-                Some(100.0),
-                Some(150.0),
-                None,
-            ),
-        )
-        .unwrap();
+    let (_dir, store) = standard_aapl_store();
     let resolver = CachedPriceResolver::new(&store, "test");
     resolver
         .seed_cache("AAPL", "2024-01-02", 150.0, "test")
@@ -810,15 +727,17 @@ fn rebuild_views_materializes_both_holdings_and_returns() {
 
 #[test]
 fn daily_returns_empty_before_materialization() {
-    let dir = tempfile::tempdir().unwrap();
-    let store = PortfolioStore::with_dir(dir.path().to_path_buf());
-    store.create("test", AssetType::Stock).unwrap();
-    store
-        .apply(
-            "test",
-            &sample_tx("2024-01-02", "deposit", None, None, None, Some(1000.0)),
-        )
-        .unwrap();
+    let (_dir, store) = stock_store(
+        "test",
+        &[sample_tx(
+            "2024-01-02",
+            "deposit",
+            None,
+            None,
+            None,
+            Some(1000.0),
+        )],
+    );
     let rows = store
         .daily_returns("test", "2024-01-02", "2024-01-03")
         .unwrap();
@@ -891,28 +810,7 @@ fn returns_errors_naming_missing_prices_instead_of_zero_valuing() {
     // Pre-fix behavior: an unseeded price cache valued the AAPL holding at
     // zero, fabricating a large fake loss. The fix refuses and names the
     // gap so the caller seeds it.
-    let dir = tempfile::tempdir().unwrap();
-    let store = PortfolioStore::with_dir(dir.path().to_path_buf());
-    store.create("test", AssetType::Stock).unwrap();
-    store
-        .apply(
-            "test",
-            &sample_tx("2024-01-02", "deposit", None, None, None, Some(20000.0)),
-        )
-        .unwrap();
-    store
-        .apply(
-            "test",
-            &sample_tx(
-                "2024-01-15",
-                "buy",
-                Some("AAPL"),
-                Some(100.0),
-                Some(150.0),
-                None,
-            ),
-        )
-        .unwrap();
+    let (_dir, store) = standard_aapl_store();
 
     let resolver = CachedPriceResolver::new(&store, "test");
     let err = returns(&store, "test", "2024-01-15", "2024-02-15", &resolver)
@@ -935,19 +833,11 @@ fn returns_errors_naming_missing_prices_instead_of_zero_valuing() {
 
 #[test]
 fn materialize_returns_fails_without_writing_on_missing_prices() {
-    let dir = tempfile::tempdir().unwrap();
-    let store = PortfolioStore::with_dir(dir.path().to_path_buf());
-    store.create("test", AssetType::Stock).unwrap();
-    store
-        .apply(
-            "test",
-            &sample_tx("2024-01-02", "deposit", None, None, None, Some(10000.0)),
-        )
-        .unwrap();
-    store
-        .apply(
-            "test",
-            &sample_tx(
+    let (_dir, store) = stock_store(
+        "test",
+        &[
+            sample_tx("2024-01-02", "deposit", None, None, None, Some(10000.0)),
+            sample_tx(
                 "2024-01-02",
                 "buy",
                 Some("AAPL"),
@@ -955,8 +845,8 @@ fn materialize_returns_fails_without_writing_on_missing_prices() {
                 Some(150.0),
                 None,
             ),
-        )
-        .unwrap();
+        ],
+    );
 
     let resolver = CachedPriceResolver::new(&store, "test");
     let err = store
@@ -975,19 +865,11 @@ fn materialize_returns_fails_without_writing_on_missing_prices() {
 
 #[test]
 fn cached_resolver_resolves_as_of_and_seed_invalidates_views() {
-    let dir = tempfile::tempdir().unwrap();
-    let store = PortfolioStore::with_dir(dir.path().to_path_buf());
-    store.create("test", AssetType::Stock).unwrap();
-    store
-        .apply(
-            "test",
-            &sample_tx("2024-01-02", "deposit", None, None, None, Some(10000.0)),
-        )
-        .unwrap();
-    store
-        .apply(
-            "test",
-            &sample_tx(
+    let (_dir, store) = stock_store(
+        "test",
+        &[
+            sample_tx("2024-01-02", "deposit", None, None, None, Some(10000.0)),
+            sample_tx(
                 "2024-01-02",
                 "buy",
                 Some("AAPL"),
@@ -995,8 +877,8 @@ fn cached_resolver_resolves_as_of_and_seed_invalidates_views() {
                 Some(150.0),
                 None,
             ),
-        )
-        .unwrap();
+        ],
+    );
 
     let resolver = CachedPriceResolver::new(&store, "test");
     // As-of resolution: a price seeded on Friday carries through the weekend.
