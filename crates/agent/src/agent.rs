@@ -978,6 +978,55 @@ impl NativeAgent {
                 // session that executed the skill.
                 thread.add_tool(RecordSkillFeedbackTool::new());
             });
+
+            // zed-kask: D2/S6 — fetch the health snapshot per Curator session,
+            // not once per connection. A connect-time fetch baked the
+            // app-start state before the metacognition loop's first tick
+            // (~30s after launch — `MetacognitionLoop::run` skips the first
+            // immediate tick), and the cached connection served every
+            // Curator thread that empty block for the whole session. This
+            // breaks the naive-realist trap (Dunning, Self-Insight 2005):
+            // without live state, the static prompt says "monitor system
+            // health" but provides no state. The label tells the model this
+            // is a snapshot — pull `curator_status` for live updates.
+            if let Some(provider) = crate::metacognition_provider() {
+                let thread_for_state = thread.clone();
+                cx.spawn(async move |_agent, cx| {
+                    let mut snapshot = provider.health_snapshot_json().await;
+                    // A session created before the loop's first tick waits
+                    // (bounded) for the first snapshot instead of baking the
+                    // block empty for the thread's lifetime.
+                    let mut remaining_waits = 12u32;
+                    while snapshot.is_none() && remaining_waits > 0 {
+                        remaining_waits -= 1;
+                        cx.background_executor()
+                            .timer(std::time::Duration::from_secs(5))
+                            .await;
+                        snapshot = provider.health_snapshot_json().await;
+                    }
+                    let Some(snapshot) = snapshot else {
+                        log::warn!(
+                            "Curator state block not delivered — the metacognition \
+                             loop has no snapshot; the session prompt renders \
+                             without it"
+                        );
+                        return;
+                    };
+                    let state_block = curator_agent_server::format_state_block(&snapshot);
+                    if state_block.is_empty() {
+                        return;
+                    }
+                    thread_for_state.update(cx, |thread, cx| {
+                        if let Some(context) = thread.agent_static_context().cloned() {
+                            thread.set_static_context(
+                                SharedString::from(format!("{context}\n\n{state_block}")),
+                                cx,
+                            );
+                        }
+                    });
+                })
+                .detach();
+            }
         }
     }
 
@@ -10417,6 +10466,109 @@ mod internal_tests {
                     "an executing session must not evaluate skills (Goodhart, D59)"
                 );
             })
+        });
+    }
+
+    /// A Curator session fetches the Current System State block per session,
+    /// not once per connection. The connect-time fetch baked the app-start
+    /// state before the metacognition loop's first tick (~30s after launch —
+    /// `MetacognitionLoop::run` skips the first immediate tick), and the
+    /// cached connection served every Curator thread that empty block for
+    /// the whole session. The per-session fetch also waits (bounded) for the
+    /// loop's first snapshot when the session is created inside that window.
+    #[gpui::test]
+    async fn test_curator_session_fetches_the_state_block_per_session(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        /// Models the loop's timeline: before the first tick there is no
+        /// snapshot (disarmed); after it, there is one (armed). The test
+        /// arms the provider between connect and session creation — the
+        /// window the connect-time fetch got wrong.
+        struct ArmedProvider {
+            armed: std::sync::atomic::AtomicBool,
+        }
+        impl crate::MetacognitionProvider for ArmedProvider {
+            fn health_snapshot_json(&self) -> Task<Option<serde_json::Value>> {
+                if self.armed.load(std::sync::atomic::Ordering::SeqCst) {
+                    Task::ready(Some(json!({
+                        "regulation_acceptance_rate": 0.75,
+                        "escalation_count": 1,
+                        "critical_alerts": 0,
+                    })))
+                } else {
+                    Task::ready(None)
+                }
+            }
+        }
+
+        // The provider hook is a process global shared by concurrently
+        // running tests; restore the previous value on exit, even on panic.
+        let previous_provider = crate::metacognition_provider();
+        struct RestoreProvider(Option<std::sync::Arc<dyn crate::MetacognitionProvider>>);
+        impl Drop for RestoreProvider {
+            fn drop(&mut self) {
+                crate::set_metacognition_provider(self.0.clone());
+            }
+        }
+        let _restore = RestoreProvider(previous_provider);
+        let provider = std::sync::Arc::new(ArmedProvider {
+            armed: std::sync::atomic::AtomicBool::new(false),
+        });
+        crate::set_metacognition_provider(Some(provider.clone()));
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/", json!({ "a": {} })).await;
+        let project = Project::test(fs.clone(), [Path::new("/a")], cx).await;
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let server = CuratorAgentServer::new(fs.clone(), thread_store);
+        let connection = cx
+            .update(|cx| {
+                server.connect(
+                    agent_servers::AgentServerDelegate::new(
+                        project.read(cx).agent_server_store().clone(),
+                        None,
+                        None,
+                    ),
+                    project.clone(),
+                    cx,
+                )
+            })
+            .await
+            .expect("connect");
+
+        // The loop ticks between connection establishment and session
+        // creation — the connect-time fetch already missed it.
+        provider
+            .armed
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+
+        let acp_thread = cx
+            .update(|cx| {
+                connection.clone().new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new("/a")]),
+                    cx,
+                )
+            })
+            .await
+            .expect("new_session");
+        let session_id = cx.update(|cx| acp_thread.read(cx).session_id().clone());
+        let agent = connection
+            .downcast::<NativeAgentConnection>()
+            .expect("curator connection is NativeAgentConnection");
+        let thread = cx.update(|cx| native_thread_for_session(&agent.0, &session_id, cx));
+        cx.run_until_parked();
+
+        thread.read_with(cx, |thread, _| {
+            let static_context = thread
+                .agent_static_context()
+                .expect("curator static context set");
+            assert!(
+                static_context.contains("## Current System State"),
+                "the state block must be fetched per session, not baked at \
+                 connect time; got: {static_context}"
+            );
+            assert!(static_context.contains("Regulation acceptance rate: 75%"));
         });
     }
 

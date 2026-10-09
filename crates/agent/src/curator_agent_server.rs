@@ -164,7 +164,7 @@ may argue for a different level, with evidence.\n\
 /// The block is compact — only high-signal fields that change the model's
 /// regulatory posture: regulation effectiveness, escalation count, critical
 /// alerts, memory degradation, alert log cap status.
-fn format_state_block(snapshot: &serde_json::Value) -> String {
+pub(crate) fn format_state_block(snapshot: &serde_json::Value) -> String {
     let acceptance_rate = snapshot
         .get("regulation_acceptance_rate")
         .and_then(|v| v.as_f64())
@@ -286,34 +286,21 @@ impl AgentServer for CuratorAgentServer {
             let templates = crate::templates::Templates::new();
             let agent = cx.update(|cx| crate::NativeAgent::new(thread_store, templates, fs, cx));
 
-            // S6: Fetch a compact system-state snapshot from the regulation
-            // loop and append it to the curator context. This breaks the
-            // naive-realist trap (Dunning, Self-Insight 2005): without live
-            // state, the static prompt says "monitor system health" but
-            // provides no state, so the model anchors on the static text and
-            // treats it as complete reality. The label explicitly tells the
-            // model this is a snapshot, not complete reality — pull
-            // `curator_status` for live updates.
-            let state_block = if let Some(provider) = crate::metacognition_provider() {
-                match provider.health_snapshot_json().await {
-                    Some(snapshot) => format_state_block(&snapshot),
-                    None => String::new(),
-                }
-            } else {
-                String::new()
-            };
-
+            // S6: the system-state snapshot is NOT baked here. A connect-time
+            // fetch captured the app-start state before the metacognition
+            // loop's first tick (~30s after launch), and the connection is
+            // cached for the whole session — so every Curator thread rendered
+            // without the block. The block is fetched per session in
+            // `NativeAgent::apply_session_surface`, which also keeps it fresh
+            // for each new or resumed thread.
             cx.update(|cx| {
                 agent.update(cx, |agent, _cx| {
-                    let mut context = match extra_context {
+                    let context = match extra_context {
                         Some(extra) => {
                             SharedString::from(format!("{CURATOR_STATIC_CONTEXT}\n{extra}"))
                         }
                         None => SharedString::from(CURATOR_STATIC_CONTEXT),
                     };
-                    if !state_block.is_empty() {
-                        context = SharedString::from(format!("{context}\n\n{state_block}"));
-                    }
                     agent.set_curator_static_context(context);
                 });
             });
