@@ -88,8 +88,23 @@ pub(crate) const DEFAULT_MAX_SKILL_SPAN_HISTORY: usize = 50;
 pub(crate) const DEFAULT_MAX_ALERTS: usize = 200;
 
 // ── Memory health defaults ──
-/// Default max h_mem count before `TripleCount` fires.
-pub(crate) const DEFAULT_TRIPLE_COUNT_MAX: usize = 10_000;
+/// Default max h_mem count before `TripleCount` fires — the memory-store
+/// growth ceiling (algedonic card c148d75d; cadence decision on card
+/// 1c02ef3c, metric (a)). Design constraint: the ~3-day therapy
+/// forgetting-valve cadence (the verified
+/// curator-process|therapy_forgetting_valve_cadence lesson, confidence
+/// 0.891 — measured 2026-10-08: the store grew 218 → 2,863 rows over ~30
+/// days with the lesson unfollowed; a habit has no enforcement mechanism).
+/// The ceiling is sized so a store growing at the measured active-day rate
+/// breaches in ~3 days, not ~30: baseline 2,852 rows post-therapy
+/// 2026-10-08, active-day growth 200–600 rows/day → the 3,500–4,500 band,
+/// 4,000 chosen. Operator-adjustable after each therapy via
+/// `HKASK_REG_CONFIG` (`triple_count_max`). The breach escalates
+/// (`RegulationReason::MemoryStoreGrowth`, card class
+/// `memory_store_growth`). The sensor reads state (count vs ceiling),
+/// never events — a therapy session that reduces the count is the
+/// response, not a new breach.
+pub(crate) const DEFAULT_TRIPLE_COUNT_MAX: usize = 4_000;
 /// Default max low-confidence h_mem count before `LowConfidenceCount` fires.
 pub(crate) const DEFAULT_LOW_CONFIDENCE_MAX: usize = 100;
 /// Default confidence threshold for `LowConfidenceCount`.
@@ -152,10 +167,13 @@ pub struct SetPoints {
     /// the cybernetics loop emits an `AlgedonicLogApproachingCap` signal.
     pub max_alerts: usize,
     // ── Memory health set-points (v0.34.0) ──
-    /// Maximum h_mem count before `TripleCount` fires. Default: 10_000
-    /// (the count-based monitoring reference; nothing enforces on it —
-    /// forgetting is time-based and distillation-gated, operator ruling
-    /// 2026-09-04).
+    /// Maximum h_mem count before `TripleCount` fires — the memory-store
+    /// growth ceiling. Default: 4_000 (sized to the ~3-day therapy
+    /// forgetting-valve cadence; see `DEFAULT_TRIPLE_COUNT_MAX` for the
+    /// measured basis). A breach escalates as `memory_store_growth`
+    /// (algedonic card c148d75d) — the count-based monitoring reference
+    /// now reaches the review board; forgetting itself stays time-based
+    /// and distillation-gated (operator ruling 2026-09-04).
     pub triple_count_max: usize,
     /// Maximum low-confidence h_mem count before `LowConfidenceCount` fires.
     /// Default: 100.

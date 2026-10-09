@@ -19,7 +19,13 @@ pub(crate) enum RegulationReason {
     VarietyDeficitExceeded,
 
     ToolReliabilityDegraded,
-    TripleCountObserved,
+    /// The memory-store growth breach: h_mem count above `triple_count_max` —
+    /// the store has outgrown the ~3-day therapy forgetting-valve cadence.
+    /// Escalates through the standard algedonic path (card class
+    /// `memory_store_growth`); see the `TripleCount` rule in
+    /// `RegulationPolicy::default` and the ceiling's definition at
+    /// `set_points::DEFAULT_TRIPLE_COUNT_MAX` (algedonic card c148d75d).
+    MemoryStoreGrowth,
     LowConfidenceCountObserved,
     ConsolidationCandidatesObserved,
     PendingEscalationsObserved,
@@ -46,7 +52,7 @@ impl RegulationReason {
             Self::VarietyDeficitExceeded => "variety_deficit_exceeded",
 
             Self::ToolReliabilityDegraded => "tool_reliability_degraded",
-            Self::TripleCountObserved => "triple_count_observed",
+            Self::MemoryStoreGrowth => "memory_store_growth",
             Self::LowConfidenceCountObserved => "low_confidence_count_observed",
             Self::ConsolidationCandidatesObserved => "consolidation_candidates_observed",
             Self::PendingEscalationsObserved => "pending_escalations_observed",
@@ -141,16 +147,31 @@ impl RegulationPolicy {
                         reason: ToolReliabilityDegraded,
                     }],
                 },
-                // ── Category A: Observational metrics → Notify (no regulation needed) ──
+                // ── Memory-store growth (the forgetting-valve breach) → Escalate ──
+                // `TripleCount` is the memory-store growth sensor: h_mem count
+                // above `triple_count_max` means the store has outgrown the ~3-day
+                // therapy forgetting-valve cadence (the verified
+                // curator-process|therapy_forgetting_valve_cadence lesson,
+                // confidence 0.891 — measured 2026-10-08: the store grew 218 →
+                // 2,863 rows over ~30 days with the lesson unfollowed). The
+                // breach escalates through the standard algedonic path (card
+                // class `memory_store_growth`) so the operator sees it in the
+                // next review walk and a therapy session runs — a Notify here
+                // repeated the habit failure mode this sensor exists to close
+                // (algedonic card c148d75d; cadence decision on card 1c02ef3c,
+                // metric (a)). The sensor reads state (count vs ceiling), never
+                // events, so a therapy session that reduces the count is the
+                // response, not a new breach.
                 RegulationRule {
                     metric: TripleCount,
                     direction: AboveSetPoint,
                     proposed: &[ProposedAction {
                         target: Curation,
-                        action_type: Notify,
-                        reason: TripleCountObserved,
+                        action_type: Escalate,
+                        reason: MemoryStoreGrowth,
                     }],
                 },
+                // ── Category A: Observational metrics → Notify (no regulation needed) ──
                 RegulationRule {
                     metric: LowConfidenceCount,
                     direction: AboveSetPoint,

@@ -1096,8 +1096,7 @@ impl super::CyberneticsLoop {
                 ))
             }
             // -- Observational metrics → Notify (no substitution ladder) --
-            RegulationReason::TripleCountObserved
-            | RegulationReason::LowConfidenceCountObserved
+            RegulationReason::LowConfidenceCountObserved
             | RegulationReason::ConsolidationCandidatesObserved
             | RegulationReason::PendingEscalationsObserved => Some(RegulatoryAction::with_metric(
                 proposed.target,
@@ -1113,6 +1112,7 @@ impl super::CyberneticsLoop {
             | RegulationReason::GoalsExpired
             | RegulationReason::MetacognitionCriticalAlerts
             | RegulationReason::MemoryLifeLow
+            | RegulationReason::MemoryStoreGrowth
             | RegulationReason::CircuitBreakerOpen
             | RegulationReason::ModelUnavailable => Some(RegulatoryAction::with_metric(
                 proposed.target,
@@ -2227,8 +2227,10 @@ mod tests {
             use DeviationDirection::*;
             use SignalMetric::*;
             let cases: &[(SignalMetric, DeviationDirection, f64, f64)] = &[
-                // Category A: Observational (Notify, AboveSetPoint)
+                // Memory-store growth (Escalate, AboveSetPoint — algedonic card
+                // c148d75d: the forgetting-valve breach reaches the board)
                 (TripleCount, AboveSetPoint, 1.0, 0.0),
+                // Category A: Observational (Notify, AboveSetPoint)
                 (LowConfidenceCount, AboveSetPoint, 1.0, 0.0),
                 (ConsolidationCandidates, AboveSetPoint, 1.0, 0.0),
                 (PendingEscalations, AboveSetPoint, 1.0, 0.0),
@@ -2280,10 +2282,18 @@ mod tests {
         let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
         runtime.block_on(async {
             let regulation_loop = loop_with_source(Arc::new(MockRolloutEventSource::empty()));
-            // TripleCount AboveSetPoint triggers a Notify rule.
-            let signal = Signal::new(LoopId::Cybernetics, SignalMetric::TripleCount, 1.0, 0.0);
+            // LowConfidenceCount AboveSetPoint triggers a Notify rule. (The
+            // original fixture was TripleCount; it escalates since algedonic
+            // card c148d75d — see
+            // growth_breach_escalates_to_the_board_and_recovery_does_not.)
+            let signal = Signal::new(
+                LoopId::Cybernetics,
+                SignalMetric::LowConfidenceCount,
+                1.0,
+                0.0,
+            );
             let deviation = Deviation::from_signal(&signal)
-                .expect("TripleCount 1.0 vs set_point 0.0 should deviate");
+                .expect("LowConfidenceCount 1.0 vs set_point 0.0 should deviate");
             let actions = regulation_loop.compute(&[deviation]).await;
             assert_eq!(actions.len(), 1);
             assert!(
@@ -2293,6 +2303,53 @@ mod tests {
                 "the observation must be represented as a handled Notify disposition"
             );
         });
+    }
+
+    /// algedonic card c148d75d (cadence decision on card 1c02ef3c, metric (a)):
+    /// the memory-store growth breach escalates through the standard algedonic
+    /// path — the board card class is `memory_store_growth` (the reason string
+    /// the delivery path carries into the card) — and a store under the ceiling
+    /// fires nothing. The sensor reads state (h_mem count vs
+    /// `triple_count_max`), never events, so the therapy session that reduces
+    /// the count is the response, not a new breach: the under-ceiling case is
+    /// exactly the post-therapy state.
+    #[tokio::test]
+    async fn growth_breach_escalates_to_the_board_and_recovery_does_not() {
+        let source = Arc::new(MemoryObservations(std::sync::atomic::AtomicUsize::new(0)));
+        let mut regulation =
+            CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())));
+        regulation.set_memory_health_source(source.clone());
+
+        // Over the ceiling (fixture h_mem_count 1_000_000 vs the 4_000 default).
+        let over = regulation.sense().await;
+        let growth_signal = over
+            .iter()
+            .find(|signal| signal.metric == SignalMetric::TripleCount)
+            .expect("an over-ceiling store must be sensed on TripleCount");
+        let growth = Deviation::from_signal(growth_signal)
+            .expect("an over-ceiling TripleCount signal must deviate");
+        assert_eq!(growth.direction, DeviationDirection::AboveSetPoint);
+        let actions = regulation.compute(&[growth]).await;
+        let escalation = actions
+            .iter()
+            .find(|action| action.metric_name.as_deref() == Some("triple_count"))
+            .expect("the growth breach must produce an action");
+        assert_eq!(
+            escalation.action_type,
+            ActionType::Escalate,
+            "the growth breach must escalate (algedonic card class memory_store_growth), not Notify"
+        );
+
+        // Under the ceiling (fixture h_mem_count 0) — the post-therapy state.
+        source.0.store(1, std::sync::atomic::Ordering::SeqCst);
+        let under = regulation.sense().await;
+        assert!(
+            under
+                .iter()
+                .all(|signal| signal.metric != SignalMetric::TripleCount
+                    || Deviation::from_signal(signal).is_none()),
+            "an under-ceiling store must not deviate on TripleCount"
+        );
     }
 
     /// Pins B2: fidelity matching must use metric_name only, not string

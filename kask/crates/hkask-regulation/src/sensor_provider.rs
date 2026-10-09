@@ -400,7 +400,11 @@ pub trait MemoryHealthSource: Send + Sync {
 ///
 /// Emits signals for 4 `SignalMetric` variants that previously had policy
 /// rules but no sensor:
-/// - `TripleCount` — h_mem count above the set-point (too many h_mems)
+/// - `TripleCount` — h_mem count above the set-point: the memory-store growth
+///   breach (the store has outgrown the ~3-day therapy forgetting-valve
+///   cadence; escalates as `memory_store_growth` — see
+///   `set_points::DEFAULT_TRIPLE_COUNT_MAX` for the ceiling's basis and
+///   algedonic card c148d75d)
 /// - `LowConfidenceCount` — low-confidence h_mem count above the set-point
 /// - `ConsolidationCandidates` — same count using the consolidation floor
 /// - `MemoryLife` — configured memory life days below the set-point (too short)
@@ -410,7 +414,10 @@ pub trait MemoryHealthSource: Send + Sync {
 pub(crate) struct MemoryHealthSensor {
     source: Arc<dyn MemoryHealthSource>,
     metric: SignalMetric,
-    /// Set-point: max h_mem count before `TripleCount` fires.
+    /// Set-point: max h_mem count before `TripleCount` fires — the
+    /// memory-store growth ceiling (see `set_points::DEFAULT_TRIPLE_COUNT_MAX`
+    /// for the valve-cadence constraint and measured basis; algedonic card
+    /// c148d75d).
     triple_count_max: usize,
     /// Set-point: max low-confidence h_mem count before `LowConfidenceCount` fires.
     low_confidence_max: usize,
