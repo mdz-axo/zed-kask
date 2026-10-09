@@ -138,6 +138,39 @@ fn database_error(error: impl std::fmt::Display) -> InfrastructureError {
     InfrastructureError::database(error.to_string())
 }
 
+/// A table's column names, read inside a migration transaction — the
+/// PRAGMA table_info probe the forward schema update gates its steps on.
+fn table_columns(
+    transaction: &rusqlite::Transaction<'_>,
+    table: &str,
+) -> Result<Vec<String>, InfrastructureError> {
+    transaction
+        .prepare(&format!("PRAGMA table_info({table})"))
+        .map_err(database_error)?
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(database_error)?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(database_error)
+}
+
+/// Two string columns read as (String, String) pairs inside a migration
+/// transaction.
+fn string_pairs<P: rusqlite::Params>(
+    transaction: &rusqlite::Transaction<'_>,
+    sql: &str,
+    params: P,
+) -> Result<Vec<(String, String)>, InfrastructureError> {
+    transaction
+        .prepare(sql)
+        .map_err(database_error)?
+        .query_map(params, |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(database_error)?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(database_error)
+}
+
 /// Canonicalize existing paths; retain normalized absolute identities when files are offline.
 ///
 /// An absent path still resolves its existing symlink ancestors: the deepest
@@ -417,13 +450,7 @@ impl GalleryStore {
         let transaction = connection
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
             .map_err(database_error)?;
-        let columns = transaction
-            .prepare("PRAGMA table_info(gallery_images)")
-            .map_err(database_error)?
-            .query_map([], |row| row.get::<_, String>(1))
-            .map_err(database_error)?
-            .collect::<rusqlite::Result<Vec<_>>>()
-            .map_err(database_error)?;
+        let columns = table_columns(&transaction, "gallery_images")?;
         if !columns.iter().any(|column| column == "missing") {
             transaction
                 .execute_batch(
@@ -431,15 +458,7 @@ impl GalleryStore {
                 ALTER TABLE gallery_images ADD COLUMN metadata_stale INTEGER NOT NULL DEFAULT 0;",
                 )
                 .map_err(database_error)?;
-            let roots = transaction
-                .prepare("SELECT id, root_path FROM galleries")
-                .map_err(database_error)?
-                .query_map([], |row| {
-                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-                })
-                .map_err(database_error)?
-                .collect::<rusqlite::Result<Vec<_>>>()
-                .map_err(database_error)?;
+            let roots = string_pairs(&transaction, "SELECT id, root_path FROM galleries", [])?;
             for (gallery_id, root) in roots {
                 let root = asset_path(&root).map_err(database_error)?;
                 transaction
@@ -452,15 +471,11 @@ impl GalleryStore {
                             "Gallery root identity conflict; no records removed: {error}"
                         ))
                     })?;
-                let images = transaction
-                    .prepare("SELECT id, absolute_path FROM gallery_images WHERE gallery_id = ?1")
-                    .map_err(database_error)?
-                    .query_map([&gallery_id], |row| {
-                        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-                    })
-                    .map_err(database_error)?
-                    .collect::<rusqlite::Result<Vec<_>>>()
-                    .map_err(database_error)?;
+                let images = string_pairs(
+                    &transaction,
+                    "SELECT id, absolute_path FROM gallery_images WHERE gallery_id = ?1",
+                    [&gallery_id],
+                )?;
                 for (image_id, absolute) in images {
                     let absolute = asset_path(&absolute).map_err(database_error)?;
                     let relative = absolute.strip_prefix(&root).unwrap_or(&absolute);
@@ -472,26 +487,14 @@ impl GalleryStore {
         transaction.execute_batch("CREATE UNIQUE INDEX IF NOT EXISTS idx_gallery_images_identity ON gallery_images(gallery_id, absolute_path);")
             .map_err(|error| database_error(format!("Gallery asset identity conflict; resolve duplicate paths explicitly, no records removed: {error}")))?;
         // Counts have one read path: aggregate active rows, not cached counters.
-        let columns = transaction
-            .prepare("PRAGMA table_info(galleries)")
-            .map_err(database_error)?
-            .query_map([], |row| row.get::<_, String>(1))
-            .map_err(database_error)?
-            .collect::<rusqlite::Result<Vec<_>>>()
-            .map_err(database_error)?;
+        let columns = table_columns(&transaction, "galleries")?;
         if columns.iter().any(|column| column == "image_count") {
             transaction.execute_batch("ALTER TABLE galleries DROP COLUMN image_count; ALTER TABLE galleries DROP COLUMN total_size_bytes;").map_err(database_error)?;
         }
         // The face_registry `embedding` column is gone: the local-cosine
         // matching path it served was removed (LLM-produced "embeddings" are
         // not geometrically consistent); face matching is vision-LLM only.
-        let columns = transaction
-            .prepare("PRAGMA table_info(face_registry)")
-            .map_err(database_error)?
-            .query_map([], |row| row.get::<_, String>(1))
-            .map_err(database_error)?
-            .collect::<rusqlite::Result<Vec<_>>>()
-            .map_err(database_error)?;
+        let columns = table_columns(&transaction, "face_registry")?;
         if columns.iter().any(|column| column == "embedding") {
             transaction
                 .execute_batch("ALTER TABLE face_registry DROP COLUMN embedding;")
@@ -1152,15 +1155,7 @@ impl GalleryStore {
              ORDER BY t.created_at DESC",
             &[DbValue::Text(gallery_id.to_string())],
             |row| {
-                let tag = TagRecord {
-                    id: row.get_str(0)?.to_string(),
-                    image_id: row.get_str(1)?.to_string(),
-                    tag_type: row.get_str(2)?.to_string(),
-                    value: row.get_str(3)?.to_string(),
-                    confidence: row.get_real(4)?,
-                    model_used: row.get_str(5)?.to_string(),
-                    created_at: row.get_str(6)?.to_string(),
-                };
+                let tag = Self::tag_from_row(row)?;
                 let relative_path: String = row.get_str(7)?.to_string();
                 Ok((tag, relative_path))
             },
@@ -1763,6 +1758,119 @@ mod tests {
         GalleryStore::from_driver(Arc::new(driver)).expect("gallery store init")
     }
 
+    /// The single-image fixture the tag, face-registry, and image-fetch
+    /// tests share: an in-memory store, a read-only gallery over a temp
+    /// root, and one image row ("/tmp/g/a.png", hash `hash`). The image
+    /// path never exists on disk — add_image records the row without
+    /// reading the file.
+    fn store_with_image(hash: &str) -> (GalleryStore, GalleryRecord, ImageRecord) {
+        let store = setup();
+        let gallery = store
+            .open(
+                tempfile::tempdir()
+                    .expect("gallery root")
+                    .path()
+                    .to_str()
+                    .expect("UTF-8 root"),
+                GalleryMode::ReadOnly,
+            )
+            .unwrap();
+        let img = store
+            .add_image(&gallery.id, "/tmp/g/a.png", hash, 100, 200, "png", 1024)
+            .unwrap();
+        (store, gallery, img)
+    }
+
+    /// The pending-image fixture the metadata-staleness tests share: one
+    /// image row named `file` under a temp gallery root (hash
+    /// "revision-one") — a newly indexed row starts metadata-stale.
+    fn store_with_pending_image(
+        file: &str,
+    ) -> Result<(GalleryStore, tempfile::TempDir, ImageRecord), Box<dyn std::error::Error>> {
+        let store = setup();
+        let directory = tempfile::tempdir()?;
+        let gallery = store.open(
+            directory.path().to_str().ok_or("UTF-8 gallery root")?,
+            GalleryMode::ReadOnly,
+        )?;
+        let image = store.add_image(
+            &gallery.id,
+            &directory.path().join(file).to_string_lossy(),
+            "revision-one",
+            1,
+            1,
+            "png",
+            1,
+        )?;
+        Ok((store, directory, image))
+    }
+
+    /// The hashed-image fixture the upsert and forward-schema tests share:
+    /// one image row ("a.png", hash "hash") under a temp gallery root,
+    /// with the row's absolute path returned for the upsert re-adds.
+    fn store_with_hashed_image() -> Result<
+        (
+            GalleryStore,
+            tempfile::TempDir,
+            GalleryRecord,
+            String,
+            ImageRecord,
+        ),
+        Box<dyn std::error::Error>,
+    > {
+        let store = setup();
+        let directory = tempfile::tempdir()?;
+        let gallery = store.open(
+            directory.path().to_str().expect("UTF-8 root"),
+            GalleryMode::ReadOnly,
+        )?;
+        let path = directory
+            .path()
+            .join("a.png")
+            .to_string_lossy()
+            .into_owned();
+        let image = store.add_image(&gallery.id, &path, "hash", 1, 1, "png", 10)?;
+        Ok((store, directory, gallery, path, image))
+    }
+
+    /// The absent-alias fixture the two alias-migration tests share: a
+    /// temp root holding a `real` directory and an `alias` symlink to it,
+    /// a gallery over the root, and one image row for `real/clip.mp4`
+    /// (hash "hash") — the clip file itself never exists.
+    #[cfg(unix)]
+    fn absent_alias_store() -> Result<
+        (
+            GalleryStore,
+            tempfile::TempDir,
+            std::path::PathBuf,
+            std::path::PathBuf,
+            GalleryRecord,
+            ImageRecord,
+        ),
+        Box<dyn std::error::Error>,
+    > {
+        let fixture = tempfile::tempdir()?;
+        let real = fixture.path().join("real");
+        std::fs::create_dir(&real)?;
+        let alias = fixture.path().join("alias");
+        std::os::unix::fs::symlink(&real, &alias)?;
+        let store = setup();
+        let gallery = store.open(
+            fixture.path().to_str().expect("UTF-8 root"),
+            GalleryMode::ReadOnly,
+        )?;
+        let image = store.add_image(
+            &gallery.id,
+            &real.join("clip.mp4").to_string_lossy(),
+            "hash",
+            1,
+            1,
+            "png",
+            10,
+        )?;
+        Ok((store, fixture, real, alias, gallery, image))
+    }
+
     #[test]
     fn create_gallery_returns_record() {
         let store = setup();
@@ -1793,20 +1901,7 @@ mod tests {
 
     #[test]
     fn add_image_stores_record() {
-        let store = setup();
-        let gallery = store
-            .open(
-                tempfile::tempdir()
-                    .expect("gallery root")
-                    .path()
-                    .to_str()
-                    .expect("UTF-8 root"),
-                GalleryMode::ReadOnly,
-            )
-            .unwrap();
-        let img = store
-            .add_image(&gallery.id, "/tmp/g/a.png", "abc123", 100, 200, "png", 1024)
-            .unwrap();
+        let (_store, _gallery, img) = store_with_image("abc123");
         assert_eq!(img.hash, "abc123");
         assert_eq!(img.width, 100);
     }
@@ -1814,21 +1909,7 @@ mod tests {
     /// expect: A newly indexed image remains pending until complete analysis certifies its revision. [P1]
     #[test]
     fn new_images_start_with_stale_metadata() -> Result<(), Box<dyn std::error::Error>> {
-        let store = setup();
-        let directory = tempfile::tempdir()?;
-        let gallery = store.open(
-            directory.path().to_str().ok_or("UTF-8 gallery root")?,
-            GalleryMode::ReadOnly,
-        )?;
-        let image = store.add_image(
-            &gallery.id,
-            &directory.path().join("pending.png").to_string_lossy(),
-            "revision-one",
-            1,
-            1,
-            "png",
-            1,
-        )?;
+        let (_store, _directory, image) = store_with_pending_image("pending.png")?;
 
         assert!(image.metadata_stale);
         Ok(())
@@ -1838,21 +1919,7 @@ mod tests {
     #[test]
     fn reanalysis_replaces_model_tags_and_preserves_user_tags()
     -> Result<(), Box<dyn std::error::Error>> {
-        let store = setup();
-        let directory = tempfile::tempdir()?;
-        let gallery = store.open(
-            directory.path().to_str().ok_or("UTF-8 gallery root")?,
-            GalleryMode::ReadOnly,
-        )?;
-        let image = store.add_image(
-            &gallery.id,
-            &directory.path().join("analyzed.png").to_string_lossy(),
-            "revision-one",
-            1,
-            1,
-            "png",
-            1,
-        )?;
+        let (store, _directory, image) = store_with_pending_image("analyzed.png")?;
         store.tag_image(&image.id, "object", "old-model", 0.8, "model-a")?;
         store.tag_image(&image.id, "object", "keep-user", 1.0, "user")?;
         store.tag_image(&image.id, "caption", "old-caption", 0.8, "model-a")?;
@@ -1896,20 +1963,7 @@ mod tests {
 
     #[test]
     fn get_image_by_index() {
-        let store = setup();
-        let gallery = store
-            .open(
-                tempfile::tempdir()
-                    .expect("gallery root")
-                    .path()
-                    .to_str()
-                    .expect("UTF-8 root"),
-                GalleryMode::ReadOnly,
-            )
-            .unwrap();
-        store
-            .add_image(&gallery.id, "/tmp/g/a.png", "aaa", 100, 200, "png", 1024)
-            .unwrap();
+        let (store, gallery, _img) = store_with_image("aaa");
         store
             .add_image(&gallery.id, "/tmp/g/b.png", "bbb", 300, 400, "png", 2048)
             .unwrap();
@@ -1921,40 +1975,14 @@ mod tests {
 
     #[test]
     fn get_image_by_hash() {
-        let store = setup();
-        let gallery = store
-            .open(
-                tempfile::tempdir()
-                    .expect("gallery root")
-                    .path()
-                    .to_str()
-                    .expect("UTF-8 root"),
-                GalleryMode::ReadOnly,
-            )
-            .unwrap();
-        store
-            .add_image(&gallery.id, "/tmp/g/a.png", "abc", 100, 200, "png", 1024)
-            .unwrap();
+        let (store, gallery, _img) = store_with_image("abc");
         let img = store.get_image(&gallery.id, None, Some("abc")).unwrap();
         assert_eq!(img.hash, "abc");
     }
 
     #[test]
     fn tag_image_stores_tag() {
-        let store = setup();
-        let gallery = store
-            .open(
-                tempfile::tempdir()
-                    .expect("gallery root")
-                    .path()
-                    .to_str()
-                    .expect("UTF-8 root"),
-                GalleryMode::ReadOnly,
-            )
-            .unwrap();
-        let img = store
-            .add_image(&gallery.id, "/tmp/g/a.png", "abc", 100, 200, "png", 1024)
-            .unwrap();
+        let (store, _gallery, img) = store_with_image("abc");
         let tag = store
             .tag_image(&img.id, "color", "red", 0.95, "test-model")
             .unwrap();
@@ -1963,20 +1991,7 @@ mod tests {
 
     #[test]
     fn get_tags_returns_all() {
-        let store = setup();
-        let gallery = store
-            .open(
-                tempfile::tempdir()
-                    .expect("gallery root")
-                    .path()
-                    .to_str()
-                    .expect("UTF-8 root"),
-                GalleryMode::ReadOnly,
-            )
-            .unwrap();
-        let img = store
-            .add_image(&gallery.id, "/tmp/g/a.png", "abc", 100, 200, "png", 1024)
-            .unwrap();
+        let (store, _gallery, img) = store_with_image("abc");
         store
             .tag_image(&img.id, "color", "red", 0.95, "test-model")
             .unwrap();
@@ -1989,20 +2004,7 @@ mod tests {
 
     #[test]
     fn tag_image_ignores_duplicates() {
-        let store = setup();
-        let gallery = store
-            .open(
-                tempfile::tempdir()
-                    .expect("gallery root")
-                    .path()
-                    .to_str()
-                    .expect("UTF-8 root"),
-                GalleryMode::ReadOnly,
-            )
-            .unwrap();
-        let img = store
-            .add_image(&gallery.id, "/tmp/g/a.png", "abc", 100, 200, "png", 1024)
-            .unwrap();
+        let (store, _gallery, img) = store_with_image("abc");
         store
             .tag_image(&img.id, "color", "red", 0.95, "test-model")
             .unwrap();
@@ -2015,20 +2017,7 @@ mod tests {
 
     #[test]
     fn register_face_creates_record() {
-        let store = setup();
-        let gallery = store
-            .open(
-                tempfile::tempdir()
-                    .expect("gallery root")
-                    .path()
-                    .to_str()
-                    .expect("UTF-8 root"),
-                GalleryMode::ReadOnly,
-            )
-            .unwrap();
-        let img = store
-            .add_image(&gallery.id, "/tmp/g/a.png", "abc", 100, 200, "png", 1024)
-            .unwrap();
+        let (store, _gallery, img) = store_with_image("abc");
         let face = store
             .register_face("John", "Doe", &img.id, "active", "")
             .unwrap();
@@ -2038,20 +2027,7 @@ mod tests {
 
     #[test]
     fn list_faces_returns_all() {
-        let store = setup();
-        let gallery = store
-            .open(
-                tempfile::tempdir()
-                    .expect("gallery root")
-                    .path()
-                    .to_str()
-                    .expect("UTF-8 root"),
-                GalleryMode::ReadOnly,
-            )
-            .unwrap();
-        let img = store
-            .add_image(&gallery.id, "/tmp/g/a.png", "abc", 100, 200, "png", 1024)
-            .unwrap();
+        let (store, _gallery, img) = store_with_image("abc");
         store
             .register_face("John", "Doe", &img.id, "active", "")
             .unwrap();
@@ -2064,20 +2040,7 @@ mod tests {
 
     #[test]
     fn list_faces_filters_by_status() {
-        let store = setup();
-        let gallery = store
-            .open(
-                tempfile::tempdir()
-                    .expect("gallery root")
-                    .path()
-                    .to_str()
-                    .expect("UTF-8 root"),
-                GalleryMode::ReadOnly,
-            )
-            .unwrap();
-        let img = store
-            .add_image(&gallery.id, "/tmp/g/a.png", "abc", 100, 200, "png", 1024)
-            .unwrap();
+        let (store, _gallery, img) = store_with_image("abc");
         store
             .register_face("John", "Doe", &img.id, "active", "")
             .unwrap();
@@ -2090,20 +2053,7 @@ mod tests {
 
     #[test]
     fn get_face_returns_record() {
-        let store = setup();
-        let gallery = store
-            .open(
-                tempfile::tempdir()
-                    .expect("gallery root")
-                    .path()
-                    .to_str()
-                    .expect("UTF-8 root"),
-                GalleryMode::ReadOnly,
-            )
-            .unwrap();
-        let img = store
-            .add_image(&gallery.id, "/tmp/g/a.png", "abc", 100, 200, "png", 1024)
-            .unwrap();
+        let (store, _gallery, img) = store_with_image("abc");
         let face = store
             .register_face("John", "Doe", &img.id, "active", "")
             .unwrap();
@@ -2119,20 +2069,7 @@ mod tests {
 
     #[test]
     fn remove_face_deletes_record() {
-        let store = setup();
-        let gallery = store
-            .open(
-                tempfile::tempdir()
-                    .expect("gallery root")
-                    .path()
-                    .to_str()
-                    .expect("UTF-8 root"),
-                GalleryMode::ReadOnly,
-            )
-            .unwrap();
-        let img = store
-            .add_image(&gallery.id, "/tmp/g/a.png", "abc", 100, 200, "png", 1024)
-            .unwrap();
+        let (store, _gallery, img) = store_with_image("abc");
         let face = store
             .register_face("John", "Doe", &img.id, "active", "")
             .unwrap();
@@ -2429,18 +2366,7 @@ mod tests {
     #[test]
     fn path_upsert_retains_annotations_and_deterministic_positions()
     -> Result<(), Box<dyn std::error::Error>> {
-        let store = setup();
-        let directory = tempfile::tempdir()?;
-        let gallery = store.open(
-            directory.path().to_str().expect("UTF-8 root"),
-            GalleryMode::ReadOnly,
-        )?;
-        let path = directory
-            .path()
-            .join("a.png")
-            .to_string_lossy()
-            .into_owned();
-        let first = store.add_image(&gallery.id, &path, "hash", 1, 1, "png", 10)?;
+        let (store, directory, gallery, path, first) = store_with_hashed_image()?;
         store.tag_image(&first.id, "caption", "Keep", 1.0, "user")?;
         let album = store.create_album(&gallery.id, "Keep", None)?;
         store.add_to_album(&album.id, &first.id)?;
@@ -2480,18 +2406,7 @@ mod tests {
     #[test]
     fn forward_schema_preserves_data_and_refuses_duplicate_identity()
     -> Result<(), Box<dyn std::error::Error>> {
-        let store = setup();
-        let directory = tempfile::tempdir()?;
-        let gallery = store.open(
-            directory.path().to_str().expect("UTF-8 root"),
-            GalleryMode::ReadOnly,
-        )?;
-        let path = directory
-            .path()
-            .join("a.png")
-            .to_string_lossy()
-            .into_owned();
-        let image = store.add_image(&gallery.id, &path, "hash", 1, 1, "png", 10)?;
+        let (store, _directory, gallery, _path, image) = store_with_hashed_image()?;
         store.tag_image(&image.id, "caption", "Original annotation", 1.0, "user")?;
         store.driver.execute_batch(
             "DROP INDEX idx_gallery_images_identity;
@@ -2530,11 +2445,7 @@ mod tests {
     #[test]
     fn absent_alias_path_resolves_existing_ancestors_and_keeps_identity()
     -> Result<(), Box<dyn std::error::Error>> {
-        let fixture = tempfile::tempdir()?;
-        let real = fixture.path().join("real");
-        std::fs::create_dir(&real)?;
-        let alias = fixture.path().join("alias");
-        std::os::unix::fs::symlink(&real, &alias)?;
+        let (store, _fixture, real, alias, gallery, image) = absent_alias_store()?;
         // The file is absent — only the ancestor symlink exists.
         let via_alias = asset_path(&alias.join("clip.mp4").to_string_lossy())?;
         let via_real = asset_path(&real.join("clip.mp4").to_string_lossy())?;
@@ -2546,20 +2457,6 @@ mod tests {
         // The legacy record carries the unresolved alias spelling; the forward
         // schema update must rewrite it to the resolved spelling so a returning
         // file re-attaches to the same record (tags, albums, lineage intact).
-        let store = setup();
-        let gallery = store.open(
-            fixture.path().to_str().expect("UTF-8 root"),
-            GalleryMode::ReadOnly,
-        )?;
-        let image = store.add_image(
-            &gallery.id,
-            &real.join("clip.mp4").to_string_lossy(),
-            "hash",
-            1,
-            1,
-            "png",
-            10,
-        )?;
         store.tag_image(&image.id, "caption", "My clip", 1.0, "user")?;
         store.driver.execute(
             "UPDATE gallery_images SET absolute_path = ?1 WHERE id = ?2",
@@ -2603,25 +2500,7 @@ mod tests {
     #[test]
     fn conflicting_absent_alias_spellings_fail_explicitly() -> Result<(), Box<dyn std::error::Error>>
     {
-        let fixture = tempfile::tempdir()?;
-        let real = fixture.path().join("real");
-        std::fs::create_dir(&real)?;
-        let alias = fixture.path().join("alias");
-        std::os::unix::fs::symlink(&real, &alias)?;
-        let store = setup();
-        let gallery = store.open(
-            fixture.path().to_str().expect("UTF-8 root"),
-            GalleryMode::ReadOnly,
-        )?;
-        let image = store.add_image(
-            &gallery.id,
-            &real.join("clip.mp4").to_string_lossy(),
-            "hash",
-            1,
-            1,
-            "png",
-            10,
-        )?;
+        let (store, _fixture, real, alias, gallery, image) = absent_alias_store()?;
         // Legacy state: two records for the same absent file — one under the
         // alias spelling, one under the real spelling — predating the status
         // columns. The canonicalizing schema update must refuse to merge them.
