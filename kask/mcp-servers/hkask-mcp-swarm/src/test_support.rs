@@ -184,7 +184,7 @@ impl hkask_types::ToolDispatchPort for NoTools {
 
 pub(crate) fn make_thread_server(
     dir: &std::path::Path,
-    inference: Arc<RecordingInference>,
+    inference: Arc<dyn hkask_types::InferencePort>,
     passphrase: &str,
 ) -> SwarmServer {
     let agents = dir.join("agents").to_string_lossy().into_owned();

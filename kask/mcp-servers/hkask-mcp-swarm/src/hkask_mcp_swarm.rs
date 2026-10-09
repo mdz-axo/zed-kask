@@ -88,6 +88,8 @@ mod abw_client;
 mod abw_util;
 mod agent_executor;
 pub mod agent_stats;
+#[cfg(test)]
+mod ai_assist_override_tests;
 mod cloud_swarm;
 mod cloud_swarm_tools;
 mod config;
