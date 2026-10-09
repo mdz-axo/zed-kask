@@ -22,6 +22,12 @@
 #      any label is judgment (P), critiqued in review. Codified here
 #      2026-09-28 after the filesystem walk ran repeatedly as a re-typed
 #      one-liner across the convergence batches (12 → 55 of 55).
+#   6. Label-vs-tool consistency (body-side, P8.4) — a SKILL.md that
+#      names a D oracle must assert a D regime somewhere in the file
+#      (the conservative whole-file floor of the doctrine's
+#      "checkably wrong" example; per-step routing correctness stays
+#      P). Codified 2026-10-08 from the D/P audit's hand-run
+#      label-vs-tool sweep.
 #
 # Advisory instrument: findings are proposals for read-triage, not edits.
 # Usage: ./skill-corpus-prescreen.sh [overlap_floor]   (default 0.25)
@@ -138,7 +144,11 @@ done
 # Separate counters from the template checks above: the template baseline
 # and its accepted-flags ledger govern templates only. Grep reads each
 # SKILL.md directly (no pipe — grep -q's early exit is safe on a file).
-SKILLS_DIR="$SCRIPT_DIR/../../../.agents/skills"
+# The SKILLS_DIR seam (the LEAN_SPEC_DIR pattern in check-lean-spec-pins.sh):
+# overridable so check-skill-corpus-dp-labels-selftest.sh can drive the D/P
+# checks over a fixture skills tree. The template checks above always run
+# against the live registry (read-only, green).
+SKILLS_DIR="${SKILLS_DIR:-$SCRIPT_DIR/../../../.agents/skills}"
 # The oracle vocabulary that makes a SKILL.md computation-prescribing (P8.4).
 # Widened 2026-10-08 with the benchmark vocabulary (cargo bench / cargo tree /
 # criterion) after the D/P audit found gpui-bench escaping the presence floor
@@ -163,5 +173,36 @@ for skill_md in "$SKILLS_DIR"/*/SKILL.md; do
     fi
 done
 echo "checked $dp_total computation-prescribing SKILL.mds; $dp_labeled carry D/P labelling; $dp_flagged flagged"
+
+# ── Body-side: label-vs-tool consistency (P8.4, check 6) ────────────────
+# The conservative floor of the doctrine's "checkably wrong" example
+# (PRINCIPLES.md: a section that labels a lisp_eval-calling skill "all
+# P"): a SKILL.md that names a D oracle must assert a D regime somewhere
+# in the file. Whole-file marker check, not section extraction — the four
+# observed section forms (tables, bold paragraphs, prose seams, indented
+# headers) make extraction fragile, and a false-flagging sensor gets
+# ignored. Honest limitation: a file whose Instructions carry inline (D)
+# markers passes even if its D/P section mislabels; per-step routing
+# correctness stays P (PRINCIPLES.md), critiqued by the operator and the
+# named oracle. Mention-not-invocation edges ("do NOT use lisp_eval")
+# are adjudicated from the flag, not the regex. Codified 2026-10-08 from
+# the D/P audit's hand-run label-vs-tool sweep (which false-positived on
+# four section forms before this calibration: 0 flags on the live
+# 61-skill corpus).
+dp_marker_pattern='\(D\b|\*\*D\*\*|\| *D[ |+]|P/D|are D\b|is D\b|D for\b|D —|D \('
+dp_coherent=0
+dp_incoherent=0
+for skill_md in "$SKILLS_DIR"/*/SKILL.md; do
+    [ -f "$skill_md" ] || continue
+    if grep -qE "$dp_oracle_pattern" "$skill_md"; then
+        if grep -qE "$dp_marker_pattern" "$skill_md"; then
+            dp_coherent=$((dp_coherent + 1))
+        else
+            dp_incoherent=$((dp_incoherent + 1))
+            echo "  ${skill_md#"$SKILLS_DIR"/}: names a D oracle but asserts no D regime anywhere (P8.4 label-vs-tool floor)"
+        fi
+    fi
+done
+echo "checked $((dp_coherent + dp_incoherent)) oracle-naming SKILL.mds; $dp_coherent carry a D regime marker; $dp_incoherent flagged"
 
 echo "checked $checked templates; $flagged flagged; $accepted accepted (baseline)"

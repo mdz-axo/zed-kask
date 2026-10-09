@@ -146,5 +146,5 @@ Fits come from the `skill-discovery` route phase. The dimension scores are judgm
 | Landauer bound at 300 K | Run (`lisp_eval`) |
 | Skill fit composites | Run (`lisp_eval`) |
 | Axis independence; routing-claim falsifiability | Run inline as judgment (P); `falsifiability` templates not rendered; no external observations |
-| Lean proof of S = k_B ln 2 · H | Not run |
+| Lean proof of S = k_B ln 2 · H | Refused by scope (2026-10-08, the audit plan's decision 1): the pin corpus is core-Lean only, no Mathlib, and the identity needs ln (real analysis) — revisit only if kask/lean's scope changes |
 | Ontology anchors | Run; all five coarse (5W1H core) at first probe — since graduated to the derived rung (all eight terms verified in `kask/crates/hkask-bridge-ontology/src/derived.rs:600-668`, re-checked 2026-09-28) |
