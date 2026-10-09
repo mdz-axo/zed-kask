@@ -279,6 +279,49 @@ fn unexpected_outcome_msg(method: &InferenceMethod, variant: &'static str) -> St
     format!("received {variant} outcome for a {method:?} request")
 }
 
+/// The variant-name half of an unexpected-outcome message, derived from the
+/// outcome value so the per-call match arms and the message cannot drift
+/// apart.
+fn outcome_variant_name(outcome: &InferenceOutcome) -> &'static str {
+    match outcome {
+        InferenceOutcome::Result { .. } => "Result",
+        InferenceOutcome::Error { .. } => "Error",
+        InferenceOutcome::Embeddings { .. } => "Embeddings",
+        InferenceOutcome::ModelList { .. } => "ModelList",
+        InferenceOutcome::ToolResult { .. } => "ToolResult",
+        InferenceOutcome::ToolDefinition { .. } => "ToolDefinition",
+        InferenceOutcome::WorktreeThread { .. } => "WorktreeThread",
+        InferenceOutcome::RerankScores { .. } => "RerankScores",
+    }
+}
+
+/// The shared tail of every IPC call method's outcome match: an `Error`
+/// outcome maps through, and any other unexpected variant surfaces as a
+/// Connection error naming what arrived instead. Each call method matches
+/// its one expected variant first and routes everything else here, so the
+/// per-method matches stay one arm instead of eight.
+fn unexpected_outcome_error(method: &InferenceMethod, outcome: InferenceOutcome) -> InferenceError {
+    match outcome {
+        InferenceOutcome::Error { error } => error.into(),
+        other => {
+            InferenceError::Connection(unexpected_outcome_msg(method, outcome_variant_name(&other)))
+        }
+    }
+}
+
+/// The tool-addressing params shared by the governed-tool IPC calls:
+/// server, tool name, the caller's declared allowlist, and the OCAP grant
+/// env. `invoke_tool` layers `tool_args` on top of this base.
+fn tool_call_params(server: &str, tool: &str, allowed: &[String]) -> InferenceParams {
+    InferenceParams {
+        tool_server: Some(server.to_string()),
+        tool_name: Some(tool.to_string()),
+        tool_allowlist: Some(allowed.to_vec()),
+        tool_grant: std::env::var(hkask_types::inference_ipc::TOOL_GRANT_ENV).ok(),
+        ..Default::default()
+    }
+}
+
 /// Strip the provider prefix (the first `/`-segment) from a model id.
 ///
 /// `"OpenRouter/z-ai/glm-5.2"` → `"z-ai/glm-5.2"`;
@@ -432,25 +475,7 @@ impl InferenceIpcClient {
         let response = self.ipc_roundtrip(&method, params).await?;
         match response.outcome {
             InferenceOutcome::Result { result } => Ok(result),
-            InferenceOutcome::Error { error } => Err(error.into()),
-            InferenceOutcome::Embeddings { .. } => Err(InferenceError::Connection(
-                unexpected_outcome_msg(&method, "Embeddings"),
-            )),
-            InferenceOutcome::ModelList { .. } => Err(InferenceError::Connection(
-                unexpected_outcome_msg(&method, "ModelList"),
-            )),
-            InferenceOutcome::ToolResult { .. } => Err(InferenceError::Connection(
-                unexpected_outcome_msg(&method, "ToolResult"),
-            )),
-            InferenceOutcome::ToolDefinition { .. } => Err(InferenceError::Connection(
-                unexpected_outcome_msg(&method, "ToolDefinition"),
-            )),
-            InferenceOutcome::WorktreeThread { .. } => Err(InferenceError::Connection(
-                unexpected_outcome_msg(&method, "WorktreeThread"),
-            )),
-            InferenceOutcome::RerankScores { .. } => Err(InferenceError::Connection(
-                unexpected_outcome_msg(&method, "RerankScores"),
-            )),
+            other => Err(unexpected_outcome_error(&method, other)),
         }
     }
 
@@ -509,23 +534,8 @@ impl InferenceIpcClient {
                 },
                 _ => EmbeddingGenerationError::Connection(error.code + ": " + &error.message),
             }),
-            InferenceOutcome::Result { .. } => Err(EmbeddingGenerationError::Connection(
-                unexpected_outcome_msg(&method, "Result"),
-            )),
-            InferenceOutcome::ModelList { .. } => Err(EmbeddingGenerationError::Connection(
-                unexpected_outcome_msg(&method, "ModelList"),
-            )),
-            InferenceOutcome::ToolResult { .. } => Err(EmbeddingGenerationError::Connection(
-                unexpected_outcome_msg(&method, "ToolResult"),
-            )),
-            InferenceOutcome::ToolDefinition { .. } => Err(EmbeddingGenerationError::Connection(
-                unexpected_outcome_msg(&method, "ToolDefinition"),
-            )),
-            InferenceOutcome::WorktreeThread { .. } => Err(EmbeddingGenerationError::Connection(
-                unexpected_outcome_msg(&method, "WorktreeThread"),
-            )),
-            InferenceOutcome::RerankScores { .. } => Err(EmbeddingGenerationError::Connection(
-                unexpected_outcome_msg(&method, "RerankScores"),
+            other => Err(EmbeddingGenerationError::Connection(
+                unexpected_outcome_msg(&method, outcome_variant_name(&other)),
             )),
         }
     }
@@ -556,25 +566,7 @@ impl InferenceIpcClient {
             .await?;
         match response.outcome {
             InferenceOutcome::ModelList { models } => Ok(models),
-            InferenceOutcome::Error { error } => Err(error.into()),
-            InferenceOutcome::Result { .. } => Err(InferenceError::Connection(
-                unexpected_outcome_msg(&method, "Result"),
-            )),
-            InferenceOutcome::Embeddings { .. } => Err(InferenceError::Connection(
-                unexpected_outcome_msg(&method, "Embeddings"),
-            )),
-            InferenceOutcome::ToolResult { .. } => Err(InferenceError::Connection(
-                unexpected_outcome_msg(&method, "ToolResult"),
-            )),
-            InferenceOutcome::ToolDefinition { .. } => Err(InferenceError::Connection(
-                unexpected_outcome_msg(&method, "ToolDefinition"),
-            )),
-            InferenceOutcome::WorktreeThread { .. } => Err(InferenceError::Connection(
-                unexpected_outcome_msg(&method, "WorktreeThread"),
-            )),
-            InferenceOutcome::RerankScores { .. } => Err(InferenceError::Connection(
-                unexpected_outcome_msg(&method, "RerankScores"),
-            )),
+            other => Err(unexpected_outcome_error(&method, other)),
         }
     }
 
@@ -605,25 +597,7 @@ impl InferenceIpcClient {
                 usage,
                 cost_usd,
             }),
-            InferenceOutcome::Error { error } => Err(error.into()),
-            InferenceOutcome::Result { .. } => Err(InferenceError::Connection(
-                unexpected_outcome_msg(&method, "Result"),
-            )),
-            InferenceOutcome::Embeddings { .. } => Err(InferenceError::Connection(
-                unexpected_outcome_msg(&method, "Embeddings"),
-            )),
-            InferenceOutcome::ModelList { .. } => Err(InferenceError::Connection(
-                unexpected_outcome_msg(&method, "ModelList"),
-            )),
-            InferenceOutcome::ToolResult { .. } => Err(InferenceError::Connection(
-                unexpected_outcome_msg(&method, "ToolResult"),
-            )),
-            InferenceOutcome::ToolDefinition { .. } => Err(InferenceError::Connection(
-                unexpected_outcome_msg(&method, "ToolDefinition"),
-            )),
-            InferenceOutcome::WorktreeThread { .. } => Err(InferenceError::Connection(
-                unexpected_outcome_msg(&method, "WorktreeThread"),
-            )),
+            other => Err(unexpected_outcome_error(&method, other)),
         }
     }
 
@@ -650,13 +624,7 @@ impl InferenceIpcClient {
         allowed: &[String],
     ) -> Result<ChatToolDefinition, InferenceError> {
         let method = InferenceMethod::ToolDefinition;
-        let params = InferenceParams {
-            tool_server: Some(server.to_string()),
-            tool_name: Some(tool.to_string()),
-            tool_allowlist: Some(allowed.to_vec()),
-            tool_grant: std::env::var(hkask_types::inference_ipc::TOOL_GRANT_ENV).ok(),
-            ..Default::default()
-        };
+        let params = tool_call_params(server, tool, allowed);
         let response = self.ipc_roundtrip(&method, params).await?;
         match response.outcome {
             InferenceOutcome::ToolDefinition { definition } => Ok(definition),
@@ -683,35 +651,13 @@ impl InferenceIpcClient {
     ) -> Result<serde_json::Value, InferenceError> {
         let method = InferenceMethod::ToolInvoke;
         let params = InferenceParams {
-            tool_server: Some(server.to_string()),
-            tool_name: Some(tool.to_string()),
             tool_args: Some(args),
-            tool_allowlist: Some(allowed.to_vec()),
-            tool_grant: std::env::var(hkask_types::inference_ipc::TOOL_GRANT_ENV).ok(),
-            ..Default::default()
+            ..tool_call_params(server, tool, allowed)
         };
         let response = self.ipc_roundtrip(&method, params).await?;
         match response.outcome {
             InferenceOutcome::ToolResult { result } => Ok(result),
-            InferenceOutcome::ToolDefinition { .. } => Err(InferenceError::Connection(
-                unexpected_outcome_msg(&method, "ToolDefinition"),
-            )),
-            InferenceOutcome::Error { error } => Err(error.into()),
-            InferenceOutcome::Result { .. } => Err(InferenceError::Connection(
-                unexpected_outcome_msg(&method, "Result"),
-            )),
-            InferenceOutcome::Embeddings { .. } => Err(InferenceError::Connection(
-                unexpected_outcome_msg(&method, "Embeddings"),
-            )),
-            InferenceOutcome::ModelList { .. } => Err(InferenceError::Connection(
-                unexpected_outcome_msg(&method, "ModelList"),
-            )),
-            InferenceOutcome::WorktreeThread { .. } => Err(InferenceError::Connection(
-                unexpected_outcome_msg(&method, "WorktreeThread"),
-            )),
-            InferenceOutcome::RerankScores { .. } => Err(InferenceError::Connection(
-                unexpected_outcome_msg(&method, "RerankScores"),
-            )),
+            other => Err(unexpected_outcome_error(&method, other)),
         }
     }
 
@@ -741,25 +687,7 @@ impl InferenceIpcClient {
         let response = self.ipc_roundtrip(&method, params).await?;
         match response.outcome {
             InferenceOutcome::WorktreeThread { thread } => Ok(thread),
-            InferenceOutcome::Error { error } => Err(error.into()),
-            InferenceOutcome::Result { .. } => Err(InferenceError::Connection(
-                unexpected_outcome_msg(&method, "Result"),
-            )),
-            InferenceOutcome::Embeddings { .. } => Err(InferenceError::Connection(
-                unexpected_outcome_msg(&method, "Embeddings"),
-            )),
-            InferenceOutcome::ModelList { .. } => Err(InferenceError::Connection(
-                unexpected_outcome_msg(&method, "ModelList"),
-            )),
-            InferenceOutcome::ToolResult { .. } => Err(InferenceError::Connection(
-                unexpected_outcome_msg(&method, "ToolResult"),
-            )),
-            InferenceOutcome::ToolDefinition { .. } => Err(InferenceError::Connection(
-                unexpected_outcome_msg(&method, "ToolDefinition"),
-            )),
-            InferenceOutcome::RerankScores { .. } => Err(InferenceError::Connection(
-                unexpected_outcome_msg(&method, "RerankScores"),
-            )),
+            other => Err(unexpected_outcome_error(&method, other)),
         }
     }
 }
@@ -773,14 +701,9 @@ impl InferencePort for InferenceIpcClient {
     ) -> std::pin::Pin<
         Box<dyn std::future::Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>,
     > {
-        let params = InferenceParams {
-            prompt: Some(prompt.to_string()),
-            parameters: parameters.clone(),
-            tools: tools.map(|t| t.to_vec()),
-            ..Default::default()
-        };
-        let this = self;
-        async move { this.call(InferenceMethod::Generate, params).await }.boxed()
+        // No override — the same construction `generate_with_model` runs with
+        // `model_override: None` (the params default this body used to rely on).
+        self.generate_with_model(prompt, parameters, None, tools)
     }
 
     fn generate_with_model(
