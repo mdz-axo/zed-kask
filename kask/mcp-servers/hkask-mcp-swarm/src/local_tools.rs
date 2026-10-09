@@ -963,6 +963,40 @@ impl SwarmServer {
     /// `LocalAgentCard` (system prompt, contracts, sampling, valence,
     /// dependencies, sync link) for one agent, so a caller does not have to
     /// list the whole registry and filter.
+    /// Resolve a local agent's card by name — the shared admission of the
+    /// local-agent tools: a non-empty name, then a registry lookup that
+    /// fails `not_found` naming the agent.
+    fn require_local_agent(
+        &self,
+        agent_name: &str,
+    ) -> Result<crate::local_registry::LocalAgentCard, McpToolError> {
+        if agent_name.trim().is_empty() {
+            return Err(McpToolError::invalid_argument(
+                "agent_name must be non-empty".to_string(),
+            ));
+        }
+        self.local_registry.get(agent_name).ok_or_else(|| {
+            McpToolError::not_found(format!("agent '{agent_name}' not found in local registry"))
+        })
+    }
+
+    /// Resolve a local swarm by id — the shared admission of the
+    /// local-swarm tools: a non-empty id, then a registry lookup that
+    /// fails `not_found` naming the swarm.
+    fn require_local_swarm(
+        &self,
+        swarm_id: &str,
+    ) -> Result<crate::local_swarms::LocalSwarm, McpToolError> {
+        if swarm_id.trim().is_empty() {
+            return Err(McpToolError::invalid_argument(
+                "swarm_id must be non-empty".to_string(),
+            ));
+        }
+        self.local_swarms
+            .get(swarm_id)
+            .ok_or_else(|| McpToolError::not_found(format!("local swarm '{swarm_id}' not found")))
+    }
+
     #[tool(
         description = "Get a single local agent's full card (the local analog of swarm_get_agent). Returns the complete LocalAgentCard — system prompt, input/output contracts, sampling, valence, dependencies, and the cloud sync link."
     )]
@@ -972,17 +1006,7 @@ impl SwarmServer {
     ) -> Result<String, McpToolError> {
         execute_tool(self, "swarm_get_local_agent", async {
             let req = parameters.0;
-            if req.agent_name.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "agent_name must be non-empty".to_string(),
-                ));
-            }
-            let card = self.local_registry.get(&req.agent_name).ok_or_else(|| {
-                McpToolError::not_found(format!(
-                    "agent '{}' not found in local registry",
-                    req.agent_name
-                ))
-            })?;
+            let card = self.require_local_agent(&req.agent_name)?;
             let mut card_value = serde_json::to_value(&card)
                 .map_err(|e| McpToolError::internal(format!("failed to serialize card: {e}")))?;
             // fermi parity: `build_agent_json` carries `execution_stats` on
@@ -1018,17 +1042,7 @@ impl SwarmServer {
     ) -> Result<String, McpToolError> {
         execute_tool(self, "swarm_workflow_check_local", async {
             let req = parameters.0;
-            if req.agent_name.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "agent_name must be non-empty".to_string(),
-                ));
-            }
-            let card = self.local_registry.get(&req.agent_name).ok_or_else(|| {
-                McpToolError::not_found(format!(
-                    "agent '{}' not found in local registry",
-                    req.agent_name
-                ))
-            })?;
+            let card = self.require_local_agent(&req.agent_name)?;
             let Some(template) = &card.workflow_template else {
                 return Ok(serde_json::json!({
                     "agent_id": req.agent_name,
@@ -1077,12 +1091,7 @@ impl SwarmServer {
                 .get_or_init()
                 .await
                 .map_err(map_local_swarm_error)?;
-            let card = self.local_registry.get(&req.agent_name).ok_or_else(|| {
-                McpToolError::not_found(format!(
-                    "agent '{}' not found in local registry",
-                    req.agent_name
-                ))
-            })?;
+            let card = self.require_local_agent(&req.agent_name)?;
             let Some(template) = &card.workflow_template else {
                 return Ok(serde_json::json!({
                     "agent_id": req.agent_name,
@@ -2229,14 +2238,7 @@ impl SwarmServer {
     ) -> Result<String, McpToolError> {
         execute_tool(self, "swarm_get_local_swarm", async {
             let req = parameters.0;
-            if req.swarm_id.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "swarm_id must be non-empty".to_string(),
-                ));
-            }
-            let swarm = self.local_swarms.get(&req.swarm_id).ok_or_else(|| {
-                McpToolError::not_found(format!("local swarm '{}' not found", req.swarm_id))
-            })?;
+            let swarm = self.require_local_swarm(&req.swarm_id)?;
             Ok(serde_json::to_value(&swarm).unwrap_or_else(
                 |_| serde_json::json!({ "swarm_id": swarm.swarm_id, "name": swarm.name }),
             ))
@@ -2409,14 +2411,7 @@ impl SwarmServer {
                 .require_auth()
                 .map_err(SwarmError::into_tool_error)?;
             let req = parameters.0;
-            if req.swarm_id.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "swarm_id must be non-empty".to_string(),
-                ));
-            }
-            let swarm = self.local_swarms.get(&req.swarm_id).ok_or_else(|| {
-                McpToolError::not_found(format!("local swarm '{}' not found", req.swarm_id))
-            })?;
+            let swarm = self.require_local_swarm(&req.swarm_id)?;
 
             // Create the ABW workspace (free) — same pattern as
             // `swarm_create_swarm`.
@@ -2730,7 +2725,15 @@ impl SwarmServer {
                 return Ok(payload);
             }
 
-            // Use the inference port directly for AI-assisted composition guidance.
+            // Use the inference port directly for AI-assisted composition
+            // guidance. Route through the classifier-class model
+            // (`kask.models.classifier_model`, env `HKASK_CLASSIFIER_MODEL`),
+            // which accepts reasoning-off requests: the host session's default
+            // chat model can be thinking-mandatory (OpenRouter 400 "Reasoning
+            // is mandatory for this endpoint and cannot be disabled" — live
+            // 2026-10-08, card d58fd87b), which left every suggest call
+            // unavailable. The same fix class as the validate advisory's
+            // reroute (f8ba3c40d8).
             let runtime = self
                 .local_runtime
                 .get_or_init()
@@ -2738,9 +2741,10 @@ impl SwarmServer {
                 .map_err(map_local_swarm_error)?;
             let inference = runtime.inference();
             let result = inference
-                .generate(
+                .generate_with_model(
                     &format!("You are an expert at composing AI agent teams. Based on the following request, generate a JSON response with suggested agent/swarm configuration:\n\n{}", json_task),
                     &hkask_types::LLMParameters::default(),
+                    hkask_inference::model_constants::classifier_model().as_deref(),
                     None,
                 )
                 .await
@@ -3880,6 +3884,42 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
+    /// The canned mock answer the local-tools doubles return — text from
+    /// the double, model "mock", single-token usage.
+    fn mock_result(text: String) -> hkask_types::InferenceResult {
+        hkask_types::InferenceResult {
+            text,
+            model: "mock".into(),
+            usage: hkask_types::InferenceUsage {
+                prompt_tokens: 1,
+                completion_tokens: 1,
+                total_tokens: 2,
+                reported: true,
+            },
+            finish_reason: "stop".into(),
+            tool_calls: vec![],
+            reasoning: None,
+            cost_usd: None,
+        }
+    }
+
+    /// The DiscriminativeInference runtime fixture the evaluator-harness
+    /// and no-budget tests share: a runtime over the discriminative double
+    /// and NoopDispatch, with the call counter returned for assertions.
+    fn discriminative_runtime() -> (Arc<AtomicUsize>, crate::local_runtime::LocalSwarmRuntime) {
+        let call_count = Arc::new(AtomicUsize::new(0));
+        let inference: Arc<dyn hkask_types::InferencePort> = Arc::new(DiscriminativeInference {
+            call_count: call_count.clone(),
+        });
+        let dispatch: Arc<dyn hkask_types::ToolDispatchPort> = Arc::new(NoopDispatch);
+        let runtime = crate::local_runtime::LocalSwarmRuntime::new_for_test(
+            inference,
+            dispatch,
+            String::new(),
+        );
+        (call_count, runtime)
+    }
+
     /// Mock inference that returns different responses based on the system
     /// prompt embedded in the prompt text. An agent whose system prompt
     /// contains respond correctly gets the right answer; everyone else gets
@@ -3888,42 +3928,16 @@ mod tests {
         call_count: Arc<AtomicUsize>,
     }
 
-    impl hkask_types::InferencePort for DiscriminativeInference {
-        fn generate(
-            &self,
-            prompt: &str,
-            _parameters: &hkask_types::LLMParameters,
-            _tools: Option<&[hkask_types::ChatToolDefinition]>,
-        ) -> Pin<
-            Box<
-                dyn Future<
-                        Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
-                    > + Send
-                    + '_,
-            >,
-        > {
+    crate::test_support::inference_generate! {
+        DiscriminativeInference,
+        generate(self, prompt, _parameters, _tools): {
             self.call_count.fetch_add(1, Ordering::Relaxed);
             let text = if prompt.contains("respond correctly") {
                 "42".to_string()
             } else {
                 "I dont know".to_string()
             };
-            Box::pin(async move {
-                Ok(hkask_types::InferenceResult {
-                    text,
-                    model: "mock".into(),
-                    usage: hkask_types::InferenceUsage {
-                        prompt_tokens: 1,
-                        completion_tokens: 1,
-                        total_tokens: 2,
-                        reported: true,
-                    },
-                    finish_reason: "stop".into(),
-                    tool_calls: vec![],
-                    reasoning: None,
-                    cost_usd: None,
-                })
-            })
+            Box::pin(async move { Ok(mock_result(text)) })
         }
     }
 
@@ -4018,13 +4032,7 @@ mod tests {
         // contains 42 should pass for the good agent and fail for the bad
         // one — non-trivial, divergent pass rates confirm the harness
         // measures something.
-        use crate::local_runtime::LocalSwarmRuntime;
-        let call_count = Arc::new(AtomicUsize::new(0));
-        let inference: Arc<dyn hkask_types::InferencePort> = Arc::new(DiscriminativeInference {
-            call_count: call_count.clone(),
-        });
-        let dispatch: Arc<dyn hkask_types::ToolDispatchPort> = Arc::new(NoopDispatch);
-        let runtime = LocalSwarmRuntime::new_for_test(inference, dispatch, String::new());
+        let (call_count, runtime) = discriminative_runtime();
 
         let good_agent = mock_agent_card(
             "good",
@@ -4062,15 +4070,7 @@ mod tests {
     /// must NOT translate to local mode (operator ruling 2026-09-04).
     #[tokio::test]
     async fn local_delegation_has_no_budget() {
-        use crate::local_runtime::LocalSwarmRuntime;
-        use std::sync::Arc;
-        use std::sync::atomic::AtomicUsize;
-        let call_count = Arc::new(AtomicUsize::new(0));
-        let inference: Arc<dyn hkask_types::InferencePort> = Arc::new(DiscriminativeInference {
-            call_count: call_count.clone(),
-        });
-        let dispatch: Arc<dyn hkask_types::ToolDispatchPort> = Arc::new(NoopDispatch);
-        let runtime = LocalSwarmRuntime::new_for_test(inference, dispatch, String::new());
+        let (_call_count, runtime) = discriminative_runtime();
 
         let agent = mock_agent_card(
             "good",
@@ -4089,37 +4089,11 @@ mod tests {
         text: String,
     }
 
-    impl hkask_types::InferencePort for JsonInference {
-        fn generate(
-            &self,
-            _prompt: &str,
-            _parameters: &hkask_types::LLMParameters,
-            _tools: Option<&[hkask_types::ChatToolDefinition]>,
-        ) -> Pin<
-            Box<
-                dyn Future<
-                        Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
-                    > + Send
-                    + '_,
-            >,
-        > {
+    crate::test_support::inference_generate! {
+        JsonInference,
+        generate(self, _prompt, _parameters, _tools): {
             let text = self.text.clone();
-            Box::pin(async move {
-                Ok(hkask_types::InferenceResult {
-                    text,
-                    model: "mock".into(),
-                    usage: hkask_types::InferenceUsage {
-                        prompt_tokens: 1,
-                        completion_tokens: 1,
-                        total_tokens: 2,
-                        reported: true,
-                    },
-                    finish_reason: "stop".into(),
-                    tool_calls: vec![],
-                    reasoning: None,
-                    cost_usd: None,
-                })
-            })
+            Box::pin(async move { Ok(mock_result(text)) })
         }
     }
 
