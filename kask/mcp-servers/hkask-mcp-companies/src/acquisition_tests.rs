@@ -1606,68 +1606,88 @@ fn decode_screener_exchange(path: &str) -> Option<String> {
     })
 }
 
+/// Run one `company_screener` call against a fixture HTTP origin and return
+/// `(content, fixture)` — the shared choreography of the screener tool
+/// tests: start the responder fixture, scope the test origin, build the
+/// server, parse the `ScreenerRequest`, call the tool, extract the content.
+/// The responder and the request JSON are each test's own variation; the
+/// assertions stay in the test. The fixture returns with the output so
+/// `count`/`requests` assertions keep working outside the scope — the
+/// scope only routes the call's HTTP, so reading the fixture after it is
+/// the same read.
+async fn screener_tool(
+    respond: impl Fn(&str) -> (u16, Value) + Send + Sync + 'static,
+    request: Value,
+) -> (Value, FixtureHttp) {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let fixture = FixtureHttp::start(respond).await;
+    let output = providers::TEST_HTTP_ORIGIN
+        .scope(fixture.origin.clone(), async {
+            let server = server(directory.path());
+            let request =
+                serde_json::from_value::<types::ScreenerRequest>(request).expect("request");
+            content(
+                &server
+                    .company_screener(Parameters(request))
+                    .await
+                    .expect("screener tool"),
+            )
+        })
+        .await;
+    (output, fixture)
+}
+
 /// expect: [P5] A multi-geography prompt fans out one EODHD screener query
 /// per exchange, interleaves results round-robin, and reports per-exchange
 /// match counts.
 /// dcterms:identifier: CompaniesServer::company_screener / screener::parse_screening_prompt
 #[tokio::test]
 async fn screener_fans_out_per_exchange_and_interleaves() {
-    let directory = tempfile::tempdir().expect("temporary directory");
-    let fixture = FixtureHttp::start(|path| {
-        if path.starts_with("/eodhd/screener") {
-            if let Some(exchange) = decode_screener_exchange(path) {
-                let rows: Vec<Value> = (0..2)
-                    .map(|index| {
-                        json!({
-                            "code": format!("{exchange}{index}"),
-                            "name": format!("Company {index} of {exchange}"),
-                            "exchange": exchange,
-                            "market_capitalization": 10_000_000_000.0
-                                - f64::from(index) * 1_000_000_000.0,
+    let (output, fixture) = screener_tool(
+        |path| {
+            if path.starts_with("/eodhd/screener") {
+                if let Some(exchange) = decode_screener_exchange(path) {
+                    let rows: Vec<Value> = (0..2)
+                        .map(|index| {
+                            json!({
+                                "code": format!("{exchange}{index}"),
+                                "name": format!("Company {index} of {exchange}"),
+                                "exchange": exchange,
+                                "market_capitalization": 10_000_000_000.0
+                                    - f64::from(index) * 1_000_000_000.0,
+                            })
                         })
-                    })
-                    .collect();
-                return (200, json!({ "data": rows }));
+                        .collect();
+                    return (200, json!({ "data": rows }));
+                }
+                return (200, json!({ "data": [] }));
             }
-            return (200, json!({ "data": [] }));
-        }
-        (404, json!({ "error": "unexpected endpoint", "path": path }))
-    })
-    .await;
-    providers::TEST_HTTP_ORIGIN
-        .scope(fixture.origin.clone(), async {
-            let server = server(directory.path());
-            let request = serde_json::from_value::<types::ScreenerRequest>(json!({
+            (404, json!({ "error": "unexpected endpoint", "path": path }))
+        },
+        json!({
                 "prompt": "US and UK listed companies",
                 "limit": 10
-            }))
-            .expect("request");
-            let output = content(
-                &server
-                    .company_screener(Parameters(request))
-                    .await
-                    .expect("screener tool"),
-            );
+        }),
+    )
+    .await;
 
-            let codes = output["parsed_criteria"]["exchanges"]
-                .as_array()
-                .expect("parsed exchanges");
-            assert!(codes.iter().any(|code| code == "US"));
-            assert!(codes.iter().any(|code| code == "LSE"));
-            assert_eq!(output["exchange_match_counts"]["US"], json!(2));
-            assert_eq!(output["exchange_match_counts"]["LSE"], json!(2));
-            let results = output["results"].as_array().expect("results");
-            assert_eq!(results.len(), 4);
-            let exchanges: Vec<&str> = results
-                .iter()
-                .map(|row| row["exchange"].as_str().expect("exchange"))
-                .collect();
-            assert_eq!(exchanges, ["US", "LSE", "US", "LSE"]);
-            let filters_text = output["screener_filters"].to_string();
-            assert!(!filters_text.contains("exchange"));
-            assert_eq!(fixture.count(), 2);
-        })
-        .await;
+    let codes = output["parsed_criteria"]["exchanges"]
+        .as_array()
+        .expect("parsed exchanges");
+    assert!(codes.iter().any(|code| code == "US"));
+    assert!(codes.iter().any(|code| code == "LSE"));
+    assert_eq!(output["exchange_match_counts"]["US"], json!(2));
+    assert_eq!(output["exchange_match_counts"]["LSE"], json!(2));
+    let results = output["results"].as_array().expect("results");
+    assert_eq!(results.len(), 4);
+    let exchanges: Vec<&str> = results
+        .iter()
+        .map(|row| row["exchange"].as_str().expect("exchange"))
+        .collect();
+    assert_eq!(exchanges, ["US", "LSE", "US", "LSE"]);
+    let filters_text = output["screener_filters"].to_string();
+    assert!(!filters_text.contains("exchange"));
+    assert_eq!(fixture.count(), 2);
 }
 
 /// expect: [P5] The screener provider paginates past the first 500-row page
@@ -1803,235 +1823,191 @@ async fn screener_band_split_subdivides_user_cap_range() {
 /// of silently returning the full universe as if it were a match.
 #[tokio::test]
 async fn screener_empty_parse_warns_and_lists_universe() {
-    let directory = tempfile::tempdir().expect("temporary directory");
-    let fixture = FixtureHttp::start(|path| {
-        if path.starts_with("/eodhd/screener") {
-            return (
-                200,
-                json!({ "data": [{
+    let (output, _fixture) = screener_tool(
+        |path| {
+            if path.starts_with("/eodhd/screener") {
+                return (
+                    200,
+                    json!({ "data": [{
                     "code": "UNIVERSE",
                     "name": "Universe Row",
                     "exchange": "US",
                     "market_capitalization": 5_000_000_000.0,
                 }] }),
-            );
-        }
-        (404, json!({ "error": "unexpected endpoint", "path": path }))
-    })
-    .await;
-    providers::TEST_HTTP_ORIGIN
-        .scope(fixture.origin.clone(), async {
-            let server = server(directory.path());
-            let request = serde_json::from_value::<types::ScreenerRequest>(json!({
+                );
+            }
+            (404, json!({ "error": "unexpected endpoint", "path": path }))
+        },
+        json!({
                 "prompt": "show me everything",
                 "limit": 20
-            }))
-            .expect("request");
-            let output = content(
-                &server
-                    .company_screener(Parameters(request))
-                    .await
-                    .expect("screener tool"),
-            );
-            assert!(
-                output["parsed_criteria"]
-                    .as_object()
-                    .expect("parsed criteria")
-                    .is_empty()
-            );
-            assert!(
-                output["warnings"]
-                    .as_array()
-                    .expect("warnings")
-                    .iter()
-                    .any(|warning| warning
-                        .as_str()
-                        .unwrap_or("")
-                        .contains("No criteria parsed"))
-            );
-            assert_eq!(output["count"], json!(1));
-            assert_eq!(output["exchange_match_counts"], json!({}));
-        })
-        .await;
+        }),
+    )
+    .await;
+    assert!(
+        output["parsed_criteria"]
+            .as_object()
+            .expect("parsed criteria")
+            .is_empty()
+    );
+    assert!(
+        output["warnings"]
+            .as_array()
+            .expect("warnings")
+            .iter()
+            .any(|warning| warning
+                .as_str()
+                .unwrap_or("")
+                .contains("No criteria parsed"))
+    );
+    assert_eq!(output["count"], json!(1));
+    assert_eq!(output["exchange_match_counts"], json!({}));
 }
 
 /// expect: [P9] One failed exchange keeps the surviving exchanges and names
 /// the failure; only a total failure propagates.
 #[tokio::test]
 async fn screener_partial_exchange_failure_is_surfaced() {
-    let directory = tempfile::tempdir().expect("temporary directory");
-    let fixture = FixtureHttp::start(|path| {
-        if path.starts_with("/eodhd/screener") {
-            return match decode_screener_exchange(path).as_deref() {
-                Some("LSE") => (500, json!({ "error": "fixture outage" })),
-                Some("US") => (
-                    200,
-                    json!({ "data": [{
+    let (output, _fixture) = screener_tool(
+        |path| {
+            if path.starts_with("/eodhd/screener") {
+                return match decode_screener_exchange(path).as_deref() {
+                    Some("LSE") => (500, json!({ "error": "fixture outage" })),
+                    Some("US") => (
+                        200,
+                        json!({ "data": [{
                         "code": "USA1",
                         "name": "US Company",
                         "exchange": "US",
                         "market_capitalization": 5_000_000_000.0,
                     }] }),
-                ),
-                _ => (200, json!({ "data": [] })),
-            };
-        }
-        (404, json!({ "error": "unexpected endpoint", "path": path }))
-    })
-    .await;
-    providers::TEST_HTTP_ORIGIN
-        .scope(fixture.origin.clone(), async {
-            let server = server(directory.path());
-            let request = serde_json::from_value::<types::ScreenerRequest>(json!({
+                    ),
+                    _ => (200, json!({ "data": [] })),
+                };
+            }
+            (404, json!({ "error": "unexpected endpoint", "path": path }))
+        },
+        json!({
                 "prompt": "US and UK stocks",
                 "limit": 20
-            }))
-            .expect("request");
-            let output = content(
-                &server
-                    .company_screener(Parameters(request))
-                    .await
-                    .expect("screener tool"),
-            );
-            assert_eq!(output["count"], json!(1));
-            assert_eq!(output["exchange_match_counts"]["US"], json!(1));
-            assert!(output["exchange_errors"]["LSE"].is_string());
-            assert!(
-                output["warnings"]
-                    .as_array()
-                    .expect("warnings")
-                    .iter()
-                    .any(|warning| warning
-                        .as_str()
-                        .unwrap_or("")
-                        .contains("dropped from results"))
-            );
-        })
-        .await;
+        }),
+    )
+    .await;
+    assert_eq!(output["count"], json!(1));
+    assert_eq!(output["exchange_match_counts"]["US"], json!(1));
+    assert!(output["exchange_errors"]["LSE"].is_string());
+    assert!(
+        output["warnings"]
+            .as_array()
+            .expect("warnings")
+            .iter()
+            .any(|warning| warning
+                .as_str()
+                .unwrap_or("")
+                .contains("dropped from results"))
+    );
 }
 
 /// expect: [P9] Zero matches on every exchange warns — a wrong exchange code
 /// must be visible, not silent.
 #[tokio::test]
 async fn screener_all_zero_matches_warns() {
-    let directory = tempfile::tempdir().expect("temporary directory");
-    let fixture = FixtureHttp::start(|path| {
-        if path.starts_with("/eodhd/screener") {
-            return (200, json!({ "data": [] }));
-        }
-        (404, json!({ "error": "unexpected endpoint", "path": path }))
-    })
-    .await;
-    providers::TEST_HTTP_ORIGIN
-        .scope(fixture.origin.clone(), async {
-            let server = server(directory.path());
-            let request = serde_json::from_value::<types::ScreenerRequest>(json!({
+    let (output, _fixture) = screener_tool(
+        |path| {
+            if path.starts_with("/eodhd/screener") {
+                return (200, json!({ "data": [] }));
+            }
+            (404, json!({ "error": "unexpected endpoint", "path": path }))
+        },
+        json!({
                 "prompt": "US and UK stocks",
                 "limit": 20
-            }))
-            .expect("request");
-            let output = content(
-                &server
-                    .company_screener(Parameters(request))
-                    .await
-                    .expect("screener tool"),
-            );
-            assert_eq!(output["count"], json!(0));
-            assert_eq!(output["total_matches"], json!(0));
-            assert_eq!(output["exchange_match_counts"]["US"], json!(0));
-            assert_eq!(output["exchange_match_counts"]["LSE"], json!(0));
-            assert!(
-                output["warnings"]
-                    .as_array()
-                    .expect("warnings")
-                    .iter()
-                    .any(|warning| warning.as_str().unwrap_or("").contains("zero matches"))
-            );
-        })
-        .await;
+        }),
+    )
+    .await;
+    assert_eq!(output["count"], json!(0));
+    assert_eq!(output["total_matches"], json!(0));
+    assert_eq!(output["exchange_match_counts"]["US"], json!(0));
+    assert_eq!(output["exchange_match_counts"]["LSE"], json!(0));
+    assert!(
+        output["warnings"]
+            .as_array()
+            .expect("warnings")
+            .iter()
+            .any(|warning| warning.as_str().unwrap_or("").contains("zero matches"))
+    );
 }
 
 /// expect: [P5] criteria_overrides merge over parsed criteria — overrides
 /// suppress the empty-parse warning and drive the exchange fan-out.
 #[tokio::test]
 async fn screener_overrides_merge_over_parsed_criteria() {
-    let directory = tempfile::tempdir().expect("temporary directory");
-    let fixture = FixtureHttp::start(|path| {
-        if path.starts_with("/eodhd/exchanges-list") {
-            return (200, json!([{"Code": "VN", "Currency": "VND"}]));
-        }
-        if path.starts_with("/eodhd/eod/USDVND.FOREX") {
-            return (200, json!([{"date": "2026-09-08", "close": 25000.0}]));
-        }
-        if path.starts_with("/eodhd/screener") {
-            return match decode_screener_exchange(path).as_deref() {
-                Some("VN") => (
-                    200,
-                    json!({ "data": [{
+    let (output, fixture) = screener_tool(
+        |path| {
+            if path.starts_with("/eodhd/exchanges-list") {
+                return (200, json!([{"Code": "VN", "Currency": "VND"}]));
+            }
+            if path.starts_with("/eodhd/eod/USDVND.FOREX") {
+                return (200, json!([{"date": "2026-09-08", "close": 25000.0}]));
+            }
+            if path.starts_with("/eodhd/screener") {
+                return match decode_screener_exchange(path).as_deref() {
+                    Some("VN") => (
+                        200,
+                        json!({ "data": [{
                         "code": "VNM1",
                         "name": "Vietnam Company",
                         "exchange": "VN",
                         "currency_symbol": "₫",
                         "market_capitalization": 50_000_000_000_000.0,
                     }] }),
-                ),
-                _ => (200, json!({ "data": [] })),
-            };
-        }
-        (404, json!({ "error": "unexpected endpoint", "path": path }))
-    })
-    .await;
-    providers::TEST_HTTP_ORIGIN
-        .scope(fixture.origin.clone(), async {
-            let server = server(directory.path());
-            let request = serde_json::from_value::<types::ScreenerRequest>(json!({
+                    ),
+                    _ => (200, json!({ "data": [] })),
+                };
+            }
+            (404, json!({ "error": "unexpected endpoint", "path": path }))
+        },
+        json!({
                 "prompt": "large companies",
                 "limit": 20,
                 "criteria_overrides": {
                     "exchanges": ["VN"],
                     "market_capitalization_min": 1000000000
                 }
-            }))
-            .expect("request");
-            let output = content(
-                &server
-                    .company_screener(Parameters(request))
-                    .await
-                    .expect("screener tool"),
-            );
-            assert_eq!(output["parsed_criteria"]["exchanges"], json!(["VN"]));
-            assert_eq!(
-                output["parsed_criteria"]["market_capitalization_min"],
-                json!(1_000_000_000)
-            );
-            assert_eq!(output["count"], json!(1));
-            assert!(
-                !output["warnings"]
-                    .as_array()
-                    .expect("warnings")
-                    .iter()
-                    .any(|warning| warning
-                        .as_str()
-                        .unwrap_or("")
-                        .contains("No criteria parsed"))
-            );
-            // The USD override is converted to VND before the provider query;
-            // row output is normalized back to market_capitalization_usd.
-            let vn_bounds = fixture
-                .requests()
-                .iter()
-                .find(|request| decode_screener_exchange(request).as_deref() == Some("VN"))
-                .map(|request| decode_screener_cap_bounds(request))
-                .unwrap_or_default();
-            assert!(
-                vn_bounds.contains(&(">=".to_string(), 25_000_000_000_000.0)),
-                "VN lower bound converted to VND: {vn_bounds:?}"
-            );
-            assert_eq!(output["fx"]["usd_rates"]["VND"], json!(25000.0));
-            // exchanges-list + USDVND + the VN screener query
-            assert_eq!(fixture.count(), 3);
-        })
-        .await;
+        }),
+    )
+    .await;
+    assert_eq!(output["parsed_criteria"]["exchanges"], json!(["VN"]));
+    assert_eq!(
+        output["parsed_criteria"]["market_capitalization_min"],
+        json!(1_000_000_000)
+    );
+    assert_eq!(output["count"], json!(1));
+    assert!(
+        !output["warnings"]
+            .as_array()
+            .expect("warnings")
+            .iter()
+            .any(|warning| warning
+                .as_str()
+                .unwrap_or("")
+                .contains("No criteria parsed"))
+    );
+    // The USD override is converted to VND before the provider query;
+    // row output is normalized back to market_capitalization_usd.
+    let vn_bounds = fixture
+        .requests()
+        .iter()
+        .find(|request| decode_screener_exchange(request).as_deref() == Some("VN"))
+        .map(|request| decode_screener_cap_bounds(request))
+        .unwrap_or_default();
+    assert!(
+        vn_bounds.contains(&(">=".to_string(), 25_000_000_000_000.0)),
+        "VN lower bound converted to VND: {vn_bounds:?}"
+    );
+    assert_eq!(output["fx"]["usd_rates"]["VND"], json!(25000.0));
+    // exchanges-list + USDVND + the VN screener query
+    assert_eq!(fixture.count(), 3);
 }
 
 /// Decode the market_capitalization bounds from a recorded screener request.
@@ -2062,8 +2038,8 @@ fn decode_screener_cap_bounds(path: &str) -> Vec<(String, f64)> {
 /// dcterms:identifier: CompaniesServer::company_screener / ScreenerFx / screener_row_currency_pass
 #[tokio::test]
 async fn screener_converts_usd_bounds_for_each_exchange() {
-    let directory = tempfile::tempdir().expect("temporary directory");
-    let fixture = FixtureHttp::start(|path| {
+    let (output, fixture) = screener_tool(
+        |path| {
         if path.starts_with("/eodhd/exchanges-list") {
             return (
                 200,
@@ -2118,98 +2094,84 @@ async fn screener_converts_usd_bounds_for_each_exchange() {
             };
         }
         (404, json!({ "error": "unexpected endpoint", "path": path }))
-    })
-    .await;
-    providers::TEST_HTTP_ORIGIN
-        .scope(fixture.origin.clone(), async {
-            let server = server(directory.path());
-            let request = serde_json::from_value::<types::ScreenerRequest>(json!({
+        },
+        json!({
                 "prompt": "US and Germany listed companies with market capitalization between 2 billion and 200 billion",
                 "limit": 10
-            }))
-            .expect("request");
-            let output = content(
-                &server
-                    .company_screener(Parameters(request))
-                    .await
-                    .expect("screener tool"),
-            );
+        }),
+    )
+    .await;
 
-            // XETRA receives EUR bounds at 0.8 EUR/USD; US remains unchanged.
-            let mut xetra_bounds = Vec::new();
-            let mut us_bounds = Vec::new();
-            for request_path in fixture.requests() {
-                match decode_screener_exchange(&request_path).as_deref() {
-                    Some("XETRA") => xetra_bounds = decode_screener_cap_bounds(&request_path),
-                    Some("US") => us_bounds = decode_screener_cap_bounds(&request_path),
-                    _ => {}
-                }
-            }
-            assert!(
-                xetra_bounds.contains(&(">=".to_string(), 1_600_000_000.0)),
-                "XETRA lower bound converted to EUR: {xetra_bounds:?}"
-            );
-            assert!(
-                xetra_bounds.contains(&("<".to_string(), 160_000_000_000.0)),
-                "XETRA upper bound converted to EUR: {xetra_bounds:?}"
-            );
-            assert!(
-                us_bounds.contains(&(">=".to_string(), 2_000_000_000.0)),
-                "US lower bound unchanged: {us_bounds:?}"
-            );
-            assert!(
-                us_bounds.contains(&("<".to_string(), 200_000_000_000.0)),
-                "US upper bound unchanged: {us_bounds:?}"
-            );
+    // XETRA receives EUR bounds at 0.8 EUR/USD; US remains unchanged.
+    let mut xetra_bounds = Vec::new();
+    let mut us_bounds = Vec::new();
+    for request_path in fixture.requests() {
+        match decode_screener_exchange(&request_path).as_deref() {
+            Some("XETRA") => xetra_bounds = decode_screener_cap_bounds(&request_path),
+            Some("US") => us_bounds = decode_screener_cap_bounds(&request_path),
+            _ => {}
+        }
+    }
+    assert!(
+        xetra_bounds.contains(&(">=".to_string(), 1_600_000_000.0)),
+        "XETRA lower bound converted to EUR: {xetra_bounds:?}"
+    );
+    assert!(
+        xetra_bounds.contains(&("<".to_string(), 160_000_000_000.0)),
+        "XETRA upper bound converted to EUR: {xetra_bounds:?}"
+    );
+    assert!(
+        us_bounds.contains(&(">=".to_string(), 2_000_000_000.0)),
+        "US lower bound unchanged: {us_bounds:?}"
+    );
+    assert!(
+        us_bounds.contains(&("<".to_string(), 200_000_000_000.0)),
+        "US upper bound unchanged: {us_bounds:?}"
+    );
 
-            // Row-currency rules, in order of USD cap: US rows (10e9, 9e9),
-            // the € row (3.2e9/0.8 = 4e9), the ¥ row (4.5e11/150 = 3e9),
-            // then the unconverted kr row last. The $-on-XETRA line is
-            // dropped (USD is also screened), and the €9e11 row is out of
-            // band.
-            let results = output["results"].as_array().expect("results");
-            assert_eq!(results.len(), 5);
-            let codes: Vec<&str> = results
-                .iter()
-                .map(|row| row["code"].as_str().expect("code"))
-                .collect();
-            assert_eq!(codes, ["US0", "US1", "EUR1", "JPY1", "KR1"]);
-            assert_eq!(
-                results[0]["market_capitalization_usd"],
-                json!(10_000_000_000.0)
-            );
-            assert_eq!(
-                results[2]["market_capitalization_usd"],
-                json!(4_000_000_000.0)
-            );
-            assert_eq!(
-                results[3]["market_capitalization_usd"],
-                json!(3_000_000_000.0)
-            );
-            assert!(results[4]["market_capitalization_usd"].is_null());
+    // Row-currency rules, in order of USD cap: US rows (10e9, 9e9),
+    // the € row (3.2e9/0.8 = 4e9), the ¥ row (4.5e11/150 = 3e9),
+    // then the unconverted kr row last. The $-on-XETRA line is
+    // dropped (USD is also screened), and the €9e11 row is out of
+    // band.
+    let results = output["results"].as_array().expect("results");
+    assert_eq!(results.len(), 5);
+    let codes: Vec<&str> = results
+        .iter()
+        .map(|row| row["code"].as_str().expect("code"))
+        .collect();
+    assert_eq!(codes, ["US0", "US1", "EUR1", "JPY1", "KR1"]);
+    assert_eq!(
+        results[0]["market_capitalization_usd"],
+        json!(10_000_000_000.0)
+    );
+    assert_eq!(
+        results[2]["market_capitalization_usd"],
+        json!(4_000_000_000.0)
+    );
+    assert_eq!(
+        results[3]["market_capitalization_usd"],
+        json!(3_000_000_000.0)
+    );
+    assert!(results[4]["market_capitalization_usd"].is_null());
 
-            // Counters surface every drop.
-            assert_eq!(output["foreign_lines_dropped"], json!(1));
-            assert_eq!(output["out_of_band_dropped"], json!(1));
-            assert_eq!(output["unconverted_rows"], json!(1));
-            assert_eq!(output["exchange_match_counts"]["US"], json!(2));
-            assert_eq!(output["exchange_match_counts"]["XETRA"], json!(3));
+    // Counters surface every drop.
+    assert_eq!(output["foreign_lines_dropped"], json!(1));
+    assert_eq!(output["out_of_band_dropped"], json!(1));
+    assert_eq!(output["unconverted_rows"], json!(1));
+    assert_eq!(output["exchange_match_counts"]["US"], json!(2));
+    assert_eq!(output["exchange_match_counts"]["XETRA"], json!(3));
 
-            // FX transparency: rates (including the pass-2 JPY rate), as-of
-            // date, and the currency map used.
-            assert_eq!(output["fx"]["as_of"], json!("2026-09-08"));
-            assert_eq!(output["fx"]["usd_rates"]["EUR"], json!(0.8));
-            assert_eq!(output["fx"]["usd_rates"]["JPY"], json!(150.0));
-            assert_eq!(
-                output["fx"]["exchange_currencies"]["XETRA"],
-                json!("EUR")
-            );
-            assert_eq!(output["fx"]["exchange_currencies"]["US"], json!("USD"));
+    // FX transparency: rates (including the pass-2 JPY rate), as-of
+    // date, and the currency map used.
+    assert_eq!(output["fx"]["as_of"], json!("2026-09-08"));
+    assert_eq!(output["fx"]["usd_rates"]["EUR"], json!(0.8));
+    assert_eq!(output["fx"]["usd_rates"]["JPY"], json!(150.0));
+    assert_eq!(output["fx"]["exchange_currencies"]["XETRA"], json!("EUR"));
+    assert_eq!(output["fx"]["exchange_currencies"]["US"], json!("USD"));
 
-            // exchanges-list + USDEUR + two screener queries + pass-2 USDJPY
-            assert_eq!(fixture.count(), 5);
-        })
-        .await;
+    // exchanges-list + USDEUR + two screener queries + pass-2 USDJPY
+    assert_eq!(fixture.count(), 5);
 }
 
 /// expect: [P5] A mixed-currency exchange (London's IOB hosts ¥ lines) is
@@ -2219,8 +2181,8 @@ async fn screener_converts_usd_bounds_for_each_exchange() {
 /// dcterms:identifier: CompaniesServer::company_screener / MIXED_CURRENCY_EXCHANGES
 #[tokio::test]
 async fn screener_mixed_currency_exchange_queries_unbounded() {
-    let directory = tempfile::tempdir().expect("temporary directory");
-    let fixture = FixtureHttp::start(|path| {
+    let (output, fixture) = screener_tool(
+        |path| {
         if path.starts_with("/eodhd/exchanges-list") {
             return (
                 200,
@@ -2258,55 +2220,47 @@ async fn screener_mixed_currency_exchange_queries_unbounded() {
             };
         }
         (404, json!({ "error": "unexpected endpoint", "path": path }))
-    })
-    .await;
-    providers::TEST_HTTP_ORIGIN
-        .scope(fixture.origin.clone(), async {
-            let server = server(directory.path());
-            let request = serde_json::from_value::<types::ScreenerRequest>(json!({
+        },
+        json!({
                 "prompt": "US and UK listed companies with market capitalization between 2 billion and 200 billion",
                 "limit": 10
-            }))
-            .expect("request");
-            let output = content(
-                &server
-                    .company_screener(Parameters(request))
-                    .await
-                    .expect("screener tool"),
-            );
+        }),
+    )
+    .await;
 
-            // The LSE query carries NO cap bounds (unbounded — a GBP
-            // ceiling would exclude the ¥ line); the US query is bounded.
-            let mut lse_bounds = Vec::new();
-            let mut us_bounds = Vec::new();
-            for request_path in fixture.requests() {
-                match decode_screener_exchange(&request_path).as_deref() {
-                    Some("LSE") => lse_bounds = decode_screener_cap_bounds(&request_path),
-                    Some("US") => us_bounds = decode_screener_cap_bounds(&request_path),
-                    _ => {}
-                }
-            }
-            assert!(lse_bounds.is_empty(), "LSE must be queried unbounded: {lse_bounds:?}");
-            assert!(us_bounds.contains(&(">=".to_string(), 2_000_000_000.0)));
+    // The LSE query carries NO cap bounds (unbounded — a GBP
+    // ceiling would exclude the ¥ line); the US query is bounded.
+    let mut lse_bounds = Vec::new();
+    let mut us_bounds = Vec::new();
+    for request_path in fixture.requests() {
+        match decode_screener_exchange(&request_path).as_deref() {
+            Some("LSE") => lse_bounds = decode_screener_cap_bounds(&request_path),
+            Some("US") => us_bounds = decode_screener_cap_bounds(&request_path),
+            _ => {}
+        }
+    }
+    assert!(
+        lse_bounds.is_empty(),
+        "LSE must be queried unbounded: {lse_bounds:?}"
+    );
+    assert!(us_bounds.contains(&(">=".to_string(), 2_000_000_000.0)));
 
-            // Both the £ row (3e9/0.75 = $4B) and the ¥ row (4.5e11/150 =
-            // $3B) survive — the Japan path — ranked below the US row.
-            let results = output["results"].as_array().expect("results");
-            assert_eq!(results.len(), 3);
-            let codes: Vec<&str> = results
-                .iter()
-                .map(|row| row["code"].as_str().expect("code"))
-                .collect();
-            assert_eq!(codes, ["US0", "GBP1", "JPY1"]);
-            assert_eq!(
-                results[2]["market_capitalization_usd"],
-                json!(3_000_000_000.0)
-            );
-            assert_eq!(output["fx"]["usd_rates"]["JPY"], json!(150.0));
-            // exchanges-list + USDGBP + two screener queries + pass-2 USDJPY
-            assert_eq!(fixture.count(), 5);
-        })
-        .await;
+    // Both the £ row (3e9/0.75 = $4B) and the ¥ row (4.5e11/150 =
+    // $3B) survive — the Japan path — ranked below the US row.
+    let results = output["results"].as_array().expect("results");
+    assert_eq!(results.len(), 3);
+    let codes: Vec<&str> = results
+        .iter()
+        .map(|row| row["code"].as_str().expect("code"))
+        .collect();
+    assert_eq!(codes, ["US0", "GBP1", "JPY1"]);
+    assert_eq!(
+        results[2]["market_capitalization_usd"],
+        json!(3_000_000_000.0)
+    );
+    assert_eq!(output["fx"]["usd_rates"]["JPY"], json!(150.0));
+    // exchanges-list + USDGBP + two screener queries + pass-2 USDJPY
+    assert_eq!(fixture.count(), 5);
 }
 
 /// expect: [P5] Exchanges whose EODHD server-side cap filters are
@@ -2318,8 +2272,8 @@ async fn screener_mixed_currency_exchange_queries_unbounded() {
 /// dcterms:identifier: CompaniesServer::company_screener / SERVER_BOUNDS_UNRELIABLE_EXCHANGES
 #[tokio::test]
 async fn screener_server_bounds_unreliable_exchange_queries_unbounded() {
-    let directory = tempfile::tempdir().expect("temporary directory");
-    let fixture = FixtureHttp::start(|path| {
+    let (output, fixture) = screener_tool(
+        |path| {
         if path.starts_with("/eodhd/exchanges-list") {
             return (
                 200,
@@ -2354,54 +2308,46 @@ async fn screener_server_bounds_unreliable_exchange_queries_unbounded() {
             };
         }
         (404, json!({ "error": "unexpected endpoint", "path": path }))
-    })
-    .await;
-    providers::TEST_HTTP_ORIGIN
-        .scope(fixture.origin.clone(), async {
-            let server = server(directory.path());
-            let request = serde_json::from_value::<types::ScreenerRequest>(json!({
+        },
+        json!({
                 "prompt": "US and Sweden listed companies with market capitalization between 5 billion and 50 billion",
                 "limit": 10
-            }))
-            .expect("request");
-            let output = content(
-                &server
-                    .company_screener(Parameters(request))
-                    .await
-                    .expect("screener tool"),
-            );
+        }),
+    )
+    .await;
 
-            // The ST query carries NO cap bounds (EODHD's server-side
-            // filter returns zero rows there); the US query is bounded.
-            let mut st_bounds = Vec::new();
-            let mut us_bounds = Vec::new();
-            for request_path in fixture.requests() {
-                match decode_screener_exchange(&request_path).as_deref() {
-                    Some("ST") => st_bounds = decode_screener_cap_bounds(&request_path),
-                    Some("US") => us_bounds = decode_screener_cap_bounds(&request_path),
-                    _ => {}
-                }
-            }
-            assert!(st_bounds.is_empty(), "ST must be queried unbounded: {st_bounds:?}");
-            assert!(us_bounds.contains(&(">=".to_string(), 5_000_000_000.0)));
+    // The ST query carries NO cap bounds (EODHD's server-side
+    // filter returns zero rows there); the US query is bounded.
+    let mut st_bounds = Vec::new();
+    let mut us_bounds = Vec::new();
+    for request_path in fixture.requests() {
+        match decode_screener_exchange(&request_path).as_deref() {
+            Some("ST") => st_bounds = decode_screener_cap_bounds(&request_path),
+            Some("US") => us_bounds = decode_screener_cap_bounds(&request_path),
+            _ => {}
+        }
+    }
+    assert!(
+        st_bounds.is_empty(),
+        "ST must be queried unbounded: {st_bounds:?}"
+    );
+    assert!(us_bounds.contains(&(">=".to_string(), 5_000_000_000.0)));
 
-            // The client-side band keeps the in-band SEK row ($30B) and
-            // drops the out-of-band one ($200B), counted. Rows rank by USD
-            // cap, so the $30B SEK row outranks the $8B US row.
-            let results = output["results"].as_array().expect("results");
-            assert_eq!(results.len(), 2);
-            let codes: Vec<&str> = results
-                .iter()
-                .map(|row| row["code"].as_str().expect("code"))
-                .collect();
-            assert_eq!(codes, ["SEK1", "US0"]);
-            assert_eq!(
-                results[0]["market_capitalization_usd"],
-                json!(30_000_000_000.0)
-            );
-            assert_eq!(output["out_of_band_dropped"], json!(1));
-        })
-        .await;
+    // The client-side band keeps the in-band SEK row ($30B) and
+    // drops the out-of-band one ($200B), counted. Rows rank by USD
+    // cap, so the $30B SEK row outranks the $8B US row.
+    let results = output["results"].as_array().expect("results");
+    assert_eq!(results.len(), 2);
+    let codes: Vec<&str> = results
+        .iter()
+        .map(|row| row["code"].as_str().expect("code"))
+        .collect();
+    assert_eq!(codes, ["SEK1", "US0"]);
+    assert_eq!(
+        results[0]["market_capitalization_usd"],
+        json!(30_000_000_000.0)
+    );
+    assert_eq!(output["out_of_band_dropped"], json!(1));
 }
 
 /// expect: [P5] The exchanges list and FOREX rates are cached — a second
@@ -2488,8 +2434,8 @@ async fn screener_fx_context_is_cached() {
 /// named — never screened with wrong-band bounds.
 #[tokio::test]
 async fn screener_fx_failure_drops_exchange_loudly() {
-    let directory = tempfile::tempdir().expect("temporary directory");
-    let fixture = FixtureHttp::start(|path| {
+    let (output, fixture) = screener_tool(
+        |path| {
         if path.starts_with("/eodhd/exchanges-list") {
             return (
                 200,
@@ -2515,98 +2461,76 @@ async fn screener_fx_failure_drops_exchange_loudly() {
             );
         }
         (404, json!({ "error": "unexpected endpoint", "path": path }))
-    })
-    .await;
-    providers::TEST_HTTP_ORIGIN
-        .scope(fixture.origin.clone(), async {
-            let server = server(directory.path());
-            let request = serde_json::from_value::<types::ScreenerRequest>(json!({
+        },
+        json!({
                 "prompt": "US and UK listed companies with market capitalization between 2 billion and 200 billion",
                 "limit": 10
-            }))
-            .expect("request");
-            let output = content(
-                &server
-                    .company_screener(Parameters(request))
-                    .await
-                    .expect("screener tool"),
-            );
-            assert_eq!(output["count"], json!(1));
-            assert!(
-                output["exchange_errors"]["LSE"]
-                    .as_str()
-                    .expect("LSE error")
-                    .contains("FX rate USDGBP unavailable")
-            );
-            assert!(
-                output["warnings"]
-                    .as_array()
-                    .expect("warnings")
-                    .iter()
-                    .any(|warning| warning
-                        .as_str()
-                        .unwrap_or("")
-                        .contains("dropped from results"))
-            );
-            // exchanges-list + failed USDGBP + the US screener query
-            assert_eq!(fixture.count(), 3);
-        })
-        .await;
+        }),
+    )
+    .await;
+    assert_eq!(output["count"], json!(1));
+    assert!(
+        output["exchange_errors"]["LSE"]
+            .as_str()
+            .expect("LSE error")
+            .contains("FX rate USDGBP unavailable")
+    );
+    assert!(
+        output["warnings"]
+            .as_array()
+            .expect("warnings")
+            .iter()
+            .any(|warning| warning
+                .as_str()
+                .unwrap_or("")
+                .contains("dropped from results"))
+    );
+    // exchanges-list + failed USDGBP + the US screener query
+    assert_eq!(fixture.count(), 3);
 }
 
 /// expect: [P9] A fan-out exchange code absent from the EODHD exchange list
 /// is dropped and named — the runtime check on the geography table's codes.
 #[tokio::test]
 async fn screener_unknown_exchange_code_is_dropped() {
-    let directory = tempfile::tempdir().expect("temporary directory");
-    let fixture = FixtureHttp::start(|path| {
-        if path.starts_with("/eodhd/exchanges-list") {
-            return (200, json!([{"Code": "US", "Currency": "USD"}]));
-        }
-        if path.starts_with("/eodhd/screener") {
-            return (
-                200,
-                json!({ "data": [{
+    let (output, fixture) = screener_tool(
+        |path| {
+            if path.starts_with("/eodhd/exchanges-list") {
+                return (200, json!([{"Code": "US", "Currency": "USD"}]));
+            }
+            if path.starts_with("/eodhd/screener") {
+                return (
+                    200,
+                    json!({ "data": [{
                     "code": "USA1",
                     "name": "US Company",
                     "exchange": "US",
                     "market_capitalization": 5_000_000_000.0,
                 }] }),
-            );
-        }
-        (404, json!({ "error": "unexpected endpoint", "path": path }))
-    })
-    .await;
-    providers::TEST_HTTP_ORIGIN
-        .scope(fixture.origin.clone(), async {
-            let server = server(directory.path());
-            let request = serde_json::from_value::<types::ScreenerRequest>(json!({
+                );
+            }
+            (404, json!({ "error": "unexpected endpoint", "path": path }))
+        },
+        json!({
                 "prompt": "large companies",
                 "limit": 10,
                 "criteria_overrides": {
                     "exchanges": ["US", "ZZ"],
                     "market_capitalization_min": 2000000000
                 }
-            }))
-            .expect("request");
-            let output = content(
-                &server
-                    .company_screener(Parameters(request))
-                    .await
-                    .expect("screener tool"),
-            );
-            assert_eq!(output["count"], json!(1));
-            assert!(
-                output["exchange_errors"]["ZZ"]
-                    .as_str()
-                    .expect("ZZ error")
-                    .contains("no currency mapping")
-            );
-            // exchanges-list + the US screener query (no forex — USD is
-            // skipped)
-            assert_eq!(fixture.count(), 2);
-        })
-        .await;
+        }),
+    )
+    .await;
+    assert_eq!(output["count"], json!(1));
+    assert!(
+        output["exchange_errors"]["ZZ"]
+            .as_str()
+            .expect("ZZ error")
+            .contains("no currency mapping")
+    );
+    // exchanges-list + the US screener query (no forex — USD is
+    // skipped)
+    assert_eq!(fixture.count(), 2);
 }
 
 /// expect: [P5] A foreign-currency line survives when its home bucket kept
@@ -2616,8 +2540,8 @@ async fn screener_unknown_exchange_code_is_dropped() {
 /// dcterms:identifier: CompaniesServer::screener_row_currency_pass
 #[tokio::test]
 async fn screener_foreign_line_kept_when_home_bucket_empty() {
-    let directory = tempfile::tempdir().expect("temporary directory");
-    let fixture = FixtureHttp::start(|path| {
+    let (output, _fixture) = screener_tool(
+        |path| {
         if path.starts_with("/eodhd/exchanges-list") {
             return (
                 200,
@@ -2659,44 +2583,36 @@ async fn screener_foreign_line_kept_when_home_bucket_empty() {
             };
         }
         (404, json!({ "error": "unexpected endpoint", "path": path }))
-    })
-    .await;
-    providers::TEST_HTTP_ORIGIN
-        .scope(fixture.origin.clone(), async {
-            let server = server(directory.path());
-            let request = serde_json::from_value::<types::ScreenerRequest>(json!({
+        },
+        json!({
                 "prompt": "US, UK and Hungary listed companies with market capitalization between 2 billion and 200 billion",
                 "limit": 10
-            }))
-            .expect("request");
-            let output = content(
-                &server
-                    .company_screener(Parameters(request))
-                    .await
-                    .expect("screener tool"),
-            );
-            // The Ft line survived the empty home bucket, converted at the
-            // HUF rate (6e12 / 312.92 ≈ $19.2B — in band).
-            assert_eq!(output["foreign_lines_dropped"], json!(0));
-            assert_eq!(output["exchange_match_counts"]["LSE"], json!(1));
-            assert_eq!(output["exchange_match_counts"]["BUD"], json!(0));
-            let results = output["results"].as_array().expect("results");
-            let codes: Vec<&str> = results
-                .iter()
-                .map(|row| row["code"].as_str().expect("code"))
-                .collect();
-            assert!(codes.contains(&"HUF1"), "the Ft line must survive: {codes:?}");
-            let huf_row = results
-                .iter()
-                .find(|row| row["code"] == "HUF1")
-                .expect("HUF row");
-            assert_eq!(
-                huf_row["market_capitalization_usd"],
-                json!(6_000_000_000_000.0 / 312.92)
-            );
-            assert_eq!(output["fx"]["usd_rates"]["HUF"], json!(312.92));
-        })
-        .await;
+        }),
+    )
+    .await;
+    // The Ft line survived the empty home bucket, converted at the
+    // HUF rate (6e12 / 312.92 ≈ $19.2B — in band).
+    assert_eq!(output["foreign_lines_dropped"], json!(0));
+    assert_eq!(output["exchange_match_counts"]["LSE"], json!(1));
+    assert_eq!(output["exchange_match_counts"]["BUD"], json!(0));
+    let results = output["results"].as_array().expect("results");
+    let codes: Vec<&str> = results
+        .iter()
+        .map(|row| row["code"].as_str().expect("code"))
+        .collect();
+    assert!(
+        codes.contains(&"HUF1"),
+        "the Ft line must survive: {codes:?}"
+    );
+    let huf_row = results
+        .iter()
+        .find(|row| row["code"] == "HUF1")
+        .expect("HUF row");
+    assert_eq!(
+        huf_row["market_capitalization_usd"],
+        json!(6_000_000_000_000.0 / 312.92)
+    );
+    assert_eq!(output["fx"]["usd_rates"]["HUF"], json!(312.92));
 }
 
 /// expect: [P5] Saved-screen submission persists and returns a job before provider
@@ -3573,8 +3489,8 @@ async fn pass_set_ticker_list_and_forex_are_cached_across_runs() {
 /// dcterms:identifier: CompaniesServer::screener_row_currency_pass / is_non_common_instrument
 #[tokio::test]
 async fn screener_non_common_instruments_dropped() {
-    let directory = tempfile::tempdir().expect("temporary directory");
-    let fixture = FixtureHttp::start(|path| {
+    let (output, _fixture) = screener_tool(
+        |path| {
         if path.starts_with("/eodhd/exchanges-list") {
             return (200, json!([{ "Code": "US", "Currency": "USD" }]));
         }
@@ -3610,43 +3526,34 @@ async fn screener_non_common_instruments_dropped() {
             );
         }
         (404, json!({ "error": "unexpected endpoint", "path": path }))
-    })
-    .await;
-    providers::TEST_HTTP_ORIGIN
-        .scope(fixture.origin.clone(), async {
-            let server = server(directory.path());
-            let request = serde_json::from_value::<types::ScreenerRequest>(json!({
+        },
+        json!({
                 "prompt": "US listed companies with market capitalization between 2 billion and 200 billion",
                 "limit": 10
-            }))
-            .expect("request");
-            let output = content(
-                &server
-                    .company_screener(Parameters(request))
-                    .await
-                    .expect("screener tool"),
-            );
-            assert_eq!(output["non_common_dropped"], json!(6));
-            assert_eq!(output["count"], json!(2));
-            let results = output["results"].as_array().expect("results");
-            assert!(results.iter().all(|row| {
-                row["market_capitalization_usd"] == row["market_capitalization"]
-            }));
-            let codes: Vec<&str> = results
-                .iter()
-                .map(|row| row["code"].as_str().expect("code"))
-                .collect();
-            // Dual-class and ADR survive; the four wrappers drop.
-            assert!(codes.contains(&"MAERSK-B"), "dual-class kept: {codes:?}");
-            assert!(codes.contains(&"SIEGY"), "ADR kept: {codes:?}");
-            assert!(!codes.contains(&"IWD"));
-            assert!(!codes.contains(&"MFC-PK"));
-            assert!(!codes.contains(&"PFH"));
-            assert!(!codes.contains(&"NKE"));
-            assert!(!codes.contains(&"XLY"), "SPDR sector fund must drop");
-            assert!(!codes.contains(&"QQQ"), "QQQ trust must drop");
-        })
-        .await;
+        }),
+    )
+    .await;
+    assert_eq!(output["non_common_dropped"], json!(6));
+    assert_eq!(output["count"], json!(2));
+    let results = output["results"].as_array().expect("results");
+    assert!(
+        results
+            .iter()
+            .all(|row| { row["market_capitalization_usd"] == row["market_capitalization"] })
+    );
+    let codes: Vec<&str> = results
+        .iter()
+        .map(|row| row["code"].as_str().expect("code"))
+        .collect();
+    // Dual-class and ADR survive; the four wrappers drop.
+    assert!(codes.contains(&"MAERSK-B"), "dual-class kept: {codes:?}");
+    assert!(codes.contains(&"SIEGY"), "ADR kept: {codes:?}");
+    assert!(!codes.contains(&"IWD"));
+    assert!(!codes.contains(&"MFC-PK"));
+    assert!(!codes.contains(&"PFH"));
+    assert!(!codes.contains(&"NKE"));
+    assert!(!codes.contains(&"XLY"), "SPDR sector fund must drop");
+    assert!(!codes.contains(&"QQQ"), "QQQ trust must drop");
 }
 
 /// expect: [P9] A failed exchanges-list fetch degrades loudly: provider cap
@@ -3654,8 +3561,8 @@ async fn screener_non_common_instruments_dropped() {
 /// remain unconverted, and round-robin interleave is preserved.
 #[tokio::test]
 async fn screener_fx_list_failure_degrades_loudly() {
-    let directory = tempfile::tempdir().expect("temporary directory");
-    let fixture = FixtureHttp::start(|path| {
+    let (output, fixture) = screener_tool(
+        |path| {
         if path.starts_with("/eodhd/exchanges-list") {
             return (500, json!({ "error": "fixture exchanges-list outage" }));
         }
@@ -3677,56 +3584,45 @@ async fn screener_fx_list_failure_degrades_loudly() {
             return (200, json!({ "data": [] }));
         }
         (404, json!({ "error": "unexpected endpoint", "path": path }))
-    })
-    .await;
-    providers::TEST_HTTP_ORIGIN
-        .scope(fixture.origin.clone(), async {
-            let server = server(directory.path());
-            let request = serde_json::from_value::<types::ScreenerRequest>(json!({
+        },
+        json!({
                 "prompt": "US and UK listed companies with market capitalization between 2 billion and 200 billion",
                 "limit": 10
-            }))
-            .expect("request");
-            let output = content(
-                &server
-                    .company_screener(Parameters(request))
-                    .await
-                    .expect("screener tool"),
-            );
-            assert!(
-                output["warnings"]
-                    .as_array()
-                    .expect("warnings")
-                    .iter()
-                    .any(|warning| warning
-                        .as_str()
-                        .unwrap_or("")
-                        .contains("USD conversion unavailable"))
-            );
-            // Incorrect local-currency bounds are never sent in degraded mode.
-            let lse_bounds = fixture
-                .requests()
-                .iter()
-                .find(|request| decode_screener_exchange(request).as_deref() == Some("LSE"))
-                .map(|request| decode_screener_cap_bounds(request))
-                .unwrap_or_default();
-            assert!(
-                lse_bounds.is_empty(),
-                "LSE cap bounds must be omitted in degraded mode: {lse_bounds:?}"
-            );
-            // Round-robin preserved (no USD ranking without conversion).
-            let results = output["results"].as_array().expect("results");
-            assert_eq!(results.len(), 4);
-            let exchanges: Vec<&str> = results
-                .iter()
-                .map(|row| row["exchange"].as_str().expect("exchange"))
-                .collect();
-            assert_eq!(exchanges, ["US", "LSE", "US", "LSE"]);
-            assert!(output["fx"].is_null());
-            // failed exchanges-list + two screener queries
-            assert_eq!(fixture.count(), 3);
-        })
-        .await;
+        }),
+    )
+    .await;
+    assert!(
+        output["warnings"]
+            .as_array()
+            .expect("warnings")
+            .iter()
+            .any(|warning| warning
+                .as_str()
+                .unwrap_or("")
+                .contains("USD conversion unavailable"))
+    );
+    // Incorrect local-currency bounds are never sent in degraded mode.
+    let lse_bounds = fixture
+        .requests()
+        .iter()
+        .find(|request| decode_screener_exchange(request).as_deref() == Some("LSE"))
+        .map(|request| decode_screener_cap_bounds(request))
+        .unwrap_or_default();
+    assert!(
+        lse_bounds.is_empty(),
+        "LSE cap bounds must be omitted in degraded mode: {lse_bounds:?}"
+    );
+    // Round-robin preserved (no USD ranking without conversion).
+    let results = output["results"].as_array().expect("results");
+    assert_eq!(results.len(), 4);
+    let exchanges: Vec<&str> = results
+        .iter()
+        .map(|row| row["exchange"].as_str().expect("exchange"))
+        .collect();
+    assert_eq!(exchanges, ["US", "LSE", "US", "LSE"]);
+    assert!(output["fx"].is_null());
+    // failed exchanges-list + two screener queries
+    assert_eq!(fixture.count(), 3);
 }
 
 /// expect: [P5] An ambiguous foreign symbol ("kr" = SEK/NOK/DKK) is dropped
@@ -3735,8 +3631,8 @@ async fn screener_fx_list_failure_degrades_loudly() {
 /// a same-currency row converted at the exchange rate.
 #[tokio::test]
 async fn screener_ambiguous_kr_line_dropped_when_home_screened() {
-    let directory = tempfile::tempdir().expect("temporary directory");
-    let fixture = FixtureHttp::start(|path| {
+    let (output, _fixture) = screener_tool(
+        |path| {
         if path.starts_with("/eodhd/exchanges-list") {
             return (
                 200,
@@ -3780,42 +3676,31 @@ async fn screener_ambiguous_kr_line_dropped_when_home_screened() {
             };
         }
         (404, json!({ "error": "unexpected endpoint", "path": path }))
-    })
-    .await;
-    providers::TEST_HTTP_ORIGIN
-        .scope(fixture.origin.clone(), async {
-            let server = server(directory.path());
-            let request = serde_json::from_value::<types::ScreenerRequest>(json!({
+        },
+        json!({
                 "prompt": "US, UK and Sweden listed companies with market capitalization between 2 billion and 200 billion",
                 "limit": 10
-            }))
-            .expect("request");
-            let output = content(
-                &server
-                    .company_screener(Parameters(request))
-                    .await
-                    .expect("screener tool"),
-            );
-            // The London kr line is dropped (SEK is screened — the company
-            // arrives via Stockholm); the Stockholm kr line is a
-            // same-currency row (6e10 / 10 = $6B).
-            assert_eq!(output["foreign_lines_dropped"], json!(1));
-            assert_eq!(output["count"], json!(2));
-            let codes: Vec<&str> = output["results"]
-                .as_array()
-                .expect("results")
-                .iter()
-                .map(|row| row["code"].as_str().expect("code"))
-                .collect();
-            assert_eq!(codes, ["US0", "KRST"]);
-            assert_eq!(
-                output["results"][1]["market_capitalization_usd"],
-                json!(6_000_000_000.0)
-            );
-            assert_eq!(output["exchange_match_counts"]["LSE"], json!(0));
-            assert_eq!(output["exchange_match_counts"]["ST"], json!(1));
-        })
-        .await;
+        }),
+    )
+    .await;
+    // The London kr line is dropped (SEK is screened — the company
+    // arrives via Stockholm); the Stockholm kr line is a
+    // same-currency row (6e10 / 10 = $6B).
+    assert_eq!(output["foreign_lines_dropped"], json!(1));
+    assert_eq!(output["count"], json!(2));
+    let codes: Vec<&str> = output["results"]
+        .as_array()
+        .expect("results")
+        .iter()
+        .map(|row| row["code"].as_str().expect("code"))
+        .collect();
+    assert_eq!(codes, ["US0", "KRST"]);
+    assert_eq!(
+        output["results"][1]["market_capitalization_usd"],
+        json!(6_000_000_000.0)
+    );
+    assert_eq!(output["exchange_match_counts"]["LSE"], json!(0));
+    assert_eq!(output["exchange_match_counts"]["ST"], json!(1));
 }
 
 // ── Expectations gap: DuPont capability axis (operator ruling 2026-09-10) ──
