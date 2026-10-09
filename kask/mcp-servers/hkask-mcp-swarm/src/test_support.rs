@@ -30,6 +30,74 @@ pub(crate) fn fixture_result(text: String) -> hkask_types::InferenceResult {
     }
 }
 
+/// The canned stub answer the executor doubles return — "stub" text from
+/// "stub-model" with single-token usage and no tool calls. Distinct from
+/// `fixture_result`: the executor tests assert these exact values.
+pub(crate) fn stub_result() -> hkask_types::InferenceResult {
+    hkask_types::InferenceResult {
+        text: "stub".into(),
+        model: "stub-model".into(),
+        usage: hkask_types::InferenceUsage {
+            prompt_tokens: 1,
+            completion_tokens: 1,
+            total_tokens: 2,
+            reported: true,
+        },
+        finish_reason: "stop".into(),
+        tool_calls: vec![],
+        reasoning: None,
+        cost_usd: None,
+    }
+}
+
+/// Generate the `InferencePort` impl for a swarm test double.
+/// The `Pin<Box<dyn Future>>` signature boilerplate every double repeated
+/// is single-sourced here; the bodies are the double's own. Parameter
+/// names come from the invocation (macro hygiene): pass `_prompt` to
+/// ignore it, `prompt` to use it. The `with_messages` arm is opt-in for
+/// the doubles that also implement the messages path.
+macro_rules! inference_generate {
+    (
+        $name:ident,
+        generate($s:ident, $prompt:ident, $params:ident, $tools:ident): $body:block
+        $(, with_messages($wm_s:ident, $messages:ident, $wm_params:ident, $wm_model:ident, $wm_tools:ident): $with_messages:block)?
+        $(,)?
+    ) => {
+        impl hkask_types::InferencePort for $name {
+            fn generate(
+                &$s,
+                $prompt: &str,
+                $params: &hkask_types::LLMParameters,
+                $tools: Option<&[hkask_types::ChatToolDefinition]>,
+            ) -> std::pin::Pin<
+                Box<
+                    dyn std::future::Future<
+                            Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
+                        > + Send
+                        + '_,
+                >,
+            > $body
+
+            $(fn generate_with_messages(
+                &$wm_s,
+                $messages: &[hkask_types::ChatMessage],
+                $wm_params: &hkask_types::LLMParameters,
+                $wm_model: Option<&str>,
+                $wm_tools: Option<&[hkask_types::ChatToolDefinition]>,
+            ) -> std::pin::Pin<
+                Box<
+                    dyn std::future::Future<
+                            Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
+                        > + Send
+                        + '_,
+                >,
+            > $with_messages)?
+        }
+    };
+}
+
+pub(crate) use inference_generate;
+
 #[derive(Default)]
 pub(crate) struct RecordingInference(pub(crate) Mutex<Vec<Vec<hkask_types::ChatMessage>>>);
 

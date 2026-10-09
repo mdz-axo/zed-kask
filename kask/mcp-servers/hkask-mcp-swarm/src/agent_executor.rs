@@ -807,20 +807,9 @@ mod tests {
 
     struct FailingInference;
 
-    impl hkask_types::InferencePort for FailingInference {
-        fn generate(
-            &self,
-            _prompt: &str,
-            _parameters: &hkask_types::LLMParameters,
-            _tools: Option<&[hkask_types::ChatToolDefinition]>,
-        ) -> Pin<
-            Box<
-                dyn Future<
-                        Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
-                    > + Send
-                    + '_,
-            >,
-        > {
+    crate::test_support::inference_generate! {
+        FailingInference,
+        generate(self, _prompt, _parameters, _tools): {
             Box::pin(async {
                 Err(hkask_types::InferenceError::Model(
                     "simulated provider failure".into(),
@@ -831,55 +820,18 @@ mod tests {
 
     struct StubInference;
 
-    impl hkask_types::InferencePort for StubInference {
-        fn generate(
-            &self,
-            _prompt: &str,
-            _parameters: &hkask_types::LLMParameters,
-            _tools: Option<&[hkask_types::ChatToolDefinition]>,
-        ) -> Pin<
-            Box<
-                dyn Future<
-                        Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
-                    > + Send
-                    + '_,
-            >,
-        > {
-            Box::pin(async {
-                Ok(hkask_types::InferenceResult {
-                    text: "stub".into(),
-                    model: "stub-model".into(),
-                    usage: hkask_types::InferenceUsage {
-                        prompt_tokens: 1,
-                        completion_tokens: 1,
-                        total_tokens: 2,
-                        reported: true,
-                    },
-                    finish_reason: "stop".into(),
-                    tool_calls: vec![],
-                    reasoning: None,
-                    cost_usd: None,
-                })
-            })
+    crate::test_support::inference_generate! {
+        StubInference,
+        generate(self, _prompt, _parameters, _tools): {
+            Box::pin(async { Ok(crate::test_support::stub_result()) })
         }
     }
 
     struct ToolThenAnswer(std::sync::atomic::AtomicUsize);
 
-    impl hkask_types::InferencePort for ToolThenAnswer {
-        fn generate(
-            &self,
-            prompt: &str,
-            parameters: &hkask_types::LLMParameters,
-            tools: Option<&[hkask_types::ChatToolDefinition]>,
-        ) -> Pin<
-            Box<
-                dyn Future<
-                        Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
-                    > + Send
-                    + '_,
-            >,
-        > {
+    crate::test_support::inference_generate! {
+        ToolThenAnswer,
+        generate(self, prompt, parameters, tools): {
             assert!(tools.is_some_and(|tools| {
                 tools.iter().any(|tool| {
                     tool.function.name == "fixture/lookup"
@@ -968,37 +920,33 @@ mod tests {
         assert_eq!(result.tool_calls[0]["ok"], true);
     }
 
-    struct ForgedTool {
+    /// A double that answers like StubInference but forges one tool call
+    /// on its first generate — the tool-name, server-conflict, and
+    /// schema-validation tests drive it with the call they are validating.
+    struct FirstCallTool {
         calls: std::sync::atomic::AtomicUsize,
-        server: &'static str,
-        tool: &'static str,
+        call: hkask_types::StructuredToolCall,
     }
-    impl hkask_types::InferencePort for ForgedTool {
-        fn generate(
-            &self,
-            _prompt: &str,
-            _parameters: &hkask_types::LLMParameters,
-            _tools: Option<&[hkask_types::ChatToolDefinition]>,
-        ) -> Pin<
-            Box<
-                dyn Future<
-                        Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
-                    > + Send
-                    + '_,
-            >,
-        > {
+
+    impl FirstCallTool {
+        fn new(call: hkask_types::StructuredToolCall) -> Self {
+            Self {
+                calls: std::sync::atomic::AtomicUsize::new(0),
+                call,
+            }
+        }
+    }
+
+    crate::test_support::inference_generate! {
+        FirstCallTool,
+        generate(self, _prompt, _parameters, _tools): {
             Box::pin(async move {
                 let mut result = StubInference
                     .generate("", &Default::default(), None)
                     .await?;
                 if self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
                     result.text.clear();
-                    result.tool_calls.push(hkask_types::StructuredToolCall {
-                        server: self.server.into(),
-                        tool: self.tool.into(),
-                        args: serde_json::json!({"query":"needle"}),
-                        call_id: Some("forged".into()),
-                    });
+                    result.tool_calls.push(self.call.clone());
                 }
                 Ok(result)
             })
@@ -1009,11 +957,12 @@ mod tests {
     #[tokio::test]
     async fn forged_undeclared_tool_call_is_denied() {
         let executor = AgentExecutor::new(
-            Arc::new(ForgedTool {
-                calls: std::sync::atomic::AtomicUsize::new(0),
-                server: "",
-                tool: "other/secret",
-            }),
+            Arc::new(FirstCallTool::new(hkask_types::StructuredToolCall {
+                server: "".into(),
+                tool: "other/secret".into(),
+                args: serde_json::json!({"query":"needle"}),
+                call_id: Some("forged".into()),
+            })),
             Arc::new(StubDispatch),
         );
         let card = LocalAgentCard {
@@ -1039,11 +988,12 @@ mod tests {
     #[tokio::test]
     async fn contradictory_server_and_qualified_tool_are_not_dispatched() {
         let executor = AgentExecutor::new(
-            Arc::new(ForgedTool {
-                calls: std::sync::atomic::AtomicUsize::new(0),
-                server: "other",
-                tool: "fixture/lookup",
-            }),
+            Arc::new(FirstCallTool::new(hkask_types::StructuredToolCall {
+                server: "other".into(),
+                tool: "fixture/lookup".into(),
+                args: serde_json::json!({"query":"needle"}),
+                call_id: Some("forged".into()),
+            })),
             Arc::new(StubDispatch),
         );
         let card = LocalAgentCard {
@@ -1131,8 +1081,13 @@ mod tests {
         }
     }
 
-    fn skill_call(name: &str) -> ScriptedCall {
-        ScriptedCall::new("host/skill", serde_json::json!({ "name": name }))
+    fn skill_call(name: &str) -> FirstCallTool {
+        FirstCallTool::new(hkask_types::StructuredToolCall {
+            server: String::new(),
+            tool: "host/skill".into(),
+            args: serde_json::json!({ "name": name }),
+            call_id: Some("scripted".into()),
+        })
     }
 
     /// expect: "A local agent that declares a skill loads it through the editor's skill tool" [P3]
@@ -1171,64 +1126,17 @@ mod tests {
     async fn agent_without_skills_gets_no_host_tools() {
         let dispatch = Arc::new(SkillDispatch::default());
         let executor = AgentExecutor::new(
-            Arc::new(ScriptedCall::new(
-                "host/lisp_eval",
-                serde_json::json!({"form": "1"}),
-            )),
+            Arc::new(FirstCallTool::new(hkask_types::StructuredToolCall {
+                server: String::new(),
+                tool: "host/lisp_eval".into(),
+                args: serde_json::json!({"form": "1"}),
+                call_id: Some("scripted".into()),
+            })),
             dispatch.clone(),
         );
         let result = executor.run(&skill_card(&[]), "eval").await.expect("run");
         assert_eq!(result.tool_calls[0]["ok"], false);
         assert!(dispatch.0.lock().unwrap().is_empty());
-    }
-
-    /// Issues one scripted tool call, then answers.
-    struct ScriptedCall {
-        calls: std::sync::atomic::AtomicUsize,
-        tool: &'static str,
-        args: serde_json::Value,
-    }
-
-    impl ScriptedCall {
-        fn new(tool: &'static str, args: serde_json::Value) -> Self {
-            Self {
-                calls: std::sync::atomic::AtomicUsize::new(0),
-                tool,
-                args,
-            }
-        }
-    }
-
-    impl hkask_types::InferencePort for ScriptedCall {
-        fn generate(
-            &self,
-            _prompt: &str,
-            _parameters: &hkask_types::LLMParameters,
-            _tools: Option<&[hkask_types::ChatToolDefinition]>,
-        ) -> Pin<
-            Box<
-                dyn Future<
-                        Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
-                    > + Send
-                    + '_,
-            >,
-        > {
-            Box::pin(async move {
-                let mut result = StubInference
-                    .generate("", &Default::default(), None)
-                    .await?;
-                if self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
-                    result.text.clear();
-                    result.tool_calls.push(hkask_types::StructuredToolCall {
-                        server: String::new(),
-                        tool: self.tool.into(),
-                        args: self.args.clone(),
-                        call_id: Some("scripted".into()),
-                    });
-                }
-                Ok(result)
-            })
-        }
     }
 
     #[tokio::test]
@@ -1250,20 +1158,9 @@ mod tests {
 
     struct AlwaysTool;
 
-    impl hkask_types::InferencePort for AlwaysTool {
-        fn generate(
-            &self,
-            _prompt: &str,
-            _parameters: &hkask_types::LLMParameters,
-            _tools: Option<&[hkask_types::ChatToolDefinition]>,
-        ) -> Pin<
-            Box<
-                dyn Future<
-                        Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
-                    > + Send
-                    + '_,
-            >,
-        > {
+    crate::test_support::inference_generate! {
+        AlwaysTool,
+        generate(self, _prompt, _parameters, _tools): {
             Box::pin(async {
                 let mut result = hkask_types::InferencePort::generate(
                     &StubInference,
@@ -1448,23 +1345,11 @@ mod tests {
     /// then the `temperature` field, then `model_params` keys override both.
     #[test]
     fn sampling_params_follow_card_precedence() {
-        use crate::local_registry::LocalAgentCapabilities;
         let mut card = crate::local_registry::LocalAgentCard {
             agent_id: "sampling_agent".to_string(),
             agent_type: "research".to_string(),
-            description: String::new(),
-            display_name: String::new(),
-            accepts: vec![],
-            produces: vec![],
-            dependencies: Default::default(),
-            capabilities: LocalAgentCapabilities::default(),
-            cloud_swarm_id: None,
-            tags: vec![],
-            visibility: String::new(),
-            sample_queries: vec![],
-            valence: None,
             version: "1.0.0".to_string(),
-            workflow_template: None,
+            ..Default::default()
         };
         // No card values → the executor's default preset.
         let defaults = hkask_types::LLMParameters::default();
@@ -1506,73 +1391,18 @@ mod tests {
         override_seen: std::sync::Mutex<Vec<Option<String>>>,
     }
 
-    impl hkask_types::InferencePort for RecordingInference {
-        fn generate(
-            &self,
-            _prompt: &str,
-            _parameters: &hkask_types::LLMParameters,
-            _tools: Option<&[hkask_types::ChatToolDefinition]>,
-        ) -> Pin<
-            Box<
-                dyn Future<
-                        Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
-                    > + Send
-                    + '_,
-            >,
-        > {
+    crate::test_support::inference_generate! {
+        RecordingInference,
+        generate(self, _prompt, _parameters, _tools): {
             self.override_seen.lock().unwrap().push(None);
-            Box::pin(async {
-                Ok(hkask_types::InferenceResult {
-                    text: "stub".into(),
-                    model: "stub-model".into(),
-                    usage: hkask_types::InferenceUsage {
-                        prompt_tokens: 1,
-                        completion_tokens: 1,
-                        total_tokens: 2,
-                        reported: true,
-                    },
-                    finish_reason: "stop".into(),
-                    tool_calls: vec![],
-                    reasoning: None,
-                    cost_usd: None,
-                })
-            })
-        }
-
-        fn generate_with_messages(
-            &self,
-            _messages: &[hkask_types::ChatMessage],
-            _parameters: &hkask_types::template::LLMParameters,
-            model_override: Option<&str>,
-            _tools: Option<&[hkask_types::ChatToolDefinition]>,
-        ) -> Pin<
-            Box<
-                dyn Future<
-                        Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
-                    > + Send
-                    + '_,
-            >,
-        > {
+            Box::pin(async { Ok(crate::test_support::stub_result()) })
+        },
+        with_messages(self, _messages, _parameters, model_override, _tools): {
             self.override_seen
                 .lock()
                 .unwrap()
                 .push(model_override.map(str::to_string));
-            Box::pin(async {
-                Ok(hkask_types::InferenceResult {
-                    text: "stub".into(),
-                    model: "stub-model".into(),
-                    usage: hkask_types::InferenceUsage {
-                        prompt_tokens: 1,
-                        completion_tokens: 1,
-                        total_tokens: 2,
-                        reported: true,
-                    },
-                    finish_reason: "stop".into(),
-                    tool_calls: vec![],
-                    reasoning: None,
-                    cost_usd: None,
-                })
-            })
+            Box::pin(async { Ok(crate::test_support::stub_result()) })
         }
     }
 
@@ -1581,7 +1411,6 @@ mod tests {
     /// the setting is empty too, inference resolves the host session model.
     #[tokio::test]
     async fn empty_card_model_passes_no_override_and_explicit_model_passes_through() {
-        use crate::local_registry::LocalAgentCapabilities;
         use std::sync::Arc;
         let inference = Arc::new(RecordingInference {
             override_seen: std::sync::Mutex::new(Vec::new()),
@@ -1591,19 +1420,8 @@ mod tests {
         let mut card = crate::local_registry::LocalAgentCard {
             agent_id: "model_probe".to_string(),
             agent_type: "research".to_string(),
-            description: String::new(),
-            display_name: String::new(),
-            accepts: vec![],
-            produces: vec![],
-            dependencies: Default::default(),
-            capabilities: LocalAgentCapabilities::default(),
-            cloud_swarm_id: None,
-            tags: vec![],
-            visibility: String::new(),
-            sample_queries: vec![],
-            valence: None,
             version: "1.0.0".to_string(),
-            workflow_template: None,
+            ..Default::default()
         };
         // Empty model → NO override → the bridge resolves the host session
         // default.
