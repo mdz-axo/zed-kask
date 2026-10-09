@@ -2049,6 +2049,38 @@ mod tool_behavior_tests {
         server_with_gallery_state(store, gallery_id, gallery_root).0
     }
 
+    /// A server over the gallery state with the deterministic fake-ffmpeg
+    /// runner — the construction the capture/rollback tests need (they must
+    /// not depend on a real ffmpeg). The two tests each hand-built this
+    /// block before the helper (2026-10-09 ratchet pass); the existing
+    /// `server_with_gallery_state` uses the real `FfmpegRunner::detect()`
+    /// and does not fit.
+    #[cfg(unix)]
+    fn server_with_fake_ffmpeg(
+        store: Arc<GalleryStore>,
+        gallery_id: String,
+        gallery_root: &std::path::Path,
+        artifacts_root: &std::path::Path,
+    ) -> Result<MediaServer, Box<dyn std::error::Error>> {
+        let gallery_state = Arc::new(std::sync::Mutex::new(Some(GalleryState {
+            path: gallery_root.to_path_buf(),
+            mode: GalleryMode::ReadOnly,
+            gallery_id: Some(gallery_id),
+        })));
+        Ok(MediaServer::new(
+            hkask_types::WebID::new(),
+            Arc::new(NoopInferencePort),
+            gallery_state,
+            store,
+            templates::create_env()?,
+            fake_successful_ffmpeg(artifacts_root)?,
+            video::ytdlp::YtDlpRunner::detect(),
+            jobs::new_job_store(),
+            None,
+            None,
+        ))
+    }
+
     #[cfg(unix)]
     fn fake_successful_ffmpeg(
         root: &std::path::Path,
@@ -2547,23 +2579,12 @@ mod tool_behavior_tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let (_env_lock, artifacts, _env, gallery_root, store, _driver, gallery) =
             media_test_env().await?;
-        let gallery_state = Arc::new(std::sync::Mutex::new(Some(GalleryState {
-            path: gallery_root.path().to_path_buf(),
-            mode: GalleryMode::ReadOnly,
-            gallery_id: Some(gallery.id),
-        })));
-        let server = MediaServer::new(
-            hkask_types::WebID::new(),
-            Arc::new(NoopInferencePort),
-            gallery_state,
+        let server = server_with_fake_ffmpeg(
             store.clone(),
-            templates::create_env()?,
-            fake_successful_ffmpeg(artifacts.path())?,
-            video::ytdlp::YtDlpRunner::detect(),
-            jobs::new_job_store(),
-            None,
-            None,
-        );
+            gallery.id,
+            gallery_root.path(),
+            artifacts.path(),
+        )?;
         let content = content_of(
             &server
                 .audio_capture(Parameters(AudioCaptureRequest { duration_secs: 1.0 }))
@@ -2707,23 +2728,12 @@ mod tool_behavior_tests {
             &[],
         )?;
         let gallery_id = gallery.id.clone();
-        let gallery_state = Arc::new(std::sync::Mutex::new(Some(GalleryState {
-            path: gallery_root.path().to_path_buf(),
-            mode: GalleryMode::ReadOnly,
-            gallery_id: Some(gallery.id),
-        })));
-        let server = MediaServer::new(
-            hkask_types::WebID::new(),
-            Arc::new(NoopInferencePort),
-            gallery_state,
+        let server = server_with_fake_ffmpeg(
             store.clone(),
-            templates::create_env()?,
-            fake_successful_ffmpeg(artifacts.path())?,
-            video::ytdlp::YtDlpRunner::detect(),
-            jobs::new_job_store(),
-            None,
-            None,
-        );
+            gallery.id,
+            gallery_root.path(),
+            artifacts.path(),
+        )?;
         let error = server
             .audio_capture(Parameters(AudioCaptureRequest { duration_secs: 1.0 }))
             .await
@@ -5601,6 +5611,69 @@ mod gallery_lifecycle_tests {
         Ok(value)
     }
 
+    /// The transcript-linked audio-asset fixture shared by the deletion
+    /// tests: a temp gallery organized in `mode`, one source.wav, one
+    /// gallery asset row, and one stored transcript linked to the asset.
+    /// Both deletion tests each carried this setup before the helper
+    /// (2026-10-09 ratchet pass).
+    struct TranscriptLinkedAsset {
+        _fixture: tempfile::TempDir,
+        source: std::path::PathBuf,
+        server: MediaServer,
+        asset: hkask_storage::ImageRecord,
+        transcript: crate::transcript_store::TranscriptSummary,
+    }
+
+    async fn transcript_linked_audio_asset(
+        mode: &str,
+    ) -> Result<TranscriptLinkedAsset, Box<dyn std::error::Error>> {
+        let fixture = tempfile::tempdir()?;
+        let root = fixture.path().join("root");
+        std::fs::create_dir(&root)?;
+        let source = root.join("source.wav");
+        std::fs::write(&source, b"source audio")?;
+        let server = server(
+            &fixture.path().join("gallery.sqlite"),
+            Arc::new(BarrierVision::barrier(analysis_vision_text)),
+        );
+        server
+            .gallery_organize(Parameters(GalleryOrganizeRequest {
+                path: root.to_string_lossy().into_owned(),
+                mode: mode.into(),
+                recursive: true,
+                auto_analyze: false,
+            }))
+            .await?;
+        let gallery = server.access_gallery()?;
+        let asset = server.gallery_store.add_media(
+            &gallery.gallery_id,
+            source.to_str().ok_or("UTF-8 source path")?,
+            "source-hash",
+            0,
+            0,
+            "wav",
+            12,
+            "audio",
+        )?;
+        let bundle = crate::transcript::TranscriptBundle::new(
+            source.to_string_lossy().into_owned(),
+            1.0,
+            "source".to_string(),
+        );
+        let transcript = crate::transcript_store::store_transcript(
+            &**server.gallery_store.driver(),
+            &bundle,
+            Some(&asset.id),
+        )?;
+        Ok(TranscriptLinkedAsset {
+            _fixture: fixture,
+            source,
+            server,
+            asset,
+            transcript,
+        })
+    }
+
     /// dcterms:identifier: `MediaServer::gallery_delete_image`
     /// expect: Gallery policy preserves originals unless destructive mode permits deletion; transcripts survive success, refusal, and partial failure.
     /// [P1] Motivating: Catalog cleanup respects the user's preservation policy.
@@ -5615,44 +5688,13 @@ mod gallery_lifecycle_tests {
             ("destructive", true, false),
             ("destructive", true, true),
         ] {
-            let fixture = tempfile::tempdir()?;
-            let root = fixture.path().join("root");
-            std::fs::create_dir(&root)?;
-            let source = root.join("source.wav");
-            std::fs::write(&source, b"source audio")?;
-            let server = server(
-                &fixture.path().join("gallery.sqlite"),
-                Arc::new(BarrierVision::barrier(analysis_vision_text)),
-            );
-            server
-                .gallery_organize(Parameters(GalleryOrganizeRequest {
-                    path: root.to_string_lossy().into_owned(),
-                    mode: mode.into(),
-                    recursive: true,
-                    auto_analyze: false,
-                }))
-                .await?;
-            let gallery = server.access_gallery()?;
-            let asset = server.gallery_store.add_media(
-                &gallery.gallery_id,
-                source.to_str().ok_or("UTF-8 source path")?,
-                "source-hash",
-                0,
-                0,
-                "wav",
-                12,
-                "audio",
-            )?;
-            let bundle = crate::transcript::TranscriptBundle::new(
-                source.to_string_lossy().into_owned(),
-                1.0,
-                "source".to_string(),
-            );
-            let transcript = crate::transcript_store::store_transcript(
-                &**server.gallery_store.driver(),
-                &bundle,
-                Some(&asset.id),
-            )?;
+            let TranscriptLinkedAsset {
+                _fixture,
+                source,
+                server,
+                asset,
+                transcript,
+            } = transcript_linked_audio_asset(mode).await?;
 
             if fail_index {
                 server.gallery_store.driver().execute_batch(
@@ -5725,44 +5767,13 @@ mod gallery_lifecycle_tests {
     /// [P1] Motivating: Destructive operations fail closed and never report cleanup they did not perform.
     #[tokio::test]
     async fn asset_file_deletion_failure_preserves_gallery_and_transcript_identity() -> TestResult {
-        let fixture = tempfile::tempdir()?;
-        let root = fixture.path().join("root");
-        std::fs::create_dir(&root)?;
-        let source = root.join("source.wav");
-        std::fs::write(&source, b"source audio")?;
-        let server = server(
-            &fixture.path().join("gallery.sqlite"),
-            Arc::new(BarrierVision::barrier(analysis_vision_text)),
-        );
-        server
-            .gallery_organize(Parameters(GalleryOrganizeRequest {
-                path: root.to_string_lossy().into_owned(),
-                mode: "destructive".into(),
-                recursive: true,
-                auto_analyze: false,
-            }))
-            .await?;
-        let gallery = server.access_gallery()?;
-        let asset = server.gallery_store.add_media(
-            &gallery.gallery_id,
-            source.to_str().ok_or("UTF-8 source path")?,
-            "source-hash",
-            0,
-            0,
-            "wav",
-            12,
-            "audio",
-        )?;
-        let bundle = crate::transcript::TranscriptBundle::new(
-            source.to_string_lossy().into_owned(),
-            1.0,
-            "source".to_string(),
-        );
-        let transcript = crate::transcript_store::store_transcript(
-            &**server.gallery_store.driver(),
-            &bundle,
-            Some(&asset.id),
-        )?;
+        let TranscriptLinkedAsset {
+            _fixture,
+            source,
+            server,
+            asset,
+            transcript,
+        } = transcript_linked_audio_asset("destructive").await?;
         std::fs::remove_file(&source)?;
         std::fs::create_dir(&source)?;
 
