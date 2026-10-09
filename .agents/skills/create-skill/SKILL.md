@@ -66,6 +66,19 @@ The template defines:
 - Jinja2 variables that the agent fills from prior step results
 - The expected JSON output shape
 
+**The `[inference]` header and the stage's D/P character (P8.4).** Every
+template header is `[inference]`-keyed metadata terminated by a lone `---`
+line, carrying the render contract (`contract.input` / `contract.output`)
+that `render_template` validates before rendering. The header is present in
+both regimes — it is the render contract, not the D/P marker. The stage's
+D/P character is declared in the `{# goal: ... #}` comment: a pure render
+(its rendered output is delivered as the step's result, no model call)
+states "Deterministic (no LLM call)" — the
+`sankey-flow/present-sankey.j2` pattern; a template whose rendered output
+is a prompt a model consumes states its LLM-bearing role. The render
+itself is D by construction in both cases (minijinja, no inference); the
+goal comment tells the reader whether the *stage* is D or P.
+
 ## Core principle: idiosyncratic, not generalized
 
 Each skill is customized and idiosyncratic to its domain. The skill's
