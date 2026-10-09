@@ -88,9 +88,10 @@ pub(crate) fn dc_type_for_path(path: &str) -> Option<hkask_bridge_ontology::dc_b
 /// legacy text. Returns the decoded text and the encoding actually used so
 /// the caller can surface it (2026-10-02: a Latin-1 saved page,
 /// engelbart-1962.html, was unconvertible under strict UTF-8 decoding).
-pub(crate) fn decode_text_bytes(bytes: &[u8]) -> Result<(String, &'static str), String> {
+/// Infallible by construction — the windows-1252 floor decodes any input.
+pub(crate) fn decode_text_bytes(bytes: &[u8]) -> (String, &'static str) {
     if let Ok(text) = std::str::from_utf8(bytes) {
-        return Ok((text.to_string(), "utf-8"));
+        return (text.to_string(), "utf-8");
     }
     // Sniff a declared charset from the first 4 KiB, case-insensitively.
     let head_len = bytes.len().min(4096);
@@ -110,7 +111,7 @@ pub(crate) fn decode_text_bytes(bytes: &[u8]) -> Result<(String, &'static str), 
         .and_then(|label| encoding_rs::Encoding::for_label(label.as_bytes()))
         .unwrap_or(encoding_rs::WINDOWS_1252);
     let (text, _, _) = encoding.decode(bytes);
-    Ok((text.into_owned(), encoding.name()))
+    (text.into_owned(), encoding.name())
 }
 
 /// Strip YAML frontmatter (delimited by `---`) from content.
@@ -373,16 +374,16 @@ mod tests {
 
     #[test]
     fn decode_text_bytes_utf8_passthrough_and_charset_fallback() {
-        let (text, encoding) = decode_text_bytes(b"plain utf-8 text").expect("utf-8");
+        let (text, encoding) = decode_text_bytes(b"plain utf-8 text");
         assert_eq!(text, "plain utf-8 text");
         assert_eq!(encoding, "utf-8");
         // "café" in windows-1252: the 0xE9 byte is invalid UTF-8.
         let legacy = b"<meta charset=\"windows-1252\">caf\xe9";
-        let (text, encoding) = decode_text_bytes(legacy).expect("declared charset");
+        let (text, encoding) = decode_text_bytes(legacy);
         assert_eq!(text, "<meta charset=\"windows-1252\">café");
         assert_eq!(encoding, "windows-1252");
         // No declaration: the legacy default still decodes.
-        let (text, encoding) = decode_text_bytes(b"caf\xe9").expect("default charset");
+        let (text, encoding) = decode_text_bytes(b"caf\xe9");
         assert_eq!(text, "café");
         assert_eq!(encoding, "windows-1252");
     }

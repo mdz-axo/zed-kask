@@ -24,7 +24,7 @@
 use std::sync::Arc;
 
 use hkask_mcp_experimentation::store::ExperimentationStore;
-use hkask_regulation::ExperimentationHealthSource;
+use hkask_regulation::{ExperimentationHealthError, ExperimentationHealthSource};
 use hkask_storage::database::driver::DatabaseDriver;
 use hkask_storage::database::sqlite::SqliteDriver;
 
@@ -72,11 +72,14 @@ impl BridgeExperimentationHealthSource {
 
 #[async_trait::async_trait]
 impl ExperimentationHealthSource for BridgeExperimentationHealthSource {
-    async fn stuck_running_experiments(&self, stale_days: u32) -> Result<Vec<String>, String> {
+    async fn stuck_running_experiments(
+        &self,
+        stale_days: u32,
+    ) -> Result<Vec<String>, ExperimentationHealthError> {
         let snapshot = self
             .store
             .health_snapshot()
-            .map_err(|error| format!("health snapshot: {error}"))?;
+            .map_err(|error| ExperimentationHealthError::Snapshot(error.to_string()))?;
         Ok(snapshot.stuck_running(stale_days as u64))
     }
 }

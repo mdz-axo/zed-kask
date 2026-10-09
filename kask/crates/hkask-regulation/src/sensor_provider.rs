@@ -495,6 +495,18 @@ impl Sensor for MemoryHealthSensor {
 // EVOLUTION REGISTRY HEALTH (§P8.9 step 1)
 // ═════════════════════════════════════════════════════════════════════════
 
+/// The experimentation registry could not be read — a broken sensor, never
+/// an empty result (the `.rules` `unwrap_or(0)` trap: an unreadable registry
+/// must not read as "no stuck experiments").
+#[derive(Debug, Clone, thiserror::Error)]
+#[non_exhaustive]
+pub enum ExperimentationHealthError {
+    /// The store's health-snapshot read failed; the payload is the store
+    /// error's message.
+    #[error("experimentation health snapshot failed: {0}")]
+    Snapshot(String),
+}
+
 /// Evolution registry health source — the bridge implements this over the
 /// evolution store's health snapshot.
 #[async_trait::async_trait]
@@ -505,7 +517,10 @@ pub trait ExperimentationHealthSource: Send + Sync {
     /// a broken sensor, which the caller must `warn!` about, never collapse
     /// into an empty list (the `.rules` `unwrap_or(0)` trap: an unreadable
     /// registry would read as "no stuck experiments").
-    async fn stuck_running_experiments(&self, stale_days: u32) -> Result<Vec<String>, String>;
+    async fn stuck_running_experiments(
+        &self,
+        stale_days: u32,
+    ) -> Result<Vec<String>, ExperimentationHealthError>;
 }
 
 /// The stale-experiment set point (D-3, operator ruling 2026-09-30): an
@@ -818,12 +833,15 @@ mod tests {
     }
 
     struct MockExperimentationSource {
-        stuck: Result<Vec<String>, String>,
+        stuck: Result<Vec<String>, ExperimentationHealthError>,
     }
 
     #[async_trait::async_trait]
     impl ExperimentationHealthSource for MockExperimentationSource {
-        async fn stuck_running_experiments(&self, _stale_days: u32) -> Result<Vec<String>, String> {
+        async fn stuck_running_experiments(
+            &self,
+            _stale_days: u32,
+        ) -> Result<Vec<String>, ExperimentationHealthError> {
             self.stuck.clone()
         }
     }
@@ -867,7 +885,9 @@ mod tests {
     async fn experimentation_sensor_returns_none_on_broken_source() {
         let sensor = ExperimentationHealthSensor::new(
             Arc::new(MockExperimentationSource {
-                stuck: Err("registry unreadable".to_string()),
+                stuck: Err(ExperimentationHealthError::Snapshot(
+                    "registry unreadable".to_string(),
+                )),
             }),
             DEFAULT_EXPERIMENTATION_STALE_DAYS,
         );

@@ -1803,7 +1803,8 @@ mod tests {
             async fn stuck_running_experiments(
                 &self,
                 _stale_days: u32,
-            ) -> Result<Vec<String>, String> {
+            ) -> Result<Vec<String>, crate::sensor_provider::ExperimentationHealthError>
+            {
                 Ok(self.0.clone())
             }
         }

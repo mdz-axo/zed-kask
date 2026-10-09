@@ -1327,56 +1327,35 @@ pub(crate) async fn extract_text_with_order(
                 }
             }
         }
-        "plain" => match crate::convert::decode_text_bytes(&file_bytes) {
-            Ok((text, _encoding)) => {
-                let word_count = text.split_whitespace().count();
-                ExtractOutcome::Success {
-                    text,
-                    word_count,
-                    structure: None,
-                }
+        "plain" => {
+            let (text, _encoding) = crate::convert::decode_text_bytes(&file_bytes);
+            let word_count = text.split_whitespace().count();
+            ExtractOutcome::Success {
+                text,
+                word_count,
+                structure: None,
             }
-            Err(e) => {
-                return Err(McpToolError::invalid_argument(format!(
-                    "Failed to decode text file '{}': {}",
-                    path, e
-                )));
+        }
+        "markdown" => {
+            let (content, _encoding) = crate::convert::decode_text_bytes(&file_bytes);
+            let text = crate::convert::strip_frontmatter(&content);
+            let word_count = text.split_whitespace().count();
+            ExtractOutcome::Success {
+                text,
+                word_count,
+                structure: None,
             }
-        },
-        "markdown" => match crate::convert::decode_text_bytes(&file_bytes) {
-            Ok((content, _encoding)) => {
-                let text = crate::convert::strip_frontmatter(&content);
-                let word_count = text.split_whitespace().count();
-                ExtractOutcome::Success {
-                    text,
-                    word_count,
-                    structure: None,
-                }
+        }
+        "html" | "htm" => {
+            let (content, _encoding) = crate::convert::decode_text_bytes(&file_bytes);
+            let text = crate::convert::strip_html(&content);
+            let word_count = text.split_whitespace().count();
+            ExtractOutcome::Success {
+                text,
+                word_count,
+                structure: None,
             }
-            Err(e) => {
-                return Err(McpToolError::invalid_argument(format!(
-                    "Failed to decode markdown file '{}': {}",
-                    path, e
-                )));
-            }
-        },
-        "html" | "htm" => match crate::convert::decode_text_bytes(&file_bytes) {
-            Ok((content, _encoding)) => {
-                let text = crate::convert::strip_html(&content);
-                let word_count = text.split_whitespace().count();
-                ExtractOutcome::Success {
-                    text,
-                    word_count,
-                    structure: None,
-                }
-            }
-            Err(e) => {
-                return Err(McpToolError::invalid_argument(format!(
-                    "Failed to decode HTML file '{}': {}",
-                    path, e
-                )));
-            }
-        },
+        }
         // Office format backends (S2: backend/pipeline separation)
         "docx" | "pptx" | "xlsx" => {
             let structure = parse_with_backend(format, path)?;
