@@ -467,18 +467,22 @@ async fn read_response(
     Ok(response)
 }
 
-async fn post_json_response(
-    key: Option<&str>,
-    url: &str,
-    payload: serde_json::Value,
+/// The shared post-send contract for mutating Reduct POSTs: a transport
+/// failure is `unavailable` carrying the may-have-succeeded warning for
+/// `uncertain_noun` ("request" or "upload"), and a non-2xx status is
+/// classified then surfaced as `failed_precondition` naming the status —
+/// never a blind retry.
+fn ensure_mutation_response(
+    result: Result<reqwest::Response, reqwest::Error>,
     operation: &str,
+    uncertain_noun: &str,
 ) -> Result<reqwest::Response, McpToolError> {
-    let (client, header) = authorized_client(key)?;
-    let response = client.post(url).header("x-auth-key", header).json(&payload)
-        .send().await.map_err(|error| McpToolError::unavailable(format!(
-            "Reduct {operation} transport failed: {}; request may have succeeded; inspect before retrying",
+    let response = result.map_err(|error| {
+        McpToolError::unavailable(format!(
+            "Reduct {operation} transport failed: {}; {uncertain_noun} may have succeeded; inspect before retrying",
             error.without_url()
-        )))?;
+        ))
+    })?;
     if !matches!(response.status().as_u16(), 200 | 201) {
         classify_reduct_mutation_status(response.status(), operation)?;
         return Err(McpToolError::failed_precondition(format!(
@@ -487,6 +491,22 @@ async fn post_json_response(
         )));
     }
     Ok(response)
+}
+
+async fn post_json_response(
+    key: Option<&str>,
+    url: &str,
+    payload: serde_json::Value,
+    operation: &str,
+) -> Result<reqwest::Response, McpToolError> {
+    let (client, header) = authorized_client(key)?;
+    let result = client
+        .post(url)
+        .header("x-auth-key", header)
+        .json(&payload)
+        .send()
+        .await;
+    ensure_mutation_response(result, operation, "request")
 }
 
 async fn post_binary_response(
@@ -498,22 +518,14 @@ async fn post_binary_response(
 ) -> Result<reqwest::Response, McpToolError> {
     let (client, header) =
         authorized_client_with_timeout(key, std::time::Duration::from_secs(300))?;
-    let response = client.post(url)
+    let result = client
+        .post(url)
         .header("x-auth-key", header)
         .header(reqwest::header::CONTENT_LENGTH, length)
-        .body(body).send().await
-        .map_err(|error| McpToolError::unavailable(format!(
-            "Reduct {operation} transport failed: {}; upload may have succeeded; inspect before retrying",
-            error.without_url()
-        )))?;
-    if !matches!(response.status().as_u16(), 200 | 201) {
-        classify_reduct_mutation_status(response.status(), operation)?;
-        return Err(McpToolError::failed_precondition(format!(
-            "Reduct {operation} returned HTTP {}; inspect before retrying",
-            response.status()
-        )));
-    }
-    Ok(response)
+        .body(body)
+        .send()
+        .await;
+    ensure_mutation_response(result, operation, "upload")
 }
 
 async fn read_upload_ack(response: reqwest::Response) -> Result<serde_json::Value, McpToolError> {
@@ -1688,23 +1700,21 @@ mod tests {
         assert!(connection_status(Some("  ")).is_err());
     }
 
-    // This fixture exercises the production URL builder, request body, header and
-    // acknowledgement parser together without sending any cloud mutation.
-    async fn reel_post_fixture<F, Fut>(
-        expected_path: &str,
-        expected_body: serde_json::Value,
-        response_body: &str,
-        call: F,
-    ) -> Result<serde_json::Value, Box<dyn std::error::Error>>
-    where
-        F: FnOnce(String) -> Fut,
-        Fut: std::future::Future<Output = Result<serde_json::Value, McpToolError>>,
-    {
-        use std::io::{Read, Write};
+    /// A one-request HTTP fixture server: binds a local listener, reads
+    /// the first request until `received` accepts the accumulated text,
+    /// writes `response`, and returns (root, handle) — joining the handle
+    /// yields the full request text.
+    fn fixture_server(
+        received: impl Fn(&str) -> bool + Send + 'static,
+        response: String,
+    ) -> Result<
+        (String, std::thread::JoinHandle<std::io::Result<String>>),
+        Box<dyn std::error::Error>,
+    > {
         let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
         let root = format!("http://{}/", listener.local_addr()?);
-        let response_body = response_body.to_string();
         let peer = std::thread::spawn(move || -> std::io::Result<String> {
+            use std::io::{Read, Write};
             let (mut stream, _) = listener.accept()?;
             stream.set_read_timeout(Some(std::time::Duration::from_secs(5)))?;
             let mut request = String::new();
@@ -1717,19 +1727,83 @@ mod tests {
                     ));
                 }
                 request.push_str(&String::from_utf8_lossy(&buffer[..n]));
-                if request.split_once("\r\n\r\n").is_some_and(|(_, body)| {
-                    serde_json::from_str::<serde_json::Value>(body).is_ok()
-                }) {
+                if received(&request) {
                     break;
                 }
             }
-            write!(
-                stream,
-                "HTTP/1.1 201 Created\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response_body}",
-                response_body.len()
-            )?;
+            write!(stream, "{response}")?;
             Ok(request)
         });
+        Ok((root, peer))
+    }
+
+    /// The break condition for a request whose body is complete JSON —
+    /// the robust condition the reel and publish fixtures share.
+    fn request_with_json_body(request: &str) -> bool {
+        request
+            .split_once("\r\n\r\n")
+            .is_some_and(|(_, body)| serde_json::from_str::<serde_json::Value>(body).is_ok())
+    }
+
+    /// The live-probe gate the #[ignore]d Reduct checks share: refuse
+    /// without HKASK_REDUCT_LIVE_PROBE=1 (opt-in from the operator's
+    /// workstation only).
+    fn require_live_probe() -> Result<(), Box<dyn std::error::Error>> {
+        if std::env::var("HKASK_REDUCT_LIVE_PROBE").as_deref() != Ok("1") {
+            return Err("set HKASK_REDUCT_LIVE_PROBE=1 for this read-only check".into());
+        }
+        Ok(())
+    }
+
+    /// The (header, client) pair the raw-reqwest live probes share: the
+    /// key as an x-auth-key header value, plus the no-proxy, no-redirect,
+    /// 15s client the shape-inspection checks read the API through.
+    fn live_probe_header_client(
+        key: &str,
+    ) -> Result<(reqwest::header::HeaderValue, reqwest::Client), Box<dyn std::error::Error>> {
+        let header = reqwest::header::HeaderValue::from_str(key)
+            .map_err(|_| std::io::Error::other("invalid key header"))?;
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .redirect_policy(reqwest::redirect::Policy::none())
+            .timeout(std::time::Duration::from_secs(15))
+            .build()?;
+        Ok((header, client))
+    }
+
+    /// Field NAMES (never values) of a JSON object, filtered to short
+    /// ASCII identifiers — the live probes' shape-inspection vocabulary.
+    fn json_field_names(value: Option<&serde_json::Value>) -> Vec<&str> {
+        value
+            .and_then(serde_json::Value::as_object)
+            .into_iter()
+            .flat_map(|record| record.keys().map(String::as_str))
+            .filter(|name| {
+                name.len() <= 32
+                    && name
+                        .chars()
+                        .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+            })
+            .collect()
+    }
+
+    // This fixture exercises the production URL builder, request body, header and
+    // acknowledgement parser together without sending any cloud mutation.
+    async fn reel_post_fixture<F, Fut>(
+        expected_path: &str,
+        expected_body: serde_json::Value,
+        response_body: &str,
+        call: F,
+    ) -> Result<serde_json::Value, Box<dyn std::error::Error>>
+    where
+        F: FnOnce(String) -> Fut,
+        Fut: std::future::Future<Output = Result<serde_json::Value, McpToolError>>,
+    {
+        let response = format!(
+            "HTTP/1.1 201 Created\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response_body}",
+            response_body.len()
+        );
+        let (root, peer) = fixture_server(request_with_json_body, response)?;
         let result = call(root).await?;
         let request = peer
             .join()
@@ -1871,7 +1945,6 @@ mod tests {
     #[tokio::test]
     async fn reel_post_429_and_5xx_preserve_kind_and_warn_to_inspect()
     -> Result<(), Box<dyn std::error::Error>> {
-        use std::io::{Read, Write};
         for (status_line, kind) in [
             (
                 "429 Too Many Requests",
@@ -1882,29 +1955,10 @@ mod tests {
                 hkask_types::McpErrorKind::Unavailable,
             ),
         ] {
-            let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
-            let root = format!("http://{}/", listener.local_addr()?);
-            let peer = std::thread::spawn(move || -> std::io::Result<()> {
-                let (mut stream, _) = listener.accept()?;
-                stream.set_read_timeout(Some(std::time::Duration::from_secs(5)))?;
-                let mut buffer = [0_u8; 4096];
-                let mut request = String::new();
-                loop {
-                    let n = stream.read(&mut buffer)?;
-                    if n == 0 || request.len() > 16 * 1024 {
-                        return Err(std::io::Error::other("incomplete POST fixture"));
-                    }
-                    request.push_str(&String::from_utf8_lossy(&buffer[..n]));
-                    if request.contains("\r\n\r\n") && request.contains("Fixture reel") {
-                        break;
-                    }
-                }
-                write!(
-                    stream,
-                    "HTTP/1.1 {status_line}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-                )?;
-                Ok(())
-            });
+            let (root, peer) = fixture_server(
+                |request| request.contains("\r\n\r\n") && request.contains("Fixture reel"),
+                format!("HTTP/1.1 {status_line}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"),
+            )?;
             let error = create_reel(Some("fixture-key"), &root, "p_fixture", "Fixture reel")
                 .await
                 .expect_err("non-successful POST must not claim Reel creation");
@@ -1928,30 +1982,10 @@ mod tests {
     #[tokio::test]
     async fn reel_post_http_error_is_classified_and_never_reported_as_created()
     -> Result<(), Box<dyn std::error::Error>> {
-        use std::io::{Read, Write};
-        let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
-        let root = format!("http://{}/", listener.local_addr()?);
-        let peer = std::thread::spawn(move || -> std::io::Result<String> {
-            let (mut stream, _) = listener.accept()?;
-            stream.set_read_timeout(Some(std::time::Duration::from_secs(5)))?;
-            let mut buffer = [0_u8; 4096];
-            let mut request = String::new();
-            loop {
-                let n = stream.read(&mut buffer)?;
-                if n == 0 || request.len() > 16 * 1024 {
-                    return Err(std::io::Error::other("incomplete error fixture"));
-                }
-                request.push_str(&String::from_utf8_lossy(&buffer[..n]));
-                if request.contains("\r\n\r\n") && request.contains("Fixture reel") {
-                    break;
-                }
-            }
-            write!(
-                stream,
-                "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-            )?;
-            Ok(request)
-        });
+        let (root, peer) = fixture_server(
+            |request| request.contains("\r\n\r\n") && request.contains("Fixture reel"),
+            "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_string(),
+        )?;
         let error = create_reel(Some("fixture-key"), &root, "p_fixture", "Fixture reel")
             .await
             .expect_err("provider refusal is not a created reel");
@@ -2056,29 +2090,13 @@ mod tests {
     #[tokio::test]
     async fn binary_upload_post_5xx_keeps_uncertain_write_warning()
     -> Result<(), Box<dyn std::error::Error>> {
-        use std::io::{Read, Write};
-        let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
-        let address = listener.local_addr()?;
-        let peer = std::thread::spawn(move || -> std::io::Result<String> {
-            let (mut stream, _) = listener.accept()?;
-            stream.set_read_timeout(Some(std::time::Duration::from_secs(5)))?;
-            let mut request = String::new();
-            let mut buffer = [0_u8; 4096];
-            while !request.contains("fixture-binary") {
-                let n = stream.read(&mut buffer)?;
-                if n == 0 || request.len() > 16 * 1024 {
-                    return Err(std::io::Error::other("incomplete binary fixture"));
-                }
-                request.push_str(&String::from_utf8_lossy(&buffer[..n]));
-            }
-            write!(
-                stream,
-                "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-            )?;
-            Ok(request)
-        });
+        let (root, peer) = fixture_server(
+            |request| request.contains("fixture-binary"),
+            "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                .to_string(),
+        )?;
         let url = format!(
-            "http://{address}/project/p_fixture/recording/r_fixture/media-upload?filename=fixture.mp4"
+            "{root}project/p_fixture/recording/r_fixture/media-upload?filename=fixture.mp4"
         );
         let error = post_binary_response(
             Some("fixture-key"),
@@ -2358,32 +2376,16 @@ mod tests {
     #[tokio::test]
     async fn recording_post_sends_documented_json_with_key_only_in_header()
     -> Result<(), Box<dyn std::error::Error>> {
-        use std::io::{Read, Write};
-        let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
-        let address = listener.local_addr()?;
-        let peer = std::thread::spawn(move || -> std::io::Result<String> {
-            let (mut stream, _) = listener.accept()?;
-            stream.set_read_timeout(Some(std::time::Duration::from_secs(5)))?;
-            let mut request = String::new();
-            let mut buffer = [0_u8; 4096];
-            while !request.contains("\"title\":\"Fixture\"") {
-                let n = stream.read(&mut buffer)?;
-                if n == 0 || request.len() > 16 * 1024 {
-                    return Err(std::io::Error::other(
-                        "incomplete or oversized test request",
-                    ));
-                }
-                request.push_str(&String::from_utf8_lossy(&buffer[..n]));
-            }
-            let body = r#"{"recording":"r_fixture"}"#;
-            write!(
-                stream,
-                "HTTP/1.1 201 Created\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                body.len()
-            )?;
-            Ok(request)
-        });
-        let url = format!("http://{address}/project/p_fixture/recording");
+        let body = r#"{"recording":"r_fixture"}"#;
+        let response = format!(
+            "HTTP/1.1 201 Created\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        let (root, peer) = fixture_server(
+            |request| request.contains("\"title\":\"Fixture\""),
+            response,
+        )?;
+        let url = format!("{root}project/p_fixture/recording");
         let response = post_json_response(
             Some("fixture-key"),
             &url,
@@ -2423,9 +2425,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires HKASK_REDUCT_LIVE_PROBE=1 and a configured OS keychain"]
     async fn live_project_probe_with_stored_key() -> Result<(), Box<dyn std::error::Error>> {
-        if std::env::var("HKASK_REDUCT_LIVE_PROBE").as_deref() != Ok("1") {
-            return Err("set HKASK_REDUCT_LIVE_PROBE=1 to authorize this read-only probe".into());
-        }
+        require_live_probe()?;
         let key = hkask_keystore::Keychain.retrieve_by_url("kask://credentials/reduct_api_key")?;
         let status = probe_project(Some(key.as_str()), PROJECT_PROBE_URL).await?;
         assert_eq!(status["provider_connection"], "project_read_succeeded");
@@ -2436,17 +2436,9 @@ mod tests {
     #[ignore = "requires HKASK_REDUCT_LIVE_PROBE=1 and a configured OS keychain"]
     async fn live_project_response_shape_with_stored_key() -> Result<(), Box<dyn std::error::Error>>
     {
-        if std::env::var("HKASK_REDUCT_LIVE_PROBE").as_deref() != Ok("1") {
-            return Err("set HKASK_REDUCT_LIVE_PROBE=1 for this read-only check".into());
-        }
+        require_live_probe()?;
         let key = hkask_keystore::Keychain.retrieve_by_url("kask://credentials/reduct_api_key")?;
-        let header = reqwest::header::HeaderValue::from_str(key.as_str())
-            .map_err(|_| std::io::Error::other("invalid key header"))?;
-        let client = reqwest::Client::builder()
-            .no_proxy()
-            .redirect_policy(reqwest::redirect::Policy::none())
-            .timeout(std::time::Duration::from_secs(15))
-            .build()?;
+        let (header, client) = live_probe_header_client(key.as_str())?;
         let response = client
             .get(PROJECT_PROBE_URL)
             .header("x-auth-key", header)
@@ -2518,17 +2510,7 @@ mod tests {
                         first_value.and_then(|entry| entry.get("id")).is_some(),
                         first_value.and_then(|entry| entry.get("name")).is_some()
                     );
-                    let field_names: Vec<&str> = first_value
-                        .and_then(serde_json::Value::as_object)
-                        .into_iter()
-                        .flat_map(|entry| entry.keys().map(String::as_str))
-                        .filter(|name| {
-                            name.len() <= 32
-                                && name
-                                    .chars()
-                                    .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
-                        })
-                        .collect();
+                    let field_names = json_field_names(first_value);
                     eprintln!("Reduct project entry field names (not values): {field_names:?}");
                 }
             }
@@ -2539,9 +2521,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires HKASK_REDUCT_LIVE_PROBE=1 and a configured OS keychain"]
     async fn live_projects_snapshot_with_stored_key() -> Result<(), Box<dyn std::error::Error>> {
-        if std::env::var("HKASK_REDUCT_LIVE_PROBE").as_deref() != Ok("1") {
-            return Err("set HKASK_REDUCT_LIVE_PROBE=1 for this read-only check".into());
-        }
+        require_live_probe()?;
         let key = hkask_keystore::Keychain.retrieve_by_url("kask://credentials/reduct_api_key")?;
         let snapshot = projects_snapshot(Some(key.as_str()), 10, PROJECT_PROBE_URL).await?;
         assert!(
@@ -2557,9 +2537,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires HKASK_REDUCT_LIVE_PROBE=1 and a configured OS keychain"]
     async fn live_reel_metadata_shape() -> Result<(), Box<dyn std::error::Error>> {
-        if std::env::var("HKASK_REDUCT_LIVE_PROBE").as_deref() != Ok("1") {
-            return Err("set HKASK_REDUCT_LIVE_PROBE=1 for read-only inspection".into());
-        }
+        require_live_probe()?;
         let key = hkask_keystore::Keychain.retrieve_by_url("kask://credentials/reduct_api_key")?;
         let response = read_response(Some(key.as_str()), PROJECT_PROBE_URL, "project list").await?;
         let body = read_bounded(response, 2 * 1024 * 1024).await?;
@@ -2587,17 +2565,7 @@ mod tests {
             {
                 observed = true;
                 let first = reels.values().next();
-                let fields: Vec<&str> = first
-                    .and_then(serde_json::Value::as_object)
-                    .into_iter()
-                    .flat_map(|record| record.keys().map(String::as_str))
-                    .filter(|name| {
-                        name.len() <= 32
-                            && name
-                                .chars()
-                                .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
-                    })
-                    .collect();
+                let fields = json_field_names(first);
                 eprintln!(
                     "Reduct reel metadata: count={}; first-field-names={fields:?}",
                     reels.len()
@@ -2612,18 +2580,7 @@ mod tests {
                     let response = read_response(Some(key.as_str()), &url, "reel detail").await?;
                     let body = read_bounded(response, 2 * 1024 * 1024).await?;
                     let detail: serde_json::Value = serde_json::from_slice(&body)?;
-                    let fields: Vec<&str> = detail
-                        .get(reel_id)
-                        .and_then(serde_json::Value::as_object)
-                        .into_iter()
-                        .flat_map(|record| record.keys().map(String::as_str))
-                        .filter(|name| {
-                            name.len() <= 32
-                                && name
-                                    .chars()
-                                    .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
-                        })
-                        .collect();
+                    let fields = json_field_names(detail.get(reel_id));
                     let block = detail.get(reel_id).and_then(|record| record.get("block"));
                     eprintln!(
                         "Reduct reel detail: id-keyed={}; top-level-field-count={}; fields={fields:?}; block-map={}; block-count={}",
@@ -2651,9 +2608,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires HKASK_REDUCT_LIVE_PROBE=1 and a configured OS keychain"]
     async fn live_recording_status_from_project() -> Result<(), Box<dyn std::error::Error>> {
-        if std::env::var("HKASK_REDUCT_LIVE_PROBE").as_deref() != Ok("1") {
-            return Err("set HKASK_REDUCT_LIVE_PROBE=1 for this read-only check".into());
-        }
+        require_live_probe()?;
         let key = hkask_keystore::Keychain.retrieve_by_url("kask://credentials/reduct_api_key")?;
         let response = read_response(Some(key.as_str()), PROJECT_PROBE_URL, "project read").await?;
         let body = read_bounded(response, 2 * 1024 * 1024).await?;
@@ -2772,17 +2727,9 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires HKASK_REDUCT_LIVE_PROBE=1 and a configured OS keychain"]
     async fn live_api_reference_access_with_stored_key() -> Result<(), Box<dyn std::error::Error>> {
-        if std::env::var("HKASK_REDUCT_LIVE_PROBE").as_deref() != Ok("1") {
-            return Err("set HKASK_REDUCT_LIVE_PROBE=1 for this read-only check".into());
-        }
+        require_live_probe()?;
         let key = hkask_keystore::Keychain.retrieve_by_url("kask://credentials/reduct_api_key")?;
-        let header = reqwest::header::HeaderValue::from_str(key.as_str())
-            .map_err(|_| std::io::Error::other("invalid key header"))?;
-        let client = reqwest::Client::builder()
-            .no_proxy()
-            .redirect_policy(reqwest::redirect::Policy::none())
-            .timeout(std::time::Duration::from_secs(15))
-            .build()?;
+        let (header, client) = live_probe_header_client(key.as_str())?;
         let response = client
             .get("https://app.reduct.video/backstage/api/")
             .header("x-auth-key", header)
@@ -3022,35 +2969,12 @@ mod tests {
     #[tokio::test]
     async fn publish_http_refusal_is_classified_never_claimed()
     -> Result<(), Box<dyn std::error::Error>> {
-        use std::io::{Read, Write};
-        let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
-        let root = format!("http://{}/", listener.local_addr()?);
-        let peer = std::thread::spawn(move || -> std::io::Result<String> {
-            let (mut stream, _) = listener.accept()?;
-            stream.set_read_timeout(Some(std::time::Duration::from_secs(5)))?;
-            let mut buffer = [0_u8; 4096];
-            let mut request = String::new();
-            loop {
-                let n = stream.read(&mut buffer)?;
-                if n == 0 || request.len() > 16 * 1024 {
-                    return Err(std::io::Error::other("incomplete refusal fixture"));
-                }
-                request.push_str(&String::from_utf8_lossy(&buffer[..n]));
-                // The publish body is the bare bool (the property-endpoint
-                // payload convention) — wait for a parseable JSON body, the
-                // same robust condition the main fixture uses.
-                if request.split_once("\r\n\r\n").is_some_and(|(_, body)| {
-                    serde_json::from_str::<serde_json::Value>(body).is_ok()
-                }) {
-                    break;
-                }
-            }
-            write!(
-                stream,
-                "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-            )?;
-            Ok(request)
-        });
+        // The publish body is the bare bool (the property-endpoint payload
+        // convention) — the JSON-body break condition covers it.
+        let (root, peer) = fixture_server(
+            request_with_json_body,
+            "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_string(),
+        )?;
         let error = publish_reel(
             Some("fixture-key"),
             &root,
@@ -3209,30 +3133,10 @@ mod tests {
     #[tokio::test]
     async fn highlight_edit_http_refusal_is_classified_never_claimed()
     -> Result<(), Box<dyn std::error::Error>> {
-        use std::io::{Read, Write};
-        let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
-        let root = format!("http://{}/", listener.local_addr()?);
-        let peer = std::thread::spawn(move || -> std::io::Result<String> {
-            let (mut stream, _) = listener.accept()?;
-            stream.set_read_timeout(Some(std::time::Duration::from_secs(5)))?;
-            let mut buffer = [0_u8; 4096];
-            let mut request = String::new();
-            loop {
-                let n = stream.read(&mut buffer)?;
-                if n == 0 || request.len() > 16 * 1024 {
-                    return Err(std::io::Error::other("incomplete refusal fixture"));
-                }
-                request.push_str(&String::from_utf8_lossy(&buffer[..n]));
-                if request.contains("\r\n\r\n") && request.contains("end_time") {
-                    break;
-                }
-            }
-            write!(
-                stream,
-                "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-            )?;
-            Ok(request)
-        });
+        let (root, peer) = fixture_server(
+            |request| request.contains("\r\n\r\n") && request.contains("end_time"),
+            "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_string(),
+        )?;
         let error = edit_recording_highlight(
             Some("fixture-key"),
             &root,
