@@ -2371,6 +2371,51 @@ mod tool_behavior_tests {
         Ok(serde_json::from_str(body)?)
     }
 
+    /// The shared durable-audio-asset contract (trim/concat/capture): a
+    /// canonical output under the generated-assets dir, a stable gallery
+    /// identity, an audio display hint with OMC CAPTURE provenance,
+    /// effective params equal to `expected`, a generated-gallery row of wav
+    /// audio, and lineage naming `op` with params equal to `expected`. The
+    /// three audio tests each carried this block before the helper
+    /// (2026-10-09 duplication-ratchet pass); trim's extras (hint identity,
+    /// absolute path, the OMC detail graph) stay in its test.
+    fn assert_durable_audio_asset(
+        content: &serde_json::Value,
+        store: &GalleryStore,
+        expected: &serde_json::Value,
+        op: &str,
+    ) -> Result<(std::path::PathBuf, String, serde_json::Value), Box<dyn std::error::Error>> {
+        let output =
+            std::path::PathBuf::from(content["output"].as_str().ok_or("missing durable output")?);
+        let asset_id = content["gallery_asset_id"]
+            .as_str()
+            .ok_or("missing stable gallery_asset_id")?
+            .to_string();
+        let hint = media_hint_body(
+            content["display_hint"]
+                .as_str()
+                .ok_or("missing audio display hint")?,
+        )?;
+        assert!(output.starts_with(crate::assets::generated_assets_dir()));
+        assert!(output.is_file());
+        assert_eq!(hint["kind"], "audio");
+        assert_eq!(hint["ontology"], hkask_bridge_ontology::omc::CAPTURE);
+        assert_eq!(hint["provenance"]["args"], *expected);
+        assert_eq!(content["effective_params"], *expected);
+        let asset = store.get_by_id(&asset_id)?;
+        assert_eq!(asset.gallery_id, generated_gallery(store));
+        assert_eq!(asset.format, "wav");
+        assert_eq!(asset.media_type, "audio");
+        let lineage = store
+            .get_generation(&asset_id)?
+            .ok_or(format!("{op} lineage missing"))?;
+        assert_eq!(lineage.op, op);
+        let params: serde_json::Value =
+            serde_json::from_str(lineage.params.as_deref().ok_or("lineage params missing")?)?;
+        assert_eq!(params, *expected);
+        Ok((output, asset_id, hint))
+    }
+
     /// dcterms:identifier: `MediaServer::audio_trim`
     /// expect: My trimmed recording remains addressable by one stable gallery identity after teardown.
     /// [P1] Motivating: completed audio work survives processor and server teardown.
@@ -2395,16 +2440,10 @@ mod tool_behavior_tests {
                 .await?,
         );
 
-        let output =
-            std::path::PathBuf::from(content["output"].as_str().ok_or("missing durable output")?);
         let asset_id = content["gallery_asset_id"]
             .as_str()
-            .ok_or("missing stable gallery_asset_id")?;
-        let hint = media_hint_body(
-            content["display_hint"]
-                .as_str()
-                .ok_or("missing audio display hint")?,
-        )?;
+            .ok_or("missing stable gallery_asset_id")?
+            .to_string();
         let expected = serde_json::json!({
             "source": source.to_string_lossy(),
             "start_sec": 0.25,
@@ -2412,19 +2451,11 @@ mod tool_behavior_tests {
             "duration_sec": 1.0,
             "format": "wav",
         });
-
-        assert!(output.starts_with(crate::assets::generated_assets_dir()));
-        assert!(output.is_file());
-        assert_eq!(hint["kind"], "audio");
-        assert_eq!(hint["ontology"], hkask_bridge_ontology::omc::CAPTURE);
-        assert_eq!(hint["gallery_asset_id"], asset_id);
-        assert_eq!(hint["provenance"]["args"], expected);
-        assert_eq!(content["effective_params"], expected);
         let detail = content_of(
             &server
                 .gallery_asset_detail(Parameters(GalleryAssetDetailRequest {
                     image_index: None,
-                    image_id: Some(asset_id.to_string()),
+                    image_id: Some(asset_id.clone()),
                 }))
                 .await?,
         );
@@ -2434,18 +2465,11 @@ mod tool_behavior_tests {
             content["omc_task_id"]
         );
         drop(server);
-        let asset = store.get_by_id(asset_id)?;
-        assert_eq!(asset.gallery_id, generated_gallery(&store));
-        assert_eq!(asset.format, "wav");
-        assert_eq!(asset.media_type, "audio");
+        let (output, asset_id, hint) =
+            assert_durable_audio_asset(&content, &store, &expected, "audio_trim")?;
+        assert_eq!(hint["gallery_asset_id"], asset_id);
+        let asset = store.get_by_id(&asset_id)?;
         assert_eq!(std::path::Path::new(&asset.absolute_path), output);
-        let lineage = store
-            .get_generation(asset_id)?
-            .ok_or("audio_trim lineage missing")?;
-        assert_eq!(lineage.op, "audio_trim");
-        let params: serde_json::Value =
-            serde_json::from_str(lineage.params.as_deref().ok_or("lineage params missing")?)?;
-        assert_eq!(params, expected);
         Ok(())
     }
 
@@ -2478,33 +2502,8 @@ mod tool_behavior_tests {
         );
         drop(server);
 
-        let output =
-            std::path::PathBuf::from(content["output"].as_str().ok_or("missing durable output")?);
-        let asset_id = content["gallery_asset_id"]
-            .as_str()
-            .ok_or("missing stable gallery_asset_id")?;
-        let hint = media_hint_body(
-            content["display_hint"]
-                .as_str()
-                .ok_or("missing audio display hint")?,
-        )?;
         let expected = serde_json::json!({"sources": sources, "format": "wav"});
-        assert!(output.starts_with(crate::assets::generated_assets_dir()));
-        assert!(output.is_file());
-        assert_eq!(hint["kind"], "audio");
-        assert_eq!(hint["ontology"], hkask_bridge_ontology::omc::CAPTURE);
-        assert_eq!(hint["provenance"]["args"], expected);
-        assert_eq!(content["effective_params"], expected);
-        let asset = store.get_by_id(asset_id)?;
-        assert_eq!(asset.gallery_id, generated_gallery(&store));
-        assert_eq!(asset.format, "wav");
-        assert_eq!(asset.media_type, "audio");
-        let lineage = store
-            .get_generation(asset_id)?
-            .ok_or("audio_concat lineage missing")?;
-        let params: serde_json::Value =
-            serde_json::from_str(lineage.params.as_deref().ok_or("lineage params missing")?)?;
-        assert_eq!(params, expected);
+        assert_durable_audio_asset(&content, &store, &expected, "audio_concat")?;
         Ok(())
     }
 
@@ -2544,38 +2543,13 @@ mod tool_behavior_tests {
         );
         drop(server);
 
-        let output =
-            std::path::PathBuf::from(content["output"].as_str().ok_or("missing durable output")?);
-        let asset_id = content["gallery_asset_id"]
-            .as_str()
-            .ok_or("missing stable gallery_asset_id")?;
-        let hint = media_hint_body(
-            content["display_hint"]
-                .as_str()
-                .ok_or("missing audio display hint")?,
-        )?;
         let expected = serde_json::json!({
             "duration_secs": 1.0,
             "sample_rate": 16000,
             "channels": 1,
             "format": "wav",
         });
-        assert!(output.starts_with(crate::assets::generated_assets_dir()));
-        assert!(output.is_file());
-        assert_eq!(hint["kind"], "audio");
-        assert_eq!(hint["ontology"], hkask_bridge_ontology::omc::CAPTURE);
-        assert_eq!(hint["provenance"]["args"], expected);
-        assert_eq!(content["effective_params"], expected);
-        let asset = store.get_by_id(asset_id)?;
-        assert_eq!(asset.gallery_id, generated_gallery(&store));
-        assert_eq!(asset.format, "wav");
-        assert_eq!(asset.media_type, "audio");
-        let lineage = store
-            .get_generation(asset_id)?
-            .ok_or("audio_capture lineage missing")?;
-        let params: serde_json::Value =
-            serde_json::from_str(lineage.params.as_deref().ok_or("lineage params missing")?)?;
-        assert_eq!(params, expected);
+        assert_durable_audio_asset(&content, &store, &expected, "audio_capture")?;
         Ok(())
     }
 
