@@ -44,6 +44,26 @@ contract:
 {# Deterministic formatting consumes structured findings and ratings directly;
    an extra inference call cannot improve their presentation contract. #}
 
+{# ── Input-shape guards (algedonic card 5057d441; therapy 2026-10-08 F008) ──
+   A stringified-JSON array iterates character-by-character in minijinja,
+   silently rendering placeholder rows that look like real findings (the
+   2026-10-08 receipts: "Hypothesis | unspecified | unspecified | False"
+   while the summary line still interpolated). Convert that class into a
+   loud, machine-readable input error instead — the change log must never
+   fabricate plausible-looking rows from a malformed input. #}
+{%- set input_errors = [] -%}
+{%- if audit_findings is string -%}{% set input_errors = input_errors + ["audit_findings: expected a JSON array of finding objects, got a string — pass plain arrays, never stringified JSON"] %}{%- endif -%}
+{%- if grill_ratings is string -%}{% set input_errors = input_errors + ["grill_ratings: expected a JSON array of rating objects, got a string — pass plain arrays, never stringified JSON"] %}{%- endif -%}
+{%- if mutations_applied is string -%}{% set input_errors = input_errors + ["mutations_applied: expected a JSON array of mutation objects, got a string — pass plain arrays, never stringified JSON"] %}{%- endif -%}
+{%- if mutations_deferred is string -%}{% set input_errors = input_errors + ["mutations_deferred: expected a JSON array of deferred-finding objects, got a string — pass plain arrays, never stringified JSON"] %}{%- endif -%}
+{%- set findings_input_error = "" -%}{%- if audit_findings is string -%}{% set findings_input_error = "**INPUT ERROR — audit_findings arrived as a string, not an array.** The findings table was NOT rendered; pass plain arrays (never stringified JSON) and re-render." %}{%- endif -%}
+{%- set ratings_input_error = "" -%}{%- if grill_ratings is string -%}{% set ratings_input_error = "**INPUT ERROR — grill_ratings arrived as a string, not an array.** The ratings list was NOT rendered; pass plain arrays (never stringified JSON) and re-render." %}{%- endif -%}
+{%- set mutations_input_error = "" -%}{%- if mutations_applied is string -%}{% set mutations_input_error = "**INPUT ERROR — mutations_applied arrived as a string, not an array.** The mutations list was NOT rendered; pass plain arrays (never stringified JSON) and re-render." %}{%- endif -%}
+{%- set deferred_input_error = "" -%}{%- if mutations_deferred is string -%}{% set deferred_input_error = "**INPUT ERROR — mutations_deferred arrived as a string, not an array.** The deferred list was NOT rendered; pass plain arrays (never stringified JSON) and re-render." %}{%- endif -%}
+{# Safe lists for the JSON arm — a string must not reach map(attribute=...). #}
+{%- if mutations_applied is string -%}{% set mutations_applied_list = [] %}{%- else -%}{% set mutations_applied_list = mutations_applied %}{%- endif -%}
+{%- if mutations_deferred is string -%}{% set mutations_deferred_list = [] %}{%- else -%}{% set mutations_deferred_list = mutations_deferred %}{%- endif -%}
+
 {# ── Build the change log sections deterministically ── #}
 
 {# Summary line: only report state produced by the active stages. #}
@@ -54,15 +74,21 @@ type={{ prompt_type }} effort={{ effort_tier }} grill_verdict={{ grill_verdict }
 {# Audit findings table — in step order (minijinja has no sort_by filter; the step 2 template already emits findings in constraint-force order)
    Note: minijinja does not support list.append() — use block-set with inline for loops instead. #}
 {%- set findings_table -%}
+{%- if findings_input_error -%}
+{{ findings_input_error }}
+{%- else -%}
 | Force | Lens | Finding | Addressed |
 |-------|------|---------|----------|
 {%- for finding in audit_findings %}
 | {{ finding.constraint_force | default("Hypothesis") }} | {{ finding.lens | default("unspecified") }} | {{ finding.finding | default("unspecified") }} | {{ finding.addressed | default(false) | string }} |
 {%- endfor %}
+{%- endif -%}
 {%- endset -%}
 
 {# Grill ratings list #}
-{%- if grill_ratings and (grill_ratings | length) > 0 -%}
+{%- if ratings_input_error -%}
+{%- set grill_ratings_text = ratings_input_error -%}
+{%- elif grill_ratings and (grill_ratings | length) > 0 -%}
 {%- set grill_ratings_text -%}
 {%- for rating in grill_ratings %}
 - **{{ rating.area | default("unknown") }}** — {{ rating.rating | default("unrated") }}: {{ rating.evidence | default("no evidence") }}
@@ -73,7 +99,9 @@ type={{ prompt_type }} effort={{ effort_tier }} grill_verdict={{ grill_verdict }
 {%- endif -%}
 
 {# Mutations applied list #}
-{%- if mutations_applied and (mutations_applied | length) > 0 -%}
+{%- if mutations_input_error -%}
+{%- set mutations_text = mutations_input_error -%}
+{%- elif mutations_applied and (mutations_applied | length) > 0 -%}
 {%- set mutations_text -%}
 {%- for mutation in mutations_applied %}
 - **{{ mutation.finding | default("unspecified") }}** → {{ mutation.mutation | default("unspecified") }} _({{ mutation.section | default("unspecified") }})_
@@ -84,7 +112,9 @@ type={{ prompt_type }} effort={{ effort_tier }} grill_verdict={{ grill_verdict }
 {%- endif -%}
 
 {# Deferred findings list #}
-{%- if mutations_deferred and (mutations_deferred | length) > 0 -%}
+{%- if deferred_input_error -%}
+{%- set deferred_text = deferred_input_error -%}
+{%- elif mutations_deferred and (mutations_deferred | length) > 0 -%}
 {%- set deferred_text -%}
 {%- for deferred in mutations_deferred %}
 - {{ deferred.finding | default("unspecified") }} — {{ deferred.reason | default("Hypothesis-tier — needs user verification") }}
@@ -141,7 +171,8 @@ type={{ prompt_type }} effort={{ effort_tier }} grill_verdict={{ grill_verdict }
     "audit_findings_table": {{ findings_table | tojson }},
     "grill_verdict": {{ grill_verdict | tojson }},
     "grill_ratings": {{ grill_ratings_text | tojson }},
-    "mutations_applied": {{ mutations_applied | map(attribute="mutation") | list | tojson }},
-    "deferred_findings": {{ mutations_deferred | map(attribute="finding") | list | tojson }}
+    "mutations_applied": {{ mutations_applied_list | map(attribute="mutation") | list | tojson }},
+    "deferred_findings": {{ mutations_deferred_list | map(attribute="finding") | list | tojson }},
+    "input_errors": {{ input_errors | tojson }}
   }
 }

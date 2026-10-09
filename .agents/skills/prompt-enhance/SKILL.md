@@ -73,6 +73,8 @@ Anchors: the 7-type taxonomy adapts Liu et al. (2026) — §The 7-Type Taxonomy;
 
 `render_template` only returns a stage's instructions; it does not classify, rewrite, verify, or save anything. Produce the JSON requested by each rendered template before calling the next one. A template contract validates the *inputs*, not whether the agent completed its output. Never treat a proposed check in an enhanced prompt as an executed check.
 
+Array-valued context fields are plain JSON arrays — never stringified JSON. A string passed where a template iterates an array renders character-by-character into placeholder rows that look like real output; the output template now surfaces this as `input_errors`, but the correct form everywhere is a plain array.
+
 ### Step 1 — Classify (enhance-classify.j2)
 
 1. Classify the input prompt against the 7-type taxonomy using pragmatic-semantics IS/OUGHT + epistemic-mode axes.
@@ -104,7 +106,7 @@ Anchors: the 7-type taxonomy adapts Liu et al. (2026) — §The 7-Type Taxonomy;
 
 ### Step 4 — Output (enhance-output-render.j2, deterministic render)
 
-1. Render with `enhanced_prompt`, `prompt_type`, `effort_tier`, `output_format_resolved`, `output_path_resolved`, `audit_findings`, `mutations_applied`, `mutations_deferred`, and flat `grill_verdict`/`grill_ratings` from verification (or skipped/empty at low effort). Do not pass a nested `verification` object. The retired `schema_defects` and `convergence_metric` fields have no producing stage and must not be required.
+1. Render with `enhanced_prompt`, `prompt_type`, `effort_tier`, `output_format_resolved`, `output_path_resolved`, `audit_findings`, `mutations_applied`, `mutations_deferred`, and flat `grill_verdict`/`grill_ratings` from verification (or skipped/empty at low effort). Do not pass a nested `verification` object. The retired `schema_defects` and `convergence_metric` fields have no producing stage and must not be required. Pass the four array fields as plain arrays of objects with the fields the template reads — `audit_findings`: `constraint_force`/`lens`/`finding`/`addressed`; `grill_ratings`: `area`/`rating`/`evidence`; `mutations_applied`: `finding`/`mutation`/`section`; `mutations_deferred`: `finding`/`reason` — never stringified JSON (the 2026-10-08 receipts: the change-log sections rendered placeholder rows while the summary line interpolated, because a stringified array iterates character-by-character; the template now rejects this loudly as `input_errors`).
 2. Deliver the rendered `delivered_output` to the user. `inline` displays it; `file` and `both` additionally require a separate file-write action. A render-only step NEVER writes a file (`output_path_written` stays empty). Report a path only after a successful write.
 3. Always include the change log: audit findings, critique verdict and ratings, applied and deferred mutations. A `rewrite_needed` or `fail` verdict must remain visible; do not report it as verified.
 4. This step makes no LLM call. The skill is not complete until its enhanced prompt is delivered, not merely rendered.
