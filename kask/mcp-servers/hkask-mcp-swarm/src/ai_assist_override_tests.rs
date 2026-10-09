@@ -12,74 +12,13 @@
 //! pins hold that route in place: the trait arm used, and the override
 //! value read from the env at call time.
 
-use std::future::Future;
-use std::pin::Pin;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use rmcp::handler::server::wrapper::Parameters;
 use serde_json::Value;
 
 use crate::request_types::AiAssistRequest;
-use crate::test_support::{content, fixture_result, make_thread_server};
-
-/// A port double that records which trait method served each call and the
-/// `model_override` it carried. The bare-`generate` arm fails with the drop
-/// shape's name so a regression reads as the routing bug it is, not as a
-/// stub quirk.
-#[derive(Default)]
-struct OverrideRecordingInference {
-    calls: Mutex<Vec<(&'static str, Option<String>)>>,
-}
-
-impl hkask_types::InferencePort for OverrideRecordingInference {
-    fn generate(
-        &self,
-        _prompt: &str,
-        _parameters: &hkask_types::LLMParameters,
-        _tools: Option<&[hkask_types::ChatToolDefinition]>,
-    ) -> Pin<
-        Box<
-            dyn Future<Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>>
-                + Send
-                + '_,
-        >,
-    > {
-        self.calls.lock().expect("calls").push(("generate", None));
-        Box::pin(async {
-            Err(hkask_types::InferenceError::Model(
-                "bare generate() is the d58fd87b drop shape — the suggest path must \
-                 route through generate_with_model with the classifier override"
-                    .into(),
-            ))
-        })
-    }
-
-    fn generate_with_model(
-        &self,
-        _prompt: &str,
-        _parameters: &hkask_types::LLMParameters,
-        model_override: Option<&str>,
-        _tools: Option<&[hkask_types::ChatToolDefinition]>,
-    ) -> Pin<
-        Box<
-            dyn Future<Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>>
-                + Send
-                + '_,
-        >,
-    > {
-        self.calls
-            .lock()
-            .expect("calls")
-            .push(("generate_with_model", model_override.map(str::to_string)));
-        Box::pin(async {
-            Ok(fixture_result(
-                r#"{"name":"probe-name","agent_type":"research","description":"A probe.",
-                    "system_prompt":"You probe.","mission":"","agents":""}"#
-                    .to_string(),
-            ))
-        })
-    }
-}
+use crate::test_support::{OverrideRecordingInference, content, make_thread_server};
 
 /// Drive one `swarm_ai_assist` suggest call through the given double and
 /// return the parsed tool payload.

@@ -805,8 +805,20 @@ pub(crate) async fn one_shot_generate(
         temperature,
         ..hkask_types::template::LLMParameters::default()
     };
+    // Route through the classifier-class model (`kask.models.classifier_model`,
+    // env `HKASK_CLASSIFIER_MODEL`), which accepts reasoning-off requests:
+    // the host session's default chat model can be thinking-mandatory
+    // (OpenRouter 400 "Reasoning is mandatory for this endpoint and cannot be
+    // disabled" — the d58fd87b class), which left both one-shot authoring
+    // aids dead. The same resolution the ai-assist paths and the eval
+    // runtime use.
     let result = inference
-        .generate(prompt, &params, None)
+        .generate_with_model(
+            prompt,
+            &params,
+            hkask_inference::model_constants::classifier_model().as_deref(),
+            None,
+        )
         .await
         .map_err(|e| {
             LocalSwarmError::Unavailable(format!("local inference generate failed: {e}"))
@@ -825,6 +837,37 @@ mod tests {
     }
 
     const TEST_PASSPHRASE: &str = "test-passphrase";
+
+    /// Card d58fd87b class completion: `one_shot_generate` (the shared helper
+    /// behind `swarm_generate_prompt_local` / `swarm_generate_ontology_local`)
+    /// must route through `generate_with_model` with the classifier override —
+    /// the same drop shape the ai-assist suggest branch had (bare
+    /// `generate()` + default params lands on the host default chat model,
+    /// which can be thinking-mandatory → OpenRouter 400, both authoring
+    /// aids dead).
+    #[tokio::test]
+    async fn one_shot_generate_routes_through_the_classifier_override() {
+        let recorder = Arc::new(crate::test_support::OverrideRecordingInference::default());
+        let inference: Arc<dyn hkask_types::InferencePort> = recorder.clone();
+        let text = one_shot_generate(&inference, "probe prompt", 0.4)
+            .await
+            .expect("one-shot generate must succeed through the override-bearing arm");
+        assert!(!text.is_empty(), "the stub's fixture text must come back");
+        let calls = recorder.calls.lock().expect("calls");
+        assert_eq!(calls.len(), 1, "one inference call per one-shot generate");
+        assert_eq!(
+            calls[0].0, "generate_with_model",
+            "one_shot_generate must route through generate_with_model — bare generate() lands \
+             on the host default chat model, which can be thinking-mandatory (the d58fd87b \
+             drop shape)"
+        );
+        assert_eq!(
+            calls[0].1,
+            hkask_inference::model_constants::classifier_model(),
+            "the override must be the classifier model resolved at call time — never \
+             silently absent"
+        );
+    }
 
     #[derive(Clone, Copy)]
     enum EmbedMode {

@@ -148,6 +148,69 @@ impl hkask_types::InferencePort for RecordingInference {
     }
 }
 
+/// A port double that records which trait method served each call and the
+/// `model_override` it carried — the fixture for the model-routing pins
+/// (the d58fd87b class: a bare-`generate` call site lands on the host
+/// default chat model, which can be thinking-mandatory). The
+/// bare-`generate` arm fails with the drop shape's name so a regression
+/// reads as the routing bug it is, not as a stub quirk.
+#[derive(Default)]
+pub(crate) struct OverrideRecordingInference {
+    pub(crate) calls: Mutex<Vec<(&'static str, Option<String>)>>,
+}
+
+impl hkask_types::InferencePort for OverrideRecordingInference {
+    fn generate(
+        &self,
+        _prompt: &str,
+        _parameters: &hkask_types::LLMParameters,
+        _tools: Option<&[hkask_types::ChatToolDefinition]>,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
+                > + Send
+                + '_,
+        >,
+    > {
+        self.calls.lock().expect("calls").push(("generate", None));
+        Box::pin(async {
+            Err(hkask_types::InferenceError::Model(
+                "bare generate() is the d58fd87b drop shape — the call site must route \
+                 through generate_with_model with the classifier override"
+                    .into(),
+            ))
+        })
+    }
+
+    fn generate_with_model(
+        &self,
+        _prompt: &str,
+        _parameters: &hkask_types::LLMParameters,
+        model_override: Option<&str>,
+        _tools: Option<&[hkask_types::ChatToolDefinition]>,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
+                > + Send
+                + '_,
+        >,
+    > {
+        self.calls
+            .lock()
+            .expect("calls")
+            .push(("generate_with_model", model_override.map(str::to_string)));
+        Box::pin(async {
+            Ok(fixture_result(
+                r#"{"name":"probe-name","agent_type":"research","description":"A probe.",
+                    "system_prompt":"You probe.","mission":"","agents":""}"#
+                    .to_string(),
+            ))
+        })
+    }
+}
+
 pub(crate) struct NoTools;
 impl hkask_types::ToolDispatchPort for NoTools {
     fn tool_definition<'a>(
