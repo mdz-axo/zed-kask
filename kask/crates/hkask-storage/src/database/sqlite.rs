@@ -144,6 +144,30 @@ impl SqliteDriver {
         Pool::builder().build(manager)
     }
 
+    /// Create a file-backed pool with WAL mode and the canonical `hmems`
+    /// schema — the file-backed analog of `in_memory_pool`, for tests and
+    /// tools that need real multi-connection WAL semantics (concurrent
+    /// writers contending on one database) over the canonical schema.
+    /// Unencrypted: no `HKASK_DB_PASSPHRASE` / SQLCipher. `max_size(8)` so
+    /// concurrent-writer tests can actually contend — `in_memory_pool` is
+    /// `max_size(1)` and serializes everything on a single connection,
+    /// where no interleaving is possible.
+    pub fn file_pool_with_schema(path: &str) -> Result<Pool<SqliteConnectionManager>, r2d2::Error> {
+        let manager = SqliteConnectionManager::file(path).with_init(|conn| {
+            // Load sqlite-vec before schema init — schema.sql creates a
+            // `vec0` virtual table, which fails with "no such module: vec0"
+            // (aborting the whole batch and leaving zero tables created) if
+            // the extension isn't loaded. Mirrors `in_memory_pool` and the
+            // production pool init in `core::connection::Database::sqlite_pool`.
+            crate::core::connection::init_sqlite_vec_on(conn)?;
+            let schema = include_str!("../core/sql/schema.sql");
+            let dim = crate::core::connection::embedding_dim();
+            conn.execute_batch(&schema.replace("$DIM", &dim.to_string()))?;
+            Ok(())
+        });
+        Pool::builder().max_size(8).build(manager)
+    }
+
     /// Prefix the pool label (if any) to a connection-acquisition error.
     fn map_conn_err(&self, e: impl std::fmt::Display) -> DbError {
         DbError::Connection(self.enrich(&e))

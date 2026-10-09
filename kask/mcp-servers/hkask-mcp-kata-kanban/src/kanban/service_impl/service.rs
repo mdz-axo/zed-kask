@@ -10,7 +10,7 @@
 //!   kanban:task  → {task_id}  → JSON Task
 //!   kanban:board_tasks:{board_id} → {task_id} → task_id (index)
 
-use hkask_storage::{HMem, HMemStore};
+use hkask_storage::{HMem, HMemError, HMemStore};
 use hkask_types::Dimension;
 use hkask_types::HMemOntology;
 use hkask_types::NotFound;
@@ -342,20 +342,24 @@ impl KanbanService {
         board.name = new_name.to_string();
         let value = serde_json::to_value(&board)
             .map_err(|e| KanbanError::Internal(format!("serialization failed: {e}")))?;
-        // Update the board h_mem in place — the same h_mem row, so the PKO
-        // procedure anchoring (and the h_mem id `board_get` resolves)
-        // survives the rename. Follows `update_task_triple`'s update
-        // pattern.
-        let h_mems = self
-            .store
-            .query_by_entity_attribute(BOARD_ENTITY, &board_id.to_string())
-            .map_err(|e| KanbanError::Internal(format!("h_mem query failed: {e}")))?;
-        let h_mem = h_mems.into_iter().next().ok_or_else(|| {
-            KanbanError::Internal(format!("board {board_id} has no h_mem row to rename"))
-        })?;
-        self.store
-            .update(&h_mem.id, value, 1.0f64)
-            .map_err(|e| KanbanError::Internal(format!("h_mem update failed: {e}")))?;
+        // Atomic stable-key write — the same h_mem row (ID and confidence
+        // preserved), so the PKO procedure anchoring (and the h_mem id
+        // `board_get` resolves) genuinely survives the rename, per this
+        // method's contract. The prior resolve-then-`HMemStore::update`
+        // form re-keyed the row (delete + reinsert, new ID) on every
+        // rename — it never delivered the same-row contract, and it
+        // carried the same resolve→write race as the task path
+        // (card 84c7e7b8).
+        let renamed = self.store.update_value_atomic::<(), TaskWriteError>(
+            BOARD_ENTITY,
+            &board_id.to_string(),
+            |_| Ok((Some(value), ())),
+        )?;
+        if renamed.is_none() {
+            return Err(KanbanError::Internal(format!(
+                "board {board_id} has no h_mem row to rename"
+            )));
+        }
 
         // P9: Regulation span
         tracing::info!(
@@ -949,15 +953,40 @@ impl KanbanService {
     pub(crate) fn update_task_triple(&self, task: &Task) -> Result<(), KanbanError> {
         let new_value = serde_json::to_value(task)
             .map_err(|e| KanbanError::Internal(format!("serialization failed: {e}")))?;
-        let h_mems = self
-            .store
-            .query_by_entity_attribute(TASK_ENTITY, &task.id.to_string())
-            .map_err(|e| KanbanError::Internal(format!("h_mem query failed: {e}")))?;
-        if let Some(t) = h_mems.into_iter().next() {
-            self.store
-                .update(&t.id, new_value, 1.0f64)
-                .map_err(|e| KanbanError::Internal(format!("h_mem update failed: {e}")))?;
-        }
+        // Atomic stable-key write: one IMMEDIATE transaction keyed by the
+        // stable (entity, attribute) pair — the row's h_mem ID and
+        // confidence are preserved, and the write lock spans the whole
+        // read-modify-write so concurrent writers serialize. The prior form
+        // resolved the row's h_mem ID and wrote through `HMemStore::update`,
+        // which re-keys the row (delete + reinsert under a new ID): a
+        // sibling commit in the resolve→write window left the old ID
+        // targeting a deleted row — the live "[internal] h_mem update
+        // failed: ... Query returned no rows" lost-update race under
+        // parallel card writes (card 84c7e7b8).
+        self.store.update_value_atomic::<(), TaskWriteError>(
+            TASK_ENTITY,
+            &task.id.to_string(),
+            |_| Ok((Some(new_value), ())),
+        )?;
         Ok(())
+    }
+}
+
+/// The task/board write path's `HMemError` mapping. The crate-wide
+/// `From<HMemError> for KanbanError` (goals.rs) carries the goal path's
+/// "atomic goal transition failed" text; task and board writes keep their
+/// operator-facing "h_mem update failed" error — the string the live
+/// incidents and the concurrent-write pin match on.
+struct TaskWriteError(HMemError);
+
+impl From<HMemError> for TaskWriteError {
+    fn from(error: HMemError) -> Self {
+        TaskWriteError(error)
+    }
+}
+
+impl From<TaskWriteError> for KanbanError {
+    fn from(error: TaskWriteError) -> Self {
+        KanbanError::Internal(format!("h_mem update failed: {}", error.0))
     }
 }

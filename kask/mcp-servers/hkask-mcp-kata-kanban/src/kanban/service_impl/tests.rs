@@ -2,7 +2,7 @@ use super::service::KanbanService;
 use crate::VerificationCriterion;
 use crate::kanban::mermaid::{export_board_to_mermaid, parse_mermaid_kanban};
 use crate::kanban::{
-    Board, ColumnDef, CriterionCitation, SpawnSpec, TaskFilter, TaskSpec, TaskStatus,
+    Board, ColumnDef, Comment, CriterionCitation, SpawnSpec, TaskFilter, TaskSpec, TaskStatus,
 };
 use hkask_storage::HMemStore;
 use hkask_types::WebID;
@@ -245,6 +245,161 @@ fn task_create_defaults_to_backlog() {
         .unwrap();
     assert_eq!(task.status, TaskStatus::Backlog);
     assert_eq!(task.board_id, board.id);
+}
+
+/// Card 84c7e7b8 second-order pin (live 2026-10-01 and 2026-10-09): the
+/// task row's h_mem ID must be stable across `update_task_triple`. The
+/// prior implementation wrote through `HMemStore::update`, which re-keys
+/// the row (delete + reinsert, new ID) — and a re-keying write is what
+/// makes a concurrent read-then-write raceable: the sibling reads the old
+/// ID, this write commits a new one, and the sibling's write targets a
+/// deleted row ("[internal] h_mem update failed: database(other): Query
+/// returned no rows"). The atomic stable-key update preserves the row's
+/// identity, so no read can go stale.
+#[test]
+fn update_task_triple_preserves_the_task_row_h_mem_id() {
+    let (svc, board, owner) = make_service_with_board();
+    let mut task = svc
+        .task_create(board.id, TaskSpec::new("Stable".into()), owner)
+        .unwrap();
+    let before = svc
+        .store
+        .query_by_entity_attribute("kanban:task", &task.id.to_string())
+        .unwrap()
+        .into_iter()
+        .next()
+        .expect("the task row exists")
+        .id;
+    task.comments
+        .push(Comment::new(task.id, owner, "a write".into()));
+    task.updated_at = chrono::Utc::now();
+    svc.update_task_triple(&task).unwrap();
+    let after = svc
+        .store
+        .query_by_entity_attribute("kanban:task", &task.id.to_string())
+        .unwrap()
+        .into_iter()
+        .next()
+        .expect("the task row exists after the update")
+        .id;
+    assert_eq!(
+        before, after,
+        "the task row's h_mem ID must be stable across updates — a re-keying write leaves concurrent read-then-writers targeting a deleted row ('Query returned no rows')"
+    );
+    let stored = svc.task_get(task.id).unwrap().expect("task reads back");
+    assert_eq!(
+        stored.comments.last().map(|comment| comment.body.as_str()),
+        Some("a write"),
+        "the written value lands"
+    );
+}
+
+/// Card 84c7e7b8 second-order pin (live 2026-10-01 and 2026-10-09):
+/// concurrent task writes must not fail. The prior read-then-write
+/// (`query_by_entity_attribute` for the h_mem ID, then `HMemStore::update`
+/// — which re-keys) raced a sibling commit between the read and the
+/// write, failing the whole call with "[internal] h_mem update failed:
+/// database(other): Query returned no rows" under parallel card writes
+/// (observed live three times in one evening). The atomic stable-key
+/// read-modify-write holds the write lock across read+write, so
+/// concurrent writers serialize. Real WAL semantics across pooled
+/// connections are required — the in-memory driver is max_size(1) and
+/// cannot interleave.
+#[test]
+fn concurrent_task_writes_do_not_fail_with_stale_row_ids() -> anyhow::Result<()> {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("concurrent-task-writes.sqlite");
+    let pool = hkask_storage::SqliteDriver::file_pool_with_schema(
+        path.to_str().expect("utf-8 temp path"),
+    )?;
+    let store =
+        HMemStore::from_driver(std::sync::Arc::new(hkask_storage::SqliteDriver::new(pool)))?;
+    let svc = KanbanService::new(store);
+    let owner = WebID::new();
+    let board = svc.board_create(owner, "Race Board", &make_default_columns())?;
+    let task = svc.task_create(board.id, TaskSpec::new("Race".into()), owner)?;
+
+    const WRITERS: usize = 8;
+    const ROUNDS: usize = 25;
+    let failures: Vec<String> = std::thread::scope(|scope| {
+        let svc = &svc;
+        let task = &task;
+        let mut handles = Vec::new();
+        for writer in 0..WRITERS {
+            handles.push(scope.spawn(move || {
+                let mut failures = Vec::new();
+                for round in 0..ROUNDS {
+                    let mut candidate = task.clone();
+                    candidate.comments.push(Comment::new(
+                        task.id,
+                        owner,
+                        format!("writer {writer} round {round}"),
+                    ));
+                    candidate.updated_at = chrono::Utc::now();
+                    if let Err(error) = svc.update_task_triple(&candidate) {
+                        failures.push(format!("update {writer}/{round}: {error}"));
+                    }
+                }
+                failures
+            }));
+        }
+        handles
+            .into_iter()
+            .flat_map(|handle| handle.join().expect("writer thread panicked"))
+            .collect()
+    });
+    assert!(
+        failures.is_empty(),
+        "concurrent task writes must not fail under WAL contention: {failures:#?}"
+    );
+    // The row survives and carries a valid task (the last committed writer).
+    let stored = svc.task_get(task.id)?.expect("the task row survives");
+    assert_eq!(stored.id, task.id);
+    assert_eq!(
+        stored.comments.len(),
+        1,
+        "whole-value overwrite: the last committed writer's single comment lands"
+    );
+    Ok(())
+}
+
+/// Card 84c7e7b8 class pin: `board_rename`'s contract promises the board
+/// h_mem is updated in place — same h_mem id, PKO procedure anchoring
+/// preserved. The prior resolve-then-`HMemStore::update` form re-keyed the
+/// row (delete + reinsert, new ID) on every rename, breaking that contract
+/// the same way the task path's writes did.
+#[test]
+fn board_rename_preserves_the_board_row_h_mem_id() {
+    let (svc, board, _owner) = make_service_with_board();
+    let before = svc
+        .store
+        .query_by_entity_attribute("kanban:board", &board.id.to_string())
+        .unwrap()
+        .into_iter()
+        .next()
+        .expect("the board row exists")
+        .id;
+    svc.board_rename(board.id, "Renamed").unwrap();
+    let after = svc
+        .store
+        .query_by_entity_attribute("kanban:board", &board.id.to_string())
+        .unwrap()
+        .into_iter()
+        .next()
+        .expect("the board row exists after the rename")
+        .id;
+    assert_eq!(
+        before, after,
+        "the board row's h_mem ID must be stable across a rename — the contract promises in-place update (PKO anchoring preserved)"
+    );
+    assert_eq!(
+        svc.board_get(board.id)
+            .unwrap()
+            .expect("board reads back")
+            .name,
+        "Renamed",
+        "the rename lands"
+    );
 }
 
 #[test]

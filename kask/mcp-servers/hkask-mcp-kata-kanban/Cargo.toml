@@ -46,6 +46,10 @@ regex.workspace = true
 # idempotent_creates.rs drives the real tool surface end-to-end (replay
 # protection through kanban_task_create/board_create/task_spawn).
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+# The concurrent task-write race pin (service_impl/tests.rs) runs against a
+# file-backed WAL pool — real multi-connection semantics the max_size(1)
+# in-memory driver cannot produce.
+tempfile.workspace = true
 
 
 [lints]
