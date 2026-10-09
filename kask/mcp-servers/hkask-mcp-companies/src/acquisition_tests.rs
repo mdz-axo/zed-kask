@@ -315,6 +315,34 @@ fn financial_fixture(path: &str) -> (u16, Value) {
     fmp_fixture(path)
 }
 
+/// The Acme profile fixture arm — the EODHD-routed shape (no `price`
+/// field), varying only by listing currency across the DCF price-fallback
+/// tests.
+fn acme_profile(currency: &str) -> Value {
+    json!([{"companyName":"Acme","sector":"Technology","industry":"Software","marketCap":3000000000.0,"sharesOutstanding":100000000.0,"currency":currency}])
+}
+
+/// The Acme quote fixture arm — the full FMP quote shape, varying by prices.
+fn acme_quote(price: f64, open: f64, high: f64, low: f64) -> Value {
+    json!({"symbol":"ACME","price":price,"open":open,"high":high,"low":low})
+}
+
+/// The FOREX rate fixture arm — one dated close, varying by rate (the
+/// endpoint condition carries the pair).
+fn forex_close(date: &str, close: f64) -> Value {
+    json!([{"date":date,"close":close}])
+}
+
+/// The income-statement arm that pins statement currency to USD —
+/// byte-identical across the DCF price-fallback tests.
+fn usd_income_statements(path: &str) -> (u16, Value) {
+    let (status, mut rows) = financial_fixture(path);
+    for row in rows.as_array_mut().expect("income rows") {
+        row["reportedCurrency"] = json!("USD");
+    }
+    (status, rows)
+}
+
 async fn comparable(server: &CompaniesServer, request: Value) -> Value {
     content(
         &server
@@ -344,23 +372,13 @@ async fn reverse_dcf_price_falls_back_to_quote_close() {
         let endpoint = path.split('?').next().expect("endpoint");
         if endpoint == "/fmp/profile" {
             // EODHD-routed profile shape: no `price` field.
-            return (
-                200,
-                json!([{"companyName":"Acme","sector":"Technology","industry":"Software","marketCap":3000000000.0,"sharesOutstanding":100000000.0,"currency":"USD"}]),
-            );
+            return (200, acme_profile("USD"));
         }
         if endpoint == "/fmp/quote" {
-            return (
-                200,
-                json!({"symbol":"ACME","price":30.0,"open":29.0,"high":31.0,"low":28.0}),
-            );
+            return (200, acme_quote(30.0, 29.0, 31.0, 28.0));
         }
         if endpoint == "/fmp/income-statement" {
-            let (status, mut rows) = financial_fixture(path);
-            for row in rows.as_array_mut().expect("income rows") {
-                row["reportedCurrency"] = json!("USD");
-            }
-            return (status, rows);
+            return usd_income_statements(path);
         }
         financial_fixture(path)
     })
@@ -404,23 +422,16 @@ async fn dcf_price_falls_back_to_normalized_quote_close() {
     let fixture = FixtureHttp::start(|path| {
         let endpoint = path.split('?').next().expect("endpoint");
         if endpoint == "/fmp/profile" {
-            return (
-                200,
-                json!([{"companyName":"Acme","sector":"Technology","industry":"Software","marketCap":3000000000.0,"sharesOutstanding":100000000.0,"currency":"EUR"}]),
-            );
+            return (200, acme_profile("EUR"));
         }
         if endpoint == "/fmp/quote" {
             return (200, json!({"symbol":"ACME","close":25.0}));
         }
         if endpoint.starts_with("/eodhd/eod/USDEUR.FOREX") {
-            return (200, json!([{"date":"2026-09-25","close":0.8}]));
+            return (200, forex_close("2026-09-25", 0.8));
         }
         if endpoint == "/fmp/income-statement" {
-            let (status, mut rows) = financial_fixture(path);
-            for row in rows.as_array_mut().expect("income rows") {
-                row["reportedCurrency"] = json!("USD");
-            }
-            return (status, rows);
+            return usd_income_statements(path);
         }
         financial_fixture(path)
     })
@@ -456,26 +467,16 @@ async fn reverse_dcf_normalizes_gbx_quote_to_usd_statements() {
     let fixture = FixtureHttp::start(|path| {
         let endpoint = path.split('?').next().expect("endpoint");
         if endpoint == "/fmp/profile" {
-            return (
-                200,
-                json!([{"companyName":"Acme","sector":"Technology","industry":"Software","marketCap":3000000000.0,"sharesOutstanding":100000000.0,"currency":"GBX"}]),
-            );
+            return (200, acme_profile("GBX"));
         }
         if endpoint == "/fmp/quote" {
-            return (
-                200,
-                json!({"symbol":"ACME","price":1603.0,"open":1600.0,"high":1620.0,"low":1580.0}),
-            );
+            return (200, acme_quote(1603.0, 1600.0, 1620.0, 1580.0));
         }
         if endpoint.starts_with("/eodhd/eod/USDGBP.FOREX") {
-            return (200, json!([{"date":"2026-09-11","close":0.7396}]));
+            return (200, forex_close("2026-09-11", 0.7396));
         }
         if endpoint == "/fmp/income-statement" {
-            let (status, mut rows) = financial_fixture(path);
-            for row in rows.as_array_mut().expect("income rows") {
-                row["reportedCurrency"] = json!("USD");
-            }
-            return (status, rows);
+            return usd_income_statements(path);
         }
         financial_fixture(path)
     })
@@ -2861,47 +2862,36 @@ async fn key_metrics_empty_provider_result_warns_naming_symbol() {
 /// dcterms:identifier: CompaniesServer::company_screener / no_screener_exchange_note
 #[tokio::test]
 async fn screener_known_gap_exchange_names_the_coverage_fact() {
-    let directory = tempfile::tempdir().expect("temporary directory");
-    let fixture = FixtureHttp::start(|path| {
-        if path.starts_with("/eodhd/exchanges-list") {
-            return (200, json!([{ "Code": "US", "Currency": "USD" }]));
-        }
-        if path.starts_with("/eodhd/screener") {
-            return (
-                200,
-                json!({ "data": [{
-                    "code": "US0", "name": "US Zero", "exchange": "US",
-                    "currency_symbol": "$", "market_capitalization": 8_000_000_000.0
-                }] }),
-            );
-        }
-        (404, json!({ "error": "unexpected endpoint", "path": path }))
-    })
+    let (output, _fixture) = screener_tool(
+        |path| {
+            if path.starts_with("/eodhd/exchanges-list") {
+                return (200, json!([{ "Code": "US", "Currency": "USD" }]));
+            }
+            if path.starts_with("/eodhd/screener") {
+                return (
+                    200,
+                    json!({ "data": [{
+                        "code": "US0", "name": "US Zero", "exchange": "US",
+                        "currency_symbol": "$", "market_capitalization": 8_000_000_000.0
+                    }] }),
+                );
+            }
+            (404, json!({ "error": "unexpected endpoint", "path": path }))
+        },
+        json!({
+            "prompt": "US listed companies with market capitalization between 2 billion and 200 billion",
+            "limit": 10,
+            "criteria_overrides": {"exchanges": ["US", "MI"]}
+        }),
+    )
     .await;
-    providers::TEST_HTTP_ORIGIN
-        .scope(fixture.origin.clone(), async {
-            let server = server(directory.path());
-            let request = serde_json::from_value::<types::ScreenerRequest>(json!({
-                "prompt": "US listed companies with market capitalization between 2 billion and 200 billion",
-                "limit": 10,
-                "criteria_overrides": {"exchanges": ["US", "MI"]}
-            }))
-            .expect("request");
-            let output = content(
-                &server
-                    .company_screener(Parameters(request))
-                    .await
-                    .expect("screener tool"),
-            );
-            let error = output["exchange_errors"]["MI"]
-                .as_str()
-                .expect("MI must be named in exchange_errors");
-            assert!(
-                error.contains("Italy has no EODHD exchange code"),
-                "the named coverage note must reach the caller: {error}"
-            );
-        })
-        .await;
+    let error = output["exchange_errors"]["MI"]
+        .as_str()
+        .expect("MI must be named in exchange_errors");
+    assert!(
+        error.contains("Italy has no EODHD exchange code"),
+        "the named coverage note must reach the caller: {error}"
+    );
 }
 
 /// expect: [P5] An EODHD-routed expectations_gap call fetches the
