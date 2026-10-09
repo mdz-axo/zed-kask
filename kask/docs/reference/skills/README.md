@@ -21,7 +21,7 @@ mds_categories: [domain, composition]
 >   (`kask/crates/hkask-lisp/src/hkask_lisp.rs:8`, call-site defaults at `:1733-1734`). The model calls it when a SKILL.md instructs
 >   deterministic computation (convergence signals, invariant checks, scoring).
 > - `render_template` — renders Jinja2 templates from `kask/registry/templates/` using `minijinja`.
->   Strips YAML frontmatter. Path traversal protection via `canonicalize` + `starts_with` check.
+>   Strips the `[inference]`-keyed header. Path traversal protection via `canonicalize` + `starts_with` check.
 >   Template base path wired via `agent::set_template_base_path()` (OnceLock) in `main.rs` at startup.
 >
 > **PDCA loops are model-coordinated, not machine-enforced.** The SKILL.md body describes
@@ -154,7 +154,7 @@ annual. The embedded seed payload equals the authored tree (pinned in
 | Skill | Purpose |
 |-------|---------|
 | `create-skill` | Author or translate a skill: ontology research, PDCA derivation, scaffold under the artifact contract, prescreen, validate |
-| `skill-maintenance` | Validate and audit existing skills, including the template-logic audit of `.j2` goals and callsites and the prescreen's body-side D/P labelling presence check (P8.4); compare designs and file proposals for the algedonic review |
+| `skill-maintenance` | Validate and audit existing skills, including the template-logic audit of `.j2` goals and callsites and the prescreen's body-side D/P labelling presence and label-vs-tool checks (P8.4); compare designs and file proposals for the algedonic review |
 | `skill-discovery` | Route tasks to installed skills (fit-scored recommendations), detect capability gaps, evaluate candidates before installation |
 | `skill-bundler` | Merge peer-level skill outputs into one grounded unified report (per-skill summaries, cross-skill insights, explicit conflicts, one bounded correction) |
 | `self-improvement` | Unified self-induced update operator: nested PDCA + outer Improvement Kata across two pathways — Foundation Model (θ) and Scaffolding (Σ), including the GEPA prompt-evolution sub-loop |

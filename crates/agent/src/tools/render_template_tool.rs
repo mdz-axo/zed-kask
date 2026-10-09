@@ -17,8 +17,9 @@ use ui::SharedString;
 /// prompt for the 3-gate loop."
 ///
 /// Templates live in `kask/registry/templates/<skill>/<file>.j2`. The tool
-/// strips YAML frontmatter (the `---`-delimited header containing the contract
-/// schema and `[inference]` parameters) and renders only the Jinja2 body.
+/// strips the `[inference]`-keyed header (the metadata block terminated by a
+/// lone `---` line, carrying the contract schema) and renders only the Jinja2
+/// body.
 ///
 /// The rendered text is a structured prompt — use it as guidance for your
 /// next reasoning step, not as a final answer.
