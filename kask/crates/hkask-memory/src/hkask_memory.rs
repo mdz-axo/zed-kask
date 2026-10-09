@@ -38,7 +38,8 @@ pub use federated_recall::{
 };
 
 pub use memory_store::{
-    DedupOutcome, MemoryStore, MemoryStoreError, PruneOutcome, semantic_passage_for_h_mem,
+    DedupOutcome, MemoryStore, MemoryStoreError, PruneOutcome, is_canonical_entity_key,
+    semantic_passage_for_h_mem,
 };
 pub use text_chunking::{chunk_text, strip_gutenberg_headers};
 

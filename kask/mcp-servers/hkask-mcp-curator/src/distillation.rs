@@ -901,6 +901,27 @@ fn prepare_lesson(
         );
         return Ok(None);
     }
+    // Canonical entity-key gate — the store's `validate_entity_key`
+    // predicate mirrored at the per-candidate boundary (one
+    // predicate, two callers). A non-canonical key would fail the
+    // whole batch's atomic publication: the store rejects it, the
+    // watermark never advances, and the thread's distillation stalls
+    // forever (therapy 2026-10-09, card 7d17d334). Skip the candidate
+    // with a teaching warning; the batch's other lessons still
+    // publish. Never normalize — segmenting ' | ' vs '|' is a
+    // semantic call the writer cannot make.
+    if !hkask_memory::is_canonical_entity_key(entity) {
+        tracing::warn!(
+            target: "hkask.mcp.curator.distillation",
+            entity,
+            attribute,
+            "Skipping lesson with a non-canonical entity key — keys are lowercase \
+             [a-z0-9:_-] (no spaces, pipes, or uppercase); never concatenate \
+             category and slug with ' | '. See \
+             kask/docs/architecture/memory-system-specification.md §3"
+        );
+        return Ok(None);
+    }
     let Some(declared_mutable_state) = candidate.mutable_state else {
         tracing::warn!(
             target: "hkask.mcp.curator.distillation",
@@ -1094,7 +1115,8 @@ fn build_distillation_prompt(
         format!(
             "\nLessons already extracted from earlier batches of this thread:\n{}\n\
              Do NOT re-extract these. If a passage extends one of them, reuse its \
-             exact entity slug so the lessons aggregate.\n",
+             exact entity slug so the lessons aggregate. The ` | ` between entity \
+             and attribute in this list is a display separator, not part of either key.\n",
             listed.join("\n")
         )
     };
@@ -1116,11 +1138,13 @@ fn build_distillation_prompt(
          lessons use mutable_state=false and state_provenance=null. Each lesson \
          must cite at least one h_mem_id from the passages above as evidence.\n\n\
          Return ONLY a JSON array, no prose, no code fences:\n\
-         [{{\"entity\": \"<short-stable-subject-slug>\", \
-         \"attribute\": \"<what-is-remembered>\", \
+         [{{\"entity\": \"<short-stable-subject-slug — lowercase [a-z0-9-]: no spaces, no pipes, no uppercase>\", \
+         \"attribute\": \"<what-is-remembered — the same canonical slug form>\", \
          \"text\": \"<the lesson, one or two sentences>\", \
          \"evidence\": [\"<h_mem_id>\"], \
          \"mutable_state\": false, \"state_provenance\": null}}]\n\n\
+         The entity and attribute keys are lowercase hyphenated slugs — never \
+         concatenate a category and a slug with ' | '.\n\n\
          Mutable state_provenance shape: {{\"source_locator\": \"<file, URL, or tool record>\", \
          \"version_or_date\": \"<commit, version, or ISO date>\"}}. \
          Return [] if nothing durable.",
@@ -2499,6 +2523,104 @@ mod tests {
             .h_mems_by_entity_prefix("decision-gating")
             .expect("query lessons");
         assert_eq!(lessons.len(), 1, "exactly one row for the lesson");
+    }
+
+    /// Therapy 2026-10-09 wiring pin (card 7d17d334): a non-canonical
+    /// entity key skips at the per-candidate gate instead of failing the
+    /// whole batch's atomic publication. The store's canonical-key gate
+    /// (card ba0ac90d) rejects the batch — the watermark never advances
+    /// and the thread's distillation stalls forever, because every pass
+    /// re-extracts the same turns. The drifted shape is the live one
+    /// ('program-management | ledger-driven-prioritization|net-line-targeting',
+    /// measured 2026-10-09).
+    #[tokio::test]
+    async fn non_canonical_entity_keys_skip_without_stalling_the_batch() {
+        let store = test_store();
+        let webid = WebID::from_persona(b"curator");
+        let now = chrono::Utc::now();
+        let turn_id = turn_h_mem(
+            &store,
+            "t-canonical-gate",
+            "prioritize refactors by the net-lines ledger",
+            "negative-ledger clusters run mechanically first",
+            now - chrono::Duration::seconds(600),
+            webid,
+        );
+        let good = serde_json::json!({
+            "entity": "program-management",
+            "attribute": "ledger-driven-prioritization",
+            "text": "Prioritize refactoring work by its net-lines ledger impact.",
+            "evidence": [turn_id.to_string()],
+            "mutable_state": false,
+            "state_provenance": null,
+        });
+        let drifted = serde_json::json!({
+            "entity": "program-management | ledger-driven-prioritization|net-line-targeting",
+            "attribute": "net-line-targeting",
+            "text": "Target clusters that drive the total line count negative.",
+            "evidence": [turn_id.to_string()],
+            "mutable_state": false,
+            "state_provenance": null,
+        });
+        let port = ScriptedDistillPort {
+            failures: std::sync::atomic::AtomicUsize::new(0),
+            response: serde_json::json!([drifted, good]).to_string(),
+        };
+        let outcome = distill_store(
+            &store,
+            &port,
+            webid,
+            now,
+            DEFAULT_DISTILLATION_IDLE_SECS,
+            now - chrono::Duration::seconds(3600),
+            &[],
+            None,
+        )
+        .await;
+        assert_eq!(
+            outcome.lessons_inserted, 1,
+            "the canonical lesson publishes — the drifted twin must not stall it"
+        );
+        assert_eq!(
+            outcome.lessons_skipped, 1,
+            "the non-canonical candidate is counted as skipped"
+        );
+        assert_eq!(
+            outcome.publication_failures, 0,
+            "the store gate never sees the bad key — no batch stall"
+        );
+        assert!(
+            !outcome.threads_pending.contains_key("t-canonical-gate"),
+            "the thread distills — no permanent pending stall"
+        );
+        let lessons = store
+            .h_mems_by_entity_prefix("program-management")
+            .expect("query lessons");
+        assert_eq!(lessons.len(), 1, "exactly one row — the canonical key");
+        assert_eq!(
+            lessons[0].attribute, "ledger-driven-prioritization",
+            "the surviving row is the canonical lesson"
+        );
+        assert!(
+            !store
+                .h_mems_by_entity_prefix("curator:distilled:t-canonical-gate")
+                .expect("query watermarks")
+                .is_empty(),
+            "the watermark advanced past the batch"
+        );
+    }
+
+    /// The extraction prompt states the canonical key form — the
+    /// prior-lessons list displays `- {entity} | {attribute}:`, and
+    /// without an explicit canonical instruction the model mimics the
+    /// display separator into the key (the live drift source).
+    #[test]
+    fn distillation_prompt_states_the_canonical_key_form() {
+        let prompt = build_distillation_prompt("t-prompt-shape", &[], &[]);
+        assert!(
+            prompt.contains("no spaces, no pipes, no uppercase"),
+            "the return shape names the canonical slug form; got: {prompt}"
+        );
     }
 
     /// Therapy 2026-10-08 F002 pin: embedding failure blocks lesson

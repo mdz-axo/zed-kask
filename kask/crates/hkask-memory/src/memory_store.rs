@@ -54,12 +54,20 @@ pub enum MemoryStoreError {
 /// (card 7d17d334); `update_confidence` replaces an existing key and is
 /// deliberately unvalidated — this gate stops new drift, it does not
 /// migrate history.
-fn validate_entity_key(entity: &str) -> Result<(), MemoryStoreError> {
-    let canonical = !entity.is_empty()
+/// Whether an entity key is in the canonical form — lowercase
+/// [a-z0-9:_-]+ (no spaces, pipes, or uppercase). Shared by the store
+/// gate (`validate_entity_key`) and the distillation writer's
+/// per-candidate skip (therapy 2026-10-09, algedonic card 7d17d334) so
+/// the two cannot drift — one predicate, two callers.
+pub fn is_canonical_entity_key(entity: &str) -> bool {
+    !entity.is_empty()
         && entity.bytes().all(|b| {
             b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b':' | b'_' | b'-')
-        });
-    if canonical {
+        })
+}
+
+fn validate_entity_key(entity: &str) -> Result<(), MemoryStoreError> {
+    if is_canonical_entity_key(entity) {
         return Ok(());
     }
     Err(MemoryStoreError::InvalidEntityKey(format!(

@@ -311,7 +311,18 @@ entity with a teaching error naming the canonical form per class
 `store_rejects_non_canonical_entity_keys`; classified `invalid_argument`
 at the MCP boundary). Every curator.db writer flows through these two
 entry points — the bridge's turn chunks and goal events, the curator
-MCP tools, and distillation. `update_confidence` replaces an existing
+MCP tools, and distillation. Distillation additionally pre-gates at the
+per-candidate boundary: `prepare_lesson` skips a non-canonical key with
+a teaching warning (via the shared `is_canonical_entity_key` predicate)
+so one drifted model output skips as a lesson instead of failing the
+whole batch's atomic publication — a batch-level rejection would leave
+the watermark unadvanced and stall that thread's distillation forever
+(therapy 2026-10-09, algedonic card 7d17d334; pinned by
+`non_canonical_entity_keys_skip_without_stalling_the_batch`). The
+extraction prompt also states the canonical slug form, because the
+prior-lessons list displays `- {entity} | {attribute}` and the model
+otherwise mimics the display separator into the key (the live drift
+source). `update_confidence` replaces an existing
 key and is deliberately unvalidated: existing rows are grandfathered
 until the mass-normalization session (algedonic card 7d17d334). The
 gate stops new drift; it does not migrate history.
