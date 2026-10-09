@@ -1177,6 +1177,17 @@ pub(crate) async fn extract_text(path: &str) -> Result<ExtractOutcome, McpToolEr
     extract_text_with_order(path, crate::tools::document::PdfTextOrder::Layout).await
 }
 
+/// The text-family outcome: word count over the decoded text, no structure
+/// — the shared tail of the plain/markdown/html extraction arms.
+fn text_outcome(text: String) -> ExtractOutcome {
+    let word_count = text.split_whitespace().count();
+    ExtractOutcome::Success {
+        text,
+        word_count,
+        structure: None,
+    }
+}
+
 pub(crate) async fn extract_text_with_order(
     path: &str,
     pdf_text_order: crate::tools::document::PdfTextOrder,
@@ -1327,35 +1338,13 @@ pub(crate) async fn extract_text_with_order(
                 }
             }
         }
-        "plain" => {
-            let (text, _encoding) = crate::convert::decode_text_bytes(&file_bytes);
-            let word_count = text.split_whitespace().count();
-            ExtractOutcome::Success {
-                text,
-                word_count,
-                structure: None,
-            }
-        }
-        "markdown" => {
-            let (content, _encoding) = crate::convert::decode_text_bytes(&file_bytes);
-            let text = crate::convert::strip_frontmatter(&content);
-            let word_count = text.split_whitespace().count();
-            ExtractOutcome::Success {
-                text,
-                word_count,
-                structure: None,
-            }
-        }
-        "html" | "htm" => {
-            let (content, _encoding) = crate::convert::decode_text_bytes(&file_bytes);
-            let text = crate::convert::strip_html(&content);
-            let word_count = text.split_whitespace().count();
-            ExtractOutcome::Success {
-                text,
-                word_count,
-                structure: None,
-            }
-        }
+        "plain" => text_outcome(crate::convert::decode_text_bytes(&file_bytes).0),
+        "markdown" => text_outcome(crate::convert::strip_frontmatter(
+            &crate::convert::decode_text_bytes(&file_bytes).0,
+        )),
+        "html" | "htm" => text_outcome(crate::convert::strip_html(
+            &crate::convert::decode_text_bytes(&file_bytes).0,
+        )),
         // Office format backends (S2: backend/pipeline separation)
         "docx" | "pptx" | "xlsx" => {
             let structure = parse_with_backend(format, path)?;
