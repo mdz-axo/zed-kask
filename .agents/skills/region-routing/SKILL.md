@@ -65,6 +65,8 @@ Call `lisp_eval`:
 - form: `(and (= unclassified 0) (= ungated 0) (= bad_region 0) (>= operator_roles 1) (>= other_roles 1))`
 - env: `{ "unclassified": <steps with no region>, "ungated": <SP/Sem-P steps with no named gate>, "bad_region": <regions outside the four>, "operator_roles": <steps assigning the operator a role>, "other_roles": <steps assigning the curator or executing agent a role> }` — the five counts are P (model-performed counting over the delivered plan, critiqued by any consumer's recomputation); the invariant over them is D. A plan in which the operator is the only role is checkably wrong: the executing agent or curator must hold at least one step (the agent's traverse is the only function that routinely crosses all four regions in one task).
 
+    Env values are FLAT SCALARS — each of the five counts a plain number; never wrap a value in an object (`{"n": 1}` instead of `1` fails the form with a type error — the 2026-10-02 step-3 receipt: the third live instance of the lisp_eval env-wrapping pathology).
+
 If false, re-enter Step 2 with the failing steps named — max 2 iterations,
 then deliver with the failures listed. Never ship a plan the form rejects.
 

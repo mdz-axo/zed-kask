@@ -52,6 +52,7 @@ FINER — Hulley, Cummings et al., *Designing Clinical Research* (1988; 4th ed. 
               "testable": <overall_testability is testable AND a required delta is defined>,
               "admissible": <falsifiability-admit's flat `admissible` field is true>,
               "feasible": <feasibility_recheck is confirmed> }`
+    - env values are FLAT SCALARS and a plain list — `misalignment_count` a number, `weak_finer` a plain array of strings, the rest booleans; never wrap a value in an object (`{"n": 1}` instead of `1` fails the form with a type error — the 2026-10-02 step-13 receipt: 5 identical failures from wrapped env values).
     Bound: max 2 refinement cycles — on a failing gate, re-enter step 2
     (refine the question) with the flagged weaknesses; misalignments that
     survive the second cycle are reported honestly (step 11's
