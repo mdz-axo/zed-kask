@@ -20,6 +20,7 @@ use crate::sanitize::{
     sanitize_agent_id, sanitize_workspace_payload,
 };
 use crate::spend_gate;
+use crate::task_board::TaskBoard;
 use crate::thread_store::ThreadTurn;
 use hkask_mcp_server::server::{McpToolError, execute_tool};
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
@@ -105,6 +106,29 @@ impl<'a> ResponseEvaluator<'a> {
 
 fn run_evaluator(response: &str, evaluator: &str, spec: &str) -> Result<bool, McpToolError> {
     Ok(ResponseEvaluator::parse(evaluator, spec)?.evaluate(response))
+}
+
+/// Run one deterministic evaluator over a response and build the
+/// `DeterministicEvaluator`-provenance verdict every consumer stamps —
+/// `swarm_evaluate_local` returns it directly; the plan and suite tools
+/// attach it as `task_success`.
+fn deterministic_verdict(
+    response: &str,
+    evaluator: &str,
+    spec: &str,
+) -> Result<crate::local_runtime::TaskSuccessVerdict, McpToolError> {
+    let pass = run_evaluator(response, evaluator, spec)?;
+    Ok(crate::local_runtime::TaskSuccessVerdict {
+        pass,
+        score: None,
+        detail: Some(format!(
+            "evaluator={}, spec_len={}, pass={}",
+            evaluator,
+            spec.len(),
+            pass
+        )),
+        provenance: crate::local_runtime::VerdictSource::DeterministicEvaluator,
+    })
 }
 
 /// The event kind for one observed delegation edge — the fact that one
@@ -286,6 +310,113 @@ fn extract_roster_member_ids(workspace: &serde_json::Value) -> Vec<String> {
                 .map(str::to_string)
         })
         .collect()
+}
+
+/// Load a swarm's task board for a swarm-scoped run. A load failure warns
+/// and degrades to `None` — the run proceeds board-less; persistence is
+/// best-effort by design, never a hard failure. The warn message is
+/// caller-supplied so each tool keeps its own phrasing.
+fn load_task_board(dir: &str, swarm_id: Option<&str>, warn_message: &str) -> Option<TaskBoard> {
+    let sid = swarm_id?;
+    match TaskBoard::load(dir, sid) {
+        Ok(board) => Some(board),
+        Err(e) => {
+            tracing::warn!(
+                target: "hkask.mcp.swarm",
+                swarm_id = %sid,
+                error = %e,
+                "{}",
+                warn_message
+            );
+            None
+        }
+    }
+}
+
+/// The stable task-board id for a delegation: the entry's own `task_id`
+/// when provided, else the synthetic id derived from (agent_name, task) —
+/// so the same task accumulates attempts across invocations rather than
+/// growing a new id per call.
+fn board_task_id(entry: &PlanDelegation) -> String {
+    entry
+        .task_id
+        .clone()
+        .unwrap_or_else(|| crate::task_board::derive_task_id(&entry.agent_name, &entry.task))
+}
+
+/// Record a delegation failure on the task board (when one was loaded).
+fn record_board_failure(board: &mut Option<TaskBoard>, entry: &PlanDelegation, reason: &str) {
+    let Some(board) = board.as_mut() else { return };
+    board.record_failure(
+        &board_task_id(entry),
+        &entry.agent_name,
+        &entry.task,
+        reason,
+    );
+}
+
+/// Record a delegation attempt on the task board (when one was loaded),
+/// with the 200-char response summary the ORIENT phase reads.
+fn record_board_attempt(
+    board: &mut Option<TaskBoard>,
+    entry: &PlanDelegation,
+    response: &str,
+    pass: Option<bool>,
+) {
+    let Some(board) = board.as_mut() else { return };
+    let summary = if response.len() > 200 {
+        format!("{}...", &response[..200])
+    } else {
+        response.to_string()
+    };
+    board.record_attempt(
+        &board_task_id(entry),
+        &entry.agent_name,
+        &entry.task,
+        pass,
+        Some(summary),
+    );
+}
+
+/// Persist the task board (when one was loaded for a swarm-scoped run).
+/// A save failure warns — never fails the tool: progress persistence is
+/// best-effort by design. The warn message is caller-supplied so each tool
+/// keeps its own phrasing.
+fn save_task_board(
+    dir: &str,
+    board: &Option<TaskBoard>,
+    swarm_id: Option<&str>,
+    warn_message: &str,
+) {
+    let Some(board) = board.as_ref() else { return };
+    let Some(sid) = swarm_id else { return };
+    if let Err(e) = board.save(dir, sid) {
+        tracing::warn!(
+            target: "hkask.mcp.swarm",
+            swarm_id = %sid,
+            error = %e,
+            "{}",
+            warn_message
+        );
+    }
+}
+
+/// The counts summary both swarm-scoped tools attach as `task_board` in
+/// their response, so callers see durable progress without a separate
+/// `swarm_task_board` query.
+fn task_board_counts_summary(board: &Option<TaskBoard>) -> Option<serde_json::Value> {
+    board.as_ref().map(|b| {
+        let c = b.counts();
+        serde_json::json!({
+            "total": c.total,
+            "pending": c.pending,
+            "in_progress": c.in_progress,
+            "complete": c.complete,
+            "failed": c.failed,
+            "all_terminal": b.all_terminal(),
+            "all_complete": b.all_complete(),
+        })
+    })
 }
 
 impl SwarmServer {
@@ -2867,19 +2998,7 @@ impl SwarmServer {
         execute_tool(self, "swarm_evaluate_local", async {
             let req = parameters.0;
             // Empty output is a measurable response, not an evaluator failure.
-            let pass = run_evaluator(&req.response, &req.evaluator, &req.spec)?;
-            let detail = format!(
-                "evaluator={}, spec_len={}, pass={}",
-                req.evaluator,
-                req.spec.len(),
-                pass
-            );
-            let verdict = crate::local_runtime::TaskSuccessVerdict {
-                pass,
-                score: None,
-                detail: Some(detail),
-                provenance: crate::local_runtime::VerdictSource::DeterministicEvaluator,
-            };
+            let verdict = deterministic_verdict(&req.response, &req.evaluator, &req.spec)?;
             Ok(serde_json::to_value(&verdict)
                 .unwrap_or_else(|_| serde_json::json!({ "error": "failed to serialize verdict" })))
         })
@@ -2927,23 +3046,11 @@ impl SwarmServer {
                 .map_err(map_local_swarm_error)?;
             // Load the task board when a swarm_id is provided so task
             // progress persists across swarm-intelligence PDCA iterations.
-            let swarm_id = req.swarm_id.clone();
-            let mut task_board = if let Some(ref sid) = swarm_id {
-                match crate::task_board::TaskBoard::load(self.local_swarms.dir(), sid) {
-                    Ok(board) => Some(board),
-                    Err(e) => {
-                        tracing::warn!(
-                            target: "hkask.mcp.swarm",
-                            swarm_id = %sid,
-                            error = %e,
-                            "Failed to load task board — task progress will not persist"
-                        );
-                        None
-                    }
-                }
-            } else {
-                None
-            };
+            let mut task_board = load_task_board(
+                self.local_swarms.dir(),
+                req.swarm_id.as_deref(),
+                "Failed to load task board — task progress will not persist",
+            );
             let mut results = Vec::new();
             let mut failed = 0usize;
             let mut total_tokens = 0i64;
@@ -2956,20 +3063,10 @@ impl SwarmServer {
                         &format!("agent '{}' not found in local registry", entry.agent_name),
                     ));
                     // Record the failure on the task board.
-                    if let Some(ref mut board) = task_board {
-                        let tid = entry.task_id.clone().unwrap_or_else(|| {
-                            crate::task_board::derive_task_id(&entry.agent_name, &entry.task)
-                        });
-                        board.record_failure(
-                            &tid,
-                            &entry.agent_name,
-                            &entry.task,
-                            "agent not found",
-                        );
-                    }
+                    record_board_failure(&mut task_board, entry, "agent not found");
                     continue;
                 };
-                let dispatched = if let Some(ref sid) = swarm_id {
+                let dispatched = if let Some(sid) = req.swarm_id.as_deref() {
                     self.dispatch_in_thread(sid, &entry.agent_name, &entry.task)
                         .await
                         .map(|(result, _turn)| result)
@@ -2985,19 +3082,8 @@ impl SwarmServer {
                         total_tokens += r.tokens_used;
                         // Stamp the deterministic verdict when an evaluator is provided.
                         if let Some(ev) = &entry.evaluator {
-                            let pass = run_evaluator(&r.response, &ev.evaluator, &ev.spec)?;
-                            r.task_success = Some(crate::local_runtime::TaskSuccessVerdict {
-                                pass,
-                                score: None,
-                                detail: Some(format!(
-                                    "evaluator={}, spec_len={}, pass={}",
-                                    ev.evaluator,
-                                    ev.spec.len(),
-                                    pass
-                                )),
-                                provenance:
-                                    crate::local_runtime::VerdictSource::DeterministicEvaluator,
-                            });
+                            r.task_success =
+                                Some(deterministic_verdict(&r.response, &ev.evaluator, &ev.spec)?);
                         }
                         // Record stigmergy (same as swarm_delegate_local).
                         self.validate_produces(&entry.agent_name, &agent.produces, &r.response);
@@ -3017,23 +3103,12 @@ impl SwarmServer {
                         )
                         .await;
                         // Record on the task board.
-                        if let Some(ref mut board) = task_board {
-                            let tid = entry.task_id.clone().unwrap_or_else(|| {
-                                crate::task_board::derive_task_id(&entry.agent_name, &entry.task)
-                            });
-                            let summary = if r.response.len() > 200 {
-                                format!("{}...", &r.response[..200])
-                            } else {
-                                r.response.clone()
-                            };
-                            board.record_attempt(
-                                &tid,
-                                &entry.agent_name,
-                                &entry.task,
-                                r.task_success.as_ref().map(|t| t.pass),
-                                Some(summary),
-                            );
-                        }
+                        record_board_attempt(
+                            &mut task_board,
+                            entry,
+                            &r.response,
+                            r.task_success.as_ref().map(|t| t.pass),
+                        );
                         results.push(serde_json::to_value(&r).unwrap_or_else(
                             |_| serde_json::json!({ "error": "failed to serialize result" }),
                         ));
@@ -3045,45 +3120,18 @@ impl SwarmServer {
                             &e.to_string(),
                         ));
                         // Record the failure on the task board.
-                        if let Some(ref mut board) = task_board {
-                            let tid = entry.task_id.clone().unwrap_or_else(|| {
-                                crate::task_board::derive_task_id(&entry.agent_name, &entry.task)
-                            });
-                            board.record_failure(
-                                &tid,
-                                &entry.agent_name,
-                                &entry.task,
-                                &e.to_string(),
-                            );
-                        }
+                        record_board_failure(&mut task_board, entry, &e.to_string());
                     }
                 }
             }
             // Persist the task board if it was loaded.
-            if let Some(ref board) = task_board {
-                if let Some(ref sid) = swarm_id {
-                    if let Err(e) = board.save(self.local_swarms.dir(), sid) {
-                        tracing::warn!(
-                            target: "hkask.mcp.swarm",
-                            swarm_id = %sid,
-                            error = %e,
-                            "Failed to save task board — task progress not persisted"
-                        );
-                    }
-                }
-            }
-            let task_summary = task_board.as_ref().map(|b| {
-                let c = b.counts();
-                serde_json::json!({
-                    "total": c.total,
-                    "pending": c.pending,
-                    "in_progress": c.in_progress,
-                    "complete": c.complete,
-                    "failed": c.failed,
-                    "all_terminal": b.all_terminal(),
-                    "all_complete": b.all_complete(),
-                })
-            });
+            save_task_board(
+                self.local_swarms.dir(),
+                &task_board,
+                req.swarm_id.as_deref(),
+                "Failed to save task board — task progress not persisted",
+            );
+            let task_summary = task_board_counts_summary(&task_board);
             Ok(serde_json::json!({
                 "results": results,
                 "total_tokens": total_tokens,
@@ -3173,23 +3221,11 @@ impl SwarmServer {
 
             // Load the task board when a swarm_id is provided so eval
             // results persist across regression runs.
-            let swarm_id = req.swarm_id.clone();
-            let mut task_board = if let Some(ref sid) = swarm_id {
-                match crate::task_board::TaskBoard::load(self.local_swarms.dir(), sid) {
-                    Ok(board) => Some(board),
-                    Err(e) => {
-                        tracing::warn!(
-                            target: "hkask.mcp.swarm",
-                            swarm_id = %sid,
-                            error = %e,
-                            "Failed to load task board for eval suite — progress will not persist"
-                        );
-                        None
-                    }
-                }
-            } else {
-                None
-            };
+            let mut task_board = load_task_board(
+                self.local_swarms.dir(),
+                req.swarm_id.as_deref(),
+                "Failed to load task board for eval suite — progress will not persist",
+            );
 
             let mut case_results = Vec::with_capacity(req.cases.len());
             let mut passed = 0usize;
@@ -3219,22 +3255,12 @@ impl SwarmServer {
                             self.validate_produces(&entry.agent_name, &agent.produces, &r.response);
                             case_tokens += r.tokens_used;
                             if let Some(ev) = &entry.evaluator {
-                                let pass = run_evaluator(&r.response, &ev.evaluator, &ev.spec)?;
-                                r.task_success = Some(crate::local_runtime::TaskSuccessVerdict {
-                                    pass,
-                                    score: None,
-                                    detail: Some(format!(
-                                        "evaluator={}, spec_len={}, pass={}",
-                                        ev.evaluator,
-                                        ev.spec.len(),
-                                        pass
-                                    )),
-                                    provenance:
-                                        crate::local_runtime::VerdictSource::DeterministicEvaluator,
-                                });
-                                if !pass {
+                                let verdict =
+                                    deterministic_verdict(&r.response, &ev.evaluator, &ev.spec)?;
+                                if !verdict.pass {
                                     case_pass = false;
                                 }
+                                r.task_success = Some(verdict);
                             }
                             // Stigmergy — mirrors swarm_execute_plan_local so
                             // eval delegations build the pheromone trail; the
@@ -3249,26 +3275,12 @@ impl SwarmServer {
                             )
                             .await;
                             // Record on the task board when a swarm_id is set.
-                            if let Some(ref mut board) = task_board {
-                                let tid = entry.task_id.clone().unwrap_or_else(|| {
-                                    crate::task_board::derive_task_id(
-                                        &entry.agent_name,
-                                        &entry.task,
-                                    )
-                                });
-                                let summary = if r.response.len() > 200 {
-                                    format!("{}...", &r.response[..200])
-                                } else {
-                                    r.response.clone()
-                                };
-                                board.record_attempt(
-                                    &tid,
-                                    &entry.agent_name,
-                                    &entry.task,
-                                    r.task_success.as_ref().map(|t| t.pass),
-                                    Some(summary),
-                                );
-                            }
+                            record_board_attempt(
+                                &mut task_board,
+                                entry,
+                                &r.response,
+                                r.task_success.as_ref().map(|t| t.pass),
+                            );
                             delegation_results.push(serde_json::json!({
                                 "agent_name": entry.agent_name,
                                 "ok": true,
@@ -3281,20 +3293,7 @@ impl SwarmServer {
                         Err(e) => {
                             case_pass = false;
                             // Record the failure on the task board.
-                            if let Some(ref mut board) = task_board {
-                                let tid = entry.task_id.clone().unwrap_or_else(|| {
-                                    crate::task_board::derive_task_id(
-                                        &entry.agent_name,
-                                        &entry.task,
-                                    )
-                                });
-                                board.record_failure(
-                                    &tid,
-                                    &entry.agent_name,
-                                    &entry.task,
-                                    &e.to_string(),
-                                );
-                            }
+                            record_board_failure(&mut task_board, entry, &e.to_string());
                             delegation_results.push(serde_json::json!({
                                 "agent_name": entry.agent_name,
                                 "ok": false,
@@ -3320,30 +3319,13 @@ impl SwarmServer {
             }
 
             // Persist the task board if it was loaded.
-            if let Some(ref board) = task_board {
-                if let Some(ref sid) = swarm_id {
-                    if let Err(e) = board.save(self.local_swarms.dir(), sid) {
-                        tracing::warn!(
-                            target: "hkask.mcp.swarm",
-                            swarm_id = %sid,
-                            error = %e,
-                            "Failed to save task board for eval suite — progress not persisted"
-                        );
-                    }
-                }
-            }
-            let task_summary = task_board.as_ref().map(|b| {
-                let c = b.counts();
-                serde_json::json!({
-                    "total": c.total,
-                    "pending": c.pending,
-                    "in_progress": c.in_progress,
-                    "complete": c.complete,
-                    "failed": c.failed,
-                    "all_terminal": b.all_terminal(),
-                    "all_complete": b.all_complete(),
-                })
-            });
+            save_task_board(
+                self.local_swarms.dir(),
+                &task_board,
+                req.swarm_id.as_deref(),
+                "Failed to save task board for eval suite — progress not persisted",
+            );
+            let task_summary = task_board_counts_summary(&task_board);
 
             let pass_rate = if req.cases.is_empty() {
                 0.0
