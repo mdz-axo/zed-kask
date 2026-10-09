@@ -153,7 +153,11 @@ make the operator ask whether work is still alive.
    file's identity, relative path, content hash and extraction mapping. For a
    refresh, diff this against the previous execution: additions, removals and
    content changes. Do not infer sameness from file counts or inherited notes.
-   Unsupported files and failed extractions remain visible scope gaps.
+   An unsupported document format fails `corpus_convert` with a typed error
+   naming the format — exclude such files from the selected scope at intake,
+   or the conversion errors; they do not silently remain gaps. A failed or
+   partial extraction surfaces in the result (`text_extraction_partial`
+   carries `ocr_pages_skipped`) — a visible gap, never silent loss.
 2. Record requested outputs, namespace/DB ownership, chunk/overlap parameters,
    QA prompt count/type mix and semantic criteria, optional centroid selectors,
    and pilot/spend bounds. Bind the acceptance bar in the same intake record:
