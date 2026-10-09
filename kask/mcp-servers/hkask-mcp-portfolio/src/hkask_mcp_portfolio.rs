@@ -41,7 +41,7 @@ pub use returns::{
     CachedPriceResolver, compute_irr, export_csv, export_json, import_csv, import_json, parse_ymd,
     returns,
 };
-pub use store::PortfolioStore;
+pub use store::{PortfolioStore, push_optional_filter, query_all_rows};
 pub use types::{
     AssetType, DailyReturnRow, Holding, HoldingsSnapshot, LedgerFilter, NoPrices, PortfolioError,
     PriceResolver, ReturnsReport, Transaction, TxType,

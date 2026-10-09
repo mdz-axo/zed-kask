@@ -167,6 +167,49 @@ pub(super) fn open_with_schema_recovery(path: &std::path::Path) -> Result<PathBu
     Ok(path.to_path_buf())
 }
 
+/// Push an optional filter onto a dynamic WHERE clause: the boxed bind
+/// value and its placeholder-numbered SQL fragment move together, so the
+/// `?N` marker can never drift from `bind_values[N - 1]`. The fragment is
+/// the condition without the placeholder (`"AND date >="`) — the leading
+/// space and `?N` are added here.
+///
+/// Shared store-layer plumbing: both stores that open the owner database
+/// through [`PortfolioStore`] build filtered reads this way — the portfolio
+/// ledger (`ledger`) and the companies research store's note queries.
+pub fn push_optional_filter<T: rusqlite::types::ToSql + 'static>(
+    bind_values: &mut Vec<Box<dyn rusqlite::types::ToSql>>,
+    sql: &mut String,
+    fragment: &str,
+    value: Option<T>,
+) {
+    let Some(value) = value else { return };
+    bind_values.push(Box::new(value));
+    sql.push_str(&format!(" {fragment} ?{}", bind_values.len()));
+}
+
+/// Run a dynamically-filtered query built with [`push_optional_filter`]:
+/// bind the boxed values, prepare, map every row through `map_row`, and
+/// collect. Prepare and row-mapping failures surface as the same
+/// `"query: …"` / `"row: …"` messages both stores have always emitted.
+pub fn query_all_rows<T>(
+    conn: &rusqlite::Connection,
+    sql: &str,
+    bind_values: &[Box<dyn rusqlite::types::ToSql>],
+    map_row: impl Fn(&rusqlite::Row<'_>) -> rusqlite::Result<T>,
+) -> Result<Vec<T>, PortfolioError> {
+    let params_refs: Vec<&dyn rusqlite::types::ToSql> =
+        bind_values.iter().map(|b| b.as_ref()).collect();
+    let mut stmt = conn.prepare(sql).map_err(|e| format!("query: {e}"))?;
+    let rows = stmt
+        .query_map(params_refs.as_slice(), map_row)
+        .map_err(|e| format!("query: {e}"))?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row.map_err(|e| format!("row: {e}"))?);
+    }
+    Ok(out)
+}
+
 impl PortfolioStore {
     /// Creates storage scoped to the authenticated server owner.
     ///
@@ -347,56 +390,55 @@ impl PortfolioStore {
         let mut bind_values: Vec<Box<dyn rusqlite::types::ToSql>> =
             vec![Box::new(name.to_string())];
 
-        if let Some(s) = filter.symbol {
-            bind_values.push(Box::new(s.to_string()));
-            sql.push_str(&format!(" AND symbol = ?{}", bind_values.len()));
-        }
-        if let Some(t) = filter.tx_type {
-            bind_values.push(Box::new(t.to_string()));
-            sql.push_str(&format!(" AND type = ?{}", bind_values.len()));
-        }
-        if let Some(a) = filter.asset_type {
-            bind_values.push(Box::new(a));
-            sql.push_str(&format!(" AND asset_type = ?{}", bind_values.len()));
-        }
-        if let Some(f) = filter.from_date {
-            bind_values.push(Box::new(f.to_string()));
-            sql.push_str(&format!(" AND date >= ?{}", bind_values.len()));
-        }
-        if let Some(t) = filter.to_date {
-            bind_values.push(Box::new(t.to_string()));
-            sql.push_str(&format!(" AND date <= ?{}", bind_values.len()));
-        }
+        push_optional_filter(
+            &mut bind_values,
+            &mut sql,
+            "AND symbol =",
+            filter.symbol.map(str::to_string),
+        );
+        push_optional_filter(
+            &mut bind_values,
+            &mut sql,
+            "AND type =",
+            filter.tx_type.map(str::to_string),
+        );
+        push_optional_filter(
+            &mut bind_values,
+            &mut sql,
+            "AND asset_type =",
+            filter.asset_type,
+        );
+        push_optional_filter(
+            &mut bind_values,
+            &mut sql,
+            "AND date >=",
+            filter.from_date.map(str::to_string),
+        );
+        push_optional_filter(
+            &mut bind_values,
+            &mut sql,
+            "AND date <=",
+            filter.to_date.map(str::to_string),
+        );
         sql.push_str(" ORDER BY date ASC");
 
-        let params_refs: Vec<&dyn rusqlite::types::ToSql> =
-            bind_values.iter().map(|b| b.as_ref()).collect();
-        let mut stmt = conn.prepare(&sql).map_err(|e| format!("query: {e}"))?;
-        let rows = stmt
-            .query_map(params_refs.as_slice(), |row| {
-                Ok(Transaction {
-                    id: row.get(0)?,
-                    date: row.get(1)?,
-                    tx_type: row.get(2)?,
-                    asset_type: row.get(3)?,
-                    symbol: row.get(4)?,
-                    quantity: row.get(5)?,
-                    price: row.get(6)?,
-                    commission: row.get(7)?,
-                    amount: row.get(8)?,
-                    weight: row.get::<_, Option<f64>>(9).unwrap_or(None),
-                    currency: row.get::<_, String>(10).unwrap_or_default(),
-                    notes: row.get::<_, String>(11).unwrap_or_default(),
-                    created_at: row.get(12)?,
-                })
+        query_all_rows(&conn, &sql, &bind_values, |row| {
+            Ok(Transaction {
+                id: row.get(0)?,
+                date: row.get(1)?,
+                tx_type: row.get(2)?,
+                asset_type: row.get(3)?,
+                symbol: row.get(4)?,
+                quantity: row.get(5)?,
+                price: row.get(6)?,
+                commission: row.get(7)?,
+                amount: row.get(8)?,
+                weight: row.get::<_, Option<f64>>(9).unwrap_or(None),
+                currency: row.get::<_, String>(10).unwrap_or_default(),
+                notes: row.get::<_, String>(11).unwrap_or_default(),
+                created_at: row.get(12)?,
             })
-            .map_err(|e| format!("query: {e}"))?;
-
-        let mut txs = Vec::new();
-        for row in rows {
-            txs.push(row.map_err(|e| format!("row: {e}"))?);
-        }
-        Ok(txs)
+        })
     }
 
     /// Materialized end-of-day holdings for a portfolio at `date`. Computes

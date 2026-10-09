@@ -7,7 +7,7 @@
 //! for companies-specific notes, files, forecasts, and screen jobs. It exposes
 //! no portfolio ledger or analytics reads.
 
-use hkask_mcp_portfolio::PortfolioStore;
+use hkask_mcp_portfolio::{PortfolioStore, push_optional_filter, query_all_rows};
 // Re-exported for the tool layer's imports.
 pub(crate) use hkask_mcp_portfolio::PortfolioError;
 use hkask_types::{WebID, agent_paths::sanitize_name, time::now_rfc3339};
@@ -841,49 +841,41 @@ impl ResearchStore {
             Box::new(symbol.to_string()),
         ];
 
-        if let Some(f) = date_from {
-            bind_values.push(Box::new(f.to_string()));
-            sql.push_str(&format!(" AND date >= ?{}", bind_values.len()));
-        }
-        if let Some(t) = date_to {
-            bind_values.push(Box::new(t.to_string()));
-            sql.push_str(&format!(" AND date <= ?{}", bind_values.len()));
-        }
+        push_optional_filter(
+            &mut bind_values,
+            &mut sql,
+            "AND date >=",
+            date_from.map(str::to_string),
+        );
+        push_optional_filter(
+            &mut bind_values,
+            &mut sql,
+            "AND date <=",
+            date_to.map(str::to_string),
+        );
         sql.push_str(" ORDER BY date DESC");
 
-        let params_refs: Vec<&dyn rusqlite::types::ToSql> =
-            bind_values.iter().map(|b| b.as_ref()).collect();
-        let mut stmt = conn.prepare(&sql).map_err(|e| format!("query: {e}"))?;
-        let rows = stmt
-            .query_map(params_refs.as_slice(), |row| {
-                let tags_str: String = row.get::<_, String>(5).unwrap_or_default();
-                let parsed_tags: Vec<String> = serde_json::from_str(&tags_str).unwrap_or_default();
-                Ok(serde_json::json!({
-                    "id": row.get::<_, String>(0)?,
-                    "symbol": row.get::<_, String>(1)?,
-                    "date": row.get::<_, String>(2)?,
-                    "title": row.get::<_, String>(3)?,
-                    "body": row.get::<_, String>(4)?,
-                    "tags": parsed_tags,
-                    "created_at": row.get::<_, String>(6)?,
-                }))
-            })
-            .map_err(|e| format!("query: {e}"))?;
-
-        let mut notes = Vec::new();
-        for row in rows {
-            let note = row.map_err(|e| format!("row: {e}"))?;
-            if let Some(filter_tags) = tags {
+        let mut notes = query_all_rows(&conn, &sql, &bind_values, |row| {
+            let tags_str: String = row.get::<_, String>(5).unwrap_or_default();
+            let parsed_tags: Vec<String> = serde_json::from_str(&tags_str).unwrap_or_default();
+            Ok(serde_json::json!({
+                "id": row.get::<_, String>(0)?,
+                "symbol": row.get::<_, String>(1)?,
+                "date": row.get::<_, String>(2)?,
+                "title": row.get::<_, String>(3)?,
+                "body": row.get::<_, String>(4)?,
+                "tags": parsed_tags,
+                "created_at": row.get::<_, String>(6)?,
+            }))
+        })?;
+        if let Some(filter_tags) = tags {
+            notes.retain(|note| {
                 let note_tags: Vec<&str> = note["tags"]
                     .as_array()
                     .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
                     .unwrap_or_default();
-                let has_any = filter_tags.iter().any(|t| note_tags.contains(&t.as_str()));
-                if !has_any {
-                    continue;
-                }
-            }
-            notes.push(note);
+                filter_tags.iter().any(|t| note_tags.contains(&t.as_str()))
+            });
         }
         Ok(notes)
     }
