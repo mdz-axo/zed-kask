@@ -2315,10 +2315,7 @@ mod tests {
     /// exactly the post-therapy state.
     #[tokio::test]
     async fn growth_breach_escalates_to_the_board_and_recovery_does_not() {
-        let source = Arc::new(MemoryObservations(std::sync::atomic::AtomicUsize::new(0)));
-        let mut regulation =
-            CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())));
-        regulation.set_memory_health_source(source.clone());
+        let (source, regulation) = loop_with_memory_observations();
 
         // Over the ceiling (fixture h_mem_count 1_000_000 vs the 4_000 default).
         let over = regulation.sense().await;
@@ -2381,6 +2378,17 @@ mod tests {
         );
     }
 
+    /// The loop + memory-source fixture shared by the memory tests below
+    /// (the 2026-10-09 duplication-ratchet diagnosis measured the two
+    /// tests' identical setup as a net-new intra-file cluster).
+    fn loop_with_memory_observations() -> (Arc<MemoryObservations>, CyberneticsLoop) {
+        let source = Arc::new(MemoryObservations(std::sync::atomic::AtomicUsize::new(0)));
+        let mut regulation =
+            CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())));
+        regulation.set_memory_health_source(source.clone());
+        (source, regulation)
+    }
+
     struct MemoryObservations(std::sync::atomic::AtomicUsize);
     #[async_trait::async_trait]
     impl crate::MemoryHealthSource for MemoryObservations {
@@ -2406,10 +2414,7 @@ mod tests {
     /// expect: "Every memory metric can report recovery independently; unavailable stores do not report zero" [P9]
     #[tokio::test]
     async fn memory_observations_report_all_metrics_and_recovery() {
-        let source = Arc::new(MemoryObservations(std::sync::atomic::AtomicUsize::new(0)));
-        let mut regulation =
-            CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())));
-        regulation.set_memory_health_source(source.clone());
+        let (source, regulation) = loop_with_memory_observations();
         let metrics = [
             SignalMetric::MemoryLife,
             SignalMetric::TripleCount,

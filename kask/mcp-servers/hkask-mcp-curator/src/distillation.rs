@@ -1267,22 +1267,28 @@ mod tests {
                 return Box::pin(async move { Err(error) });
             }
             let text = self.response.clone();
-            Box::pin(async move {
-                Ok(InferenceResult {
-                    text,
-                    model: "test-model".to_string(),
-                    usage: InferenceUsage {
-                        prompt_tokens: 0,
-                        completion_tokens: 0,
-                        total_tokens: 0,
-                        reported: false,
-                    },
-                    finish_reason: "stop".to_string(),
-                    tool_calls: Vec::new(),
-                    reasoning: None,
-                    cost_usd: None,
-                })
-            })
+            Box::pin(async move { Ok(test_inference_result(text)) })
+        }
+    }
+
+    /// One `InferenceResult` for the scripted test ports — the five ports
+    /// below each carried a copy of this literal before the helper (the
+    /// 2026-10-09 duplication-ratchet diagnosis measured three of those
+    /// copies as net-new intra-file clusters).
+    fn test_inference_result(text: String) -> InferenceResult {
+        InferenceResult {
+            text,
+            model: "test-model".to_string(),
+            usage: InferenceUsage {
+                prompt_tokens: 0,
+                completion_tokens: 0,
+                total_tokens: 0,
+                reported: false,
+            },
+            finish_reason: "stop".to_string(),
+            tool_calls: Vec::new(),
+            reasoning: None,
+            cost_usd: None,
         }
     }
 
@@ -1304,22 +1310,7 @@ mod tests {
         ) -> Pin<Box<dyn Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>>
         {
             let text = self.response.clone();
-            Box::pin(async move {
-                Ok(InferenceResult {
-                    text,
-                    model: "test-model".to_string(),
-                    usage: InferenceUsage {
-                        prompt_tokens: 0,
-                        completion_tokens: 0,
-                        total_tokens: 0,
-                        reported: false,
-                    },
-                    finish_reason: "stop".to_string(),
-                    tool_calls: Vec::new(),
-                    reasoning: None,
-                    cost_usd: None,
-                })
-            })
+            Box::pin(async move { Ok(test_inference_result(text)) })
         }
 
         fn embed<'a>(&'a self, _model: &str, texts: &[String]) -> hkask_types::EmbedFuture<'a> {
@@ -1551,22 +1542,7 @@ mod tests {
                 .expect("model recorder mutex")
                 .push(model_override.map(str::to_string));
             let text = self.response.clone();
-            Box::pin(async move {
-                Ok(InferenceResult {
-                    text,
-                    model: "test-model".to_string(),
-                    usage: InferenceUsage {
-                        prompt_tokens: 0,
-                        completion_tokens: 0,
-                        total_tokens: 0,
-                        reported: false,
-                    },
-                    finish_reason: "stop".to_string(),
-                    tool_calls: Vec::new(),
-                    reasoning: None,
-                    cost_usd: None,
-                })
-            })
+            Box::pin(async move { Ok(test_inference_result(text)) })
         }
     }
 
@@ -1680,22 +1656,7 @@ mod tests {
                 });
             }
             let text = self.response.clone();
-            Box::pin(async move {
-                Ok(InferenceResult {
-                    text,
-                    model: "test-model".to_string(),
-                    usage: InferenceUsage {
-                        prompt_tokens: 0,
-                        completion_tokens: 0,
-                        total_tokens: 0,
-                        reported: false,
-                    },
-                    finish_reason: "stop".to_string(),
-                    tool_calls: Vec::new(),
-                    reasoning: None,
-                    cost_usd: None,
-                })
-            })
+            Box::pin(async move { Ok(test_inference_result(text)) })
         }
     }
 
@@ -1999,22 +1960,7 @@ mod tests {
                 .lock()
                 .expect("prompt recorder mutex")
                 .push(prompt.to_string());
-            Box::pin(async move {
-                Ok(InferenceResult {
-                    text,
-                    model: "test-model".to_string(),
-                    usage: InferenceUsage {
-                        prompt_tokens: 0,
-                        completion_tokens: 0,
-                        total_tokens: 0,
-                        reported: false,
-                    },
-                    finish_reason: "stop".to_string(),
-                    tool_calls: Vec::new(),
-                    reasoning: None,
-                    cost_usd: None,
-                })
-            })
+            Box::pin(async move { Ok(test_inference_result(text)) })
         }
     }
 
