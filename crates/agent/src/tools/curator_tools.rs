@@ -103,6 +103,12 @@ pub struct CuratorStatusOutput {
     /// verified) from broken (running but failing) from unobserved (can't
     /// tell). `None` when the metacognition provider isn't wired.
     pub loop_reading: Option<String>,
+    /// Total regulation cycles the ledger has recorded this process — the
+    /// loop's own liveness evidence (one `record_cycle_outcome` per
+    /// cybernetics tick). Rendered as "Loop Cycles" so the operator can
+    /// see the loop turning behind an `unobserved` impact reading. `None`
+    /// when the metacognition provider isn't wired.
+    pub loop_cycles: Option<u64>,
     /// Declared human doors for `Manual`/`Prompted` regulation stages
     /// (Fermi `STAGE_ACTIONS`). Each entry is a `(trigger, stage, tools)` tuple.
     /// Empty when the metacognition provider isn't wired or no doors are
@@ -125,6 +131,12 @@ fn read_regulation_acceptance_rate(snapshot: &serde_json::Value) -> Option<f64> 
         .filter(|rate| (0.0..=1.0).contains(rate))
 }
 
+fn read_loop_cycles(snapshot: &serde_json::Value) -> Option<u64> {
+    snapshot
+        .get("total_cycles")
+        .and_then(|value| value.as_u64())
+}
+
 fn status_line(
     memory_degraded: Option<bool>,
     loop_reading: Option<&str>,
@@ -135,10 +147,20 @@ fn status_line(
     }
     if memory_degraded == Some(true) {
         "degraded (curator memory store down; self-healing re-open in progress)".to_string()
-    } else if loop_reading.is_none()
-        || loop_reading == Some("unobserved")
-        || memory_degraded.is_none()
-    {
+    } else if loop_reading == Some("unobserved") {
+        // `Unobserved` implies liveness `Live` (`compute_reading` returns
+        // `WiringClosed` for `NeverRun` first): the loop IS turning and IS
+        // monitored (heartbeat, cycle count, deviations recorded in
+        // `reg.outcome.loop_quality`). What is absent is verified impact —
+        // the only production submitter of before/after rollout checks is
+        // the harness regression monitor, which fires on harness pass-rate
+        // regressions only, so an ordinary homeostatic session reads
+        // `unobserved` indefinitely. The former label ("loop or memory
+        // health not monitored") mislabeled every such session as
+        // unmonitored (observed live 2026-10-08: 720 cycles at zero
+        // deviations read as "not monitored").
+        "partial (loop turning; impact unverified)".to_string()
+    } else if loop_reading.is_none() || memory_degraded.is_none() {
         "partial (loop or memory health not monitored)".to_string()
     } else if alert_log_approaching_cap == Some(true) {
         "snapshot available (in-memory alert log approaching cap; review durable backlog)"
@@ -186,6 +208,80 @@ mod status_snapshot_tests {
         );
     }
 
+    /// The `unobserved` Fermi `LoopView` reading is "turning but impact
+    /// unverified", NOT "not monitored": `unobserved` implies liveness
+    /// `Live` (`compute_reading` returns `WiringClosed` for `NeverRun`
+    /// first), and the loop monitors itself (heartbeat, cycle count,
+    /// deviations in `reg.outcome.loop_quality`). What is absent is
+    /// verified impact — the only production submitter of before/after
+    /// rollout checks is the harness regression monitor, which fires on
+    /// harness pass-rate regressions only — so an ordinary homeostatic
+    /// session reads `unobserved` indefinitely. The former label ("loop
+    /// or memory health not monitored") mislabeled every such session as
+    /// unmonitored (observed live 2026-10-08: 720 cycles at zero
+    /// deviations read as "not monitored").
+    #[test]
+    fn status_line_labels_unobserved_as_turning_not_unmonitored() {
+        let line = status_line(Some(false), Some("unobserved"), Some(false));
+        assert!(line.starts_with("partial"), "never healthy (Goodhart)");
+        assert!(
+            line.contains("loop turning"),
+            "the unobserved reading means the loop is turning; got: {line}"
+        );
+        assert!(
+            line.contains("impact unverified"),
+            "the absent thing is verified impact, not monitoring; got: {line}"
+        );
+        assert!(
+            !line.contains("not monitored"),
+            "the loop IS monitored — heartbeat, cycles and deviations are \
+             recorded; got: {line}"
+        );
+    }
+
+    /// The status output carries the loop's own cycle count (the ledger's
+    /// `regulation_health.total_cycles` — one per cybernetics tick), so
+    /// the operator sees the loop turning behind an `unobserved` impact
+    /// reading, and never confuses the ledger's cycle counter with the
+    /// loop-quality telemetry's `tick_count`.
+    #[test]
+    fn status_output_carries_the_loops_cycle_count() {
+        assert_eq!(
+            read_loop_cycles(&serde_json::json!({"total_cycles": 720})),
+            Some(720)
+        );
+        assert_eq!(
+            read_loop_cycles(&serde_json::json!({"tick_count": 720})),
+            None,
+            "the ledger's regulation_health.total_cycles is the status source, \
+             not the loop-quality tick_count"
+        );
+        let output = CuratorStatusOutput {
+            status: status_line(Some(false), Some("unobserved"), Some(false)),
+            regulation_acceptance_rate: None,
+            escalation_count: Some(0),
+            pending_escalations: Some(6),
+            critical_alerts: Some(0),
+            variety_deficit: None,
+            memory_degraded: Some(false),
+            alert_log_count: Some(3),
+            alert_log_cap: Some(200),
+            alert_log_approaching_cap: Some(false),
+            loop_reading: Some("unobserved".to_string()),
+            loop_cycles: Some(720),
+            declared_doors: Vec::new(),
+        };
+        match language_model::LanguageModelToolResultContent::from(output) {
+            language_model::LanguageModelToolResultContent::Text(text) => {
+                let text = text.to_string();
+                assert!(text.contains("Loop Cycles: 720"), "got: {text}");
+                assert!(text.contains("Loop Reading: unobserved"));
+                assert!(text.contains("loop turning; impact unverified"));
+            }
+            other => panic!("expected text, got {other:?}"),
+        }
+    }
+
     #[test]
     fn status_serializes_only_the_measured_rate_name() {
         let output = CuratorStatusOutput {
@@ -200,6 +296,7 @@ mod status_snapshot_tests {
             alert_log_cap: None,
             alert_log_approaching_cap: None,
             loop_reading: None,
+            loop_cycles: None,
             declared_doors: Vec::new(),
         };
         let value = serde_json::to_value(output).expect("status output serializes");
@@ -220,6 +317,7 @@ mod status_snapshot_tests {
             alert_log_cap: None,
             alert_log_approaching_cap: None,
             loop_reading: None,
+            loop_cycles: None,
             declared_doors: Vec::new(),
         };
         match language_model::LanguageModelToolResultContent::from(output) {
@@ -281,6 +379,7 @@ impl AgentTool for CuratorStatusTool {
                 alert_log_cap: None,
                 alert_log_approaching_cap: None,
                 loop_reading: None,
+                loop_cycles: None,
                 declared_doors: Vec::new(),
             })?;
 
@@ -302,6 +401,7 @@ impl AgentTool for CuratorStatusTool {
                     alert_log_cap: None,
                     alert_log_approaching_cap: None,
                     loop_reading: None,
+                    loop_cycles: None,
                     declared_doors: Vec::new(),
                 });
             };
@@ -318,10 +418,12 @@ impl AgentTool for CuratorStatusTool {
                     alert_log_cap: None,
                     alert_log_approaching_cap: None,
                     loop_reading: None,
+                    loop_cycles: None,
                     declared_doors: Vec::new(),
                 });
             };
             let acceptance_rate = read_regulation_acceptance_rate(&snapshot);
+            let loop_cycles = read_loop_cycles(&snapshot);
             let critical = snapshot
                 .get("critical_alerts")
                 .and_then(|v| v.as_u64())
@@ -405,6 +507,7 @@ impl AgentTool for CuratorStatusTool {
                 alert_log_cap,
                 alert_log_approaching_cap,
                 loop_reading,
+                loop_cycles,
                 declared_doors,
             })
         })
@@ -423,6 +526,7 @@ impl From<CuratorStatusOutput> for language_model::LanguageModelToolResultConten
              Memory: {}\n\
              Algedonic Log: {}\n\
              Loop Reading: {}\n\
+             Loop Cycles: {}\n\
              Declared Doors: {}",
             output.status,
             output
@@ -467,6 +571,10 @@ impl From<CuratorStatusOutput> for language_model::LanguageModelToolResultConten
                 _ => "not available".to_string(),
             },
             output.loop_reading.as_deref().unwrap_or("not available"),
+            output
+                .loop_cycles
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| "not available".to_string()),
             if output.declared_doors.is_empty() {
                 "none".to_string()
             } else {
