@@ -1122,6 +1122,7 @@ mod integration_tests {
 #[cfg(test)]
 mod tool_behavior_tests {
     use super::*;
+    use crate::test_support::read_only_organize_request;
     use crate::types::{GalleryRefreshRequest, YoutubeSearchRequest};
     use rmcp::handler::server::wrapper::Parameters;
     use std::sync::Arc;
@@ -1508,21 +1509,17 @@ mod tool_behavior_tests {
         let server = make_server();
         let directory = tempfile::tempdir()?;
         image::RgbImage::new(2, 2).save(directory.path().join("one.png"))?;
-        let request = || {
-            Parameters(GalleryOrganizeRequest {
-                path: directory.path().to_string_lossy().into_owned(),
-                mode: "read-only".into(),
-                recursive: true,
-                auto_analyze: false,
-            })
-        };
-        server.gallery_organize(request()).await?;
+        server
+            .gallery_organize(read_only_organize_request(directory.path()))
+            .await?;
         let original = server.access_gallery()?.gallery_id;
         *server
             .gallery_state
             .lock()
             .map_err(|error| error.to_string())? = None;
-        server.gallery_organize(request()).await?;
+        server
+            .gallery_organize(read_only_organize_request(directory.path()))
+            .await?;
         assert_eq!(server.access_gallery()?.gallery_id, original);
         assert_eq!(server.gallery_store.count_assets(&original)?, 1);
         Ok(())
@@ -1534,15 +1531,9 @@ mod tool_behavior_tests {
         let server = make_server();
         let directory = tempfile::tempdir()?;
         image::RgbImage::new(2, 2).save(directory.path().join("one.png"))?;
-        let request = || {
-            Parameters(GalleryOrganizeRequest {
-                path: directory.path().to_string_lossy().into_owned(),
-                mode: "read-only".into(),
-                recursive: true,
-                auto_analyze: false,
-            })
-        };
-        server.gallery_organize(request()).await?;
+        server
+            .gallery_organize(read_only_organize_request(directory.path()))
+            .await?;
         let gallery = server.access_gallery()?;
         let original = server
             .gallery_store
@@ -1550,7 +1541,9 @@ mod tool_behavior_tests {
         server
             .gallery_store
             .tag_image(&original.id, "caption", "My photo", 1.0, "user")?;
-        server.gallery_organize(request()).await?;
+        server
+            .gallery_organize(read_only_organize_request(directory.path()))
+            .await?;
         assert_eq!(server.gallery_store.count_assets(&gallery.gallery_id)?, 1);
         let current = server
             .gallery_store
@@ -1576,12 +1569,7 @@ mod tool_behavior_tests {
         image::RgbImage::new(2, 2).save(directory.path().join("one.png"))?;
         image::RgbImage::new(2, 2).save(directory.path().join("two.png"))?;
         server
-            .gallery_organize(Parameters(GalleryOrganizeRequest {
-                path: directory.path().to_string_lossy().into_owned(),
-                mode: "read-only".into(),
-                recursive: true,
-                auto_analyze: false,
-            }))
+            .gallery_organize(read_only_organize_request(directory.path()))
             .await?;
         let result = server
             .image_create_collage(Parameters(crate::types::CreateCollageRequest {
@@ -5560,6 +5548,7 @@ mod tool_behavior_tests {
 #[cfg(test)]
 mod gallery_lifecycle_tests {
     use super::*;
+    use crate::test_support::read_only_organize_request;
     use hkask_storage::database::sqlite::SqliteDriver;
     use rmcp::handler::server::wrapper::Parameters;
     use std::future::Future;
@@ -5855,12 +5844,7 @@ mod gallery_lifecycle_tests {
         let invalid = fixture.path().join("absent");
         assert!(
             server
-                .gallery_organize(Parameters(GalleryOrganizeRequest {
-                    path: invalid.to_string_lossy().into_owned(),
-                    mode: "read-only".into(),
-                    recursive: true,
-                    auto_analyze: false,
-                }))
+                .gallery_organize(read_only_organize_request(&invalid))
                 .await
                 .is_err()
         );
@@ -6342,15 +6326,27 @@ mod gallery_lifecycle_tests {
         );
         Ok(())
     }
-    /// expect: Successful complete reanalysis clears staleness only for the analyzed revision. [P1]
-    #[tokio::test]
-    async fn complete_reanalysis_refreshes_matching_revision() -> TestResult {
+    /// The stale-image analysis fixture shared by the reanalysis tests:
+    /// one png organized, replaced (making its metadata stale), and
+    /// re-organized — then a full four-pipeline analysis on index 0,
+    /// returning the server, the stale image record, and the analysis
+    /// (count, errors). Both tests carried this setup before the helper
+    /// (2026-10-09 ratchet pass); the vision port is the varying input.
+    async fn stale_image_analysis(
+        vision: Arc<dyn InferencePort>,
+    ) -> Result<
+        (
+            tempfile::TempDir,
+            MediaServer,
+            hkask_storage::ImageRecord,
+            (u32, Vec<String>),
+        ),
+        Box<dyn std::error::Error>,
+    > {
         let fixture = tempfile::tempdir()?;
         let root = fixture.path().join("root");
         std::fs::create_dir(&root)?;
         png(&root.join("a.png"), 1);
-        let vision = Arc::new(BarrierVision::barrier(analysis_vision_text));
-        vision.resume.notify_one();
         let server = server(&fixture.path().join("gallery.sqlite"), vision);
         organize(&server, &root, true).await?;
         png(&root.join("a.png"), 2);
@@ -6372,6 +6368,15 @@ mod gallery_lifecycle_tests {
                 ],
             )
             .await;
+        Ok((fixture, server, image, (count, errors)))
+    }
+
+    /// expect: Successful complete reanalysis clears staleness only for the analyzed revision. [P1]
+    #[tokio::test]
+    async fn complete_reanalysis_refreshes_matching_revision() -> TestResult {
+        let vision = Arc::new(BarrierVision::barrier(analysis_vision_text));
+        vision.resume.notify_one();
+        let (_fixture, server, image, (count, errors)) = stale_image_analysis(vision).await?;
         assert_eq!(count, 1, "{errors:?}");
         assert!(errors.is_empty());
         assert!(!server.gallery_store.get_by_id(&image.id)?.metadata_stale);
@@ -6388,34 +6393,9 @@ mod gallery_lifecycle_tests {
     /// expect: Structurally invalid analysis output never certifies freshness. [P1]
     #[tokio::test]
     async fn invalid_analysis_outputs_retain_staleness() -> TestResult {
-        let fixture = tempfile::tempdir()?;
-        let root = fixture.path().join("root");
-        std::fs::create_dir(&root)?;
-        png(&root.join("a.png"), 1);
-        let server = server(
-            &fixture.path().join("gallery.sqlite"),
-            Arc::new(StubVisionPort::new(invalid_analysis_vision_text)),
-        );
-        organize(&server, &root, true).await?;
-        png(&root.join("a.png"), 2);
-        organize(&server, &root, true).await?;
-        let gallery = server.access_gallery()?;
-        let image = server
-            .gallery_store
-            .get_image(&gallery.gallery_id, Some(0), None)?;
-        assert!(image.metadata_stale);
-        let (count, errors) = server
-            .run_analysis_on_indices(
-                &gallery,
-                &[0],
-                &[
-                    "objects".into(),
-                    "colors".into(),
-                    "composition".into(),
-                    "scene".into(),
-                ],
-            )
-            .await;
+        let (_fixture, server, image, (count, errors)) =
+            stale_image_analysis(Arc::new(StubVisionPort::new(invalid_analysis_vision_text)))
+                .await?;
         assert_eq!(count, 0, "nothing was certified");
         assert!(!errors.is_empty(), "invalid shapes must surface as errors");
         assert!(

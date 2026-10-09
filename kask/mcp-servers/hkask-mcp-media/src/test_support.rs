@@ -48,3 +48,17 @@ macro_rules! media_inference_stub {
 }
 
 pub(crate) use media_inference_stub;
+
+/// The read-only organize request the gallery lifecycle tests share —
+/// each test rebuilt the same closure (or inline block) to capture its
+/// directory before the helper (2026-10-09 ratchet pass).
+pub fn read_only_organize_request(
+    path: &std::path::Path,
+) -> rmcp::handler::server::wrapper::Parameters<crate::types::GalleryOrganizeRequest> {
+    rmcp::handler::server::wrapper::Parameters(crate::types::GalleryOrganizeRequest {
+        path: path.to_string_lossy().into_owned(),
+        mode: "read-only".into(),
+        recursive: true,
+        auto_analyze: false,
+    })
+}
