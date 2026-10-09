@@ -2416,6 +2416,34 @@ mod tool_behavior_tests {
         Ok((output, asset_id, hint))
     }
 
+    /// The gallery-switch choreography shared by the two-gallery tests:
+    /// wait for the spawned operation to reach its admission/validation
+    /// gate, swap the active gallery to B, resume the operation, await it,
+    /// and return (content, stable gallery asset id). Each switch test
+    /// carried this block before the helper (2026-10-09 ratchet pass).
+    async fn switch_to_gallery_b_and_finish(
+        entered: &Arc<tokio::sync::Notify>,
+        resume: &Arc<tokio::sync::Notify>,
+        gallery_state: &Arc<std::sync::Mutex<Option<GalleryState>>>,
+        gallery_b_root: &std::path::Path,
+        gallery_b_id: &str,
+        operation: tokio::task::JoinHandle<Result<String, hkask_mcp_server::server::McpToolError>>,
+    ) -> Result<(serde_json::Value, String), Box<dyn std::error::Error>> {
+        tokio::time::timeout(std::time::Duration::from_secs(5), entered.notified()).await?;
+        *gallery_state.lock().map_err(|error| error.to_string())? = Some(GalleryState {
+            path: gallery_b_root.to_path_buf(),
+            mode: GalleryMode::ReadOnly,
+            gallery_id: Some(gallery_b_id.to_string()),
+        });
+        resume.notify_one();
+        let content = content_of(&operation.await??);
+        let asset_id = content["gallery_asset_id"]
+            .as_str()
+            .ok_or("missing stable gallery asset id")?
+            .to_string();
+        Ok((content, asset_id))
+    }
+
     /// dcterms:identifier: `MediaServer::audio_trim`
     /// expect: My trimmed recording remains addressable by one stable gallery identity after teardown.
     /// [P1] Motivating: completed audio work survives processor and server teardown.
@@ -2590,22 +2618,20 @@ mod tool_behavior_tests {
                     .await
             })
         };
-        tokio::time::timeout(std::time::Duration::from_secs(5), entered.notified()).await?;
-        *gallery_state.lock().map_err(|error| error.to_string())? = Some(GalleryState {
-            path: gallery_b_root.path().to_path_buf(),
-            mode: GalleryMode::ReadOnly,
-            gallery_id: Some(gallery_b.id.clone()),
-        });
-        resume.notify_one();
-        let content = content_of(&operation.await??);
-        let asset_id = content["gallery_asset_id"]
-            .as_str()
-            .ok_or("missing stable gallery asset id")?;
+        let (_content, asset_id) = switch_to_gallery_b_and_finish(
+            &entered,
+            &resume,
+            &gallery_state,
+            gallery_b_root.path(),
+            &gallery_b.id,
+            operation,
+        )
+        .await?;
 
         let generated = store
             .containing(&crate::assets::generated_assets_dir())?
             .ok_or("generated gallery registered")?;
-        assert_eq!(store.get_by_id(asset_id)?.gallery_id, generated.id);
+        assert_eq!(store.get_by_id(&asset_id)?.gallery_id, generated.id);
         assert_eq!(store.count_assets(&gallery_a.id)?, 0);
         assert_eq!(store.count_assets(&gallery_b.id)?, 0);
         Ok(())
@@ -3445,20 +3471,18 @@ mod tool_behavior_tests {
                     .await
             })
         };
-        tokio::time::timeout(std::time::Duration::from_secs(5), entered.notified()).await?;
-        *gallery_state.lock().map_err(|error| error.to_string())? = Some(GalleryState {
-            path: gallery_b_root.path().to_path_buf(),
-            mode: GalleryMode::ReadOnly,
-            gallery_id: Some(gallery_b.id.clone()),
-        });
-        resume.notify_one();
-        let content = content_of(&operation.await??);
-        let asset_id = content["gallery_asset_id"]
-            .as_str()
-            .ok_or("missing gallery asset id")?;
+        let (_content, asset_id) = switch_to_gallery_b_and_finish(
+            &entered,
+            &resume,
+            &gallery_state,
+            gallery_b_root.path(),
+            &gallery_b.id,
+            operation,
+        )
+        .await?;
 
         assert_eq!(
-            store.get_by_id(asset_id)?.gallery_id,
+            store.get_by_id(&asset_id)?.gallery_id,
             generated_gallery(&store)
         );
         assert_eq!(store.count_assets(&gallery_a.id)?, 0);
@@ -3512,24 +3536,22 @@ mod tool_behavior_tests {
                     .await
             })
         };
-        tokio::time::timeout(std::time::Duration::from_secs(5), entered.notified()).await?;
-        *gallery_state.lock().map_err(|error| error.to_string())? = Some(GalleryState {
-            path: gallery_b_root.path().to_path_buf(),
-            mode: GalleryMode::ReadOnly,
-            gallery_id: Some(gallery_b.id.clone()),
-        });
-        resume.notify_one();
-        let content = content_of(&operation.await??);
-        let asset_id = content["gallery_asset_id"]
-            .as_str()
-            .ok_or("missing gallery asset id")?;
+        let (content, asset_id) = switch_to_gallery_b_and_finish(
+            &entered,
+            &resume,
+            &gallery_state,
+            gallery_b_root.path(),
+            &gallery_b.id,
+            operation,
+        )
+        .await?;
 
         assert_eq!(
             content["effective_params"]["sources"][0],
             source_a.to_string_lossy().as_ref()
         );
         assert_eq!(
-            store.get_by_id(asset_id)?.gallery_id,
+            store.get_by_id(&asset_id)?.gallery_id,
             generated_gallery(&store)
         );
         assert_eq!(store.count_assets(&gallery_a.id)?, 1);
