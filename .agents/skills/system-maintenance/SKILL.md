@@ -17,11 +17,25 @@ description: Weekly system maintenance for this machine (Ubuntu 26.04, Framework
 - **Initial condition:** a "run the weekly maintenance" request (or a staleness/health warning to triage), the five `~/system-maintenance/` scripts, their logs, and live system state.
 - **Target condition:** a completed pass — health check interpreted, dry-run classified, disposable class executed, manual-review items surfaced as exact commands, sudo work handed off (not asked for), measurements reconciled, ledger reported. Observable: health-check exit code, review-script output, the handoff block, and a df/du delta that closes against the deletion ledger.
 
+## Managed scripts
+
+The skill manages the script fleet at `~/system-maintenance/` (this machine's convention) — inventory, verification, execution, and updates. The fleet is versioned in place (`~/system-maintenance/.git`, `logs/` ignored — runtime data, read live by the staleness instrument); a script change without its commit is unmanaged. Fleet docs: `README.md` (machine manifest, scripts table, process).
+
+| Script | Role | Runs | sudo? |
+|---|---|---|---|
+| `system-health-check.sh` | read-only health check; warns on disk, services, staleness | daily 08:30 timer + on demand | no |
+| `maintenance-clean.sh` | cache cleanup; `--dry-run` default, `--run` deletes reviewed disposables only | weekly on demand | no |
+| `maintenance-review.sh` | manual-review surface — every held-back item as an exact command | weekly on demand | no |
+| `maintenance-update.sh` | package update (apt, snap, flatpak, SMART, rustup, uv) | weekly, the operator's terminal | yes |
+| `maintenance-reminder.sh` | desktop reminder to run the update | Sat 09:00 timer | no |
+| `setup-maintenance-timers.sh` | installer for the two timers | on demand | no |
+
 ## When to Use
 
 - "Run the weekly/maintenance" requests, or the Saturday 09:00 reminder firing.
 - Triage of health-check warnings (disk, services, staleness, failed units).
 - Disk-space pressure on `/` or `~/.cache`.
+- Script updates: a new trap, warning class, or review category surfaced by a pass or requested by the operator.
 
 ## When NOT to Use
 
@@ -48,7 +62,15 @@ description: Weekly system maintenance for this machine (Ubuntu 26.04, Framework
 6. **Review surface (D).** Run `bash ~/system-maintenance/maintenance-review.sh` — every held-back item as an exact command, one place.
 7. **Handoff (P).** Deliver the sudo block verbatim (reset-failed + crash-file removal + `maintenance-update.sh`). Never ask for the password; never run sudo from the agent terminal (it cannot authenticate — the Sep 5/12/19 logs are this failure).
 8. **Verify (D).** Re-run the health check. Reconcile: `(df_before − df_after)` vs the deletion ledger's bytes, and `du` deltas per item. Any unexplained gap → re-enter step 2 (triage) with the gap named. **Trap:** `du` mid-churn (an app restarting) reads transient — re-measure via the health check, not a mid-batch `du`. Hardlink-shared caches (uv) free fewer blocks than `du` reports.
-9. **Report + improve (P→D).** Ledger table (item → evidence gate → bytes freed), the handoff block, protected items named, learnings. If the pass surfaced a new trap: update the script AND this skill in the same pass (a stale skill is active misinformation).
+9. **Report (P→D).** Ledger table (item → evidence gate → bytes freed), the handoff block, protected items named, learnings.
+
+10. **Improve the scripts (P→D) — the manager step.** The skill owns the scripts' lifecycle. When a pass surfaces a new trap, warning class, or review category — or the operator requests one — update the fleet through the script-update path:
+    1. Edit the script (or fleet doc) in `~/system-maintenance/`.
+    2. Verify: `bash -n <script>`; run the read-safe ones (health check, review, `--dry-run`) to confirm the change behaves.
+    3. Commit in the scripts repo: `git -C ~/system-maintenance commit -m "<change> — <session evidence>"`.
+    4. Update this SKILL.md in the same pass if the process, traps, or inventory changed; commit in zed-kask pathspec-limited.
+
+    Triggers: a trap hit live (the transient `du` was one); a new warning worth instrumenting (the staleness warning was one); a new manual-review category (add it to `maintenance-review.sh` — the top-`~/.cache`-consumers section was one); an operator request.
 
 ### Convergence
 
@@ -63,7 +85,7 @@ After step 8, check in `lisp_eval`:
 | Step | Type | Oracle / critique |
 |---|---|---|
 | 1 Baseline, 3 Preview, 5 Execute, 6 Review, 8 Verify | D | script exit codes, `du`/`df`, `lisp_eval` reconciliation |
-| 2 Triage, 4 Probe, 7 Handoff, 9 Report | P | the operator vetoes classifications; D gates (exit codes, byte arithmetic) critique every claim |
+| 2 Triage, 4 Probe, 7 Handoff, 9 Report, 10 Improve | P | the operator vetoes classifications and trigger decisions; D gates (exit codes, byte arithmetic, `bash -n`, git commits) critique every claim |
 
 ## Constraints
 
@@ -71,7 +93,7 @@ After step 8, check in `lisp_eval`:
 - **Probe before every deletion** — atime, open handles, recoverability, references, false positives. No deletion on a name match alone.
 - **Protected classes** stand until an operator ruling: false positives, live infrastructure, unrecoverable local-only artifacts without explicit instruction.
 - **Read full outputs** — truncated sweep/du displays hide results; count matches (`grep -c`) and consume the list.
-- **The scripts stay the executables** — this skill orchestrates and interprets; it duplicates no script logic. Script changes update this skill in the same pass.
+- **The scripts stay the executables; this skill is their manager** — the inventory above, verification, execution, and the step-10 update path. It duplicates no script logic. Script changes commit in the scripts repo and update this skill in the same pass — a stale skill or stale fleet doc is active misinformation.
 - **Timers are reminders, not executors** — the weekly timer reminds; the update runs in your terminal.
 
 ## Regression case
