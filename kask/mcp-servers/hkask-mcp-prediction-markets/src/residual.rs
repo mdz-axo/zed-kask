@@ -25,8 +25,13 @@ pub struct ResidualAnalysis {
     pub r_squared: f64,
     /// Overlapping observation count — the consumer's fit-quality signal.
     pub observations: usize,
-    /// Most recent residual (niche log-odds minus fitted value) — the
-    /// event's current idiosyncratic deviation from its base.
+    /// Most recent residual: the niche price minus its through-origin
+    /// proportional-scaling fit (sigma of beta x logit(base) — the
+    /// intercept is dropped), compared in probability space — the event's
+    /// current idiosyncratic deviation from its base. Deliberately not the
+    /// OLS regression residual (logit(niche) − (alpha + beta x logit(base))):
+    /// the levels diagnostic measures proportional-scaling deviation, not
+    /// regression error.
     pub latest_residual: f64,
 }
 
