@@ -46,23 +46,28 @@ pub enum MemoryStoreError {
 /// Canonical entity-key validation (operator instruction 2026-10-08;
 /// algedonic card ba0ac90d — different agents invented per-session key
 /// standards before this existed). A curator entity key is lowercase
-/// `[a-z0-9:_-]+`: no spaces, no pipes, no uppercase. The live audit
+/// `[a-z0-9:._-]+`: no spaces, no pipes, no uppercase. The live audit
 /// (2026-10-08) measured the drift this closes — 56 pipe-concatenated
 /// entities (`category | lesson`), 68 space-containing entities (11 of
 /// them Capitalized With Spaces) against 881 canonical/namespaced keys.
+/// Dots are allowed (amendment 2026-10-10, algedonic card 91ea8f27): the
+/// corpus crate's production entity refs embed source file names
+/// (`corpus:researcher:consolidated:river.txt:0`), and a file extension
+/// is data, not drift — the audit's drift classes were pipes, spaces,
+/// and uppercase, and the dot was collateral exclusion.
 /// Existing rows are grandfathered until the normalization session
 /// (card 7d17d334); `update_confidence` replaces an existing key and is
 /// deliberately unvalidated — this gate stops new drift, it does not
 /// migrate history.
 /// Whether an entity key is in the canonical form — lowercase
-/// [a-z0-9:_-]+ (no spaces, pipes, or uppercase). Shared by the store
+/// [a-z0-9:._-]+ (no spaces, pipes, or uppercase). Shared by the store
 /// gate (`validate_entity_key`) and the distillation writer's
 /// per-candidate skip (therapy 2026-10-09, algedonic card 7d17d334) so
 /// the two cannot drift — one predicate, two callers.
 pub fn is_canonical_entity_key(entity: &str) -> bool {
     !entity.is_empty()
         && entity.bytes().all(|b| {
-            b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b':' | b'_' | b'-')
+            b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b':' | b'_' | b'-' | b'.')
         })
 }
 
@@ -71,7 +76,7 @@ fn validate_entity_key(entity: &str) -> Result<(), MemoryStoreError> {
         return Ok(());
     }
     Err(MemoryStoreError::InvalidEntityKey(format!(
-        "'{entity}' is not a canonical curator entity key — keys are lowercase [a-z0-9:_-] \
+        "'{entity}' is not a canonical curator entity key — keys are lowercase [a-z0-9:._-] \
          (no spaces, pipes, or uppercase). Namespaced system records use '<namespace>:…' \
          (curator:, curator:goal:, curator:thread:, skill_use_issue:, kanban:, skill:, agent:); \
          skill knowledge uses the BARE skill name (ruling ac85c2c8); lessons use bare \
@@ -1381,7 +1386,10 @@ mod tests {
     /// measured live (2026-10-08: 56 pipe / 68 space / 11 uppercase
     /// entities) — with an error that teaches the canonical form, while
     /// every canonical class (namespaced system record, bare skill name,
-    /// bare lesson slug, curator process entity) passes. Existing rows are
+    /// bare lesson slug, curator process entity) passes. Dots pass
+    /// (amendment 2026-10-10, card 91ea8f27): the corpus crate's
+    /// production entity refs embed source file names, and a file
+    /// extension is data, not drift. Existing rows are
     /// grandfathered: `update_confidence` and the direct `HMemStore` path
     /// are deliberately unvalidated.
     #[test]
@@ -1407,12 +1415,15 @@ mod tests {
             assert!(err.to_string().contains("canonical curator entity key"));
         }
 
-        // Every canonical class passes.
+        // Every canonical class passes — including the corpus crate's
+        // dot-bearing source-file refs (amendment 2026-10-10, card
+        // 91ea8f27: `river.txt`'s extension is data, not drift).
         for canonical in [
             "curator:thread:9c8d4a2e-1f2b-4c3d-8e5f-6a7b8c9d0e1f",
             "company-research-deep",
             "verification-protocol",
             "curator-process",
+            "corpus:researcher:consolidated:river.txt:0",
         ] {
             store_h_mem(&store, canonical, "lesson", "text", webid);
         }

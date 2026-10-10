@@ -294,8 +294,14 @@ entities (`category | lesson`), 68 space-containing entities (11 of them
 Capitalized With Spaces), and one stringified-JSON value against 881
 canonical/namespaced entities.
 
-The canonical form: an entity key is **lowercase `[a-z0-9:_-]+`** — no
-spaces, no pipes (`|`), no uppercase, no slashes. Per knowledge class:
+The canonical form: an entity key is **lowercase `[a-z0-9:._-]+`** — no
+spaces, no pipes (`|`), no uppercase, no slashes. Dots are allowed
+(amendment 2026-10-10, algedonic card 91ea8f27): the corpus crate's
+production entity refs embed source file names
+(`corpus:researcher:consolidated:river.txt:0`), and a file extension is
+data, not drift — the 2026-10-08 audit's drift classes were pipes,
+spaces, and uppercase, and the dot was collateral exclusion. Per
+knowledge class:
 
 | Class | Form | Examples |
 | --- | --- | --- |
