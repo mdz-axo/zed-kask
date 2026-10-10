@@ -4,7 +4,7 @@ Measures the `code-review` skill's detection recall, finding precision, and
 severity correctness against planted-defect fixtures. Built as proposal P4 of
 the 2026-10-09 improvement plan (card `09bae2d9-7985-4841-b2e4-2d26064432bf`);
 ground truth is by construction (defects are planted), annotations are
-agent-proposed with operator sign-off pending.
+operator-signed (signed_off 2026-10-10; see manifest.json annotation_status).
 
 ## Layout
 
