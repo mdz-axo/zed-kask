@@ -37,7 +37,10 @@ pub(crate) const MAX_JSON_SCHEMA_BYTES: usize = 32_768;
 pub(crate) use freshness::{Freshness, freshness_brave, freshness_serpapi};
 pub(crate) use ranking::{RerankOutcome, apply_rerank, llm_rerank, rrf_score};
 pub use rate_limiter::RateLimiter;
-pub(crate) use validation::{COMPOUND_PROVIDER_TIMEOUT_SECS, sanitize_health_error};
+pub(crate) use validation::{
+    COMPOUND_PROVIDER_TIMEOUT_SECS, normalize_closed_vocab, parse_closed_vocab,
+    sanitize_health_error,
+};
 
 // ── Provider profiles (metacognitive lookup table) ──
 
@@ -240,7 +243,9 @@ pub struct SearchRequest {
     /// run only when named here. When set, only that provider is queried — no fusion, no
     /// fallback. When `None` with an `intent`, the top-recommended provider
     /// is queried; with neither, the `strategy` field selects providers
-    /// (quick = best-scored single keyword provider; web/news/deep = fan out
+    /// (quick = best-scored single keyword provider under the live-merged
+    /// scoring — static profile plus live success/p50 penalties, so a
+    /// persistently failing provider drops out; web/news/deep = fan out
     /// with RRF fusion).
     pub provider: Option<String>,
     /// Optional research-run identifier (from `begin_research_run`): when
@@ -640,15 +645,18 @@ impl std::fmt::Display for SearchStrategy {
 impl std::str::FromStr for SearchStrategy {
     type Err = WebError;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "quick" => Ok(Self::Quick),
-            "web" | "semantic" => Ok(Self::Web),
-            "news" => Ok(Self::News),
-            "deep" | "research" => Ok(Self::Deep),
-            _ => Err(WebError::BadArgs(format!(
-                "Unknown strategy: {s}. Use: quick, web, news, deep"
-            ))),
-        }
+        // The shared closed-vocabulary parse site (C2): normalizes
+        // emission noise, accepts aliases, teaches on miss.
+        parse_closed_vocab(
+            "strategy",
+            s,
+            &[
+                (&["quick"], Self::Quick),
+                (&["web", "semantic"], Self::Web),
+                (&["news"], Self::News),
+                (&["deep", "research"], Self::Deep),
+            ],
+        )
     }
 }
 
@@ -718,8 +726,10 @@ pub(crate) struct SearchOutput {
     pub selected_provider: Option<String>,
     /// The provider ranking computed when `intent`-driven selection ran
     /// (provider unset, intent set): every configured/unconfigured provider
-    /// with score, rationale, and profile. Empty for explicit `provider`
-    /// calls and compound strategies.
+    /// with score, rationale, and profile. Carried on every path where
+    /// the tool makes the selection (intent pick, quick pick, fusion);
+    /// empty (field absent) for explicit `provider` calls — the caller's
+    /// own deliberate override needs no ranking.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub provider_recommendations: Vec<ProviderRecommendation>,
     /// How the deep strategy's rerank stage ran. `mode: "llm"` when the

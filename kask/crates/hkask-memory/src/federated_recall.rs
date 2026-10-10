@@ -6,7 +6,7 @@
 //! projects `embeddings.passage_text` directly, so corpus h_mems such as
 //! `method_signals` never enter the result surface.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -17,6 +17,8 @@ use hkask_storage::database::value::DbValue;
 use hkask_storage::{Database, EmbeddingStore};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+
+use crate::lexical;
 
 const MANIFEST_SCHEMA_VERSION: u32 = 1;
 const RUN_IDENTITY_SCHEMA_VERSION: u32 = 3;
@@ -407,6 +409,10 @@ pub fn interleave_ranked_batches(
 pub struct ReadOnlyPassageSource {
     identity: FederatedSourceIdentity,
     embeddings: EmbeddingStore,
+    /// The lexical leg of hybrid retrieval — `None` when the index build
+    /// failed at admission (logged there); retrieval then degrades to
+    /// dense-only for this source.
+    lexical: Option<lexical::LexicalIndex>,
 }
 
 impl ReadOnlyPassageSource {
@@ -743,6 +749,35 @@ impl ReadOnlyPassageSource {
                 source,
             }
         })?;
+        // The lexical leg of hybrid retrieval: a rare-term inverted index
+        // derived in memory from the sealed rows at admission. The sealed
+        // file is never modified; a build failure degrades this source to
+        // dense-only retrieval with the reason logged — never silent.
+        let lexical = match embeddings.list_passage_rows() {
+            Ok(rows) => {
+                let index = lexical::LexicalIndex::build(
+                    rows.into_iter()
+                        .map(|row| (row.id, row.entity_ref, row.passage_text)),
+                );
+                tracing::info!(
+                    target: "reg.memory",
+                    source_id = %spec.id,
+                    rows = index.row_count(),
+                    terms = index.term_count(),
+                    "Hybrid lexical index built for sealed source"
+                );
+                Some(index)
+            }
+            Err(error) => {
+                tracing::warn!(
+                    target: "reg.memory",
+                    source_id = %spec.id,
+                    error = %error,
+                    "Lexical index build failed; retrieval degrades to dense-only for this source"
+                );
+                None
+            }
+        };
         Ok(Self {
             identity: FederatedSourceIdentity {
                 source_id: spec.id.clone(),
@@ -757,6 +792,7 @@ impl ReadOnlyPassageSource {
                 passage_count,
             },
             embeddings,
+            lexical,
         })
     }
 
@@ -767,6 +803,7 @@ impl ReadOnlyPassageSource {
     pub fn search(
         &self,
         query_model: &str,
+        query_text: &str,
         query_vector: &[f32],
         limit: usize,
     ) -> Result<ExternalPassageBatch, FederatedRecallError> {
@@ -817,28 +854,122 @@ impl ReadOnlyPassageSource {
                 source_id: self.identity.source_id.clone(),
                 source,
             })?;
-        let results = outcome.results;
-        let mut hits = Vec::with_capacity(results.len());
-        let mut missing_text = 0;
-        for (index, result) in results.into_iter().enumerate() {
-            if !result
-                .embedding
-                .entity_ref
-                .starts_with(&self.identity.entity_ref_prefix)
-            {
-                return Err(FederatedRecallError::IncompatibleEntity {
+        let dense_results = outcome.results;
+
+        // Hybrid fusion: the dense KNN ranks are fused with the lexical
+        // leg's ranks by reciprocal-rank fusion — the legs' scores are
+        // never compared, each contributes 1/(RRF_K + rank). With no
+        // lexical index (build failed at admission) or no rare-term signal
+        // in the query, the fused order degenerates to the dense order:
+        // the lexical leg is silent without signal.
+        let lexical = self.lexical.as_ref();
+        let lexical_hits = lexical.map(|index| index.search(query_text, limit));
+        let mut contributions: HashMap<&str, f64> = HashMap::new();
+        for (index, result) in dense_results.iter().enumerate() {
+            // Build-metadata rows (the corpus's own MANIFEST) keep their
+            // dense candidacy but never on rank parity with content —
+            // they crowded 5 of the top-10 slots for real mechanics
+            // queries before the penalty (observed 2026-10-09).
+            let is_metadata = lexical
+                .map(|index| {
+                    index
+                        .row_by_id(&result.embedding.id)
+                        .is_some_and(|row| index.is_metadata(row))
+                })
+                .unwrap_or(false);
+            let rank = index + 1 + usize::from(is_metadata) * lexical::METADATA_RANK_PENALTY;
+            *contributions
+                .entry(result.embedding.id.as_str())
+                .or_insert(0.0) += lexical::rrf_contribution(rank);
+        }
+        if let (Some(index), Some(hits)) = (lexical, &lexical_hits) {
+            for (position, hit) in hits.iter().enumerate() {
+                if let Some(id) = index.row_id(hit.row) {
+                    *contributions.entry(id).or_insert(0.0) +=
+                        lexical::rrf_contribution(position + 1);
+                }
+            }
+        }
+        let mut ordered: Vec<(&str, f64)> = contributions.into_iter().collect();
+        // Deterministic tie-break on the embedding id: equal fused scores
+        // order stably across runs.
+        ordered.sort_by(|a, b| {
+            b.1.partial_cmp(&a.1)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.0.cmp(b.0))
+        });
+        ordered.truncate(limit);
+
+        // Materialize the fused rows. Dense-leg rows carry their measured
+        // vec0 distance; lexical-only rows fall outside the dense top-K
+        // window — the case this leg exists for — so their full rows are
+        // fetched by id and the cosine distance computed against the
+        // query vector. Admission verified exactly one model/dimension
+        // pair for the whole sealed table, so fetched rows share the
+        // sealed model and no per-row model gate is needed here.
+        let dense_by_id: HashMap<&str, &hkask_storage::SimilarityResult> = dense_results
+            .iter()
+            .map(|result| (result.embedding.id.as_str(), result))
+            .collect();
+        let missing: Vec<&str> = ordered
+            .iter()
+            .map(|(id, _contribution)| *id)
+            .filter(|id| !dense_by_id.contains_key(id))
+            .collect();
+        let mut fetched: HashMap<String, hkask_storage::StoredEmbedding> = HashMap::new();
+        if !missing.is_empty() {
+            let rows = self.embeddings.get_by_ids(&missing).map_err(|source| {
+                FederatedRecallError::Retrieval {
+                    source_id: self.identity.source_id.clone(),
+                    source,
+                }
+            })?;
+            if rows.len() != missing.len() {
+                return Err(FederatedRecallError::SchemaMismatch {
                     source_id: self.identity.source_id.clone(),
                     reason: format!(
-                        "retrieved entity '{}' falls outside prefix '{}'",
-                        result.embedding.entity_ref, self.identity.entity_ref_prefix
+                        "{} fused rows are absent from the sealed embeddings table",
+                        missing.len() - rows.len()
                     ),
                 });
             }
-            let Some(text) = result
-                .embedding
-                .passage_text
-                .filter(|text| !text.trim().is_empty())
-            else {
+            fetched = rows.into_iter().map(|row| (row.id.clone(), row)).collect();
+        }
+
+        let mut hits = Vec::with_capacity(ordered.len());
+        let mut missing_text = 0;
+        for (position, (id, _contribution)) in ordered.iter().enumerate() {
+            let (entity_ref, text, model, distance) = match (dense_by_id.get(*id), fetched.get(*id))
+            {
+                (Some(result), _) => (
+                    result.embedding.entity_ref.clone(),
+                    result.embedding.passage_text.clone(),
+                    result.embedding.model.clone(),
+                    result.distance,
+                ),
+                (None, Some(row)) => (
+                    row.entity_ref.clone(),
+                    row.passage_text.clone(),
+                    row.model.clone(),
+                    cosine_distance(query_vector, &row.vector),
+                ),
+                (None, None) => {
+                    return Err(FederatedRecallError::SchemaMismatch {
+                        source_id: self.identity.source_id.clone(),
+                        reason: format!("fused row '{id}' is absent from both retrieval legs"),
+                    });
+                }
+            };
+            if !entity_ref.starts_with(&self.identity.entity_ref_prefix) {
+                return Err(FederatedRecallError::IncompatibleEntity {
+                    source_id: self.identity.source_id.clone(),
+                    reason: format!(
+                        "retrieved entity '{entity_ref}' falls outside prefix '{}'",
+                        self.identity.entity_ref_prefix
+                    ),
+                });
+            }
+            let Some(text) = text.filter(|text| !text.trim().is_empty()) else {
                 missing_text += 1;
                 continue;
             };
@@ -846,12 +977,12 @@ impl ReadOnlyPassageSource {
                 source_id: self.identity.source_id.clone(),
                 display_name: self.identity.display_name.clone(),
                 run_id: self.identity.run_id.clone(),
-                embedding_id: result.embedding.id,
-                entity_ref: result.embedding.entity_ref,
+                embedding_id: (*id).to_string(),
+                entity_ref,
                 text,
-                model: result.embedding.model,
-                distance: result.distance,
-                source_rank: index + 1,
+                model,
+                distance,
+                source_rank: position + 1,
             });
         }
         Ok(ExternalPassageBatch {
@@ -861,6 +992,24 @@ impl ReadOnlyPassageSource {
             excluded_model_mismatch: outcome.excluded_model_mismatch,
         })
     }
+}
+
+/// Cosine distance matching vec0's `distance_metric=cosine` (1 − cos):
+/// lexical-only fused rows fall outside the dense KNN window, so their
+/// distance is computed directly against the query vector.
+fn cosine_distance(query: &[f32], vector: &[f32]) -> f64 {
+    let mut dot = 0.0;
+    let mut query_norm = 0.0;
+    let mut vector_norm = 0.0;
+    for (query_component, vector_component) in query.iter().zip(vector) {
+        dot += *query_component as f64 * *vector_component as f64;
+        query_norm += *query_component as f64 * *query_component as f64;
+        vector_norm += *vector_component as f64 * *vector_component as f64;
+    }
+    if query_norm == 0.0 || vector_norm == 0.0 {
+        return 1.0;
+    }
+    1.0 - dot / (query_norm.sqrt() * vector_norm.sqrt())
 }
 
 #[derive(Deserialize)]

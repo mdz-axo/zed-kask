@@ -1,0 +1,166 @@
+{
+  "harness": "code-review",
+  "version": 1,
+  "created": "2026-10-09",
+  "annotation_status": "agent-proposed (defects are planted, so ground truth is by construction); operator sign-off pending",
+  "severity_vocabulary": ["FYI", "Nit", "Should-fix", "Blocker"],
+  "class_vocabulary": [
+    "unwrap_fallible",
+    "silent_discard",
+    "hardcoded_dup",
+    "invented_api",
+    "stray_import",
+    "out_of_scope_edit",
+    "n_plus_one",
+    "missing_timeout",
+    "cross_layer_mismatch",
+    "spec_mismatch",
+    "subjunctive_concurrency",
+    "secret_leak",
+    "panicking_index"
+  ],
+  "fixtures": [
+    {
+      "id": "01-unwrap-fallible",
+      "file": "fixtures/01-unwrap-fallible.md",
+      "category": "representative",
+      "expected_verdict": "Request changes",
+      "expected": [
+        {"class": "unwrap_fallible", "file": "src/services/user_service.rs", "line_approx": "15", "severity": "Blocker", "note": ".rules Prohibition: no unwrap() in production code"}
+      ]
+    },
+    {
+      "id": "02-silent-discard-hardcoded",
+      "file": "fixtures/02-silent-discard-hardcoded.md",
+      "category": "representative",
+      "expected_verdict": "Request changes",
+      "expected": [
+        {"class": "silent_discard", "file": "src/config.rs", "line_approx": "31", "severity": "Blocker", "note": "let _ = on fallible validate()"},
+        {"class": "hardcoded_dup", "file": "src/config.rs", "line_approx": "32", "severity": "Should-fix", "note": "30 duplicates DEFAULT_TIMEOUT_SECS in the same module"}
+      ]
+    },
+    {
+      "id": "03-invented-api",
+      "file": "fixtures/03-invented-api.md",
+      "category": "representative",
+      "expected_verdict": "Request changes",
+      "expected": [
+        {"class": "invented_api", "file": "src/orders.rs", "line_approx": "43", "severity": "Blocker", "note": "all.paginate() has no definition anywhere; the helper is the free function paginate_orders(); the change cannot compile"}
+      ]
+    },
+    {
+      "id": "04-stray-import",
+      "file": "fixtures/04-stray-import.md",
+      "category": "representative",
+      "expected_verdict": "Approve",
+      "expected": [
+        {"class": "stray_import", "file": "src/handler.rs", "line_approx": "3", "severity": "FYI", "note": "rustc unused-import warning covers it and CI denies warnings — FYI at most under linter-overlap suppression"}
+      ]
+    },
+    {
+      "id": "05-out-of-scope-edit",
+      "file": "fixtures/05-out-of-scope-edit.md",
+      "category": "representative",
+      "expected_verdict": "Approve",
+      "expected": [
+        {"class": "out_of_scope_edit", "file": "src/billing.rs", "line_approx": "42", "severity": "Should-fix", "note": "unrequested rename in payments-adjacent code; a stricter reading treats it as a waivable Guardrail Blocker"}
+      ]
+    },
+    {
+      "id": "06-n-plus-one",
+      "file": "fixtures/06-n-plus-one.md",
+      "category": "representative",
+      "expected_verdict": "Approve",
+      "expected": [
+        {"class": "n_plus_one", "file": "src/report.rs", "line_approx": "14", "severity": "Should-fix", "note": "per-id get_order in a loop; batched get_orders exists; unquantified performance caps at Should-fix"}
+      ]
+    },
+    {
+      "id": "07-missing-timeout",
+      "file": "fixtures/07-missing-timeout.md",
+      "category": "representative",
+      "expected_verdict": "Approve",
+      "expected": [
+        {"class": "missing_timeout", "file": "src/checkout.rs", "line_approx": "33", "severity": "Should-fix", "note": "no timeout on a user-facing remote call; every other outbound call sets one"}
+      ]
+    },
+    {
+      "id": "08-cross-layer-mismatch",
+      "file": "fixtures/08-cross-layer-mismatch.md",
+      "category": "representative",
+      "expected_verdict": "Request changes",
+      "expected": [
+        {"class": "cross_layer_mismatch", "file": "src/client/flags.rs", "line_approx": "11", "severity": "Blocker", "note": "client defaults true, server defaults false — inconsistent gating ships when the flag is unset"}
+      ]
+    },
+    {
+      "id": "09-spec-mismatch",
+      "file": "fixtures/09-spec-mismatch.md",
+      "category": "representative",
+      "expected_verdict": "Request changes",
+      "expected": [
+        {"class": "spec_mismatch", "file": "src/auth.rs", "line_approx": "41", "severity": "Blocker", "note": "spec asks per-IP limiting; the code limits per-user"}
+      ]
+    },
+    {
+      "id": "10-clean-extraction",
+      "file": "fixtures/10-clean-extraction.md",
+      "category": "negative",
+      "expected_verdict": "Approve",
+      "expected": [],
+      "note": "strict clean: any finding at any severity is a false positive (anti-fabrication test)"
+    },
+    {
+      "id": "11-taste-only",
+      "file": "fixtures/11-taste-only.md",
+      "category": "negative",
+      "expected_verdict": "Approve",
+      "expected": [],
+      "max_severity": "Nit",
+      "tolerate_below": "Should-fix",
+      "note": "taste never blocks: unmapped Nit/FYI findings are tolerated; any Should-fix or Blocker is a ceiling violation"
+    },
+    {
+      "id": "12-subjunctive-concurrency",
+      "file": "fixtures/12-subjunctive-concurrency.md",
+      "category": "boundary",
+      "expected_verdict": "Approve",
+      "expected": [
+        {"class": "subjunctive_concurrency", "file": "src/metrics.rs", "line_approx": "9", "severity": "Should-fix", "note": "subjunctive claim (correct today, races under future concurrent callers) — provenance ceiling: never exceeds Should-fix"}
+      ],
+      "max_severity": "Should-fix",
+      "tolerate_below": "Nit",
+      "note": "a Blocker here is a provenance-ceiling violation"
+    },
+    {
+      "id": "13-uncommitted-diff-trap",
+      "file": "fixtures/13-uncommitted-diff-trap.md",
+      "category": "scenario",
+      "scenario": true,
+      "expected_verdict": null,
+      "expected": [],
+      "expected_behavior": "scope inspects the working-tree diff (git diff / --cached); a review that emits size_class empty on this scenario FAILS",
+      "note": "process fixture: scored on behavior_pass, not on findings"
+    },
+    {
+      "id": "holdout-01-secret-leak",
+      "file": "heldout/holdout-01-secret-leak.md",
+      "category": "held-out",
+      "held_out": true,
+      "expected_verdict": "Request changes",
+      "expected": [
+        {"class": "secret_leak", "file": "src/payment.rs", "line_approx": "22", "severity": "Blocker", "note": "live credential logged to the shared aggregator"}
+      ]
+    },
+    {
+      "id": "holdout-02-panicking-index",
+      "file": "heldout/holdout-02-panicking-index.md",
+      "category": "held-out",
+      "held_out": true,
+      "expected_verdict": "Request changes",
+      "expected": [
+        {"class": "panicking_index", "file": "src/report.rs", "line_approx": "16", "severity": "Blocker", "note": "unbounded index on external data; .rules: no panicking indexing"}
+      ]
+    }
+  ]
+}

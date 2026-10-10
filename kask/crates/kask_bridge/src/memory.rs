@@ -650,6 +650,7 @@ impl RealMemoryPort {
             .await
             .map_err(|error| format!("External query embedding task failed: {error}"))??;
         let model = self.embedding_model.clone();
+        let query_text = query.to_string();
         self.tokio_handle
             .spawn_blocking(move || {
                 let results = registry
@@ -663,9 +664,14 @@ impl RealMemoryPort {
                                 source.identity().source_id
                             )
                         })?;
-                        source.search(&model, vector, limit).map_err(|error| {
-                            format!("External source '{}': {error}", source.identity().source_id)
-                        })
+                        source
+                            .search(&model, &query_text, vector, limit)
+                            .map_err(|error| {
+                                format!(
+                                    "External source '{}': {error}",
+                                    source.identity().source_id
+                                )
+                            })
                     })
                     .collect::<Result<Vec<_>, _>>()?;
                 if !registry.unchanged()? {
@@ -1670,6 +1676,208 @@ pub(crate) mod tests {
             "the width-matched passage is found"
         );
         assert_eq!(batches[0].hits[0].text, "width-matched fixture passage");
+        Ok(())
+    }
+
+    /// The hybrid-retrieval known-answer fixture: a named document whose
+    /// passage text never names itself (only the entity_ref filename
+    /// carries the name), dense-attracting decoys, and the corpus's own
+    /// MANIFEST metadata chunk whose text contains the named document's
+    /// slug. Every query embeds as `vector[0] = 1.0`
+    /// (`in_memory_port_with_external_fixture`), so slot-0 documents sit at
+    /// dense distance 0 and the slot-1 named document at dense distance 1
+    /// — dense alone ranks the named document last, which is the live
+    /// failure the lexical leg exists to fix (2026-10-09: the query
+    /// "magnifica humanitas" did not recall the charter from zk-ref-open).
+    fn hybrid_retrieval_documents() -> Vec<hkask_memory::test_support::DocumentFixture> {
+        vec![
+            hkask_memory::test_support::DocumentFixture {
+                filename: "alpha-charter.md".to_string(),
+                passages: vec![
+                    "dignity of work expresses and enhances the lives of persons".to_string(),
+                    "subsidiarity places decisions at the closest level to the person".to_string(),
+                    "the limit is positive and systems flourish through restraint".to_string(),
+                ],
+                vector_slot: 1,
+            },
+            hkask_memory::test_support::DocumentFixture {
+                filename: "decoy-instructions.md".to_string(),
+                passages: vec![
+                    "system prompt instructions template for responding to queries".to_string(),
+                ],
+                vector_slot: 0,
+            },
+            hkask_memory::test_support::DocumentFixture {
+                filename: "decoy-dialogue.md".to_string(),
+                passages: vec![
+                    "dialogue history and working memory sections of the prompt".to_string(),
+                ],
+                vector_slot: 0,
+            },
+            hkask_memory::test_support::DocumentFixture {
+                filename: "MANIFEST.json".to_string(),
+                passages: vec![
+                    r#"{"slug": "alpha-charter", "retrieval": {"method": "fixture"}}"#.to_string(),
+                ],
+                vector_slot: 0,
+            },
+        ]
+    }
+
+    fn fixture_hex(filename: &str) -> String {
+        filename.bytes().map(|byte| format!("{byte:02x}")).collect()
+    }
+
+    async fn hybrid_retrieval_batches(
+        manifest_path: &std::path::Path,
+        query: &str,
+    ) -> anyhow::Result<Vec<hkask_memory::ExternalPassageBatch>> {
+        let port = in_memory_port_with_external_fixture();
+        port.search_external_passages_at(
+            manifest_path,
+            query,
+            &["fixture-reference".to_string()],
+            5,
+        )
+        .await
+        .map_err(anyhow::Error::msg)
+    }
+
+    /// The bare entity-name query must recall the named document's chunks
+    /// — the live failure class: dense alone ranked them last, and the
+    /// metadata chunk crowded the window before the penalty.
+    #[tokio::test]
+    async fn entity_name_query_recalls_the_named_document() -> anyhow::Result<()> {
+        let directory = tempfile::tempdir()?;
+        let manifest_path = hkask_memory::test_support::sealed_federated_fixture_documents(
+            directory.path(),
+            "fixture-reference",
+            "Fixture research library",
+            "test-model",
+            "test-model",
+            &hybrid_retrieval_documents(),
+        )?;
+        let batches = hybrid_retrieval_batches(&manifest_path, "alpha charter").await?;
+        let hits = &batches[0].hits;
+        let alpha = fixture_hex("alpha-charter.md");
+        let manifest = fixture_hex("MANIFEST.json");
+        assert_eq!(
+            hits.iter()
+                .filter(|hit| hit.entity_ref.contains(&alpha))
+                .count(),
+            3,
+            "all three named-document chunks must surface, including the one outside the dense window"
+        );
+        assert!(
+            hits[0].entity_ref.contains(&alpha) && hits[1].entity_ref.contains(&alpha),
+            "the bare entity-name query must rank the named document first"
+        );
+        assert!(
+            hits.iter().all(|hit| !hit.entity_ref.contains(&manifest)),
+            "the metadata chunk must not crowd the named document out"
+        );
+        Ok(())
+    }
+
+    /// A multi-topic prompt that names the document once among mechanics
+    /// vocabulary must still recall it — the live case was a long recall-
+    /// mechanics question naming the charter.
+    #[tokio::test]
+    async fn multitopic_prompt_recalls_the_named_document() -> anyhow::Result<()> {
+        let directory = tempfile::tempdir()?;
+        let manifest_path = hkask_memory::test_support::sealed_federated_fixture_documents(
+            directory.path(),
+            "fixture-reference",
+            "Fixture research library",
+            "test-model",
+            "test-model",
+            &hybrid_retrieval_documents(),
+        )?;
+        let query = "how does the recall of the alpha charter from the federated source work, \
+                     is it chunked and tagged, and were the chunks injected into the context";
+        let batches = hybrid_retrieval_batches(&manifest_path, query).await?;
+        let hits = &batches[0].hits;
+        let alpha = fixture_hex("alpha-charter.md");
+        assert!(
+            hits[0].entity_ref.contains(&alpha),
+            "the named document must lead the fused ranking"
+        );
+        assert_eq!(
+            hits.iter()
+                .filter(|hit| hit.entity_ref.contains(&alpha))
+                .count(),
+            3,
+            "all three named-document chunks must surface"
+        );
+        Ok(())
+    }
+
+    /// The corpus's own build-metadata chunk (MANIFEST.json) is down-ranked:
+    /// on dense rank parity with content chunks it surfaces last, never
+    /// crowding content out of the window.
+    #[tokio::test]
+    async fn metadata_source_chunks_are_downranked() -> anyhow::Result<()> {
+        let directory = tempfile::tempdir()?;
+        let manifest_path = hkask_memory::test_support::sealed_federated_fixture_documents(
+            directory.path(),
+            "fixture-reference",
+            "Fixture research library",
+            "test-model",
+            "test-model",
+            &hybrid_retrieval_documents(),
+        )?;
+        let query = "system prompt instructions template dialogue history working memory \
+                     sections responding queries";
+        let batches = hybrid_retrieval_batches(&manifest_path, query).await?;
+        let hits = &batches[0].hits;
+        let manifest = fixture_hex("MANIFEST.json");
+        let manifest_position = hits
+            .iter()
+            .position(|hit| hit.entity_ref.contains(&manifest))
+            .expect("the metadata chunk keeps its candidacy, down-ranked not excluded");
+        assert_eq!(
+            manifest_position,
+            hits.len() - 1,
+            "the metadata chunk must rank last, never on parity with content"
+        );
+        Ok(())
+    }
+
+    /// Control: a query with no rare-term signal leaves the dense order
+    /// among content rows unchanged — the lexical leg is silent without
+    /// signal, and only the metadata penalty applies.
+    #[tokio::test]
+    async fn queries_without_rare_terms_keep_the_dense_order() -> anyhow::Result<()> {
+        let directory = tempfile::tempdir()?;
+        let manifest_path = hkask_memory::test_support::sealed_federated_fixture_documents(
+            directory.path(),
+            "fixture-reference",
+            "Fixture research library",
+            "test-model",
+            "test-model",
+            &hybrid_retrieval_documents(),
+        )?;
+        let batches =
+            hybrid_retrieval_batches(&manifest_path, "qqq www unindexed vocabulary").await?;
+        let hits = &batches[0].hits;
+        let instructions = fixture_hex("decoy-instructions.md");
+        let dialogue = fixture_hex("decoy-dialogue.md");
+        let alpha = fixture_hex("alpha-charter.md");
+        let instructions_position = hits
+            .iter()
+            .position(|hit| hit.entity_ref.contains(&instructions))
+            .expect("dense-attracting decoy present");
+        let dialogue_position = hits
+            .iter()
+            .position(|hit| hit.entity_ref.contains(&dialogue))
+            .expect("dense-attracting decoy present");
+        for hit in hits.iter().filter(|hit| hit.entity_ref.contains(&alpha)) {
+            assert!(
+                hit.source_rank > instructions_position + 1
+                    && hit.source_rank > dialogue_position + 1,
+                "without rare-term signal the dense order among content rows is unchanged"
+            );
+        }
         Ok(())
     }
 

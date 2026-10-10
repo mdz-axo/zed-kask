@@ -51,6 +51,16 @@ pub struct SearchOutcome {
     pub results: Vec<SimilarityResult>,
     pub excluded_model_mismatch: usize,
 }
+/// One row's identity and passage text without its vector — the hybrid
+/// lexical index builds from a full-table scan once per sealed-source
+/// admission, and decoding every stored vector for a text-only scan would
+/// be pure cost.
+#[derive(Debug, Clone)]
+pub struct PassageRow {
+    pub id: String,
+    pub entity_ref: String,
+    pub passage_text: Option<String>,
+}
 /// KNN over-fetch factor for the model gate: each search fetches
 /// `limit × this` candidates so matching-model rows can still fill `limit`
 /// while rows from another embedding model are filtered out. vec0 KNN scans
@@ -431,6 +441,73 @@ impl EmbeddingStore {
             results,
             excluded_model_mismatch,
         })
+    }
+
+    /// List every row's id, entity_ref, and passage_text — without
+    /// vectors. The hybrid lexical index builds from this full-table scan
+    /// once per sealed-source admission; the sealed database is never
+    /// modified.
+    pub fn list_passage_rows(&self) -> Result<Vec<PassageRow>, EmbeddingError> {
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| InfrastructureError::database(e.to_string()))?;
+        let mut stmt = conn.prepare("SELECT id, entity_ref, passage_text FROM embeddings")?;
+        let rows = stmt.query_map([], |row| {
+            Ok(PassageRow {
+                id: row.get(0)?,
+                entity_ref: row.get(1)?,
+                passage_text: row.get(2)?,
+            })
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
+    /// Fetch full rows (with decoded vectors) by embedding id. The hybrid
+    /// fusion path materializes lexical-leg hits that fall outside the
+    /// dense KNN window, so their rows are fetched after fusion rather
+    /// than over-fetching vectors for every candidate. Returns only the
+    /// rows that exist; the fusion caller enforces the count — a missing
+    /// id in a sealed store is a consistency failure it reports loudly.
+    pub fn get_by_ids(&self, ids: &[&str]) -> Result<Vec<StoredEmbedding>, EmbeddingError> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| InfrastructureError::database(e.to_string()))?;
+        let mut stmt = conn.prepare(
+            "SELECT id, entity_ref, vector, model, passage_text FROM embeddings WHERE id = ?1",
+        )?;
+        let mut rows = Vec::with_capacity(ids.len());
+        for id in ids {
+            let mut matched = stmt.query_map(rusqlite::params![id], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Vec<u8>>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                ))
+            })?;
+            if let Some(row) = matched.next() {
+                let (id, entity_ref, blob, model, passage_text) = row?;
+                let vector = Self::decode_vector(&blob, self.dim())?;
+                rows.push(StoredEmbedding {
+                    id,
+                    entity_ref,
+                    vector,
+                    model,
+                    passage_text,
+                });
+            }
+        }
+        Ok(rows)
     }
     /// Delete one exact embedding from both tables in one transaction.
     ///

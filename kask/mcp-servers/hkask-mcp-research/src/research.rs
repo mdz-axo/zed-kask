@@ -49,7 +49,7 @@ pub(crate) use types::{
     MAX_JSON_PROMPT_LENGTH, MAX_JSON_SCHEMA_BYTES, MAX_QUERY_LENGTH, MAX_URL_LENGTH, PingOutput,
     ProviderProfileOutput, ProviderRecommendation, RerankInfo, RerankOutcome, ResolvePaperRequest,
     SearchMetadata, SearchOutput, SearchQuery, SearchRequest, SearchResultOutput, SearchStrategy,
-    WebError, llm_rerank, provider_profile,
+    WebError, llm_rerank, normalize_closed_vocab, parse_closed_vocab, provider_profile,
 };
 
 /// Build a `ProviderPool` from a credential map.

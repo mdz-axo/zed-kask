@@ -1,6 +1,6 @@
 //! Freshness normalization per provider.
 
-use crate::research::types::WebError;
+use crate::research::types::{WebError, parse_closed_vocab};
 use serde::{Deserialize, Serialize};
 
 /// Normalized freshness values at the MCP boundary.
@@ -19,17 +19,30 @@ pub(crate) enum Freshness {
 impl std::str::FromStr for Freshness {
     type Err = WebError;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "day" | "d" | "1d" | "past_day" | "past day" | "24h" => Ok(Freshness::Day),
-            "week" | "w" | "1w" | "past_week" | "past week" | "7d" | "pw" => Ok(Freshness::Week),
-            "month" | "m" | "1m" | "past_month" | "past month" | "30d" | "pm" => {
-                Ok(Freshness::Month)
-            }
-            "year" | "y" | "1y" | "past_year" | "past year" | "365d" | "py" => Ok(Freshness::Year),
-            _ => Err(WebError::BadArgs(format!(
-                "Unknown freshness: {s}. Use: day, week, month, year"
-            ))),
-        }
+        // The shared closed-vocabulary parse site (C2): normalizes
+        // emission noise, accepts the provider-idiomatic aliases.
+        parse_closed_vocab(
+            "freshness",
+            s,
+            &[
+                (
+                    &["day", "d", "1d", "past_day", "past day", "24h"],
+                    Self::Day,
+                ),
+                (
+                    &["week", "w", "1w", "past_week", "past week", "7d", "pw"],
+                    Self::Week,
+                ),
+                (
+                    &["month", "m", "1m", "past_month", "past month", "30d", "pm"],
+                    Self::Month,
+                ),
+                (
+                    &["year", "y", "1y", "past_year", "past year", "365d", "py"],
+                    Self::Year,
+                ),
+            ],
+        )
     }
 }
 

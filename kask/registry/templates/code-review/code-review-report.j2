@@ -1,4 +1,4 @@
-{# goal: Produce the verdict + named structural remedies + coverage honesty + lessons_learned/next_review_focus loop closure. Verdict driven by Blocker presence, not nit count. Never a bare "LGTM". #}
+{# goal: Produce the verdict + named structural remedies + coverage honesty + decoupling disclosure + lessons_learned/next_review_focus loop closure with durable lessons routed to curator memory and the .rules proposal path. Verdict driven by Blocker presence, not nit count. Never a bare "LGTM". #}
 [inference]
 contract:
   input:
@@ -128,12 +128,24 @@ A clean review MUST say so explicitly and name what it did NOT verify. Never
 output a bare "LGTM". Anti-sycophancy: "LGTM without evidence of review" is a
 failure mode.
 
+Also emit `decoupling` in the review object (`in_thread` | `spawn_agent` |
+`fresh_session` | `unknown`), from the change model's `reviewer_is_author`
+and how this review was invoked: an `in_thread` author-review is a
+self-check — say so and discount reliability claims accordingly
+(grounding-verify's decoupling discipline); never present it as independent.
+
 ## Step 6 — Loop closure
 
 Emit:
 - **lessons_learned**: concrete, actionable lessons derived from THIS review's
   findings (e.g., "N+1 pattern recurred in two handlers; next pass should
-  check all list endpoints"). Not generic platitudes.
+  check all list endpoints"). Not generic platitudes. A lesson naming a
+  RECURRING defect class is durable: store it via `memory_insert` (entity
+  `skill:code-review`, attribute `recurring_defect_class`, value the class +
+  a concrete example, evidence = this review's findings) when curator tools
+  are available; a lesson naming a repo trap routes to the `.rules` proposal
+  path in the change report — never edit `.rules` inline. One-off lessons
+  stay in prior_review_handoff only.
 - **next_review_focus**: what the next pass should concentrate on; EMPTY string
   if the review converged clean (zero open Blockers).
 
@@ -145,6 +157,7 @@ Respond with a JSON object:
 {
   "review": {
     "verdict": "Approve | Request changes | Comment",
+    "decoupling": "in_thread | spawn_agent | fresh_session | unknown",
     "summary": "one-line: N findings (B blockers, S should-fix, N nit, F fyi), verdict",
     "prediction_reconciliation": {"predicted_findings": 0, "found_findings": 0, "predicted_blockers": 0, "found_blockers": 0, "gap": [0, 0]},
     "findings_by_severity": {
@@ -177,9 +190,11 @@ adjudicate's `blocker_delta` baseline is typed and emitted, never inferred.
 - Verdict driven by Blocker presence, NOT nit count. Don't block on taste.
 - Every Blocker/Should-fix finding carries a concrete remedy AND a falsifier.
 - Coverage honesty is mandatory: checked / not_checked / residual_risk. Never
-  a bare "LGTM".
+  a bare "LGTM". The `decoupling` field is mandatory — an in_thread
+  author-review is disclosed as a self-check, never presented as independent.
 - lessons_learned must be concrete and derived from this review's findings, not
-  generic platitudes.
+  generic platitudes; recurring defect classes route to curator memory / the
+  .rules proposal path (never edit `.rules` inline).
 - next_review_focus is empty when the review converged clean (zero open
   Blockers).
 - Emit prior_review_handoff: blockers as an integer count — the typed

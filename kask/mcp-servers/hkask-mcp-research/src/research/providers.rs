@@ -109,30 +109,7 @@ pub(crate) fn validate_provider_url_permissive(url: &str) -> Result<(), WebError
         .map_err(|e| WebError::BadArgs(e.message))
 }
 
-/// Pick the best provider from a set of candidates using the static profile
-/// table. Scoring: lower cost and faster latency tier score higher. Ties
-/// break on alphabetical kind for determinism. Returns the first candidate
-/// if none have a profile (free providers only).
-///
-/// Layer 3 will merge live performance data (success rate, p50 latency)
-/// into this score. For now, the static profile drives selection — already
-/// a deliberate choice over blind first-Ok-wins fallback.
-pub(crate) fn pick_best_provider<'a>(
-    candidates: &[&'a (dyn WebSearchProvider + 'a)],
-) -> &'a (dyn WebSearchProvider + 'a) {
-    candidates
-        .iter()
-        .min_by(|a, b| {
-            let sa = score_static((*a).kind());
-            let sb = score_static((*b).kind());
-            sa.partial_cmp(&sb)
-                .unwrap_or(std::cmp::Ordering::Equal)
-                .then_with(|| (*a).kind().cmp((*b).kind()))
-        })
-        .copied()
-        .expect("pick_best_provider requires at least one candidate")
-}
-
+/// Whether a provider KIND name is recognized, and what gates it.
 /// Static score for a provider kind: lower cost + faster latency = lower
 /// score (we sort ascending). Returns a neutral mid-score for providers
 /// without a profile (free providers like arxiv/semantic_scholar).
@@ -147,6 +124,37 @@ fn score_static(kind: &str) -> f64 {
             p.cost_per_call_usd + latency_penalty
         }
         None => 0.5,
+    }
+}
+
+/// Whether a provider KIND name is recognized, and what gates it. Drives the
+/// `search_single_provider` error taxonomy: a recognized name that isn't
+/// registered is a configuration fact (permission_denied naming the env
+/// var); an unrecognized name is a closed-set mistake — typo or quoted
+/// value — (invalid_argument naming the valid values). Conflating the two
+/// sent agents chasing API keys for quoting mistakes (observed live
+/// 2026-10-09).
+pub(crate) enum KnownProviderKind {
+    /// Recognized; enabled by setting this env var.
+    Credential(&'static str),
+    /// Recognized; free and always registered at pool construction, so its
+    /// absence from a pool is a construction anomaly, not configuration.
+    Free,
+    /// Not a provider kind name at all.
+    Unknown,
+}
+
+pub(crate) fn known_provider_kind(kind: &str) -> KnownProviderKind {
+    match kind {
+        "tavily" => KnownProviderKind::Credential("HKASK_TAVILY_API_KEY"),
+        "brave" => KnownProviderKind::Credential("HKASK_BRAVE_API_KEY"),
+        "exa" => KnownProviderKind::Credential("HKASK_EXA_API_KEY"),
+        "firecrawl" => KnownProviderKind::Credential("HKASK_FIRECRAWL_API_KEY"),
+        "serpapi" | "google_scholar" | "google_books" => {
+            KnownProviderKind::Credential("HKASK_SERPAPI_API_KEY")
+        }
+        "openalex" | "arxiv" | "semantic_scholar" => KnownProviderKind::Free,
+        _ => KnownProviderKind::Unknown,
     }
 }
 
@@ -299,9 +307,12 @@ impl ProviderPool {
     /// list). Used when the caller sets `provider` explicitly or when the
     /// `quick` strategy picks a single best-scored provider.
     ///
-    /// Returns `NoProviderConfigured` if the named provider isn't registered
-    /// (missing API key) so the caller can surface a clear error rather than
-    /// silently falling back to another provider.
+    /// A name that isn't registered errors by WHICH mistake it is
+    /// (`known_provider_kind`): a recognized kind is a configuration gap
+    /// (`NoProviderConfigured` → permission_denied, naming the env var);
+    /// anything else is a closed-set mistake — typo or quoted value —
+    /// (`BadArgs` → invalid_argument, naming the registered kinds). The
+    /// caller never gets a silent fallback to another provider.
     pub async fn search_single_provider(
         &self,
         kind: &str,
@@ -312,10 +323,23 @@ impl ProviderPool {
             .iter()
             .find(|p| p.kind() == kind)
             .ok_or_else(|| {
-                WebError::NoProviderConfigured(format!(
-                    "Provider '{kind}' is not configured. Set the corresponding API key \
-                     or pick a configured provider via web_recommend_provider."
-                ))
+                let registered = self.search_provider_kinds().join(", ");
+                match known_provider_kind(kind) {
+                    KnownProviderKind::Credential(var) => WebError::NoProviderConfigured(format!(
+                        "Provider '{kind}' is recognized but not configured — set {var} \
+                         to enable it. Registered providers: {registered}."
+                    )),
+                    KnownProviderKind::Free => WebError::NoProviderConfigured(format!(
+                        "Provider '{kind}' is free and always registered at pool \
+                         construction — its absence from this pool is a construction \
+                         anomaly, not a configuration issue."
+                    )),
+                    KnownProviderKind::Unknown => WebError::BadArgs(format!(
+                        "Unknown provider '{kind}'. Registered providers: {registered}. \
+                         Other recognized names (each needs an API key): tavily, brave, \
+                         exa, firecrawl, serpapi, google_scholar, google_books."
+                    )),
+                }
             })?;
 
         let start = std::time::Instant::now();
@@ -415,6 +439,53 @@ impl ProviderPool {
                 duplicates_removed: 0,
             }),
         }
+    }
+
+    /// The live-merged scoring model for one provider kind: the static
+    /// profile score plus the live success-rate/p50 penalty from the
+    /// in-process `reg.web.provider` feedback loop. The single model
+    /// behind both `score_providers`' ranking and the quick strategy's
+    /// pick — one feedback loop, two consumers. Below
+    /// `MIN_SAMPLES_FOR_LIVE` the penalty is 0 and this reduces to the
+    /// static score.
+    fn live_merged_score(&self, kind: &str) -> (f64, Vec<&'static str>) {
+        let (live_penalty, live_rationale) =
+            crate::research::performance::live_performance_penalty(&self.performance, kind);
+        (score_static(kind) + live_penalty.max(0.0), live_rationale)
+    }
+
+    /// Pick the quick strategy's provider: the registered, keyword-capable,
+    /// non-explicit-only candidate with the best (lowest) live-merged
+    /// score. C3: the quick pick was static-only, ignoring the live
+    /// feedback the server already collects — with the shared model a
+    /// provider that keeps failing drops out of quick automatically.
+    /// Ties break on alphabetical kind for determinism. Errors with the
+    /// keyword-capability message when no candidate exists.
+    pub(crate) fn pick_quick_provider(&self) -> Result<&str, WebError> {
+        let candidates: Vec<&dyn WebSearchProvider> = self
+            .search_providers
+            .iter()
+            .filter(|p| !p.explicit_only())
+            .filter(|p| p.capabilities().contains(&SearchCapability::Keyword))
+            .map(|p| p.as_ref())
+            .collect();
+        if candidates.is_empty() {
+            return Err(WebError::NoProviderConfigured(
+                "No keyword-capable provider configured. Set an API key \
+                 (HKASK_BRAVE_API_KEY, HKASK_TAVILY_API_KEY, etc.) to use web_search."
+                    .to_string(),
+            ));
+        }
+        Ok(candidates
+            .into_iter()
+            .map(|p| (self.live_merged_score(p.kind()).0, p.kind()))
+            .min_by(|a, b| {
+                a.0.partial_cmp(&b.0)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then_with(|| a.1.cmp(b.1))
+            })
+            .expect("non-empty candidates checked above")
+            .1)
     }
 
     pub async fn search_compound(
@@ -702,8 +773,9 @@ impl ProviderPool {
 
     /// Score each configured search provider against a query + intent hint,
     /// returning ranked recommendations. This is the metacognitive surface:
-    /// the model calls `web_recommend_provider` to pick deliberately rather
-    /// than relying on blind fallback.
+    /// `web_search`'s `intent` path calls it to pick deliberately rather
+    /// than relying on blind fallback, and surfaces the ranking in the
+    /// response's `provider_recommendations`.
     ///
     /// Scoring (lower is better):
     /// - Static: `cost_per_call_usd` + latency penalty (Fast=0, Medium=0.5, Slow=1.0)
@@ -730,7 +802,10 @@ impl ProviderPool {
             .iter()
             .map(|profile| {
                 let configured = configured_kinds.contains(profile.kind);
-                let mut score = score_static(profile.kind);
+                // Live-merged base (C3): the single scoring model shared
+                // with the quick strategy's pick — static profile + live
+                // success/p50 penalty.
+                let (mut score, live_rationale) = self.live_merged_score(profile.kind);
                 let mut rationale_parts: Vec<&str> = Vec::new();
 
                 // Intent match bonus
@@ -762,17 +837,6 @@ impl ProviderPool {
                     }
                 }
 
-                // Live performance penalty (Layer 3). Merges rolling
-                // success-rate and p50-latency from the in-process aggregator.
-                // No-op below MIN_SAMPLES_FOR_LIVE — static profile alone.
-                let (live_penalty, live_rationale) =
-                    crate::research::performance::live_performance_penalty(
-                        &self.performance,
-                        profile.kind,
-                    );
-                if live_penalty > 0.0 {
-                    score += live_penalty;
-                }
                 // Zero-penalty rationales still carry load-bearing news: the
                 // poisoned-lock arm reports the degraded live channel at
                 // penalty 0.0. Gating the rationale on the penalty is what
@@ -913,33 +977,22 @@ impl WebSearchPort for ProviderPool {
 
         let mut compound = if let Some(kind) = provider {
             // Explicit provider override — single provider, no fusion, no
-            // fallback. The caller picked deliberately (likely via
-            // web_recommend_provider). Returns NoProviderConfigured if the
-            // named provider isn't registered.
+            // fallback. The caller picked deliberately (from the intent
+            // ranking surfaced in provider_recommendations, or web_ping's
+            // provider list). An unrecognized name is a closed-set mistake
+            // (BadArgs); a recognized-but-unconfigured one is a credential
+            // gap (NoProviderConfigured) — see search_single_provider.
             self.search_single_provider(kind, query).await?
         } else if strategy == SearchStrategy::Quick {
             // Quick strategy: pick the single best-scored keyword-capable
-            // provider, not blind first-Ok-wins fallback. Scoring uses the
-            // static profile table (cost, latency tier, best_for match).
-            // Live performance data (success rate, p50 latency) merges in
-            // Layer 3. Falls back to the first keyword provider only if no
-            // profiled provider is configured (free providers only).
-            let candidates: Vec<&dyn WebSearchProvider> = self
-                .search_providers
-                .iter()
-                .filter(|p| !p.explicit_only())
-                .filter(|p| p.capabilities().contains(&SearchCapability::Keyword))
-                .map(|p| p.as_ref())
-                .collect();
-            if candidates.is_empty() {
-                return Err(WebError::NoProviderConfigured(
-                    "No keyword-capable provider configured. Set an API key \
-                     (HKASK_BRAVE_API_KEY, HKASK_TAVILY_API_KEY, etc.) to use web_search."
-                        .to_string(),
-                ));
-            }
-            let picked = pick_best_provider(&candidates);
-            self.search_single_provider(picked.kind(), query).await?
+            // provider, not blind first-Ok-wins fallback. C3: the pick uses
+            // the live-merged scoring (static profile + live success/p50
+            // penalties from the reg.web.provider feedback loop) — the same
+            // model as score_providers' ranking — so a provider that keeps
+            // failing drops out of quick automatically. Below
+            // MIN_SAMPLES_FOR_LIVE this reduces to the static pick.
+            let picked = self.pick_quick_provider()?;
+            self.search_single_provider(picked, query).await?
         } else {
             // N4: before dispatching a compound search, verify the strategy's
             // provider filter actually matches at least one configured provider.
@@ -1096,9 +1149,9 @@ impl WebSearchPort for ProviderPool {
 mod tests {
     use super::*;
 
-    /// Stub provider for testing `pick_best_provider`. Returns a fixed kind
-    /// and keyword capability — enough for the scorer to exercise the
-    /// static profile table.
+    /// Stub provider for testing the quick pick and pool-surface pins.
+    /// Returns a fixed kind and keyword capability — enough for the scorer
+    /// to exercise the static profile table.
     struct StubProvider {
         kind: &'static str,
     }
@@ -1201,40 +1254,100 @@ mod tests {
         );
     }
 
-    /// `pick_best_provider` must select the lowest-cost, fastest-latency
-    /// provider from the static profile table — not blind first-Ok-wins.
-    /// This pins the deliberate-selection behavior: `quick` strategy picks
-    /// Brave ($0.002, Fast) over Tavily ($0.003, Fast) over Exa ($0.01, Medium).
+    /// The quick pick must select the lowest-cost, fastest-latency provider
+    /// from the static profile table — not blind first-Ok-wins. This pins
+    /// the deliberate-selection behavior (and the static layer of the
+    /// live-merged model): `quick` strategy picks Brave ($0.002, Fast) over
+    /// Tavily ($0.003, Fast) over Exa ($0.01, Medium).
     #[test]
-    fn pick_best_provider_prefers_lower_cost_faster_latency() {
-        let brave = StubProvider { kind: "brave" };
-        let tavily = StubProvider { kind: "tavily" };
-        let exa = StubProvider { kind: "exa" };
-        let candidates: Vec<&dyn WebSearchProvider> = vec![&exa, &tavily, &brave];
-        let picked = pick_best_provider(&candidates);
+    fn pick_quick_provider_prefers_lower_cost_faster_latency() {
+        let pool = ProviderPool::new(
+            vec![
+                Box::new(StubProvider { kind: "exa" }),
+                Box::new(StubProvider { kind: "tavily" }),
+                Box::new(StubProvider { kind: "brave" }),
+            ],
+            Vec::new(),
+            Vec::new(),
+            None,
+            None,
+            None,
+        );
         assert_eq!(
-            picked.kind(),
+            pool.pick_quick_provider().expect("quick pick"),
             "brave",
             "quick strategy must pick the lowest-cost fastest-latency provider, \
              not blind first-Ok-wins fallback"
         );
     }
 
-    /// When no candidate has a profile (free providers only),
-    /// `pick_best_provider` falls back to the first candidate with a neutral
-    /// score — deterministic via alphabetical tiebreak.
+    /// When no candidate has a profile (free providers only), the quick
+    /// pick falls back to the neutral score — deterministic via
+    /// alphabetical tiebreak.
     #[test]
-    fn pick_best_provider_unprofiled_falls_back_alphabetically() {
-        let arxiv = StubProvider { kind: "arxiv" };
-        let semantic = StubProvider {
-            kind: "semantic_scholar",
-        };
-        let candidates: Vec<&dyn WebSearchProvider> = vec![&arxiv, &semantic];
-        let picked = pick_best_provider(&candidates);
+    fn pick_quick_provider_unprofiled_falls_back_alphabetically() {
+        let pool = ProviderPool::new(
+            vec![
+                Box::new(StubProvider { kind: "arxiv" }),
+                Box::new(StubProvider {
+                    kind: "semantic_scholar",
+                }),
+            ],
+            Vec::new(),
+            Vec::new(),
+            None,
+            None,
+            None,
+        );
         assert_eq!(
-            picked.kind(),
+            pool.pick_quick_provider().expect("quick pick"),
             "arxiv",
             "unprofiled providers should tie-break alphabetically for determinism"
+        );
+    }
+
+    /// C3: the quick pick reads the live feedback loop. Brave wins the
+    /// static layer ($0.002 < $0.003), but after enough live failures
+    /// (≥ MIN_SAMPLES_FOR_LIVE, success rate < 0.5 → +2.0 penalty) the
+    /// pick must flip to tavily — a persistently failing provider drops
+    /// out of quick automatically, the behavior the static-only pick
+    /// could not deliver.
+    #[test]
+    fn pick_quick_provider_drops_a_persistently_failing_provider() {
+        let pool = ProviderPool::new(
+            vec![
+                Box::new(StubProvider { kind: "brave" }),
+                Box::new(StubProvider { kind: "tavily" }),
+            ],
+            Vec::new(),
+            Vec::new(),
+            None,
+            None,
+            None,
+        );
+        // Static pick: brave.
+        assert_eq!(pool.pick_quick_provider().expect("quick pick"), "brave");
+        // Record enough failures for brave to cross MIN_SAMPLES_FOR_LIVE
+        // with a success rate under 0.5.
+        {
+            let mut agg = pool.performance.lock().expect("performance lock");
+            for _ in 0..3 {
+                agg.record_outcome(
+                    "brave",
+                    crate::research::performance::ProviderOutcome {
+                        latency_ms: 100,
+                        success: false,
+                    },
+                );
+            }
+        }
+        // Live-merged pick: tavily — brave's +2.0 penalty dwarfs the
+        // 0.001 static gap.
+        assert_eq!(
+            pool.pick_quick_provider().expect("quick pick"),
+            "tavily",
+            "live failures must flip the quick pick — the feedback loop drives \
+             selection, not just reporting"
         );
     }
 
@@ -1471,6 +1584,103 @@ mod tests {
             "named provider was not called"
         );
         Ok(())
+    }
+
+    /// A provider name outside the closed set (typo, quoted value) is a
+    /// caller mistake: BadArgs (→ invalid_argument) naming the registered
+    /// kinds — NOT a credentials problem. Before the split, `"tavil"` and a
+    /// quoted `"tavily"` both read as "set the API key", sending agents
+    /// chasing credentials for a spelling error (observed live 2026-10-09).
+    #[tokio::test]
+    async fn single_provider_unknown_name_is_a_closed_set_error() {
+        let pool = ProviderPool::new(
+            vec![Box::new(StubProvider { kind: "brave" })],
+            Vec::new(),
+            Vec::new(),
+            None,
+            None,
+            None,
+        );
+        let query = SearchQuery {
+            query: "test".to_string(),
+            num_results: 5,
+            include_domains: Vec::new(),
+            exclude_domains: Vec::new(),
+            freshness: None,
+        };
+        let err = pool
+            .search_single_provider("tavil", &query)
+            .await
+            .expect_err("typo'd name must error");
+        assert!(matches!(err, WebError::BadArgs(_)), "got {err:?}");
+        let msg = err.to_string();
+        assert!(msg.contains("Unknown provider 'tavil'"), "{msg}");
+        assert!(
+            msg.contains("brave"),
+            "must name the registered kinds: {msg}"
+        );
+    }
+
+    /// A recognized kind that isn't registered is a configuration gap:
+    /// NoProviderConfigured (→ permission_denied) naming the env var that
+    /// enables it — the agent's next move is the keychain, not a retry.
+    #[tokio::test]
+    async fn single_provider_known_unconfigured_names_the_credential() {
+        let pool = ProviderPool::new(
+            vec![Box::new(StubProvider { kind: "brave" })],
+            Vec::new(),
+            Vec::new(),
+            None,
+            None,
+            None,
+        );
+        let query = SearchQuery {
+            query: "test".to_string(),
+            num_results: 5,
+            include_domains: Vec::new(),
+            exclude_domains: Vec::new(),
+            freshness: None,
+        };
+        let err = pool
+            .search_single_provider("tavily", &query)
+            .await
+            .expect_err("unconfigured known kind must error");
+        assert!(
+            matches!(err, WebError::NoProviderConfigured(_)),
+            "got {err:?}"
+        );
+        let msg = err.to_string();
+        assert!(msg.contains("HKASK_TAVILY_API_KEY"), "{msg}");
+    }
+
+    /// Free providers are always registered at construction — one absent
+    /// from a pool is a construction anomaly, never a closed-set mistake.
+    #[tokio::test]
+    async fn single_provider_free_kind_absence_is_a_construction_anomaly() {
+        let pool = ProviderPool::new(
+            vec![Box::new(StubProvider { kind: "brave" })],
+            Vec::new(),
+            Vec::new(),
+            None,
+            None,
+            None,
+        );
+        let query = SearchQuery {
+            query: "test".to_string(),
+            num_results: 5,
+            include_domains: Vec::new(),
+            exclude_domains: Vec::new(),
+            freshness: None,
+        };
+        let err = pool
+            .search_single_provider("openalex", &query)
+            .await
+            .expect_err("absent free kind must error");
+        assert!(
+            matches!(err, WebError::NoProviderConfigured(_)),
+            "got {err:?}"
+        );
+        assert!(err.to_string().contains("construction"), "{}", err);
     }
 
     /// S4 (loop-register L23): a degraded live-performance channel must be

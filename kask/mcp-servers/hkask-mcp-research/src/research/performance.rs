@@ -17,8 +17,9 @@
 //!   drop off as new ones arrive — a rolling window, not an unbounded
 //!   accumulator.
 //! - `Mutex<...>` (not `RwLock`) — write path is on every search call,
-//!   read path is on `score_providers`/`web_recommend_provider`. Both
-//!   are short critical sections; a lock is simpler and correct.
+//!   read path is on `score_providers` (the web_search intent path and
+//!   the C4 audit ranking) and `pick_quick_provider` (the quick pick).
+//!   Both are short critical sections; a lock is simpler and correct.
 //! - `Send + Sync` so it can sit behind `ProviderPool`'s `Arc<dyn WebSearchPort>`.
 
 use std::collections::HashMap;
@@ -178,8 +179,8 @@ pub(crate) fn live_performance_penalty(
 }
 
 /// Expose the rolling stats for a provider for surfacing in tool output
-/// (e.g. `web_recommend_provider` could include live stats). Read-only
-/// snapshot — does not mutate the aggregator.
+/// (e.g. `web_ping` provider health, or `score_providers` recommendations
+/// carrying live stats). Read-only snapshot — does not mutate the aggregator.
 pub(crate) fn snapshot_stats(
     aggregator: &Mutex<ProviderPerformanceAggregator>,
     kind: &str,

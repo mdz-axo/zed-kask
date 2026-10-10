@@ -14,6 +14,18 @@ use anyhow::anyhow;
 use sha2::Digest as _;
 use std::path::{Path, PathBuf};
 
+/// One document in a multi-document sealed fixture: `passages` are its
+/// chunks (stored in order, entity index 0..n), and `vector_slot` is the
+/// coordinate set to 1.0 in every chunk's stored embedding — the fixture's
+/// dense-rank control. Bridge test ports embed every query as
+/// `vector[0] = 1.0`, so slot 0 is dense-attracting (distance 0) and any
+/// other slot is dense-repelling (distance 1).
+pub struct DocumentFixture {
+    pub filename: String,
+    pub passages: Vec<String>,
+    pub vector_slot: usize,
+}
+
 /// Build one sealed federated source inside `directory`:
 ///
 /// - a `reference.db` seeded with `passage` (a `text` h_mem, a
@@ -27,8 +39,8 @@ use std::path::{Path, PathBuf};
 ///
 /// The entity ref is `calibration:fixture:sealed-v1:reference:utf8-<hex>:0`
 /// where `<hex>` is `source_filename`'s UTF-8 encoding — the producer's ref
-/// scheme. The manifest's boilerplate-exclusion report key is the constant
-/// `"fixture.txt"` every existing fixture carries.
+/// scheme. The manifest's boilerplate-exclusion report is keyed by
+/// `source_filename`.
 pub fn sealed_federated_fixture(
     directory: &Path,
     source_id: &str,
@@ -69,8 +81,11 @@ pub fn sealed_federated_fixture_indexed(
         directory,
         source_id,
         display_name,
-        source_filename,
-        passage,
+        &[DocumentFixture {
+            filename: source_filename.to_string(),
+            passages: vec![passage.to_string()],
+            vector_slot: 0,
+        }],
         requested_model,
         actual_model,
         manifest_prefix,
@@ -97,8 +112,11 @@ pub fn sealed_federated_fixture_dimmed(
         directory,
         source_id,
         display_name,
-        source_filename,
-        passage,
+        &[DocumentFixture {
+            filename: source_filename.to_string(),
+            passages: vec![passage.to_string()],
+            vector_slot: 0,
+        }],
         requested_model,
         actual_model,
         "calibration:fixture:sealed-v1",
@@ -107,19 +125,44 @@ pub fn sealed_federated_fixture_dimmed(
     )
 }
 
-/// The parameterized core of [`sealed_federated_fixture`]. `manifest_prefix`,
+/// Build one sealed federated source containing several documents, each
+/// with its own chunks — the fixture for hybrid-retrieval known-answer
+/// tests, where a document must be findable by its filename alone (the
+/// entity_ref carries the name; the passage text need not).
+pub fn sealed_federated_fixture_documents(
+    directory: &Path,
+    source_id: &str,
+    display_name: &str,
+    requested_model: &str,
+    actual_model: &str,
+    documents: &[DocumentFixture],
+) -> anyhow::Result<PathBuf> {
+    sealed_federated_fixture_core(
+        directory,
+        source_id,
+        display_name,
+        documents,
+        requested_model,
+        actual_model,
+        "calibration:fixture:sealed-v1",
+        "reference",
+        hkask_storage::embedding_dim(),
+    )
+}
+
+/// The parameterized core of the public builders. `manifest_prefix`,
 /// `index_name`, and `dim` are the producer's composition inputs, used
-/// verbatim: the entity ref is `{manifest_prefix}:{index_name}:utf8-<hex>:0`
-/// (a trailing-colon prefix such as the corpus pipeline's
-/// `corpus:researcher:` yields the producer's double-colon refs), the
-/// database digest lands under `indexes[{index_name}]`, the database file
-/// is `{index_name}.db`, and the sealed embedding width is `dim`.
+/// verbatim: each chunk's entity ref is
+/// `{manifest_prefix}:{index_name}:utf8-<hex>:<chunk>` (a trailing-colon
+/// prefix such as the corpus pipeline's `corpus:researcher:` yields the
+/// producer's double-colon refs), the database digest lands under
+/// `indexes[{index_name}]`, the database file is `{index_name}.db`, and the
+/// sealed embedding width is `dim`.
 fn sealed_federated_fixture_core(
     directory: &Path,
     source_id: &str,
     display_name: &str,
-    source_filename: &str,
-    passage: &str,
+    documents: &[DocumentFixture],
     requested_model: &str,
     actual_model: &str,
     manifest_prefix: &str,
@@ -131,13 +174,6 @@ fn sealed_federated_fixture_core(
     let database = database_path
         .to_str()
         .ok_or_else(|| anyhow!("non-UTF-8 database path"))?;
-    let hex: String = source_filename
-        .bytes()
-        .map(|byte| format!("{byte:02x}"))
-        .collect();
-    let entity = format!("{manifest_prefix}:{index_name}:utf8-{hex}:0");
-    let mut vector = vec![0.0; dim];
-    vector[0] = 1.0;
     if dim != hkask_storage::embedding_dim() {
         // `MemoryStore::open`'s `dim` parameter configures only the
         // Rust-side embedding validation; the schema's vec0 virtual table is
@@ -159,19 +195,31 @@ fn sealed_federated_fixture_core(
     }
     {
         let store = MemoryStore::open(database, PASSPHRASE, dim)?;
-        store.store(hkask_storage::HMem::new(
-            &entity,
-            "text",
-            serde_json::json!(passage),
-            hkask_types::WebID::new(),
-        ))?;
-        store.store(hkask_storage::HMem::new(
-            &entity,
-            "method_signals",
-            serde_json::json!({"parataxis_ratio": 1.0}),
-            hkask_types::WebID::new(),
-        ))?;
-        store.store_embedding(&entity, &vector, actual_model, Some(passage))?;
+        for document in documents {
+            let hex: String = document
+                .filename
+                .bytes()
+                .map(|byte| format!("{byte:02x}"))
+                .collect();
+            for (chunk, passage) in document.passages.iter().enumerate() {
+                let entity = format!("{manifest_prefix}:{index_name}:utf8-{hex}:{chunk}");
+                store.store(hkask_storage::HMem::new(
+                    &entity,
+                    "text",
+                    serde_json::json!(passage),
+                    hkask_types::WebID::new(),
+                ))?;
+                store.store(hkask_storage::HMem::new(
+                    &entity,
+                    "method_signals",
+                    serde_json::json!({"parataxis_ratio": 1.0}),
+                    hkask_types::WebID::new(),
+                ))?;
+                let mut vector = vec![0.0; dim];
+                vector[document.vector_slot.min(dim - 1)] = 1.0;
+                store.store_embedding(&entity, &vector, actual_model, Some(passage))?;
+            }
+        }
     }
     {
         let database = hkask_storage::open_or_repair(database, PASSPHRASE)?;
@@ -189,15 +237,20 @@ fn sealed_federated_fixture_core(
 
     let digest = sha256_file(&database_path)?;
     let representations_path = directory.join("representations-manifest.json");
+    let mut reports = serde_json::Map::new();
+    for document in documents {
+        reports.insert(
+            document.filename.clone(),
+            serde_json::json!({"input_words": 3, "retained_words": 3, "exclusions": []}),
+        );
+    }
     std::fs::write(
         &representations_path,
         serde_json::to_vec_pretty(&serde_json::json!({
             "schema_version": 2,
             "entity_ref_prefix": manifest_prefix,
-            "boilerplate_exclusion_reports": {
-                "fixture.txt": {"input_words": 3, "retained_words": 3, "exclusions": []}
-            },
-            "validation": {"accepted_source_count": 1, "boilerplate_filter_applied": true}
+            "boilerplate_exclusion_reports": reports,
+            "validation": {"accepted_source_count": documents.len(), "boilerplate_filter_applied": true}
         }))?,
     )?;
     let manifest_digest = sha256_file(&representations_path)?;

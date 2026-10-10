@@ -1,4 +1,4 @@
-{# goal: Scope the actual committed or uncommitted change from git evidence (Fagan sizing), identify critical paths, build a change model, and consume prior_review.next_review_focus. Detection/collection separation: do NOT judge findings here. #}
+{# goal: Scope the actual committed or uncommitted change from git evidence (Fagan sizing), identify critical paths, build a change model with reviewer identity, run machine checks first when runnable, and consume prior_review.next_review_focus. Detection/collection separation: do NOT judge findings here. #}
 [inference]
 contract:
   input:
@@ -12,6 +12,7 @@ contract:
     size_class: string
     critical_paths: array
     focus_axes: array
+    machine_checks: object
     prior_feedback_consumed: string
 ---
 {# Phase 1 — SCOPE (Fagan Planning: sizing + critical-path identification + change model) #}
@@ -127,6 +128,27 @@ Describe:
 - If `focus` is empty, this is comprehensive (the default) — all axes run.
 - If `prior_review.next_review_focus` is present, merge it into focus_axes as
   the primary emphasis (do not drop the user's explicit `focus`).
+- Recall durable review lessons: when curator memory tools are available,
+  query recurring code-review defect classes for this repo (e.g.
+  `curator_semantic_search` "code-review recurring defect class") and merge
+  a recurring class into focus_axes as secondary emphasis. Degrade visibly
+  (note it in prior_feedback_consumed) if unavailable.
+
+## Step 6 — Machine checks first (deterministic before LLM)
+
+Unless `run_checks` is `"off"`, run the repo's deterministic checkers against
+the change — per repo `.rules` (Rust: `cargo check` scoped to touched crates
+where feasible, `./script/clippy`; skip live-mutation test suites unless
+explicitly authorized). Record each failure in `machine_checks.findings`
+(file, line, tool, verbatim message). If checks cannot run (read-only
+context, missing toolchain, `.rules` forbids), set `machine_checks.skipped`
+to the named reason — degrade visibly, never silently skip.
+
+## Step 7 — Record reviewer identity
+
+Set `reviewer_is_author` in the change model: did this session/context author
+the change under review? (true | false | unknown). The report's `decoupling`
+field consumes it.
 
 ## Output
 
@@ -139,8 +161,10 @@ Respond with a JSON object:
     "intent_vs_spec": "...",
     "module_boundaries_crossed": ["..."],
     "observed_characteristics": ["async", "unsafe", "trait_objects", "concurrency", "ffi", "macros"],
-    "prior_blockers": 0
+    "prior_blockers": 0,
+    "reviewer_is_author": false
   },
+  "machine_checks": {"ran": ["..."], "skipped": null, "findings": [{"file": "...", "line": "...", "tool": "...", "message": "..."}]},
   "scope_summary": "one-line: N files, M lines, size_class, critical paths",
   "size_class": "trivial | good | acceptable | too_large | empty",
   "critical_paths": [
@@ -161,4 +185,5 @@ Respond with a JSON object:
 - observed_characteristics must be derived from actually reading the diff /
   files; do not fabricate. If you could not read the diff, state so and
   proceed with an empty characteristics list.
+- Machine checks degrade visibly: `machine_checks.skipped` names the reason; never silently skip. `reviewer_is_author` is recorded even when unknown.
 - Handle missing variables gracefully (leave as-is or use default).

@@ -1,4 +1,4 @@
-{# goal: Multi-axis defect DETECTION across PERFECT-ordered axes × the addyosmani five-axis, with optional delegation. DETECTION ONLY — no verdicts/severity/confidence. Every raw finding cites file:line + verbatim evidence (no-fiction). #}
+{# goal: Multi-axis defect DETECTION across PERFECT-ordered axes × the addyosmani five-axis plus the AI-code annex and cross-layer consistency checks, machine findings folded first, with size-tiered read-only delegation. DETECTION ONLY — no verdicts/severity/confidence. Every raw finding cites file:line + verbatim evidence (no-fiction). #}
 [inference]
 contract:
   input:
@@ -6,9 +6,9 @@ contract:
     focus: array
     focus_axes: array
     critical_paths: array
+    machine_checks: object
     delegate_bug_hunt: boolean
     delegate_architecture: boolean
-    probe_findings: string
   output:
     raw_findings: array
     delegated_axes: array
@@ -47,17 +47,18 @@ the adjudicate phase (detection/collection separation, Sauer).
 - delegate_bug_hunt: {{ delegate_bug_hunt | default(false) }}
 - delegate_architecture: {{ delegate_architecture | default(false) }}
 
-{% if probe_findings %}
-## Delegate Results (Agent-Executed)
-These delegate results were produced after this step's delegation instructions
-were emitted (the delegates run between perspectives and adjudicate: on the
-skill path their findings are passed back into this step's render; in Zed
-sessions the agent folds them between perspectives and adjudicate — one
-owner per path, never both). Fold them into raw_findings with `source` set to
-the delegate name; do not double-count or re-verdict them.
+## Machine Checks (from scope)
+{{ machine_checks | default({}) | tojson }}
 
-{{ probe_findings }}
-{% endif %}
+Fold any `machine_checks.findings` into raw_findings FIRST with
+`source: "machine"` — they are the highest-provenance findings. If
+`machine_checks.skipped` names a reason, carry it into the report's
+not_checked (visible degradation, never silent).
+
+## Delegate Results (Agent-Executed)
+The delegates run between this step and adjudicate. On every path the agent
+folds their returned findings into raw_findings with `source` set to the
+delegate name — one fold, one owner; do not double-count or re-verdict them.
 
 ## Step 0 — Predict before detecting (calibration)
 
@@ -70,9 +71,11 @@ Record both numbers before detection begins; the report step 0 reconciles
 them against the found counts. A wrong prediction is not a defect — an
 unrecorded one is.
 
-## Step 1 — Read surrounding code, not just the diff
+## Step 1 — Fold machine findings, then read surrounding code
 
-Diffs alone miss issues. Use `read_file` / `grep` for context around each
+First: if scope's `machine_checks.findings` is non-empty, enter each as a raw
+finding with `source: "machine"` (highest-provenance findings lead). Then:
+diffs alone miss issues. Use `read_file` / `grep` for context around each
 hunk. Do not opine on regions you did not read.
 
 ## Step 2 — Walk the PERFECT-ordered axes (descending importance)
@@ -89,6 +92,9 @@ addyosmani five-axis where relevant.
 - Does the code do what `change_spec` claims? (intent_vs_spec from the model)
 - Does it match the spec / task requirements? Does it produce the expected
   result, not just look reasonable?
+- AI-code check — invented APIs: every symbol the diff calls must resolve.
+  Grep the definition; a call to a function/method with no definition
+  anywhere is a generation artifact, not a typo. Flag it first.
 - If it doesn't solve the task, nothing else matters — flag it first.
 
 ### E — Edge cases (correctness + reliability axes)
@@ -97,6 +103,8 @@ addyosmani five-axis where relevant.
 - "Impossible" states that become reachable after future changes (e.g.,
   unwrapping an Option without a guard).
 - Concurrency edge cases: check-then-act, TOCTOU, missing synchronization.
+- AI-code check — stray imports: is each import/use still consumed after
+  this edit? Hardcoded values duplicating existing config/constants?
 
 ### R — Reliability (security + performance axes)
 - Security: input validation at boundaries, injection (SQL/XSS/command/path),
@@ -107,6 +115,9 @@ addyosmani five-axis where relevant.
   should be async, unnecessary allocations in hot paths, re-renders.
 - Integration: missing timeouts/retries, fragile external dependencies,
   unhandled error responses.
+- Cross-layer consistency: the same flag/default/env var consistent across
+  layers (client and server defaults match; referenced env vars defined;
+  feature gating enforced beyond the UI).
 
 ### F — Form (architecture axis)
 - Cohesion / coupling. Does the change fit existing patterns or introduce a
@@ -114,8 +125,13 @@ addyosmani five-axis where relevant.
 - Module boundaries: feature-specific logic leaking into a shared module?
   A bespoke helper duplicating an existing canonical one?
 - Dependencies flowing in the right direction (no circular deps)?
-- Does this refactor reduce complexity or just relocate it? (Count the
-  concepts a reader must hold.)
+- Does this refactor reduce complexity or just relocate it? Ousterhout's
+  test: did change amplification, cognitive load, or unknown unknowns
+  increase? (Count the concepts a reader must hold; flag dependencies on
+  obscure facts.)
+- AI-code check — edits outside the spec's intended files (flag for the
+  Purpose axis); the same operation written two ways across files this
+  change touches.
 - Type boundaries: gratuitous `any`/`unknown`/casts/silent fallbacks?
 - (Architecture depth via refactor-architecture/deep-module/essentialist when
   delegate_architecture.)
@@ -154,8 +170,13 @@ recorded. Do not generate fictional findings — only report what you read.
 
 For each enabled delegate flag, emit a delegation instruction the agent runs
 between this step and adjudicate. The inline pass always covers the basics;
-delegation adds depth. Each instruction names the delegate skill, the inputs
-it needs, and the axes it deepens:
+delegation adds depth. Delegates are read-only and must not re-invoke
+code-review or spawn further review agents — perform the delegated pass
+directly. Scale by size_class: trivial → no delegates (the inline pass
+covers); good → at most one targeted delegate for the riskiest area;
+acceptable/too_large → shard instructions by module bundle (group related
+files, one instruction per bundle). Each instruction names the delegate
+skill, the inputs it needs, and the axes it deepens:
 
 {% if delegate_bug_hunt %}
 - **bug-hunt** (delegate_bug_hunt): quality_criteria from the change_spec.
@@ -184,7 +205,7 @@ Respond with a JSON object:
       "location": {"file": "...", "line_approx": "..."},
       "evidence": "verbatim ≤5 lines from the cited location",
       "observation": "one line — what was observed (no verdict)",
-      "source": "inline | bug-hunt | refactor-architecture"
+      "source": "inline | machine | bug-hunt | refactor-architecture"
     }
   ],
   "delegated_axes": ["bug-hunt", "refactor-architecture"],
@@ -208,6 +229,8 @@ Respond with a JSON object:
   focus is empty. A prior pass's merged `next_review_focus` emphasis is
   walked first and deepest — never demoted to a passive header.
 - Delegation adds depth but does not remove the inline basics pass.
-- When probe_findings is present, fold them into raw_findings with source set;
-  do not double-count or re-verdict them.
+- Delegates are read-only, never re-invoke code-review, and scale by
+  size_class; the agent folds delegate findings into raw_findings on every
+  path — no double-counting, no re-verdicting.
+- Machine findings fold first with source "machine".
 - Handle missing variables gracefully.

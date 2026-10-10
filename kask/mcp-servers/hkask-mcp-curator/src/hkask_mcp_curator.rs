@@ -797,7 +797,7 @@ impl CuratorServer {
             let registry = self.db.federated_sources();
             let mut external_statuses = registry.statuses();
             for source in registry.sources() {
-                match source.search(&embedding_model, &query_vector, limit) {
+                match source.search(&embedding_model, &req.query, &query_vector, limit) {
                     Ok(batch) => {
                         if let Some(status) = external_statuses
                             .iter_mut()

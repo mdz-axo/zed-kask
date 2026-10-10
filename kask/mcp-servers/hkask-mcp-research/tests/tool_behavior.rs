@@ -645,6 +645,243 @@ async fn web_search_rejects_unknown_freshness() {
     assert_error_kind(&error, McpErrorKind::InvalidArgument);
 }
 
+// ── web_search closed-vocabulary normalization ─────────────────────────────
+// LLM tool-call emitters wrap enum values in quotes/padding (observed live
+// 2026-10-09: `strategy: "\"quick\""` rejected as unknown, costing agent
+// retries). The boundary normalizes once, up front — these tests pin that
+// every closed-vocabulary field accepts the noisy form while genuinely
+// unknown values still reject (the tests above).
+
+#[tokio::test]
+async fn web_search_accepts_quoted_and_padded_strategy_and_freshness() {
+    let server = test_server(
+        Arc::new(IntentSelectionPool {
+            selected_provider: std::sync::Mutex::new(Vec::new()),
+        }),
+        0,
+        None,
+        None,
+        None,
+        None,
+    );
+    // `"quick"` with literal quote characters, and `  "web"  ` padded —
+    // both must parse. Before the normalization this errored with
+    // "Unknown strategy: \"quick\"".
+    for (strategy, freshness) in [
+        (Some("\"quick\"".to_string()), Some("'week'".to_string())),
+        (
+            Some("  \"web\"  ".to_string()),
+            Some("  month  ".to_string()),
+        ),
+    ] {
+        let output = server
+            .web_search(Parameters(SearchRequest {
+                query: "normalization probe".to_string(),
+                num_results: Some(3),
+                include_domains: None,
+                exclude_domains: None,
+                freshness,
+                strategy,
+                provider: None,
+                run_id: None,
+                intent: None,
+            }))
+            .await;
+        let parsed = parse(&ok(output));
+        assert!(
+            parsed.get("results").is_some_and(|r| r.is_array()),
+            "quoted strategy/freshness must succeed, got: {parsed}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn web_search_accepts_quoted_intent_and_routes_by_it() {
+    let pool = Arc::new(IntentSelectionPool {
+        selected_provider: std::sync::Mutex::new(Vec::new()),
+    });
+    let server = test_server(pool.clone(), 0, None, None, None, None);
+    let output = server
+        .web_search(Parameters(SearchRequest {
+            query: "normalization probe".to_string(),
+            num_results: Some(3),
+            include_domains: None,
+            exclude_domains: None,
+            freshness: None,
+            strategy: None,
+            provider: None,
+            run_id: None,
+            intent: Some("  \"academic\"  ".to_string()),
+        }))
+        .await;
+    let parsed = parse(&ok(output));
+    // The normalized intent drove provider selection: the stub's top
+    // configured recommendation (arxiv) was queried...
+    let selected = pool
+        .selected_provider
+        .lock()
+        .expect("selected provider lock");
+    assert_eq!(
+        selected.last().map(|p| p.clone()),
+        Some(Some("arxiv".to_string())),
+        "quoted intent must route to the top recommendation"
+    );
+    // ...and the surfaced ranking echoes the NORMALIZED intent (the stub's
+    // rationale interpolates the intent it received).
+    let rationale = parsed
+        .get("provider_recommendations")
+        .and_then(|r| r.get(0))
+        .and_then(|r| r.get("rationale"))
+        .and_then(|r| r.as_str())
+        .unwrap_or_default();
+    assert!(
+        rationale.contains("academic"),
+        "normalized intent must flow to score_providers, got: {rationale}"
+    );
+}
+
+#[tokio::test]
+async fn web_search_normalizes_provider_before_dispatch() {
+    let pool = Arc::new(IntentSelectionPool {
+        selected_provider: std::sync::Mutex::new(Vec::new()),
+    });
+    let server = test_server(pool.clone(), 0, None, None, None, None);
+    let output = server
+        .web_search(Parameters(SearchRequest {
+            query: "normalization probe".to_string(),
+            num_results: Some(3),
+            include_domains: None,
+            exclude_domains: None,
+            freshness: None,
+            strategy: None,
+            // A quoted provider name previously flowed through raw — in
+            // production the pool misattributed it to a missing API key.
+            provider: Some("\"arxiv\"".to_string()),
+            run_id: None,
+            intent: None,
+        }))
+        .await;
+    let parsed = parse(&ok(output));
+    assert_eq!(
+        parsed.get("selected_provider").and_then(|p| p.as_str()),
+        Some("arxiv"),
+        "quoted provider must dispatch normalized, got: {parsed}"
+    );
+    let selected = pool
+        .selected_provider
+        .lock()
+        .expect("selected provider lock");
+    assert_eq!(
+        selected.last().map(|p| p.clone()),
+        Some(Some("arxiv".to_string())),
+        "the port must receive the normalized provider name"
+    );
+}
+
+#[tokio::test]
+async fn web_search_rejects_unknown_intent() {
+    let server = make_server_without_db();
+    let error = err(server
+        .web_search(Parameters(SearchRequest {
+            query: "test".to_string(),
+            num_results: None,
+            include_domains: None,
+            exclude_domains: None,
+            freshness: None,
+            strategy: None,
+            provider: None,
+            run_id: None,
+            intent: Some("bogus".to_string()),
+        }))
+        .await);
+    assert_error_kind(&error, McpErrorKind::InvalidArgument);
+    assert!(
+        error.message.contains("intent"),
+        "error names the field: {}",
+        error.message
+    );
+    assert!(
+        error.message.contains("news"),
+        "error teaches the accepted values: {}",
+        error.message
+    );
+}
+
+#[tokio::test]
+async fn web_search_surfaces_provider_recommendations_on_non_intent_paths() {
+    // C4: the live-merged ranking is the audit trail for WHY providers
+    // were (or would be) chosen — surfaced on every path where the tool
+    // makes the selection, not just the intent pick. A web-strategy call
+    // (no intent, no provider) must carry the ranking.
+    let server = test_server(
+        Arc::new(IntentSelectionPool {
+            selected_provider: std::sync::Mutex::new(Vec::new()),
+        }),
+        0,
+        None,
+        None,
+        None,
+        None,
+    );
+    let parsed = parse(&ok(server
+        .web_search(Parameters(SearchRequest {
+            query: "fusion audit probe".to_string(),
+            num_results: Some(3),
+            include_domains: None,
+            exclude_domains: None,
+            freshness: None,
+            strategy: Some("web".to_string()),
+            provider: None,
+            run_id: None,
+            intent: None,
+        }))
+        .await));
+    let recommendations = parsed
+        .get("provider_recommendations")
+        .and_then(|r| r.as_array());
+    assert!(
+        recommendations.is_some_and(|r| !r.is_empty()),
+        "web-strategy call must surface the ranking, got: {parsed}"
+    );
+}
+
+#[tokio::test]
+async fn web_search_skips_ranking_for_explicit_provider() {
+    // The counterpoint: an explicit-provider call is the caller's own
+    // deliberate override — selected_provider carries the choice, the
+    // ranking is skipped.
+    let server = test_server(
+        Arc::new(IntentSelectionPool {
+            selected_provider: std::sync::Mutex::new(Vec::new()),
+        }),
+        0,
+        None,
+        None,
+        None,
+        None,
+    );
+    let parsed = parse(&ok(server
+        .web_search(Parameters(SearchRequest {
+            query: "override probe".to_string(),
+            num_results: Some(3),
+            include_domains: None,
+            exclude_domains: None,
+            freshness: None,
+            strategy: None,
+            provider: Some("arxiv".to_string()),
+            run_id: None,
+            intent: None,
+        }))
+        .await));
+    let recommendations = parsed
+        .get("provider_recommendations")
+        .and_then(|r| r.as_array());
+    assert!(
+        recommendations.is_none_or(|r| r.is_empty()),
+        "explicit-provider call must skip the ranking, got: {parsed}"
+    );
+}
+
 // ── web_search credential-missing path ─────────────────────────────────────
 
 #[tokio::test]
@@ -711,6 +948,52 @@ async fn web_extract_rejects_oversized_json_prompt() {
         "error should mention json_prompt; got: {}",
         error.message
     );
+}
+
+#[tokio::test]
+async fn web_extract_rejects_unknown_format() {
+    // The closed-set gate: Firecrawl silently maps unknown formats to
+    // markdown while echoing the REQUESTED format, so an unknown value
+    // must reject up front (the format check precedes the pool call).
+    let server = make_server_without_db();
+    let error = err(server
+        .web_extract(Parameters(ExtractRequest {
+            url: LITERAL_IP_URL.to_string(),
+            format: Some("bogus".to_string()),
+            json_prompt: None,
+            json_schema: None,
+            main_content_only: None,
+            wait_for_ms: None,
+            run_id: None,
+        }))
+        .await);
+    assert_error_kind(&error, McpErrorKind::InvalidArgument);
+    assert!(
+        error.message.contains("format"),
+        "error should mention format; got: {}",
+        error.message
+    );
+}
+
+#[tokio::test]
+async fn web_extract_accepts_quoted_format() {
+    // `"json"` with literal quote characters normalizes to `json` and
+    // proceeds PAST the format gate — the stub pool then surfaces its
+    // credential-missing arm (PermissionDenied), proving the format check
+    // passed rather than silently mapping to markdown.
+    let server = make_server_without_db();
+    let error = err(server
+        .web_extract(Parameters(ExtractRequest {
+            url: LITERAL_IP_URL.to_string(),
+            format: Some("\"json\"".to_string()),
+            json_prompt: None,
+            json_schema: None,
+            main_content_only: None,
+            wait_for_ms: None,
+            run_id: None,
+        }))
+        .await);
+    assert_error_kind(&error, McpErrorKind::PermissionDenied);
 }
 
 // ── web_extract credential-missing path ────────────────────────────────────
@@ -2628,6 +2911,22 @@ async fn evaluate_evidence_rejects_unknown_duplication_mode() {
         error.message.contains("duplication"),
         "message names the field: {}",
         error.message
+    );
+}
+
+#[tokio::test]
+async fn evaluate_evidence_accepts_quoted_duplication_mode() {
+    // `"semantic"` with literal quote characters normalizes and proceeds
+    // past the closed-set gate — same degradation path as the bare form
+    // (no embedding model → shingle floor with the surfaced reason).
+    let server = make_server_with_embedding(Arc::new(EmbeddingInferencePort), None);
+    let json = parse(&ok(server
+        .evaluate_evidence(Parameters(semantic_request(Some("\"semantic\""))))
+        .await));
+    assert_eq!(json["set"]["duplication_mode"].as_str(), Some("shingles"));
+    assert!(
+        json["set"].get("duplication_reason").is_some(),
+        "degradation reason surfaced: {json}"
     );
 }
 

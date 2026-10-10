@@ -31,7 +31,9 @@ pub(crate) mod embeddings;
 pub(crate) mod hmem;
 pub(crate) mod regulation_store;
 
-pub use embeddings::{EmbeddingError, EmbeddingStore, SearchOutcome, SimilarityResult};
+pub use embeddings::{
+    EmbeddingError, EmbeddingStore, PassageRow, SearchOutcome, SimilarityResult, StoredEmbedding,
+};
 
 pub use hkask_types::HMemId;
 pub use hmem::{HMem, HMemError, HMemStore};

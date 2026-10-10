@@ -1,4 +1,4 @@
-{# goal: Defect COLLECTION — turn raw observations into tiered, evidence-backed verdicts via pragmatic-semantics + falsifiability + grill-me + no-fiction citation. Derive severity from constraint force. Compute blocker_delta vs prior_review. Does NOT re-scan the code. #}
+{# goal: Defect COLLECTION — turn raw observations into tiered, evidence-backed verdicts via pragmatic-semantics + falsifiability + grill-me + no-fiction citation. Derive severity from constraint force with linter-overlap suppression (machine findings exempt). Compute blocker_delta vs prior_review. Does NOT re-scan the code. #}
 [inference]
 contract:
   input:
@@ -97,6 +97,12 @@ Modifiers:
 - a finding on a critical_path (auth/payments/data writes/concurrency/unsafe/
   secrets) weighs heavier — a Prohibition there stays Blocker even at lower
   confidence.
+- linter-overlap suppression: a finding the repo's deterministic tooling
+  already enforces (compiler warnings, clippy, check scripts) — and that the
+  repo's CI actually runs — is FYI at most; review attention goes where
+  linters cannot look. Machine findings (source "machine") are never
+  suppressed: they are the tool's own output at direct_measurement
+  provenance — set `violated_force` to the rule the checker enforces.
 
 Apply the modifiers in this order, each once: (1) base tier from the table;
 (2) confidence < 0.60 downgrades one tier, unless it is a Prohibition on a
@@ -170,7 +176,7 @@ Respond with a JSON object:
       "confidence": 0.0,
       "quantification": "quantified statement OR 'not quantified'",
       "self_challenge": {"question": "...", "resolution": "upheld | downgraded | rejected"},
-      "source": "inline | bug-hunt | refactor-architecture",
+      "source": "inline | machine | bug-hunt | refactor-architecture",
       "fix_suggestion_hint": "direction of a remedy if obvious, else 'see report'"
     }
   ],
@@ -191,7 +197,8 @@ Respond with a JSON object:
   missing any → reject (not silently drop).
 - Severity is derived from constraint force (not ad-hoc importance); a taste
   finding is never a Blocker; subjunctive/assessment never exceeds Should-fix;
-  confidence < 0.60 downgrades one tier.
+  confidence < 0.60 downgrades one tier; tool-covered findings are FYI at most
+  (machine findings exempt — never suppressed).
 - `waivable` is true only for a Blocker whose force (or `violated_force`) is
   Guardrail. `waiver` stays null here; only the operator fills it, in the
   review, with a stated reason. Never set a waiver yourself.

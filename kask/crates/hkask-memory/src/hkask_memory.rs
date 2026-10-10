@@ -23,6 +23,7 @@
 pub(crate) mod bayesian; // Confidence combination via log-odds pooling
 pub mod consolidation_service; // Memory consolidator (confidence-floor cleanup)
 pub mod federated_recall; // Identity-bound read-only external passage retrieval
+pub mod lexical; // Rare-term inverted index — the lexical leg of hybrid retrieval
 pub mod memory_store; // Unified store (ontology-discriminated)
 pub mod recall_dedup;
 pub mod salience;

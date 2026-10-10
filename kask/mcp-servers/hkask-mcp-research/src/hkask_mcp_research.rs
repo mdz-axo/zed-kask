@@ -40,8 +40,8 @@ use crate::research::{
     ResponseCache, RunSourceRecord, SearchMetadata, SearchOutput, SearchQuery, SearchRequest,
     SearchResultOutput, SearchStrategy, SensitivityStatus, SubscribeRequest, SynthesizeRequest,
     UnreadCountRequest, UnsubscribeRequest, WebSearchPort, build_provider_pool, cache_key,
-    discover_feeds, fetch_feed, llm_rerank, provider_profile, score_evidence_set,
-    validated_fetch_client,
+    discover_feeds, fetch_feed, llm_rerank, normalize_closed_vocab, parse_closed_vocab,
+    provider_profile, score_evidence_set, validated_fetch_client,
 };
 
 /// Dispatch a [`SpreadsheetError`] through the canonical per-variant
@@ -275,12 +275,14 @@ impl ResearchServer {
 
     #[tool(description = "Search the web with RRF fusion across providers. \
          Set `provider` to query a single named provider (tavily, brave, exa, \
-         firecrawl, serpapi) — no fusion, no fallback. Or set `intent` (news, \
+         firecrawl, serpapi, or the free scholarly providers openalex, arxiv, \
+         semantic_scholar) — no fusion, no fallback. Or set `intent` (news, \
          academic, semantic, research, freshness, general, transcript) to have the tool \
          score the configured providers against the query and pick the top \
          recommendation for you — the ranking is surfaced in \
          provider_recommendations. When both are None, `strategy` selects: \
-         quick (best-scored single keyword provider), web (all, RRF fusion), \
+         quick (best-scored single keyword provider, live-performance-aware — \
+         a provider that keeps failing drops out), web (all, RRF fusion), \
          news (news-capable), deep (all + 2x results + content extraction). \
          The google_scholar and google_books engines need operator-qualified \
          queries for exact-title lookups (e.g. intitle:\"The Logic of Scientific \
@@ -289,7 +291,7 @@ impl ResearchServer {
          exact-title paper lookup, prefer resolve_paper's `title` mode.")]
     pub async fn web_search(
         &self,
-        Parameters(req): Parameters<SearchRequest>,
+        Parameters(mut req): Parameters<SearchRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "web_search", async {
             self.rate_limiter.check("web_search")?;
@@ -303,28 +305,40 @@ impl ResearchServer {
                     MAX_QUERY_LENGTH
                 )));
             }
+            // Closed-vocabulary fields cross the LLM boundary: normalize
+            // predictable emission noise (surrounding whitespace, one layer
+            // of symmetric quotes) once, up front — before validation AND
+            // before the cache key, so the quoted and bare forms of the same
+            // request share one cache entry (observed live: `"\"quick\""`
+            // rejected as an unknown strategy cost agents retries). The
+            // `provider` pass-through normalizes here (classification lives
+            // in the pool); `intent` parses to its canonical spelling via
+            // the shared closed-vocabulary helper (C2).
+            req.provider = req.provider.map(|p| normalize_closed_vocab(&p).to_string());
             // Intent is a closed vocabulary, not a free string: the scorer
             // silently maps an unrecognized intent to no-bonus generic
             // ranking, so a typo would read as a successful request routed
-            // under the intended lens. Reject unknown values up front (same
-            // class as `format` and `duplication`).
-            if let Some(intent) = req.intent.as_deref()
-                && !matches!(
-                    intent,
-                    "news"
-                        | "academic"
-                        | "semantic"
-                        | "research"
-                        | "freshness"
-                        | "general"
-                        | "transcript"
-                )
-            {
-                return Err(McpToolError::invalid_argument(format!(
-                    "intent must be one of news, academic, semantic, research, freshness, \
-                     general, transcript — got '{intent}'"
-                )));
-            }
+            // under the intended lens. parse_closed_vocab normalizes
+            // emission noise and rejects unknown values up front.
+            let intent = match req.intent.as_deref() {
+                Some(raw) => Some(
+                    parse_closed_vocab(
+                        "intent",
+                        raw,
+                        &[
+                            (&["news"], "news"),
+                            (&["academic"], "academic"),
+                            (&["semantic"], "semantic"),
+                            (&["research"], "research"),
+                            (&["freshness"], "freshness"),
+                            (&["general"], "general"),
+                            (&["transcript"], "transcript"),
+                        ],
+                    )
+                    .map_err(McpToolError::from)?,
+                ),
+                None => None,
+            };
 
             let strat = match req.strategy.as_deref() {
                 Some(s) => s.parse::<SearchStrategy>().map_err(McpToolError::from)?,
@@ -351,7 +365,7 @@ impl ResearchServer {
                     "include_domains": req.include_domains,
                     "exclude_domains": req.exclude_domains,
                     "provider": req.provider,
-                    "intent": req.intent,
+                    "intent": intent,
                 }),
                 &fingerprint,
             );
@@ -365,18 +379,23 @@ impl ResearchServer {
                 return Ok(cached);
             }
 
-            // Deliberate single-provider selection without an explicit
-            // provider (the former web_recommend_provider + web_search(provider)
-            // two-step, folded in): score the configured providers against
-            // (query, intent) and query the top recommendation. The ranking is
-            // surfaced in the output so the choice is auditable.
+            // Provider selection + audit ranking. C4: the ranking is
+            // surfaced on every path where the tool makes the selection
+            // (intent pick, quick pick, fusion) — the audit trail for WHY
+            // providers were (or would be) chosen. The intent path picks the
+            // top configured recommendation (the former
+            // web_recommend_provider + web_search(provider) two-step, folded
+            // in); quick picks inside the pool under the same live-merged
+            // model; web/news/deep fuse. Explicit-provider calls are the
+            // caller's own deliberate override — they carry
+            // selected_provider and skip the ranking.
             let mut provider = req.provider.clone();
             let mut provider_recommendations: Vec<ProviderRecommendation> = Vec::new();
-            if provider.is_none()
-                && let Some(ref intent) = req.intent
-            {
-                provider_recommendations = self.pool.score_providers(&req.query, Some(intent));
-                if let Some(top) = provider_recommendations.iter().find(|r| r.configured) {
+            if provider.is_none() {
+                provider_recommendations = self.pool.score_providers(&req.query, intent);
+                if intent.is_some()
+                    && let Some(top) = provider_recommendations.iter().find(|r| r.configured)
+                {
                     provider = Some(top.kind.clone());
                 }
             }
@@ -688,16 +707,17 @@ impl ResearchServer {
             // Format is an enum, not a free string: Firecrawl silently maps
             // unknown formats to markdown while echoing the REQUESTED format
             // in its output — the caller would read markdown labelled as
-            // something else. Reject unknown formats up front.
-            let fmt = match format.as_deref() {
-                Some("markdown") | Some("json") | None => {
-                    format.unwrap_or_else(|| "markdown".to_string())
-                }
-                Some(other) => {
-                    return Err(McpToolError::invalid_argument(format!(
-                        "format must be 'markdown' or 'json', got '{other}'"
-                    )));
-                }
+            // something else. parse_closed_vocab normalizes emission noise
+            // and rejects unknown values up front (the shared
+            // closed-vocabulary contract, C2).
+            let fmt: &str = match format.as_deref() {
+                None => "markdown",
+                Some(raw) => parse_closed_vocab(
+                    "format",
+                    raw,
+                    &[(&["markdown"], "markdown"), (&["json"], "json")],
+                )
+                .map_err(McpToolError::from)?,
             };
             let main_content_only = main_content_only.unwrap_or(true);
             let wait_for_ms_val = wait_for_ms.unwrap_or(0);
@@ -709,7 +729,7 @@ impl ResearchServer {
 
             let fingerprint = self.pool.provider_fingerprint();
             let cache_params = serde_json::json!({
-                "format": &fmt,
+                "format": fmt,
                 "main_content_only": main_content_only,
                 "json_prompt": json_prompt,
                 "json_schema": json_schema_str,
@@ -718,7 +738,7 @@ impl ResearchServer {
             let ckey = cache_key("extract", &url, &cache_params, &fingerprint);
 
             let opts = ExtractOptions {
-                format: fmt.clone(),
+                format: fmt.to_string(),
                 json_prompt,
                 json_schema: json_schema_inner,
                 main_content_only,
@@ -731,7 +751,7 @@ impl ResearchServer {
                 && let Some(cached) = self.cache.get(&ckey).await
             {
                 if validate_extraction(
-                    &fmt,
+                    fmt,
                     cached.get("format").and_then(serde_json::Value::as_str),
                     cached.get("content").and_then(serde_json::Value::as_str),
                 )
@@ -748,7 +768,7 @@ impl ResearchServer {
                 .await
                 .map_err(McpToolError::from)?;
             validate_extraction(
-                &fmt,
+                fmt,
                 Some(&extracted.format),
                 Some(&extracted.content),
             )?;
@@ -2095,14 +2115,16 @@ impl ResearchServer {
                     "artifacts must not be empty",
                 ));
             }
-            match duplication.as_deref() {
-                None | Some("semantic") => {}
-                Some(other) => {
-                    return Err(McpToolError::invalid_argument(format!(
-                        "duplication must be 'semantic' or omitted, got '{other}'"
-                    )));
-                }
-            }
+            // Duplication is a closed vocabulary: parse_closed_vocab
+            // normalizes emission noise and rejects unknown values (the
+            // shared closed-vocabulary contract, C2).
+            let duplication: Option<&str> = match duplication.as_deref() {
+                None => None,
+                Some(raw) => Some(
+                    parse_closed_vocab("duplication", raw, &[(&["semantic"], "semantic")])
+                        .map_err(McpToolError::from)?,
+                ),
+            };
 
             // Tier-2 duplication (parameter-gated): the caller opts in with
             // duplication="semantic". The deterministic shingle floor runs
@@ -2110,7 +2132,7 @@ impl ResearchServer {
             // embed call fails — every degradation surfaced with its reason,
             // never silent (the rerank degradation contract).
             let mut duplication_reason: Option<String> = None;
-            let semantic_vectors: Option<Vec<(usize, Vec<f32>)>> = match duplication.as_deref() {
+            let semantic_vectors: Option<Vec<(usize, Vec<f32>)>> = match duplication {
                 Some("semantic") => match self.embedding_model.as_deref() {
                     None => {
                         duplication_reason = Some(

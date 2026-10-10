@@ -52,7 +52,7 @@ fn bound_source_returns_provenance_without_method_signals() -> anyhow::Result<()
     assert_eq!(source.identity().dimensions, hkask_storage::embedding_dim());
     assert_eq!(source.identity().passage_count, 1);
 
-    let batch = source.search(REQUESTED_MODEL, &fixture_vector(), 3)?;
+    let batch = source.search(REQUESTED_MODEL, "fixture passage", &fixture_vector(), 3)?;
     assert_eq!(batch.hits.len(), 1);
     assert_eq!(batch.hits[0].text, "grounded fixture passage");
     assert_eq!(batch.hits[0].source_id, SOURCE_ID);
@@ -103,7 +103,7 @@ fn bound_source_admits_trailing_colon_manifest_prefix() -> anyhow::Result<()> {
     );
     assert_eq!(source.identity().passage_count, 1);
 
-    let batch = source.search(REQUESTED_MODEL, &fixture_vector(), 3)?;
+    let batch = source.search(REQUESTED_MODEL, "fixture passage", &fixture_vector(), 3)?;
     assert_eq!(batch.hits.len(), 1);
     assert_eq!(batch.hits[0].text, "grounded fixture passage");
     assert_eq!(
@@ -438,7 +438,7 @@ fn materialized_provenance_admits_without_the_sealed_byte_digest() -> anyhow::Re
     let source = ReadOnlyPassageSource::open(&spec, PASSPHRASE)?;
     assert_eq!(source.identity().source_id, SOURCE_ID);
     assert_eq!(source.identity().passage_count, 1);
-    let batch = source.search(REQUESTED_MODEL, &fixture_vector(), 3)?;
+    let batch = source.search(REQUESTED_MODEL, "fixture passage", &fixture_vector(), 3)?;
     assert_eq!(batch.hits.len(), 1);
     assert_eq!(batch.hits[0].text, "grounded fixture passage");
     Ok(())
@@ -571,7 +571,7 @@ fn rekeyed_database_admits_via_provenance_not_the_sealed_digest() -> anyhow::Res
     // the machine passphrase is never used for a materialized source.
     let source = ReadOnlyPassageSource::open(&spec, PASSPHRASE)?;
     assert_eq!(source.identity().passage_count, 1);
-    let batch = source.search(REQUESTED_MODEL, &fixture_vector(), 3)?;
+    let batch = source.search(REQUESTED_MODEL, "fixture passage", &fixture_vector(), 3)?;
     assert_eq!(batch.hits.len(), 1);
     assert_eq!(batch.hits[0].text, "grounded fixture passage");
     Ok(())
