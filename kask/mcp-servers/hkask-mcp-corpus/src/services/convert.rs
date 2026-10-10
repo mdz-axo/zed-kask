@@ -1594,6 +1594,57 @@ mod ocr_guards {
         assert_eq!(ocr_pages, [0, 1]);
     }
 
+    /// The `generate` refusal shared by the test vision ports: every mock here
+    /// exercises `generate_vision`; `generate` answers with the unsupported
+    /// error. An owning `'static` future coerces to the borrowed arm at each
+    /// call site.
+    fn stub_vision_port_generate()
+    -> Pin<Box<dyn Future<Output = Result<InferenceResult, InferenceError>> + Send>> {
+        Box::pin(async {
+            Err(InferenceError::VisionUnsupported(
+                "mock port has no text generate".to_string(),
+            ))
+        })
+    }
+
+    /// Emit the shared stub `generate` arm inside a test vision port's
+    /// `impl InferencePort` block — the arm every mock here repeats. Each
+    /// port's `generate_vision` stays hand-written (its text source is the
+    /// mock's own variation).
+    macro_rules! vision_port_generate_arm {
+        () => {
+            fn generate(
+                &self,
+                _prompt: &str,
+                _parameters: &LLMParameters,
+                _tools: Option<&[ChatToolDefinition]>,
+            ) -> Pin<Box<dyn Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>>
+            {
+                stub_vision_port_generate()
+            }
+        };
+    }
+
+    /// The canned vision result the test ports return — model "mock", zero
+    /// usage, clean stop — parameterized on the text (each mock's own source:
+    /// a configured cell, or the current value of a shared cell).
+    fn mock_vision_result(text: String) -> InferenceResult {
+        InferenceResult {
+            text,
+            model: "mock".to_string(),
+            usage: InferenceUsage {
+                prompt_tokens: 0,
+                completion_tokens: 0,
+                total_tokens: 0,
+                reported: false,
+            },
+            finish_reason: "stop".to_string(),
+            tool_calls: vec![],
+            reasoning: None,
+            cost_usd: None,
+        }
+    }
+
     /// Mock port whose `generate_vision` returns a configurable text — the
     /// fixture for the raw-bytes OCR guard.
     struct VisionMockPort {
@@ -1601,19 +1652,7 @@ mod ocr_guards {
     }
 
     impl InferencePort for VisionMockPort {
-        fn generate(
-            &self,
-            _prompt: &str,
-            _parameters: &LLMParameters,
-            _tools: Option<&[ChatToolDefinition]>,
-        ) -> Pin<Box<dyn Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>>
-        {
-            Box::pin(async {
-                Err(InferenceError::VisionUnsupported(
-                    "mock port has no text generate".to_string(),
-                ))
-            })
-        }
+        vision_port_generate_arm!();
 
         fn generate_vision(
             &self,
@@ -1623,21 +1662,7 @@ mod ocr_guards {
             _model_override: Option<&str>,
         ) -> Pin<Box<dyn Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>>
         {
-            let result = InferenceResult {
-                text: self.vision_text.clone(),
-                model: "mock".to_string(),
-                usage: InferenceUsage {
-                    prompt_tokens: 0,
-                    completion_tokens: 0,
-                    total_tokens: 0,
-                    reported: false,
-                },
-                finish_reason: "stop".to_string(),
-                tool_calls: vec![],
-                reasoning: None,
-                cost_usd: None,
-            };
-            Box::pin(async { Ok(result) })
+            Box::pin(async { Ok(mock_vision_result(self.vision_text.clone())) })
         }
     }
 
@@ -1649,19 +1674,7 @@ mod ocr_guards {
     }
 
     impl InferencePort for MutableVisionPort {
-        fn generate(
-            &self,
-            _prompt: &str,
-            _parameters: &LLMParameters,
-            _tools: Option<&[ChatToolDefinition]>,
-        ) -> Pin<Box<dyn Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>>
-        {
-            Box::pin(async {
-                Err(InferenceError::VisionUnsupported(
-                    "mock port has no text generate".to_string(),
-                ))
-            })
-        }
+        vision_port_generate_arm!();
 
         fn generate_vision(
             &self,
@@ -1676,21 +1689,7 @@ mod ocr_guards {
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .clone();
-            let result = InferenceResult {
-                text,
-                model: "mock".to_string(),
-                usage: InferenceUsage {
-                    prompt_tokens: 0,
-                    completion_tokens: 0,
-                    total_tokens: 0,
-                    reported: false,
-                },
-                finish_reason: "stop".to_string(),
-                tool_calls: vec![],
-                reasoning: None,
-                cost_usd: None,
-            };
-            Box::pin(async { Ok(result) })
+            Box::pin(async move { Ok(mock_vision_result(text)) })
         }
     }
 
