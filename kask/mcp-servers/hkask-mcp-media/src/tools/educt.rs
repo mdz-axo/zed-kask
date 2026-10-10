@@ -93,6 +93,29 @@ impl WorkingTranscript {
     }
 }
 
+/// Load a stored transcript and enforce the word-timings precondition every
+/// timed consumer requires: an unknown ID is the caller's named not-found,
+/// and an untimed transcript refuses with the caller's consumer-specific
+/// message (each tool names what cannot anchor without timings). Returns the
+/// bundle — no current caller reads the summary past the guard.
+fn load_timed_transcript(
+    driver: &dyn hkask_storage::database::driver::DatabaseDriver,
+    transcript_id: &str,
+    no_timings_message: &str,
+) -> Result<TranscriptBundle, McpToolError> {
+    let Some((summary, bundle)) =
+        transcript_store::load_transcript(driver, transcript_id).map_err(map_store_error)?
+    else {
+        return Err(McpToolError::not_found(format!(
+            "transcript {transcript_id} not found"
+        )));
+    };
+    if !summary.has_word_timings {
+        return Err(McpToolError::invalid_argument(no_timings_message));
+    }
+    Ok(bundle)
+}
+
 fn working_transcript(
     driver: &dyn hkask_storage::database::driver::DatabaseDriver,
     transcript_id: &str,
@@ -536,20 +559,13 @@ impl MediaServer {
         execute_tool(self, "educt_paragraph_pass", async {
             let _admission = self.admit_heavy_operation()?;
             let driver = &**self.gallery_store.driver();
-            let Some((summary, bundle)) = transcript_store::load_transcript(driver, &transcript_id)
-                .map_err(map_store_error)?
-            else {
-                return Err(McpToolError::not_found(format!(
-                    "transcript {transcript_id} not found"
-                )));
-            };
-            if !summary.has_word_timings {
-                return Err(McpToolError::invalid_argument(
-                    "transcript has no word-level timings; the paragraph pass cannot \
-                     anchor (NoWordTimings) — store a transcript from transcribe_bundle \
-                     first",
-                ));
-            }
+            let bundle = load_timed_transcript(
+                driver,
+                &transcript_id,
+                "transcript has no word-level timings; the paragraph pass cannot \
+                 anchor (NoWordTimings) — store a transcript from transcribe_bundle \
+                 first",
+            )?;
             let mode = if structured.unwrap_or(false) {
                 PassMode::Structured
             } else {
@@ -593,20 +609,13 @@ impl MediaServer {
         execute_tool(self, "educt_speaker_pass", async {
             let _admission = self.admit_heavy_operation()?;
             let driver = &**self.gallery_store.driver();
-            let Some((summary, bundle)) = transcript_store::load_transcript(driver, &transcript_id)
-                .map_err(map_store_error)?
-            else {
-                return Err(McpToolError::not_found(format!(
-                    "transcript {transcript_id} not found"
-                )));
-            };
-            if !summary.has_word_timings {
-                return Err(McpToolError::invalid_argument(
-                    "transcript has no word-level timings; the speaker pass cannot \
-                     anchor (NoWordTimings) — store a transcript from transcribe_bundle \
-                     first",
-                ));
-            }
+            let bundle = load_timed_transcript(
+                driver,
+                &transcript_id,
+                "transcript has no word-level timings; the speaker pass cannot \
+                 anchor (NoWordTimings) — store a transcript from transcribe_bundle \
+                 first",
+            )?;
             // Structured outputs apply to the text passes only — the
             // audio path is prompt-schema (rejected here, never a silent
             // no-op).
@@ -678,20 +687,13 @@ impl MediaServer {
         execute_tool(self, "educt_correction_pass", async {
             let _admission = self.admit_heavy_operation()?;
             let driver = &**self.gallery_store.driver();
-            let Some((summary, bundle)) = transcript_store::load_transcript(driver, &transcript_id)
-                .map_err(map_store_error)?
-            else {
-                return Err(McpToolError::not_found(format!(
-                    "transcript {transcript_id} not found"
-                )));
-            };
-            if !summary.has_word_timings {
-                return Err(McpToolError::invalid_argument(
-                    "transcript has no word-level timings; the correction pass cannot \
-                     anchor (NoWordTimings) — store a transcript from transcribe_bundle \
-                     first",
-                ));
-            }
+            let bundle = load_timed_transcript(
+                driver,
+                &transcript_id,
+                "transcript has no word-level timings; the correction pass cannot \
+                 anchor (NoWordTimings) — store a transcript from transcribe_bundle \
+                 first",
+            )?;
             let mode = if structured.unwrap_or(false) {
                 PassMode::Structured
             } else {
@@ -732,19 +734,12 @@ impl MediaServer {
     ) -> Result<String, McpToolError> {
         execute_tool(self, "educt_apply_corrections", async {
             let driver = &**self.gallery_store.driver();
-            let Some((summary, bundle)) = transcript_store::load_transcript(driver, &transcript_id)
-                .map_err(map_store_error)?
-            else {
-                return Err(McpToolError::not_found(format!(
-                    "transcript {transcript_id} not found"
-                )));
-            };
-            if !summary.has_word_timings {
-                return Err(McpToolError::invalid_argument(
-                    "transcript has no word-level timings; corrections cannot anchor \
-                     (NoWordTimings)",
-                ));
-            }
+            let bundle = load_timed_transcript(
+                driver,
+                &transcript_id,
+                "transcript has no word-level timings; corrections cannot anchor \
+                 (NoWordTimings)",
+            )?;
             let layers =
                 transcript_store::list_layers(driver, &transcript_id).map_err(map_store_error)?;
             let mut correction_layers: Vec<_> = layers
@@ -849,19 +844,12 @@ impl MediaServer {
     ) -> Result<String, McpToolError> {
         execute_tool(self, "educt_realign_transcript", async {
             let driver = &**self.gallery_store.driver();
-            let Some((summary, bundle)) = transcript_store::load_transcript(driver, &transcript_id)
-                .map_err(map_store_error)?
-            else {
-                return Err(McpToolError::not_found(format!(
-                    "transcript {transcript_id} not found"
-                )));
-            };
-            if !summary.has_word_timings {
-                return Err(McpToolError::invalid_argument(
-                    "transcript has no word-level timings; a realignment cannot \
-                     anchor interpolation on an untimed source (NoWordTimings)",
-                ));
-            }
+            let bundle = load_timed_transcript(
+                driver,
+                &transcript_id,
+                "transcript has no word-level timings; a realignment cannot \
+                 anchor interpolation on an untimed source (NoWordTimings)",
+            )?;
             let layers =
                 transcript_store::list_layers(driver, &transcript_id).map_err(map_store_error)?;
             let mut correction_layers: Vec<_> = layers
@@ -945,20 +933,13 @@ impl MediaServer {
         execute_tool(self, "educt_highlight_pass", async {
             let _admission = self.admit_heavy_operation()?;
             let driver = &**self.gallery_store.driver();
-            let Some((summary, bundle)) = transcript_store::load_transcript(driver, &transcript_id)
-                .map_err(map_store_error)?
-            else {
-                return Err(McpToolError::not_found(format!(
-                    "transcript {transcript_id} not found"
-                )));
-            };
-            if !summary.has_word_timings {
-                return Err(McpToolError::invalid_argument(
-                    "transcript has no word-level timings; the highlight pass cannot \
-                     anchor (NoWordTimings) — store a transcript from transcribe_bundle \
-                     first",
-                ));
-            }
+            let bundle = load_timed_transcript(
+                driver,
+                &transcript_id,
+                "transcript has no word-level timings; the highlight pass cannot \
+                 anchor (NoWordTimings) — store a transcript from transcribe_bundle \
+                 first",
+            )?;
             let working = working_transcript(driver, &transcript_id, &bundle)?;
             let working_words = working.require_timed_words("educt_highlight_pass")?;
             let mut working_bundle = bundle.clone();
@@ -1006,20 +987,12 @@ impl MediaServer {
     ) -> Result<String, McpToolError> {
         execute_tool(self, "educt_edl_from_highlights", async {
             let driver = &**self.gallery_store.driver();
-            let Some((summary, _bundle)) =
-                transcript_store::load_transcript(driver, &transcript_id)
-                    .map_err(map_store_error)?
-            else {
-                return Err(McpToolError::not_found(format!(
-                    "transcript {transcript_id} not found"
-                )));
-            };
-            if !summary.has_word_timings {
-                return Err(McpToolError::invalid_argument(
-                    "transcript has no word-level timings; an EDL cannot anchor \
-                     (NoWordTimings)",
-                ));
-            }
+            load_timed_transcript(
+                driver,
+                &transcript_id,
+                "transcript has no word-level timings; an EDL cannot anchor \
+                 (NoWordTimings)",
+            )?;
             let layers =
                 transcript_store::list_layers(driver, &transcript_id).map_err(map_store_error)?;
             let mut highlight_layers: Vec<_> = layers
@@ -1120,19 +1093,12 @@ impl MediaServer {
         execute_tool(self, "educt_render_edl", async {
             let _admission = self.admit_heavy_operation()?;
             let driver = &**self.gallery_store.driver();
-            let Some((summary, bundle)) = transcript_store::load_transcript(driver, &transcript_id)
-                .map_err(map_store_error)?
-            else {
-                return Err(McpToolError::not_found(format!(
-                    "transcript {transcript_id} not found"
-                )));
-            };
-            if !summary.has_word_timings {
-                return Err(McpToolError::invalid_argument(
-                    "transcript has no word-level timings; an EDL cannot render \
-                     (NoWordTimings)",
-                ));
-            }
+            let bundle = load_timed_transcript(
+                driver,
+                &transcript_id,
+                "transcript has no word-level timings; an EDL cannot render \
+                 (NoWordTimings)",
+            )?;
             let layers =
                 transcript_store::list_layers(driver, &transcript_id).map_err(map_store_error)?;
             let mut edl_layers: Vec<_> = layers
@@ -1418,19 +1384,12 @@ impl MediaServer {
     ) -> Result<String, McpToolError> {
         execute_tool(self, "educt_locate", async {
             let driver = &**self.gallery_store.driver();
-            let Some((summary, bundle)) = transcript_store::load_transcript(driver, &transcript_id)
-                .map_err(map_store_error)?
-            else {
-                return Err(McpToolError::not_found(format!(
-                    "transcript {transcript_id} not found"
-                )));
-            };
-            if !summary.has_word_timings {
-                return Err(McpToolError::invalid_argument(
-                    "transcript has no word-level timings; a quote cannot map to a media \
-                     range (NoWordTimings)",
-                ));
-            }
+            let bundle = load_timed_transcript(
+                driver,
+                &transcript_id,
+                "transcript has no word-level timings; a quote cannot map to a media \
+                 range (NoWordTimings)",
+            )?;
             let working = working_transcript(driver, &transcript_id, &bundle)?;
             let working_words = working.require_timed_words("educt_locate")?;
             let ranges = text_to_word_ranges(working_words, &text);
