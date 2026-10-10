@@ -1229,6 +1229,51 @@ mod tests {
         }
     }
 
+    /// Build a `LanguageModelInferencePort` over a fresh `FakeLanguageModel` —
+    /// the construction every resilience test repeats, varying only the
+    /// timeout, the concurrency bound, and the resilience config. Returns the
+    /// model too: the fake-driving tests derive `model.as_fake()` locally (the
+    /// fake borrows the model, so it cannot cross this helper's boundary).
+    fn test_port(
+        cx: &mut gpui::TestAppContext,
+        timeout: Duration,
+        max_concurrency: usize,
+        resilience: crate::InferenceResilienceConfig,
+    ) -> (
+        super::LanguageModelInferencePort,
+        Arc<dyn language_model::LanguageModel>,
+        gpui::Task<()>,
+    ) {
+        let model: Arc<dyn language_model::LanguageModel> = Arc::new(FakeLanguageModel::default());
+        let (port, task) = super::LanguageModelInferencePort::new(
+            model.clone(),
+            timeout,
+            max_concurrency,
+            resilience,
+            cx.to_async(),
+        );
+        (port, model, task)
+    }
+
+    /// The canned `ProviderRejection` the resilience tests inject through the
+    /// fake — provider and wire message constant, varying in status, code,
+    /// and retryability class. The auth-rejection detail test keeps its own
+    /// construction (a different wire message).
+    fn provider_rejection(
+        status: Option<http_client::StatusCode>,
+        code: &str,
+        category: ProviderErrorCategory,
+    ) -> LanguageModelCompletionError {
+        LanguageModelCompletionError::ProviderRejection {
+            provider: LanguageModelProviderName::new("OpenRouter"),
+            status,
+            code: Some(code.to_string()),
+            message: "Provider returned error".to_string(),
+            retry_after: None,
+            category,
+        }
+    }
+
     /// expect: "Inference reports include cached prompt categories and preserve provider cost" [P8]
     #[test]
     fn completion_usage_includes_cached_tokens() {
@@ -1308,14 +1353,11 @@ mod tests {
         // Display is the wire message only — 402/429/502/statusless all read
         // "Provider returned error". The detail must carry every preserved
         // wire field plus the retryability class.
-        let rejection = LanguageModelCompletionError::ProviderRejection {
-            provider: LanguageModelProviderName::new("OpenRouter"),
-            status: Some(http_client::StatusCode::BAD_GATEWAY),
-            code: Some("502".to_string()),
-            message: "Provider returned error".to_string(),
-            retry_after: None,
-            category: ProviderErrorCategory::InternalServer,
-        };
+        let rejection = provider_rejection(
+            Some(http_client::StatusCode::BAD_GATEWAY),
+            "502",
+            ProviderErrorCategory::InternalServer,
+        );
         let detail = super::completion_error_detail(&rejection);
         assert!(detail.contains("OpenRouter"));
         assert!(detail.contains("502"));
@@ -1329,14 +1371,7 @@ mod tests {
         // Mid-stream rejections carry no HTTP status; a code mapping to no
         // known category is permanent-class — the sub-second failure
         // signature from the incident log.
-        let rejection = LanguageModelCompletionError::ProviderRejection {
-            provider: LanguageModelProviderName::new("OpenRouter"),
-            status: None,
-            code: Some("499".to_string()),
-            message: "Provider returned error".to_string(),
-            retry_after: None,
-            category: ProviderErrorCategory::Other,
-        };
+        let rejection = provider_rejection(None, "499", ProviderErrorCategory::Other);
         let detail = super::completion_error_detail(&rejection);
         assert!(detail.contains("none (mid-stream rejection)"));
         assert!(detail.contains("499"));
@@ -1411,15 +1446,9 @@ mod tests {
     async fn missing_api_key_failures_do_not_open_the_transient_circuit(
         cx: &mut gpui::TestAppContext,
     ) {
-        let model: Arc<dyn language_model::LanguageModel> = Arc::new(FakeLanguageModel::default());
+        let (port, model, _task) =
+            test_port(cx, Duration::from_secs(300), 1, test_resilience_config());
         let fake = model.as_fake();
-        let (port, _task) = super::LanguageModelInferencePort::new(
-            model.clone(),
-            Duration::from_secs(300),
-            1,
-            test_resilience_config(),
-            cx.to_async(),
-        );
 
         for attempt_index in 0..3 {
             let attempt_port = port.clone();
@@ -1467,28 +1496,19 @@ mod tests {
         // arriving mid-stream must reach the MCP-server caller as
         // InferenceError::Generation carrying the wire fields, not the bare
         // "Provider returned error" Display.
-        let model: Arc<dyn language_model::LanguageModel> = Arc::new(FakeLanguageModel::default());
+        let (port, model, _task) =
+            test_port(cx, Duration::from_secs(300), 2, test_resilience_config());
         let fake = model.as_fake();
-        let (port, _task) = super::LanguageModelInferencePort::new(
-            model.clone(),
-            Duration::from_secs(300),
-            2, // max_concurrency
-            test_resilience_config(),
-            cx.to_async(),
-        );
 
         let generate =
             cx.spawn(async move |_cx| port.generate("test", &LLMParameters::default(), None).await);
         // Let the request reach the fake and open its stream.
         cx.run_until_parked();
-        fake.send_last_completion_stream_error(LanguageModelCompletionError::ProviderRejection {
-            provider: LanguageModelProviderName::new("OpenRouter"),
-            status: Some(http_client::StatusCode::BAD_GATEWAY),
-            code: Some("502".to_string()),
-            message: "Provider returned error".to_string(),
-            retry_after: None,
-            category: ProviderErrorCategory::InternalServer,
-        });
+        fake.send_last_completion_stream_error(provider_rejection(
+            Some(http_client::StatusCode::BAD_GATEWAY),
+            "502",
+            ProviderErrorCategory::InternalServer,
+        ));
         cx.run_until_parked();
 
         let Err(error) = generate.await else {
@@ -1510,15 +1530,9 @@ mod tests {
     /// [P2] Constraining: automatic control is bounded to reversible admission denial
     #[gpui::test]
     async fn transient_provider_storm_opens_live_inference_circuit(cx: &mut gpui::TestAppContext) {
-        let model: Arc<dyn language_model::LanguageModel> = Arc::new(FakeLanguageModel::default());
+        let (port, model, _task) =
+            test_port(cx, Duration::from_secs(300), 2, test_resilience_config());
         let fake = model.as_fake();
-        let (port, _task) = super::LanguageModelInferencePort::new(
-            model.clone(),
-            Duration::from_secs(300),
-            2,
-            test_resilience_config(),
-            cx.to_async(),
-        );
 
         for attempt_index in 0..3 {
             let attempt_port = port.clone();
@@ -1529,16 +1543,11 @@ mod tests {
                     .await
             });
             cx.run_until_parked();
-            fake.send_last_completion_stream_error(
-                LanguageModelCompletionError::ProviderRejection {
-                    provider: LanguageModelProviderName::new("OpenRouter"),
-                    status: Some(http_client::StatusCode::BAD_GATEWAY),
-                    code: Some("502".to_string()),
-                    message: "Provider returned error".to_string(),
-                    retry_after: None,
-                    category: ProviderErrorCategory::InternalServer,
-                },
-            );
+            fake.send_last_completion_stream_error(provider_rejection(
+                Some(http_client::StatusCode::BAD_GATEWAY),
+                "502",
+                ProviderErrorCategory::InternalServer,
+            ));
             cx.run_until_parked();
             assert!(matches!(attempt.await, Err(InferenceError::Generation(_))));
         }
@@ -1556,18 +1565,16 @@ mod tests {
     /// post: one probe reaches the provider, succeeds, and closes the observed circuit
     #[gpui::test]
     async fn successful_live_half_open_probe_closes_circuit(cx: &mut gpui::TestAppContext) {
-        let model: Arc<dyn language_model::LanguageModel> = Arc::new(FakeLanguageModel::default());
-        let fake = model.as_fake();
-        let (port, _task) = super::LanguageModelInferencePort::new(
-            model.clone(),
+        let (port, model, _task) = test_port(
+            cx,
             Duration::from_secs(300),
             1,
             crate::InferenceResilienceConfig {
                 transient_failure_threshold: 1,
                 open_duration: Duration::ZERO,
             },
-            cx.to_async(),
         );
+        let fake = model.as_fake();
 
         let failed_port = port.clone();
         let failed = cx.spawn(async move |_cx| {
@@ -1576,14 +1583,11 @@ mod tests {
                 .await
         });
         cx.run_until_parked();
-        fake.send_last_completion_stream_error(LanguageModelCompletionError::ProviderRejection {
-            provider: LanguageModelProviderName::new("OpenRouter"),
-            status: Some(http_client::StatusCode::BAD_GATEWAY),
-            code: Some("502".to_string()),
-            message: "Provider returned error".to_string(),
-            retry_after: None,
-            category: ProviderErrorCategory::InternalServer,
-        });
+        fake.send_last_completion_stream_error(provider_rejection(
+            Some(http_client::StatusCode::BAD_GATEWAY),
+            "502",
+            ProviderErrorCategory::InternalServer,
+        ));
         cx.run_until_parked();
         assert!(matches!(failed.await, Err(InferenceError::Generation(_))));
 
@@ -1631,14 +1635,8 @@ mod tests {
     /// post: the next request fails before dispatch with `InferenceError::CircuitOpen`
     #[gpui::test]
     async fn timeout_storm_opens_live_inference_circuit(cx: &mut gpui::TestAppContext) {
-        let model: Arc<dyn language_model::LanguageModel> = Arc::new(FakeLanguageModel::default());
-        let (port, _task) = super::LanguageModelInferencePort::new(
-            model,
-            Duration::from_secs(2),
-            1,
-            test_resilience_config(),
-            cx.to_async(),
-        );
+        let (port, _model, _task) =
+            test_port(cx, Duration::from_secs(2), 1, test_resilience_config());
 
         for attempt_index in 0..3 {
             let attempt_port = port.clone();
@@ -1668,14 +1666,8 @@ mod tests {
     /// post: the request times out at the hint, not the global.
     #[gpui::test]
     async fn request_timeout_hint_overrides_the_global_deadline(cx: &mut gpui::TestAppContext) {
-        let model: Arc<dyn language_model::LanguageModel> = Arc::new(FakeLanguageModel::default());
-        let (port, _task) = super::LanguageModelInferencePort::new(
-            model,
-            Duration::from_secs(600),
-            1,
-            test_resilience_config(),
-            cx.to_async(),
-        );
+        let (port, _model, _task) =
+            test_port(cx, Duration::from_secs(600), 1, test_resilience_config());
         let mut params = LLMParameters::default();
         params.timeout_hint_secs = Some(2);
         let attempt_port = port.clone();
@@ -1696,14 +1688,8 @@ mod tests {
     /// post: the deadline fires at the 1800s server cap.
     #[gpui::test]
     async fn request_timeout_hint_is_capped_at_the_server_maximum(cx: &mut gpui::TestAppContext) {
-        let model: Arc<dyn language_model::LanguageModel> = Arc::new(FakeLanguageModel::default());
-        let (port, _task) = super::LanguageModelInferencePort::new(
-            model,
-            Duration::from_secs(600),
-            1,
-            test_resilience_config(),
-            cx.to_async(),
-        );
+        let (port, _model, _task) =
+            test_port(cx, Duration::from_secs(600), 1, test_resilience_config());
         let mut params = LLMParameters::default();
         params.timeout_hint_secs = Some(999_999);
         let attempt_port = port.clone();
@@ -1727,15 +1713,9 @@ mod tests {
     async fn permanent_provider_failure_is_observed_without_opening_circuit(
         cx: &mut gpui::TestAppContext,
     ) {
-        let model: Arc<dyn language_model::LanguageModel> = Arc::new(FakeLanguageModel::default());
+        let (port, model, _task) =
+            test_port(cx, Duration::from_secs(300), 2, test_resilience_config());
         let fake = model.as_fake();
-        let (port, _task) = super::LanguageModelInferencePort::new(
-            model.clone(),
-            Duration::from_secs(300),
-            2,
-            test_resilience_config(),
-            cx.to_async(),
-        );
         let attempt_port = port.clone();
         let attempt = cx.spawn(async move |_cx| {
             attempt_port
@@ -1743,14 +1723,11 @@ mod tests {
                 .await
         });
         cx.run_until_parked();
-        fake.send_last_completion_stream_error(LanguageModelCompletionError::ProviderRejection {
-            provider: LanguageModelProviderName::new("OpenRouter"),
-            status: None,
-            code: Some("499".to_string()),
-            message: "Provider returned error".to_string(),
-            retry_after: None,
-            category: ProviderErrorCategory::Other,
-        });
+        fake.send_last_completion_stream_error(provider_rejection(
+            None,
+            "499",
+            ProviderErrorCategory::Other,
+        ));
         cx.run_until_parked();
         assert!(matches!(attempt.await, Err(InferenceError::Generation(_))));
 
@@ -1853,16 +1830,9 @@ mod tests {
     // so `completion_count()` (open stream senders) must never exceed 2.
     #[gpui::test]
     async fn concurrency_semaphore_bounds_in_flight_calls(cx: &mut gpui::TestAppContext) {
-        let model: Arc<dyn language_model::LanguageModel> = Arc::new(FakeLanguageModel::default());
+        let (port, model, _task) =
+            test_port(cx, Duration::from_secs(300), 2, test_resilience_config());
         let fake = model.as_fake();
-
-        let (port, _task) = super::LanguageModelInferencePort::new(
-            model.clone(),
-            Duration::from_secs(300),
-            2, // max_concurrency
-            test_resilience_config(),
-            cx.to_async(),
-        );
 
         // Start 4 calls
         // Fire 5 non-streaming requests. Each returns a future that resolves
@@ -1921,15 +1891,9 @@ mod tests {
     /// expect: "Queue wait and stalled stream drain share the admission deadline" [P1]
     #[gpui::test]
     async fn queued_and_established_requests_share_deadline(cx: &mut gpui::TestAppContext) {
-        let model: Arc<dyn language_model::LanguageModel> = Arc::new(FakeLanguageModel::default());
+        let (port, model, _receiver) =
+            test_port(cx, Duration::from_secs(2), 1, test_resilience_config());
         let fake = model.as_fake();
-        let (port, _receiver) = super::LanguageModelInferencePort::new(
-            model.clone(),
-            Duration::from_secs(2),
-            1,
-            test_resilience_config(),
-            cx.to_async(),
-        );
         let first = {
             let port = port.clone();
             cx.spawn(async move |_| {
@@ -1964,16 +1928,9 @@ mod tests {
     async fn streaming_deadline_covers_unpolled_queue_and_drain(cx: &mut gpui::TestAppContext) {
         use futures_util::StreamExt;
         for poll_receiver in [false, true] {
-            let model: Arc<dyn language_model::LanguageModel> =
-                Arc::new(FakeLanguageModel::default());
+            let (port, model, _receiver) =
+                test_port(cx, Duration::from_secs(2), 1, test_resilience_config());
             let fake = model.as_fake();
-            let (port, _receiver) = super::LanguageModelInferencePort::new(
-                model.clone(),
-                Duration::from_secs(2),
-                1,
-                test_resilience_config(),
-                cx.to_async(),
-            );
             let mut stream = port.generate_stream("stream", &LLMParameters::default(), None);
             assert_eq!(port.admission.available_permits(), 1);
             if poll_receiver {
@@ -2003,14 +1960,7 @@ mod tests {
     async fn streaming_cancellation_releases_permits_with_disabled_deadline(
         cx: &mut gpui::TestAppContext,
     ) {
-        let model: Arc<dyn language_model::LanguageModel> = Arc::new(FakeLanguageModel::default());
-        let (port, _receiver) = super::LanguageModelInferencePort::new(
-            model,
-            Duration::ZERO,
-            1,
-            test_resilience_config(),
-            cx.to_async(),
-        );
+        let (port, _model, _receiver) = test_port(cx, Duration::ZERO, 1, test_resilience_config());
         let stream = port.generate_stream("stream", &LLMParameters::default(), None);
         cx.run_until_parked();
         cx.executor().advance_clock(Duration::from_secs(3600));
@@ -2033,14 +1983,8 @@ mod tests {
     // request.
     #[gpui::test]
     async fn structured_emit_result_remains_required(cx: &mut gpui::TestAppContext) {
-        let model: Arc<dyn language_model::LanguageModel> = Arc::new(FakeLanguageModel::default());
-        let (port, _task) = super::LanguageModelInferencePort::new(
-            model.clone(),
-            Duration::from_secs(300),
-            2,
-            test_resilience_config(),
-            cx.to_async(),
-        );
+        let (port, _model, _task) =
+            test_port(cx, Duration::from_secs(300), 2, test_resilience_config());
 
         let messages = [ChatMessage::user(
             "Execute the instructions above.".to_string(),
