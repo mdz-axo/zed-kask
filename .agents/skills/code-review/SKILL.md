@@ -79,7 +79,7 @@ The `skill` tool accepts `name` and `task` only. Read the user's task and gather
 3. DETECTION ONLY — do NOT assign verdicts, severity, confidence, or falsifiers (that is the adjudicate phase; Sauer detection/collection separation).
 4. For each raw finding, record `axis`, `location.file`, `location.line_approx`, a verbatim `evidence` snippet (≤5 lines) read from the cited location, a one-line `observation` (no verdict), and `source`. Uncited observations are DROPPED, not recorded (no-fiction).
 5. For each enabled delegate flag, emit a delegation instruction (bug-hunt / refactor-architecture / deep-module / essentialist) for the agent to run between this step and adjudicate; the inline pass always covers the basics, delegation adds depth. Delegates are read-only and must not re-invoke code-review or spawn further review agents — perform the delegated pass directly. Scale by `size_class`: trivial → no delegates (the inline pass covers); good → at most one targeted delegate for the riskiest area; acceptable/too_large → shard delegate instructions by module bundle (group related files, one instruction per bundle). On every path the agent folds the delegates' returned findings into `raw_findings` with `source` set to the delegate name before adjudicate — one fold, one owner, no double-counting, no re-verdicting.
-6. Lead with leverage (purpose/security/structural before cosmetic nits). Respond with `predicted_findings`, `predicted_blockers`, `raw_findings`, `delegated_axes`, `delegate_instructions`.
+6. Lead with leverage (purpose/security/structural before cosmetic nits). Respond with `predicted_findings`, `predicted_blockers`, `raw_findings`, `delegate_instructions`.
 
 ### code-review-adjudicate
 

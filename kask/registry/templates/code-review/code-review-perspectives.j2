@@ -11,7 +11,6 @@ contract:
     delegate_architecture: boolean
   output:
     raw_findings: array
-    delegated_axes: array
     delegate_instructions: array
     predicted_findings: integer
     predicted_blockers: integer
@@ -208,7 +207,6 @@ Respond with a JSON object:
       "source": "inline | machine | bug-hunt | refactor-architecture"
     }
   ],
-  "delegated_axes": ["bug-hunt", "refactor-architecture"],
   "delegate_instructions": [
     {"delegate": "bug-hunt", "inputs": {"target": "...", "quality_criteria": "...", "probe_depth": "static"}, "axes": ["P/E-correctness"]}
   ],
