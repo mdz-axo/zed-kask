@@ -2441,6 +2441,54 @@ fn federated_source_fixture(
     )?)
 }
 
+/// Build a federated-search `CuratorServer` over a fresh in-memory memory
+/// store seeded with one local lesson (`entity`, `text`) embedded to the
+/// federated fixture vector — the shared construction of the three
+/// federated-search tests. `regulation` toggles the regulation archive
+/// (the interleave test carries one; the outage/reload tests do not);
+/// `manifest_path` is the sealed fixture manifest (clone it when the test
+/// removes or restores the manifest file after construction). The per-test
+/// pre-server work (the corpus-file before-read, the manifest tampering,
+/// the original-manifest capture) stays at each site.
+fn federated_search_server(
+    manifest_path: std::path::PathBuf,
+    regulation: bool,
+    entity: &str,
+    text: &str,
+) -> Result<CuratorServer, Box<dyn std::error::Error>> {
+    let driver = SqliteDriver::in_memory_driver();
+    let h_mem_store = HMemStore::from_driver(driver.clone())?;
+    let embedding_store = EmbeddingStore::from_driver(driver.clone(), test_dim())?;
+    let memory = Arc::new(hkask_memory::MemoryStore::new(h_mem_store, embedding_store));
+    let local = hkask_storage::HMem::new(entity, "lesson", serde_json::json!(text), WebID::new());
+    memory.store(local.clone())?;
+    memory.store_embedding(
+        &local.entity,
+        &federated_fixture_vector(),
+        "test-model",
+        Some(text),
+    )?;
+    let regulation_store = if regulation {
+        Some(Arc::new(RegulationArchive::from_driver(driver)?))
+    } else {
+        None
+    };
+    let stores = CuratorStores {
+        regulation_store,
+        memory: Some(memory),
+    };
+    let database = Arc::new(CuratorDb::from_stores_with_federated_manifest(
+        stores,
+        manifest_path,
+        "test-passphrase".to_string(),
+    ));
+    Ok(CuratorServer::new(
+        WebID::new(),
+        database,
+        Arc::new(ConstantEmbedPort) as Arc<dyn hkask_types::InferencePort>,
+    ))
+}
+
 /// expect: "One explicit search returns Curator experience and sealed corpus evidence with provenance." [P8]
 #[tokio::test]
 async fn federated_search_interleaves_sources_without_mutating_corpus()
@@ -2451,37 +2499,12 @@ async fn federated_search_interleaves_sources_without_mutating_corpus()
     let database_path = directory.path().join("reference.db");
     let before = std::fs::read(&database_path)?;
 
-    let driver = SqliteDriver::in_memory_driver();
-    let h_mem_store = HMemStore::from_driver(driver.clone())?;
-    let embedding_store = EmbeddingStore::from_driver(driver.clone(), test_dim())?;
-    let memory = Arc::new(hkask_memory::MemoryStore::new(h_mem_store, embedding_store));
-    let local = hkask_storage::HMem::new(
-        "curator:decision:fixture",
-        "lesson",
-        serde_json::json!("curator experience"),
-        WebID::new(),
-    );
-    memory.store(local.clone())?;
-    memory.store_embedding(
-        &local.entity,
-        &federated_fixture_vector(),
-        "test-model",
-        Some("curator experience"),
-    )?;
-    let stores = CuratorStores {
-        regulation_store: Some(Arc::new(RegulationArchive::from_driver(driver)?)),
-        memory: Some(memory),
-    };
-    let database = Arc::new(CuratorDb::from_stores_with_federated_manifest(
-        stores,
+    let server = federated_search_server(
         manifest_path,
-        "test-passphrase".to_string(),
-    ));
-    let server = CuratorServer::new(
-        WebID::new(),
-        database,
-        Arc::new(ConstantEmbedPort) as Arc<dyn hkask_types::InferencePort>,
-    );
+        true,
+        "curator:decision:fixture",
+        "curator experience",
+    )?;
 
     let response = parse(
         &server
@@ -2523,35 +2546,12 @@ async fn federated_search_preserves_healthy_source_during_partial_outage()
         .push(missing);
     std::fs::write(&manifest_path, serde_json::to_vec_pretty(&manifest)?)?;
 
-    let driver = SqliteDriver::in_memory_driver();
-    let h_mem_store = HMemStore::from_driver(driver.clone())?;
-    let embedding_store = EmbeddingStore::from_driver(driver, test_dim())?;
-    let memory = Arc::new(hkask_memory::MemoryStore::new(h_mem_store, embedding_store));
-    let local = hkask_storage::HMem::new(
+    let server = federated_search_server(
+        manifest_path,
+        false,
         "curator:partial-outage",
-        "lesson",
-        serde_json::json!("local evidence"),
-        WebID::new(),
-    );
-    memory.store(local.clone())?;
-    memory.store_embedding(
-        &local.entity,
-        &federated_fixture_vector(),
-        "test-model",
-        Some("local evidence"),
+        "local evidence",
     )?;
-    let server = CuratorServer::new(
-        WebID::new(),
-        Arc::new(CuratorDb::from_stores_with_federated_manifest(
-            CuratorStores {
-                regulation_store: None,
-                memory: Some(memory),
-            },
-            manifest_path,
-            "test-passphrase".to_string(),
-        )),
-        Arc::new(ConstantEmbedPort) as Arc<dyn hkask_types::InferencePort>,
-    );
     let output = server
         .curator_federated_search(Parameters(FederatedSearchRequest {
             query: "compare local evidence and external corpus evidence".to_string(),
@@ -2583,36 +2583,12 @@ async fn federated_search_reloads_removed_and_restored_manifest()
     let directory = tempfile::tempdir()?;
     let manifest_path = federated_source_fixture(directory.path())?;
     let original_manifest = std::fs::read(&manifest_path)?;
-    let driver = SqliteDriver::in_memory_driver();
-    let h_mem_store = HMemStore::from_driver(driver.clone())?;
-    let embedding_store = EmbeddingStore::from_driver(driver.clone(), test_dim())?;
-    let memory = Arc::new(hkask_memory::MemoryStore::new(h_mem_store, embedding_store));
-    let local = hkask_storage::HMem::new(
-        "curator:decision:manifest-refresh",
-        "lesson",
-        serde_json::json!("local knowledge survives corpus outage"),
-        WebID::new(),
-    );
-    memory.store(local.clone())?;
-    memory.store_embedding(
-        &local.entity,
-        &federated_fixture_vector(),
-        "test-model",
-        Some("local knowledge survives corpus outage"),
-    )?;
-    let db = Arc::new(CuratorDb::from_stores_with_federated_manifest(
-        CuratorStores {
-            regulation_store: None,
-            memory: Some(memory),
-        },
+    let server = federated_search_server(
         manifest_path.clone(),
-        "test-passphrase".to_string(),
-    ));
-    let server = CuratorServer::new(
-        WebID::new(),
-        db,
-        Arc::new(ConstantEmbedPort) as Arc<dyn hkask_types::InferencePort>,
-    );
+        false,
+        "curator:decision:manifest-refresh",
+        "local knowledge survives corpus outage",
+    )?;
     let search = || async {
         let output = server
             .curator_federated_search(Parameters(FederatedSearchRequest {
