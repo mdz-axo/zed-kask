@@ -568,6 +568,48 @@ impl OcrExecutor for LlmOcrExecutor {
 mod tests {
     use super::*;
 
+    /// The pinned future every test vision port's arms return — the trait's
+    /// `Pin<Box<dyn Future<Output = Result<...>> + Send>>` spelling, aliased
+    /// so each mock's signature carries its parameters and not ten lines of
+    /// boilerplate.
+    type OcrTestFuture<'a> = std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
+                > + Send
+                + 'a,
+        >,
+    >;
+
+    /// The `generate` refusal shared by the vision-only test ports: only
+    /// `generate_vision` is under test there, so `generate` answers with the
+    /// noop connection error. [`CountingVisionPort`] counts in both arms
+    /// instead and keeps its own `generate` body.
+    fn noop_vision_test_generate() -> OcrTestFuture<'static> {
+        Box::pin(async {
+            Err(hkask_types::InferenceError::Connection(
+                "noop — only generate_vision is under test".into(),
+            ))
+        })
+    }
+
+    /// Emit the shared noop `generate` arm inside a test port's
+    /// `impl InferencePort` block — the arm every vision-only port repeats
+    /// (only `generate_vision` is under test there). [`CountingVisionPort`]
+    /// counts in its `generate` arm and keeps it hand-written.
+    macro_rules! vision_port_generate {
+        () => {
+            fn generate(
+                &self,
+                _prompt: &str,
+                _parameters: &LLMParameters,
+                _tools: Option<&[hkask_types::ChatToolDefinition]>,
+            ) -> OcrTestFuture<'_> {
+                noop_vision_test_generate()
+            }
+        };
+    }
+
     /// The breaker's cooldown escalates per consecutive opening (base ×
     /// 2^(openings-1), capped at 300s) and a success resets the escalation.
     /// A fixed 30s cooldown let a dead endpoint tax a 412-page run for its
@@ -644,25 +686,7 @@ mod tests {
     struct HttpErrorVisionPort;
 
     impl hkask_types::InferencePort for HttpErrorVisionPort {
-        fn generate(
-            &self,
-            _prompt: &str,
-            _parameters: &LLMParameters,
-            _tools: Option<&[hkask_types::ChatToolDefinition]>,
-        ) -> std::pin::Pin<
-            Box<
-                dyn std::future::Future<
-                        Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
-                    > + Send
-                    + '_,
-            >,
-        > {
-            Box::pin(async {
-                Err(hkask_types::InferenceError::Connection(
-                    "noop — only generate_vision is under test".into(),
-                ))
-            })
-        }
+        vision_port_generate!();
 
         fn generate_vision(
             &self,
@@ -670,14 +694,7 @@ mod tests {
             _images: &[String],
             _parameters: &LLMParameters,
             _model_override: Option<&str>,
-        ) -> std::pin::Pin<
-            Box<
-                dyn std::future::Future<
-                        Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
-                    > + Send
-                    + '_,
-            >,
-        > {
+        ) -> OcrTestFuture<'_> {
             Box::pin(async {
                 Err(hkask_types::InferenceError::Connection(
                     "HTTP 404: The requested path was not found.".into(),
@@ -753,25 +770,7 @@ mod tests {
     struct CircuitOpenVisionPort;
 
     impl hkask_types::InferencePort for CircuitOpenVisionPort {
-        fn generate(
-            &self,
-            _prompt: &str,
-            _parameters: &LLMParameters,
-            _tools: Option<&[hkask_types::ChatToolDefinition]>,
-        ) -> std::pin::Pin<
-            Box<
-                dyn std::future::Future<
-                        Output = Result<hkask_types::InferenceResult, InferenceError>,
-                    > + Send
-                    + '_,
-            >,
-        > {
-            Box::pin(async {
-                Err(InferenceError::Connection(
-                    "noop — only generate_vision is under test".into(),
-                ))
-            })
-        }
+        vision_port_generate!();
 
         fn generate_vision(
             &self,
@@ -779,16 +778,9 @@ mod tests {
             _images: &[String],
             _parameters: &LLMParameters,
             _model_override: Option<&str>,
-        ) -> std::pin::Pin<
-            Box<
-                dyn std::future::Future<
-                        Output = Result<hkask_types::InferenceResult, InferenceError>,
-                    > + Send
-                    + '_,
-            >,
-        > {
+        ) -> OcrTestFuture<'_> {
             Box::pin(async {
-                Err(InferenceError::CircuitOpen(
+                Err(hkask_types::InferenceError::CircuitOpen(
                     "transient inference failure threshold reached; retry after 30s".into(),
                 ))
             })
@@ -840,14 +832,7 @@ mod tests {
             _prompt: &str,
             _parameters: &LLMParameters,
             _tools: Option<&[hkask_types::ChatToolDefinition]>,
-        ) -> std::pin::Pin<
-            Box<
-                dyn std::future::Future<
-                        Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
-                    > + Send
-                    + '_,
-            >,
-        > {
+        ) -> OcrTestFuture<'_> {
             self.calls.fetch_add(1, Ordering::Relaxed);
             Box::pin(async {
                 Err(hkask_types::InferenceError::NotConfigured(
@@ -862,14 +847,7 @@ mod tests {
             _images: &[String],
             _parameters: &LLMParameters,
             _model_override: Option<&str>,
-        ) -> std::pin::Pin<
-            Box<
-                dyn std::future::Future<
-                        Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
-                    > + Send
-                    + '_,
-            >,
-        > {
+        ) -> OcrTestFuture<'_> {
             self.calls.fetch_add(1, Ordering::Relaxed);
             Box::pin(async {
                 Err(hkask_types::InferenceError::NotConfigured(
@@ -925,25 +903,7 @@ mod tests {
     }
 
     impl hkask_types::InferencePort for RotatingThenValidVisionPort {
-        fn generate(
-            &self,
-            _prompt: &str,
-            _parameters: &LLMParameters,
-            _tools: Option<&[hkask_types::ChatToolDefinition]>,
-        ) -> std::pin::Pin<
-            Box<
-                dyn std::future::Future<
-                        Output = Result<hkask_types::InferenceResult, InferenceError>,
-                    > + Send
-                    + '_,
-            >,
-        > {
-            Box::pin(async {
-                Err(InferenceError::Connection(
-                    "noop — only generate_vision is under test".into(),
-                ))
-            })
-        }
+        vision_port_generate!();
 
         fn generate_vision(
             &self,
@@ -951,14 +911,7 @@ mod tests {
             _images: &[String],
             _parameters: &LLMParameters,
             _model_override: Option<&str>,
-        ) -> std::pin::Pin<
-            Box<
-                dyn std::future::Future<
-                        Output = Result<hkask_types::InferenceResult, InferenceError>,
-                    > + Send
-                    + '_,
-            >,
-        > {
+        ) -> OcrTestFuture<'_> {
             let n = self.calls.fetch_add(1, Ordering::SeqCst);
             Box::pin(async move {
                 let text = if n == 0 {
@@ -1009,25 +962,7 @@ mod tests {
     }
 
     impl hkask_types::InferencePort for HintCapturingVisionPort {
-        fn generate(
-            &self,
-            _prompt: &str,
-            _parameters: &LLMParameters,
-            _tools: Option<&[hkask_types::ChatToolDefinition]>,
-        ) -> std::pin::Pin<
-            Box<
-                dyn std::future::Future<
-                        Output = Result<hkask_types::InferenceResult, InferenceError>,
-                    > + Send
-                    + '_,
-            >,
-        > {
-            Box::pin(async {
-                Err(InferenceError::Connection(
-                    "noop — only generate_vision is under test".into(),
-                ))
-            })
-        }
+        vision_port_generate!();
 
         fn generate_vision(
             &self,
@@ -1035,20 +970,13 @@ mod tests {
             _images: &[String],
             parameters: &LLMParameters,
             _model_override: Option<&str>,
-        ) -> std::pin::Pin<
-            Box<
-                dyn std::future::Future<
-                        Output = Result<hkask_types::InferenceResult, InferenceError>,
-                    > + Send
-                    + '_,
-            >,
-        > {
+        ) -> OcrTestFuture<'_> {
             self.hints
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
                 .push(parameters.timeout_hint_secs);
             Box::pin(async {
-                Err(InferenceError::Connection(
+                Err(hkask_types::InferenceError::Connection(
                     "the call outcome is irrelevant — the hint is the assertion".into(),
                 ))
             })
@@ -1082,25 +1010,7 @@ mod tests {
     }
 
     impl hkask_types::InferencePort for AlwaysRotatingVisionPort {
-        fn generate(
-            &self,
-            _prompt: &str,
-            _parameters: &LLMParameters,
-            _tools: Option<&[hkask_types::ChatToolDefinition]>,
-        ) -> std::pin::Pin<
-            Box<
-                dyn std::future::Future<
-                        Output = Result<hkask_types::InferenceResult, InferenceError>,
-                    > + Send
-                    + '_,
-            >,
-        > {
-            Box::pin(async {
-                Err(InferenceError::Connection(
-                    "noop — only generate_vision is under test".into(),
-                ))
-            })
-        }
+        vision_port_generate!();
 
         fn generate_vision(
             &self,
@@ -1108,14 +1018,7 @@ mod tests {
             _images: &[String],
             _parameters: &LLMParameters,
             _model_override: Option<&str>,
-        ) -> std::pin::Pin<
-            Box<
-                dyn std::future::Future<
-                        Output = Result<hkask_types::InferenceResult, InferenceError>,
-                    > + Send
-                    + '_,
-            >,
-        > {
+        ) -> OcrTestFuture<'_> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             Box::pin(async {
                 Ok(hkask_types::InferenceResult {
