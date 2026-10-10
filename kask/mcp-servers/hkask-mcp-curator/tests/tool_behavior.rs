@@ -155,6 +155,76 @@ fn failing_inference_port() -> Arc<dyn hkask_types::InferencePort> {
     Arc::new(FailingEmbedPort)
 }
 
+/// Seed one h_mem into the test memory store — the shared construction of
+/// every test that plants a row before exercising a read path. Returns the
+/// stored row's id (the citation tests cite it as `memory_insert` evidence).
+/// The entity, attribute, and value are the test's own variation.
+fn seed_h_mem(
+    memory: &hkask_memory::MemoryStore,
+    entity: &str,
+    attribute: &str,
+    value: String,
+) -> String {
+    let h_mem = hkask_storage::HMem::new(
+        entity,
+        attribute,
+        serde_json::Value::String(value),
+        WebID::new(),
+    );
+    let id = h_mem.id.to_string();
+    memory.store(h_mem).expect("seed h_mem");
+    id
+}
+
+/// Seed the unit-vector embedding under `entity` — the KNN shape every
+/// semantic test searches with (the `ConstantEmbedPort` embeds queries to
+/// the same unit vector, so every seeded row is a guaranteed hit). An
+/// entity with an embedding but no h_mem is the orphan-resolution fixture.
+fn seed_embedding(memory: &hkask_memory::MemoryStore, entity: &str) {
+    memory
+        .store_embedding(entity, &unit_vector(), "test-model", None)
+        .expect("seed embedding");
+}
+
+/// Seed one aged h_mem — `observed_at` back-dated `age_days` — so the prune
+/// valve's age scope has a row to act on. The entity, attribute, value, and
+/// age are the test's own variation.
+fn seed_aged_h_mem(
+    memory: &hkask_memory::MemoryStore,
+    entity: &str,
+    attribute: &str,
+    value: String,
+    age_days: i64,
+) {
+    let mut h_mem = hkask_storage::HMem::new(
+        entity,
+        attribute,
+        serde_json::Value::String(value),
+        WebID::new(),
+    );
+    h_mem.observed_at = chrono::Utc::now() - chrono::Duration::days(age_days);
+    memory.store(h_mem).expect("seed aged h_mem");
+}
+
+/// The shared `memory_insert` call of the citation tests: insert the
+/// default-agent-model memory citing `seed_id` as evidence. The two
+/// insert-path tests make this call identically — their assertions (the
+/// confidence floor vs the semantic-recall embedding) are each test's own.
+async fn insert_citing_seed(server: &CuratorServer, seed_id: String) -> serde_json::Value {
+    parse(
+        &server
+            .memory_insert(Parameters(MemoryInsertRequest {
+                entity: "zed-kask".to_string(),
+                attribute: "default_agent_model".to_string(),
+                value: serde_json::json!("qwen3").into(),
+                evidence_h_mem_id: seed_id,
+                note: None,
+            }))
+            .await
+            .expect("tool ok"),
+    )
+}
+
 /// The semantic paths resolve the embedding model from
 /// `HKASK_EMBEDDING_MODEL` (an `Option` since the model_constants
 /// refactor — unset means the semantic paths fail visibly: search errors
@@ -414,18 +484,8 @@ async fn semantic_search_matches_question_by_embedding() {
         "agent_response": "zeta eta theta",
     })
     .to_string();
-    let h_mem = hkask_storage::HMem::new(
-        entity,
-        "turn",
-        serde_json::Value::String(turn),
-        WebID::new(),
-    );
-    memory.store(h_mem).expect("seed h_mem");
-    let mut vector = vec![0.0f32; test_dim()];
-    vector[0] = 1.0;
-    memory
-        .store_embedding(entity, &vector, "test-model", None)
-        .expect("seed embedding");
+    seed_h_mem(&memory, entity, "turn", turn);
+    seed_embedding(&memory, entity);
 
     let response = parse(
         &server
@@ -540,21 +600,9 @@ async fn semantic_search_all_hits_failing_resolution_is_not_reported_as_empty() 
 async fn semantic_search_partial_resolution_failure_notes_degradation() {
     let (server, memory) = make_server_with_embeddings();
     let entity = "curator:thread:partial-live";
-    let h_mem = hkask_storage::HMem::new(
-        entity,
-        "turn",
-        serde_json::Value::String("live turn content".to_string()),
-        WebID::new(),
-    );
-    memory.store(h_mem).expect("seed h_mem");
-    let mut vector = vec![0.0f32; test_dim()];
-    vector[0] = 1.0;
-    memory
-        .store_embedding(entity, &vector, "test-model", None)
-        .expect("seed live embedding");
-    memory
-        .store_embedding("curator:thread:partial-orphan", &vector, "test-model", None)
-        .expect("seed orphan embedding");
+    seed_h_mem(&memory, entity, "turn", "live turn content".to_string());
+    seed_embedding(&memory, entity);
+    seed_embedding(&memory, "curator:thread:partial-orphan");
 
     let response = parse(
         &server
@@ -592,18 +640,8 @@ async fn consult_returns_semantic_fragments_for_question() {
         "agent_response": "via the socket",
     })
     .to_string();
-    let h_mem = hkask_storage::HMem::new(
-        entity,
-        "turn",
-        serde_json::Value::String(turn),
-        WebID::new(),
-    );
-    memory.store(h_mem).expect("seed h_mem");
-    let mut vector = vec![0.0f32; test_dim()];
-    vector[0] = 1.0;
-    memory
-        .store_embedding(entity, &vector, "test-model", None)
-        .expect("seed embedding");
+    seed_h_mem(&memory, entity, "turn", turn);
+    seed_embedding(&memory, entity);
 
     let response = parse(
         &server
@@ -638,11 +676,7 @@ async fn consult_returns_semantic_fragments_for_question() {
 #[tokio::test]
 async fn consult_all_hits_failing_resolution_is_not_reported_as_empty() {
     let (server, memory) = make_server_with_embeddings();
-    let mut vector = vec![0.0f32; test_dim()];
-    vector[0] = 1.0;
-    memory
-        .store_embedding("curator:thread:consult-orphan", &vector, "test-model", None)
-        .expect("seed orphan embedding (no h_mem under the entity)");
+    seed_embedding(&memory, "curator:thread:consult-orphan");
 
     let response = parse(
         &server
@@ -676,26 +710,9 @@ async fn consult_all_hits_failing_resolution_is_not_reported_as_empty() {
 async fn consult_partial_resolution_failure_notes_degradation() {
     let (server, memory) = make_server_with_embeddings();
     let entity = "curator:thread:consult-partial-live";
-    let h_mem = hkask_storage::HMem::new(
-        entity,
-        "turn",
-        serde_json::Value::String("live consult turn".to_string()),
-        WebID::new(),
-    );
-    memory.store(h_mem).expect("seed h_mem");
-    let mut vector = vec![0.0f32; test_dim()];
-    vector[0] = 1.0;
-    memory
-        .store_embedding(entity, &vector, "test-model", None)
-        .expect("seed live embedding");
-    memory
-        .store_embedding(
-            "curator:thread:consult-partial-orphan",
-            &vector,
-            "test-model",
-            None,
-        )
-        .expect("seed orphan embedding");
+    seed_h_mem(&memory, entity, "turn", "live consult turn".to_string());
+    seed_embedding(&memory, entity);
+    seed_embedding(&memory, "curator:thread:consult-partial-orphan");
 
     let response = parse(
         &server
@@ -733,27 +750,14 @@ async fn consult_partial_resolution_failure_notes_degradation() {
 #[tokio::test]
 async fn memory_insert_accepts_existing_h_mem_id_as_evidence() {
     let (server, memory) = make_server_with_embeddings();
-    let seed = hkask_storage::HMem::new(
+    let seed_id = seed_h_mem(
+        &memory,
         "curator:thread:evidence-source",
         "chatted",
-        serde_json::Value::String("the source turn".to_string()),
-        WebID::new(),
+        "the source turn".to_string(),
     );
-    let seed_id = seed.id.to_string();
-    memory.store(seed).expect("seed evidence h_mem");
 
-    let response = parse(
-        &server
-            .memory_insert(Parameters(MemoryInsertRequest {
-                entity: "zed-kask".to_string(),
-                attribute: "default_agent_model".to_string(),
-                value: serde_json::json!("qwen3").into(),
-                evidence_h_mem_id: seed_id,
-                note: None,
-            }))
-            .await
-            .expect("tool ok"),
-    );
+    let response = insert_citing_seed(&server, seed_id).await;
 
     assert_eq!(
         response["inserted"].as_bool(),
@@ -786,19 +790,8 @@ async fn memory_insert_accepts_existing_h_mem_id_as_evidence() {
 async fn memory_citation_round_trip_from_tool_surface() {
     let (server, memory) = make_server_with_embeddings();
     let entity = "curator:thread:evidence-source";
-    let seed = hkask_storage::HMem::new(
-        entity,
-        "chatted",
-        serde_json::Value::String("the source turn".to_string()),
-        WebID::new(),
-    );
-    let seed_id = seed.id.to_string();
-    memory.store(seed).expect("seed evidence h_mem");
-    let mut vector = vec![0.0f32; test_dim()];
-    vector[0] = 1.0;
-    memory
-        .store_embedding(entity, &vector, "test-model", None)
-        .expect("seed embedding");
+    let seed_id = seed_h_mem(&memory, entity, "chatted", "the source turn".to_string());
+    seed_embedding(&memory, entity);
 
     // Recall via the tool — the cited ID must come from the tool output,
     // not from the store.
@@ -934,27 +927,14 @@ async fn memory_insert_rejects_missing_or_malformed_evidence() {
 #[tokio::test]
 async fn memory_insert_embeds_value_for_semantic_recall() {
     let (server, memory) = make_server_with_embeddings();
-    let seed = hkask_storage::HMem::new(
+    let seed_id = seed_h_mem(
+        &memory,
         "curator:thread:evidence-source",
         "chatted",
-        serde_json::Value::String("the source turn".to_string()),
-        WebID::new(),
+        "the source turn".to_string(),
     );
-    let seed_id = seed.id.to_string();
-    memory.store(seed).expect("seed evidence h_mem");
 
-    let response = parse(
-        &server
-            .memory_insert(Parameters(MemoryInsertRequest {
-                entity: "zed-kask".to_string(),
-                attribute: "default_agent_model".to_string(),
-                value: serde_json::json!("qwen3").into(),
-                evidence_h_mem_id: seed_id,
-                note: None,
-            }))
-            .await
-            .expect("tool ok"),
-    );
+    let response = insert_citing_seed(&server, seed_id).await;
     assert_eq!(
         response["inserted"].as_bool(),
         Some(true),
@@ -1824,23 +1804,21 @@ async fn backfill_rejects_unknown_mode_and_store() {
 async fn curator_memory_prune_defaults_to_turn_storage_scope() {
     let (server, memory) = make_server_with_embeddings();
 
-    let mut aged_turn = hkask_storage::HMem::new(
+    seed_aged_h_mem(
+        &memory,
         "curator:thread:prune-tool-test",
         "turn",
-        serde_json::Value::String("aged turn".to_string()),
-        WebID::new(),
+        "aged turn".to_string(),
+        100,
     );
-    aged_turn.observed_at = chrono::Utc::now() - chrono::Duration::days(100);
-    memory.store(aged_turn).expect("seed aged turn");
 
-    let mut aged_ruling = hkask_storage::HMem::new(
+    seed_aged_h_mem(
+        &memory,
         "zed-kask-prune-scope-test-ruling",
         "operator_ruling",
-        serde_json::Value::String("durable ruling".to_string()),
-        WebID::new(),
+        "durable ruling".to_string(),
+        100,
     );
-    aged_ruling.observed_at = chrono::Utc::now() - chrono::Duration::days(100);
-    memory.store(aged_ruling).expect("seed aged ruling");
 
     // Default scope: turn storage only — the ruling survives.
     let scoped = parse(
@@ -1897,32 +1875,29 @@ async fn curator_memory_prune_defaults_to_turn_storage_scope() {
 async fn curator_memory_prune_scoped_prefixes_prune_only_matching_rows() {
     let (server, memory) = make_server_with_embeddings();
 
-    let mut aged_incident = hkask_storage::HMem::new(
+    seed_aged_h_mem(
+        &memory,
         "skill_use_issue:prune-scope-test",
         "tool_failure:terminal",
-        serde_json::Value::String("aged incident".to_string()),
-        WebID::new(),
+        "aged incident".to_string(),
+        100,
     );
-    aged_incident.observed_at = chrono::Utc::now() - chrono::Duration::days(100);
-    memory.store(aged_incident).expect("seed aged incident");
 
-    let mut aged_turn = hkask_storage::HMem::new(
+    seed_aged_h_mem(
+        &memory,
         "curator:thread:prune-prefix-test",
         "turn",
-        serde_json::Value::String("aged turn".to_string()),
-        WebID::new(),
+        "aged turn".to_string(),
+        100,
     );
-    aged_turn.observed_at = chrono::Utc::now() - chrono::Duration::days(100);
-    memory.store(aged_turn).expect("seed aged turn");
 
-    let mut aged_ruling = hkask_storage::HMem::new(
+    seed_aged_h_mem(
+        &memory,
         "zed-kask-prune-prefix-test-ruling",
         "operator_ruling",
-        serde_json::Value::String("durable ruling".to_string()),
-        WebID::new(),
+        "durable ruling".to_string(),
+        100,
     );
-    aged_ruling.observed_at = chrono::Utc::now() - chrono::Duration::days(100);
-    memory.store(aged_ruling).expect("seed aged ruling");
 
     // Scoped valve: only the named prefix is pruned; the response names
     // the scope used.
