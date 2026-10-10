@@ -112,7 +112,8 @@ pub(crate) fn validate_provider_url_permissive(url: &str) -> Result<(), WebError
 /// Whether a provider KIND name is recognized, and what gates it.
 /// Static score for a provider kind: lower cost + faster latency = lower
 /// score (we sort ascending). Returns a neutral mid-score for providers
-/// without a profile (free providers like arxiv/semantic_scholar).
+/// without a profile — the explicit-only google engines and any future
+/// unprofiled kind (the free scholarly providers are profiled since C4b).
 fn score_static(kind: &str) -> f64 {
     match provider_profile(kind) {
         Some(p) => {
@@ -1285,11 +1286,12 @@ mod tests {
         );
     }
 
-    /// When no candidate has a profile (free providers only), the quick
-    /// pick falls back to the neutral score — deterministic via
-    /// alphabetical tiebreak.
+    /// The free scholarly providers are profiled (C4b) at cost 0 + Medium
+    /// latency — they tie at the same 0.5 static score the former neutral
+    /// fallback gave them, so equal scores still tie-break alphabetically
+    /// for determinism (and quick's scoring is unchanged by the profiling).
     #[test]
-    fn pick_quick_provider_unprofiled_falls_back_alphabetically() {
+    fn pick_quick_provider_equal_scores_tie_break_alphabetically() {
         let pool = ProviderPool::new(
             vec![
                 Box::new(StubProvider { kind: "arxiv" }),
@@ -1306,7 +1308,34 @@ mod tests {
         assert_eq!(
             pool.pick_quick_provider().expect("quick pick"),
             "arxiv",
-            "unprofiled providers should tie-break alphabetically for determinism"
+            "equal-score providers should tie-break alphabetically for determinism"
+        );
+    }
+
+    /// C4b must not change quick's picks: the free providers' Medium
+    /// latency keeps their static score at the former neutral 0.5, so a
+    /// configured cheap keyword provider still wins quick.
+    #[test]
+    fn pick_quick_provider_still_prefers_a_configured_paid_keyword_provider() {
+        let pool = ProviderPool::new(
+            vec![
+                Box::new(StubProvider { kind: "brave" }),
+                Box::new(StubProvider { kind: "arxiv" }),
+                Box::new(StubProvider { kind: "openalex" }),
+                Box::new(StubProvider {
+                    kind: "semantic_scholar",
+                }),
+            ],
+            Vec::new(),
+            Vec::new(),
+            None,
+            None,
+            None,
+        );
+        assert_eq!(
+            pool.pick_quick_provider().expect("quick pick"),
+            "brave",
+            "profiling the free providers must not change quick's pick"
         );
     }
 
@@ -1353,6 +1382,80 @@ mod tests {
             "live failures must flip the quick pick — the feedback loop drives \
              selection, not just reporting"
         );
+    }
+
+    /// C4b: the free scholarly providers carry profiles, so the ranking —
+    /// the audit trail for what the tool would pick — includes them. A
+    /// keys-free pool (free providers only, exactly the production state
+    /// without API keys) must show all three configured, and quick's pick
+    /// must be a ranked entry — the audit gap this change closes.
+    #[test]
+    fn score_providers_ranks_the_free_scholarly_providers() {
+        let pool = ProviderPool::new(
+            vec![
+                Box::new(StubProvider { kind: "openalex" }),
+                Box::new(StubProvider { kind: "arxiv" }),
+                Box::new(StubProvider {
+                    kind: "semantic_scholar",
+                }),
+            ],
+            Vec::new(),
+            Vec::new(),
+            None,
+            None,
+            None,
+        );
+        let recs = pool.score_providers("scholarly probe", None);
+        for kind in ["openalex", "arxiv", "semantic_scholar"] {
+            let rec = recs
+                .iter()
+                .find(|r| r.kind == kind)
+                .unwrap_or_else(|| panic!("free provider {kind} missing from the ranking"));
+            assert!(
+                rec.configured,
+                "{kind} is registered — must read as configured"
+            );
+        }
+        // The audit closes: quick's pick is a ranked entry.
+        let picked = pool.pick_quick_provider().expect("quick pick");
+        assert!(
+            recs.iter().any(|r| r.kind == picked),
+            "quick picked {picked} but the ranking does not contain it"
+        );
+    }
+
+    /// C4b's honest consequence, pinned deliberately: under an academic
+    /// intent the free scholarly providers (purpose-built, cost 0) top the
+    /// paid semantic engines — they win by exactly the cost gap — so the
+    /// intent path routes academic queries to the free sources.
+    #[test]
+    fn score_providers_academic_intent_prefers_free_scholarly_sources() {
+        let pool = ProviderPool::new(
+            vec![
+                Box::new(StubProvider { kind: "arxiv" }),
+                Box::new(StubProvider { kind: "exa" }),
+            ],
+            Vec::new(),
+            Vec::new(),
+            None,
+            None,
+            None,
+        );
+        let recs = pool.score_providers("graph neural networks", Some("academic"));
+        let arxiv = recs
+            .iter()
+            .find(|r| r.kind == "arxiv")
+            .expect("arxiv ranked");
+        let exa = recs.iter().find(|r| r.kind == "exa").expect("exa ranked");
+        assert!(arxiv.configured && exa.configured);
+        assert!(
+            arxiv.score < exa.score,
+            "academic intent must prefer the free scholarly source \
+             (arxiv={}, exa={})",
+            arxiv.score,
+            exa.score
+        );
+        assert_eq!(recs[0].kind, "arxiv");
     }
 
     /// `score_static` must return a lower score for cheaper + faster providers.

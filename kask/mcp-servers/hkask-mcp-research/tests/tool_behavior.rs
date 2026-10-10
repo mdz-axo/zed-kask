@@ -175,6 +175,31 @@ stub_web_search_port! {
     score(self, _query, _intent): { Vec::new() }
 }
 
+/// Stub whose registered kinds are exactly the free scholarly providers —
+/// the production registration state without API keys. Pins C4b's web_ping
+/// claim: the profile table lists the free providers now that they carry
+/// static profiles.
+struct FreeProvidersPool;
+
+stub_web_search_port! {
+    FreeProvidersPool, "stub-free-providers",
+    search(self, _query, _strategy, _provider): {
+        no_provider!("No paid provider configured.")
+    },
+    find_similar: { no_provider!("Exa provider not configured. Set HKASK_EXA_API_KEY.") },
+    extract: { no_provider!("No extract provider configured.") },
+    browse: { no_provider!("No browse provider configured. Set HKASK_FIRECRAWL_API_KEY.") },
+    health: { Vec::new() },
+    kinds: {
+        vec![
+            "openalex".to_string(),
+            "arxiv".to_string(),
+            "semantic_scholar".to_string(),
+        ]
+    },
+    score(self, _query, _intent): { Vec::new() }
+}
+
 /// Stub whose `extract` returns a near-empty body — the JS-shell / bot-block
 /// shape observed on Cloudflare-gated publisher pages (2026-09-30 zk-reference
 /// lesson L1). Pins the degradation contract: a successful HTTP fetch with a
@@ -554,6 +579,37 @@ async fn web_ping_returns_ok_with_provider_health() {
         json.get("providers")
             .is_some_and(|providers| providers.is_array()),
         "web_ping should return a providers array; got: {json}"
+    );
+}
+
+#[tokio::test]
+async fn web_ping_lists_the_free_scholarly_providers_in_the_profile_table() {
+    // C4b: the free providers carry static profiles, so web_ping's
+    // metacognitive table lists them — an agent reading the ping sees the
+    // full set of selectable providers, not just the paid ones.
+    let server = make_server_with_pool(Arc::new(FreeProvidersPool));
+    let json = parse(&ok(server.web_ping().await));
+    let rows: Vec<&serde_json::Value> = json
+        .get("provider_profiles")
+        .and_then(|p| p.as_array())
+        .map(|array| array.iter().collect())
+        .unwrap_or_default();
+    for kind in ["openalex", "arxiv", "semantic_scholar"] {
+        assert!(
+            rows.iter()
+                .any(|r| r.get("kind").and_then(|k| k.as_str()) == Some(kind)),
+            "web_ping profile table missing {kind}: {json}"
+        );
+    }
+    // The free providers' rows carry their profiled cost (0.0).
+    let arxiv_row = rows
+        .iter()
+        .find(|r| r.get("kind").and_then(|k| k.as_str()) == Some("arxiv"))
+        .expect("arxiv row");
+    assert_eq!(
+        arxiv_row.get("cost_per_call_usd").and_then(|c| c.as_f64()),
+        Some(0.0),
+        "free providers must be profiled at cost 0: {json}"
     );
 }
 

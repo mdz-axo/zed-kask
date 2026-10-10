@@ -93,10 +93,14 @@ pub struct ProviderProfile {
 /// - `score_providers` (merges static profile with live performance)
 ///
 /// Keep entries aligned with the providers registered in `build_provider_pool`.
-/// Free providers (openalex, arxiv, semantic_scholar) are intentionally
-/// absent — they have no cost/latency profile. They are always registered
-/// and selectable via the `provider` field; the quick pick scores them at
-/// the neutral mid-score (`score_static`).
+/// The free scholarly providers (openalex, arxiv, semantic_scholar) carry
+/// profiles (C4b, 2026-10-09) so they appear in `provider_recommendations`
+/// and `web_ping`'s profile table — their Medium latency keeps the static
+/// score at the former neutral 0.5, so quick picks are unchanged. The
+/// explicit-only engines (google_scholar, google_books) stay absent by
+/// design: they never join fused, quick, or intent-routed searches, so the
+/// ranking — which audits what the tool would pick — has nothing to say
+/// about them.
 pub static PROVIDER_PROFILES: &[ProviderProfile] = &[
     ProviderProfile {
         kind: "tavily",
@@ -141,6 +145,30 @@ pub static PROVIDER_PROFILES: &[ProviderProfile] = &[
         strengths: &["Google index", "news", "freshness", "YouTube transcripts"],
         weaknesses: &["no content extraction", "higher cost", "rate limits"],
         best_for: &["news", "freshness", "transcript"],
+    },
+    ProviderProfile {
+        kind: "openalex",
+        cost_per_call_usd: 0.0,
+        latency_tier: LatencyTier::Medium,
+        strengths: &["free", "scholarly metadata", "paper identity resolution"],
+        weaknesses: &["metadata only — no full text", "no general web coverage"],
+        best_for: &["academic", "research"],
+    },
+    ProviderProfile {
+        kind: "arxiv",
+        cost_per_call_usd: 0.0,
+        latency_tier: LatencyTier::Medium,
+        strengths: &["free", "academic preprints", "open access full text"],
+        weaknesses: &["preprints — not peer reviewed", "no general web coverage"],
+        best_for: &["academic", "research"],
+    },
+    ProviderProfile {
+        kind: "semantic_scholar",
+        cost_per_call_usd: 0.0,
+        latency_tier: LatencyTier::Medium,
+        strengths: &["free", "academic papers", "citation data"],
+        weaknesses: &["rate-limited under bulk use", "no general web coverage"],
+        best_for: &["academic", "research"],
     },
 ];
 

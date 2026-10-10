@@ -359,7 +359,17 @@ precedence is unchanged: explicit `provider` > `intent` > `strategy`.
 the selection (intent pick, quick pick, web/news/deep fusion);
 explicit-`provider` calls skip it — the caller's deliberate override
 carries `selected_provider` and needs no ranking (the field is absent
-from the response when empty).
+from the response when empty). The ranking's domain is the profile
+table, which since 2026-10-09 includes the free scholarly providers
+(openalex, arxiv, semantic_scholar) — so quick's pick of a free
+provider is visible in its own audit trail, and `web_ping`'s profile
+table lists them too. Their Medium latency keeps the static score at
+the former neutral 0.5, so quick picks are unchanged; the deliberate
+consequence is that academic/research intents now rank the free
+scholarly sources above paid exa (they win by exactly the cost gap),
+routing those queries to the free sources. The explicit-only Google
+engines stay absent from the ranking by design — they are never
+auto-picked, so the audit has nothing to say about them.
 
 **The closed-vocabulary boundary contract.** Every enum-ish string field
 parses through one helper pair in `src/research/types/validation.rs`:
