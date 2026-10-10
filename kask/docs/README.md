@@ -131,14 +131,6 @@ Git history is the archive of record. Every removed document names its active su
 | --- | --- |
 | `research/navigating-the-region-space-collaboration.md` | `research/syntax-semantic-probabilistic-deterministic-space.md` §4 (the three-party collaboration overlay subsection — the durable model); the reification record lives in `.agents/skills/region-routing/SKILL.md` and the skills registry; git history is the session-record archive. |
 
-### Deleted 2026-09-30 (CU-5 condensation — the Aeneas record set, operator ruling)
-
-| Artifact | Successor |
-| --- | --- |
-| `plans/aeneas-reference-model-grounding-verification-plan.md` (Proposed) | Git history (this tombstone's commits); the program was upstream-blocked (Aeneas issue #838) and authorized nothing — the plan's own summary paragraph carried the durable facts. |
-| `plans/aeneas-adoption-gate.txt` | Git history; the five gate conditions required re-derivation against any future tool version by their own terms ("rather than inheriting old proof results"). |
-| `plans/aeneas-results.txt` | Git history; point-in-time feasibility evidence (2026-09-23, pinned hashes) — Aeneas failed on the core function at `str::pattern`. |
-
 ### Deleted 2026-09-28 (doc-update realignment — reference absorbs how-to)
 
 | Artifact | Successor |

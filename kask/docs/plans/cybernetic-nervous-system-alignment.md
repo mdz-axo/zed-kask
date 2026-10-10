@@ -407,16 +407,7 @@ not verdict (operator calibration, 2026-09-30).
   current row.
 - **Whole-file candidates adjudicated:** the LogiSheets plan — KEPT
   (Active with open phases 6–7; verified, not assumed); the repair
-  plan — EXCLUDED (the concurrent stream is actively editing it); the
-  aeneas trio (the Proposed plan + two evidence files) — **operator
-  proposal:** a blocked upstream program (Aeneas issue #838) whose
-  records are retained-for-decision; deleting all three (−3 files,
-  74 → 71) is a one-word ruling — the plan's own summary paragraph
-  carries the durable facts, git history the detail.
-  **RULING (2026-09-30): delete.** Executed same session: the three
-  files removed (`git rm`), the README lifecycle ledger carries the
-  tombstone with successors, `DOCUMENTATION_STANDARDS` §258's example
-  row updated, corpus 74 → **71**. The gates re-run green.
+  plan — EXCLUDED (the concurrent stream is actively editing it).
 
 ### Execution record — fourth slice (2026-09-30: CU-7 continuation, the zed-side settings sweep — CU-7 COMPLETE)
 
@@ -469,8 +460,7 @@ coinages. Proposal:
 - **CU-5(b) probe artifacts: clean** (no probe/scratch/tmp/bak files
   in production trees).
 - **Gates (at this slice, 2026-09-30):** count 74 under the 75 cap
-  (currency 2026-10-01: **72** — the aeneas deletion −3, the experimentation
-  per-server doc +1; register v0.24.6/v0.24.7). The 60-file target
+  (currency 2026-10-01: **72**; register v0.24.6/v0.24.7). The 60-file target
   remains the direction — the file-count work needs the whole-file
   rulings;
   links, citations, frontmatter, and no-deleted-surfaces re-checked

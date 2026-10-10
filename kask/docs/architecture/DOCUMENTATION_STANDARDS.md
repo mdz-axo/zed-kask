@@ -255,7 +255,7 @@ For the authoritative MDS category → directory mapping, see [`MDS.md`](../arch
 | Per-crate Diataxis docs | `kask/docs/diataxis/` |
 | Prior-art research findings (operator-authorized class, introduced 2026-09-16) | `kask/docs/research/` |
 | Operator-retained, not-yet-authorized plans (`status: "Proposed"`) | `kask/docs/plans/` |
-| Plain-text evidence companions (durable tool-run logs, adoption-gate records; introduced 2026-09-28 for the Aeneas evidence files, deleted 2026-09-30 by operator ruling — tombstone in the README lifecycle ledger) | Beside their governing document, referenced from it, never standalone |
+| Plain-text evidence companions (durable tool-run logs, adoption-gate records; introduced 2026-09-28) | Beside their governing document, referenced from it, never standalone |
 | Consolidated Mermaid diagram files | `kask/docs/diagrams/` + `DIAGRAMS_INDEX.md` |
 | Portal / navigation / lifecycle ledger | `kask/docs/README.md` |
 | Crate coding context (brief) | `<workspace>/crates/<crate>/README.md` |

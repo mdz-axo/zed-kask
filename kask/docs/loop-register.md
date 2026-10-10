@@ -983,15 +983,6 @@ exactly that lag), not evidence of absence.)
   does not touch the S4 regions (verified), and the full test re-run
   waits for their landing.
 
-- 2026-09-30 — v0.24.6 executed the operator's aeneas ruling ("delete"):
-  the three-file Aeneas record set removed (the Proposed plan, the
-  adoption-gate record, the feasibility evidence) — a blocked upstream
-  program (Aeneas issue #838) that authorized nothing. Successors
-  named in the README lifecycle ledger tombstone; git history is the
-  archive. `DOCUMENTATION_STANDARDS` §258's example row updated in the
-  same change. Corpus: 74 → **71 files** (70 md + 1 yaml). Gates
-  re-run green (count, links, no-deleted-surfaces — only tombstone
-  mentions remain).
 
 - 2026-09-30 — v0.24.5 executed the alignment plan §8 CU-5's first
   condensation pass over this register (the named first candidate).
@@ -1010,8 +1001,7 @@ exactly that lag), not evidence of absence.)
   dispositions, and the F1–F6 follow-up records. Net **−373 lines**
   (1,882 → 1,509); git history is the archive. The corpus count is
   unchanged (in-file condensation); the whole-file candidates are
-  priced separately (the aeneas trio — operator-retained Proposed,
-  blocked upstream; the LogiSheets plan — Active with open phases
+  priced separately (the LogiSheets plan — Active with open phases
   6–7, kept).
 
 - 2026-09-30 — v0.24.4 executed the alignment plan §8's second cleanup
