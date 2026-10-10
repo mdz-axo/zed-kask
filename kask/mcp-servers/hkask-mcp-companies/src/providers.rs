@@ -540,31 +540,11 @@ fn enrich_key_metrics(mut raw: Value, ratios: Option<Value>, growth: Option<Valu
     };
 
     // Build lookup maps by date for ratios and growth data.
-    let ratios_by_date: std::collections::HashMap<String, &Value> = ratios
-        .as_ref()
-        .and_then(|r| r.as_array())
-        .map_or(std::collections::HashMap::new(), |arr| {
-            arr.iter()
-                .filter_map(|e| {
-                    e.get("date")
-                        .and_then(|d| d.as_str())
-                        .map(|d| (d.to_string(), e))
-                })
-                .collect()
-        });
+    let ratios_by_date: std::collections::HashMap<String, &Value> =
+        entries_by_date(ratios.as_ref());
 
-    let growth_by_date: std::collections::HashMap<String, &Value> = growth
-        .as_ref()
-        .and_then(|g| g.as_array())
-        .map_or(std::collections::HashMap::new(), |arr| {
-            arr.iter()
-                .filter_map(|e| {
-                    e.get("date")
-                        .and_then(|d| d.as_str())
-                        .map(|d| (d.to_string(), e))
-                })
-                .collect()
-        });
+    let growth_by_date: std::collections::HashMap<String, &Value> =
+        entries_by_date(growth.as_ref());
 
     // Fields from /stable/ratios that were in the old key-metrics response.
     const RATIOS_FIELDS: &[&str] = &[
@@ -762,6 +742,76 @@ fn map_field(map: &mut serde_json::Map<String, Value>, from: &str, to: &str) {
     }
 }
 
+/// Sort statement items by their `date` field descending (newest first,
+/// like FMP). Shared by the statement normalizers and the key-metrics
+/// builder so the two cannot drift on ordering.
+fn sort_by_date_desc(items: &mut [Value]) {
+    items.sort_by(|a, b| {
+        let da = a.get("date").and_then(|v| v.as_str()).unwrap_or("");
+        let db = b.get("date").and_then(|v| v.as_str()).unwrap_or("");
+        db.cmp(da)
+    });
+}
+
+/// Extract one EODHD yearly statement (`Financials.<statement>.yearly`)
+/// and normalize each dated row to the FMP shape: clone the row, insert
+/// the `calendarYear` (date's year prefix) and `date` aliases when absent,
+/// apply the statement's EODHD→FMP field mappings, and sort newest-first.
+/// The statement name and the mappings are each caller's own — they are
+/// what the statement varies.
+fn normalize_eodhd_statement(
+    fundamentals: &Value,
+    statement: &str,
+    field_mappings: &[(&str, &str)],
+) -> Value {
+    let yearly = fundamentals
+        .get("Financials")
+        .and_then(|f| f.get(statement))
+        .and_then(|s| s.get("yearly"));
+
+    match yearly {
+        Some(Value::Object(map)) => {
+            let mut items: Vec<Value> = map
+                .iter()
+                .map(|(date, stmt)| {
+                    let mut obj = stmt.clone();
+                    if let Some(obj_map) = obj.as_object_mut() {
+                        let year = date.split('-').next().unwrap_or(date);
+                        obj_map
+                            .entry("calendarYear".to_string())
+                            .or_insert_with(|| Value::String(year.to_string()));
+                        obj_map
+                            .entry("date".to_string())
+                            .or_insert_with(|| Value::String(date.to_string()));
+                        for (from, to) in field_mappings {
+                            map_field(obj_map, from, to);
+                        }
+                    }
+                    obj
+                })
+                .collect();
+            sort_by_date_desc(&mut items);
+            Value::Array(items)
+        }
+        _ => Value::Array(vec![]),
+    }
+}
+
+/// Index one endpoint's rows by their `date` field — the enrich lookup
+/// shape (ratios and growth share it, varying only in the source).
+fn entries_by_date(rows: Option<&Value>) -> std::collections::HashMap<String, &Value> {
+    rows.and_then(|r| r.as_array())
+        .map_or(std::collections::HashMap::new(), |arr| {
+            arr.iter()
+                .filter_map(|e| {
+                    e.get("date")
+                        .and_then(|d| d.as_str())
+                        .map(|d| (d.to_string(), e))
+                })
+                .collect()
+        })
+}
+
 /// EODHD's fundamentals return monetary values as decimal strings
 /// ("89443000000.00") where FMP returns JSON numbers, and every downstream
 /// consumer — `as_f64()` readers, the DCF history builder, derived key
@@ -917,46 +967,17 @@ fn normalize_eodhd_profile(fundamentals: &Value) -> Value {
 /// Maps EODHD field names to FMP equivalents (e.g. totalRevenue → revenue)
 /// and adds calendarYear/date fields for downstream compatibility.
 fn normalize_eodhd_income_statement(fundamentals: &Value) -> Value {
-    let yearly = fundamentals
-        .get("Financials")
-        .and_then(|f| f.get("Income_Statement"))
-        .and_then(|is| is.get("yearly"));
-
-    match yearly {
-        Some(Value::Object(map)) => {
-            let mut items: Vec<Value> = map
-                .iter()
-                .map(|(date, stmt)| {
-                    let mut obj = stmt.clone();
-                    if let Some(obj_map) = obj.as_object_mut() {
-                        let year = date.split('-').next().unwrap_or(date);
-                        obj_map
-                            .entry("calendarYear".to_string())
-                            .or_insert_with(|| Value::String(year.to_string()));
-                        obj_map
-                            .entry("date".to_string())
-                            .or_insert_with(|| Value::String(date.to_string()));
-                        // Map EODHD field names → FMP field names.
-                        map_field(obj_map, "totalRevenue", "revenue");
-                        map_field(
-                            obj_map,
-                            "sellingGeneralAdministrative",
-                            "sellingGeneralAndAdministrativeExpenses",
-                        );
-                    }
-                    obj
-                })
-                .collect();
-            // Sort by date descending (newest first, like FMP)
-            items.sort_by(|a, b| {
-                let da = a.get("date").and_then(|v| v.as_str()).unwrap_or("");
-                let db = b.get("date").and_then(|v| v.as_str()).unwrap_or("");
-                db.cmp(da)
-            });
-            Value::Array(items)
-        }
-        _ => Value::Array(vec![]),
-    }
+    normalize_eodhd_statement(
+        fundamentals,
+        "Income_Statement",
+        &[
+            ("totalRevenue", "revenue"),
+            (
+                "sellingGeneralAdministrative",
+                "sellingGeneralAndAdministrativeExpenses",
+            ),
+        ],
+    )
 }
 
 /// Extract balance sheets from EODHD Financials.Balance_Sheet.yearly → FMP format.
@@ -964,48 +985,17 @@ fn normalize_eodhd_income_statement(fundamentals: &Value) -> Value {
 /// Maps EODHD field names to FMP equivalents (e.g. totalLiab → totalLiabilities,
 /// totalStockholderEquity → totalEquity/totalStockholdersEquity).
 fn normalize_eodhd_balance_sheet(fundamentals: &Value) -> Value {
-    let yearly = fundamentals
-        .get("Financials")
-        .and_then(|f| f.get("Balance_Sheet"))
-        .and_then(|bs| bs.get("yearly"));
-
-    match yearly {
-        Some(Value::Object(map)) => {
-            let mut items: Vec<Value> = map
-                .iter()
-                .map(|(date, sheet)| {
-                    let mut obj = sheet.clone();
-                    if let Some(obj_map) = obj.as_object_mut() {
-                        let year = date.split('-').next().unwrap_or(date);
-                        obj_map
-                            .entry("calendarYear".to_string())
-                            .or_insert_with(|| Value::String(year.to_string()));
-                        obj_map
-                            .entry("date".to_string())
-                            .or_insert_with(|| Value::String(date.to_string()));
-                        // Map EODHD field names → FMP field names
-                        map_field(obj_map, "totalLiab", "totalLiabilities");
-                        map_field(obj_map, "totalStockholderEquity", "totalStockholdersEquity");
-                        map_field(obj_map, "totalStockholderEquity", "totalEquity");
-                        map_field(
-                            obj_map,
-                            "cashAndShortTermInvestments",
-                            "cashAndCashEquivalents",
-                        );
-                        map_field(obj_map, "commonStockSharesOutstanding", "sharesOutstanding");
-                    }
-                    obj
-                })
-                .collect();
-            items.sort_by(|a, b| {
-                let da = a.get("date").and_then(|v| v.as_str()).unwrap_or("");
-                let db = b.get("date").and_then(|v| v.as_str()).unwrap_or("");
-                db.cmp(da)
-            });
-            Value::Array(items)
-        }
-        _ => Value::Array(vec![]),
-    }
+    normalize_eodhd_statement(
+        fundamentals,
+        "Balance_Sheet",
+        &[
+            ("totalLiab", "totalLiabilities"),
+            ("totalStockholderEquity", "totalStockholdersEquity"),
+            ("totalStockholderEquity", "totalEquity"),
+            ("cashAndShortTermInvestments", "cashAndCashEquivalents"),
+            ("commonStockSharesOutstanding", "sharesOutstanding"),
+        ],
+    )
 }
 
 /// Extract cash flow statements from EODHD Financials.Cash_Flow.yearly → FMP format.
@@ -1014,61 +1004,27 @@ fn normalize_eodhd_balance_sheet(fundamentals: &Value) -> Value {
 /// → netCashProvidedByOperatingActivities, capitalExpenditures → capitalExpenditure,
 /// depreciation → depreciationAndAmortization).
 fn normalize_eodhd_cash_flow(fundamentals: &Value) -> Value {
-    let yearly = fundamentals
-        .get("Financials")
-        .and_then(|f| f.get("Cash_Flow"))
-        .and_then(|cf| cf.get("yearly"));
-
-    match yearly {
-        Some(Value::Object(map)) => {
-            let mut items: Vec<Value> = map
-                .iter()
-                .map(|(date, flow)| {
-                    let mut obj = flow.clone();
-                    if let Some(obj_map) = obj.as_object_mut() {
-                        let year = date.split('-').next().unwrap_or(date);
-                        obj_map
-                            .entry("calendarYear".to_string())
-                            .or_insert_with(|| Value::String(year.to_string()));
-                        obj_map
-                            .entry("date".to_string())
-                            .or_insert_with(|| Value::String(date.to_string()));
-                        // Map EODHD field names → FMP field names
-                        map_field(
-                            obj_map,
-                            "totalCashFromOperatingActivities",
-                            "netCashProvidedByOperatingActivities",
-                        );
-                        map_field(
-                            obj_map,
-                            "totalCashflowsFromInvestingActivities",
-                            "netCashProvidedByInvestingActivities",
-                        );
-                        map_field(
-                            obj_map,
-                            "totalCashFromFinancingActivities",
-                            "netCashProvidedByFinancingActivities",
-                        );
-                        map_field(obj_map, "capitalExpenditures", "capitalExpenditure");
-                        map_field(obj_map, "depreciation", "depreciationAndAmortization");
-                        map_field(
-                            obj_map,
-                            "totalCashFromOperatingActivities",
-                            "operatingCashFlow",
-                        );
-                    }
-                    obj
-                })
-                .collect();
-            items.sort_by(|a, b| {
-                let da = a.get("date").and_then(|v| v.as_str()).unwrap_or("");
-                let db = b.get("date").and_then(|v| v.as_str()).unwrap_or("");
-                db.cmp(da)
-            });
-            Value::Array(items)
-        }
-        _ => Value::Array(vec![]),
-    }
+    normalize_eodhd_statement(
+        fundamentals,
+        "Cash_Flow",
+        &[
+            (
+                "totalCashFromOperatingActivities",
+                "netCashProvidedByOperatingActivities",
+            ),
+            (
+                "totalCashflowsFromInvestingActivities",
+                "netCashProvidedByInvestingActivities",
+            ),
+            (
+                "totalCashFromFinancingActivities",
+                "netCashProvidedByFinancingActivities",
+            ),
+            ("capitalExpenditures", "capitalExpenditure"),
+            ("depreciation", "depreciationAndAmortization"),
+            ("totalCashFromOperatingActivities", "operatingCashFlow"),
+        ],
+    )
 }
 
 /// Build key-metrics array from EODHD Highlights + Earnings.History + Financials → FMP format.
@@ -1130,11 +1086,7 @@ fn normalize_eodhd_key_metrics(fundamentals: &Value) -> Value {
     };
 
     // Sort by date descending (newest first, like FMP)
-    items.sort_by(|a, b| {
-        let da = a.get("date").and_then(|v| v.as_str()).unwrap_or("");
-        let db = b.get("date").and_then(|v| v.as_str()).unwrap_or("");
-        db.cmp(da)
-    });
+    sort_by_date_desc(&mut items);
 
     // Merge Highlights data into the latest year's entry (now first after sort).
     // Map EODHD Highlights field names → FMP field names.
