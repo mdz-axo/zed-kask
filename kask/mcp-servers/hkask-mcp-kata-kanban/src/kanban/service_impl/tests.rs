@@ -2,7 +2,7 @@ use super::service::KanbanService;
 use crate::VerificationCriterion;
 use crate::kanban::mermaid::{export_board_to_mermaid, parse_mermaid_kanban};
 use crate::kanban::{
-    Board, ColumnDef, Comment, CriterionCitation, SpawnSpec, TaskFilter, TaskSpec, TaskStatus,
+    Board, ColumnDef, Comment, CriterionCitation, SpawnSpec, Task, TaskFilter, TaskSpec, TaskStatus,
 };
 use hkask_storage::HMemStore;
 use hkask_types::WebID;
@@ -27,6 +27,52 @@ fn make_service_with_board() -> (KanbanService, Board, WebID) {
         .board_create(owner, "Test Board", &make_default_columns())
         .unwrap();
     (svc, board, owner)
+}
+
+/// The fault-injection test environment: the in-memory driver (the
+/// trigger-injection site), its store (the row-count/query oracle), a
+/// service over a store clone, an owner, and a board — the arrangement the
+/// four atomicity tests share. The task each test creates and the injected
+/// SQL stay per-test: they are the pre-condition each test varies.
+struct FaultEnv {
+    driver: std::sync::Arc<dyn hkask_storage::database::driver::DatabaseDriver>,
+    store: HMemStore,
+    service: KanbanService,
+    owner: WebID,
+    board: Board,
+}
+
+/// The shared post-condition of the board-delete failure tests: the failed
+/// delete leaves the board, its task, and the board index all readable, and
+/// no rows were removed. The two board-delete fault tests assert this tail
+/// identically (their pre-conditions differ only in the injected SQL);
+/// `task_delete_atomic` keeps its own tail (its arrangement differs).
+fn assert_board_and_task_retained(env: &FaultEnv, task: &Task) -> anyhow::Result<()> {
+    assert!(env.service.board_get(env.board.id)?.is_some());
+    assert!(env.service.task_get(task.id)?.is_some());
+    assert_eq!(
+        env.service
+            .task_list(env.board.id, TaskFilter::all())?
+            .len(),
+        1
+    );
+    assert_eq!(env.store.count()?, 3);
+    Ok(())
+}
+
+fn fault_env() -> anyhow::Result<FaultEnv> {
+    let driver = hkask_storage::database::sqlite::SqliteDriver::in_memory_driver();
+    let store = HMemStore::from_driver(driver.clone())?;
+    let service = KanbanService::new(store.clone());
+    let owner = WebID::new();
+    let board = service.board_create(owner, "Board", &make_default_columns())?;
+    Ok(FaultEnv {
+        driver,
+        store,
+        service,
+        owner,
+        board,
+    })
 }
 
 #[test]
@@ -416,27 +462,27 @@ fn task_create_rejects_unknown_board() {
 /// post: task creation fails and neither task payload nor board index row exists
 #[test]
 fn task_create_atomic_when_index_insert_fails() -> anyhow::Result<()> {
-    let driver = hkask_storage::database::sqlite::SqliteDriver::in_memory_driver();
-    let store = HMemStore::from_driver(driver.clone())?;
-    let service = KanbanService::new(store.clone());
-    let owner = WebID::new();
-    let board = service.board_create(owner, "Board", &make_default_columns())?;
-    driver.execute_batch(
+    let env = fault_env()?;
+    env.driver.execute_batch(
         "CREATE TRIGGER reject_task_index_insert BEFORE INSERT ON hmems
          WHEN NEW.entity LIKE 'kanban:board_tasks:%'
          BEGIN SELECT RAISE(FAIL, 'forced task index failure'); END;",
     )?;
 
     assert!(
-        service
-            .task_create(board.id, TaskSpec::new("Task".into()), owner)
+        env.service
+            .task_create(env.board.id, TaskSpec::new("Task".into()), env.owner)
             .is_err()
     );
-    assert!(service.task_list(board.id, TaskFilter::all())?.is_empty());
-    assert!(store.query_by_entity("kanban:task")?.is_empty());
     assert!(
-        store
-            .query_by_entity(&format!("kanban:board_tasks:{}", board.id))?
+        env.service
+            .task_list(env.board.id, TaskFilter::all())?
+            .is_empty()
+    );
+    assert!(env.store.query_by_entity("kanban:task")?.is_empty());
+    assert!(
+        env.store
+            .query_by_entity(&format!("kanban:board_tasks:{}", env.board.id))?
             .is_empty()
     );
     Ok(())
@@ -968,23 +1014,26 @@ fn task_delete_after_update_removes_replacement_payload() -> anyhow::Result<()> 
 /// post: task deletion fails while task payload, board index, and board all remain
 #[test]
 fn task_delete_atomic_when_index_delete_fails() -> anyhow::Result<()> {
-    let driver = hkask_storage::database::sqlite::SqliteDriver::in_memory_driver();
-    let store = HMemStore::from_driver(driver.clone())?;
-    let service = KanbanService::new(store.clone());
-    let owner = WebID::new();
-    let board = service.board_create(owner, "Board", &make_default_columns())?;
-    let task = service.task_create(board.id, TaskSpec::new("Task".into()), owner)?;
-    driver.execute_batch(
+    let env = fault_env()?;
+    let task = env
+        .service
+        .task_create(env.board.id, TaskSpec::new("Task".into()), env.owner)?;
+    env.driver.execute_batch(
         "CREATE TRIGGER reject_task_index_delete BEFORE DELETE ON hmems
          WHEN OLD.entity LIKE 'kanban:board_tasks:%'
          BEGIN SELECT RAISE(FAIL, 'forced task index delete failure'); END;",
     )?;
 
-    assert!(service.task_delete(task.id).is_err());
-    assert!(service.task_get(task.id)?.is_some());
-    assert_eq!(service.task_list(board.id, TaskFilter::all())?.len(), 1);
-    assert!(service.board_get(board.id)?.is_some());
-    assert_eq!(store.count()?, 3);
+    assert!(env.service.task_delete(task.id).is_err());
+    assert!(env.service.task_get(task.id)?.is_some());
+    assert_eq!(
+        env.service
+            .task_list(env.board.id, TaskFilter::all())?
+            .len(),
+        1
+    );
+    assert!(env.service.board_get(env.board.id)?.is_some());
+    assert_eq!(env.store.count()?, 3);
     Ok(())
 }
 
@@ -995,23 +1044,18 @@ fn task_delete_atomic_when_index_delete_fails() -> anyhow::Result<()> {
 /// post: board deletion fails while board, task payload, and index remain readable
 #[test]
 fn board_delete_atomic_when_child_delete_fails() -> anyhow::Result<()> {
-    let driver = hkask_storage::database::sqlite::SqliteDriver::in_memory_driver();
-    let store = HMemStore::from_driver(driver.clone())?;
-    let service = KanbanService::new(store.clone());
-    let owner = WebID::new();
-    let board = service.board_create(owner, "Board", &make_default_columns())?;
-    let task = service.task_create(board.id, TaskSpec::new("Task".into()), owner)?;
-    driver.execute_batch(
+    let env = fault_env()?;
+    let task = env
+        .service
+        .task_create(env.board.id, TaskSpec::new("Task".into()), env.owner)?;
+    env.driver.execute_batch(
         "CREATE TRIGGER reject_board_child_delete BEFORE DELETE ON hmems
          WHEN OLD.entity = 'kanban:task'
          BEGIN SELECT RAISE(FAIL, 'forced board child delete failure'); END;",
     )?;
 
-    assert!(service.board_delete(board.id).is_err());
-    assert!(service.board_get(board.id)?.is_some());
-    assert!(service.task_get(task.id)?.is_some());
-    assert_eq!(service.task_list(board.id, TaskFilter::all())?.len(), 1);
-    assert_eq!(store.count()?, 3);
+    assert!(env.service.board_delete(env.board.id).is_err());
+    assert_board_and_task_retained(&env, &task)?;
     Ok(())
 }
 
@@ -1022,21 +1066,16 @@ fn board_delete_atomic_when_child_delete_fails() -> anyhow::Result<()> {
 #[test]
 fn board_delete_rejects_invalid_root_and_retains_all_rows() -> anyhow::Result<()> {
     for replacement in ["NULL", "'{\"pko_procedure\":\"other-board\"}'"] {
-        let driver = hkask_storage::database::sqlite::SqliteDriver::in_memory_driver();
-        let store = HMemStore::from_driver(driver.clone())?;
-        let service = KanbanService::new(store.clone());
-        let owner = WebID::new();
-        let board = service.board_create(owner, "Board", &make_default_columns())?;
-        let task = service.task_create(board.id, TaskSpec::new("Task".into()), owner)?;
-        driver.execute_batch(&format!(
+        let env = fault_env()?;
+        let task =
+            env.service
+                .task_create(env.board.id, TaskSpec::new("Task".into()), env.owner)?;
+        env.driver.execute_batch(&format!(
             "UPDATE hmems SET ontology = {replacement} WHERE entity = 'kanban:board'"
         ))?;
 
-        assert!(service.board_delete(board.id).is_err());
-        assert!(service.board_get(board.id)?.is_some());
-        assert!(service.task_get(task.id)?.is_some());
-        assert_eq!(service.task_list(board.id, TaskFilter::all())?.len(), 1);
-        assert_eq!(store.count()?, 3);
+        assert!(env.service.board_delete(env.board.id).is_err());
+        assert_board_and_task_retained(&env, &task)?;
     }
     Ok(())
 }
