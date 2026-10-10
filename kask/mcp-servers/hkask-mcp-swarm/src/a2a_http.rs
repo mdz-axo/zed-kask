@@ -317,7 +317,9 @@ fn handle_jsonrpc(
                 let runtime = runtime.get_or_init().await?;
                 // No budget for external callers — local agents run on
                 // the operator's substrate.
-                runtime.delegate(&agent, &text).await
+                // Dispatch provenance: the external A2A HTTP gateway.
+                let stamp = crate::local_runtime::DispatchStamp::new("a2a", "a2a-http")?;
+                runtime.delegate(&agent, &text, stamp).await
             });
             match result {
                 Ok(delegate_result) => {

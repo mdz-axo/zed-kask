@@ -50,12 +50,25 @@ impl SwarmServer {
                 ))
             })?;
             let result = if let Some(ref swarm_id) = req.swarm_id {
-                self.dispatch_in_thread(swarm_id, &req.agent_name, &req.message)
-                    .await?
-                    .0
+                self.dispatch_in_thread(
+                    swarm_id,
+                    &req.agent_name,
+                    &req.message,
+                    // Dispatch provenance: the A2A surface (scoped branch).
+                    crate::local_runtime::DispatchStamp::new("a2a", "a2a-message")
+                        .map_err(map_local_swarm_error)?,
+                )
+                .await?
+                .0
             } else {
                 runtime
-                    .delegate(&agent, &req.message)
+                    .delegate(
+                        &agent,
+                        &req.message,
+                        // Dispatch provenance: the A2A surface.
+                        crate::local_runtime::DispatchStamp::new("a2a", "a2a-message")
+                            .map_err(map_local_swarm_error)?,
+                    )
                     .await
                     .map_err(map_local_swarm_error)?
             };
@@ -180,7 +193,14 @@ impl SwarmServer {
                     }
                 };
                 match self
-                    .dispatch_in_thread(&req.swarm_id, member_id, &req.message)
+                    .dispatch_in_thread(
+                        &req.swarm_id,
+                        member_id,
+                        &req.message,
+                        // Dispatch provenance: the A2A broadcast surface.
+                        crate::local_runtime::DispatchStamp::new("a2a", "a2a-broadcast")
+                            .map_err(map_local_swarm_error)?,
+                    )
                     .await
                 {
                     Ok((result, _turn)) => {

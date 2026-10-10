@@ -128,6 +128,31 @@ rows and shards, attempts, actual model, pending retry refs and the next unit
 `preparing`, `embedding`, `evaluating` or `complete`; premature or malformed final
 artifacts fail closed rather than manufacturing completion.
 
+After a `hmems` schema migration, a sealed run's databases change bytes and the
+seal (`run-identity.json` `indexes` digests + the `run_id` self-digest) no longer
+matches — every federated admission of a registered source then fails the
+digest check. Re-bind the seal without re-running the calibration:
+
+```bash
+kask/scripts/audit/reseal-calibration-run.sh <run-dir> [<manifest.json> <source-id>]
+```
+
+The resealer performs the storage layer's own migration (PRAGMA probe, then
+`ALTER TABLE hmems ADD COLUMN provenance TEXT NOT NULL DEFAULT 'model_inference'`
+— idempotent), checkpoints the WAL to the sealed state, re-computes every index
+digest, and re-derives `run_id` through the producer's `jq -cS` pipeline
+(`hkask-memory/src/federated_recall.rs` `sealed_run_id`). The original identity
+is preserved as `run-identity.pre-reseal-<date>.json`; a broken `run_id`
+self-digest aborts before anything moves (the repair never launders a tampered
+seal). With a manifest and source id it ends by running the real admission path
+(`hkask-memory examples/verify_federated_source` — run-identity shape, `run_id`
+self-digest, byte digest, current schema, embedding identity, one probe search)
+over the re-sealed artifacts. The SQLCipher key is read from a running
+hkask-mcp-corpus/curator process environment and never printed. Executed live
+2026-10-10 over both registered sources (`capabilities-researcher`, 121,992
+passages; `zk-ref-open`, 278,670 passages) after the R5 `provenance` column —
+both admitted and probe-searched clean.
+
 For a source-balanced QA pilot, run
 `kask/scripts/audit/select-position-diverse-chunks.sh <tagged-jsonl> <new-output-jsonl> <chunks-per-source>`
 before `corpus_build_prompts`. The selector requires current-protocol classified

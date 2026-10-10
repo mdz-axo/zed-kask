@@ -909,7 +909,10 @@ mod tests {
             ..Default::default()
         };
         let results = runtime
-            .delegate_batch(vec![(card, "look up needle".into())])
+            .delegate_batch(
+                vec![(card, "look up needle".into())],
+                crate::local_runtime::DispatchStamp::new("test", "test").expect("valid test stamp"),
+            )
             .await;
         let result = results
             .into_iter()

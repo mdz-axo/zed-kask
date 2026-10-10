@@ -62,6 +62,17 @@ async fn scoped_plan_broadcast_send_share_history_and_keep_verdict_and_board()
     assert_eq!(scoped["succeeded"], 2);
     assert_eq!(scoped["results"][0]["task_success"]["pass"], true);
     assert_eq!(scoped["task_board"]["total"], 3);
+    // Dispatch provenance (fermi `stamp_invocation` port): the plan surface
+    // names itself on every scoped result — the stamp C5/C6 blame reads to
+    // split routing-attributable failures from agent-quality ones.
+    assert_eq!(
+        scoped["results"][0]["dispatch"]["route_reason"], "plan",
+        "the plan surface stamps its results"
+    );
+    assert_eq!(
+        scoped["results"][0]["dispatch"]["question_source"],
+        "plan-task"
+    );
     let broadcast = content(
         &server
             .swarm_a2a_broadcast(Parameters(A2aBroadcastRequest {

@@ -349,8 +349,9 @@ impl LocalSwarmRuntime {
         &self,
         agent: &LocalAgentCard,
         task: &str,
+        dispatch: DispatchStamp,
     ) -> Result<LocalDelegateResult, LocalSwarmError> {
-        self.delegate_with_history(agent, task, &[]).await
+        self.delegate_with_history(agent, task, &[], dispatch).await
     }
 
     /// Count one grounding-gate decision in the durable counters (fermi's
@@ -388,6 +389,7 @@ impl LocalSwarmRuntime {
         agent: &LocalAgentCard,
         task: &str,
         history: &[hkask_types::ChatMessage],
+        dispatch: DispatchStamp,
     ) -> Result<LocalDelegateResult, LocalSwarmError> {
         let started = Instant::now();
         // Strip leading @mentions (defense-in-depth, mirrors ABW delegate).
@@ -413,6 +415,10 @@ impl LocalSwarmRuntime {
             &agent.agent_id,
             started.elapsed().as_millis().min(u64::MAX as u128) as u64,
         );
+        // Dispatch provenance (fermi `stamp_invocation` port): the surface
+        // names itself at the dispatch boundary — never caller-supplied,
+        // never unstamped on a production path.
+        result.dispatch = Some(dispatch);
         // Contract checks (the local analog of fermi's verification gates):
         // advisory verdicts stamped here, in the shared execution path, so
         // every delegation surface (delegate, fanout, a2a, pipeline, the
@@ -479,6 +485,7 @@ impl LocalSwarmRuntime {
             completeness: None,
             reliance: None,
             memory: None,
+            dispatch: None,
         }
     }
 
@@ -486,6 +493,7 @@ impl LocalSwarmRuntime {
     pub async fn delegate_batch(
         &self,
         delegations: Vec<(LocalAgentCard, String)>,
+        dispatch: DispatchStamp,
     ) -> Vec<Result<LocalDelegateResult, LocalSwarmError>> {
         // Extract the agent ids for phase 2, since the spawned tasks
         // consume the owned cards.
@@ -579,6 +587,10 @@ impl LocalSwarmRuntime {
                 }
             };
             let mut built = self.build_result(raw, agent_id, 0);
+            // Dispatch provenance — batch parity with `delegate` (the same
+            // one-stamp-per-delegation point; the surface names itself once
+            // for the whole batch).
+            built.dispatch = Some(dispatch.clone());
             // Contract checks — batch parity with `delegate` (see the note
             // there). `index` is the delegation's submission index: the
             // fill-missing pass guarantees one sorted entry per index, so
@@ -715,6 +727,59 @@ fn check_note(mut check: serde_json::Value, note: &str) -> serde_json::Value {
 /// MAX_TOOL_ROUNDS). Also the worst-case serial latency multiplier.
 pub const MAX_FANOUT: usize = 10;
 
+/// Why this agent received this task — the dispatch provenance stamp
+/// (fermi `stamp_invocation` / `RouteReason` port). Carries no quality
+/// judgment: it exists so fault attribution (swarm-intelligence C5/C6)
+/// can separate "the wrong question was sent to this agent" (routing —
+/// fix the composition) from "the agent is bad at the job" (quality —
+/// reconfigure the agent), previously the same blame row.
+///
+/// Both fields are server-authored constants naming the dispatching
+/// surface and the task's origin — never caller-supplied. fermi's own
+/// lesson applies (api_server `stamp_invocation`): a caller-provided
+/// string must not be able to invent arbitrary tags, so the constructor
+/// slug-validates (bounded, ASCII lowercase, `[a-z0-9_-.:]`, ≤64).
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+pub struct DispatchStamp {
+    /// The dispatching surface: `direct` (swarm_delegate_local), `thread`
+    /// (scoped dispatch), `fanout`, `pipeline`, `plan`
+    /// (swarm_execute_plan_local), `workflow`, `eval` (rollout harness),
+    /// `a2a` (send / HTTP gateway).
+    pub route_reason: String,
+    /// Where the task text came from: `operator` (a typed prompt),
+    /// `plan-task`, `workflow-stage`, `eval-rollout`, `a2a-message`,
+    /// `a2a-http`.
+    pub question_source: String,
+}
+
+impl DispatchStamp {
+    /// Construct a stamp, slug-validating both fields (fermi `stamp_invocation`'s
+    /// bounded-tag rule — the charset check is the guard against a future
+    /// surface inventing an unparseable tag, not against callers).
+    pub fn new(route_reason: &str, question_source: &str) -> Result<Self, LocalSwarmError> {
+        let slug = |value: &str| -> Result<String, LocalSwarmError> {
+            let trimmed = value.trim();
+            if trimmed.is_empty()
+                || trimmed.len() > 64
+                || !trimmed
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | ':' | '.'))
+            {
+                return Err(LocalSwarmError::InvalidInput(format!(
+                    "dispatch stamp component '{value}' must be 1-64 chars of [a-z0-9_-.:] (slug)"
+                )));
+            }
+            Ok(trimmed.to_ascii_lowercase())
+        };
+        Ok(Self {
+            route_reason: slug(route_reason)?,
+            question_source: slug(question_source)?,
+        })
+    }
+}
+
 /// Result of a local delegation.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct LocalDelegateResult {
@@ -809,6 +874,14 @@ pub struct LocalDelegateResult {
     /// degradation is reported here but never changes delegation success.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub memory: Option<crate::local_knowledge::TurnIngestionReport>,
+    /// Dispatch provenance (fermi `stamp_invocation` / `RouteReason` port):
+    /// which surface dispatched and where the task came from. `None` on
+    /// results the runtime builds before a dispatch surface stamps — every
+    /// production dispatch surface sets it; consumers treat `None` as
+    /// unstamped (legacy). Carries no quality judgment (see
+    /// [`DispatchStamp`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dispatch: Option<DispatchStamp>,
 }
 
 impl LocalDelegateResult {
@@ -854,6 +927,12 @@ impl LocalDelegateResult {
         }
         if let Some(memory) = &self.memory {
             entry["memory"] = serde_json::to_value(memory).unwrap_or(serde_json::Value::Null);
+        }
+        // Dispatch provenance (fermi `stamp_invocation` port) travels on
+        // every entry shape — C5/C6 blame attribution reads it to split
+        // routing-attributable failures from agent-quality ones.
+        if let Some(dispatch) = &self.dispatch {
+            entry["dispatch"] = serde_json::to_value(dispatch).unwrap_or(serde_json::Value::Null);
         }
         entry
     }
@@ -1049,6 +1128,46 @@ mod local_knowledge_result_tests {
         assert_eq!(
             entry["memory"]["degradations"][0]["kind"],
             "embedding_model_unconfigured"
+        );
+    }
+}
+
+#[cfg(test)]
+mod dispatch_stamp_tests {
+    use super::DispatchStamp;
+    use crate::error::LocalSwarmError;
+
+    /// The slug rules (fermi `stamp_invocation`'s bounded-tag guard): valid
+    /// components pass and lowercase; over-length, empty, and bad-charset
+    /// components are refused — a future surface cannot invent an
+    /// unparseable tag.
+    #[test]
+    fn slug_validation_accepts_and_rejects() {
+        let stamp = DispatchStamp::new("Direct", "Operator").expect("valid");
+        assert_eq!(
+            (stamp.route_reason.as_str(), stamp.question_source.as_str()),
+            ("direct", "operator"),
+            "components are lowercased"
+        );
+        assert!(DispatchStamp::new("plan", "plan-task").is_ok());
+        assert!(DispatchStamp::new("a2a", "a2a-http").is_ok());
+        for bad in ["", "  ", &"x".repeat(65), "has space", "häs-umlaut"] {
+            assert!(
+                matches!(DispatchStamp::new(bad, "operator"), Err(LocalSwarmError::InvalidInput(_))),
+                "component {bad:?} must be refused"
+            );
+        }
+    }
+
+    /// The stamp serializes into the result shape C5/C6 blame reads — the
+    /// two fields, nothing else, no quality judgment.
+    #[test]
+    fn serializes_the_two_fields_only() {
+        let stamp = DispatchStamp::new("plan", "plan-task").expect("valid");
+        let value = serde_json::to_value(&stamp).expect("serialize");
+        assert_eq!(
+            value,
+            serde_json::json!({"route_reason": "plan", "question_source": "plan-task"})
         );
     }
 }

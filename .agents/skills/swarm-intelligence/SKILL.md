@@ -265,10 +265,22 @@ Successful entries are `LocalDelegateResult`-shaped: `agent_id`, `response`, `mo
 (optional deterministic verdict), and the evaluator-contract fields when an
 output contract was declared (`bind_matched`, `rollout_id`, `reasoning_steps`,
 `input_contract_check`, `output_contract_check`, `grounding`, `completeness`,
-`reliance`, `memory`). ORIENT attributes fault from
+`reliance`, `memory`), plus `dispatch` — the dispatch-provenance stamp
+(`{route_reason, question_source}`, fermi `stamp_invocation` port: which
+surface dispatched and where the task came from; carries no quality
+judgment). ORIENT attributes fault from
 `delegate_results[].task_success.pass` (highest fidelity, when present) and
 `delegate_results[].tool_calls[].ok`; `fault_count` accumulates; C6
-reconfigures the most-blamed agent. Absent `delegate_results`, C5/C6 are inert.
+reconfigures the most-blamed agent — **but only on agent-attributable
+blame**. A failed result whose `bind_matched` is `false` (or whose
+`input_contract_check` is `invalid`) is routing-attributable: the wrong
+question was sent to that agent, and the fix is the composition (the plan
+entry, the roster, the router), not the agent's prompt. The `dispatch`
+stamp names the surface that sent it (`plan`, `fanout`, `pipeline`,
+`workflow`, `direct`, `thread`, `a2a`, `eval`) so a routing-attributable
+pattern is traceable to its dispatching surface. Absent `delegate_results`,
+C5/C6 are inert. Results stamped `route_reason: "eval"` are rollout-harness
+measurements — they feed agent stats, never C6 blame.
 Do not infer reasoning traces or skill executions from this result shape.
 
 ### The task board (durable task progress)

@@ -213,8 +213,9 @@ async fn delegate_and_ingest(
     runtime: &crate::local_runtime::LocalSwarmRuntime,
     agent: &crate::local_registry::LocalAgentCard,
     task: &str,
+    stamp: crate::local_runtime::DispatchStamp,
 ) -> Result<LocalDelegateResult, crate::error::LocalSwarmError> {
-    let mut result = runtime.delegate(agent, task).await?;
+    let mut result = runtime.delegate(agent, task, stamp).await?;
     attach_narrative_memory(memory, &runtime.inference(), task, &mut result).await;
     Ok(result)
 }
@@ -427,6 +428,7 @@ impl SwarmServer {
         swarm_id: &str,
         agent_name: &str,
         task: &str,
+        dispatch: crate::local_runtime::DispatchStamp,
     ) -> Result<(LocalDelegateResult, ThreadTurn), McpToolError> {
         if swarm_id.trim().is_empty() || agent_name.trim().is_empty() || task.trim().is_empty() {
             return Err(McpToolError::invalid_argument(
@@ -479,7 +481,7 @@ impl SwarmServer {
             .await
             .map_err(map_local_swarm_error)?;
         let result = runtime
-            .delegate_with_history(&agent, task, &history)
+            .delegate_with_history(&agent, task, &history, dispatch)
             .await
             .map_err(map_local_swarm_error)?;
         let turn = self
@@ -519,7 +521,14 @@ impl SwarmServer {
                 ));
             }
             let (result, turn) = self
-                .dispatch_in_thread(&req.swarm_id, &req.agent_name, &req.task)
+                .dispatch_in_thread(
+                    &req.swarm_id,
+                    &req.agent_name,
+                    &req.task,
+                    // Dispatch provenance: the scoped thread-dispatch surface.
+                    crate::local_runtime::DispatchStamp::new("thread", "operator")
+                        .map_err(map_local_swarm_error)?,
+                )
                 .await?;
             Ok(serde_json::json!({
                 "swarm_id": req.swarm_id, "sequence": turn.sequence, "result": result,
@@ -639,10 +648,17 @@ impl SwarmServer {
             // admission (`validate_typing`) is the gate.
             let bind_matched = crate::local_runtime::check_bind(&agent, &req.task);
             // Execute via the local runtime.
-            let mut result =
-                delegate_and_ingest(&self.local_memory, &runtime, &agent, &req.task)
-                    .await
-                    .map_err(map_local_swarm_error)?;
+            let mut result = delegate_and_ingest(
+                &self.local_memory,
+                &runtime,
+                &agent,
+                &req.task,
+                // Dispatch provenance: the direct operator delegation surface.
+                crate::local_runtime::DispatchStamp::new("direct", "operator")
+                    .map_err(map_local_swarm_error)?,
+            )
+            .await
+            .map_err(map_local_swarm_error)?;
             // Evaluator contract (phase 4): a card-declared evaluator is the
             // agent's own oracle. Run each; the verdict passes only if ALL
             // declared evaluators pass (they are conjunctive expectations
@@ -736,7 +752,14 @@ impl SwarmServer {
                 let mut total_latency_ms = 0u64;
                 for entry in &req.delegations {
                     match self
-                        .dispatch_in_thread(swarm_id, &entry.agent_name, &entry.task)
+                        .dispatch_in_thread(
+                            swarm_id,
+                            &entry.agent_name,
+                            &entry.task,
+                            // Dispatch provenance: the fanout surface (scoped branch).
+                            crate::local_runtime::DispatchStamp::new("fanout", "operator")
+                                .map_err(map_local_swarm_error)?,
+                        )
                         .await
                     {
                         Ok((result, _turn)) => {
@@ -790,7 +813,15 @@ impl SwarmServer {
                         }
                     }
                 }
-                let raw_results = runtime.delegate_batch(delegations).await;
+                let raw_results = runtime
+                    .delegate_batch(
+                        delegations,
+                        // Dispatch provenance: the fanout surface (unscoped
+                        // branch) — one stamp for the whole batch.
+                        crate::local_runtime::DispatchStamp::new("fanout", "operator")
+                            .map_err(map_local_swarm_error)?,
+                    )
+                    .await;
                 let mut results = Vec::new();
                 let mut failed = 0usize;
                 let mut total_tokens = 0i64;
@@ -863,8 +894,16 @@ impl SwarmServer {
                     ));
                     continue;
                 };
-                match delegate_and_ingest(&self.local_memory, &runtime, &agent, &entry.task)
-                    .await
+                match delegate_and_ingest(
+                    &self.local_memory,
+                    &runtime,
+                    &agent,
+                    &entry.task,
+                    // Dispatch provenance: the fanout surface (operator task).
+                    crate::local_runtime::DispatchStamp::new("fanout", "operator")
+                        .map_err(map_local_swarm_error)?,
+                )
+                .await
                 {
                     Ok(r) => {
                         self.validate_produces(&entry.agent_name, &agent.produces, &r.response);
@@ -977,13 +1016,26 @@ impl SwarmServer {
                     }
                 }
                 let dispatched = if let Some(swarm_id) = &req.swarm_id {
-                    self.dispatch_in_thread(swarm_id, &step.agent_name, &task)
-                        .await
-                        .map(|(result, _turn)| result)
-                        .map_err(|error| error.to_string())
+                    self.dispatch_in_thread(
+                        swarm_id,
+                        &step.agent_name,
+                        &task,
+                        // Dispatch provenance: the pipeline surface (scoped branch).
+                        crate::local_runtime::DispatchStamp::new("pipeline", "pipeline-stage")
+                            .map_err(map_local_swarm_error)?,
+                    )
+                    .await
+                    .map(|(result, _turn)| result)
+                    .map_err(|error| error.to_string())
                 } else {
                     runtime
-                        .delegate(&agent, &task)
+                        .delegate(
+                            &agent,
+                            &task,
+                            // Dispatch provenance: the pipeline surface.
+                            crate::local_runtime::DispatchStamp::new("pipeline", "pipeline-stage")
+                                .map_err(map_local_swarm_error)?,
+                        )
                         .await
                         .map_err(|error| error.to_string())
                 };
@@ -1271,7 +1323,22 @@ impl SwarmServer {
                     async move {
                         if let Some(swarm_id) = swarm_id {
                             return self
-                                .dispatch_in_thread(swarm_id, &agent_id, &task)
+                                .dispatch_in_thread(
+                                    swarm_id,
+                                    &agent_id,
+                                    &task,
+                                    // Dispatch provenance: the workflow surface
+                                    // (scoped branch).
+                                    crate::local_runtime::DispatchStamp::new(
+                                        "workflow",
+                                        "workflow-stage",
+                                    )
+                                    .map_err(|error| {
+                                        crate::workflow::WorkflowDelegateError::Delegate(
+                                            error.to_string(),
+                                        )
+                                    })?,
+                                )
                                 .await
                                 .map(|(result, _turn)| (result.response, result.reliance))
                                 .map_err(|error| {
@@ -1284,7 +1351,20 @@ impl SwarmServer {
                             crate::workflow::WorkflowDelegateError::AgentNotFound(agent_id.clone())
                         })?;
                         runtime
-                            .delegate(&agent, &task)
+                            .delegate(
+                                &agent,
+                                &task,
+                                // Dispatch provenance: the workflow surface.
+                                crate::local_runtime::DispatchStamp::new(
+                                    "workflow",
+                                    "workflow-stage",
+                                )
+                                .map_err(|error| {
+                                    crate::workflow::WorkflowDelegateError::Delegate(
+                                        error.to_string(),
+                                    )
+                                })?,
+                            )
                             .await
                             .map(|result| (result.response, result.reliance))
                             .map_err(|error| {
@@ -3079,13 +3159,26 @@ impl SwarmServer {
                     continue;
                 };
                 let dispatched = if let Some(sid) = req.swarm_id.as_deref() {
-                    self.dispatch_in_thread(sid, &entry.agent_name, &entry.task)
-                        .await
-                        .map(|(result, _turn)| result)
-                        .map_err(|error| error.to_string())
+                    self.dispatch_in_thread(
+                        sid,
+                        &entry.agent_name,
+                        &entry.task,
+                        // Dispatch provenance: the plan surface (scoped branch).
+                        crate::local_runtime::DispatchStamp::new("plan", "plan-task")
+                            .map_err(map_local_swarm_error)?,
+                    )
+                    .await
+                    .map(|(result, _turn)| result)
+                    .map_err(|error| error.to_string())
                 } else {
                     runtime
-                        .delegate(&agent, &entry.task)
+                        .delegate(
+                            &agent,
+                            &entry.task,
+                            // Dispatch provenance: the plan surface.
+                            crate::local_runtime::DispatchStamp::new("plan", "plan-task")
+                                .map_err(map_local_swarm_error)?,
+                        )
                         .await
                         .map_err(|error| error.to_string())
                 };
@@ -3293,8 +3386,17 @@ impl SwarmServer {
                         }));
                         continue;
                     };
-                    match delegate_and_ingest(&self.local_memory, &runtime, &agent, &entry.task)
-                        .await
+                    match delegate_and_ingest(
+                        &self.local_memory,
+                        &runtime,
+                        &agent,
+                        &entry.task,
+                        // Dispatch provenance: the eval-suite surface (rollout
+                        // harness — outcomes feed agent stats, not C6 blame).
+                        crate::local_runtime::DispatchStamp::new("eval", "eval-rollout")
+                            .map_err(map_local_swarm_error)?,
+                    )
+                    .await
                     {
                         Ok(mut r) => {
                             self.validate_produces(&entry.agent_name, &agent.produces, &r.response);
@@ -3498,7 +3600,17 @@ impl SwarmServer {
                     let mut errors = 0usize;
                     let mut latencies_ms: Vec<u64> = Vec::with_capacity(repeats as usize);
                     for repeat_index in 0..repeats {
-                        match runtime.delegate(&agent, &task.task).await {
+                        match runtime
+                            .delegate(
+                                &agent,
+                                &task.task,
+                                // Dispatch provenance: the rollout-harness surface —
+                                // outcomes feed agent stats, not C6 blame.
+                                crate::local_runtime::DispatchStamp::new("eval", "eval-rollout")
+                                    .map_err(map_local_swarm_error)?,
+                            )
+                            .await
+                        {
                             Ok(result) => {
                                 total_tokens += result.tokens_used;
                                 latencies_ms.push(result.latency_ms);
@@ -4068,11 +4180,19 @@ mod tests {
         let bad_agent = mock_agent_card("bad", "You are a confused assistant.");
 
         let good_result = runtime
-            .delegate(&good_agent, "What is 6 times 7?")
+            .delegate(
+                &good_agent,
+                "What is 6 times 7?",
+                crate::local_runtime::DispatchStamp::new("test", "test").expect("test stamp"),
+            )
             .await
             .unwrap();
         let bad_result = runtime
-            .delegate(&bad_agent, "What is 6 times 7?")
+            .delegate(
+                &bad_agent,
+                "What is 6 times 7?",
+                crate::local_runtime::DispatchStamp::new("test", "test").expect("test stamp"),
+            )
             .await
             .unwrap();
 
@@ -4104,7 +4224,11 @@ mod tests {
             "You are a helpful assistant. Always respond correctly.",
         );
         let result = runtime
-            .delegate(&agent, "What is 6 times 7?")
+            .delegate(
+                &agent,
+                "What is 6 times 7?",
+                crate::local_runtime::DispatchStamp::new("test", "test").expect("test stamp"),
+            )
             .await
             .expect("local delegation needs no budget");
         assert!(!result.response.is_empty());
@@ -4204,7 +4328,11 @@ mod tests {
         let mut card = mock_agent_card("inheriting", "You answer briefly.");
         card.capabilities.model.clear();
         runtime
-            .delegate(&card, "hello")
+            .delegate(
+                &card,
+                "hello",
+                crate::local_runtime::DispatchStamp::new("test", "test").expect("test stamp"),
+            )
             .await
             .expect("inherited model runs");
         assert!(
@@ -4213,7 +4341,11 @@ mod tests {
         );
         card.capabilities.model = "Explicit/card-model".to_string();
         runtime
-            .delegate(&card, "hello")
+            .delegate(
+                &card,
+                "hello",
+                crate::local_runtime::DispatchStamp::new("test", "test").expect("test stamp"),
+            )
             .await
             .expect("explicit model runs");
         assert_eq!(
@@ -4253,7 +4385,11 @@ mod tests {
         let runtime = LocalSwarmRuntime::new_for_test(inference, dispatch, String::new());
 
         let result = runtime
-            .delegate(&agent, "analyze")
+            .delegate(
+                &agent,
+                "analyze",
+                crate::local_runtime::DispatchStamp::new("test", "test").expect("test stamp"),
+            )
             .await
             .expect("delegation succeeds");
 
@@ -4314,7 +4450,14 @@ mod tests {
         });
         let dispatch: Arc<dyn hkask_types::ToolDispatchPort> = Arc::new(NoopDispatch);
         let runtime = LocalSwarmRuntime::new_for_test(inference, dispatch, String::new());
-        let result = runtime.delegate(&agent, "summarize").await.expect("ok");
+        let result = runtime
+            .delegate(
+                &agent,
+                "summarize",
+                crate::local_runtime::DispatchStamp::new("test", "test").expect("test stamp"),
+            )
+            .await
+            .expect("ok");
         assert_eq!(
             result
                 .reliance
@@ -4332,7 +4475,11 @@ mod tests {
         let prose_runtime =
             LocalSwarmRuntime::new_for_test(prose_inference, Arc::new(NoopDispatch), String::new());
         let prose_result = prose_runtime
-            .delegate(&agent, "summarize")
+            .delegate(
+                &agent,
+                "summarize",
+                crate::local_runtime::DispatchStamp::new("test", "test").expect("test stamp"),
+            )
             .await
             .expect("ok");
         assert_eq!(
