@@ -2,7 +2,7 @@
   "harness": "code-review",
   "version": 1,
   "created": "2026-10-09",
-  "annotation_status": "agent-proposed (defects are planted, so ground truth is by construction); operator sign-off pending",
+  "annotation_status": "signed_off 2026-10-10 (operator approved the agent-proposed annotations: severity expectations, class vocabulary, verdicts, ceilings; defects are planted, so defect ground truth is by construction)",
   "severity_vocabulary": ["FYI", "Nit", "Should-fix", "Blocker"],
   "class_vocabulary": [
     "unwrap_fallible",
