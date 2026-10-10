@@ -16,8 +16,11 @@
 //! For root nodes (no `depends_on`), P(Yes) = `marginal_probability`.
 //! For dependent nodes, P(Yes | parents' outcomes in this path) is computed
 //! from the conditional probability tables — the same CPTs that
-//! `scenario_quantify` emits. Multiple dependency entries combine by
-//! independence (product), matching the scenarios server's marginalization.
+//! `scenario_quantify` emits. Multiple dependency groups combine by
+//! noisy-OR (`1 − Π_g (1 − c_g)`), the scenarios server's multi-group
+//! marginalization rule, via the shared `hkask_forecast` engine — so path
+//! probabilities marginalize to the same tree marginals `scenario_quantify`
+//! produces under the server's parent-independence assumption.
 //!
 //! # Per-node delta mapping
 //!
@@ -490,8 +493,11 @@ pub(crate) fn scenario_impact_dcf(
 ///
 /// For root nodes (no `depends_on`): P(Yes) = `marginal_probability`.
 /// For dependent nodes: P(Yes | parents' outcomes in this path) is computed
-/// from the CPTs. Multiple dependency entries combine by independence
-/// (product), matching the scenarios server's marginalization.
+/// from the CPTs. Multiple dependency groups combine by noisy-OR
+/// (`1 − Π_g (1 − c_g)`) through the shared `hkask_forecast` engine — the
+/// scenarios server's multi-group marginalization rule — so path
+/// probabilities marginalize to the same tree marginals `scenario_quantify`
+/// produces. Single-group nodes coincide with the raw CPT entry within 1 ULP.
 fn compute_path_probability(
     topo_order: &[String],
     node_map: &std::collections::HashMap<&str, &ScenarioTreeNode>,
@@ -512,7 +518,14 @@ fn compute_path_probability(
         let p_yes = if node.depends_on.is_empty() {
             node.marginal_probability
         } else {
-            let mut combined = 1.0_f64;
+            // Per-group conditionals at this path's parent assignment,
+            // combined by noisy-OR (1 − Π_g (1 − c_g)) through the shared
+            // engine — the scenarios server's multi-group rule. The former
+            // local product rule (Π_g c_g) silently disagreed with the
+            // consumed trees' marginals on every multi-group node (0.25 vs
+            // 0.75 on the minimal two-group falsifier); single-group results
+            // coincide within 1 ULP.
+            let mut per_group: Vec<f64> = Vec::with_capacity(node.depends_on.len());
             for dep in &node.depends_on {
                 let mut bitmap = 0usize;
                 for (j, parent_id) in dep.parent_event_ids.iter().enumerate() {
@@ -523,10 +536,9 @@ fn compute_path_probability(
                         bitmap |= 1 << j;
                     }
                 }
-                let conditional = dep.conditionals.get(bitmap).copied().unwrap_or(0.0);
-                combined *= conditional;
+                per_group.push(dep.conditionals.get(bitmap).copied().unwrap_or(0.0));
             }
-            combined.clamp(0.0, 1.0)
+            hkask_forecast::combine_independent_channels(&per_group).clamp(0.0, 1.0)
         };
 
         let p_outcome = if is_yes { p_yes } else { 1.0 - p_yes };
@@ -619,5 +631,132 @@ fn compute_distribution(
         p90: percentile(0.90),
         max,
         prob_undervalued,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn dependency(parent_ids: &[&str], conditionals: &[f64]) -> ScenarioTreeDependency {
+        ScenarioTreeDependency {
+            parent_event_ids: parent_ids.iter().map(|id| id.to_string()).collect(),
+            conditionals: conditionals.to_vec(),
+        }
+    }
+
+    fn node(
+        id: &str,
+        marginal_probability: f64,
+        depends_on: Vec<ScenarioTreeDependency>,
+    ) -> ScenarioTreeNode {
+        ScenarioTreeNode {
+            id: id.to_string(),
+            name: Some(id.to_string()),
+            marginal_probability,
+            depends_on,
+        }
+    }
+
+    /// The scoring audit's minimal multi-group tree (site 45): two
+    /// independent roots (a, b at 0.5) and one child (c) with TWO dependency
+    /// groups, each group's CPT [0.5, 0.5].
+    fn two_group_tree() -> Vec<ScenarioTreeNode> {
+        vec![
+            node("a", 0.5, vec![]),
+            node("b", 0.5, vec![]),
+            node(
+                "c",
+                0.5,
+                vec![
+                    dependency(&["a"], &[0.5, 0.5]),
+                    dependency(&["b"], &[0.5, 0.5]),
+                ],
+            ),
+        ]
+    }
+
+    fn fixtures(
+        nodes: &[ScenarioTreeNode],
+    ) -> (
+        Vec<String>,
+        HashMap<&str, &ScenarioTreeNode>,
+        HashMap<&str, usize>,
+    ) {
+        let topo_order: Vec<String> = nodes.iter().map(|n| n.id.clone()).collect();
+        let node_map: HashMap<&str, &ScenarioTreeNode> =
+            nodes.iter().map(|n| (n.id.as_str(), n)).collect();
+        let bit_positions: HashMap<&str, usize> = nodes
+            .iter()
+            .enumerate()
+            .map(|(i, n)| (n.id.as_str(), i))
+            .collect();
+        (topo_order, node_map, bit_positions)
+    }
+
+    /// The all-yes path through the two-group tree carries
+    /// P(c=yes | a,b) = 1 − (1−0.5)(1−0.5) = 0.75, so the path probability is
+    /// 0.5 · 0.5 · 0.75 = 0.1875. The former local product rule (Π_g c_g)
+    /// gave 0.5 · 0.5 · 0.25 = 0.0625 — it silently disagreed with the consumed
+    /// trees' marginals on every multi-group node.
+    #[test]
+    fn multi_group_conditionals_combine_by_noisy_or() {
+        let nodes = two_group_tree();
+        let (topo_order, node_map, bit_positions) = fixtures(&nodes);
+        let path_prob = compute_path_probability(&topo_order, &node_map, &bit_positions, 0b111)
+            .expect("all-yes path");
+        assert!(
+            (path_prob - 0.1875).abs() < 1e-9,
+            "noisy-OR path probability, got {path_prob}"
+        );
+    }
+
+    /// Path probabilities marginalize to the shared engine's tree marginals:
+    /// summing the c=yes paths recovers P(c) = 0.75 — the value
+    /// `hkask_forecast` produces from the same CPTs — and the full
+    /// enumeration carries total probability mass 1.
+    #[test]
+    fn multi_group_paths_marginalize_to_the_shared_engine() {
+        let nodes = two_group_tree();
+        let (topo_order, node_map, bit_positions) = fixtures(&nodes);
+        let c_bit = *bit_positions.get("c").expect("c bit position");
+        let mut total = 0.0;
+        let mut c_yes = 0.0;
+        for mask in 0..(1usize << 3) {
+            let path_prob = compute_path_probability(&topo_order, &node_map, &bit_positions, mask)
+                .expect("path");
+            total += path_prob;
+            if (mask >> c_bit) & 1 == 1 {
+                c_yes += path_prob;
+            }
+        }
+        assert!((total - 1.0).abs() < 1e-9, "total mass, got {total}");
+        let engine_marginal = hkask_forecast::combine_independent_channels(&[
+            hkask_forecast::marginalize(&[0.5], &[0.5, 0.5]),
+            hkask_forecast::marginalize(&[0.5], &[0.5, 0.5]),
+        ]);
+        assert!(
+            (c_yes - engine_marginal).abs() < 1e-9,
+            "path-level c marginal {c_yes} vs engine {engine_marginal}"
+        );
+    }
+
+    /// Single-group nodes: the combined conditional is the raw CPT entry
+    /// (within 1 ULP — 1 − (1 − c) ≈ c), so single-group trees keep their
+    /// pre-fix path probabilities.
+    #[test]
+    fn single_group_conditionals_are_the_raw_cpt_entry() {
+        let nodes = vec![
+            node("a", 0.5, vec![]),
+            node("c", 0.5, vec![dependency(&["a"], &[0.3, 0.9])]),
+        ];
+        let (topo_order, node_map, bit_positions) = fixtures(&nodes);
+        let path_prob = compute_path_probability(&topo_order, &node_map, &bit_positions, 0b11)
+            .expect("a=yes, c=yes path");
+        assert!(
+            (path_prob - 0.5 * 0.9).abs() < 1e-9,
+            "single-group path probability, got {path_prob}"
+        );
     }
 }

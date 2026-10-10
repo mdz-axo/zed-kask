@@ -1,0 +1,3 @@
+{"fixture_id": "01-unwrap-fallible", "run": "decoupled-2026-10-10", "executor": "spawn_agent", "decoupling": "spawn_agent", "verdict": "Request changes", "findings": [{"id": "CR-001", "file": "src/services/user_service.rs", "line_approx": "15", "severity": "Blocker", "mapped_class": "unwrap_fallible"}]}
+{"fixture_id": "03-invented-api", "run": "decoupled-2026-10-10", "executor": "spawn_agent", "decoupling": "spawn_agent", "verdict": "Request changes", "findings": [{"id": "CR-001", "file": "src/orders.rs", "line_approx": "42", "severity": "Blocker", "mapped_class": "invented_api"}]}
+{"fixture_id": "10-clean-extraction", "run": "decoupled-2026-10-10", "executor": "spawn_agent", "decoupling": "spawn_agent", "verdict": "Approve", "findings": []}
