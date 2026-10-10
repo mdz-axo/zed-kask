@@ -51,9 +51,9 @@ the existing implementation, not a shell-based oracle.[^response-regex]
 [^response-regex]: Rust regex contributors. *regex crate: performance and untrusted input*. https://docs.rs/regex/latest/regex/#untrusted-input. Parsing is effect-free; semantic validity and held-out acceptance remain operator responsibilities.
 
 **Crate:** `kask/mcp-servers/hkask-mcp-swarm`
-**Tools:** 90 — 48 ABW cloud + 42 non-cloud, **both sets always exposed in either mode**.
+**Tools:** 91 — 48 ABW cloud + 43 non-cloud, **both sets always exposed in either mode**.
 Count is pinned end-to-end by `tool_surface_is_exactly_91_registered_tools`
-(`kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:1021-1025`); the canonical list is build-script-generated:
+(`kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:1021-1026`); the canonical list is build-script-generated:
 `kask/mcp-servers/hkask-mcp-swarm/build.rs` scans router-annotated `swarm_*` functions
 (`kask/mcp-servers/hkask-mcp-swarm/build.rs:34-81`) and emits `TOOL_NAMES`, kept in agreement with the live router by
 `tool_names_const_matches_registered_surface`. The 91 functions split into 48 cloud
@@ -263,7 +263,15 @@ fabricated.
   "tool_calls": [{ "tool": "string", "ok": true, "error": null }],
   "task_success": { "pass": true, "score": null, "detail": "evaluator=...", "provenance": "deterministic" },
   "bind_matched": true,
-  "reasoning_steps": []
+  "rollout_id": "string — event-store capture id (absent when capture is unwired)",
+  "reasoning_steps": [],
+  "input_contract_check": { "status": "valid | invalid | unverified_*" },
+  "output_contract_check": { "status": "valid | invalid | unverified_*" },
+  "grounding": { "amended": false, "stripped": [], "violations": [], "document": {} },
+  "completeness": { "asked_for": 2, "filled": 2, "owed": [], "no_data": 0, "excused": 0 },
+  "reliance": { "status": "clean", "why": "..." },
+  "memory": { "attempted": 1, "stored": 1, "embedded": 1, "failed": 0 },
+  "dispatch": { "route_reason": "direct", "question_source": "operator" }
 }
 ```
 
@@ -273,6 +281,20 @@ fabricated.
   when `swarm_execute_plan_local` or the Curator has run a deterministic
   evaluator. `provenance` is `deterministic` (trusted) or `llm_judged`
   (ORIENT warns, not trusts).
+- `reliance.status` is the one-token trust envelope — worst-first `unusable` →
+  `malformed` → `amended` → `incomplete` → `unchecked` → `clean` — derived
+  from the grounding, completeness and schema verdicts on this result, never
+  recomputed by consumers. `unchecked` (no contract applied) is deliberately
+  not `clean`.
+- `dispatch` is the dispatch-provenance stamp (fermi `stamp_invocation` port):
+  `route_reason` names the dispatching surface (`direct`, `thread`, `fanout`,
+  `pipeline`, `workflow`, `plan`, `eval`, `a2a`) and `question_source` where
+  the task text came from. Server-authored on every production dispatch
+  surface — callers cannot supply it. It carries no quality judgment; its
+  consumer is blame attribution — routing-attributable failures
+  (`bind_matched: false`, `input_contract_check: invalid`) fix the
+  composition, agent-attributable ones reconfigure the agent, and
+  `route_reason: "eval"` results feed stats, never blame.
 
 ## The consent gate (the ABW load-bearing invariant)
 

@@ -1,8 +1,8 @@
 ---
 title: "Swarm Diagrams — Server Architecture, Panel Modes, Feedback Loops, PDCA Cascade, Steering Loop"
 audience: [architects, developers]
-last_updated: 2026-09-28
-version: "1.1.0"
+last_updated: 2026-10-10
+version: "1.2.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust]
@@ -14,8 +14,10 @@ Consolidated diagrams for the swarm system: the `hkask-mcp-swarm` server
 (architecture + class), the swarm panel modes, the cybernetic feedback-loop
 map, the `swarm-intelligence` PDCA cascade, and the steering loop. Unique
 `DIAGRAM_ALIGNMENT` IDs are preserved from the originals. Every diagram was
-re-verified against current code on 2026-09-28; the class diagram was
-regenerated for the ninth collaborator and the expanded `LocalDelegateResult`.
+re-verified against current code on 2026-09-28; on 2026-10-10 the class
+diagram was regenerated for the tenth collaborator (`GateCounterStore`) and
+the dispatch-provenance stamp, and the feedback-loop map was re-verified for
+the C5/C6 routing-vs-agent blame split.
 
 ## Swarm MCP Server Architecture
 
@@ -104,8 +106,11 @@ ninth, `SwarmThreadStore` (the encrypted member-conversation store behind
 the swarm-scoped thread tools). `LocalDelegateResult` carries the
 fermi-absorption trust fields (`rollout_id`, `reasoning_steps`,
 `input_contract_check`, `output_contract_check`, `grounding`,
-`completeness`, `reliance`, `memory`) alongside the C4 `latency_ms` and C5
-`task_success`/`bind_matched` fields. The 91-tool pin and the
+`completeness`, `reliance`, `memory`, `dispatch`) alongside the C4
+`latency_ms` and C5 `task_success`/`bind_matched` fields — `dispatch` is
+the R6 provenance stamp (`route_reason` + `question_source`, fermi's
+`stamp_invocation` port) that splits C6 blame into routing-attributable
+vs agent-attributable. The 91-tool pin and the
 build.rs-generated `tool_names.gen.rs` asserted against the live
 `combined_router()` at test time are unchanged in mechanism.
 
@@ -215,6 +220,7 @@ classDiagram
         completeness report optional
         reliance one-token verdict
         memory ingestion report
+        dispatch stamp optional
     }
 
     SwarmServer --> SwarmClient : abw mode
@@ -240,8 +246,8 @@ classDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-SWARM-006
-verified_date: 2026-09-28
-verified_against: kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs (SwarmServer struct L152-163 — ten collaborators incl. thread_store + gate_store, combined_router L167-172, 91-tool pin L1021-1025); kask/mcp-servers/hkask-mcp-swarm/src/consent.rs (CONSENT_TTL_SECS L76, mint L221, consume L255); kask/mcp-servers/hkask-mcp-swarm/src/spend_gate.rs (resolve_auth L50, authorize_hire L130, complete_hire L287, authorize_delegate L380, complete_delegate L468, authorize_curate L544); kask/mcp-servers/hkask-mcp-swarm/src/local_runtime.rs (LazyLocalSwarmRuntime L46-53, lazy L134, LocalSwarmRuntime L164, delegate L318, LocalDelegateResult L658-750 — no cost/balance fields, no-spending-policy doc L161-164); kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs (MAX_TOOL_ROUNDS L21); kask/mcp-servers/hkask-mcp-swarm/src/a2a_tools.rs; kask/mcp-servers/hkask-mcp-swarm/src/local_swarms.rs; kask/mcp-servers/hkask-mcp-swarm/src/local_knowledge.rs; kask/mcp-servers/hkask-mcp-swarm/src/agent_stats.rs; kask/mcp-servers/hkask-mcp-swarm/src/thread_store.rs (SwarmThreadStore L17, ThreadTurn L9, lock L38)
+verified_date: 2026-10-10
+verified_against: kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs (SwarmServer struct L152-164 — ten collaborators incl. thread_store + gate_store, combined_router L168-173, 91-tool pin L1022-1024); kask/mcp-servers/hkask-mcp-swarm/src/consent.rs (CONSENT_TTL_SECS L76, mint L221, consume L255); kask/mcp-servers/hkask-mcp-swarm/src/spend_gate.rs (resolve_auth L50, authorize_hire L130, complete_hire L287, authorize_delegate L380, complete_delegate L468, authorize_curate L544); kask/mcp-servers/hkask-mcp-swarm/src/local_runtime.rs (LazyLocalSwarmRuntime L46-59, lazy L140, LocalSwarmRuntime L176, delegate L348, LocalDelegateResult L785-885 — dispatch stamp field L877-884, DispatchStamp L745-781, no cost/balance fields, no-spending-policy doc L170-175); kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs (MAX_TOOL_ROUNDS L21); kask/mcp-servers/hkask-mcp-swarm/src/a2a_tools.rs; kask/mcp-servers/hkask-mcp-swarm/src/local_swarms.rs; kask/mcp-servers/hkask-mcp-swarm/src/local_knowledge.rs; kask/mcp-servers/hkask-mcp-swarm/src/agent_stats.rs; kask/mcp-servers/hkask-mcp-swarm/src/thread_store.rs (SwarmThreadStore L17, ThreadTurn L9, lock L38)
 status: VERIFIED
 -->
 
@@ -348,10 +354,11 @@ flowchart TD
     subgraph c6["Loop B C5/C6 actuator"]
         direction LR
         DL["swarm_delegate_local<br/>per emitted call"]
-        RES["LocalDelegateResult<br/>tool_calls ok executed_skills ok<br/>BINARY fidelity"]
+        RES["LocalDelegateResult<br/>task_success verdict tool_calls ok<br/>dispatch stamp"]
         RC["swarm_reconfigure_local_agent<br/>most-blamed agent only"]
         DL --> RES --> ORIENT
-        ORIENT -.->|fault_count| RC
+        ORIENT -.->|agent-attributable fault_count| RC
+        ORIENT -.->|routing-attributable| COMP["fix the composition<br/>bind_matched false / input contract invalid"]
         RC -.->|re-prompt| DL
     end
 
@@ -378,7 +385,7 @@ flowchart TD
     LAT -.->|no consumer| X["open sub-loop"]
 
     noteA["Loop A polarity healthy gain healthy<br/>delay degraded closure degraded fidelity degraded"]
-    noteB["Loop B polarity healthy gain healthy<br/>delay healthy in steering<br/>fidelity DEGRADED binary ok"]
+    noteB["Loop B polarity healthy gain healthy<br/>delay healthy in steering<br/>fidelity MITIGATED task_success first"]
     noteC["Loop C polarity healthy delay healthy<br/>gain healthy closure healthy fidelity degraded local"]
     noteD["Loop D polarity healthy gain healthy<br/>delay degraded closure degraded by design fidelity healthy"]
 
@@ -390,8 +397,8 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-SWARM-008
-verified_date: 2026-09-28
-verified_against: .agents/skills/swarm-intelligence/SKILL.md (steering receipt loop L81, ORIENT C5 fault attribution L88, CHECK/CONVERGE L92-95, convergence criterion L126-142); kask/registry/templates/swarm-intelligence/swarm-act.j2 (emitted_calls L13, steering_directive L15, L122-154); kask/registry/templates/swarm-intelligence/swarm-check.j2; kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs (swarm_execute_plan_local L2882)
+verified_date: 2026-10-10
+verified_against: .agents/skills/swarm-intelligence/SKILL.md (ORIENT C5 fault attribution L89, CHECK/CONV L94-98, convergence criterion L145-148, delegate_results contract L260-285 — dispatch stamp + C5/C6 routing-vs-agent blame split); kask/registry/templates/swarm-intelligence/swarm-act.j2 (emitted_calls L13, steering_directive L15, L122-154); kask/registry/templates/swarm-intelligence/swarm-check.j2; kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs (swarm_execute_plan_local L3112)
 status: VERIFIED
 -->
 

@@ -122,6 +122,14 @@ ported:
   schema and default to `model_inference` — fail-safe (never overstates),
   to be stamped in their own changes if their recall surfaces ever
   surface provenance.
-- **Dispatch provenance signals** (fermi `stamp_invocation`): dispatch records
-  carry no route-reason stamps, so swarm C6 blame cannot separate "the wrong
-  question was sent" from "the agent is bad at the job".
+- **Dispatch provenance signals — CLOSED 2026-10-10 (R6).** Every production
+  dispatch surface stamps its results: `DispatchStamp` (`route_reason` +
+  `question_source`, slug-validated, server-authored — never caller-supplied;
+  `local_runtime.rs:745-781`) carried on `LocalDelegateResult.dispatch`
+  (`local_runtime.rs:877-884`) and through `to_result_json`. Stamped surfaces:
+  `direct`, `thread`, `fanout`, `pipeline`, `workflow`, `plan`, `eval`
+  (agent + suite), `a2a` (send/broadcast/HTTP). Swarm C6 blame now separates
+  routing-attributable failures (`bind_matched: false` or
+  `input_contract_check: invalid` — fix the composition) from
+  agent-attributable ones (reconfigure the agent); `route_reason: "eval"`
+  results feed stats, never blame.
