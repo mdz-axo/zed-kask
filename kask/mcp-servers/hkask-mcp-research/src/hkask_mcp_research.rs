@@ -41,7 +41,7 @@ use crate::research::{
     SearchResultOutput, SearchStrategy, SensitivityStatus, SubscribeRequest, SynthesizeRequest,
     UnreadCountRequest, UnsubscribeRequest, WebSearchPort, build_provider_pool, cache_key,
     discover_feeds, fetch_feed, llm_rerank, normalize_closed_vocab, parse_closed_vocab,
-    provider_profile, score_evidence_set, validated_fetch_client,
+    parse_closed_vocab_const, provider_profile, score_evidence_set, validated_fetch_client,
 };
 
 /// Dispatch a [`SpreadsheetError`] through the canonical per-variant
@@ -1794,9 +1794,19 @@ impl ResearchServer {
             if req.status.trim().is_empty() {
                 return Err(McpToolError::invalid_argument("status must not be empty"));
             }
+            // Status is a closed vocabulary owned by runs.rs
+            // (FINISH_STATUSES): parse at the boundary for emission
+            // tolerance — the domain guard in finish_research_run stays
+            // the owner and receives the canonical spelling.
+            let status = parse_closed_vocab_const(
+                "status",
+                &req.status,
+                crate::research::runs::FINISH_STATUSES,
+            )
+            .map_err(McpToolError::from)?;
             let database = require_research_db!(self);
             let run_id_for_task = req.run_id.clone();
-            let status_for_task = req.status.clone();
+            let status_for_task = status.to_string();
             let note_for_task = req.note.clone();
             let result = spawn_db(database, move |connection| {
                 Ok(crate::research::runs::finish_research_run(
@@ -1848,10 +1858,20 @@ impl ResearchServer {
             if url.trim().is_empty() {
                 return Err(McpToolError::invalid_argument("url must not be empty"));
             }
+            // verification_state is a closed vocabulary owned by runs.rs
+            // (VERIFICATION_STATES): boundary tolerance, domain ownership —
+            // the guard in annotate_run_source receives the canonical
+            // spelling.
+            let state = parse_closed_vocab_const(
+                "verification_state",
+                &verification_state,
+                crate::research::runs::VERIFICATION_STATES,
+            )
+            .map_err(McpToolError::from)?;
             let database = require_research_db!(self);
             let run_id_for_task = run_id.clone();
             let url_for_task = url.clone();
-            let state_for_task = verification_state.clone();
+            let state_for_task = state.to_string();
             let basis_for_task = basis.clone();
             let result = spawn_db(database, move |connection| {
                 Ok(crate::research::runs::annotate_run_source(
@@ -1867,7 +1887,7 @@ impl ResearchServer {
                 Ok(Ok(Ok(()))) => Ok(serde_json::json!({
                     "run_id": run_id,
                     "url": url,
-                    "verification_state": verification_state,
+                    "verification_state": state,
                     "recorded_by": "agent",
                 })),
                 Ok(Ok(Err(crate::research::runs::AnnotateError::RunNotFound))) => Err(
@@ -2124,6 +2144,22 @@ impl ResearchServer {
                     parse_closed_vocab("duplication", raw, &[(&["semantic"], "semantic")])
                         .map_err(McpToolError::from)?,
                 ),
+            };
+            // Presentation is a closed vocabulary (plan §6: explicit
+            // choice): parse_closed_vocab normalizes emission noise;
+            // absent = DataOnly (the former serde default, now explicit
+            // at the boundary).
+            let presentation = match presentation.as_deref() {
+                None => EvidencePresentation::DataOnly,
+                Some(raw) => parse_closed_vocab(
+                    "presentation",
+                    raw,
+                    &[
+                        (&["DataOnly"], EvidencePresentation::DataOnly),
+                        (&["InlineTable"], EvidencePresentation::InlineTable),
+                    ],
+                )
+                .map_err(McpToolError::from)?,
             };
 
             // Tier-2 duplication (parameter-gated): the caller opts in with
@@ -2384,6 +2420,21 @@ impl ResearchServer {
                 if sources.is_empty() {
                     return Err(McpToolError::invalid_argument("sources must not be empty"));
                 }
+                // Style is a closed vocabulary: parse_closed_vocab normalizes
+                // emission noise (quoted/padded/case variants) and rejects
+                // unknown values with a teaching error (the shared
+                // closed-vocabulary contract).
+                let style = parse_closed_vocab(
+                    "style",
+                    &style,
+                    &[
+                        (&["apa"], CiteStyle::Apa),
+                        (&["bibtex"], CiteStyle::Bibtex),
+                        (&["chicago"], CiteStyle::Chicago),
+                        (&["json"], CiteStyle::Json),
+                    ],
+                )
+                .map_err(McpToolError::from)?;
 
                 let citations: Vec<String> = sources
                     .iter()
@@ -2777,6 +2828,11 @@ mod tool_surface_tests {
                 "duplication",
                 serde_json::json!(["semantic"]),
             ),
+            (
+                "evaluate_evidence",
+                "presentation",
+                serde_json::json!(["DataOnly", "InlineTable"]),
+            ),
         ] {
             let tool = tools
                 .iter()
@@ -2786,6 +2842,17 @@ mod tool_surface_tests {
             assert_eq!(schema["properties"][field]["anyOf"][0]["enum"], values);
             assert_eq!(schema["properties"][field]["anyOf"][1]["type"], "null");
         }
+        // Required closed-vocabulary fields carry the enum directly (no
+        // null arm): cite_sources style.
+        let cite = tools
+            .iter()
+            .find(|tool| tool.name == "cite_sources")
+            .expect("cite_sources registered");
+        let cite_schema = serde_json::to_value(&cite.input_schema).expect("tool input schema");
+        assert_eq!(
+            cite_schema["properties"]["style"]["enum"],
+            serde_json::json!(["apa", "bibtex", "chicago", "json"])
+        );
     }
 
     include!(concat!(env!("OUT_DIR"), "/tool_names.gen.rs"));

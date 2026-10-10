@@ -75,7 +75,8 @@ pub struct EditTagRequest {
 pub struct SynthesizeRequest {
     /// Source URL to extract items from.
     pub source_url: String,
-    /// Extractor kind: "css", "json_path", or "diff_hash".
+    /// Extractor kind: "css", "json_path", "diff_hash", "llm_schema",
+    /// or "pdf_ocr".
     pub extractor_kind: String,
     /// JSON-encoded `ExtractorSpec`: {"items_selector": "...", "fields": {...}, ...}
     pub extractor_spec: String,

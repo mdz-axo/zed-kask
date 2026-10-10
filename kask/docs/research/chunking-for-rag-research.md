@@ -1,8 +1,8 @@
 ---
 title: "Text Chunking for RAG — Canonical Design Patterns and Reference Models"
 audience: [architects, developers, agents]
-last_updated: 2026-09-28
-version: "1.1.0"
+last_updated: 2026-10-09
+version: "1.2.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [composition, trust]
@@ -278,6 +278,47 @@ corpus produces different vectors depending on which entry point loaded it.
 Prefixing metadata into the embedded text is the strongest-performing simple
 metadata strategy reported.[^metadata]
 
+**Retrieval-side hybrid landed (2026-10-09, IS).** The consumer side of this
+gap is closed at the retrieval layer: sealed-source search now fuses dense
+KNN with a lexical leg — a rare-term inverted index over each chunk's decoded
+source filename (the document-identity channel) and its rare text terms, built
+in memory at admission, ranked by BM25, fused by reciprocal-rank fusion, with
+build-metadata chunks (`MANIFEST.json`) excluded from the lexical leg and
+rank-penalized in the dense leg (`kask/crates/hkask-memory/src/lexical.rs`;
+`kask/crates/hkask-memory/src/federated_recall.rs:803`). The live failure that
+motivated it: the query "magnifica humanitas" — a charter document's own
+name — returned zero charter chunks from zk-ref-open while a descriptive query
+recalled the same chunks at ranks 1–3; pure dense retrieval carries a phrase's
+semantic meaning, not its referential identity. Pinned by the hybrid-retrieval
+known-answer tests in `kask/crates/kask_bridge/src/memory.rs` (entity-name
+query, multi-topic prompt, metadata down-rank, no-signal control).
+
+**Embedding-side redesign (OUGHT — the next rebuild).** The prefix gaps above
+remain for the corpus build itself, now with a concrete design sequenced
+behind the retrieval-side fix:
+1. **Deterministic identity prefix (L1)** — prepend source title and filename
+   (plus the conversion report's `dc_type`/`dc_subject`) to every chunk's
+   embedded text. No LLM cost: the identity is manifest data. This subsumes
+   §8.3's structural-provenance prefix for the identity dimension and implies
+   a re-embed.
+2. **Queryable tag axes (L2)** — keep `corpus_tag_chunks`' 5W1H and
+   ladder-resolved terms, but store the resolved tags as a first-class index
+   (derived at registration, digest-recorded, seal preserved), exposed as an
+   axis filter/boost on federated search — the corpus-side counterpart of the
+   curator memory's `ontology_axis` recall — and as a term-matching leg in the
+   fusion. Cost-gated: roughly 16K LLM calls for the full 160K-chunk corpus;
+   scope to priority sources.
+3. **Query-side conditioning (L3)** — define the query instruction for the
+   instruction-tuned embedding model on both federated paths (explicit tool
+   and per-turn injection); today both embed the raw prompt
+   (`kask/crates/kask_bridge/src/memory.rs:617`). Any prefix change shifts the
+   geometry — re-calibrate the recall metrics with it. The evaluation must
+   also gain real-prompt cases: the sealed run's 377 regenerated cloze
+   queries ("Which source passage connects <verbatim chunk quote>?" —
+   `queries.jsonl`, `provenance: source_derived`) measure quote-completion,
+   not question answering, and reported cs-recall@5 0.86 on that suite while
+   the entity-name case failed.
+
 **No contextualized embedding paradigm.** The pipeline is uniformly
 pre-embedding: each chunk is embedded independently, so chunk vectors are blind
 to their document context — the failure mode both contextualized paradigms
@@ -317,7 +358,9 @@ stage, no tier linking, and no model-derived default budget.
    currently embeds bare text.[^metadata] Changing the embedded string changes
    every vector, so this item implies a re-embed of any corpus already loaded, and
    it must not be landed without the instrument from §8.1 to show the change is
-   an improvement.
+   an improvement. *(2026-10-09: the retrieval-side complement — hybrid
+   lexical+dense fusion over sealed sources — has landed; see the §7.2 record.
+   The embedding-side prefix itself remains unadopted.)*
 4. **Add contextual-retrieval prefixing as an optional stage.** One cached
    generation per chunk via the existing inference router; surface an explicit
    degraded mode when inference is unavailable.[^ctxretr] Prefer this over late

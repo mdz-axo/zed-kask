@@ -11,9 +11,10 @@
 //! - `css`:        CSS selectors against static HTML (html2rss/rsspls model)
 //! - `json_path`:  JSONPath expressions against JSON APIs
 //! - `diff_hash`:  whole-content hash; new entry only when content changes
+//! - `llm_schema`: LLM-structured extraction via the pool's extract surface
+//! - `pdf_ocr`:    PDF OCR via the pool's extract surface
 //!
-//! Future kinds (`xpath`, `llm_schema`, `pdf_ocr`) are reserved in the enum
-//! but not yet implemented here.
+//! (`xpath` is reserved in the enum but not yet implemented.)
 
 use std::collections::HashMap;
 
@@ -23,6 +24,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use scraper::{ElementRef, Html, Selector};
+
+use crate::research::types::normalize_closed_vocab;
 
 // FetchResult is used by the caller (rss_fetch_synthetic), not by this module.
 
@@ -44,13 +47,19 @@ pub(crate) enum ExtractorKind {
 impl std::str::FromStr for ExtractorKind {
     type Err = SyntheticError;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
+        // Boundary tolerance (the shared closed-vocabulary contract): LLM
+        // emitters wrap enum values in quotes — normalize before the match.
+        // This keeps its own match because the error type is SyntheticError,
+        // not WebError; the miss teaches the accepted kinds.
+        match normalize_closed_vocab(s).to_lowercase().as_str() {
             "css" => Ok(Self::Css),
             "json_path" => Ok(Self::JsonPath),
             "diff_hash" => Ok(Self::DiffHash),
             "llm_schema" => Ok(Self::LlmSchema),
             "pdf_ocr" => Ok(Self::PdfOcr),
-            other => Err(SyntheticError::UnsupportedKind(other.to_string())),
+            _ => Err(SyntheticError::UnsupportedKind(format!(
+                "{s} — use one of css, json_path, diff_hash, llm_schema, pdf_ocr"
+            ))),
         }
     }
 }

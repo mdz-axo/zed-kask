@@ -39,7 +39,7 @@ pub(crate) use ranking::{RerankOutcome, apply_rerank, llm_rerank, rrf_score};
 pub use rate_limiter::RateLimiter;
 pub(crate) use validation::{
     COMPOUND_PROVIDER_TIMEOUT_SECS, normalize_closed_vocab, parse_closed_vocab,
-    sanitize_health_error,
+    parse_closed_vocab_const, sanitize_health_error,
 };
 
 // ── Provider profiles (metacognitive lookup table) ──
@@ -206,6 +206,17 @@ fn search_strategy_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema
 fn duplication_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
     json_schema!({"anyOf": [
         {"type": "string", "enum": ["semantic"]},
+        {"type": "null"}
+    ]})
+}
+
+fn cite_style_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    json_schema!({"type": "string", "enum": ["apa", "bibtex", "chicago", "json"]})
+}
+
+fn presentation_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    json_schema!({"anyOf": [
+        {"type": "string", "enum": ["DataOnly", "InlineTable"]},
         {"type": "null"}
     ]})
 }
@@ -389,9 +400,11 @@ pub struct EvaluateEvidenceRequest {
     /// plain JSON report; `InlineTable` additionally publishes the
     /// per-artifact evaluation matrix as a bounded inline table block and
     /// appends its ```spreadsheet display hint for inline rendering
-    /// (SP-05, plan §10 Phase 7 — evidence-evaluation matrix).
+    /// (SP-05, plan §10 Phase 7 — evidence-evaluation matrix). Quoted or
+    /// padded values are normalized at the boundary; absent = DataOnly.
     #[serde(default)]
-    pub presentation: EvidencePresentation,
+    #[schemars(schema_with = "presentation_schema")]
+    pub presentation: Option<String>,
 }
 
 /// The presentation choice for an evidence evaluation (plan §6).
@@ -416,15 +429,17 @@ pub struct EvaluateArtifact {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct CiteSourcesRequest {
+pub struct CiteSourcesRequest {
     /// Sources to cite (URLs + metadata from web_search/web_extract results).
     pub sources: Vec<CiteSource>,
-    /// Citation style.
-    pub style: CiteStyle,
+    /// Citation style: apa, bibtex, chicago, or json. Quoted or padded
+    /// values are normalized at the boundary.
+    #[schemars(schema_with = "cite_style_schema")]
+    pub style: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct CiteSource {
+pub struct CiteSource {
     pub url: String,
     pub title: Option<String>,
     pub published: Option<String>,
@@ -432,9 +447,9 @@ pub(crate) struct CiteSource {
     pub authors: Option<Vec<String>>,
 }
 
-#[derive(Debug, Clone, Deserialize, JsonSchema, Serialize)]
+#[derive(Debug, Clone, Copy, Deserialize, JsonSchema, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum CiteStyle {
+pub enum CiteStyle {
     Apa,
     Bibtex,
     Chicago,

@@ -69,21 +69,23 @@ mod normalize_closed_vocab_tests {
 }
 
 /// Parse a closed-vocabulary field value: normalize LLM emission noise
-/// (`normalize_closed_vocab`), lowercase, and match against a table of
-/// accepted spellings mapped to values. The single parse site for every
-/// enum-ish tool parameter — one owner of the tolerance + teaching-error
-/// contract (C2: the five scattered match arms — strategy, freshness,
-/// intent, format, duplication — collapsed onto this helper). On miss,
-/// the error names the field and the canonical spellings (the first entry
-/// of each group); aliases are accepted but not listed.
+/// (`normalize_closed_vocab`), match case-insensitively against a table
+/// of accepted spellings mapped to values. The single parse site for
+/// every enum-ish tool parameter — one owner of the tolerance +
+/// teaching-error contract (C2: the scattered match arms — strategy,
+/// freshness, intent, format, duplication — collapsed onto this helper).
+/// On miss, the error names the field and the canonical spellings (the
+/// first entry of each group); aliases are accepted but not listed.
+/// Case-insensitive so canonical spellings may be any case (the schema's
+/// `DataOnly` matches an emitted `dataonly`).
 pub(crate) fn parse_closed_vocab<T: Copy>(
     field: &'static str,
     raw: &str,
     table: &[(&'static [&'static str], T)],
 ) -> Result<T, WebError> {
-    let normalized = normalize_closed_vocab(raw).to_lowercase();
+    let normalized = normalize_closed_vocab(raw);
     for (spellings, value) in table {
-        if spellings.contains(&normalized.as_str()) {
+        if spellings.iter().any(|s| s.eq_ignore_ascii_case(normalized)) {
             return Ok(*value);
         }
     }
@@ -94,9 +96,31 @@ pub(crate) fn parse_closed_vocab<T: Copy>(
     )))
 }
 
+/// Parse a closed-vocabulary field whose accepted spellings are owned as a
+/// flat `&'static [&'static str]` const by a domain module (runs.rs's
+/// `FINISH_STATUSES` / `VERIFICATION_STATES`): the same tolerance +
+/// teaching contract as `parse_closed_vocab`, but the vocabulary has a
+/// single owner outside the boundary and no aliases — each spelling is
+/// canonical. Returns the canonical spelling borrowed from `accepted`, so
+/// the domain guard downstream receives the clean form.
+pub(crate) fn parse_closed_vocab_const(
+    field: &'static str,
+    raw: &str,
+    accepted: &[&'static str],
+) -> Result<&'static str, WebError> {
+    let normalized = normalize_closed_vocab(raw);
+    if let Some(canonical) = accepted.iter().find(|a| a.eq_ignore_ascii_case(normalized)) {
+        return Ok(canonical);
+    }
+    Err(WebError::BadArgs(format!(
+        "{field} must be one of {}, got '{raw}'",
+        accepted.join(", ")
+    )))
+}
+
 #[cfg(test)]
 mod parse_closed_vocab_tests {
-    use super::parse_closed_vocab;
+    use super::{parse_closed_vocab, parse_closed_vocab_const};
 
     #[test]
     fn matches_canonical_alias_and_noisy_forms() {
@@ -111,6 +135,45 @@ mod parse_closed_vocab_tests {
             2
         );
         assert_eq!(parse_closed_vocab("strategy", "'quick'", table).unwrap(), 1);
+    }
+
+    #[test]
+    fn matches_case_insensitively_against_mixed_case_canonicals() {
+        // Canonical spellings may be PascalCase (the schema's DataOnly):
+        // an emitted lowercase/quoted form must still parse, and the miss
+        // error must list the canonical spelling verbatim.
+        let table: &[(&[&str], i32)] = &[(&["DataOnly"], 1), (&["InlineTable"], 2)];
+        assert_eq!(
+            parse_closed_vocab("presentation", "dataonly", table).unwrap(),
+            1
+        );
+        assert_eq!(
+            parse_closed_vocab("presentation", " \"inlinetable\" ", table).unwrap(),
+            2
+        );
+        let err = parse_closed_vocab("presentation", "bogus", table).expect_err("must miss");
+        assert!(err.to_string().contains("DataOnly, InlineTable"));
+    }
+
+    #[test]
+    fn const_variant_parses_against_a_domain_owned_vocabulary() {
+        const STATUSES: &[&str] = &["completed", "partial", "blocked", "failed"];
+        assert_eq!(
+            parse_closed_vocab_const("status", " \"Blocked\" ", STATUSES).unwrap(),
+            "blocked"
+        );
+        // The canonical spelling is returned, not the raw emission.
+        assert_eq!(
+            parse_closed_vocab_const("status", "BLOCKED", STATUSES).unwrap(),
+            "blocked"
+        );
+        let err = parse_closed_vocab_const("status", "bogus", STATUSES).expect_err("must miss");
+        assert!(
+            err.to_string()
+                .contains("status must be one of completed, partial, blocked, failed"),
+            "{}",
+            err
+        );
     }
 
     #[test]

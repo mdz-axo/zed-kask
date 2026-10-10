@@ -29,11 +29,11 @@ use hkask_mcp_research::research::providers::{
 };
 use hkask_mcp_research::research::rss_types::{
     DiscoverRequest, GetEntriesRequest, ListSubscriptionsRequest, MarkReadRequest,
-    UnreadCountRequest, UnsubscribeRequest,
+    SynthesizeRequest, UnreadCountRequest, UnsubscribeRequest,
 };
 use hkask_mcp_research::research::types::{
-    AnnotateResearchRunRequest, BeginResearchRunRequest, BrowseRequest, BrowseResult,
-    CompoundSearchResult, EvaluateArtifact, EvaluateEvidenceRequest, EvidencePresentation,
+    AnnotateResearchRunRequest, BeginResearchRunRequest, BrowseRequest, BrowseResult, CiteSource,
+    CiteSourcesRequest, CompoundSearchResult, EvaluateArtifact, EvaluateEvidenceRequest,
     ExtractOptions, ExtractRequest, ExtractedContent, FindSimilarRequest, FinishResearchRunRequest,
     GetResearchRunRequest, LatencyTier, ProviderFailureRecord, ProviderHealthEntry, ProviderInfo,
     ProviderRecommendation, RankedResult, RateLimiter, ResolvePaperRequest, SearchQuery,
@@ -1805,7 +1805,7 @@ async fn evaluate_evidence_inline_table_publishes_the_matrix() {
         .evaluate_evidence(Parameters(EvaluateEvidenceRequest {
             question: "is the claim corroborated?".to_string(),
             duplication: None,
-            presentation: EvidencePresentation::InlineTable,
+            presentation: Some("InlineTable".to_string()),
             artifacts: vec![
                 evidence_artifact(
                     "https://a.example/1",
@@ -1836,7 +1836,7 @@ async fn evaluate_evidence_inline_table_publishes_the_matrix() {
         .evaluate_evidence(Parameters(EvaluateEvidenceRequest {
             question: "is the claim corroborated?".to_string(),
             duplication: None,
-            presentation: EvidencePresentation::default(),
+            presentation: None,
             artifacts: vec![evidence_artifact(
                 "https://a.example/1",
                 Some("a.example"),
@@ -1858,7 +1858,7 @@ async fn evaluate_evidence_rejects_empty_question() {
         .evaluate_evidence(Parameters(EvaluateEvidenceRequest {
             question: "  ".to_string(),
             duplication: None,
-            presentation: EvidencePresentation::default(),
+            presentation: None,
             artifacts: vec![evidence_artifact(
                 "https://a.example/1",
                 Some("a.example"),
@@ -1877,7 +1877,7 @@ async fn evaluate_evidence_rejects_empty_artifacts() {
         .evaluate_evidence(Parameters(EvaluateEvidenceRequest {
             question: "what is the evidence?".to_string(),
             duplication: None,
-            presentation: EvidencePresentation::default(),
+            presentation: None,
             artifacts: Vec::new(),
         }))
         .await);
@@ -1891,7 +1891,7 @@ async fn evaluate_evidence_emits_signal_model() {
         .evaluate_evidence(Parameters(EvaluateEvidenceRequest {
             question: "is the claim corroborated?".to_string(),
             duplication: None,
-            presentation: EvidencePresentation::default(),
+            presentation: None,
             artifacts: vec![
                 evidence_artifact(
                     "https://a.example/1",
@@ -1987,7 +1987,7 @@ async fn evaluate_evidence_syndication_visible_in_clusters() {
         .evaluate_evidence(Parameters(EvaluateEvidenceRequest {
             question: "did the wire story spread?".to_string(),
             duplication: None,
-            presentation: EvidencePresentation::default(),
+            presentation: None,
             artifacts: vec![
                 evidence_artifact(
                     "https://a.example/1",
@@ -2468,6 +2468,184 @@ async fn annotate_rejects_unknown_verification_state() {
     );
 }
 
+// ── Closed-vocabulary boundary: sibling fields ──────────────────────────────
+// The shared parse contract (normalize_closed_vocab + parse_closed_vocab*)
+// covers every closed-vocabulary field in the server, not just web_search's:
+// finish status, annotate verification_state, cite style, evidence
+// presentation, and the synthetic extractor kind all accept quoted/padded
+// case-variant emissions, and unknown values teach the accepted spellings.
+
+#[tokio::test]
+async fn finish_research_run_accepts_quoted_status() {
+    let server = make_server_with_research_db();
+    let begun = parse(&ok(server
+        .begin_research_run(Parameters(BeginResearchRunRequest {
+            question: "quoted status probe".to_string(),
+        }))
+        .await));
+    let run_id = begun["run_id"].as_str().expect("run_id").to_string();
+    // `"Blocked"` — quoted, padded, wrong case — must parse to the
+    // canonical spelling and finish the run (blocked needs no
+    // server-recorded source).
+    let finished = parse(&ok(server
+        .finish_research_run(Parameters(FinishResearchRunRequest {
+            run_id,
+            status: " \"Blocked\" ".to_string(),
+            note: None,
+        }))
+        .await));
+    assert!(
+        finished.is_object(),
+        "quoted status must finish the run: {finished}"
+    );
+}
+
+#[tokio::test]
+async fn annotate_research_run_accepts_quoted_verification_state() {
+    let server = make_server_with_research_db();
+    let begun = parse(&ok(server
+        .begin_research_run(Parameters(BeginResearchRunRequest {
+            question: "quoted state probe".to_string(),
+        }))
+        .await));
+    let run_id = begun["run_id"].as_str().expect("run_id").to_string();
+    // Annotating an unseen URL records an agent-declared row — no
+    // server-recorded source needed for not_checked.
+    let annotated = parse(&ok(server
+        .annotate_research_run(Parameters(AnnotateResearchRunRequest {
+            run_id,
+            url: "https://external.example/quoted".to_string(),
+            verification_state: " \"Not_Checked\" ".to_string(),
+            basis: None,
+        }))
+        .await));
+    assert_eq!(
+        annotated["verification_state"].as_str(),
+        Some("not_checked"),
+        "quoted verification_state must parse to the canonical spelling: {annotated}"
+    );
+}
+
+#[tokio::test]
+async fn cite_sources_accepts_quoted_style() {
+    let server = make_server_without_db();
+    let cited = parse(&ok(server
+        .cite_sources(Parameters(CiteSourcesRequest {
+            sources: vec![CiteSource {
+                url: "https://a.example/1".to_string(),
+                title: Some("Quoted Style Probe".to_string()),
+                published: Some("2026-10-09".to_string()),
+                source: Some("a.example".to_string()),
+                authors: Some(vec!["A. Author".to_string()]),
+            }],
+            style: "\"apa\"".to_string(),
+        }))
+        .await));
+    assert_eq!(cited["style"].as_str(), Some("apa"), "{cited}");
+    assert!(
+        cited["citations"].as_array().is_some_and(|c| !c.is_empty()),
+        "{cited}"
+    );
+}
+
+#[tokio::test]
+async fn cite_sources_unknown_style_teaches_the_vocabulary() {
+    let server = make_server_without_db();
+    let error = err(server
+        .cite_sources(Parameters(CiteSourcesRequest {
+            sources: vec![CiteSource {
+                url: "https://a.example/1".to_string(),
+                title: Some("Quoted Style Probe".to_string()),
+                published: None,
+                source: None,
+                authors: None,
+            }],
+            style: "mla".to_string(),
+        }))
+        .await);
+    assert_error_kind(&error, McpErrorKind::InvalidArgument);
+    assert!(
+        error.message.contains("apa, bibtex, chicago, json"),
+        "teaches the accepted styles: {}",
+        error.message
+    );
+}
+
+#[tokio::test]
+async fn evaluate_evidence_accepts_quoted_presentation() {
+    let server = make_server_without_db();
+    // A quoted lowercase dataonly must parse to DataOnly and take the
+    // plain-report path.
+    let json = parse(&ok(server
+        .evaluate_evidence(Parameters(EvaluateEvidenceRequest {
+            question: "quoted presentation probe".to_string(),
+            duplication: None,
+            presentation: Some(" \"dataonly\" ".to_string()),
+            artifacts: vec![evidence_artifact(
+                "https://a.example/1",
+                Some("a.example"),
+                None,
+                Some("alpha one two three four"),
+            )],
+        }))
+        .await));
+    assert!(
+        json["artifacts"].as_array().is_some_and(|a| !a.is_empty()),
+        "{json}"
+    );
+}
+
+#[tokio::test]
+async fn rss_synthesize_rejects_unknown_extractor_kind_with_teaching() {
+    let server = make_server_with_research_db();
+    let error = err(server
+        .rss_synthesize(Parameters(SynthesizeRequest {
+            source_url: "https://a.example/feed".to_string(),
+            extractor_kind: "regex".to_string(),
+            extractor_spec: "{}".to_string(),
+            title: None,
+            description: None,
+            cadence_hint_secs: None,
+            label: None,
+            folder: None,
+            subscribe: None,
+        }))
+        .await);
+    assert_error_kind(&error, McpErrorKind::InvalidArgument);
+    assert!(
+        error
+            .message
+            .contains("css, json_path, diff_hash, llm_schema, pdf_ocr"),
+        "teaches the accepted kinds: {}",
+        error.message
+    );
+}
+
+#[tokio::test]
+async fn rss_synthesize_quoted_extractor_kind_parses() {
+    // A quoted kind gets PAST the closed-set parse — the failure moves
+    // downstream (here: the spec), proving the boundary accepted it.
+    let server = make_server_with_research_db();
+    let error = err(server
+        .rss_synthesize(Parameters(SynthesizeRequest {
+            source_url: "https://a.example/feed".to_string(),
+            extractor_kind: "\"css\"".to_string(),
+            extractor_spec: "not json".to_string(),
+            title: None,
+            description: None,
+            cadence_hint_secs: None,
+            label: None,
+            folder: None,
+            subscribe: None,
+        }))
+        .await);
+    assert!(
+        !error.message.contains("extractor kind"),
+        "quoted kind must pass the parse; the error should be about the spec: {}",
+        error.message
+    );
+}
+
 // ── Paper resolution (identity) ────────────────────────────────────────────
 
 #[tokio::test]
@@ -2823,7 +3001,7 @@ fn make_server_with_embedding(
 fn semantic_request(duplication: Option<&str>) -> EvaluateEvidenceRequest {
     EvaluateEvidenceRequest {
         question: "is it duplicated?".to_string(),
-        presentation: EvidencePresentation::default(),
+        presentation: None,
         artifacts: vec![
             evidence_artifact(
                 "https://a.example/1",
@@ -3017,7 +3195,7 @@ async fn finish_research_run_rejects_unknown_run_and_nonterminal_status() {
     assert!(
         nonterminal
             .message
-            .contains("completed|partial|blocked|failed"),
+            .contains("completed, partial, blocked, failed"),
         "message names the terminal vocabulary: {}",
         nonterminal.message
     );

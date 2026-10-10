@@ -250,7 +250,7 @@ fn filename_from_entity_ref(entity_ref: &str) -> Option<String> {
 }
 
 fn decode_hex_utf8(hex: &str) -> Option<String> {
-    if hex.len() % 2 != 0 {
+    if !hex.len().is_multiple_of(2) {
         return None;
     }
     let mut bytes = Vec::with_capacity(hex.len() / 2);
