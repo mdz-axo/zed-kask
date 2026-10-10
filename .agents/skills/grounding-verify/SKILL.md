@@ -18,8 +18,11 @@ the VCP graduated-severity scale — both cited where implemented. (Heuer's
 ACH, Caulfield's SIFT and IEEE 1012 were named here with no operational
 consumer — the roles they claimed were already anchored to the sources
 that implement them — and were removed 2026-09-28.) Earlier
-anchors retained: Fermi's four-contract trust system (grounding_trust,
-schema_trust, rollup_trust, port_trust), the listening skill's
+anchors retained: Fermi's five-rung verification ladder (presence,
+liveness, truth, grounding, binding — the rungs' zed-kask homes are
+mapped in `kask/docs/reference/verification-ladder.md`; this skill
+works the grounding, truth, presence and binding rungs over text, and
+liveness belongs to the regulation loop), the listening skill's
 retrieve-cite-verify process, and the Verification Commons Protocol
 (Ostrom institutional design: bounded provenance, decoupled monitoring,
 graduated sanctions, conflict precedence, nested verification layers).
@@ -57,7 +60,7 @@ and the provenance floor will price it accordingly.
 | 1 | `model_inference` | LLM synthesized from source outputs (extraction ceiling) |
 | 0 | `unavailable` | No source the pipeline called can supply this claim — the `why` must name which: no source exists, or a source exists but was never consulted |
 | 0 | `tool_no_match` | Source was consulted and had nothing for this subject |
-| 0 | `pending_check` | Check exists but has not run yet |
+| 0 | `pending_check` | Check exists but has not run yet — not graded: counted in `pending_count`, excluded from the floor (a pending claim could still lower it) |
 | 0 | `rejected` | Checked and found wrong |
 
 The provenance vocabulary is a closed set. The Step 2 validation call
@@ -479,31 +482,51 @@ over zero rows is unknown, not clean.
 
 ### Step 6 — Report the provenance floor
 
-Compute the provenance floor — the minimum strength across all factual
-claims (the Fermi `floor()` pattern: a report is only as strong as its
-weakest claim) — and report it with the `decoupling` field
+Compute the provenance floor — the minimum strength across all GRADED
+factual claims (the Fermi `floor()` pattern: a report is only as strong
+as its weakest graded claim) — and report it with the `decoupling` field
 (`spawn_agent` or `in_thread`). An `in_thread` run by the text's generator
 is a self-check — say so; the party being monitored cannot be the sole
 monitor. The floor and the decoupling field are facts for the reader, not
 a verdict on the text; the output never says verified.
 
-1. Call `lisp_eval` to compute the floor (a claim record missing
-   `strength` must error loudly — an unfinished classification surfaces,
-   it does not silently floor):
-   - form: `"(define floor-strength (lambda (cs) (if (= (length cs) 1) (assoc "strength" (nth 0 cs)) (let ((rest_min (floor-strength (cdr cs)))) (let ((this (assoc "strength" (car cs)))) (if (< this rest_min) this rest_min)))))) (floor-strength claims)"`
-   - env: `{ "claims": <the Step 2 provenance assignments, each with "strength"> }`
-   - Pass `max_depth` ≥ 8× the claims count (the recursive helper — see
-     Step 1 item 4's depth note).
+`pending_check` claims are not graded — "nobody has checked this yet"
+is neither a strength nor a weakness, and a pending claim must not floor
+a report the way a `rejected` claim does (the Fermi unknown rule: an
+ungradeable source poisons a result only when it could still move the
+floor). Pending claims are counted, and the count is reported beside the
+floor.
 
-2. Derive and report the confidence band from the floor, the source
+1. Call `lisp_eval` once to compute the floor and the pending count (a
+   GRADED claim record missing `strength` must error loudly — an
+   unfinished classification surfaces, it does not silently floor):
+   - form: `"(define graded (lambda (cs) (cond ((is_null cs) '()) ((string= (assoc "provenance" (car cs)) "pending_check") (graded (cdr cs))) (t (cons (car cs) (graded (cdr cs))))))) (define pending-count (lambda (cs) (cond ((is_null cs) 0) ((string= (assoc "provenance" (car cs)) "pending_check") (+ 1 (pending-count (cdr cs)))) (t (pending-count (cdr cs)))))) (define floor-strength (lambda (cs) (cond ((is_null (cdr cs)) (min (assoc "strength" (car cs)) (assoc "strength" (car cs)))) (t (min (assoc "strength" (car cs)) (floor-strength (cdr cs))))))) (let ((g (graded claims))) (list (list "floor" (if (= (length g) 0) nil (floor-strength g))) (list "pending_count" (pending-count claims))))"`
+   - env: `{ "claims": <the Step 2 provenance assignments, each with "provenance" and "strength"> }`
+   - Pass `max_depth` ≥ 8× the claims count (the recursive helpers — see
+     Step 1 item 4's depth note).
+   - Read `floor` and `pending_count` from the result. A `null` floor with
+     claims present means NOTHING is graded — every claim is pending;
+     report it as unknown, not clean (the Step 5 zero-claim rule, one
+     step further in).
+
+2. Report the pending caveat beside the floor: when `pending_count` > 0
+   and the floor is above 0, the pending claims could still lower the
+   floor to 0 — say so ("floor 1 over graded claims; 3 pending could
+   still lower it to 0"). When the floor is already 0, pending changes
+   nothing — no verdict a pending claim could hold would lower a floor
+   already resting at the bottom — and the caveat is omitted.
+
+3. Derive and report the confidence band from the floor, the source
    conflicts, and the decoupling field (the Fermi `hud_contract.rs`
    `confidence_for` adaptation — derived from the provenance verdict,
    never accepted from the model): the band caps at `medium` for an
-   `in_thread` run (a self-check, no matter how strong the claims) and at
-   `medium` when unresolved material `source_conflicts` are present; a
-   high or critical finding surfaces immediately regardless of the band.
-   The band is a derived fact for the reader, like the floor — never a
-   verdict.
+   `in_thread` run (a self-check, no matter how strong the claims), at
+   `medium` when unresolved material `source_conflicts` are present, and
+   at `medium` when `pending_count` > 0 and the floor is above 0 (the
+   pending claims could still move it; a floor already at 0 is priced by
+   the floor itself); a high or critical finding surfaces immediately
+   regardless of the band. The band is a derived fact for the reader,
+   like the floor — never a verdict.
 
 ### Step 7 — Emit verification report
 
@@ -511,9 +534,12 @@ a verdict on the text; the output never says verified.
 1. Emit the verification report with:
    - `counts`: claims extracted, load-bearing claims, claims checked, claims
      at each provenance tier, claims rejected — the raw counts from Step 5
-   - `provenance_floor`: the minimum claim strength, and `decoupling`:
-     spawn_agent | in_thread — mandatory. A consumer must
-     be able to tell a decoupled audit from a self-check.
+   - `provenance_floor`: the minimum strength over GRADED claims (null
+     when nothing is graded — unknown, not clean), `pending_count`: the
+     claims not yet graded, carrying the Step 6 caveat when they could
+     still lower the floor, and `decoupling`: spawn_agent | in_thread —
+     mandatory. A consumer must be able to tell a decoupled audit from a
+     self-check, and a graded floor from an ungraded one.
    - `verified_claims`: append-only registry of all claims with
      provenance tier, source reference, `why`, cross_check result
    - `hallucination_findings`: claims reclassified as `rejected`, with
@@ -659,6 +685,10 @@ single-pass by design and verifies against provided sources only.
 - The confidence band from provenance floor is adapted from Fermi's
   `hud_contract.rs` (`confidence_for` derived from provenance verdict,
   never accepted from the model).
+- The floor-over-graded-claims rule (pending counted, never floored) is
+  adapted from Fermi's unknown rule (`verification_for_agent_ecologies.md`
+  §5.4: an ungradeable source poisons a result only when it could still
+  move the floor).
 - The conflict precedence hierarchy, graduated finding severity, and
   decoupling observability are adapted from the Verification Commons
   Protocol v1.0 (2026-09-07), which grounds research verification in
@@ -691,6 +721,11 @@ single-pass by design and verifies against provided sources only.
 - The provenance floor and the `decoupling` field are reported facts, not
   a verdict; the output never says verified. An `in_thread` run by the
   text's generator is reported as a self-check.
+- The floor is computed over GRADED claims only. `pending_check` claims
+  are counted in `pending_count` and never floor the report — "not yet
+  checked" is not "checked and wrong"; a pending claim moves the result
+  only through the reported caveat and the band cap, never through the
+  floor itself.
 - `verification_scope_limitations` must be disclosed in the output,
   including which sources the tracing pass did not examine. The
   verification covers grounding and material omissions, not reasoning

@@ -115,7 +115,7 @@ Every claim is classified into one of these tiers:
 | 1 | `model_inference` | 1 | LLM synthesized from source outputs — the extraction ceiling |
 | 0 | `unavailable` | 0 | No source the pipeline called can supply this claim |
 | 0 | `tool_no_match` | 0 | Source was called but returned nothing for this subject |
-| 0 | `pending_check` | 0 | Check exists but has not run yet |
+| 0 | `pending_check` | 0 | Check exists but has not run yet — not graded: counted in `pending_count`, excluded from the floor (Step 6) |
 
 ## The extraction ceiling
 
