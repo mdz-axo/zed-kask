@@ -1128,21 +1128,7 @@ mod tool_behavior_tests {
     use std::sync::Arc;
 
     fn make_server() -> MediaServer {
-        let driver = hkask_storage::database::sqlite::SqliteDriver::in_memory_driver();
-        let gallery_store =
-            Arc::new(GalleryStore::from_driver(driver).expect("gallery store init"));
-        MediaServer::new(
-            hkask_types::WebID::new(),
-            Arc::new(NoopInferencePort),
-            Arc::new(std::sync::Mutex::new(None)),
-            gallery_store,
-            templates::create_env().expect("media templates must compile"),
-            video::ffmpeg::FfmpegRunner::detect(),
-            video::ytdlp::YtDlpRunner::detect(),
-            jobs::new_job_store(),
-            None,
-            None,
-        )
+        make_server_with_port(Arc::new(NoopInferencePort))
     }
 
     #[tokio::test]
