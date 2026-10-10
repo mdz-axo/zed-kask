@@ -140,6 +140,48 @@ fn join_page_text<'a>(pages: impl IntoIterator<Item = &'a str>) -> String {
     pages.into_iter().collect::<Vec<_>>().join("\u{000C}")
 }
 
+/// Render the PDF's pages for the whole-document OCR pipeline — the target
+/// subset when a target set is given, else the entire document. The shared
+/// decimation prelude of both whole-doc OCR paths (`force_ocr`, and the
+/// text-extraction fallback): each path keeps its own model resolution and
+/// decimation-failure semantics, which interleave with this differently.
+async fn render_whole_doc_pages(
+    resolved: &std::path::Path,
+    target_set: Option<&std::collections::HashSet<usize>>,
+) -> Result<Vec<image::DynamicImage>, crate::ocr::PipelineError> {
+    if let Some(ts) = target_set {
+        // 0-based page indices for decimation, derived from the 1-based set.
+        let mut indices: Vec<usize> = ts.iter().map(|p| p - 1).collect();
+        indices.sort();
+        decimation::pdf_to_images_for_pages(resolved, crate::ocr::OCR_IMAGE_LONG_EDGE, &indices)
+            .await
+    } else {
+        decimation::pdf_to_images(resolved, crate::ocr::OCR_IMAGE_LONG_EDGE).await
+    }
+}
+
+/// The block-count and structure fields every OCR-pipeline result carries:
+/// the total block count across pages, and the structure serialized when
+/// requested, else null. Three composers share these fields (the two
+/// whole-doc paths and selective OCR); each keeps its own result JSON and
+/// field order.
+fn structure_fields(
+    structure: &hkask_types::document::DocStructure,
+    include_structure: bool,
+) -> (usize, serde_json::Value) {
+    let block_count = structure
+        .pages
+        .iter()
+        .map(|p| p.blocks.len())
+        .sum::<usize>();
+    let structure_value = if include_structure {
+        serde_json::to_value(structure).unwrap_or(serde_json::Value::Null)
+    } else {
+        serde_json::Value::Null
+    };
+    (block_count, structure_value)
+}
+
 /// Assemble pipeline results into an outcome, erroring when the assembled
 /// text is empty — zero text after a pipeline run is a failure (every page
 /// empty or errored), never a silent success.
@@ -333,6 +375,48 @@ impl<'a> ConvertService<'a> {
         .await;
         self.persist_pipeline_outcome(&outcome).await;
         outcome
+    }
+
+    /// Run the OCR pipeline over the rendered whole-document pages and reduce
+    /// it to the pieces every whole-doc result composes from: the rendered
+    /// page count, the pipeline outcome (for [`Self::with_pipeline_outcome`]),
+    /// the joined page text, its word count, and the block-count/structure
+    /// result fields ([`structure_fields`]). The caller keeps its model
+    /// resolution — the two whole-doc paths resolve at different points with
+    /// different failure semantics.
+    async fn whole_doc_pipeline_pieces(
+        &self,
+        page_images: Vec<image::DynamicImage>,
+        model: &str,
+        include_structure: bool,
+    ) -> (
+        usize,
+        PipelineOutcome,
+        String,
+        usize,
+        usize,
+        serde_json::Value,
+    ) {
+        let expected = page_images.len();
+        let outcome = self.run_standard_pipeline(page_images, model).await;
+        let text = join_page_text(outcome.results.iter().map(|result| result.text.as_str()));
+        let word_count = text.split_whitespace().count();
+        let structure = markdown_pages_to_structure(
+            outcome
+                .results
+                .iter()
+                .map(|r| (r.page_index + 1, r.text.clone())),
+            "pdf",
+        );
+        let (block_count, structure_value) = structure_fields(&structure, include_structure);
+        (
+            expected,
+            outcome,
+            text,
+            word_count,
+            block_count,
+            structure_value,
+        )
     }
 
     /// Fold the common pipeline-outcome fields — the verification report,
@@ -556,12 +640,6 @@ impl<'a> ConvertService<'a> {
         } else {
             None
         };
-        // 0-based page indices for decimation, derived from target_set.
-        let target_indices = |ts: &std::collections::HashSet<usize>| -> Vec<usize> {
-            let mut v: Vec<usize> = ts.iter().map(|p| p - 1).collect();
-            v.sort();
-            v
-        };
 
         let metadata = std::fs::metadata(&resolved)
             .map_err(|e| map_corpus_io_error(e, &format!("Failed to inspect file '{path}'")))?;
@@ -610,16 +688,7 @@ impl<'a> ConvertService<'a> {
 
             // Not an image — render PDF pages for the vision pipeline
             if format == "pdf" {
-                let imgs_res = if let Some(ref ts) = target_set {
-                    decimation::pdf_to_images_for_pages(
-                        &resolved,
-                        crate::ocr::OCR_IMAGE_LONG_EDGE,
-                        &target_indices(ts),
-                    )
-                    .await
-                } else {
-                    decimation::pdf_to_images(&resolved, crate::ocr::OCR_IMAGE_LONG_EDGE).await
-                };
+                let imgs_res = render_whole_doc_pages(&resolved, target_set.as_ref()).await;
                 match imgs_res {
                     Ok(page_images) => {
                         let model = match self.resolve_ocr_model(None).await {
@@ -630,29 +699,15 @@ impl<'a> ConvertService<'a> {
                                 ));
                             }
                         };
-                        let expected = page_images.len();
-                        let outcome = self.run_standard_pipeline(page_images, &model).await;
-                        let text = join_page_text(
-                            outcome.results.iter().map(|result| result.text.as_str()),
-                        );
-                        let word_count = text.split_whitespace().count();
-                        let structure = markdown_pages_to_structure(
-                            outcome
-                                .results
-                                .iter()
-                                .map(|r| (r.page_index + 1, r.text.clone())),
-                            "pdf",
-                        );
+                        let (expected, outcome, text, word_count, block_count, structure_value) =
+                            self.whole_doc_pipeline_pieces(page_images, &model, include_structure)
+                                .await;
                         let result = serde_json::json!({
                             "format": format, "path": path, "method": "ocr_pipeline",
                             "model": model, "text": text, "word_count": word_count,
                             "pages": expected,
-                            "block_count": structure.pages.iter().map(|p| p.blocks.len()).sum::<usize>(),
-                            "structure": if include_structure {
-                                serde_json::to_value(&structure).unwrap_or(serde_json::Value::Null)
-                            } else {
-                                serde_json::Value::Null
-                            },
+                            "block_count": block_count,
+                            "structure": structure_value,
                         });
                         return Ok(self.with_pipeline_outcome(result, &outcome));
                     }
@@ -764,6 +819,8 @@ impl<'a> ConvertService<'a> {
                             per_page.iter().enumerate().map(|(i, t)| (i + 1, t.clone())),
                             "pdf",
                         );
+                        let (block_count, structure_value) =
+                            structure_fields(&structure, include_structure);
                         let triage_summary: Vec<serde_json::Value> = verdicts
                             .iter()
                             .filter(|v| v.needs_ocr)
@@ -777,12 +834,8 @@ impl<'a> ConvertService<'a> {
                             "model": model, "text": text, "word_count": word_count,
                             "pages": page_texts.len(),
                             "ocr_pages": ocr_pages.len(),
-                            "block_count": structure.pages.iter().map(|p| p.blocks.len()).sum::<usize>(),
-                            "structure": if include_structure {
-                                serde_json::to_value(&structure).unwrap_or(serde_json::Value::Null)
-                            } else {
-                                serde_json::Value::Null
-                            },
+                            "block_count": block_count,
+                            "structure": structure_value,
                             "triage": triage_summary,
                         });
                         return Ok(self.with_pipeline_outcome(result, &outcome));
@@ -807,40 +860,17 @@ impl<'a> ConvertService<'a> {
             if self.has_ocr()
                 && let Ok(model) = self.resolve_ocr_model(None).await
             {
-                let imgs_res = if let Some(ref ts) = target_set {
-                    decimation::pdf_to_images_for_pages(
-                        &resolved,
-                        crate::ocr::OCR_IMAGE_LONG_EDGE,
-                        &target_indices(ts),
-                    )
-                    .await
-                } else {
-                    decimation::pdf_to_images(&resolved, crate::ocr::OCR_IMAGE_LONG_EDGE).await
-                };
+                let imgs_res = render_whole_doc_pages(&resolved, target_set.as_ref()).await;
                 match imgs_res {
                     Ok(page_images) => {
-                        let expected = page_images.len();
-                        let outcome = self.run_standard_pipeline(page_images, &model).await;
-                        let text = join_page_text(
-                            outcome.results.iter().map(|result| result.text.as_str()),
-                        );
-                        let word_count = text.split_whitespace().count();
-                        let structure = markdown_pages_to_structure(
-                            outcome
-                                .results
-                                .iter()
-                                .map(|r| (r.page_index + 1, r.text.clone())),
-                            "pdf",
-                        );
+                        let (expected, outcome, text, word_count, block_count, structure_value) =
+                            self.whole_doc_pipeline_pieces(page_images, &model, include_structure)
+                                .await;
                         let result = serde_json::json!({
                             "format": format, "path": path, "method": "ocr_pipeline",
                             "model": model, "text": text, "word_count": word_count,
-                            "block_count": structure.pages.iter().map(|p| p.blocks.len()).sum::<usize>(),
-                            "structure": if include_structure {
-                                serde_json::to_value(&structure).unwrap_or(serde_json::Value::Null)
-                            } else {
-                                serde_json::Value::Null
-                            },
+                            "block_count": block_count,
+                            "structure": structure_value,
                             "pages": expected,
                         });
                         return Ok(self.with_pipeline_outcome(result, &outcome));
