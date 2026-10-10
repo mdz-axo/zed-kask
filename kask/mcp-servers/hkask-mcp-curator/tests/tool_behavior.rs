@@ -24,6 +24,40 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
+/// The pinned future every test port's arms return — the trait's
+/// `Pin<Box<dyn Future<Output = Result<...>> + Send>>` spelling, aliased so
+/// each mock's signature carries its parameters and not ten lines of
+/// boilerplate.
+type CuratorTestFuture<'a> = Pin<
+    Box<
+        dyn Future<Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>>
+            + Send
+            + 'a,
+    >,
+>;
+
+/// The `generate` stub shared by the test ports: every mock here exercises
+/// an embed arm (or nothing); `generate` answers with the stub connection
+/// error. Single-sourced so the three mocks cannot drift apart.
+fn stub_generate() -> CuratorTestFuture<'static> {
+    Box::pin(async { Err(hkask_types::InferenceError::Connection("stub".to_string())) })
+}
+
+/// Emit the shared stub `generate` arm inside a test port's
+/// `impl InferencePort` block — the arm every mock here repeats.
+macro_rules! stub_generate_arm {
+    () => {
+        fn generate(
+            &self,
+            _prompt: &str,
+            _parameters: &hkask_types::LLMParameters,
+            _tools: Option<&[hkask_types::ChatToolDefinition]>,
+        ) -> CuratorTestFuture<'_> {
+            stub_generate()
+        }
+    };
+}
+
 /// Stub inference port whose `embed` is left at the trait default (an
 /// error) — pins the degradation path: the semantic tools must fall back
 /// to exact-entity lookup (surfaced in the output) rather than erroring
@@ -31,20 +65,7 @@ use std::sync::Arc;
 struct FailingEmbedPort;
 
 impl hkask_types::InferencePort for FailingEmbedPort {
-    fn generate(
-        &self,
-        _prompt: &str,
-        _parameters: &hkask_types::LLMParameters,
-        _tools: Option<&[hkask_types::ChatToolDefinition]>,
-    ) -> Pin<
-        Box<
-            dyn Future<Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>>
-                + Send
-                + '_,
-        >,
-    > {
-        Box::pin(async { Err(hkask_types::InferenceError::Connection("stub".to_string())) })
-    }
+    stub_generate_arm!();
 }
 
 /// Stub inference port whose `embed` returns a constant unit vector for any
@@ -59,20 +80,7 @@ fn test_dim() -> usize {
 struct ConstantEmbedPort;
 
 impl hkask_types::InferencePort for ConstantEmbedPort {
-    fn generate(
-        &self,
-        _prompt: &str,
-        _parameters: &hkask_types::LLMParameters,
-        _tools: Option<&[hkask_types::ChatToolDefinition]>,
-    ) -> Pin<
-        Box<
-            dyn Future<Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>>
-                + Send
-                + '_,
-        >,
-    > {
-        Box::pin(async { Err(hkask_types::InferenceError::Connection("stub".to_string())) })
-    }
+    stub_generate_arm!();
 
     fn embed<'a>(&'a self, _model: &str, texts: &[String]) -> hkask_types::EmbedFuture<'a> {
         // Capture only the count (owned, `Copy`) so the future borrows
@@ -104,20 +112,7 @@ impl hkask_types::InferencePort for ConstantEmbedPort {
 struct ActualFormEmbedPort;
 
 impl hkask_types::InferencePort for ActualFormEmbedPort {
-    fn generate(
-        &self,
-        _prompt: &str,
-        _parameters: &hkask_types::LLMParameters,
-        _tools: Option<&[hkask_types::ChatToolDefinition]>,
-    ) -> Pin<
-        Box<
-            dyn Future<Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>>
-                + Send
-                + '_,
-        >,
-    > {
-        Box::pin(async { Err(hkask_types::InferenceError::Connection("stub".to_string())) })
-    }
+    stub_generate_arm!();
 
     fn embed_with_dimensions<'a>(
         &'a self,
