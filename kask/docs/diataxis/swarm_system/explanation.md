@@ -12,9 +12,9 @@ mds_categories: [trust, curation]
 
 The swarm system separates cloud authority, local execution, type admission,
 and result evaluation so each decision has one enforcement point. Its live MCP
-surface is 90 tools: 48 cloud tools and 42 non-cloud tools (35 local, 4
+surface is 91 tools: 48 cloud tools and 43 non-cloud tools (36 local, 4
 knowledge, 3 A2A — count by pinning test for the total and per-file grep for
-the partition; `kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:1026-1060`).
+the partition; `kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:1016-1047`).
 The Zed-side Steer surface renders its ABW/local tool split from the same
 build-generated name consts, never a hand-maintained list
 (`crates/swarm_panel/src/swarm_panel.rs:154-158`).

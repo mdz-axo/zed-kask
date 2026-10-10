@@ -49,9 +49,10 @@ pub struct LazyLocalSwarmRuntime {
     /// runtime's result path). Passed through to the runtime so recording
     /// and surfacing see one store.
     agent_stats: std::sync::Arc<crate::agent_stats::AgentStatsStore>,
-    /// The grounding-gate decision ledger — same one-store-two-handles
-    /// shape as the stats store: the runtime records at the grade sites,
-    /// the gate tools surface it (fermi's `gate_decisions` analog).
+    /// The grounding-gate counter store — same one-store-two-handles
+    /// shape as the stats store: the runtime counts at the grade sites,
+    /// the gate readings tool surfaces them (fermi's gate-account
+    /// readings analog).
     gate_store: std::sync::Arc<crate::gate_store::GateCounterStore>,
     default_agent_model: String,
     inner: tokio::sync::OnceCell<LocalSwarmRuntime>,
@@ -187,9 +188,9 @@ pub struct LocalSwarmRuntime {
     /// `measured_exec_stats`. Recorded at the result path (single-writer by
     /// construction) and surfaced by the local agent tools.
     stats: std::sync::Arc<crate::agent_stats::AgentStatsStore>,
-    /// The grounding-gate decision ledger — every `grade()` outcome is
-    /// recorded here (fermi's `gate_decisions`), so per-agent gate
-    /// readings and after-the-fact review survive the delegation result.
+    /// The grounding-gate counter store — every `grade()` outcome is
+    /// counted here (fermi's gate-account readings), so per-agent gate
+    /// readings survive the delegation result.
     gate_store: std::sync::Arc<crate::gate_store::GateCounterStore>,
 }
 
