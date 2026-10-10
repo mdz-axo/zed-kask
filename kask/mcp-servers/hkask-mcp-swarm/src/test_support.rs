@@ -277,6 +277,10 @@ pub(crate) fn make_thread_server(
             dir.join("threads.db").to_string_lossy().into_owned(),
             passphrase.into(),
         )),
+        Arc::new(crate::gate_store::GateCounterStore::new(
+            dir.join("gate.db").to_string_lossy().into_owned(),
+            passphrase.into(),
+        )),
     )
 }
 

@@ -19,14 +19,14 @@ regenerated for the ninth collaborator and the expanded `LocalDelegateResult`.
 
 ## Swarm MCP Server Architecture
 
-The swarm server (`hkask-mcp-swarm`) exposes **90 tools** across four
+The swarm server (`hkask-mcp-swarm`) exposes **91 tools** across four
 routers. The governed `McpRuntime` is the sole Kask MCP spawn authority;
 `kask.swarm.mode` selects the execution substrate, not the tool surface.
 The agent tool picker reads from that runtime, not a second per-project
 `ContextServerStore` child (`crates/zed/src/main.rs:1019-1021`, the single
 spawn authority).
 
-**Current router (2026-09-23):** **90** tools (48 cloud + 32 local + 3 A2A
+**Current router (2026-09-23):** **91** tools (48 cloud + 33 local + 3 A2A
 + 4 knowledge + 3 swarm-scoped thread tools); the router composition is
 `cloud_swarm_router + local_router + a2a_router + knowledge_router`
 (`hkask_mcp_swarm.rs:160-166`) — the former `ledger_router` was removed with
@@ -39,7 +39,7 @@ and `swarm_select_agent_local` were added 2026-09-09 with the fermi absorption
 ```mermaid
 flowchart TD
     MR[McpRuntime<br/>sole governed spawn authority]
-    SWARM[hkask-mcp-swarm<br/>90 tools: 48 cloud + 32 local + 3 a2a + 4 knowledge + 3 scoped thread]
+    SWARM[hkask-mcp-swarm<br/>91 tools: 48 cloud + 33 local + 3 a2a + 4 knowledge + 3 scoped thread]
     MR --> SWARM
 
     subgraph abw[ABW Backend cloud]
@@ -95,14 +95,19 @@ operator's own substrate, so nothing is priced or gated
 in protocol-compliant types over the in-process transport (no HTTP server
 required).
 
-**Regenerated (2026-09-28):** `SwarmThreadStore` is the ninth collaborator
-(the encrypted member-conversation store behind the swarm-scoped thread
-tools), and `LocalDelegateResult` grew the fermi-absorption trust fields
-(`rollout_id`, `reasoning_steps`, `input_contract_check`,
-`output_contract_check`, `grounding`, `completeness`, `reliance`, `memory`)
-alongside the C4 `latency_ms` and C5 `task_success`/`bind_matched` fields.
-The 90-tool pin and the build.rs-generated `tool_names.gen.rs` asserted
-against the live `combined_router()` at test time are unchanged.
+**Regenerated (2026-10-10):** `GateCounterStore` is the tenth collaborator
+(the per-agent grounding-gate counter store behind
+`swarm_gate_readings` — fermi's gate-account readings, aggregate pattern
+visibility only per the operator's 2026-10-10 ruling; the runtime counts
+at both `grade()` sites, the tool surfaces the readings), alongside the
+ninth, `SwarmThreadStore` (the encrypted member-conversation store behind
+the swarm-scoped thread tools). `LocalDelegateResult` carries the
+fermi-absorption trust fields (`rollout_id`, `reasoning_steps`,
+`input_contract_check`, `output_contract_check`, `grounding`,
+`completeness`, `reliance`, `memory`) alongside the C4 `latency_ms` and C5
+`task_success`/`bind_matched` fields. The 91-tool pin and the
+build.rs-generated `tool_names.gen.rs` asserted against the live
+`combined_router()` at test time are unchanged in mechanism.
 
 ```mermaid
 classDiagram

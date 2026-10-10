@@ -32,7 +32,7 @@ is findable.
 | 1. Presence | Does the declared thing exist? | `port_registry.rs` (an `accepts`/`produces` label that resolves to no registered type is rejected at admission); `schema_validate.rs:1-24` (no schema or an unsupported keyword is `unverified_*`, never `valid`); the grounding gate's no-contract arm (`grounding.rs:443-450` — `unchecked`, not `clean`) | admission, then per invocation | a card declaring a type that does not exist; a contract nobody wrote |
 | 2. Liveness | Does the writer ever run? | `hkask-regulation/src/loops/core.rs:325` (`LivenessTrust`: `Live`/`Stale`/`NeverRun`), `:342` (`Reading`), `:387` (`LoopView`), `:436` (`compute_reading`) | per regulation tick | a loop that reports success while having never run — `WiringClosed`, the dominant failure mode |
 | 3. Truth | Does the stored value equal its source of truth? | the `grounding-verify` skill's Step 3 mechanical re-derivation (`.agents/skills/grounding-verify/SKILL.md` — `lisp_eval` re-derives every computed number against its inputs); `core.rs:305` (`OutcomeTrust`: impact verified / untrusted / unverified); resolved-outcome Brier scoring (`forecast_record`, `market_calibration`, `kanban_goal_score`) | per claim at verification; at resolution for forecasts | a derived number that does not re-derive; a prediction that disagrees with the resolved outcome |
-| 4. Grounding | Could this value have come from any available tool? | `grounding.rs:105` (`grade` — a `sourced` field with no tool call in the run is stripped; the run is amended, not refused) + the `grounding-verify` skill's provenance lattice | per delegation; per verification run | a fabricated measurement — a value no tool of the agent's could have supplied |
+| 4. Grounding | Could this value have come from any available tool? | `grounding.rs:105` (`grade` — a `sourced` field with no tool call in the run is stripped; the run is amended, not refused) + the `grounding-verify` skill's provenance lattice + `gate_store.rs` (per-agent counters and readings — `strips_everything` names a mis-declared contract as the suspect, not the agent; surfaced by `swarm_gate_readings`) | per delegation; per verification run | a fabricated measurement — a value no tool of the agent's could have supplied |
 | 5. Binding | Does the invocation match the declared interface? | `local_runtime.rs:586` (`contract_checks` — `input_contract_check` / `output_contract_check` / `bind_matched` on every delegation result); `local_registry.rs:46` (`validate_typing` at admission); `contract.rs` (the composition contract, fermi's `agent_contract.rs` port) | per request | prose sent to a structured-only port; a document that contradicts its declared type |
 
 ## The two ladder properties
@@ -103,14 +103,11 @@ unknown, not clean).
 Named honestly so they stay findable — each is a fermi structure not yet
 ported:
 
-- **Gate counters and readings** (fermi `gate_trust`/`gate_api`): the
-  grounding gate counts nothing per agent or contract. A card whose grounding
-  map mis-declares every field strips 100% of that agent's output and the gate
-  reads as working; nothing distinguishes a contract bug from a misbehaving
-  agent at the aggregate level.
 - **Gate-decision review** (fermi `gate_review.rs`): no recorded after-the-fact
-  human review of gate decisions. A wrong strip or flag leaves no reviewable
-  ledger entry; the algedonic review covers skill output, not gate decisions.
+  human review of individual gate decisions. **Deliberately not ported**
+  (operator ruling 2026-10-10: aggregate pattern visibility is adequate) —
+  a wrong individual strip surfaces the way every other finding does: as
+  a review-board card with the evidence pasted in.
 - **Memory provenance tiers** (fermi extraction ceiling applied to curator
   memory): h_mems carry evidence citation and confidence but no provenance
   tier — a model-synthesized memory and a tool-observed one retrieve with

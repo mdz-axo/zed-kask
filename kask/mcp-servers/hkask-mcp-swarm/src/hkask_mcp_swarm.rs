@@ -97,6 +97,7 @@ mod consent;
 mod contract;
 mod error;
 pub mod fleet_digest;
+mod gate_store;
 pub mod grounding;
 mod knowledge_tools;
 mod local_knowledge;
@@ -159,6 +160,7 @@ hkask_mcp_server::mcp_server!(
         pub agent_stats: std::sync::Arc<agent_stats::AgentStatsStore>,
         pub event_store: std::sync::Arc<LazyEventStore>,
         pub thread_store: std::sync::Arc<thread_store::SwarmThreadStore>,
+        pub gate_store: std::sync::Arc<gate_store::GateCounterStore>,
     }
 );
 
@@ -286,8 +288,24 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
             let agent_stats = std::sync::Arc::new(agent_stats::AgentStatsStore::load(
                 &config.local_agents_dir,
             ));
+            // The grounding-gate counter store (fermi's gate-account
+            // readings). D28 layout: `mcp/swarm/gate.db` under the data dir,
+            // same passphrase chain as the thread store. One store, two
+            // handles: the runtime counts at the grade sites, the gate
+            // readings tool surfaces them. Aggregate pattern visibility
+            // only — the per-decision ledger and review path are
+            // deliberately not ported (operator ruling 2026-10-10).
+            let gate_store = std::sync::Arc::new(gate_store::GateCounterStore::new(
+                hkask_types::agent_paths::resolve_under_data_dir(
+                    &hkask_types::agent_paths::mcp_server_db("swarm", "gate"),
+                )
+                .to_string_lossy()
+                .into_owned(),
+                config.memory_passphrase.clone(),
+            ));
             let local_runtime = std::sync::Arc::new(LazyLocalSwarmRuntime::lazy(
                 agent_stats.clone(),
+                gate_store.clone(),
                 config.default_agent_model.clone(),
             ));
 
@@ -426,6 +444,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 agent_stats,
                 event_store,
                 thread_store,
+                gate_store,
             ))
         },
         vec![CredentialRequirement::optional(
@@ -448,6 +467,14 @@ fn default_db_paths_follow_standardized_layout() {
             .join("swarm")
             .join("consent.db"),
         "swarm consent path must follow mcp/swarm/consent.db"
+    );
+    let gate = hkask_types::agent_paths::mcp_server_db("swarm", "gate");
+    assert_eq!(
+        gate,
+        std::path::PathBuf::from("mcp")
+            .join("swarm")
+            .join("gate.db"),
+        "swarm gate-ledger path must follow mcp/swarm/gate.db"
     );
 }
 
@@ -501,8 +528,13 @@ mod smoke_tests {
         let local_registry = Arc::new(LocalAgentRegistry::new(agents_dir));
         let stats_dir = scratch.join("stats").to_string_lossy().to_string();
         let agent_stats = Arc::new(crate::agent_stats::AgentStatsStore::load(&stats_dir));
+        let gate_store = Arc::new(crate::gate_store::GateCounterStore::new(
+            scratch.join("gate.db").to_string_lossy().into_owned(),
+            "test-passphrase".into(),
+        ));
         let local_runtime = Arc::new(LazyLocalSwarmRuntime::lazy(
             agent_stats.clone(),
+            gate_store.clone(),
             String::new(),
         ));
         let local_swarms = Arc::new(LocalSwarmRegistry::new(swarms_dir));
@@ -527,6 +559,7 @@ mod smoke_tests {
                 scratch.join("threads.db").to_string_lossy().into_owned(),
                 "test-passphrase".into(),
             )),
+            gate_store,
         )
     }
 
@@ -880,8 +913,13 @@ mod smoke_tests {
         let agent_stats = Arc::new(crate::agent_stats::AgentStatsStore::load(
             &scratch.join("stats").to_string_lossy(),
         ));
+        let gate_store = Arc::new(crate::gate_store::GateCounterStore::new(
+            scratch.join("gate.db").to_string_lossy().into_owned(),
+            "test-passphrase".into(),
+        ));
         let local_runtime = Arc::new(LazyLocalSwarmRuntime::lazy(
             agent_stats.clone(),
+            gate_store.clone(),
             String::new(),
         ));
         let local_swarms = Arc::new(LocalSwarmRegistry::new(
@@ -909,6 +947,7 @@ mod smoke_tests {
                 scratch.join("threads.db").to_string_lossy().into_owned(),
                 "test-passphrase".into(),
             )),
+            gate_store,
         );
 
         server
@@ -962,14 +1001,17 @@ mod smoke_tests {
 // `combined_router()`, silently registers nothing (`cargo check` passes on an
 // unwired orphan). The count must match `TOOL_NAMES` (build.rs-generated from
 // `pub(crate) async fn swarm_*` signatures): 48 cloud (swarm_update_agent
-// added 2026-09-03, fermi API alignment) + 32 local (swarm_get_local_agent
+// added 2026-09-03, fermi API alignment) + 33 local (swarm_get_local_agent
 // added 2026-09-03, local parity with swarm_get_agent; swarm_run_workflow_local
 // and swarm_observed_seams_local added 2026-09-09, fermi trust-evolution
 // absorption — the workflow runner and the observed-topology report;
 // swarm_fleet_digest_local, swarm_who_answers_local, and
 // swarm_select_agent_local added 2026-09-09, completing the fermi absorption
-// — the fleet digest, the cohort query, and the measured selection) +
-// 4 knowledge + 3 a2a + 3 swarm-scoped thread tools = 90 (the 3 local-ledger
+// — the fleet digest, the cohort query, and the measured selection;
+// swarm_gate_readings added 2026-10-10, fermi gate-account absorption —
+// per-agent grounding-gate readings from the durable counters, aggregate
+// pattern visibility only per the operator's 2026-10-10 ruling) +
+// 4 knowledge + 3 a2a + 3 swarm-scoped thread tools = 91 (the 3 local-ledger
 // tools were removed with the local budget system, operator ruling 2026-09-04).
 #[cfg(test)]
 mod tool_surface_tests {
@@ -979,8 +1021,8 @@ mod tool_surface_tests {
     hkask_mcp_server::tool_surface_pin!(
         SwarmServer::combined_router(),
         "combined_router",
-        90,
-        tool_surface_is_exactly_90_registered_tools,
+        91,
+        tool_surface_is_exactly_91_registered_tools,
     );
 
     // The cloud partition must match the live cloud router — the swarm panel

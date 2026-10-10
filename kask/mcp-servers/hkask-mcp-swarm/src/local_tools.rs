@@ -3190,6 +3190,39 @@ impl SwarmServer {
         .await
     }
 
+    /// Per-agent grounding-gate readings from the durable counters —
+    /// fermi's gate-account vocabulary, structurally adapted:
+    /// `strips_everything` (fault) is the mis-declared-contract signature —
+    /// the reading names the contract as the suspect, not the agent;
+    /// `never_asked` and `all_clean` (unknown) are inert/never-fired, never
+    /// a pass. Aggregate pattern visibility only (operator ruling
+    /// 2026-10-10): no per-decision rows, no review path — the algedonic
+    /// gemba reads the readings.
+    #[tool(
+        description = "Per-agent grounding-gate readings from the durable counters: reliance-token counts, stripped/owed totals, and the classification. strips_everything (fault) names a mis-declared contract as the suspect, not the agent; never_asked/all_clean (unknown) are never a pass. Filter by agent_id."
+    )]
+    pub(crate) async fn swarm_gate_readings(
+        &self,
+        parameters: Parameters<GateReadingsRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "swarm_gate_readings", async {
+            let req = parameters.0;
+            let readings = self
+                .gate_store
+                .readings(req.agent_id.as_deref())
+                .await
+                .map_err(map_local_swarm_error)?;
+            Ok(serde_json::json!({
+                "readings": readings,
+                "note": "Aggregate pattern visibility only — per-decision rows and the \
+                         review path are deliberately not ported (operator ruling \
+                         2026-10-10). `strips_everything` names the contract as the \
+                         suspect, not the agent.",
+            }))
+        })
+        .await
+    }
+
     /// Regression-test a swarm composition across a dataset of cases. Each
     /// case is a plan (list of delegations with evaluators). The suite runs
     /// each case via `swarm_execute_plan_local`, aggregates pass/fail, and

@@ -1575,3 +1575,15 @@ pub struct WriteWorkspaceFileRequest {
     /// File content to write.
     pub content: String,
 }
+
+// ── Gate-readings tool (fermi gate-account absorption) ─────────────────────
+
+/// `swarm_gate_readings` — per-agent grounding-gate readings from the
+/// durable counters. Aggregate pattern visibility only (operator ruling
+/// 2026-10-10): no per-decision rows, no review path.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GateReadingsRequest {
+    /// Filter to one agent's reading (its local agent id). Omit for all
+    /// agents.
+    pub agent_id: Option<String>,
+}

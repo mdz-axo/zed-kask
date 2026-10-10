@@ -52,16 +52,20 @@ the existing implementation, not a shell-based oracle.[^response-regex]
 
 **Crate:** `kask/mcp-servers/hkask-mcp-swarm`
 **Tools:** 90 — 48 ABW cloud + 42 non-cloud, **both sets always exposed in either mode**.
-Count is pinned end-to-end by `tool_surface_is_exactly_90_registered_tools`
-(`kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:1030-1033`); the canonical list is build-script-generated:
+Count is pinned end-to-end by `tool_surface_is_exactly_91_registered_tools`
+(`kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:1021-1025`); the canonical list is build-script-generated:
 `kask/mcp-servers/hkask-mcp-swarm/build.rs` scans router-annotated `swarm_*` functions
 (`kask/mcp-servers/hkask-mcp-swarm/build.rs:34-81`) and emits `TOOL_NAMES`, kept in agreement with the live router by
-`tool_names_const_matches_registered_surface`. The 90 functions split into 48 cloud
-(`cloud_swarm_tools.rs`), 32 local plus 3 swarm-scoped thread tools (`local_tools.rs`),
+`tool_names_const_matches_registered_surface`. The 91 functions split into 48 cloud
+(`cloud_swarm_tools.rs`), 33 local plus 3 swarm-scoped thread tools (`local_tools.rs`),
 3 A2A (`a2a_tools.rs`), and 4 local knowledge (`knowledge_tools.rs`);
 `swarm_fleet_digest_local` and `swarm_select_agent_local` were added 2026-09-09
 with the fermi absorption (grounding gate, reliance verdict, fleet digest,
-agent selection; commit `256f87307c`); `swarm_update_agent` and
+agent selection; commit `256f87307c`); `swarm_gate_readings` was added 2026-10-10
+with the fermi gate-account absorption (per-agent grounding-gate readings from
+the durable counters — aggregate pattern visibility only, per the operator's
+2026-10-10 ruling; the per-decision ledger and review path are deliberately
+not ported); `swarm_update_agent` and
 `swarm_get_local_agent` were added 2026-09-03
 **Modes:** `kask.swarm.mode` selects the substrate — `abw` (default, ABW REST) or `local` (zed-kask's local substrate)
 **ABW auth:** ABW Pro-tier API key (`Authorization: Bearer`), injected as `HKASK_ABW_API_KEY`
@@ -96,7 +100,7 @@ substrate. ABW and local tools both fit the same three surfaces.[^reynolds-swarm
 | **Authoring**   | Create new agents          | `swarm_generate_prompt`, `swarm_generate_ontology`, `swarm_create_agent`, `swarm_ontology_templates`, `swarm_fork_agent`                                                                                                                                                                                                                      | `swarm_create_local_agent`, `swarm_reconfigure_local_agent`, `swarm_generate_prompt_local`, `swarm_generate_ontology_local`, `swarm_clone_to_local`, `swarm_ai_assist`                                                                   |
 | **Composition** | Group agents into teams    | `swarm_create_swarm`, `swarm_create_app`, `swarm_xaman`, `swarm_fanout`, `swarm_publish_agent`, `swarm_publish_checks`                                                                                                                                                                                                                        | `swarm_create_local_swarm`, `swarm_list_local_swarms`, `swarm_get_local_swarm`, `swarm_delete_local_swarm`, `swarm_add_agent_local`, `swarm_remove_agent_local`, `swarm_list_local_agents`, `swarm_fanout_local`, `swarm_pipeline_local` |
 | **Operation**   | Browse, run, spend, manage | `swarm_list_agents`, `swarm_get_agent`, `swarm_list_apps`, `swarm_get_swarm`, `swarm_execute_agent`, `swarm_hire`, `swarm_delegate`, `swarm_delegate_and_wait`, `swarm_run_status`, `swarm_hire_cost`, `swarm_request_consent`, `swarm_authorize_session`, `swarm_search_knowledge`, `swarm_fire`, `swarm_delete_agent`, `swarm_delete_swarm` | `swarm_delegate_local`, `swarm_a2a_send`, `swarm_a2a_card`, `swarm_search_knowledge_local`, `swarm_push_to_cloud`, `swarm_remove_local`                                |
-| **Verification** | Trust, topology, selection | `swarm_execute_agent` (the trust envelope) | `swarm_workflow_check_local`, `swarm_run_workflow_local`, `swarm_observed_seams_local`, `swarm_fleet_digest_local`, `swarm_who_answers_local`, `swarm_select_agent_local` |
+| **Verification** | Trust, topology, selection | `swarm_execute_agent` (the trust envelope), `swarm_gate_readings` (per-agent gate readings) | `swarm_workflow_check_local`, `swarm_run_workflow_local`, `swarm_observed_seams_local`, `swarm_fleet_digest_local`, `swarm_who_answers_local`, `swarm_select_agent_local` |
 
 ## Tool reference — ABW cloud (48 tools)
 
@@ -165,15 +169,16 @@ substrate. ABW and local tools both fit the same three surfaces.[^reynolds-swarm
 | `swarm_delete_agent` | `DELETE /api/agents/{id}`        | Permanently delete an authored agent (irreversible; removes it from your library and all rosters). A synced local card is NOT touched. |
 | `swarm_delete_swarm` | `DELETE /api/teams/{id}`         | Permanently delete a workspace and its roster (irreversible).                                                                          |
 
-## Tool reference — Non-cloud (42 tools)
+## Tool reference — Non-cloud (43 tools)
 
-> The non-cloud partition is 32 local tools, 3 swarm-scoped thread tools, 4 knowledge tools, and 3 A2A tools. The source partitions are exact: `kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:354-3366`, `kask/mcp-servers/hkask-mcp-swarm/src/knowledge_tools.rs:23-229`, and `kask/mcp-servers/hkask-mcp-swarm/src/a2a_tools.rs:30-172`. Together with the 48 cloud tools they reconcile to the pinned 90-tool router.
+> The non-cloud partition is 33 local tools, 3 swarm-scoped thread tools, 4 knowledge tools, and 3 A2A tools. The source partitions are exact: `kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:354-3700`, `kask/mcp-servers/hkask-mcp-swarm/src/knowledge_tools.rs:23-229`, and `kask/mcp-servers/hkask-mcp-swarm/src/a2a_tools.rs:30-172`. Together with the 48 cloud tools they reconcile to the pinned 91-tool router.
 
 | Partition | Canonical tools |
 |---|---|
 | Local delegation and workflow | `swarm_delegate_local`, `swarm_fanout_local`, `swarm_pipeline_local`, `swarm_workflow_check_local`, `swarm_run_workflow_local`, `swarm_observed_seams_local`, `swarm_execute_plan_local` |
 | Swarm-scoped threads | `swarm_delegate_in_thread_local`, `swarm_thread_local`, `swarm_list_local_threads` |
 | Local fleet and evaluation | `swarm_fleet_digest_local`, `swarm_who_answers_local`, `swarm_select_agent_local`, `swarm_evaluate_local`, `swarm_task_board`, `swarm_eval_suite_local`, `swarm_eval_agent_local` |
+| Grounding-gate readings | `swarm_gate_readings` |
 | Local agent registry | `swarm_list_local_agents`, `swarm_get_local_agent`, `swarm_clone_to_local`, `swarm_push_to_cloud`, `swarm_remove_local`, `swarm_create_local_agent`, `swarm_reconfigure_local_agent`, `swarm_ai_assist` |
 | Local swarms and synchronization | `swarm_create_local_swarm`, `swarm_list_local_swarms`, `swarm_get_local_swarm`, `swarm_delete_local_swarm`, `swarm_add_agent_local`, `swarm_remove_agent_local`, `swarm_update_local_swarm`, `swarm_clone_local_swarm`, `swarm_push_local_swarm`, `swarm_pull_swarm_to_local` |
 | Knowledge | `swarm_search_knowledge_local`, `swarm_recall_local`, `swarm_generate_prompt_local`, `swarm_generate_ontology_local` |

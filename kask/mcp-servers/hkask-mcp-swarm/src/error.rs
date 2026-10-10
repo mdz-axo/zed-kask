@@ -169,6 +169,17 @@ impl From<SwarmError> for LocalSwarmError {
     }
 }
 
+/// Row-level storage errors (`hkask_types::DbError` from the SQL driver)
+/// compose into the local error type as database failures — lets the gate
+/// ledger's row loops propagate `row.get_int(..)?` / `row.get_str(..)?`
+/// through `Result<_, LocalSwarmError>` the same way the collect-based
+/// readers in `thread_store` do over `DbError` directly.
+impl From<hkask_types::DbError> for LocalSwarmError {
+    fn from(e: hkask_types::DbError) -> Self {
+        LocalSwarmError::Database(e.to_string())
+    }
+}
+
 /// Classify a [`LocalSwarmError`] into the MCP wire-level [`McpToolError`]
 /// kind, per variant (not a blanket `Internal`) — the `.rules` "MCP tool error
 /// classification" trap. `Io`/`Database` are infrastructure failures

@@ -49,6 +49,10 @@ pub struct LazyLocalSwarmRuntime {
     /// runtime's result path). Passed through to the runtime so recording
     /// and surfacing see one store.
     agent_stats: std::sync::Arc<crate::agent_stats::AgentStatsStore>,
+    /// The grounding-gate decision ledger — same one-store-two-handles
+    /// shape as the stats store: the runtime records at the grade sites,
+    /// the gate tools surface it (fermi's `gate_decisions` analog).
+    gate_store: std::sync::Arc<crate::gate_store::GateCounterStore>,
     default_agent_model: String,
     inner: tokio::sync::OnceCell<LocalSwarmRuntime>,
 }
@@ -124,6 +128,7 @@ impl LazyLocalSwarmRuntime {
     pub(crate) fn with_runtime(runtime: LocalSwarmRuntime) -> Self {
         Self {
             agent_stats: runtime.stats.clone(),
+            gate_store: runtime.gate_store.clone(),
             default_agent_model: String::new(),
             inner: tokio::sync::OnceCell::new_with(Some(runtime)),
         }
@@ -133,10 +138,12 @@ impl LazyLocalSwarmRuntime {
     /// on first call to `get_or_init`.
     pub fn lazy(
         agent_stats: std::sync::Arc<crate::agent_stats::AgentStatsStore>,
+        gate_store: std::sync::Arc<crate::gate_store::GateCounterStore>,
         default_agent_model: String,
     ) -> Self {
         Self {
             agent_stats,
+            gate_store,
             default_agent_model,
             inner: tokio::sync::OnceCell::new(),
         }
@@ -148,8 +155,12 @@ impl LazyLocalSwarmRuntime {
     pub async fn get_or_init(&self) -> Result<&LocalSwarmRuntime, LocalSwarmError> {
         self.inner
             .get_or_try_init(|| async {
-                LocalSwarmRuntime::new(self.agent_stats.clone(), self.default_agent_model.clone())
-                    .await
+                LocalSwarmRuntime::new(
+                    self.agent_stats.clone(),
+                    self.gate_store.clone(),
+                    self.default_agent_model.clone(),
+                )
+                .await
             })
             .await
     }
@@ -176,6 +187,10 @@ pub struct LocalSwarmRuntime {
     /// `measured_exec_stats`. Recorded at the result path (single-writer by
     /// construction) and surfaced by the local agent tools.
     stats: std::sync::Arc<crate::agent_stats::AgentStatsStore>,
+    /// The grounding-gate decision ledger — every `grade()` outcome is
+    /// recorded here (fermi's `gate_decisions`), so per-agent gate
+    /// readings and after-the-fact review survive the delegation result.
+    gate_store: std::sync::Arc<crate::gate_store::GateCounterStore>,
 }
 
 impl LocalSwarmRuntime {
@@ -183,6 +198,7 @@ impl LocalSwarmRuntime {
     /// ports once at construction.
     pub(crate) async fn new(
         stats: std::sync::Arc<crate::agent_stats::AgentStatsStore>,
+        gate_store: std::sync::Arc<crate::gate_store::GateCounterStore>,
         default_agent_model: String,
     ) -> Result<Self, LocalSwarmError> {
         // Resolve the agent-run ports once at construction: inference and
@@ -201,6 +217,7 @@ impl LocalSwarmRuntime {
             executor,
             capture_drops: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             stats,
+            gate_store,
         })
     }
 
@@ -226,10 +243,18 @@ impl LocalSwarmRuntime {
         let stats = std::sync::Arc::new(crate::agent_stats::AgentStatsStore::load(
             &stats_dir.to_string_lossy(),
         ));
+        // A throwaway gate-counter store — same rule as the stats store:
+        // tests exercise the delegate logic, not counter persistence (that
+        // is unit-tested on `GateCounterStore` directly).
+        let gate_store = std::sync::Arc::new(crate::gate_store::GateCounterStore::new(
+            stats_dir.join("gate.db").to_string_lossy().into_owned(),
+            "test-passphrase".into(),
+        ));
         Self {
             executor,
             capture_drops: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             stats,
+            gate_store,
         }
     }
 
@@ -327,6 +352,36 @@ impl LocalSwarmRuntime {
         self.delegate_with_history(agent, task, &[]).await
     }
 
+    /// Count one grounding-gate decision in the durable counters (fermi's
+    /// gate-account analog — every grade, including `unchecked` and
+    /// `unusable`, which are the opportunity counts behind the
+    /// `never_asked` reading). Non-fatal by contract, never silent: a
+    /// failed write warns and the per-agent readings undercount — the warn
+    /// names both.
+    async fn record_gate_counter(
+        &self,
+        agent_id: &str,
+        graded: &crate::grounding::GroundingOutcome,
+    ) {
+        if let Err(error) = self
+            .gate_store
+            .bump(
+                agent_id,
+                crate::grounding::reliance_token(graded),
+                crate::grounding::stripped_count(graded),
+                crate::grounding::owed_count(graded),
+            )
+            .await
+        {
+            tracing::warn!(
+                target: "hkask.mcp.swarm",
+                agent_id = %agent_id,
+                error = %error,
+                "gate counter write failed — per-agent gate readings will undercount"
+            );
+        }
+    }
+
     pub(crate) async fn delegate_with_history(
         &self,
         agent: &LocalAgentCard,
@@ -381,6 +436,7 @@ impl LocalSwarmRuntime {
             &result.tool_calls,
             result.output_contract_check.as_ref(),
         );
+        self.record_gate_counter(&agent.agent_id, &graded).await;
         result.grounding = Some(graded.report);
         result.completeness = Some(graded.completeness);
         result.reliance = Some(graded.reliance);
@@ -542,6 +598,7 @@ impl LocalSwarmRuntime {
                 &built.tool_calls,
                 built.output_contract_check.as_ref(),
             );
+            self.record_gate_counter(agent_id, &graded).await;
             built.grounding = Some(graded.report);
             built.completeness = Some(graded.completeness);
             built.reliance = Some(graded.reliance);

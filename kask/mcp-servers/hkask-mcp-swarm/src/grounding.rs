@@ -95,6 +95,38 @@ pub struct GroundingOutcome {
     pub reliance: Value,
 }
 
+/// The reliance token of a graded outcome — the one-word verdict a caller
+/// branches on. Ledger extraction helper: the gate store records this per
+/// decision. Fail-safe to `unusable` (the worst-first reading) if the
+/// status field is ever absent.
+pub fn reliance_token(outcome: &GroundingOutcome) -> &str {
+    outcome
+        .reliance
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or("unusable")
+}
+
+/// How many fields the gate stripped in this outcome. Ledger extraction
+/// helper — one implementation, next to the report shape that defines it.
+pub fn stripped_count(outcome: &GroundingOutcome) -> usize {
+    outcome
+        .report
+        .get("stripped")
+        .and_then(Value::as_array)
+        .map_or(0, Vec::len)
+}
+
+/// How many fields the completeness report marks owed. Ledger extraction
+/// helper — same single-implementation rule.
+pub fn owed_count(outcome: &GroundingOutcome) -> usize {
+    outcome
+        .completeness
+        .get("owed")
+        .and_then(Value::as_array)
+        .map_or(0, Vec::len)
+}
+
 /// Grade one delegation's response against the agent's output contract.
 ///
 /// `output_contract` is the card's compiled contract (the same value
@@ -421,6 +453,39 @@ mod tests {
 
     fn tool_call() -> Value {
         serde_json::json!({ "tool": "research/web_search", "ok": true })
+    }
+
+    /// The ledger-extraction accessors: token fail-safe to `unusable`,
+    /// counts read from the report/completeness shapes. One implementation
+    /// next to the producer — the counter store consumes these.
+    #[test]
+    fn ledger_accessors_read_token_and_counts_fail_safe() {
+        let outcome = grade(
+            Some(&contract(serde_json::json!({
+                "verdicts": {"status": "sourced", "from": "a tool", "why": "..."},
+                "risk": {"status": "unavailable", "from": "nowhere", "why": "..."},
+            }))),
+            "{\"verdicts\": {\"status\": \"grounded\"}}",
+            &[],
+            None,
+        );
+        assert_eq!(reliance_token(&outcome), "amended");
+        assert_eq!(
+            stripped_count(&outcome),
+            1,
+            "the unavailable field was stripped"
+        );
+        assert_eq!(owed_count(&outcome), 0);
+        // Fail-safe: a reliance block with no status reads as the worst
+        // token, never as a missing count.
+        let broken = GroundingOutcome {
+            report: Value::Null,
+            completeness: Value::Null,
+            reliance: Value::Null,
+        };
+        assert_eq!(reliance_token(&broken), "unusable");
+        assert_eq!(stripped_count(&broken), 0);
+        assert_eq!(owed_count(&broken), 0);
     }
 
     #[test]
