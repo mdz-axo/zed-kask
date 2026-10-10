@@ -116,6 +116,68 @@ fn load_timed_transcript(
     Ok(bundle)
 }
 
+/// Select a stored layer of `kind` from the transcript's listed layers:
+/// newest first (RFC 3339 timestamps sort lexicographically; the ID breaks
+/// ties deterministically, so a tied newest group resolves to its newest
+/// member, never an arbitrary one), the caller's `layer_id` when provided,
+/// else the newest. An unknown ID (or no layer of the kind) is the named
+/// not-found. The caller keeps its typed destructure — the kind filter
+/// guarantees the variant, so a mismatch there is an invariant break, never
+/// a caller error.
+fn select_layer_of_kind(
+    layers: &[transcript_store::LayerRecord],
+    transcript_id: &str,
+    kind: &str,
+    layer_id: Option<&str>,
+) -> Result<transcript_store::LayerRecord, McpToolError> {
+    let mut matching: Vec<_> = layers
+        .iter()
+        .filter(|record| record.layer.kind() == kind)
+        .cloned()
+        .collect();
+    matching.sort_by(|a, b| {
+        b.created_at
+            .cmp(&a.created_at)
+            .then_with(|| b.id.cmp(&a.id))
+    });
+    let selected = match layer_id {
+        Some(id) => matching.into_iter().find(|record| record.id == id),
+        None => matching.into_iter().next(),
+    };
+    selected.ok_or_else(|| {
+        McpToolError::not_found(format!(
+            "no {kind} layer found for transcript {transcript_id}"
+        ))
+    })
+}
+
+/// Select the transcript's correction layer — newest, or the caller's
+/// `layer_id` — and destructure it: the typed selection the correction
+/// consumers (`educt_apply_corrections`, `educt_realign_transcript`)
+/// share. Returns the storage record (callers read its id) and the cloned
+/// correction layer. The kind filter guarantees the variant, so a mismatch
+/// is an invariant break, never a caller error.
+fn select_correction_layer(
+    layers: &[transcript_store::LayerRecord],
+    transcript_id: &str,
+    layer_id: Option<&str>,
+) -> Result<
+    (
+        transcript_store::LayerRecord,
+        crate::transcript_layers::CorrectionLayer,
+    ),
+    McpToolError,
+> {
+    let record = select_layer_of_kind(layers, transcript_id, "correction", layer_id)?;
+    let TranscriptLayer::Correction(correction) = &record.layer else {
+        return Err(McpToolError::internal(
+            "layer kind mismatch after correction filter",
+        ));
+    };
+    let correction = correction.clone();
+    Ok((record, correction))
+}
+
 fn working_transcript(
     driver: &dyn hkask_storage::database::driver::DatabaseDriver,
     transcript_id: &str,
@@ -742,31 +804,8 @@ impl MediaServer {
             )?;
             let layers =
                 transcript_store::list_layers(driver, &transcript_id).map_err(map_store_error)?;
-            let mut correction_layers: Vec<_> = layers
-                .iter()
-                .filter(|record| record.layer.kind() == "correction")
-                .cloned()
-                .collect();
-            // Newest first; the ID breaks timestamp ties deterministically.
-            correction_layers.sort_by(|a, b| {
-                b.created_at
-                    .cmp(&a.created_at)
-                    .then_with(|| b.id.cmp(&a.id))
-            });
-            let record = match layer_id {
-                Some(id) => correction_layers.into_iter().find(|record| record.id == id),
-                None => correction_layers.into_iter().next(),
-            };
-            let Some(record) = record else {
-                return Err(McpToolError::not_found(format!(
-                    "no correction layer found for transcript {transcript_id}"
-                )));
-            };
-            let TranscriptLayer::Correction(correction) = &record.layer else {
-                return Err(McpToolError::internal(
-                    "layer kind mismatch after correction filter",
-                ));
-            };
+            let (record, correction) =
+                select_correction_layer(&layers, &transcript_id, layer_id.as_deref())?;
             let corrected =
                 crate::transcript_layers::corrected_text_view(&bundle.words, &correction.edits);
             // Consistency with the working transcript every timed consumer
@@ -852,29 +891,8 @@ impl MediaServer {
             )?;
             let layers =
                 transcript_store::list_layers(driver, &transcript_id).map_err(map_store_error)?;
-            let mut correction_layers: Vec<_> = layers
-                .iter()
-                .filter(|record| record.layer.kind() == "correction")
-                .collect();
-            correction_layers.sort_by(|a, b| {
-                b.created_at
-                    .cmp(&a.created_at)
-                    .then_with(|| b.id.cmp(&a.id))
-            });
-            let record = match layer_id {
-                Some(id) => correction_layers.into_iter().find(|record| record.id == id),
-                None => correction_layers.into_iter().next(),
-            };
-            let Some(record) = record else {
-                return Err(McpToolError::not_found(format!(
-                    "no correction layer found for transcript {transcript_id}"
-                )));
-            };
-            let TranscriptLayer::Correction(correction) = &record.layer else {
-                return Err(McpToolError::internal(
-                    "layer kind mismatch after correction filter",
-                ));
-            };
+            let (record, correction) =
+                select_correction_layer(&layers, &transcript_id, layer_id.as_deref())?;
             // An already-aligned correction needs no re-anchoring — an
             // honest no-op, not an error.
             if crate::transcript_layers::aligned_corrected_words(&bundle.words, &correction.edits)
@@ -883,7 +901,7 @@ impl MediaServer {
                 return Ok(serde_json::json!({
                     "alignment": "aligned",
                     "note": "correction is already one-for-one aligned; no re-anchoring needed",
-                    "applied_layer": {"id": record.id.clone()},
+                    "applied_layer": {"id": record.id},
                 }));
             }
             let realignment =
@@ -909,7 +927,7 @@ impl MediaServer {
                 "working_words": working_words,
                 "stored": stored,
                 "reanchored": {
-                    "correction_layer_id": record.id.clone(),
+                    "correction_layer_id": record.id,
                     "interpolation": "equal-slice across each edited range's source span",
                     "source_timings": "unchanged — the immutable source bundle is never modified",
                 },
@@ -995,29 +1013,8 @@ impl MediaServer {
             )?;
             let layers =
                 transcript_store::list_layers(driver, &transcript_id).map_err(map_store_error)?;
-            let mut highlight_layers: Vec<_> = layers
-                .into_iter()
-                .filter(|record| record.layer.kind() == "highlight")
-                .collect();
-            // Newest first (RFC 3339 timestamps sort lexicographically);
-            // the ID breaks timestamp ties deterministically — the same
-            // tie-break the correction-layer selections use, so a tied
-            // newest group resolves to its newest member, never an
-            // arbitrary one.
-            highlight_layers.sort_by(|a, b| {
-                b.created_at
-                    .cmp(&a.created_at)
-                    .then_with(|| b.id.cmp(&a.id))
-            });
-            let record = match layer_id {
-                Some(id) => highlight_layers.into_iter().find(|record| record.id == id),
-                None => highlight_layers.into_iter().next(),
-            };
-            let Some(record) = record else {
-                return Err(McpToolError::not_found(format!(
-                    "no highlight layer found for transcript {transcript_id}"
-                )));
-            };
+            let record =
+                select_layer_of_kind(&layers, &transcript_id, "highlight", layer_id.as_deref())?;
             let TranscriptLayer::Highlight(highlight) = &record.layer else {
                 return Err(McpToolError::internal(
                     "layer kind mismatch after highlight filter",
