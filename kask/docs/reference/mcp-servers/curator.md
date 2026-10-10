@@ -39,11 +39,16 @@ path resolution finds the same root the agent uses
   covers the entity_ref JOIN — an embedding stored under an entity with no
   h_mem is an orphan the KNN path must surface, never silently drop.
 - **Memory writes** — `memory_insert` (`:1418`, evidence-cited: rejects
-  inserts without a supporting h_mem id), `memory_update` (`:1539`,
-  Bayesian log-odds confidence combination), `memory_resolve_contradiction`
+  inserts without a supporting h_mem id; stamps the extraction ceiling
+  `provenance: model_inference` — the request schema offers no tier field
+  to claim — and refuses a colliding insert: a differing value for an
+  existing `(entity, attribute)` key is surfaced by id and routed to
+  resolution, never silently coexisting), `memory_update` (`:1539`,
+  Bayesian log-odds confidence combination — revision by id, unaffected
+  by the collision gate), `memory_resolve_contradiction`
   (`:1616`, forget or update-confidence with a cited reason),
-  `curator_memory_extract` (`:1891`, turn-history candidates),
-  `curator_memory_backfill_embeddings` (`:1828`).
+  `curator_memory_extract` (`:1891`, turn-history candidates — machine
+  ingestion, ungated), `curator_memory_backfill_embeddings` (`:1828`).
 - **Hygiene** — `curator_memory_prune` (`:1710`, age-gated with the
   spare-recalled-within escape), `curator_memory_dedup` (`:1789`,
   normalized-string value dedup).

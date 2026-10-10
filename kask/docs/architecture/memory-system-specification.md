@@ -224,6 +224,7 @@ creation (`hmem.rs:141-149`).
 | `visibility`  | TEXT    | `private` / `shared` / `public` (default `private`) |
 | `owner_webid` | TEXT    | The owning WebID                               |
 | `ontology`    | TEXT    | JSON blob: dual-axis anchoring (PKO process + DC state) |
+| `provenance`  | TEXT    | How the value was obtained (NOT NULL DEFAULT `model_inference`): `tool_observed` (a verbatim tool-outcome record, stamped only by the machine paths that hold it) or `model_inference` (the model's synthesis or speech — the extraction ceiling: a model-synthesized memory never retrieves as tool-observed, no matter how often it is recalled or re-asserted). Added 2026-10-10 (R5, fermi's `verification_for_agent_ecologies.md` §5.4/§7); legacy rows backfill as `model_inference` — the fail-safe direction. Surfaced in `curator_memory_recall` / `curator_semantic_search` output. The write-path contradiction check: `memory_insert` refuses a differing value for an existing `(entity, attribute)` key — surfaced by id, routed to `memory_resolve_contradiction` / `memory_update`, never silently coexisting. |
 
 ### `embeddings` (vector metadata — `schema.sql:5`)
 
@@ -381,6 +382,7 @@ erDiagram
         TEXT visibility
         TEXT owner_webid
         TEXT ontology
+        TEXT provenance
     }
     embeddings {
         TEXT id PK

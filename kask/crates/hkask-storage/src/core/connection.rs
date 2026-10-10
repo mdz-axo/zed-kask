@@ -347,6 +347,7 @@ impl Database {
         let dim = embedding_dim();
         conn.execute_batch(&schema.replace("$DIM", &dim.to_string()))?;
         Self::migrate_embeddings_passage_text(conn)?;
+        Self::migrate_hmems_provenance(conn)?;
         Self::migrate_hmems_forgetting_spec(conn)?;
         Ok(())
     }
@@ -367,6 +368,33 @@ impl Database {
             tracing::info!(
                 target: "reg.storage",
                 "Migration: added passage_text column to embeddings table"
+            );
+        }
+        Ok(())
+    }
+
+    /// Migrate existing `hmems` tables: add the `provenance` column (the
+    /// extraction ceiling, R5 2026-10-10) if it doesn't exist. `CREATE TABLE
+    /// IF NOT EXISTS` won't add the column to an already-existing table, so
+    /// `ALTER TABLE` is needed for DBs created before this column was
+    /// introduced. SQLite has no `ADD COLUMN IF NOT EXISTS`, so we check
+    /// `PRAGMA table_info` first (the `passage_text` pattern). The default
+    /// backfills legacy rows as `model_inference` — the fail-safe direction:
+    /// an unstamped memory never reads as tool-observed.
+    fn migrate_hmems_provenance(conn: &rusqlite::Connection) -> Result<(), DatabaseError> {
+        let mut stmt = conn.prepare("PRAGMA table_info(hmems)")?;
+        let has_column = stmt.query_map([], |row| row.get::<_, String>(1))?;
+        let has_column = has_column
+            .filter_map(|r| r.ok())
+            .any(|name| name == "provenance");
+        drop(stmt);
+        if !has_column {
+            conn.execute_batch(
+                "ALTER TABLE hmems ADD COLUMN provenance TEXT NOT NULL DEFAULT 'model_inference';",
+            )?;
+            tracing::info!(
+                target: "reg.storage",
+                "Migration: added provenance column to hmems table (legacy rows read as model_inference)"
             );
         }
         Ok(())
@@ -1025,12 +1053,16 @@ mod tests {
             let database = open_or_repair(path, "test_passphrase")?;
             let pool = database.sqlite_pool()?;
             let connection = pool.get()?;
-            let columns = connection
+            let columns: Vec<String> = connection
                 .prepare("PRAGMA table_info(hmems)")?
                 .query_map([], |row| row.get::<_, String>(1))?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
-            assert_eq!(columns.len(), 11);
+            assert_eq!(columns.len(), 12);
             assert!(!columns.iter().any(|column| column == "valid_to"));
+            assert!(
+                columns.iter().any(|column| column == "provenance"),
+                "the provenance migration must have added the column"
+            );
             let count: i64 =
                 connection.query_row("SELECT count(*) FROM hmems", [], |row| row.get(0))?;
             assert_eq!(count, 1, "forgotten rows must be absent, not filtered");

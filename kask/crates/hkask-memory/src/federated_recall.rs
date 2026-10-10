@@ -38,6 +38,7 @@ const CURRENT_HMEM_COLUMNS: &[&str] = &[
     "visibility",
     "owner_webid",
     "ontology",
+    "provenance",
 ];
 const CURRENT_EMBEDDING_COLUMNS: &[&str] = &[
     "id",

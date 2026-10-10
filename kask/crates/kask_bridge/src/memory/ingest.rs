@@ -27,7 +27,7 @@ use hkask_inference::passage_tagging::{
     render_deployed_tagging_prompt_at,
 };
 use hkask_memory::MemoryConsolidator;
-use hkask_storage::HMem;
+use hkask_storage::{HMem, Provenance};
 use hkask_types::template::LLMParameters;
 use hkask_types::{
     Confidence, Dimension, GoalEvent, HMemOntology, MemoryError, TurnRecord, Visibility, WebID,
@@ -345,7 +345,10 @@ async fn publish_goal_event(
     )
     .with_visibility(Visibility::Shared)
     .with_ontology(goal_ontology)
-    .with_confidence(Confidence::new(0.5));
+    .with_confidence(Confidence::new(0.5))
+    // The value is the verbatim output of the goal tool — a tool outcome
+    // record, not a synthesis (the extraction ceiling's upper tier).
+    .with_provenance(Provenance::ToolObserved);
     if let Err(error) = curator_store.store(shared_goal) {
         if let Err(cleanup_error) = curator_store.delete_embedding_by_id(&embedding_id) {
             tracing::warn!(

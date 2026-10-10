@@ -108,10 +108,20 @@ ported:
   (operator ruling 2026-10-10: aggregate pattern visibility is adequate) —
   a wrong individual strip surfaces the way every other finding does: as
   a review-board card with the evidence pasted in.
-- **Memory provenance tiers** (fermi extraction ceiling applied to curator
-  memory): h_mems carry evidence citation and confidence but no provenance
-  tier — a model-synthesized memory and a tool-observed one retrieve with
-  equal standing, and no write-path check routes contradictions.
+- **Memory provenance tiers — CLOSED 2026-10-10 (R5).** h_mems now carry a
+  `provenance` tier (`tool_observed` | `model_inference` — the extraction
+  ceiling: a model-synthesized memory never retrieves as tool-observed),
+  stamped at every write path (`memory_insert` stamps `model_inference`
+  unclaimably; goal-event ingestion stamps `tool_observed`; turn chunks and
+  distilled lessons default `model_inference`), surfaced in
+  `curator_memory_recall` / `curator_semantic_search`, and backed by a
+  write-path contradiction check (`memory_insert` refuses a differing value
+  for an existing key, surfaced by id and routed to
+  `memory_resolve_contradiction` / `memory_update`). Residual, disclosed:
+  the other servers' stores (kata-kanban, corpus, training) share the
+  schema and default to `model_inference` — fail-safe (never overstates),
+  to be stamped in their own changes if their recall surfaces ever
+  surface provenance.
 - **Dispatch provenance signals** (fermi `stamp_invocation`): dispatch records
   carry no route-reason stamps, so swarm C6 blame cannot separate "the wrong
   question was sent" from "the agent is bad at the job".

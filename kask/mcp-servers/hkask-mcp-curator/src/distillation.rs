@@ -45,7 +45,7 @@
 //! is indistinguishable from a broken one.
 
 use crate::CuratorDb;
-use hkask_storage::HMem;
+use hkask_storage::{HMem, Provenance};
 use hkask_types::WebID;
 use hkask_types::regulation::RegulationSpan;
 use hkask_types::template::LLMParameters;
@@ -675,7 +675,9 @@ pub(crate) async fn distill_store(
                 webid,
             )
             .with_confidence(hkask_types::Confidence::new(0.5))
-            .with_visibility(hkask_types::Visibility::Private);
+            .with_visibility(hkask_types::Visibility::Private)
+            // A platform record of what was processed — not a synthesis.
+            .with_provenance(Provenance::ToolObserved);
             // Embed-at-publish — the goal-event contract (therapy 2026-10-08,
             // F002): every lesson is embedded BEFORE the atomic publication,
             // and an embedding failure fails the batch (watermark unadvanced,

@@ -117,6 +117,18 @@ fn model_mismatch_note(excluded: usize) -> String {
     )
 }
 
+/// Strip the derived keys the insert path adds (`recall_text`, `_note`)
+/// before comparing a new value against a stored one — the write-path
+/// contradiction check compares payloads, not storage decorations.
+fn comparable_payload(value: &serde_json::Value) -> serde_json::Value {
+    let mut value = value.clone();
+    if let Some(object) = value.as_object_mut() {
+        object.remove("recall_text");
+        object.remove("_note");
+    }
+    value
+}
+
 /// The curator's stores, backed by the curator's
 /// sovereign `curator.db`. Grouped so the self-healing handle can swap the whole
 /// set atomically after a re-open.
@@ -602,7 +614,7 @@ impl CuratorServer {
                             json!({
                                 "id": t.id.to_string(),
                                 "entity": t.entity, "attribute": t.attribute,
-                                "value": t.value, "confidence": t.confidence,
+                                "value": t.value, "confidence": t.confidence, "provenance": t.provenance.as_str(),
                                 "distance": distance,
                             })
                         })
@@ -647,7 +659,7 @@ impl CuratorServer {
                             json!({
                                 "id": t.id.to_string(),
                                 "entity": t.entity, "attribute": t.attribute,
-                                "value": t.value, "confidence": t.confidence,
+                                "value": t.value, "confidence": t.confidence, "provenance": t.provenance.as_str(),
                             })
                         })
                         .collect();
@@ -906,7 +918,7 @@ impl CuratorServer {
                         json!({
                             "id": t.id.to_string(),
                             "entity": t.entity, "attribute": t.attribute,
-                            "value": t.value, "confidence": t.confidence,
+                            "value": t.value, "confidence": t.confidence, "provenance": t.provenance.as_str(),
                             "ontology": t.ontology,
                         })
                     })
@@ -933,7 +945,7 @@ impl CuratorServer {
                                     json!({
                                         "id": t.id.to_string(),
                                         "entity": t.entity, "attribute": t.attribute,
-                                        "value": t.value, "confidence": t.confidence,
+                                        "value": t.value, "confidence": t.confidence, "provenance": t.provenance.as_str(),
                                         "valid_from": t.observed_at.to_rfc3339(),
                                     })
                                 })
@@ -961,7 +973,7 @@ impl CuratorServer {
                                     json!({
                                         "id": t.id.to_string(),
                                         "entity": t.entity, "attribute": t.attribute,
-                                        "value": t.value, "confidence": t.confidence,
+                                        "value": t.value, "confidence": t.confidence, "provenance": t.provenance.as_str(),
                                     })
                                 })
                                 .collect();
@@ -1035,7 +1047,7 @@ impl CuratorServer {
                                 "entity": t.entity,
                                 "attribute": t.attribute,
                                 "value": t.value,
-                                "confidence": t.confidence,
+                                "confidence": t.confidence, "provenance": t.provenance.as_str(),
                                 "distance": distance,
                             })
                         })
@@ -1059,7 +1071,7 @@ impl CuratorServer {
                                 "entity": t.entity,
                                 "attribute": t.attribute,
                                 "value": t.value,
-                                "confidence": t.confidence,
+                                "confidence": t.confidence, "provenance": t.provenance.as_str(),
                                 "distance": distance,
                             })
                         })
@@ -1115,7 +1127,7 @@ impl CuratorServer {
                                             "entity": t.entity,
                                             "attribute": t.attribute,
                                             "value": t.value,
-                                            "confidence": t.confidence,
+                                            "confidence": t.confidence, "provenance": t.provenance.as_str(),
                                         })
                                     })
                                     .collect();
@@ -1148,7 +1160,7 @@ impl CuratorServer {
                                             "entity": t.entity,
                                             "attribute": t.attribute,
                                             "value": t.value,
-                                            "confidence": t.confidence,
+                                            "confidence": t.confidence, "provenance": t.provenance.as_str(),
                                             "valid_from": t.observed_at.to_rfc3339(),
                                         })
                                     })
@@ -1467,10 +1479,44 @@ impl CuratorServer {
                 )));
             }
 
+            // The write-path contradiction check (R5, fermi's "unverified is
+            // a work item" discipline inverted: a *conflicting* value is not
+            // a work item, it is a finding): a colliding insert surfaces the
+            // contradiction — never silently coexisting. Existing rows for
+            // the same (entity, attribute) holding a different payload value
+            // are surfaced by id and routed to the resolution paths; a
+            // same-value insert (re-assertion) is not a contradiction.
+            // `memory_update` (revision by id) and the machine ingestion
+            // paths are unaffected — the gate is the deliberate
+            // model-facing knowledge write only.
+            let existing = memory
+                .query_deduped(&req.entity)
+                .map_err(|e| map_memory_store_error(e, "Failed to read existing memories for the contradiction check"))?;
+            let incoming = serde_json::Value::from(req.value);
+            let new_payload = comparable_payload(&incoming);
+            let contradictions: Vec<&hkask_storage::HMem> = existing
+                .iter()
+                .filter(|h| {
+                    h.attribute == req.attribute && comparable_payload(&h.value) != new_payload
+                })
+                .collect();
+            if !contradictions.is_empty() {
+                let ids: Vec<String> = contradictions.iter().map(|h| h.id.to_string()).collect();
+                return Err(McpToolError::failed_precondition(format!(
+                    "contradiction: {} existing h_mem(s) for '{}/{}' hold a different value ({ids:?}). \
+                     Resolve via memory_resolve_contradiction (forget or update_confidence on the \
+                     wrong one) or memory_update (revise by id); a differing value for the same \
+                     key may not coexist silently",
+                    contradictions.len(),
+                    req.entity,
+                    req.attribute
+                )));
+            }
+
             // Build the h_mem with confidence floor 0.5. The AnyJsonValue
             // tool input converts to an owned Value here — the handler
             // mutates it (note insertion, recall_text backfill) below.
-            let mut value = serde_json::Value::from(req.value);
+            let mut value = incoming;
             if let Some(note) = &req.note {
                 if let Some(obj) = value.as_object_mut() {
                     obj.insert("_note".to_string(), serde_json::Value::String(note.clone()));
@@ -1505,7 +1551,13 @@ impl CuratorServer {
                 value,
                 self.webid,
             )
-            .with_confidence(hkask_types::Confidence::new(0.5));
+            .with_confidence(hkask_types::Confidence::new(0.5))
+            // The extraction ceiling, enforced here: the model's insert is
+            // `model_inference` — permanently, no matter how often it is
+            // recalled or re-asserted. The request schema offers no tier
+            // field to claim; only the machine paths that hold a verbatim
+            // tool outcome stamp `tool_observed`.
+            .with_provenance(hkask_storage::Provenance::ModelInference);
             let embed_text = hkask_memory::semantic_passage_for_h_mem(&h_mem).ok_or_else(|| {
                 McpToolError::invalid_argument(
                     "memory value has no canonical semantic passage; mutable state requires recall_text",
@@ -1540,6 +1592,7 @@ impl CuratorServer {
                 ));
             }
 
+            let provenance = h_mem.provenance.as_str();
             memory
                 .store(h_mem)
                 .map_err(|e| map_memory_store_error(e, "Failed to store curator memory"))?;
@@ -1551,9 +1604,10 @@ impl CuratorServer {
                 "entity": req.entity,
                 "attribute": req.attribute,
                 "confidence": 0.5,
+                "provenance": provenance,
                 "evidence_h_mem_id": req.evidence_h_mem_id,
                 "semantic_recall": "embedded",
-                "guidance": "Memory stored at confidence 0.5 with a semantic embedding. Use memory_update to adjust confidence after outcome observation. Retrieve via curator_memory_recall with this entity, or curator_semantic_search by meaning."
+                "guidance": "Memory stored at confidence 0.5 with a semantic embedding, provenance model_inference (the extraction ceiling — a model-synthesized memory never retrieves as tool-observed). Use memory_update to adjust confidence after outcome observation. Retrieve via curator_memory_recall with this entity, or curator_semantic_search by meaning."
             }))
         })
         .await

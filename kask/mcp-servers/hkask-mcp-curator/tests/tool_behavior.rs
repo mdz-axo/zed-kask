@@ -915,6 +915,114 @@ async fn memory_insert_rejects_missing_or_malformed_evidence() {
     );
 }
 
+// ── Insert-path provenance tier + write-path contradiction check (R5) ──
+
+/// The extraction ceiling, enforced at the tool: the model's insert is
+/// `model_inference` — the request schema offers no tier field to claim —
+/// and the tier surfaces in the insert receipt and in recall, so a
+/// model-synthesized memory never retrieves as tool-observed.
+#[tokio::test]
+async fn memory_insert_stamps_model_inference_and_recall_surfaces_the_tier() {
+    let (server, memory) = make_server_with_embeddings();
+    let seed_id = seed_h_mem(&memory, "evidence", "fact", "seed".to_string());
+    let inserted = insert_citing_seed(&server, seed_id).await;
+    assert_eq!(
+        inserted["provenance"].as_str(),
+        Some("model_inference"),
+        "the insert receipt carries the ceiling stamp — got: {inserted}"
+    );
+
+    let recalled = parse(
+        &server
+            .curator_memory_recall(Parameters(MemoryRecallRequest {
+                entity: "zed-kask".to_string(),
+                recall_shape: MemoryRecallType::EntityWide,
+                ontology_axis: None,
+                ontology_value: None,
+            }))
+            .await
+            .expect("recall ok"),
+    );
+    let h_mems = recalled["entity_wide"]["h_mems"]
+        .as_array()
+        .expect("entity_wide h_mems");
+    assert!(!h_mems.is_empty(), "the inserted memory is recalled");
+    assert!(
+        h_mems
+            .iter()
+            .all(|h| h["provenance"].as_str() == Some("model_inference")),
+        "recall surfaces the tier on every h_mem — got: {recalled}"
+    );
+}
+
+/// A colliding insert surfaces the contradiction at the write path — never
+/// silently coexisting: the refusal names the existing h_mem by id and
+/// routes to the resolution paths. `memory_update` (revision by id) and the
+/// machine ingestion paths are unaffected — the gate is the deliberate
+/// model-facing knowledge write only.
+#[tokio::test]
+async fn memory_insert_collision_surfaces_the_contradiction_and_routes_to_resolution() {
+    let (server, memory) = make_server_with_embeddings();
+    let seed_id = seed_h_mem(
+        &memory,
+        "company:acme",
+        "revenue_trend",
+        "declining".to_string(),
+    );
+
+    let error = server
+        .memory_insert(Parameters(MemoryInsertRequest {
+            entity: "company:acme".to_string(),
+            attribute: "revenue_trend".to_string(),
+            value: serde_json::json!("growing").into(),
+            evidence_h_mem_id: seed_id.clone(),
+            note: None,
+        }))
+        .await
+        .expect_err("a differing value for the same key must be refused");
+    assert!(
+        matches!(error.kind, hkask_types::McpErrorKind::FailedPrecondition),
+        "a contradiction is a failed precondition, not an argument or internal error — got: {error:?}"
+    );
+    assert!(
+        error.message.contains("contradiction"),
+        "the refusal names the contradiction — got: {error:?}"
+    );
+    assert!(
+        error.message.contains(&seed_id),
+        "the refusal names the existing h_mem by id — got: {error:?}"
+    );
+    assert!(
+        error.message.contains("memory_resolve_contradiction"),
+        "the refusal routes to the resolution path — got: {error:?}"
+    );
+}
+
+/// A same-value insert is a re-assertion, not a contradiction — it proceeds.
+/// The payload comparison strips the derived keys (`recall_text`, `_note`),
+/// so a re-assertion whose stored form gained a recall passage still matches.
+#[tokio::test]
+async fn memory_insert_same_value_reassertion_is_not_a_contradiction() {
+    let (server, memory) = make_server_with_embeddings();
+    let seed_id = seed_h_mem(&memory, "company:beta", "sector", "software".to_string());
+
+    let ok = server
+        .memory_insert(Parameters(MemoryInsertRequest {
+            entity: "company:beta".to_string(),
+            attribute: "sector".to_string(),
+            value: serde_json::json!("software").into(),
+            evidence_h_mem_id: seed_id,
+            note: None,
+        }))
+        .await
+        .expect("a same-value re-assertion proceeds");
+    assert_eq!(
+        parse(&ok)["provenance"].as_str(),
+        Some("model_inference"),
+        "the re-assertion carries the ceiling stamp"
+    );
+}
+
 // ── Insert-path semantic recallability (the entity_ref invariant) ──────
 
 /// `memory_insert` must embed the inserted memory's text under its entity.

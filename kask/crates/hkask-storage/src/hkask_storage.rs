@@ -36,7 +36,7 @@ pub use embeddings::{
 };
 
 pub use hkask_types::HMemId;
-pub use hmem::{HMem, HMemError, HMemStore};
+pub use hmem::{HMem, HMemError, HMemStore, Provenance};
 pub use regulation_store::RegulationArchive;
 
 pub use gallery::{

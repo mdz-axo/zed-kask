@@ -37,6 +37,59 @@ impl From<serde_json::Error> for HMemError {
     }
 }
 
+/// How an h_mem's value was obtained — the extraction ceiling (fermi's
+/// `verification_for_agent_ecologies.md` §5.4/§7: "extraction can never
+/// exceed inference; judgement does not inherit retrieval"). A memory the
+/// model synthesized from what it read is `model_inference` — permanently,
+/// no matter how often it is recalled or re-asserted. Only a write path
+/// that records a verbatim tool outcome may claim `tool_observed`.
+///
+/// The default is `model_inference` because the failure direction is
+/// asymmetric: an unstamped memory must never read as tool-observed (the
+/// same direction as reliance's `unchecked` ≠ `clean` — a checker can
+/// lower, never raise). Machine paths that record tool outcomes stamp
+/// `tool_observed` explicitly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Provenance {
+    /// The value is a verbatim record of what a tool returned (a goal
+    /// event's output, a platform watermark) — written only by the machine
+    /// paths that hold the tool result.
+    ToolObserved,
+    /// The value is the model's synthesis or speech — the default, and the
+    /// permanent tier for anything the model wrote about what it read.
+    #[default]
+    ModelInference,
+}
+
+impl Provenance {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Provenance::ToolObserved => "tool_observed",
+            Provenance::ModelInference => "model_inference",
+        }
+    }
+
+    /// Parse a stored tier. A value outside the closed set reads as
+    /// `model_inference` with a warn — fail-safe down (never up: a
+    /// corrupted or future tier must not surface as tool-observed), and
+    /// the drift is visible in the log (the failure-signal rule).
+    pub fn parse_stored(text: &str) -> Self {
+        match text {
+            "tool_observed" => Provenance::ToolObserved,
+            "model_inference" => Provenance::ModelInference,
+            other => {
+                tracing::warn!(
+                    target: "reg.storage",
+                    tier = other,
+                    "unknown h_mem provenance tier — reading as model_inference (never tool_observed)"
+                );
+                Provenance::ModelInference
+            }
+        }
+    }
+}
+
 /// A memory with observation and recall timestamps; forgetting deletes it.
 #[derive(Debug, Clone)]
 pub struct HMem {
@@ -57,6 +110,9 @@ pub struct HMem {
     /// ontology). Queryable via `json_extract(ontology, ...)` so h_mems and
     /// corpus `TaggedChunk`s share a common substrate for graph reasoning.
     pub ontology: Option<HMemOntology>,
+    /// How the value was obtained (the extraction ceiling). Defaults to
+    /// `model_inference` — see [`Provenance`].
+    pub provenance: Provenance,
 }
 impl HMem {
     /// Create a new HMem with required fields.
@@ -78,6 +134,7 @@ impl HMem {
             access: AccessControl::new(owner_webid),
             recalled_at: now,
             ontology: None,
+            provenance: Provenance::default(),
         }
     }
     /// Set confidence on a HMem.
@@ -130,6 +187,15 @@ impl HMem {
         self.ontology = Some(ont.with_dimension(d));
         self
     }
+
+    /// Set the provenance tier on a HMem. The ceiling is enforced by the
+    /// write paths, not here: only a machine path holding a verbatim tool
+    /// outcome stamps `tool_observed`; the model-facing surfaces never
+    /// accept a tier claim (see [`Provenance`]).
+    pub fn with_provenance(mut self, p: Provenance) -> Self {
+        self.provenance = p;
+        self
+    }
 }
 /// HMem store — backed by a provider-agnostic DatabaseDriver.
 #[derive(Clone)]
@@ -159,7 +225,7 @@ impl HMemStore {
     }
 }
 
-const HMEM_COLUMNS: &str = "id, entity, attribute, value, valid_from, recalled_at, confidence, perspective, visibility, owner_webid, ontology";
+const HMEM_COLUMNS: &str = "id, entity, attribute, value, valid_from, recalled_at, confidence, perspective, visibility, owner_webid, ontology, provenance";
 
 impl HMemStore {
     fn exec(&self, sql: &str, params: &[DbValue]) -> Result<usize, HMemError> {
@@ -217,6 +283,11 @@ impl HMemStore {
                         HMemOntology::from_json_str(s).ok()
                     }
                 }),
+                provenance: row
+                    .get(11)?
+                    .as_text()
+                    .ok()
+                    .map_or(Provenance::ModelInference, |s| Provenance::parse_stored(s)),
             };
         Self::row_to_triple(hrow)
     }
@@ -265,7 +336,7 @@ impl HMemStore {
         };
         self.exec(
             &format!(
-                "INSERT INTO hmems ({HMEM_COLUMNS}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)"
+                "INSERT INTO hmems ({HMEM_COLUMNS}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)"
             ),
             &[
                 DbValue::Text(h_mem.id.to_string()),
@@ -283,6 +354,7 @@ impl HMemStore {
                 DbValue::Text(h_mem.access.visibility.to_string()),
                 DbValue::Text(h_mem.access.owner_webid.to_string()),
                 ontology,
+                DbValue::Text(h_mem.provenance.as_str().into()),
             ],
         )?;
         Ok(())
@@ -361,6 +433,7 @@ impl HMemStore {
                     h_mem.access.visibility.to_string(),
                     h_mem.access.owner_webid.to_string(),
                     ontology,
+                    h_mem.provenance.as_str(),
                 ))
             })
             .collect::<Result<Vec<_>, HMemError>>()?;
@@ -403,11 +476,11 @@ impl HMemStore {
             transaction
                 .execute(
                     &format!(
-                        "INSERT INTO hmems ({HMEM_COLUMNS}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)"
+                        "INSERT INTO hmems ({HMEM_COLUMNS}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)"
                     ),
                     rusqlite::params![
                         row.0, row.1, row.2, row.3, row.4, row.5, row.6, row.7, row.8, row.9,
-                        row.10
+                        row.10, row.11
                     ],
                 )
                 .map_err(|error| {
@@ -820,7 +893,7 @@ impl HMemStore {
         // Read the old version's metadata to carry into the replacement —
         // before the delete, because the row is gone afterwards.
         let row = tx.query_row(
-            "SELECT entity, attribute, perspective, visibility, owner_webid, ontology FROM hmems WHERE id = ?1",
+            "SELECT entity, attribute, perspective, visibility, owner_webid, ontology, provenance FROM hmems WHERE id = ?1",
             rusqlite::params![id.to_string()],
             |row| {
                 Ok((
@@ -830,10 +903,11 @@ impl HMemStore {
                     row.get::<_, String>(3)?,
                     row.get::<_, String>(4)?,
                     row.get::<_, Option<String>>(5)?,
+                    row.get::<_, String>(6)?,
                 ))
             },
         ).map_err(|e| HMemError::Infra(InfrastructureError::database(e.to_string())))?;
-        let (entity, attribute, perspective, visibility, owner_webid, ontology) = row;
+        let (entity, attribute, perspective, visibility, owner_webid, ontology, provenance) = row;
         // Delete the old version — the forgetting spec keeps no superseded
         // state (operator ruling 2026-09-04: memories are forgotten or
         // deleted, never "expired").
@@ -845,7 +919,7 @@ impl HMemStore {
         let new_id = HMemId::new();
         tx.execute(
             &format!(
-                "INSERT INTO hmems ({HMEM_COLUMNS}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)"
+                "INSERT INTO hmems ({HMEM_COLUMNS}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)"
             ),
             rusqlite::params![
                 new_id.to_string(),
@@ -859,6 +933,10 @@ impl HMemStore {
                 visibility,
                 owner_webid,
                 ontology,
+                // The tier carries through an update — an update never
+                // elevates (the ceiling: only the write path that holds
+                // the tool outcome stamps tool_observed).
+                provenance,
             ],
         )
         .map_err(|e| HMemError::Infra(InfrastructureError::database(e.to_string())))?;
@@ -1172,6 +1250,7 @@ impl HMemStore {
             },
             recalled_at,
             ontology: row.ontology,
+            provenance: row.provenance,
         })
     }
 }
@@ -1188,12 +1267,67 @@ struct HMemRow {
     visibility: Visibility,
     owner_webid: WebID,
     ontology: Option<HMemOntology>,
+    provenance: Provenance,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::database::sqlite::SqliteDriver;
+
+    /// The provenance tier round-trips through the store, and the default
+    /// is the ceiling's fail-safe direction: an unstamped `HMem::new`
+    /// reads as `model_inference`, never `tool_observed` (R5 — a
+    /// model-synthesized memory never retrieves as tool-observed).
+    #[test]
+    fn provenance_round_trips_and_defaults_to_model_inference() -> anyhow::Result<()> {
+        let store = HMemStore::from_driver(SqliteDriver::in_memory_driver())?;
+        let unstamped = HMem::new(
+            "company:A",
+            "lesson",
+            serde_json::json!("mix shift"),
+            WebID::new(),
+        );
+        let stamped = HMem::new(
+            "curator:goal:1",
+            "kanban_goal_score",
+            serde_json::json!({"achieved": true}),
+            WebID::new(),
+        )
+        .with_provenance(Provenance::ToolObserved);
+        assert_eq!(unstamped.provenance, Provenance::ModelInference);
+        store.insert(&unstamped)?;
+        store.insert(&stamped)?;
+        assert_eq!(
+            store.get_by_id(&unstamped.id)?.expect("stored").provenance,
+            Provenance::ModelInference
+        );
+        assert_eq!(
+            store.get_by_id(&stamped.id)?.expect("stored").provenance,
+            Provenance::ToolObserved
+        );
+        Ok(())
+    }
+
+    /// A stored tier outside the closed set reads as `model_inference` —
+    /// fail-safe down, never up (a corrupted or future tier must not
+    /// surface as tool-observed).
+    #[test]
+    fn unknown_stored_tier_reads_as_model_inference() {
+        assert_eq!(
+            Provenance::parse_stored("tool_observed"),
+            Provenance::ToolObserved
+        );
+        assert_eq!(
+            Provenance::parse_stored("model_inference"),
+            Provenance::ModelInference
+        );
+        assert_eq!(
+            Provenance::parse_stored("future_tier"),
+            Provenance::ModelInference
+        );
+        assert_eq!(Provenance::parse_stored(""), Provenance::ModelInference);
+    }
 
     /// Approved slice 1: identities and deletion commit together; a partially
     /// executed DELETE must roll back before the pool connection is reused.
