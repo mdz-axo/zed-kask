@@ -867,9 +867,43 @@ pub const DERIVED_CONCEPTS: &[DerivedConcept] = &[
         constituents: &["error", "error code"],
         authority: "operator ruling 2026-10-06; PKO 2.0.0 pko:Error, pko:errorCode",
     },
+    DerivedConcept {
+        term: "preventive_maintenance",
+        aliases: &["preventative maintenance", "pm maintenance"],
+        identity: "maintenance carried out to mitigate degradation and reduce the probability of failure",
+        definition: "IEC 60050-192:2015 IEV 192-06-05, verbatim: maintenance carried out to mitigate degradation and reduce the probability of failure. Its siblings by the same vocabulary: condition-based maintenance (IEV 192-06-07, assessment of physical condition) and scheduled maintenance (IEV 192-06-12, a specified time schedule) — the calendar cadence backed by a measured condition. Note 2 to entry: preventive maintenance can sometimes be performed without disabling the item (on-line maintenance, IEV 192-06-30) — the maintenance pass over a running machine is exactly that.",
+        constituents: &["degradation", "probability of failure"],
+        authority: "operator ruling 2026-10-10; IEC 60050-192:2015, IEV 192-06-05 (Electropedia, publication 2024-03-08)",
+    },
+    DerivedConcept {
+        term: "condition_based_maintenance",
+        aliases: &["cbm", "conditional maintenance"],
+        identity: "preventive maintenance based on the assessment of physical condition",
+        definition: "IEC 60050-192:2015 IEV 192-06-07, verbatim: preventive maintenance based on the assessment of physical condition. Note 1 to entry: the condition assessment can be by operator observation, conducted according to a schedule, or by condition monitoring (IEV 192-06-28) of system parameters. The trigger is a measured state, not the calendar — a threshold crossed, a deviation observed. The staleness warning that fires when the last successful weekly update exceeds seven days is condition-based maintenance in exactly this sense: the schedule (IEV 192-06-12) is backed by a measured condition.",
+        constituents: &["preventive maintenance", "physical condition assessment"],
+        authority: "operator ruling 2026-10-10; IEC 60050-192:2015, IEV 192-06-07 (Electropedia, publication 2024-03-08)",
+    },
+    DerivedConcept {
+        term: "cache",
+        aliases: &["caching"],
+        identity: "a hardware or software component that stores data so that future requests for that data can be served faster",
+        definition: "The stored data might be the result of an earlier computation or a copy of data stored elsewhere. A cache hit serves the request from the cache; a miss recomputes or reads the slower backing store — the more requests served from the cache, the faster the system performs. The defining maintenance property follows from the identity: a cache is deletable exactly when re-derivation (recomputation or refetch) is available and cheaper than storage — the recoverability leg of probe-before-delete. Hardlink-shared caches (uv) free fewer blocks than their du size; a cache's apparent size is an upper bound on reclaimable space.",
+        constituents: &["stored data", "future requests"],
+        authority: "operator ruling 2026-10-10; Wikipedia, Cache (computing) (2026-10-10 revision) — the registry's Wikidata-citation practice (cf. pdca_cycle Q820214)",
+    },
+    DerivedConcept {
+        term: "system_health_monitoring",
+        aliases: &["health monitoring", "shm"],
+        identity: "continuous or periodic acquisition of data about a system's state, compared against expected conditions, to surface degradation or deviation before failure",
+        definition: "An integrated technical framework that continuously or periodically acquires data about the state of a subject — a machine, a structure, a service — for early fault diagnosis (IEEE Technology Navigator, Health Monitoring System; Tsalapati & Koubarakis, SHM ontology, ISWC 2023). The sense leg of a cybernetic feedback loop (Wiener 1948; Ashby 1956; this registry, operator ruling 2026-09-18): measurement compared against a set point, the deviation driving action whose effect enters the next measurement. A health check that measures but never compares (no thresholds, no warnings) is monitoring in name only — a silent leg is a broken loop.",
+        constituents: &[
+            "state acquisition",
+            "expected condition",
+            "deviation signal",
+        ],
+        authority: "operator ruling 2026-10-10; IEEE Technology Navigator (Health Monitoring System); Tsalapati & Koubarakis, SHM: A Light-weight, Mid-level Ontology for Reliable System Health Monitoring (ISWC 2023)",
+    },
 ];
-
-/// Resolve a term (or alias) against the derived registry.
 /// Normalization matches the onto_anchor tool's: lowercase alphanumeric
 /// characters only, separators and case folded away.
 pub fn resolve_derived(term: &str) -> Option<&'static DerivedConcept> {
@@ -1016,6 +1050,36 @@ mod tests {
             );
             assert!(
                 concept.authority.contains("2026-09-24"),
+                "{term} cites the ruling"
+            );
+        }
+    }
+
+    /// expect: [P5] The maintenance vocabulary the system-maintenance skill
+    /// uses resolves to published anchors (IEC 60050-192 Electropedia) with
+    /// the 2026-10-10 ruling, and the CBM identity names its parent.
+    #[test]
+    fn maintenance_terms_resolve_with_published_authority() {
+        let cbm = resolve_derived("condition-based maintenance").expect("CBM is defined");
+        assert_eq!(cbm.term, "condition_based_maintenance");
+        assert!(
+            cbm.identity.contains("preventive maintenance"),
+            "CBM identity names its parent"
+        );
+        for (term, marker) in [
+            ("preventive maintenance", "IEV 192-06-05"),
+            ("condition-based maintenance", "IEV 192-06-07"),
+            ("cache", "Cache (computing)"),
+            ("system health monitoring", "ISWC 2023"),
+        ] {
+            let concept = resolve_derived(term).expect("maintenance term is defined");
+            assert!(
+                concept.authority.contains(marker),
+                "{term}: {}",
+                concept.authority
+            );
+            assert!(
+                concept.authority.contains("2026-10-10"),
                 "{term} cites the ruling"
             );
         }

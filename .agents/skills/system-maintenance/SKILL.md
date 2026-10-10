@@ -9,7 +9,7 @@ description: Weekly system maintenance for this machine (Ubuntu 26.04, Framework
 
 - **PDCA** — Shewhart (1939)/Deming; `onto_anchor` → derived `pdca_cycle` (operator ruling 2026-09-24). The maintenance pass is one bounded PDCA loop; its Check measures the pass, never the agent running it.
 - **Feedback loop** — Wiener (1948)/Ashby (1956); `onto_anchor` → derived `cybernetic_feedback_loop` (operator ruling 2026-09-18). The staleness warning is the instrument that made missed weekly runs visible; a silent leg is a broken loop.
-- **Maintenance strategy** — scheduled (calendar) vs condition-based (measured state) maintenance, per the reliability-engineering literature (Moubray, *RCM II*; ISO 14224 taxonomy). Coarse `onto_anchor` (5W1H core rung) — ruling requested; never a private definition.
+- **Maintenance strategy** — scheduled (calendar) vs condition-based (measured state) maintenance: `onto_anchor` → derived `preventive_maintenance` (IEC 60050-192:2015, IEV 192-06-05) and `condition_based_maintenance` (IEV 192-06-07), operator ruling 2026-10-10 — the weekly cadence is scheduled maintenance backed by a measured condition. `cache` (Wikipedia, *Cache (computing)*) and `system_health_monitoring` (IEEE/Tsalapati & Koubarakis ISWC 2023) resolve derived under the same ruling.
 - **Probe-before-action** — audit discipline (assertion → evidence → action); the project's own probe-before-delete rulings.
 
 ## Initial and target condition
