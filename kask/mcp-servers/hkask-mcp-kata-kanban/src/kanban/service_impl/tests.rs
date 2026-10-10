@@ -29,6 +29,43 @@ fn make_service_with_board() -> (KanbanService, Board, WebID) {
     (svc, board, owner)
 }
 
+/// A service over a three-column board (Backlog, In Progress, Done) — the
+/// custom-column arrangement the column-order and round-trip tests share.
+/// The board name is the caller's own (each test's fixture name); the
+/// columns are the shared intent.
+fn make_service_with_three_column_board(name: &str) -> (KanbanService, Board, WebID) {
+    let svc = KanbanService::new(make_store());
+    let owner = WebID::new();
+    let columns = vec![
+        ColumnDef::new("Backlog".into(), TaskStatus::Backlog, 0),
+        ColumnDef::new("In Progress".into(), TaskStatus::InProgress, 1),
+        ColumnDef::new("Done".into(), TaskStatus::Done, 2),
+    ];
+    let board = svc
+        .board_create(owner, name, &columns)
+        .expect("board create");
+    (svc, board, owner)
+}
+
+/// The owner-isolation body shared by `board_list_by_owner` and
+/// `board_isolation` — two named intents (whose list, and isolation of
+/// owners) carried by the test names, one body: two owners' boards, and
+/// each owner's list shows only their own.
+fn assert_boards_isolated_by_owner() {
+    let svc = KanbanService::new(make_store());
+    let alice = WebID::new();
+    let bob = WebID::new();
+
+    svc.board_create(alice, "Alice's Board", &make_default_columns())
+        .unwrap();
+    svc.board_create(bob, "Bob's Board", &make_default_columns())
+        .unwrap();
+
+    let alice_boards = svc.board_list(&alice).unwrap();
+    assert_eq!(alice_boards.len(), 1);
+    assert_eq!(alice_boards[0].name, "Alice's Board");
+}
+
 /// The fault-injection test environment: the in-memory driver (the
 /// trigger-injection site), its store (the row-count/query oracle), a
 /// service over a store clone, an owner, and a board — the arrangement the
@@ -269,18 +306,7 @@ fn board_rename_to_same_name_converges() {
 
 #[test]
 fn board_list_by_owner() {
-    let svc = KanbanService::new(make_store());
-    let alice = WebID::new();
-    let bob = WebID::new();
-
-    svc.board_create(alice, "Alice's Board", &make_default_columns())
-        .unwrap();
-    svc.board_create(bob, "Bob's Board", &make_default_columns())
-        .unwrap();
-
-    let alice_boards = svc.board_list(&alice).unwrap();
-    assert_eq!(alice_boards.len(), 1);
-    assert_eq!(alice_boards[0].name, "Alice's Board");
+    assert_boards_isolated_by_owner();
 }
 
 #[test]
@@ -717,14 +743,7 @@ fn task_move_rejects_skip() {
 
 #[test]
 fn task_move_uses_custom_board_column_order() {
-    let svc = KanbanService::new(make_store());
-    let owner = WebID::new();
-    let columns = vec![
-        ColumnDef::new("Backlog".into(), TaskStatus::Backlog, 0),
-        ColumnDef::new("In Progress".into(), TaskStatus::InProgress, 1),
-        ColumnDef::new("Done".into(), TaskStatus::Done, 2),
-    ];
-    let board = svc.board_create(owner, "Three columns", &columns).unwrap();
+    let (svc, board, owner) = make_service_with_three_column_board("Three columns");
     let task = svc
         .task_create(board.id, TaskSpec::new("Test".into()), owner)
         .unwrap();
@@ -847,18 +866,7 @@ fn board_get_succeeds() {
 
 #[test]
 fn board_isolation() {
-    let svc = KanbanService::new(make_store());
-    let alice = WebID::new();
-    let bob = WebID::new();
-
-    svc.board_create(alice, "Alice's Board", &make_default_columns())
-        .unwrap();
-    svc.board_create(bob, "Bob's Board", &make_default_columns())
-        .unwrap();
-
-    let alice_boards = svc.board_list(&alice).unwrap();
-    assert_eq!(alice_boards.len(), 1);
-    assert_eq!(alice_boards[0].name, "Alice's Board");
+    assert_boards_isolated_by_owner();
 }
 
 // ── Kanban-as-swarm-coordination tests (Slices 1-4) ──────────────────────
@@ -1093,16 +1101,7 @@ fn board_delete_rejects_invalid_root_and_retains_all_rows() -> anyhow::Result<()
 /// populate it with tasks in each column, returning the service, board, and
 /// owner for the test to drive.
 fn make_board_with_tasks_for_round_trip() -> (KanbanService, Board, WebID) {
-    let svc = KanbanService::new(make_store());
-    let owner = WebID::new();
-    let columns = vec![
-        ColumnDef::new("Backlog".into(), TaskStatus::Backlog, 0),
-        ColumnDef::new("In Progress".into(), TaskStatus::InProgress, 1),
-        ColumnDef::new("Done".into(), TaskStatus::Done, 2),
-    ];
-    let board = svc
-        .board_create(owner, "Round Trip Board", &columns)
-        .expect("board create");
+    let (svc, board, owner) = make_service_with_three_column_board("Round Trip Board");
 
     // Backlog tasks (created in Backlog by default).
     svc.task_create(board.id, TaskSpec::new("Backlog A".into()), owner)
