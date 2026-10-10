@@ -84,17 +84,19 @@ pub struct ProviderProfile {
 }
 
 /// The canonical provider profile table. Single source of truth consumed by:
-/// - the intent-driven provider selection inside `web_search` (scores
+/// - the provider selection + audit ranking inside `web_search` (scores
 ///   providers against a query; the ranking surfaces as
-///   `provider_recommendations`)
+///   `provider_recommendations` on every tool-selected path)
 /// - `web_ping` output (`provider_profiles` field for metacognitive
 ///   surfacing — moved off the per-call `web_search` response 2026-09-30:
 ///   the static table repeated ~1KB of identical context on every call)
 /// - `score_providers` (merges static profile with live performance)
 ///
 /// Keep entries aligned with the providers registered in `build_provider_pool`.
-/// Free providers (arxiv, semantic_scholar) are intentionally absent — they're
-/// always-on fallbacks, not selectable via the `provider` field.
+/// Free providers (openalex, arxiv, semantic_scholar) are intentionally
+/// absent — they have no cost/latency profile. They are always registered
+/// and selectable via the `provider` field; the quick pick scores them at
+/// the neutral mid-score (`score_static`).
 pub static PROVIDER_PROFILES: &[ProviderProfile] = &[
     ProviderProfile {
         kind: "tavily",
@@ -244,9 +246,9 @@ pub struct SearchRequest {
     /// providers against (query, intent) — cost, latency, strengths,
     /// capability match — and queries the top recommendation as a
     /// single-provider call. The ranking is surfaced in the output's
-    /// `provider_recommendations` and the choice in `selected_provider`.
-    /// The former two-step web_recommend_provider + web_search(provider)
-    /// pattern, folded in.
+    /// `provider_recommendations` (as on every tool-selected path) and
+    /// the choice in `selected_provider`. The former two-step
+    /// web_recommend_provider + web_search(provider) pattern, folded in.
     pub intent: Option<String>,
     /// Explicit provider override: "tavily", "brave", "exa", "firecrawl",
     /// "serpapi", and the free scholarly providers "openalex", "arxiv",
@@ -402,15 +404,15 @@ pub struct EvaluateEvidenceRequest {
     /// appends its ```spreadsheet display hint for inline rendering
     /// (SP-05, plan §10 Phase 7 — evidence-evaluation matrix). Quoted or
     /// padded values are normalized at the boundary; absent = DataOnly.
-    #[serde(default)]
     #[schemars(schema_with = "presentation_schema")]
     pub presentation: Option<String>,
 }
 
 /// The presentation choice for an evidence evaluation (plan §6).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, JsonSchema)]
+/// Constructed by the boundary parse (`parse_closed_vocab`) — nothing
+/// deserializes or schema-generates this enum directly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EvidencePresentation {
-    #[default]
     DataOnly,
     InlineTable,
 }
@@ -447,7 +449,10 @@ pub struct CiteSource {
     pub authors: Option<Vec<String>>,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, JsonSchema, Serialize)]
+/// The citation style. Constructed by the boundary parse
+/// (`parse_closed_vocab`) and serialized into the response — nothing
+/// deserializes or schema-generates this enum directly.
+#[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CiteStyle {
     Apa,
@@ -893,7 +898,7 @@ pub(crate) struct PingOutput {
     /// web_search response: the table is static per server version, and
     /// repeating it per call spent ~1KB of identical context per response
     /// (observed 2026-09-30 zk-reference sweep). web_search keeps the
-    /// per-call `provider_recommendations` audit of intent-driven picks.
+    /// per-call `provider_recommendations` audit of tool-selected picks.
     /// Always serialized — an empty table (no profiled providers
     /// configured) is information, not absence.
     #[serde(default)]

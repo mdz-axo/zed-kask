@@ -1,8 +1,8 @@
 ---
 title: "Research MCP Server Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-09-28
-version: "0.39.3"
+last_updated: 2026-10-09
+version: "0.40.2"
 status: "Active"
 domain: "Inference"
 mds_categories: [domain, composition, lifecycle]
@@ -26,8 +26,12 @@ response caching, and rate limiting.
 
 - **Credential path:** `ctx.credentials` → `build_provider_pool` — API-key
   providers register only when their key is present; free providers always
-  register. A missing key surfaces as `permission_denied` naming the env var
-  (`WebError::NoProviderConfigured`), never a silent empty result.
+  register. A missing key for a recognized provider surfaces as
+  `permission_denied` naming the env var
+  (`WebError::NoProviderConfigured`), never a silent empty result; an
+  unrecognized provider name is `invalid_argument` naming the registered
+  providers (`known_provider_kind`, 2026-10-09) — a typo or quoted value
+  never reads as a credentials problem.
 - **Inference path:** the server holds an `Arc<dyn InferencePort>` resolved
   via `hkask_inference::resolve_inference_port()` (a `LazyInferencePort` over
   the zed IPC bridge, `HKASK_INFERENCE_SOCKET`). Its single consumer is the
@@ -325,11 +329,64 @@ Three changes from the zk-reference retrieval sweep's lessons:
   contract as `resolve_paper`'s enrichment.
 - The static `provider_profiles` table moved from every `web_search`
   response (~1KB of repeated context per call) to `web_ping`; web_search
-  keeps the per-call `provider_recommendations` audit of intent-driven
-  picks. The Semantic Scholar provider retries 429s with 1s/2s backoff
+  keeps the per-call `provider_recommendations` audit — of tool-selected
+  picks on every selection path since 2026-10-09, of intent-driven picks
+  before that. The Semantic Scholar provider retries 429s with 1s/2s backoff
   (two retries; a persistent 429 surfaces with the attempt count), and
   the compound-provider timeout is 20s (raised from 10s — SerpAPI
   consistently exceeded the old bound and never participated).
+
+## Provider selection & closed-vocabulary boundary (2026-10-09)
+
+Two changes from the agent-friction troubleshooting pass (the observed
+trigger: `web_search`'s `strategy` parameter rejected quoted values, and
+agents burned retries discovering it):
+
+**One live-merged scoring model, two consumers.** The quick strategy's
+pick and the `provider_recommendations` ranking share a single model —
+`live_merged_score` (`src/research/providers.rs`): the static profile
+score (cost + latency tier) plus the live success-rate/p50 penalty from
+the in-process `reg.web.provider` feedback loop
+(`src/research/performance.rs`; penalties apply only at
+`MIN_SAMPLES_FOR_LIVE = 3` samples). The quick pick
+(`pick_quick_provider`) therefore drops a persistently failing provider
+automatically — pinned by
+`pick_quick_provider_drops_a_persistently_failing_provider`. Selection
+precedence is unchanged: explicit `provider` > `intent` > `strategy`.
+
+**The audit ranking on every tool-selected path.**
+`provider_recommendations` is computed on every call where the tool makes
+the selection (intent pick, quick pick, web/news/deep fusion);
+explicit-`provider` calls skip it — the caller's deliberate override
+carries `selected_provider` and needs no ranking (the field is absent
+from the response when empty).
+
+**The closed-vocabulary boundary contract.** Every enum-ish string field
+parses through one helper pair in `src/research/types/validation.rs`:
+`normalize_closed_vocab` (trim, strip one layer of symmetric quotes,
+trim) then `parse_closed_vocab` (a spelling→value table) or
+`parse_closed_vocab_const` (a domain-owned `&[&str]` const — runs.rs's
+`FINISH_STATUSES` / `VERIFICATION_STATES` keep single vocabulary
+ownership, no duplicated tables). Covered fields: `web_search`
+strategy/intent/provider/freshness, `web_extract` format,
+`evaluate_evidence` duplication/presentation, `cite_sources` style,
+`finish_research_run` status, `annotate_research_run`
+verification_state, and `rss_synthesize` extractor_kind. Matching is
+case-insensitive; quoted, padded, and case-variant emissions parse to the
+canonical spelling, and quoted and bare forms share one cache entry
+(normalization precedes the cache key). Unknown values reject with a
+teaching error naming the field and the accepted spellings:
+`{field} must be one of ..., got '{raw}'`.
+
+**Provider-name error taxonomy.** A `provider` value that isn't
+registered errors by which mistake it is (`known_provider_kind`,
+`src/research/providers.rs`): an unrecognized name (typo, quoted value)
+is `invalid_argument` naming the registered providers; a
+recognized-but-unconfigured kind is `permission_denied` naming the env
+var that enables it. Before the split both read as "set the API key",
+sending agents chasing credentials for spelling errors — and the old
+error taught a tool that no longer exists (`web_recommend_provider`,
+folded into `web_search` 2026-09-03).
 
 ## Capability adoption record (2026-09-09)
 

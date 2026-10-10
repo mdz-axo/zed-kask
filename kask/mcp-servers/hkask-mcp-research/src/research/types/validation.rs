@@ -72,12 +72,14 @@ mod normalize_closed_vocab_tests {
 /// (`normalize_closed_vocab`), match case-insensitively against a table
 /// of accepted spellings mapped to values. The single parse site for
 /// every enum-ish tool parameter — one owner of the tolerance +
-/// teaching-error contract (C2: the scattered match arms — strategy,
-/// freshness, intent, format, duplication — collapsed onto this helper).
-/// On miss, the error names the field and the canonical spellings (the
-/// first entry of each group); aliases are accepted but not listed.
-/// Case-insensitive so canonical spellings may be any case (the schema's
-/// `DataOnly` matches an emitted `dataonly`).
+/// teaching-error contract (the scattered match arms — strategy,
+/// freshness, intent, provider, format, duplication, presentation,
+/// style, status, verification_state — collapsed onto this helper and its
+/// `parse_closed_vocab_const` sibling). On miss, the error names the
+/// field and the canonical spellings (the first entry of each group);
+/// aliases are accepted but not listed. Case-insensitive so canonical
+/// spellings may be any case (the schema's `DataOnly` matches an emitted
+/// `dataonly`).
 pub(crate) fn parse_closed_vocab<T: Copy>(
     field: &'static str,
     raw: &str,

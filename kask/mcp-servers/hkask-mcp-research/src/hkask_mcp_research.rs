@@ -254,7 +254,7 @@ impl ResearchServer {
             // lesson L5): the table is per-server-version constant, so it is
             // served once per ping instead of ~1KB on every web_search
             // response. web_search keeps the per-call
-            // `provider_recommendations` audit of intent-driven picks.
+            // `provider_recommendations` audit of tool-selected picks.
             let provider_profiles: Vec<ProviderProfileOutput> = self
                 .pool
                 .provider_kinds()
@@ -280,7 +280,8 @@ impl ResearchServer {
          academic, semantic, research, freshness, general, transcript) to have the tool \
          score the configured providers against the query and pick the top \
          recommendation for you — the ranking is surfaced in \
-         provider_recommendations. When both are None, `strategy` selects: \
+         provider_recommendations (carried on every tool-selected path). \
+         When both are None, `strategy` selects: \
          quick (best-scored single keyword provider, live-performance-aware — \
          a provider that keeps failing drops out), web (all, RRF fusion), \
          news (news-capable), deep (all + 2x results + content extraction). \

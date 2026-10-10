@@ -773,9 +773,13 @@ impl ProviderPool {
 
     /// Score each configured search provider against a query + intent hint,
     /// returning ranked recommendations. This is the metacognitive surface:
-    /// `web_search`'s `intent` path calls it to pick deliberately rather
-    /// than relying on blind fallback, and surfaces the ranking in the
-    /// response's `provider_recommendations`.
+    /// `web_search` calls it on every tool-selected path — the `intent`
+    /// pick queries the top configured recommendation, and every other
+    /// selection path (quick, web, news, deep) surfaces the ranking in the
+    /// response's `provider_recommendations` as the audit trail. The
+    /// quick strategy's pick (`pick_quick_provider`) shares the same
+    /// live-merged model (`live_merged_score`) — one feedback loop, two
+    /// consumers.
     ///
     /// Scoring (lower is better):
     /// - Static: `cost_per_call_usd` + latency penalty (Fast=0, Medium=0.5, Slow=1.0)
