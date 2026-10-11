@@ -47,7 +47,7 @@ use std::sync::{Arc, Mutex};
 
 use collections::HashSet;
 use credentials_provider::CredentialsProvider;
-use gpui::{AppContext, ReadGlobal as _, ScrollHandle, Task, prelude::*};
+use gpui::{AppContext, ElementId, ReadGlobal as _, ScrollHandle, Task, prelude::*};
 use settings::SettingsStore;
 use ui::{
     Button, ButtonLink, ButtonStyle, ConfiguredApiCard, Divider, SwitchField, ToggleState,
@@ -359,151 +359,195 @@ pub(crate) fn kask_string_input(
     struct_name: &'static str,
     field_name: &'static str,
 ) -> SettingsInputField {
+    kask_input_field(
+        field_id,
+        0,
+        initial,
+        placeholder,
+        label,
+        |text| Some(text.trim().to_string()),
+        move |parsed, settings| {
+            let kask = settings.kask.get_or_insert_default();
+            match (struct_name, field_name) {
+                ("kask", "data_dir") => {
+                    kask.data_dir = Some(parsed);
+                }
+                ("kask", "artifacts_dir") => {
+                    kask.artifacts_dir = Some(parsed);
+                }
+                ("research", "research_db") => {
+                    kask.research.get_or_insert_default().research_db = Some(parsed);
+                }
+                ("companies", "chronic_staleness_days") => {
+                    if let Ok(v) = parsed.parse::<u32>() {
+                        kask.companies
+                            .get_or_insert_default()
+                            .chronic_staleness_days = Some(v);
+                    }
+                }
+                ("companies", "investor_required_return") => {
+                    if let Ok(value) = parsed.parse::<f64>()
+                        && value.is_finite()
+                        && value > 0.0
+                        && value < 1.0
+                    {
+                        kask.companies
+                            .get_or_insert_default()
+                            .investor_required_return = Some(value);
+                    }
+                }
+                ("companies", "fermi_defaults") => {
+                    kask.companies.get_or_insert_default().fermi_defaults = Some(parsed);
+                }
+                ("corpus", "embedding_model") => {
+                    kask.corpus.get_or_insert_default().embedding_model = Some(parsed);
+                }
+                ("corpus", "template_root") => {
+                    kask.corpus.get_or_insert_default().template_root = Some(parsed);
+                }
+                ("scenarios", "data_dir") => {
+                    // No-op — scenarios has no per-server path field.
+                    // The data dir is derived from the global
+                    // `data_dir` as `mcp/scenarios/`.
+                }
+                ("prediction_markets", "data_dir") => {
+                    // No-op — prediction_markets has no per-server
+                    // path field. The data dir is derived from the
+                    // global `data_dir` as `mcp/prediction-markets/`.
+                }
+                ("prediction_markets", "cache_ttl_secs") => {
+                    if let Ok(v) = parsed.parse::<u64>() {
+                        kask.prediction_markets
+                            .get_or_insert_default()
+                            .cache_ttl_secs = Some(v);
+                    }
+                }
+                ("prediction_markets", "base_events") => {
+                    kask.prediction_markets.get_or_insert_default().base_events = Some(parsed);
+                }
+                ("training", "host") => {
+                    kask.training.get_or_insert_default().host = Some(parsed);
+                }
+                ("training", "cache_dir") => {
+                    kask.training.get_or_insert_default().cache_dir = Some(parsed);
+                }
+                ("media", "tts_model") => {
+                    kask.media.get_or_insert_default().tts_model = Some(parsed);
+                }
+                ("media", "stt_model") => {
+                    kask.media.get_or_insert_default().stt_model = Some(parsed);
+                }
+                ("media", "vision_model") => {
+                    kask.media.get_or_insert_default().vision_model = Some(parsed);
+                }
+                ("media", "image_gen_model") => {
+                    kask.media.get_or_insert_default().image_gen_model = Some(parsed);
+                }
+                ("media", "video_model") => {
+                    kask.media.get_or_insert_default().video_model = Some(parsed);
+                }
+                ("models", "default_model") => {
+                    kask.models.get_or_insert_default().default_model = Some(parsed);
+                }
+                ("models", "embedding_model") => {
+                    kask.models.get_or_insert_default().embedding_model = Some(parsed);
+                }
+                ("models", "classifier_model") => {
+                    kask.models.get_or_insert_default().classifier_model = Some(parsed);
+                }
+                ("models", "qa_generation_model") => {
+                    kask.models.get_or_insert_default().qa_generation_model = Some(parsed);
+                }
+                ("models", "ocr_model") => {
+                    kask.models.get_or_insert_default().ocr_model = Some(parsed);
+                }
+                ("models", "rerank_model") => {
+                    kask.models.get_or_insert_default().rerank_model = Some(parsed);
+                }
+                ("portfolio", "transactions_dir") => {
+                    // No-op — portfolio has no per-server path field.
+                    // The transactions dir is derived from the
+                    // artifacts dir as `portfolio-mcp/transactions/`.
+                }
+                ("corpus", "embedding_dim") => {
+                    if let Ok(v) = parsed.parse::<u32>() {
+                        kask.corpus.get_or_insert_default().embedding_dim = Some(v);
+                    }
+                }
+                ("general", "max_concurrency") => {
+                    if let Ok(v) = parsed.parse::<u32>() {
+                        kask.general.get_or_insert_default().max_concurrency = Some(v);
+                    }
+                }
+                _ => {}
+            }
+        },
+    )
+}
+
+/// Build a settings input field whose confirmed text is parsed and applied
+/// through the settings store. `parse` maps the confirmed text to the typed
+/// setting value — `None` skips the store write entirely (a failed parse
+/// never rewrites the file); `apply` assigns the parsed value into the
+/// settings content.
+pub(crate) fn kask_input_field<P: Send + 'static>(
+    field_id: impl Into<ElementId>,
+    tab_index: isize,
+    initial: String,
+    placeholder: impl Into<SharedString>,
+    aria_label: impl Into<SharedString>,
+    parse: impl Fn(&str) -> Option<P> + Clone + 'static,
+    apply: impl Fn(P, &mut settings::SettingsContent) + Clone + Send + 'static,
+) -> SettingsInputField {
     SettingsInputField::new(field_id)
-        .tab_index(0)
+        .tab_index(tab_index)
         .with_initial_text(initial)
         .with_placeholder(placeholder)
-        .aria_label(label)
+        .aria_label(aria_label)
         .confirm_on_focus_out()
         .on_confirm(move |value, _window, cx| {
             if let Some(text) = value {
-                let parsed = text.trim().to_string();
-                SettingsStore::global(cx).update_settings_file(
-                    <dyn fs::Fs>::global(cx),
-                    move |settings, _| {
-                        let kask = settings.kask.get_or_insert_default();
-                        match (struct_name, field_name) {
-                            ("kask", "data_dir") => {
-                                kask.data_dir = Some(parsed.clone());
-                            }
-                            ("kask", "artifacts_dir") => {
-                                kask.artifacts_dir = Some(parsed.clone());
-                            }
-                            ("research", "research_db") => {
-                                kask.research.get_or_insert_default().research_db =
-                                    Some(parsed.clone());
-                            }
-                            ("companies", "chronic_staleness_days") => {
-                                if let Ok(v) = parsed.parse::<u32>() {
-                                    kask.companies
-                                        .get_or_insert_default()
-                                        .chronic_staleness_days = Some(v);
-                                }
-                            }
-                            ("companies", "investor_required_return") => {
-                                if let Ok(value) = parsed.parse::<f64>()
-                                    && value.is_finite()
-                                    && value > 0.0
-                                    && value < 1.0
-                                {
-                                    kask.companies
-                                        .get_or_insert_default()
-                                        .investor_required_return = Some(value);
-                                }
-                            }
-                            ("companies", "fermi_defaults") => {
-                                kask.companies.get_or_insert_default().fermi_defaults =
-                                    Some(parsed.clone());
-                            }
-                            ("corpus", "embedding_model") => {
-                                kask.corpus.get_or_insert_default().embedding_model =
-                                    Some(parsed.clone());
-                            }
-                            ("corpus", "template_root") => {
-                                kask.corpus.get_or_insert_default().template_root =
-                                    Some(parsed.clone());
-                            }
-                            ("scenarios", "data_dir") => {
-                                // No-op — scenarios has no per-server path field.
-                                // The data dir is derived from the global
-                                // `data_dir` as `mcp/scenarios/`.
-                            }
-                            ("prediction_markets", "data_dir") => {
-                                // No-op — prediction_markets has no per-server
-                                // path field. The data dir is derived from the
-                                // global `data_dir` as `mcp/prediction-markets/`.
-                            }
-                            ("prediction_markets", "cache_ttl_secs") => {
-                                if let Ok(v) = parsed.parse::<u64>() {
-                                    kask.prediction_markets
-                                        .get_or_insert_default()
-                                        .cache_ttl_secs = Some(v);
-                                }
-                            }
-                            ("prediction_markets", "base_events") => {
-                                kask.prediction_markets.get_or_insert_default().base_events =
-                                    Some(parsed.clone());
-                            }
-                            ("training", "host") => {
-                                kask.training.get_or_insert_default().host = Some(parsed.clone());
-                            }
-                            ("training", "cache_dir") => {
-                                kask.training.get_or_insert_default().cache_dir =
-                                    Some(parsed.clone());
-                            }
-                            ("media", "tts_model") => {
-                                kask.media.get_or_insert_default().tts_model = Some(parsed.clone());
-                            }
-                            ("media", "stt_model") => {
-                                kask.media.get_or_insert_default().stt_model = Some(parsed.clone());
-                            }
-                            ("media", "vision_model") => {
-                                kask.media.get_or_insert_default().vision_model =
-                                    Some(parsed.clone());
-                            }
-                            ("media", "image_gen_model") => {
-                                kask.media.get_or_insert_default().image_gen_model =
-                                    Some(parsed.clone());
-                            }
-                            ("media", "video_model") => {
-                                kask.media.get_or_insert_default().video_model =
-                                    Some(parsed.clone());
-                            }
-                            ("models", "default_model") => {
-                                kask.models.get_or_insert_default().default_model =
-                                    Some(parsed.clone());
-                            }
-                            ("models", "embedding_model") => {
-                                kask.models.get_or_insert_default().embedding_model =
-                                    Some(parsed.clone());
-                            }
-                            ("models", "classifier_model") => {
-                                kask.models.get_or_insert_default().classifier_model =
-                                    Some(parsed.clone());
-                            }
-                            ("models", "qa_generation_model") => {
-                                kask.models.get_or_insert_default().qa_generation_model =
-                                    Some(parsed.clone());
-                            }
-                            ("models", "ocr_model") => {
-                                kask.models.get_or_insert_default().ocr_model =
-                                    Some(parsed.clone());
-                            }
-                            ("models", "rerank_model") => {
-                                kask.models.get_or_insert_default().rerank_model =
-                                    Some(parsed.clone());
-                            }
-                            ("portfolio", "transactions_dir") => {
-                                // No-op — portfolio has no per-server path field.
-                                // The transactions dir is derived from the
-                                // artifacts dir as `portfolio-mcp/transactions/`.
-                            }
-                            ("corpus", "embedding_dim") => {
-                                if let Ok(v) = parsed.parse::<u32>() {
-                                    kask.corpus.get_or_insert_default().embedding_dim = Some(v);
-                                }
-                            }
-                            ("general", "max_concurrency") => {
-                                if let Ok(v) = parsed.parse::<u32>() {
-                                    kask.general.get_or_insert_default().max_concurrency = Some(v);
-                                }
-                            }
-                            _ => {}
-                        }
-                    },
-                );
+                if let Some(parsed) = parse(&text) {
+                    let apply = apply.clone();
+                    SettingsStore::global(cx)
+                        .update_settings_file(<dyn fs::Fs>::global(cx), move |settings, _| {
+                            apply(parsed, settings)
+                        });
+                }
             }
         })
+}
+
+/// Build a settings toggle that persists its boolean through the settings
+/// store. `apply` assigns the toggled value into the settings content; the
+/// toggle-state mapping and the store write live here once.
+pub(crate) fn kask_toggle(
+    field_id: impl Into<ElementId>,
+    label: Option<&'static str>,
+    description: Option<SharedString>,
+    selected: bool,
+    tab_index: isize,
+    apply: impl Fn(bool, &mut settings::SettingsContent) + Clone + Send + 'static,
+) -> SwitchField {
+    SwitchField::new(
+        field_id,
+        label,
+        description,
+        if selected {
+            ToggleState::Selected
+        } else {
+            ToggleState::Unselected
+        },
+        move |state, _window, cx| {
+            let enabled = *state == ToggleState::Selected;
+            let apply = apply.clone();
+            SettingsStore::global(cx)
+                .update_settings_file(<dyn fs::Fs>::global(cx), move |settings, _| {
+                    apply(enabled, settings)
+                });
+        },
+    )
+    .tab_index(tab_index)
 }
 
 // ---------------------------------------------------------------------------

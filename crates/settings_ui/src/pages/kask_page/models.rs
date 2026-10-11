@@ -238,29 +238,31 @@ mod tests {
         )));
     }
 
-    /// Exercise the host's real settings file writer and reload path on FakeFs;
-    /// no user settings or provider is touched. Rendered UI interaction is separate.
-    #[gpui::test]
-    async fn qa_generation_model_persists_and_reloads(cx: &mut gpui::TestAppContext) {
+    /// Exercise the host's real settings file writer and reload path on FakeFs
+    /// for one models field — no user settings or provider is touched.
+    /// Rendered UI interaction is separate. `write` assigns the field,
+    /// `read` reads it back from the resolved settings, and `env_key` is the
+    /// MCP env var the field maps to (empty values map to None).
+    async fn model_field_persists_and_reloads(
+        cx: &mut gpui::TestAppContext,
+        write: impl Fn(&str, &mut settings::SettingsContent) + Clone + Send + 'static,
+        read: impl Fn(&kask_bridge::KaskSettings) -> String,
+        env_key: &'static str,
+        values: [&'static str; 2],
+    ) {
         let fs = fs::FakeFs::new(cx.executor());
         fs.create_dir(paths::settings_file().parent().expect("settings directory"))
             .await
             .expect("create fake settings directory");
         fs.insert_file(paths::settings_file(), b"{}".to_vec()).await;
         cx.update(settings::init);
-        for value in ["OpenRouter/~openai/gpt-sol-latest", ""] {
+        for value in values {
+            let write = write.clone();
             let completion = cx.update(|cx| {
-                SettingsStore::global(cx).update_settings_file_with_completion(
-                    fs.clone(),
-                    move |settings, _| {
-                        settings
-                            .kask
-                            .get_or_insert_default()
-                            .models
-                            .get_or_insert_default()
-                            .qa_generation_model = Some(value.into());
-                    },
-                )
+                SettingsStore::global(cx)
+                    .update_settings_file_with_completion(fs.clone(), move |settings, _| {
+                        write(value, settings)
+                    })
             });
             completion
                 .await
@@ -278,63 +280,55 @@ mod tests {
                 cx.set_global(reloaded);
                 let content = raw_kask_settings(cx).expect("persisted Kask settings");
                 let resolved: kask_bridge::KaskSettings = content.into();
-                assert_eq!(resolved.models.qa_generation_model, value);
+                assert_eq!(read(&resolved), value);
                 let env = resolved.mcp_env();
                 assert_eq!(
-                    env.get("HKASK_QA_GENERATION_MODEL").map(String::as_str),
+                    env.get(env_key).map(String::as_str),
                     (!value.is_empty()).then_some(value)
                 );
             });
         }
     }
 
+    /// Exercise the host's real settings file writer and reload path on FakeFs;
+    /// no user settings or provider is touched. Rendered UI interaction is separate.
+    #[gpui::test]
+    async fn qa_generation_model_persists_and_reloads(cx: &mut gpui::TestAppContext) {
+        model_field_persists_and_reloads(
+            cx,
+            |value, settings| {
+                settings
+                    .kask
+                    .get_or_insert_default()
+                    .models
+                    .get_or_insert_default()
+                    .qa_generation_model = Some(value.into());
+            },
+            |resolved| resolved.models.qa_generation_model.clone(),
+            "HKASK_QA_GENERATION_MODEL",
+            ["OpenRouter/~openai/gpt-sol-latest", ""],
+        )
+        .await;
+    }
+
     /// Same writer/reload path for the rerank model — the field whose save
     /// dispatch arm was missing (the persistence defect this test pins).
     #[gpui::test]
     async fn rerank_model_persists_and_reloads(cx: &mut gpui::TestAppContext) {
-        let fs = fs::FakeFs::new(cx.executor());
-        fs.create_dir(paths::settings_file().parent().expect("settings directory"))
-            .await
-            .expect("create fake settings directory");
-        fs.insert_file(paths::settings_file(), b"{}".to_vec()).await;
-        cx.update(settings::init);
-        for value in ["deepinfra/Qwen/Qwen3-Reranker-8B", ""] {
-            let completion = cx.update(|cx| {
-                SettingsStore::global(cx).update_settings_file_with_completion(
-                    fs.clone(),
-                    move |settings, _| {
-                        settings
-                            .kask
-                            .get_or_insert_default()
-                            .models
-                            .get_or_insert_default()
-                            .rerank_model = Some(value.into());
-                    },
-                )
-            });
-            completion
-                .await
-                .expect("writer finished")
-                .expect("settings saved");
-            let saved = fs
-                .load(paths::settings_file())
-                .await
-                .expect("read saved settings");
-            cx.update(|cx| {
-                let mut reloaded = SettingsStore::new(cx, &settings::default_settings());
-                reloaded
-                    .set_user_settings(&saved, cx)
-                    .expect("reload saved settings");
-                cx.set_global(reloaded);
-                let content = raw_kask_settings(cx).expect("persisted Kask settings");
-                let resolved: kask_bridge::KaskSettings = content.into();
-                assert_eq!(resolved.models.rerank_model, value);
-                let env = resolved.mcp_env();
-                assert_eq!(
-                    env.get("HKASK_RERANK_MODEL").map(String::as_str),
-                    (!value.is_empty()).then_some(value)
-                );
-            });
-        }
+        model_field_persists_and_reloads(
+            cx,
+            |value, settings| {
+                settings
+                    .kask
+                    .get_or_insert_default()
+                    .models
+                    .get_or_insert_default()
+                    .rerank_model = Some(value.into());
+            },
+            |resolved| resolved.models.rerank_model.clone(),
+            "HKASK_RERANK_MODEL",
+            ["deepinfra/Qwen/Qwen3-Reranker-8B", ""],
+        )
+        .await;
     }
 }

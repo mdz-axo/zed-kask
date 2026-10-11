@@ -120,91 +120,75 @@ pub(crate) fn render_memory_page(
         .into_any_element()
     });
 
-    let cadence_input = SettingsInputField::new("kask-memory-consolidation-cadence")
-        .tab_index(0)
-        .with_initial_text(cadence)
-        .with_placeholder("300")
-        .aria_label("Consolidation Cadence (seconds)")
-        .confirm_on_focus_out()
-        .on_confirm(move |value, _window, cx| {
-            if let Some(text) = value {
-                if let Ok(parsed) = text.parse::<u64>() {
-                    SettingsStore::global(cx).update_settings_file(
-                        <dyn fs::Fs>::global(cx),
-                        move |settings, _| {
-                            settings
-                                .kask
-                                .get_or_insert_default()
-                                .memory
-                                .get_or_insert_default()
-                                .consolidation_cadence_secs = Some(parsed);
-                        },
-                    );
-                }
-            }
-        });
+    let cadence_input = kask_input_field(
+        "kask-memory-consolidation-cadence",
+        0,
+        cadence,
+        "300",
+        "Consolidation Cadence (seconds)",
+        |text| text.parse::<u64>().ok(),
+        move |parsed, settings| {
+            settings
+                .kask
+                .get_or_insert_default()
+                .memory
+                .get_or_insert_default()
+                .consolidation_cadence_secs = Some(parsed);
+        },
+    );
 
-    let confidence_input = SettingsInputField::new("kask-memory-confidence-floor")
-        .tab_index(0)
-        .with_initial_text(confidence_floor)
-        .with_placeholder("0.3")
-        .aria_label("Consolidation Deletion Floor")
-        .confirm_on_focus_out()
-        .on_confirm(move |value, _window, cx| {
-            if let Some(text) = value {
-                if let Ok(parsed) = text.parse::<f64>() {
-                    // Memories are inserted at the 0.5 floor; consolidation
-                    // deletes at-or-below this value. A floor at or above 0.5
-                    // would delete every newly-inserted memory on the next
-                    // pass — refuse it here. The deliberate policy, if ever
-                    // wanted, is set via settings.json.
-                    if refuses_above_insert_floor(parsed) {
-                        log::warn!(
-                            "Refusing confidence_floor {parsed}: consolidation deletes \
-                             at-or-below it, and memories insert at 0.5 — this value \
-                             would delete every new memory on the next pass. \
-                             Valid range: 0.0 (inclusive) to just under 0.5."
-                        );
-                        return;
-                    }
-                    SettingsStore::global(cx).update_settings_file(
-                        <dyn fs::Fs>::global(cx),
-                        move |settings, _| {
-                            settings
-                                .kask
-                                .get_or_insert_default()
-                                .memory
-                                .get_or_insert_default()
-                                .confidence_floor = Some(parsed);
-                        },
+    let confidence_input = kask_input_field(
+        "kask-memory-confidence-floor",
+        0,
+        confidence_floor,
+        "0.3",
+        "Consolidation Deletion Floor",
+        |text| {
+            text.parse::<f64>().ok().and_then(|parsed| {
+                // Memories are inserted at the 0.5 floor; consolidation
+                // deletes at-or-below this value. A floor at or above 0.5
+                // would delete every newly-inserted memory on the next
+                // pass — refuse it here. The deliberate policy, if ever
+                // wanted, is set via settings.json.
+                if refuses_above_insert_floor(parsed) {
+                    log::warn!(
+                        "Refusing confidence_floor {parsed}: consolidation deletes \
+                         at-or-below it, and memories insert at 0.5 — this value \
+                         would delete every new memory on the next pass. \
+                         Valid range: 0.0 (inclusive) to just under 0.5."
                     );
+                    None
+                } else {
+                    Some(parsed)
                 }
-            }
-        });
+            })
+        },
+        move |parsed, settings| {
+            settings
+                .kask
+                .get_or_insert_default()
+                .memory
+                .get_or_insert_default()
+                .confidence_floor = Some(parsed);
+        },
+    );
 
-    let memory_life_input = SettingsInputField::new("kask-memory-life-days")
-        .tab_index(0)
-        .with_initial_text(memory_life_days)
-        .with_placeholder("180")
-        .aria_label("Memory Life (days)")
-        .confirm_on_focus_out()
-        .on_confirm(move |value, _window, cx| {
-            if let Some(text) = value {
-                if let Ok(parsed) = text.parse::<f64>() {
-                    SettingsStore::global(cx).update_settings_file(
-                        <dyn fs::Fs>::global(cx),
-                        move |settings, _| {
-                            settings
-                                .kask
-                                .get_or_insert_default()
-                                .memory
-                                .get_or_insert_default()
-                                .memory_life_days = Some(parsed);
-                        },
-                    );
-                }
-            }
-        });
+    let memory_life_input = kask_input_field(
+        "kask-memory-life-days",
+        0,
+        memory_life_days,
+        "180",
+        "Memory Life (days)",
+        |text| text.parse::<f64>().ok(),
+        move |parsed, settings| {
+            settings
+                .kask
+                .get_or_insert_default()
+                .memory
+                .get_or_insert_default()
+                .memory_life_days = Some(parsed);
+        },
+    );
 
     v_flex()
         .id("kask-memory-page")
@@ -289,29 +273,22 @@ pub(crate) fn render_memory_page(
                     .color(Color::Muted),
                 )
                 .child(
-                    SettingsInputField::new("kask-memory-recall-limit")
-                        .tab_index(0)
-                        .with_initial_text(recall_limit)
-                        .with_placeholder("5")
-                        .aria_label("Recall Limit")
-                        .confirm_on_focus_out()
-                        .on_confirm(move |value, _window, cx| {
-                            if let Some(text) = value {
-                                if let Ok(parsed) = text.parse::<u32>() {
-                                    SettingsStore::global(cx).update_settings_file(
-                                        <dyn fs::Fs>::global(cx),
-                                        move |settings, _| {
-                                            settings
-                                                .kask
-                                                .get_or_insert_default()
-                                                .memory
-                                                .get_or_insert_default()
-                                                .recall_limit = Some(parsed);
-                                        },
-                                    );
-                                }
-                            }
-                        }),
+                    kask_input_field(
+                        "kask-memory-recall-limit",
+                        0,
+                        recall_limit,
+                        "5",
+                        "Recall Limit",
+                        |text| text.parse::<u32>().ok(),
+                        move |parsed, settings| {
+                            settings
+                                .kask
+                                .get_or_insert_default()
+                                .memory
+                                .get_or_insert_default()
+                                .recall_limit = Some(parsed);
+                        },
+                    ),
                 ),
         )
         .child(Divider::horizontal())
@@ -334,71 +311,65 @@ pub(crate) fn render_memory_page(
                     .color(Color::Muted),
                 )
                 .child(
-                    SettingsInputField::new("kask-memory-recall-min-confidence")
-                        .tab_index(0)
-                        .with_initial_text(recall_min_confidence)
-                        .with_placeholder("0.3")
-                        .aria_label("Recall Injection Gate (Decayed Confidence)")
-                        .confirm_on_focus_out()
-                        .on_confirm(move |value, _window, cx| {
-                            if let Some(text) = value {
-                                if let Ok(parsed) = text.parse::<f64>() {
-                                    // Memories insert at the 0.5 floor; the gate
-                                    // compares decayed confidence. A gate at or
-                                    // above 0.5 makes every newly-inserted
-                                    // memory invisible until calibrated above it
-                                    // — recall looks broken, silently. Refuse;
-                                    // the deliberate calibrated-only policy is
-                                    // set via settings.json.
-                                    if refuses_above_insert_floor(parsed) {
-                                        log::warn!(
-                                            "Refusing recall_min_confidence {parsed}: memories \
-                                             insert at the 0.5 floor, so this gate would hide \
-                                             every new memory until outcome calibration lifts \
-                                             it above the gate. Valid range: 0.0 (inclusive) \
-                                             to just under 0.5."
-                                        );
-                                        return;
-                                    }
-                                    SettingsStore::global(cx).update_settings_file(
-                                        <dyn fs::Fs>::global(cx),
-                                        move |settings, _| {
-                                            settings
-                                                .kask
-                                                .get_or_insert_default()
-                                                .memory
-                                                .get_or_insert_default()
-                                                .recall_min_confidence = Some(parsed);
-                                        },
+                    kask_input_field(
+                        "kask-memory-recall-min-confidence",
+                        0,
+                        recall_min_confidence,
+                        "0.3",
+                        "Recall Injection Gate (Decayed Confidence)",
+                        |text| {
+                            text.parse::<f64>().ok().and_then(|parsed| {
+                                // Memories insert at the 0.5 floor; the gate
+                                // compares decayed confidence. A gate at or
+                                // above 0.5 makes every newly-inserted
+                                // memory invisible until calibrated above it
+                                // — recall looks broken, silently. Refuse;
+                                // the deliberate calibrated-only policy is
+                                // set via settings.json.
+                                if refuses_above_insert_floor(parsed) {
+                                    log::warn!(
+                                        "Refusing recall_min_confidence {parsed}: memories \
+                                         insert at the 0.5 floor, so this gate would hide \
+                                         every new memory until outcome calibration lifts \
+                                         it above the gate. Valid range: 0.0 (inclusive) \
+                                         to just under 0.5."
                                     );
+                                    None
+                                } else {
+                                    Some(parsed)
                                 }
-                            }
-                        }),
-                ),
-        )
-        .child(Divider::horizontal())
-        .child(
-            SwitchField::new(
-                "kask-memory-auto-inject",
-                Some("Auto-Inject Memories"),
-                Some("Automatically inject curator memories and any selected federated source into prompts.".into()),
-                auto_inject,
-                move |state, _window, cx| {
-                    let value = *state == ToggleState::Selected;
-                    SettingsStore::global(cx).update_settings_file(
-                        <dyn fs::Fs>::global(cx),
-                        move |settings, _| {
+                            })
+                        },
+                        move |parsed, settings| {
                             settings
                                 .kask
                                 .get_or_insert_default()
                                 .memory
                                 .get_or_insert_default()
-                                .auto_inject = Some(value);
+                                .recall_min_confidence = Some(parsed);
                         },
-                    );
+                    ),
+                ),
+        )
+        .child(Divider::horizontal())
+        .child(
+            kask_toggle(
+                "kask-memory-auto-inject",
+                Some("Auto-Inject Memories"),
+                Some(
+                    "Automatically inject curator memories and any selected federated source into prompts.".into(),
+                ),
+                auto_inject,
+                0,
+                move |value, settings| {
+                    settings
+                        .kask
+                        .get_or_insert_default()
+                        .memory
+                        .get_or_insert_default()
+                        .auto_inject = Some(value);
                 },
-            )
-            .tab_index(0),
+            ),
         )
         .child(Divider::horizontal())
         .child(

@@ -100,7 +100,7 @@ pub(crate) fn render_swarm_page(
     // there if they want to suppress the ABW-key warning in local-only use.
 
     // Curator consent default toggle.
-    let consent_toggle = SwitchField::new(
+    let consent_toggle = kask_toggle(
         "kask-swarm-curator-consent-default",
         Some("Curator Consent Default"),
         Some(
@@ -109,107 +109,78 @@ pub(crate) fn render_swarm_page(
              a third-party curator requires explicit per-call consent."
                 .into(),
         ),
-        if curator_consent_default {
-            ToggleState::Selected
-        } else {
-            ToggleState::Unselected
+        curator_consent_default,
+        1,
+        move |enabled, settings| {
+            settings
+                .kask
+                .get_or_insert_default()
+                .swarm
+                .get_or_insert_default()
+                .curator_consent_default = Some(enabled);
         },
-        move |state, _window, cx| {
-            let enabled = *state == ToggleState::Selected;
-            SettingsStore::global(cx).update_settings_file(
-                <dyn fs::Fs>::global(cx),
-                move |settings, _| {
-                    settings
-                        .kask
-                        .get_or_insert_default()
-                        .swarm
-                        .get_or_insert_default()
-                        .curator_consent_default = Some(enabled);
-                },
-            );
+    );
+
+    let api_url_input = kask_input_field(
+        "kask-swarm-api-url",
+        2,
+        api_url,
+        "https://agent-bestiary.world",
+        "ABW API URL",
+        |text| Some(text.trim().to_string()),
+        move |parsed, settings| {
+            settings
+                .kask
+                .get_or_insert_default()
+                .swarm
+                .get_or_insert_default()
+                .api_url = if parsed.is_empty() {
+                None
+            } else {
+                Some(parsed)
+            };
         },
-    )
-    .tab_index(1);
+    );
 
-    let api_url_input = SettingsInputField::new("kask-swarm-api-url")
-        .tab_index(2)
-        .with_initial_text(api_url)
-        .with_placeholder("https://agent-bestiary.world")
-        .aria_label("ABW API URL")
-        .confirm_on_focus_out()
-        .on_confirm(move |value, _window, cx| {
-            if let Some(text) = value {
-                let parsed = text.trim().to_string();
-                SettingsStore::global(cx).update_settings_file(
-                    <dyn fs::Fs>::global(cx),
-                    move |settings, _| {
-                        settings
-                            .kask
-                            .get_or_insert_default()
-                            .swarm
-                            .get_or_insert_default()
-                            .api_url = if parsed.is_empty() {
-                            None
-                        } else {
-                            Some(parsed)
-                        };
-                    },
-                );
-            }
-        });
+    let max_credits_input = kask_input_field(
+        "kask-swarm-max-credits",
+        3,
+        max_credits,
+        "50",
+        "Max Credits Per Dispatch",
+        |text| text.trim().parse::<u32>().ok(),
+        move |parsed, settings| {
+            settings
+                .kask
+                .get_or_insert_default()
+                .swarm
+                .get_or_insert_default()
+                .max_credits_per_dispatch = Some(parsed);
+        },
+    );
 
-    let max_credits_input = SettingsInputField::new("kask-swarm-max-credits")
-        .tab_index(3)
-        .with_initial_text(max_credits)
-        .with_placeholder("50")
-        .aria_label("Max Credits Per Dispatch")
-        .confirm_on_focus_out()
-        .on_confirm(move |value, _window, cx| {
-            if let Some(text) = value {
-                if let Ok(parsed) = text.trim().parse::<u32>() {
-                    SettingsStore::global(cx).update_settings_file(
-                        <dyn fs::Fs>::global(cx),
-                        move |settings, _| {
-                            settings
-                                .kask
-                                .get_or_insert_default()
-                                .swarm
-                                .get_or_insert_default()
-                                .max_credits_per_dispatch = Some(parsed);
-                        },
-                    );
-                }
-            }
-        });
+    let default_agent_model_input = kask_input_field(
+        "kask-swarm-default-agent-model",
+        5,
+        default_agent_model,
+        "claude-haiku-4-5-20251001",
+        "Default Agent Model",
+        |text| Some(text.trim().to_string()),
+        move |parsed, settings| {
+            settings
+                .kask
+                .get_or_insert_default()
+                .swarm
+                .get_or_insert_default()
+                .default_agent_model = if parsed.is_empty() {
+                None
+            } else {
+                Some(parsed)
+            };
+        },
+    );
 
-    let default_agent_model_input = SettingsInputField::new("kask-swarm-default-agent-model")
-        .tab_index(5)
-        .with_initial_text(default_agent_model)
-        .with_placeholder("claude-haiku-4-5-20251001")
-        .aria_label("Default Agent Model")
-        .confirm_on_focus_out()
-        .on_confirm(move |value, _window, cx| {
-            if let Some(text) = value {
-                let parsed = text.trim().to_string();
-                SettingsStore::global(cx).update_settings_file(
-                    <dyn fs::Fs>::global(cx),
-                    move |settings, _| {
-                        settings
-                            .kask
-                            .get_or_insert_default()
-                            .swarm
-                            .get_or_insert_default()
-                            .default_agent_model = if parsed.is_empty() {
-                            None
-                        } else {
-                            Some(parsed)
-                        };
-                    },
-                );
-            }
-        });
-
-    let a2a_http_toggle = SwitchField::new(
+    let a2a_http_toggle = kask_toggle(
         "kask-swarm-a2a-http-enabled",
         Some("A2A HTTP Gateway"),
         Some(
@@ -219,51 +190,34 @@ pub(crate) fn render_swarm_page(
              HKASK_A2A_HTTP_ENABLE=1."
                 .into(),
         ),
-        if a2a_http_enabled {
-            ToggleState::Selected
-        } else {
-            ToggleState::Unselected
+        a2a_http_enabled,
+        6,
+        move |enabled, settings| {
+            settings
+                .kask
+                .get_or_insert_default()
+                .swarm
+                .get_or_insert_default()
+                .a2a_http_enabled = Some(enabled);
         },
-        move |state, _window, cx| {
-            let enabled = *state == ToggleState::Selected;
-            SettingsStore::global(cx).update_settings_file(
-                <dyn fs::Fs>::global(cx),
-                move |settings, _| {
-                    settings
-                        .kask
-                        .get_or_insert_default()
-                        .swarm
-                        .get_or_insert_default()
-                        .a2a_http_enabled = Some(enabled);
-                },
-            );
-        },
-    )
-    .tab_index(6);
+    );
 
-    let embedding_dim_input = SettingsInputField::new("kask-swarm-embedding-dim")
-        .tab_index(8)
-        .with_initial_text(embedding_dim)
-        .with_placeholder("1024")
-        .aria_label("Embedding Dimension")
-        .confirm_on_focus_out()
-        .on_confirm(move |value, _window, cx| {
-            if let Some(text) = value {
-                if let Ok(parsed) = text.trim().parse::<usize>() {
-                    SettingsStore::global(cx).update_settings_file(
-                        <dyn fs::Fs>::global(cx),
-                        move |settings, _| {
-                            settings
-                                .kask
-                                .get_or_insert_default()
-                                .swarm
-                                .get_or_insert_default()
-                                .embedding_dim = Some(parsed);
-                        },
-                    );
-                }
-            }
-        });
+    let embedding_dim_input = kask_input_field(
+        "kask-swarm-embedding-dim",
+        8,
+        embedding_dim,
+        "1024",
+        "Embedding Dimension",
+        |text| text.trim().parse::<usize>().ok(),
+        move |parsed, settings| {
+            settings
+                .kask
+                .get_or_insert_default()
+                .swarm
+                .get_or_insert_default()
+                .embedding_dim = Some(parsed);
+        },
+    );
 
     v_flex()
         .id("kask-swarm-page")

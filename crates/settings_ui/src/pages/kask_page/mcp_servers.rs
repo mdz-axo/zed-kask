@@ -16,7 +16,7 @@ pub(crate) fn render_mcp_servers_page(
     let load_default = mcp.load_default;
     let overrides = &mcp.overrides;
 
-    let master_toggle = SwitchField::new(
+    let master_toggle = kask_toggle(
         "kask-mcp-load-default",
         Some("Load Default MCP Servers"),
         Some(
@@ -24,27 +24,17 @@ pub(crate) fn render_mcp_servers_page(
              individually overridden below. Disable to load no kask MCP servers."
                 .into(),
         ),
-        if load_default {
-            ToggleState::Selected
-        } else {
-            ToggleState::Unselected
+        load_default,
+        0,
+        move |enabled, settings| {
+            settings
+                .kask
+                .get_or_insert_default()
+                .mcp
+                .get_or_insert_default()
+                .load_default = Some(enabled);
         },
-        move |state, _window, cx| {
-            let enabled = *state == ToggleState::Selected;
-            SettingsStore::global(cx).update_settings_file(
-                <dyn fs::Fs>::global(cx),
-                move |settings, _| {
-                    settings
-                        .kask
-                        .get_or_insert_default()
-                        .mcp
-                        .get_or_insert_default()
-                        .load_default = Some(enabled);
-                },
-            );
-        },
-    )
-    .tab_index(0);
+    );
 
     let mut server_rows: Vec<AnyElement> = Vec::new();
     for (server_id, description) in builtin_mcp_servers() {
@@ -92,32 +82,21 @@ fn render_mcp_server_toggle(
     loaded: bool,
     load_default: bool,
 ) -> AnyElement {
-    let toggle_id = format!("kask-mcp-{server_id}");
     let server_id_for_write = server_id.to_string();
-    SwitchField::new(
-        toggle_id,
+    kask_toggle(
+        format!("kask-mcp-{server_id}"),
         Some(server_id),
         Some((*description).into()),
-        if loaded {
-            ToggleState::Selected
-        } else {
-            ToggleState::Unselected
-        },
-        move |state, _window, cx| {
-            let enabled = *state == ToggleState::Selected;
-            let server_id = server_id_for_write.clone();
-            SettingsStore::global(cx).update_settings_file(
-                <dyn fs::Fs>::global(cx),
-                move |settings, _| {
-                    settings
-                        .kask
-                        .get_or_insert_default()
-                        .mcp
-                        .get_or_insert_default()
-                        .overrides
-                        .insert(server_id, enabled);
-                },
-            );
+        loaded,
+        0,
+        move |enabled, settings| {
+            settings
+                .kask
+                .get_or_insert_default()
+                .mcp
+                .get_or_insert_default()
+                .overrides
+                .insert(server_id_for_write.clone(), enabled);
         },
     )
     .when(!load_default, |this| {

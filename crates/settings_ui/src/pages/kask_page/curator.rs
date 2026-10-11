@@ -73,57 +73,40 @@ pub(crate) fn render_curator_page(
     .style(DropdownStyle::Outlined)
     .full_width(true);
 
-    let always_on_toggle = SwitchField::new(
+    let always_on_toggle = kask_toggle(
         "kask-curator-always-on",
         Some("Always On"),
         Some(
             "Whether the Curator agent is always-on (runs regulation loops in background).".into(),
         ),
-        if always_on {
-            ToggleState::Selected
-        } else {
-            ToggleState::Unselected
+        always_on,
+        0,
+        move |enabled, settings| {
+            settings
+                .kask
+                .get_or_insert_default()
+                .curator
+                .get_or_insert_default()
+                .always_on = Some(enabled);
         },
-        move |state, _window, cx| {
-            let enabled = *state == ToggleState::Selected;
-            SettingsStore::global(cx).update_settings_file(
-                <dyn fs::Fs>::global(cx),
-                move |settings, _| {
-                    settings
-                        .kask
-                        .get_or_insert_default()
-                        .curator
-                        .get_or_insert_default()
-                        .always_on = Some(enabled);
-                },
-            );
-        },
-    )
-    .tab_index(0);
+    );
 
-    let threshold_input = SettingsInputField::new("kask-curator-algedonic-threshold")
-        .tab_index(0)
-        .with_initial_text(algedonic_threshold)
-        .with_placeholder("0.8")
-        .aria_label("Algedonic Threshold")
-        .confirm_on_focus_out()
-        .on_confirm(move |value, _window, cx| {
-            if let Some(text) = value {
-                if let Ok(parsed) = text.parse::<f64>() {
-                    SettingsStore::global(cx).update_settings_file(
-                        <dyn fs::Fs>::global(cx),
-                        move |settings, _| {
-                            settings
-                                .kask
-                                .get_or_insert_default()
-                                .curator
-                                .get_or_insert_default()
-                                .algedonic_threshold = Some(parsed);
-                        },
-                    );
-                }
-            }
-        });
+    let threshold_input = kask_input_field(
+        "kask-curator-algedonic-threshold",
+        0,
+        algedonic_threshold,
+        "0.8",
+        "Algedonic Threshold",
+        |text| text.parse::<f64>().ok(),
+        move |parsed, settings| {
+            settings
+                .kask
+                .get_or_insert_default()
+                .curator
+                .get_or_insert_default()
+                .algedonic_threshold = Some(parsed);
+        },
+    );
 
     v_flex()
         .id("kask-curator-page")
