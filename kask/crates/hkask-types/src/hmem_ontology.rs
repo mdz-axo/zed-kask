@@ -159,6 +159,33 @@ impl HMemOntology {
         self
     }
 
+    /// Merge a batch of model-tagging judgments onto this ontology — the
+    /// single merge rule both hMem content tagging (the bridge's turn
+    /// ingest) and the swarm's response-chunk tagging apply, so the two
+    /// cannot drift. New dimensions dedupe-append; candidate terms are
+    /// canonicalized through the shared resolver (models supply raw terms,
+    /// never namespaces or URIs); expertise is recorded separately as
+    /// metadata, never as an ontology namespace.
+    pub fn merge_tag_judgments(
+        &mut self,
+        dimensions: &[String],
+        candidate_terms: &[String],
+        expertise: Option<ExpertiseLevel>,
+    ) {
+        for dimension in dimensions {
+            if !self.dimensions.contains(dimension) {
+                self.dimensions.push(dimension.clone());
+            }
+        }
+        let canonical = hkask_bridge_ontology::term_resolution::canonicalize_terms(candidate_terms);
+        self.dc_subject = canonical.candidate_terms.clone();
+        self.candidate_terms = canonical.candidate_terms;
+        self.ontology_tags = canonical.ontology_tags;
+        self.ontology_protocol =
+            Some(hkask_bridge_ontology::term_resolution::TERM_RESOLUTION_PROTOCOL.to_string());
+        self.expertise_level = expertise;
+    }
+
     /// Serialize to a JSON string for storage in the `ontology` column.
     pub fn to_json_string(&self) -> Result<String, serde_json::Error> {
         serde_json::to_string(self)
@@ -194,5 +221,50 @@ mod tests {
             ontology.ontology_protocol.as_deref(),
             Some(hkask_bridge_ontology::term_resolution::TERM_RESOLUTION_PROTOCOL)
         );
+    }
+
+    #[test]
+    fn merge_tag_judgments_use_shared_resolution_and_separate_expertise() {
+        let mut merged = HMemOntology {
+            dimensions: vec![
+                "how".to_string(),
+                "when".to_string(),
+                "who".to_string(),
+                "where".to_string(),
+            ],
+            ..HMemOntology::default()
+        };
+        merged.merge_tag_judgments(
+            &["what".to_string(), "why".to_string()],
+            &[
+                "corporation".to_string(),
+                "unknown idea".to_string(),
+                "memory".to_string(),
+            ],
+            Some(crate::corpus::ExpertiseLevel::Researcher),
+        );
+        assert_eq!(
+            merged.dimensions,
+            vec!["how", "when", "who", "where", "what", "why"]
+        );
+        assert_eq!(merged.dc_subject, ["corporation", "unknown idea", "memory"]);
+        assert_eq!(
+            merged.candidate_terms,
+            ["corporation", "unknown idea", "memory"]
+        );
+        assert_eq!(
+            merged.ontology_tags["fibo"],
+            [hkask_bridge_ontology::fibo::CORPORATION]
+        );
+        assert_eq!(merged.ontology_tags["core"], ["5w1h_core"]);
+        assert_eq!(
+            merged.ontology_protocol.as_deref(),
+            Some(hkask_bridge_ontology::term_resolution::TERM_RESOLUTION_PROTOCOL)
+        );
+        assert_eq!(
+            merged.expertise_level,
+            Some(crate::corpus::ExpertiseLevel::Researcher)
+        );
+        assert!(!merged.ontology_tags.contains_key("expertise"));
     }
 }

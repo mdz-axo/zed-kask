@@ -19,7 +19,6 @@
 //! hit — the `.rules` unwrap_or(0) trap), and the generate tools proceed
 //! unseeded (memory is an enhancement, not a dependency).
 
-use hkask_bridge_ontology::term_resolution::{TERM_RESOLUTION_PROTOCOL, canonicalize_terms};
 use hkask_inference::passage_tagging::{
     ExpertiseMode, Passage, PassageTag, PassageTaggingRequest, parse_tagging_response,
     render_deployed_tagging_prompt,
@@ -451,17 +450,7 @@ fn response_chunk_ontology(
         ..HMemOntology::default()
     };
     if let Some(tags) = tags {
-        for dimension in &tags.dimensions {
-            if !ontology.dimensions.contains(dimension) {
-                ontology.dimensions.push(dimension.clone());
-            }
-        }
-        let canonical = canonicalize_terms(&tags.candidate_terms);
-        ontology.dc_subject = canonical.candidate_terms.clone();
-        ontology.candidate_terms = canonical.candidate_terms;
-        ontology.ontology_tags = canonical.ontology_tags;
-        ontology.ontology_protocol = Some(TERM_RESOLUTION_PROTOCOL.to_string());
-        ontology.expertise_level = tags.expertise;
+        ontology.merge_tag_judgments(&tags.dimensions, &tags.candidate_terms, tags.expertise);
     }
     ontology
 }

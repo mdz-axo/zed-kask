@@ -21,7 +21,6 @@
 use std::sync::Arc;
 use std::sync::RwLock;
 
-use hkask_bridge_ontology::term_resolution::{TERM_RESOLUTION_PROTOCOL, canonicalize_terms};
 use hkask_inference::passage_tagging::{
     ExpertiseMode, Passage, PassageTag, PassageTaggingRequest, parse_tagging_response,
     render_deployed_tagging_prompt_at,
@@ -679,7 +678,7 @@ pub(crate) async fn write_turn(
     for (index, chunk_text) in chunk_texts.iter().enumerate() {
         let mut ontology = structural_ontology(&thread_id, turn_ms, index);
         if let Some(tags) = content_tags.as_ref().and_then(|tags| tags.get(index)) {
-            ontology = merge_content_tags(ontology, tags);
+            ontology.merge_tag_judgments(&tags.dimensions, &tags.candidate_terms, tags.expertise);
         }
 
         let chunk_h_mem = HMem::new(
@@ -929,24 +928,6 @@ async fn tag_chunks_with_llm(
     }
 }
 
-/// Merge classifier judgments onto structural provenance. Candidate terms are
-/// preserved, while namespaces and canonical concepts come only from the
-/// shared published-ontology resolver.
-fn merge_content_tags(mut ontology: HMemOntology, tags: &PassageTag) -> HMemOntology {
-    for dimension in &tags.dimensions {
-        if !ontology.dimensions.contains(dimension) {
-            ontology.dimensions.push(dimension.clone());
-        }
-    }
-    let canonical = canonicalize_terms(&tags.candidate_terms);
-    ontology.dc_subject = canonical.candidate_terms.clone();
-    ontology.candidate_terms = canonical.candidate_terms;
-    ontology.ontology_tags = canonical.ontology_tags;
-    ontology.ontology_protocol = Some(TERM_RESOLUTION_PROTOCOL.to_string());
-    ontology.expertise_level = tags.expertise;
-    ontology
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -998,45 +979,6 @@ mod tests {
         assert_eq!(ontology.pko_step.as_deref(), Some("chunk:2"));
         assert_eq!(ontology.dc_source, "chat:t1:turn:123");
         assert!(ontology.dc_subject.is_empty());
-    }
-
-    #[test]
-    fn merge_content_tags_uses_shared_resolution_and_separate_expertise() {
-        let base = structural_ontology("t1", 1, 0);
-        let tags = PassageTag {
-            correlation_id: "item-0".to_string(),
-            dimensions: vec!["what".to_string(), "why".to_string()],
-            candidate_terms: vec![
-                "corporation".to_string(),
-                "unknown idea".to_string(),
-                "memory".to_string(),
-            ],
-            expertise: Some(hkask_types::corpus::ExpertiseLevel::Researcher),
-        };
-        let merged = merge_content_tags(base, &tags);
-        assert_eq!(
-            merged.dimensions,
-            vec!["how", "when", "who", "where", "what", "why"]
-        );
-        assert_eq!(merged.dc_subject, ["corporation", "unknown idea", "memory"]);
-        assert_eq!(
-            merged.candidate_terms,
-            ["corporation", "unknown idea", "memory"]
-        );
-        assert_eq!(
-            merged.ontology_tags["fibo"],
-            [hkask_bridge_ontology::fibo::CORPORATION]
-        );
-        assert_eq!(merged.ontology_tags["core"], ["5w1h_core"]);
-        assert_eq!(
-            merged.ontology_protocol.as_deref(),
-            Some(TERM_RESOLUTION_PROTOCOL)
-        );
-        assert_eq!(
-            merged.expertise_level,
-            Some(hkask_types::corpus::ExpertiseLevel::Researcher)
-        );
-        assert!(!merged.ontology_tags.contains_key("expertise"));
     }
 
     /// expect: "In-process chunk tagging renders from the settings-threaded
