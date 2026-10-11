@@ -325,6 +325,24 @@ pub async fn match_faces(
     Ok(parsed)
 }
 
+/// Run one plain vision-LLM call: default parameters, one image loaded from
+/// `image_url`, the rendered `prompt`, optional model override — the shared
+/// body of the tag/caption analyses. The face tools keep their own calls
+/// (logged, low-temperature, or two-image variants).
+async fn vision_call(
+    inference: &Arc<dyn InferencePort>,
+    prompt: &str,
+    image_url: &str,
+    vision_model: Option<&str>,
+) -> Result<hkask_types::InferenceResult, crate::MediaError> {
+    let params = LLMParameters::default();
+    let image_b64 = load_image_as_png_base64(image_url).await?;
+    inference
+        .generate_vision(prompt, &[image_b64], &params, vision_model)
+        .await
+        .map_err(|e| crate::MediaError::VisionApi(format!("Vision LLM call failed: {}", e)))
+}
+
 /// Detect and label all prominent objects in an image.
 ///
 /// Returns a list of object descriptions (JSON objects with name,
@@ -342,13 +360,7 @@ pub async fn detect_objects(
     vars.insert("max_objects", "20");
     let prompt = crate::templates::render(template_env, "tag_objects", &vars)?;
 
-    let params = LLMParameters::default();
-
-    let image_b64 = load_image_as_png_base64(image_url).await?;
-    let result = inference
-        .generate_vision(&prompt, &[image_b64], &params, vision_model)
-        .await
-        .map_err(|e| crate::MediaError::VisionApi(format!("Vision LLM call failed: {}", e)))?;
+    let result = vision_call(inference, &prompt, image_url, vision_model).await?;
 
     let objects: Vec<serde_json::Value> = serde_json::from_str(&result.text).map_err(|e| {
         crate::MediaError::VisionParse(format!(
@@ -376,13 +388,7 @@ pub async fn analyze_colors(
     vars.insert("max_colors", "8");
     let prompt = crate::templates::render(template_env, "tag_colors", &vars)?;
 
-    let params = LLMParameters::default();
-
-    let image_b64 = load_image_as_png_base64(image_url).await?;
-    let result = inference
-        .generate_vision(&prompt, &[image_b64], &params, vision_model)
-        .await
-        .map_err(|e| crate::MediaError::VisionApi(format!("Vision LLM call failed: {}", e)))?;
+    let result = vision_call(inference, &prompt, image_url, vision_model).await?;
 
     let parsed: serde_json::Value = serde_json::from_str(&result.text).map_err(|e| {
         crate::MediaError::VisionParse(format!(
@@ -417,13 +423,7 @@ pub async fn analyze_composition(
 ) -> Result<serde_json::Value, crate::MediaError> {
     let prompt = crate::templates::render(template_env, "tag_composition", &HashMap::new())?;
 
-    let params = LLMParameters::default();
-
-    let image_b64 = load_image_as_png_base64(image_url).await?;
-    let result = inference
-        .generate_vision(&prompt, &[image_b64], &params, vision_model)
-        .await
-        .map_err(|e| crate::MediaError::VisionApi(format!("Vision LLM call failed: {}", e)))?;
+    let result = vision_call(inference, &prompt, image_url, vision_model).await?;
 
     let parsed: serde_json::Value = serde_json::from_str(&result.text).map_err(|e| {
         crate::MediaError::VisionParse(format!(
@@ -474,13 +474,7 @@ pub async fn caption_scene(
     vars.insert("style", "descriptive");
     let prompt = crate::templates::render(template_env, "caption", &vars)?;
 
-    let params = LLMParameters::default();
-
-    let image_b64 = load_image_as_png_base64(image_url).await?;
-    let result = inference
-        .generate_vision(&prompt, &[image_b64], &params, vision_model)
-        .await
-        .map_err(|e| crate::MediaError::VisionApi(format!("Vision LLM call failed: {}", e)))?;
+    let result = vision_call(inference, &prompt, image_url, vision_model).await?;
 
     let caption = result.text.trim().to_string();
     if caption.is_empty() {
