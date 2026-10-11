@@ -54,13 +54,14 @@ pub(crate) fn stub_result() -> hkask_types::InferenceResult {
 /// The `Pin<Box<dyn Future>>` signature boilerplate every double repeated
 /// is single-sourced here; the bodies are the double's own. Parameter
 /// names come from the invocation (macro hygiene): pass `_prompt` to
-/// ignore it, `prompt` to use it. The `with_messages` arm is opt-in for
-/// the doubles that also implement the messages path.
+/// ignore it, `prompt` to use it. The `with_messages` and `with_model`
+/// arms are opt-in for the doubles that also implement those paths.
 macro_rules! inference_generate {
     (
         $name:ident,
         generate($s:ident, $prompt:ident, $params:ident, $tools:ident): $body:block
         $(, with_messages($wm_s:ident, $messages:ident, $wm_params:ident, $wm_model:ident, $wm_tools:ident): $with_messages:block)?
+        $(, with_model($gm_s:ident, $gm_prompt:ident, $gm_params:ident, $gm_model:ident, $gm_tools:ident): $with_model:block)?
         $(,)?
     ) => {
         impl hkask_types::InferencePort for $name {
@@ -87,11 +88,26 @@ macro_rules! inference_generate {
             ) -> std::pin::Pin<
                 Box<
                     dyn std::future::Future<
-                            Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
-                        > + Send
-                        + '_,
+                        Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
+                    > + Send
+                    + '_,
                 >,
             > $with_messages)?
+
+            $(fn generate_with_model(
+                &$gm_s,
+                $gm_prompt: &str,
+                $gm_params: &hkask_types::LLMParameters,
+                $gm_model: Option<&str>,
+                $gm_tools: Option<&[hkask_types::ChatToolDefinition]>,
+            ) -> std::pin::Pin<
+                Box<
+                    dyn std::future::Future<
+                        Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
+                    > + Send
+                    + '_,
+                >,
+            > $with_model)?
         }
     };
 }
@@ -168,41 +184,16 @@ pub(crate) use allowed_dispatch;
 #[derive(Default)]
 pub(crate) struct RecordingInference(pub(crate) Mutex<Vec<Vec<hkask_types::ChatMessage>>>);
 
-impl hkask_types::InferencePort for RecordingInference {
-    fn generate(
-        &self,
-        _: &str,
-        _: &hkask_types::LLMParameters,
-        _: Option<&[hkask_types::ChatToolDefinition]>,
-    ) -> std::pin::Pin<
-        Box<
-            dyn std::future::Future<
-                    Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
-                > + Send
-                + '_,
-        >,
-    > {
+inference_generate! {
+    RecordingInference,
+    generate(self, _prompt, _params, _tools): {
         Box::pin(async {
             Err(hkask_types::InferenceError::Model(
                 "expected messages".into(),
             ))
         })
-    }
-
-    fn generate_with_messages(
-        &self,
-        messages: &[hkask_types::ChatMessage],
-        _: &hkask_types::LLMParameters,
-        _: Option<&str>,
-        _: Option<&[hkask_types::ChatToolDefinition]>,
-    ) -> std::pin::Pin<
-        Box<
-            dyn std::future::Future<
-                    Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
-                > + Send
-                + '_,
-        >,
-    > {
+    },
+    with_messages(self, messages, _params, _model, _tools): {
         let mut calls = self.0.lock().expect("recorder");
         calls.push(messages.to_vec());
         let text = format!("reply {}", calls.len());
@@ -212,7 +203,7 @@ impl hkask_types::InferencePort for RecordingInference {
             tokio::task::yield_now().await;
             Ok(fixture_result(text))
         })
-    }
+    },
 }
 
 /// A port double that records which trait method served each call and the
@@ -226,20 +217,9 @@ pub(crate) struct OverrideRecordingInference {
     pub(crate) calls: Mutex<Vec<(&'static str, Option<String>)>>,
 }
 
-impl hkask_types::InferencePort for OverrideRecordingInference {
-    fn generate(
-        &self,
-        _prompt: &str,
-        _parameters: &hkask_types::LLMParameters,
-        _tools: Option<&[hkask_types::ChatToolDefinition]>,
-    ) -> std::pin::Pin<
-        Box<
-            dyn std::future::Future<
-                    Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
-                > + Send
-                + '_,
-        >,
-    > {
+inference_generate! {
+    OverrideRecordingInference,
+    generate(self, _prompt, _params, _tools): {
         self.calls.lock().expect("calls").push(("generate", None));
         Box::pin(async {
             Err(hkask_types::InferenceError::Model(
@@ -248,22 +228,8 @@ impl hkask_types::InferencePort for OverrideRecordingInference {
                     .into(),
             ))
         })
-    }
-
-    fn generate_with_model(
-        &self,
-        _prompt: &str,
-        _parameters: &hkask_types::LLMParameters,
-        model_override: Option<&str>,
-        _tools: Option<&[hkask_types::ChatToolDefinition]>,
-    ) -> std::pin::Pin<
-        Box<
-            dyn std::future::Future<
-                    Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
-                > + Send
-                + '_,
-        >,
-    > {
+    },
+    with_model(self, _prompt, _params, model_override, _tools): {
         self.calls
             .lock()
             .expect("calls")
@@ -275,7 +241,7 @@ impl hkask_types::InferencePort for OverrideRecordingInference {
                     .to_string(),
             ))
         })
-    }
+    },
 }
 
 pub(crate) struct NoTools;
