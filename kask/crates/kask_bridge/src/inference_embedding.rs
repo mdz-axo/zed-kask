@@ -260,28 +260,12 @@ impl LanguageModelEmbeddingPort {
     where
         F: Fn(&str) -> Vec<f32> + Send + Sync + ?Sized + 'static,
     {
-        let (tx, mut rx) = mpsc::unbounded_channel::<EmbedRequest>();
-        tokio_handle.spawn(async move {
-            while let Some(req) = rx.recv().await {
-                let vectors: Vec<Vec<f32>> = req.texts.iter().map(|t| embed_fn(t)).collect();
-                let result = if vectors.is_empty() {
-                    Err(EmbeddingGenerationError::EmptyResponse)
-                } else {
-                    Ok(EmbeddingBatch {
-                        vectors,
-                        requested_model: req.model,
-                        actual_model: None,
-                        // The local embed-fn path computes vectors in-process
-                        // — no provider, no tokens, no cost. `reported:
-                        // false` keeps the absence honest.
-                        usage: hkask_types::InferenceUsage::default(),
-                        cost_usd: None,
-                    })
-                };
-                let _ = req.reply.send(result);
-            }
-        });
-        Self { tx }
+        // The width-unaware fixture is the dimension-aware one with the
+        // width ignored — one reply loop, one EmbeddingBatch shape.
+        Self::for_tests_with_dim_embed_fn(
+            Arc::new(move |text: &str, _width: Option<u32>| embed_fn(text)),
+            tokio_handle,
+        )
     }
 
     /// Construct a port whose `embed` calls are answered by `embed_fn`,
@@ -313,6 +297,9 @@ impl LanguageModelEmbeddingPort {
                         vectors,
                         requested_model: req.model,
                         actual_model: None,
+                        // The local embed-fn path computes vectors in-process
+                        // — no provider, no tokens, no cost. `reported:
+                        // false` keeps the absence honest.
                         usage: hkask_types::InferenceUsage::default(),
                         cost_usd: None,
                     })
