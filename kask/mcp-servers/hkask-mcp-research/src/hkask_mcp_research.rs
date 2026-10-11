@@ -211,6 +211,106 @@ pub(crate) fn map_db_error(e: anyhow::Error) -> McpToolError {
     McpToolError::internal(message)
 }
 
+/// The run-ledger field shape shared by the search and find-similar
+/// result outputs: both carry url, title, published, source, and a content
+/// preview falling back to the description as the excerpt.
+trait RunSourceFields {
+    fn url(&self) -> &str;
+    fn title(&self) -> &str;
+    fn published(&self) -> Option<&str>;
+    fn source(&self) -> Option<&str>;
+    fn excerpt(&self) -> Option<String>;
+}
+
+macro_rules! impl_run_source_fields {
+    ($ty:ty) => {
+        impl RunSourceFields for $ty {
+            fn url(&self) -> &str {
+                &self.url
+            }
+            fn title(&self) -> &str {
+                &self.title
+            }
+            fn published(&self) -> Option<&str> {
+                self.published.as_deref()
+            }
+            fn source(&self) -> Option<&str> {
+                self.source.as_deref()
+            }
+            fn excerpt(&self) -> Option<String> {
+                self.content_preview
+                    .clone()
+                    .or_else(|| self.description.clone())
+            }
+        }
+    };
+}
+impl_run_source_fields!(SearchResultOutput);
+impl_run_source_fields!(FindSimilarResultOutput);
+
+/// Map one search or find-similar result to its run-ledger record — the
+/// shared field shape of the two ledger appends. `provider` is the
+/// caller's variation: the search path names the result's contributing
+/// providers, the find-similar path names Exa (the findSimilar origin).
+fn run_source_record(result: &impl RunSourceFields, provider: Option<String>) -> RunSourceRecord {
+    RunSourceRecord {
+        url: result.url().to_string(),
+        provider,
+        title: Some(result.title().to_string()),
+        published: result.published().map(str::to_string),
+        source: result.source().map(str::to_string),
+        excerpt: result.excerpt(),
+    }
+}
+
+/// Build the synthetic feed from extracted items — the shared tail of the
+/// item-producing extractor arms (llm_schema; pdf_ocr with items; css and
+/// json_path). Returns the feed with its entries assigned and the entry
+/// count. The diff-hash arms keep their own shape (a single hash entry).
+fn items_synthetic_feed(
+    items: Vec<crate::research::synthetic::ExtractedItem>,
+    source_url: &str,
+    title: &str,
+    description: &str,
+) -> (feed_rs::model::Feed, usize) {
+    let entries = crate::research::synthetic::items_to_entries(items, title);
+    let count = entries.len();
+    let mut feed = crate::research::synthetic::build_synthetic_feed(source_url, title, description);
+    feed.entries = entries;
+    (feed, count)
+}
+
+/// Insert extracted entries and update the synthetic feed's status in one
+/// transaction — the shared commit tail of the two fetch paths (diff-hash
+/// with its new content hash; item extraction without). Returns the
+/// stream's fetch summary, or maps the DB/join failure.
+async fn commit_synthetic_entries(
+    db: r2d2::Pool<hkask_storage::SqliteConnectionManager>,
+    feed_id: i64,
+    entries: Vec<feed_rs::model::Entry>,
+    extract_hash: Option<String>,
+    stream_id: &str,
+) -> Result<serde_json::Value, McpToolError> {
+    let result = spawn_db(db, move |conn| {
+        let tx =
+            rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Deferred)?;
+        let new_count = insert_entries(&tx, feed_id, &entries)?;
+        update_synthetic_status(&tx, feed_id, new_count, extract_hash.as_deref(), None)?;
+        tx.commit()?;
+        Ok::<usize, anyhow::Error>(new_count)
+    })
+    .await;
+    match result {
+        Ok(Ok(new_count)) => Ok(serde_json::json!({
+            "stream_id": stream_id,
+            "new_entries": new_count,
+            "fetched": true,
+        })),
+        Ok(Err(e)) => Err(map_db_error(e)),
+        Err(e) => Err(map_join_error(e, "db task failed")),
+    }
+}
+
 /// Require the research database, returning an Err if not configured.
 /// The message names the actual causes: the DB opens at its DEFAULT path
 /// when `HKASK_RESEARCH_DB` is unset, so an unconfigured DB is almost always
@@ -562,17 +662,7 @@ impl ResearchServer {
                 let records: Vec<RunSourceRecord> = search_output
                     .results
                     .iter()
-                    .map(|result| RunSourceRecord {
-                        url: result.url.clone(),
-                        provider: result.providers.first().cloned(),
-                        title: Some(result.title.clone()),
-                        published: result.published.clone(),
-                        source: result.source.clone(),
-                        excerpt: result
-                            .content_preview
-                            .clone()
-                            .or_else(|| result.description.clone()),
-                    })
+                    .map(|result| run_source_record(result, result.providers.first().cloned()))
                     .collect();
                 let note = self.append_run_ledger(run_id, records).await;
                 output["run_ledger"] = note;
@@ -642,17 +732,7 @@ impl ResearchServer {
                 let records: Vec<RunSourceRecord> = fs_output
                     .results
                     .iter()
-                    .map(|result| RunSourceRecord {
-                        url: result.url.clone(),
-                        provider: Some("exa".to_string()),
-                        title: Some(result.title.clone()),
-                        published: result.published.clone(),
-                        source: result.source.clone(),
-                        excerpt: result
-                            .content_preview
-                            .clone()
-                            .or_else(|| result.description.clone()),
-                    })
+                    .map(|result| run_source_record(result, Some("exa".to_string())))
                     .collect();
                 let note = self.append_run_ledger(run_id, records).await;
                 output["run_ledger"] = note;
@@ -1342,14 +1422,8 @@ impl ResearchServer {
                     )
                     .await
                     .map_err(McpToolError::from)?;
-                    let entries = crate::research::synthetic::items_to_entries(items, &title);
-                    let count = entries.len();
-                    let mut feed = crate::research::synthetic::build_synthetic_feed(
-                        &source_url,
-                        &title,
-                        &description,
-                    );
-                    feed.entries = entries;
+                    let (feed, count) =
+                        items_synthetic_feed(items, &source_url, &title, &description);
                     (feed, count, None)
                 }
                 crate::research::synthetic::ExtractorKind::PdfOcr => {
@@ -1371,14 +1445,8 @@ impl ResearchServer {
                         let count = feed.entries.len();
                         (feed, count, Some(hash))
                     } else {
-                        let entries = crate::research::synthetic::items_to_entries(items, &title);
-                        let count = entries.len();
-                        let mut feed = crate::research::synthetic::build_synthetic_feed(
-                            &source_url,
-                            &title,
-                            &description,
-                        );
-                        feed.entries = entries;
+                        let (feed, count) =
+                            items_synthetic_feed(items, &source_url, &title, &description);
                         (feed, count, None)
                     }
                 }
@@ -1391,14 +1459,8 @@ impl ResearchServer {
                         &body,
                     )
                     .map_err(McpToolError::from)?;
-                    let entries = crate::research::synthetic::items_to_entries(items, &title);
-                    let count = entries.len();
-                    let mut feed = crate::research::synthetic::build_synthetic_feed(
-                        &source_url,
-                        &title,
-                        &description,
-                    );
-                    feed.entries = entries;
+                    let (feed, count) =
+                        items_synthetic_feed(items, &source_url, &title, &description);
                     (feed, count, None)
                 }
             };
@@ -1582,28 +1644,7 @@ impl ResearchServer {
                 &synth.source_url,
                 &synth.source_url,
             );
-            let feed_id = synth.feed_id;
-            let hash_for_db = hash.clone();
-            let result = spawn_db(db, move |conn| {
-                let tx = rusqlite::Transaction::new_unchecked(
-                    conn,
-                    rusqlite::TransactionBehavior::Deferred,
-                )?;
-                let new_count = insert_entries(&tx, feed_id, &feed.entries)?;
-                update_synthetic_status(&tx, feed_id, new_count, Some(&hash_for_db), None)?;
-                tx.commit()?;
-                Ok::<usize, anyhow::Error>(new_count)
-            })
-            .await;
-            match result {
-                Ok(Ok(new_count)) => Ok(serde_json::json!({
-                    "stream_id": stream_id,
-                    "new_entries": new_count,
-                    "fetched": true,
-                })),
-                Ok(Err(e)) => Err(map_db_error(e)),
-                Err(e) => Err(map_join_error(e, "db task failed")),
-            }
+            commit_synthetic_entries(db, synth.feed_id, feed.entries, Some(hash), stream_id).await
         } else {
             // css, json_path, llm_schema, or pdf_ocr extraction.
             let items = match kind {
@@ -1634,27 +1675,7 @@ impl ResearchServer {
             };
 
             let entries = crate::research::synthetic::items_to_entries(items, &synth.source_url);
-            let feed_id = synth.feed_id;
-            let result = spawn_db(db, move |conn| {
-                let tx = rusqlite::Transaction::new_unchecked(
-                    conn,
-                    rusqlite::TransactionBehavior::Deferred,
-                )?;
-                let new_count = insert_entries(&tx, feed_id, &entries)?;
-                update_synthetic_status(&tx, feed_id, new_count, None, None)?;
-                tx.commit()?;
-                Ok::<usize, anyhow::Error>(new_count)
-            })
-            .await;
-            match result {
-                Ok(Ok(new_count)) => Ok(serde_json::json!({
-                    "stream_id": stream_id,
-                    "new_entries": new_count,
-                    "fetched": true,
-                })),
-                Ok(Err(e)) => Err(map_db_error(e)),
-                Err(e) => Err(map_join_error(e, "db task failed")),
-            }
+            commit_synthetic_entries(db, synth.feed_id, entries, None, stream_id).await
         }
     }
 
