@@ -1,12 +1,16 @@
 #!/bin/bash
 # Shared helpers for zed-kask install scripts.
 #
-# Sourced by install.sh. Provides:
+# Sourced by install.sh and by the conformance gate
+# (build/check-install-best-practices.sh, which exercises the corpus stage
+# against a file:// fixture). Provides:
 #   - log/log_success/log_warning/log_error
 #   - MCP_SERVERS array (loaded from mcp-servers.txt — single source of truth)
 #   - publish_binaries (staged, per-file-atomic binary publication)
 #   - add_to_path (symlink-then-shell-config strategy)
 #   - print_banner
+#   - corpus bundle stage (install_corpus_bundle(s)): idempotent by run
+#     identity, resumable part downloads, atomic database assembly
 #
 # The runtime canonical registry is BUILT_IN_MCP_SERVERS in
 # kask/crates/kask_bridge/src/mcp_servers.rs; mcp-servers.txt is the
@@ -882,4 +886,255 @@ print_banner() {
     echo "║        $subtitle"
     echo "╚══════════════════════════════════════════════════════════╝"
     echo ""
+}
+
+# ============================================================================
+# Corpus bundles — the distribution stage of the corpus pipeline
+# ============================================================================
+#
+# Every shippable corpus is exported by the `corpus_export_bundle` tool
+# (hkask-mcp-corpus) into a package of hash-pinned parts plus metadata,
+# described by a bundle.json committed at kask/registry/<corpus-id>/bundle.json.
+# The installer downloads each asset, verifies it against the committed
+# hashes, reassembles the database, writes the materialization receipt, and
+# registers the source for federated recall. The shipped database is locked
+# with the PUBLIC bundle key declared in bundle.json (the corpus is openly
+# licensed; the encryption is the transport wrapper the database format
+# requires) — so installation needs no per-machine rekey and passphrase
+# rotation can never orphan a shipped corpus.
+#
+# A corpus install failure is loud but not fatal to the product install:
+# the editor and MCP servers are already in place; re-running the installer
+# retries (verified assets are not re-downloaded, interrupted parts resume).
+#
+# Escape: --skip-corpora stages nothing.
+#
+# This stage lives in install-common.sh (not install.sh) for the same reason
+# uninstall_hkask does: install.sh runs `main "$@"` at the bottom and is not
+# sourceable, and the conformance gate (build/check-install-best-practices.sh)
+# exercises these functions directly against a file:// fixture.
+
+CORPUS_REGISTRY_RELATIVE="kask/registry"
+CORPUS_URL_BASE_DEFAULT="https://github.com/mdz-axo/zed-kask/releases/download"
+
+# corpus_sources_manifest — the machine's federated registration manifest.
+corpus_sources_manifest() {
+    echo "${XDG_DATA_HOME:-$HOME/.local/share}/zed-kask/agents/curator/federated-sources.json"
+}
+
+# corpus_registered_field <source_id> <field> — a registered source's field
+# (run_identity_path, database_path, …), or empty when unregistered. One home
+# for the federated-sources.json lookup, shared by the up-to-date gate and
+# verify_installation.
+corpus_registered_field() {
+    local source_id="$1" field="$2"
+    local manifest
+    manifest="$(corpus_sources_manifest)"
+    [ -f "$manifest" ] || return 0
+    jq -r --arg id "$source_id" \
+        "([.sources[]? | select(.id == \$id)] | first | .$field) // empty" \
+        "$manifest" 2>/dev/null || true
+}
+
+# install_corpus_bundle <corpus-id> <bundle-json-path>
+install_corpus_bundle() {
+    local corpus_id="$1"
+    local bundle_json="$2"
+    command -v curl >/dev/null 2>&1 || {
+        log_error "corpus '$corpus_id': download requires curl (not found on PATH)"
+        return 1
+    }
+    command -v jq >/dev/null 2>&1 || {
+        log_error "corpus '$corpus_id': registration requires jq (not found on PATH)"
+        return 1
+    }
+
+    local source_id display_name bundle_key bundle_run_id
+    source_id="$(jq -r '.source_id' "$bundle_json")"
+    display_name="$(jq -r '.display_name' "$bundle_json")"
+    bundle_key="$(jq -r '.bundle_key' "$bundle_json")"
+    bundle_run_id="$(jq -r '.run_id' "$bundle_json")"
+    if [ -z "$source_id" ] || [ "$source_id" = "null" ] \
+        || [ -z "$display_name" ] || [ "$display_name" = "null" ] \
+        || [ -z "$bundle_key" ] || [ "$bundle_key" = "null" ] \
+        || [ -z "$bundle_run_id" ] || [ "$bundle_run_id" = "null" ]; then
+        log_error "corpus '$corpus_id': bundle.json is missing source_id, display_name, bundle_key, or run_id"
+        return 1
+    fi
+
+    local manifest
+    manifest="$(corpus_sources_manifest)"
+
+    # Up-to-date check: a machine that already holds this corpus must not
+    # re-download gigabytes. The run_id seals the run identity including the
+    # database digest, so a registration naming the same run with an
+    # existing database IS this bundle's content — whether it is a prior
+    # install's materialized copy or the build machine's sealed registration.
+    # The registration's own admission chain (byte digest or provenance)
+    # remains the integrity check; this gate only detects presence.
+    local registered_identity registered_database registered_run_id
+    registered_identity="$(corpus_registered_field "$source_id" run_identity_path)"
+    registered_database="$(corpus_registered_field "$source_id" database_path)"
+    if [ -n "$registered_identity" ] && [ -f "$registered_identity" ] \
+        && [ -n "$registered_database" ] && [ -f "$registered_database" ]; then
+        registered_run_id="$(jq -r '.run_id // empty' "$registered_identity" 2>/dev/null)" || true
+        if [ -n "$registered_run_id" ] && [ "$registered_run_id" = "$bundle_run_id" ]; then
+            log "corpus '$corpus_id' already up to date (run ${registered_run_id:0:12}…) — skipping download"
+            log "  to force a fresh materialization, remove the '$source_id' entry from $manifest and re-run"
+            return 0
+        fi
+    fi
+
+    local home="${XDG_DATA_HOME:-$HOME/.local/share}/zed-kask/agents/curator/$corpus_id"
+    local staging="$home/.staging"
+    mkdir -p "$staging"
+
+    local url_base="${HKASK_CORPUS_URL_BASE:-$CORPUS_URL_BASE_DEFAULT}/corpus-$corpus_id"
+    local name hash actual curl_rc
+    while IFS=$'\t' read -r name hash; do
+        [ -n "$name" ] || continue
+        if [ -f "$staging/$name" ] \
+            && [ "$(sha256sum "$staging/$name" | cut -d' ' -f1)" = "$hash" ]; then
+            log "corpus '$corpus_id': asset already verified: $name"
+            continue
+        fi
+        if [ -f "$staging/$name" ]; then
+            log "corpus '$corpus_id': resuming partial download: $name ($(stat -c%s "$staging/$name") bytes staged)"
+        fi
+        # -C - resumes an interrupted transfer from the staged bytes instead
+        # of restarting a multi-hundred-MB part from zero. curl exits 33/22
+        # when the staged bytes already cover the remote (typically an
+        # already-complete file) — those fall through to the hash check,
+        # which is the arbiter.
+        curl_rc=0
+        curl -fL -C - --retry 3 --progress-bar -o "$staging/$name" "$url_base/$name" \
+            || curl_rc=$?
+        if [ "$curl_rc" -ne 0 ] && [ "$curl_rc" -ne 33 ] && [ "$curl_rc" -ne 22 ]; then
+            # Transport interrupted mid-transfer: keep the partial in
+            # staging so the next run resumes; the working install (if any)
+            # is untouched.
+            log_error "corpus '$corpus_id': download of $name interrupted (curl exit $curl_rc) — partial kept in staging for resume; re-run the installer"
+            return 1
+        fi
+        if [ "$curl_rc" -ne 0 ]; then
+            log_warning "corpus '$corpus_id': transfer of $name ended with curl exit $curl_rc — verifying staged bytes"
+        fi
+        actual="$(sha256sum "$staging/$name" | cut -d' ' -f1)"
+        if [ "$actual" != "$hash" ]; then
+            # Corrupt staged bytes (not a transport interruption): discard
+            # and re-download once, cleanly, from zero.
+            rm -f "$staging/$name"
+            log_warning "corpus '$corpus_id': staged $name failed verification — re-downloading from scratch"
+            curl -fL --retry 3 --progress-bar -o "$staging/$name" "$url_base/$name" \
+                || { log_error "corpus '$corpus_id': download failed: $url_base/$name"; return 1; }
+            actual="$(sha256sum "$staging/$name" | cut -d' ' -f1)"
+            if [ "$actual" != "$hash" ]; then
+                rm -f "$staging/$name"
+                log_error "corpus '$corpus_id': asset '$name' sha256 $actual != bundle pin $hash"
+                log_error "Transport corrupted or the release is inconsistent with the committed bundle.json — aborting this corpus."
+                return 1
+            fi
+        fi
+    done < <(jq -r '.assets[] | "\(.name)\t\(.sha256)"' "$bundle_json")
+
+    # Reassemble the database parts (lexicographic part order is
+    # reassembly order — the export's zero-padded suffixes guarantee it).
+    # Assemble into a sibling temp and rename into place: a failed or
+    # interrupted assembly must never truncate a registered database — the
+    # same staged-then-rename contract publish_binaries keeps for binaries
+    # (a failure preserves the working install).
+    local database="$home/$source_id.db"
+    local assembling="$database.assembling"
+    rm -f "$assembling"
+    : > "$assembling"
+    local part_count=0
+    local part
+    for part in $(jq -r '.assets[].name' "$bundle_json" | grep "^${source_id}\\.db\\.part-" | sort); do
+        if ! cat "$staging/$part" >> "$assembling"; then
+            rm -f "$assembling"
+            log_error "corpus '$corpus_id': failed assembling part $part into $assembling"
+            return 1
+        fi
+        part_count=$((part_count + 1))
+    done
+    if [ "$part_count" -eq 0 ]; then
+        rm -f "$assembling"
+        log_error "corpus '$corpus_id': bundle declares no '${source_id}.db.part-NNN' database parts"
+        return 1
+    fi
+    mv -f "$assembling" "$database"
+
+    # Place the metadata assets and the git-pinned manifest.
+    cp "$staging/run-identity.json" "$home/run-identity.json"
+    cp "$staging/representations-manifest.json" "$home/representations-manifest.json"
+    cp "$bundle_json" "$home/bundle.json"
+
+    # The receipt records the verified asset hashes in bundle order and the
+    # materialized database path — the provenance chain admission compares.
+    jq -n \
+        --arg database "$database" \
+        --slurpfile bundle "$bundle_json" \
+        '{schema_version: 1,
+          asset_sha256: $bundle[0].assets | map(.sha256),
+          database_path: $database}' > "$home/receipt.json"
+
+    # Register for federated recall: replace any entry with the same id,
+    # preserve every other source (the safe jq merge form — no select-as
+    # binding, which silently drops unpatched entries). `manifest` was
+    # bound above, before the up-to-date check.
+    local spec
+    spec="$(jq -n \
+        --arg id "$source_id" \
+        --arg name "$display_name" \
+        --arg database "$database" \
+        --arg identity "$home/run-identity.json" \
+        --arg representations "$home/representations-manifest.json" \
+        --arg bundle "$home/bundle.json" \
+        --arg receipt "$home/receipt.json" \
+        '{id: $id,
+          display_name: $name,
+          database_path: $database,
+          run_identity_path: $identity,
+          representations_manifest_path: $representations,
+          index_name: "fine",
+          materialized_provenance: {bundle_manifest_path: $bundle, receipt_path: $receipt}}')"
+    if [ -f "$manifest" ]; then
+        jq --argjson new "$spec" \
+            '.schema_version = (.schema_version // 1) | .sources = ((.sources // []) | map(select(.id != $new.id)) + [$new])' \
+            "$manifest" > "$manifest.tmp" && mv "$manifest.tmp" "$manifest"
+    else
+        jq -n --argjson new "$spec" '{schema_version: 1, sources: [$new]}' > "$manifest"
+    fi
+
+    # Verify the registration invariant itself, not the shape: the corpus
+    # is present exactly once and the manifest parses.
+    jq -e --arg id "$source_id" \
+        '(.sources | map(select(.id == $id)) | length) == 1' \
+        "$manifest" >/dev/null \
+        || { log_error "corpus '$corpus_id': registration merge failed verification"; return 1; }
+
+    rm -rf "$staging"
+    log_success "corpus '$corpus_id' installed and registered for federated recall ($part_count database parts)"
+    log "It appears as a federated recall option after the next curator-server launch."
+    return 0
+}
+
+install_corpus_bundles() {
+    local registry="$HKASK_SOURCE_DIR/$CORPUS_REGISTRY_RELATIVE"
+    if [ ! -d "$registry" ]; then
+        log "No corpus registry at $registry — nothing to install"
+        return 0
+    fi
+    local bundle_json corpus_id failed=0
+    while IFS= read -r bundle_json; do
+        corpus_id="$(basename "$(dirname "$bundle_json")")"
+        if ! install_corpus_bundle "$corpus_id" "$bundle_json"; then
+            failed=$((failed + 1))
+        fi
+    done < <(find "$registry" -name bundle.json | sort)
+    if [ "$failed" -gt 0 ]; then
+        log_error "$failed corpus bundle(s) failed to install — re-run the installer to retry (verified assets are not re-downloaded, interrupted parts resume)"
+        return 1
+    fi
+    return 0
 }

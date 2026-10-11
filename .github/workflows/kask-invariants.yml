@@ -228,6 +228,8 @@ jobs:
           sudo apt-get update -qq && sudo apt-get install -y -qq jq
           git fetch origin "$(head -1 kask/scripts/duplication-scan-base.txt)" --depth=1
           bash kask/scripts/check-duplication-ratchet.sh
+      - name: Installer best practices — idempotent/resumable/atomic corpus stage; shellcheck; version sync; registry integrity
+        run: bash kask/scripts/build/check-install-best-practices.sh
       - name: Gate selftests — every kask/scripts/check-*-selftest.sh fails on a violation
         run: |
           # The glob covers every gate selftest in kask/scripts: the

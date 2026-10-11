@@ -167,7 +167,11 @@ install_rust() {
                 source "$HOME/.cargo/env"
             fi
         else
-            log "Running in CI environment, skipping Rust installation"
+            # Loud and truthful: this branch FAILS the install — a CI image
+            # without rustc must pre-provision it, not get an interactive
+            # rustup. The old "skipping" message contradicted the behavior:
+            # the last line before an abort must never say "skipping".
+            log_error "CI environment without rustc — CI images must pre-provision Rust (see kask-invariants.yml); refusing an interactive rustup install"
             return 1
         fi
     fi
@@ -193,7 +197,7 @@ build_mcp_servers() {
     for server in "${MCP_SERVERS[@]}"; do
         server_args+=(--package "$server")
     done
-    cargo build --jobs "$jobs" --profile release-mcp "${server_args[@]}"
+    cargo build --locked --jobs "$jobs" --profile release-mcp "${server_args[@]}"
 }
 
 build_hkask() {
@@ -257,7 +261,7 @@ build_hkask() {
         # as upstream. The glibc arena-ratchet memory finding (2026-09-28) is
         # real; if it recurs, address it without a code divergence
         # (MALLOC_ARENA_MAX in the launcher) and re-measure.
-        if cargo build --jobs "$jobs" --release --package zed; then
+        if cargo build --locked --jobs "$jobs" --release --package zed; then
             build_mcp_servers "$jobs" && build_ok=1
         fi
     else
@@ -269,7 +273,7 @@ build_hkask() {
         # "rebuilt and worse" incident, two-symptom findings §7.9).
         log "Building zed binary on the release-fast profile (release flags, no LTO)..."
         log "Building with at most $jobs concurrent compile jobs..."
-        if cargo build --jobs "$jobs" --profile release-fast --package zed; then
+        if cargo build --locked --jobs "$jobs" --profile release-fast --package zed; then
             build_mcp_servers "$jobs" && build_ok=1
         fi
     fi
@@ -531,194 +535,16 @@ setup_environment() {
 # Corpus bundles — the distribution stage of the corpus pipeline
 # ============================================================================
 #
-# Every shippable corpus is exported by the `corpus_export_bundle` tool
-# (hkask-mcp-corpus) into a package of hash-pinned parts plus metadata,
-# described by a bundle.json committed at kask/registry/<corpus-id>/bundle.json.
-# The installer downloads each asset, verifies it against the committed
-# hashes, reassembles the database, writes the materialization receipt, and
-# registers the source for federated recall. The shipped database is locked
-# with the PUBLIC bundle key declared in bundle.json (the corpus is openly
-# licensed; the encryption is the transport wrapper the database format
-# requires) — so installation needs no per-machine rekey and passphrase
-# rotation can never orphan a shipped corpus.
-#
-# A corpus install failure is loud but not fatal to the product install:
-# the editor and MCP servers are already in place; re-running the installer
-# retries (verified assets are not re-downloaded).
-#
-# Escape: --skip-corpora stages nothing.
-
-CORPUS_REGISTRY_RELATIVE="kask/registry"
-CORPUS_URL_BASE_DEFAULT="https://github.com/mdz-axo/zed-kask/releases/download"
-
-# install_corpus_bundle <corpus-id> <bundle-json-path>
-install_corpus_bundle() {
-    local corpus_id="$1"
-    local bundle_json="$2"
-    command -v curl >/dev/null 2>&1 || {
-        log_error "corpus '$corpus_id': download requires curl (not found on PATH)"
-        return 1
-    }
-    command -v jq >/dev/null 2>&1 || {
-        log_error "corpus '$corpus_id': registration requires jq (not found on PATH)"
-        return 1
-    }
-
-    local source_id display_name bundle_key bundle_run_id
-    source_id="$(jq -r '.source_id' "$bundle_json")"
-    display_name="$(jq -r '.display_name' "$bundle_json")"
-    bundle_key="$(jq -r '.bundle_key' "$bundle_json")"
-    bundle_run_id="$(jq -r '.run_id' "$bundle_json")"
-    if [ -z "$source_id" ] || [ "$source_id" = "null" ] \
-        || [ -z "$display_name" ] || [ "$display_name" = "null" ] \
-        || [ -z "$bundle_key" ] || [ "$bundle_key" = "null" ] \
-        || [ -z "$bundle_run_id" ] || [ "$bundle_run_id" = "null" ]; then
-        log_error "corpus '$corpus_id': bundle.json is missing source_id, display_name, bundle_key, or run_id"
-        return 1
-    fi
-
-    local manifest="${XDG_DATA_HOME:-$HOME/.local/share}/zed-kask/agents/curator/federated-sources.json"
-
-    # Up-to-date check: a machine that already holds this corpus must not
-    # re-download gigabytes. The run_id seals the run identity including the
-    # database digest, so a registration naming the same run with an
-    # existing database IS this bundle's content — whether it is a prior
-    # install's materialized copy or the build machine's sealed registration.
-    # The registration's own admission chain (byte digest or provenance)
-    # remains the integrity check; this gate only detects presence.
-    if [ -f "$manifest" ]; then
-        local registered_identity registered_database registered_run_id
-        registered_identity="$(jq -r --arg id "$source_id" \
-            '([.sources[]? | select(.id == $id)] | first | .run_identity_path) // empty' \
-            "$manifest" 2>/dev/null)" || true
-        registered_database="$(jq -r --arg id "$source_id" \
-            '([.sources[]? | select(.id == $id)] | first | .database_path) // empty' \
-            "$manifest" 2>/dev/null)" || true
-        if [ -n "$registered_identity" ] && [ -f "$registered_identity" ] \
-            && [ -n "$registered_database" ] && [ -f "$registered_database" ]; then
-            registered_run_id="$(jq -r '.run_id // empty' "$registered_identity" 2>/dev/null)" || true
-            if [ -n "$registered_run_id" ] && [ "$registered_run_id" = "$bundle_run_id" ]; then
-                log "corpus '$corpus_id' already up to date (run ${registered_run_id:0:12}…) — skipping download"
-                log "  to force a fresh materialization, remove the '$source_id' entry from $manifest and re-run"
-                return 0
-            fi
-        fi
-    fi
-
-    local home="${XDG_DATA_HOME:-$HOME/.local/share}/zed-kask/agents/curator/$corpus_id"
-    local staging="$home/.staging"
-    mkdir -p "$staging"
-
-    local url_base="${HKASK_CORPUS_URL_BASE:-$CORPUS_URL_BASE_DEFAULT}/corpus-$corpus_id"
-    local name hash actual
-    while IFS=$'\t' read -r name hash; do
-        [ -n "$name" ] || continue
-        if [ -f "$staging/$name" ] \
-            && [ "$(sha256sum "$staging/$name" | cut -d' ' -f1)" = "$hash" ]; then
-            log "corpus '$corpus_id': asset already verified: $name"
-            continue
-        fi
-        rm -f "$staging/$name"
-        log "corpus '$corpus_id': downloading $name"
-        curl -fL --retry 3 --progress-bar -o "$staging/$name" "$url_base/$name" \
-            || { log_error "corpus '$corpus_id': download failed: $url_base/$name"; return 1; }
-        actual="$(sha256sum "$staging/$name" | cut -d' ' -f1)"
-        if [ "$actual" != "$hash" ]; then
-            rm -f "$staging/$name"
-            log_error "corpus '$corpus_id': asset '$name' sha256 $actual != bundle pin $hash"
-            log_error "Transport corrupted or the release is inconsistent with the committed bundle.json — aborting this corpus."
-            return 1
-        fi
-    done < <(jq -r '.assets[] | "\(.name)\t\(.sha256)"' "$bundle_json")
-
-    # Reassemble the database parts (lexicographic part order is
-    # reassembly order — the export's zero-padded suffixes guarantee it).
-    local database="$home/$source_id.db"
-    : > "$database"
-    local part_count=0
-    for part in $(jq -r '.assets[].name' "$bundle_json" | grep "^${source_id}\\.db\\.part-" | sort); do
-        cat "$staging/$part" >> "$database"
-        part_count=$((part_count + 1))
-    done
-    if [ "$part_count" -eq 0 ]; then
-        log_error "corpus '$corpus_id': bundle declares no '${source_id}.db.part-NNN' database parts"
-        return 1
-    fi
-
-    # Place the metadata assets and the git-pinned manifest.
-    cp "$staging/run-identity.json" "$home/run-identity.json"
-    cp "$staging/representations-manifest.json" "$home/representations-manifest.json"
-    cp "$bundle_json" "$home/bundle.json"
-
-    # The receipt records the verified asset hashes in bundle order and the
-    # materialized database path — the provenance chain admission compares.
-    jq -n \
-        --arg database "$database" \
-        --slurpfile bundle "$bundle_json" \
-        '{schema_version: 1,
-          asset_sha256: $bundle[0].assets | map(.sha256),
-          database_path: $database}' > "$home/receipt.json"
-
-    # Register for federated recall: replace any entry with the same id,
-    # preserve every other source (the safe jq merge form — no select-as
-    # binding, which silently drops unpatched entries). `manifest` was
-    # bound by the up-to-date check above.
-    local spec
-    spec="$(jq -n \
-        --arg id "$source_id" \
-        --arg name "$display_name" \
-        --arg database "$database" \
-        --arg identity "$home/run-identity.json" \
-        --arg representations "$home/representations-manifest.json" \
-        --arg bundle "$home/bundle.json" \
-        --arg receipt "$home/receipt.json" \
-        '{id: $id,
-          display_name: $name,
-          database_path: $database,
-          run_identity_path: $identity,
-          representations_manifest_path: $representations,
-          index_name: "fine",
-          materialized_provenance: {bundle_manifest_path: $bundle, receipt_path: $receipt}}')"
-    if [ -f "$manifest" ]; then
-        jq --argjson new "$spec" \
-            '.schema_version = (.schema_version // 1) | .sources = ((.sources // []) | map(select(.id != $new.id)) + [$new])' \
-            "$manifest" > "$manifest.tmp" && mv "$manifest.tmp" "$manifest"
-    else
-        jq -n --argjson new "$spec" '{schema_version: 1, sources: [$new]}' > "$manifest"
-    fi
-
-    # Verify the registration invariant itself, not the shape: the corpus
-    # is present exactly once and the manifest parses.
-    jq -e --arg id "$source_id" \
-        '(.sources | map(select(.id == $id)) | length) == 1' \
-        "$manifest" >/dev/null \
-        || { log_error "corpus '$corpus_id': registration merge failed verification"; return 1; }
-
-    rm -rf "$staging"
-    log_success "corpus '$corpus_id' installed and registered for federated recall ($part_count database parts)"
-    log "It appears as a federated recall option after the next curator-server launch."
-    return 0
-}
-
-install_corpus_bundles() {
-    local registry="$HKASK_SOURCE_DIR/$CORPUS_REGISTRY_RELATIVE"
-    if [ ! -d "$registry" ]; then
-        log "No corpus registry at $registry — nothing to install"
-        return 0
-    fi
-    local bundle_json corpus_id failed=0
-    while IFS= read -r bundle_json; do
-        corpus_id="$(basename "$(dirname "$bundle_json")")"
-        if ! install_corpus_bundle "$corpus_id" "$bundle_json"; then
-            failed=$((failed + 1))
-        fi
-    done < <(find "$registry" -name bundle.json | sort)
-    if [ "$failed" -gt 0 ]; then
-        log_error "$failed corpus bundle(s) failed to install — re-run the installer to retry (verified assets are not re-downloaded)"
-        return 1
-    fi
-    return 0
-}
+# The corpus stage (install_corpus_bundle / install_corpus_bundles, the
+# registry constants, and the federated-registration helpers) lives in
+# install-common.sh — the same testability move as uninstall_hkask: this
+# script runs `main "$@"` at the bottom and is not sourceable, and the
+# conformance gate (build/check-install-best-practices.sh) exercises the
+# corpus functions directly against a file:// fixture. The stage is
+# idempotent by run identity (a machine already holding the bundle's run
+# does not re-download), resumable (interrupted parts continue via
+# curl -C -), and assembles the database atomically (a failed assembly
+# preserves the working registration).
 
 # ============================================================================
 # Verification
@@ -803,6 +629,26 @@ verify_installation() {
         return 1
     fi
     log "[installed] Lean/Lake launcher: $elan_home/bin/lake"
+
+    # Corpus registrations — presence evidence for the installer's own
+    # artifacts (the corpus stage verifies its registration at write time;
+    # this reports what is on the machine now). A corpus that failed this
+    # run or was skipped reports [skipped], not failure: the product
+    # install (editor + MCP servers) does not depend on it.
+    local corpus_registry="$HKASK_SOURCE_DIR/$CORPUS_REGISTRY_RELATIVE"
+    if [ -d "$corpus_registry" ]; then
+        local c_bundle c_sid c_db
+        while IFS= read -r c_bundle; do
+            c_sid="$(jq -r '.source_id // empty' "$c_bundle" 2>/dev/null)" || true
+            [ -n "$c_sid" ] || continue
+            c_db="$(corpus_registered_field "$c_sid" database_path)"
+            if [ -n "$c_db" ] && [ -s "$c_db" ]; then
+                log "[installed] Corpus registration: $c_sid ($c_db)"
+            else
+                log "[skipped] Corpus registration: $c_sid not present (corpus stage failed or --skip-corpora)"
+            fi
+        done < <(find "$corpus_registry" -name bundle.json | sort)
+    fi
 
     # Check symlink in /usr/local/bin
     if [ -L "$SYSTEM_BIN/zed-kask" ]; then
@@ -1027,7 +873,15 @@ main() {
             write_mcp_server_settings
 
             if [ "$skip_corpora" = false ]; then
-                install_corpus_bundles
+                # The corpus stage's documented contract: a failure is loud
+                # but NOT fatal to the product install — the editor and MCP
+                # servers are already in place, and re-running retries from
+                # staging (verified assets are not re-downloaded, interrupted
+                # parts resume). The old bare call made the failure fatal
+                # under set -e, contradicting the contract.
+                if ! install_corpus_bundles; then
+                    log_error "Corpus bundle installation failed — the editor and MCP servers remain installed; re-run the installer to retry"
+                fi
             else
                 log "Skipping corpus bundle installation (--skip-corpora)"
             fi

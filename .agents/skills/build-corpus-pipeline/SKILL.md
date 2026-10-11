@@ -817,11 +817,14 @@ Shipping a bundle (operator steps, outside tool execution):
    — the git-pinned trust root the installer verifies against.
 2. Upload the part files and metadata assets to the corpus's release
    (`corpus-<corpus-id>` tag; override the base with `HKASK_CORPUS_URL_BASE`).
-3. The installer (`kask/scripts/build/install.sh`) downloads each asset,
-   verifies it against the committed hashes, reassembles the database, writes
-   the materialization receipt, and registers the source for federated recall.
-   `--skip-corpora` opts out. A failed corpus install is loud and retried by
-   re-running the installer; verified assets are not re-downloaded.
+3. The installer's corpus stage (`install_corpus_bundle` in
+   `kask/scripts/build/install-common.sh`, driven by `install.sh`) downloads
+   each asset, verifies it against the committed hashes, reassembles the
+   database atomically, writes the materialization receipt, and registers
+   the source for federated recall. `--skip-corpora` opts out. A failed
+   corpus install is loud but not fatal to the product install, and is
+   retried by re-running the installer; verified assets are not
+   re-downloaded and interrupted parts resume.
 
 Admission at query time verifies the provenance chain (receipt hashes against
 the bundle manifest, run-id binding, content pins) and opens the database under
