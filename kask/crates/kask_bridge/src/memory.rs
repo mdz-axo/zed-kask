@@ -2993,53 +2993,53 @@ pub(crate) mod tests {
         assert!(port.curator_store.get().is_none());
     }
 
-    /// expect: [P9] A failed embedding is reported as partial ingestion while the stored turn remains non-fatal.
-    #[tokio::test]
-    async fn write_turn_reports_non_blocking_partial_embedding_failure() {
-        let port = in_memory_port();
-        let ctx = write_context(&port, port.embedding_port.as_ref());
+    /// The shared shape of the two P9 embedding-degradation reports: a
+    /// Curator turn through `write_turn` with the embedding capability in
+    /// the given state, expecting non-fatal ingestion and a degraded
+    /// report with one stored, un-embedded chunk. Returns the report for
+    /// the caller's distinct field assert.
+    async fn degraded_write_report(
+        port: &RealMemoryPort,
+        thread_id: &str,
+        embedding_port: Option<&LanguageModelEmbeddingPort>,
+    ) -> ingest::IngestionReport {
+        let ctx = write_context(port, embedding_port);
         let record = turn_record(
-            "surfaced-embedding-degradation",
+            thread_id,
             "remember this turn",
             "the conversation continues",
             "Curator",
             Vec::new(),
         );
-
         let report = ingest::write_turn(&ctx, record)
             .await
             .expect("degraded ingestion remains non-fatal");
-
         assert_eq!(report.attempted, 1);
         assert_eq!(report.stored, 1);
         assert_eq!(report.embedded, 0);
-        assert_eq!(report.failed, 1);
         assert!(report.degraded());
+        report
+    }
+
+    /// expect: [P9] A failed embedding is reported as partial ingestion while the stored turn remains non-fatal.
+    #[tokio::test]
+    async fn write_turn_reports_non_blocking_partial_embedding_failure() {
+        let port = in_memory_port();
+        let report = degraded_write_report(
+            &port,
+            "surfaced-embedding-degradation",
+            port.embedding_port.as_ref(),
+        )
+        .await;
+        assert_eq!(report.failed, 1);
     }
 
     /// expect: [P9] An unavailable embedding capability is reported as degraded while chunk storage remains non-fatal.
     #[tokio::test]
     async fn write_turn_reports_unavailable_embedding_capability() {
         let port = in_memory_port();
-        let ctx = write_context(&port, None);
-        let record = turn_record(
-            "unavailable-embedding-capability",
-            "remember this turn",
-            "the conversation continues",
-            "Curator",
-            Vec::new(),
-        );
-
-        let report = ingest::write_turn(&ctx, record)
-            .await
-            .expect("degraded ingestion remains non-fatal");
-
-        assert_eq!(report.attempted, 1);
-        assert_eq!(report.stored, 1);
-        assert_eq!(report.embedded, 0);
-        assert_eq!(report.failed, 0);
+        let report = degraded_write_report(&port, "unavailable-embedding-capability", None).await;
         assert_eq!(report.degraded, 1);
-        assert!(report.degraded());
     }
 
     #[tokio::test]
