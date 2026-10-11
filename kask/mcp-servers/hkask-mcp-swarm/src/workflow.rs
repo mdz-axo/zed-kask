@@ -530,19 +530,32 @@ mod tests {
         }};
     }
 
+    /// Run `workflow` over the echo delegate, returning (outcomes, observed
+    /// edges, recorded calls) — the preamble every workflow test shares.
+    async fn run_echo_workflow(
+        workflow: &LocalWorkflowTemplate,
+    ) -> (
+        Vec<WorkflowStageOutcome>,
+        Vec<(String, String)>,
+        std::sync::Arc<std::sync::Mutex<Vec<(String, String)>>>,
+    ) {
+        let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let delegate = echo_delegate!(calls.clone());
+        let mut edges = Vec::new();
+        let outcomes = run_workflow(workflow, "the question", lookup, delegate, |from, to| {
+            edges.push((from.to_string(), to.to_string()))
+        })
+        .await;
+        (outcomes, edges, calls)
+    }
+
     #[tokio::test]
     async fn the_artifact_flows_verbatim_between_stages() {
         let workflow = template(vec![
             stage("gather", Some("research"), &["text"], &["analysis"]),
             stage("write", Some("writer"), &["analysis"], &["draft"]),
         ]);
-        let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-        let delegate = echo_delegate!(calls.clone());
-        let mut edges = Vec::new();
-        let outcomes = run_workflow(&workflow, "the question", lookup, delegate, |from, to| {
-            edges.push((from.to_string(), to.to_string()))
-        })
-        .await;
+        let (outcomes, edges, calls) = run_echo_workflow(&workflow).await;
 
         assert_eq!(outcomes.len(), 2);
         assert!(outcomes.iter().all(|o| o.ok));
@@ -582,13 +595,7 @@ mod tests {
             &["text"],
             &["analysis"],
         )]);
-        let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-        let delegate = echo_delegate!(calls);
-        let mut edges = Vec::new();
-        let outcomes = run_workflow(&workflow, "the question", lookup, delegate, |from, to| {
-            edges.push((from.to_string(), to.to_string()))
-        })
-        .await;
+        let (outcomes, edges, _) = run_echo_workflow(&workflow).await;
         assert_eq!(outcomes.len(), 1);
         assert!(outcomes[0].ok);
         assert!(edges.is_empty());
@@ -600,13 +607,7 @@ mod tests {
             stage("gather", Some("research"), &["text"], &["analysis"]),
             stage("write", None, &["analysis"], &["draft"]),
         ]);
-        let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-        let delegate = echo_delegate!(calls.clone());
-        let mut edges = Vec::new();
-        let outcomes = run_workflow(&workflow, "the question", lookup, delegate, |from, to| {
-            edges.push((from.to_string(), to.to_string()))
-        })
-        .await;
+        let (outcomes, edges, calls) = run_echo_workflow(&workflow).await;
 
         // Stage 1 ran; stage 2 never dispatched (open slot) — so no edge,
         // and the outcome names the slot so the operator can fill it.
@@ -624,13 +625,7 @@ mod tests {
             stage("gather", Some("research"), &["text"], &["analysis"]),
             stage("write", Some("ghost"), &["analysis"], &["draft"]),
         ]);
-        let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-        let delegate = echo_delegate!(calls.clone());
-        let mut edges = Vec::new();
-        let outcomes = run_workflow(&workflow, "the question", lookup, delegate, |from, to| {
-            edges.push((from.to_string(), to.to_string()))
-        })
-        .await;
+        let (outcomes, edges, calls) = run_echo_workflow(&workflow).await;
 
         assert_eq!(outcomes.len(), 2);
         assert!(outcomes[0].ok);
