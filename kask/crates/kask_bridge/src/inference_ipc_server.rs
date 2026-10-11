@@ -1808,18 +1808,13 @@ mod tests {
             request,
         )
         .await;
-
-        match outcome {
-            InferenceOutcome::Error { error } => {
-                assert_eq!(error.code, "ToolPort");
-                assert!(
-                    error
-                        .message
-                        .contains("not in the delegated tool allowlist")
-                );
-            }
-            other => panic!("expected error outcome, got {other:?}"),
-        }
+        let error = require_error(outcome);
+        assert_eq!(error.code, "ToolPort");
+        assert!(
+            error
+                .message
+                .contains("not in the delegated tool allowlist")
+        );
     }
 
     /// Dispatch a request through the canned test ports — the scaffolding
@@ -1844,6 +1839,24 @@ mod tests {
             request,
         )
         .await
+    }
+
+    /// Require the error outcome of a dispatch, returning the payload for
+    /// the caller's field asserts — the shared tail of every fail-closed
+    /// dispatch test, whatever dispatcher produced the outcome.
+    fn require_error(outcome: InferenceOutcome) -> InferenceErrorPayload {
+        match outcome {
+            InferenceOutcome::Error { error } => error,
+            other => panic!("expected error outcome, got {other:?}"),
+        }
+    }
+
+    /// Require the success outcome of a dispatch, returning the result.
+    fn require_result(outcome: InferenceOutcome) -> InferenceResult {
+        match outcome {
+            InferenceOutcome::Result { result } => result,
+            other => panic!("expected result outcome, got {other:?}"),
+        }
     }
 
     /// A granted CreateWorktreeThread request — the fixture both worktree
@@ -1879,15 +1892,9 @@ mod tests {
 
         let request = make_tool_invoke_request("kanban", "kanban_task_create", None);
 
-        let outcome = dispatch_canned(request, Some(&tool_port)).await;
-
-        match outcome {
-            InferenceOutcome::Error { error } => {
-                assert_eq!(error.code, "ToolPort");
-                assert!(error.message.contains("missing tool_allowlist"));
-            }
-            other => panic!("expected error outcome, got {other:?}"),
-        }
+        let error = require_error(dispatch_canned(request, Some(&tool_port)).await);
+        assert_eq!(error.code, "ToolPort");
+        assert!(error.message.contains("missing tool_allowlist"));
     }
 
     #[tokio::test]
@@ -1897,15 +1904,9 @@ mod tests {
 
         let request = make_tool_invoke_request("kanban", "kanban_task_create", Some(vec![]));
 
-        let outcome = dispatch_canned(request, Some(&tool_port)).await;
-
-        match outcome {
-            InferenceOutcome::Error { error } => {
-                assert_eq!(error.code, "ToolPort");
-                assert!(error.message.contains("missing tool_allowlist"));
-            }
-            other => panic!("expected error outcome, got {other:?}"),
-        }
+        let error = require_error(dispatch_canned(request, Some(&tool_port)).await);
+        assert_eq!(error.code, "ToolPort");
+        assert!(error.message.contains("missing tool_allowlist"));
     }
 
     #[tokio::test]
@@ -1946,15 +1947,9 @@ mod tests {
             Some(vec!["kanban/kanban_task_create".to_string()]),
         );
 
-        let outcome = dispatch_canned(request, None).await; // no tool port
-
-        match outcome {
-            InferenceOutcome::Error { error } => {
-                assert_eq!(error.code, "Connection");
-                assert!(error.message.contains("tool dispatch not configured"));
-            }
-            other => panic!("expected error outcome, got {other:?}"),
-        }
+        let error = require_error(dispatch_canned(request, None).await); // no tool port
+        assert_eq!(error.code, "Connection");
+        assert!(error.message.contains("tool dispatch not configured"));
     }
 
     /// expect: "IPC rejects a different embedding destination before HTTP dispatch" [P1]
@@ -2013,15 +2008,9 @@ mod tests {
             },
         };
 
-        let outcome = dispatch_canned(request, None).await; // no embedding port
-
-        match outcome {
-            InferenceOutcome::Error { error } => {
-                assert_eq!(error.code, "Connection");
-                assert!(error.message.contains("embedding port not configured"));
-            }
-            other => panic!("expected error outcome, got {other:?}"),
-        }
+        let error = require_error(dispatch_canned(request, None).await); // no embedding port
+        assert_eq!(error.code, "Connection");
+        assert!(error.message.contains("embedding port not configured"));
     }
 
     // ── dispatch: generate paths ────────────────────────────────────────
@@ -2040,15 +2029,9 @@ mod tests {
             },
         };
 
-        let outcome = dispatch_canned(request, None).await;
-
-        match outcome {
-            InferenceOutcome::Result { result } => {
-                assert_eq!(result.text, "canned response");
-                assert_eq!(result.model, "test-model");
-            }
-            other => panic!("expected result outcome, got {other:?}"),
-        }
+        let result = require_result(dispatch_canned(request, None).await);
+        assert_eq!(result.text, "canned response");
+        assert_eq!(result.model, "test-model");
     }
 
     #[tokio::test]
@@ -2066,14 +2049,8 @@ mod tests {
             },
         };
 
-        let outcome = dispatch_canned(request, None).await;
-
-        match outcome {
-            InferenceOutcome::Result { result } => {
-                assert_eq!(result.text, "canned response");
-            }
-            other => panic!("expected result outcome, got {other:?}"),
-        }
+        let result = require_result(dispatch_canned(request, None).await);
+        assert_eq!(result.text, "canned response");
     }
 
     #[tokio::test]
@@ -2089,14 +2066,8 @@ mod tests {
             },
         };
 
-        let outcome = dispatch_canned(request, None).await;
-
-        match outcome {
-            InferenceOutcome::Result { result } => {
-                assert_eq!(result.text, "canned response");
-            }
-            other => panic!("expected result outcome, got {other:?}"),
-        }
+        let result = require_result(dispatch_canned(request, None).await);
+        assert_eq!(result.text, "canned response");
     }
 
     // ── dispatch: tool_invoke missing fields ────────────────────────────
@@ -2116,15 +2087,9 @@ mod tests {
             },
         };
 
-        let outcome = dispatch_canned(request, Some(&tool_port)).await;
-
-        match outcome {
-            InferenceOutcome::Error { error } => {
-                assert_eq!(error.code, "ToolPort");
-                assert!(error.message.contains("missing tool_server"));
-            }
-            other => panic!("expected error outcome, got {other:?}"),
-        }
+        let error = require_error(dispatch_canned(request, Some(&tool_port)).await);
+        assert_eq!(error.code, "ToolPort");
+        assert!(error.message.contains("missing tool_server"));
     }
 
     #[tokio::test]
@@ -2142,15 +2107,9 @@ mod tests {
             },
         };
 
-        let outcome = dispatch_canned(request, Some(&tool_port)).await;
-
-        match outcome {
-            InferenceOutcome::Error { error } => {
-                assert_eq!(error.code, "ToolPort");
-                assert!(error.message.contains("missing tool_name"));
-            }
-            other => panic!("expected error outcome, got {other:?}"),
-        }
+        let error = require_error(dispatch_canned(request, Some(&tool_port)).await);
+        assert_eq!(error.code, "ToolPort");
+        assert!(error.message.contains("missing tool_name"));
     }
 
     // ── dispatch: early-return coverage for non-generate methods ───────
@@ -2201,18 +2160,13 @@ mod tests {
             request,
         )
         .await;
-
-        match outcome {
-            InferenceOutcome::Error { error } => {
-                assert_eq!(error.code, "Connection");
-                assert!(
-                    error.message.contains("list_models task dropped"),
-                    "expected list_models task-dropped error, got: {}",
-                    error.message
-                );
-            }
-            other => panic!("expected error outcome, got {other:?}"),
-        }
+        let error = require_error(outcome);
+        assert_eq!(error.code, "Connection");
+        assert!(
+            error.message.contains("list_models task dropped"),
+            "expected list_models task-dropped error, got: {}",
+            error.message
+        );
     }
 
     #[tokio::test]
@@ -2224,19 +2178,13 @@ mod tests {
         // `CreateWorktreeThread`.
         let (server, request) = granted_worktree_request();
 
-        let outcome = dispatch_canned(request, None).await; // no worktree spawn port
-
-        match outcome {
-            InferenceOutcome::Error { error } => {
-                assert_eq!(error.code, "Connection");
-                assert!(
-                    error.message.contains("worktree spawn port not configured"),
-                    "expected worktree-spawn-port-not-configured error, got: {}",
-                    error.message
-                );
-            }
-            other => panic!("expected error outcome, got {other:?}"),
-        }
+        let error = require_error(dispatch_canned(request, None).await); // no worktree spawn port
+        assert_eq!(error.code, "Connection");
+        assert!(
+            error.message.contains("worktree spawn port not configured"),
+            "expected worktree-spawn-port-not-configured error, got: {}",
+            error.message
+        );
         crate::delegation_grants::revoke_delegation_grant(&server);
     }
 
@@ -2251,19 +2199,13 @@ mod tests {
 
         let (server, request) = granted_worktree_request();
 
-        let outcome = dispatch_worktree(&worktree_spawn_tx, request).await;
-
-        match outcome {
-            InferenceOutcome::Error { error } => {
-                assert_eq!(error.code, "WorktreeSpawn");
-                assert!(
-                    error.message.contains("not admitted"),
-                    "expected worktree-spawn-task-dropped error, got: {}",
-                    error.message
-                );
-            }
-            other => panic!("expected error outcome, got {other:?}"),
-        }
+        let error = require_error(dispatch_worktree(&worktree_spawn_tx, request).await);
+        assert_eq!(error.code, "WorktreeSpawn");
+        assert!(
+            error.message.contains("not admitted"),
+            "expected worktree-spawn-task-dropped error, got: {}",
+            error.message
+        );
         crate::delegation_grants::revoke_delegation_grant(&server);
     }
 
