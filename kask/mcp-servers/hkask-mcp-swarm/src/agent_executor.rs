@@ -1223,21 +1223,16 @@ mod tests {
             >,
         > {
             Box::pin(async move {
-                let name = format!("{server}/{tool}");
-                if !allowed.contains(&name) {
-                    return Err(hkask_types::InferenceError::Auth("not allowed".into()));
-                }
-                Ok(hkask_types::ChatToolDefinition {
-                    tool_type: "function".into(),
-                    function: hkask_types::ChatToolFunction {
-                        name,
-                        description: "Fixture lookup".into(),
-                        parameters: serde_json::json!({
-                            "type": "object", "properties": {"query": {"type": "string"}},
-                            "required": ["query"]
-                        }),
-                    },
-                })
+                crate::test_support::allowed_tool_definition(
+                    server,
+                    tool,
+                    allowed,
+                    "Fixture lookup",
+                    serde_json::json!({
+                        "type": "object", "properties": {"query": {"type": "string"}},
+                        "required": ["query"]
+                    }),
+                )
             })
         }
 

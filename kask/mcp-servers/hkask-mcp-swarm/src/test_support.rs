@@ -245,6 +245,30 @@ impl hkask_types::ToolDispatchPort for NoTools {
     }
 }
 
+/// The allowlist-checking `tool_definition` arm the dispatch stubs share:
+/// serve any allowed `server/tool` name with the given description and
+/// parameter schema, Auth-rejecting names outside the allowlist.
+pub(crate) fn allowed_tool_definition(
+    server: &str,
+    tool: &str,
+    allowed: &[String],
+    description: &str,
+    parameters: Value,
+) -> Result<hkask_types::ChatToolDefinition, hkask_types::InferenceError> {
+    let name = format!("{server}/{tool}");
+    if !allowed.contains(&name) {
+        return Err(hkask_types::InferenceError::Auth("not allowed".into()));
+    }
+    Ok(hkask_types::ChatToolDefinition {
+        tool_type: "function".into(),
+        function: hkask_types::ChatToolFunction {
+            name,
+            description: description.into(),
+            parameters,
+        },
+    })
+}
+
 pub(crate) fn make_thread_server(
     dir: &std::path::Path,
     inference: Arc<dyn hkask_types::InferencePort>,
