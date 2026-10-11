@@ -414,6 +414,49 @@ fn usd_income_statements(path: &str) -> (u16, Value) {
     (status, rows)
 }
 
+/// The DCF price-fallback fixture: an EODHD-routed Acme profile (no
+/// `price` field) in `currency`, the `/fmp/quote` body, the FOREX rate
+/// table, USD income statements, and the financial fallback — the
+/// composition the three price-fallback tests share, varying exactly
+/// these inputs.
+fn price_fallback_fixture(
+    currency: &'static str,
+    quote: Value,
+    forex: &'static [(&'static str, &'static str, f64)],
+) -> impl Fn(&str) -> (u16, Value) + Send + Sync + 'static {
+    move |path| {
+        let endpoint = path.split('?').next().expect("endpoint");
+        if endpoint == "/fmp/profile" {
+            return (200, acme_profile(currency));
+        }
+        if endpoint == "/fmp/quote" {
+            return (200, quote.clone());
+        }
+        if let Some(response) = forex_routes(path, forex) {
+            return response;
+        }
+        if endpoint == "/fmp/income-statement" {
+            return usd_income_statements(path);
+        }
+        financial_fixture(path)
+    }
+}
+
+/// The reverse-DCF tool call over the ACME fixture symbol — the shared
+/// choreography of the two reverse-DCF price-fallback tests.
+async fn reverse_dcf_output(server: &CompaniesServer) -> Value {
+    let request = serde_json::from_value::<types::ReverseDcfRequest>(json!({
+        "symbol": "ACME"
+    }))
+    .expect("request");
+    content(
+        &server
+            .reverse_dcf(Parameters(request))
+            .await
+            .expect("reverse dcf tool"),
+    )
+}
+
 async fn comparable(server: &CompaniesServer, request: Value) -> Value {
     content(
         &server
@@ -439,34 +482,16 @@ async fn comparable(server: &CompaniesServer, request: Value) -> Value {
 #[tokio::test]
 async fn reverse_dcf_price_falls_back_to_quote_close() {
     let directory = tempfile::tempdir().expect("temporary directory");
-    let fixture = FixtureHttp::start(|path| {
-        let endpoint = path.split('?').next().expect("endpoint");
-        if endpoint == "/fmp/profile" {
-            // EODHD-routed profile shape: no `price` field.
-            return (200, acme_profile("USD"));
-        }
-        if endpoint == "/fmp/quote" {
-            return (200, acme_quote(30.0, 29.0, 31.0, 28.0));
-        }
-        if endpoint == "/fmp/income-statement" {
-            return usd_income_statements(path);
-        }
-        financial_fixture(path)
-    })
+    let fixture = FixtureHttp::start(price_fallback_fixture(
+        "USD",
+        acme_quote(30.0, 29.0, 31.0, 28.0),
+        &[],
+    ))
     .await;
     providers::TEST_HTTP_ORIGIN
         .scope(fixture.origin.clone(), async {
             let server = server(directory.path());
-            let request = serde_json::from_value::<types::ReverseDcfRequest>(json!({
-                "symbol": "ACME"
-            }))
-            .expect("request");
-            let output = content(
-                &server
-                    .reverse_dcf(Parameters(request))
-                    .await
-                    .expect("reverse dcf tool"),
-            );
+            let output = reverse_dcf_output(&server).await;
             assert_eq!(
                 output["price_source"],
                 json!("stock_quote; currency_normalized:USD->USD")
@@ -490,34 +515,16 @@ async fn reverse_dcf_price_falls_back_to_quote_close() {
 #[tokio::test]
 async fn dcf_price_falls_back_to_normalized_quote_close() {
     let directory = tempfile::tempdir().expect("temporary directory");
-    let fixture = FixtureHttp::start(|path| {
-        let endpoint = path.split('?').next().expect("endpoint");
-        if endpoint == "/fmp/profile" {
-            return (200, acme_profile("EUR"));
-        }
-        if endpoint == "/fmp/quote" {
-            return (200, json!({"symbol":"ACME","close":25.0}));
-        }
-        if endpoint.starts_with("/eodhd/eod/USDEUR.FOREX") {
-            return (200, forex_close("2026-09-25", 0.8));
-        }
-        if endpoint == "/fmp/income-statement" {
-            return usd_income_statements(path);
-        }
-        financial_fixture(path)
-    })
+    let fixture = FixtureHttp::start(price_fallback_fixture(
+        "EUR",
+        json!({"symbol":"ACME","close":25.0}),
+        &[("EUR", "2026-09-25", 0.8)],
+    ))
     .await;
     providers::TEST_HTTP_ORIGIN
         .scope(fixture.origin.clone(), async {
             let server = server(directory.path());
-            let output = content(
-                &server
-                    .dcf_valuation(Parameters(
-                        serde_json::from_value(json!({"symbol":"ACME"})).expect("request"),
-                    ))
-                    .await
-                    .expect("DCF tool"),
-            );
+            let output = standalone_dcf(&server).await;
             assert!(output["error"].is_null(), "{output}");
             assert!(
                 output["valuation"]["current_price"]
@@ -535,36 +542,16 @@ async fn dcf_price_falls_back_to_normalized_quote_close() {
 #[tokio::test]
 async fn reverse_dcf_normalizes_gbx_quote_to_usd_statements() {
     let directory = tempfile::tempdir().expect("temporary directory");
-    let fixture = FixtureHttp::start(|path| {
-        let endpoint = path.split('?').next().expect("endpoint");
-        if endpoint == "/fmp/profile" {
-            return (200, acme_profile("GBX"));
-        }
-        if endpoint == "/fmp/quote" {
-            return (200, acme_quote(1603.0, 1600.0, 1620.0, 1580.0));
-        }
-        if endpoint.starts_with("/eodhd/eod/USDGBP.FOREX") {
-            return (200, forex_close("2026-09-11", 0.7396));
-        }
-        if endpoint == "/fmp/income-statement" {
-            return usd_income_statements(path);
-        }
-        financial_fixture(path)
-    })
+    let fixture = FixtureHttp::start(price_fallback_fixture(
+        "GBX",
+        acme_quote(1603.0, 1600.0, 1620.0, 1580.0),
+        &[("GBP", "2026-09-11", 0.7396)],
+    ))
     .await;
     providers::TEST_HTTP_ORIGIN
         .scope(fixture.origin.clone(), async {
             let server = server(directory.path());
-            let request = serde_json::from_value::<types::ReverseDcfRequest>(json!({
-                "symbol": "ACME"
-            }))
-            .expect("request");
-            let output = content(
-                &server
-                    .reverse_dcf(Parameters(request))
-                    .await
-                    .expect("reverse dcf tool"),
-            );
+            let output = reverse_dcf_output(&server).await;
             assert_eq!(
                 output["price_source"],
                 json!("stock_quote; currency_normalized:GBX->USD")
