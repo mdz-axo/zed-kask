@@ -153,14 +153,11 @@ fn resolve_curator_db_path() -> String {
     })
 }
 
-/// Resolve the swarm memory DB path.
-///
-/// `HKASK_SWARM_MEMORY_DB` if set (absolute override), else
-/// `mcp/swarm/memory.db` under the hKask data dir. Mirrors the resolution
-/// in `SwarmConfig::from_env`.
-fn resolve_swarm_memory_db_path() -> String {
-    let default = "mcp/swarm/memory.db";
-    let raw = std::env::var("HKASK_SWARM_MEMORY_DB")
+/// Resolve an operator-overridable DB path: the env var when set
+/// non-blank, else `default`; an absolute value is used as-is, a relative
+/// one resolves under the hKask data dir.
+fn resolve_env_db_path(env_var: &str, default: &str) -> String {
+    let raw = std::env::var(env_var)
         .ok()
         .filter(|s| !s.trim().is_empty())
         .unwrap_or_else(|| default.to_string());
@@ -173,33 +170,28 @@ fn resolve_swarm_memory_db_path() -> String {
     }
 }
 
+/// Resolve the swarm memory DB path.
+///
+/// `HKASK_SWARM_MEMORY_DB` if set (absolute override), else
+/// `mcp/swarm/memory.db` under the hKask data dir. Mirrors the resolution
+/// in `SwarmConfig::from_env`.
+fn resolve_swarm_memory_db_path() -> String {
+    resolve_env_db_path("HKASK_SWARM_MEMORY_DB", "mcp/swarm/memory.db")
+}
+
 /// The fixed-path SQLCipher databases that share `HKASK_DB_PASSPHRASE`,
 /// each resolved the same way its owning MCP server resolves it (env-var
 /// override, else the Standardized Artifact Storage default under the
 /// hKask data dir — databases are the one artifact class that stays in
 /// the internal data dir).
 pub(crate) fn kask_db_paths() -> Vec<(&'static str, String)> {
-    let resolve = |env_var: &str, default: &str| -> String {
-        let raw = std::env::var(env_var)
-            .ok()
-            .filter(|s| !s.trim().is_empty())
-            .unwrap_or_else(|| default.to_string());
-        if std::path::Path::new(&raw).is_absolute() {
-            raw
-        } else {
-            hkask_types::agent_paths::resolve_under_data_dir(std::path::Path::new(&raw))
-                .to_string_lossy()
-                .to_string()
-        }
-    };
-
     managed_database_layout()
         .into_iter()
         .map(|(name, variable, default)| {
             let path = match name {
                 "curator" => resolve_curator_db_path(),
                 "swarm_memory" => resolve_swarm_memory_db_path(),
-                _ => resolve(variable, &default.to_string_lossy()),
+                _ => resolve_env_db_path(variable, &default.to_string_lossy()),
             };
             (name, path)
         })
