@@ -1,8 +1,8 @@
 ---
 title: "Text Chunking for RAG — Canonical Design Patterns and Reference Models"
 audience: [architects, developers, agents]
-last_updated: 2026-10-09
-version: "1.2.0"
+last_updated: 2026-10-11
+version: "1.2.1"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [composition, trust]
@@ -285,7 +285,7 @@ source filename (the document-identity channel) and its rare text terms, built
 in memory at admission, ranked by BM25, fused by reciprocal-rank fusion, with
 build-metadata chunks (`MANIFEST.json`) excluded from the lexical leg and
 rank-penalized in the dense leg (`kask/crates/hkask-memory/src/lexical.rs`;
-`kask/crates/hkask-memory/src/federated_recall.rs:803`). The live failure that
+`kask/crates/hkask-memory/src/federated_recall.rs:790`). The live failure that
 motivated it: the query "magnifica humanitas" — a charter document's own
 name — returned zero charter chunks from zk-ref-open while a descriptive query
 recalled the same chunks at ranks 1–3; pure dense retrieval carries a phrase's
@@ -318,6 +318,13 @@ behind the retrieval-side fix:
    `queries.jsonl`, `provenance: source_derived`) measure quote-completion,
    not question answering, and reported cs-recall@5 0.86 on that suite while
    the entity-name case failed.
+4. **Exclude build-metadata at the build.** The read-side down-rank is an
+   interim mitigation over already-sealed corpora: the build itself should
+   never embed `MANIFEST.json` (and similar registration boilerplate) as
+   retrievable passages — manifest chunks held 5 of the top-10 dense slots on
+   a real mechanics prompt before the penalty (observed 2026-10-09).
+   Build-side exclusion removes the class for future seals; the read-side
+   penalty stays for every source already sealed.
 
 **No contextualized embedding paradigm.** The pipeline is uniformly
 pre-embedding: each chunk is embedded independently, so chunk vectors are blind

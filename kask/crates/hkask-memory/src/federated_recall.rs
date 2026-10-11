@@ -2,9 +2,11 @@
 //!
 //! External evidence stores remain separate from Curator memory. A source is
 //! admitted only when its current manifest, sealed run identity, database
-//! digest, schema, entity prefix, and embedding identity all agree. Retrieval
-//! projects `embeddings.passage_text` directly, so corpus h_mems such as
-//! `method_signals` never enter the result surface.
+//! digest, the schema of the tables retrieval reads, entity prefix, and
+//! embedding identity all agree. Retrieval projects `embeddings.passage_text`
+//! directly, so corpus h_mems such as `method_signals` never enter the result
+//! surface — and `hmems`, being producer-owned and never read here, carries
+//! no admission contract.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::Read;
@@ -26,20 +28,6 @@ const REPRESENTATIONS_SCHEMA_VERSION: u32 = 2;
 const BUNDLE_SCHEMA_VERSION: u32 = 1;
 const RECEIPT_SCHEMA_VERSION: u32 = 1;
 
-const CURRENT_HMEM_COLUMNS: &[&str] = &[
-    "id",
-    "entity",
-    "attribute",
-    "value",
-    "valid_from",
-    "recalled_at",
-    "confidence",
-    "perspective",
-    "visibility",
-    "owner_webid",
-    "ontology",
-    "provenance",
-];
 const CURRENT_EMBEDDING_COLUMNS: &[&str] = &[
     "id",
     "entity_ref",
@@ -1271,31 +1259,41 @@ fn table_columns(
         .collect()
 }
 
+/// Validate the schema of the tables this source actually reads: the
+/// `embeddings` columns the source projects, plus the `vec0` KNN table.
+///
+/// `hmems` is producer-owned and never read here, so its shape is not
+/// admission's business — the read-write path migrates legacy `hmems`
+/// shapes in place (`migrate_hmems_provenance`), and the former exact-match
+/// `hmems` check rejected the sealed zk-ref-open charter source wholesale
+/// for lacking the `provenance` column (2026-10-11) while never reading that
+/// table. The `embeddings` check is a required-column subset, not an exact
+/// match: a database sealed before a later-added column the reader does not
+/// project still admits, and one missing a projected column is rejected
+/// loudly.
 fn validate_current_schema(
     source_id: &str,
     driver: &dyn DatabaseDriver,
 ) -> Result<(), FederatedRecallError> {
-    for (table, expected) in [
-        ("hmems", CURRENT_HMEM_COLUMNS),
-        ("embeddings", CURRENT_EMBEDDING_COLUMNS),
-    ] {
-        let actual =
-            table_columns(driver, table).map_err(|error| FederatedRecallError::SchemaMismatch {
-                source_id: source_id.to_string(),
-                reason: format!("cannot inspect {table}: {error}"),
-            })?;
-        let expected: Vec<String> = expected
-            .iter()
-            .map(|column| (*column).to_string())
-            .collect();
-        if actual != expected {
-            return Err(FederatedRecallError::SchemaMismatch {
-                source_id: source_id.to_string(),
-                reason: format!(
-                    "table {table} columns differ from current schema: expected {expected:?}, got {actual:?}"
-                ),
-            });
+    let actual = table_columns(driver, "embeddings").map_err(|error| {
+        FederatedRecallError::SchemaMismatch {
+            source_id: source_id.to_string(),
+            reason: format!("cannot inspect embeddings: {error}"),
         }
+    })?;
+    let mut missing: Vec<&str> = Vec::new();
+    for &column in CURRENT_EMBEDDING_COLUMNS {
+        if !actual.iter().any(|name| name == column) {
+            missing.push(column);
+        }
+    }
+    if !missing.is_empty() {
+        return Err(FederatedRecallError::SchemaMismatch {
+            source_id: source_id.to_string(),
+            reason: format!(
+                "embeddings table is missing required columns {missing:?} (found {actual:?})"
+            ),
+        });
     }
     let rows = driver
         .query(

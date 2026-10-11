@@ -179,7 +179,8 @@ fn bound_source_rejects_pre_filter_representation_manifest() -> anyhow::Result<(
     Ok(())
 }
 
-/// expect: "A legacy source schema is rejected even when its sealed digest is valid." [P8]
+/// expect: "A source whose embeddings table lacks a column the reader
+/// projects is rejected even when its sealed digest is valid." [P8]
 #[test]
 fn bound_source_rejects_non_current_schema_without_a_shim() -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
@@ -193,7 +194,7 @@ fn bound_source_rejects_non_current_schema_without_a_shim() -> anyhow::Result<()
         let pool = database.sqlite_pool()?;
         let connection = pool.get()?;
         connection.execute_batch(
-            "ALTER TABLE hmems ADD COLUMN abandoned_legacy_state TEXT;
+            "ALTER TABLE embeddings RENAME COLUMN passage_text TO passage_text_legacy;
              PRAGMA wal_checkpoint(TRUNCATE);",
         )?;
     }
@@ -214,6 +215,51 @@ fn bound_source_rejects_non_current_schema_without_a_shim() -> anyhow::Result<()
         Err(error) => error,
     };
     assert!(error.to_string().contains("non-current database schema"));
+    assert!(error.to_string().contains("passage_text"));
+    Ok(())
+}
+
+/// expect: "A corpus database sealed before a later `hmems` storage migration
+/// still admits — `hmems` is producer-owned and never read by retrieval." [P8]
+/// The former exact-match `hmems` check rejected the sealed zk-ref-open
+/// charter source for lacking the `provenance` column (2026-10-11) while the
+/// read-write path migrates the same legacy shape in place; the extra
+/// embeddings column pins the subset check's forward tolerance.
+#[test]
+fn bound_source_admits_legacy_hmems_schema() -> anyhow::Result<()> {
+    let directory = tempfile::tempdir()?;
+    let manifest_path = fixture(directory.path())?;
+    let database_path = directory.path().join("reference.db");
+    let database_str = database_path
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("non-UTF-8 database path"))?;
+    {
+        let database = hkask_storage::open_or_repair(database_str, PASSPHRASE)?;
+        let pool = database.sqlite_pool()?;
+        let connection = pool.get()?;
+        connection.execute_batch(
+            "ALTER TABLE hmems DROP COLUMN provenance;
+             ALTER TABLE embeddings ADD COLUMN future_extension TEXT;
+             PRAGMA wal_checkpoint(TRUNCATE);",
+        )?;
+    }
+    let digest = sha256_file(&database_path)?;
+    let run_identity_path = directory.path().join("run-identity.json");
+    let mut run_identity: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&run_identity_path)?)?;
+    run_identity["indexes"]["reference"] = serde_json::json!(digest);
+    reseal_fixture_identity(&mut run_identity)?;
+    std::fs::write(
+        &run_identity_path,
+        serde_json::to_vec_pretty(&run_identity)?,
+    )?;
+
+    let manifest = FederatedSourcesManifest::load(&manifest_path)?;
+    let source = ReadOnlyPassageSource::open(&manifest.sources[0], PASSPHRASE)?;
+    assert_eq!(source.identity().passage_count, 1);
+    let batch = source.search(REQUESTED_MODEL, "fixture passage", &fixture_vector(), 3)?;
+    assert_eq!(batch.hits.len(), 1);
+    assert_eq!(batch.hits[0].text, "grounded fixture passage");
     Ok(())
 }
 

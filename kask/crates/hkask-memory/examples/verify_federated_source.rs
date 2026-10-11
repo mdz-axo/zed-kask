@@ -2,7 +2,7 @@
 //! admission path — no fixture, no mock. Runs the production
 //! [`ReadOnlyPassageSource::open`] over the real on-disk artifacts: the
 //! manifest, the sealed run identity (shape + `run_id` self-digest), the
-//! byte digest of the database, the current-schema check, the embedding
+//! byte digest of the database, the embeddings-schema check, the embedding
 //! identity, and one probe search.
 //!
 //! The reseal driver (`kask/scripts/audit/reseal-calibration-run.sh`)
@@ -61,7 +61,7 @@ fn main() -> Result<(), String> {
         .clone();
 
     // The real admission: run-identity shape, run_id self-digest, byte
-    // digest, current schema, embedding identity. Any failure is the typed
+    // digest, embeddings schema, embedding identity. Any failure is the typed
     // admission error — print it, exit 1.
     let source = ReadOnlyPassageSource::open(&spec, &passphrase)
         .map_err(|error| format!("ADMISSION FAILED for '{source_id}': {error}"))?;

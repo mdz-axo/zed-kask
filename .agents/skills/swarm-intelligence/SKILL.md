@@ -86,7 +86,7 @@ Do NOT use for:
 
 ```
 Check: Phase 1  — SENSE            → Measure current swarm state against Onto4MAT + backend workspace/wallet. Optionally pass `kanban_board_id` when a kanban board is this swarm's durable coordination surface — SENSE grounds its sensing in the board's persisted task state via `kanban_task_list`. Pass the already-read roster/wallet as `fetched_swarm_state` when the live-process roster read has run — SENSE then does not re-fetch.
-Plan:  Phase 2  — ORIENT           → Classify the gap + deterministic fault attribution (C5). When a `swarm_id` is available, call `swarm_task_board` for durable task progress. Detect reasoning loops from the iteration log (C1), not from fields absent in local results.
+Plan:  Phase 2  — ORIENT           → Classify the gap + deterministic fault attribution (C5). When a `swarm_id` is available, call `swarm_task_board` for durable task progress. Call `swarm_gate_readings` once (bounded, no agent filter): a `strips_everything` (fault) reading names the agent's declared output contract as the suspect — the fix is the card's grounding map or the composition, never a C6 reconfigure; `never_asked` and `all_clean` are inert (never a pass). Detect reasoning loops from the iteration log (C1), not from fields absent in local results.
 Plan:  Phase 3  — DECIDE           → Propose composition adjustments isomorphic to PSO/ACO/Reynolds tuning
 Det:   Phase 4  — FILTER           → Deterministically enforce C3 failed-edit + C7 influence guards (no LLM)
 Do:    Phase 5  — ACT              → Emit consent-gated ABW calls or shared-thread local-swarm calls
@@ -359,7 +359,10 @@ the surviving record).
     against declared ports), `swarm_fleet_digest_local` (the fleet's shape:
     categories and counts, never individual agents), `swarm_who_answers_local`
     (which agents accept a label, with the bespoke/cohort/universal reading),
-    `swarm_select_agent_local` (rank candidates for a slot by measured stats).
+    `swarm_select_agent_local` (rank candidates for a slot by measured stats),
+    `swarm_gate_readings` (per-agent grounding-gate readings from the durable
+    counters — aggregate pattern visibility only; a `strips_everything`
+    reading names the declared contract as the suspect, not the agent).
 
     **Fleet facts are registry-first — never from memory** (fermi's
     `biotech_analyst` incident: a navigator answered three specific claims
