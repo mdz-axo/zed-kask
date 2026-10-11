@@ -21,8 +21,7 @@ use hkask_types::kanban_wire::KANBAN_BOARD_NAME_MAX_CHARS;
 use rmcp::handler::server::wrapper::Parameters;
 use std::sync::Arc;
 
-mod common;
-use common::{UnavailableWorktreeSpawn, parse};
+use hkask_mcp_kata_kanban::test_support::{UnavailableWorktreeSpawn, parse};
 
 /// Build a server whose caller identity is `caller`, over a store that may
 /// already hold another owner's boards (shared driver) — so a test can pin

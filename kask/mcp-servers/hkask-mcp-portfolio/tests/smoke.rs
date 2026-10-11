@@ -11,8 +11,7 @@ use hkask_mcp_portfolio::AssetType;
 use hkask_mcp_portfolio::server::{ImportFormat, LedgerImportRequest, LedgerReadRequest};
 use rmcp::handler::server::wrapper::Parameters;
 
-mod common;
-use common::{make_server, unwrap_content};
+use hkask_mcp_portfolio::test_support::{make_server, unwrap_content};
 
 #[tokio::test]
 async fn portfolio_list_returns_empty_array_on_fresh_store() {

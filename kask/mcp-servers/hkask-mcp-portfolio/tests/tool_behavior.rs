@@ -20,8 +20,7 @@ use hkask_mcp_portfolio::{AssetType, ClassificationObservation, Transaction, TxT
 use hkask_types::spreadsheet::{CellEdit, EditTransaction, TableValue};
 use rmcp::handler::server::wrapper::Parameters;
 
-mod common;
-use common::{make_server, unwrap_content};
+use hkask_mcp_portfolio::test_support::{make_server, unwrap_content};
 
 fn transaction(
     date: &str,

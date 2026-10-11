@@ -32,8 +32,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-mod common;
-use common::{UnavailableWorktreeSpawn, parse};
+use hkask_mcp_kata_kanban::test_support::{UnavailableWorktreeSpawn, parse};
 
 /// Build a server whose task- and goal-replay stores share `driver`, with
 /// caller identity `webid` — the construction the shared-driver tests

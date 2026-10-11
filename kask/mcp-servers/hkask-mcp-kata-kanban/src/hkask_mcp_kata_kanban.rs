@@ -11,6 +11,11 @@
 pub mod idempotency;
 pub mod kanban;
 pub(crate) mod pko;
+/// Integration-test fixtures (the lib-crate test seam — `#[doc(hidden)]`
+/// keeps the public docs clean while the test binaries reach it through
+/// the lib; see the module docs for the no-`mod.rs` rationale).
+#[doc(hidden)]
+pub mod test_support;
 pub mod types;
 
 // Re-export the kata-kanban service API at crate root (folded from hkask-services-kata-kanban).
