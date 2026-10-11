@@ -1638,6 +1638,53 @@ async fn screener_tool(
     (output, fixture)
 }
 
+/// The two-exchange fan-out responder: two rows per queried exchange with
+/// market cap descending by row index. The screener arm and the 404
+/// fallback are byte-identical in the interleave test and the
+/// fx-list-failure test; they vary only in the exchanges-list arm —
+/// `None` carries no arm, `Some(status)` returns that status with the
+/// fixture outage body.
+fn fanout_responder(
+    exchanges_list_status: Option<u16>,
+) -> impl Fn(&str) -> (u16, Value) + Send + Sync + 'static {
+    move |path| {
+        if let Some(status) = exchanges_list_status {
+            if path.starts_with("/eodhd/exchanges-list") {
+                return (status, json!({ "error": "fixture exchanges-list outage" }));
+            }
+        }
+        if path.starts_with("/eodhd/screener") {
+            if let Some(exchange) = decode_screener_exchange(path) {
+                let rows: Vec<Value> = (0..2)
+                    .map(|index| {
+                        json!({
+                            "code": format!("{exchange}{index}"),
+                            "name": format!("Company {index} of {exchange}"),
+                            "exchange": exchange,
+                            "market_capitalization": 10_000_000_000.0
+                                - f64::from(index) * 1_000_000_000.0,
+                        })
+                    })
+                    .collect();
+                return (200, json!({ "data": rows }));
+            }
+            return (200, json!({ "data": [] }));
+        }
+        (404, json!({ "error": "unexpected endpoint", "path": path }))
+    }
+}
+
+/// The round-robin interleave contract: four results alternating US/LSE.
+fn assert_round_robin_us_lse_interleave(output: &Value) {
+    let results = output["results"].as_array().expect("results");
+    assert_eq!(results.len(), 4);
+    let exchanges: Vec<&str> = results
+        .iter()
+        .map(|row| row["exchange"].as_str().expect("exchange"))
+        .collect();
+    assert_eq!(exchanges, ["US", "LSE", "US", "LSE"]);
+}
+
 /// expect: [P5] A multi-geography prompt fans out one EODHD screener query
 /// per exchange, interleaves results round-robin, and reports per-exchange
 /// match counts.
@@ -1645,26 +1692,7 @@ async fn screener_tool(
 #[tokio::test]
 async fn screener_fans_out_per_exchange_and_interleaves() {
     let (output, fixture) = screener_tool(
-        |path| {
-            if path.starts_with("/eodhd/screener") {
-                if let Some(exchange) = decode_screener_exchange(path) {
-                    let rows: Vec<Value> = (0..2)
-                        .map(|index| {
-                            json!({
-                                "code": format!("{exchange}{index}"),
-                                "name": format!("Company {index} of {exchange}"),
-                                "exchange": exchange,
-                                "market_capitalization": 10_000_000_000.0
-                                    - f64::from(index) * 1_000_000_000.0,
-                            })
-                        })
-                        .collect();
-                    return (200, json!({ "data": rows }));
-                }
-                return (200, json!({ "data": [] }));
-            }
-            (404, json!({ "error": "unexpected endpoint", "path": path }))
-        },
+        fanout_responder(None),
         json!({
                 "prompt": "US and UK listed companies",
                 "limit": 10
@@ -1679,13 +1707,7 @@ async fn screener_fans_out_per_exchange_and_interleaves() {
     assert!(codes.iter().any(|code| code == "LSE"));
     assert_eq!(output["exchange_match_counts"]["US"], json!(2));
     assert_eq!(output["exchange_match_counts"]["LSE"], json!(2));
-    let results = output["results"].as_array().expect("results");
-    assert_eq!(results.len(), 4);
-    let exchanges: Vec<&str> = results
-        .iter()
-        .map(|row| row["exchange"].as_str().expect("exchange"))
-        .collect();
-    assert_eq!(exchanges, ["US", "LSE", "US", "LSE"]);
+    assert_round_robin_us_lse_interleave(&output);
     let filters_text = output["screener_filters"].to_string();
     assert!(!filters_text.contains("exchange"));
     assert_eq!(fixture.count(), 2);
@@ -3552,29 +3574,7 @@ async fn screener_non_common_instruments_dropped() {
 #[tokio::test]
 async fn screener_fx_list_failure_degrades_loudly() {
     let (output, fixture) = screener_tool(
-        |path| {
-        if path.starts_with("/eodhd/exchanges-list") {
-            return (500, json!({ "error": "fixture exchanges-list outage" }));
-        }
-        if path.starts_with("/eodhd/screener") {
-            if let Some(exchange) = decode_screener_exchange(path) {
-                let rows: Vec<Value> = (0..2)
-                    .map(|index| {
-                        json!({
-                            "code": format!("{exchange}{index}"),
-                            "name": format!("Company {index} of {exchange}"),
-                            "exchange": exchange,
-                            "market_capitalization": 10_000_000_000.0
-                                - f64::from(index) * 1_000_000_000.0,
-                        })
-                    })
-                    .collect();
-                return (200, json!({ "data": rows }));
-            }
-            return (200, json!({ "data": [] }));
-        }
-        (404, json!({ "error": "unexpected endpoint", "path": path }))
-        },
+        fanout_responder(Some(500)),
         json!({
                 "prompt": "US and UK listed companies with market capitalization between 2 billion and 200 billion",
                 "limit": 10
@@ -3603,13 +3603,7 @@ async fn screener_fx_list_failure_degrades_loudly() {
         "LSE cap bounds must be omitted in degraded mode: {lse_bounds:?}"
     );
     // Round-robin preserved (no USD ranking without conversion).
-    let results = output["results"].as_array().expect("results");
-    assert_eq!(results.len(), 4);
-    let exchanges: Vec<&str> = results
-        .iter()
-        .map(|row| row["exchange"].as_str().expect("exchange"))
-        .collect();
-    assert_eq!(exchanges, ["US", "LSE", "US", "LSE"]);
+    assert_round_robin_us_lse_interleave(&output);
     assert!(output["fx"].is_null());
     // failed exchanges-list + two screener queries
     assert_eq!(fixture.count(), 3);
