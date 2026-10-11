@@ -57,16 +57,10 @@ impl TrainingServer {
                     "mode must be 'sft', 'preference', or 'both'; got '{mode}'"
                 )));
             }
-            let events_path = std::env::var("HKASK_SWARM_EVENTS_PATH")
-                .ok()
-                .filter(|s| !s.trim().is_empty())
-                .unwrap_or_else(|| {
-                    hkask_types::agent_paths::resolve_under_data_dir(
-                        &hkask_types::agent_paths::mcp_server_db("swarm", "events"),
-                    )
-                    .to_string_lossy()
-                    .to_string()
-                });
+            // The path contract (HKASK_SWARM_EVENTS_PATH override, D28
+            // default) is shared with the swarm server and zed's harness
+            // monitor — single-sourced in swarm_events_db_path.
+            let events_path = hkask_types::agent_paths::swarm_events_db_path();
             if !std::path::Path::new(&events_path).exists() {
                 return Err(McpToolError::invalid_argument(format!(
                     "event store not found at '{events_path}' — run the rollout harness \

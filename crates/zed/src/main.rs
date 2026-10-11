@@ -819,16 +819,10 @@ fn main() {
         // `submit_rollout_impact_check` — the first live traffic through the
         // seam.
         let (cybernetics_loop_inner, harness_event_store) = {
-            let events_path = std::env::var("HKASK_SWARM_EVENTS_PATH")
-                .ok()
-                .filter(|s| !s.trim().is_empty())
-                .unwrap_or_else(|| {
-                    hkask_types::agent_paths::resolve_under_data_dir(
-                        &hkask_types::agent_paths::mcp_server_db("swarm", "events"),
-                    )
-                    .to_string_lossy()
-                    .to_string()
-                });
+            // The path contract (HKASK_SWARM_EVENTS_PATH override, D28
+            // default) is shared with the swarm server and the training
+            // rollout bridge — single-sourced in swarm_events_db_path.
+            let events_path = hkask_types::agent_paths::swarm_events_db_path();
             match kask_bridge::BridgeRolloutEventSource::open(&events_path) {
                 Ok(source) => {
                     let store = source.store();

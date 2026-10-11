@@ -309,21 +309,14 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 config.default_agent_model.clone(),
             ));
 
-            // The rollout event store (event-substrate data plane). D28
-            // layout: `mcp/swarm/events.db` under the data dir,
-            // operator-configurable via `HKASK_SWARM_EVENTS_PATH`. Lazy —
+            // The rollout event store (event-substrate data plane). Lazy —
             // opened on first write, so a missing/unwritable path surfaces at
-            // the first `swarm_eval_agent_local` call, not at startup.
-            let events_path = std::env::var("HKASK_SWARM_EVENTS_PATH")
-                .ok()
-                .filter(|s| !s.trim().is_empty())
-                .unwrap_or_else(|| {
-                    hkask_types::agent_paths::resolve_under_data_dir(
-                        &hkask_types::agent_paths::mcp_server_db("swarm", "events"),
-                    )
-                    .to_string_lossy()
-                    .to_string()
-                });
+            // the first `swarm_eval_agent_local` call, not at startup. The
+            // path contract — the D28 default plus the
+            // `HKASK_SWARM_EVENTS_PATH` operator override, shared with zed's
+            // harness regression monitor and the training rollout bridge —
+            // lives in `hkask_types::agent_paths::swarm_events_db_path`.
+            let events_path = hkask_types::agent_paths::swarm_events_db_path();
             let event_store = std::sync::Arc::new(LazyEventStore::lazy(events_path));
             let thread_store = std::sync::Arc::new(thread_store::SwarmThreadStore::new(
                 hkask_types::agent_paths::resolve_under_data_dir(

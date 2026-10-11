@@ -194,6 +194,34 @@ pub fn mcp_server_subdir(server_id: &str, subdir: &str) -> PathBuf {
     }
 }
 
+/// Resolve the swarm rollout event store's database path: the
+/// `HKASK_SWARM_EVENTS_PATH` operator override when set non-blank, else
+/// the D28 default `mcp/swarm/events.db` under the data dir.
+///
+/// Single-sources a three-opener contract: the swarm server's `run()`
+/// writes the store, zed's harness regression monitor reads it (the
+/// phase-6 seam), and the training rollout bridge reads it — all three
+/// must open the same database or the seam silently breaks.
+pub fn swarm_events_db_path() -> String {
+    env_override_or_default(
+        std::env::var("HKASK_SWARM_EVENTS_PATH").ok().as_deref(),
+        &mcp_server_db("swarm", "events"),
+    )
+}
+
+/// The override-or-default resolution behind [`swarm_events_db_path`],
+/// split from the env read so the legs are testable in-process
+/// (edition-2024 env mutation is unsafe and racy under parallel tests).
+/// A set override is used raw; a blank one falls back to the default.
+fn env_override_or_default(override_path: Option<&str>, default: &std::path::Path) -> String {
+    match override_path.filter(|s| !s.trim().is_empty()) {
+        Some(path) => path.to_string(),
+        None => resolve_under_data_dir(default)
+            .to_string_lossy()
+            .to_string(),
+    }
+}
+
 // ── MCP content-server paths (artifacts dir route) ───────────────────────────
 
 /// Returns the relative path `{server_id}-mcp/{subdir}` — the canonical
@@ -371,6 +399,28 @@ mod tests {
             PathBuf::from("mcp/companies/fibo-cache")
         );
         assert_eq!(mcp_server_subdir("swarm", ""), PathBuf::from("mcp/swarm"));
+    }
+
+    #[test]
+    fn swarm_events_db_path_override_and_default_legs() {
+        // The contract three openers share (the swarm server's run(), zed's
+        // harness regression monitor, the training rollout bridge): a set
+        // override is used raw, a blank one falls back to the D28 default.
+        let default = resolve_under_data_dir(&mcp_server_db("swarm", "events"))
+            .to_string_lossy()
+            .to_string();
+        assert_eq!(
+            env_override_or_default(None, &mcp_server_db("swarm", "events")),
+            default
+        );
+        assert_eq!(
+            env_override_or_default(Some("   "), &mcp_server_db("swarm", "events")),
+            default
+        );
+        assert_eq!(
+            env_override_or_default(Some("/custom/events.db"), &mcp_server_db("swarm", "events")),
+            "/custom/events.db"
+        );
     }
 
     #[test]
