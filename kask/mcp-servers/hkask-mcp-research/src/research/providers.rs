@@ -275,6 +275,49 @@ macro_rules! try_fallback {
     }};
 }
 
+/// Emit one per-provider outcome span and record the outcome into the
+/// in-process aggregator — shared by the single-provider path and each
+/// compound fan-out future. Same target (`reg.web.provider`) so the
+/// curator's MetacognitionLoop aggregates single-provider and compound
+/// calls together. Best-effort aggregation: a poisoned lock skips the live
+/// path; the read side surfaces the degraded state (`live_stats_degraded` +
+/// the rationale part), so the skip is never silent.
+fn record_provider_span(
+    performance: &std::sync::Mutex<crate::research::performance::ProviderPerformanceAggregator>,
+    kind: &str,
+    latency_ms: u64,
+    result: &Result<ProviderSearchOutput, WebError>,
+) {
+    let outcome = match result {
+        Ok(_) => "ok",
+        Err(WebError::RateLimited(_)) => "rate_limited",
+        Err(WebError::ProviderUnavailable(_)) => "unavailable",
+        Err(WebError::ProviderError(_)) => "error",
+        Err(_) => "error",
+    };
+    let error_kind = match result {
+        Ok(_) => None,
+        Err(e) => Some(e.kind()),
+    };
+    tracing::info!(
+        target: "reg.web.provider",
+        kind = %kind,
+        outcome = outcome,
+        latency_ms = latency_ms,
+        error_kind = error_kind.map(|k| k.to_string()).as_deref().unwrap_or(""),
+        "REG"
+    );
+    if let Ok(mut agg) = performance.lock() {
+        agg.record_outcome(
+            kind,
+            crate::research::performance::ProviderOutcome {
+                latency_ms,
+                success: result.is_ok(),
+            },
+        );
+    }
+}
+
 impl ProviderPool {
     /// Construct a new `ProviderPool` with the given providers.
     ///
@@ -346,41 +389,7 @@ impl ProviderPool {
         let start = std::time::Instant::now();
         let result = provider.search(query).await;
         let latency_ms = start.elapsed().as_millis() as u64;
-        // Emit per-provider outcome span for the cybernetic feedback loop.
-        // Same target as search_compound so the curator's MetacognitionLoop
-        // aggregates single-provider and compound calls together.
-        let outcome = match &result {
-            Ok(_) => "ok",
-            Err(WebError::RateLimited(_)) => "rate_limited",
-            Err(WebError::ProviderUnavailable(_)) => "unavailable",
-            Err(WebError::ProviderError(_)) => "error",
-            Err(_) => "error",
-        };
-        let error_kind = match &result {
-            Ok(_) => None,
-            Err(e) => Some(e.kind()),
-        };
-        tracing::info!(
-            target: "reg.web.provider",
-            kind = %kind,
-            outcome = outcome,
-            latency_ms = latency_ms,
-            error_kind = error_kind.map(|k| k.to_string()).as_deref().unwrap_or(""),
-            "REG"
-        );
-        // Record into the in-process aggregator for live score_providers
-        // penalties. Best-effort — a poisoned lock skips the live path; the
-        // read side surfaces the degraded state (`live_stats_degraded` +
-        // the rationale part), so the skip is never silent.
-        if let Ok(mut agg) = self.performance.lock() {
-            agg.record_outcome(
-                kind,
-                crate::research::performance::ProviderOutcome {
-                    latency_ms,
-                    success: result.is_ok(),
-                },
-            );
-        }
+        record_provider_span(&self.performance, kind, latency_ms, &result);
         let providers_queried = vec![ProviderInfo {
             kind: kind.to_string(),
             capabilities: provider.capabilities(),
@@ -550,42 +559,7 @@ impl ProviderPool {
                         }
                     };
                     let latency_ms = start.elapsed().as_millis() as u64;
-                    let success = result.is_ok();
-                    // Emit per-provider outcome span for the cybernetic feedback
-                    // loop. The curator's MetacognitionLoop and reg_query read
-                    // these to compute rolling success-rate/latency per provider,
-                    // which feeds back into score_providers (Layer 3 dynamic).
-                    let outcome = match &result {
-                        Ok(_) => "ok",
-                        Err(WebError::RateLimited(_)) => "rate_limited",
-                        Err(WebError::ProviderUnavailable(_)) => "unavailable",
-                        Err(WebError::ProviderError(_)) => "error",
-                        Err(_) => "error",
-                    };
-                    let error_kind = match &result {
-                        Ok(_) => None,
-                        Err(e) => Some(e.kind()),
-                    };
-                    tracing::info!(
-                        target: "reg.web.provider",
-                        kind = %kind,
-                        outcome = outcome,
-                        latency_ms = latency_ms,
-                        error_kind = error_kind.map(|k| k.to_string()).as_deref().unwrap_or(""),
-                        "REG"
-                    );
-                    // Record into the in-process aggregator for live
-                    // score_providers penalties. Best-effort — a poisoned
-                    // lock skips the live path (static profile still applies).
-                    if let Ok(mut agg) = performance.lock() {
-                        agg.record_outcome(
-                            &kind,
-                            crate::research::performance::ProviderOutcome {
-                                latency_ms,
-                                success,
-                            },
-                        );
-                    }
+                    record_provider_span(performance, &kind, latency_ms, &result);
                     (kind, result)
                 }
             })
@@ -1222,6 +1196,43 @@ mod tests {
         }
     }
 
+    /// A brave+tavily stub pool — the shared fixture of the scorer and
+    /// quick-pick tests.
+    fn brave_tavily_pool() -> ProviderPool {
+        ProviderPool::new(
+            vec![
+                Box::new(StubProvider { kind: "brave" }),
+                Box::new(StubProvider { kind: "tavily" }),
+            ],
+            Vec::new(),
+            Vec::new(),
+            None,
+            None,
+            None,
+        )
+    }
+
+    /// A one-brave-stub pool plus a five-result test query — the shared
+    /// fixture of the closed-set error tests.
+    fn brave_pool_and_query() -> (ProviderPool, SearchQuery) {
+        let pool = ProviderPool::new(
+            vec![Box::new(StubProvider { kind: "brave" })],
+            Vec::new(),
+            Vec::new(),
+            None,
+            None,
+            None,
+        );
+        let query = SearchQuery {
+            query: "test".to_string(),
+            num_results: 5,
+            include_domains: Vec::new(),
+            exclude_domains: Vec::new(),
+            freshness: None,
+        };
+        (pool, query)
+    }
+
     /// R-03 pin (mcp-tool-review): health entries carry the pool surface
     /// they serve. The same provider kind registers once per surface it
     /// serves (firecrawl: search+extract+browse; tavily/exa: search+browse)
@@ -1347,17 +1358,7 @@ mod tests {
     /// could not deliver.
     #[test]
     fn pick_quick_provider_drops_a_persistently_failing_provider() {
-        let pool = ProviderPool::new(
-            vec![
-                Box::new(StubProvider { kind: "brave" }),
-                Box::new(StubProvider { kind: "tavily" }),
-            ],
-            Vec::new(),
-            Vec::new(),
-            None,
-            None,
-            None,
-        );
+        let pool = brave_tavily_pool();
         // Static pick: brave.
         assert_eq!(pool.pick_quick_provider().expect("quick pick"), "brave");
         // Record enough failures for brave to cross MIN_SAMPLES_FOR_LIVE
@@ -1505,16 +1506,7 @@ mod tests {
     /// should rank Brave (best_for includes "news") above Tavily (doesn't).
     #[test]
     fn score_providers_intent_match_ranks_higher() {
-        let brave = StubProvider { kind: "brave" };
-        let tavily = StubProvider { kind: "tavily" };
-        let pool = ProviderPool::new(
-            vec![Box::new(brave), Box::new(tavily)],
-            Vec::new(),
-            Vec::new(),
-            None,
-            None,
-            None,
-        );
+        let pool = brave_tavily_pool();
         let recs = pool.score_providers("latest AI news", Some("news"));
         // Brave (best_for includes "news") should rank above Tavily.
         assert_eq!(recs[0].kind, "brave");
@@ -1529,16 +1521,7 @@ mod tests {
     /// cybernetic feedback loop — the aggregator feeds back into selection.
     #[test]
     fn score_providers_live_penalty_applies_after_failures() {
-        let brave = StubProvider { kind: "brave" };
-        let tavily = StubProvider { kind: "tavily" };
-        let pool = ProviderPool::new(
-            vec![Box::new(brave), Box::new(tavily)],
-            Vec::new(),
-            Vec::new(),
-            None,
-            None,
-            None,
-        );
+        let pool = brave_tavily_pool();
         // Baseline: brave scores lower (better) than tavily (cheaper + faster).
         let baseline = pool.score_providers("test", None);
         let brave_baseline = baseline.iter().find(|r| r.kind == "brave").unwrap().score;
@@ -1700,21 +1683,7 @@ mod tests {
     /// chasing credentials for a spelling error (observed live 2026-10-09).
     #[tokio::test]
     async fn single_provider_unknown_name_is_a_closed_set_error() {
-        let pool = ProviderPool::new(
-            vec![Box::new(StubProvider { kind: "brave" })],
-            Vec::new(),
-            Vec::new(),
-            None,
-            None,
-            None,
-        );
-        let query = SearchQuery {
-            query: "test".to_string(),
-            num_results: 5,
-            include_domains: Vec::new(),
-            exclude_domains: Vec::new(),
-            freshness: None,
-        };
+        let (pool, query) = brave_pool_and_query();
         let err = pool
             .search_single_provider("tavil", &query)
             .await
@@ -1733,21 +1702,7 @@ mod tests {
     /// enables it — the agent's next move is the keychain, not a retry.
     #[tokio::test]
     async fn single_provider_known_unconfigured_names_the_credential() {
-        let pool = ProviderPool::new(
-            vec![Box::new(StubProvider { kind: "brave" })],
-            Vec::new(),
-            Vec::new(),
-            None,
-            None,
-            None,
-        );
-        let query = SearchQuery {
-            query: "test".to_string(),
-            num_results: 5,
-            include_domains: Vec::new(),
-            exclude_domains: Vec::new(),
-            freshness: None,
-        };
+        let (pool, query) = brave_pool_and_query();
         let err = pool
             .search_single_provider("tavily", &query)
             .await
@@ -1764,21 +1719,7 @@ mod tests {
     /// from a pool is a construction anomaly, never a closed-set mistake.
     #[tokio::test]
     async fn single_provider_free_kind_absence_is_a_construction_anomaly() {
-        let pool = ProviderPool::new(
-            vec![Box::new(StubProvider { kind: "brave" })],
-            Vec::new(),
-            Vec::new(),
-            None,
-            None,
-            None,
-        );
-        let query = SearchQuery {
-            query: "test".to_string(),
-            num_results: 5,
-            include_domains: Vec::new(),
-            exclude_domains: Vec::new(),
-            freshness: None,
-        };
+        let (pool, query) = brave_pool_and_query();
         let err = pool
             .search_single_provider("openalex", &query)
             .await
