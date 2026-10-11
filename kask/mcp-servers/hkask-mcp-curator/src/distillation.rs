@@ -1392,6 +1392,72 @@ mod tests {
         .to_string()
     }
 
+    /// A never-failing scripted port answering `response` — the common
+    /// fixture of the publication tests. The failure-counting variant
+    /// constructs `ScriptedDistillPort` explicitly.
+    fn scripted_port(response: String) -> ScriptedDistillPort {
+        ScriptedDistillPort {
+            response,
+            failures: std::sync::atomic::AtomicUsize::new(0),
+        }
+    }
+
+    /// A prompt-recording per-call-responses port starting at call zero —
+    /// the fixture of the batching tests.
+    fn scripted_responses(responses: Vec<String>) -> ScriptedResponsesPort {
+        ScriptedResponsesPort {
+            responses,
+            calls: std::sync::atomic::AtomicUsize::new(0),
+            prompts: std::sync::Mutex::new(Vec::new()),
+        }
+    }
+
+    /// The common distillation pass: default idle window, one-hour scan
+    /// cutoff, no revisit threads, and the test model override. The
+    /// failure-injection and model-routing tests call `distill_store`
+    /// directly for their varying windows and models.
+    async fn distill_default(
+        store: &hkask_memory::MemoryStore,
+        port: &impl hkask_types::InferencePort,
+        webid: WebID,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> DistillationOutcome {
+        distill_store(
+            store,
+            port,
+            webid,
+            now,
+            DEFAULT_DISTILLATION_IDLE_SECS,
+            now - chrono::Duration::seconds(3600),
+            &[],
+            Some("test-model"),
+        )
+        .await
+    }
+
+    /// The failure-injection pass: a 60-second idle window and the epoch
+    /// scan cutoff, so the seeded turn is idle-eligible and the scan sees
+    /// everything. The retry call varies `now` and its revisit thread, so
+    /// it stays an explicit `distill_store`.
+    async fn distill_from_epoch(
+        store: &hkask_memory::MemoryStore,
+        port: &impl hkask_types::InferencePort,
+        webid: WebID,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> DistillationOutcome {
+        distill_store(
+            store,
+            port,
+            webid,
+            now,
+            60,
+            chrono::DateTime::from_timestamp(0, 0).expect("epoch"),
+            &[],
+            Some("test-model"),
+        )
+        .await
+    }
+
     /// expect: "A lesson-store failure cannot mark its source turns as distilled."
     #[tokio::test]
     async fn lesson_store_failure_does_not_advance_the_watermark() {
@@ -1414,27 +1480,14 @@ mod tests {
                  BEGIN SELECT RAISE(FAIL, 'injected lesson failure'); END;",
             )
             .expect("install failure trigger");
-        let port = ScriptedDistillPort {
-            response: lesson_response(
-                "atomic-failure-lesson",
-                "publication_order",
-                "The watermark follows durable lessons.",
-                &[&turn_id.to_string()],
-            ),
-            failures: std::sync::atomic::AtomicUsize::new(0),
-        };
+        let port = scripted_port(lesson_response(
+            "atomic-failure-lesson",
+            "publication_order",
+            "The watermark follows durable lessons.",
+            &[&turn_id.to_string()],
+        ));
 
-        let outcome = distill_store(
-            &store,
-            &port,
-            webid,
-            now,
-            60,
-            chrono::DateTime::from_timestamp(0, 0).expect("epoch"),
-            &[],
-            Some("test-model"),
-        )
-        .await;
+        let outcome = distill_from_epoch(&store, &port, webid, now).await;
 
         assert_eq!(outcome.lessons_inserted, 0);
         assert_eq!(outcome.publication_failures, 1);
@@ -1507,27 +1560,14 @@ mod tests {
                  BEGIN SELECT RAISE(FAIL, 'injected watermark failure'); END;",
             )
             .expect("install watermark failure trigger");
-        let port = ScriptedDistillPort {
-            response: lesson_response(
-                "watermark-rollback-lesson",
-                "atomicity",
-                "Lesson and watermark share one commit.",
-                &[&turn_id.to_string()],
-            ),
-            failures: std::sync::atomic::AtomicUsize::new(0),
-        };
+        let port = scripted_port(lesson_response(
+            "watermark-rollback-lesson",
+            "atomicity",
+            "Lesson and watermark share one commit.",
+            &[&turn_id.to_string()],
+        ));
 
-        let outcome = distill_store(
-            &store,
-            &port,
-            webid,
-            now,
-            60,
-            chrono::DateTime::from_timestamp(0, 0).expect("epoch"),
-            &[],
-            Some("test-model"),
-        )
-        .await;
+        let outcome = distill_from_epoch(&store, &port, webid, now).await;
 
         assert_eq!(outcome.lessons_inserted, 0);
         assert_eq!(outcome.publication_failures, 1);
@@ -1706,17 +1746,7 @@ mod tests {
             failures: std::sync::atomic::AtomicUsize::new(1),
             response: "[]".to_string(),
         };
-        let outcome = distill_store(
-            &store,
-            &port,
-            webid,
-            now,
-            DEFAULT_DISTILLATION_IDLE_SECS,
-            now - chrono::Duration::seconds(3600),
-            &[],
-            Some("test-model"),
-        )
-        .await;
+        let outcome = distill_default(&store, &port, webid, now).await;
         assert_eq!(outcome.extraction_failures, 1);
         assert_eq!(outcome.threads_distilled, 0);
         assert!(
@@ -1796,35 +1826,21 @@ mod tests {
         // (therapy 2026-10-08 F001) skips identical re-extractions, so the
         // batching intent (every turn shown exactly once, per-batch
         // watermarks) is pinned with different texts per batch.
-        let port = ScriptedResponsesPort {
-            responses: vec![
-                lesson_response(
-                    "batch-entity",
-                    "batch-attribute",
-                    "batch lesson one",
-                    &[&turns[11].to_string()],
-                ),
-                lesson_response(
-                    "batch-entity",
-                    "batch-attribute",
-                    "batch lesson two",
-                    &[&turns[14].to_string()],
-                ),
-            ],
-            calls: std::sync::atomic::AtomicUsize::new(0),
-            prompts: std::sync::Mutex::new(Vec::new()),
-        };
-        let outcome = distill_store(
-            &store,
-            &port,
-            webid,
-            now,
-            DEFAULT_DISTILLATION_IDLE_SECS,
-            now - chrono::Duration::seconds(3600),
-            &[],
-            Some("test-model"),
-        )
-        .await;
+        let port = scripted_responses(vec![
+            lesson_response(
+                "batch-entity",
+                "batch-attribute",
+                "batch lesson one",
+                &[&turns[11].to_string()],
+            ),
+            lesson_response(
+                "batch-entity",
+                "batch-attribute",
+                "batch lesson two",
+                &[&turns[14].to_string()],
+            ),
+        ]);
+        let outcome = distill_default(&store, &port, webid, now).await;
         assert_eq!(outcome.threads_examined, 1);
         assert_eq!(outcome.threads_distilled, 1);
         assert_eq!(
@@ -1888,17 +1904,7 @@ mod tests {
             calls: std::sync::atomic::AtomicUsize::new(0),
         };
 
-        let outcome = distill_store(
-            &store,
-            &port,
-            webid,
-            now,
-            DEFAULT_DISTILLATION_IDLE_SECS,
-            now - chrono::Duration::seconds(3600),
-            &[],
-            Some("test-model"),
-        )
-        .await;
+        let outcome = distill_default(&store, &port, webid, now).await;
         assert!(outcome.threads_pending.contains_key("t-duplicate-markers"));
         assert_eq!(outcome.lessons_inserted, 0);
         assert_eq!(
@@ -1935,17 +1941,7 @@ mod tests {
             fail_on_call: 2,
             calls: std::sync::atomic::AtomicUsize::new(0),
         };
-        let outcome = distill_store(
-            &store,
-            &failing,
-            webid,
-            now,
-            DEFAULT_DISTILLATION_IDLE_SECS,
-            now - chrono::Duration::seconds(3600),
-            &[],
-            Some("test-model"),
-        )
-        .await;
+        let outcome = distill_default(&store, &failing, webid, now).await;
         assert_eq!(outcome.extraction_failures, 1);
         assert_eq!(
             outcome.threads_distilled, 0,
@@ -1984,17 +1980,7 @@ mod tests {
             fail_on_call: 0,
             calls: std::sync::atomic::AtomicUsize::new(0),
         };
-        let second = distill_store(
-            &store,
-            &working,
-            webid,
-            now,
-            DEFAULT_DISTILLATION_IDLE_SECS,
-            now - chrono::Duration::seconds(3600),
-            &[],
-            Some("test-model"),
-        )
-        .await;
+        let second = distill_default(&store, &working, webid, now).await;
         assert_eq!(second.threads_distilled, 1);
         assert_eq!(second.lessons_inserted, 1);
         assert_eq!(
@@ -2072,30 +2058,16 @@ mod tests {
         let webid = WebID::from_persona(b"curator");
         let now = chrono::Utc::now();
         let turns = seed_turns(&store, "t-prior", 15, webid, now);
-        let port = ScriptedResponsesPort {
-            responses: vec![
-                lesson_response(
-                    "prior-slug-entity",
-                    "prior-attribute",
-                    "prior lesson text",
-                    &[&turns[0].to_string()],
-                ),
-                "[]".to_string(),
-            ],
-            calls: std::sync::atomic::AtomicUsize::new(0),
-            prompts: std::sync::Mutex::new(Vec::new()),
-        };
-        let outcome = distill_store(
-            &store,
-            &port,
-            webid,
-            now,
-            DEFAULT_DISTILLATION_IDLE_SECS,
-            now - chrono::Duration::seconds(3600),
-            &[],
-            Some("test-model"),
-        )
-        .await;
+        let port = scripted_responses(vec![
+            lesson_response(
+                "prior-slug-entity",
+                "prior-attribute",
+                "prior lesson text",
+                &[&turns[0].to_string()],
+            ),
+            "[]".to_string(),
+        ]);
+        let outcome = distill_default(&store, &port, webid, now).await;
         assert_eq!(outcome.lessons_inserted, 1);
         let prompts = port.prompts.lock().expect("prompts").clone();
         assert_eq!(prompts.len(), 2, "a 15-turn thread distills in two batches");
@@ -2149,23 +2121,9 @@ mod tests {
                 .with_confidence(hkask_types::Confidence::new(0.5)),
             )
             .expect("seed prior lesson");
-        let port = ScriptedResponsesPort {
-            responses: vec!["[]".to_string()],
-            calls: std::sync::atomic::AtomicUsize::new(0),
-            prompts: std::sync::Mutex::new(Vec::new()),
-        };
+        let port = scripted_responses(vec!["[]".to_string()]);
 
-        let outcome = distill_store(
-            &store,
-            &port,
-            webid,
-            now,
-            DEFAULT_DISTILLATION_IDLE_SECS,
-            now - chrono::Duration::seconds(3600),
-            &[],
-            Some("test-model"),
-        )
-        .await;
+        let outcome = distill_default(&store, &port, webid, now).await;
         assert_eq!(outcome.extraction_failures, 0);
         let prompts = port.prompts.lock().expect("prompts");
         assert_eq!(prompts.len(), 1);
@@ -2194,9 +2152,8 @@ mod tests {
             now - chrono::Duration::seconds(600),
             webid,
         );
-        let port = ScriptedDistillPort {
-            failures: std::sync::atomic::AtomicUsize::new(0),
-            response: serde_json::json!([{
+        let port = scripted_port(
+            serde_json::json!([{
                 "entity": "server-tool-count",
                 "attribute": "current-count",
                 "text": "The server currently exposes five tools.",
@@ -2204,19 +2161,9 @@ mod tests {
                 "mutable_state": true
             }])
             .to_string(),
-        };
+        );
 
-        let outcome = distill_store(
-            &store,
-            &port,
-            webid,
-            now,
-            DEFAULT_DISTILLATION_IDLE_SECS,
-            now - chrono::Duration::seconds(3600),
-            &[],
-            Some("test-model"),
-        )
-        .await;
+        let outcome = distill_default(&store, &port, webid, now).await;
         assert_eq!(outcome.lessons_inserted, 0);
         assert_eq!(outcome.lessons_skipped, 1);
         assert!(
@@ -2243,9 +2190,8 @@ mod tests {
             now - chrono::Duration::seconds(600),
             webid,
         );
-        let port = ScriptedDistillPort {
-            failures: std::sync::atomic::AtomicUsize::new(0),
-            response: serde_json::json!([
+        let port = scripted_port(
+            serde_json::json!([
                 {
                     "entity": "unclassified-lesson",
                     "attribute": "invariant",
@@ -2273,19 +2219,9 @@ mod tests {
                 }
             ])
             .to_string(),
-        };
+        );
 
-        let outcome = distill_store(
-            &store,
-            &port,
-            webid,
-            now,
-            DEFAULT_DISTILLATION_IDLE_SECS,
-            now - chrono::Duration::seconds(3600),
-            &[],
-            Some("test-model"),
-        )
-        .await;
+        let outcome = distill_default(&store, &port, webid, now).await;
         assert_eq!(outcome.lessons_inserted, 0);
         assert_eq!(outcome.lessons_skipped, 3);
     }
@@ -2305,9 +2241,8 @@ mod tests {
             now - chrono::Duration::seconds(600),
             webid,
         );
-        let port = ScriptedDistillPort {
-            failures: std::sync::atomic::AtomicUsize::new(0),
-            response: serde_json::json!([{
+        let port = scripted_port(
+            serde_json::json!([{
                 "entity": "server-tool-count",
                 "attribute": "current-count",
                 "text": "At commit abc123 the server exposes five tools.",
@@ -2319,19 +2254,9 @@ mod tests {
                 }
             }])
             .to_string(),
-        };
+        );
 
-        let outcome = distill_store(
-            &store,
-            &port,
-            webid,
-            now,
-            DEFAULT_DISTILLATION_IDLE_SECS,
-            now - chrono::Duration::seconds(3600),
-            &[],
-            Some("test-model"),
-        )
-        .await;
+        let outcome = distill_default(&store, &port, webid, now).await;
         assert_eq!(outcome.lessons_inserted, 1);
         let stored = store
             .h_mems_by_entity_prefix("server-tool-count")
@@ -2388,21 +2313,8 @@ mod tests {
             }
         ])
         .to_string();
-        let port = ScriptedDistillPort {
-            failures: std::sync::atomic::AtomicUsize::new(0),
-            response,
-        };
-        let outcome = distill_store(
-            &store,
-            &port,
-            webid,
-            now,
-            DEFAULT_DISTILLATION_IDLE_SECS,
-            now - chrono::Duration::seconds(3600),
-            &[],
-            Some("test-model"),
-        )
-        .await;
+        let port = scripted_port(response);
+        let outcome = distill_default(&store, &port, webid, now).await;
         assert_eq!(
             outcome.lessons_inserted, 1,
             "the corrupted-citation lesson must be recovered and inserted"
@@ -2440,26 +2352,13 @@ mod tests {
             now - chrono::Duration::seconds(600),
             webid,
         );
-        let port = ScriptedDistillPort {
-            failures: std::sync::atomic::AtomicUsize::new(0),
-            response: lesson_response(
-                "operator-reporting-standard",
-                "report_language",
-                "Reports lead with what the user can now do, in functional language.",
-                &[&turn_id.to_string()],
-            ),
-        };
-        let outcome = distill_store(
-            &store,
-            &port,
-            webid,
-            now,
-            DEFAULT_DISTILLATION_IDLE_SECS,
-            now - chrono::Duration::seconds(3600),
-            &[],
-            Some("test-model"),
-        )
-        .await;
+        let port = scripted_port(lesson_response(
+            "operator-reporting-standard",
+            "report_language",
+            "Reports lead with what the user can now do, in functional language.",
+            &[&turn_id.to_string()],
+        ));
+        let outcome = distill_default(&store, &port, webid, now).await;
         assert_eq!(outcome.threads_examined, 1);
         assert_eq!(outcome.threads_distilled, 1);
         assert_eq!(outcome.lessons_inserted, 1);
@@ -2526,17 +2425,7 @@ mod tests {
                 &[&turn_id.to_string()],
             ),
         };
-        let outcome = distill_store(
-            &store,
-            &port,
-            webid,
-            now,
-            DEFAULT_DISTILLATION_IDLE_SECS,
-            now - chrono::Duration::seconds(3600),
-            &[],
-            Some("test-model"),
-        )
-        .await;
+        let outcome = distill_default(&store, &port, webid, now).await;
         assert_eq!(
             outcome.lessons_inserted, 0,
             "the duplicate must not publish"
@@ -2579,17 +2468,7 @@ mod tests {
             failures: std::sync::atomic::AtomicUsize::new(0),
             response: serde_json::json!([one, one]).to_string(),
         };
-        let outcome = distill_store(
-            &store,
-            &port,
-            webid,
-            now,
-            DEFAULT_DISTILLATION_IDLE_SECS,
-            now - chrono::Duration::seconds(3600),
-            &[],
-            Some("test-model"),
-        )
-        .await;
+        let outcome = distill_default(&store, &port, webid, now).await;
         assert_eq!(outcome.lessons_inserted, 1, "one lesson publishes");
         assert_eq!(outcome.lessons_skipped, 1, "the twin is counted as skipped");
         let lessons = store
@@ -2639,17 +2518,7 @@ mod tests {
             failures: std::sync::atomic::AtomicUsize::new(0),
             response: serde_json::json!([drifted, good]).to_string(),
         };
-        let outcome = distill_store(
-            &store,
-            &port,
-            webid,
-            now,
-            DEFAULT_DISTILLATION_IDLE_SECS,
-            now - chrono::Duration::seconds(3600),
-            &[],
-            Some("test-model"),
-        )
-        .await;
+        let outcome = distill_default(&store, &port, webid, now).await;
         assert_eq!(
             outcome.lessons_inserted, 1,
             "the canonical lesson publishes — the drifted twin must not stall it"
@@ -2723,17 +2592,7 @@ mod tests {
             embed_failures: std::sync::atomic::AtomicUsize::new(1),
         };
         // First pass: the embed fails — nothing publishes, no watermark.
-        let outcome = distill_store(
-            &store,
-            &port,
-            webid,
-            now,
-            DEFAULT_DISTILLATION_IDLE_SECS,
-            now - chrono::Duration::seconds(3600),
-            &[],
-            Some("test-model"),
-        )
-        .await;
+        let outcome = distill_default(&store, &port, webid, now).await;
         assert_eq!(
             outcome.lessons_inserted, 0,
             "no lesson publishes without its embedding"
@@ -2761,17 +2620,7 @@ mod tests {
         // Second pass: the embed works — the lesson publishes WITH its
         // embedding (the retry re-extracts because the watermark never
         // covered the turn).
-        let outcome = distill_store(
-            &store,
-            &port,
-            webid,
-            now,
-            DEFAULT_DISTILLATION_IDLE_SECS,
-            now - chrono::Duration::seconds(3600),
-            &[],
-            Some("test-model"),
-        )
-        .await;
+        let outcome = distill_default(&store, &port, webid, now).await;
         assert_eq!(
             outcome.lessons_inserted, 1,
             "the retry publishes the lesson"
@@ -2835,17 +2684,7 @@ mod tests {
                 &[&turn_id.to_string()],
             ),
         };
-        let outcome = distill_store(
-            &store,
-            &port,
-            webid,
-            now,
-            DEFAULT_DISTILLATION_IDLE_SECS,
-            now - chrono::Duration::seconds(3600),
-            &[],
-            Some("test-model"),
-        )
-        .await;
+        let outcome = distill_default(&store, &port, webid, now).await;
         assert_eq!(outcome.lessons_inserted, 1);
         // Every pre-existing h_mem is byte-identical.
         let after: Vec<(String, String, serde_json::Value)> =
@@ -2942,17 +2781,7 @@ mod tests {
             failures: std::sync::atomic::AtomicUsize::new(0),
             response: "[]".to_string(),
         };
-        let outcome = distill_store(
-            &store,
-            &port,
-            webid,
-            now,
-            DEFAULT_DISTILLATION_IDLE_SECS,
-            now - chrono::Duration::seconds(3600),
-            &[],
-            Some("test-model"),
-        )
-        .await;
+        let outcome = distill_default(&store, &port, webid, now).await;
         assert_eq!(outcome.threads_examined, 1);
         assert_eq!(outcome.threads_distilled, 0);
         assert_eq!(outcome.lessons_inserted, 0);
@@ -2987,17 +2816,7 @@ mod tests {
                 &[bogus],
             ),
         };
-        let outcome = distill_store(
-            &store,
-            &port,
-            webid,
-            now,
-            DEFAULT_DISTILLATION_IDLE_SECS,
-            now - chrono::Duration::seconds(3600),
-            &[],
-            Some("test-model"),
-        )
-        .await;
+        let outcome = distill_default(&store, &port, webid, now).await;
         assert_eq!(outcome.lessons_inserted, 0);
         assert_eq!(outcome.lessons_skipped, 1);
         // The thread was examined and its watermark advanced — a bad model
