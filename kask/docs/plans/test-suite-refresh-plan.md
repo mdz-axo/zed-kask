@@ -348,6 +348,22 @@ tool-implementation issue). Rule: one row-mutating kanban call per task per
 batch — comments included. Proposed .rules addition, operator call; not
 edited inline.
 
+**2026-10-11 — batches 4–9 (hkask-bridge-ontology, kask_bridge,
+hkask-mcp-swarm, hkask-mcp-prediction-markets, hkask-mcp-companies,
+hkask-types): KEEP ALL, no findings.** All six green (61+4 / 272 / 223 /
+85 / 167+25 / 88+1 passed; 0 failed, 0 ignored anywhere), all drift under
+45 days (oldest: swarm contract.rs and task_board.rs, 2026-08-29, 43
+days), no ignored tests. 43 green pin-candidate files kept across the six
+crates (incl. swarm's port_registry.rs — the .rules-named PortRegistry
+surface). 0 suspect, 0 needs-intent-reading across 96 test files →
+deep-review scope zero. No modifications → no crate commits; the commit
+path remains unvalidated.
+
+**Funnel simplification (green pin-candidates).** For green suites,
+pin-candidate confirmation reduces to marker-present + suite-green:
+whether the marker sits in test code or a production comment routes to the
+same verdict (keep), so the distinction is skipped.
+
 ## 10. Composition-time scope manifest (2026-10-11)
 
 Sizing input only, captured mechanically at composition time. Phase 1 re-runs
