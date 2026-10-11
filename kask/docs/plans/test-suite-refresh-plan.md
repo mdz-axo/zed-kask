@@ -398,6 +398,35 @@ edits persist). Remaining scope: hkask-memory + the zed-side mini-batch
 (awaiting the §3.6 operator call). 31 of 33 board tasks done; 241 of 246
 in-scope test files triaged.
 
+**2026-10-11 — batch 32 (hkask-memory): KEEP ALL, no findings.** Deferral
+lifted (the other stream's edits landed 2026-10-11; tree clear at batch
+start); 82+16 passed, 0 failed; no drift; 2 pin-candidates kept; the
+landing stream's own refresh of tests/federated_source.rs verified green.
+
+**2026-10-11 — batch 33 (zed-side fork-seam mini-batch): KEEP ALL, no
+findings; one seam-registration gap found and fixed.** Operator scope
+ruling mid-batch: fork-owned zed-side crates' tests + the D-seam monitor
+only — no zed-wide suite runs (the operator stopped a 24-crate chained
+run). Classification: 67 candidates → 48 marker-in-test pin files
+(D1/D7/D8/D16/D18/D20/D24/D28/D36/D37/D39/D41/D45/D49/D66/D68/D78/D83)
++ 17 prod-only (upstream tests, out of fork-owned scope). Fork-owned
+suites green: widgets 36/32/62; agent 1038/0 with 12 ignored all
+attributed deliberate (feature/env-gated; one bare #[ignore] at
+tests/mod.rs:441 noted as hygiene). Seam monitor: check-d-seam-audit-
+ledger.sh failed at batch start — D90 (collab/call/LiveKit C1 deletion,
+operator ruling 2026-10-06) live in DIVERGENCE.md without a ledger row;
+registered pending in-batch per the ledger's own convention (both named
+pins verified to exist), gate re-run green, committed at 2886a2daee.
+Upstream crates' pin tests delegated to the seam-monitoring machinery
+per the operator ruling.
+
+**2026-10-11 — TERMINATION CONDITION MET: all 33 board tasks done.**
+246/246 kask-side test files triaged plus 48 zed-side pin files
+classified; zero stale pins; zero test modifications; the only tree
+changes the review produced are this plan file, its execution log, and
+the D90 ledger registration. Phase 5 (final report + plan lifecycle
+close-out) awaits the operator's go.
+
 ## 10. Composition-time scope manifest (2026-10-11)
 
 Sizing input only, captured mechanically at composition time. Phase 1 re-runs
