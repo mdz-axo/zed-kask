@@ -1,27 +1,18 @@
-use std::sync::Arc;
-
 use rmcp::handler::server::wrapper::Parameters;
 use serde_json::{Value, json};
 
 use crate::request_types::{
     A2aBroadcastRequest, A2aSendRequest, ExecutePlanLocalRequest, GetLocalSwarmRequest,
 };
-use crate::test_support::{RecordingInference, content, make_thread_server};
+use crate::test_support::{
+    content, make_thread_server, recording_thread_server, write_fixture_card, write_fixture_cards,
+};
 
 #[tokio::test]
 async fn scoped_plan_broadcast_send_share_history_and_keep_verdict_and_board()
 -> Result<(), Box<dyn std::error::Error>> {
-    let dir = tempfile::tempdir()?;
-    let recorder = Arc::new(RecordingInference::default());
-    let server = make_thread_server(dir.path(), recorder.clone(), "test-passphrase");
-    for id in ["a", "b", "outsider"] {
-        server
-            .local_registry
-            .write_card(&serde_json::from_value(json!({
-                "agent_id": id, "agent_type": "test", "description": "fixture",
-                "capabilities": {"system_prompt": "Answer tasks", "model": "fixture/model"}
-            }))?)?;
-    }
+    let (_dir, server, recorder) = recording_thread_server("test-passphrase");
+    write_fixture_cards(&server, &["a", "b", "outsider"])?;
     let swarm = server
         .local_swarms
         .create("scoped", "", vec!["a".into(), "b".into()])?;
@@ -170,9 +161,7 @@ async fn scoped_plan_broadcast_send_share_history_and_keep_verdict_and_board()
 #[tokio::test]
 async fn scoped_storage_failure_is_not_reported_as_success()
 -> Result<(), Box<dyn std::error::Error>> {
-    let dir = tempfile::tempdir()?;
-    let recorder = Arc::new(RecordingInference::default());
-    let server = make_thread_server(dir.path(), recorder.clone(), "short");
+    let (_dir, server, recorder) = recording_thread_server("short");
     server
         .local_registry
         .write_card(&serde_json::from_value(json!({
@@ -226,9 +215,7 @@ async fn scoped_storage_failure_is_not_reported_as_success()
 async fn append_failure_after_inference_is_reported_and_not_read_back()
 -> Result<(), Box<dyn std::error::Error>> {
     use hkask_storage::DatabaseDriver;
-    let dir = tempfile::tempdir()?;
-    let recorder = Arc::new(RecordingInference::default());
-    let server = make_thread_server(dir.path(), recorder.clone(), "test-passphrase");
+    let (dir, server, recorder) = recording_thread_server("test-passphrase");
     server
         .local_registry
         .write_card(&serde_json::from_value(json!({
@@ -281,9 +268,7 @@ async fn append_failure_after_inference_is_reported_and_not_read_back()
 #[tokio::test]
 async fn independent_store_instances_serialize_history_and_sequences()
 -> Result<(), Box<dyn std::error::Error>> {
-    let dir = tempfile::tempdir()?;
-    let recorder = Arc::new(RecordingInference::default());
-    let first = make_thread_server(dir.path(), recorder.clone(), "test-passphrase");
+    let (dir, first, recorder) = recording_thread_server("test-passphrase");
     let second = make_thread_server(dir.path(), recorder.clone(), "test-passphrase");
     first
         .local_registry
@@ -328,17 +313,8 @@ async fn independent_store_instances_serialize_history_and_sequences()
 #[tokio::test]
 async fn scoped_fanout_and_pipeline_commit_ordered_history_and_deny_nonmembers()
 -> Result<(), Box<dyn std::error::Error>> {
-    let dir = tempfile::tempdir()?;
-    let recorder = Arc::new(RecordingInference::default());
-    let server = make_thread_server(dir.path(), recorder.clone(), "test-passphrase");
-    for id in ["a", "b", "outsider"] {
-        server
-            .local_registry
-            .write_card(&serde_json::from_value(json!({
-                "agent_id": id, "agent_type": "test", "description": "fixture",
-                "capabilities": {"system_prompt": "Answer tasks", "model": "fixture/model"}
-            }))?)?;
-    }
+    let (_dir, server, recorder) = recording_thread_server("test-passphrase");
+    write_fixture_cards(&server, &["a", "b", "outsider"])?;
     let swarm = server
         .local_swarms
         .create("scoped", "", vec!["a".into(), "b".into()])?;
@@ -421,25 +397,16 @@ async fn scoped_fanout_and_pipeline_commit_ordered_history_and_deny_nonmembers()
 #[tokio::test]
 async fn scoped_workflow_dispatches_each_stage_and_refuses_outsider()
 -> Result<(), Box<dyn std::error::Error>> {
-    let dir = tempfile::tempdir()?;
-    let recorder = Arc::new(RecordingInference::default());
-    let server = make_thread_server(dir.path(), recorder.clone(), "test-passphrase");
-    server
-        .local_registry
-        .write_card(&serde_json::from_value(json!({
-            "agent_id":"lead", "agent_type":"test", "description":"fixture",
-            "capabilities":{"system_prompt":"Answer tasks", "model":"fixture/model"},
-            "workflow_template":{"stages":[{"name":"first", "agent":"a"},
-                                            {"name":"second", "agent":"b"}]}
-        }))?)?;
-    for id in ["a", "b"] {
-        server
-            .local_registry
-            .write_card(&serde_json::from_value(json!({
-                "agent_id":id, "agent_type":"test", "description":"fixture",
-                "capabilities":{"system_prompt":"Answer tasks", "model":"fixture/model"}
-            }))?)?;
-    }
+    let (_dir, server, recorder) = recording_thread_server("test-passphrase");
+    write_fixture_card(
+        &server,
+        "lead",
+        Some(
+            json!({"workflow_template": {"stages": [{"name": "first", "agent": "a"},
+                                                     {"name": "second", "agent": "b"}]}}),
+        ),
+    )?;
+    write_fixture_cards(&server, &["a", "b"])?;
     let swarm = server
         .local_swarms
         .create("workflow", "", vec!["a".into()])?;

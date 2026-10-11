@@ -1,25 +1,16 @@
-use std::sync::Arc;
-
 use rmcp::handler::server::wrapper::Parameters;
 use serde_json::json;
 
 use crate::request_types::{DelegateInThreadLocalRequest, GetLocalSwarmRequest};
-use crate::test_support::{RecordingInference, content, make_thread_server};
+use crate::test_support::{
+    content, make_thread_server, recording_thread_server, write_fixture_card, write_fixture_cards,
+};
 
 #[tokio::test]
 async fn scoped_thread_is_structured_durable_isolated_and_archived()
 -> Result<(), Box<dyn std::error::Error>> {
-    let dir = tempfile::tempdir()?;
-    let recorder = Arc::new(RecordingInference::default());
-    let server = make_thread_server(dir.path(), recorder.clone(), "test-passphrase");
-    for id in ["a", "b", "outsider"] {
-        server
-            .local_registry
-            .write_card(&serde_json::from_value(json!({
-                "agent_id":id,"agent_type":"test","description":"fixture",
-                "capabilities":{"system_prompt":"Answer tasks","model":"fixture/model"}
-            }))?)?;
-    }
+    let (dir, server, recorder) = recording_thread_server("test-passphrase");
+    write_fixture_cards(&server, &["a", "b", "outsider"])?;
     let first = server
         .local_swarms
         .create("first", "", vec!["a".into(), "b".into()])?;
@@ -176,15 +167,8 @@ async fn scoped_thread_is_structured_durable_isolated_and_archived()
 #[tokio::test]
 async fn malformed_roster_refuses_scoped_inference_instead_of_using_cached_members()
 -> Result<(), Box<dyn std::error::Error>> {
-    let dir = tempfile::tempdir()?;
-    let recorder = Arc::new(RecordingInference::default());
-    let server = make_thread_server(dir.path(), recorder.clone(), "test-passphrase");
-    server
-        .local_registry
-        .write_card(&serde_json::from_value(json!({
-            "agent_id": "a", "agent_type": "test", "description": "fixture",
-            "capabilities": {"system_prompt": "Answer tasks", "model": "fixture/model"}
-        }))?)?;
+    let (dir, server, recorder) = recording_thread_server("test-passphrase");
+    write_fixture_card(&server, "a", None)?;
     let swarm = server
         .local_swarms
         .create("protected", "", vec!["a".into()])?;

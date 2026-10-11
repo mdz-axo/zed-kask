@@ -1,7 +1,8 @@
 //! Shared fixtures for the swarm server's cfg(test) modules: the recording
-//! inference port, the no-tools dispatch port, the thread-server builder,
-//! and the tool-result content helper. One canonical copy (R5 batch-2) —
-//! the test modules import from here instead of re-declaring.
+//! inference port, the no-tools dispatch port, the thread-server builders,
+//! the fixture-card writers, and the tool-result content helper. One
+//! canonical copy (R5 batch-2) — the test modules import from here instead
+//! of re-declaring.
 
 use std::sync::{Arc, Mutex};
 
@@ -339,6 +340,54 @@ pub(crate) fn make_thread_server(
             passphrase.into(),
         )),
     )
+}
+
+/// The standard scoped-dispatch fixture: a thread server on a fresh
+/// tempdir whose runtime records every inference call. Keep the returned
+/// dir alive for as long as the server — dropping it deletes the stores
+/// the server points at.
+pub(crate) fn recording_thread_server(
+    passphrase: &str,
+) -> (tempfile::TempDir, SwarmServer, Arc<RecordingInference>) {
+    let dir = tempfile::tempdir().expect("dir");
+    let recorder = Arc::new(RecordingInference::default());
+    let server = make_thread_server(dir.path(), recorder.clone(), passphrase);
+    (dir, server, recorder)
+}
+
+/// Write a fixture agent card under `id` — `agent_type: "test"`, the
+/// "Answer tasks" system prompt, `fixture/model` — so the registry has a
+/// delegatable agent. `extra` merges top-level fields into the card for
+/// per-test additions (e.g. a `workflow_template`).
+pub(crate) fn write_fixture_card(
+    server: &SwarmServer,
+    id: &str,
+    extra: Option<Value>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut card = serde_json::json!({
+        "agent_id": id, "agent_type": "test", "description": "fixture",
+        "capabilities": {"system_prompt": "Answer tasks", "model": "fixture/model"}
+    });
+    if let Some(extra) = extra {
+        for (key, value) in extra.as_object().expect("extra card fields are an object") {
+            card[key] = value.clone();
+        }
+    }
+    server
+        .local_registry
+        .write_card(&serde_json::from_value(card)?)?;
+    Ok(())
+}
+
+/// Write fixture cards for every `ids` entry (see [`write_fixture_card`]).
+pub(crate) fn write_fixture_cards(
+    server: &SwarmServer,
+    ids: &[&str],
+) -> Result<(), Box<dyn std::error::Error>> {
+    for id in ids {
+        write_fixture_card(server, id, None)?;
+    }
+    Ok(())
 }
 
 pub(crate) fn content(output: &str) -> Result<Value, Box<dyn std::error::Error>> {
