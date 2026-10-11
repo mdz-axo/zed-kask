@@ -645,6 +645,23 @@ mod tests {
             .expect("session alive")
     }
 
+    /// The connection-refused control fixture: a session-backed consent
+    /// store on a fresh tempdir plus a client pointed at a port where
+    /// nothing listens (a listener is bound to reserve the port, then
+    /// dropped, so the connect fails before the request leaves). Both
+    /// completion routes — @mention and execute — prove the never-sent
+    /// reservation release against this shape.
+    fn refused_session() -> (tempfile::TempDir, ConsentStore, String, SwarmClient) {
+        let dir = tempfile::tempdir().expect("dir");
+        let store = sqlite_store(&dir);
+        let session = store.open_session(10, &[]).expect("session");
+        let probe = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = probe.local_addr().expect("addr").port();
+        drop(probe);
+        let client = test_client(&format!("http://127.0.0.1:{port}"));
+        (dir, store, session, client)
+    }
+
     /// Two overlapping 10-credit authorizations against one 10-credit
     /// session admit at most one POST — including across separate server
     /// instances sharing the consent DB. Pre-fix, both authorized
@@ -749,13 +766,7 @@ mod tests {
     /// the request never left — the reservation is released.
     #[tokio::test]
     async fn connection_refused_releases_session_reservation() {
-        let dir = tempfile::tempdir().expect("dir");
-        let store = sqlite_store(&dir);
-        let session = store.open_session(10, &[]).expect("session");
-        let probe = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
-        let port = probe.local_addr().expect("addr").port();
-        drop(probe);
-        let client = test_client(&format!("http://127.0.0.1:{port}"));
+        let (_dir, store, session, client) = refused_session();
         let auth = authorize_delegate(&client, &store, SpendAuth::Session(&session), "ws", 10)
             .expect("reserved");
         let _ = complete_delegate(&client, &store, auth, "ws", "agent", "task")
@@ -867,13 +878,7 @@ mod tests {
     /// reservation. Proves the settlement wiring, not just the POST.
     #[tokio::test]
     async fn execute_connection_refused_releases_session_reservation() {
-        let dir = tempfile::tempdir().expect("dir");
-        let store = sqlite_store(&dir);
-        let session = store.open_session(10, &[]).expect("session");
-        let probe = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
-        let port = probe.local_addr().expect("addr").port();
-        drop(probe);
-        let client = test_client(&format!("http://127.0.0.1:{port}"));
+        let (_dir, store, session, client) = refused_session();
         let auth = authorize_delegate(
             &client,
             &store,
