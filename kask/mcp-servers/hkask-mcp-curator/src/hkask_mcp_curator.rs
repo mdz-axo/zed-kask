@@ -117,6 +117,75 @@ fn model_mismatch_note(excluded: usize) -> String {
     )
 }
 
+/// Serialize one h_mem as its recall wire fragment — the six fields every
+/// recall surface shares. Site extras (distance, valid_from, ontology) are
+/// appended by the caller; each is last in its literal, so insertion keeps
+/// the field order (serde_json preserve_order).
+fn h_mem_fragment(t: &hkask_storage::HMem) -> serde_json::Value {
+    json!({
+        "id": t.id.to_string(),
+        "entity": t.entity, "attribute": t.attribute,
+        "value": t.value, "confidence": t.confidence,
+        "provenance": t.provenance.as_str(),
+    })
+}
+
+/// A semantic hit: the h_mem fragment plus its KNN distance.
+fn h_mem_with_distance(t: &hkask_storage::HMem, distance: &f64) -> serde_json::Value {
+    let mut fragment = h_mem_fragment(t);
+    fragment["distance"] = json!(distance);
+    fragment
+}
+
+/// One exact-entity recall leg: open the memory store, run `query`, and
+/// return the leg as one JSON object — hits under count/h_mems (`take`
+/// capping the serialized hits; `valid_from` adding the perspective-scoped
+/// observed-at field), the query error as text, or the unavailable status
+/// when the store cannot open. `fallback_reason` names the semantic-recall
+/// degradation so the exact fallback reads as degraded, not as matches.
+fn exact_recall_leg(
+    memory: Result<&Arc<hkask_memory::MemoryStore>, McpToolError>,
+    query: impl FnOnce(
+        &hkask_memory::MemoryStore,
+    ) -> Result<Vec<hkask_storage::HMem>, hkask_memory::MemoryStoreError>,
+    take: Option<usize>,
+    valid_from: bool,
+    fallback_reason: Option<&str>,
+) -> serde_json::Value {
+    let memory = match memory {
+        Ok(memory) => memory,
+        Err(_) => return json!({"status": "unavailable"}),
+    };
+    let h_mems = match query(memory) {
+        Ok(h_mems) => h_mems,
+        Err(e) => return json!({"error": format!("{e}")}),
+    };
+    let hits = match take {
+        Some(limit) => h_mems.iter().take(limit).collect::<Vec<_>>(),
+        None => h_mems.iter().collect::<Vec<_>>(),
+    };
+    let serialized: Vec<serde_json::Value> = hits
+        .into_iter()
+        .map(|t| {
+            let mut fragment = h_mem_fragment(t);
+            if valid_from {
+                fragment["valid_from"] = json!(t.observed_at.to_rfc3339());
+            }
+            fragment
+        })
+        .collect();
+    let mut leg = json!({});
+    leg["count"] = json!(serialized.len());
+    if let Some(reason) = fallback_reason {
+        leg["mode"] = json!("entity_exact");
+        leg["note"] = json!(format!(
+            "semantic recall unavailable — fell back to exact-entity lookup: {reason}"
+        ));
+    }
+    leg["h_mems"] = json!(serialized);
+    leg
+}
+
 /// Strip the derived keys the insert path adds (`recall_text`, `_note`)
 /// before comparing a new value against a stored one — the write-path
 /// contradiction check compares payloads, not storage decorations.
@@ -610,14 +679,7 @@ impl CuratorServer {
                         .fragments
                         .iter()
                         .take(limit)
-                        .map(|(t, distance)| {
-                            json!({
-                                "id": t.id.to_string(),
-                                "entity": t.entity, "attribute": t.attribute,
-                                "value": t.value, "confidence": t.confidence, "provenance": t.provenance.as_str(),
-                                "distance": distance,
-                            })
-                        })
+                        .map(|(t, distance)| h_mem_with_distance(t, distance))
                         .collect();
                     let yielded = serialized.len();
                     let mut result = json!({
@@ -655,13 +717,7 @@ impl CuratorServer {
                     let serialized: Vec<serde_json::Value> = exact
                         .iter()
                         .take(limit)
-                        .map(|t| {
-                            json!({
-                                "id": t.id.to_string(),
-                                "entity": t.entity, "attribute": t.attribute,
-                                "value": t.value, "confidence": t.confidence, "provenance": t.provenance.as_str(),
-                            })
-                        })
+                        .map(|t| h_mem_fragment(t))
                         .collect();
                     Ok(json!({
                         "count": serialized.len(),
@@ -915,12 +971,9 @@ impl CuratorServer {
                 let serialized: Vec<serde_json::Value> = h_mems
                     .iter()
                     .map(|t| {
-                        json!({
-                            "id": t.id.to_string(),
-                            "entity": t.entity, "attribute": t.attribute,
-                            "value": t.value, "confidence": t.confidence, "provenance": t.provenance.as_str(),
-                            "ontology": t.ontology,
-                        })
+                        let mut fragment = h_mem_fragment(t);
+                        fragment["ontology"] = json!(t.ontology);
+                        fragment
                     })
                     .collect();
                 return Ok(json!({
@@ -936,57 +989,24 @@ impl CuratorServer {
             if recall_shape == MemoryRecallType::PerspectiveScoped
                 || recall_shape == MemoryRecallType::Both
             {
-                match stores.memory() {
-                    Ok(ep) => match ep.query_for_deduped(&req.entity, self.webid) {
-                        Ok(h_mems) => {
-                            let s: Vec<serde_json::Value> = h_mems
-                                .iter()
-                                .map(|t| {
-                                    json!({
-                                        "id": t.id.to_string(),
-                                        "entity": t.entity, "attribute": t.attribute,
-                                        "value": t.value, "confidence": t.confidence, "provenance": t.provenance.as_str(),
-                                        "valid_from": t.observed_at.to_rfc3339(),
-                                    })
-                                })
-                                .collect();
-                            result["perspective_scoped"] = json!({"count": s.len(), "h_mems": s});
-                        }
-                        Err(e) => {
-                            result["perspective_scoped"] = json!({"error": format!("{e}")});
-                        }
-                    },
-                    Err(_) => {
-                        result["perspective_scoped"] = json!({"status": "unavailable"});
-                    }
-                }
+                result["perspective_scoped"] = exact_recall_leg(
+                    stores.memory(),
+                    |memory| memory.query_for_deduped(&req.entity, self.webid),
+                    None,
+                    true,
+                    None,
+                );
             }
             if recall_shape == MemoryRecallType::EntityWide
                 || recall_shape == MemoryRecallType::Both
             {
-                match stores.memory() {
-                    Ok(sem) => match sem.query_deduped(&req.entity) {
-                        Ok(h_mems) => {
-                            let s: Vec<serde_json::Value> = h_mems
-                                .iter()
-                                .map(|t| {
-                                    json!({
-                                        "id": t.id.to_string(),
-                                        "entity": t.entity, "attribute": t.attribute,
-                                        "value": t.value, "confidence": t.confidence, "provenance": t.provenance.as_str(),
-                                    })
-                                })
-                                .collect();
-                            result["entity_wide"] = json!({"count": s.len(), "h_mems": s});
-                        }
-                        Err(e) => {
-                            result["entity_wide"] = json!({"error": format!("{e}")});
-                        }
-                    },
-                    Err(_) => {
-                        result["entity_wide"] = json!({"status": "unavailable"});
-                    }
-                }
+                result["entity_wide"] = exact_recall_leg(
+                    stores.memory(),
+                    |memory| memory.query_deduped(&req.entity),
+                    None,
+                    false,
+                    None,
+                );
             }
             Ok(result)
         })
@@ -1041,16 +1061,7 @@ impl CuratorServer {
                         .fragments
                         .iter()
                         .take(limit)
-                        .map(|(t, distance)| {
-                            json!({
-                                "id": t.id.to_string(),
-                                "entity": t.entity,
-                                "attribute": t.attribute,
-                                "value": t.value,
-                                "confidence": t.confidence, "provenance": t.provenance.as_str(),
-                                "distance": distance,
-                            })
-                        })
+                        .map(|(t, distance)| h_mem_with_distance(t, distance))
                         .collect();
                     let entity_wide_count = entity_wide.len();
                     let mut entity_wide_json = json!({
@@ -1065,16 +1076,7 @@ impl CuratorServer {
                         .iter()
                         .filter(|(t, _)| t.access.perspective == Some(self.webid))
                         .take(limit)
-                        .map(|(t, distance)| {
-                            json!({
-                                "id": t.id.to_string(),
-                                "entity": t.entity,
-                                "attribute": t.attribute,
-                                "value": t.value,
-                                "confidence": t.confidence, "provenance": t.provenance.as_str(),
-                                "distance": distance,
-                            })
-                        })
+                        .map(|(t, distance)| h_mem_with_distance(t, distance))
                         .collect();
                     let perspective_count = perspective_scoped.len();
                     let mut perspective_json = json!({
@@ -1107,81 +1109,26 @@ impl CuratorServer {
                 // Degradation, not a silent fallback — surface why semantic
                 // recall is unavailable, then fall back to the exact-entity
                 // lookup (which only matches when the query IS an entity).
+                // The note is preserved alongside the fallback results so the
+                // operator can distinguish "semantic recall broken" from
+                // "no matching memories" — same pattern as
+                // `curator_semantic_search`.
                 Err(reason) => {
-                    // Degradation, not a silent fallback — surface why semantic
-                    // recall is unavailable, then fall back to the exact-entity
-                    // lookup (which only matches when the query IS an entity).
-                    // The note is preserved alongside the fallback results so the
-                    // operator can distinguish "semantic recall broken" from
-                    // "no matching memories" — same pattern as
-                    // `curator_semantic_search` (L540-545).
-                    match stores.memory() {
-                        Ok(sem) => match sem.query_deduped(&req.query) {
-                            Ok(h_mems) => {
-                                let fragments: Vec<serde_json::Value> = h_mems
-                                    .iter()
-                                    .take(limit)
-                                    .map(|t| {
-                                        json!({
-                                            "id": t.id.to_string(),
-                                            "entity": t.entity,
-                                            "attribute": t.attribute,
-                                            "value": t.value,
-                                            "confidence": t.confidence, "provenance": t.provenance.as_str(),
-                                        })
-                                    })
-                                    .collect();
-                                result["entity_wide_fragments"] = json!({
-                                    "count": fragments.len(),
-                                    "mode": "entity_exact",
-                                    "note": format!("semantic recall unavailable — fell back to exact-entity lookup: {reason}"),
-                                    "h_mems": fragments,
-                                });
-                            }
-                            Err(e) => {
-                                result["entity_wide_fragments"] =
-                                    json!({"error": format!("{e}")});
-                            }
-                        },
-                        Err(_) => {
-                            result["entity_wide_fragments"] =
-                                json!({"status": "unavailable"});
-                        }
-                    }
-                    match stores.memory() {
-                        Ok(ep) => match ep.query_for_deduped(&req.query, self.webid) {
-                            Ok(h_mems) => {
-                                let fragments: Vec<serde_json::Value> = h_mems
-                                    .iter()
-                                    .take(limit)
-                                    .map(|t| {
-                                        json!({
-                                            "id": t.id.to_string(),
-                                            "entity": t.entity,
-                                            "attribute": t.attribute,
-                                            "value": t.value,
-                                            "confidence": t.confidence, "provenance": t.provenance.as_str(),
-                                            "valid_from": t.observed_at.to_rfc3339(),
-                                        })
-                                    })
-                                    .collect();
-                                result["perspective_scoped_fragments"] = json!({
-                                    "count": fragments.len(),
-                                    "mode": "entity_exact",
-                                    "note": format!("semantic recall unavailable — fell back to exact-entity lookup: {reason}"),
-                                    "h_mems": fragments,
-                                });
-                            }
-                            Err(e) => {
-                                result["perspective_scoped_fragments"] =
-                                    json!({"error": format!("{e}")});
-                            }
-                        },
-                        Err(_) => {
-                            result["perspective_scoped_fragments"] =
-                                json!({"status": "unavailable"});
-                        }
-                    }
+                    let reason = reason.to_string();
+                    result["entity_wide_fragments"] = exact_recall_leg(
+                        stores.memory(),
+                        |memory| memory.query_deduped(&req.query),
+                        Some(limit),
+                        false,
+                        Some(&reason),
+                    );
+                    result["perspective_scoped_fragments"] = exact_recall_leg(
+                        stores.memory(),
+                        |memory| memory.query_for_deduped(&req.query, self.webid),
+                        Some(limit),
+                        true,
+                        Some(&reason),
+                    );
                 }
                 Ok(recall) => {
                     // Every KNN hit failed to resolve, or none matched. When
