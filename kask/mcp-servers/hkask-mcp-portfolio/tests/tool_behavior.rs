@@ -16,37 +16,12 @@ use hkask_mcp_portfolio::server::{
     PortfolioNameRequest, PortfolioReturnsRequest, PortfolioServer, PortfolioSnapshotRequest,
     PortfolioWhatIfRequest, PriceSeedEntry, PriceSeedRequest, WhatIfPresentation,
 };
-use hkask_mcp_portfolio::{
-    AssetType, ClassificationObservation, PortfolioStore, Transaction, TxType,
-};
-use hkask_types::WebID;
+use hkask_mcp_portfolio::{AssetType, ClassificationObservation, Transaction, TxType};
 use hkask_types::spreadsheet::{CellEdit, EditTransaction, TableValue};
 use rmcp::handler::server::wrapper::Parameters;
 
-/// Extract the MCP tool-result envelope: `{"content": <value>}`.
-fn unwrap_content(output: &str) -> serde_json::Value {
-    let parsed: serde_json::Value = serde_json::from_str(output)
-        .unwrap_or_else(|e| panic!("tool output must be valid JSON, got: {output} ({e})"));
-    parsed
-        .get("content")
-        .cloned()
-        .unwrap_or_else(|| panic!("tool output must have 'content' key, got: {parsed}"))
-}
-
-fn make_server() -> (PortfolioServer, std::path::PathBuf) {
-    let dir = std::env::temp_dir().join(format!(
-        "hkask-portfolio-tool-behavior-{}",
-        uuid::Uuid::new_v4()
-    ));
-    let _ = std::fs::remove_dir_all(&dir);
-    let owner = WebID::new();
-    let store = PortfolioStore::with_dir_for_owner(dir.clone(), owner);
-    let spreadsheet =
-        hkask_spreadsheet::WorkbookService::start_with_root(dir.join("spreadsheet-workbooks"))
-            .expect("spreadsheet engine actor");
-    let server = PortfolioServer::new(WebID::new(), store, spreadsheet);
-    (server, dir)
-}
+mod common;
+use common::{make_server, unwrap_content};
 
 fn transaction(
     date: &str,
@@ -420,12 +395,12 @@ async fn delete_tool_removes_portfolio_and_ledger() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-#[tokio::test]
-async fn investor_reports_emit_viewer_hints_and_what_if_keeps_the_ledger_immutable() {
-    let (server, dir) = make_server();
+/// Create `name` and apply the shared deposit+buy ledger preamble that the
+/// report and what-if tests both hand-rolled before this helper existed.
+async fn portfolio_with_deposit_and_buy(server: &PortfolioServer, name: &str) {
     server
         .portfolio_create(Parameters(PortfolioCreateRequest {
-            name: "investor".into(),
+            name: name.into(),
             asset_type: AssetType::Stock,
         }))
         .await
@@ -450,12 +425,18 @@ async fn investor_reports_emit_viewer_hints_and_what_if_keeps_the_ledger_immutab
     ] {
         server
             .ledger_apply(Parameters(LedgerApplyRequest {
-                portfolio: "investor".into(),
+                portfolio: name.into(),
                 transaction: tx,
             }))
             .await
             .expect("apply transaction");
     }
+}
+
+#[tokio::test]
+async fn investor_reports_emit_viewer_hints_and_what_if_keeps_the_ledger_immutable() {
+    let (server, dir) = make_server();
+    portfolio_with_deposit_and_buy(&server, "investor").await;
     server
         .portfolio_seed_price(Parameters(PriceSeedRequest {
             portfolio: "investor".into(),
@@ -683,39 +664,7 @@ async fn attribution_tool_reconciles_active_return_against_an_explicit_benchmark
 #[tokio::test]
 async fn what_if_workbook_is_immutable_and_never_touches_the_ledger() {
     let (server, dir) = make_server();
-    server
-        .portfolio_create(Parameters(PortfolioCreateRequest {
-            name: "proving".into(),
-            asset_type: AssetType::Stock,
-        }))
-        .await
-        .expect("create portfolio");
-    for tx in [
-        transaction(
-            "2025-01-01",
-            TxType::Deposit,
-            None,
-            None,
-            None,
-            Some(1_000.0),
-        ),
-        transaction(
-            "2025-01-01",
-            TxType::Buy,
-            Some("A"),
-            Some(50.0),
-            Some(10.0),
-            None,
-        ),
-    ] {
-        server
-            .ledger_apply(Parameters(LedgerApplyRequest {
-                portfolio: "proving".into(),
-                transaction: tx,
-            }))
-            .await
-            .expect("apply transaction");
-    }
+    portfolio_with_deposit_and_buy(&server, "proving").await;
     server
         .portfolio_seed_price(Parameters(PriceSeedRequest {
             portfolio: "proving".into(),

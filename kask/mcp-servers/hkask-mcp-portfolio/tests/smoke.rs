@@ -7,36 +7,16 @@
 
 #![forbid(unsafe_code)]
 
-use hkask_mcp_portfolio::server::{
-    ImportFormat, LedgerImportRequest, LedgerReadRequest, PortfolioServer,
-};
-use hkask_mcp_portfolio::{AssetType, PortfolioStore};
-use hkask_types::WebID;
+use hkask_mcp_portfolio::AssetType;
+use hkask_mcp_portfolio::server::{ImportFormat, LedgerImportRequest, LedgerReadRequest};
 use rmcp::handler::server::wrapper::Parameters;
 
-/// Extract the MCP tool-result envelope: `{"content": <value>}`.
-fn unwrap_content(output: &str) -> serde_json::Value {
-    let parsed: serde_json::Value = serde_json::from_str(output)
-        .unwrap_or_else(|e| panic!("tool output must be valid JSON, got: {output} ({e})"));
-    parsed
-        .get("content")
-        .cloned()
-        .unwrap_or_else(|| panic!("tool output must have 'content' key, got: {parsed}"))
-}
+mod common;
+use common::{make_server, unwrap_content};
 
 #[tokio::test]
 async fn portfolio_list_returns_empty_array_on_fresh_store() {
-    let dir = std::env::temp_dir().join(format!(
-        "hkask-portfolio-smoke-list-{}",
-        uuid::Uuid::new_v4()
-    ));
-    let _ = std::fs::remove_dir_all(&dir);
-    let owner = WebID::new();
-    let store = PortfolioStore::with_dir_for_owner(dir.clone(), owner);
-    let spreadsheet =
-        hkask_spreadsheet::WorkbookService::start_with_root(dir.join("spreadsheet-workbooks"))
-            .expect("spreadsheet engine actor");
-    let server = PortfolioServer::new(WebID::new(), store, spreadsheet);
+    let (server, dir) = make_server();
 
     let output = server.portfolio_list().await.expect("tool ok");
     let content = unwrap_content(&output);
@@ -56,17 +36,7 @@ async fn portfolio_list_returns_empty_array_on_fresh_store() {
 
 #[tokio::test]
 async fn ledger_import_csv_then_read_round_trips() {
-    let dir = std::env::temp_dir().join(format!(
-        "hkask-portfolio-smoke-csv-{}",
-        uuid::Uuid::new_v4()
-    ));
-    let _ = std::fs::remove_dir_all(&dir);
-    let owner = WebID::new();
-    let store = PortfolioStore::with_dir_for_owner(dir.clone(), owner);
-    let spreadsheet =
-        hkask_spreadsheet::WorkbookService::start_with_root(dir.join("spreadsheet-workbooks"))
-            .expect("spreadsheet engine actor");
-    let server = PortfolioServer::new(WebID::new(), store, spreadsheet);
+    let (server, dir) = make_server();
 
     // Create a portfolio to import into.
     server

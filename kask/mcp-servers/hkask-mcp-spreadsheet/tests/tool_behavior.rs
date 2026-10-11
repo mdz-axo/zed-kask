@@ -21,14 +21,11 @@ use hkask_types::spreadsheet::{
 use hkask_types::{McpErrorKind, WebID};
 use rmcp::handler::server::wrapper::Parameters;
 
-/// Extract the MCP tool-result envelope: `{"content": <value>}`.
+/// Extract the MCP tool-result content via the canonical envelope helper
+/// (`hkask_types::tool_response::parse_tool_response` — parse + unwrap in
+/// one call; this formerly re-implemented it).
 fn unwrap_content(output: &str) -> serde_json::Value {
-    let parsed: serde_json::Value = serde_json::from_str(output)
-        .unwrap_or_else(|e| panic!("tool output must be valid JSON, got: {output} ({e})"));
-    parsed
-        .get("content")
-        .cloned()
-        .unwrap_or_else(|| panic!("tool output must have 'content' key, got: {parsed}"))
+    hkask_types::tool_response::parse_tool_response(output).expect("tool output must be valid JSON")
 }
 
 fn make_server() -> (SpreadsheetServer, tempfile::TempDir) {
