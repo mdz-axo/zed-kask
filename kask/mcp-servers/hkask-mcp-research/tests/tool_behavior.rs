@@ -140,6 +140,45 @@ macro_rules! stub_web_search_port {
     };
 }
 
+/// Generate a `stub_web_search_port!` invocation whose non-distinct arms are
+/// the shared defaults: every provider method answers `no_provider!` with
+/// its realistic not-configured message, and health/kinds/score answer empty.
+/// The invocation supplies only what makes its stub distinct — an optional
+/// custom `search` body (default: the not-configured message) and an optional
+/// `resolve_title` body (default: the trait's). Stubs customizing other arms
+/// (`extract`, `kinds`, ...) use `stub_web_search_port!` directly.
+macro_rules! defaults_pool {
+    (
+        $name:ident, $fingerprint:literal,
+        search($self:ident, $query:ident, $strategy:ident, $provider:ident): $search:block
+        $(, resolve_title: $resolve:block)?
+        $(,)?
+    ) => {
+        stub_web_search_port! {
+            $name, $fingerprint,
+            search($self, $query, $strategy, $provider): $search,
+            find_similar: {
+                no_provider!("Exa provider not configured. Set HKASK_EXA_API_KEY.")
+            },
+            extract: { no_provider!("No extract provider configured.") },
+            browse: { no_provider!("No browse provider configured.") },
+            health: { Vec::new() },
+            kinds: { Vec::new() },
+            score(self, _query, _intent): { Vec::new() }
+            $(, resolve_title: $resolve)?
+        }
+    };
+    (
+        $name:ident, $fingerprint:literal
+        $(, resolve_title: $resolve:block)?
+        $(,)?
+    ) => {
+        defaults_pool!($name, $fingerprint, search(self, _query, _strategy, _provider): {
+            no_provider!("No search provider configured.")
+        } $(, resolve_title: $resolve)?);
+    };
+}
+
 /// Stub that simulates "no credentials configured" for all HTTP provider
 /// calls. The tool handler maps `WebError::NoProviderConfigured` to
 /// `McpToolError::permission_denied` — the test asserts that mapping,
@@ -275,19 +314,8 @@ fn crossref_candidate(
 /// are surfaced in full, the top candidate resolves to the typed identity.
 struct TitleResolvePool;
 
-stub_web_search_port! {
+defaults_pool! {
     TitleResolvePool, "stub-title-resolve",
-    search(self, _query, _strategy, _provider): { no_provider!("No search provider configured.") },
-    find_similar: {
-        no_provider!("Exa provider not configured. Set HKASK_EXA_API_KEY.")
-    },
-    extract: {
-        no_provider!("No extract provider configured.")
-    },
-    browse: { no_provider!("No browse provider configured.") },
-    health: { Vec::new() },
-    kinds: { Vec::new() },
-    score(self, _query, _intent): { Vec::new() },
     resolve_title: {
         Ok(vec![
             crossref_candidate(
@@ -313,19 +341,8 @@ stub_web_search_port! {
 /// stable within groups.
 struct SuperstringFirstTitlePool;
 
-stub_web_search_port! {
+defaults_pool! {
     SuperstringFirstTitlePool, "stub-superstring-first",
-    search(self, _query, _strategy, _provider): { no_provider!("No search provider configured.") },
-    find_similar: {
-        no_provider!("Exa provider not configured. Set HKASK_EXA_API_KEY.")
-    },
-    extract: {
-        no_provider!("No extract provider configured.")
-    },
-    browse: { no_provider!("No browse provider configured.") },
-    health: { Vec::new() },
-    kinds: { Vec::new() },
-    score(self, _query, _intent): { Vec::new() },
     resolve_title: {
         // The live 2026-10-01 observation: Crossref's relevance put the
         // superstring "Computing Machinery and Intelligence Amplification"
@@ -710,16 +727,7 @@ async fn web_search_rejects_unknown_freshness() {
 
 #[tokio::test]
 async fn web_search_accepts_quoted_and_padded_strategy_and_freshness() {
-    let server = test_server(
-        Arc::new(IntentSelectionPool {
-            selected_provider: std::sync::Mutex::new(Vec::new()),
-        }),
-        0,
-        None,
-        None,
-        None,
-        None,
-    );
+    let server = intent_selection_server().0;
     // `"quick"` with literal quote characters, and `  "web"  ` padded —
     // both must parse. Before the normalization this errored with
     // "Unknown strategy: \"quick\"".
@@ -753,10 +761,7 @@ async fn web_search_accepts_quoted_and_padded_strategy_and_freshness() {
 
 #[tokio::test]
 async fn web_search_accepts_quoted_intent_and_routes_by_it() {
-    let pool = Arc::new(IntentSelectionPool {
-        selected_provider: std::sync::Mutex::new(Vec::new()),
-    });
-    let server = test_server(pool.clone(), 0, None, None, None, None);
+    let (server, pool) = intent_selection_server();
     let output = server
         .web_search(Parameters(SearchRequest {
             query: "normalization probe".to_string(),
@@ -798,10 +803,7 @@ async fn web_search_accepts_quoted_intent_and_routes_by_it() {
 
 #[tokio::test]
 async fn web_search_normalizes_provider_before_dispatch() {
-    let pool = Arc::new(IntentSelectionPool {
-        selected_provider: std::sync::Mutex::new(Vec::new()),
-    });
-    let server = test_server(pool.clone(), 0, None, None, None, None);
+    let (server, pool) = intent_selection_server();
     let output = server
         .web_search(Parameters(SearchRequest {
             query: "normalization probe".to_string(),
@@ -869,16 +871,7 @@ async fn web_search_surfaces_provider_recommendations_on_non_intent_paths() {
     // were (or would be) chosen — surfaced on every path where the tool
     // makes the selection, not just the intent pick. A web-strategy call
     // (no intent, no provider) must carry the ranking.
-    let server = test_server(
-        Arc::new(IntentSelectionPool {
-            selected_provider: std::sync::Mutex::new(Vec::new()),
-        }),
-        0,
-        None,
-        None,
-        None,
-        None,
-    );
+    let server = intent_selection_server().0;
     let parsed = parse(&ok(server
         .web_search(Parameters(SearchRequest {
             query: "fusion audit probe".to_string(),
@@ -906,16 +899,7 @@ async fn web_search_skips_ranking_for_explicit_provider() {
     // The counterpoint: an explicit-provider call is the caller's own
     // deliberate override — selected_provider carries the choice, the
     // ranking is skipped.
-    let server = test_server(
-        Arc::new(IntentSelectionPool {
-            selected_provider: std::sync::Mutex::new(Vec::new()),
-        }),
-        0,
-        None,
-        None,
-        None,
-        None,
-    );
+    let server = intent_selection_server().0;
     let parsed = parse(&ok(server
         .web_search(Parameters(SearchRequest {
             query: "override probe".to_string(),
@@ -1362,7 +1346,7 @@ async fn rss_get_entries_rejects_non_base64_continuation_token() {
 /// touching the network.
 struct FixedResultsPool;
 
-stub_web_search_port! {
+defaults_pool! {
     FixedResultsPool, "stub-fixed-results",
     search(self, _query, _strategy, _provider): {
         let result = |title: &str, url: &str| RankedResult {
@@ -1396,13 +1380,7 @@ stub_web_search_port! {
             total_before_dedup: 3,
             duplicates_removed: 0,
         })
-    },
-    find_similar: { no_provider!("stub") },
-    extract: { no_provider!("stub") },
-    browse: { no_provider!("stub") },
-    health: { Vec::new() },
-    kinds: { Vec::new() },
-    score(self, _query, _intent): { Vec::new() }
+    }
 }
 
 fn make_server_with_pool_and_port(
@@ -1610,7 +1588,7 @@ struct FailThenSucceedPool {
     failed_once: std::sync::Mutex<bool>,
 }
 
-stub_web_search_port! {
+defaults_pool! {
     FailThenSucceedPool, "stub-fail-then-succeed",
     search(self, _query, _strategy, _provider): {
         let mut failed_once = self
@@ -1661,13 +1639,7 @@ stub_web_search_port! {
             total_before_dedup: 0,
             duplicates_removed: 0,
         })
-    },
-    find_similar: { no_provider!("stub") },
-    extract: { no_provider!("stub") },
-    browse: { no_provider!("stub") },
-    health: { Vec::new() },
-    kinds: { Vec::new() },
-    score(self, _query, _intent): { Vec::new() }
+    }
 }
 
 #[tokio::test]
@@ -1789,18 +1761,20 @@ stub_web_search_port! {
     }
 }
 
+/// Server backed by a fresh `IntentSelectionPool` — the fixture of the
+/// provider-selection tests. Returns the server and the pool (the pool's
+/// recorded provider selections are those tests' assertions).
+fn intent_selection_server() -> (ResearchServer, Arc<IntentSelectionPool>) {
+    let pool = Arc::new(IntentSelectionPool {
+        selected_provider: std::sync::Mutex::new(Vec::new()),
+    });
+    let server = test_server(pool.clone(), 0, None, None, None, None);
+    (server, pool)
+}
+
 #[tokio::test]
 async fn web_search_intent_selects_top_configured_provider_and_surfaces_ranking() {
-    let server = test_server(
-        Arc::new(IntentSelectionPool {
-            selected_provider: std::sync::Mutex::new(Vec::new()),
-        }),
-        0,
-        None,
-        None,
-        None,
-        None,
-    );
+    let server = intent_selection_server().0;
     let output = server
         .web_search(Parameters(SearchRequest {
             query: "rust async runtime benchmarks".to_string(),
@@ -3076,18 +3050,26 @@ fn semantic_request(duplication: Option<&str>) -> EvaluateEvidenceRequest {
     }
 }
 
+/// Run one semantic `evaluate_evidence` pass and return the surfaced
+/// degradation reason — the shared preamble of the shingle-floor tests (the
+/// mode assert pins that the semantic tier degraded, never errored).
+async fn semantic_shingles_reason(server: &ResearchServer) -> String {
+    let json = parse(&ok(server
+        .evaluate_evidence(Parameters(semantic_request(Some("semantic"))))
+        .await));
+    assert_eq!(json["set"]["duplication_mode"].as_str(), Some("shingles"));
+    json["set"]["duplication_reason"]
+        .as_str()
+        .expect("degradation reason surfaced")
+        .to_string()
+}
+
 #[tokio::test]
 async fn evaluate_evidence_semantic_without_model_degrades_to_shingles_with_reason() {
     // No embedding model configured: the tier degrades to the deterministic
     // floor with a reason naming the setting — never silent, never an error.
     let server = make_server_with_embedding(Arc::new(EmbeddingInferencePort), None);
-    let json = parse(&ok(server
-        .evaluate_evidence(Parameters(semantic_request(Some("semantic"))))
-        .await));
-    assert_eq!(json["set"]["duplication_mode"].as_str(), Some("shingles"));
-    let reason = json["set"]["duplication_reason"]
-        .as_str()
-        .expect("degradation reason surfaced");
+    let reason = semantic_shingles_reason(&server).await;
     assert!(
         reason.contains("HKASK_EMBEDDING_MODEL"),
         "reason names the setting: {reason}"
@@ -3099,13 +3081,7 @@ async fn evaluate_evidence_semantic_with_embed_failure_degrades_with_reason() {
     // Model configured but the embed call fails: the floor runs, the
     // failure is surfaced.
     let server = make_server_with_embedding(Arc::new(FailingInferencePort), Some("test-embed"));
-    let json = parse(&ok(server
-        .evaluate_evidence(Parameters(semantic_request(Some("semantic"))))
-        .await));
-    assert_eq!(json["set"]["duplication_mode"].as_str(), Some("shingles"));
-    let reason = json["set"]["duplication_reason"]
-        .as_str()
-        .expect("degradation reason surfaced");
+    let reason = semantic_shingles_reason(&server).await;
     assert!(
         reason.contains("embedding tier failed"),
         "reason names the failure: {reason}"
