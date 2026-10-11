@@ -77,6 +77,23 @@ async fn register_variant(
     envelope(&response)
 }
 
+/// Propose an experiment and register its first variant — the preamble the
+/// fitness-record and selection tests need. Returns (experiment_id, variant_id).
+async fn propose_with_variant(
+    server: &ExperimentationServer,
+    layer: &str,
+    variant_name: &str,
+) -> (String, String) {
+    let proposed = propose(server, layer).await;
+    let experiment_id = proposed["experiment"]["id"]
+        .as_str()
+        .expect("id")
+        .to_string();
+    let variant = register_variant(server, &experiment_id, variant_name, None).await;
+    let variant_id = variant["variant"]["id"].as_str().expect("id").to_string();
+    (experiment_id, variant_id)
+}
+
 /// The full §P8.3 protocol through the tool seam: Declare → Vary → Test →
 /// Select → Retain, then lineage and population read back the whole record.
 #[tokio::test]
@@ -202,13 +219,7 @@ async fn invalid_inputs_are_rejected_with_named_errors() {
     assert!(error.to_string().contains("genotype_refs"), "{error}");
 
     // Fitness with no recorded runs is refused — never simulated (§P8.3).
-    let proposed = propose(&server, "skill").await;
-    let experiment_id = proposed["experiment"]["id"]
-        .as_str()
-        .expect("id")
-        .to_string();
-    let variant = register_variant(&server, &experiment_id, "v1", None).await;
-    let variant_id = variant["variant"]["id"].as_str().expect("id").to_string();
+    let (experiment_id, variant_id) = propose_with_variant(&server, "skill", "v1").await;
     let error = server
         .fitness_record(Parameters(FitnessRecordRequest {
             experiment_id,
@@ -223,13 +234,7 @@ async fn invalid_inputs_are_rejected_with_named_errors() {
 
     // A zero run_count is refused — a fitness record must state how many
     // rollouts its reports cover (§P8.9 step 2).
-    let proposed = propose(&server, "skill").await;
-    let experiment_id = proposed["experiment"]["id"]
-        .as_str()
-        .expect("id")
-        .to_string();
-    let variant = register_variant(&server, &experiment_id, "v2", None).await;
-    let variant_id = variant["variant"]["id"].as_str().expect("id").to_string();
+    let (experiment_id, variant_id) = propose_with_variant(&server, "skill", "v2").await;
     let error = server
         .fitness_record(Parameters(FitnessRecordRequest {
             experiment_id,
@@ -261,13 +266,7 @@ async fn unknown_records_are_not_found_and_resolved_experiments_refuse_work() {
     assert!(error.to_string().contains("not found"), "{error}");
 
     // Drive one experiment to resolved, then verify the refusal.
-    let proposed = propose(&server, "skill").await;
-    let experiment_id = proposed["experiment"]["id"]
-        .as_str()
-        .expect("id")
-        .to_string();
-    let variant = register_variant(&server, &experiment_id, "v1", None).await;
-    let variant_id = variant["variant"]["id"].as_str().expect("id").to_string();
+    let (experiment_id, variant_id) = propose_with_variant(&server, "skill", "v1").await;
     server
         .selection_record(Parameters(SelectionRecordRequest {
             experiment_id: experiment_id.clone(),

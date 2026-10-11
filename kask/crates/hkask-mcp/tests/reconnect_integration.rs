@@ -426,15 +426,8 @@ async fn discovery_failure_reaps_child() {
             .await;
         let pid = fixture.wait_for_pid().await;
         runtime.stop_server("fixture").await;
-        let deadline = std::time::Instant::now() + Duration::from_secs(2);
         // Only inspect/kill the PID written by this test's own child.
-        while unsafe { libc::kill(pid as i32, 0) } == 0 && std::time::Instant::now() < deadline {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-        let leaked = unsafe { libc::kill(pid as i32, 0) } == 0;
-        if leaked {
-            Fixture::kill(pid);
-        }
+        let leaked = wait_for_exit_and_reap(pid, Duration::from_secs(2)).await;
         assert!(result.is_err());
         assert!(!leaked, "failed discovery left an unowned child");
         assert!(runtime.registered_servers().await.is_empty());
@@ -605,14 +598,7 @@ async fn stalled_discovery_has_a_phase_deadline() {
     runtime.stop_server("fixture").await;
     // rmcp allows three seconds for graceful shutdown before force-killing.
     // The fixture waits thirty seconds, so its own timeout cannot satisfy this.
-    let deadline = std::time::Instant::now() + Duration::from_secs(5);
-    while unsafe { libc::kill(pid as i32, 0) } == 0 && std::time::Instant::now() < deadline {
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    let leaked = unsafe { libc::kill(pid as i32, 0) } == 0;
-    if leaked {
-        Fixture::kill(pid);
-    }
+    let leaked = wait_for_exit_and_reap(pid, Duration::from_secs(5)).await;
     assert!(!leaked);
     let error = result
         .expect_err("stalled discovery must time out")
@@ -621,6 +607,22 @@ async fn stalled_discovery_has_a_phase_deadline() {
         error.contains("fixture") && error.contains("timed out during tool discovery"),
         "{error}"
     );
+}
+
+/// Poll until the child exits or `grace` elapses, then report whether it
+/// leaked — force-killing a survivor so a leaked fixture never outlives
+/// the test run.
+async fn wait_for_exit_and_reap(pid: u32, grace: Duration) -> bool {
+    let deadline = std::time::Instant::now() + grace;
+    // SAFETY: signal 0 only probes the PID this test's own fixture wrote.
+    while unsafe { libc::kill(pid as i32, 0) } == 0 && std::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let leaked = unsafe { libc::kill(pid as i32, 0) } == 0;
+    if leaked {
+        Fixture::kill(pid);
+    }
+    leaked
 }
 
 /// Wait for `predicate` to return true, polling every `poll` up to `timeout`.

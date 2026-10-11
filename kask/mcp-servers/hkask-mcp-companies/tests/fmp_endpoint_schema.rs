@@ -592,6 +592,20 @@ mod tests {
             .filter(|s| !s.is_empty())
     }
 
+    /// Find the primary common-stock listing in an EODHD search response —
+    /// the listing the symbol resolver must surface as primary.
+    fn find_primary_common_stock(arr: &[Value]) -> Option<&Value> {
+        arr.iter().find(|e| {
+            e.get("isPrimary")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+                && e.get("Type")
+                    .and_then(|v| v.as_str())
+                    .map(|t| t == "Common Stock")
+                    .unwrap_or(false)
+        })
+    }
+
     async fn fetch_eodhd(client: &reqwest::Client, path: &str) -> Option<Value> {
         let key = eodhd_key()?;
         let url = format!("https://eodhd.com/api{path}");
@@ -817,15 +831,7 @@ mod tests {
         assert!(!arr.is_empty(), "search should return results");
 
         // Find the primary listing
-        let primary = arr.iter().find(|e| {
-            e.get("isPrimary")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false)
-                && e.get("Type")
-                    .and_then(|v| v.as_str())
-                    .map(|t| t == "Common Stock")
-                    .unwrap_or(false)
-        });
+        let primary = find_primary_common_stock(arr);
         assert!(
             primary.is_some(),
             "should find a primary common stock listing for Vodafone"
@@ -863,15 +869,7 @@ mod tests {
         let arr = data.as_array().expect("search should return array");
         assert!(!arr.is_empty());
 
-        let primary = arr.iter().find(|e| {
-            e.get("isPrimary")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false)
-                && e.get("Type")
-                    .and_then(|v| v.as_str())
-                    .map(|t| t == "Common Stock")
-                    .unwrap_or(false)
-        });
+        let primary = find_primary_common_stock(arr);
         assert!(primary.is_some(), "should find primary listing for AAPL");
         let primary = primary.unwrap();
         assert_eq!(

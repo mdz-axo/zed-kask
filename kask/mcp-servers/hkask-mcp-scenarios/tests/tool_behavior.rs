@@ -77,6 +77,23 @@ fn persistence_score_request(probability: f64, occurred: bool) -> ScoreRequest {
     }
 }
 
+/// An `AssessRequest` with every caller metric omitted — the form the
+/// derivation tests start from, so every reported metric comes only from
+/// the project's stored state.
+fn assess_request_all_omitted(project_id: &str) -> AssessRequest {
+    AssessRequest {
+        project_id: project_id.to_string(),
+        perspective_count: None,
+        disagreement_score: None,
+        event_count: None,
+        events_with_dependencies: None,
+        strategies_generated: None,
+        strategies_implemented: None,
+        learning_events: None,
+        has_early_warning_indicators: None,
+    }
+}
+
 /// Parse the journal's newline-delimited entries into (key, record) pairs.
 /// Panics on malformed lines so a torn journal fails the test loudly rather
 /// than being silently accepted as the expected durable state.
@@ -96,6 +113,28 @@ fn parse_journal_entries(
         entries.push((key, entry["record"].clone()));
     }
     Ok(entries)
+}
+
+/// Assert the recovered store holds exactly the journal's final record:
+/// one resolved forecast (probability 0.9, outcome false) with Brier
+/// (0.9 - 0)^2 — never a duplicate, the stale snapshot's version, or the
+/// journal's pending first entry.
+fn assert_recovered_final_record(status: &serde_json::Value) {
+    assert_eq!(status["pipeline"]["forecast_count"], 1);
+    assert_eq!(status["pipeline"]["resolved_count"], 1);
+    assert_eq!(status["pipeline"]["pending_count"], 0);
+    let brier = status["pipeline"]["overall_brier"]
+        .as_f64()
+        .expect("recovered resolved record must be Brier-scored");
+    assert!(
+        (brier - 0.81).abs() < 1e-9,
+        "Brier must be (0.9 - 0)^2, got {brier}"
+    );
+    let recent = &status["pipeline"]["recent_forecasts"][0];
+    assert_eq!(recent["forecast_id"], "persistence-regression");
+    assert_eq!(recent["event_id"], "event");
+    assert_eq!(recent["probability"], 0.9);
+    assert_eq!(recent["outcome"], false);
 }
 
 /// expect: "A failed snapshot must not erase my scored forecast." [P1]
@@ -149,21 +188,7 @@ async fn snapshot_failure_preserves_journal_for_recovery() -> Result<(), Box<dyn
             .scenario_status(Parameters(StatusRequest {}))
             .await?,
     );
-    assert_eq!(status["pipeline"]["forecast_count"], 1);
-    assert_eq!(status["pipeline"]["resolved_count"], 1);
-    assert_eq!(status["pipeline"]["pending_count"], 0);
-    let brier = status["pipeline"]["overall_brier"]
-        .as_f64()
-        .expect("recovered resolved record must be Brier-scored");
-    assert!(
-        (brier - 0.81).abs() < 1e-9,
-        "Brier must be (0.9 - 0)^2, got {brier}"
-    );
-    let recent = &status["pipeline"]["recent_forecasts"][0];
-    assert_eq!(recent["forecast_id"], "persistence-regression");
-    assert_eq!(recent["event_id"], "event");
-    assert_eq!(recent["probability"], 0.9);
-    assert_eq!(recent["outcome"], false);
+    assert_recovered_final_record(&status);
 
     // With the blockage cleared, the retry must succeed, publish a snapshot,
     // and only then clear the journal.
@@ -242,29 +267,7 @@ async fn snapshot_with_uncleared_journal_recovers_exactly_once()
             .scenario_status(Parameters(StatusRequest {}))
             .await?,
     );
-    assert_eq!(
-        status["pipeline"]["forecast_count"], 1,
-        "an overlapping journal must not duplicate the recovered record"
-    );
-    assert_eq!(status["pipeline"]["pending_count"], 0);
-    let brier = status["pipeline"]["overall_brier"]
-        .as_f64()
-        .expect("recovered resolved record must be Brier-scored");
-    assert!(
-        (brier - 0.81).abs() < 1e-9,
-        "Brier must be (0.9 - 0)^2, got {brier}"
-    );
-    let recent = &status["pipeline"]["recent_forecasts"][0];
-    assert_eq!(recent["forecast_id"], "persistence-regression");
-    assert_eq!(recent["event_id"], "event");
-    assert_eq!(
-        recent["probability"], 0.9,
-        "journal replay must win over the stale snapshot"
-    );
-    assert_eq!(
-        recent["outcome"], false,
-        "the journal's last entry must win, not its first entry or the snapshot"
-    );
+    assert_recovered_final_record(&status);
     Ok(())
 }
 
@@ -511,17 +514,7 @@ async fn scenario_assess_calibration_curve_is_subject_scoped() {
             .expect("score ok");
     }
     let output = server
-        .scenario_assess(Parameters(AssessRequest {
-            project_id: "alpha".to_string(),
-            perspective_count: None,
-            disagreement_score: None,
-            event_count: None,
-            events_with_dependencies: None,
-            strategies_generated: None,
-            strategies_implemented: None,
-            learning_events: None,
-            has_early_warning_indicators: None,
-        }))
+        .scenario_assess(Parameters(assess_request_all_omitted("alpha")))
         .await
         .expect("tool ok");
     let parsed = parse(&output);
@@ -1035,17 +1028,7 @@ async fn scenario_assess_unreported_metrics_withhold_dependent_phases() {
         .await
         .expect("frame_document ok");
     let output = server
-        .scenario_assess(Parameters(AssessRequest {
-            project_id: "ACME".to_string(),
-            perspective_count: None,
-            disagreement_score: None,
-            event_count: None,
-            events_with_dependencies: None,
-            strategies_generated: None,
-            strategies_implemented: None,
-            learning_events: None,
-            has_early_warning_indicators: None,
-        }))
+        .scenario_assess(Parameters(assess_request_all_omitted("ACME")))
         .await
         .expect("tool ok");
     let parsed = parse(&output);
@@ -1421,17 +1404,7 @@ async fn scenario_score_scores_the_tree_marginal_not_the_prior() {
 async fn scenario_assess_unknown_project_is_not_found() {
     let server = make_server();
     let error = server
-        .scenario_assess(Parameters(AssessRequest {
-            project_id: "ghost-project".to_string(),
-            perspective_count: None,
-            disagreement_score: None,
-            event_count: None,
-            events_with_dependencies: None,
-            strategies_generated: None,
-            strategies_implemented: None,
-            learning_events: None,
-            has_early_warning_indicators: None,
-        }))
+        .scenario_assess(Parameters(assess_request_all_omitted("ghost-project")))
         .await
         .expect_err("an unknown project must be rejected");
     assert!(
@@ -1485,17 +1458,7 @@ async fn scenario_assess_derives_counts_and_preparation_from_the_project() {
         .await
         .expect("quantify ok");
     let output = server
-        .scenario_assess(Parameters(AssessRequest {
-            project_id: "ACME".to_string(),
-            perspective_count: None,
-            disagreement_score: None,
-            event_count: None,
-            events_with_dependencies: None,
-            strategies_generated: None,
-            strategies_implemented: None,
-            learning_events: None,
-            has_early_warning_indicators: None,
-        }))
+        .scenario_assess(Parameters(assess_request_all_omitted("ACME")))
         .await
         .expect("tool ok");
     let parsed = parse(&output);
