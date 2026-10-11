@@ -651,6 +651,26 @@ fn usage_from_wire(usage: Option<&ChatUsage>) -> hkask_types::InferenceUsage {
     }
 }
 
+/// Build the authorized JSON POST request — the shared request shape of the
+/// direct port's chat and embeddings calls. The Bearer header is attached
+/// only when a key is set (local providers like Ollama need none), so the
+/// auth policy lives once for both call kinds.
+fn authorized_json_post(
+    client: &reqwest::Client,
+    uri: &str,
+    body: &serde_json::Value,
+    api_key: &str,
+) -> reqwest::RequestBuilder {
+    let mut request = client
+        .post(uri)
+        .header("Content-Type", "application/json")
+        .json(body);
+    if !api_key.is_empty() {
+        request = request.header("Authorization", format!("Bearer {api_key}"));
+    }
+    request
+}
+
 impl hkask_types::InferencePort for DirectEmbeddingPort {
     fn generate(
         &self,
@@ -797,20 +817,14 @@ impl hkask_types::InferencePort for DirectEmbeddingPort {
                 body["reasoning"] = serde_json::json!({"effort": "none"});
             }
 
-            let mut request = client
-                .post(&uri)
-                .header("Content-Type", "application/json")
-                .json(&body);
-
-            if !api_key.is_empty() {
-                request = request.header("Authorization", format!("Bearer {api_key}"));
-            }
-
-            let response = request.send().await.map_err(|e| {
-                hkask_types::InferenceError::Connection(format!(
-                    "direct inference request failed: {e}"
-                ))
-            })?;
+            let response = authorized_json_post(&client, &uri, &body, &api_key)
+                .send()
+                .await
+                .map_err(|e| {
+                    hkask_types::InferenceError::Connection(format!(
+                        "direct inference request failed: {e}"
+                    ))
+                })?;
 
             let status = response.status();
             if !status.is_success() {
@@ -906,20 +920,14 @@ impl hkask_types::InferencePort for DirectEmbeddingPort {
                 }
             }
 
-            let mut request = client
-                .post(&uri)
-                .header("Content-Type", "application/json")
-                .json(&body);
-
-            if !api_key.is_empty() {
-                request = request.header("Authorization", format!("Bearer {api_key}"));
-            }
-
-            let response = request.send().await.map_err(|e| {
-                hkask_types::EmbeddingGenerationError::Connection(format!(
-                    "direct embedding request failed: {e}"
-                ))
-            })?;
+            let response = authorized_json_post(&client, &uri, &body, &api_key)
+                .send()
+                .await
+                .map_err(|e| {
+                    hkask_types::EmbeddingGenerationError::Connection(format!(
+                        "direct embedding request failed: {e}"
+                    ))
+                })?;
 
             let status = response.status();
             if !status.is_success() {
