@@ -89,7 +89,7 @@ Use `cx.background_executor().timer(duration).await` in GPUI tests, not `smol::T
 * A skill's missing reference model, D/P label or calibration step is a review finding, never a load-time failure — an incomplete skill must not become a broken skill (operator ruling 2026-09-28). Enforce these in `skill-maintenance` and the corpus audit scripts, not in `agent_skills` loading.
 * `lisp_eval` tool — registered in `add_default_tools`. Do NOT register it again in `register_session` — causes "Duplicate tool name" panic.
 * `render_template` tool — registered in `add_default_tools` (alongside `lisp_eval`). Path traversal protection via `canonicalize` + `starts_with` — do not bypass this check. Template base path wired via `agent::set_template_base_path()` (OnceLock) in `main.rs` at startup; if not wired, the tool errors — it never silently renders from the wrong path.
-* Template goal lines end with terminal punctuation (. ! ?) — the prescreen GOAL WRAP flag is a wrap heuristic, not a length limit (`skill-corpus-prescreen.sh:106-112`); read the checker before the second fix guess.
+* Template goal lines end with terminal punctuation (. ! ?) — the prescreen GOAL WRAP flag is a wrap heuristic, not a length limit (`skill-corpus-prescreen.sh:109-119`); read the checker before the second fix guess.
 * Convention priors from `.rules` must be verified against the codebase before use — rules can be stale.
 
 ## Agent typing system (hkask-mcp-swarm)
@@ -103,7 +103,7 @@ Use `cx.background_executor().timer(duration).await` in GPUI tests, not `smol::T
 * Kask settings defaults live in `Default` impls only — not in `#[serde(default)]`, `From<Content>` literals, or `mcp_env()` comparison literals.
 * Model-name constants must reference `hkask_inference::model_constants::DEFAULT_*_MODEL`, not re-declare literals across crates.
 * MCP server credentials/config are scoped per-server via non-optional allowlists (`credentials`/`config_env` on `BuiltinMcpServer` — `&'static [&'static str]`, no `Option`); declare `&[]` when a server reads none. Allowlists must align with actual env-var reads.
-* After `INFERENCE_SOCKET_PATH` is set, call `sync_kask_mcp_servers` again so servers restart with updated env.
+* After `INFERENCE_SOCKET_PATH` is set, call `sync_kask_mcp_runtime_servers` again so servers restart with updated env.
 * Passphrase rotation (`run_pending_db_passphrase_rotation`) writes the main keychain slot LAST, after every DB is rotated — a keychain write after a partial rotation leaves DBs unopenable (one `HKASK_DB_PASSPHRASE` for every SQLCipher DB — the full rule lives under MCP server patterns).
 
 ## MCP server patterns
@@ -123,7 +123,7 @@ Use `cx.background_executor().timer(duration).await` in GPUI tests, not `smol::T
 
 * Trait-with-one-impl is speculative generality — grep for `self.<field>` before merging; if only constructor matches, it's unwired. Generalizes: convention helpers with only test callers are dead code, and folded-service modules with no production callers outside the subtree are dead surface.
 * Advertised invariants (doc comments claiming security gates, audit surfaces, migrations) must point to the enforcement line; if none exists, the doc must say "not yet enforced." Validation gates must return `Undetermined`/`Skipped` when the check wasn't performed, not `Ready` with empty findings.
-* **Stale comments are active misinformation.** When code behavior changes, every comment describing the old behavior is updated in the same change — agents read comments as ground truth and follow stale comments over user instructions. Grep for comments referencing the changed behavior and update or delete them; a stale comment is worse than no comment.
+* **Stale comments are active misinformation.** When code behavior changes, every comment describing the old behavior is updated in the same change — agents read comments as ground truth and follow stale comments over user instructions. Grep for comments referencing the changed behavior and update or delete them; a stale comment is worse than no comment. File:line citations in docs are the same rot: a line-shifting edit to a cited file silently invalidates every doc citing those lines — grep `kask/docs` for the cited filename and re-verify the citations in the same change.
 * Cargo.toml deps outlive their consumers — when deleting a source file, grep for `use <dep>` in remaining `src/` and `tests/`; zero hits = remove the dep.
 * Deletions must clean up what they orphan — no orphan piles, no compatibility states (operator ruling 2026-09-09). Deleting h_mems removes their embeddings and memory_links (`MemoryStore::delete_h_mem` self-cleans; `delete_orphaned_embeddings` is the backstop); deleting a source file sweeps its dep; deleting a capability sweeps its settings knobs and doc sections — all in the same change.
 * MCP servers are leaf crates (zero external dependents) — `pub mod` → `pub(crate) mod` tightening is churn. Focus dead-code hunts on truly unused items (zero references anywhere, including `tests/`); test seams (`#[doc(hidden)] pub fn from_stores`) are alive even with zero `src/` callers.
