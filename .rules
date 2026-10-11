@@ -99,6 +99,10 @@ Use `cx.background_executor().timer(duration).await` in GPUI tests, not `smol::T
 * Do not reintroduce a runtime request-classification heuristic (the deleted `classify_request` had no correct setting); admission typing (`validate_typing`) is the gate.
 * An unsupported JSON Schema keyword in `schema_validate.rs` is `ValidationStatus::UnsupportedSchema`, never a pass.
 
+## Federated recall (hkask-memory)
+
+* A read-only federated source validates only the tables it reads, never producer-owned ones — the exact-match `hmems` admission check coupled sealed sources to storage-schema evolution and rejected every sealed corpus source at the R5 `provenance` migration (2026-10-11).
+
 ## Settings and constants
 
 * Kask settings defaults live in `Default` impls only — not in `#[serde(default)]`, `From<Content>` literals, or `mcp_env()` comparison literals.
