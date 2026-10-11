@@ -187,6 +187,16 @@ impl EmbeddingStore {
         }
         Ok(())
     }
+
+    /// Validate the vector against the store dimension and prepare the new
+    /// row's identity and vec0 blob — the shared prologue of the two write
+    /// paths (`store`, `replace`), which diverge in transaction handling.
+    fn prepare_new_row(&self, vector: &[f32]) -> Result<(String, Vec<u8>), EmbeddingError> {
+        self.validate_dim(vector)?;
+        let id = hkask_types::EmbeddingID::new().to_string();
+        let blob = Self::encode_vector(vector);
+        Ok((id, blob))
+    }
 }
 impl EmbeddingStore {
     /// Store embedding in both tables (single transaction). Returns the embedding ID.
@@ -204,9 +214,7 @@ impl EmbeddingStore {
         model: &str,
         passage_text: Option<&str>,
     ) -> Result<String, EmbeddingError> {
-        self.validate_dim(vector)?;
-        let id = hkask_types::EmbeddingID::new().to_string();
-        let blob = Self::encode_vector(vector);
+        let (id, blob) = self.prepare_new_row(vector)?;
         let dim = vector.len() as i32;
 
         let conn = self
@@ -262,9 +270,7 @@ impl EmbeddingStore {
         model: &str,
         passage_text: Option<&str>,
     ) -> Result<String, EmbeddingError> {
-        self.validate_dim(vector)?;
-        let id = hkask_types::EmbeddingID::new().to_string();
-        let blob = Self::encode_vector(vector);
+        let (id, blob) = self.prepare_new_row(vector)?;
         let mut conn = self
             .pool
             .get()
@@ -581,15 +587,12 @@ impl EmbeddingStore {
         self.delete_by_id(&id)
     }
 
-    /// Delete every embedding under an entity — the vector rows AND the
-    /// metadata rows, transactionally. `delete` resolves only the first
-    /// id for an entity; a thread entity holds one embedding per chunk,
-    /// and the forgetting pass must remove all of them.
-    pub fn delete_all_by_entity_ref(&self, entity_ref: &str) -> Result<usize, EmbeddingError> {
-        let rows = self.query_driver(
-            "SELECT id FROM embeddings WHERE entity_ref = ?",
-            &[DbValue::Text(entity_ref.to_string())],
-        )?;
+    /// Delete the embeddings selected by `sql` — vector rows AND metadata
+    /// rows, transactionally — returning how many were deleted. The
+    /// entity-ref and passage-scoped bulk deletes share this choreography
+    /// and differ only in how they select the ids.
+    fn delete_selected_ids(&self, sql: &str, params: &[DbValue]) -> Result<usize, EmbeddingError> {
+        let rows = self.query_driver(sql, params)?;
         let mut ids = Vec::with_capacity(rows.len());
         for row in &rows {
             let id = row.get(0)?.as_text()?.to_string();
@@ -633,6 +636,17 @@ impl EmbeddingStore {
         Ok(ids.len())
     }
 
+    /// Delete every embedding under an entity — the vector rows AND the
+    /// metadata rows, transactionally. `delete` resolves only the first
+    /// id for an entity; a thread entity holds one embedding per chunk,
+    /// and the forgetting pass must remove all of them.
+    pub fn delete_all_by_entity_ref(&self, entity_ref: &str) -> Result<usize, EmbeddingError> {
+        self.delete_selected_ids(
+            "SELECT id FROM embeddings WHERE entity_ref = ?",
+            &[DbValue::Text(entity_ref.to_string())],
+        )
+    }
+
     /// Delete the embedding rows of one entity whose `passage_text` is in
     /// `passages` — vector rows AND metadata rows, transactionally, same
     /// pattern as [`delete_all_by_entity_ref`]. The forgetting pass uses
@@ -659,42 +673,7 @@ impl EmbeddingStore {
                 .iter()
                 .map(|passage| DbValue::Text(passage.clone())),
         );
-        let rows = self.query_driver(&sql, &params)?;
-        let mut ids = Vec::with_capacity(rows.len());
-        for row in &rows {
-            let id = row.get(0)?.as_text()?.to_string();
-            ids.push(id);
-        }
-        if ids.is_empty() {
-            return Ok(0);
-        }
-        let conn = self
-            .pool
-            .get()
-            .map_err(|e| InfrastructureError::database(e.to_string()))?;
-        conn.execute_batch("BEGIN TRANSACTION;")?;
-        for id in &ids {
-            if let Err(e) = conn.execute(
-                "DELETE FROM vec_embeddings WHERE rowid = (SELECT rowid FROM embeddings WHERE id = ?1)",
-                rusqlite::params![id],
-            ) {
-                if let Err(rb_err) = conn.execute_batch("ROLLBACK;") {
-                    tracing::warn!(target: "reg.storage", error = %rb_err, "ROLLBACK failed after vec_embeddings DELETE error");
-                }
-                return Err(EmbeddingError::Storage(e));
-            }
-            if let Err(e) = conn.execute(
-                "DELETE FROM embeddings WHERE id = ?1",
-                rusqlite::params![id],
-            ) {
-                if let Err(rb_err) = conn.execute_batch("ROLLBACK;") {
-                    tracing::warn!(target: "reg.storage", error = %rb_err, "ROLLBACK failed after embeddings DELETE error");
-                }
-                return Err(EmbeddingError::Storage(e));
-            }
-        }
-        conn.execute_batch("COMMIT;")?;
-        Ok(ids.len())
+        self.delete_selected_ids(&sql, &params)
     }
 
     /// Delete vector rows whose rowid has no embeddings metadata row —
