@@ -711,6 +711,26 @@ async fn run_screen(server: &CompaniesServer, exchanges: &[&str]) -> (Value, Val
     panic!("screen did not complete");
 }
 
+/// Run one saved screen to completion, assert the one-job status shape
+/// (processed/total == 1), and remove the canonical report artifact — the
+/// shared post-run choreography of the completed-screen tests. Returns
+/// (completed_status, results) for the per-test status and table
+/// assertions, which stay in the tests (each one's own intent).
+async fn run_completed_screen_and_remove_artifact(
+    server: &CompaniesServer,
+    exchanges: &[&str],
+) -> (Value, Value) {
+    let (completed_status, output) = run_screen(server, exchanges).await;
+    assert_eq!(completed_status["processed"], json!(1));
+    assert_eq!(completed_status["total"], json!(1));
+    let artifact_path = completed_status["artifact_path"]
+        .as_str()
+        .expect("canonical report path");
+    assert!(std::path::Path::new(artifact_path).is_file());
+    std::fs::remove_file(artifact_path).expect("remove test report artifact");
+    (completed_status, output)
+}
+
 /// One liquid US screener row — the seven-field shape the run_screen
 /// tests screen (code, name, currency symbol, cap, adjusted close,
 /// 200-day average volume; exchange fixed at US).
@@ -3112,18 +3132,12 @@ async fn screen_data_failures_exclude_with_reasons_and_complete() {
     providers::TEST_HTTP_ORIGIN
         .scope(fixture.origin.clone(), async {
             let server = server(directory.path());
-            let (completed_status, output) = run_screen(&server, &["US", "PA"]).await;
-            assert_eq!(completed_status["processed"], json!(1));
-            assert_eq!(completed_status["total"], json!(1));
+            let (completed_status, output) =
+                run_completed_screen_and_remove_artifact(&server, &["US", "PA"]).await;
             assert!(
                 completed_status["enrichment_deadline_remaining_seconds"].is_u64(),
                 "status must report enrichment deadline headroom separately from the ETA: {completed_status}"
             );
-            let artifact_path = completed_status["artifact_path"]
-                .as_str()
-                .expect("canonical report path");
-            assert!(std::path::Path::new(artifact_path).is_file());
-            std::fs::remove_file(artifact_path).expect("remove test report artifact");
             assert_eq!(output["metadata"]["candidate_count"], json!(2));
             assert_eq!(output["table"]["row_count"], json!(1));
             assert_eq!(output["table"]["row_ids"], json!(["PAR.PA"]));
@@ -3242,13 +3256,9 @@ async fn expectations_template_reduces_and_reconciles_the_universe() {
     providers::TEST_HTTP_ORIGIN
         .scope(fixture.origin.clone(), async {
             let server = server(directory.path());
-            let (completed_status, output) = run_screen(&server, &["US"]).await;
-            assert_eq!(completed_status["processed"], json!(1));
-            assert_eq!(completed_status["total"], json!(1));
+            let (completed_status, output) =
+                run_completed_screen_and_remove_artifact(&server, &["US"]).await;
             assert!(completed_status["heartbeat_at"].is_string());
-            let artifact_path = completed_status["artifact_path"].as_str().expect("canonical report path");
-            assert!(std::path::Path::new(artifact_path).is_file());
-            std::fs::remove_file(artifact_path).expect("remove test report artifact");
             assert_eq!(output["metadata"]["candidate_count"], json!(3));
             assert_eq!(output["metadata"]["issuer_count"], json!(1));
             assert_eq!(
