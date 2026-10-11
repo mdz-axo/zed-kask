@@ -731,6 +731,35 @@ async fn run_completed_screen_and_remove_artifact(
     (completed_status, output)
 }
 
+/// Assert the warm run's cache-hit count and cold/warm verdict parity, then
+/// remove both runs' canonical report artifacts — the shared tail of the
+/// warm-rerun cache tests. `cache_hits` is the warm run's hit count (1
+/// single-issuer, 2 dual-issuer); the hit message is unified to "issuers"
+/// (panic text only, never fires on the passing path).
+fn assert_warm_rerun_parity_and_cleanup(
+    first_status: &Value,
+    second_status: &Value,
+    first: &Value,
+    second: &Value,
+    cache_hits: u64,
+) {
+    assert_eq!(
+        second["phase_timings"]["cache_hits"],
+        json!(cache_hits),
+        "warm run serves issuers from the cache: {second}"
+    );
+    assert_eq!(
+        second["metadata"]["analysis_state_counts"], first["metadata"]["analysis_state_counts"],
+        "warm run must produce the same verdicts as the cold run"
+    );
+    for status in [first_status, second_status] {
+        let artifact_path = status["artifact_path"]
+            .as_str()
+            .expect("canonical report path");
+        std::fs::remove_file(artifact_path).expect("remove test report artifact");
+    }
+}
+
 /// One liquid US screener row — the seven-field shape the run_screen
 /// tests screen (code, name, currency symbol, cap, adjusted close,
 /// 200-day average volume; exchange fixed at US).
@@ -3391,22 +3420,7 @@ async fn fundamentals_cache_skips_refetches_on_rerun() {
                 fundamentals_calls, 1,
                 "warm run must not refetch fundamentals: {second}"
             );
-            assert_eq!(
-                second["phase_timings"]["cache_hits"],
-                json!(1),
-                "warm run serves the issuer from the cache: {second}"
-            );
-            assert_eq!(
-                second["metadata"]["analysis_state_counts"],
-                first["metadata"]["analysis_state_counts"],
-                "warm run must produce the same verdicts as the cold run"
-            );
-            for status in [&first_status, &second_status] {
-                let artifact_path = status["artifact_path"]
-                    .as_str()
-                    .expect("canonical report path");
-                std::fs::remove_file(artifact_path).expect("remove test report artifact");
-            }
+            assert_warm_rerun_parity_and_cleanup(&first_status, &second_status, &first, &second, 1);
         })
         .await;
 }
@@ -3514,22 +3528,7 @@ async fn pass_set_ticker_list_and_forex_are_cached_across_runs() {
                 2,
                 "warm run must not refetch fundamentals: {second}"
             );
-            assert_eq!(
-                second["phase_timings"]["cache_hits"],
-                json!(2),
-                "warm run serves both issuers from the cache: {second}"
-            );
-            assert_eq!(
-                second["metadata"]["analysis_state_counts"],
-                first["metadata"]["analysis_state_counts"],
-                "warm run must produce the same verdicts as the cold run"
-            );
-            for status in [&first_status, &second_status] {
-                let artifact_path = status["artifact_path"]
-                    .as_str()
-                    .expect("canonical report path");
-                std::fs::remove_file(artifact_path).expect("remove test report artifact");
-            }
+            assert_warm_rerun_parity_and_cleanup(&first_status, &second_status, &first, &second, 2);
         })
         .await;
 }
