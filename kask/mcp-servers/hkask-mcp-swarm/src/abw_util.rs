@@ -6,8 +6,10 @@
 //! inspect 200-response bodies for upstream errors ABW buries in the body
 //! (never leaks reqwest types — `detect_embedded_error` maps to `SwarmError`).
 
+use crate::abw_client::SwarmClient;
 use crate::error::LocalSwarmError;
 use crate::error::SwarmError;
+use hkask_mcp_server::server::McpToolError;
 
 /// Inspect a 200-response body for ABW's embedded upstream-error pattern.
 /// Returns a typed `SwarmError` when the payload is an error in disguise.
@@ -102,6 +104,42 @@ pub fn make_swarm_slug(slug_base: &str, now: std::time::SystemTime) -> String {
         base
     };
     format!("{base}_{suffix}")
+}
+
+/// Create an ABW workspace (free) for `name`/`mission` and return its id —
+/// the shared front half of `swarm_create_swarm` and the local
+/// push-to-cloud path.
+pub(crate) async fn create_abw_workspace(
+    client: &SwarmClient,
+    name: &str,
+    mission: Option<&str>,
+) -> Result<String, McpToolError> {
+    // ABW slugs allow only lowercase letters, digits, and underscores.
+    let slug_base: String = name
+        .to_lowercase()
+        .chars()
+        .map(|c| if c.is_alphanumeric() { c } else { '_' })
+        .collect();
+    let slug = make_swarm_slug(&slug_base, std::time::SystemTime::now());
+    let team = client
+        .post(
+            "/teams",
+            &serde_json::json!({
+                "name": name,
+                "slug": slug,
+                "description": mission,
+                "mission": mission,
+            }),
+        )
+        .await
+        .map_err(SwarmError::into_tool_error)?;
+    team.get("id")
+        .and_then(|i| i.as_str())
+        .map(str::to_string)
+        .ok_or_else(|| {
+            SwarmError::ApiVersionMismatch("team create returned no id".to_string())
+                .into_tool_error()
+        })
 }
 
 /// Validate an ABW agent name (the creation surface). ABW agent names are

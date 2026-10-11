@@ -6,7 +6,7 @@
 //! touch the local registry.
 use crate::SwarmServer;
 use crate::abw_util::{
-    effective_hire_cost, make_swarm_slug, url_encode_segment, validate_agent_name,
+    create_abw_workspace, effective_hire_cost, url_encode_segment, validate_agent_name,
 };
 use crate::cloud_swarm;
 use crate::error::SwarmError;
@@ -1148,51 +1148,12 @@ impl SwarmServer {
             require_non_empty(&[("name", &req.name)])?;
 
             // Create the workspace (free).
-            // ABW slugs allow only lowercase letters, digits, and underscores.
-            let slug_base: String = req
-                .name
-                .to_lowercase()
-                .chars()
-                .map(|c| if c.is_alphanumeric() { c } else { '_' })
-                .collect();
-            let slug = make_swarm_slug(&slug_base, std::time::SystemTime::now());
-            let team = self
-                .client
-                .post(
-                    "/teams",
-                    &serde_json::json!({
-                        "name": req.name,
-                        "slug": slug,
-                        "description": req.mission,
-                        "mission": req.mission,
-                    }),
-                )
-                .await
-                .map_err(SwarmError::into_tool_error)?;
+            let workspace_id =
+                create_abw_workspace(&self.client, &req.name, req.mission.as_deref()).await?;
 
-            let workspace_id = team
-                .get("id")
-                .and_then(|i| i.as_str())
-                .map(str::to_string)
-                .ok_or_else(|| {
-                    SwarmError::ApiVersionMismatch("team create returned no id".to_string())
-                        .into_tool_error()
-                })?;
-
-            // Hire the requested agents, each gated by its own consent token.
-            // Each hire routes through `spend_gate::authorize_hire` +
-            // `complete_hire` — the same path `swarm_hire` uses — so the two
-            // cannot desync (the prior version copy-pasted `swarm_hire`'s
-            // re-verify + `/hire`→`/add` fallback body into this loop).
-            //
-            // `consume_cost = 0` (the two-phase consume pattern): the actual
-            // spend is not known until the ABW re-verify inside `authorize_hire`,
-            // so the consent store's over-spend guard cannot fire meaningfully;
-            // the store's single-use + scope checks still fire, and the real
-            // over-spend guard is `actual_cost > grant` inside `authorize_hire`,
-            // which refunds on failure. `budget = None` uses the token's own
-            // embedded ceiling (`swarm_create_swarm` has no per-agent caller
-            // budget — `CreateSwarmRequest` carries only tokens, not amounts).
+            // Hire the requested agents, each gated by its own consent token,
+            // through the shared `spend_gate::hire_agents` flow (the
+            // two-phase consume rationale lives on that helper).
             let agents = req.agents.unwrap_or_default();
             let tokens = req.consent_tokens.unwrap_or_default();
             let session_token = req.session_token.as_deref().filter(|s| !s.is_empty());
@@ -1204,57 +1165,18 @@ impl SwarmServer {
                     "provide either consent_tokens or session_token, not both".to_string(),
                 ));
             }
-            let mut hired = Vec::new();
-            let mut hire_errors = Vec::new();
-            for (ix, agent) in agents.iter().enumerate() {
-                // One auth source per hire: a shared session token, or a
-                // per-agent single-use consent token. The gate handles either.
-                let spend_auth = match session_token {
-                    Some(st) => spend_gate::SpendAuth::Session(st),
-                    None => match tokens.get(ix) {
-                        Some(token) => spend_gate::SpendAuth::SingleUse(token.as_str()),
-                        None => {
-                            hire_errors.push(serde_json::json!({
-                                "agent": agent,
-                                "error": "no consent token provided for this hire",
-                            }));
-                            continue;
-                        }
-                    },
-                };
-                match spend_gate::authorize_hire(
-                    &self.client,
-                    &self.consent,
-                    spend_auth,
-                    agent,
-                    0,
-                    None,
-                    false,
-                )
-                .await
-                {
-                    Ok(auth) => match spend_gate::complete_hire(
-                        &self.client,
-                        &self.consent,
-                        auth,
-                        &workspace_id,
-                        agent,
-                        false,
-                    )
-                    .await
-                    {
-                        Ok(_) => hired.push(agent.clone()),
-                        Err(e) => hire_errors.push(serde_json::json!({
-                            "agent": agent,
-                            "error": e.to_string(),
-                        })),
-                    },
-                    Err(e) => hire_errors.push(serde_json::json!({
-                        "agent": agent,
-                        "error": e.to_string(),
-                    })),
-                }
-            }
+            let auth_source = match session_token {
+                Some(session) => spend_gate::HireAuthSource::Session(session),
+                None => spend_gate::HireAuthSource::Tokens(&tokens),
+            };
+            let (hired, hire_errors) = spend_gate::hire_agents(
+                &self.client,
+                &self.consent,
+                &workspace_id,
+                &agents,
+                auth_source,
+            )
+            .await;
 
             Ok(self
                 .client

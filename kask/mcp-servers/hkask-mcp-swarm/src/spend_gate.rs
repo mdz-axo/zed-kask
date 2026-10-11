@@ -344,6 +344,69 @@ pub(crate) async fn complete_hire(
     }
 }
 
+/// The per-hire authorization source for `hire_agents`: one session token
+/// funding every hire, or one single-use consent token per agent.
+#[derive(Clone, Copy)]
+pub(crate) enum HireAuthSource<'a> {
+    Session(&'a str),
+    Tokens(&'a [String]),
+}
+
+/// Hire `agents` into `workspace_id`, each gated by its own spend auth —
+/// the shared back half of `swarm_create_swarm` and the local
+/// push-to-cloud path. A missing per-agent token is reported in
+/// `hire_errors`, never a hard abort: the workspace already exists.
+///
+/// Each hire routes through `authorize_hire` + `complete_hire` — the same
+/// path `swarm_hire` uses — so the two cannot desync. `consume_cost = 0`
+/// (the two-phase consume pattern): the actual spend is not known until
+/// the ABW re-verify inside `authorize_hire`, so the consent store's
+/// over-spend guard cannot fire meaningfully; the store's single-use +
+/// scope checks still fire, and the real over-spend guard is
+/// `actual_cost > grant` inside `authorize_hire`, which refunds on
+/// failure. `budget = None` uses the token's own embedded ceiling.
+pub(crate) async fn hire_agents(
+    client: &SwarmClient,
+    consent: &ConsentStore,
+    workspace_id: &str,
+    agents: &[String],
+    auth_source: HireAuthSource<'_>,
+) -> (Vec<String>, Vec<serde_json::Value>) {
+    let mut hired = Vec::new();
+    let mut hire_errors = Vec::new();
+    for (ix, agent) in agents.iter().enumerate() {
+        let spend_auth = match auth_source {
+            HireAuthSource::Session(session) => SpendAuth::Session(session),
+            HireAuthSource::Tokens(tokens) => match tokens.get(ix) {
+                Some(token) => SpendAuth::SingleUse(token.as_str()),
+                None => {
+                    hire_errors.push(serde_json::json!({
+                        "agent": agent,
+                        "error": "no consent token provided for this hire",
+                    }));
+                    continue;
+                }
+            },
+        };
+        match authorize_hire(client, consent, spend_auth, agent, 0, None, false).await {
+            Ok(auth) => {
+                match complete_hire(client, consent, auth, workspace_id, agent, false).await {
+                    Ok(_) => hired.push(agent.clone()),
+                    Err(e) => hire_errors.push(serde_json::json!({
+                        "agent": agent,
+                        "error": e.to_string(),
+                    })),
+                }
+            }
+            Err(e) => hire_errors.push(serde_json::json!({
+                "agent": agent,
+                "error": e.to_string(),
+            })),
+        }
+    }
+    (hired, hire_errors)
+}
+
 /// Settle a failed dispatch by the operator-ratified settlement policy
 /// (2026-09-08): a PROVEN pre-dispatch rejection releases the reservation
 /// and propagates the error; an AMBIGUOUS outcome holds the reservation and

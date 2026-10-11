@@ -7,7 +7,7 @@ use crate::SwarmServer;
 #[cfg(test)]
 #[path = "scoped_dispatch_tests.rs"]
 mod scoped_dispatch_tests;
-use crate::abw_util::{make_swarm_slug, url_encode_segment, validate_agent_name};
+use crate::abw_util::{create_abw_workspace, url_encode_segment, validate_agent_name};
 use crate::error::{LocalSwarmError, SwarmError, map_local_swarm_error};
 use crate::local_knowledge;
 use crate::local_registry::{
@@ -2624,89 +2624,23 @@ impl SwarmServer {
             let req = parameters.0;
             let swarm = self.require_local_swarm(&req.swarm_id)?;
 
-            // Create the ABW workspace (free) — same pattern as
+            // Create the ABW workspace (free) — the same path as
             // `swarm_create_swarm`.
-            let slug_base: String = swarm
-                .name
-                .to_lowercase()
-                .chars()
-                .map(|c| if c.is_alphanumeric() { c } else { '_' })
-                .collect();
-            let slug = make_swarm_slug(&slug_base, std::time::SystemTime::now());
-            let team = self
-                .client
-                .post(
-                    "/teams",
-                    &serde_json::json!({
-                        "name": swarm.name,
-                        "slug": slug,
-                        "description": swarm.mission,
-                        "mission": swarm.mission,
-                    }),
-                )
-                .await
-                .map_err(SwarmError::into_tool_error)?;
+            let workspace_id =
+                create_abw_workspace(&self.client, &swarm.name, Some(swarm.mission.as_str()))
+                    .await?;
 
-            let workspace_id = team
-                .get("id")
-                .and_then(|i| i.as_str())
-                .map(str::to_string)
-                .ok_or_else(|| {
-                    SwarmError::ApiVersionMismatch("team create returned no id".to_string())
-                        .into_tool_error()
-                })?;
-
-            // Hire each member agent, gated by consent tokens. Same
-            // spend_gate flow as `swarm_create_swarm`. A missing token for
-            // an agent is reported in hire_errors, not a hard abort — the
-            // workspace is already created.
-            let tokens = &req.consent_tokens;
-            let mut hired = Vec::new();
-            let mut hire_errors = Vec::new();
-            for (ix, agent) in swarm.members.iter().enumerate() {
-                let spend_auth = match tokens.get(ix) {
-                    Some(token) => spend_gate::SpendAuth::SingleUse(token.as_str()),
-                    None => {
-                        hire_errors.push(serde_json::json!({
-                            "agent": agent,
-                            "error": "no consent token provided for this hire",
-                        }));
-                        continue;
-                    }
-                };
-                match spend_gate::authorize_hire(
-                    &self.client,
-                    &self.consent,
-                    spend_auth,
-                    agent,
-                    0,
-                    None,
-                    false,
-                )
-                .await
-                {
-                    Ok(auth) => match spend_gate::complete_hire(
-                        &self.client,
-                        &self.consent,
-                        auth,
-                        &workspace_id,
-                        agent,
-                        false,
-                    )
-                    .await
-                    {
-                        Ok(_) => hired.push(agent.clone()),
-                        Err(e) => hire_errors.push(serde_json::json!({
-                            "agent": agent,
-                            "error": e.to_string(),
-                        })),
-                    },
-                    Err(e) => hire_errors.push(serde_json::json!({
-                        "agent": agent,
-                        "error": e.to_string(),
-                    })),
-                }
-            }
+            // Hire each member agent, gated by consent tokens — the shared
+            // spend_gate flow. A missing token is reported in hire_errors,
+            // not a hard abort (the workspace is already created).
+            let (hired, hire_errors) = spend_gate::hire_agents(
+                &self.client,
+                &self.consent,
+                &workspace_id,
+                &swarm.members,
+                spend_gate::HireAuthSource::Tokens(&req.consent_tokens),
+            )
+            .await;
 
             // Store the ABW workspace_id back on the local swarm so the
             // local↔cloud link is tracked. A failure here is logged, not
