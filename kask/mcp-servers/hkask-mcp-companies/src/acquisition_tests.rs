@@ -468,6 +468,31 @@ async fn comparable(server: &CompaniesServer, request: Value) -> Value {
     )
 }
 
+/// A fixture responder whose one arm overrides `financial_fixture` — the
+/// shape the overlay-error and empty-target tests share, varying exactly
+/// the overriding arm (None falls through to the financial fixture).
+fn override_financial_fixture(
+    arm: impl Fn(&str) -> Option<(u16, Value)> + Send + Sync + 'static,
+) -> impl Fn(&str) -> (u16, Value) + Send + Sync + 'static {
+    move |path| {
+        if let Some(response) = arm(path) {
+            return response;
+        }
+        financial_fixture(path)
+    }
+}
+
+/// Run one scoped comparable_analysis call over the ACME+PEER request and
+/// return its content — the scope + server + call choreography the
+/// overlay-error and empty-target tests share (the request is identical).
+async fn scoped_comparable_output(directory: &std::path::Path, fixture: &FixtureHttp) -> Value {
+    providers::TEST_HTTP_ORIGIN
+        .scope(fixture.origin.clone(), async {
+            comparable(&server(directory), json!({"symbol":"ACME","peers":"PEER"})).await
+        })
+        .await
+}
+
 /// expect: [P5] The reverse DCF's current price falls back to the stock
 /// quote's close when the profile carries no `price` field (every
 /// EODHD-routed, exchange-qualified symbol — live-observed 2026-09-10:
@@ -1230,26 +1255,17 @@ async fn peer_acquisition_is_concurrent() {
 #[tokio::test]
 async fn overlay_acquisition_error_preserves_comparison_table() {
     let directory = tempfile::tempdir().expect("temporary directory");
-    let fixture = FixtureHttp::start(|path| {
+    let fixture = FixtureHttp::start(override_financial_fixture(|path| {
         if path.starts_with("/fmp/income-statement") || path.starts_with("/eodhd/") {
-            (503, json!({"error":"statements unavailable"}))
-        } else {
-            financial_fixture(path)
+            return Some((503, json!({"error":"statements unavailable"})));
         }
-    })
+        None
+    }))
     .await;
-    providers::TEST_HTTP_ORIGIN
-        .scope(fixture.origin.clone(), async {
-            let output = comparable(
-                &server(directory.path()),
-                json!({"symbol":"ACME","peers":"PEER"}),
-            )
-            .await;
-            assert_eq!(output["comparison"][1]["pe_ratio"], 20.0);
-            assert!(output["dcf_overlay"]["error"].is_string());
-            assert!(output["dcf_overlay"]["kind"].is_string());
-        })
-        .await;
+    let output = scoped_comparable_output(directory.path(), &fixture).await;
+    assert_eq!(output["comparison"][1]["pe_ratio"], 20.0);
+    assert!(output["dcf_overlay"]["error"].is_string());
+    assert!(output["dcf_overlay"]["kind"].is_string());
 }
 
 /// expect: [P1] Transport failures must never publish or persist provider credentials.
@@ -1519,36 +1535,27 @@ async fn review_overlay_reports_same_missing_capex_quality() {
 #[tokio::test]
 async fn review_empty_target_metrics_report_endpoint_error() {
     let directory = tempfile::tempdir().expect("temporary directory");
-    let fixture = FixtureHttp::start(|path| {
+    let fixture = FixtureHttp::start(override_financial_fixture(|path| {
         if path.starts_with("/fmp/key-metrics") && path.contains("limit=1") {
-            (200, json!([]))
-        } else {
-            financial_fixture(path)
+            return Some((200, json!([])));
         }
-    })
+        None
+    }))
     .await;
-    providers::TEST_HTTP_ORIGIN
-        .scope(fixture.origin.clone(), async {
-            let output = comparable(
-                &server(directory.path()),
-                json!({"symbol":"ACME","peers":"PEER"}),
-            )
-            .await;
-            assert_eq!(output["comparison"][0]["price"], 30.0);
-            assert!(output["dcf_overlay"]["intrinsic_per_share"].is_number());
-            let errors = &output["comparison"][0]["errors"];
-            assert!(
-                errors
-                    .as_array()
-                    .expect("target errors")
-                    .iter()
-                    .any(|error| error["endpoint"] == "key_metrics"),
-                "{output}"
-            );
-            assert_eq!(errors, &output["comparison"][1]["errors"]);
-            assert!(output["comparison"][0]["pe_ratio"].is_null());
-        })
-        .await;
+    let output = scoped_comparable_output(directory.path(), &fixture).await;
+    assert_eq!(output["comparison"][0]["price"], 30.0);
+    assert!(output["dcf_overlay"]["intrinsic_per_share"].is_number());
+    let errors = &output["comparison"][0]["errors"];
+    assert!(
+        errors
+            .as_array()
+            .expect("target errors")
+            .iter()
+            .any(|error| error["endpoint"] == "key_metrics"),
+        "{output}"
+    );
+    assert_eq!(errors, &output["comparison"][1]["errors"]);
+    assert!(output["comparison"][0]["pe_ratio"].is_null());
 }
 
 /// expect: [P9] Invalid explicit numeric shares are rejected, not hidden by a valid fallback.
