@@ -298,9 +298,55 @@ harness runs.
 
 ## 9. Execution log
 
-No amendments yet — plan composed 2026-10-11, not executed. Pilot calibration
-results, threshold changes, and scope surprises are recorded here as they
-occur.
+**2026-10-11 — execution started.** Phase 1 re-enumeration: 32 crates / 17
+integration test files / 229 inline test-bearing files / 67 zed-side
+candidates — unchanged from §10; the composition-time tables stand. Plan
+committed at aee548085a. Board `test-suite-refresh` created with default
+columns (Backlog / Ready / In Progress / Review / Done); the §1 WIP-1 limit
+is enforced procedurally (default columns carry no per-column limits). 33
+tasks created. Foreign in-flight edits noted at start: hkask-memory
+(federated_recall.rs, tests/federated_source.rs) and hkask-mcp-media
+(assets.rs, hkask_mcp_media.rs, tools/educt.rs, tools/processing.rs) — those
+batches defer per §2 entry criteria while the edits persist.
+
+**2026-10-11 — pilot (hkask-email): KEEP, no findings.** 1 file, all signals
+clear (green 8/0/0; typed-variant error assertion form; Display strings live
+in src; no drift — tests and production share one file last touched
+together 2026-08-29, e1d2312711; no keep-signature). No modifications → the
+commit path remains unvalidated; the first batch with findings validates it.
+
+**2026-10-11 — scale calibration (hkask-mcp-corpus): KEEP ALL, no findings.**
+25 files → 22 healthy + 3 confirmed keep-list pins (property_tests.rs
+invariant tests; gather.rs D-seam F4 pin territory; hkask_mcp_corpus.rs
+registry-derived count/schema pins). 0 suspect, 0 needs-intent-reading →
+deep-review scope zero. Suite green 243/0/0 — the six stash-attributed
+corpus failures in session history are gone (re-established from the fresh
+run, not carried forward). check-mcp-tool-tests.sh exit 0.
+
+**2026-10-11 — hkask-tool-port: no findings by enumeration** (zero test
+files in both the composition-time and execution-time enumerations).
+
+**Funnel refinements (calibration output).** (1) For green tests, signal (b)
+is subsumed by signal (c): a passing assertion cannot pin a divergent
+literal — the (b) literal-grep runs only on non-green files, as an
+attribution aid. (2) The largest crates are the freshest (corpus: every test
+file touched within 30 days) — funnel yield concentrates where drift exists,
+not where file count is high; the §3.2 descending-count order stands (triage
+is cheap), with findings expected from the drifted tail. (3) The funnel
+certifies "not stale," not "minimal" — green tests exercising dead production
+surface are §3.7 follow-up territory, invisible to the funnel by design.
+
+**Procedure corrections (observed live).** (1) The board rejects direct
+backlog→in_progress moves; the §2 claim is two sequenced moves
+(backlog→ready→in_progress), and closure is in_progress→review→
+verify(evidence)→done — kanban_task_verify performs the review→done
+transition. (2) kanban_task_comment + kanban_task_move on the same task in
+one parallel batch: the comment's row write reverts the move's status write
+(observed: the move returned new_status=ready, the subsequent board listing
+showed backlog with the comment present; reported to the curator as a
+tool-implementation issue). Rule: one row-mutating kanban call per task per
+batch — comments included. Proposed .rules addition, operator call; not
+edited inline.
 
 ## 10. Composition-time scope manifest (2026-10-11)
 
