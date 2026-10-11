@@ -364,6 +364,24 @@ pin-candidate confirmation reduces to marker-present + suite-green:
 whether the marker sits in test code or a production comment routes to the
 same verdict (keep), so the distinction is skipped.
 
+**2026-10-11 — batches 10–13 (hkask-mcp-research, hkask-storage,
+hkask-regulation, hkask-mcp-media): KEEP ALL, no findings.** All four green
+(104+83 / 79+5+2 / 105+5+7 / 325+193+1 passed; 0 failed anywhere). Ignored-
+test attributions: media's 6 ignored = deliberate live-probe gates
+(tools/reduct.rs, HKASK_REDUCT_LIVE_PROBE=1 credential-gated opt-in,
+reduct.rs:2426-2728); storage's 2 ignored = ```ignore doc-example blocks
+(store_macros.rs:23, driver.rs:105). Media's foreign-edit deferral lifted
+at batch start (tree clear). 19 green pin-candidate files kept. 0 suspect,
+0 needs-intent-reading across 55 test files. No modifications → no crate
+commits.
+
+**Ignored-test handling (funnel note).** Ignored tests route to suspect by
+default (§2 signal c) but attribute cheaply when the ignore carries a
+reason string naming an environment gate (credential-gated probes) or when
+the target is doc-tests with ```ignore blocks — both are deliberate
+documentation/probe patterns, recorded as attributed-deliberate in the
+findings, not stale pins.
+
 ## 10. Composition-time scope manifest (2026-10-11)
 
 Sizing input only, captured mechanically at composition time. Phase 1 re-runs
