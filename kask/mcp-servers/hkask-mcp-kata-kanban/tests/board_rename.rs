@@ -16,34 +16,13 @@ use hkask_mcp_server::server::McpToolError;
 use hkask_mcp_swarm::LocalAgentRegistry;
 use hkask_storage::HMemStore;
 use hkask_storage::database::sqlite::SqliteDriver;
+use hkask_types::WebID;
 use hkask_types::kanban_wire::KANBAN_BOARD_NAME_MAX_CHARS;
-use hkask_types::{InferenceError, WebID, WorktreeSpawnPort};
 use rmcp::handler::server::wrapper::Parameters;
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::Arc;
 
-/// Worktree-spawn stub for tests: returns an error so no test here can
-/// accidentally exercise a spawn. Mirrors the stub in
-/// `tests/idempotent_creates.rs`.
-struct UnavailableWorktreeSpawn;
-
-impl WorktreeSpawnPort for UnavailableWorktreeSpawn {
-    fn create_worktree_thread<'a>(
-        &'a self,
-        _prompt: &'a str,
-        _title: &'a str,
-        _worktree_name: Option<&'a str>,
-        _base_ref: Option<&'a str>,
-        _allowed_tools: &'a [String],
-    ) -> Pin<Box<dyn Future<Output = Result<String, InferenceError>> + Send + 'a>> {
-        Box::pin(async {
-            Err(InferenceError::Connection(
-                "worktree spawn unavailable (test stub)".into(),
-            ))
-        })
-    }
-}
+mod common;
+use common::{UnavailableWorktreeSpawn, parse};
 
 /// Build a server whose caller identity is `caller`, over a store that may
 /// already hold another owner's boards (shared driver) — so a test can pin
@@ -73,10 +52,6 @@ fn server_over_shared_driver(
 fn make_server() -> KanbanServer {
     let driver = SqliteDriver::in_memory_driver();
     server_over_shared_driver(driver, WebID::new())
-}
-
-fn parse(out: &str) -> serde_json::Value {
-    hkask_types::tool_response::parse_tool_response(out).expect("tool output must be valid JSON")
 }
 
 async fn create_board(server: &KanbanServer, name: &str) -> serde_json::Value {

@@ -32,24 +32,28 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-/// Worktree-spawn refusal fixture: no alternate executor may be started.
-struct UnavailableWorktreeSpawn;
+mod common;
+use common::{UnavailableWorktreeSpawn, parse};
 
-impl WorktreeSpawnPort for UnavailableWorktreeSpawn {
-    fn create_worktree_thread<'a>(
-        &'a self,
-        _prompt: &'a str,
-        _title: &'a str,
-        _worktree_name: Option<&'a str>,
-        _base_ref: Option<&'a str>,
-        _allowed_tools: &'a [String],
-    ) -> Pin<Box<dyn Future<Output = Result<String, InferenceError>> + Send + 'a>> {
-        Box::pin(async {
-            Err(InferenceError::Connection(
-                "worktree spawn unavailable (test stub)".to_string(),
-            ))
-        })
-    }
+/// Build a server whose task- and goal-replay stores share `driver`, with
+/// caller identity `webid` — the construction the shared-driver tests
+/// hand-rolled before this helper existed.
+fn make_server_over_driver(
+    driver: Arc<dyn hkask_storage::database::driver::DatabaseDriver>,
+    webid: WebID,
+) -> KanbanServer {
+    let idempotency = Arc::new(
+        hkask_mcp_kata_kanban::idempotency::IdempotencyStore::with_driver(Arc::clone(&driver))
+            .expect("idempotency schema"),
+    );
+    KanbanServer::new(
+        webid,
+        KanbanService::new(HMemStore::from_driver(driver).expect("hmem store")),
+        Arc::new(LocalAgentRegistry::new("/nonexistent")),
+        Arc::new(UnavailableWorktreeSpawn),
+        Arc::clone(&idempotency),
+        idempotency,
+    )
 }
 
 /// Build a server whose replay-protection store shares the kanban driver, as
@@ -60,31 +64,12 @@ fn make_server_with_shared_driver() -> (
     Arc<dyn hkask_storage::database::driver::DatabaseDriver>,
 ) {
     let driver = SqliteDriver::in_memory_driver();
-    let idempotency_driver = driver.clone();
-    let store = HMemStore::from_driver(driver.clone()).expect("hmem store init");
-    let service = KanbanService::new(store);
-    let idempotency = Arc::new(
-        hkask_mcp_kata_kanban::idempotency::IdempotencyStore::with_driver(idempotency_driver)
-            .expect("idempotency schema"),
-    );
-    let goal_idempotency = Arc::clone(&idempotency);
-    let server = KanbanServer::new(
-        WebID::new(),
-        service,
-        Arc::new(LocalAgentRegistry::new("/nonexistent")),
-        Arc::new(UnavailableWorktreeSpawn),
-        idempotency,
-        goal_idempotency,
-    );
+    let server = make_server_over_driver(Arc::clone(&driver), WebID::new());
     (server, driver)
 }
 
 fn make_server() -> KanbanServer {
     make_server_with_shared_driver().0
-}
-
-fn parse(out: &str) -> serde_json::Value {
-    hkask_types::tool_response::parse_tool_response(out).expect("tool output must be valid JSON")
 }
 
 async fn create_board(server: &KanbanServer, name: &str, key: Option<&str>) -> serde_json::Value {
@@ -428,19 +413,7 @@ async fn changed_request_with_same_key_is_rejected_without_effect() {
 async fn other_webid_cannot_replay_a_key_on_shared_driver() {
     let (owner, driver) = make_server_with_shared_driver();
     let first = create_board(&owner, "Owner board", Some("shared-key")).await;
-    let store = HMemStore::from_driver(driver.clone()).expect("shared store");
-    let replay_store = Arc::new(
-        hkask_mcp_kata_kanban::idempotency::IdempotencyStore::with_driver(driver)
-            .expect("shared replay store"),
-    );
-    let other = KanbanServer::new(
-        WebID::new(),
-        KanbanService::new(store),
-        Arc::new(LocalAgentRegistry::new("/nonexistent")),
-        Arc::new(UnavailableWorktreeSpawn),
-        Arc::clone(&replay_store),
-        replay_store,
-    );
+    let other = make_server_over_driver(driver, WebID::new());
     let error = other
         .kanban_board_create(Parameters(BoardCreateRequest {
             name: "Owner board".to_string(),
@@ -500,18 +473,7 @@ async fn legacy_unbound_key_is_unknown_and_cannot_be_reused() {
          ('kanban_board_create', 'legacy', '{\"board_id\":\"old\"}', '2020-01-01');",
         )
         .expect("old schema with unbound key");
-    let idempotency = Arc::new(
-        hkask_mcp_kata_kanban::idempotency::IdempotencyStore::with_driver(driver.clone())
-            .expect("upgrade schema without trusting old rows"),
-    );
-    let server = KanbanServer::new(
-        WebID::new(),
-        KanbanService::new(HMemStore::from_driver(driver).expect("hmem store")),
-        Arc::new(LocalAgentRegistry::new("/nonexistent")),
-        Arc::new(UnavailableWorktreeSpawn),
-        Arc::clone(&idempotency),
-        idempotency,
-    );
+    let server = make_server_over_driver(driver, WebID::new());
     for name in ["Original", "Changed"] {
         let error = server
             .kanban_board_create(Parameters(BoardCreateRequest {
@@ -772,24 +734,27 @@ async fn durable_protection_carries_no_degradation_label() {
     let pool = SqliteDriver::in_memory_pool().expect("pool");
     let driver: Arc<dyn hkask_storage::database::driver::DatabaseDriver> =
         Arc::new(SqliteDriver::new(pool).with_durability(true));
-    let idempotency = Arc::new(
-        hkask_mcp_kata_kanban::idempotency::IdempotencyStore::with_driver(Arc::clone(&driver))
-            .expect("idempotency schema"),
-    );
-    let server = KanbanServer::new(
-        WebID::new(),
-        KanbanService::new(HMemStore::from_driver(driver).expect("hmem store")),
-        Arc::new(LocalAgentRegistry::new("/nonexistent")),
-        Arc::new(UnavailableWorktreeSpawn),
-        Arc::clone(&idempotency),
-        idempotency,
-    );
+    let server = make_server_over_driver(driver, WebID::new());
     let board = create_board(&server, "Board", Some("durable")).await;
     assert!(
         board.get("idempotency_durable").is_none(),
         "a durable store must not emit the degradation marker, or the marker would \
          carry no information, got: {board}"
     );
+}
+
+async fn listed_goal_ids(server: &KanbanServer) -> Vec<String> {
+    let out = server
+        .kanban_goal_list(Parameters(GoalListRequest {}))
+        .await
+        .expect("tool ok");
+    let listed = parse(&out);
+    listed["goals"]
+        .as_array()
+        .expect("goals array")
+        .iter()
+        .filter_map(|g| g["goal_id"].as_str().map(str::to_string))
+        .collect()
 }
 
 // ── Goal replay protection: durable, shared with the kanban DB ───────────
@@ -825,21 +790,7 @@ async fn create_goal(
 async fn goal_replay_protection_survives_a_restart_and_replays_the_live_goal() {
     let webid = WebID::new();
     let driver = SqliteDriver::in_memory_driver();
-    let make_process = || {
-        let store = HMemStore::from_driver(driver.clone()).expect("hmem store");
-        let idempotency = Arc::new(
-            hkask_mcp_kata_kanban::idempotency::IdempotencyStore::with_driver(driver.clone())
-                .expect("idempotency schema"),
-        );
-        KanbanServer::new(
-            webid,
-            KanbanService::new(store),
-            Arc::new(LocalAgentRegistry::new("/nonexistent")),
-            Arc::new(UnavailableWorktreeSpawn),
-            Arc::clone(&idempotency),
-            Arc::clone(&idempotency),
-        )
-    };
+    let make_process = || make_server_over_driver(driver.clone(), webid);
     let process_a = make_process();
     let first = create_goal(&process_a, "Goal", Some("goal-key")).await;
     let first_id = first["goal_id"].as_str().expect("goal_id").to_string();
@@ -856,20 +807,10 @@ async fn goal_replay_protection_survives_a_restart_and_replays_the_live_goal() {
     );
 
     // The replayed goal is live on the new process: listable (same owner).
-    let out = process_b
-        .kanban_goal_list(Parameters(GoalListRequest {}))
-        .await
-        .expect("tool ok");
-    let listed = parse(&out);
-    let ids: Vec<&str> = listed["goals"]
-        .as_array()
-        .expect("goals array")
-        .iter()
-        .filter_map(|g| g["goal_id"].as_str())
-        .collect();
+    let ids = listed_goal_ids(&process_b).await;
     assert!(
-        ids.contains(&first_id.as_str()),
-        "the persisted goal must survive the restart in the store, got: {listed}"
+        ids.contains(&first_id),
+        "the persisted goal must survive the restart in the store, got: {ids:?}"
     );
 
     // And scoreable — the Brier closure survives the restart. Scoring retains
@@ -884,20 +825,10 @@ async fn goal_replay_protection_survives_a_restart_and_replays_the_live_goal() {
     let scored = parse(&out);
     assert_eq!(scored["goal_id"].as_str(), Some(first_id.as_str()));
 
-    let out = process_b
-        .kanban_goal_list(Parameters(GoalListRequest {}))
-        .await
-        .expect("tool ok");
-    let listed = parse(&out);
-    let ids: Vec<&str> = listed["goals"]
-        .as_array()
-        .expect("goals array")
-        .iter()
-        .filter_map(|g| g["goal_id"].as_str())
-        .collect();
+    let ids = listed_goal_ids(&process_b).await;
     assert!(
-        ids.contains(&first_id.as_str()),
-        "the resolved goal must remain retryable until memory acknowledgment, got: {listed}"
+        ids.contains(&first_id),
+        "the resolved goal must remain retryable until memory acknowledgment, got: {ids:?}"
     );
 
     process_b
@@ -907,20 +838,10 @@ async fn goal_replay_protection_survives_a_restart_and_replays_the_live_goal() {
         .await
         .expect("memory acknowledgment must prune the retained goal");
 
-    let out = process_b
-        .kanban_goal_list(Parameters(GoalListRequest {}))
-        .await
-        .expect("tool ok");
-    let listed = parse(&out);
-    let ids: Vec<&str> = listed["goals"]
-        .as_array()
-        .expect("goals array")
-        .iter()
-        .filter_map(|g| g["goal_id"].as_str())
-        .collect();
+    let ids = listed_goal_ids(&process_b).await;
     assert!(
-        !ids.contains(&first_id.as_str()),
-        "memory acknowledgment must prune the retained goal, got: {listed}"
+        !ids.contains(&first_id),
+        "memory acknowledgment must prune the retained goal, got: {ids:?}"
     );
 
     process_b
