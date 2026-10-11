@@ -1378,15 +1378,11 @@ mod smoke {
     }
 
     /// Pull the `{"content": <value>}` success envelope out of a tool's
-    /// `String` output, panicking with the raw output on any shape mismatch.
+    /// `String` output via the canonical parser; a tool output that fails
+    /// to parse is a test failure.
     fn unwrap_content(output: &str) -> serde_json::Value {
-        let parsed: serde_json::Value = serde_json::from_str(output).unwrap_or_else(|error| {
-            panic!("tool output must be valid JSON, got: {output} ({error})")
-        });
-        parsed
-            .get("content")
-            .cloned()
-            .unwrap_or_else(|| panic!("tool output must have a 'content' key, got: {parsed}"))
+        hkask_types::tool_response::parse_tool_response(output)
+            .expect("tool output must be valid JSON")
     }
 
     /// A successful completion manifest as the status tool

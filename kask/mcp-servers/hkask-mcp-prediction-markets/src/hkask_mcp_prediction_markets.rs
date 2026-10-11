@@ -1938,15 +1938,12 @@ mod smoke {
         )
     }
 
-    /// Extract the MCP tool-result envelope: `{"content": <value>}`.
-    /// Panics with the raw output on any shape violation so failures are actionable.
+    /// Extract the MCP tool-result envelope `{"content": <value>}` via
+    /// the canonical parser; a tool output that fails to parse is a test
+    /// failure.
     fn unwrap_content(output: &str) -> serde_json::Value {
-        let parsed: serde_json::Value = serde_json::from_str(output)
-            .unwrap_or_else(|e| panic!("tool output must be valid JSON, got: {output} ({e})"));
-        parsed
-            .get("content")
-            .cloned()
-            .unwrap_or_else(|| panic!("tool output must have 'content' key, got: {parsed}"))
+        hkask_types::tool_response::parse_tool_response(output)
+            .expect("tool output must be valid JSON")
     }
 
     /// Pin: the HTTP client built in `run()` carries explicit connect and

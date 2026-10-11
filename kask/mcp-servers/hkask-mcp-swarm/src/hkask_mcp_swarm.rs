@@ -831,13 +831,11 @@ mod smoke_tests {
         Ok(())
     }
 
-    /// Extract the `{"content": …}` success envelope from a tool output.
+    /// Extract the `{"content": …}` success envelope from a tool output
+    /// via the canonical parser.
     fn unwrap_content(output: &str) -> Value {
-        let parsed: Value = serde_json::from_str(output).expect("tool output must be valid JSON");
-        parsed
-            .get("content")
-            .cloned()
-            .expect("success envelope must carry a \"content\" field")
+        hkask_types::tool_response::parse_tool_response(output)
+            .expect("tool output must be valid JSON")
     }
 
     /// `swarm_evaluate_local` stamps deterministic verdicts through the
