@@ -1203,57 +1203,17 @@ mod tests {
         assert!(error.to_string().contains("exhausted 4 tool-call rounds"));
     }
 
-    struct StubDispatch;
-
-    impl hkask_types::ToolDispatchPort for StubDispatch {
-        fn tool_definition<'a>(
-            &'a self,
-            server: &'a str,
-            tool: &'a str,
-            allowed: &'a [String],
-        ) -> Pin<
-            Box<
-                dyn Future<
-                        Output = Result<
-                            hkask_types::ChatToolDefinition,
-                            hkask_types::InferenceError,
-                        >,
-                    > + Send
-                    + 'a,
-            >,
-        > {
-            Box::pin(async move {
-                crate::test_support::allowed_tool_definition(
-                    server,
-                    tool,
-                    allowed,
-                    "Fixture lookup",
-                    serde_json::json!({
-                        "type": "object", "properties": {"query": {"type": "string"}},
-                        "required": ["query"]
-                    }),
-                )
-            })
-        }
-
-        fn invoke_tool<'a>(
-            &'a self,
-            _server: &'a str,
-            _tool: &'a str,
-            args: serde_json::Value,
-            allowlist: &'a [String],
-        ) -> Pin<
-            Box<
-                dyn Future<Output = Result<serde_json::Value, hkask_types::InferenceError>>
-                    + Send
-                    + 'a,
-            >,
-        > {
-            Box::pin(async move {
-                assert_eq!(args["query"], "needle");
-                assert!(allowlist.iter().any(|name| name == "fixture/lookup"));
-                Ok(serde_json::json!({"ok": true}))
-            })
+    crate::test_support::allowed_dispatch! {
+        StubDispatch,
+        "Fixture lookup",
+        serde_json::json!({
+            "type": "object", "properties": {"query": {"type": "string"}},
+            "required": ["query"]
+        }),
+        invoke: |_server, _tool, args, allowlist| {
+            assert_eq!(args["query"], "needle");
+            assert!(allowlist.iter().any(|name| name == "fixture/lookup"));
+            Ok(serde_json::json!({"ok": true}))
         }
     }
 

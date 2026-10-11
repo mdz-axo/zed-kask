@@ -4014,51 +4014,11 @@ mod tests {
         }
     }
 
-    struct NoopDispatch;
-
-    impl hkask_types::ToolDispatchPort for NoopDispatch {
-        fn tool_definition<'a>(
-            &'a self,
-            server: &'a str,
-            tool: &'a str,
-            allowed: &'a [String],
-        ) -> Pin<
-            Box<
-                dyn Future<
-                        Output = Result<
-                            hkask_types::ChatToolDefinition,
-                            hkask_types::InferenceError,
-                        >,
-                    > + Send
-                    + 'a,
-            >,
-        > {
-            Box::pin(async move {
-                crate::test_support::allowed_tool_definition(
-                    server,
-                    tool,
-                    allowed,
-                    "Fixture tool",
-                    serde_json::json!({"type": "object"}),
-                )
-            })
-        }
-
-        fn invoke_tool<'a>(
-            &'a self,
-            _server: &'a str,
-            _tool: &'a str,
-            _args: serde_json::Value,
-            _allowlist: &'a [String],
-        ) -> Pin<
-            Box<
-                dyn Future<Output = Result<serde_json::Value, hkask_types::InferenceError>>
-                    + Send
-                    + 'a,
-            >,
-        > {
-            Box::pin(async { Ok(serde_json::json!({})) })
-        }
+    crate::test_support::allowed_dispatch! {
+        NoopDispatch,
+        "Fixture tool",
+        serde_json::json!({"type": "object"}),
+        invoke: |_server, _tool, _args, _allowlist| { Ok(serde_json::json!({})) }
     }
 
     fn mock_agent_card(agent_id: &str, system_prompt: &str) -> LocalAgentCard {

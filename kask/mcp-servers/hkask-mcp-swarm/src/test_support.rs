@@ -98,6 +98,73 @@ macro_rules! inference_generate {
 
 pub(crate) use inference_generate;
 
+/// Generate a `ToolDispatchPort` test stub: a unit struct `$name` whose
+/// `tool_definition` serves any allowed `server/tool` name (Auth-rejecting
+/// the rest) with `$description` and `$parameters`, and whose `invoke_tool`
+/// runs `$invoke` — a block over the four invoke parameters returning
+/// `Result<Value, InferenceError>`. The `Pin<Box<dyn Future>>` signature
+/// boilerplate both dispatch stubs repeated is single-sourced here;
+/// parameter names come from the invocation (macro hygiene): pass `_args`
+/// to ignore it, `args` to use it.
+macro_rules! allowed_dispatch {
+    (
+        $name:ident,
+        $description:literal,
+        $parameters:expr,
+        invoke: |$server:ident, $tool:ident, $args:ident, $allowlist:ident| $invoke:block
+    ) => {
+        struct $name;
+
+        impl hkask_types::ToolDispatchPort for $name {
+            fn tool_definition<'a>(
+                &'a self,
+                server: &'a str,
+                tool: &'a str,
+                allowed: &'a [String],
+            ) -> std::pin::Pin<
+                Box<
+                    dyn std::future::Future<
+                            Output = Result<
+                                hkask_types::ChatToolDefinition,
+                                hkask_types::InferenceError,
+                            >,
+                        > + Send
+                        + 'a,
+                >,
+            > {
+                Box::pin(async move {
+                    $crate::test_support::allowed_tool_definition(
+                        server,
+                        tool,
+                        allowed,
+                        $description,
+                        $parameters,
+                    )
+                })
+            }
+
+            fn invoke_tool<'a>(
+                &'a self,
+                $server: &'a str,
+                $tool: &'a str,
+                $args: serde_json::Value,
+                $allowlist: &'a [String],
+            ) -> std::pin::Pin<
+                Box<
+                    dyn std::future::Future<
+                            Output = Result<serde_json::Value, hkask_types::InferenceError>,
+                        > + Send
+                        + 'a,
+                >,
+            > {
+                Box::pin(async move $invoke)
+            }
+        }
+    };
+}
+
+pub(crate) use allowed_dispatch;
+
 #[derive(Default)]
 pub(crate) struct RecordingInference(pub(crate) Mutex<Vec<Vec<hkask_types::ChatMessage>>>);
 
