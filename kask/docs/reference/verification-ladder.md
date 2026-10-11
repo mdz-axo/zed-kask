@@ -29,11 +29,11 @@ is findable.
 
 | Rung | Question | zed-kask home | Clock | Catches |
 |---|---|---|---|---|
-| 1. Presence | Does the declared thing exist? | `port_registry.rs` (an `accepts`/`produces` label that resolves to no registered type is rejected at admission); `schema_validate.rs:1-24` (no schema or an unsupported keyword is `unverified_*`, never `valid`); the grounding gate's no-contract arm (`grounding.rs:443-450` — `unchecked`, not `clean`) | admission, then per invocation | a card declaring a type that does not exist; a contract nobody wrote |
+| 1. Presence | Does the declared thing exist? | `port_registry.rs` (an `accepts`/`produces` label that resolves to no registered type is rejected at admission); `schema_validate.rs:1-24` (no schema or an unsupported keyword is `unverified_*`, never `valid`); the grounding gate's no-contract arm (`grounding.rs:279-283` — `unchecked`, not `clean`; pinned at `:508`) | admission, then per invocation | a card declaring a type that does not exist; a contract nobody wrote |
 | 2. Liveness | Does the writer ever run? | `hkask-regulation/src/loops/core.rs:325` (`LivenessTrust`: `Live`/`Stale`/`NeverRun`), `:342` (`Reading`), `:387` (`LoopView`), `:436` (`compute_reading`) | per regulation tick | a loop that reports success while having never run — `WiringClosed`, the dominant failure mode |
 | 3. Truth | Does the stored value equal its source of truth? | the `grounding-verify` skill's Step 3 mechanical re-derivation (`.agents/skills/grounding-verify/SKILL.md` — `lisp_eval` re-derives every computed number against its inputs); `core.rs:305` (`OutcomeTrust`: impact verified / untrusted / unverified); resolved-outcome Brier scoring (`forecast_record`, `market_calibration`, `kanban_goal_score`) | per claim at verification; at resolution for forecasts | a derived number that does not re-derive; a prediction that disagrees with the resolved outcome |
-| 4. Grounding | Could this value have come from any available tool? | `grounding.rs:105` (`grade` — a `sourced` field with no tool call in the run is stripped; the run is amended, not refused) + the `grounding-verify` skill's provenance lattice + `gate_store.rs` (per-agent counters and readings — `strips_everything` names a mis-declared contract as the suspect, not the agent; surfaced by `swarm_gate_readings`) | per delegation; per verification run | a fabricated measurement — a value no tool of the agent's could have supplied |
-| 5. Binding | Does the invocation match the declared interface? | `local_runtime.rs:586` (`contract_checks` — `input_contract_check` / `output_contract_check` / `bind_matched` on every delegation result); `local_registry.rs:46` (`validate_typing` at admission); `contract.rs` (the composition contract, fermi's `agent_contract.rs` port) | per request | prose sent to a structured-only port; a document that contradicts its declared type |
+| 4. Grounding | Could this value have come from any available tool? | `grounding.rs:137` (`grade` — a `sourced` field with no tool call in the run is stripped; the run is amended, not refused) + the `grounding-verify` skill's provenance lattice + `gate_store.rs` (per-agent counters and readings — `strips_everything` names a mis-declared contract as the suspect, not the agent; surfaced by `swarm_gate_readings`) | per delegation; per verification run | a fabricated measurement — a value no tool of the agent's could have supplied |
+| 5. Binding | Does the invocation match the declared interface? | `local_runtime.rs:656` (`contract_checks` — `input_contract_check` / `output_contract_check` / `bind_matched` on every delegation result); `local_registry.rs:46` (`validate_typing` at admission); `contract.rs` (the composition contract, fermi's `agent_contract.rs` port) | per request | prose sent to a structured-only port; a document that contradicts its declared type |
 
 ## The two ladder properties
 
@@ -92,7 +92,7 @@ never needed to fire.
 Every rung must demonstrate it can fail. fermi enforces this with a
 falsification registry (each check broken by hand and watched fail); zed-kask
 pins it in tests: the grounding gate's worst-first precedence and
-closed-vocabulary pins (`grounding.rs:657-673`, `:743-749`), the `LoopView`
+closed-vocabulary pins (`grounding.rs:722`, `:808`), the `LoopView`
 composition pins (`core.rs:693-712`), and the skill's Step 6 floor form, which
 errors loudly on a graded claim missing its strength (verified live 2026-10-10:
 a mixed set floors over graded claims only; an all-pending set returns null —

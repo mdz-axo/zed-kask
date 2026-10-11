@@ -100,13 +100,13 @@ substrate. ABW and local tools both fit the same three surfaces.[^reynolds-swarm
 | **Authoring**   | Create new agents          | `swarm_generate_prompt`, `swarm_generate_ontology`, `swarm_create_agent`, `swarm_ontology_templates`, `swarm_fork_agent`                                                                                                                                                                                                                      | `swarm_create_local_agent`, `swarm_reconfigure_local_agent`, `swarm_generate_prompt_local`, `swarm_generate_ontology_local`, `swarm_clone_to_local`, `swarm_ai_assist`                                                                   |
 | **Composition** | Group agents into teams    | `swarm_create_swarm`, `swarm_create_app`, `swarm_xaman`, `swarm_fanout`, `swarm_publish_agent`, `swarm_publish_checks`                                                                                                                                                                                                                        | `swarm_create_local_swarm`, `swarm_list_local_swarms`, `swarm_get_local_swarm`, `swarm_delete_local_swarm`, `swarm_add_agent_local`, `swarm_remove_agent_local`, `swarm_list_local_agents`, `swarm_fanout_local`, `swarm_pipeline_local` |
 | **Operation**   | Browse, run, spend, manage | `swarm_list_agents`, `swarm_get_agent`, `swarm_list_apps`, `swarm_get_swarm`, `swarm_execute_agent`, `swarm_hire`, `swarm_delegate`, `swarm_delegate_and_wait`, `swarm_run_status`, `swarm_hire_cost`, `swarm_request_consent`, `swarm_authorize_session`, `swarm_search_knowledge`, `swarm_fire`, `swarm_delete_agent`, `swarm_delete_swarm` | `swarm_delegate_local`, `swarm_a2a_send`, `swarm_a2a_card`, `swarm_search_knowledge_local`, `swarm_push_to_cloud`, `swarm_remove_local`                                |
-| **Verification** | Trust, topology, selection | `swarm_execute_agent` (the trust envelope), `swarm_gate_readings` (per-agent gate readings) | `swarm_workflow_check_local`, `swarm_run_workflow_local`, `swarm_observed_seams_local`, `swarm_fleet_digest_local`, `swarm_who_answers_local`, `swarm_select_agent_local` |
+| **Verification** | Trust, topology, selection | `swarm_execute_agent` (the trust envelope) | `swarm_gate_readings` (per-agent gate readings), `swarm_workflow_check_local`, `swarm_run_workflow_local`, `swarm_observed_seams_local`, `swarm_fleet_digest_local`, `swarm_who_answers_local`, `swarm_select_agent_local` |
 
 ## Tool reference — ABW cloud (48 tools)
 
 > The tables below document 27 core ABW tools; the canonical cloud list contains
 > 48 names and is separately pinned against `cloud_swarm_router`
-> (`cloud_swarm_tool_names_match_live_cloud_router`, `kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:1060-1075`; the router is generated at `kask/mcp-servers/hkask-mcp-swarm/src/cloud_swarm_tools.rs:173`). The 21 untabulated tools are `swarm_update_agent`, the App surface (`swarm_create_app_direct`,
+> (`cloud_swarm_tool_names_match_live_cloud_router`, `kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:1032`; the router is generated at `kask/mcp-servers/hkask-mcp-swarm/src/cloud_swarm_tools.rs:214`). The 21 untabulated tools are `swarm_update_agent`, the App surface (`swarm_create_app_direct`,
 > `swarm_update_app`, `swarm_publish_app`, `swarm_archive_app`, `swarm_get_app`,
 > `swarm_get_app_schema`, `swarm_spawn_app_workspace`, `swarm_list_app_workspaces`,
 > `swarm_fork_workspace_to_app`) and the workspace file/action surface
@@ -171,7 +171,7 @@ substrate. ABW and local tools both fit the same three surfaces.[^reynolds-swarm
 
 ## Tool reference — Non-cloud (43 tools)
 
-> The non-cloud partition is 33 local tools, 3 swarm-scoped thread tools, 4 knowledge tools, and 3 A2A tools. The source partitions are exact: `kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:354-3700`, `kask/mcp-servers/hkask-mcp-swarm/src/knowledge_tools.rs:23-229`, and `kask/mcp-servers/hkask-mcp-swarm/src/a2a_tools.rs:30-172`. Together with the 48 cloud tools they reconcile to the pinned 91-tool router.
+> The non-cloud partition is 33 local tools, 3 swarm-scoped thread tools, 4 knowledge tools, and 3 A2A tools. The source partitions are exact: `kask/mcp-servers/hkask-mcp-swarm/src/local_tools.rs:506-3506` (36 `#[tool]` annotations), `kask/mcp-servers/hkask-mcp-swarm/src/knowledge_tools.rs:20-197`, and `kask/mcp-servers/hkask-mcp-swarm/src/a2a_tools.rs:27-143`. Together with the 48 cloud tools they reconcile to the pinned 91-tool router.
 
 | Partition | Canonical tools |
 |---|---|
@@ -331,8 +331,8 @@ sequenceDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-RF-SWARM-001
-verified_date: 2026-09-28
-verified_against: kask/mcp-servers/hkask-mcp-swarm/src/cloud_swarm_tools.rs; kask/mcp-servers/hkask-mcp-swarm/src/spend_gate.rs:130,380,544; kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:1026-1075
+verified_date: 2026-10-11
+verified_against: kask/mcp-servers/hkask-mcp-swarm/src/cloud_swarm_tools.rs; kask/mcp-servers/hkask-mcp-swarm/src/spend_gate.rs:130,380,544; kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:1021-1026,1032; kask/mcp-servers/hkask-mcp-swarm/src/consent.rs:76,221,255
 status: VERIFIED
 -->
 

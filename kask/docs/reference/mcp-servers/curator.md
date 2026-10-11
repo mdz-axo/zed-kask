@@ -12,7 +12,7 @@ mds_categories: [domain, composition, trust, lifecycle]
 
 **Crate:** `kask/mcp-servers/hkask-mcp-curator`
 **Tools:** 15 — `curator_ping`, `curator_semantic_search`, `curator_federated_search`, `curator_memory_recall`, `curator_consult`, `curator_algedonic_log`, `reg_query`, `curator_report_skill_use_issue`, `memory_insert`, `memory_update`, `memory_resolve_contradiction`, `curator_memory_prune`, `curator_memory_dedup`, `curator_memory_backfill_embeddings`, `curator_memory_extract`
-**Auto-start:** Yes by default with the full built-in set; `kask.mcp.load_default=false` disables the fleet and `kask.mcp.overrides.curator=false` disables this server (server id `curator`, `kask/crates/kask_bridge/src/mcp_servers.rs:170`).
+**Auto-start:** Yes by default with the full built-in set; `kask.mcp.load_default=false` disables the fleet and `kask.mcp.overrides.curator=false` disables this server (server id `curator`, `kask/crates/kask_bridge/src/mcp_servers.rs:164`).
 
 The curator server is the **Curator's sovereign memory and regulation-readback
 surface**: the durable h_mem store the whole platform learns through, the
@@ -32,23 +32,26 @@ path resolution finds the same root the agent uses
 
 ## Tool groups
 
-- **Recall and consult** — `curator_semantic_search` (`:579`),
-  `curator_federated_search` (`:690`, sealed corpus sources in one
-  source-aware retrieval), `curator_memory_recall` (`:864`),
-  `curator_consult` (`:999`), `curator_ping` (`:433`). The recall path
+- **Recall and consult** — `curator_semantic_search` (`:594`),
+  `curator_federated_search` (`:705`, sealed corpus sources in one
+  source-aware retrieval), `curator_memory_recall` (`:882`),
+  `curator_consult` (`:1017`), `curator_ping` (`:445`). The recall path
   covers the entity_ref JOIN — an embedding stored under an entity with no
   h_mem is an orphan the KNN path must surface, never silently drop.
-- **Memory writes** — `memory_insert` (`:1418`, evidence-cited: rejects
+  Recall/search results carry each h_mem's `provenance` tier
+  (`tool_observed` | `model_inference`) so a caller can separate
+  machine-observed records from model synthesis (R5).
+- **Memory writes** — `memory_insert` (`:1447`, evidence-cited: rejects
   inserts without a supporting h_mem id; stamps the extraction ceiling
   `provenance: model_inference` — the request schema offers no tier field
   to claim — and refuses a colliding insert: a differing value for an
   existing `(entity, attribute)` key is surfaced by id and routed to
-  resolution, never silently coexisting), `memory_update` (`:1539`,
+  resolution, never silently coexisting), `memory_update` (`:1623`,
   Bayesian log-odds confidence combination — revision by id, unaffected
   by the collision gate), `memory_resolve_contradiction`
-  (`:1616`, forget or update-confidence with a cited reason),
-  `curator_memory_extract` (`:1891`, turn-history candidates — machine
-  ingestion, ungated), `curator_memory_backfill_embeddings` (`:1828`).
+  (`:1700`, forget or update-confidence with a cited reason),
+  `curator_memory_extract` (`:1975`, turn-history candidates — machine
+  ingestion, ungated), `curator_memory_backfill_embeddings` (`:1912`).
 - **Hygiene** — `curator_memory_prune` (`:1710`, age-gated with the
   spare-recalled-within escape), `curator_memory_dedup` (`:1789`,
   normalized-string value dedup).

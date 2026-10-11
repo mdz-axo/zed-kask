@@ -621,6 +621,18 @@ impl LocalSwarmRuntime {
     }
 }
 
+/// Rung 4 (Binding): does the request match any declared `accepts` label?
+///
+/// Returns `None` when the agent declares no `accepts` (absence ≠
+/// contradiction, paper Rule 5.3). `text` is treated as a universal accept
+/// — an agent declaring `accepts: ["text"]` matches any request. For any
+/// other label, the bind check returns `None` (cannot determine): runtime
+/// classification of free-text requests is a heuristic with no correct
+/// setting (widen it and it swallows structured ports, narrow it and it
+/// misses real declarations), so it was deleted. The typing layer at
+/// admission (`validate_typing`) is the gate that enforces `accepts`
+/// labels resolve to registered types; runtime bind matching against
+/// those labels is the typing layer's unfinished transition, not this
 /// function's job.
 pub fn check_bind(card: &crate::local_registry::LocalAgentCard, _task: &str) -> Option<bool> {
     if card.accepts.is_empty() {
@@ -811,7 +823,7 @@ pub struct LocalDelegateResult {
     pub task_success: Option<TaskSuccessVerdict>,
     /// Rung 4 (Binding): whether the request matched at least one declared
     /// `accepts` label. `None` = not checked (no `accepts` declared, or the
-    /// label is not `"text"" — absence ≠ contradiction, paper Rule 5.3).
+    /// label is not `"text"` — absence ≠ contradiction, paper Rule 5.3).
     /// `Some(true)` = the agent declares `accepts: ["text"]`, which is a
     /// universal accept. The runtime classification heuristic that produced
     /// `Some(false)` was deleted (no correct setting — paper Rule 5.2); the
@@ -1153,7 +1165,10 @@ mod dispatch_stamp_tests {
         assert!(DispatchStamp::new("a2a", "a2a-http").is_ok());
         for bad in ["", "  ", &"x".repeat(65), "has space", "häs-umlaut"] {
             assert!(
-                matches!(DispatchStamp::new(bad, "operator"), Err(LocalSwarmError::InvalidInput(_))),
+                matches!(
+                    DispatchStamp::new(bad, "operator"),
+                    Err(LocalSwarmError::InvalidInput(_))
+                ),
                 "component {bad:?} must be refused"
             );
         }
