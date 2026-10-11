@@ -503,18 +503,31 @@ mod smoke_tests {
     use crate::request_types::{A2aCardRequest, CreateLocalAgentRequest, ListLocalSwarmsRequest};
     use hkask_types::WebID;
 
-    /// Build a `SwarmServer` backed by throwaway paths under the test scratch
-    /// dir and the session-local in-memory consent store. The registry dirs
-    /// need not exist — a missing dir yields zero entries (not an error) — and
-    /// the events/memory stores are lazy, so they are never opened by
-    /// the read-only tools exercised here. No ABW key, no network.
-    fn make_server() -> SwarmServer {
+    /// Build a `SwarmServer` backed by throwaway paths under a per-name
+    /// scratch dir in the test scratch root, with the session-local
+    /// in-memory consent store. The registry dirs need not exist — a
+    /// missing dir yields zero entries (not an error) — and the
+    /// events/memory stores are lazy, so they are never opened by the
+    /// read-only tools exercised here. No ABW key, no network. The
+    /// scratch name must be unique per test: tests in one binary run in
+    /// parallel, and the read-only smoke tests assert count 0 against
+    /// the same registry a create test writes into. `config` receives
+    /// the derived agents dir so a test can point the client config's
+    /// `local_agents_dir` at the same scratch registry the server uses
+    /// (production tools read it — e.g. `swarm_remove_local`
+    /// canonicalizes it); pass `|_| SwarmConfig::default()` for the
+    /// default. Returns the server and the agents dir (to read written
+    /// cards).
+    fn make_server_in(
+        scratch_name: &str,
+        config: impl FnOnce(&str) -> SwarmConfig,
+    ) -> (SwarmServer, String) {
         // `CARGO_TARGET_TMPDIR` is a per-test-binary scratch path cargo
         // provides; fall back to the OS temp dir if unset (e.g. under a bare
         // `rustc` invocation).
         let base = std::env::var("CARGO_TARGET_TMPDIR")
             .unwrap_or_else(|_| std::env::temp_dir().to_string_lossy().to_string());
-        let scratch = std::path::Path::new(&base).join("hkask_mcp_swarm_smoke");
+        let scratch = std::path::Path::new(&base).join(scratch_name);
         let agents_dir = scratch.join("agents").to_string_lossy().to_string();
         let swarms_dir = scratch.join("swarms").to_string_lossy().to_string();
         let events_path = scratch.join("events.db").to_string_lossy().to_string();
@@ -522,10 +535,10 @@ mod smoke_tests {
 
         let client = Arc::new(SwarmClient::new(
             reqwest::Client::new(),
-            SwarmConfig::default(),
+            config(&agents_dir),
         ));
         let consent = Arc::new(ConsentStore::default());
-        let local_registry = Arc::new(LocalAgentRegistry::new(agents_dir));
+        let local_registry = Arc::new(LocalAgentRegistry::new(agents_dir.clone()));
         let stats_dir = scratch.join("stats").to_string_lossy().to_string();
         let agent_stats = Arc::new(crate::agent_stats::AgentStatsStore::load(&stats_dir));
         let gate_store = Arc::new(crate::gate_store::GateCounterStore::new(
@@ -545,7 +558,7 @@ mod smoke_tests {
         ));
         let event_store = Arc::new(LazyEventStore::lazy(events_path));
 
-        SwarmServer::new(
+        let server = SwarmServer::new(
             WebID::new(),
             client,
             consent,
@@ -560,7 +573,12 @@ mod smoke_tests {
                 "test-passphrase".into(),
             )),
             gate_store,
-        )
+        );
+        (server, agents_dir)
+    }
+
+    fn make_server() -> SwarmServer {
+        make_server_in("hkask_mcp_swarm_smoke", |_| SwarmConfig::default()).0
     }
 
     /// `swarm_list_local_swarms` reads only the local swarms directory — no
@@ -899,56 +917,11 @@ mod smoke_tests {
     /// resolves at execution time; a stamped value would become stale.
     #[tokio::test]
     async fn create_local_agent_without_model_writes_empty_card_model() {
-        let base = std::env::var("CARGO_TARGET_TMPDIR")
-            .unwrap_or_else(|_| std::env::temp_dir().to_string_lossy().to_string());
-        let scratch = std::path::Path::new(&base).join("hkask_mcp_swarm_create_model");
-        let agents_dir = scratch.join("agents").to_string_lossy().to_string();
-        let config = SwarmConfig {
-            local_agents_dir: agents_dir.clone(),
-            ..SwarmConfig::default()
-        };
-        let client = Arc::new(SwarmClient::new(reqwest::Client::new(), config));
-        let consent = Arc::new(ConsentStore::default());
-        let local_registry = Arc::new(LocalAgentRegistry::new(agents_dir.clone()));
-        let agent_stats = Arc::new(crate::agent_stats::AgentStatsStore::load(
-            &scratch.join("stats").to_string_lossy(),
-        ));
-        let gate_store = Arc::new(crate::gate_store::GateCounterStore::new(
-            scratch.join("gate.db").to_string_lossy().into_owned(),
-            "test-passphrase".into(),
-        ));
-        let local_runtime = Arc::new(LazyLocalSwarmRuntime::lazy(
-            agent_stats.clone(),
-            gate_store.clone(),
-            String::new(),
-        ));
-        let local_swarms = Arc::new(LocalSwarmRegistry::new(
-            scratch.join("swarms").to_string_lossy().to_string(),
-        ));
-        let local_memory = Arc::new(LazyLocalMemory::lazy(
-            scratch.join("memory.db").to_string_lossy().to_string(),
-            "test-passphrase".to_string(),
-            1024,
-        ));
-        let event_store = Arc::new(LazyEventStore::lazy(
-            scratch.join("events.db").to_string_lossy().to_string(),
-        ));
-        let server = SwarmServer::new(
-            WebID::new(),
-            client,
-            consent,
-            local_registry,
-            local_runtime,
-            local_swarms,
-            local_memory,
-            agent_stats,
-            event_store,
-            Arc::new(crate::thread_store::SwarmThreadStore::new(
-                scratch.join("threads.db").to_string_lossy().into_owned(),
-                "test-passphrase".into(),
-            )),
-            gate_store,
-        );
+        let (server, agents_dir) =
+            make_server_in("hkask_mcp_swarm_create_model", |agents_dir| SwarmConfig {
+                local_agents_dir: agents_dir.to_string(),
+                ..SwarmConfig::default()
+            });
 
         server
             .swarm_create_local_agent(Parameters(CreateLocalAgentRequest {
