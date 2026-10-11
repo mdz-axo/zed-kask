@@ -382,6 +382,22 @@ the target is doc-tests with ```ignore blocks — both are deliberate
 documentation/probe patterns, recorded as attributed-deliberate in the
 findings, not stale pins.
 
+**2026-10-11 — batches 14–31 (the small-crate tail, 18 crates): KEEP ALL,
+no findings.** kata-kanban, curator, inference, training, condenser,
+portfolio, mcp-server, forecast, scenarios, experimentation, spreadsheet,
+lisp, keystore, mcp, event-store, services-core, steer-core,
+mcp-spreadsheet — all green (111 / 100 / 57 / 48 / 56 / 65 / 31+7ig / 65 /
+39 / 22 / 21 / 40 / 15 / 25 / 17 / 5 / 8 / 8 passed; 0 failed anywhere),
+all drift ≤ 36 days, no unattributed ignored tests. Ignored attribution:
+mcp-server's 7 doc-tests = documentation example blocks (6 ```ignore +
+1 ```rust,ignore; zero #[ignore] functions). Named keep: kata-kanban's
+tests/rjoule_removal_pin.rs (regression pin). 28 green pin-candidate files
+kept. 0 suspect, 0 needs-intent-reading across 64 test files. No
+modifications → no crate commits. hkask-memory remains deferred (foreign
+edits persist). Remaining scope: hkask-memory + the zed-side mini-batch
+(awaiting the §3.6 operator call). 31 of 33 board tasks done; 241 of 246
+in-scope test files triaged.
+
 ## 10. Composition-time scope manifest (2026-10-11)
 
 Sizing input only, captured mechanically at composition time. Phase 1 re-runs
