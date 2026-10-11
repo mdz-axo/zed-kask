@@ -70,6 +70,27 @@ fn flat(index: usize, answer: &str) -> Value {
         "concepts":["test concept"], "difficulty":2})
 }
 
+/// The first two flat candidate rows — the shared two-row batch.
+fn two_flat_rows() -> [String; 2] {
+    [
+        flat(0, ANSWERS[0]).to_string(),
+        flat(1, ANSWERS[1]).to_string(),
+    ]
+}
+
+/// The paraphrase-answer candidate row: the answer paraphrases its citation
+/// ("about thirty, give or take" vs "The measured count is thirty."), so the
+/// honest bundle records the answer as model_inference — never verified.
+fn paraphrase_answer_row() -> String {
+    json!({"instruction":"Question 0?", "output":PARAPHRASE_ANSWER,
+        "qa_type":"factual", "type":"factual", "source":"brooks.txt",
+        "chunk_ref":"corpus:brooks:0", "prompt_id":"qa-0",
+        "provenance":{"prompt_protocol":"prepared-qa-grounding-candidate-v1","generator_model":"fixture/generator"},
+        "evidence_quotes":[{"chunk_ref":"corpus:brooks:0","source":"brooks.txt","quote":"The measured count is thirty."}],
+        "concepts":["test concept"], "difficulty":2})
+        .to_string()
+}
+
 /// A canonical source chunk classified under the current published-ontology
 /// protocol with reconciling candidate terms — the only source shape the
 /// grounding standard admits.
@@ -116,13 +137,13 @@ fn rows_path(directory: &Path) -> std::path::PathBuf {
     directory.join("grounding").join("grounding-rows.jsonl")
 }
 
-/// Ground through the real public tool — the same producer the pipeline uses.
-async fn ground(server: &CorpusServer, directory: &Path) -> anyhow::Result<Value> {
-    let rows = std::fs::read_to_string(directory.join("generated.jsonl"))?
-        .lines()
-        .map(str::to_string)
-        .collect::<Vec<_>>();
-    let chunks = chunk_rows_from_candidates(&rows)?;
+/// Write the canonical chunks file and ground through the real public tool —
+/// the same producer the pipeline uses. Returns the tool's content envelope.
+async fn ground_chunks(
+    server: &CorpusServer,
+    directory: &Path,
+    chunks: &[Value],
+) -> anyhow::Result<Value> {
     std::fs::write(
         directory.join("chunks.jsonl"),
         chunks
@@ -140,6 +161,17 @@ async fn ground(server: &CorpusServer, directory: &Path) -> anyhow::Result<Value
             }))
             .await?,
     )
+}
+
+/// Ground the already-written candidates: derive the canonical chunks from
+/// the candidate rows, then ground.
+async fn ground(server: &CorpusServer, directory: &Path) -> anyhow::Result<Value> {
+    let rows = std::fs::read_to_string(directory.join("generated.jsonl"))?
+        .lines()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    let chunks = chunk_rows_from_candidates(&rows)?;
+    ground_chunks(server, directory, &chunks).await
 }
 
 fn read_bundle_rows(directory: &Path) -> anyhow::Result<Vec<Value>> {
@@ -220,23 +252,7 @@ async fn write_rows_and_ground_chunks(
     chunks: &[Value],
 ) -> anyhow::Result<()> {
     std::fs::write(directory.join("generated.jsonl"), rows.join("\n"))?;
-    std::fs::write(
-        directory.join("chunks.jsonl"),
-        chunks
-            .iter()
-            .map(Value::to_string)
-            .collect::<Vec<_>>()
-            .join("\n"),
-    )?;
-    content(
-        server
-            .corpus_ground_generated_qa(Parameters(GroundQaRequest {
-                generated_jsonl: directory.join("generated.jsonl").to_string_lossy().into(),
-                source_chunks_jsonl: directory.join("chunks.jsonl").to_string_lossy().into(),
-                output_dir: directory.join("grounding").to_string_lossy().into(),
-            }))
-            .await?,
-    )?;
+    ground_chunks(server, directory, chunks).await?;
     Ok(())
 }
 
@@ -476,10 +492,7 @@ async fn ingest_reports_partial_storage_failure() -> anyhow::Result<()> {
     let directory = fixture()?;
     let server = server();
     let req = request(directory.path(), false);
-    let rows = [
-        flat(0, ANSWERS[0]).to_string(),
-        flat(1, ANSWERS[1]).to_string(),
-    ];
+    let rows = two_flat_rows();
     write_candidates_and_ground(&server, directory.path(), &rows).await?;
     let store = crate::helpers::open_memory_store(&req.db_path, PASSPHRASE)?;
     let database = hkask_storage::Database::open(&req.db_path, PASSPHRASE)?;
@@ -583,13 +596,7 @@ async fn ingest_requires_grounding_manifest_before_any_write() -> anyhow::Result
 async fn self_reported_verification_cannot_open_ingestion_gate() -> anyhow::Result<()> {
     let directory = fixture()?;
     let server = server();
-    let row = json!({"instruction":"Question 0?", "output":PARAPHRASE_ANSWER,
-        "qa_type":"factual", "type":"factual", "source":"brooks.txt",
-        "chunk_ref":"corpus:brooks:0", "prompt_id":"qa-0",
-        "provenance":{"prompt_protocol":"prepared-qa-grounding-candidate-v1","generator_model":"fixture/generator"},
-        "evidence_quotes":[{"chunk_ref":"corpus:brooks:0","source":"brooks.txt","quote":"The measured count is thirty."}],
-        "concepts":["test concept"], "difficulty":2})
-        .to_string();
+    let row = paraphrase_answer_row();
     write_candidates_and_ground(&server, directory.path(), &[row]).await?;
 
     // The honest bundle records the paraphrase as model_inference.
@@ -633,10 +640,7 @@ async fn self_reported_verification_cannot_open_ingestion_gate() -> anyhow::Resu
 async fn grounding_manifest_hash_mismatch_fails_closed() -> anyhow::Result<()> {
     let directory = fixture()?;
     let server = server();
-    let rows = [
-        flat(0, ANSWERS[0]).to_string(),
-        flat(1, ANSWERS[1]).to_string(),
-    ];
+    let rows = two_flat_rows();
     write_candidates_and_ground(&server, directory.path(), &rows).await?;
     // Mutate the rows file after the manifest bound its hash.
     let body = std::fs::read_to_string(rows_path(directory.path()))?;
@@ -657,10 +661,7 @@ async fn grounding_manifest_hash_mismatch_fails_closed() -> anyhow::Result<()> {
 async fn grounding_manifest_requires_bijective_row_coverage() -> anyhow::Result<()> {
     let directory = fixture()?;
     let server = server();
-    let rows = [
-        flat(0, ANSWERS[0]).to_string(),
-        flat(1, ANSWERS[1]).to_string(),
-    ];
+    let rows = two_flat_rows();
     write_candidates_and_ground(&server, directory.path(), &rows).await?;
 
     // A self-consistent bundle that covers only the first candidate.
@@ -728,13 +729,7 @@ async fn model_inference_answer_is_admitted_and_persisted_as_model_mediated() ->
 {
     let directory = fixture()?;
     let server = server();
-    let row = json!({"instruction":"Question 0?", "output":PARAPHRASE_ANSWER,
-        "qa_type":"factual", "type":"factual", "source":"brooks.txt",
-        "chunk_ref":"corpus:brooks:0", "prompt_id":"qa-0",
-        "provenance":{"prompt_protocol":"prepared-qa-grounding-candidate-v1","generator_model":"fixture/generator"},
-        "evidence_quotes":[{"chunk_ref":"corpus:brooks:0","source":"brooks.txt","quote":"The measured count is thirty."}],
-        "concepts":["test concept"], "difficulty":2})
-        .to_string();
+    let row = paraphrase_answer_row();
     write_candidates_and_ground(&server, directory.path(), &[row]).await?;
     // The honest bundle records the paraphrase as model_inference and the
     // citation as byte-verified.
@@ -807,10 +802,7 @@ async fn grounding_gate_runs_before_output_and_db_open() -> anyhow::Result<()> {
 async fn later_ungrounded_citation_blocks_every_batch_write() -> anyhow::Result<()> {
     let directory = fixture()?;
     let server = server();
-    let rows = [
-        flat(0, ANSWERS[0]).to_string(),
-        flat(1, ANSWERS[1]).to_string(),
-    ];
+    let rows = two_flat_rows();
     let chunks = [
         tagged_chunk_json("corpus:brooks:0", "brooks.txt", ANSWERS[0]),
         tagged_chunk_json("corpus:brooks:1", "brooks.txt", "An unrelated sentence."),
@@ -836,13 +828,7 @@ async fn later_ungrounded_citation_blocks_every_batch_write() -> anyhow::Result<
 async fn citation_not_byte_exact_fails_closed_despite_paraphrase_answer() -> anyhow::Result<()> {
     let directory = fixture()?;
     let server = server();
-    let row = json!({"instruction":"Question 0?", "output":PARAPHRASE_ANSWER,
-        "qa_type":"factual", "type":"factual", "source":"brooks.txt",
-        "chunk_ref":"corpus:brooks:0", "prompt_id":"qa-0",
-        "provenance":{"prompt_protocol":"prepared-qa-grounding-candidate-v1","generator_model":"fixture/generator"},
-        "evidence_quotes":[{"chunk_ref":"corpus:brooks:0","source":"brooks.txt","quote":"The measured count is thirty."}],
-        "concepts":["test concept"], "difficulty":2})
-        .to_string();
+    let row = paraphrase_answer_row();
     let chunks = [tagged_chunk_json(
         "corpus:brooks:0",
         "brooks.txt",
