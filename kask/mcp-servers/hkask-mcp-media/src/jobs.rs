@@ -120,37 +120,43 @@ impl JobController {
         }
     }
 
-    /// Return cloned records without exposing the controller's mutable representation.
-    pub fn list(&self) -> Result<Vec<JobRecord>, JobStoreError> {
+    /// Lock the records map, mapping lock poisoning to the named part.
+    fn lock_records(
+        &self,
+    ) -> Result<std::sync::MutexGuard<'_, HashMap<String, JobRecord>>, JobStoreError> {
         self.records
             .lock()
-            .map(|records| records.values().cloned().collect())
             .map_err(|error| JobStoreError::LockPoisoned {
                 part: "records",
                 detail: error.to_string(),
             })
+    }
+
+    /// Lock the active-jobs map, mapping lock poisoning to the named part.
+    fn lock_active(
+        &self,
+    ) -> Result<std::sync::MutexGuard<'_, HashMap<String, ActiveJob>>, JobStoreError> {
+        self.active
+            .lock()
+            .map_err(|error| JobStoreError::LockPoisoned {
+                part: "active",
+                detail: error.to_string(),
+            })
+    }
+
+    /// Return cloned records without exposing the controller's mutable representation.
+    pub fn list(&self) -> Result<Vec<JobRecord>, JobStoreError> {
+        Ok(self.lock_records()?.values().cloned().collect())
     }
 
     /// Return one cloned record without holding the controller lock across callers.
     pub fn get(&self, job_id: &str) -> Result<Option<JobRecord>, JobStoreError> {
-        self.records
-            .lock()
-            .map(|records| records.get(job_id).cloned())
-            .map_err(|error| JobStoreError::LockPoisoned {
-                part: "records",
-                detail: error.to_string(),
-            })
+        Ok(self.lock_records()?.get(job_id).cloned())
     }
 
     #[cfg(test)]
     pub(crate) fn insert_record_for_test(&self, record: JobRecord) -> Result<(), JobStoreError> {
-        let mut records = self
-            .records
-            .lock()
-            .map_err(|error| JobStoreError::LockPoisoned {
-                part: "records",
-                detail: error.to_string(),
-            })?;
+        let mut records = self.lock_records()?;
         if records.contains_key(&record.id) {
             return Err(JobStoreError::Duplicate(record.id));
         }
@@ -169,20 +175,8 @@ impl JobController {
         let job_id = record.id.clone();
         let token = CancellationToken::new();
         let (completion, completion_rx) = watch::channel(false);
-        let mut active = self
-            .active
-            .lock()
-            .map_err(|error| JobStoreError::LockPoisoned {
-                part: "active",
-                detail: error.to_string(),
-            })?;
-        let mut records = self
-            .records
-            .lock()
-            .map_err(|error| JobStoreError::LockPoisoned {
-                part: "records",
-                detail: error.to_string(),
-            })?;
+        let mut active = self.lock_active()?;
+        let mut records = self.lock_records()?;
         if records.contains_key(&job_id) {
             return Err(JobStoreError::Duplicate(job_id));
         }
@@ -208,13 +202,7 @@ impl JobController {
     }
 
     pub fn mark_running(&self, job_id: &str) -> Result<bool, JobStoreError> {
-        let mut records = self
-            .records
-            .lock()
-            .map_err(|error| JobStoreError::LockPoisoned {
-                part: "records",
-                detail: error.to_string(),
-            })?;
+        let mut records = self.lock_records()?;
         let job = records
             .get_mut(job_id)
             .ok_or_else(|| JobStoreError::NotFound(job_id.to_string()))?;
@@ -228,20 +216,8 @@ impl JobController {
     /// Request cancellation and wait until task teardown has released its active slot.
     pub async fn cancel(&self, job_id: &str) -> Result<(), JobStoreError> {
         let mut completion = {
-            let active = self
-                .active
-                .lock()
-                .map_err(|error| JobStoreError::LockPoisoned {
-                    part: "active",
-                    detail: error.to_string(),
-                })?;
-            let mut records = self
-                .records
-                .lock()
-                .map_err(|error| JobStoreError::LockPoisoned {
-                    part: "records",
-                    detail: error.to_string(),
-                })?;
+            let active = self.lock_active()?;
+            let mut records = self.lock_records()?;
             let job = records
                 .get_mut(job_id)
                 .ok_or_else(|| JobStoreError::NotFound(job_id.to_string()))?;
@@ -302,13 +278,7 @@ impl JobController {
     /// completion release their slot.
     #[doc(hidden)]
     pub fn active_count(&self) -> Result<usize, JobStoreError> {
-        self.active
-            .lock()
-            .map(|active| active.len())
-            .map_err(|error| JobStoreError::LockPoisoned {
-                part: "active",
-                detail: error.to_string(),
-            })
+        Ok(self.lock_active()?.len())
     }
 
     fn finish_published(
@@ -317,20 +287,8 @@ impl JobController {
         result: serde_json::Value,
         publication: &mut crate::assets::StagedJobPublication,
     ) -> Result<bool, JobStoreError> {
-        let mut active = self
-            .active
-            .lock()
-            .map_err(|error| JobStoreError::LockPoisoned {
-                part: "active",
-                detail: error.to_string(),
-            })?;
-        let mut records = self
-            .records
-            .lock()
-            .map_err(|error| JobStoreError::LockPoisoned {
-                part: "records",
-                detail: error.to_string(),
-            })?;
+        let mut active = self.lock_active()?;
+        let mut records = self.lock_records()?;
         let job = records
             .get_mut(job_id)
             .ok_or_else(|| JobStoreError::NotFound(job_id.to_string()))?;
@@ -356,20 +314,8 @@ impl JobController {
     }
 
     fn finish_job(&self, job_id: &str, outcome: JobOutcome) -> Result<(), JobStoreError> {
-        let mut active = self
-            .active
-            .lock()
-            .map_err(|error| JobStoreError::LockPoisoned {
-                part: "active",
-                detail: error.to_string(),
-            })?;
-        let mut records = self
-            .records
-            .lock()
-            .map_err(|error| JobStoreError::LockPoisoned {
-                part: "records",
-                detail: error.to_string(),
-            })?;
+        let mut active = self.lock_active()?;
+        let mut records = self.lock_records()?;
         let job = records
             .get_mut(job_id)
             .ok_or_else(|| JobStoreError::NotFound(job_id.to_string()))?;
@@ -552,6 +498,26 @@ mod tests {
         }
     }
 
+    /// Assert the shared dropped/aborted-task contract: the record is
+    /// terminal-failed with the panic/abort cause, the active slot is
+    /// released, and capacity is immediately reusable.
+    fn assert_job_failed_and_slot_released(
+        store: &JobStore,
+        missing: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let job = store.get("job-001")?.ok_or_else(|| missing.to_string())?;
+        assert_eq!(job.status, "failed");
+        assert!(
+            job.error
+                .as_deref()
+                .is_some_and(|error| error.contains("panic or abort"))
+        );
+        assert_eq!(store.active_count()?, 0);
+        let replacement = store.admit(record(2))?;
+        assert_eq!(replacement.job_id, "job-002");
+        Ok(())
+    }
+
     /// expect: A fifth media job is visibly rejected while four admitted jobs remain active.
     #[test]
     fn admission_is_bounded_at_four_active_jobs() -> Result<(), Box<dyn std::error::Error>> {
@@ -679,19 +645,7 @@ mod tests {
         });
         assert!(handle.await.is_err());
 
-        let job = store
-            .get("job-001")?
-            .ok_or_else(|| "panicked job record missing".to_string())?;
-        assert_eq!(job.status, "failed");
-        assert!(
-            job.error
-                .as_deref()
-                .is_some_and(|error| error.contains("panic or abort"))
-        );
-        assert_eq!(store.active_count()?, 0);
-        let replacement = store.admit(record(2))?;
-        assert_eq!(replacement.job_id, "job-002");
-        Ok(())
+        assert_job_failed_and_slot_released(&store, "panicked job record missing")
     }
 
     /// expect: Aborting the actual spawned task records failure and immediately frees capacity.
@@ -716,18 +670,6 @@ mod tests {
             .expect_err("aborted media task must report a cancelled join");
         assert!(join_error.is_cancelled());
 
-        let job = store
-            .get("job-001")?
-            .ok_or_else(|| "aborted job record missing".to_string())?;
-        assert_eq!(job.status, "failed");
-        assert!(
-            job.error
-                .as_deref()
-                .is_some_and(|error| error.contains("panic or abort"))
-        );
-        assert_eq!(store.active_count()?, 0);
-        let replacement = store.admit(record(2))?;
-        assert_eq!(replacement.job_id, "job-002");
-        Ok(())
+        assert_job_failed_and_slot_released(&store, "aborted job record missing")
     }
 }
