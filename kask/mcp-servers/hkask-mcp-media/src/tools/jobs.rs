@@ -89,6 +89,20 @@ fn map_job_store_error(error: crate::jobs::JobStoreError) -> McpToolError {
     }
 }
 
+/// Finish a job lease as cancelled, warning (named by job id) when the
+/// record could not be updated — the shared exit of the spawned task's
+/// cancellation paths.
+fn finish_cancelled(lease: crate::jobs::JobLease, job_id: &str) {
+    if let Err(error) = lease.finish(crate::jobs::JobOutcome::Cancelled) {
+        tracing::warn!(
+            target: "hkask.mcp.media.jobs",
+            job_id = %job_id,
+            %error,
+            "Failed to record cancelled media job"
+        );
+    }
+}
+
 #[tool_router(router = jobs_router, vis = "pub")]
 impl MediaServer {
     /// Submit an async media generation job. Returns a job ID immediately;
@@ -170,14 +184,7 @@ impl MediaServer {
                     }
                 };
                 if !running {
-                    if let Err(error) = lease.finish(crate::jobs::JobOutcome::Cancelled) {
-                        tracing::warn!(
-                            target: "hkask.mcp.media.jobs",
-                            job_id = %job_id_for_task,
-                            error = %error,
-                            "Failed to record cancelled media job"
-                        );
-                    }
+                    finish_cancelled(lease, &job_id_for_task);
                     return;
                 }
 
@@ -188,9 +195,7 @@ impl MediaServer {
                 };
                 let value = match generated {
                     None => {
-                        if let Err(error) = lease.finish(crate::jobs::JobOutcome::Cancelled) {
-                            tracing::warn!(target: "hkask.mcp.media.jobs", job_id = %job_id_for_task, %error, "Failed to record cancelled media job");
-                        }
+                        finish_cancelled(lease, &job_id_for_task);
                         return;
                     }
                     Some(Err(error)) => {
@@ -211,9 +216,7 @@ impl MediaServer {
                 };
                 let mut publication = match staged {
                     None => {
-                        if let Err(error) = lease.finish(crate::jobs::JobOutcome::Cancelled) {
-                            tracing::warn!(target: "hkask.mcp.media.jobs", job_id = %job_id_for_task, %error, "Failed to record cancelled media job");
-                        }
+                        finish_cancelled(lease, &job_id_for_task);
                         return;
                     }
                     Some(Err(error)) => {
@@ -530,6 +533,73 @@ mod tests {
         ))
     }
 
+    /// Test-only scope: pin `HKASK_ARTIFACTS_DIR` to a fresh temp dir for
+    /// the test's duration under the process-global artifacts lock, so
+    /// parallel tests cannot race the env var; the prior value (or its
+    /// absence) is restored on drop.
+    struct ArtifactsEnvScope {
+        _env_lock: tokio::sync::MutexGuard<'static, ()>,
+        temp: tempfile::TempDir,
+        prior: Option<std::ffi::OsString>,
+    }
+
+    impl ArtifactsEnvScope {
+        async fn acquire() -> Result<Self, Box<dyn std::error::Error>> {
+            let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
+            let temp = tempfile::TempDir::new()?;
+            let prior = std::env::var_os("HKASK_ARTIFACTS_DIR");
+            unsafe { std::env::set_var("HKASK_ARTIFACTS_DIR", temp.path()) };
+            Ok(Self {
+                _env_lock,
+                temp,
+                prior,
+            })
+        }
+    }
+
+    impl Drop for ArtifactsEnvScope {
+        fn drop(&mut self) {
+            match self.prior.take() {
+                Some(value) => unsafe { std::env::set_var("HKASK_ARTIFACTS_DIR", value) },
+                None => unsafe { std::env::remove_var("HKASK_ARTIFACTS_DIR") },
+            }
+        }
+    }
+
+    /// Server backed by the `ImmediateMedia` stub with an active read-only
+    /// gallery rooted at `root` — the shared fixture of the publication
+    /// lifecycle tests. Returns the server, its job store, and the gallery id.
+    fn server_with_active_gallery(
+        root: &std::path::Path,
+    ) -> Result<(MediaServer, crate::jobs::JobStore, String), Box<dyn std::error::Error>> {
+        let store = crate::jobs::new_job_store();
+        let server = server_with_port(Arc::new(ImmediateMedia), store.clone())?;
+        let gallery = server.gallery_store.open(
+            &root.to_string_lossy(),
+            hkask_storage::GalleryMode::ReadOnly,
+        )?;
+        let mut state = GalleryState::new(root.to_path_buf(), hkask_storage::GalleryMode::ReadOnly);
+        state.gallery_id = Some(gallery.id.clone());
+        *server
+            .gallery_state
+            .lock()
+            .map_err(|error| error.to_string())? = Some(state);
+        Ok((server, store, gallery.id))
+    }
+
+    /// A `NoInference` server and its unfiltered `job_list` response — the
+    /// shared opening of the queue-contract tests.
+    async fn no_inference_job_list() -> Result<(MediaServer, String), Box<dyn std::error::Error>> {
+        let server = server_with_port(Arc::new(NoInference), crate::jobs::new_job_store())?;
+        let response = server
+            .job_list(Parameters(JobListRequest {
+                status: None,
+                limit: None,
+            }))
+            .await?;
+        Ok((server, response))
+    }
+
     async fn submit(server: &MediaServer) -> Result<String, McpToolError> {
         let params = serde_json::to_string(&hkask_types::MediaGenerateParams {
             prompt: Some("blocked test image".to_string()),
@@ -608,10 +678,8 @@ mod tests {
     #[tokio::test]
     async fn cancellation_acknowledges_only_after_teardown_and_slot_release()
     -> Result<(), Box<dyn std::error::Error>> {
-        let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
-        let temp = tempfile::TempDir::new()?;
-        let prior = std::env::var_os("HKASK_ARTIFACTS_DIR");
-        unsafe { std::env::set_var("HKASK_ARTIFACTS_DIR", temp.path()) };
+        let scope = ArtifactsEnvScope::acquire().await?;
+        let temp = scope.temp.path();
 
         let barrier = Arc::new(tokio::sync::Barrier::new(
             MAX_CONCURRENT_HEAVY_OPERATIONS + 1,
@@ -650,12 +718,7 @@ mod tests {
             .ok_or_else(|| "cancelled job record missing".to_string())?;
         assert_eq!(job.status, "cancelled");
         assert!(job.result.is_none());
-        assert_eq!(std::fs::read_dir(temp.path())?.count(), 0);
-
-        match prior {
-            Some(value) => unsafe { std::env::set_var("HKASK_ARTIFACTS_DIR", value) },
-            None => unsafe { std::env::remove_var("HKASK_ARTIFACTS_DIR") },
-        }
+        assert_eq!(std::fs::read_dir(temp)?.count(), 0);
         Ok(())
     }
 
@@ -664,29 +727,13 @@ mod tests {
     #[tokio::test]
     async fn cancellation_after_staging_rolls_back_file_and_gallery_publication()
     -> Result<(), Box<dyn std::error::Error>> {
-        let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
-        let temp = tempfile::TempDir::new()?;
-        let prior = std::env::var_os("HKASK_ARTIFACTS_DIR");
-        unsafe { std::env::set_var("HKASK_ARTIFACTS_DIR", temp.path()) };
-
+        let scope = ArtifactsEnvScope::acquire().await?;
         let entered = Arc::new(tokio::sync::Semaphore::new(0));
         let release = Arc::new(tokio::sync::Semaphore::new(0));
-        let store = crate::jobs::new_job_store();
-        store.set_publication_gate_for_test(entered.clone(), release)?;
-        let server = server_with_port(Arc::new(ImmediateMedia), store.clone())?;
-        let gallery = server.gallery_store.open(
-            &temp.path().to_string_lossy(),
-            hkask_storage::GalleryMode::ReadOnly,
-        )?;
-        let mut state = GalleryState::new(
-            temp.path().to_path_buf(),
-            hkask_storage::GalleryMode::ReadOnly,
-        );
-        state.gallery_id = Some(gallery.id.clone());
-        *server
-            .gallery_state
-            .lock()
-            .map_err(|error| error.to_string())? = Some(state);
+        let (server, store, gallery_id) = server_with_active_gallery(scope.temp.path())?;
+        server
+            .job_store
+            .set_publication_gate_for_test(entered.clone(), release)?;
         let job_id = submit(&server).await?;
         let entered_permit =
             tokio::time::timeout(std::time::Duration::from_secs(2), entered.acquire_owned())
@@ -702,7 +749,7 @@ mod tests {
                 .and_then(|name| name.to_str())
                 .is_some_and(|name| name.ends_with(".staged"))
         );
-        assert_eq!(server.gallery_store.count_assets(&gallery.id)?, 0);
+        assert_eq!(server.gallery_store.count_assets(&gallery_id)?, 0);
 
         server
             .job_cancel(Parameters(JobCancelRequest {
@@ -720,12 +767,7 @@ mod tests {
             std::fs::read_dir(crate::assets::generated_assets_dir())?.count(),
             0
         );
-        assert_eq!(server.gallery_store.count_assets(&gallery.id)?, 0);
-
-        match prior {
-            Some(value) => unsafe { std::env::set_var("HKASK_ARTIFACTS_DIR", value) },
-            None => unsafe { std::env::remove_var("HKASK_ARTIFACTS_DIR") },
-        }
+        assert_eq!(server.gallery_store.count_assets(&gallery_id)?, 0);
         Ok(())
     }
 
@@ -733,27 +775,8 @@ mod tests {
     #[tokio::test]
     async fn completed_job_publishes_lineage_and_omc_graph()
     -> Result<(), Box<dyn std::error::Error>> {
-        let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
-        let temp = tempfile::TempDir::new()?;
-        let prior = std::env::var_os("HKASK_ARTIFACTS_DIR");
-        unsafe { std::env::set_var("HKASK_ARTIFACTS_DIR", temp.path()) };
-
-        let store = crate::jobs::new_job_store();
-        let server = server_with_port(Arc::new(ImmediateMedia), store.clone())?;
-        let gallery = server.gallery_store.open(
-            &temp.path().to_string_lossy(),
-            hkask_storage::GalleryMode::ReadOnly,
-        )?;
-        let mut state = GalleryState::new(
-            temp.path().to_path_buf(),
-            hkask_storage::GalleryMode::ReadOnly,
-        );
-        state.gallery_id = Some(gallery.id.clone());
-        *server
-            .gallery_state
-            .lock()
-            .map_err(|error| error.to_string())? = Some(state);
-
+        let scope = ArtifactsEnvScope::acquire().await?;
+        let (server, store, _gallery_id) = server_with_active_gallery(scope.temp.path())?;
         let job_id = submit(&server).await?;
         wait_until(|| {
             store
@@ -786,11 +809,6 @@ mod tests {
         let graph: crate::omc::CreationGraph = serde_json::from_str(&graph.graph_json)?;
         assert_eq!(graph.asset_id, asset_id);
         assert_eq!(graph.task_id, task_id);
-
-        match prior {
-            Some(value) => unsafe { std::env::set_var("HKASK_ARTIFACTS_DIR", value) },
-            None => unsafe { std::env::remove_var("HKASK_ARTIFACTS_DIR") },
-        }
         Ok(())
     }
 
@@ -852,25 +870,7 @@ mod tests {
     #[tokio::test]
     async fn job_list_response_round_trips_through_client_decoder()
     -> Result<(), Box<dyn std::error::Error>> {
-        let driver = hkask_storage::database::sqlite::SqliteDriver::in_memory_driver();
-        let server = MediaServer::new(
-            hkask_types::WebID::new(),
-            Arc::new(NoInference),
-            Arc::new(Mutex::new(None)),
-            Arc::new(GalleryStore::from_driver(driver)?),
-            crate::templates::create_env()?,
-            FfmpegRunner::detect(),
-            YtDlpRunner::detect(),
-            crate::jobs::new_job_store(),
-            None,
-            None,
-        );
-        let response = server
-            .job_list(Parameters(JobListRequest {
-                status: None,
-                limit: None,
-            }))
-            .await?;
+        let (server, response) = no_inference_job_list().await?;
         let empty = parse_job_list_response(&response)?;
         assert!(empty.jobs.is_empty());
         assert_eq!(empty.total, 0);
@@ -984,13 +984,7 @@ mod tests {
     #[tokio::test]
     async fn all_job_history_surfaces_disclose_ephemeral_restart_scope()
     -> Result<(), Box<dyn std::error::Error>> {
-        let server = server_with_port(Arc::new(NoInference), crate::jobs::new_job_store())?;
-        let response = server
-            .job_list(Parameters(JobListRequest {
-                status: None,
-                limit: None,
-            }))
-            .await?;
+        let (server, response) = no_inference_job_list().await?;
         let value: serde_json::Value = serde_json::from_str(&response)?;
         let payload = hkask_types::tool_response::unwrap_tool_envelope(value);
         assert_eq!(payload["history_scope"], "ephemeral_process_local");
