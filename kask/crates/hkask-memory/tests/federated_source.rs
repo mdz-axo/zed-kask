@@ -1,8 +1,8 @@
 use hkask_memory::test_support::{reseal_fixture_identity, sha256_file};
 use hkask_memory::{
-    BundleAsset, BundleManifest, FederatedHit, FederatedRecallError, FederatedSourceKind,
-    FederatedSourcesManifest, MaterializationReceipt, MaterializedProvenance, RankedSourceBatch,
-    ReadOnlyPassageSource, interleave_ranked_batches,
+    BundleAsset, BundleManifest, ExternalPassageBatch, FederatedHit, FederatedRecallError,
+    FederatedSourceKind, FederatedSourcesManifest, MaterializationReceipt, MaterializedProvenance,
+    RankedSourceBatch, ReadOnlyPassageSource, interleave_ranked_batches,
 };
 
 const PASSPHRASE: &str = "test-passphrase";
@@ -29,6 +29,84 @@ fn fixture_vector() -> Vec<f32> {
     vector
 }
 
+/// Load the sealed fixture's run identity as JSON.
+fn load_run_identity(directory: &std::path::Path) -> anyhow::Result<serde_json::Value> {
+    Ok(serde_json::from_slice(&std::fs::read(
+        directory.join("run-identity.json"),
+    )?)?)
+}
+
+/// Persist the (possibly re-sealed) run identity back into the fixture.
+fn write_run_identity(
+    directory: &std::path::Path,
+    identity: &serde_json::Value,
+) -> anyhow::Result<()> {
+    std::fs::write(
+        directory.join("run-identity.json"),
+        serde_json::to_vec_pretty(identity)?,
+    )?;
+    Ok(())
+}
+
+/// Open the fixture's first sealed source under the test passphrase.
+fn open_source(manifest_path: &std::path::Path) -> anyhow::Result<ReadOnlyPassageSource> {
+    let manifest = FederatedSourcesManifest::load(manifest_path)?;
+    Ok(ReadOnlyPassageSource::open(
+        &manifest.sources[0],
+        PASSPHRASE,
+    )?)
+}
+
+/// The rejection shape: opening the fixture's first sealed source must
+/// fail. `accepted` names what would have been wrong with the accepted
+/// case; the surfaced error is the caller's to assert on.
+fn open_source_error(
+    manifest_path: &std::path::Path,
+    accepted: &str,
+) -> anyhow::Result<FederatedRecallError> {
+    let manifest = FederatedSourcesManifest::load(manifest_path)?;
+    match ReadOnlyPassageSource::open(&manifest.sources[0], PASSPHRASE) {
+        Ok(_) => anyhow::bail!("{accepted}"),
+        Err(error) => Ok(error),
+    }
+}
+
+/// Run one SQL batch against the fixture's sealed database (opened under
+/// the test passphrase). Callers checkpoint inside the batch when the file
+/// digest must stabilize.
+fn mutate_fixture_database(directory: &std::path::Path, sql: &str) -> anyhow::Result<()> {
+    let database_path = directory.join("reference.db");
+    let database_str = database_path
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("non-UTF-8 database path"))?;
+    let database = hkask_storage::open_or_repair(database_str, PASSPHRASE)?;
+    let pool = database.sqlite_pool()?;
+    let connection = pool.get()?;
+    connection.execute_batch(sql)?;
+    Ok(())
+}
+
+/// Rewrite the fixture's sealed index digest: set `indexes.reference` to
+/// `digest` (the real re-hash when the database mutated; a corrupt pin
+/// otherwise), re-seal the identity, and persist it.
+fn reseal_index_digest(directory: &std::path::Path, digest: &str) -> anyhow::Result<()> {
+    let mut identity = load_run_identity(directory)?;
+    identity["indexes"]["reference"] = serde_json::json!(digest);
+    reseal_fixture_identity(&mut identity)?;
+    write_run_identity(directory, &identity)
+}
+
+/// The admission tail shared by every admitting test: one passage indexed,
+/// and the fixture passage is the one semantic search returns. The batch is
+/// returned for the caller's test-specific asserts.
+fn search_fixture(source: &ReadOnlyPassageSource) -> anyhow::Result<ExternalPassageBatch> {
+    assert_eq!(source.identity().passage_count, 1);
+    let batch = source.search(REQUESTED_MODEL, "fixture passage", &fixture_vector(), 3)?;
+    assert_eq!(batch.hits.len(), 1);
+    assert_eq!(batch.hits[0].text, "grounded fixture passage");
+    Ok(batch)
+}
+
 /// expect: "A configured external source is identity-bound and returns only passage text." [P8]
 #[test]
 fn bound_source_returns_provenance_without_method_signals() -> anyhow::Result<()> {
@@ -36,8 +114,7 @@ fn bound_source_returns_provenance_without_method_signals() -> anyhow::Result<()
     let manifest_path = fixture(directory.path())?;
     let before = std::fs::read(directory.path().join("reference.db"))?;
 
-    let manifest = FederatedSourcesManifest::load(&manifest_path)?;
-    let source = ReadOnlyPassageSource::open(&manifest.sources[0], PASSPHRASE)?;
+    let source = open_source(&manifest_path)?;
     assert_eq!(source.identity().source_id, SOURCE_ID);
     let run_identity: serde_json::Value =
         serde_json::from_slice(&std::fs::read(directory.path().join("run-identity.json"))?)?;
@@ -50,11 +127,7 @@ fn bound_source_returns_provenance_without_method_signals() -> anyhow::Result<()
     assert_eq!(source.identity().entity_ref_prefix, ENTITY_PREFIX);
     assert_eq!(source.identity().actual_embedding_model, ACTUAL_MODEL);
     assert_eq!(source.identity().dimensions, hkask_storage::embedding_dim());
-    assert_eq!(source.identity().passage_count, 1);
-
-    let batch = source.search(REQUESTED_MODEL, "fixture passage", &fixture_vector(), 3)?;
-    assert_eq!(batch.hits.len(), 1);
-    assert_eq!(batch.hits[0].text, "grounded fixture passage");
+    let batch = search_fixture(&source)?;
     assert_eq!(batch.hits[0].source_id, SOURCE_ID);
     assert_eq!(batch.hits[0].run_id, source.identity().run_id);
     assert_eq!(batch.missing_text, 0);
@@ -95,17 +168,12 @@ fn bound_source_admits_trailing_colon_manifest_prefix() -> anyhow::Result<()> {
         "fine",
     )?;
 
-    let manifest = FederatedSourcesManifest::load(&manifest_path)?;
-    let source = ReadOnlyPassageSource::open(&manifest.sources[0], PASSPHRASE)?;
+    let source = open_source(&manifest_path)?;
     assert_eq!(
         source.identity().entity_ref_prefix,
         "corpus:researcher::fine:"
     );
-    assert_eq!(source.identity().passage_count, 1);
-
-    let batch = source.search(REQUESTED_MODEL, "fixture passage", &fixture_vector(), 3)?;
-    assert_eq!(batch.hits.len(), 1);
-    assert_eq!(batch.hits[0].text, "grounded fixture passage");
+    let batch = search_fixture(&source)?;
     assert_eq!(
         batch.hits[0].entity_ref,
         "corpus:researcher::fine:utf8-666978747572652e747874:0"
@@ -118,20 +186,14 @@ fn bound_source_admits_trailing_colon_manifest_prefix() -> anyhow::Result<()> {
 fn bound_source_rejects_partial_schema_three_identity() -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
     let manifest_path = fixture(directory.path())?;
-    let run_identity_path = directory.path().join("run-identity.json");
-    let mut identity: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(&run_identity_path)?)?;
+    let mut identity = load_run_identity(directory.path())?;
     identity
         .as_object_mut()
         .ok_or_else(|| anyhow::anyhow!("run identity must be an object"))?
         .remove("preseal_run_id");
     reseal_fixture_identity(&mut identity)?;
-    std::fs::write(&run_identity_path, serde_json::to_vec_pretty(&identity)?)?;
-    let manifest = FederatedSourcesManifest::load(&manifest_path)?;
-    let error = match ReadOnlyPassageSource::open(&manifest.sources[0], PASSPHRASE) {
-        Ok(_) => anyhow::bail!("partial producer identity was accepted"),
-        Err(error) => error,
-    };
+    write_run_identity(directory.path(), &identity)?;
+    let error = open_source_error(&manifest_path, "partial producer identity was accepted")?;
     assert!(error.to_string().contains("run identity"));
     Ok(())
 }
@@ -147,11 +209,7 @@ fn bound_source_rejects_tampered_filter_attestation() -> anyhow::Result<()> {
     representations["boilerplate_exclusion_reports"]["fixture.txt"]["retained_words"] =
         serde_json::json!(2);
     std::fs::write(&representations_path, serde_json::to_vec(&representations)?)?;
-    let manifest = FederatedSourcesManifest::load(&manifest_path)?;
-    let error = match ReadOnlyPassageSource::open(&manifest.sources[0], PASSPHRASE) {
-        Ok(_) => anyhow::bail!("tampered manifest unexpectedly opened"),
-        Err(error) => error,
-    };
+    let error = open_source_error(&manifest_path, "tampered manifest unexpectedly opened")?;
     assert!(error.to_string().contains("digest mismatch"));
     Ok(())
 }
@@ -170,11 +228,10 @@ fn bound_source_rejects_pre_filter_representation_manifest() -> anyhow::Result<(
         }))?,
     )?;
 
-    let manifest = FederatedSourcesManifest::load(&manifest_path)?;
-    let error = match ReadOnlyPassageSource::open(&manifest.sources[0], PASSPHRASE) {
-        Ok(_) => anyhow::bail!("pre-filter representation manifest unexpectedly opened"),
-        Err(error) => error,
-    };
+    let error = open_source_error(
+        &manifest_path,
+        "pre-filter representation manifest unexpectedly opened",
+    )?;
     assert!(error.to_string().contains("digest mismatch"));
     Ok(())
 }
@@ -185,35 +242,17 @@ fn bound_source_rejects_pre_filter_representation_manifest() -> anyhow::Result<(
 fn bound_source_rejects_non_current_schema_without_a_shim() -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
     let manifest_path = fixture(directory.path())?;
-    let database_path = directory.path().join("reference.db");
-    let database_str = database_path
-        .to_str()
-        .ok_or_else(|| anyhow::anyhow!("non-UTF-8 database path"))?;
-    {
-        let database = hkask_storage::open_or_repair(database_str, PASSPHRASE)?;
-        let pool = database.sqlite_pool()?;
-        let connection = pool.get()?;
-        connection.execute_batch(
-            "ALTER TABLE embeddings RENAME COLUMN passage_text TO passage_text_legacy;
-             PRAGMA wal_checkpoint(TRUNCATE);",
-        )?;
-    }
-    let digest = sha256_file(&database_path)?;
-    let run_identity_path = directory.path().join("run-identity.json");
-    let mut run_identity: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(&run_identity_path)?)?;
-    run_identity["indexes"]["reference"] = serde_json::json!(digest);
-    reseal_fixture_identity(&mut run_identity)?;
-    std::fs::write(
-        &run_identity_path,
-        serde_json::to_vec_pretty(&run_identity)?,
+    mutate_fixture_database(
+        directory.path(),
+        "ALTER TABLE embeddings RENAME COLUMN passage_text TO passage_text_legacy;
+         PRAGMA wal_checkpoint(TRUNCATE);",
+    )?;
+    reseal_index_digest(
+        directory.path(),
+        &sha256_file(&directory.path().join("reference.db"))?,
     )?;
 
-    let manifest = FederatedSourcesManifest::load(&manifest_path)?;
-    let error = match ReadOnlyPassageSource::open(&manifest.sources[0], PASSPHRASE) {
-        Ok(_) => anyhow::bail!("non-current schema unexpectedly opened"),
-        Err(error) => error,
-    };
+    let error = open_source_error(&manifest_path, "non-current schema unexpectedly opened")?;
     assert!(error.to_string().contains("non-current database schema"));
     assert!(error.to_string().contains("passage_text"));
     Ok(())
@@ -229,37 +268,19 @@ fn bound_source_rejects_non_current_schema_without_a_shim() -> anyhow::Result<()
 fn bound_source_admits_legacy_hmems_schema() -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
     let manifest_path = fixture(directory.path())?;
-    let database_path = directory.path().join("reference.db");
-    let database_str = database_path
-        .to_str()
-        .ok_or_else(|| anyhow::anyhow!("non-UTF-8 database path"))?;
-    {
-        let database = hkask_storage::open_or_repair(database_str, PASSPHRASE)?;
-        let pool = database.sqlite_pool()?;
-        let connection = pool.get()?;
-        connection.execute_batch(
-            "ALTER TABLE hmems DROP COLUMN provenance;
-             ALTER TABLE embeddings ADD COLUMN future_extension TEXT;
-             PRAGMA wal_checkpoint(TRUNCATE);",
-        )?;
-    }
-    let digest = sha256_file(&database_path)?;
-    let run_identity_path = directory.path().join("run-identity.json");
-    let mut run_identity: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(&run_identity_path)?)?;
-    run_identity["indexes"]["reference"] = serde_json::json!(digest);
-    reseal_fixture_identity(&mut run_identity)?;
-    std::fs::write(
-        &run_identity_path,
-        serde_json::to_vec_pretty(&run_identity)?,
+    mutate_fixture_database(
+        directory.path(),
+        "ALTER TABLE hmems DROP COLUMN provenance;
+         ALTER TABLE embeddings ADD COLUMN future_extension TEXT;
+         PRAGMA wal_checkpoint(TRUNCATE);",
+    )?;
+    reseal_index_digest(
+        directory.path(),
+        &sha256_file(&directory.path().join("reference.db"))?,
     )?;
 
-    let manifest = FederatedSourcesManifest::load(&manifest_path)?;
-    let source = ReadOnlyPassageSource::open(&manifest.sources[0], PASSPHRASE)?;
-    assert_eq!(source.identity().passage_count, 1);
-    let batch = source.search(REQUESTED_MODEL, "fixture passage", &fixture_vector(), 3)?;
-    assert_eq!(batch.hits.len(), 1);
-    assert_eq!(batch.hits[0].text, "grounded fixture passage");
+    let source = open_source(&manifest_path)?;
+    search_fixture(&source)?;
     Ok(())
 }
 
@@ -268,17 +289,11 @@ fn bound_source_admits_legacy_hmems_schema() -> anyhow::Result<()> {
 fn bound_source_rejects_run_id_that_does_not_match_identity() -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
     let manifest_path = fixture(directory.path())?;
-    let run_identity_path = directory.path().join("run-identity.json");
-    let mut identity: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(&run_identity_path)?)?;
+    let mut identity = load_run_identity(directory.path())?;
     identity["run_id"] = serde_json::json!("0".repeat(64));
-    std::fs::write(&run_identity_path, serde_json::to_vec_pretty(&identity)?)?;
+    write_run_identity(directory.path(), &identity)?;
 
-    let manifest = FederatedSourcesManifest::load(&manifest_path)?;
-    let error = match ReadOnlyPassageSource::open(&manifest.sources[0], PASSPHRASE) {
-        Ok(_) => anyhow::bail!("altered run ID was accepted"),
-        Err(error) => error,
-    };
+    let error = open_source_error(&manifest_path, "altered run ID was accepted")?;
     assert!(error.to_string().contains("run identity"));
     Ok(())
 }
@@ -306,11 +321,7 @@ fn bound_source_rejects_nonempty_wal() -> anyhow::Result<()> {
         "fixture must contain WAL-resident writes"
     );
 
-    let manifest = FederatedSourcesManifest::load(&manifest_path)?;
-    let error = match ReadOnlyPassageSource::open(&manifest.sources[0], PASSPHRASE) {
-        Ok(_) => anyhow::bail!("uncheckpointed source was accepted"),
-        Err(error) => error,
-    };
+    let error = open_source_error(&manifest_path, "uncheckpointed source was accepted")?;
     assert!(error.to_string().contains("WAL"));
     Ok(())
 }
@@ -320,21 +331,9 @@ fn bound_source_rejects_nonempty_wal() -> anyhow::Result<()> {
 fn bound_source_rejects_index_digest_mismatch() -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
     let manifest_path = fixture(directory.path())?;
-    let run_identity_path = directory.path().join("run-identity.json");
-    let mut run_identity: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(&run_identity_path)?)?;
-    run_identity["indexes"]["reference"] = serde_json::json!("0".repeat(64));
-    reseal_fixture_identity(&mut run_identity)?;
-    std::fs::write(
-        &run_identity_path,
-        serde_json::to_vec_pretty(&run_identity)?,
-    )?;
+    reseal_index_digest(directory.path(), &"0".repeat(64))?;
 
-    let manifest = FederatedSourcesManifest::load(&manifest_path)?;
-    let error = match ReadOnlyPassageSource::open(&manifest.sources[0], PASSPHRASE) {
-        Ok(_) => anyhow::bail!("digest mismatch unexpectedly opened"),
-        Err(error) => error,
-    };
+    let error = open_source_error(&manifest_path, "digest mismatch unexpectedly opened")?;
     assert!(error.to_string().contains("digest"));
     Ok(())
 }
@@ -446,8 +445,7 @@ fn materialized_spec(
 }
 
 fn fixture_run_id(directory: &std::path::Path) -> anyhow::Result<String> {
-    let identity: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(directory.join("run-identity.json"))?)?;
+    let identity = load_run_identity(directory)?;
     Ok(identity["run_id"]
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("missing run ID"))?
@@ -465,11 +463,7 @@ fn fixture_run_id(directory: &std::path::Path) -> anyhow::Result<String> {
 fn materialized_provenance_admits_without_the_sealed_byte_digest() -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
     let manifest_path = fixture(directory.path())?;
-    let identity_path = directory.path().join("run-identity.json");
-    let mut identity: serde_json::Value = serde_json::from_slice(&std::fs::read(&identity_path)?)?;
-    identity["indexes"]["reference"] = serde_json::json!("f".repeat(64));
-    reseal_fixture_identity(&mut identity)?;
-    std::fs::write(&identity_path, serde_json::to_vec_pretty(&identity)?)?;
+    reseal_index_digest(directory.path(), &"f".repeat(64))?;
 
     let spec = materialized_spec(
         directory.path(),
@@ -483,10 +477,7 @@ fn materialized_provenance_admits_without_the_sealed_byte_digest() -> anyhow::Re
     )?;
     let source = ReadOnlyPassageSource::open(&spec, PASSPHRASE)?;
     assert_eq!(source.identity().source_id, SOURCE_ID);
-    assert_eq!(source.identity().passage_count, 1);
-    let batch = source.search(REQUESTED_MODEL, "fixture passage", &fixture_vector(), 3)?;
-    assert_eq!(batch.hits.len(), 1);
-    assert_eq!(batch.hits[0].text, "grounded fixture passage");
+    search_fixture(&source)?;
     Ok(())
 }
 
@@ -616,9 +607,6 @@ fn rekeyed_database_admits_via_provenance_not_the_sealed_digest() -> anyhow::Res
     // accepts. Admission must open via the bundle's declared key anyway:
     // the machine passphrase is never used for a materialized source.
     let source = ReadOnlyPassageSource::open(&spec, PASSPHRASE)?;
-    assert_eq!(source.identity().passage_count, 1);
-    let batch = source.search(REQUESTED_MODEL, "fixture passage", &fixture_vector(), 3)?;
-    assert_eq!(batch.hits.len(), 1);
-    assert_eq!(batch.hits[0].text, "grounded fixture passage");
+    search_fixture(&source)?;
     Ok(())
 }
