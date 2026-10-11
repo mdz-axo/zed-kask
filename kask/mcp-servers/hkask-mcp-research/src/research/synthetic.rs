@@ -219,27 +219,9 @@ fn extract_css(
         let mut item = ExtractedItem::default();
         for (field, sel) in &field_selectors {
             let value = extract_field_css(element, sel, &base);
-            match field.as_str() {
-                "title" => item.title = value,
-                "link" | "url" => item.link = value,
-                "date" | "published" | "published_at" => item.date = value,
-                "summary" | "description" => item.summary = value,
-                "entry_id" | "id" => item.entry_id = value,
-                _ => {} // ignore unknown fields
-            }
+            assign_item_field(&mut item, field, value);
         }
-        // If entry_id was not explicitly extracted, build it from the template.
-        if item.entry_id.is_empty() {
-            item.entry_id = render_template(template, &item);
-        }
-        // If entry_id is still empty, fall back to link, then title.
-        if item.entry_id.is_empty() {
-            item.entry_id = if !item.link.is_empty() {
-                item.link.clone()
-            } else {
-                blake3::hash(item.title.as_bytes()).to_hex().to_string()
-            };
-        }
+        finalize_entry_id(&mut item, template);
         items.push(item);
     }
 
@@ -329,25 +311,9 @@ fn extract_json_path(
         let mut item = ExtractedItem::default();
         for (field, path) in &spec.fields {
             let value = query_json_field(item_val, path);
-            match field.as_str() {
-                "title" => item.title = value,
-                "link" | "url" => item.link = value,
-                "date" | "published" | "published_at" => item.date = value,
-                "summary" | "description" => item.summary = value,
-                "entry_id" | "id" => item.entry_id = value,
-                _ => {} // ignore unknown fields
-            }
+            assign_item_field(&mut item, field, value);
         }
-        if item.entry_id.is_empty() {
-            item.entry_id = render_template(template, &item);
-        }
-        if item.entry_id.is_empty() {
-            item.entry_id = if !item.link.is_empty() {
-                item.link.clone()
-            } else {
-                blake3::hash(item.title.as_bytes()).to_hex().to_string()
-            };
-        }
+        finalize_entry_id(&mut item, template);
         items.push(item);
     }
 
@@ -380,6 +346,106 @@ fn json_value_to_string(v: &Value) -> String {
         // For arrays/objects, serialize to compact JSON.
         other => serde_json::to_string(other).unwrap_or_default(),
     }
+}
+
+/// Assign one spec-authored field value to its item slot. The narrow alias
+/// set (`url`/`published`/`published_at`/`id` tolerated alongside the
+/// canonical keys): spec `fields` keys are authored, so LLM-emitted key drift
+/// (`name`/`href`/`timestamp`/`abstract`) is NOT accepted here.
+fn assign_item_field(item: &mut ExtractedItem, field: &str, value: String) {
+    match field {
+        "title" => item.title = value,
+        "link" | "url" => item.link = value,
+        "date" | "published" | "published_at" => item.date = value,
+        "summary" | "description" => item.summary = value,
+        "entry_id" | "id" => item.entry_id = value,
+        _ => {} // ignore unknown fields
+    }
+}
+
+/// Fill a missing entry_id: first from the template, then the link, then a
+/// blake3 hash of the title. Shared by every extractor's item loop.
+fn finalize_entry_id(item: &mut ExtractedItem, template: &str) {
+    if item.entry_id.is_empty() {
+        item.entry_id = render_template(template, item);
+    }
+    if item.entry_id.is_empty() {
+        item.entry_id = if !item.link.is_empty() {
+            item.link.clone()
+        } else {
+            blake3::hash(item.title.as_bytes()).to_hex().to_string()
+        };
+    }
+}
+
+/// Unwrap a parsed LLM extraction into the item array: a direct array, an
+/// object wrapping the array under "items", or any other single value
+/// treated as one `_raw` item.
+fn parsed_to_items_arr(parsed: serde_json::Value) -> Vec<serde_json::Value> {
+    match parsed {
+        serde_json::Value::Array(arr) => arr,
+        serde_json::Value::Object(obj) => {
+            // Some providers wrap the array in an object with a key like "items".
+            if let Some(arr) = obj.get("items").and_then(|v| v.as_array()) {
+                arr.clone()
+            } else {
+                // Single object — treat as one item.
+                vec![serde_json::json!({"_raw": serde_json::Value::Object(obj)})]
+            }
+        }
+        other => vec![serde_json::json!({"_raw": other})],
+    }
+}
+
+/// Assign one LLM-extracted key/value pair (direct-LLM alias set: key drift
+/// tolerated, including `timestamp` as a date alias).
+fn assign_llm_item_field(item: &mut ExtractedItem, key: &str, val: &serde_json::Value) {
+    let s = json_value_to_string(val);
+    match key {
+        "title" | "name" => item.title = s,
+        "link" | "url" | "href" => item.link = s,
+        "date" | "published" | "published_at" | "timestamp" => item.date = s,
+        "summary" | "description" | "abstract" => item.summary = s,
+        "entry_id" | "id" => item.entry_id = s,
+        _ => {}
+    }
+}
+
+/// Assign one LLM-extracted key/value pair (post-OCR alias set: the
+/// direct-LLM set minus `timestamp`, which the post-OCR path has never
+/// accepted — kept distinct to preserve behavior).
+fn assign_post_ocr_item_field(item: &mut ExtractedItem, key: &str, val: &serde_json::Value) {
+    let s = json_value_to_string(val);
+    match key {
+        "title" | "name" => item.title = s,
+        "link" | "url" | "href" => item.link = s,
+        "date" | "published" | "published_at" => item.date = s,
+        "summary" | "description" | "abstract" => item.summary = s,
+        "entry_id" | "id" => item.entry_id = s,
+        _ => {}
+    }
+}
+
+/// Build items from an LLM extraction array: each object's keys assigned
+/// through `assign` (the caller's alias set), then the shared entry_id
+/// finalization.
+fn items_from_arr(
+    items_arr: Vec<serde_json::Value>,
+    template: &str,
+    assign: fn(&mut ExtractedItem, &str, &serde_json::Value),
+) -> Vec<ExtractedItem> {
+    let mut items = Vec::new();
+    for item_val in items_arr {
+        let mut item = ExtractedItem::default();
+        if let Some(obj) = item_val.as_object() {
+            for (key, val) in obj {
+                assign(&mut item, key, val);
+            }
+        }
+        finalize_entry_id(&mut item, template);
+        items.push(item);
+    }
+    items
 }
 
 // ── LLM schema extraction ───────────────────────────────────────────────────
@@ -427,53 +493,9 @@ pub async fn extract_llm_schema(
     let parsed: serde_json::Value = serde_json::from_str(&result.content)
         .map_err(|e| SyntheticError::ExtractionFailed(format!("parse extracted JSON: {e}")))?;
 
-    // The parsed value should be an array of items.
-    let items_arr = match parsed {
-        serde_json::Value::Array(arr) => arr,
-        serde_json::Value::Object(obj) => {
-            // Some providers wrap the array in an object with a key like "items".
-            if let Some(arr) = obj.get("items").and_then(|v| v.as_array()) {
-                arr.clone()
-            } else {
-                // Single object — treat as one item.
-                vec![serde_json::json!({"_raw": serde_json::Value::Object(obj)})]
-            }
-        }
-        other => vec![serde_json::json!({"_raw": other})],
-    };
-
+    let items_arr = parsed_to_items_arr(parsed);
     let template = spec.entry_id_template.as_deref().unwrap_or("{link}");
-
-    let mut items = Vec::new();
-    for item_val in items_arr {
-        let mut item = ExtractedItem::default();
-        if let Some(obj) = item_val.as_object() {
-            for (key, val) in obj {
-                let s = json_value_to_string(val);
-                match key.as_str() {
-                    "title" | "name" => item.title = s,
-                    "link" | "url" | "href" => item.link = s,
-                    "date" | "published" | "published_at" | "timestamp" => item.date = s,
-                    "summary" | "description" | "abstract" => item.summary = s,
-                    "entry_id" | "id" => item.entry_id = s,
-                    _ => {} // ignore unknown fields
-                }
-            }
-        }
-        if item.entry_id.is_empty() {
-            item.entry_id = render_template(template, &item);
-        }
-        if item.entry_id.is_empty() {
-            item.entry_id = if !item.link.is_empty() {
-                item.link.clone()
-            } else {
-                blake3::hash(item.title.as_bytes()).to_hex().to_string()
-            };
-        }
-        items.push(item);
-    }
-
-    Ok(items)
+    Ok(items_from_arr(items_arr, template, assign_llm_item_field))
 }
 
 // ── PDF text extraction ────────────────────────────────────────────────────
@@ -563,50 +585,13 @@ pub async fn extract_pdf_ocr(
             let parsed: serde_json::Value = serde_json::from_str(&result.content)
                 .map_err(|e| SyntheticError::ExtractionFailed(format!("parse: {e}")))?;
 
-            let items_arr = match parsed {
-                serde_json::Value::Array(arr) => arr,
-                serde_json::Value::Object(obj) => {
-                    if let Some(arr) = obj.get("items").and_then(|v| v.as_array()) {
-                        arr.clone()
-                    } else {
-                        vec![serde_json::json!({"_raw": serde_json::Value::Object(obj)})]
-                    }
-                }
-                other => vec![serde_json::json!({"_raw": other})],
-            };
-
+            let items_arr = parsed_to_items_arr(parsed);
             let template = post_spec.entry_id_template.as_deref().unwrap_or("{link}");
-
-            let mut items = Vec::new();
-            for item_val in items_arr {
-                let mut item = ExtractedItem::default();
-                if let Some(obj) = item_val.as_object() {
-                    for (key, val) in obj {
-                        let s = json_value_to_string(val);
-                        match key.as_str() {
-                            "title" | "name" => item.title = s,
-                            "link" | "url" | "href" => item.link = s,
-                            "date" | "published" | "published_at" => item.date = s,
-                            "summary" | "description" | "abstract" => item.summary = s,
-                            "entry_id" | "id" => item.entry_id = s,
-                            _ => {}
-                        }
-                    }
-                }
-                if item.entry_id.is_empty() {
-                    item.entry_id = render_template(template, &item);
-                }
-                if item.entry_id.is_empty() {
-                    item.entry_id = if !item.link.is_empty() {
-                        item.link.clone()
-                    } else {
-                        blake3::hash(item.title.as_bytes()).to_hex().to_string()
-                    };
-                }
-                items.push(item);
-            }
-
-            Ok(items)
+            Ok(items_from_arr(
+                items_arr,
+                template,
+                assign_post_ocr_item_field,
+            ))
         }
         other => Err(SyntheticError::InvalidSpec(format!(
             "unsupported post_ocr_kind: {other}"
@@ -645,14 +630,7 @@ pub(crate) fn items_to_entries(
             let links = if item.link.is_empty() {
                 Vec::new()
             } else {
-                vec![feed_rs::model::Link {
-                    href: item.link,
-                    rel: None,
-                    media_type: None,
-                    href_lang: None,
-                    title: None,
-                    length: None,
-                }]
+                vec![source_link(&item.link)]
             };
             let summary = if item.summary.is_empty() {
                 None
@@ -705,29 +683,37 @@ fn make_text(content: &str) -> feed_rs::model::Text {
     }
 }
 
-/// Build a synthetic feed_rs::Feed for upsert_feed. The feed's `url` is
-/// `synthetic://<feed_id_placeholder>` — the actual feed_id is assigned by
-/// the DB and the url is updated after insert.
-pub(crate) fn build_synthetic_feed(
+/// A `feed_rs` link to the source URL — the link shape shared by entry links
+/// and the feed's self link.
+fn source_link(href: &str) -> feed_rs::model::Link {
+    feed_rs::model::Link {
+        href: href.to_string(),
+        rel: None,
+        media_type: None,
+        href_lang: None,
+        title: None,
+        length: None,
+    }
+}
+
+/// The Atom feed shell shared by the synthetic-feed builders: source-titled,
+/// self-linked, no authors, with the caller's description, entries, and
+/// updated timestamp.
+fn atom_feed_shell(
     source_url: &str,
     title: &str,
-    description: &str,
+    description: Option<&str>,
+    entries: Vec<feed_rs::model::Entry>,
+    updated: chrono::DateTime<chrono::Utc>,
 ) -> feed_rs::model::Feed {
     feed_rs::model::Feed {
         feed_type: feed_rs::model::FeedType::Atom,
         id: source_url.to_string(),
         title: Some(make_text(title)),
-        updated: Some(chrono::Utc::now()),
+        updated: Some(updated),
         authors: Vec::new(),
-        description: Some(make_text(description)),
-        links: vec![feed_rs::model::Link {
-            href: source_url.to_string(),
-            rel: None,
-            media_type: None,
-            href_lang: None,
-            title: None,
-            length: None,
-        }],
+        description: description.map(make_text),
+        links: vec![source_link(source_url)],
         categories: Vec::new(),
         contributors: Vec::new(),
         generator: None,
@@ -738,8 +724,25 @@ pub(crate) fn build_synthetic_feed(
         rating: None,
         rights: None,
         ttl: None,
-        entries: Vec::new(),
+        entries,
     }
+}
+
+/// Build a synthetic feed_rs::Feed for upsert_feed. The feed's `url` is
+/// `synthetic://<feed_id_placeholder>` — the actual feed_id is assigned by
+/// the DB and the url is updated after insert.
+pub(crate) fn build_synthetic_feed(
+    source_url: &str,
+    title: &str,
+    description: &str,
+) -> feed_rs::model::Feed {
+    atom_feed_shell(
+        source_url,
+        title,
+        Some(description),
+        Vec::new(),
+        chrono::Utc::now(),
+    )
 }
 
 /// Build a FetchResult-shaped object for the diff_hash path. This is a
@@ -758,14 +761,7 @@ pub(crate) fn build_diff_hash_feed(
         updated: Some(now),
         authors: Vec::new(),
         content: None,
-        links: vec![feed_rs::model::Link {
-            href: source_url.to_string(),
-            rel: None,
-            media_type: None,
-            href_lang: None,
-            title: None,
-            length: None,
-        }],
+        links: vec![source_link(source_url)],
         summary: None,
         categories: Vec::new(),
         contributors: Vec::new(),
@@ -776,33 +772,7 @@ pub(crate) fn build_diff_hash_feed(
         language: None,
         base: None,
     };
-    let feed = feed_rs::model::Feed {
-        feed_type: feed_rs::model::FeedType::Atom,
-        id: source_url.to_string(),
-        title: Some(make_text(title)),
-        updated: Some(now),
-        authors: Vec::new(),
-        description: None,
-        links: vec![feed_rs::model::Link {
-            href: source_url.to_string(),
-            rel: None,
-            media_type: None,
-            href_lang: None,
-            title: None,
-            length: None,
-        }],
-        categories: Vec::new(),
-        contributors: Vec::new(),
-        generator: None,
-        icon: None,
-        language: None,
-        logo: None,
-        published: None,
-        rating: None,
-        rights: None,
-        ttl: None,
-        entries: vec![entry],
-    };
+    let feed = atom_feed_shell(source_url, title, None, vec![entry], now);
     (feed, hash)
 }
 
