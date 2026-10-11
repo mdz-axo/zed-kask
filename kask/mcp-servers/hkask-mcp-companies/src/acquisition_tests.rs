@@ -2890,6 +2890,32 @@ async fn screener_known_gap_exchange_names_the_coverage_fact() {
     );
 }
 
+/// Run one scoped expectations_gap call over a request Value and return
+/// its content — the scope + server + typed-parse + call choreography both
+/// expectations-gap tests share, varying exactly the request body. The
+/// fixture's recorded requests stay readable after the scope closes (the
+/// scope only routes the call's HTTP).
+async fn scoped_expectations_gap_output(
+    directory: &std::path::Path,
+    fixture: &FixtureHttp,
+    request: Value,
+) -> Value {
+    providers::TEST_HTTP_ORIGIN
+        .scope(fixture.origin.clone(), async {
+            let server = server(directory);
+            content(
+                &server
+                    .expectations_gap(Parameters(
+                        serde_json::from_value::<types::ExpectationsGapRequest>(request)
+                            .expect("request"),
+                    ))
+                    .await
+                    .expect("expectations gap tool"),
+            )
+        })
+        .await
+}
+
 /// expect: [P5] An EODHD-routed expectations_gap call fetches the
 /// fundamentals payload ONCE — EODHD's /fundamentals is one 10-API-call
 /// endpoint carrying every statement, and the per-tool path fetched the
@@ -2930,51 +2956,44 @@ async fn expectations_gap_consolidates_eodhd_fundamentals_and_compact_skips_rese
         (404, json!({ "error": "unexpected endpoint", "path": path }))
     })
     .await;
-    providers::TEST_HTTP_ORIGIN
-        .scope(fixture.origin.clone(), async {
-            let server = server(directory.path());
-            let request = serde_json::from_value::<types::ExpectationsGapRequest>(json!({
-                "symbol": "GAP.PA", "compact": true
-            }))
-            .expect("request");
-            let output = content(
-                &server
-                    .expectations_gap(Parameters(request))
-                    .await
-                    .expect("expectations gap tool"),
-            );
+    let output = scoped_expectations_gap_output(
+        directory.path(),
+        &fixture,
+        json!({
+            "symbol": "GAP.PA", "compact": true
+        }),
+    )
+    .await;
 
-            // ONE fundamentals request supplies all five statement views
-            // (the per-tool path made five); one light /real-time quote.
-            let fundamentals_calls = fixture
-                .requests()
-                .iter()
-                .filter(|path| path.starts_with("/eodhd/fundamentals/"))
-                .count();
-            assert_eq!(
-                fundamentals_calls, 1,
-                "the consolidated EODHD path must fetch fundamentals once"
-            );
-            let quote_calls = fixture
-                .requests()
-                .iter()
-                .filter(|path| path.starts_with("/eodhd/real-time/"))
-                .count();
-            assert_eq!(quote_calls, 1);
+    // ONE fundamentals request supplies all five statement views
+    // (the per-tool path made five); one light /real-time quote.
+    let fundamentals_calls = fixture
+        .requests()
+        .iter()
+        .filter(|path| path.starts_with("/eodhd/fundamentals/"))
+        .count();
+    assert_eq!(
+        fundamentals_calls, 1,
+        "the consolidated EODHD path must fetch fundamentals once"
+    );
+    let quote_calls = fixture
+        .requests()
+        .iter()
+        .filter(|path| path.starts_with("/eodhd/real-time/"))
+        .count();
+    assert_eq!(quote_calls, 1);
 
-            // Compact mode: no research (the fixture server carries no
-            // research credentials — a research call would have errored),
-            // the mode is surfaced, and the gap math is intact.
-            assert_eq!(output["narrative_mode"], json!("compact"));
-            assert_eq!(output["context"]["guidance_samples"], json!(0));
-            assert_eq!(output["data_quality"]["capability_available"], json!(true));
-            assert_eq!(output["data_quality"]["total_research_claims"], json!(0));
-            assert!(
-                output["signal"].as_str().is_some(),
-                "the consolidated views must feed the solve: {output}"
-            );
-        })
-        .await;
+    // Compact mode: no research (the fixture server carries no
+    // research credentials — a research call would have errored),
+    // the mode is surfaced, and the gap math is intact.
+    assert_eq!(output["narrative_mode"], json!("compact"));
+    assert_eq!(output["context"]["guidance_samples"], json!(0));
+    assert_eq!(output["data_quality"]["capability_available"], json!(true));
+    assert_eq!(output["data_quality"]["total_research_claims"], json!(0));
+    assert!(
+        output["signal"].as_str().is_some(),
+        "the consolidated views must feed the solve: {output}"
+    );
 }
 
 /// expect: [P5] Data unavailability is a named-reason insufficient_data
@@ -2998,35 +3017,28 @@ async fn expectations_gap_data_unavailable_is_named_reason_report_not_error() {
         (404, json!({ "error": "unexpected endpoint", "path": path }))
     })
     .await;
-    providers::TEST_HTTP_ORIGIN
-        .scope(fixture.origin.clone(), async {
-            let server = server(directory.path());
-            let request = serde_json::from_value::<types::ExpectationsGapRequest>(json!({
-                "symbol": "DEAD.PA"
-            }))
-            .expect("request");
-            let output = content(
-                &server
-                    .expectations_gap(Parameters(request))
-                    .await
-                    .expect("data unavailability must be a report, not an error"),
-            );
-            assert_eq!(output["signal"], json!("insufficient_data"));
-            assert_eq!(output["data_quality"]["capability_available"], json!(false));
-            let reason = output["data_quality"]["unavailable_reason"]
-                .as_str()
-                .expect("unavailable_reason must name the failed fetch");
-            assert!(
-                reason.contains("EODHD fundamentals fetch failed"),
-                "the reason names the failed fetch: {reason}"
-            );
-            assert_eq!(
-                output["narrative_mode"],
-                json!("skipped_unavailable_financials")
-            );
-            assert_eq!(output["context"]["guidance_samples"], json!(0));
-        })
-        .await;
+    let output = scoped_expectations_gap_output(
+        directory.path(),
+        &fixture,
+        json!({
+            "symbol": "DEAD.PA"
+        }),
+    )
+    .await;
+    assert_eq!(output["signal"], json!("insufficient_data"));
+    assert_eq!(output["data_quality"]["capability_available"], json!(false));
+    let reason = output["data_quality"]["unavailable_reason"]
+        .as_str()
+        .expect("unavailable_reason must name the failed fetch");
+    assert!(
+        reason.contains("EODHD fundamentals fetch failed"),
+        "the reason names the failed fetch: {reason}"
+    );
+    assert_eq!(
+        output["narrative_mode"],
+        json!("skipped_unavailable_financials")
+    );
+    assert_eq!(output["context"]["guidance_samples"], json!(0));
 }
 
 /// expect: [P5] Per-company data failures never abort the screen —
