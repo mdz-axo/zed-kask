@@ -711,6 +711,55 @@ async fn run_screen(server: &CompaniesServer, exchanges: &[&str]) -> (Value, Val
     panic!("screen did not complete");
 }
 
+/// One liquid US screener row — the seven-field shape the run_screen
+/// tests screen (code, name, currency symbol, cap, adjusted close,
+/// 200-day average volume; exchange fixed at US).
+fn liquid_row(code: &str, name: &str, symbol: &str, cap: f64, close: f64, avgvol: f64) -> Value {
+    json!({
+        "code": code, "name": name, "exchange": "US", "currency_symbol": symbol,
+        "market_capitalization": cap, "adjusted_close": close, "avgvol_200d": avgvol
+    })
+}
+
+/// One US exchange-symbol-list row — the ticker-list shape the run_screen
+/// tests reconcile screener rows against (common stock, varying currency).
+fn symbol_list_row(code: &str, name: &str, exchange: &str, currency: &str, isin: &str) -> Value {
+    json!({
+        "Code": code, "Name": name, "Exchange": exchange, "Currency": currency,
+        "Type": "Common Stock", "Isin": isin
+    })
+}
+
+/// The run_screen fixture: the screener arm serves `screener_rows`, the US
+/// exchange-symbol-list serves `symbol_list`, the FOREX routes serve `forex`,
+/// the per-suffix fundamentals arms serve `fundamentals`, and everything
+/// else 404s — the composition the three run_screen tests share, varying
+/// exactly these tables.
+fn run_screen_fixture(
+    screener_rows: Vec<Value>,
+    symbol_list: Vec<Value>,
+    forex: &'static [(&'static str, &'static str, f64)],
+    fundamentals: Vec<(&'static str, Value)>,
+) -> impl Fn(&str) -> (u16, Value) + Send + Sync + 'static {
+    move |path| {
+        if path.starts_with("/eodhd/screener") {
+            return (200, json!({ "data": screener_rows.clone() }));
+        }
+        if path.starts_with("/eodhd/exchange-symbol-list/US") {
+            return (200, json!(symbol_list.clone()));
+        }
+        if let Some(response) = forex_routes(path, forex) {
+            return response;
+        }
+        for (suffix, value) in &fundamentals {
+            if path.starts_with(&format!("/eodhd/fundamentals/{suffix}")) {
+                return (200, value.clone());
+            }
+        }
+        (404, json!({"error":"unexpected endpoint","path":path}))
+    }
+}
+
 /// expect: [P5] EODHD SG&A reaches the normalized financial model instead of
 /// becoming a fabricated zero operating expense.
 /// pre: the provider payload uses EODHD's sellingGeneralAdministrative field.
@@ -3124,45 +3173,69 @@ async fn screen_data_failures_exclude_with_reasons_and_complete() {
 #[tokio::test]
 async fn expectations_template_reduces_and_reconciles_the_universe() {
     let directory = tempfile::tempdir().expect("temporary directory");
-    let fixture = FixtureHttp::start(|path| {
-        if path.starts_with("/eodhd/screener") {
-            return (200, json!({"data":[
-                {"code":"LIQ","name":"Liquid Issuer","exchange":"US","currency_symbol":"$","market_capitalization":9_000_000_000.0,"adjusted_close":30.0,"avgvol_200d":100_000.0},
-                {"code":"LIQADR","name":"Liquid Issuer ADR","exchange":"US","currency_symbol":"$","market_capitalization":9_100_000_000.0,"adjusted_close":40.0,"avgvol_200d":100_000.0},
-                {"code":"ILL","name":"Illiquid Issuer","exchange":"US","currency_symbol":"$","market_capitalization":8_000_000_000.0,"adjusted_close":30.0,"avgvol_200d":1_000.0}
-            ]}));
-        }
-        if path.starts_with("/eodhd/exchange-symbol-list/US") {
-            return (200, json!([
-                {"Code":"LIQ","Name":"Liquid Issuer","Exchange":"NYSE","Currency":"USD","Type":"Common Stock","Isin":"US0000000001"},
-                {"Code":"LIQADR","Name":"Liquid Issuer","Exchange":"NYSE","Currency":"USD","Type":"Common Stock","Isin":"US0000000003"},
-                {"Code":"ILL","Name":"Illiquid Issuer","Exchange":"NASDAQ","Currency":"USD","Type":"Common Stock","Isin":"US0000000002"}
-            ]));
-        }
-        if path.starts_with("/eodhd/fundamentals/LIQADR.US") {
-            return (200, eodhd_issuer("LIQADR", "Liquid Issuer ADR", "USD", "US0000000003"));
-        }
-        if path.starts_with("/eodhd/fundamentals/LIQ.US") {
-            let mut value = eodhd_fixture();
-            value["General"]["Code"] = json!("LIQ");
-            value["General"]["Name"] = json!("Liquid Issuer");
-            value["General"]["Type"] = json!("Common Stock");
-            value["General"]["CurrencyCode"] = json!("USD");
-            value["General"]["LEI"] = json!("549300LIQUIDSET01");
-            value["General"]["PrimaryTicker"] = json!("LIQ.US");
-            value["General"]["IsDelisted"] = json!(false);
-            value["Financials"]["Income_Statement"]["currency_symbol"] = json!("USD");
-            value["Financials"]["Balance_Sheet"]["currency_symbol"] = json!("USD");
-            value["Financials"]["Cash_Flow"] = json!({
-                "currency_symbol":"USD","yearly":{
-                    "2025-12-31":{"totalCashFromOperatingActivities":"180000000.00","capitalExpenditures":"-30000000.00","dividendsPaid":"-20000000.00"},
-                    "2024-12-31":{"totalCashFromOperatingActivities":"170000000.00","capitalExpenditures":"-28000000.00","dividendsPaid":"-18000000.00"}
-                }
-            });
-            return (200, value);
-        }
-        (404, json!({"error":"unexpected endpoint","path":path}))
-    }).await;
+    // The LIQ fundamentals carry an LEI (not an ISIN) — the identity shape
+    // this test reconciles; the mutation stays visible here.
+    let liq_lei_fundamentals = {
+        let mut value = eodhd_fixture();
+        value["General"]["Code"] = json!("LIQ");
+        value["General"]["Name"] = json!("Liquid Issuer");
+        value["General"]["Type"] = json!("Common Stock");
+        value["General"]["CurrencyCode"] = json!("USD");
+        value["General"]["LEI"] = json!("549300LIQUIDSET01");
+        value["General"]["PrimaryTicker"] = json!("LIQ.US");
+        value["General"]["IsDelisted"] = json!(false);
+        value["Financials"]["Income_Statement"]["currency_symbol"] = json!("USD");
+        value["Financials"]["Balance_Sheet"]["currency_symbol"] = json!("USD");
+        value["Financials"]["Cash_Flow"] = json!({
+            "currency_symbol":"USD","yearly":{
+                "2025-12-31":{"totalCashFromOperatingActivities":"180000000.00","capitalExpenditures":"-30000000.00","dividendsPaid":"-20000000.00"},
+                "2024-12-31":{"totalCashFromOperatingActivities":"170000000.00","capitalExpenditures":"-28000000.00","dividendsPaid":"-18000000.00"}
+            }
+        });
+        value
+    };
+    let fixture = FixtureHttp::start(run_screen_fixture(
+        vec![
+            liquid_row(
+                "LIQ",
+                "Liquid Issuer",
+                "$",
+                9_000_000_000.0,
+                30.0,
+                100_000.0,
+            ),
+            liquid_row(
+                "LIQADR",
+                "Liquid Issuer ADR",
+                "$",
+                9_100_000_000.0,
+                40.0,
+                100_000.0,
+            ),
+            liquid_row(
+                "ILL",
+                "Illiquid Issuer",
+                "$",
+                8_000_000_000.0,
+                30.0,
+                1_000.0,
+            ),
+        ],
+        vec![
+            symbol_list_row("LIQ", "Liquid Issuer", "NYSE", "USD", "US0000000001"),
+            symbol_list_row("LIQADR", "Liquid Issuer ADR", "NYSE", "USD", "US0000000003"),
+            symbol_list_row("ILL", "Illiquid Issuer", "NASDAQ", "USD", "US0000000002"),
+        ],
+        &[],
+        vec![
+            (
+                "LIQADR.US",
+                eodhd_issuer("LIQADR", "Liquid Issuer ADR", "USD", "US0000000003"),
+            ),
+            ("LIQ.US", liq_lei_fundamentals),
+        ],
+    ))
+    .await;
     providers::TEST_HTTP_ORIGIN
         .scope(fixture.origin.clone(), async {
             let server = server(directory.path());
@@ -3250,24 +3323,36 @@ async fn expectations_template_reduces_and_reconciles_the_universe() {
 #[tokio::test]
 async fn fundamentals_cache_skips_refetches_on_rerun() {
     let directory = tempfile::tempdir().expect("temporary directory");
-    let fixture = FixtureHttp::start(|path| {
-        if path.starts_with("/eodhd/screener") {
-            return (200, json!({"data":[
-                {"code":"LIQ","name":"Liquid Issuer","exchange":"US","currency_symbol":"$","market_capitalization":9_000_000_000.0,"adjusted_close":30.0,"avgvol_200d":100_000.0},
-                {"code":"LIQADR","name":"Liquid Issuer ADR","exchange":"US","currency_symbol":"$","market_capitalization":9_100_000_000.0,"adjusted_close":40.0,"avgvol_200d":100_000.0}
-            ]}));
-        }
-        if path.starts_with("/eodhd/exchange-symbol-list/US") {
-            return (200, json!([
-                {"Code":"LIQ","Name":"Liquid Issuer","Exchange":"NYSE","Currency":"USD","Type":"Common Stock","Isin":"US0000000001"},
-                {"Code":"LIQADR","Name":"Liquid Issuer ADR","Exchange":"NYSE","Currency":"USD","Type":"Common Stock","Isin":"US0000000003"}
-            ]));
-        }
-        if path.starts_with("/eodhd/fundamentals/LIQADR.US") {
-            return (200, eodhd_issuer("LIQADR", "Liquid Issuer ADR", "USD", "US0000000003"));
-        }
-        (404, json!({"error":"unexpected endpoint","path":path}))
-    }).await;
+    let fixture = FixtureHttp::start(run_screen_fixture(
+        vec![
+            liquid_row(
+                "LIQ",
+                "Liquid Issuer",
+                "$",
+                9_000_000_000.0,
+                30.0,
+                100_000.0,
+            ),
+            liquid_row(
+                "LIQADR",
+                "Liquid Issuer ADR",
+                "$",
+                9_100_000_000.0,
+                40.0,
+                100_000.0,
+            ),
+        ],
+        vec![
+            symbol_list_row("LIQ", "Liquid Issuer", "NYSE", "USD", "US0000000001"),
+            symbol_list_row("LIQADR", "Liquid Issuer ADR", "NYSE", "USD", "US0000000003"),
+        ],
+        &[],
+        vec![(
+            "LIQADR.US",
+            eodhd_issuer("LIQADR", "Liquid Issuer ADR", "USD", "US0000000003"),
+        )],
+    ))
+    .await;
     providers::TEST_HTTP_ORIGIN
         .scope(fixture.origin.clone(), async {
             let server = server(directory.path());
@@ -3323,33 +3408,42 @@ async fn fundamentals_cache_skips_refetches_on_rerun() {
 #[tokio::test]
 async fn pass_set_ticker_list_and_forex_are_cached_across_runs() {
     let directory = tempfile::tempdir().expect("temporary directory");
-    let fixture = FixtureHttp::start(|path| {
-        if path.starts_with("/eodhd/screener") {
-            return (200, json!({"data":[
-                {"code":"LIQ","name":"Liquid Issuer","exchange":"US","currency_symbol":"$","market_capitalization":9_000_000_000.0,"adjusted_close":30.0,"avgvol_200d":100_000.0},
-                {"code":"LIQCAD","name":"Maple Issuer","exchange":"US","currency_symbol":"C$","market_capitalization":9_200_000_000.0,"adjusted_close":40.0,"avgvol_200d":100_000.0}
-            ]}));
-        }
-        if path.starts_with("/eodhd/exchange-symbol-list/US") {
-            return (200, json!([
-                {"Code":"LIQ","Name":"Liquid Issuer","Exchange":"NYSE","Currency":"USD","Type":"Common Stock","Isin":"US0000000001"},
-                {"Code":"LIQCAD","Name":"Maple Issuer","Exchange":"NYSE","Currency":"CAD","Type":"Common Stock","Isin":"US0000000002"}
-            ]));
-        }
-        if path.starts_with("/eodhd/eod/USDCAD.FOREX") {
-            return (200, json!([{"date":"2026-10-01","close":1.37}]));
-        }
-        if path.starts_with("/eodhd/eod/USDEUR.FOREX") {
-            return (200, json!([{"date":"2026-10-01","close":0.92}]));
-        }
-        if path.starts_with("/eodhd/fundamentals/LIQ.US") {
-            return (200, eodhd_issuer("LIQ", "Liquid Issuer", "EUR", "US0000000001"));
-        }
-        if path.starts_with("/eodhd/fundamentals/LIQCAD.US") {
-            return (200, eodhd_issuer("LIQCAD", "Maple Issuer", "CAD", "US0000000002"));
-        }
-        (404, json!({"error":"unexpected endpoint","path":path}))
-    }).await;
+    let fixture = FixtureHttp::start(run_screen_fixture(
+        vec![
+            liquid_row(
+                "LIQ",
+                "Liquid Issuer",
+                "$",
+                9_000_000_000.0,
+                30.0,
+                100_000.0,
+            ),
+            liquid_row(
+                "LIQCAD",
+                "Maple Issuer",
+                "C$",
+                9_200_000_000.0,
+                40.0,
+                100_000.0,
+            ),
+        ],
+        vec![
+            symbol_list_row("LIQ", "Liquid Issuer", "NYSE", "USD", "US0000000001"),
+            symbol_list_row("LIQCAD", "Maple Issuer", "NYSE", "CAD", "US0000000002"),
+        ],
+        &[("CAD", "2026-10-01", 1.37), ("EUR", "2026-10-01", 0.92)],
+        vec![
+            (
+                "LIQ.US",
+                eodhd_issuer("LIQ", "Liquid Issuer", "EUR", "US0000000001"),
+            ),
+            (
+                "LIQCAD.US",
+                eodhd_issuer("LIQCAD", "Maple Issuer", "CAD", "US0000000002"),
+            ),
+        ],
+    ))
+    .await;
     providers::TEST_HTTP_ORIGIN
         .scope(fixture.origin.clone(), async {
             let server = server(directory.path());
