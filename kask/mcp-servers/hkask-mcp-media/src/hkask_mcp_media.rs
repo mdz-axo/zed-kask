@@ -800,31 +800,9 @@ mod integration_tests {
         assert_eq!(cols, 2);
         assert_eq!(rows, 2);
 
-        let cell_w = (canvas_w - spacing * (cols + 1)) / cols;
-        let cell_h = (canvas_h - spacing * (rows + 1)) / rows;
-
-        let mut canvas = image::DynamicImage::new_rgba8(canvas_w, canvas_h);
-        let bg = image::Rgba([30u8, 30u8, 30u8, 255u8]);
-        for pixel in canvas.as_mut_rgba8().unwrap().pixels_mut() {
-            *pixel = bg;
-        }
-
-        for (i, img) in images.iter().enumerate() {
-            let col = i as u32 % cols;
-            let row = i as u32 / cols;
-            let scaled = img.resize_exact(
-                cell_w.saturating_sub(spacing),
-                cell_h.saturating_sub(spacing),
-                image::imageops::FilterType::Lanczos3,
-            );
-            let x = spacing
-                + col * (cell_w + spacing)
-                + (cell_w.saturating_sub(spacing) - scaled.width()) / 2;
-            let y = spacing
-                + row * (cell_h + spacing)
-                + (cell_h.saturating_sub(spacing) - scaled.height()) / 2;
-            image::imageops::overlay(&mut canvas, &scaled, x as i64, y as i64);
-        }
+        let canvas = crate::tools::processing::compose_collage_grid(
+            &images, cols, rows, canvas_w, canvas_h, spacing,
+        );
 
         let output_path = temp.path().join("collage_test.png");
         canvas.save(&output_path).expect("save collage");

@@ -24,6 +24,68 @@ pub(crate) fn generated_assets_dir() -> std::path::PathBuf {
     dir
 }
 
+/// Scratch intermediates for multi-step local media pipelines: every
+/// intermediate file a pipeline stages before its final publication is
+/// tracked here, and cleanup removes what it can while surfacing the first
+/// failure (paths that failed to delete stay tracked for the Drop-time
+/// retry). The label names the pipeline in error and warn messages.
+pub(crate) struct ScratchIntermediates {
+    paths: Vec<std::path::PathBuf>,
+    label: &'static str,
+}
+
+impl ScratchIntermediates {
+    pub(crate) fn new(label: &'static str) -> Self {
+        Self {
+            paths: Vec::new(),
+            label,
+        }
+    }
+
+    pub(crate) fn track(&mut self, path: std::path::PathBuf) {
+        self.paths.push(path);
+    }
+
+    pub(crate) fn cleanup(&mut self) -> Result<(), MediaError> {
+        let mut first_error = None;
+        let mut remaining = Vec::new();
+        for path in std::mem::take(&mut self.paths) {
+            match std::fs::remove_file(&path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    if first_error.is_none() {
+                        first_error = Some(MediaError::Io(format!(
+                            "delete {} intermediate {}: {error}",
+                            self.label,
+                            path.display()
+                        )));
+                    }
+                    remaining.push(path);
+                }
+            }
+        }
+        self.paths = remaining;
+        match first_error {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
+    }
+}
+
+impl Drop for ScratchIntermediates {
+    fn drop(&mut self) {
+        if let Err(error) = self.cleanup() {
+            tracing::warn!(
+                target: "hkask.mcp.media",
+                %error,
+                "Failed to clean up {} intermediates",
+                self.label
+            );
+        }
+    }
+}
+
 /// The gallery a file belongs to: its canonical home folder `home` is
 /// registered (idempotent), then the most specific gallery containing the
 /// file wins. Files are filed by where they live, never by which gallery

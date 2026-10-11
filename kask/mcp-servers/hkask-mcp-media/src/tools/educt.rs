@@ -286,57 +286,6 @@ fn working_transcript(
     }
 }
 
-struct EdlRenderIntermediates {
-    paths: Vec<std::path::PathBuf>,
-}
-
-impl EdlRenderIntermediates {
-    fn new() -> Self {
-        Self { paths: Vec::new() }
-    }
-
-    fn track(&mut self, path: std::path::PathBuf) {
-        self.paths.push(path);
-    }
-
-    fn cleanup(&mut self) -> Result<(), MediaError> {
-        let mut first_error = None;
-        let mut remaining = Vec::new();
-        for path in std::mem::take(&mut self.paths) {
-            match std::fs::remove_file(&path) {
-                Ok(()) => {}
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => {
-                    if first_error.is_none() {
-                        first_error = Some(MediaError::Io(format!(
-                            "delete EDL render intermediate {}: {error}",
-                            path.display()
-                        )));
-                    }
-                    remaining.push(path);
-                }
-            }
-        }
-        self.paths = remaining;
-        match first_error {
-            Some(error) => Err(error),
-            None => Ok(()),
-        }
-    }
-}
-
-impl Drop for EdlRenderIntermediates {
-    fn drop(&mut self) {
-        if let Err(error) = self.cleanup() {
-            tracing::warn!(
-                target: "hkask.mcp.media",
-                %error,
-                "Failed to clean up EDL render intermediates"
-            );
-        }
-    }
-}
-
 /// Map store errors to MCP wire-level kinds per-variant (never a blanket
 /// internal): a missing transcript is NotFound; a validation failure is
 /// InvalidArgument carrying the named invariant; a DB failure is Internal.
@@ -1144,7 +1093,7 @@ impl MediaServer {
             self.require_ffmpeg()?;
             let media_path = bundle.audio_path.clone();
             let audio = is_audio_path(&media_path);
-            let mut intermediates = EdlRenderIntermediates::new();
+            let mut intermediates = crate::assets::ScratchIntermediates::new("EDL render");
             let mut clip_paths: Vec<std::path::PathBuf> = Vec::with_capacity(plan_secs.len());
             for (start_sec, end_sec) in &plan_secs {
                 let clipped = if audio {

@@ -190,54 +190,115 @@ pub(crate) fn resolve_image_path_in_gallery(
     Ok(std::path::PathBuf::from(image.absolute_path))
 }
 
-struct LocalVideoIntermediates {
-    paths: Vec<std::path::PathBuf>,
+/// Compose a collage grid: dark canvas, cells sized by `cols`/`rows` and
+/// `spacing`, each image scaled to its cell (Lanczos3) and centered.
+/// Shared by the collage tool and its composition test — the grid math is
+/// the tested contract, so it lives once.
+pub(crate) fn compose_collage_grid(
+    images: &[image::DynamicImage],
+    cols: u32,
+    rows: u32,
+    canvas_w: u32,
+    canvas_h: u32,
+    spacing: u32,
+) -> image::DynamicImage {
+    let cell_w = (canvas_w - spacing * (cols + 1)) / cols;
+    let cell_h = (canvas_h - spacing * (rows + 1)) / rows;
+
+    let mut canvas = image::DynamicImage::new_rgba8(canvas_w, canvas_h);
+    let bg = image::Rgba([30u8, 30u8, 30u8, 255u8]);
+    for pixel in canvas
+        .as_mut_rgba8()
+        .expect("canvas was created as RGBA8")
+        .pixels_mut()
+    {
+        *pixel = bg;
+    }
+
+    for (i, img) in images.iter().enumerate() {
+        let col = i as u32 % cols;
+        let row = i as u32 / cols;
+
+        let scaled = img.resize_exact(
+            cell_w.saturating_sub(spacing),
+            cell_h.saturating_sub(spacing),
+            image::imageops::FilterType::Lanczos3,
+        );
+
+        let x = spacing
+            + col * (cell_w + spacing)
+            + (cell_w.saturating_sub(spacing) - scaled.width()) / 2;
+        let y = spacing
+            + row * (cell_h + spacing)
+            + (cell_h.saturating_sub(spacing) - scaled.height()) / 2;
+
+        image::imageops::overlay(&mut canvas, &scaled, x as i64, y as i64);
+    }
+    canvas
 }
 
-impl LocalVideoIntermediates {
-    fn new() -> Self {
-        Self { paths: Vec::new() }
+/// Draw meme text (uppercase, centered, black outline + white fill) at the
+/// given row. The y position is the caller's variation — top text sits
+/// near the top edge, bottom text sits above the bottom edge.
+fn draw_meme_text(
+    img: &mut image::DynamicImage,
+    font: &ab_glyph::FontVec,
+    scale: ab_glyph::PxScale,
+    text: &str,
+    y: i32,
+) {
+    let text_upper = text.to_uppercase();
+    let (tw, _th) = measure_text(font, scale, &text_upper);
+    let x = ((img.width() as i32 - tw as i32) / 2).max(0);
+    let white = image::Rgba([255u8, 255u8, 255u8, 255u8]);
+    let black = image::Rgba([0u8, 0u8, 0u8, 255u8]);
+    for &(dx, dy) in &[(1, 0), (-1, 0), (0, 1), (0, -1)] {
+        draw_text_mut(img, black, x + dx, y + dy, scale, font, &text_upper);
     }
+    draw_text_mut(img, white, x, y, scale, font, &text_upper);
+}
 
-    fn track(&mut self, path: std::path::PathBuf) {
-        self.paths.push(path);
-    }
+impl MediaServer {
+    /// Admission choreography shared by the local-video tools: local
+    /// inputs must exist, the test gate observes admission (test builds
+    /// only), remote inputs pass DNS validation, and ffmpeg must be
+    /// available — in that order, once per tool call.
+    async fn admit_local_video_inputs(&self, urls: &[String]) -> Result<(), McpToolError> {
+        for url in urls {
+            ensure_local_input_exists(url)?;
+        }
 
-    fn cleanup(&mut self) -> Result<(), MediaError> {
-        let mut first_error = None;
-        let mut remaining = Vec::new();
-        for path in std::mem::take(&mut self.paths) {
-            match std::fs::remove_file(&path) {
-                Ok(()) => {}
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => {
-                    if first_error.is_none() {
-                        first_error = Some(MediaError::Io(format!(
-                            "delete video remix intermediate {}: {error}",
-                            path.display()
-                        )));
-                    }
-                    remaining.push(path);
-                }
+        #[cfg(test)]
+        let bypass_dns = pause_after_local_video_admission().await?;
+        #[cfg(not(test))]
+        let bypass_dns = false;
+        for url in urls {
+            if !crate::is_local_media_path(url) && !bypass_dns {
+                validate_tool_url_with_dns(url).await?;
             }
         }
-        self.paths = remaining;
-        match first_error {
-            Some(error) => Err(error),
-            None => Ok(()),
-        }
+        self.require_ffmpeg()?;
+        Ok(())
     }
-}
 
-impl Drop for LocalVideoIntermediates {
-    fn drop(&mut self) {
-        if let Err(error) = self.cleanup() {
-            tracing::warn!(
-                target: "hkask.mcp.media",
-                %error,
-                "Failed to clean up video remix intermediates"
-            );
-        }
+    /// Run one provider media-generation op and persist its payload as a
+    /// slim gallery result — the shared tail of the vision-backed tools
+    /// (the provider's base64 payload never enters the model's context).
+    async fn media_generate_and_persist(
+        &self,
+        op: &'static str,
+        error_label: &'static str,
+        tool: &'static str,
+        kind: &'static str,
+        media_params: hkask_types::MediaGenerateParams,
+    ) -> Result<serde_json::Value, McpToolError> {
+        let args = serde_json::to_value(&media_params).unwrap_or(serde_json::Value::Null);
+        let result = self
+            .vision_port
+            .media_generate(op, &media_params)
+            .await
+            .map_err(|e| classify_inference_error(error_label, e))?;
+        persist_slim_and_enrich(&self.gallery_store, &result, tool, kind, args).await
     }
 }
 
@@ -265,20 +326,12 @@ impl MediaServer {
                 image_url: Some(image_url.clone()),
                 ..Default::default()
             };
-            let args = serde_json::to_value(&media_params).unwrap_or(serde_json::Value::Null);
-            let result = self
-                .vision_port
-                .media_generate("remove_background", &media_params)
-                .await
-                .map_err(|e| classify_inference_error("Background removal failed", e))?;
-            // Persist the payload and compose the slim result (the provider's
-            // base64 payload never enters the model's context).
-            persist_slim_and_enrich(
-                &self.gallery_store,
-                &result,
+            self.media_generate_and_persist(
+                "remove_background",
+                "Background removal failed",
                 "image_remove_background",
                 "image",
-                args,
+                media_params,
             )
             .await
         })
@@ -313,21 +366,12 @@ impl MediaServer {
                 strength,
                 ..Default::default()
             };
-            let args = serde_json::to_value(&media_params).unwrap_or(serde_json::Value::Null);
-            let result = self
-                .vision_port
-                .media_generate("image_to_image", &media_params)
-                .await
-                .map_err(|e| classify_inference_error("Style transfer failed", e))?;
-            // Persist the payload and compose the slim result (the provider's
-            // base64 payload never enters the model's context). Previously this
-            // tool returned the raw provider response unpersisted.
-            persist_slim_and_enrich(
-                &self.gallery_store,
-                &result,
+            self.media_generate_and_persist(
+                "image_to_image",
+                "Style transfer failed",
                 "image_apply_style",
                 "image",
-                args,
+                media_params,
             )
             .await
         })
@@ -463,30 +507,7 @@ impl MediaServer {
             let canvas_w: u32 = parts.first().and_then(|s| s.parse().ok()).unwrap_or(1200);
             let canvas_h: u32 = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(900);
 
-            let cell_w = (canvas_w - spacing * (cols + 1)) / cols;
-            let cell_h = (canvas_h - spacing * (rows + 1)) / rows;
-
-            let mut canvas = image::DynamicImage::new_rgba8(canvas_w, canvas_h);
-            let bg = image::Rgba([30u8, 30u8, 30u8, 255u8]);
-            for pixel in canvas.as_mut_rgba8().expect("canvas was created as RGBA8").pixels_mut() {
-                *pixel = bg;
-            }
-
-            for (i, img) in images.iter().enumerate() {
-                let col = i as u32 % cols;
-                let row = i as u32 / cols;
-
-                let scaled = img.resize_exact(
-                    cell_w.saturating_sub(spacing),
-                    cell_h.saturating_sub(spacing),
-                    image::imageops::FilterType::Lanczos3,
-                );
-
-                let x = spacing + col * (cell_w + spacing) + (cell_w.saturating_sub(spacing) - scaled.width()) / 2;
-                let y = spacing + row * (cell_h + spacing) + (cell_h.saturating_sub(spacing) - scaled.height()) / 2;
-
-                image::imageops::overlay(&mut canvas, &scaled, x as i64, y as i64);
-            }
+            let canvas = compose_collage_grid(&images, cols, rows, canvas_w, canvas_h, spacing);
 
             // Scratch write consumed by the canonical publication below —
             // the publish path stages the bytes durably, removes the scratch
@@ -559,16 +580,8 @@ impl MediaServer {
                     "start_sec must be less than end_sec.",
                 ));
             }
-            ensure_local_input_exists(&video_url)?;
-
-            #[cfg(test)]
-            let bypass_dns = pause_after_local_video_admission().await?;
-            #[cfg(not(test))]
-            let bypass_dns = false;
-            if !crate::is_local_media_path(&video_url) && !bypass_dns {
-                validate_tool_url_with_dns(&video_url).await?;
-            }
-            self.require_ffmpeg()?;
+            self.admit_local_video_inputs(std::slice::from_ref(&video_url))
+                .await?;
 
             let params = ClipEffectiveParams {
                 source: &video_url,
@@ -625,16 +638,8 @@ impl MediaServer {
             if f == 0 {
                 return Err(McpToolError::invalid_argument("fps must be greater than 0"));
             }
-            ensure_local_input_exists(&video_url)?;
-
-            #[cfg(test)]
-            let bypass_dns = pause_after_local_video_admission().await?;
-            #[cfg(not(test))]
-            let bypass_dns = false;
-            if !crate::is_local_media_path(&video_url) && !bypass_dns {
-                validate_tool_url_with_dns(&video_url).await?;
-            }
-            self.require_ffmpeg()?;
+            self.admit_local_video_inputs(std::slice::from_ref(&video_url))
+                .await?;
             let params = GifEffectiveParams {
                 source: &video_url,
                 start_sec: start,
@@ -696,21 +701,12 @@ impl MediaServer {
                 model,
                 ..Default::default()
             };
-            let args = serde_json::to_value(&media_params).unwrap_or(serde_json::Value::Null);
-            let result = self
-                .vision_port
-                .media_generate("image_to_video", &media_params)
-                .await
-                .map_err(|e| classify_inference_error("Image-to-video failed", e))?;
-            // Persist the video payload and compose the slim result (the
-            // payload never enters the model's context). Previously this
-            // tool returned the raw provider response unpersisted.
-            persist_slim_and_enrich(
-                &self.gallery_store,
-                &result,
+            self.media_generate_and_persist(
+                "image_to_video",
+                "Image-to-video failed",
                 "image_to_video",
                 "video",
-                args,
+                media_params,
             )
             .await
         })
@@ -736,16 +732,8 @@ impl MediaServer {
                     "font_size must be greater than 0",
                 ));
             }
-            ensure_local_input_exists(&video_url)?;
-
-            #[cfg(test)]
-            let bypass_dns = pause_after_local_video_admission().await?;
-            #[cfg(not(test))]
-            let bypass_dns = false;
-            if !crate::is_local_media_path(&video_url) && !bypass_dns {
-                validate_tool_url_with_dns(&video_url).await?;
-            }
-            self.require_ffmpeg()?;
+            self.admit_local_video_inputs(std::slice::from_ref(&video_url))
+                .await?;
             let params = CaptionEffectiveParams {
                 source: &video_url,
                 text: &text,
@@ -792,16 +780,8 @@ impl MediaServer {
                     "start_sec must be less than end_sec.",
                 ));
             }
-            ensure_local_input_exists(&video_url)?;
-
-            #[cfg(test)]
-            let bypass_dns = pause_after_local_video_admission().await?;
-            #[cfg(not(test))]
-            let bypass_dns = false;
-            if !crate::is_local_media_path(&video_url) && !bypass_dns {
-                validate_tool_url_with_dns(&video_url).await?;
-            }
-            self.require_ffmpeg()?;
+            self.admit_local_video_inputs(std::slice::from_ref(&video_url))
+                .await?;
 
             let params = RemixEffectiveParams {
                 source: &video_url,
@@ -815,7 +795,7 @@ impl MediaServer {
                 gif_width: REMIX_GIF_WIDTH,
                 gif_fps: REMIX_GIF_FPS,
             };
-            let mut intermediates = LocalVideoIntermediates::new();
+            let mut intermediates = crate::assets::ScratchIntermediates::new("video remix");
             let clipped = self
                 .ffmpeg
                 .clip(params.source, params.start_sec, params.end_sec)
@@ -851,7 +831,7 @@ impl MediaServer {
                 )
                 .await
                 .map_err(map_media_error)?;
-            let mut final_cleanup = LocalVideoIntermediates::new();
+            let mut final_cleanup = crate::assets::ScratchIntermediates::new("video remix");
             final_cleanup.track(gif.clone());
             intermediates.cleanup().map_err(map_media_error)?;
 
@@ -957,20 +937,7 @@ impl MediaServer {
                 2,
                 hkask_types::media_limits::MAX_CONCAT_ITEMS,
             )?;
-            for url in &video_urls {
-                ensure_local_input_exists(url)?;
-            }
-
-            #[cfg(test)]
-            let bypass_dns = pause_after_local_video_admission().await?;
-            #[cfg(not(test))]
-            let bypass_dns = false;
-            for url in &video_urls {
-                if !crate::is_local_media_path(url) && !bypass_dns {
-                    validate_tool_url_with_dns(url).await?;
-                }
-            }
-            self.require_ffmpeg()?;
+            self.admit_local_video_inputs(&video_urls).await?;
 
             let params = ConcatEffectiveParams {
                 sources: &video_urls,
@@ -1217,32 +1184,17 @@ impl MediaServer {
                 ))
             })?;
 
-            let img_w = img.width();
             let img_h = img.height();
             let scale = ab_glyph::PxScale::from(img_h as f32 * 0.10);
-            let white = image::Rgba([255u8, 255u8, 255u8, 255u8]);
-            let black = image::Rgba([0u8, 0u8, 0u8, 255u8]);
 
             if let Some(ref text) = top_text {
-                let text_upper: String = text.to_uppercase();
-                let (tw, _th) = measure_text(&font, scale, &text_upper);
-                let x = ((img_w as i32 - tw as i32) / 2).max(0);
-                let y = (img_h as f32 * 0.05) as i32;
-                for &(dx, dy) in &[(1, 0), (-1, 0), (0, 1), (0, -1)] {
-                    draw_text_mut(&mut img, black, x + dx, y + dy, scale, &font, &text_upper);
-                }
-                draw_text_mut(&mut img, white, x, y, scale, &font, &text_upper);
+                draw_meme_text(&mut img, &font, scale, text, (img_h as f32 * 0.05) as i32);
             }
 
             if let Some(ref text) = bottom_text {
-                let text_upper: String = text.to_uppercase();
-                let (tw, th) = measure_text(&font, scale, &text_upper);
-                let x = ((img_w as i32 - tw as i32) / 2).max(0);
+                let (_, th) = measure_text(&font, scale, &text.to_uppercase());
                 let y = (img_h as i32 - th as i32 - (img_h as f32 * 0.05) as i32).max(0);
-                for &(dx, dy) in &[(1, 0), (-1, 0), (0, 1), (0, -1)] {
-                    draw_text_mut(&mut img, black, x + dx, y + dy, scale, &font, &text_upper);
-                }
-                draw_text_mut(&mut img, white, x, y, scale, &font, &text_upper);
+                draw_meme_text(&mut img, &font, scale, text, y);
             }
 
             let mut buf = std::io::Cursor::new(Vec::new());
@@ -1262,22 +1214,12 @@ impl MediaServer {
                 duration,
                 ..Default::default()
             };
-            let args = serde_json::to_value(&media_params)
-                .unwrap_or(serde_json::Value::Null);
-            let result = self
-                .vision_port
-                .media_generate("image_to_video", &media_params)
-                .await
-                .map_err(|e| classify_inference_error("Image-to-video failed", e))?;
-            // Persist the video payload and compose the slim result (the
-            // payload never enters the model's context). Previously this
-            // tool returned the raw provider response unpersisted.
-            persist_slim_and_enrich(
-                &self.gallery_store,
-                &result,
+            self.media_generate_and_persist(
+                "image_to_video",
+                "Image-to-video failed",
                 "video_meme",
                 "video",
-                args,
+                media_params,
             )
             .await
         })
