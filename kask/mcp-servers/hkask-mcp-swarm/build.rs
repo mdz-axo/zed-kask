@@ -1,33 +1,24 @@
 //! Build script — generates `tool_names.gen.rs` from `#[tool]` fn signatures.
 //!
-//! Scans `src/**/*.rs` for functions annotated with `#[tool(...)]` and emits
-//! a `pub const TOOL_NAMES: &[&str]` with their names. The generated set is
-//! pinned against the live router by `tool_surface_pin!` in the server's
-//! test module, so a tool added/renamed/unrouted fails the pin instead of
-//! degrading to "tool not found" at dispatch. The scan itself lives in the
-//! shared support module — one implementation for every server.
-//!
-//! Swarm-specific: also emits `CLOUD_SWARM_TOOL_NAMES` — the subset
-//! declared in the file carrying `#[tool_router(router = cloud_swarm_router)]`.
-//! The swarm panel's Steer prompt splits the surface into ABW tools (the
-//! cloud router) and local-substrate tools (the complement); deriving the
+//! Swarm-specific: also emits `CLOUD_SWARM_TOOL_NAMES` — the subset declared
+//! in the file carrying `#[tool_router(router = cloud_swarm_router)]`. The
+//! swarm panel's Steer prompt splits the surface into ABW tools (the cloud
+//! router) and local-substrate tools (the complement); deriving the
 //! partition here keeps it structural, not hand-maintained. Pinned against
 //! the live `cloud_swarm_router()` surface by
 //! `cloud_swarm_tool_names_match_live_cloud_router`.
+//!
+//! The shared scan/generation/change-detection mechanics live in
+//! `hkask-mcp-server/build_support/tool_names.rs`; this driver keeps only the
+//! cloud-partition selection.
 
 #[path = "../../crates/hkask-mcp-server/build_support/tool_names.rs"]
 mod tool_names;
 
 use std::collections::BTreeSet;
-use std::env;
-use std::path::Path;
 
 fn main() {
-    let manifest_dir = env::var("CARGO_MANIFEST_DIR")
-        .expect("CARGO_MANIFEST_DIR is set by cargo for build scripts");
-    let src_dir = Path::new(&manifest_dir).join("src");
-    let out_dir = env::var("OUT_DIR").expect("OUT_DIR is set by cargo for build scripts");
-    let out_path = Path::new(&out_dir).join("tool_names.gen.rs");
+    let (src_dir, out_path) = tool_names::src_and_out_paths();
 
     let router_pattern =
         regex::Regex::new(r"#\[tool_router\(router\s*=\s*(\w+)").expect("valid regex");
