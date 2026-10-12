@@ -525,6 +525,21 @@ pub struct BrowseResult {
     pub actions_taken: Vec<String>,
 }
 
+impl BrowseResult {
+    /// A browse result whose provider returned extracted page content —
+    /// the shared tail of the extract-style providers (Exa `/contents`,
+    /// Tavily `/extract`). The content extraction stays per provider
+    /// (each response shape differs); the result shape is shared.
+    pub fn extracted(url: &str, content: String, instruction: &str) -> Self {
+        Self {
+            url: url.to_string(),
+            content,
+            instruction: Some(instruction.to_string()),
+            actions_taken: vec!["extract".to_string()],
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchQuery {
     pub query: String,

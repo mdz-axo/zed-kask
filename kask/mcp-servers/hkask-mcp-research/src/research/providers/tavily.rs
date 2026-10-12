@@ -198,12 +198,7 @@ impl WebBrowseProvider for TavilyProvider {
             .unwrap_or("")
             .to_string();
 
-        Ok(BrowseResult {
-            url: url.to_string(),
-            content,
-            instruction: Some(instruction.to_string()),
-            actions_taken: vec!["extract".to_string()],
-        })
+        Ok(BrowseResult::extracted(url, content, instruction))
     }
 
     async fn health(&self) -> Result<(), WebError> {
