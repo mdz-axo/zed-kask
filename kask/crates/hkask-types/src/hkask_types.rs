@@ -45,6 +45,7 @@ pub mod voice;
 
 pub use voice::VoiceDesign;
 
+pub mod serpapi;
 #[cfg(feature = "sql")]
 pub mod sql_impls;
 pub mod url_utils;

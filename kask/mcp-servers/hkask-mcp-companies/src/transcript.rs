@@ -348,24 +348,7 @@ pub async fn fetch_corpus_transcripts(
     let search_json: serde_json::Value = serde_json::from_str(&search_body).map_err(|error| {
         McpToolError::unavailable(format!("SerpAPI search returned malformed JSON: {error}"))
     })?;
-    let video_results = search_json["video_results"]
-        .as_array()
-        .map(|array| {
-            array
-                .iter()
-                .filter_map(|video| {
-                    let title = video["title"].as_str()?.to_string();
-                    let link = video["link"].as_str()?.to_string();
-                    let channel = video["channel"]
-                        .as_str()
-                        .or_else(|| video["channel"]["name"].as_str())
-                        .unwrap_or("unknown")
-                        .to_string();
-                    Some((title, link, channel))
-                })
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
+    let video_results = hkask_types::serpapi::youtube_video_results(&search_json);
     let mut transcripts = Vec::new();
     let mut excluded = Vec::new();
     for (title, url, channel) in video_results {

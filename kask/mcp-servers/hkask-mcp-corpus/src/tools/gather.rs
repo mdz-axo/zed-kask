@@ -730,24 +730,7 @@ async fn search_youtube_for_company(
     let parsed: serde_json::Value =
         serde_json::from_str(&body).map_err(|error| anyhow::anyhow!("malformed JSON: {error}"))?;
 
-    let videos = parsed["video_results"]
-        .as_array()
-        .map(|array| {
-            array
-                .iter()
-                .filter_map(|video| {
-                    let title = video["title"].as_str()?.to_string();
-                    let link = video["link"].as_str()?.to_string();
-                    let channel = video["channel"]
-                        .as_str()
-                        .or_else(|| video["channel"]["name"].as_str())
-                        .unwrap_or("unknown")
-                        .to_string();
-                    Some((title, link, channel))
-                })
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
+    let videos = hkask_types::serpapi::youtube_video_results(&parsed);
 
     Ok(videos)
 }
