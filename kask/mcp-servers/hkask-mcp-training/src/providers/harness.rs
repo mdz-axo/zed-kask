@@ -54,6 +54,92 @@ fn render_harness_template(
         })
 }
 
+/// The template context every harness builds from a TrainingJob — the
+/// shared parameter surface: dataset location, base model, quantization,
+/// LoRA geometry, optimization basics, output dir, and the always-present
+/// flags the templates' Strict mode requires. Each adapter adds its
+/// harness-specific keys and its optional-field strategy on top (Axolotl
+/// inserts conditionally so template `default()` filters fire; Ludwig
+/// always inserts so `{% if %}` guards work).
+fn shared_training_context(
+    job: &TrainingJob,
+    output_dir: String,
+) -> serde_json::Map<String, serde_json::Value> {
+    let p = &job.params;
+    let lo = &p.lora;
+    let opt = &p.optimization;
+    let (dataset_path, data_files) = job
+        .artifacts
+        .as_ref()
+        .map(|artifacts| {
+            (
+                artifacts.dataset.repository.clone(),
+                artifacts.dataset.path.clone(),
+            )
+        })
+        .unwrap_or_else(|| (job.dataset_path.display().to_string(), String::new()));
+
+    let mut context = serde_json::Map::from_iter([
+        ("base_model".to_string(), serde_json::json!(job.base_model)),
+        (
+            "load_in_4bit".to_string(),
+            serde_json::json!(p.quantization.load_in_4bit),
+        ),
+        ("lora_r".to_string(), serde_json::json!(lo.r)),
+        ("lora_alpha".to_string(), serde_json::json!(lo.alpha)),
+        ("lora_dropout".to_string(), serde_json::json!(lo.dropout)),
+        (
+            "lora_target_modules".to_string(),
+            serde_json::json!(lo.target_modules),
+        ),
+        ("dataset_path".to_string(), serde_json::json!(dataset_path)),
+        ("data_files".to_string(), serde_json::json!(data_files)),
+        ("num_epochs".to_string(), serde_json::json!(p.num_epochs)),
+        (
+            "learning_rate".to_string(),
+            serde_json::json!(p.learning_rate),
+        ),
+        (
+            "micro_batch_size".to_string(),
+            serde_json::json!(p.batch_size),
+        ),
+        (
+            "gradient_accumulation_steps".to_string(),
+            serde_json::json!(opt.gradient_accumulation_steps),
+        ),
+        ("output_dir".to_string(), serde_json::json!(output_dir)),
+    ]);
+    // peft_init_lora_weights is used in {% if %} in the templates, so it
+    // must always be present in the context for minijinja Strict mode.
+    // Insert as null when absent — null is falsy in {% if %}.
+    context.insert(
+        "peft_init_lora_weights".to_string(),
+        serde_json::json!(
+            lo.init_lora_weights
+                .as_ref()
+                .map(|init| init.as_config_value())
+        ),
+    );
+    // Optimization fields wired from TrainingParams — these exist in the
+    // struct but must reach the template rather than fall back to
+    // hardcoded defaults.
+    context.insert("bf16".to_string(), serde_json::json!(p.advanced.bf16));
+    context.insert(
+        "sample_packing".to_string(),
+        serde_json::json!(p.sequence.sample_packing),
+    );
+    if let Some(ref gc) = p.advanced.gradient_checkpointing {
+        context.insert("gradient_checkpointing".to_string(), serde_json::json!(gc));
+    }
+    if let Some(ref attn) = p.advanced.attn_implementation {
+        context.insert(
+            "flash_attention".to_string(),
+            serde_json::json!((attn == "flash_attention_2").to_string()),
+        );
+    }
+    context
+}
+
 // ── Axolotl harness ────────────────────────────────────────────────────────
 
 /// Renders axolotl YAML configuration from canonical TrainingParams.
@@ -62,63 +148,9 @@ pub(crate) struct AxolotlHarness;
 impl HarnessAdapter for AxolotlHarness {
     fn render_config(&self, job: &TrainingJob) -> Result<String, HostProviderError> {
         let p = &job.params;
-        let lo = &p.lora;
         let opt = &p.optimization;
-        let (dataset_path, data_files) = job
-            .artifacts
-            .as_ref()
-            .map(|artifacts| {
-                (
-                    artifacts.dataset.repository.clone(),
-                    artifacts.dataset.path.clone(),
-                )
-            })
-            .unwrap_or_else(|| (job.dataset_path.display().to_string(), String::new()));
-
-        let mut context = serde_json::Map::from_iter([
-            ("base_model".to_string(), serde_json::json!(job.base_model)),
-            (
-                "load_in_4bit".to_string(),
-                serde_json::json!(p.quantization.load_in_4bit),
-            ),
-            ("lora_r".to_string(), serde_json::json!(lo.r)),
-            ("lora_alpha".to_string(), serde_json::json!(lo.alpha)),
-            ("lora_dropout".to_string(), serde_json::json!(lo.dropout)),
-            (
-                "lora_target_modules".to_string(),
-                serde_json::json!(lo.target_modules),
-            ),
-            ("dataset_path".to_string(), serde_json::json!(dataset_path)),
-            ("data_files".to_string(), serde_json::json!(data_files)),
-            ("num_epochs".to_string(), serde_json::json!(p.num_epochs)),
-            (
-                "learning_rate".to_string(),
-                serde_json::json!(p.learning_rate),
-            ),
-            (
-                "micro_batch_size".to_string(),
-                serde_json::json!(p.batch_size),
-            ),
-            (
-                "gradient_accumulation_steps".to_string(),
-                serde_json::json!(opt.gradient_accumulation_steps),
-            ),
-            (
-                "output_dir".to_string(),
-                serde_json::json!(self.output_dir(&job.id).display().to_string()),
-            ),
-        ]);
-        // peft_init_lora_weights is used in {% if %} in the template, so it
-        // must always be present in the context for minijinja Strict mode.
-        // Insert as null when absent — null is falsy in {% if %}.
-        context.insert(
-            "peft_init_lora_weights".to_string(),
-            serde_json::json!(
-                lo.init_lora_weights
-                    .as_ref()
-                    .map(|init| init.as_config_value())
-            ),
-        );
+        let mut context =
+            shared_training_context(job, self.output_dir(&job.id).display().to_string());
         // The following fields are used with {{ field | default(...) }} in the
         // template. The default() filter only triggers when the variable is
         // undefined (not in context), not when it's null. So we use conditional
@@ -154,30 +186,12 @@ impl HarnessAdapter for AxolotlHarness {
                 serde_json::json!(eval_ratio.to_string()),
             );
         }
-        if let Some(ref gc) = p.advanced.gradient_checkpointing {
-            context.insert("gradient_checkpointing".to_string(), serde_json::json!(gc));
-        }
-        if let Some(ref attn) = p.advanced.attn_implementation {
-            context.insert(
-                "flash_attention".to_string(),
-                serde_json::json!((attn == "flash_attention_2").to_string()),
-            );
-        }
         if opt.weight_decay > 0.0 {
             context.insert(
                 "weight_decay".to_string(),
                 serde_json::json!(opt.weight_decay),
             );
         }
-
-        // Wire optimization fields from TrainingParams to the template context.
-        // These fields exist in the struct but were not previously passed to the
-        // template, causing the template to use hardcoded defaults.
-        context.insert("bf16".to_string(), serde_json::json!(p.advanced.bf16));
-        context.insert(
-            "sample_packing".to_string(),
-            serde_json::json!(p.sequence.sample_packing),
-        );
 
         let template_root = std::env::var_os("HKASK_TEMPLATE_ROOT")
             .map(PathBuf::from)
@@ -285,87 +299,37 @@ impl HarnessAdapter for LudwigHarness {
         let p = &job.params;
         let lo = &p.lora;
         let opt = &p.optimization;
-        let (dataset_path, data_files) = job
-            .artifacts
-            .as_ref()
-            .map(|artifacts| {
-                (
-                    artifacts.dataset.repository.clone(),
-                    artifacts.dataset.path.clone(),
-                )
-            })
-            .unwrap_or_else(|| (job.dataset_path.display().to_string(), String::new()));
-
         // Ludwig uses a different config shape from Axolotl — `model_type: llm`,
         // `base_model:`, `adapter:`, `quantization:`, `input_features`,
         // `output_features`, `trainer:`. We assemble the full context the
         // template needs; the template (ludwig-lora.j2) is the single source
         // of truth for the YAML structure.
-        let mut context = serde_json::Map::from_iter([
-            ("base_model".to_string(), serde_json::json!(job.base_model)),
-            (
-                "load_in_4bit".to_string(),
-                serde_json::json!(p.quantization.load_in_4bit),
-            ),
-            ("lora_r".to_string(), serde_json::json!(lo.r)),
-            ("lora_alpha".to_string(), serde_json::json!(lo.alpha)),
-            ("lora_dropout".to_string(), serde_json::json!(lo.dropout)),
-            (
-                "lora_target_modules".to_string(),
-                serde_json::json!(lo.target_modules),
-            ),
-            ("dataset_path".to_string(), serde_json::json!(dataset_path)),
-            ("data_files".to_string(), serde_json::json!(data_files)),
-            ("num_epochs".to_string(), serde_json::json!(p.num_epochs)),
-            (
-                "learning_rate".to_string(),
-                serde_json::json!(p.learning_rate),
-            ),
-            (
-                "micro_batch_size".to_string(),
-                serde_json::json!(p.batch_size),
-            ),
-            (
-                "gradient_accumulation_steps".to_string(),
-                serde_json::json!(opt.gradient_accumulation_steps),
-            ),
-            (
-                "output_dir".to_string(),
-                serde_json::json!(self.output_dir(&job.id).display().to_string()),
-            ),
-            // Ludwig-specific: use_rslora / use_dora map to adapter config flags.
-            (
-                "use_rslora".to_string(),
-                serde_json::json!(lo.use_rslora.to_string()),
-            ),
-            (
-                "use_dora".to_string(),
-                serde_json::json!(lo.use_dora.to_string()),
-            ),
-            (
-                "trainer_type".to_string(),
-                serde_json::json!(match p.training_method.unwrap_or_default() {
-                    TrainingMethod::Sft => "finetune",
-                    TrainingMethod::Dpo => "dpo",
-                    TrainingMethod::Kto => "kto",
-                    TrainingMethod::Orpo => "orpo",
-                    TrainingMethod::Grpo => "grpo",
-                }),
-            ),
-        ]);
+        let mut context =
+            shared_training_context(job, self.output_dir(&job.id).display().to_string());
+        // Ludwig-specific: use_rslora / use_dora map to adapter config flags.
+        context.insert(
+            "use_rslora".to_string(),
+            serde_json::json!(lo.use_rslora.to_string()),
+        );
+        context.insert(
+            "use_dora".to_string(),
+            serde_json::json!(lo.use_dora.to_string()),
+        );
+        context.insert(
+            "trainer_type".to_string(),
+            serde_json::json!(match p.training_method.unwrap_or_default() {
+                TrainingMethod::Sft => "finetune",
+                TrainingMethod::Dpo => "dpo",
+                TrainingMethod::Kto => "kto",
+                TrainingMethod::Orpo => "orpo",
+                TrainingMethod::Grpo => "grpo",
+            }),
+        );
         // Optional fields — always inserted (with empty defaults when None) so
         // the template's `{% if field %}` guards work with minijinja Strict
         // undefined behavior. Empty strings are falsy in minijinja, so `{% if %}`
         // correctly skips rendering when the value is absent. This mirrors the
         // Axolotl harness pattern (always insert, let the template decide).
-        context.insert(
-            "peft_init_lora_weights".to_string(),
-            serde_json::json!(
-                lo.init_lora_weights
-                    .as_ref()
-                    .map(|init| init.as_config_value())
-            ),
-        );
         context.insert(
             "optim".to_string(),
             serde_json::json!(opt.optimizer.clone()),
@@ -396,22 +360,6 @@ impl HarnessAdapter for LudwigHarness {
             "weight_decay".to_string(),
             serde_json::json!(opt.weight_decay),
         );
-
-        // Optimization fields — wired from TrainingParams.
-        context.insert("bf16".to_string(), serde_json::json!(p.advanced.bf16));
-        context.insert(
-            "sample_packing".to_string(),
-            serde_json::json!(p.sequence.sample_packing),
-        );
-        if let Some(ref gc) = p.advanced.gradient_checkpointing {
-            context.insert("gradient_checkpointing".to_string(), serde_json::json!(gc));
-        }
-        if let Some(ref attn) = p.advanced.attn_implementation {
-            context.insert(
-                "flash_attention".to_string(),
-                serde_json::json!((attn == "flash_attention_2").to_string()),
-            );
-        }
 
         let template_root = std::env::var_os("HKASK_TEMPLATE_ROOT")
             .map(PathBuf::from)
