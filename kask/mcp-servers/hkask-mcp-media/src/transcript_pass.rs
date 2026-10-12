@@ -645,6 +645,29 @@ fn truncate(text: &str, max_chars: usize) -> String {
 mod tests {
     use super::*;
 
+    /// The pass-prompt fixture: a compiled template environment plus the
+    /// two-word timing-aligned transcript (alpha 0-500, beta 500-900) the
+    /// prompt-embedding tests share. Timings stay exact — not the
+    /// test_support 1-second-boundary fixture.
+    fn prompt_env_and_words() -> (minijinja::Environment<'static>, Vec<TimedWord>) {
+        let env = crate::templates::create_env().expect("media templates must compile");
+        let words = vec![
+            TimedWord {
+                word: "alpha".to_string(),
+                start_ms: 0,
+                end_ms: 500,
+                confidence: None,
+            },
+            TimedWord {
+                word: "beta".to_string(),
+                start_ms: 500,
+                end_ms: 900,
+                confidence: None,
+            },
+        ];
+        (env, words)
+    }
+
     #[test]
     fn indexed_words_line_formats_indices() {
         let words = vec![
@@ -666,21 +689,7 @@ mod tests {
 
     #[test]
     fn every_pass_prompt_embeds_schema_and_indexed_words() {
-        let env = crate::templates::create_env().expect("media templates must compile");
-        let words = vec![
-            TimedWord {
-                word: "alpha".to_string(),
-                start_ms: 0,
-                end_ms: 500,
-                confidence: None,
-            },
-            TimedWord {
-                word: "beta".to_string(),
-                start_ms: 500,
-                end_ms: 900,
-                confidence: None,
-            },
-        ];
+        let (env, words) = prompt_env_and_words();
         for (template, schema_marker) in [
             (PARAGRAPH_PASS_TEMPLATE, "breaks_after"),
             (SPEAKER_PASS_TEMPLATE, "spans"),
@@ -703,21 +712,7 @@ mod tests {
 
     #[test]
     fn highlight_prompt_embeds_the_selection_request() {
-        let env = crate::templates::create_env().expect("media templates must compile");
-        let words = vec![
-            TimedWord {
-                word: "alpha".to_string(),
-                start_ms: 0,
-                end_ms: 500,
-                confidence: None,
-            },
-            TimedWord {
-                word: "beta".to_string(),
-                start_ms: 500,
-                end_ms: 900,
-                confidence: None,
-            },
-        ];
+        let (env, words) = prompt_env_and_words();
         let prompt = render_pass_prompt(
             &env,
             HIGHLIGHT_PASS_TEMPLATE,
