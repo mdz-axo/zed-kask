@@ -388,8 +388,5 @@ A resolved but uncommitted merge exists only in the index and worktree;
 - **Mapped re-application in progress, merge already committed:** `git checkout
   -- <file>` discards one file's in-progress re-application; `git restore
   --source upstream/main -- <file>` restarts from clean upstream.
-- **Pushed to PR branch, before merge to `main`:** `git push --force-with-lease
-  origin upstream-sync-<YYYY-MM-DD>` — `--force-with-lease` (not `--force`)
-  rejects if someone else pushed.
 - **Merged to `main`:** do not force-push `main`. Revert with
   `git revert -m 1 <merge-sha>` and open a follow-up PR.
