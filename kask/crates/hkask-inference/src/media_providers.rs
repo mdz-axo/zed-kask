@@ -49,6 +49,49 @@ fn provider_http_error(prefix: &str, status: reqwest::StatusCode, body: &str) ->
     }
 }
 
+/// The `execute` arm body for a media op whose provider method signature is
+/// shared across providers — the bodies are identical because the
+/// signatures are the contract. Each provider's match keeps its own op
+/// patterns, arm order, and unsupported-op fallback (the dispatch table
+/// stays explicit per provider); this macro single-sources only the body.
+/// `$provider` is the expanding provider (`self` — macro hygiene requires
+/// passing it); `$params` is the `execute` binding.
+macro_rules! shared_media_dispatch {
+    (GenerateImage, $provider:expr, $params:ident) => {{
+        let prompt = $params.prompt.clone().unwrap_or_default();
+        let model = resolved_model($params)?;
+        ($provider)
+            .generate_image(&prompt, $params.size.as_deref(), $params.count, model)
+            .await
+    }};
+    (Transcribe, $provider:expr, $params:ident) => {{
+        let audio_url = $params.audio_url.clone().unwrap_or_default();
+        let model = resolved_model($params)?;
+        ($provider)
+            .transcribe(&audio_url, $params.language.as_deref(), model)
+            .await
+    }};
+    (GenerateVideo, $provider:expr, $params:ident) => {{
+        let prompt = $params.prompt.clone().unwrap_or_default();
+        let model = resolved_model($params)?;
+        ($provider)
+            .generate_video(&prompt, $params.duration, model)
+            .await
+    }};
+    (ImageToVideo, $provider:expr, $params:ident) => {{
+        let image_url = $params.image_url.clone().unwrap_or_default();
+        let model = resolved_model($params)?;
+        ($provider)
+            .image_to_video(
+                &image_url,
+                $params.prompt.as_deref(),
+                $params.duration,
+                model,
+            )
+            .await
+    }};
+}
+
 // ── DeepInfra ─────────────────────────────────────────────────────────────
 
 /// DeepInfra media generation backend.
@@ -371,12 +414,7 @@ impl MediaProvider for DeepInfraMediaProvider {
     ) -> Pin<Box<dyn Future<Output = Result<Value, InferenceError>> + Send + 'a>> {
         Box::pin(async move {
             match op {
-                MediaOp::GenerateImage => {
-                    let prompt = params.prompt.clone().unwrap_or_default();
-                    let model = resolved_model(params)?;
-                    self.generate_image(&prompt, params.size.as_deref(), params.count, model)
-                        .await
-                }
+                MediaOp::GenerateImage => shared_media_dispatch!(GenerateImage, self, params),
                 MediaOp::ImageToImage => {
                     let image_url = params.image_url.clone().unwrap_or_default();
                     let prompt = params.prompt.clone().unwrap_or_default();
@@ -404,28 +442,9 @@ impl MediaProvider for DeepInfraMediaProvider {
                     let model = resolved_model(params)?;
                     self.generate_speech(&text, &voice, model).await
                 }
-                MediaOp::Transcribe => {
-                    let audio_url = params.audio_url.clone().unwrap_or_default();
-                    let model = resolved_model(params)?;
-                    self.transcribe(&audio_url, params.language.as_deref(), model)
-                        .await
-                }
-                MediaOp::GenerateVideo => {
-                    let prompt = params.prompt.clone().unwrap_or_default();
-                    let model = resolved_model(params)?;
-                    self.generate_video(&prompt, params.duration, model).await
-                }
-                MediaOp::ImageToVideo => {
-                    let image_url = params.image_url.clone().unwrap_or_default();
-                    let model = resolved_model(params)?;
-                    self.image_to_video(
-                        &image_url,
-                        params.prompt.as_deref(),
-                        params.duration,
-                        model,
-                    )
-                    .await
-                }
+                MediaOp::Transcribe => shared_media_dispatch!(Transcribe, self, params),
+                MediaOp::GenerateVideo => shared_media_dispatch!(GenerateVideo, self, params),
+                MediaOp::ImageToVideo => shared_media_dispatch!(ImageToVideo, self, params),
                 // Not claimed by `supports` — the registry never routes
                 // chat_audio here. The named error is defense-in-depth for
                 // direct calls: audio-input chat is served by OpenRouter's
@@ -864,18 +883,8 @@ impl MediaProvider for OpenRouterMediaProvider {
     ) -> Pin<Box<dyn Future<Output = Result<Value, InferenceError>> + Send + 'a>> {
         Box::pin(async move {
             match op {
-                MediaOp::GenerateImage => {
-                    let prompt = params.prompt.clone().unwrap_or_default();
-                    let model = resolved_model(params)?;
-                    self.generate_image(&prompt, params.size.as_deref(), params.count, model)
-                        .await
-                }
-                MediaOp::Transcribe => {
-                    let audio_url = params.audio_url.clone().unwrap_or_default();
-                    let model = resolved_model(params)?;
-                    self.transcribe(&audio_url, params.language.as_deref(), model)
-                        .await
-                }
+                MediaOp::GenerateImage => shared_media_dispatch!(GenerateImage, self, params),
+                MediaOp::Transcribe => shared_media_dispatch!(Transcribe, self, params),
                 MediaOp::ChatAudio => {
                     let prompt = params.prompt.clone().unwrap_or_default();
                     let audio_url = params.audio_url.clone().unwrap_or_default();
@@ -888,22 +897,8 @@ impl MediaProvider for OpenRouterMediaProvider {
                     let model = resolved_model(params)?;
                     self.chat_json(&prompt, &schema, model).await
                 }
-                MediaOp::GenerateVideo => {
-                    let prompt = params.prompt.clone().unwrap_or_default();
-                    let model = resolved_model(params)?;
-                    self.generate_video(&prompt, params.duration, model).await
-                }
-                MediaOp::ImageToVideo => {
-                    let image_url = params.image_url.clone().unwrap_or_default();
-                    let model = resolved_model(params)?;
-                    self.image_to_video(
-                        &image_url,
-                        params.prompt.as_deref(),
-                        params.duration,
-                        model,
-                    )
-                    .await
-                }
+                MediaOp::GenerateVideo => shared_media_dispatch!(GenerateVideo, self, params),
+                MediaOp::ImageToVideo => shared_media_dispatch!(ImageToVideo, self, params),
                 other => Err(InferenceError::Connection(format!(
                     "openrouter does not support media op: {}",
                     other.as_str()
