@@ -68,6 +68,26 @@ pub const SPREADSHEET_BLOCK_SCHEMA_VERSION: u32 = 1;
 /// The fenced-block viz discriminator for all spreadsheet presentation blocks.
 pub const SPREADSHEET_VIZ: &str = "spreadsheet";
 
+/// Header checks shared by both spreadsheet block variants: the viz
+/// discriminator and schema version must match the block format this
+/// version writes — anything else means the block was not produced by this
+/// format (or was not migrated).
+fn validate_block_header(viz: &str, schema_version: u32) -> Result<(), SpreadsheetError> {
+    if viz != SPREADSHEET_VIZ {
+        return Err(SpreadsheetError::InvalidBlock {
+            detail: format!("viz discriminator is {viz:?}, expected {SPREADSHEET_VIZ:?}"),
+        });
+    }
+    if schema_version != SPREADSHEET_BLOCK_SCHEMA_VERSION {
+        return Err(SpreadsheetError::InvalidBlock {
+            detail: format!(
+                "schema version {schema_version} is not {SPREADSHEET_BLOCK_SCHEMA_VERSION}"
+            ),
+        });
+    }
+    Ok(())
+}
+
 // ── Typed values ───────────────────────────────────────────────────────────
 
 /// A typed cell value in an [`AnalyticalTable`].
@@ -599,22 +619,7 @@ impl InlineTableBlock {
     }
 
     pub fn validate(&self) -> Result<(), SpreadsheetError> {
-        if self.viz != SPREADSHEET_VIZ {
-            return Err(SpreadsheetError::InvalidBlock {
-                detail: format!(
-                    "viz discriminator is {:?}, expected {SPREADSHEET_VIZ:?}",
-                    self.viz
-                ),
-            });
-        }
-        if self.schema_version != SPREADSHEET_BLOCK_SCHEMA_VERSION {
-            return Err(SpreadsheetError::InvalidBlock {
-                detail: format!(
-                    "schema version {} is not {SPREADSHEET_BLOCK_SCHEMA_VERSION}",
-                    self.schema_version
-                ),
-            });
-        }
+        validate_block_header(&self.viz, self.schema_version)?;
         self.origin.validate()?;
         self.table.validate()?;
         Ok(())
@@ -665,22 +670,7 @@ impl SpreadsheetBlock {
     }
 
     pub fn validate(&self) -> Result<(), SpreadsheetError> {
-        if self.viz != SPREADSHEET_VIZ {
-            return Err(SpreadsheetError::InvalidBlock {
-                detail: format!(
-                    "viz discriminator is {:?}, expected {SPREADSHEET_VIZ:?}",
-                    self.viz
-                ),
-            });
-        }
-        if self.schema_version != SPREADSHEET_BLOCK_SCHEMA_VERSION {
-            return Err(SpreadsheetError::InvalidBlock {
-                detail: format!(
-                    "schema version {} is not {SPREADSHEET_BLOCK_SCHEMA_VERSION}",
-                    self.schema_version
-                ),
-            });
-        }
+        validate_block_header(&self.viz, self.schema_version)?;
         if self.title.trim().is_empty() || self.active_sheet.trim().is_empty() {
             return Err(SpreadsheetError::InvalidBlock {
                 detail: "block requires a title and an active sheet".into(),
