@@ -504,6 +504,26 @@ impl LocalMediaFormat {
     }
 }
 
+/// Stage `bytes` into `asset_dir` under a fresh uuid with the rollback-armed
+/// staged path — the staging block shared by local processor outputs
+/// (`stage_local_media_publication`) and provider-response assets
+/// (`stage_job_asset_in_dir`). The caller owns the returned cleanup and
+/// disarms it once the built asset owns the staged path.
+fn stage_staged_asset(
+    asset_dir: &std::path::Path,
+    ext: &str,
+    bytes: &[u8],
+) -> Result<(std::path::PathBuf, std::path::PathBuf, StagedPathCleanup), MediaError> {
+    let id = uuid::Uuid::new_v4();
+    let final_path = asset_dir.join(format!("{id}.{ext}"));
+    let staged_path = asset_dir.join(format!(".{id}.{ext}.staged"));
+    let staged_path_cleanup = StagedPathCleanup::armed(staged_path.clone());
+    write_staged_asset(&staged_path, bytes).map_err(|error| {
+        MediaError::AssetPersistence(format!("stage {}: {error}", staged_path.display()))
+    })?;
+    Ok((staged_path, final_path, staged_path_cleanup))
+}
+
 /// Move a completed local processor output under the same rollback-armed
 /// publication owner used by background generation jobs. The processor's
 /// temporary file is consumed before this returns; no temp-runner lifetime is
@@ -522,13 +542,8 @@ pub(crate) fn stage_local_media_publication(
     let ext = format.extension().to_string();
 
     let asset_dir = generated_assets_dir();
-    let id = uuid::Uuid::new_v4();
-    let final_path = asset_dir.join(format!("{id}.{ext}"));
-    let staged_path = asset_dir.join(format!(".{id}.{ext}.staged"));
-    let mut staged_path_cleanup = StagedPathCleanup::armed(staged_path.clone());
-    write_staged_asset(&staged_path, &bytes).map_err(|error| {
-        MediaError::AssetPersistence(format!("stage {}: {error}", staged_path.display()))
-    })?;
+    let (staged_path, final_path, mut staged_path_cleanup) =
+        stage_staged_asset(&asset_dir, &ext, &bytes)?;
     std::fs::remove_file(source_path).map_err(|error| {
         MediaError::AssetPersistence(format!(
             "consume processor output {}: {error}",
@@ -801,13 +816,8 @@ async fn stage_job_asset_in_dir(
         }
     };
 
-    let id = uuid::Uuid::new_v4();
-    let final_path = asset_dir.join(format!("{id}.{ext}"));
-    let staged_path = asset_dir.join(format!(".{id}.{ext}.staged"));
-    let mut staged_path_cleanup = StagedPathCleanup::armed(staged_path.clone());
-    write_staged_asset(&staged_path, &bytes).map_err(|error| {
-        MediaError::AssetPersistence(format!("stage {}: {error}", staged_path.display()))
-    })?;
+    let (staged_path, final_path, mut staged_path_cleanup) =
+        stage_staged_asset(asset_dir, ext, &bytes)?;
     let asset = StagedJobAsset {
         staged_path,
         final_path,
