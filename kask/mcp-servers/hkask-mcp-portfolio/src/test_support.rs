@@ -6,8 +6,8 @@
 //! out of the public docs while the integration test binaries (separate
 //! crates) reach it through the lib.
 
-use crate::PortfolioStore;
 use crate::server::PortfolioServer;
+use crate::{AssetType, PortfolioStore, Transaction, TxType};
 use hkask_types::WebID;
 
 /// Build a server over a fresh temp-dir SQLite store, returning the server
@@ -29,4 +29,35 @@ pub fn make_server() -> (PortfolioServer, std::path::PathBuf) {
 /// one call; the former per-file copies re-implemented it).
 pub fn unwrap_content(output: &str) -> serde_json::Value {
     hkask_types::tool_response::parse_tool_response(output).expect("tool output must be valid JSON")
+}
+
+/// Build a stock `Transaction` fixture — the field defaults every test
+/// builder repeated (Stock asset type, zero commission, no weight, USD,
+/// empty notes), with `created_at` derived from the date. Integration
+/// suites wrap this with their own id policy (the tool-behavior suite
+/// mints a uuid per transaction).
+pub fn transaction(
+    id: &str,
+    date: &str,
+    tx_type: TxType,
+    symbol: Option<&str>,
+    quantity: Option<f64>,
+    price: Option<f64>,
+    amount: Option<f64>,
+) -> Transaction {
+    Transaction {
+        id: id.to_string(),
+        date: date.to_string(),
+        tx_type,
+        asset_type: AssetType::Stock,
+        symbol: symbol.map(str::to_string),
+        quantity,
+        price,
+        commission: Some(0.0),
+        amount,
+        weight: None,
+        currency: "USD".to_string(),
+        notes: String::new(),
+        created_at: format!("{date}T00:00:00Z"),
+    }
 }

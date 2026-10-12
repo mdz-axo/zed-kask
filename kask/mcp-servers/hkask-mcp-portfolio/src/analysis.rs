@@ -815,32 +815,7 @@ fn uses_harmonic_aggregation(metric: &str) -> bool {
 mod tests {
     use super::*;
     use crate::NoPrices;
-
-    fn transaction(
-        id: &str,
-        date: &str,
-        tx_type: TxType,
-        symbol: Option<&str>,
-        quantity: Option<f64>,
-        price: Option<f64>,
-        amount: Option<f64>,
-    ) -> Transaction {
-        Transaction {
-            id: id.to_string(),
-            date: date.to_string(),
-            tx_type,
-            asset_type: AssetType::Stock,
-            symbol: symbol.map(str::to_string),
-            quantity,
-            price,
-            commission: Some(0.0),
-            amount,
-            weight: None,
-            currency: "USD".to_string(),
-            notes: String::new(),
-            created_at: format!("{date}T00:00:00Z"),
-        }
-    }
+    use crate::test_support::transaction;
 
     struct FixturePrices(HashMap<(String, String), f64>);
 

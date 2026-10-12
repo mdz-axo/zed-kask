@@ -30,21 +30,17 @@ fn transaction(
     price: Option<f64>,
     amount: Option<f64>,
 ) -> Transaction {
-    Transaction {
-        id: uuid::Uuid::new_v4().to_string(),
-        date: date.to_string(),
+    // The shared fixture builder carries the field defaults; this suite's
+    // id policy is a fresh uuid per transaction.
+    hkask_mcp_portfolio::test_support::transaction(
+        &uuid::Uuid::new_v4().to_string(),
+        date,
         tx_type,
-        asset_type: AssetType::Stock,
-        symbol: symbol.map(str::to_string),
+        symbol,
         quantity,
         price,
-        commission: Some(0.0),
         amount,
-        weight: None,
-        currency: "USD".to_string(),
-        notes: String::new(),
-        created_at: "2026-01-01T00:00:00Z".to_string(),
-    }
+    )
 }
 
 /// The full tool-seam loop: create → apply → batch-seed → returns →

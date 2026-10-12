@@ -42,6 +42,26 @@ fn stock_store(name: &str, txs: &[Transaction]) -> (tempfile::TempDir, Portfolio
     (dir, store)
 }
 
+/// The unpriced-AAPL fixture both materialization tests start from: a
+/// 10k deposit and a 10-share AAPL buy at 150 with no cached price — the
+/// missing-price gate's precondition.
+fn store_with_unpriced_aapl_buy() -> (tempfile::TempDir, PortfolioStore) {
+    stock_store(
+        "test",
+        &[
+            sample_tx("2024-01-02", "deposit", None, None, None, Some(10000.0)),
+            sample_tx(
+                "2024-01-02",
+                "buy",
+                Some("AAPL"),
+                Some(10.0),
+                Some(150.0),
+                None,
+            ),
+        ],
+    )
+}
+
 /// The standard AAPL fixture the snapshot, returns, and rebuild tests
 /// share: a "test" stock portfolio with a 2024-01-02 $20,000 deposit and
 /// a 2024-01-15 buy of 100 AAPL @ $150 — 100 shares plus $5,000 cash from
@@ -833,20 +853,7 @@ fn returns_errors_naming_missing_prices_instead_of_zero_valuing() {
 
 #[test]
 fn materialize_returns_fails_without_writing_on_missing_prices() {
-    let (_dir, store) = stock_store(
-        "test",
-        &[
-            sample_tx("2024-01-02", "deposit", None, None, None, Some(10000.0)),
-            sample_tx(
-                "2024-01-02",
-                "buy",
-                Some("AAPL"),
-                Some(10.0),
-                Some(150.0),
-                None,
-            ),
-        ],
-    );
+    let (_dir, store) = store_with_unpriced_aapl_buy();
 
     let resolver = CachedPriceResolver::new(&store, "test");
     let err = store
@@ -865,20 +872,7 @@ fn materialize_returns_fails_without_writing_on_missing_prices() {
 
 #[test]
 fn cached_resolver_resolves_as_of_and_seed_invalidates_views() {
-    let (_dir, store) = stock_store(
-        "test",
-        &[
-            sample_tx("2024-01-02", "deposit", None, None, None, Some(10000.0)),
-            sample_tx(
-                "2024-01-02",
-                "buy",
-                Some("AAPL"),
-                Some(10.0),
-                Some(150.0),
-                None,
-            ),
-        ],
-    );
+    let (_dir, store) = store_with_unpriced_aapl_buy();
 
     let resolver = CachedPriceResolver::new(&store, "test");
     // As-of resolution: a price seeded on Friday carries through the weekend.

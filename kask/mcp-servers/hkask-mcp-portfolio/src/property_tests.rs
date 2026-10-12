@@ -38,6 +38,32 @@ fn tx(
     }
 }
 
+/// A fresh stock store with an opening deposit — the preamble both ledger
+/// property tests start from.
+fn store_with_opening_deposit(amount: f64) -> (tempfile::TempDir, PortfolioStore) {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    let store = PortfolioStore::with_dir(dir.path().to_path_buf());
+    store
+        .create("p", AssetType::Stock)
+        .expect("create portfolio");
+    store
+        .apply(
+            "p",
+            &tx(
+                "d",
+                "2024-01-01",
+                TxType::Deposit,
+                None,
+                None,
+                None,
+                None,
+                Some(amount),
+            ),
+        )
+        .expect("apply deposit");
+    (dir, store)
+}
+
 proptest! {
     /// Hypothesis: a buy-then-sell round trip moves exactly the spread minus
     /// commissions — no money vanishes or appears beyond
@@ -107,15 +133,7 @@ proptest! {
             1..12,
         ),
     ) {
-        let dir = tempfile::tempdir().expect("temporary directory");
-        let store = PortfolioStore::with_dir(dir.path().to_path_buf());
-        store.create("p", AssetType::Stock).expect("create portfolio");
-        store
-            .apply("p", &tx(
-                "d", "2024-01-01", TxType::Deposit, None, None, None, None,
-                Some(1_000_000.0),
-            ))
-            .expect("apply deposit");
+        let (_dir, store) = store_with_opening_deposit(1_000_000.0);
 
         let mut reference = 0.0f64;
         for (i, (day, is_buy, qty)) in cases.iter().enumerate() {
@@ -158,15 +176,7 @@ proptest! {
         ),
         day in 2usize..=9,
     ) {
-        let dir = tempfile::tempdir().expect("temporary directory");
-        let store = PortfolioStore::with_dir(dir.path().to_path_buf());
-        store.create("p", AssetType::Stock).expect("create portfolio");
-        store
-            .apply("p", &tx(
-                "d", "2024-01-01", TxType::Deposit, None, None, None, None,
-                Some(deposit),
-            ))
-            .expect("apply deposit");
+        let (_dir, store) = store_with_opening_deposit(deposit);
 
         let mut spent = 0.0f64;
         let mut shares = 0.0f64;
