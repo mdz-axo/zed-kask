@@ -5059,6 +5059,29 @@ mod tool_behavior_tests {
     /// inserts words leaves timed consumers failing with the unaligned
     /// precondition (retained by design); storing a realignment layer
     /// via educt_realign_transcript restores them — the same corrected
+    /// Store a transcript bundle and return its transcript id — the store
+    /// call + id extraction the realignment and repeat-locate tests share,
+    /// varying exactly the bundle.
+    async fn store_bundle_transcript(
+        server: &MediaServer,
+        bundle: &crate::transcript::TranscriptBundle,
+    ) -> String {
+        use crate::types::EductStoreTranscriptRequest;
+        let stored = server
+            .educt_store_transcript(Parameters(EductStoreTranscriptRequest {
+                transcript: hkask_types::AnyJsonValue(
+                    serde_json::to_value(bundle).expect("serialize bundle"),
+                ),
+                gallery_asset_id: None,
+            }))
+            .await
+            .expect("store succeeds");
+        content_of(&stored)["id"]
+            .as_str()
+            .expect("id present")
+            .to_string()
+    }
+
     /// text subsequently drives educt_locate, the highlight pass, and SRT
     /// export over re-anchored timings.
     #[tokio::test]
@@ -5066,7 +5089,7 @@ mod tool_behavior_tests {
         use crate::transcript::{TimedWord, TranscriptBundle};
         use crate::types::{
             EductExportRequest, EductHighlightPassRequest, EductLocateRequest,
-            EductRealignTranscriptRequest, EductStoreLayerRequest, EductStoreTranscriptRequest,
+            EductRealignTranscriptRequest, EductStoreLayerRequest,
         };
 
         let _artifacts = IsolatedArtifacts::new().await;
@@ -5092,19 +5115,7 @@ mod tool_behavior_tests {
                 "the cinder ela curve".to_string(),
             )
         };
-        let stored = server
-            .educt_store_transcript(Parameters(EductStoreTranscriptRequest {
-                transcript: hkask_types::AnyJsonValue(
-                    serde_json::to_value(&bundle).expect("serialize bundle"),
-                ),
-                gallery_asset_id: None,
-            }))
-            .await
-            .expect("store succeeds");
-        let transcript_id = content_of(&stored)["id"]
-            .as_str()
-            .expect("id present")
-            .to_string();
+        let transcript_id = store_bundle_transcript(&server, &bundle).await;
 
         // A cardinality-changing correction: word 2 ("ela") becomes two
         // tokens — an insertion.
@@ -5225,7 +5236,7 @@ mod tool_behavior_tests {
     #[tokio::test]
     async fn educt_locate_surfaces_all_candidates_on_ambiguity() {
         use crate::transcript::{TimedWord, TranscriptBundle};
-        use crate::types::{EductLocateRequest, EductStoreTranscriptRequest};
+        use crate::types::EductLocateRequest;
 
         let server = make_pass_server("{}".to_string());
         // "the plan" appears twice — both candidates must surface.
@@ -5246,16 +5257,7 @@ mod tool_behavior_tests {
                 "the plan the plan again".to_string(),
             )
         };
-        let stored = server
-            .educt_store_transcript(Parameters(EductStoreTranscriptRequest {
-                transcript: hkask_types::AnyJsonValue(
-                    serde_json::to_value(&bundle).expect("serialize bundle"),
-                ),
-                gallery_asset_id: None,
-            }))
-            .await
-            .expect("store succeeds");
-        let transcript_id = content_of(&stored)["id"].as_str().expect("id").to_string();
+        let transcript_id = store_bundle_transcript(&server, &bundle).await;
         let result = server
             .educt_locate(Parameters(EductLocateRequest {
                 transcript_id,
