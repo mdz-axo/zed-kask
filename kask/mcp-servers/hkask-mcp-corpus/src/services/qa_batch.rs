@@ -726,6 +726,47 @@ mod tests {
         )
     }
 
+    /// Build the reviewed-admit fixture, run the batch under `mode`, and
+    /// return the summary, stub port, output path, and fixture directory.
+    /// The caller binds the directory as a keep-alive: the output and
+    /// adjudication files live inside it and must outlive the assertions.
+    async fn reviewed_admit_batch(
+        mode: Mode,
+    ) -> Result<
+        (serde_json::Value, Arc<StubPort>, String, tempfile::TempDir),
+        Box<dyn std::error::Error>,
+    > {
+        let (directory, mut request) = fixture(&[prompt("qa-1")])?;
+        attach_adjudication(&directory, &mut request, "admit", None)?;
+        let output = request.output.clone();
+        let port = Arc::new(StubPort::new(mode));
+        let summary = QaBatchService::new(port.clone())
+            .generate_qa_batch(request)
+            .await?;
+        Ok((summary, port, output, directory))
+    }
+
+    /// Assert the reviewed-mandate flow spent exactly two provider responses
+    /// (the plan plus one correction or generate attempt) and left a single
+    /// terminal error row carrying `needle`.
+    fn assert_terminal_error_row(
+        summary: &serde_json::Value,
+        port: &Arc<StubPort>,
+        output: &str,
+        needle: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        assert_eq!(summary["provider_responses"], 2);
+        assert_eq!(port.calls.load(Ordering::SeqCst), 2);
+        let rows = records(output)?;
+        assert_eq!(rows.len(), 1);
+        assert!(
+            rows[0]["error"]
+                .as_str()
+                .is_some_and(|error| error.contains(needle))
+        );
+        Ok(())
+    }
+
     /// expect: Generation admits the generator's named-object drafts as candidates
     /// with canonical evidence, marks them pending external verification, and
     /// reports every prompt once.
@@ -807,13 +848,7 @@ mod tests {
     #[tokio::test]
     async fn reviewed_admit_generates_under_reviewed_mandates()
     -> Result<(), Box<dyn std::error::Error>> {
-        let (directory, mut request) = fixture(&[prompt("qa-1")])?;
-        attach_adjudication(&directory, &mut request, "admit", None)?;
-        let output = request.output.clone();
-        let port = Arc::new(StubPort::new(Mode::Success));
-        let summary = QaBatchService::new(port.clone())
-            .generate_qa_batch(request)
-            .await?;
+        let (summary, port, output, _directory) = reviewed_admit_batch(Mode::Success).await?;
         assert_eq!(summary["qa_rows_written"], 2);
         assert_eq!(summary["qa_levels_skipped"], 0);
         assert_eq!(summary["reviewed_passage_admits"], 1);
@@ -832,13 +867,8 @@ mod tests {
     #[tokio::test]
     async fn reviewed_conceptual_generate_mismatch_is_corrected_once()
     -> Result<(), Box<dyn std::error::Error>> {
-        let (directory, mut request) = fixture(&[prompt("qa-1")])?;
-        attach_adjudication(&directory, &mut request, "admit", None)?;
-        let output = request.output.clone();
-        let port = Arc::new(StubPort::new(Mode::ReviewedGenerateMismatchOnce));
-        let summary = QaBatchService::new(port.clone())
-            .generate_qa_batch(request)
-            .await?;
+        let (summary, port, output, _directory) =
+            reviewed_admit_batch(Mode::ReviewedGenerateMismatchOnce).await?;
         assert_eq!(summary["prompts_succeeded"], 1);
         assert_eq!(summary["qa_rows_written"], 2);
         assert_eq!(summary["qa_levels_skipped"], 0);
@@ -854,25 +884,12 @@ mod tests {
     #[tokio::test]
     async fn second_reviewed_generate_mismatch_fails_prompt()
     -> Result<(), Box<dyn std::error::Error>> {
-        let (directory, mut request) = fixture(&[prompt("qa-1")])?;
-        attach_adjudication(&directory, &mut request, "admit", None)?;
-        let output = request.output.clone();
-        let port = Arc::new(StubPort::new(Mode::ReviewedGenerateMismatchAlways));
-        let summary = QaBatchService::new(port.clone())
-            .generate_qa_batch(request)
-            .await?;
+        let (summary, port, output, _directory) =
+            reviewed_admit_batch(Mode::ReviewedGenerateMismatchAlways).await?;
         assert_eq!(summary["prompts_failed"], 1);
         assert_eq!(summary["qa_rows_written"], 0);
         assert_eq!(summary["qa_levels_skipped"], 0);
-        assert_eq!(summary["provider_responses"], 2);
-        assert_eq!(port.calls.load(Ordering::SeqCst), 2);
-        let rows = records(&output)?;
-        assert_eq!(rows.len(), 1);
-        assert!(
-            rows[0]["error"]
-                .as_str()
-                .is_some_and(|error| error.contains("QA disposition mandate rejected"))
-        );
+        assert_terminal_error_row(&summary, &port, &output, "QA disposition mandate rejected")?;
         Ok(())
     }
 
@@ -892,13 +909,12 @@ mod tests {
         assert_eq!(summary["qa_levels_skipped"], 0);
         assert_eq!(summary["reviewed_level_generates"], 1);
         assert_eq!(summary["reviewed_level_skips"], 1);
-        assert_eq!(summary["provider_responses"], 2);
-        assert_eq!(port.calls.load(Ordering::SeqCst), 2);
-        let rows = records(&output)?;
-        assert_eq!(rows.len(), 1);
-        assert!(rows[0]["error"].as_str().is_some_and(|error| {
-            error.contains("requires skip reason 'conceptual_support_absent'")
-        }));
+        assert_terminal_error_row(
+            &summary,
+            &port,
+            &output,
+            "requires skip reason 'conceptual_support_absent'",
+        )?;
         Ok(())
     }
 
