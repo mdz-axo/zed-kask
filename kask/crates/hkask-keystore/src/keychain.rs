@@ -211,32 +211,9 @@ impl Keychain {
     pub fn retrieve_by_key(&self, key: &str) -> Result<Zeroizing<String>, KeychainError> {
         let url = credential_url(key);
         let key = key.to_string();
-        let log_key = key.clone();
         let keyring = open_keyring();
         match block_on_with_timeout(
-            async move {
-                let keyring = keyring.await?;
-                keyring.unlock().await?;
-                let items = keyring.search_items(&[("url", url.as_str())]).await?;
-                for item in items {
-                    if item.label().await.is_ok_and(|label| label == KEYRING_LABEL) {
-                        item.unlock().await?;
-                        let secret = item.secret().await?;
-                        let secret_str = String::from_utf8_lossy(&secret).into_owned();
-                        info!(
-                            target: "reg.keystore",
-                            operation = "retrieve_by_key",
-                            key = %log_key,
-                            "REG"
-                        );
-                        return Ok(Zeroizing::new(secret_str));
-                    }
-                }
-                Err(KeychainError::NotFound(NotFound {
-                    entity_type: "secret".to_string(),
-                    id: format!("keychain entry not found at url={url}"),
-                }))
-            },
+            Self::retrieve_url(keyring, url, Some(("retrieve_by_key", key.clone()))),
             std::time::Duration::from_secs(KEYCHAIN_READ_TIMEOUT_SECS),
         ) {
             Some(result) => result,
@@ -263,24 +240,7 @@ impl Keychain {
         let url = credential_url(key);
         let key = key.to_string();
         let keyring = open_keyring();
-        block_on(async move {
-            let keyring = keyring.await?;
-            keyring.unlock().await?;
-            let items = keyring.search_items(&[("url", url.as_str())]).await?;
-            for item in items {
-                if item.label().await.is_ok_and(|label| label == KEYRING_LABEL) {
-                    item.delete().await?;
-                    info!(
-                        target: "reg.keystore",
-                        operation = "delete_by_key",
-                        key = %key,
-                        "REG"
-                    );
-                    return Ok(());
-                }
-            }
-            Ok::<_, KeychainError>(())
-        })
+        block_on(Self::delete_url(keyring, url, Some(("delete_by_key", key))))
     }
 
     // ── Generic URL-based access ─────────────────────────────────────
@@ -339,7 +299,7 @@ impl Keychain {
     /// post: returns Ok(secret) if stored, Err(NotFound) if not
     pub fn retrieve_by_url(&self, url: &str) -> Result<Zeroizing<String>, KeychainError> {
         let keyring = open_keyring();
-        block_on(Self::retrieve_url(keyring, url.to_string()))
+        block_on(Self::retrieve_url(keyring, url.to_string(), None))
     }
 
     /// Async counterpart of `retrieve_by_url`; the returned secret is zeroized on drop.
@@ -360,7 +320,7 @@ impl Keychain {
         let key = url.to_string();
         match async_std::future::timeout(
             std::time::Duration::from_secs(KEYCHAIN_READ_TIMEOUT_SECS),
-            async_std::task::spawn(Self::retrieve_url(keyring, key.clone())),
+            async_std::task::spawn(Self::retrieve_url(keyring, key.clone(), None)),
         )
         .await
         {
@@ -379,26 +339,49 @@ impl Keychain {
         }
     }
 
+    /// Unlock the keyring and return the entry labeled [`KEYRING_LABEL`] at
+    /// `url`, if any — the shared search of the keychain read and delete
+    /// operations.
+    async fn labeled_item_at(
+        keyring: impl std::future::Future<Output = Result<oo7::Keyring, KeychainError>> + Send,
+        url: &str,
+    ) -> Result<Option<oo7::Item>, KeychainError> {
+        let keyring = keyring.await?;
+        keyring.unlock().await?;
+        let items = keyring.search_items(&[("url", url)]).await?;
+        for item in items {
+            if item.label().await.is_ok_and(|label| label == KEYRING_LABEL) {
+                return Ok(Some(item));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Read the labeled entry's secret at `url` — the one implementation of
+    /// the keychain read shared by the key-based and URL-based paths.
+    /// `log` names the key-based caller's operation for its `REG` journal
+    /// record; the URL-based paths pass `None`.
     async fn retrieve_url(
         keyring: impl std::future::Future<Output = Result<oo7::Keyring, KeychainError>> + Send,
         url: String,
+        log: Option<(&'static str, String)>,
     ) -> Result<Zeroizing<String>, KeychainError> {
-        let keyring = keyring.await?;
-        keyring.unlock().await?;
-        let items = keyring.search_items(&[("url", url.as_str())]).await?;
-        for item in items {
-            if item.label().await.is_ok_and(|label| label == KEYRING_LABEL) {
+        match Self::labeled_item_at(keyring, &url).await? {
+            Some(item) => {
                 item.unlock().await?;
                 let secret = item.secret().await?;
-                return Ok(Zeroizing::new(
+                if let Some((operation, key)) = log {
+                    info!(target: "reg.keystore", operation = %operation, key = %key, "REG");
+                }
+                Ok(Zeroizing::new(
                     String::from_utf8_lossy(&secret).into_owned(),
-                ));
+                ))
             }
+            None => Err(KeychainError::NotFound(NotFound {
+                entity_type: "secret".to_string(),
+                id: format!("keychain entry not found at url={url}"),
+            })),
         }
-        Err(KeychainError::NotFound(NotFound {
-            entity_type: "secret".to_string(),
-            id: format!("keychain entry not found at url={url}"),
-        }))
     }
 
     /// Delete a secret at an arbitrary URL; absent entries are a no-op.
@@ -407,20 +390,22 @@ impl Keychain {
     /// bound landed on the read path first (see the incident note there).
     pub async fn delete_by_url_async(&self, url: &str) -> Result<(), KeychainError> {
         let keyring = open_keyring();
-        async_std::task::spawn(Self::delete_url(keyring, url.to_string())).await
+        async_std::task::spawn(Self::delete_url(keyring, url.to_string(), None)).await
     }
 
+    /// Delete the labeled entry at `url`; absent entries are a no-op — the
+    /// one implementation of the keychain delete shared by the key-based and
+    /// URL-based paths. `log` as in [`Self::retrieve_url`]. Not yet
+    /// deadline-bounded, like [`Self::store_url`].
     async fn delete_url(
         keyring: impl std::future::Future<Output = Result<oo7::Keyring, KeychainError>> + Send,
         url: String,
+        log: Option<(&'static str, String)>,
     ) -> Result<(), KeychainError> {
-        let keyring = keyring.await?;
-        keyring.unlock().await?;
-        let items = keyring.search_items(&[("url", url.as_str())]).await?;
-        for item in items {
-            if item.label().await.is_ok_and(|label| label == KEYRING_LABEL) {
-                item.delete().await?;
-                return Ok(());
+        if let Some(item) = Self::labeled_item_at(keyring, &url).await? {
+            item.delete().await?;
+            if let Some((operation, key)) = log {
+                info!(target: "reg.keystore", operation = %operation, key = %key, "REG");
             }
         }
         Ok(())
