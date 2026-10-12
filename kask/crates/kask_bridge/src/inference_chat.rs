@@ -422,6 +422,58 @@ impl StreamAccumulator {
 /// The `InferenceResilienceSource` impl exposes these counters with circuit
 /// transitions as one coherent observation. `Clone` shares the same runtime
 /// state between request dispatch and regulation observation.
+/// The reply channel one dispatch arm delivers its completion on — the
+/// oneshot completion channel or the unbounded streaming channel. The
+/// admission protocol (permit, in-flight guard, reply-close/deadline race,
+/// circuit completion) is shared; only the channel kind, its progress
+/// sender, and the final mapping differ.
+trait DispatchReply {
+    type Item;
+    /// Wait for the receiving end to drop.
+    async fn wait_closed(&mut self);
+    /// The progress sender `collect_completion` streams interim chunks
+    /// through — `None` when the channel carries only the final result.
+    fn progress(
+        &self,
+    ) -> Option<&tokio::sync::mpsc::UnboundedSender<Result<InferenceStreamChunk, InferenceError>>>;
+    /// Deliver the final result; `false` when the receiver is gone.
+    fn send_result(self, result: Result<Self::Item, InferenceError>) -> bool;
+}
+
+impl DispatchReply for tokio::sync::oneshot::Sender<Result<InferenceResult, InferenceError>> {
+    type Item = InferenceResult;
+    async fn wait_closed(&mut self) {
+        self.closed().await;
+    }
+    fn progress(
+        &self,
+    ) -> Option<&tokio::sync::mpsc::UnboundedSender<Result<InferenceStreamChunk, InferenceError>>>
+    {
+        None
+    }
+    fn send_result(self, result: Result<InferenceResult, InferenceError>) -> bool {
+        self.send(result).is_ok()
+    }
+}
+
+impl DispatchReply
+    for tokio::sync::mpsc::UnboundedSender<Result<InferenceStreamChunk, InferenceError>>
+{
+    type Item = InferenceStreamChunk;
+    async fn wait_closed(&mut self) {
+        self.closed().await;
+    }
+    fn progress(
+        &self,
+    ) -> Option<&tokio::sync::mpsc::UnboundedSender<Result<InferenceStreamChunk, InferenceError>>>
+    {
+        Some(self)
+    }
+    fn send_result(self, result: Result<InferenceStreamChunk, InferenceError>) -> bool {
+        self.send(result).is_ok()
+    }
+}
+
 #[derive(Clone)]
 pub struct LanguageModelInferencePort {
     admission: Arc<Semaphore>,
@@ -513,26 +565,23 @@ impl LanguageModelInferencePort {
                         let in_flight = in_flight.clone();
                         let recent_timeouts = recent_timeouts.clone();
                         cx.spawn(async move |cx| {
-                            let InferenceRequest { request, model_override, mut reply, lifetime } = req;
+                            let InferenceRequest { request, model_override, reply, lifetime } = req;
                             let RequestLifetime { _admission, circuit, deadline } = lifetime;
-                            let work = async {
-                                let _permit = semaphore.acquire().await.map_err(|error| InferenceError::Connection(error.to_string()))?;
-                                let _in_flight = InFlightGuard::new(in_flight);
-                                Self::collect_completion(request, model_override, &model, cx, None).await
-                            };
-                            let result = tokio::select! {
-                                biased;
-                                _ = reply.closed() => return,
-                                _ = Self::wait_deadline(deadline) => {
-                                    recent_timeouts.lock().unwrap_or_else(|error| error.into_inner()).push(std::time::Instant::now());
-                                    Err(InferenceError::Timeout("inference admission-to-completion deadline exceeded".into()))
-                                },
-                                result = work => result,
-                            };
-                            Self::complete_circuit(circuit, &result);
-                            if reply.send(result.map(StreamAccumulator::into_result)).is_err() {
-                                tracing::trace!(target: "hkask.inference", "inference caller cancelled");
-                            }
+                            Self::run_admission_task(
+                                request,
+                                model_override,
+                                reply,
+                                circuit,
+                                deadline,
+                                &model,
+                                &semaphore,
+                                in_flight,
+                                &recent_timeouts,
+                                cx,
+                                StreamAccumulator::into_result,
+                                "inference caller cancelled",
+                            )
+                            .await;
                         }).detach();
                     }
                     Some(req) = stream_rx.recv() => {
@@ -543,24 +592,21 @@ impl LanguageModelInferencePort {
                         cx.spawn(async move |cx| {
                             let StreamInferenceRequest { request, model_override, reply, lifetime } = req;
                             let RequestLifetime { _admission, circuit, deadline } = lifetime;
-                            let work = async {
-                                let _permit = semaphore.acquire().await.map_err(|error| InferenceError::Connection(error.to_string()))?;
-                                let _in_flight = InFlightGuard::new(in_flight);
-                                Self::collect_completion(request, model_override, &model, cx, Some(&reply)).await
-                            };
-                            let result = tokio::select! {
-                                biased;
-                                _ = reply.closed() => return,
-                                _ = Self::wait_deadline(deadline) => {
-                                    recent_timeouts.lock().unwrap_or_else(|error| error.into_inner()).push(std::time::Instant::now());
-                                    Err(InferenceError::Timeout("inference admission-to-completion deadline exceeded".into()))
-                                },
-                                result = work => result,
-                            };
-                            Self::complete_circuit(circuit, &result);
-                            if reply.send(result.map(StreamAccumulator::into_final_chunk)).is_err() {
-                                tracing::trace!(target: "hkask.inference", "streaming caller cancelled");
-                            }
+                            Self::run_admission_task(
+                                request,
+                                model_override,
+                                reply,
+                                circuit,
+                                deadline,
+                                &model,
+                                &semaphore,
+                                in_flight,
+                                &recent_timeouts,
+                                cx,
+                                StreamAccumulator::into_final_chunk,
+                                "streaming caller cancelled",
+                            )
+                            .await;
                         }).detach();
                     }
                     else => break,
@@ -713,6 +759,96 @@ impl LanguageModelInferencePort {
             .is_some_and(is_transient_inference_failure);
         let permanent_failure = result.as_ref().err().and_then(permanent_inference_failure);
         circuit.complete(result.is_ok(), transient_failure, permanent_failure);
+    }
+
+    /// Acquire a concurrency permit, register the in-flight guard, and
+    /// collect the completion — the work body both receiver arms race
+    /// against the reply-close and the admission deadline. The permit is
+    /// held for the work's lifetime and released on drop; `progress`
+    /// streams interim chunks (the streaming arm) or stays `None` (the
+    /// completion arm).
+    async fn acquire_and_collect(
+        request: LanguageModelRequest,
+        model_override: Option<String>,
+        model_for_task: &Arc<dyn LanguageModel>,
+        cx: &AsyncApp,
+        semaphore: &Arc<tokio::sync::Semaphore>,
+        in_flight: Arc<std::sync::atomic::AtomicUsize>,
+        progress: Option<
+            tokio::sync::mpsc::UnboundedSender<Result<InferenceStreamChunk, InferenceError>>,
+        >,
+    ) -> Result<StreamAccumulator, InferenceError> {
+        let _permit = semaphore
+            .acquire()
+            .await
+            .map_err(|error| InferenceError::Connection(error.to_string()))?;
+        let _in_flight = InFlightGuard::new(in_flight);
+        Self::collect_completion(
+            request,
+            model_override,
+            model_for_task,
+            cx,
+            progress.as_ref(),
+        )
+        .await
+    }
+
+    /// Record the deadline miss on the recent-timeouts ring and build the
+    /// typed timeout error — the deadline-exceeded arm body both receiver
+    /// arms share.
+    fn record_deadline_exceeded(
+        recent_timeouts: &Arc<std::sync::Mutex<Vec<std::time::Instant>>>,
+    ) -> Result<StreamAccumulator, InferenceError> {
+        recent_timeouts
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .push(std::time::Instant::now());
+        Err(InferenceError::Timeout(
+            "inference admission-to-completion deadline exceeded".into(),
+        ))
+    }
+
+    /// Run one dispatched request's admission protocol — the shared task
+    /// body of both receiver arms: acquire a permit, register in-flight,
+    /// collect the completion raced against the caller's reply-close and
+    /// the admission deadline, feed the outcome to the resilience circuit,
+    /// and deliver the mapped result on `reply`. Returns early when the
+    /// receiver drops mid-flight.
+    #[allow(clippy::too_many_arguments)]
+    async fn run_admission_task<R: DispatchReply>(
+        request: LanguageModelRequest,
+        model_override: Option<String>,
+        mut reply: R,
+        circuit: InferenceCircuitPermit,
+        deadline: Option<RequestDeadline>,
+        model_for_task: &Arc<dyn LanguageModel>,
+        semaphore: &Arc<tokio::sync::Semaphore>,
+        in_flight: Arc<std::sync::atomic::AtomicUsize>,
+        recent_timeouts: &Arc<std::sync::Mutex<Vec<std::time::Instant>>>,
+        cx: &AsyncApp,
+        finish: fn(StreamAccumulator) -> R::Item,
+        cancelled_label: &'static str,
+    ) {
+        let progress = reply.progress().cloned();
+        let work = Self::acquire_and_collect(
+            request,
+            model_override,
+            model_for_task,
+            cx,
+            semaphore,
+            in_flight,
+            progress,
+        );
+        let result = tokio::select! {
+            biased;
+            _ = reply.wait_closed() => return,
+            _ = Self::wait_deadline(deadline) => Self::record_deadline_exceeded(recent_timeouts),
+            result = work => result,
+        };
+        Self::complete_circuit(circuit, &result);
+        if !reply.send_result(result.map(finish)) {
+            tracing::trace!(target: "hkask.inference", "{cancelled_label}");
+        }
     }
 
     async fn collect_completion(
