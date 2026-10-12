@@ -2456,25 +2456,26 @@ mod tool_identity_tests {
         }
     }
 
+    /// Register alpha and beta, each exposing its own same-named `lookup`
+    /// tool — the two-server setup the tool-identity tests share.
+    async fn register_lookup_servers(runtime: &McpRuntime) {
+        for server in ["alpha", "beta"] {
+            runtime
+                .register_server(McpServer {
+                    id: server.to_string(),
+                    name: server.to_string(),
+                    tools: vec![tool_on(server, "lookup")],
+                })
+                .await;
+        }
+    }
+
     /// Two servers exposing the same tool name must each resolve their own
     /// metadata — same-named tools must not shadow each other.
     #[tokio::test]
     async fn same_named_tools_on_two_servers_keep_their_own_schemas() {
         let runtime = McpRuntime::new();
-        runtime
-            .register_server(McpServer {
-                id: "alpha".to_string(),
-                name: "alpha".to_string(),
-                tools: vec![tool_on("alpha", "lookup")],
-            })
-            .await;
-        runtime
-            .register_server(McpServer {
-                id: "beta".to_string(),
-                name: "beta".to_string(),
-                tools: vec![tool_on("beta", "lookup")],
-            })
-            .await;
+        register_lookup_servers(&runtime).await;
 
         let alpha = runtime
             .get_tool_info("alpha", "lookup")
@@ -2494,20 +2495,7 @@ mod tool_identity_tests {
     #[tokio::test]
     async fn stopping_one_server_leaves_the_others_same_named_tool_lookup() {
         let runtime = McpRuntime::new();
-        runtime
-            .register_server(McpServer {
-                id: "alpha".to_string(),
-                name: "alpha".to_string(),
-                tools: vec![tool_on("alpha", "lookup")],
-            })
-            .await;
-        runtime
-            .register_server(McpServer {
-                id: "beta".to_string(),
-                name: "beta".to_string(),
-                tools: vec![tool_on("beta", "lookup")],
-            })
-            .await;
+        register_lookup_servers(&runtime).await;
 
         runtime.stop_server("alpha").await;
 
@@ -2593,6 +2581,25 @@ mod metering_tests {
         McpRuntime::new().with_governance(cyber, Arc::new(NoopEventSink))
     }
 
+    /// Register a fixture server exposing one `ping` tool — the setup the
+    /// metering tests share so each call reaches `Unavailable` (registered
+    /// but never started), not `NotFound`; the metering decision, not the
+    /// tool lookup, is what each test varies.
+    async fn register_ping_server(runtime: &McpRuntime) {
+        runtime
+            .register_server(McpServer {
+                id: "fixture".to_string(),
+                name: "fixture".to_string(),
+                tools: vec![McpTool {
+                    name: "ping".to_string(),
+                    description: String::new(),
+                    input_schema: Value::Null,
+                    server_id: "fixture".to_string(),
+                }],
+            })
+            .await;
+    }
+
     /// An agent the composition root never registered is auto-registered at
     /// the default runaway ceiling, NOT denied. The call still proceeds to
     /// dispatch (which then fails because no server is connected — but the
@@ -2607,18 +2614,7 @@ mod metering_tests {
         // check passes and the dispatch path reaches `Unavailable` (registered
         // but never started) rather than `NotFound` (unknown tool). The
         // metering decision is what's under test, not the tool lookup.
-        runtime
-            .register_server(McpServer {
-                id: "fixture".to_string(),
-                name: "fixture".to_string(),
-                tools: vec![McpTool {
-                    name: "ping".to_string(),
-                    description: String::new(),
-                    input_schema: Value::Null,
-                    server_id: "fixture".to_string(),
-                }],
-            })
-            .await;
+        register_ping_server(&runtime).await;
         let agent = WebID::new();
 
         // The agent has no registered cap. invoke must NOT return
@@ -2654,18 +2650,7 @@ mod metering_tests {
         let ledger = Arc::new(RwLock::new(RegulationLedger::with_threshold(100)));
         let cyber = Arc::new(RwLock::new(CyberneticsLoop::new(ledger.clone())));
         let runtime = McpRuntime::new().with_governance(cyber, Arc::new(NoopEventSink));
-        runtime
-            .register_server(McpServer {
-                id: "fixture".to_string(),
-                name: "fixture".to_string(),
-                tools: vec![McpTool {
-                    name: "ping".to_string(),
-                    description: String::new(),
-                    input_schema: Value::Null,
-                    server_id: "fixture".to_string(),
-                }],
-            })
-            .await;
+        register_ping_server(&runtime).await;
         let agent = WebID::new();
 
         // Dispatch fails (no live connection) but the feed fires after the
@@ -2814,18 +2799,7 @@ mod metering_tests {
         // Register a server+tool so the first call reaches `Unavailable`
         // (not `NotFound`) — the cap exhaustion, not the tool lookup, is
         // what's under test.
-        runtime
-            .register_server(McpServer {
-                id: "fixture".to_string(),
-                name: "fixture".to_string(),
-                tools: vec![McpTool {
-                    name: "ping".to_string(),
-                    description: String::new(),
-                    input_schema: Value::Null,
-                    server_id: "fixture".to_string(),
-                }],
-            })
-            .await;
+        register_ping_server(&runtime).await;
         let agent = WebID::new();
         // Register a ceiling of 1 — the first call charges it, the second
         // trips the breaker.
@@ -2872,18 +2846,7 @@ mod metering_tests {
         // Register a server+tool so the call reaches `Unavailable` (not
         // `NotFound`) — the absence of metering, not the tool lookup, is
         // what's under test.
-        runtime
-            .register_server(McpServer {
-                id: "fixture".to_string(),
-                name: "fixture".to_string(),
-                tools: vec![McpTool {
-                    name: "ping".to_string(),
-                    description: String::new(),
-                    input_schema: Value::Null,
-                    server_id: "fixture".to_string(),
-                }],
-            })
-            .await;
+        register_ping_server(&runtime).await;
 
         let agent = WebID::new();
         let result = runtime.invoke("fixture", "ping", Value::Null, agent).await;
