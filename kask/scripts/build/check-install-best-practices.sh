@@ -220,6 +220,12 @@ export HKASK_SOURCE_DIR="$repo"
 corpus_home="$XDG_DATA_HOME/zed-kask/agents/curator/$CID"
 db="$corpus_home/$SID.db"
 staging="$corpus_home/.staging"
+# Deliberate resolution order: B7 below defines a cat() fault-injection
+# mock (define, inject one failure, unset -f cat) AFTER this top-level call,
+# so this cat runs the real binary by design — a same-named function
+# existing later is the injection mechanism, not a use-before-definition
+# bug. The mock definition carries its own SC2329 disable.
+# shellcheck disable=SC2218
 cat "$part0" "$part1" > "$sandbox/expected.db"
 
 # registered_run_of <source-id> — the registered run_id, or empty. Guarded:
