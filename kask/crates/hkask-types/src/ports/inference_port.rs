@@ -362,15 +362,26 @@ pub trait InferencePort: Send + Sync {
     /// Embedding, text-embedding-3). Callers whose vector stores are
     /// width-bound (sqlite-vec `float[N]` tables) pass the store's width so
     /// returned vectors always fit; `None` requests the model's native
-    /// width. The default delegates to [`InferencePort::embed_with_identity`],
-    /// ignoring the width — ports that talk to a provider honor it.
+    /// width. The default delegates to [`InferencePort::embed_with_identity`]
+    /// and `debug_assert!`s against a requested width: a port that does not
+    /// override this method cannot honor one, and silently discarding it
+    /// would hand native-width vectors to a caller under the belief they fit
+    /// its store. The assert makes the forgotten override loud in debug/test
+    /// builds; release keeps the historical delegation. Ports that talk to a
+    /// provider override it.
     fn embed_with_dimensions<'a>(
         &'a self,
         model: &str,
         texts: &[String],
         dimensions: Option<u32>,
     ) -> EmbedWithIdentityFuture<'a> {
-        let _ = dimensions;
+        debug_assert!(
+            dimensions.is_none(),
+            "InferencePort::embed_with_dimensions default used with a requested width \
+             ({dimensions:?}): this implementation does not override the method, so the \
+             width would be discarded and native-width vectors returned — override \
+             embed_with_dimensions or request the native width (None)"
+        );
         let model = model.to_string();
         let texts = texts.to_vec();
         Box::pin(async move { self.embed_with_identity(&model, &texts).await })
@@ -458,5 +469,52 @@ impl From<InferenceResult> for InferenceStreamChunk {
             tool_calls: r.tool_calls,
             cost_usd: r.cost_usd,
         }
+    }
+}
+
+#[cfg(test)]
+mod embed_dimensions_tests {
+    use super::*;
+
+    /// A port that implements only `generate` and relies on the trait
+    /// defaults for the embed family — the exact shape a future port that
+    /// forgets to override `embed_with_dimensions` takes.
+    struct DefaultEmbedPort;
+
+    impl InferencePort for DefaultEmbedPort {
+        fn generate(
+            &self,
+            _prompt: &str,
+            _parameters: &LLMParameters,
+            _tools: Option<&[ChatToolDefinition]>,
+        ) -> InferenceFuture<'_> {
+            Box::pin(async {
+                Err(InferenceError::NotConfigured(
+                    "generation unused".to_string(),
+                ))
+            })
+        }
+    }
+
+    /// The seam pin (fails without the fix): a width request routed to the
+    /// trait default — a port that cannot honor it — must fail loudly in
+    /// debug/test builds instead of silently discarding the width and
+    /// returning native-width vectors to a width-bound caller.
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "does not override")]
+    fn default_rejects_a_requested_width() {
+        let texts = vec!["text".to_string()];
+        // Not awaited: the guard fires synchronously, before the future is
+        // created.
+        let _future = DefaultEmbedPort.embed_with_dimensions("provider/model", &texts, Some(1024));
+    }
+
+    /// The default's legitimate path: `None` (native width) routes through
+    /// without tripping the guard.
+    #[test]
+    fn default_accepts_a_native_width_request() {
+        let texts = vec!["text".to_string()];
+        let _future = DefaultEmbedPort.embed_with_dimensions("provider/model", &texts, None);
     }
 }

@@ -979,6 +979,22 @@ mod tests {
                 })
             })
         }
+
+        fn embed_with_dimensions<'a>(
+            &'a self,
+            model: &str,
+            texts: &[String],
+            dimensions: Option<u32>,
+        ) -> hkask_types::EmbedWithIdentityFuture<'a> {
+            // Explicit width routing (not the trait default): ingest_turn and
+            // recall_turns pass the memory's width, and this stub embeds at
+            // the same `dim` the test constructs both with — a mismatch is a
+            // test bug, asserted here.
+            if let Some(d) = dimensions {
+                debug_assert_eq!(d as usize, self.dim);
+            }
+            self.embed_with_identity(model, texts)
+        }
     }
 
     fn constant_vectors(count: usize, dim: usize) -> Vec<Vec<f32>> {

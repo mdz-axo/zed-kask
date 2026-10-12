@@ -542,6 +542,23 @@ mod smoke {
                 ))
             })
         }
+
+        fn embed_with_dimensions<'a>(
+            &'a self,
+            _model: &str,
+            _texts: &[String],
+            _dimensions: Option<u32>,
+        ) -> hkask_types::EmbedWithIdentityFuture<'a> {
+            // corpus_query passes the store's width; fail it explicitly with
+            // the same message the width-less default produces, so the
+            // structured-error pin (Unavailable, surfaced) stays the behavior
+            // under test — not the trait default's width-discard guard.
+            Box::pin(async {
+                Err(hkask_types::EmbeddingGenerationError::Connection(
+                    "embed not supported by this InferencePort".to_string(),
+                ))
+            })
+        }
     }
 
     fn make_server() -> CorpusServer {

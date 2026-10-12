@@ -53,6 +53,21 @@ impl InferencePort for IdentityPort {
             })
         })
     }
+
+    fn embed_with_dimensions<'a>(
+        &'a self,
+        model: &str,
+        texts: &[String],
+        dimensions: Option<u32>,
+    ) -> hkask_types::EmbedWithIdentityFuture<'a> {
+        // Explicit width routing (not the trait default): corpus_embed passes
+        // the store's width, and this stub embeds at the same resolver — a
+        // request mismatch is a test bug, asserted here.
+        if let Some(d) = dimensions {
+            debug_assert_eq!(d as usize, crate::embedding_dim());
+        }
+        self.embed_with_identity(model, texts)
+    }
 }
 
 #[derive(Default)]
@@ -137,6 +152,22 @@ impl InferencePort for RecordingPort {
                 cost_usd: None,
             })
         })
+    }
+
+    fn embed_with_dimensions<'a>(
+        &'a self,
+        model: &str,
+        texts: &[String],
+        dimensions: Option<u32>,
+    ) -> hkask_types::EmbedWithIdentityFuture<'a> {
+        // Explicit width routing (not the trait default): corpus_embed and
+        // corpus_query pass the store's width, and this stub embeds at the
+        // same resolver (its wrong_dimension knob perturbs the response, not
+        // the request) — a request mismatch is a test bug, asserted here.
+        if let Some(d) = dimensions {
+            debug_assert_eq!(d as usize, crate::embedding_dim());
+        }
+        self.embed_with_identity(model, texts)
     }
 }
 

@@ -66,6 +66,24 @@ struct FailingEmbedPort;
 
 impl hkask_types::InferencePort for FailingEmbedPort {
     stub_generate_arm!();
+
+    fn embed_with_dimensions<'a>(
+        &'a self,
+        _model: &str,
+        _texts: &[String],
+        _dimensions: Option<u32>,
+    ) -> hkask_types::EmbedWithIdentityFuture<'a> {
+        // The semantic tools call the width-bearing arm with the store's
+        // width; fail it explicitly with the same message the width-less
+        // default produces, so the degradation path under test (fall back to
+        // exact-entity lookup, surfaced) stays the pin — not the trait
+        // default's width-discard guard.
+        Box::pin(async {
+            Err(hkask_types::EmbeddingGenerationError::Connection(
+                "embed not supported by this InferencePort".to_string(),
+            ))
+        })
+    }
 }
 
 /// Stub inference port whose `embed` returns a constant unit vector for any
@@ -102,6 +120,21 @@ impl hkask_types::InferencePort for ConstantEmbedPort {
                 cost_usd: None,
             })
         })
+    }
+
+    fn embed_with_dimensions<'a>(
+        &'a self,
+        model: &str,
+        texts: &[String],
+        dimensions: Option<u32>,
+    ) -> hkask_types::EmbedWithIdentityFuture<'a> {
+        // Explicit width routing (not the trait default): the semantic tools
+        // pass the store's width, and this stub embeds at the same resolver
+        // (`test_dim`) — a mismatch is a test bug, asserted here.
+        if let Some(d) = dimensions {
+            debug_assert_eq!(d as usize, test_dim());
+        }
+        self.embed_with_identity(model, texts)
     }
 }
 

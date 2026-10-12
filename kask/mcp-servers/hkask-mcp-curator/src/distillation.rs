@@ -1277,6 +1277,22 @@ mod tests {
                 let batch = scripted_embedding_batch(texts);
                 Box::pin(async move { Ok(batch) })
             }
+
+            fn embed_with_dimensions<'a>(
+                &'a self,
+                model: &str,
+                texts: &[String],
+                dimensions: Option<u32>,
+            ) -> hkask_types::EmbedWithIdentityFuture<'a> {
+                // Explicit width routing (not the trait default): lesson
+                // publication recalls prior lessons through the width-bearing
+                // path with the store's width, and the scripted batch embeds
+                // at 1024 — a mismatch is a test bug, asserted here.
+                if let Some(d) = dimensions {
+                    debug_assert_eq!(d as usize, 1024);
+                }
+                self.embed_with_identity(model, texts)
+            }
         };
     }
 
@@ -1376,6 +1392,24 @@ mod tests {
             }
             let batch = scripted_embedding_batch(texts);
             Box::pin(async move { Ok(batch) })
+        }
+
+        fn embed_with_dimensions<'a>(
+            &'a self,
+            model: &str,
+            texts: &[String],
+            dimensions: Option<u32>,
+        ) -> hkask_types::EmbedWithIdentityFuture<'a> {
+            // Explicit width routing (not the trait default): publication
+            // passes the store's width; delegate to this port's
+            // failure-counting `embed` (the F002 pin — transient embed
+            // failures block publication and retry) via the identity
+            // default. The scripted batch embeds at 1024 — a request
+            // mismatch is a test bug, asserted here.
+            if let Some(d) = dimensions {
+                debug_assert_eq!(d as usize, 1024);
+            }
+            self.embed_with_identity(model, texts)
         }
     }
 
