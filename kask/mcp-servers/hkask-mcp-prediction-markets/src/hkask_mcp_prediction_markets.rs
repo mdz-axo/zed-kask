@@ -382,6 +382,45 @@ impl PredictionMarketsServer {
         .await
     }
 
+    /// Read the calibration block for `bucket` — the per-market step the
+    /// rung scanner and both lookup gatherers share. The store reading is
+    /// snapshotted without holding the guard across an await (holding the
+    /// MutexGuard across one makes the tool future non-Send).
+    fn calibration_block_for(&self, bucket: &str) -> types::Calibration {
+        let guard = self
+            .calibration_store
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let reading = calibration::read_calibration(&guard, bucket);
+        types::calibration_for(Some(&reading), bucket)
+    }
+
+    /// Build the Polymarket market record with its calibration block — the
+    /// per-market step both the rung scanner and the lookup gatherer
+    /// repeat. Same family-first bucket derivation as the snapshot writers:
+    /// the calibration block a record carries must read the bucket the
+    /// scanner writes (§7 followup root cause).
+    fn polymarket_record_with_calibration(
+        &self,
+        market: &provider_polymarket::GammaMarket,
+        event: &provider_polymarket::GammaEvent,
+        event_tags: &[String],
+        now: &chrono::DateTime<chrono::Utc>,
+    ) -> Option<types::MarketRecord> {
+        let bucket = semantic_mapping::calibration_bucket_for_gamma(&market.question, &market.slug);
+        let calibration_block = self.calibration_block_for(&bucket);
+        types::MarketRecord::from_polymarket(
+            market,
+            &event.id,
+            &event.slug,
+            event.volume,
+            event.liquidity,
+            event_tags,
+            calibration_block,
+            now,
+        )
+    }
+
     /// Duration profile of a contract series (the term-structure ladder).
     #[tool(
         description = "Return the ladder of contracts in a series ordered by deadline, each annotated with its time_to_maturity in fractional years. Kalshi series ticker or Polymarket event slug; both platforms are probed. Unparsable deadlines sort last with null maturity; per-platform failures surface in warnings — the ladder never fabricates a maturity."
@@ -427,30 +466,10 @@ impl PredictionMarketsServer {
                         let event_tags: Vec<String> =
                             event.tags.iter().map(|t| t.label.clone()).collect();
                         for market in &event.markets {
-                            // Same family-first bucket derivation as the
-                            // snapshot writers — the calibration reading a
-                            // rung shows accrues under the bucket the scanner
-                            // writes, per market.
-                            let bucket = semantic_mapping::calibration_bucket_for_gamma(
-                                &market.question,
-                                &market.slug,
-                            );
-                            let reading = {
-                                let guard = self
-                                    .calibration_store
-                                    .lock()
-                                    .unwrap_or_else(|e| e.into_inner());
-                                calibration::read_calibration(&guard, &bucket)
-                            };
-                            let calibration_block = types::calibration_for(Some(&reading), &bucket);
-                            if let Some(record) = types::MarketRecord::from_polymarket(
+                            if let Some(record) = self.polymarket_record_with_calibration(
                                 market,
-                                &event.id,
-                                &event.slug,
-                                event.volume,
-                                event.liquidity,
+                                event,
                                 &event_tags,
-                                calibration_block,
                                 &now,
                             ) {
                                 rungs.push(serde_json::json!({
@@ -1639,36 +1658,14 @@ impl PredictionMarketsServer {
         }
         let now = chrono::Utc::now();
         let mut records = Vec::new();
-        // Snapshot store readings before any await: holding the MutexGuard
-        // across a fetch makes the tool future non-Send. Readings are cheap
-        // clones keyed by bucket; per-bucket lookup below.
-        let store = std::sync::Arc::clone(&self.calibration_store);
 
         let gamma_events = provider_polymarket::fetch_events(&self.http, 100).await?;
         for event in &gamma_events {
             let event_tags: Vec<String> = event.tags.iter().map(|t| t.label.clone()).collect();
             for market in &event.markets {
-                // Same family-first bucket derivation as the snapshot
-                // writers — the calibration block a lookup record carries
-                // must read the bucket the scanner writes (§7 followup root
-                // cause). Per market: the writer derives per market.
-                let bucket =
-                    semantic_mapping::calibration_bucket_for_gamma(&market.question, &market.slug);
-                let reading = {
-                    let guard = store.lock().unwrap_or_else(|e| e.into_inner());
-                    calibration::read_calibration(&guard, &bucket)
-                };
-                let calibration_block = types::calibration_for(Some(&reading), &bucket);
-                if let Some(record) = types::MarketRecord::from_polymarket(
-                    market,
-                    &event.id,
-                    &event.slug,
-                    event.volume,
-                    event.liquidity,
-                    &event_tags,
-                    calibration_block,
-                    &now,
-                ) {
+                if let Some(record) =
+                    self.polymarket_record_with_calibration(market, event, &event_tags, &now)
+                {
                     records.push(record);
                 }
             }
@@ -1688,11 +1685,7 @@ impl PredictionMarketsServer {
                 &market.event_ticker,
                 &market.title,
             );
-            let reading = {
-                let guard = store.lock().unwrap_or_else(|e| e.into_inner());
-                calibration::read_calibration(&guard, &bucket)
-            };
-            let calibration_block = types::calibration_for(Some(&reading), &bucket);
+            let calibration_block = self.calibration_block_for(&bucket);
             if let Some(record) =
                 types::MarketRecord::from_kalshi(market, event, calibration_block, &now)
             {
