@@ -701,25 +701,15 @@ impl OpenRouterMediaProvider {
         Ok(serde_json::json!({ "text": content, "model": model }))
     }
 
-    /// Generate a video via OpenRouter's async video generation API.
-    ///
-    /// Uses `/v1/videos` (submit + poll). Submits the prompt, receives a job
-    /// ID, then polls until the video is ready. Returns the video URL.
-    async fn generate_video(
+    /// Submit a `/v1/videos` job and poll it to completion. Both video
+    /// entry points (generate from prompt, animate an image) share the
+    /// submit → job-id → poll chain; only the request body differs.
+    async fn submit_and_poll_video(
         &self,
-        prompt: &str,
-        duration: Option<f32>,
+        body: Value,
         model: &str,
     ) -> Result<Value, InferenceError> {
         let submit_url = format!("{}/v1/videos", self.base_url);
-        let mut body = serde_json::json!({
-            "model": model,
-            "prompt": prompt,
-        });
-        if let Some(dur) = duration {
-            body["duration"] = serde_json::json!(dur);
-        }
-
         let resp = self
             .client
             .post(&submit_url)
@@ -754,6 +744,26 @@ impl OpenRouterMediaProvider {
         self.poll_video(job_id, model).await
     }
 
+    /// Generate a video via OpenRouter's async video generation API.
+    ///
+    /// Uses `/v1/videos` (submit + poll). Submits the prompt, receives a job
+    /// ID, then polls until the video is ready. Returns the video URL.
+    async fn generate_video(
+        &self,
+        prompt: &str,
+        duration: Option<f32>,
+        model: &str,
+    ) -> Result<Value, InferenceError> {
+        let mut body = serde_json::json!({
+            "model": model,
+            "prompt": prompt,
+        });
+        if let Some(dur) = duration {
+            body["duration"] = serde_json::json!(dur);
+        }
+        self.submit_and_poll_video(body, model).await
+    }
+
     /// Animate a still image into a video via OpenRouter's video API.
     async fn image_to_video(
         &self,
@@ -762,7 +772,6 @@ impl OpenRouterMediaProvider {
         duration: Option<f32>,
         model: &str,
     ) -> Result<Value, InferenceError> {
-        let submit_url = format!("{}/v1/videos", self.base_url);
         let mut body = serde_json::json!({
             "model": model,
             "image_url": image_url,
@@ -773,39 +782,7 @@ impl OpenRouterMediaProvider {
         if let Some(dur) = duration {
             body["duration"] = serde_json::json!(dur);
         }
-
-        let resp = self
-            .client
-            .post(&submit_url)
-            .header("Authorization", format!("Bearer {}", self.api_key))
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| {
-                InferenceError::Connection(format!("OpenRouter video submit failed: {e}"))
-            })?;
-
-        let status = resp.status();
-        let text = resp
-            .text()
-            .await
-            .map_err(|e| InferenceError::Connection(format!("response body read failed: {e}")))?;
-        if !status.is_success() {
-            return Err(provider_http_error(
-                "OpenRouter video submit",
-                status,
-                &text,
-            ));
-        }
-
-        let json: Value = serde_json::from_str(&text)
-            .map_err(|e| InferenceError::Json(format!("OpenRouter video submit parse: {e}")))?;
-
-        let job_id = json["id"].as_str().ok_or_else(|| {
-            InferenceError::Connection("OpenRouter: no video job id in response".into())
-        })?;
-
-        self.poll_video(job_id, model).await
+        self.submit_and_poll_video(body, model).await
     }
 
     /// Poll a video generation job until completion.

@@ -241,20 +241,7 @@ fn render_named_template(
     let template = env
         .get_template(TEMPLATE_NAME)
         .map_err(PassageTaggingError::TemplateSyntax)?;
-    let context = serde_json::json!({
-        "passages": request.passages,
-        "model_dimensions": request.model_dimensions,
-        "server_dimensions": request.server_dimensions,
-        "expertise_mode": request.expertise_mode,
-    });
-    let rendered = template
-        .render(minijinja::Value::from_serialize(&context))
-        .map_err(PassageTaggingError::TemplateRender)?;
-    let rendered = rendered.trim().to_string();
-    if rendered.is_empty() {
-        return Err(PassageTaggingError::BlankTemplateOutput);
-    }
-    Ok(rendered)
+    render_tag_prompt(&template, request)
 }
 
 fn render_uncached(
@@ -274,6 +261,17 @@ fn render_uncached(
     let template = env
         .get_template(TEMPLATE_NAME)
         .map_err(PassageTaggingError::TemplateSyntax)?;
+    render_tag_prompt(&template, request)
+}
+
+/// Render the tagging prompt from a prepared template. Both render paths
+/// (the cached deployed env and the uncached ad-hoc env) share the context
+/// shape, the trim, and the blank-output guard — a context-field change at
+/// one caller would silently drift the other.
+fn render_tag_prompt(
+    template: &minijinja::Template<'_, '_>,
+    request: &PassageTaggingRequest,
+) -> Result<String, PassageTaggingError> {
     let context = serde_json::json!({
         "passages": request.passages,
         "model_dimensions": request.model_dimensions,
