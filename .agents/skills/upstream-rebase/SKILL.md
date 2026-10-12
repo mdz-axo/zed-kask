@@ -222,38 +222,24 @@ If any gate fails, return to Step 5 for that file with the failing command's out
 ## Post-merge test-fallout triage
 
 The verification gate surfaces fallout; this section diagnoses it. Check the
-failing test against these merge-recurrent classes before debugging production
-code:
+failing test against these merge-recurrent classes before debugging production code:
 
-- **Fake snapshot semantics** — capacity/thinking arithmetic implying default
-  capabilities (a pre-shrink panic reporting ~1M-token windowing;
-  `thinking_allowed` false where the fork set it true). `fake.model()` returns
-  a clone: a test that mutates the stored model after capturing the snapshot
-  leaves the thread stale. Capture `update_model`'s return.
-- **Background-request races** — a test hangs, turn never completing: mid-turn
-  title generation races tool-result follow-ups on the registered fake.
-  Select requests by `CompletionIntent`, never by list position.
-- **Dropped fork setup blocks** — a fork test fails on behavior its own comment
-  says it pins: diff the test body against the fork parent; fake-API migration
-  drops load-bearing setup (settings blocks, parent-side `add_tool`).
-- **Merge-dedup collisions** — a fork test fails while its sibling passes:
-  same-named helpers from both parents; check which body kept the name.
-- **Upstream helpers × fork environment** — scheduler determinism panics
-  naming async-std/keychain: upstream `sign_in` helpers persist through the
-  fork's always-keychain provider; install a test credentials-provider global
-  first.
-- **Unregistered fake instance** — empty pending state on a fresh
-  `FakeLanguageModelProvider::default()`: bind to the registered provider
-  instance.
+| Class | Signature | First check |
+| --- | --- | --- |
+| Fake snapshot semantics | Capacity/thinking arithmetic implying default capabilities (a pre-shrink panic reporting ~1M-token windowing; `thinking_allowed` false where the fork set it true) | `fake.model()` returns a clone — capture `update_model`'s return instead of mutating after capture |
+| Background-request races | A test hangs, the turn never completing | Mid-turn title generation races follow-ups on the registered fake — select requests by `CompletionIntent`, never list position |
+| Dropped fork setup blocks | A fork test fails on behavior its own comment says it pins | Diff the test body against the fork parent — fake-API migration drops load-bearing setup (settings blocks, parent-side `add_tool`) |
+| Merge-dedup collisions | A fork test fails while its sibling passes | Same-named helpers from both parents — check which body kept the name |
+| Upstream helpers × fork environment | Scheduler determinism panics naming async-std/keychain | Upstream `sign_in` helpers persist through the fork's always-keychain provider — install a test credentials-provider global first |
+| Unregistered fake instance | Empty pending state on a fresh `FakeLanguageModelProvider::default()` | Bind to the registered provider instance |
 
 Techniques: hangs block the harness's panic output — re-run with
 `--skip <hang-names>` to harvest the other panics; then run the hang isolated
 with `RUST_LOG=agent=debug -- --nocapture` and read the last log lines before
-hypothesizing (the 2026-10-12 hang class was a title-generation race, not the
-suspected timer deadlock). For any failing test, identify its parent-of-record
-first: diff the test against both parents — a test byte-identical to
-upstream's means the fork's code side is the suspect; a fork test's oracle is
-the fork parent.
+hypothesizing. For any failing test, identify its parent-of-record first:
+diff the test against both parents — a test byte-identical to upstream's
+means the fork's code side is the suspect; a fork test's oracle is the fork
+parent.
 
 ## Composed Skills
 
@@ -380,9 +366,7 @@ invariants first, then compile, then tests.
 5. `cargo test -p <affected-crates>` — derive the crate set from the merge,
    never memorize it: the crates of every file in
    `git diff --name-only <base> <upstream-sha>` plus every seam file,
-   deduplicated. Run their full suites, not only the Step 6 pins — the
-   2026-10-12 merge's fallout landed in non-pin tests of crates outside every
-   memorized list.
+   deduplicated. Run their full suites, not only the Step 6 pins.
 
 ### Recovery
 
