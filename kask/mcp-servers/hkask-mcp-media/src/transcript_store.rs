@@ -804,9 +804,9 @@ fn opt_text(row: &DbRow, name: &str) -> Result<Option<String>, DbError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::overlapping_keeps_edl;
     use crate::transcript::TimedWord;
-    use crate::transcript_layers::{EdlLayer, HighlightEntry, HighlightLayer, LayerProvenance};
-    use crate::transcript_select::{EdlEntry, EdlOp, WordRange};
+    use crate::transcript_layers::{HighlightEntry, HighlightLayer, LayerProvenance};
     use hkask_storage::database::sqlite::SqliteDriver;
 
     fn driver() -> std::sync::Arc<dyn DatabaseDriver> {
@@ -1184,19 +1184,7 @@ mod tests {
     fn edl_layer_validates_via_the_selection_algebra_at_store_time() {
         let driver = driver();
         let summary = store_transcript(&*driver, &bundle(5, "/tmp/a.wav"), None).expect("store");
-        let overlapping_keeps = TranscriptLayer::Edl(EdlLayer {
-            provenance: provenance(),
-            ops: vec![
-                EdlEntry {
-                    range: WordRange::new(0, 3),
-                    op: EdlOp::Keep,
-                },
-                EdlEntry {
-                    range: WordRange::new(2, 4),
-                    op: EdlOp::Keep,
-                },
-            ],
-        });
+        let overlapping_keeps = overlapping_keeps_edl(provenance());
         assert!(store_layer(&*driver, &summary.id, &overlapping_keeps).is_err());
         assert!(list_layers(&*driver, &summary.id).expect("list").is_empty());
     }

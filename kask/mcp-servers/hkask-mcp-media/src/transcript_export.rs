@@ -343,21 +343,9 @@ fn csv_escape(field: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::timed_words;
     use crate::transcript_layers::{HighlightEntry, HighlightLayer, LayerProvenance};
     use hkask_storage::database::sqlite::SqliteDriver;
-
-    fn timed_words(texts: &[&str]) -> Vec<TimedWord> {
-        texts
-            .iter()
-            .enumerate()
-            .map(|(index, text)| TimedWord {
-                word: text.to_string(),
-                start_ms: index as u64 * 1000,
-                end_ms: index as u64 * 1000 + 500,
-                confidence: None,
-            })
-            .collect()
-    }
 
     #[test]
     fn srt_splits_cues_at_sentence_punctuation() {

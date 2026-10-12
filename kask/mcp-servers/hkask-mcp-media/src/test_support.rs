@@ -11,6 +11,10 @@
 //! named, so a body that uses the prompt (or ignores it) passes the name
 //! it wants to bind (the research server's batch-3 pattern).
 
+use crate::transcript::TimedWord;
+use crate::transcript_layers::{EdlLayer, LayerProvenance, TranscriptLayer};
+use crate::transcript_select::{EdlEntry, EdlOp, WordRange};
+
 /// Generate the `InferencePort` impl for a media test stub. `generate` is
 /// the text surface — most media stubs never exercise it (one body:
 /// panic, a canned error, or a canned result); `list_models` and
@@ -94,5 +98,42 @@ pub fn read_only_organize_request(
         mode: "read-only".into(),
         recursive: true,
         auto_analyze: false,
+    })
+}
+
+/// Words at 1-second boundaries: word i spans [i*1000, i*1000+500] ms.
+/// Shared by the transcript layers, export and select test modules —
+/// each rebuilt the same fixture (2026-10-12 ratchet pass).
+pub fn timed_words(texts: &[&str]) -> Vec<TimedWord> {
+    texts
+        .iter()
+        .enumerate()
+        .map(|(index, text)| TimedWord {
+            word: text.to_string(),
+            start_ms: index as u64 * 1000,
+            end_ms: index as u64 * 1000 + 500,
+            confidence: None,
+        })
+        .collect()
+}
+
+/// The overlapping-keeps EDL fixture the layers and store tests share:
+/// keep [0,3] and keep [2,4] overlap at word 2. The layers test pins
+/// `validate` rejecting it via the selection algebra; the store test
+/// pins the same rejection at store time. Provenance is the caller's —
+/// each module keeps its own local helper.
+pub fn overlapping_keeps_edl(provenance: LayerProvenance) -> TranscriptLayer {
+    TranscriptLayer::Edl(EdlLayer {
+        provenance,
+        ops: vec![
+            EdlEntry {
+                range: WordRange::new(0, 3),
+                op: EdlOp::Keep,
+            },
+            EdlEntry {
+                range: WordRange::new(2, 4),
+                op: EdlOp::Keep,
+            },
+        ],
     })
 }

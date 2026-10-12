@@ -352,20 +352,7 @@ fn merge_adjacent(ranges: &[WordRange]) -> Vec<WordRange> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Words at 1-second boundaries: word i spans [i*1000, i*1000+500] ms.
-    fn words_from_texts(texts: &[&str]) -> Vec<TimedWord> {
-        texts
-            .iter()
-            .enumerate()
-            .map(|(index, text)| TimedWord {
-                word: text.to_string(),
-                start_ms: index as u64 * 1000,
-                end_ms: index as u64 * 1000 + 500,
-                confidence: None,
-            })
-            .collect()
-    }
+    use crate::test_support::timed_words;
 
     fn entry(start: usize, end: usize, op: EdlOp) -> EdlEntry {
         EdlEntry {
@@ -378,7 +365,7 @@ mod tests {
 
     #[test]
     fn time_range_maps_exact_boundaries() {
-        let words = words_from_texts(&["a", "b", "c", "d"]);
+        let words = timed_words(&["a", "b", "c", "d"]);
         assert_eq!(
             word_range_to_time_range(&words, WordRange::new(0, 0)),
             Ok((0, 500))
@@ -395,7 +382,7 @@ mod tests {
 
     #[test]
     fn time_range_rejects_out_of_bounds_with_named_error() {
-        let words = words_from_texts(&["a", "b"]);
+        let words = timed_words(&["a", "b"]);
         assert_eq!(
             word_range_to_time_range(&words, WordRange::new(0, 2)),
             Err(SelectionError::WordIndexOutOfBounds { index: 2, len: 2 })
@@ -404,7 +391,7 @@ mod tests {
 
     #[test]
     fn time_range_rejects_reversed_range() {
-        let words = words_from_texts(&["a", "b"]);
+        let words = timed_words(&["a", "b"]);
         assert_eq!(
             word_range_to_time_range(&words, WordRange::new(1, 0)),
             Err(SelectionError::ReversedRange {
@@ -426,7 +413,7 @@ mod tests {
 
     #[test]
     fn text_selection_finds_single_match() {
-        let words = words_from_texts(&["Hello", "world", "said", "the", "agent"]);
+        let words = timed_words(&["Hello", "world", "said", "the", "agent"]);
         assert_eq!(
             text_to_word_ranges(&words, "said the"),
             vec![WordRange::new(2, 3)]
@@ -435,7 +422,7 @@ mod tests {
 
     #[test]
     fn text_selection_surfaces_all_candidates() {
-        let words = words_from_texts(&["the", "plan", "the", "plan", "again"]);
+        let words = timed_words(&["the", "plan", "the", "plan", "again"]);
         assert_eq!(
             text_to_word_ranges(&words, "the plan"),
             vec![WordRange::new(0, 1), WordRange::new(2, 3)]
@@ -444,13 +431,13 @@ mod tests {
 
     #[test]
     fn text_selection_no_match_returns_empty() {
-        let words = words_from_texts(&["a", "b"]);
+        let words = timed_words(&["a", "b"]);
         assert!(text_to_word_ranges(&words, "missing passage").is_empty());
     }
 
     #[test]
     fn text_selection_matches_rendered_punctuation() {
-        let words = words_from_texts(&["Hello,", "world."]);
+        let words = timed_words(&["Hello,", "world."]);
         assert_eq!(
             text_to_word_ranges(&words, "Hello, world."),
             vec![WordRange::new(0, 1)]
@@ -461,7 +448,7 @@ mod tests {
 
     #[test]
     fn text_selection_requires_word_boundaries() {
-        let words = words_from_texts(&["Hello", "world"]);
+        let words = timed_words(&["Hello", "world"]);
         // Interior substring, not word-aligned — no match.
         assert!(text_to_word_ranges(&words, "lo wor").is_empty());
         assert!(text_to_word_ranges(&words, "Hello wor").is_empty());
@@ -469,7 +456,7 @@ mod tests {
 
     #[test]
     fn text_selection_normalizes_query_whitespace() {
-        let words = words_from_texts(&["a", "b", "c"]);
+        let words = timed_words(&["a", "b", "c"]);
         assert_eq!(
             text_to_word_ranges(&words, "  a   b  "),
             vec![WordRange::new(0, 1)]
@@ -478,7 +465,7 @@ mod tests {
 
     #[test]
     fn rendered_transcript_joins_with_single_spaces() {
-        let words = words_from_texts(&["Hello,", "world."]);
+        let words = timed_words(&["Hello,", "world."]);
         assert_eq!(rendered_transcript(&words), "Hello, world.");
         assert_eq!(rendered_transcript(&[]), "");
     }
@@ -614,7 +601,7 @@ mod tests {
 
     #[test]
     fn clip_plan_merges_adjacent_ranges() {
-        let words = words_from_texts(&["a", "b", "c", "d"]);
+        let words = timed_words(&["a", "b", "c", "d"]);
         let plan = keep_ranges_to_clip_plan(&words, &[WordRange::new(0, 1), WordRange::new(2, 3)])
             .unwrap();
         assert_eq!(plan, vec![(0, 3500)]);
@@ -622,7 +609,7 @@ mod tests {
 
     #[test]
     fn clip_plan_keeps_nonadjacent_ranges_separate() {
-        let words = words_from_texts(&["a", "b", "c", "d"]);
+        let words = timed_words(&["a", "b", "c", "d"]);
         let plan = keep_ranges_to_clip_plan(&words, &[WordRange::new(0, 0), WordRange::new(2, 3)])
             .unwrap();
         assert_eq!(plan, vec![(0, 500), (2000, 3500)]);
@@ -631,7 +618,7 @@ mod tests {
     #[test]
     fn clip_plan_preserves_reel_order() {
         // Reordered reel: [3,3] then [0,0] — clips emit in list order.
-        let words = words_from_texts(&["a", "b", "c", "d"]);
+        let words = timed_words(&["a", "b", "c", "d"]);
         let plan = keep_ranges_to_clip_plan(&words, &[WordRange::new(3, 3), WordRange::new(0, 0)])
             .unwrap();
         assert_eq!(plan, vec![(3000, 3500), (0, 500)]);
@@ -639,7 +626,7 @@ mod tests {
 
     #[test]
     fn clip_plan_empty_ranges_yield_empty_plan() {
-        let words = words_from_texts(&["a"]);
+        let words = timed_words(&["a"]);
         assert_eq!(
             keep_ranges_to_clip_plan(&words, &[]).unwrap(),
             Vec::<(u64, u64)>::new()
@@ -656,7 +643,7 @@ mod tests {
 
     #[test]
     fn edl_to_clip_plan_composes_both_stages() {
-        let words = words_from_texts(&["a", "b", "c", "d", "e"]);
+        let words = timed_words(&["a", "b", "c", "d", "e"]);
         // Keep [0,4], cut [1,1] → keep [0,0] + [2,4] → two clips: word 1
         // is cut between them, so the ranges are not adjacent and do not
         // merge.
@@ -671,7 +658,7 @@ mod tests {
 
     #[test]
     fn subtractive_edl_round_trips_to_complement_clip_plan() {
-        let words = words_from_texts(&["a", "b", "c", "d", "e"]);
+        let words = timed_words(&["a", "b", "c", "d", "e"]);
         // Cut the middle word (index 2): keep [0,1] + [3,4] → clips
         // (0,1500),(3000,4500).
         let edl = Edl {

@@ -477,6 +477,7 @@ pub fn corrected_text_view(words: &[TimedWord], edits: &[CorrectionEdit]) -> Str
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::{overlapping_keeps_edl, timed_words};
     use crate::transcript_select::{EdlEntry, EdlOp, WordRange};
 
     fn provenance() -> LayerProvenance {
@@ -689,19 +690,7 @@ mod tests {
 
     #[test]
     fn edl_layer_rejects_overlapping_keeps_via_the_algebra() {
-        let layer = TranscriptLayer::Edl(EdlLayer {
-            provenance: provenance(),
-            ops: vec![
-                EdlEntry {
-                    range: WordRange::new(0, 3),
-                    op: EdlOp::Keep,
-                },
-                EdlEntry {
-                    range: WordRange::new(2, 4),
-                    op: EdlOp::Keep,
-                },
-            ],
-        });
+        let layer = overlapping_keeps_edl(provenance());
         assert_eq!(
             layer.validate(5),
             Err(LayerValidationError::EdlSelection(
@@ -797,20 +786,7 @@ mod tests {
         assert_eq!(json, serde_json::json!("keep"));
     }
 
-    // ── corrected_text_view ──────────────────────────────────────────────
-
-    fn timed_words(texts: &[&str]) -> Vec<TimedWord> {
-        texts
-            .iter()
-            .enumerate()
-            .map(|(index, text)| TimedWord {
-                word: text.to_string(),
-                start_ms: index as u64 * 1000,
-                end_ms: index as u64 * 1000 + 500,
-                confidence: None,
-            })
-            .collect()
-    }
+    // ── corrected_text_view ──────────────────────────────────────────
 
     fn edit(start: usize, end: usize, replacement: &str) -> CorrectionEdit {
         CorrectionEdit {
