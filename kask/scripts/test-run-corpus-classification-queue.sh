@@ -72,7 +72,7 @@ if [[ -f "${FAIL_MARKER_DIR}/${unit}" ]]; then
     printf 'simulated transport timeout\n' > "$log"
     exit 0
 fi
-jq -c '. + {classification:{status:"classified",ontology_protocol:"published-term-resolution-v1"},
+jq -c '. + {classification:{status:"classified",ontology_protocol:"published-term-resolution-v2"},
           candidate_terms:["one","two","three"],ontology_tags:{core:["5w1h_core"]},
           concepts:["5w1h_core"]}' "$input" > "$output"
 summary=$(jq -cn --argjson total "$(wc -l < "$input" | tr -d ' ')" \
