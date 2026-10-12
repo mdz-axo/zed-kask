@@ -4499,24 +4499,48 @@ mod tool_behavior_tests {
         );
     }
 
-    #[tokio::test]
-    async fn educt_edl_from_highlights_merges_overlapping_selections() {
-        use crate::transcript_layers::{
-            HighlightEntry, HighlightLayer, LayerProvenance, TranscriptLayer,
-        };
+    /// Store a highlight layer with the standard test provenance over
+    /// `entries` — the layer construction + store call the three
+    /// highlight-layer tests share, varying exactly the highlight entries.
+    /// The provenance timestamp is unified (no test asserts it).
+    async fn store_highlight_layer(
+        server: &MediaServer,
+        transcript_id: &str,
+        entries: Vec<crate::transcript_layers::HighlightEntry>,
+    ) {
+        use crate::transcript_layers::{HighlightLayer, LayerProvenance, TranscriptLayer};
         use crate::types::EductStoreLayerRequest;
-
-        let server = make_pass_server("{}".to_string());
-        let transcript_id = store_two_word_transcript(&server).await;
-        // Two overlapping highlights over a 2-word transcript: [0,1] and
-        // [1,1] → union [0,1] → one Keep op.
         let highlight = TranscriptLayer::Highlight(HighlightLayer {
             provenance: LayerProvenance {
                 model: "test".to_string(),
                 prompt_template: "test".to_string(),
                 created_at: "2026-08-30T00:00:00Z".to_string(),
             },
-            highlights: vec![
+            highlights: entries,
+        });
+        server
+            .educt_store_layer(Parameters(EductStoreLayerRequest {
+                transcript_id: transcript_id.to_string(),
+                layer: hkask_types::AnyJsonValue(
+                    serde_json::to_value(&highlight).expect("serialize highlight"),
+                ),
+            }))
+            .await
+            .expect("highlight stored");
+    }
+
+    #[tokio::test]
+    async fn educt_edl_from_highlights_merges_overlapping_selections() {
+        use crate::transcript_layers::HighlightEntry;
+
+        let server = make_pass_server("{}".to_string());
+        let transcript_id = store_two_word_transcript(&server).await;
+        // Two overlapping highlights over a 2-word transcript: [0,1] and
+        // [1,1] → union [0,1] → one Keep op.
+        store_highlight_layer(
+            &server,
+            &transcript_id,
+            vec![
                 HighlightEntry {
                     start_word: 0,
                     end_word: 1,
@@ -4530,16 +4554,8 @@ mod tool_behavior_tests {
                     note: String::new(),
                 },
             ],
-        });
-        server
-            .educt_store_layer(Parameters(EductStoreLayerRequest {
-                transcript_id: transcript_id.clone(),
-                layer: hkask_types::AnyJsonValue(
-                    serde_json::to_value(&highlight).expect("serialize highlight"),
-                ),
-            }))
-            .await
-            .expect("highlight stored");
+        )
+        .await;
 
         let composed = server
             .educt_edl_from_highlights(Parameters(crate::types::EductEdlFromHighlightsRequest {
@@ -4567,35 +4583,21 @@ mod tool_behavior_tests {
 
     #[tokio::test]
     async fn educt_edl_from_highlights_label_miss_is_not_found() {
-        use crate::transcript_layers::{
-            HighlightEntry, HighlightLayer, LayerProvenance, TranscriptLayer,
-        };
-        use crate::types::EductStoreLayerRequest;
+        use crate::transcript_layers::HighlightEntry;
 
         let server = make_pass_server("{}".to_string());
         let transcript_id = store_two_word_transcript(&server).await;
-        let highlight = TranscriptLayer::Highlight(HighlightLayer {
-            provenance: LayerProvenance {
-                model: "test".to_string(),
-                prompt_template: "test".to_string(),
-                created_at: "2026-08-30T00:00:00Z".to_string(),
-            },
-            highlights: vec![HighlightEntry {
+        store_highlight_layer(
+            &server,
+            &transcript_id,
+            vec![HighlightEntry {
                 start_word: 0,
                 end_word: 1,
                 label: "a".to_string(),
                 note: String::new(),
             }],
-        });
-        server
-            .educt_store_layer(Parameters(EductStoreLayerRequest {
-                transcript_id: transcript_id.clone(),
-                layer: hkask_types::AnyJsonValue(
-                    serde_json::to_value(&highlight).expect("serialize highlight"),
-                ),
-            }))
-            .await
-            .expect("highlight stored");
+        )
+        .await;
         let error = server
             .educt_edl_from_highlights(Parameters(crate::types::EductEdlFromHighlightsRequest {
                 transcript_id,
@@ -4889,35 +4891,21 @@ mod tool_behavior_tests {
     #[tokio::test]
     async fn educt_export_highlights_csv_writes_rows() {
         let _artifacts = IsolatedArtifacts::new().await;
-        use crate::transcript_layers::{
-            HighlightEntry, HighlightLayer, LayerProvenance, TranscriptLayer,
-        };
-        use crate::types::EductStoreLayerRequest;
+        use crate::transcript_layers::HighlightEntry;
 
         let server = make_pass_server("{}".to_string());
         let transcript_id = store_two_word_transcript(&server).await;
-        let highlight = TranscriptLayer::Highlight(HighlightLayer {
-            provenance: LayerProvenance {
-                model: "test".to_string(),
-                prompt_template: "test".to_string(),
-                created_at: "2026-08-31T00:00:00Z".to_string(),
-            },
-            highlights: vec![HighlightEntry {
+        store_highlight_layer(
+            &server,
+            &transcript_id,
+            vec![HighlightEntry {
                 start_word: 0,
                 end_word: 1,
                 label: "key-argument".to_string(),
                 note: "the curve".to_string(),
             }],
-        });
-        server
-            .educt_store_layer(Parameters(EductStoreLayerRequest {
-                transcript_id: transcript_id.clone(),
-                layer: hkask_types::AnyJsonValue(
-                    serde_json::to_value(&highlight).expect("serialize highlight"),
-                ),
-            }))
-            .await
-            .expect("highlight stored");
+        )
+        .await;
 
         let (content, output, metadata) =
             export_content_and_metadata(&server, &transcript_id, "highlights_csv").await;
