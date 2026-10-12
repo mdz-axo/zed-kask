@@ -329,81 +329,85 @@ impl DatasetPipeline {
         Ok(key)
     }
 
-    /// Normalize ChatML JSONL to canonical form.
-    ///
-    /// Input: JSONL with `{"messages": [{"role": ..., "content": ...}, ...]}`
-    /// Output: Same format, validated.
-    fn normalize_chatml(&self, raw: &str) -> Result<Vec<ChatConversation>, DatasetError> {
-        let mut conversations = Vec::new();
+    /// Parse a JSONL dataset into typed records — the shared loop of every
+    /// normalize leg: blank lines skip silently, each line deserializes as
+    /// `T` with a line-numbered Validation error, and an all-empty input is
+    /// `DatasetError::Empty`. `record_kind` names the format in the error
+    /// message.
+    fn parse_jsonl<T: serde::de::DeserializeOwned>(
+        raw: &str,
+        record_kind: &str,
+    ) -> Result<Vec<T>, DatasetError> {
+        let mut records = Vec::new();
         for (i, line) in raw.lines().enumerate() {
             let trimmed = line.trim();
             if trimmed.is_empty() {
                 continue;
             }
-            #[derive(Deserialize)]
-            struct ChatMLRecord {
-                messages: Vec<ChatMessage>,
-            }
-            let record: ChatMLRecord =
+            let record: T =
                 serde_json::from_str(trimmed).map_err(|e| DatasetError::Validation {
                     line: i + 1,
-                    message: format!("Invalid ChatML record: {}", e),
+                    message: format!("Invalid {record_kind} record: {}", e),
                 })?;
-            conversations.push(ChatConversation {
-                messages: record.messages,
-            });
+            records.push(record);
         }
-        if conversations.is_empty() {
+        if records.is_empty() {
             return Err(DatasetError::Empty);
         }
-        Ok(conversations)
+        Ok(records)
+    }
+
+    /// Normalize ChatML JSONL to canonical form.
+    ///
+    /// Input: JSONL with `{"messages": [{"role": ..., "content": ...}, ...]}`
+    /// Output: Same format, validated.
+    fn normalize_chatml(&self, raw: &str) -> Result<Vec<ChatConversation>, DatasetError> {
+        #[derive(Deserialize)]
+        struct ChatMLRecord {
+            messages: Vec<ChatMessage>,
+        }
+        Ok(Self::parse_jsonl::<ChatMLRecord>(raw, "ChatML")?
+            .into_iter()
+            .map(|record| ChatConversation {
+                messages: record.messages,
+            })
+            .collect())
     }
 
     /// Normalize ShareGPT JSONL to canonical ChatML.
     ///
     /// ShareGPT uses `from: human/gpt` and `value` instead of `role` and `content`.
     fn normalize_sharegpt(&self, raw: &str) -> Result<Vec<ChatConversation>, DatasetError> {
-        let mut conversations = Vec::new();
-        for (i, line) in raw.lines().enumerate() {
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                continue;
-            }
-            #[derive(Deserialize)]
-            struct ShareGPTTurn {
-                from: String,
-                value: String,
-            }
-            #[derive(Deserialize)]
-            struct ShareGPTRecord {
-                conversations: Vec<ShareGPTTurn>,
-            }
-            let record: ShareGPTRecord =
-                serde_json::from_str(trimmed).map_err(|e| DatasetError::Validation {
-                    line: i + 1,
-                    message: format!("Invalid ShareGPT record: {}", e),
-                })?;
-            let messages: Vec<ChatMessage> = record
-                .conversations
-                .into_iter()
-                .map(|t| {
-                    let role = match t.from.as_str() {
-                        "human" => "user".to_string(),
-                        "gpt" => "assistant".to_string(),
-                        other => other.to_string(),
-                    };
-                    ChatMessage {
-                        role,
-                        content: t.value,
-                    }
-                })
-                .collect();
-            conversations.push(ChatConversation { messages });
+        #[derive(Deserialize)]
+        struct ShareGPTTurn {
+            from: String,
+            value: String,
         }
-        if conversations.is_empty() {
-            return Err(DatasetError::Empty);
+        #[derive(Deserialize)]
+        struct ShareGPTRecord {
+            conversations: Vec<ShareGPTTurn>,
         }
-        Ok(conversations)
+        Ok(Self::parse_jsonl::<ShareGPTRecord>(raw, "ShareGPT")?
+            .into_iter()
+            .map(|record| {
+                let messages: Vec<ChatMessage> = record
+                    .conversations
+                    .into_iter()
+                    .map(|t| {
+                        let role = match t.from.as_str() {
+                            "human" => "user".to_string(),
+                            "gpt" => "assistant".to_string(),
+                            other => other.to_string(),
+                        };
+                        ChatMessage {
+                            role,
+                            content: t.value,
+                        }
+                    })
+                    .collect();
+                ChatConversation { messages }
+            })
+            .collect())
     }
 
     /// Normalize Alpaca JSON to canonical ChatML.
@@ -479,34 +483,21 @@ impl DatasetPipeline {
     ///
     /// Reference: https://huggingface.co/docs/trl/main/en/dpo_trainer#expected-dataset-type-and-format
     fn normalize_preference_dpo(&self, raw: &str) -> Result<Vec<PreferenceExample>, DatasetError> {
-        let mut examples = Vec::new();
-        for (i, line) in raw.lines().enumerate() {
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                continue;
-            }
-            #[derive(Deserialize)]
-            struct DpoRecord {
-                prompt: serde_json::Value,
-                chosen: serde_json::Value,
-                rejected: serde_json::Value,
-            }
-            let record: DpoRecord =
-                serde_json::from_str(trimmed).map_err(|e| DatasetError::Validation {
-                    line: i + 1,
-                    message: format!("Invalid DPO preference record: {}", e),
-                })?;
-            examples.push(PreferenceExample {
+        #[derive(Deserialize)]
+        struct DpoRecord {
+            prompt: serde_json::Value,
+            chosen: serde_json::Value,
+            rejected: serde_json::Value,
+        }
+        Ok(Self::parse_jsonl::<DpoRecord>(raw, "DPO preference")?
+            .into_iter()
+            .map(|record| PreferenceExample {
                 prompt: Some(record.prompt),
                 chosen: record.chosen,
                 rejected: Some(record.rejected),
                 label: None,
-            });
-        }
-        if examples.is_empty() {
-            return Err(DatasetError::Empty);
-        }
-        Ok(examples)
+            })
+            .collect())
     }
 
     /// Normalize KTO preference JSONL to canonical `PreferenceExample`.
@@ -518,36 +509,25 @@ impl DatasetPipeline {
     ///
     /// Reference: https://huggingface.co/docs/trl/main/en/kto_trainer#expected-dataset-type-and-format
     fn normalize_preference_kto(&self, raw: &str) -> Result<Vec<PreferenceExample>, DatasetError> {
-        let mut examples = Vec::new();
-        for (i, line) in raw.lines().enumerate() {
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                continue;
-            }
-            #[derive(Deserialize)]
-            struct KtoRecord {
-                prompt: serde_json::Value,
-                completion: serde_json::Value,
-                label: bool,
-            }
-            let record: KtoRecord =
-                serde_json::from_str(trimmed).map_err(|e| DatasetError::Validation {
-                    line: i + 1,
-                    message: format!("Invalid KTO preference record: {}", e),
-                })?;
-            // KTO stores the completion in `chosen` and the label in `label`.
-            // `rejected` is None — KTO is unpaired.
-            examples.push(PreferenceExample {
-                prompt: Some(record.prompt),
-                chosen: record.completion,
-                rejected: None,
-                label: Some(record.label),
-            });
+        #[derive(Deserialize)]
+        struct KtoRecord {
+            prompt: serde_json::Value,
+            completion: serde_json::Value,
+            label: bool,
         }
-        if examples.is_empty() {
-            return Err(DatasetError::Empty);
-        }
-        Ok(examples)
+        Ok(Self::parse_jsonl::<KtoRecord>(raw, "KTO preference")?
+            .into_iter()
+            .map(|record| {
+                // KTO stores the completion in `chosen` and the label in
+                // `label`. `rejected` is None — KTO is unpaired.
+                PreferenceExample {
+                    prompt: Some(record.prompt),
+                    chosen: record.completion,
+                    rejected: None,
+                    label: Some(record.label),
+                }
+            })
+            .collect())
     }
 
     /// Normalize ORPO preference JSONL to canonical `PreferenceExample`.
@@ -558,33 +538,20 @@ impl DatasetPipeline {
     ///
     /// Reference: https://huggingface.co/docs/trl/main/en/orpo_trainer#expected-dataset-type-and-format
     fn normalize_preference_orpo(&self, raw: &str) -> Result<Vec<PreferenceExample>, DatasetError> {
-        let mut examples = Vec::new();
-        for (i, line) in raw.lines().enumerate() {
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                continue;
-            }
-            #[derive(Deserialize)]
-            struct OrpoRecord {
-                chosen: serde_json::Value,
-                rejected: serde_json::Value,
-            }
-            let record: OrpoRecord =
-                serde_json::from_str(trimmed).map_err(|e| DatasetError::Validation {
-                    line: i + 1,
-                    message: format!("Invalid ORPO preference record: {}", e),
-                })?;
-            examples.push(PreferenceExample {
+        #[derive(Deserialize)]
+        struct OrpoRecord {
+            chosen: serde_json::Value,
+            rejected: serde_json::Value,
+        }
+        Ok(Self::parse_jsonl::<OrpoRecord>(raw, "ORPO preference")?
+            .into_iter()
+            .map(|record| PreferenceExample {
                 prompt: None, // ORPO prompt is implicit
                 chosen: record.chosen,
                 rejected: Some(record.rejected),
                 label: None,
-            });
-        }
-        if examples.is_empty() {
-            return Err(DatasetError::Empty);
-        }
-        Ok(examples)
+            })
+            .collect())
     }
 
     /// Validate the normalized dataset.
