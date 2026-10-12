@@ -1467,15 +1467,25 @@ mod tool_behavior_tests {
         Ok(())
     }
 
-    /// expect: Reopening my gallery after restart restores its original identity. [P1]
-    #[tokio::test]
-    async fn gallery_reopen_restores_requested_root() -> Result<(), Box<dyn std::error::Error>> {
+    /// Organize a read-only gallery over one fresh 2x2 png and return
+    /// (server, directory) — the shared prologue of the reopen/rescan
+    /// gallery-identity tests, which vary only in what they assert after
+    /// the first organize.
+    async fn organized_single_image_gallery()
+    -> Result<(MediaServer, tempfile::TempDir), Box<dyn std::error::Error>> {
         let server = make_server();
         let directory = tempfile::tempdir()?;
         image::RgbImage::new(2, 2).save(directory.path().join("one.png"))?;
         server
             .gallery_organize(read_only_organize_request(directory.path()))
             .await?;
+        Ok((server, directory))
+    }
+
+    /// expect: Reopening my gallery after restart restores its original identity. [P1]
+    #[tokio::test]
+    async fn gallery_reopen_restores_requested_root() -> Result<(), Box<dyn std::error::Error>> {
+        let (server, directory) = organized_single_image_gallery().await?;
         let original = server.access_gallery()?.gallery_id;
         *server
             .gallery_state
@@ -1492,12 +1502,7 @@ mod tool_behavior_tests {
     /// expect: Rescanning preserves one identity and my annotations, not duplicate rows. [P1]
     #[tokio::test]
     async fn gallery_rescan_preserves_identity() -> Result<(), Box<dyn std::error::Error>> {
-        let server = make_server();
-        let directory = tempfile::tempdir()?;
-        image::RgbImage::new(2, 2).save(directory.path().join("one.png"))?;
-        server
-            .gallery_organize(read_only_organize_request(directory.path()))
-            .await?;
+        let (server, directory) = organized_single_image_gallery().await?;
         let gallery = server.access_gallery()?;
         let original = server
             .gallery_store
