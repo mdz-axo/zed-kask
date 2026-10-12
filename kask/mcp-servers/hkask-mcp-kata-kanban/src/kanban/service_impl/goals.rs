@@ -480,16 +480,37 @@ mod goal_tests {
         Ok(())
     }
 
+    /// The concurrent-scored-goal fixture: a service, owner, one-criterion goal
+    /// with a 0.7 intake prediction, and a 3-party barrier (two workers + main)
+    /// — shared by the two concurrent score/judge races.
+    fn concurrent_scored_goal() -> anyhow::Result<(KanbanService, WebID, Goal, std::sync::Barrier)>
+    {
+        let svc = make_service();
+        let owner = WebID::new();
+        let goal = svc.goal_create("goal".into(), criteria(1), Some(0.7), None, owner)?;
+        let start = std::sync::Barrier::new(3);
+        Ok((svc, owner, goal, start))
+    }
+
+    /// The store-level fixture: an in-memory HMemStore (returned for direct
+    /// row queries) with its service, owner, and one-criterion goal — shared
+    /// by the tests that read the durable rows behind the service.
+    fn store_level_goal() -> anyhow::Result<(HMemStore, KanbanService, WebID, Goal)> {
+        let driver = hkask_storage::database::sqlite::SqliteDriver::in_memory_driver();
+        let store = HMemStore::from_driver(driver)?;
+        let svc = KanbanService::new(store.clone());
+        let owner = WebID::new();
+        let goal = svc.goal_create("goal".into(), criteria(1), None, None, owner)?;
+        Ok((store, svc, owner, goal))
+    }
+
     /// expect: "Two conflicting resolutions cannot both report success."
     /// [P2] Motivating: Transparent Imperfection — the stored outcome remains retryable.
     /// pre: opposing score requests start together
     /// post: exactly one succeeds, and the retained outbox outcome matches it
     #[test]
     fn concurrent_conflicting_goal_scores_have_one_winner() -> anyhow::Result<()> {
-        let svc = make_service();
-        let owner = WebID::new();
-        let goal = svc.goal_create("goal".into(), criteria(1), Some(0.7), None, owner)?;
-        let start = std::sync::Barrier::new(3);
+        let (svc, owner, goal, start) = concurrent_scored_goal()?;
         let outcomes = std::thread::scope(|scope| {
             let workers: Vec<_> = [true, false]
                 .into_iter()
@@ -526,10 +547,7 @@ mod goal_tests {
     /// post: the resolved outbox row contains every successful verdict
     #[test]
     fn concurrent_goal_judge_and_score_preserve_successful_verdict() -> anyhow::Result<()> {
-        let svc = make_service();
-        let owner = WebID::new();
-        let goal = svc.goal_create("goal".into(), criteria(1), Some(0.7), None, owner)?;
-        let start = std::sync::Barrier::new(3);
+        let (svc, owner, goal, start) = concurrent_scored_goal()?;
         let (judge, score) = std::thread::scope(|scope| {
             let judge = scope.spawn(|| {
                 start.wait();
@@ -699,11 +717,7 @@ mod goal_tests {
     /// with the identity read shape.
     #[test]
     fn duplicate_goal_rows_error_the_identity_read() -> anyhow::Result<()> {
-        let driver = hkask_storage::database::sqlite::SqliteDriver::in_memory_driver();
-        let store = HMemStore::from_driver(driver)?;
-        let svc = KanbanService::new(store.clone());
-        let owner = WebID::new();
-        let goal = svc.goal_create("goal".into(), criteria(1), None, None, owner)?;
+        let (store, svc, _owner, goal) = store_level_goal()?;
         let row = store
             .query_by_entity_attribute(GOAL_ENTITY, &goal.id.to_string())?
             .into_iter()
@@ -728,11 +742,7 @@ mod goal_tests {
     /// post: judging changes only the value while retaining the identical ontology payload
     #[test]
     fn goal_update_preserves_ontology() -> anyhow::Result<()> {
-        let driver = hkask_storage::database::sqlite::SqliteDriver::in_memory_driver();
-        let store = HMemStore::from_driver(driver)?;
-        let svc = KanbanService::new(store.clone());
-        let owner = WebID::new();
-        let goal = svc.goal_create("goal".into(), criteria(1), None, None, owner)?;
+        let (store, svc, owner, goal) = store_level_goal()?;
         let before = store
             .query_by_entity_attribute(GOAL_ENTITY, &goal.id.to_string())?
             .into_iter()
