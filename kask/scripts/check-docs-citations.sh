@@ -25,16 +25,15 @@
 #             1 = rotted citations, 2 = usage/tooling.
 set -uo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null)" || {
-  echo "FAIL: $SCRIPT_DIR is not inside a git repository." >&2
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || {
+  echo "FAIL: not inside a git repository (run from within the repo)." >&2
   exit 2
 }
 cd "$REPO_ROOT" || exit 2
 DOCS_ROOT="${DOCS_ROOT:-kask/docs}"
 
-command -v rg >/dev/null 2>&1 || {
-  echo "FAIL: rg not found — the gate extracts citations with rg." >&2
+command -v grep >/dev/null 2>&1 || {
+  echo "FAIL: grep not found — the gate extracts citations with grep -oE." >&2
   exit 2
 }
 
@@ -92,7 +91,7 @@ for doc in "${DOCS[@]}"; do
         echo "::error::docs-citation: $doc cites $cite — no live file resolves (deleted surface)"
       fi
     fi
-  done < <(rg -o -N --no-filename '[A-Za-z0-9_./-]+\.rs:[0-9]+' "$doc" 2>/dev/null | sort -u)
+  done < <(grep -oE '[A-Za-z0-9_./-]+\.rs:[0-9]+' "$doc" 2>/dev/null | sort -u)
 done
 
 echo "----"

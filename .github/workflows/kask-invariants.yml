@@ -188,6 +188,13 @@ jobs:
         run: bash kask/scripts/check-no-new-dead-code-allows.sh
       - name: String errors — no Result<_, String> in hkask library code
         run: bash kask/scripts/check-string-errors.sh
+      - name: Structural traps — no net-new unwrap() in production beyond the ratchet baseline
+        run: |
+          # jq for the gate's stream-JSON parsing (the duplication-ratchet
+          # step's install pattern); npx/node is preinstalled on the runner
+          # (the jscpd precedent in the duplication ratchet below).
+          sudo apt-get update -qq && sudo apt-get install -y -qq jq
+          bash kask/scripts/check-structural-traps.sh
       - name: MCP tool-behavior contract tests — Parameters seam coverage
         run: bash kask/scripts/check-mcp-tool-tests.sh
       - name: MCP packaging — installer inventory matches runtime
@@ -221,6 +228,8 @@ jobs:
         run: bash kask/scripts/check-docs-count-gate.sh
       - name: Docs frontmatter gate — seven-field header on every Markdown file
         run: bash kask/scripts/check-docs-frontmatter.sh
+      - name: Docs citations — every path.rs:line citation resolves via the ladder
+        run: bash kask/scripts/check-docs-citations.sh
       - name: Diagram registry parity — fences, alignment records, index rows agree
         run: bash kask/scripts/check-diagram-registry-parity.sh
       - name: Duplication ratchet — no net-new clone clusters beyond the baseline
