@@ -38,6 +38,7 @@ crates/kanban_panel/src/kanban_panel.rs:1
 crates/lmstudio/src/lmstudio.rs:1
 crates/open_ai/src/open_ai.rs:1
 crates/open_router/src/open_router.rs:1
+crates/path/src/path_component.rs:1
 crates/project/src/debugger/dap_command.rs:3
 crates/project/src/debugger/dap_store.rs:1
 crates/project/src/lsp_store.rs:1

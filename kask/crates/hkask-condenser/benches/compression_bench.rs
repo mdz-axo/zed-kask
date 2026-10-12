@@ -3,9 +3,9 @@
 //! Run with: cargo bench -p hkask-condenser
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use std::hint::black_box;
 use hkask_condenser::engine::CondenserEngine;
 use hkask_condenser::types::ContextCategory;
+use std::hint::black_box;
 
 fn bench_compression(c: &mut Criterion) {
     let mut group = c.benchmark_group("compress");

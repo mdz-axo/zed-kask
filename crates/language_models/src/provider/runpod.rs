@@ -430,10 +430,8 @@ impl LanguageModelClient for RunpodLanguageModelProvider {
         model: &LanguageModel,
         request: LanguageModelRequest,
         cx: &AsyncApp,
-    ) -> BoxFuture<
-        'static,
-        Result<LanguageModelCompletionStream, LanguageModelCompletionError>,
-    > {
+    ) -> BoxFuture<'static, Result<LanguageModelCompletionStream, LanguageModelCompletionError>>
+    {
         let config = match cx.update(|cx| self.config(model, cx)) {
             Ok(config) => config,
             Err(error) => return async move { Err(error) }.boxed(),

@@ -209,6 +209,43 @@ fn content(result: Result<String, hkask_mcp_server::server::McpToolError>) -> Va
     hkask_types::tool_response::unwrap_tool_envelope(value)
 }
 
+/// Write a style fixture (entity_ref + text pairs, style.txt provenance) to
+/// style.jsonl and embed it into a fresh style.db under the offline model —
+/// the shared setup of the compose/centroid style tests. Returns the
+/// database path; the entries are the caller's, everything else is the
+/// fixture's.
+async fn embed_style_fixture(
+    server: &CorpusServer,
+    directory: &tempfile::TempDir,
+    entries: &[(&str, &str)],
+) -> std::path::PathBuf {
+    let input = directory.path().join("style.jsonl");
+    std::fs::write(
+        &input,
+        entries
+            .into_iter()
+            .map(|(entity_ref, text)| {
+                json!({"entity_ref":entity_ref,"source":"style.txt","text":text}).to_string()
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )
+    .expect("style input");
+    let database = directory.path().join("style.db");
+    content(
+        server
+            .corpus_embed(Parameters(EmbedRequest {
+                chunks_jsonl: input.to_string_lossy().into(),
+                tagged_jsonl: None,
+                db_path: database.to_string_lossy().into(),
+                model: Some("offline".into()),
+                batch_size: 10,
+            }))
+            .await,
+    );
+    database
+}
+
 /// expect: "Every tagged passage carries measured how-signals, even if LLM tagging degrades." [P3]
 #[tokio::test]
 async fn tagging_persists_method_signals_without_trusting_the_model() {
@@ -357,30 +394,12 @@ async fn composition_filters_durable_passages_by_declared_method() {
     let server = server(Arc::clone(&port));
     let paratactic = "The water glittered and the boat drifted.";
     let hypotactic = "Because the water glittered, the boat drifted.";
-    let input = directory.path().join("style.jsonl");
-    std::fs::write(
-        &input,
-        [("style:test:1", paratactic), ("style:test:2", hypotactic)]
-            .into_iter()
-            .map(|(entity_ref, text)| {
-                json!({"entity_ref":entity_ref,"source":"style.txt","text":text}).to_string()
-            })
-            .collect::<Vec<_>>()
-            .join("\n"),
+    let database = embed_style_fixture(
+        &server,
+        &directory,
+        &[("style:test:1", paratactic), ("style:test:2", hypotactic)],
     )
-    .expect("style input");
-    let database = directory.path().join("style.db");
-    content(
-        server
-            .corpus_embed(Parameters(EmbedRequest {
-                chunks_jsonl: input.to_string_lossy().into(),
-                tagged_jsonl: None,
-                db_path: database.to_string_lossy().into(),
-                model: Some("offline".into()),
-                batch_size: 10,
-            }))
-            .await,
-    );
+    .await;
     for (method, expected_count) in [
         (Value::Null, 2),
         (
@@ -478,33 +497,15 @@ async fn centroid_tool_stores_style_centroid_and_unblocks_compose_validation() {
     let directory = fixture();
     let port = Arc::new(RecordingPort::default());
     let server = server(Arc::clone(&port));
-    let input = directory.path().join("style.jsonl");
-    std::fs::write(
-        &input,
-        [
+    let database = embed_style_fixture(
+        &server,
+        &directory,
+        &[
             ("style:jb-test:1", "The water glittered."),
             ("style:jb-test:2", "The boat drifted."),
-        ]
-        .into_iter()
-        .map(|(entity_ref, text)| {
-            json!({"entity_ref":entity_ref,"source":"style.txt","text":text}).to_string()
-        })
-        .collect::<Vec<_>>()
-        .join("\n"),
+        ],
     )
-    .expect("style input");
-    let database = directory.path().join("style.db");
-    content(
-        server
-            .corpus_embed(Parameters(EmbedRequest {
-                chunks_jsonl: input.to_string_lossy().into(),
-                tagged_jsonl: None,
-                db_path: database.to_string_lossy().into(),
-                model: Some("offline".into()),
-                batch_size: 10,
-            }))
-            .await,
-    );
+    .await;
 
     let centroid = content(
         server

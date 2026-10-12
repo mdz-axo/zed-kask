@@ -1700,6 +1700,39 @@ mod tests {
         assert!(connection_status(Some("  ")).is_err());
     }
 
+    /// Accept one fixture connection with a deadline. An unbounded
+    /// `accept()` turns any client-side failure that happens before the
+    /// request into an infinite silent hang: the peer thread never
+    /// returns, the test's `join()` never completes, and no child process
+    /// is left to diagnose (observed live on CI, where the missing
+    /// ffprobe binary made `upload_local_media` fail before its POST and
+    /// the test binary sat in `accept()` until the 60-minute job
+    /// timeout). The deadline bounds the wait so the same failure
+    /// surfaces as a fast, named fixture error instead.
+    fn accept_with_deadline(
+        listener: &std::net::TcpListener,
+    ) -> std::io::Result<std::net::TcpStream> {
+        listener.set_nonblocking(true)?;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        loop {
+            match listener.accept() {
+                Ok((stream, _)) => {
+                    stream.set_nonblocking(false)?;
+                    return Ok(stream);
+                }
+                Err(error) if error.kind() != std::io::ErrorKind::WouldBlock => {
+                    return Err(error);
+                }
+                Err(_) if std::time::Instant::now() >= deadline => {
+                    return Err(std::io::Error::other(
+                        "fixture peer: no client connection arrived within 30s — the client-side call likely failed before its request",
+                    ));
+                }
+                Err(_) => std::thread::sleep(std::time::Duration::from_millis(10)),
+            }
+        }
+    }
+
     /// A one-request HTTP fixture server: binds a local listener, reads
     /// the first request until `received` accepts the accumulated text,
     /// writes `response`, and returns (root, handle) — joining the handle
@@ -1715,7 +1748,7 @@ mod tests {
         let root = format!("http://{}/", listener.local_addr()?);
         let peer = std::thread::spawn(move || -> std::io::Result<String> {
             use std::io::{Read, Write};
-            let (mut stream, _) = listener.accept()?;
+            let mut stream = accept_with_deadline(&listener)?;
             stream.set_read_timeout(Some(std::time::Duration::from_secs(5)))?;
             let mut request = String::new();
             let mut buffer = [0_u8; 4096];
@@ -1874,7 +1907,7 @@ mod tests {
         let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
         let root = format!("http://{}/", listener.local_addr()?);
         let peer = std::thread::spawn(move || -> std::io::Result<(String, String)> {
-            let (mut get, _) = listener.accept()?;
+            let mut get = accept_with_deadline(&listener)?;
             get.set_read_timeout(Some(std::time::Duration::from_secs(5)))?;
             let mut buffer = [0_u8; 4096];
             let n = get.read(&mut buffer)?;
@@ -1886,7 +1919,7 @@ mod tests {
                 body.len()
             )?;
             drop(get);
-            let (mut post, _) = listener.accept()?;
+            let mut post = accept_with_deadline(&listener)?;
             post.set_read_timeout(Some(std::time::Duration::from_secs(5)))?;
             let mut request = String::new();
             loop {
@@ -2149,7 +2182,7 @@ mod tests {
         let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
         let address = listener.local_addr()?;
         let peer = std::thread::spawn(move || -> std::io::Result<String> {
-            let (mut stream, _) = listener.accept()?;
+            let mut stream = accept_with_deadline(&listener)?;
             stream.set_read_timeout(Some(std::time::Duration::from_secs(5)))?;
             let mut request = Vec::new();
             let mut buffer = [0_u8; 4096];
@@ -2752,21 +2785,8 @@ mod tests {
         use std::io::{Read, Write};
         let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
         let address = listener.local_addr()?;
-        listener.set_nonblocking(true)?;
         let peer = std::thread::spawn(move || -> std::io::Result<String> {
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-            let mut stream = loop {
-                match listener.accept() {
-                    Ok((stream, _)) => break stream,
-                    Err(error)
-                        if error.kind() == std::io::ErrorKind::WouldBlock
-                            && std::time::Instant::now() < deadline =>
-                    {
-                        std::thread::sleep(std::time::Duration::from_millis(10));
-                    }
-                    Err(error) => return Err(error),
-                }
-            };
+            let mut stream = accept_with_deadline(&listener)?;
             stream.set_read_timeout(Some(std::time::Duration::from_secs(5)))?;
             let mut bytes = [0_u8; 4096];
             let count = stream.read(&mut bytes)?;
