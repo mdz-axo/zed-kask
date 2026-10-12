@@ -68,6 +68,35 @@ fn dbnomics_url(endpoint: &str, params: &[(&str, &str)]) -> String {
     EconomicDataClient::build_url(DBNOMICS_API_BASE, endpoint, params)
 }
 
+/// The DBnomics series' normalized JSON — the content-field mapping search
+/// results and series info share. The code fields are parameters: search
+/// reads them from the series document, series info falls back to the
+/// request's own codes.
+fn dbnomics_series_json(
+    series: &Value,
+    provider_code: &str,
+    dataset_code: &str,
+    series_code: &str,
+) -> Value {
+    serde_json::json!({
+        "provider_code": provider_code,
+        "dataset_code": dataset_code,
+        "series_code": series_code,
+        "series_name": series.get("series_name").and_then(|v| v.as_str())
+            .or_else(|| series.get("name").and_then(|v| v.as_str()))
+            .unwrap_or(""),
+        "frequency": series.get("@frequency").and_then(|v| v.as_str()).unwrap_or(""),
+        "start_period": series.get("period").and_then(|v| v.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|v| v.as_str())
+            .unwrap_or(""),
+        "end_period": series.get("period").and_then(|v| v.as_array())
+            .and_then(|arr| arr.last())
+            .and_then(|v| v.as_str())
+            .unwrap_or(""),
+    })
+}
+
 // ── Tool implementations ────────────────────────────────────────────────────
 
 /// `dbnomics_search`: Full-text search across all DBnomics series.
@@ -107,23 +136,21 @@ pub async fn search(
     let results: Vec<Value> = docs
         .iter()
         .map(|series| {
-            serde_json::json!({
-                "provider_code": series.get("provider_code").and_then(|v| v.as_str()).unwrap_or(""),
-                "dataset_code": series.get("dataset_code").and_then(|v| v.as_str()).unwrap_or(""),
-                "series_code": series.get("series_code").and_then(|v| v.as_str()).unwrap_or(""),
-                "series_name": series.get("series_name").and_then(|v| v.as_str())
-                    .or_else(|| series.get("name").and_then(|v| v.as_str()))
-                    .unwrap_or(""),
-                "frequency": series.get("@frequency").and_then(|v| v.as_str()).unwrap_or(""),
-                "start_period": series.get("period").and_then(|v| v.as_array())
-                    .and_then(|arr| arr.first())
+            dbnomics_series_json(
+                series,
+                series
+                    .get("provider_code")
                     .and_then(|v| v.as_str())
                     .unwrap_or(""),
-                "end_period": series.get("period").and_then(|v| v.as_array())
-                    .and_then(|arr| arr.last())
+                series
+                    .get("dataset_code")
                     .and_then(|v| v.as_str())
                     .unwrap_or(""),
-            })
+                series
+                    .get("series_code")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(""),
+            )
         })
         .collect();
 
@@ -306,28 +333,22 @@ pub async fn get_series(
         Vec::new()
     };
 
-    Ok(serde_json::json!({
-        "provider_code": provider_code,
-        "dataset_code": series.get("dataset_code").and_then(|v| v.as_str())
+    let mut info = dbnomics_series_json(
+        &series,
+        provider_code,
+        series
+            .get("dataset_code")
+            .and_then(|v| v.as_str())
             .unwrap_or(dataset_code),
-        "series_code": series.get("series_code").and_then(|v| v.as_str())
+        series
+            .get("series_code")
+            .and_then(|v| v.as_str())
             .unwrap_or(series_code),
-        "series_name": series.get("series_name").and_then(|v| v.as_str())
-            .or_else(|| series.get("name").and_then(|v| v.as_str()))
-            .unwrap_or(""),
-        "frequency": series.get("@frequency").and_then(|v| v.as_str()).unwrap_or(""),
-        "start_period": series.get("period").and_then(|v| v.as_array())
-            .and_then(|arr| arr.first())
-            .and_then(|v| v.as_str())
-            .unwrap_or(""),
-        "end_period": series.get("period").and_then(|v| v.as_array())
-            .and_then(|arr| arr.last())
-            .and_then(|v| v.as_str())
-            .unwrap_or(""),
-        "num_found": num_found,
-        "observations": observations,
-        "returned": observations.len(),
-    }))
+    );
+    info["num_found"] = serde_json::json!(num_found);
+    info["observations"] = serde_json::json!(observations);
+    info["returned"] = serde_json::json!(observations.len());
+    Ok(info)
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────

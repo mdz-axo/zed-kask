@@ -98,6 +98,27 @@ fn wb_extract_meta(body: &Value) -> Result<&Value, EconomicDataError> {
         })
 }
 
+/// The World Bank indicator's normalized JSON — the field mapping every
+/// indicator-returning endpoint shares (search's topic-filtered and
+/// unfiltered branches, and indicator info).
+fn wb_indicator_json(ind: &Value) -> Value {
+    serde_json::json!({
+        "id": ind.get("id").and_then(|v| v.as_str()).unwrap_or(""),
+        "name": ind.get("name").and_then(|v| v.as_str()).unwrap_or(""),
+        "unit": ind.get("unit").and_then(|v| v.as_str()).unwrap_or(""),
+        "source": ind.get("source").and_then(|v| v.get("value")).and_then(|v| v.as_str()).unwrap_or(""),
+        "source_note": ind.get("sourceNote").and_then(|v| v.as_str()).unwrap_or(""),
+        "topics": ind.get("topics").and_then(|v| v.as_array()).map(|t| {
+            t.iter().map(|topic| {
+                serde_json::json!({
+                    "id": topic.get("id").and_then(|v| v.as_i64()).unwrap_or(0),
+                    "value": topic.get("value").and_then(|v| v.as_str()).unwrap_or(""),
+                })
+            }).collect::<Vec<_>>()
+        }).unwrap_or_default(),
+    })
+}
+
 // ── Tool implementations ────────────────────────────────────────────────────
 
 /// `wb_search_indicators`: Search World Bank indicators by text.
@@ -128,26 +149,7 @@ pub async fn search_indicators(
                     .unwrap_or(false)
             })
             .collect();
-        let results: Vec<Value> = filtered
-            .iter()
-            .map(|ind| {
-                serde_json::json!({
-                    "id": ind.get("id").and_then(|v| v.as_str()).unwrap_or(""),
-                    "name": ind.get("name").and_then(|v| v.as_str()).unwrap_or(""),
-                    "unit": ind.get("unit").and_then(|v| v.as_str()).unwrap_or(""),
-                    "source": ind.get("source").and_then(|v| v.get("value")).and_then(|v| v.as_str()).unwrap_or(""),
-                    "source_note": ind.get("sourceNote").and_then(|v| v.as_str()).unwrap_or(""),
-                    "topics": ind.get("topics").and_then(|v| v.as_array()).map(|t| {
-                        t.iter().map(|topic| {
-                            serde_json::json!({
-                                "id": topic.get("id").and_then(|v| v.as_i64()).unwrap_or(0),
-                                "value": topic.get("value").and_then(|v| v.as_str()).unwrap_or(""),
-                            })
-                        }).collect::<Vec<_>>()
-                    }).unwrap_or_default(),
-                })
-            })
-            .collect();
+        let results: Vec<Value> = filtered.iter().map(|ind| wb_indicator_json(ind)).collect();
         return Ok(serde_json::json!({
             "query": req.query,
             "topic_id": req.topic_id,
@@ -172,26 +174,7 @@ pub async fn search_indicators(
         .take(limit as usize)
         .collect();
 
-    let results: Vec<Value> = filtered
-        .iter()
-        .map(|ind| {
-            serde_json::json!({
-                "id": ind.get("id").and_then(|v| v.as_str()).unwrap_or(""),
-                "name": ind.get("name").and_then(|v| v.as_str()).unwrap_or(""),
-                "unit": ind.get("unit").and_then(|v| v.as_str()).unwrap_or(""),
-                "source": ind.get("source").and_then(|v| v.get("value")).and_then(|v| v.as_str()).unwrap_or(""),
-                "source_note": ind.get("sourceNote").and_then(|v| v.as_str()).unwrap_or(""),
-                "topics": ind.get("topics").and_then(|v| v.as_array()).map(|t| {
-                    t.iter().map(|topic| {
-                        serde_json::json!({
-                            "id": topic.get("id").and_then(|v| v.as_i64()).unwrap_or(0),
-                            "value": topic.get("value").and_then(|v| v.as_str()).unwrap_or(""),
-                        })
-                    }).collect::<Vec<_>>()
-                }).unwrap_or_default(),
-            })
-        })
-        .collect();
+    let results: Vec<Value> = filtered.iter().map(|ind| wb_indicator_json(ind)).collect();
 
     Ok(serde_json::json!({
         "query": req.query,
@@ -376,22 +359,15 @@ pub async fn get_indicator_info(
         detail: "indicator not found".into(),
     })?;
 
-    Ok(serde_json::json!({
-        "id": ind.get("id").and_then(|v| v.as_str()).unwrap_or(""),
-        "name": ind.get("name").and_then(|v| v.as_str()).unwrap_or(""),
-        "unit": ind.get("unit").and_then(|v| v.as_str()).unwrap_or(""),
-        "source": ind.get("source").and_then(|s| s.get("value")).and_then(|v| v.as_str()).unwrap_or(""),
-        "source_note": ind.get("sourceNote").and_then(|v| v.as_str()).unwrap_or(""),
-        "source_organization": ind.get("sourceOrganization").and_then(|v| v.as_str()).unwrap_or(""),
-        "topics": ind.get("topics").and_then(|v| v.as_array()).map(|t| {
-            t.iter().map(|topic| {
-                serde_json::json!({
-                    "id": topic.get("id").and_then(|v| v.as_i64()).unwrap_or(0),
-                    "value": topic.get("value").and_then(|v| v.as_str()).unwrap_or(""),
-                })
-            }).collect::<Vec<_>>()
-        }).unwrap_or_default(),
-    }))
+    let mut info = wb_indicator_json(ind);
+    // Indicator info is the one endpoint that also names the source
+    // organization; the shared mapping covers the rest.
+    info["source_organization"] = serde_json::json!(
+        ind.get("sourceOrganization")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+    );
+    Ok(info)
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────────
