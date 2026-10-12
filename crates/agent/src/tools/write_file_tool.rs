@@ -6,7 +6,7 @@ use crate::{
     AgentTool, Thread, ToolCallEventStream, ToolInput, ToolInputPayload, map_tool_input_error,
 };
 use action_log::ActionLog;
-use agent_client_protocol::schema::v1 as acp;
+use agent_client_protocol::schema::v2 as acp;
 use futures::FutureExt as _;
 use gpui::{App, AsyncApp, Entity, Task, WeakEntity};
 use language::LanguageRegistry;
@@ -276,7 +276,7 @@ mod tests {
     use futures::StreamExt as _;
     use gpui::{AppContext as _, Entity, TestAppContext, UpdateGlobal};
     use language::language_settings::FormatOnSave;
-    use language_model::fake_provider::FakeLanguageModel;
+    use language_model::LanguageModelRegistry;
     use project::{Project, ProjectPath};
     use prompt_store::ProjectContext;
     use serde_json::json;
@@ -366,7 +366,11 @@ mod tests {
 
         event_rx.expect_update_fields().await;
         let auth = event_rx.expect_authorization().await;
-        let title = auth.tool_call.fields.title.as_deref().unwrap_or("");
+        let title = auth
+            .tool_call
+            .title
+            .value()
+            .expect("expected authorization title");
         assert!(
             title.contains("agent skills"),
             "Authorization title should mention agent skills, got: {title}",
@@ -536,7 +540,7 @@ mod tests {
             language::LanguageConfig {
                 name: "Rust".into(),
                 matcher: (language::LanguageMatcher {
-                    path_suffixes: vec!["rs".to_string()],
+                    path_suffixes: vec!["rs".into()],
                     ..Default::default()
                 })
                 .into(),
@@ -1197,7 +1201,11 @@ mod tests {
         let auth = stream_rx.expect_authorization().await;
 
         // Verify the prompt is the overwrite-mode prompt.
-        let content = auth.tool_call.fields.content.as_deref().unwrap_or(&[]);
+        let content = auth
+            .tool_call
+            .content
+            .value()
+            .expect("expected authorization content");
         let acp::ToolCallContent::Content(text) = content.first().expect("expected message body")
         else {
             panic!("expected text body, got: {:?}", content.first());
@@ -1380,7 +1388,7 @@ mod tests {
         let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
         let context_server_registry =
             cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
-        let model = Arc::new(FakeLanguageModel::default());
+        let model = cx.update(|cx| LanguageModelRegistry::test(cx).model("fake"));
         let thread = cx.new(|cx| {
             crate::Thread::new(
                 project.clone(),

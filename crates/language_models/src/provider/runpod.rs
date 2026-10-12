@@ -20,10 +20,11 @@ use gpui::{App, AppContext, AsyncApp, Context, Entity, SharedString, Task};
 use http_client::{CustomHeaders, HttpClient};
 use language_model::{
     ApiKeyConfiguration, ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel,
-    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
-    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
-    ProviderSettingsView, RateLimiter, chat_completion::ChatCompletionEventMapper, env_var,
+    LanguageModelClient, LanguageModelCompletionError, LanguageModelCompletionStream,
+    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
+    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
+    LanguageModelToolChoiceSupport, ModelRateLimiters, ProviderSettingsView, RateLimiter,
+    chat_completion::ChatCompletionEventMapper, env_var, unavailable_error,
 };
 use open_ai::{ResponseStreamEvent, stream_completion};
 use serde::Deserialize;
@@ -66,6 +67,7 @@ pub struct RunpodLanguageModelProvider {
     http_client: Arc<dyn HttpClient>,
     state: Entity<State>,
     discovery_state: Entity<DiscoveryState>,
+    request_limiters: ModelRateLimiters,
 }
 
 pub struct State {
@@ -251,29 +253,56 @@ impl RunpodLanguageModelProvider {
             http_client,
             state,
             discovery_state,
+            request_limiters: ModelRateLimiters::default(),
         }
     }
 
-    fn create_language_model_with_url(
-        &self,
-        model: AvailableModel,
-        _cx: &App,
-    ) -> Arc<dyn LanguageModel> {
-        Arc::new(RunpodLanguageModel {
-            id: LanguageModelId::from(model.name.clone()),
-            endpoint_url: endpoint_url("", &model.endpoint_id),
+    fn language_model(&self, model: &AvailableModel) -> LanguageModel {
+        LanguageModel {
+            // RunPod serverless endpoints host single-model vLLM workers (e.g.
+            // OLMOCR-2 for OCR). These are specialized models that do not support
+            // tool calls. Advertising `false` is fail-closed: the agent panel
+            // won't offer RunPod models for tool-using agent profiles, and the
+            // inference request won't include tool definitions the model can't
+            // honor. A future tool-capable endpoint can override this via a
+            // per-model config field when one is needed.
+            supports_tools: false,
             supports_images: model.supports_images,
-            max_tokens: model.max_tokens,
+            supports_streaming_tools: false,
+            supports_thinking: false,
+            supported_effort_levels: Vec::new().into(),
+            tool_choice_support: LanguageModelToolChoiceSupport::ALL,
             max_output_tokens: model.max_output_tokens,
-            model_name: model.name.clone(),
-            served_model_name: model
-                .served_model_name
-                .clone()
-                .unwrap_or_else(|| model.name.clone()),
-            state: self.state.clone(),
-            http_client: self.http_client.clone(),
-            request_limiter: RateLimiter::new(4),
-        })
+            ..LanguageModel::new(
+                LanguageModelId::from(model.name.clone()),
+                // The endpoint name (not the display_name) is the resolution
+                // key: the IPC server builds `ModelListEntry.name` as
+                // `{provider_id}/{model.name()}`, which must match
+                // `DEFAULT_OCR_MODEL = "RunPod/kask-ocr"` in `resolve_ocr_model`.
+                LanguageModelName::from(model.name.clone()),
+                PROVIDER_ID,
+                PROVIDER_NAME,
+                format!("runpod/{}", model.name),
+                model.max_tokens,
+            )
+        }
+    }
+
+    /// The current configuration of `model`, if this provider still offers it.
+    fn config(
+        &self,
+        model: &LanguageModel,
+        cx: &App,
+    ) -> Result<AvailableModel, LanguageModelCompletionError> {
+        // Settings models first (user-configured takes precedence), then
+        // discovered models not already present by name.
+        Self::settings(cx)
+            .available_models
+            .iter()
+            .chain(self.discovery_state.read(cx).fetched_models.iter())
+            .find(|available| available.name == model.id.0.as_ref())
+            .cloned()
+            .ok_or_else(|| unavailable_error(model))
     }
 
     fn settings(cx: &App) -> &RunpodSettings {
@@ -331,24 +360,24 @@ impl LanguageModelProvider for RunpodLanguageModelProvider {
         IconOrSvg::Icon(IconName::AiOpenAiCompat)
     }
 
-    fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
+    fn default_model(&self, cx: &App) -> Option<LanguageModel> {
         let settings_models = &Self::settings(cx).available_models;
         if let Some(model) = settings_models.first() {
-            return Some(self.create_language_model_with_url(model.clone(), cx));
+            return Some(self.language_model(model));
         }
         // Fall back to the first discovered model when no static models are configured.
         self.discovery_state
             .read(cx)
             .fetched_models
             .first()
-            .map(|model| self.create_language_model_with_url(model.clone(), cx))
+            .map(|model| self.language_model(model))
     }
 
-    fn default_fast_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
+    fn default_fast_model(&self, _cx: &App) -> Option<LanguageModel> {
         None
     }
 
-    fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
+    fn provided_models(&self, cx: &App) -> Vec<LanguageModel> {
         let settings_models = &Self::settings(cx).available_models;
         let discovered_models = &self.discovery_state.read(cx).fetched_models;
 
@@ -367,7 +396,7 @@ impl LanguageModelProvider for RunpodLanguageModelProvider {
         }
         models
             .into_iter()
-            .map(|model| self.create_language_model_with_url(model, cx))
+            .map(|model| self.language_model(&model))
             .collect()
     }
 
@@ -395,29 +424,53 @@ impl LanguageModelProvider for RunpodLanguageModelProvider {
     }
 }
 
-pub struct RunpodLanguageModel {
-    id: LanguageModelId,
-    /// Per-model OpenAI-compatible endpoint URL:
-    /// `https://api.runpod.ai/v2/{endpoint_id}/openai/v1`.
-    endpoint_url: String,
-    supports_images: bool,
-    max_tokens: u64,
-    max_output_tokens: Option<u64>,
-    /// The endpoint name, used as `LanguageModel::name()` (the resolution key)
-    /// and `telemetry_id()`.
-    model_name: String,
-    /// The model name to send in the OpenAI `model` field. Defaults to
-    /// `model_name` when not overridden — works if the endpoint sets
-    /// `--served-model-name` to the endpoint name.
-    served_model_name: String,
-    state: Entity<State>,
-    http_client: Arc<dyn HttpClient>,
-    request_limiter: RateLimiter,
-}
-
-impl RunpodLanguageModel {
+impl LanguageModelClient for RunpodLanguageModelProvider {
     fn stream_completion(
         &self,
+        model: &LanguageModel,
+        request: LanguageModelRequest,
+        cx: &AsyncApp,
+    ) -> BoxFuture<
+        'static,
+        Result<LanguageModelCompletionStream, LanguageModelCompletionError>,
+    > {
+        let config = match cx.update(|cx| self.config(model, cx)) {
+            Ok(config) => config,
+            Err(error) => return async move { Err(error) }.boxed(),
+        };
+        let request_limiter = self.request_limiters.for_model(&model.id);
+        let served_model_name = config
+            .served_model_name
+            .clone()
+            .unwrap_or_else(|| config.name.clone());
+        let request = match into_open_ai(
+            request,
+            &served_model_name,
+            false, // supports_parallel_tool_calls
+            false, // supports_prompt_cache_key
+            config.max_output_tokens,
+            ChatCompletionMaxTokensParameter::MaxTokens,
+            None,  // reasoning_effort
+            false, // interleaved_reasoning
+        ) {
+            Ok(request) => request,
+            Err(error) => return async move { Err(error.into()) }.boxed(),
+        };
+        let stream = self.stream_chat_completion(&request_limiter, &config, request, cx);
+        async move {
+            // zed-kask: D29 — use upstream's shared mapper, including D20/D36 handling.
+            let mapper = ChatCompletionEventMapper::new();
+            Ok(mapper.map_stream(stream.await?.boxed()).boxed())
+        }
+        .boxed()
+    }
+}
+
+impl RunpodLanguageModelProvider {
+    fn stream_chat_completion(
+        &self,
+        request_limiter: &RateLimiter,
+        config: &AvailableModel,
         request: open_ai::Request,
         cx: &AsyncApp,
     ) -> BoxFuture<
@@ -425,18 +478,16 @@ impl RunpodLanguageModel {
         Result<BoxStream<'static, Result<ResponseStreamEvent>>, LanguageModelCompletionError>,
     > {
         let http_client = self.http_client.clone();
-        let endpoint_url = self.endpoint_url.clone();
+        let endpoint_url = endpoint_url("", &config.endpoint_id);
 
         let (api_key, extra_headers) = self.state.read_with(cx, |state, cx| {
-            let api_url = RunpodLanguageModelProvider::api_url(cx);
-            let extra_headers = RunpodLanguageModelProvider::settings(cx)
-                .custom_headers
-                .clone();
+            let api_url = Self::api_url(cx);
+            let extra_headers = Self::settings(cx).custom_headers.clone();
             (state.api_key_state.key(&api_url), extra_headers)
         });
 
         let provider = PROVIDER_NAME;
-        let future = self.request_limiter.stream(async move {
+        let future = request_limiter.stream(async move {
             let Some(api_key) = api_key else {
                 return Err(LanguageModelCompletionError::NoApiKey { provider });
             };
@@ -453,107 +504,6 @@ impl RunpodLanguageModel {
         });
 
         async move { Ok(future.await?.boxed()) }.boxed()
-    }
-}
-
-impl LanguageModel for RunpodLanguageModel {
-    fn id(&self) -> LanguageModelId {
-        self.id.clone()
-    }
-
-    fn name(&self) -> LanguageModelName {
-        // Return the endpoint name (the resolution key), not the display_name.
-        // The IPC server builds `ModelListEntry.name` as `{provider_id}/{model.name()}`;
-        // if `name()` returned the display_name (e.g. "kask-ocr (OLMOCR-2)"), the
-        // prefixed name would be "runpod/kask-ocr (OLMOCR-2)" which can't match
-        // `DEFAULT_OCR_MODEL = "RunPod/kask-ocr"` in `resolve_ocr_model`. The
-        // display_name is for UI rendering; `name()` is the resolution key.
-        LanguageModelName::from(self.model_name.clone())
-    }
-
-    fn provider_id(&self) -> LanguageModelProviderId {
-        PROVIDER_ID
-    }
-
-    fn provider_name(&self) -> LanguageModelProviderName {
-        PROVIDER_NAME
-    }
-
-    fn supports_tools(&self) -> bool {
-        // RunPod serverless endpoints host single-model vLLM workers (e.g.
-        // OLMOCR-2 for OCR). These are specialized models that do not support
-        // tool calls. Advertising `false` is fail-closed: the agent panel
-        // won't offer RunPod models for tool-using agent profiles, and the
-        // inference request won't include tool definitions the model can't
-        // honor. A future tool-capable endpoint can override this via a
-        // per-model config field when one is needed.
-        false
-    }
-
-    fn supports_streaming_tools(&self) -> bool {
-        false
-    }
-
-    fn supports_thinking(&self) -> bool {
-        false
-    }
-
-    fn supported_effort_levels(&self) -> Vec<language_model::LanguageModelEffortLevel> {
-        Vec::new()
-    }
-
-    fn supports_tool_choice(&self, _choice: LanguageModelToolChoice) -> bool {
-        true
-    }
-
-    fn supports_images(&self) -> bool {
-        self.supports_images
-    }
-
-    fn telemetry_id(&self) -> String {
-        format!("runpod/{}", self.model_name)
-    }
-
-    fn max_token_count(&self) -> u64 {
-        self.max_tokens
-    }
-
-    fn max_output_tokens(&self) -> Option<u64> {
-        self.max_output_tokens
-    }
-
-    fn stream_completion(
-        &self,
-        request: LanguageModelRequest,
-        cx: &AsyncApp,
-    ) -> BoxFuture<
-        'static,
-        Result<
-            BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
-            LanguageModelCompletionError,
-        >,
-    > {
-        let request = match into_open_ai(
-            request,
-            &self.served_model_name,
-            false, // supports_parallel_tool_calls
-            false, // supports_prompt_cache_key
-            self.max_output_tokens,
-            ChatCompletionMaxTokensParameter::MaxTokens,
-            None,  // reasoning_effort
-            false, // interleaved_reasoning
-        ) {
-            Ok(request) => request,
-            Err(error) => return async move { Err(error.into()) }.boxed(),
-        };
-        let stream = self.stream_completion(request, cx);
-
-        async move {
-            // zed-kask: D29 — use upstream's shared mapper, including D20/D36 handling.
-            let mapper = ChatCompletionEventMapper::new();
-            Ok(mapper.map_stream(stream.await?).boxed())
-        }
-        .boxed()
     }
 }
 

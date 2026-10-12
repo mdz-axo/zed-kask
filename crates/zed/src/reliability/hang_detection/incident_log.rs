@@ -70,7 +70,8 @@ fn batches_append_without_truncating() {
     let incident = SerializedHangIncident {
         measurement_version: 2,
         phase: "steady",
-        trigger: gpui::profiler::hang::HangTrigger::Budget,
+        trigger: gpui::profiler::hang::HangTrigger::LateFrame,
+        during_active_use: true,
         start_ms: 0.0,
         active_ms: 100.0,
         stall_ms: 94.0,

@@ -172,12 +172,15 @@ impl BridgeEditPredictionPort {
                     .into_values()
                     .next()?
             }
-            None => registry.default_model()?.model,
+            None => Arc::new(registry.default_model()?),
         };
 
-        let api_url = model.api_url(cx)?;
-        let api_key = model.api_key(cx)?;
-        let model_id = model.id().0.to_string();
+        // zed-kask: D24 — credentials resolve through the serving provider
+        // (the registry already holds them; no second inference router).
+        let provider = registry.provider_for_model(&model).ok()?;
+        let api_url = provider.api_url(&model, cx)?;
+        let api_key = provider.api_key(&model, cx)?;
+        let model_id = model.id.0.to_string();
 
         Some(Self::new(
             api_url,

@@ -1,4 +1,4 @@
-use agent_client_protocol::schema::v1 as acp;
+use agent_client_protocol::schema::v2 as acp;
 use gpui::{App, Entity, SharedString, Task};
 use language_model::LanguageModelToolResultContent;
 use schemars::JsonSchema;

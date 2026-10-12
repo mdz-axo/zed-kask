@@ -16,9 +16,12 @@ doctest = false
 anyhow.workspace = true
 collections.workspace = true
 cpal.workspace = true
+futures.workspace = true
 gpui.workspace = true
 log.workspace = true
 rodio.workspace = true
 settings.workspace = true
 util.workspace = true
 
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }

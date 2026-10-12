@@ -605,7 +605,7 @@ pub struct SwarmPanel {
     thread_picker: Entity<hkask_steer::ThreadPicker>,
     /// The session id to resume on the next `ensure_steer_conversation` —
     /// set by `open_thread`, consumed by `ensure_steer_conversation`.
-    pending_resume: Option<agent_client_protocol::schema::v1::SessionId>,
+    pending_resume: Option<agent_client_protocol::schema::v2::SessionId>,
     /// Last-seen `kask.swarm.mode` value, used to detect mode changes that
     /// invalidate the Steer conversation's baked-in system prompt. The Steer
     /// prompt interpolates the mode at construction (`ensure_steer_conversation`),
@@ -908,7 +908,7 @@ impl SwarmPanel {
     /// mode the operator is looking at.
     fn open_thread(
         &mut self,
-        session_id: agent_client_protocol::schema::v1::SessionId,
+        session_id: agent_client_protocol::schema::v2::SessionId,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {

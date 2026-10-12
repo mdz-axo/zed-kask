@@ -42,7 +42,8 @@ use acp_thread::{
     AcpThread, AgentModelId, AgentModelSelector, AgentSessionInfo, AgentSessionList,
     AgentSessionListRequest, AgentSessionListResponse, ClientUserMessageId, TokenUsageRatio,
 };
-use agent_client_protocol::schema::v1 as acp;
+use agent_client_protocol::schema::v1 as acp_v1;
+use agent_client_protocol::schema::v2 as acp_v2;
 use agent_skills::{
     AGENTS_DIR_NAME, MAX_SKILL_DESCRIPTIONS_SIZE, ProjectSkillGroup, SKILL_FILE_NAME, Skill,
     SkillIndex, SkillLoadError, SkillLoadWarning, SkillScopeId, SkillSource, SkillSummary,
@@ -168,7 +169,7 @@ pub struct SkillLoadingIssuesUpdated {
 /// unrecoverable.
 #[derive(Clone, Debug)]
 pub struct ThreadSaveFailed {
-    pub session_id: acp::SessionId,
+    pub session_id: acp_v2::SessionId,
     pub error: Arc<anyhow::Error>,
 }
 
@@ -248,17 +249,37 @@ struct Session {
     /// Latest snapshot to persist. Overwritten in place on every save request;
     /// the single save worker drains it, coalescing bursts into one write.
     pending_save: Arc<Mutex<Option<PendingThreadSave>>>,
+    last_streaming_save_key: Option<StreamingSaveKey>,
+    last_draft_prompt_revision: Option<usize>,
     save_wake: watch::Sender<()>,
     save_worker: Task<Result<()>>,
     _subscriptions: Vec<Subscription>,
 }
 
 impl Session {
-    fn draft_prompt(&self, cx: &App) -> Option<Vec<acp::ContentBlock>> {
+    fn draft_prompt(&self, cx: &App) -> Option<Vec<acp_v2::ContentBlock>> {
         match self.acp_thread.upgrade() {
             Some(acp_thread) => acp_thread.read(cx).draft_prompt().map(Vec::from),
             None => self.thread.read(cx).draft_prompt().map(Vec::from),
         }
+    }
+
+    fn draft_prompt_revision(&self, cx: &App) -> Option<usize> {
+        self.acp_thread
+            .upgrade()
+            .map(|acp_thread| acp_thread.read(cx).draft_prompt_revision())
+    }
+
+    fn can_skip_save_while_streaming(&self, cx: &App) -> bool {
+        // Streaming notifies the thread once per chunk, but `to_db` doesn't
+        // include the streaming message, so those notifies have nothing new to save.
+        let thread = self.thread.read(cx);
+        thread.is_streaming_message()
+            && self
+                .last_streaming_save_key
+                .as_ref()
+                .is_some_and(|key| *key == thread.streaming_save_key())
+            && self.last_draft_prompt_revision == self.draft_prompt_revision(cx)
     }
 }
 
@@ -268,7 +289,7 @@ struct PendingSession {
 
 pub struct LanguageModels {
     /// Access language model by ID
-    models: HashMap<AgentModelId, Arc<dyn LanguageModel>>,
+    models: HashMap<AgentModelId, LanguageModel>,
     /// Cached list for returning language model information
     model_list: acp_thread::AgentModelList,
     refresh_models_rx: watch::Receiver<()>,
@@ -347,12 +368,12 @@ impl LanguageModels {
         self.refresh_models_tx.send(()).ok();
     }
 
-    pub fn model_from_id(&self, model_id: &AgentModelId) -> Option<Arc<dyn LanguageModel>> {
+    pub fn model_from_id(&self, model_id: &AgentModelId) -> Option<LanguageModel> {
         self.models.get(model_id).cloned()
     }
 
     fn map_language_model_to_info(
-        model: &Arc<dyn LanguageModel>,
+        model: &LanguageModel,
         provider: &Arc<dyn LanguageModelProvider>,
     ) -> acp_thread::AgentModelInfo {
         acp_thread::AgentModelInfo {
@@ -369,7 +390,7 @@ impl LanguageModels {
         }
     }
 
-    fn model_id(model: &Arc<dyn LanguageModel>) -> AgentModelId {
+    fn model_id(model: &LanguageModel) -> AgentModelId {
         AgentModelId::new(format!("{}/{}", model.provider_id().0, model.id().0))
     }
 
@@ -454,8 +475,8 @@ pub trait SiblingThreadHost {
 
 pub struct NativeAgent {
     /// Session ID -> Session mapping
-    sessions: HashMap<acp::SessionId, Session>,
-    pending_sessions: HashMap<acp::SessionId, PendingSession>,
+    sessions: HashMap<acp_v2::SessionId, Session>,
+    pending_sessions: HashMap<acp_v2::SessionId, PendingSession>,
     thread_store: Entity<ThreadStore>,
     /// Project-specific state keyed by project EntityId
     projects: HashMap<EntityId, ProjectState>,
@@ -902,7 +923,7 @@ impl NativeAgent {
 
         let default_model = registry.default_model().and_then(|default_model| {
             self.models
-                .model_from_id(&LanguageModels::model_id(&default_model.model))
+                .model_from_id(&LanguageModels::model_id(&default_model))
         });
         let thread = cx.new(|cx| {
             Thread::new(
@@ -1072,7 +1093,7 @@ impl NativeAgent {
         });
 
         let registry = LanguageModelRegistry::read_global(cx);
-        let summarization_model = registry.thread_summary_model(cx).map(|c| c.model);
+        let summarization_model = registry.thread_summary_model(cx);
 
         let weak = cx.weak_entity();
         let weak_thread = thread_handle.downgrade();
@@ -1157,6 +1178,8 @@ impl NativeAgent {
                 subagents: Vec::new(),
                 project_id,
                 pending_save,
+                last_streaming_save_key: None,
+                last_draft_prompt_revision: None,
                 save_wake,
                 save_worker,
                 _subscriptions: subscriptions,
@@ -1255,7 +1278,7 @@ impl NativeAgent {
         );
     }
 
-    fn session_project_state(&self, session_id: &acp::SessionId) -> Option<&ProjectState> {
+    fn session_project_state(&self, session_id: &acp_v2::SessionId) -> Option<&ProjectState> {
         self.sessions
             .get(session_id)
             .and_then(|session| self.projects.get(&session.project_id))
@@ -1716,12 +1739,15 @@ impl NativeAgent {
         self.models.refresh_list(cx);
 
         let registry = LanguageModelRegistry::read_global(cx);
-        let default_model = registry.default_model().map(|m| m.model);
-        let summarization_model = registry.thread_summary_model(cx).map(|m| m.model);
+        let default_model = registry.default_model();
+        let summarization_model = registry.thread_summary_model(cx);
 
         for session in self.sessions.values_mut() {
             session.thread.update(cx, |thread, cx| {
                 thread.ensure_model(default_model.as_ref(), cx);
+                if let language_model::Event::ProviderStateChanged(provider_id) = event {
+                    thread.refresh_model(provider_id, cx);
+                }
 
                 if let Some(model) = summarization_model.clone() {
                     if thread.summarization_model().is_none()
@@ -1825,14 +1851,7 @@ impl NativeAgent {
             session
                 .acp_thread
                 .update(cx, |thread, cx| {
-                    thread
-                        .handle_session_update(
-                            acp::SessionUpdate::AvailableCommandsUpdate(
-                                acp::AvailableCommandsUpdate::new(available_commands.clone()),
-                            ),
-                            cx,
-                        )
-                        .log_err();
+                    thread.update_available_commands(available_commands.clone(), cx);
                 })
                 .ok();
         }
@@ -1841,23 +1860,23 @@ impl NativeAgent {
     fn build_available_commands_for_project(
         project_state: Option<&ProjectState>,
         cx: &App,
-    ) -> Vec<acp::AvailableCommand> {
+    ) -> Vec<acp_v2::AvailableCommand> {
         let Some(state) = project_state else {
             return Vec::new();
         };
-        let compact_command = acp::AvailableCommand::new(
+        let compact_command = acp_v2::AvailableCommand::new(
             COMPACT_COMMAND_NAME,
             "Summarize the conversation so far to free up context",
         )
         .meta(acp_thread::meta_with_command_category(
             acp_thread::CommandCategory::Native,
         ));
-        let trace_command = acp::AvailableCommand::new(
+        let trace_command = acp_v2::AvailableCommand::new(
             TRACE_COMMAND_NAME,
             "Run one prompt with an on-demand private tool trace",
         )
-        .input(acp::AvailableCommandInput::Unstructured(
-            acp::UnstructuredCommandInput::new("<prompt>"),
+        .input(acp_v2::AvailableCommandInput::Text(
+            acp_v2::TextCommandInput::new("<prompt>"),
         ))
         .meta(acp_thread::meta_with_command_category(
             acp_thread::CommandCategory::Native,
@@ -1885,7 +1904,7 @@ impl NativeAgent {
             };
 
             let mut command =
-                acp::AvailableCommand::new(name, prompt.description.clone().unwrap_or_default())
+                acp_v2::AvailableCommand::new(name, prompt.description.clone().unwrap_or_default())
                     .meta(acp_thread::meta_with_command_category(
                         acp_thread::CommandCategory::Mcp,
                     ));
@@ -1894,8 +1913,8 @@ impl NativeAgent {
                 Some([arg]) => {
                     let hint = format!("<{}>", arg.name);
 
-                    command = command.input(acp::AvailableCommandInput::Unstructured(
-                        acp::UnstructuredCommandInput::new(hint),
+                    command = command.input(acp_v2::AvailableCommandInput::Text(
+                        acp_v2::TextCommandInput::new(hint),
                     ));
                 }
                 Some([]) | None => {}
@@ -1916,7 +1935,7 @@ impl NativeAgent {
 
     pub fn load_thread(
         &mut self,
-        id: acp::SessionId,
+        id: acp_v2::SessionId,
         project: Entity<Project>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Thread>>> {
@@ -1934,9 +1953,8 @@ impl NativeAgent {
                     .projects
                     .get(&project_id)
                     .context("project state not found")?;
-                let summarization_model = LanguageModelRegistry::read_global(cx)
-                    .thread_summary_model(cx)
-                    .map(|c| c.model);
+                let summarization_model =
+                    LanguageModelRegistry::read_global(cx).thread_summary_model(cx);
 
                 Ok(cx.new(|cx| {
                     let mut thread = Thread::from_db(
@@ -1957,7 +1975,7 @@ impl NativeAgent {
 
     pub fn open_thread(
         &mut self,
-        id: acp::SessionId,
+        id: acp_v2::SessionId,
         project: Entity<Project>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<AcpThread>>> {
@@ -2029,7 +2047,7 @@ impl NativeAgent {
 
     pub fn thread_summary(
         &mut self,
-        id: acp::SessionId,
+        id: acp_v2::SessionId,
         project: Entity<Project>,
         cx: &mut Context<Self>,
     ) -> Task<Result<SharedString>> {
@@ -2054,9 +2072,9 @@ impl NativeAgent {
 
     fn release_session(
         &mut self,
-        session_id: &acp::SessionId,
+        session_id: &acp_v2::SessionId,
         acp_thread_id: EntityId,
-        draft_prompt: Option<Vec<acp::ContentBlock>>,
+        draft_prompt: Option<Vec<acp_v2::ContentBlock>>,
         cx: &mut Context<Self>,
     ) {
         let Some(session) = self.sessions.get(session_id) else {
@@ -2085,14 +2103,17 @@ impl NativeAgent {
         let Some(session) = self.sessions.get(&id) else {
             return;
         };
+        if session.can_skip_save_while_streaming(cx) {
+            return;
+        }
         let draft_prompt = session.draft_prompt(cx);
         self.enqueue_save(&id, draft_prompt, cx);
     }
 
     fn enqueue_save(
         &mut self,
-        id: &acp::SessionId,
-        draft_prompt: Option<Vec<acp::ContentBlock>>,
+        id: &acp_v2::SessionId,
+        draft_prompt: Option<Vec<acp_v2::ContentBlock>>,
         cx: &mut Context<Self>,
     ) {
         let Some(session) = self.sessions.get(id) else {
@@ -2107,6 +2128,8 @@ impl NativeAgent {
         let Some(session) = self.sessions.get_mut(&id) else {
             return;
         };
+        session.last_streaming_save_key = Some(session.thread.read(cx).streaming_save_key());
+        session.last_draft_prompt_revision = session.draft_prompt_revision(cx);
         *session.pending_save.lock() = Some(PendingThreadSave {
             folder_paths,
             db_thread,
@@ -2118,7 +2141,7 @@ impl NativeAgent {
     // do not retain the agent/session lifecycle they are flushing.
     async fn run_save_worker(
         this: WeakEntity<Self>,
-        id: acp::SessionId,
+        id: acp_v2::SessionId,
         mut wake: watch::Receiver<()>,
         pending_save: Arc<Mutex<Option<PendingThreadSave>>>,
         database_future: Shared<Task<Result<Arc<ThreadsDatabase>, Arc<anyhow::Error>>>>,
@@ -2177,9 +2200,9 @@ impl NativeAgent {
     fn thread_save_payload(
         &self,
         session: &Session,
-        draft_prompt: Option<Vec<acp::ContentBlock>>,
+        draft_prompt: Option<Vec<acp_v2::ContentBlock>>,
         cx: &mut App,
-    ) -> Option<(acp::SessionId, PathList, Task<DbThread>)> {
+    ) -> Option<(acp_v2::SessionId, PathList, Task<DbThread>)> {
         if session.thread.read(cx).is_empty() {
             return None;
         }
@@ -2237,13 +2260,13 @@ impl NativeAgent {
     fn send_mcp_prompt(
         &self,
         client_user_message_id: ClientUserMessageId,
-        session_id: acp::SessionId,
+        session_id: acp_v2::SessionId,
         prompt_name: String,
         server_id: ContextServerId,
         arguments: HashMap<String, String>,
-        original_content: Vec<acp::ContentBlock>,
+        original_content: Vec<acp_v2::ContentBlock>,
         cx: &mut Context<Self>,
-    ) -> Task<Result<acp::PromptResponse>> {
+    ) -> Task<Result<acp_v1::PromptResponse>> {
         let Some(state) = self.session_project_state(&session_id) else {
             return Task::ready(Err(anyhow!("Project state not found for session")));
         };
@@ -2278,12 +2301,13 @@ impl NativeAgent {
                     original_content.into_iter().skip(1),
                     path_style,
                     cx,
-                );
-            });
+                )
+            })?;
 
             for message in prompt.messages {
                 let context_server::types::PromptMessage { role, content } = message;
                 let block = mcp_message_content_to_acp_content_block(content);
+                let display_block = block.clone();
 
                 match role {
                     context_server::types::Role::User => {
@@ -2292,29 +2316,27 @@ impl NativeAgent {
                         acp_thread.update(cx, |acp_thread, cx| {
                             acp_thread.push_user_content_block_with_indent(
                                 Some(id.clone()),
-                                block.clone(),
+                                display_block,
                                 true,
                                 cx,
                             );
                         });
 
                         thread.update(cx, |thread, cx| {
-                            thread.push_acp_user_block(id, [block], path_style, cx);
-                        });
+                            thread.push_acp_user_block(id, [block], path_style, cx)
+                        })?;
                     }
                     context_server::types::Role::Assistant => {
                         acp_thread.update(cx, |acp_thread, cx| {
                             acp_thread.push_assistant_content_block_with_indent(
-                                block.clone(),
+                                display_block,
                                 false,
                                 true,
                                 cx,
                             );
                         });
 
-                        thread.update(cx, |thread, cx| {
-                            thread.push_acp_agent_block(block, cx);
-                        });
+                        thread.update(cx, |thread, cx| thread.push_acp_agent_block(block, cx))?;
                     }
                 }
 
@@ -2350,9 +2372,9 @@ impl NativeAgent {
     fn send_compact_command(
         &self,
         client_user_message_id: ClientUserMessageId,
-        session_id: acp::SessionId,
+        session_id: acp_v2::SessionId,
         cx: &mut Context<Self>,
-    ) -> Task<Result<acp::PromptResponse>> {
+    ) -> Task<Result<acp_v1::PromptResponse>> {
         cx.spawn(async move |this, cx| {
             let (acp_thread, thread) = this.update(cx, |this, _cx| {
                 let session = this
@@ -2398,11 +2420,11 @@ impl NativeAgent {
     fn send_skill_invocation(
         &self,
         client_user_message_id: ClientUserMessageId,
-        session_id: acp::SessionId,
+        session_id: acp_v2::SessionId,
         skill: Skill,
-        original_content: Vec<acp::ContentBlock>,
+        original_content: Vec<acp_v2::ContentBlock>,
         cx: &mut Context<Self>,
-    ) -> Task<Result<acp::PromptResponse>> {
+    ) -> Task<Result<acp_v1::PromptResponse>> {
         let Some(state) = self.session_project_state(&session_id) else {
             return Task::ready(Err(anyhow!("Project state not found for session")));
         };
@@ -2432,10 +2454,10 @@ impl NativeAgent {
                 )
             })?;
             let envelope = crate::tools::render_skill_envelope(&skill, &body);
-            let envelope_block = acp::ContentBlock::Text(acp::TextContent::new(envelope));
+            let envelope_block = acp_v2::ContentBlock::Text(acp_v2::TextContent::new(envelope));
 
             let mut user_blocks = original_content;
-            if let Some(acp::ContentBlock::Text(text_content)) = user_blocks.first_mut() {
+            if let Some(acp_v2::ContentBlock::Text(text_content)) = user_blocks.first_mut() {
                 let stripped = strip_slash_command_prefix(&text_content.text);
                 if stripped.trim().is_empty() {
                     user_blocks.remove(0);
@@ -2449,10 +2471,11 @@ impl NativeAgent {
             // user's own typed message is already rendered by the normal
             // prompt flow, so we don't push it to the UI again here.
             let injected_id = acp_thread::ClientUserMessageId::new();
+            let display_block = envelope_block.clone();
             acp_thread.update(cx, |acp_thread, cx| {
                 acp_thread.push_user_content_block_with_indent(
                     Some(injected_id),
-                    envelope_block.clone(),
+                    display_block,
                     true,
                     cx,
                 );
@@ -2465,8 +2488,8 @@ impl NativeAgent {
             combined.extend(user_blocks);
 
             thread.update(cx, |thread, cx| {
-                thread.push_acp_user_block(client_user_message_id, combined, path_style, cx);
-            });
+                thread.push_acp_user_block(client_user_message_id, combined, path_style, cx)
+            })?;
 
             let response_stream = thread.update(cx, |thread, cx| thread.send_existing(cx))?;
 
@@ -2491,7 +2514,7 @@ impl NativeAgent {
 pub struct NativeAgentConnection(pub Entity<NativeAgent>, pub AgentId);
 
 impl NativeAgentConnection {
-    pub fn thread(&self, session_id: &acp::SessionId, cx: &App) -> Option<Entity<Thread>> {
+    pub fn thread(&self, session_id: &acp_v2::SessionId, cx: &App) -> Option<Entity<Thread>> {
         self.0
             .read(cx)
             .sessions
@@ -2521,7 +2544,7 @@ impl NativeAgentConnection {
 
     pub fn available_skills(
         &self,
-        session_id: &acp::SessionId,
+        session_id: &acp_v2::SessionId,
         cx: &App,
     ) -> Vec<NativeAvailableSkill> {
         self.0
@@ -2539,7 +2562,7 @@ impl NativeAgentConnection {
 
     pub fn load_thread(
         &self,
-        id: acp::SessionId,
+        id: acp_v2::SessionId,
         project: Entity<Project>,
         cx: &mut App,
     ) -> Task<Result<Entity<Thread>>> {
@@ -2549,11 +2572,11 @@ impl NativeAgentConnection {
 
     fn run_turn(
         &self,
-        session_id: acp::SessionId,
+        session_id: acp_v2::SessionId,
         cx: &mut App,
         f: impl 'static
         + FnOnce(Entity<Thread>, &mut App) -> Result<mpsc::UnboundedReceiver<Result<ThreadEvent>>>,
-    ) -> Task<Result<acp::PromptResponse>> {
+    ) -> Task<Result<acp_v1::PromptResponse>> {
         let Some((thread, acp_thread)) = self.0.update(cx, |agent, _cx| {
             let session = agent.sessions.get(&session_id)?;
             Some((session.thread.clone(), session.acp_thread.clone()))
@@ -2575,7 +2598,7 @@ impl NativeAgentConnection {
         acp_thread: WeakEntity<AcpThread>,
         connection: Option<NativeAgentConnection>,
         cx: &App,
-    ) -> Task<Result<acp::PromptResponse>> {
+    ) -> Task<Result<acp_v1::PromptResponse>> {
         cx.spawn(async move |cx| {
             // Handle response stream and forward to session.acp_thread
             while let Some(result) = events.next().await {
@@ -2585,11 +2608,14 @@ impl NativeAgentConnection {
 
                         match event {
                             ThreadEvent::UserMessage(message) => {
+                                let content = message.content.iter().cloned()
+                                    .map(acp_v2::ContentBlock::from)
+                                    .collect::<Vec<_>>();
                                 acp_thread.update(cx, |thread, cx| {
-                                    for content in &*message.content {
+                                    for content in content {
                                         thread.push_user_content_block(
                                             Some(message.id.clone()),
-                                            content.clone().into(),
+                                            content,
                                             cx,
                                         );
                                     }
@@ -2613,7 +2639,7 @@ impl NativeAgentConnection {
                                 kind,
                             }) => {
                                 let outcome_task = acp_thread.update(cx, |thread, cx| {
-                                    thread.request_tool_call_authorization(
+                                    thread.request_tool_call_update_authorization(
                                         tool_call, options, kind, cx,
                                     )
                                 })??;
@@ -2622,10 +2648,10 @@ impl NativeAgentConnection {
                                         acp_thread::RequestPermissionOutcome::Selected(outcome) => outcome,
                                         acp_thread::RequestPermissionOutcome::InterruptedByFollowUp => {
                                             acp_thread::SelectedPermissionOutcome::new(
-                                                acp::PermissionOptionId::new(
+                                                acp_v2::PermissionOptionId::new(
                                                     FOLLOW_UP_PERMISSION_DENIED_OPTION_ID,
                                                 ),
-                                                acp::PermissionOptionKind::RejectOnce,
+                                                acp_v2::PermissionOptionKind::RejectOnce,
                                             )
                                         }
                                         acp_thread::RequestPermissionOutcome::Cancelled => return,
@@ -2652,12 +2678,12 @@ impl NativeAgentConnection {
                                 response,
                             }) => {
                                 let request_result = acp_thread.update(cx, |thread, cx| {
-                                    let scope = acp::ElicitationSessionScope::new(
+                                    let scope = acp_v2::ElicitationSessionScope::new(
                                         thread.session_id().clone(),
                                     )
                                     .tool_call_id(tool_call_id);
-                                    let request = acp::CreateElicitationRequest::new(
-                                        acp::ElicitationFormMode::new(scope, schema),
+                                    let request = acp_v2::CreateElicitationRequest::new(
+                                        acp_v2::ElicitationFormMode::new(scope, schema),
                                         message,
                                     );
                                     thread.request_elicitation(request, cx)
@@ -2681,17 +2707,12 @@ impl NativeAgentConnection {
                                         // doesn't hang waiting on a form that will
                                         // never render.
                                         response
-                                            .send(acp::CreateElicitationResponse::new(
-                                                acp::ElicitationAction::Cancel,
+                                            .send(acp_v2::CreateElicitationResponse::new(
+                                                acp_v2::ElicitationAction::Cancel,
                                             ))
                                             .ok();
                                     }
                                 }
-                            }
-                            ThreadEvent::ToolCall(tool_call) => {
-                                acp_thread.update(cx, |thread, cx| {
-                                    thread.upsert_tool_call(tool_call, cx)
-                                })??;
                             }
                             ThreadEvent::ToolCallUpdate(update) => {
                                 acp_thread.update(cx, |thread, cx| {
@@ -2736,7 +2757,7 @@ impl NativeAgentConnection {
                             }
                             ThreadEvent::Stop(stop_reason) => {
                                 log::debug!("Assistant message complete: {:?}", stop_reason);
-                                return Ok(acp::PromptResponse::new(stop_reason));
+                                return legacy_native_completion(stop_reason);
                             }
                         }
                     }
@@ -2748,9 +2769,29 @@ impl NativeAgentConnection {
             }
 
             log::debug!("Response stream completed");
-            anyhow::Ok(acp::PromptResponse::new(acp::StopReason::EndTurn))
+            anyhow::Ok(acp_v1::PromptResponse::new(acp_v1::StopReason::EndTurn))
         })
     }
+}
+
+fn legacy_native_completion(stop_reason: acp_v2::StopReason) -> Result<acp_v1::PromptResponse> {
+    // Native events are version-neutral, but the completion-based connection API
+    // still returns a v1 response. This is not a v2 acceptance receipt.
+    let stop_reason = match stop_reason {
+        acp_v2::StopReason::EndTurn => acp_v1::StopReason::EndTurn,
+        acp_v2::StopReason::MaxTokens => acp_v1::StopReason::MaxTokens,
+        acp_v2::StopReason::MaxTurnRequests => acp_v1::StopReason::MaxTurnRequests,
+        acp_v2::StopReason::Refusal => acp_v1::StopReason::Refusal,
+        acp_v2::StopReason::Cancelled => acp_v1::StopReason::Cancelled,
+        acp_v2::StopReason::Error(reason) => {
+            return Err(match reason.error {
+                Some(error) => anyhow::Error::new(*error),
+                None => anyhow!("Native agent stopped with an error"),
+            });
+        }
+        _ => anyhow::bail!("Native agent returned an unsupported stop reason"),
+    };
+    Ok(acp_v1::PromptResponse::new(stop_reason))
 }
 
 struct Command<'a> {
@@ -2776,8 +2817,8 @@ impl<'a> Command<'a> {
             && self.skill_scope.is_none()
     }
 
-    fn parse(prompt: &'a [acp::ContentBlock]) -> Option<Self> {
-        let acp::ContentBlock::Text(text_content) = prompt.first()? else {
+    fn parse(prompt: &'a [acp_v2::ContentBlock]) -> Option<Self> {
+        let acp_v2::ContentBlock::Text(text_content) = prompt.first()? else {
             return None;
         };
         let text = text_content.text.trim();
@@ -2847,7 +2888,7 @@ fn strip_slash_command_prefix(text: &str) -> String {
 }
 
 struct NativeAgentModelSelector {
-    session_id: acp::SessionId,
+    session_id: acp_v2::SessionId,
     connection: NativeAgentConnection,
 }
 
@@ -3053,7 +3094,7 @@ pub fn available_native_agent(cx: &App) -> AvailableAgent {
         for model in provider.provided_models(cx) {
             let id = format!("{}/{}", provider_id.0, model.id().0);
             let is_default = default.as_ref().is_some_and(|default| {
-                default.provider.id() == provider_id && default.model.id() == model.id()
+                default.provider_id == provider_id && default.id == model.id
             });
             models.push(AvailableModel {
                 id,
@@ -3517,7 +3558,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
 
     fn load_session(
         self: Rc<Self>,
-        session_id: acp::SessionId,
+        session_id: acp_v2::SessionId,
         project: Entity<Project>,
         _work_dirs: PathList,
         _title: Option<SharedString>,
@@ -3527,15 +3568,15 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
             .update(cx, |agent, cx| agent.open_thread(session_id, project, cx))
     }
 
-    fn auth_methods(&self) -> &[acp::AuthMethod] {
+    fn auth_methods(&self) -> &[acp_v2::AuthMethod] {
         &[] // No auth for in-process
     }
 
-    fn authenticate(&self, _method: acp::AuthMethodId, _cx: &mut App) -> Task<Result<()>> {
+    fn authenticate(&self, _method: acp_v2::AuthMethodId, _cx: &mut App) -> Task<Result<()>> {
         Task::ready(Ok(()))
     }
 
-    fn model_selector(&self, session_id: &acp::SessionId) -> Option<Rc<dyn AgentModelSelector>> {
+    fn model_selector(&self, session_id: &acp_v2::SessionId) -> Option<Rc<dyn AgentModelSelector>> {
         Some(Rc::new(NativeAgentModelSelector {
             session_id: session_id.clone(),
             connection: self.clone(),
@@ -3550,11 +3591,17 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         Some(prompt)
     }
 
+    fn validate_prompt_content(&self, content: &[acp_v2::ContentBlock]) -> Result<()> {
+        content
+            .iter()
+            .try_for_each(UserMessageContent::validate_content_block)
+    }
+
     fn prompt(
         &self,
-        params: acp::PromptRequest,
+        params: acp_v2::PromptRequest,
         cx: &mut App,
-    ) -> Task<Result<acp::PromptResponse>> {
+    ) -> Task<Result<acp_v1::PromptResponse>> {
         acp_thread::AgentSessionClientUserMessageIds::prompt(
             self,
             acp_thread::AgentSessionClientUserMessageIds::new_id(self),
@@ -3565,7 +3612,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
 
     fn retry(
         &self,
-        session_id: &acp::SessionId,
+        session_id: &acp_v2::SessionId,
         _cx: &App,
     ) -> Option<Rc<dyn acp_thread::AgentSessionRetry>> {
         Some(Rc::new(NativeAgentSessionRetry {
@@ -3574,7 +3621,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         }) as _)
     }
 
-    fn cancel(&self, session_id: &acp::SessionId, cx: &mut App) {
+    fn cancel(&self, session_id: &acp_v2::SessionId, cx: &mut App) {
         log::info!("Cancelling on session: {}", session_id);
         self.0.update(cx, |agent, cx| {
             if let Some(session) = agent.sessions.get(session_id) {
@@ -3588,7 +3635,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
 
     fn truncate(
         &self,
-        session_id: &acp::SessionId,
+        session_id: &acp_v2::SessionId,
         cx: &App,
     ) -> Option<Rc<dyn acp_thread::AgentSessionTruncate>> {
         self.0.read_with(cx, |agent, _cx| {
@@ -3603,7 +3650,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
 
     fn set_title(
         &self,
-        session_id: &acp::SessionId,
+        session_id: &acp_v2::SessionId,
         cx: &App,
     ) -> Option<Rc<dyn acp_thread::AgentSessionSetTitle>> {
         self.0.read_with(cx, |agent, _cx| {
@@ -3637,9 +3684,9 @@ impl acp_thread::AgentSessionClientUserMessageIds for NativeAgentConnection {
     fn prompt(
         &self,
         client_user_message_id: acp_thread::ClientUserMessageId,
-        params: acp::PromptRequest,
+        params: acp_v2::PromptRequest,
         cx: &mut App,
-    ) -> Task<Result<acp::PromptResponse>> {
+    ) -> Task<Result<acp_v1::PromptResponse>> {
         let session_id = params.session_id.clone();
         log::info!("Received prompt request for session: {}", session_id);
         log::debug!("Prompt blocks count: {}", params.prompt.len());
@@ -3654,6 +3701,12 @@ impl acp_thread::AgentSessionClientUserMessageIds for NativeAgentConnection {
             }
             return Task::ready(Err(anyhow::anyhow!("Session not found")));
         };
+
+        if let Err(error) =
+            acp_thread::AgentConnection::validate_prompt_content(self, &params.prompt)
+        {
+            return Task::ready(Err(error));
+        }
 
         if let Some(parsed_command) = Command::parse(&params.prompt) {
             if parsed_command.is_unqualified(COMPACT_COMMAND_NAME) {
@@ -3675,7 +3728,7 @@ impl acp_thread::AgentSessionClientUserMessageIds for NativeAgentConnection {
                     return Task::ready(Err(anyhow!("Trace session was released")));
                 };
                 let mut blocks = params.prompt;
-                if let Some(acp::ContentBlock::Text(first)) = blocks.first_mut() {
+                if let Some(acp_v2::ContentBlock::Text(first)) = blocks.first_mut() {
                     let text = strip_slash_command_prefix(&first.text);
                     if text.trim().is_empty() {
                         blocks.remove(0);
@@ -3692,9 +3745,12 @@ impl acp_thread::AgentSessionClientUserMessageIds for NativeAgentConnection {
                     move |_thread, cx| {
                         thread.update(cx, |thread, cx| {
                             thread.start_on_demand_trace()?;
-                            let content = blocks.into_iter().map(|block| {
-                                UserMessageContent::from_content_block(block, path_style)
-                            });
+                            let content = blocks
+                                .into_iter()
+                                .map(|block| {
+                                    UserMessageContent::from_content_block(block, path_style)
+                                })
+                                .collect::<Result<Vec<_>>>()?;
                             thread.send(client_user_message_id, content, cx)
                         })
                     }
@@ -3825,13 +3881,12 @@ impl acp_thread::AgentSessionClientUserMessageIds for NativeAgentConnection {
         };
 
         let path_style = project_state.project.read(cx).path_style(cx);
-
         self.run_turn(session_id, cx, move |thread, cx| {
-            let content: Vec<UserMessageContent> = params
+            let content = params
                 .prompt
                 .into_iter()
                 .map(|block| UserMessageContent::from_content_block(block, path_style))
-                .collect::<Vec<_>>();
+                .collect::<Result<Vec<_>>>()?;
             log::debug!("Converted prompt to message: {} chars", content.len());
             log::debug!("Client user message id: {:?}", client_user_message_id);
             log::debug!("Message content: {:?}", content);
@@ -3846,7 +3901,7 @@ impl acp_thread::AgentSessionClientUserMessageIds for NativeAgentConnection {
 impl acp_thread::AgentTelemetry for NativeAgentConnection {
     fn thread_data(
         &self,
-        session_id: &acp::SessionId,
+        session_id: &acp_v2::SessionId,
         cx: &mut App,
     ) -> Task<Result<serde_json::Value>> {
         let Some(session) = self.0.read(cx).sessions.get(session_id) else {
@@ -3908,7 +3963,7 @@ impl AgentSessionList for NativeAgentSessionList {
         true
     }
 
-    fn delete_session(&self, session_id: &acp::SessionId, cx: &mut App) -> Task<Result<()>> {
+    fn delete_session(&self, session_id: &acp_v2::SessionId, cx: &mut App) -> Task<Result<()>> {
         self.thread_store
             .update(cx, |store, cx| store.delete_thread(session_id.clone(), cx))
     }
@@ -3966,11 +4021,11 @@ impl acp_thread::AgentSessionTruncate for NativeAgentSessionTruncate {
 
 struct NativeAgentSessionRetry {
     connection: NativeAgentConnection,
-    session_id: acp::SessionId,
+    session_id: acp_v2::SessionId,
 }
 
 impl acp_thread::AgentSessionRetry for NativeAgentSessionRetry {
-    fn run(&self, cx: &mut App) -> Task<Result<acp::PromptResponse>> {
+    fn run(&self, cx: &mut App) -> Task<Result<acp_v1::PromptResponse>> {
         self.connection
             .run_turn(self.session_id.clone(), cx, |thread, cx| {
                 thread.update(cx, |thread, cx| thread.resume(cx))
@@ -4070,7 +4125,7 @@ impl NativeThreadEnvironment {
 
     pub(crate) fn resume_subagent_thread(
         &self,
-        session_id: acp::SessionId,
+        session_id: acp_v2::SessionId,
         cx: &mut App,
     ) -> Result<Rc<dyn SubagentHandle>> {
         let parent = self
@@ -4113,7 +4168,7 @@ impl NativeThreadEnvironment {
 
     fn prompt_subagent(
         &self,
-        session_id: acp::SessionId,
+        session_id: acp_v2::SessionId,
         subagent_thread: Entity<Thread>,
         acp_thread: Entity<acp_thread::AcpThread>,
     ) -> Result<Rc<dyn SubagentHandle>> {
@@ -4133,7 +4188,7 @@ impl ThreadEnvironment for NativeThreadEnvironment {
     fn create_terminal(
         &self,
         command: String,
-        extra_env: Vec<acp::EnvVariable>,
+        extra_env: Vec<acp_v1::EnvVariable>,
         cwd: Option<PathBuf>,
         output_byte_limit: Option<u64>,
         sandbox_wrap: Option<acp_thread::SandboxWrap>,
@@ -4182,9 +4237,9 @@ impl ThreadEnvironment for NativeThreadEnvironment {
                     let temp_dir = temp_dir.canonicalize().unwrap_or(temp_dir);
                     let temp_dir_string = temp_dir.to_string_lossy().into_owned();
                     extra_env.extend([
-                        acp::EnvVariable::new("TMPDIR", &temp_dir_string),
-                        acp::EnvVariable::new("TMP", &temp_dir_string),
-                        acp::EnvVariable::new("TEMP", &temp_dir_string),
+                        acp_v1::EnvVariable::new("TMPDIR", &temp_dir_string),
+                        acp_v1::EnvVariable::new("TMP", &temp_dir_string),
+                        acp_v1::EnvVariable::new("TEMP", &temp_dir_string),
                     ]);
                     // The command's `$TMPDIR` must live inside the sandbox's
                     // writable scope. The per-thread temp directory is owned
@@ -4245,7 +4300,7 @@ impl ThreadEnvironment for NativeThreadEnvironment {
 
     fn resume_subagent(
         &self,
-        session_id: acp::SessionId,
+        session_id: acp_v2::SessionId,
         cx: &mut App,
     ) -> Result<Rc<dyn SubagentHandle>> {
         self.resume_subagent_thread(session_id, cx)
@@ -4302,7 +4357,7 @@ enum SubagentPromptResult {
 }
 
 pub struct NativeSubagentHandle {
-    session_id: acp::SessionId,
+    session_id: acp_v2::SessionId,
     parent_thread: WeakEntity<Thread>,
     subagent_thread: Entity<Thread>,
     acp_thread: Entity<acp_thread::AcpThread>,
@@ -4310,7 +4365,7 @@ pub struct NativeSubagentHandle {
 
 impl NativeSubagentHandle {
     fn new(
-        session_id: acp::SessionId,
+        session_id: acp_v2::SessionId,
         subagent_thread: Entity<Thread>,
         acp_thread: Entity<acp_thread::AcpThread>,
         parent_thread_entity: Entity<Thread>,
@@ -4325,7 +4380,7 @@ impl NativeSubagentHandle {
 }
 
 impl SubagentHandle for NativeSubagentHandle {
-    fn id(&self) -> acp::SessionId {
+    fn id(&self) -> acp_v2::SessionId {
         self.session_id.clone()
     }
 
@@ -4388,15 +4443,15 @@ impl SubagentHandle for NativeSubagentHandle {
             };
             let discard_partial_output = matches!(
                 &response,
-                Ok(Some(response)) if response.stop_reason == acp::StopReason::Cancelled
-                    || response.stop_reason == acp::StopReason::Refusal
+                Ok(Some(acp_thread::SubmissionResponse::LegacyCompleted(response))) if response.stop_reason == acp_v1::StopReason::Cancelled
+                    || response.stop_reason == acp_v1::StopReason::Refusal
             );
             let result = match response {
-                Ok(Some(response)) => match response.stop_reason {
-                    acp::StopReason::Cancelled => Err(anyhow!("User canceled")),
-                    acp::StopReason::MaxTokens => Err(anyhow!("The agent reached the maximum number of tokens.")),
-                    acp::StopReason::MaxTurnRequests => Err(anyhow!("The agent reached the maximum number of allowed requests between user turns. Try prompting again.")),
-                    acp::StopReason::Refusal => Err(anyhow!("The agent refused to process that prompt. Try again.")),
+                Ok(Some(acp_thread::SubmissionResponse::LegacyCompleted(response))) => match response.stop_reason {
+                    acp_v1::StopReason::Cancelled => Err(anyhow!("User canceled")),
+                    acp_v1::StopReason::MaxTokens => Err(anyhow!("The agent reached the maximum number of tokens.")),
+                    acp_v1::StopReason::MaxTurnRequests => Err(anyhow!("The agent reached the maximum number of allowed requests between user turns. Try prompting again.")),
+                    acp_v1::StopReason::Refusal => Err(anyhow!("The agent refused to process that prompt. Try again.")),
                     _ => thread.read_with(cx, |thread, _cx| {
                         thread
                             .last_message()
@@ -4418,6 +4473,9 @@ impl SubagentHandle for NativeSubagentHandle {
                             .context("No response from subagent")
                     }),
                 },
+                Ok(Some(acp_thread::SubmissionResponse::Accepted(_))) => {
+                    Err(anyhow!("Native subagent returned acceptance instead of turn completion"))
+                }
                 Ok(None) => Err(anyhow!("No response from the agent. You can try messaging again.")),
                 Err(error) => Err(error),
             };
@@ -4501,14 +4559,17 @@ impl SubagentHandle for NativeSubagentHandle {
                     .background_spawn(async move {
                         futures::select! {
                             response = task.fuse() => match response {
-                                Ok(Some(response)) => {
+                                Ok(Some(acp_thread::SubmissionResponse::LegacyCompleted(response))) => {
                                     match response.stop_reason {
-                                        acp::StopReason::Cancelled => SubagentPromptResult::Cancelled,
-                                        acp::StopReason::MaxTokens => SubagentPromptResult::Error("The agent reached the maximum number of tokens.".into()),
-                                        acp::StopReason::MaxTurnRequests => SubagentPromptResult::Error("The agent reached the maximum number of allowed requests between user turns. Try prompting again.".into()),
-                                        acp::StopReason::Refusal => SubagentPromptResult::Error("The agent refused to process that prompt. Try again.".into()),
-                                        acp::StopReason::EndTurn | _ => SubagentPromptResult::Completed,
+                                        acp_v1::StopReason::Cancelled => SubagentPromptResult::Cancelled,
+                                        acp_v1::StopReason::MaxTokens => SubagentPromptResult::Error("The agent reached the maximum number of tokens.".into()),
+                                        acp_v1::StopReason::MaxTurnRequests => SubagentPromptResult::Error("The agent reached the maximum number of allowed requests between user turns. Try prompting again.".into()),
+                                        acp_v1::StopReason::Refusal => SubagentPromptResult::Error("The agent refused to process that prompt. Try again.".into()),
+                                        acp_v1::StopReason::EndTurn | _ => SubagentPromptResult::Completed,
                                     }
+                                }
+                                Ok(Some(acp_thread::SubmissionResponse::Accepted(_))) => {
+                                    SubagentPromptResult::Error("Native subagent returned acceptance instead of turn completion".into())
                                 }
                                 Ok(None) => SubagentPromptResult::Error("No response from the agent. You can try messaging again.".into()),
                                 Err(error) => SubagentPromptResult::Error(error.to_string()),
@@ -4590,16 +4651,16 @@ pub struct AcpTerminalHandle {
 }
 
 impl TerminalHandle for AcpTerminalHandle {
-    fn id(&self, cx: &AsyncApp) -> Result<acp::TerminalId> {
+    fn id(&self, cx: &AsyncApp) -> Result<acp_v2::TerminalId> {
         Ok(self.terminal.read_with(cx, |term, _cx| term.id().clone()))
     }
 
-    fn wait_for_exit(&self, cx: &AsyncApp) -> Result<Shared<Task<acp::TerminalExitStatus>>> {
+    fn wait_for_exit(&self, cx: &AsyncApp) -> Result<Shared<Task<acp_v1::TerminalExitStatus>>> {
         self.terminal
             .read_with(cx, |term, _cx| term.wait_for_exit())
     }
 
-    fn current_output(&self, cx: &AsyncApp) -> Result<acp::TerminalOutputResponse> {
+    fn current_output(&self, cx: &AsyncApp) -> Result<acp_v1::TerminalOutputResponse> {
         Ok(self
             .terminal
             .read_with(cx, |term, cx| term.current_output(cx)))
@@ -5083,15 +5144,48 @@ mod internal_tests {
     use fs::FakeFs;
     use gpui::TestAppContext;
     use indoc::formatdoc;
-    use language_model::fake_provider::{FakeLanguageModel, FakeLanguageModelProvider};
+    use language_model::fake_provider::FakeLanguageModelProvider;
     use language_model::{
         CompletionIntent, LanguageModelCompletionError, LanguageModelCompletionEvent,
-        LanguageModelProviderId, LanguageModelProviderName, Speed,
+        LanguageModelName, LanguageModelProviderId, LanguageModelProviderName, Speed,
     };
     use project::WorktreeId;
     use serde_json::json;
     use settings::{LanguageModelProviderSetting, SettingsStore};
     use util::{path, rel_path::rel_path};
+
+    #[test]
+    fn native_stop_reasons_preserve_legacy_completions() -> Result<()> {
+        for (native, legacy) in [
+            (acp_v2::StopReason::EndTurn, acp_v1::StopReason::EndTurn),
+            (acp_v2::StopReason::MaxTokens, acp_v1::StopReason::MaxTokens),
+            (
+                acp_v2::StopReason::MaxTurnRequests,
+                acp_v1::StopReason::MaxTurnRequests,
+            ),
+            (acp_v2::StopReason::Refusal, acp_v1::StopReason::Refusal),
+            (acp_v2::StopReason::Cancelled, acp_v1::StopReason::Cancelled),
+        ] {
+            assert_eq!(legacy_native_completion(native)?.stop_reason, legacy);
+        }
+        assert!(
+            legacy_native_completion(acp_v2::StopReason::Other(acp_v2::OtherStopReason::new(
+                "_future",
+                Default::default(),
+            )))
+            .is_err(),
+            "an unsupported reason must not masquerade as successful completion"
+        );
+        let error = legacy_native_completion(acp_v2::ErrorStopReason::new().into())
+            .expect_err("an error without details is not successful completion");
+        assert_eq!(error.to_string(), "Native agent stopped with an error");
+        let details = acp_v2::Error::auth_required().data(json!({"hint": "sign in"}));
+        let error =
+            legacy_native_completion(acp_v2::ErrorStopReason::new().error(details.clone()).into())
+                .expect_err("reported error details propagate");
+        assert_eq!(error.downcast_ref::<acp_v2::Error>(), Some(&details));
+        Ok(())
+    }
 
     #[gpui::test]
     fn test_available_native_agent_hides_hidden_providers(cx: &mut TestAppContext) {
@@ -5119,19 +5213,14 @@ mod internal_tests {
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
         let agent = cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs, cx));
         let connection = Rc::new(NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone()));
-        let model = Arc::new(FakeLanguageModel::with_id_and_thinking(
-            "fake-corp",
-            "subagent-model",
-            "Subagent Model",
-            true,
+        let provider = Arc::new(FakeLanguageModelProvider::new(
+            LanguageModelProviderId::from("fake-corp".to_string()),
+            LanguageModelProviderName::from("Fake Corp".to_string()),
         ));
-        let provider = Arc::new(
-            FakeLanguageModelProvider::new(
-                LanguageModelProviderId::from("fake-corp".to_string()),
-                LanguageModelProviderName::from("Fake Corp".to_string()),
-            )
-            .with_models(vec![model.clone()]),
-        );
+        let model = provider.update_model("subagent-model", |model| {
+            model.name = LanguageModelName::from("Subagent Model".to_string());
+            model.supports_thinking = true;
+        });
         cx.update(|cx| {
             LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
                 registry.register_provider(provider, cx);
@@ -5227,7 +5316,7 @@ mod internal_tests {
         let task = cx.update(|cx| {
             tool.run(
                 ToolInput::resolved(SandboxedTerminalToolInput {
-                    command: "true".to_string(),
+                    command: "read -r line </dev/tty".to_string(),
                     cd: temp_dir.path().to_string_lossy().into_owned(),
                     ..Default::default()
                 }),
@@ -5240,18 +5329,19 @@ mod internal_tests {
         authorization
             .response
             .send(acp_thread::SelectedPermissionOutcome::new(
-                acp::PermissionOptionId::new("allow"),
-                acp::PermissionOptionKind::AllowOnce,
+                acp_v2::PermissionOptionId::new("allow"),
+                acp_v2::PermissionOptionKind::AllowOnce,
             ))
             .expect("authorization response should send");
 
         let update = receiver.expect_update_fields().await;
         let terminal_id = update
             .content
-            .iter()
+            .value()
+            .into_iter()
             .flatten()
             .find_map(|content| match content {
-                acp::ToolCallContent::Terminal(terminal) => Some(terminal.terminal_id.clone()),
+                acp_v2::ToolCallContent::Terminal(terminal) => Some(terminal.terminal_id.clone()),
                 _ => None,
             })
             .expect("terminal tool should announce its real terminal");
@@ -5264,11 +5354,10 @@ mod internal_tests {
             "the full terminal tool path should create a real PTY"
         );
 
+        historical_terminal.update(cx, |terminal, _cx| terminal.input(b"\n".to_vec()));
+
         let result = task.await.expect("native terminal tool call succeeds");
-        assert!(
-            result.contains("Command executed successfully."),
-            "unexpected terminal tool result: {result}"
-        );
+        assert_eq!(result, "Command executed successfully.");
         assert!(
             historical_terminal.read_with(cx, |terminal, _cx| {
                 terminal.is_pty() && terminal.pid_getter().is_some()
@@ -5639,17 +5728,17 @@ mod internal_tests {
 
     #[test]
     fn test_qualified_compact_commands_are_not_native_compact() {
-        let unqualified_blocks = [acp::ContentBlock::from("/compact")];
+        let unqualified_blocks = [acp_v2::ContentBlock::from("/compact")];
         let unqualified = Command::parse(&unqualified_blocks).unwrap();
         assert!(unqualified.is_unqualified("compact"));
 
-        let mcp_blocks = [acp::ContentBlock::from("/server.compact")];
+        let mcp_blocks = [acp_v2::ContentBlock::from("/server.compact")];
         let mcp_qualified = Command::parse(&mcp_blocks).unwrap();
         assert_eq!(mcp_qualified.prompt_name, "compact");
         assert_eq!(mcp_qualified.explicit_server_id, Some("server"));
         assert!(!mcp_qualified.is_unqualified("compact"));
 
-        let skill_blocks = [acp::ContentBlock::from("/:compact")];
+        let skill_blocks = [acp_v2::ContentBlock::from("/:compact")];
         let skill_qualified = Command::parse(&skill_blocks).unwrap();
         assert_eq!(skill_qualified.prompt_name, "compact");
         assert_eq!(skill_qualified.skill_scope, Some(""));
@@ -5674,7 +5763,7 @@ mod internal_tests {
     }
 
     /// Filter to only user-defined (non-core) skills for test assertions.
-    fn user_skills(skills: &[Skill]) -> Vec<&Skill> {
+    fn non_core_skills(skills: &[Skill]) -> Vec<&Skill> {
         skills.iter().filter(|s| !s.core).collect()
     }
 
@@ -5689,7 +5778,7 @@ mod internal_tests {
         let (skills, errors) = combine_skills(vec![Ok(global)], vec![Ok(project)].into_iter());
 
         assert!(errors.is_empty());
-        let user = user_skills(&skills);
+        let user = non_core_skills(&skills);
         assert_eq!(user.len(), 2);
         assert!(matches!(user[0].source, SkillSource::Global));
         assert!(matches!(user[1].source, SkillSource::ProjectLocal { .. }));
@@ -5908,12 +5997,14 @@ mod internal_tests {
         Entity<NativeAgent>,
         Entity<Project>,
         Entity<AcpThread>,
+        Arc<FakeFs>,
     ) {
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree("/", json!({ "a": {} })).await;
         let project = Project::test(fs.clone(), [Path::new("/a")], cx).await;
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
-        let agent = cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs, cx));
+        let agent =
+            cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs.clone(), cx));
         let connection = Rc::new(NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone()));
         let acp_thread = cx
             .update(|cx| {
@@ -5926,12 +6017,12 @@ mod internal_tests {
             .await
             .unwrap();
 
-        (connection, agent, project, acp_thread)
+        (connection, agent, project, acp_thread, fs)
     }
 
     fn native_thread_for_session(
         agent: &Entity<NativeAgent>,
-        session_id: &acp::SessionId,
+        session_id: &acp_v2::SessionId,
         cx: &App,
     ) -> Entity<Thread> {
         agent.read_with(cx, |agent, _cx| {
@@ -5955,12 +6046,12 @@ mod internal_tests {
     // post: no model request or MCP prompt dispatch occurs.
     #[gpui::test]
     async fn missing_scoped_skill_does_not_fall_through_to_other_prompts(cx: &mut TestAppContext) {
-        init_test(cx);
-        let (connection, agent, project, acp_thread) = setup_native_agent_session(cx).await;
+        let fake = init_test(cx);
+        let (connection, agent, project, acp_thread, _fs) = setup_native_agent_session(cx).await;
         cx.run_until_parked();
         let session_id = cx.update(|cx| acp_thread.read(cx).session_id().clone());
         let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
-        let model = Arc::new(FakeLanguageModel::default());
+        let model = fake.model("fake");
         cx.update(|cx| {
             thread.update(cx, |thread, cx| thread.set_model(model.clone(), cx));
             let registry = agent
@@ -5993,13 +6084,13 @@ mod internal_tests {
             acp_thread::AgentSessionClientUserMessageIds::prompt(
                 connection.as_ref(),
                 ClientUserMessageId::new(),
-                acp::PromptRequest::new(session_id, vec!["/:missing-skill".into()]),
+                acp_v2::PromptRequest::new(session_id, vec!["/:missing-skill".into()]),
                 cx,
             )
         });
         cx.run_until_parked();
         assert!(
-            model.pending_completions().is_empty(),
+            fake.pending_completions_for(&model).is_empty(),
             "scoped miss must not reach model"
         );
         let error = prompt_task
@@ -6015,7 +6106,7 @@ mod internal_tests {
     // post: the request contains only the core envelope and the user's text.
     #[gpui::test]
     async fn unqualified_core_slash_invokes_global_body(cx: &mut TestAppContext) {
-        init_test(cx);
+        let fake = init_test(cx);
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree("/", json!({ "a": {} })).await;
         let core_dir = global_skills_dir().join("metacognition");
@@ -6044,7 +6135,7 @@ mod internal_tests {
         cx.run_until_parked();
         let session_id = cx.update(|cx| acp_thread.read(cx).session_id().clone());
         let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
-        let model = Arc::new(FakeLanguageModel::default());
+        let model = fake.model("fake");
         cx.update(|cx| {
             thread.update(cx, |thread, cx| thread.set_model(model.clone(), cx));
             agent.update(cx, |agent, _cx| {
@@ -6063,12 +6154,18 @@ mod internal_tests {
             acp_thread::AgentSessionClientUserMessageIds::prompt(
                 connection.as_ref(),
                 ClientUserMessageId::new(),
-                acp::PromptRequest::new(session_id, vec!["/metacognition inline request".into()]),
+                acp_v2::PromptRequest::new(
+                    session_id,
+                    vec!["/metacognition inline request".into()],
+                ),
                 cx,
             )
         });
         cx.run_until_parked();
-        let request = model.pending_completions().pop().expect("model request");
+        let request = fake
+            .pending_completions_for(&model)
+            .pop()
+            .expect("model request");
         let text = request_texts_after_system(&request.messages).join("\n");
         assert!(
             text.contains("CANONICAL_CORE_BODY"),
@@ -6082,33 +6179,36 @@ mod internal_tests {
             !text.contains("Project override"),
             "project skill selected: {text}"
         );
-        model.send_completion_stream_text_chunk(&request, "ok");
-        model.end_completion_stream(&request);
+        fake.send_text(&model, &request, "ok");
+        fake.end_stream(&model, &request);
         cx.run_until_parked();
         prompt_task.await.expect("prompt completes");
     }
 
     #[gpui::test]
     async fn trace_prompt_starts_capture_and_sends_only_the_prompt(cx: &mut TestAppContext) {
-        init_test(cx);
-        let (connection, agent, _project, acp_thread) = setup_native_agent_session(cx).await;
+        let fake = init_test(cx);
+        let (connection, agent, _project, acp_thread, _fs) = setup_native_agent_session(cx).await;
         cx.run_until_parked();
         let session_id = cx.update(|cx| acp_thread.read(cx).session_id().clone());
         let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
-        let model = Arc::new(FakeLanguageModel::default());
+        let model = fake.model("fake");
         cx.update(|cx| thread.update(cx, |thread, cx| thread.set_model(model.clone(), cx)));
 
         let prompt_task = cx.update(|cx| {
             acp_thread::AgentSessionClientUserMessageIds::prompt(
                 connection.as_ref(),
                 ClientUserMessageId::new(),
-                acp::PromptRequest::new(session_id.clone(), vec!["/trace inspect this".into()]),
+                acp_v2::PromptRequest::new(session_id.clone(), vec!["/trace inspect this".into()]),
                 cx,
             )
         });
         cx.run_until_parked();
 
-        let request = model.pending_completions().pop().expect("model request");
+        let request = fake
+            .pending_completions_for(&model)
+            .pop()
+            .expect("model request");
         assert_eq!(
             request_texts_after_system(&request.messages),
             vec!["inspect this"]
@@ -6125,21 +6225,22 @@ mod internal_tests {
         cx: &mut TestAppContext,
     ) {
         let run = async {
-            init_test(cx);
+            let fake = init_test(cx);
             let temp = tempfile::tempdir()?;
             let directory = temp.path().join("agent-traces");
             let _override = crate::tool_trace::TestTraceDirectoryGuard::scoped(directory.clone());
-            let (connection, agent, _project, acp_thread) = setup_native_agent_session(cx).await;
+            let (connection, agent, _project, acp_thread, _fs) =
+                setup_native_agent_session(cx).await;
             cx.run_until_parked();
             let session_id = cx.update(|cx| acp_thread.read(cx).session_id().clone());
             let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
-            let model = Arc::new(FakeLanguageModel::default());
+            let model = fake.model("fake");
             cx.update(|cx| thread.update(cx, |thread, cx| thread.set_model(model.clone(), cx)));
             let prompt_task = cx.update(|cx| {
                 acp_thread::AgentSessionClientUserMessageIds::prompt(
                     connection.as_ref(),
                     ClientUserMessageId::new(),
-                    acp::PromptRequest::new(
+                    acp_v2::PromptRequest::new(
                         session_id.clone(),
                         vec!["/trace check sustainable growth rate to net margin".into()],
                     ),
@@ -6147,8 +6248,8 @@ mod internal_tests {
                 )
             });
             cx.run_until_parked();
-            let request = model
-                .pending_completions()
+            let request = fake
+                .pending_completions_for(&model)
                 .pop()
                 .expect("traced model request");
             let tool_use = language_model::LanguageModelToolUse {
@@ -6161,18 +6262,24 @@ mod internal_tests {
                 is_input_complete: true,
                 thought_signature: None,
             };
-            model.send_completion_stream_event(
+            fake.send_event(
+                &model,
                 &request,
                 LanguageModelCompletionEvent::ToolUse(tool_use),
             );
-            model.end_completion_stream(&request);
+            fake.end_stream(&model, &request);
             cx.run_until_parked();
-            let followup = model
-                .pending_completions()
-                .pop()
+            // The mid-turn title generation (thread.rs: the turn loop fires
+            // `generate_title` once `title.is_none()`) races this follow-up on
+            // the same registered fake — select by intent, not by list
+            // position, so the answer lands on the turn's request.
+            let followup = fake
+                .pending_completions_for(&model)
+                .into_iter()
+                .find(|request| request.intent == Some(CompletionIntent::ToolResults))
                 .expect("tool-result followup");
-            model.send_completion_stream_text_chunk(&followup, "traced answer");
-            model.end_completion_stream(&followup);
+            fake.send_text(&model, &followup, "traced answer");
+            fake.end_stream(&model, &followup);
             cx.run_until_parked();
             prompt_task.await?;
             let paths = std::fs::read_dir(&directory)?.collect::<std::io::Result<Vec<_>>>()?;
@@ -6201,17 +6308,17 @@ mod internal_tests {
                 acp_thread::AgentSessionClientUserMessageIds::prompt(
                     connection.as_ref(),
                     ClientUserMessageId::new(),
-                    acp::PromptRequest::new(session_id, vec!["ordinary response".into()]),
+                    acp_v2::PromptRequest::new(session_id, vec!["ordinary response".into()]),
                     cx,
                 )
             });
             cx.run_until_parked();
-            let request = model
-                .pending_completions()
+            let request = fake
+                .pending_completions_for(&model)
                 .pop()
                 .expect("ordinary model request");
-            model.send_completion_stream_text_chunk(&request, "normal answer");
-            model.end_completion_stream(&request);
+            fake.send_text(&model, &request, "normal answer");
+            fake.end_stream(&model, &request);
             cx.run_until_parked();
             normal_task.await?;
             assert_eq!(
@@ -6222,6 +6329,124 @@ mod internal_tests {
             Ok::<(), anyhow::Error>(())
         };
         run.await.expect("native trace export and opt-in boundary");
+    }
+
+    #[gpui::test]
+    async fn test_native_prompt_rejects_unknown_content_before_dispatch(cx: &mut TestAppContext) {
+        let fake = init_test(cx);
+        let (connection, agent, project, acp_thread, _fs) = setup_native_agent_session(cx).await;
+        let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+        let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
+        let unknown = acp_v2::ContentBlock::Other(acp_v2::OtherContentBlock::new(
+            "_future",
+            std::collections::BTreeMap::from([("payload".into(), json!("private-payload"))]),
+        ));
+
+        for text in ["ordinary prompt", "/compact"] {
+            let content = vec![text.into(), unknown.clone()];
+            assert!(connection.validate_prompt_content(&content).is_err());
+            let error = cx
+                .update(|cx| {
+                    acp_thread::AgentSessionClientUserMessageIds::prompt(
+                        connection.as_ref(),
+                        ClientUserMessageId::new(),
+                        acp_v2::PromptRequest::new(session_id.clone(), content),
+                        cx,
+                    )
+                })
+                .await
+                .expect_err("unsupported content must not reach command dispatch or the model");
+            assert!(error.to_string().contains("Native agent does not support"));
+            assert!(!error.to_string().contains("private-payload"));
+        }
+        thread.update(cx, |thread, cx| {
+            let path_style = project.read(cx).path_style(cx);
+            assert!(
+                thread
+                    .push_acp_user_block(
+                        ClientUserMessageId::new(),
+                        ["valid prefix".into(), unknown.clone()],
+                        path_style,
+                        cx,
+                    )
+                    .is_err()
+            );
+            assert!(thread.push_acp_agent_block(unknown, cx).is_err());
+            assert!(thread.is_empty());
+        });
+        assert!(acp_thread.read_with(cx, |thread, _| thread.entries().is_empty()));
+        assert!(fake.pending_completions().is_empty());
+    }
+
+    #[gpui::test]
+    async fn test_native_skill_prompt_preserves_v2_attachment_source(cx: &mut TestAppContext) {
+        let fake = init_test(cx);
+        let (_connection, agent, project, acp_thread, fs) = setup_native_agent_session(cx).await;
+        cx.run_until_parked();
+        let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+        let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
+        let model = fake.model("fake");
+        thread.update(cx, |thread, cx| thread.set_model(model.clone(), cx));
+        let skill = make_global_skill("test-skill", "Test skill");
+        // zed-kask: the fork's `Skill` has no `embedded_body` (upstream's
+        // compile-time-embedded built-in bodies); global-skill bodies are read
+        // from disk through the agent's fs, so write the body there.
+        fs.create_dir(&skill.directory_path).await.unwrap();
+        fs.insert_file(
+            skill.skill_file_path.clone(),
+            b"---\nname: test-skill\ndescription: Test skill\n---\n\nskill instructions".to_vec(),
+        )
+        .await;
+        agent.update(cx, |agent, _| {
+            agent
+                .projects
+                .get_mut(&project.entity_id())
+                .expect("project state")
+                .skills = Arc::new(vec![skill]);
+        });
+        let prompt = vec![
+            acp_v2::ContentBlock::Text(
+                acp_v2::TextContent::new("/:test-skill  keep\nformatting").meta(
+                    acp_v2::Meta::from_iter([("source".into(), json!({"raw": true}))]),
+                ),
+            ),
+            acp_v2::ContentBlock::ResourceLink(
+                acp_v2::ResourceLink::new("attachment", "https://example.com/raw%20path")
+                    .icons(vec![acp_v2::Icon::new("https://example.com/icon.svg")]),
+            ),
+            acp_v2::ContentBlock::Resource(acp_v2::EmbeddedResource::new(
+                acp_v2::EmbeddedResourceResource::TextResourceContents(
+                    acp_v2::TextResourceContents::new("attached text", "custom://raw/source").meta(
+                        acp_v2::Meta::from_iter([("nested".into(), json!([null, true]))]),
+                    ),
+                ),
+            )),
+        ];
+        let send = acp_thread.update(cx, |thread, cx| thread.send(prompt.clone(), cx));
+        let send = cx.foreground_executor().spawn(send);
+        cx.run_until_parked();
+        let request = fake
+            .pending_completions_for(&model)
+            .pop()
+            .expect("skill reaches model");
+        thread.read_with(cx, |thread, _| {
+            let Some(Message::User(message)) = thread.last_message() else {
+                panic!("skill should inject one model-context user message");
+            };
+            assert!(matches!(message.content.first(), Some(UserMessageContent::Text(text)) if text.contains("skill instructions")));
+            assert_eq!(message.content.get(1), Some(&UserMessageContent::Text(" keep\nformatting".into())));
+            assert!(matches!(message.content.get(3), Some(UserMessageContent::Text(text)) if text.contains("attached text")));
+        });
+        acp_thread.read_with(cx, |thread, _| {
+            let Some(acp_thread::AgentThreadEntry::UserMessage(message)) = thread.entries().first()
+            else {
+                panic!("skill prompt should retain its source");
+            };
+            assert_eq!(message.content.source_blocks(), prompt.as_slice());
+        });
+        fake.send_text(&model, &request, "done");
+        fake.end_stream(&model, &request);
+        send.await.expect("skill prompt should complete");
     }
 
     #[gpui::test]
@@ -6249,6 +6474,9 @@ mod internal_tests {
         cx.update(|cx| {
             let commands = acp_thread.read(cx).available_commands();
 
+            // zed-kask: find, not full-list equality — the fork also registers
+            // the native `/trace` command (D6), so the command list is a superset
+            // of upstream's.
             let compact = commands.iter().find(|command| command.name == "compact");
             let compact = compact.expect("compact command should be available");
             assert_eq!(
@@ -6260,54 +6488,43 @@ mod internal_tests {
 
     #[gpui::test]
     async fn test_compact_prompt_routes_to_manual_compaction(cx: &mut TestAppContext) {
-        use feature_flags::{
-            AcpBetaFeatureFlag, FeatureFlag as _, FeatureFlagAppExt as _, FeatureFlagsSettings,
-        };
-
-        init_test(cx);
-        let (connection, agent, project, acp_thread) = setup_native_agent_session(cx).await;
+        let fake = init_test(cx);
+        let (connection, agent, project, acp_thread, _fs) = setup_native_agent_session(cx).await;
         let session_id = cx.update(|cx| acp_thread.read(cx).session_id().clone());
         let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
-        let model = Arc::new(FakeLanguageModel::default());
+        let model = fake.model("fake");
         let old_message_id = ClientUserMessageId::new();
 
         cx.update(|cx| {
-            cx.update_flags(true, Vec::new());
-            FeatureFlagsSettings::override_global(
-                FeatureFlagsSettings {
-                    overrides: HashMap::from_iter([(
-                        AcpBetaFeatureFlag::NAME.into(),
-                        "off".into(),
-                    )]),
-                },
-                cx,
-            );
             let path_style = project.read(cx).path_style(cx);
             thread.update(cx, |thread, cx| {
                 thread.set_model(model.clone(), cx);
-                thread.push_acp_user_block(
-                    old_message_id,
-                    [acp::ContentBlock::from("old user")],
-                    path_style,
-                    cx,
-                );
-                thread.push_acp_agent_block("old assistant".into(), cx);
+                thread
+                    .push_acp_user_block(
+                        old_message_id,
+                        [acp_v2::ContentBlock::from("old user")],
+                        path_style,
+                        cx,
+                    )
+                    .expect("user content should be supported");
+                thread
+                    .push_acp_agent_block("old assistant".into(), cx)
+                    .expect("agent content should be supported");
             });
         });
 
         let compact_message_id = ClientUserMessageId::new();
         let prompt_task = cx.update(|cx| {
-            assert!(!cx.has_flag::<AcpBetaFeatureFlag>());
             acp_thread::AgentSessionClientUserMessageIds::prompt(
                 connection.as_ref(),
                 compact_message_id,
-                acp::PromptRequest::new(session_id.clone(), vec!["/compact".into()]),
+                acp_v2::PromptRequest::new(session_id.0.clone(), vec!["/compact".into()]),
                 cx,
             )
         });
         cx.run_until_parked();
 
-        let request = model.pending_completions().pop().unwrap();
+        let request = fake.pending_completions().pop().unwrap();
         assert_eq!(
             request.intent,
             Some(CompletionIntent::ThreadContextSummarization)
@@ -6329,11 +6546,13 @@ mod internal_tests {
             };
             assert!(thread.is_compacting());
             assert!(compaction.is_in_progress());
-            assert!(compaction.summary.is_empty());
+            assert_eq!(compaction.summary.blocks().len(), 0);
+            assert!(compaction.summary.source_blocks().is_empty());
+            assert!(compaction.meta.is_none());
             compaction.id.clone()
         });
 
-        model.send_completion_stream_text_chunk(&request, "retained ");
+        fake.send_text(&model, &request, "retained ");
         cx.run_until_parked();
         let summary = acp_thread.read_with(cx, |thread, cx| {
             let Some(acp_thread::AgentThreadEntry::ContextCompaction(compaction)) =
@@ -6343,7 +6562,14 @@ mod internal_tests {
             };
             assert_eq!(compaction.id, compaction_id);
             assert!(compaction.is_in_progress());
-            let [summary] = compaction.summary.as_slice() else {
+            assert_eq!(
+                compaction.summary.source_blocks(),
+                &[acp_v2::ContentBlock::Text(acp_v2::TextContent::new(
+                    "retained "
+                ))]
+            );
+            let blocks = compaction.summary.blocks().collect::<Vec<_>>();
+            let [summary] = blocks.as_slice() else {
                 panic!("native text chunks should create one retained Markdown block");
             };
             let markdown = summary
@@ -6352,8 +6578,8 @@ mod internal_tests {
             assert_eq!(markdown.read(cx).source().as_ref(), "retained ");
             markdown.clone()
         });
-        model.send_completion_stream_text_chunk(&request, "context");
-        model.end_completion_stream(&request);
+        fake.send_text(&model, &request, "context");
+        fake.end_stream(&model, &request);
         cx.run_until_parked();
         prompt_task
             .await
@@ -6371,13 +6597,14 @@ mod internal_tests {
                 acp_thread::ContextCompactionStatus::Completed
             );
             assert!(compaction.error.is_none());
-            assert_eq!(compaction.summary.len(), 1);
+            assert_eq!(compaction.summary.blocks().len(), 1);
+            assert_eq!(compaction.summary.markdowns().next(), Some(&summary));
             assert_eq!(
-                compaction
-                    .summary
-                    .first()
-                    .and_then(|block| block.markdown()),
-                Some(&summary)
+                compaction.summary.source_blocks(),
+                &[
+                    acp_v2::ContentBlock::Text(acp_v2::TextContent::new("retained ")),
+                    acp_v2::ContentBlock::Text(acp_v2::TextContent::new("context")),
+                ]
             );
             assert_eq!(summary.read(cx).source().as_ref(), "retained context");
         });
@@ -6423,9 +6650,16 @@ mod internal_tests {
             assert_eq!(
                 compaction
                     .summary
-                    .first()
+                    .blocks()
+                    .next()
                     .map(|block| block.to_markdown(cx)),
                 Some("retained context")
+            );
+            assert_eq!(
+                compaction.summary.source_blocks(),
+                &[acp_v2::ContentBlock::Text(acp_v2::TextContent::new(
+                    "retained context"
+                ))]
             );
         });
     }
@@ -6433,7 +6667,7 @@ mod internal_tests {
     #[gpui::test]
     async fn test_load_session_replays_provider_native_compaction(cx: &mut TestAppContext) {
         init_test(cx);
-        let (connection, agent, project, acp_thread) = setup_native_agent_session(cx).await;
+        let (connection, agent, project, acp_thread, _fs) = setup_native_agent_session(cx).await;
         let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
         let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
         let mut saved_thread = thread.read_with(cx, |thread, cx| thread.to_db(cx)).await;
@@ -6443,7 +6677,7 @@ mod internal_tests {
                 items: vec![json!({"type": "compaction", "encrypted_content": "opaque state"})],
             },
         )));
-        let restored_session_id = acp::SessionId::new("provider-native-compaction");
+        let restored_session_id = acp_v2::SessionId::new("provider-native-compaction");
         let database = cx
             .update(|cx| ThreadsDatabase::connect(cx))
             .await
@@ -6480,7 +6714,9 @@ mod internal_tests {
                 compaction.status,
                 acp_thread::ContextCompactionStatus::Completed
             );
-            assert!(compaction.summary.is_empty());
+            assert_eq!(compaction.summary.blocks().len(), 0);
+            assert!(compaction.summary.source_blocks().is_empty());
+            assert!(compaction.meta.is_none());
             assert!(compaction.error.is_none());
             assert!(!thread.is_compacting());
         });
@@ -6488,12 +6724,11 @@ mod internal_tests {
 
     #[gpui::test]
     async fn test_retried_auto_compaction_terminalizes_each_attempt(cx: &mut TestAppContext) {
-        init_test(cx);
-        let (connection, agent, _project, acp_thread) = setup_native_agent_session(cx).await;
+        let fake = init_test(cx);
+        let (connection, agent, _project, acp_thread, _fs) = setup_native_agent_session(cx).await;
         let session_id = cx.update(|cx| acp_thread.read(cx).session_id().clone());
         let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
-        let model = Arc::new(FakeLanguageModel::default());
-        model.set_max_token_count(1_000_000);
+        let model = fake.model("fake");
 
         cx.update(|cx| {
             let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
@@ -6509,25 +6744,26 @@ mod internal_tests {
             acp_thread::AgentSessionClientUserMessageIds::prompt(
                 connection.as_ref(),
                 ClientUserMessageId::new(),
-                acp::PromptRequest::new(session_id.clone(), vec!["old user".into()]),
+                acp_v2::PromptRequest::new(session_id.0.clone(), vec!["old user".into()]),
                 cx,
             )
         });
         cx.run_until_parked();
 
-        let first_request = model
+        let first_request = fake
             .pending_completions()
             .pop()
             .expect("first user prompt should start a model request");
-        model.send_completion_stream_event(
+        fake.send_event(
+            &model,
             &first_request,
             LanguageModelCompletionEvent::UsageUpdate(language_model::TokenUsage {
                 input_tokens: 750_000,
                 ..Default::default()
             }),
         );
-        model.send_completion_stream_text_chunk(&first_request, "old assistant");
-        model.end_completion_stream(&first_request);
+        fake.send_text(&model, &first_request, "old assistant");
+        fake.end_stream(&model, &first_request);
         cx.run_until_parked();
         first_prompt
             .await
@@ -6537,13 +6773,13 @@ mod internal_tests {
             acp_thread::AgentSessionClientUserMessageIds::prompt(
                 connection.as_ref(),
                 ClientUserMessageId::new(),
-                acp::PromptRequest::new(session_id, vec!["new user".into()]),
+                acp_v2::PromptRequest::new(session_id.0, vec!["new user".into()]),
                 cx,
             )
         });
         cx.run_until_parked();
 
-        let first_compaction_request = model
+        let first_compaction_request = fake
             .pending_completions()
             .pop()
             .expect("token threshold should start automatic compaction");
@@ -6551,7 +6787,8 @@ mod internal_tests {
             first_compaction_request.intent,
             Some(CompletionIntent::ThreadContextSummarization)
         );
-        model.send_completion_stream_error(
+        fake.send_error(
+            &model,
             &first_compaction_request,
             LanguageModelCompletionError::from_provider_response(
                 language_model::ANTHROPIC_PROVIDER_NAME,
@@ -6562,10 +6799,10 @@ mod internal_tests {
                 language_model::ProviderErrorCategory::RateLimit,
             ),
         );
-        model.end_completion_stream(&first_compaction_request);
+        fake.end_stream(&model, &first_compaction_request);
         cx.run_until_parked();
 
-        let second_compaction_request = model
+        let second_compaction_request = fake
             .pending_completions()
             .pop()
             .expect("retryable error should start another compaction attempt");
@@ -6594,8 +6831,8 @@ mod internal_tests {
             assert!(thread.is_compacting());
         });
 
-        model.send_completion_stream_text_chunk(&second_compaction_request, "summary");
-        model.end_completion_stream(&second_compaction_request);
+        fake.send_text(&model, &second_compaction_request, "summary");
+        fake.end_stream(&model, &second_compaction_request);
         cx.run_until_parked();
 
         acp_thread.read_with(cx, |thread, _cx| {
@@ -6622,13 +6859,13 @@ mod internal_tests {
             );
         });
 
-        let final_request = model
+        let final_request = fake
             .pending_completions()
             .pop()
             .expect("successful compaction should continue the user turn");
         assert_eq!(final_request.intent, Some(CompletionIntent::UserPrompt));
-        model.send_completion_stream_text_chunk(&final_request, "new assistant");
-        model.end_completion_stream(&final_request);
+        fake.send_text(&model, &final_request, "new assistant");
+        fake.end_stream(&model, &final_request);
         cx.run_until_parked();
         second_prompt
             .await
@@ -6637,7 +6874,7 @@ mod internal_tests {
 
     #[gpui::test]
     async fn test_native_compaction_cancellation_is_bridged_before_stop(cx: &mut TestAppContext) {
-        init_test(cx);
+        let fake = init_test(cx);
 
         for (scenario, cancel_before_first_poll, partial_summary) in [
             ("before first poll", true, None),
@@ -6648,22 +6885,27 @@ mod internal_tests {
                 Some("retained partial summary"),
             ),
         ] {
-            let (connection, agent, project, acp_thread) = setup_native_agent_session(cx).await;
+            let (connection, agent, project, acp_thread, _fs) =
+                setup_native_agent_session(cx).await;
             let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
             let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
-            let model = Arc::new(FakeLanguageModel::default());
+            let model = fake.model("fake");
 
             cx.update(|cx| {
                 let path_style = project.read(cx).path_style(cx);
                 thread.update(cx, |thread, cx| {
                     thread.set_model(model.clone(), cx);
-                    thread.push_acp_user_block(
-                        ClientUserMessageId::new(),
-                        [acp::ContentBlock::from("old user")],
-                        path_style,
-                        cx,
-                    );
-                    thread.push_acp_agent_block("old assistant".into(), cx);
+                    thread
+                        .push_acp_user_block(
+                            ClientUserMessageId::new(),
+                            [acp_v2::ContentBlock::from("old user")],
+                            path_style,
+                            cx,
+                        )
+                        .expect("user content should be supported");
+                    thread
+                        .push_acp_agent_block("old assistant".into(), cx)
+                        .expect("agent content should be supported");
                 });
             });
 
@@ -6683,12 +6925,12 @@ mod internal_tests {
                     .expect("manual compaction should start");
                 cx.run_until_parked();
 
-                let request = model
+                let request = fake
                     .pending_completions()
                     .pop()
                     .expect("manual compaction should reach the model");
                 if let Some(partial_summary) = partial_summary {
-                    model.send_completion_stream_text_chunk(&request, partial_summary);
+                    fake.send_text(&model, &request, partial_summary);
                     cx.run_until_parked();
                 }
 
@@ -6710,7 +6952,7 @@ mod internal_tests {
                 .expect("canceled compaction events should be bridged");
             assert_eq!(
                 response.stop_reason,
-                acp::StopReason::Cancelled,
+                acp_v1::StopReason::Cancelled,
                 "{scenario}"
             );
 
@@ -6745,7 +6987,11 @@ mod internal_tests {
                 );
                 assert!(!thread.is_compacting(), "{scenario}");
                 assert_eq!(
-                    compaction.summary.first().map(|block| block.to_markdown(cx)),
+                    compaction
+                        .summary
+                        .blocks()
+                        .next()
+                        .map(|block| block.to_markdown(cx)),
                     partial_summary,
                     "{scenario}"
                 );
@@ -6757,11 +7003,11 @@ mod internal_tests {
     async fn test_native_tool_names_survive_reused_ids_and_reload(cx: &mut TestAppContext) {
         use language_model::{LanguageModelToolUse, LanguageModelToolUseInput};
 
-        init_test(cx);
-        let (connection, agent, project, acp_thread) = setup_native_agent_session(cx).await;
+        let fake = init_test(cx);
+        let (connection, agent, project, acp_thread, _fs) = setup_native_agent_session(cx).await;
         let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
         let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
-        let model = Arc::new(FakeLanguageModel::default());
+        let model = fake.model("thread");
         let fs = project.read_with(cx, |project, _| project.fs().clone());
         fs.write(Path::new("/a/file.txt"), b"retained file contents")
             .await
@@ -6779,17 +7025,18 @@ mod internal_tests {
                 acp_thread::AgentSessionClientUserMessageIds::prompt(
                     connection.as_ref(),
                     ClientUserMessageId::new(),
-                    acp::PromptRequest::new(session_id.clone(), vec!["use a tool".into()]),
+                    acp_v2::PromptRequest::new(session_id.0.clone(), vec!["use a tool".into()]),
                     cx,
                 )
             });
             cx.run_until_parked();
-            let request = model
-                .pending_completions()
+            let request = fake
+                .pending_completions_for(&model)
                 .pop()
                 .expect("user prompt should reach the model");
             let input = json!({"path": "a/file.txt"});
-            model.send_completion_stream_event(
+            fake.send_event(
+                &model,
                 &request,
                 LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
                     id: "reused_id".into(),
@@ -6800,15 +7047,15 @@ mod internal_tests {
                     thought_signature: None,
                 }),
             );
-            model.end_completion_stream(&request);
+            fake.end_stream(&model, &request);
             cx.run_until_parked();
-            let request = model
-                .pending_completions()
+            let request = fake
+                .pending_completions_for(&model)
                 .pop()
                 .expect("tool result should reach the model");
             assert_eq!(request.intent, Some(CompletionIntent::ToolResults));
-            model.send_completion_stream_text_chunk(&request, "done");
-            model.end_completion_stream(&request);
+            fake.send_text(&model, &request, "done");
+            fake.end_stream(&model, &request);
             cx.run_until_parked();
             prompt_task.await.expect("native tool turn should complete");
         }
@@ -6821,7 +7068,7 @@ mod internal_tests {
                     acp_thread::AgentThreadEntry::ToolCall(tool_call) => Some((
                         tool_call.id.clone(),
                         tool_call.tool_name.clone(),
-                        std::mem::discriminant(&tool_call.status),
+                        std::mem::discriminant(&tool_call.status()),
                     )),
                     _ => None,
                 })
@@ -6877,7 +7124,7 @@ mod internal_tests {
     async fn test_threads_flushed_to_database_on_app_quit(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let (connection, agent, project, acp_thread) = setup_native_agent_session(cx).await;
+        let (connection, agent, project, acp_thread, _fs) = setup_native_agent_session(cx).await;
         let session_id = cx.update(|cx| acp_thread.read(cx).session_id().clone());
         let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
 
@@ -6900,16 +7147,20 @@ mod internal_tests {
         cx.update(|cx| {
             let path_style = project.read(cx).path_style(cx);
             thread.update(cx, |thread, cx| {
-                thread.push_acp_user_block(
-                    ClientUserMessageId::new(),
-                    [acp::ContentBlock::from("hello from the user")],
-                    path_style,
-                    cx,
-                );
+                thread
+                    .push_acp_user_block(
+                        ClientUserMessageId::new(),
+                        [acp_v2::ContentBlock::from("hello from the user")],
+                        path_style,
+                        cx,
+                    )
+                    .expect("user content should be supported");
             });
             acp_thread.update(cx, |acp_thread, cx| {
-                acp_thread
-                    .set_draft_prompt(Some(vec![acp::ContentBlock::from("draft in progress")]), cx);
+                acp_thread.set_draft_prompt(
+                    Some(vec![acp_v2::ContentBlock::from("draft in progress")]),
+                    cx,
+                );
             });
         });
         cx.run_until_parked();
@@ -6944,7 +7195,7 @@ mod internal_tests {
         );
         assert_eq!(
             restored.draft_prompt,
-            Some(vec![acp::ContentBlock::from("draft in progress")]),
+            Some(vec![acp_v2::ContentBlock::from("draft in progress")]),
             "the current draft prompt should be captured by the quit flush"
         );
         assert!(
@@ -6966,6 +7217,28 @@ mod internal_tests {
             .iter()
             .filter(|s| matches!(s.source, SkillSource::Global))
             .collect()
+    }
+
+    #[test]
+    fn test_mcp_prompt_content_preserves_annotations() {
+        let content = json!({
+            "type": "resource",
+            "resource": {"uri": "file:///raw%20path.md", "mimeType": "text/markdown"},
+            "annotations": {"audience": ["user", "assistant"], "priority": 0.75}
+        });
+        let block = mcp_message_content_to_acp_content_block(
+            serde_json::from_value(content).expect("MCP resource should deserialize"),
+        );
+        assert_eq!(
+            serde_json::to_value(block).expect("v2 resource link should serialize"),
+            json!({
+                "type": "resource_link",
+                "name": "file:///raw%20path.md",
+                "uri": "file:///raw%20path.md",
+                "mimeType": "text/markdown",
+                "annotations": {"audience": ["user", "assistant"], "priority": 0.75}
+            }),
+        );
     }
 
     #[test]
@@ -8369,11 +8642,8 @@ mod internal_tests {
         let project_id = project.entity_id();
         let session_id = acp_thread.read_with(cx, |thread, _cx| thread.session_id().clone());
 
-        agent.read_with(cx, |agent, cx| {
-            let commands = NativeAgent::build_available_commands_for_project(
-                agent.projects.get(&project_id),
-                cx,
-            );
+        acp_thread.read_with(cx, |thread, _cx| {
+            let commands = thread.available_commands();
             let names: Vec<&str> = commands.iter().map(|c| c.name.as_str()).collect();
             assert!(
                 !names.contains(&"visible-skill"),
@@ -8508,7 +8778,7 @@ mod internal_tests {
 
         let skill = agent.read_with(cx, |agent, _cx| {
             let state = agent.projects.get(&project_id).unwrap();
-            user_skills(&state.skills)
+            non_core_skills(&state.skills)
                 .into_iter()
                 .find(|s| s.name == "my-skill")
                 .cloned()
@@ -8581,7 +8851,7 @@ mod internal_tests {
 
         agent.read_with(cx, |agent, _cx| {
             let state = agent.projects.get(&project_id).unwrap();
-            let skill = user_skills(&state.skills)
+            let skill = non_core_skills(&state.skills)
                 .into_iter()
                 .find(|s| s.name == "my-skill")
                 .expect("skill should be loaded");
@@ -8610,7 +8880,7 @@ mod internal_tests {
 
         agent.read_with(cx, |agent, _cx| {
             let state = agent.projects.get(&project_id).unwrap();
-            let skill = user_skills(&state.skills)
+            let skill = non_core_skills(&state.skills)
                 .into_iter()
                 .find(|s| s.name == "my-skill")
                 .expect("skill should still be loaded");
@@ -8756,19 +9026,14 @@ mod internal_tests {
 
         // Register a thinking model and select it.
         cx.update(|cx| {
-            let thinking_model = Arc::new(FakeLanguageModel::with_id_and_thinking(
-                "fake-corp",
-                "fake-thinking",
-                "Fake Thinking",
-                true,
+            let thinking_provider = Arc::new(FakeLanguageModelProvider::new(
+                LanguageModelProviderId::from("fake-corp".to_string()),
+                LanguageModelProviderName::from("Fake Corp".to_string()),
             ));
-            let thinking_provider = Arc::new(
-                FakeLanguageModelProvider::new(
-                    LanguageModelProviderId::from("fake-corp".to_string()),
-                    LanguageModelProviderName::from("Fake Corp".to_string()),
-                )
-                .with_models(vec![thinking_model]),
-            );
+            thinking_provider.update_model("fake-thinking", |model| {
+                model.name = LanguageModelName::from("Fake Thinking".to_string());
+                model.supports_thinking = true;
+            });
             LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
                 registry.register_provider(thinking_provider, cx);
             });
@@ -8820,19 +9085,14 @@ mod internal_tests {
 
         // Register a second provider with a thinking model.
         cx.update(|cx| {
-            let thinking_model = Arc::new(FakeLanguageModel::with_id_and_thinking(
-                "fake-corp",
-                "fake-thinking",
-                "Fake Thinking",
-                true,
+            let thinking_provider = Arc::new(FakeLanguageModelProvider::new(
+                LanguageModelProviderId::from("fake-corp".to_string()),
+                LanguageModelProviderName::from("Fake Corp".to_string()),
             ));
-            let thinking_provider = Arc::new(
-                FakeLanguageModelProvider::new(
-                    LanguageModelProviderId::from("fake-corp".to_string()),
-                    LanguageModelProviderName::from("Fake Corp".to_string()),
-                )
-                .with_models(vec![thinking_model]),
-            );
+            thinking_provider.update_model("fake-thinking", |model| {
+                model.name = LanguageModelName::from("Fake Thinking".to_string());
+                model.supports_thinking = true;
+            });
             LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
                 registry.register_provider(thinking_provider, cx);
             });
@@ -8953,22 +9213,17 @@ mod internal_tests {
         let connection = Rc::new(NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone()));
 
         // Register a thinking model.
-        let thinking_model = Arc::new(FakeLanguageModel::with_id_and_thinking(
-            "fake-corp",
-            "fake-thinking",
-            "Fake Thinking",
-            true,
+        let thinking_provider = Arc::new(FakeLanguageModelProvider::new(
+            LanguageModelProviderId::from("fake-corp".to_string()),
+            LanguageModelProviderName::from("Fake Corp".to_string()),
         ));
-        let thinking_provider = Arc::new(
-            FakeLanguageModelProvider::new(
-                LanguageModelProviderId::from("fake-corp".to_string()),
-                LanguageModelProviderName::from("Fake Corp".to_string()),
-            )
-            .with_models(vec![thinking_model.clone()]),
-        );
+        let thinking_model = thinking_provider.update_model("fake-thinking", |model| {
+            model.name = LanguageModelName::from("Fake Thinking".to_string());
+            model.supports_thinking = true;
+        });
         cx.update(|cx| {
             LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
-                registry.register_provider(thinking_provider, cx);
+                registry.register_provider(thinking_provider.clone(), cx);
             });
         });
         agent.update(cx, |agent, cx| agent.models.refresh_list(cx));
@@ -9007,8 +9262,8 @@ mod internal_tests {
         let send = cx.foreground_executor().spawn(send);
         cx.run_until_parked();
 
-        thinking_model.send_last_completion_stream_text_chunk("Response.");
-        thinking_model.end_last_completion_stream();
+        thinking_provider.send_last_text(&thinking_model, "Response.");
+        thinking_provider.end_last(&thinking_model);
 
         send.await.unwrap();
         cx.run_until_parked();
@@ -9054,22 +9309,16 @@ mod internal_tests {
 
         // Register a model where id() != name(), like real Anthropic models
         // (e.g. id="claude-sonnet-4-5-thinking-latest", name="Claude Sonnet 4.5 Thinking").
-        let model = Arc::new(FakeLanguageModel::with_id_and_thinking(
-            "fake-corp",
-            "custom-model-id",
-            "Custom Model Display Name",
-            false,
+        let provider = Arc::new(FakeLanguageModelProvider::new(
+            LanguageModelProviderId::from("fake-corp".to_string()),
+            LanguageModelProviderName::from("Fake Corp".to_string()),
         ));
-        let provider = Arc::new(
-            FakeLanguageModelProvider::new(
-                LanguageModelProviderId::from("fake-corp".to_string()),
-                LanguageModelProviderName::from("Fake Corp".to_string()),
-            )
-            .with_models(vec![model.clone()]),
-        );
+        let model = provider.update_model("custom-model-id", |model| {
+            model.name = LanguageModelName::from("Custom Model Display Name".to_string());
+        });
         cx.update(|cx| {
             LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
-                registry.register_provider(provider, cx);
+                registry.register_provider(provider.clone(), cx);
             });
         });
         agent.update(cx, |agent, cx| agent.models.refresh_list(cx));
@@ -9108,8 +9357,8 @@ mod internal_tests {
         let send = cx.foreground_executor().spawn(send);
         cx.run_until_parked();
 
-        model.send_last_completion_stream_text_chunk("Response.");
-        model.end_last_completion_stream();
+        provider.send_last_text(&model, "Response.");
+        provider.end_last(&model);
 
         send.await.unwrap();
         cx.run_until_parked();
@@ -9152,7 +9401,7 @@ mod internal_tests {
         Entity<NativeAgent>,
         Rc<NativeAgentConnection>,
         Entity<Project>,
-        acp::SessionId,
+        acp_v2::SessionId,
         Arc<FakeLanguageModelProvider>,
     ) {
         let fs = FakeFs::new(cx.executor());
@@ -9163,19 +9412,13 @@ mod internal_tests {
             .update(|cx| NativeAgent::new(thread_store.clone(), Templates::new(), fs.clone(), cx));
         let connection = Rc::new(NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone()));
 
-        let model = Arc::new(FakeLanguageModel::with_id_and_thinking(
-            "fake-corp",
-            "custom-model-id",
-            "Custom Model Display Name",
-            false,
+        let provider = Arc::new(FakeLanguageModelProvider::new(
+            LanguageModelProviderId::from("fake-corp".to_string()),
+            LanguageModelProviderName::from("Fake Corp".to_string()),
         ));
-        let provider = Arc::new(
-            FakeLanguageModelProvider::new(
-                LanguageModelProviderId::from("fake-corp".to_string()),
-                LanguageModelProviderName::from("Fake Corp".to_string()),
-            )
-            .with_models(vec![model.clone()]),
-        );
+        let model = provider.update_model("custom-model-id", |model| {
+            model.name = LanguageModelName::from("Custom Model Display Name".to_string());
+        });
         cx.update(|cx| {
             LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
                 registry.register_provider(provider.clone(), cx);
@@ -9203,8 +9446,8 @@ mod internal_tests {
         let send = acp_thread.update(cx, |thread, cx| thread.send(vec!["Hello".into()], cx));
         let send = cx.foreground_executor().spawn(send);
         cx.run_until_parked();
-        model.send_last_completion_stream_text_chunk("Response.");
-        model.end_last_completion_stream();
+        provider.send_last_text(&model, "Response.");
+        provider.end_last(&model);
         send.await.unwrap();
         cx.run_until_parked();
 
@@ -9302,19 +9545,13 @@ mod internal_tests {
         });
 
         // The user explicitly picks a different, available model.
-        let other_model = Arc::new(FakeLanguageModel::with_id_and_thinking(
-            "other-corp",
-            "other-model-id",
-            "Other Model",
-            false,
+        let other_provider = Arc::new(FakeLanguageModelProvider::new(
+            LanguageModelProviderId::from("other-corp".to_string()),
+            LanguageModelProviderName::from("Other Corp".to_string()),
         ));
-        let other_provider = Arc::new(
-            FakeLanguageModelProvider::new(
-                LanguageModelProviderId::from("other-corp".to_string()),
-                LanguageModelProviderName::from("Other Corp".to_string()),
-            )
-            .with_models(vec![other_model.clone()]),
-        );
+        other_provider.update_model("other-model-id", |model| {
+            model.name = LanguageModelName::from("Other Model".to_string());
+        });
         cx.update(|cx| {
             LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
                 registry.register_provider(other_provider, cx);
@@ -9352,7 +9589,7 @@ mod internal_tests {
 
     #[gpui::test]
     async fn test_save_load_thread(cx: &mut TestAppContext) {
-        init_test(cx);
+        let fake = init_test(cx);
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
             "/",
@@ -9383,8 +9620,8 @@ mod internal_tests {
         });
 
         // Ensure empty threads are not saved, even if they get mutated.
-        let model = Arc::new(FakeLanguageModel::default());
-        let summary_model = Arc::new(FakeLanguageModel::default());
+        let model = fake.model("fake");
+        let summary_model = fake.model("summary");
         thread.update(cx, |thread, cx| {
             thread.set_model(model.clone(), cx);
             thread.set_summarization_model(Some(summary_model.clone()), cx);
@@ -9392,41 +9629,64 @@ mod internal_tests {
         cx.run_until_parked();
         assert_eq!(thread_entries(&thread_store, cx), vec![]);
 
-        let send = acp_thread.update(cx, |thread, cx| {
-            thread.send(
-                vec![
-                    "What does ".into(),
-                    acp::ContentBlock::ResourceLink(acp::ResourceLink::new(
-                        "b.md",
-                        MentionUri::File {
-                            abs_path: path!("/a/b.md").into(),
-                        }
-                        .to_uri()
-                        .to_string(),
-                    )),
-                    " mean?".into(),
-                ],
-                cx,
-            )
-        });
+        let prompt = vec![
+            acp_v2::ContentBlock::Text(acp_v2::TextContent::new("What does ").meta(
+                acp_v2::Meta::from_iter([("source".into(), json!({"nested": [null, "retained"]}))]),
+            )),
+            acp_v2::ContentBlock::ResourceLink(
+                acp_v2::ResourceLink::new(
+                    "b.md",
+                    MentionUri::File {
+                        abs_path: path!("/a/b.md").into(),
+                    }
+                    .to_uri()
+                    .to_string(),
+                )
+                .icons(vec![acp_v2::Icon::new("https://example.com/file.svg")])
+                .annotations(
+                    acp_v2::Annotations::new()
+                        .audience(vec![acp_v2::Role::Other("_future-audience".into())]),
+                ),
+            ),
+            " mean?".into(),
+        ];
+        let send = acp_thread.update(cx, |thread, cx| thread.send(prompt.clone(), cx));
         let send = cx.foreground_executor().spawn(send);
         cx.run_until_parked();
 
-        model.send_last_completion_stream_text_chunk("Lorem.");
-        model.send_last_completion_stream_event(LanguageModelCompletionEvent::UsageUpdate(
-            language_model::TokenUsage {
+        let request = fake.pending_completions_for(&model).pop().unwrap();
+        let request_text = request_texts_after_system(&request.messages).join("\n");
+        assert!(request_text.contains("What does "));
+        assert!(request_text.contains("b.md"));
+        assert!(request_text.contains(" mean?"));
+        fake.send_text(&model, &request, "Lorem.");
+        fake.send_event(
+            &model,
+            &request,
+            LanguageModelCompletionEvent::UsageUpdate(language_model::TokenUsage {
                 input_tokens: 150,
                 output_tokens: 75,
                 ..Default::default()
-            },
-        ));
-        model.end_last_completion_stream();
+            }),
+        );
+        fake.end_stream(&model, &request);
         cx.run_until_parked();
-        summary_model
-            .send_last_completion_stream_text_chunk(&format!("Explaining {}", path!("/a/b.md")));
-        summary_model.end_last_completion_stream();
+        let summary_request = fake.pending_completions_for(&summary_model).pop().unwrap();
+        fake.send_text(
+            &summary_model,
+            &summary_request,
+            format!("Explaining {}", path!("/a/b.md")),
+        );
+        fake.end_stream(&summary_model, &summary_request);
 
         send.await.unwrap();
+        acp_thread.read_with(cx, |thread, _| {
+            let Some(acp_thread::AgentThreadEntry::UserMessage(message)) = thread.entries().first()
+            else {
+                panic!("native prompt should retain its source");
+            };
+            assert_eq!(message.content.source_blocks(), prompt.as_slice());
+        });
         let uri = MentionUri::File {
             abs_path: path!("/a/b.md").into(),
         }
@@ -9453,9 +9713,9 @@ mod internal_tests {
         // AFTER run_until_parked, so the only save that captures these
         // changes is the one performed by close_session itself.
         let draft_blocks = vec![
-            acp::ContentBlock::Text(acp::TextContent::new("Check out ")),
-            acp::ContentBlock::ResourceLink(acp::ResourceLink::new("b.md", uri.to_string())),
-            acp::ContentBlock::Text(acp::TextContent::new(" please")),
+            acp_v2::ContentBlock::Text(acp_v2::TextContent::new("Check out ")),
+            acp_v2::ContentBlock::ResourceLink(acp_v2::ResourceLink::new("b.md", uri.to_string())),
+            acp_v2::ContentBlock::Text(acp_v2::TextContent::new(" please")),
         ];
         acp_thread.update(cx, |thread, cx| {
             thread.set_draft_prompt(Some(draft_blocks.clone()), cx);
@@ -9531,7 +9791,7 @@ mod internal_tests {
 
     #[gpui::test]
     async fn test_releasing_session_saves_thread(cx: &mut TestAppContext) {
-        init_test(cx);
+        let fake = init_test(cx);
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
             "/",
@@ -9561,7 +9821,7 @@ mod internal_tests {
             agent.sessions.get(&session_id).unwrap().thread.clone()
         });
 
-        let model = Arc::new(FakeLanguageModel::default());
+        let model = fake.model("fake");
         thread.update(cx, |thread, cx| {
             thread.set_model(model.clone(), cx);
         });
@@ -9571,8 +9831,8 @@ mod internal_tests {
         let send = cx.foreground_executor().spawn(send);
         cx.run_until_parked();
 
-        model.send_last_completion_stream_text_chunk("world");
-        model.end_last_completion_stream();
+        fake.send_last_text(&model, "world");
+        fake.end_last(&model);
         send.await.unwrap();
         cx.run_until_parked();
 
@@ -9580,7 +9840,7 @@ mod internal_tests {
         // This means no observe-triggered save has run for this change.
         // The only way this data gets persisted is if close_session
         // itself performs the save.
-        let draft_blocks = vec![acp::ContentBlock::Text(acp::TextContent::new(
+        let draft_blocks = vec![acp_v2::ContentBlock::Text(acp_v2::TextContent::new(
             "unsaved draft",
         ))];
         acp_thread.update(cx, |thread, cx| {
@@ -9698,7 +9958,7 @@ mod internal_tests {
         cx: &mut TestAppContext,
     ) {
         init_test(cx);
-        let (_connection, agent, _project, acp_thread) = setup_native_agent_session(cx).await;
+        let (_connection, agent, _project, acp_thread, _fs) = setup_native_agent_session(cx).await;
         let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
         let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
         let db_thread = thread.update(cx, |thread, cx| thread.to_db(cx));
@@ -9751,7 +10011,7 @@ mod internal_tests {
 
     #[gpui::test]
     async fn test_save_burst_preserves_in_flight_write(cx: &mut TestAppContext) {
-        init_test(cx);
+        let fake = init_test(cx);
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
             "/",
@@ -9781,7 +10041,7 @@ mod internal_tests {
             agent.sessions.get(&session_id).unwrap().thread.clone()
         });
 
-        let model = Arc::new(FakeLanguageModel::default());
+        let model = fake.model("fake");
         thread.update(cx, |thread, cx| {
             thread.set_model(model.clone(), cx);
         });
@@ -9790,15 +10050,15 @@ mod internal_tests {
         let send = cx.foreground_executor().spawn(send);
         cx.run_until_parked();
 
-        model.send_last_completion_stream_text_chunk("world");
-        model.end_last_completion_stream();
+        fake.send_last_text(&model, "world");
+        fake.end_last(&model);
         send.await.unwrap();
         cx.run_until_parked();
 
         let database = cx.update(|cx| ThreadsDatabase::connect(cx)).await.unwrap();
 
         let [first_draft, second_draft, third_draft] = ["draft one", "draft two", "draft three"]
-            .map(|text| vec![acp::ContentBlock::Text(acp::TextContent::new(text))]);
+            .map(|text| vec![acp_v2::ContentBlock::Text(acp_v2::TextContent::new(text))]);
 
         let (first_gate_tx, first_gate_rx) = oneshot::channel();
         database.set_write_gate(first_gate_rx);
@@ -9841,8 +10101,282 @@ mod internal_tests {
     }
 
     #[gpui::test]
+    async fn test_streaming_chunks_do_not_save_thread(cx: &mut TestAppContext) {
+        let (turn, send) = StreamingTurn::start(cx).await;
+        let saves_before_stream = turn.database.save_count();
+
+        for chunk in ["one ", "two ", "three"] {
+            turn.fake.send_last_text(&turn.model, chunk);
+            cx.run_until_parked();
+        }
+        assert_eq!(
+            turn.database.save_count(),
+            saves_before_stream,
+            "streamed chunks must not save the thread"
+        );
+
+        turn.fake.end_last(&turn.model);
+        send.await.unwrap();
+        cx.run_until_parked();
+        assert!(turn.database.save_count() > saves_before_stream);
+        assert_eq!(
+            turn.saved_markdown().await,
+            "## User\n\nhello\n\n## Assistant\n\none two three\n"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_completed_message_saved_while_next_message_streams(cx: &mut TestAppContext) {
+        let (turn, send) = StreamingTurn::start(cx).await;
+
+        turn.fake.send_last_event(
+            &turn.model,
+            LanguageModelCompletionEvent::StartMessage {
+                message_id: "first".into(),
+            },
+        );
+        turn.fake.send_last_text(&turn.model, "first message");
+        turn.fake.send_last_event(
+            &turn.model,
+            LanguageModelCompletionEvent::StartMessage {
+                message_id: "second".into(),
+            },
+        );
+        turn.fake.send_last_text(&turn.model, "second mess");
+        cx.run_until_parked();
+        assert_eq!(
+            turn.saved_markdown().await,
+            "## User\n\nhello\n\n## Assistant\n\nfirst message\n",
+            "a completed message must be saved even while the next one streams"
+        );
+
+        turn.fake.send_last_text(&turn.model, "age");
+        turn.fake.end_last(&turn.model);
+        send.await.unwrap();
+        cx.run_until_parked();
+        assert_eq!(
+            turn.saved_markdown().await,
+            "## User\n\nhello\n\n## Assistant\n\nfirst message\n\n## Assistant\n\nsecond message\n"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_cancelling_stream_saves_partial_message(cx: &mut TestAppContext) {
+        let (turn, send) = StreamingTurn::start(cx).await;
+
+        turn.fake.send_last_text(&turn.model, "partial");
+        cx.run_until_parked();
+        turn.acp_thread
+            .update(cx, |thread, cx| thread.cancel(cx))
+            .await;
+        send.await.unwrap();
+        cx.run_until_parked();
+        assert_eq!(
+            turn.saved_markdown().await,
+            "## User\n\nhello\n\n## Assistant\n\npartial\n"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_settings_changes_save_while_message_streams(cx: &mut TestAppContext) {
+        let (turn, send) = StreamingTurn::start(cx).await;
+        turn.fake.send_last_text(&turn.model, "one ");
+        cx.run_until_parked();
+
+        turn.thread.update(cx, |thread, cx| {
+            thread.set_reasoning_effort(Some("high".into()), cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            turn.saved_thread().await.reasoning_effort.as_deref(),
+            Some("high")
+        );
+
+        turn.thread
+            .update(cx, |thread, cx| thread.set_title("Renamed".into(), cx));
+        cx.run_until_parked();
+        assert_eq!(turn.saved_thread().await.title, "Renamed");
+
+        let draft = vec![acp_v2::ContentBlock::Text(acp_v2::TextContent::new(
+            "next prompt",
+        ))];
+        turn.acp_thread.update(cx, |acp_thread, cx| {
+            acp_thread.set_draft_prompt(Some(draft.clone()), cx);
+        });
+        // The thread view notifies the thread after a draft edit to request a save.
+        turn.thread.update(cx, |_, cx| cx.notify());
+        cx.run_until_parked();
+        assert_eq!(turn.saved_thread().await.draft_prompt, Some(draft));
+
+        let saves_after_changes = turn.database.save_count();
+        turn.fake.send_last_text(&turn.model, "two");
+        cx.run_until_parked();
+        assert_eq!(
+            turn.database.save_count(),
+            saves_after_changes,
+            "streamed chunks after a saved change must not save the thread"
+        );
+
+        turn.fake.end_last(&turn.model);
+        send.await.unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_token_usage_does_not_save_while_message_streams(cx: &mut TestAppContext) {
+        let (turn, send) = StreamingTurn::start(cx).await;
+        turn.fake.send_last_text(&turn.model, "one ");
+        cx.run_until_parked();
+        let saves_before_usage = turn.database.save_count();
+
+        // Some providers, like Google, report usage with every streamed chunk.
+        for output_tokens in [10, 20, 30] {
+            turn.fake.send_last_event(
+                &turn.model,
+                LanguageModelCompletionEvent::UsageUpdate(language_model::TokenUsage {
+                    input_tokens: 100,
+                    output_tokens,
+                    ..Default::default()
+                }),
+            );
+            cx.run_until_parked();
+        }
+        assert_eq!(turn.database.save_count(), saves_before_usage);
+
+        turn.fake.end_last(&turn.model);
+        send.await.unwrap();
+        cx.run_until_parked();
+        let expected_usage = language_model::TokenUsage {
+            input_tokens: 100,
+            output_tokens: 30,
+            ..Default::default()
+        };
+        let saved_thread = turn.saved_thread().await;
+        assert_eq!(saved_thread.cumulative_token_usage, expected_usage);
+        assert_eq!(
+            saved_thread
+                .request_token_usage
+                .into_values()
+                .collect::<Vec<_>>(),
+            vec![expected_usage]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_token_usage_saved_when_message_ends_without_content(cx: &mut TestAppContext) {
+        let (turn, send) = StreamingTurn::start(cx).await;
+        // A titled thread doesn't generate a title when the turn ends, which
+        // would otherwise save the thread.
+        turn.thread
+            .update(cx, |thread, cx| thread.set_title("Title".into(), cx));
+        turn.send_start_message_with_usage(100);
+        cx.run_until_parked();
+
+        turn.fake.end_last(&turn.model);
+        send.await.unwrap();
+        cx.run_until_parked();
+        assert_eq!(
+            turn.saved_thread()
+                .await
+                .cumulative_token_usage
+                .input_tokens,
+            100
+        );
+    }
+
+    #[gpui::test]
+    async fn test_token_usage_saved_when_cancelled_before_content(cx: &mut TestAppContext) {
+        let (turn, send) = StreamingTurn::start(cx).await;
+        // A titled thread doesn't generate a title when the turn ends, which
+        // would otherwise save the thread.
+        turn.thread
+            .update(cx, |thread, cx| thread.set_title("Title".into(), cx));
+        turn.send_start_message_with_usage(100);
+        cx.run_until_parked();
+
+        turn.acp_thread
+            .update(cx, |thread, cx| thread.cancel(cx))
+            .await;
+        send.await.unwrap();
+        cx.run_until_parked();
+        assert_eq!(
+            turn.saved_thread()
+                .await
+                .cumulative_token_usage
+                .input_tokens,
+            100
+        );
+    }
+
+    struct StreamingTurn {
+        fake: Arc<FakeLanguageModelProvider>,
+        model: LanguageModel,
+        acp_thread: Entity<AcpThread>,
+        thread: Entity<Thread>,
+        session_id: acp_v2::SessionId,
+        database: Arc<ThreadsDatabase>,
+    }
+
+    impl StreamingTurn {
+        async fn start(
+            cx: &mut TestAppContext,
+        ) -> (Self, Task<Result<Option<acp_thread::SubmissionResponse>>>) {
+            let fake = init_test(cx);
+            let (_connection, agent, _project, acp_thread, _fs) =
+                setup_native_agent_session(cx).await;
+            let session_id = cx.update(|cx| acp_thread.read(cx).session_id().clone());
+            let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
+            let model = fake.model("fake");
+            thread.update(cx, |thread, cx| thread.set_model(model.clone(), cx));
+            let database = cx.update(|cx| ThreadsDatabase::connect(cx)).await.unwrap();
+
+            let send = acp_thread.update(cx, |thread, cx| thread.send(vec!["hello".into()], cx));
+            let send = cx.foreground_executor().spawn(send);
+            cx.run_until_parked();
+
+            let turn = Self {
+                fake,
+                model,
+                acp_thread,
+                thread,
+                session_id,
+                database,
+            };
+            (turn, send)
+        }
+
+        async fn saved_thread(&self) -> DbThread {
+            self.database
+                .load_thread(self.session_id.clone())
+                .await
+                .unwrap()
+                .unwrap()
+        }
+
+        async fn saved_markdown(&self) -> String {
+            crate::thread::messages_to_markdown(&self.saved_thread().await.messages)
+        }
+
+        /// Providers like Anthropic report usage before streaming any content.
+        fn send_start_message_with_usage(&self, input_tokens: u64) {
+            self.fake.send_last_event(
+                &self.model,
+                LanguageModelCompletionEvent::StartMessage {
+                    message_id: "message".into(),
+                },
+            );
+            self.fake.send_last_event(
+                &self.model,
+                LanguageModelCompletionEvent::UsageUpdate(language_model::TokenUsage {
+                    input_tokens,
+                    ..Default::default()
+                }),
+            );
+        }
+    }
+
+    #[gpui::test]
     async fn test_thread_summary_releases_loaded_session(cx: &mut TestAppContext) {
-        init_test(cx);
+        let fake = init_test(cx);
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
             "/",
@@ -9872,8 +10406,8 @@ mod internal_tests {
             agent.sessions.get(&session_id).unwrap().thread.clone()
         });
 
-        let model = Arc::new(FakeLanguageModel::default());
-        let summary_model = Arc::new(FakeLanguageModel::default());
+        let model = fake.model("fake");
+        let summary_model = fake.model("summary");
         thread.update(cx, |thread, cx| {
             thread.set_model(model.clone(), cx);
             thread.set_summarization_model(Some(summary_model.clone()), cx);
@@ -9883,8 +10417,9 @@ mod internal_tests {
         let send = cx.foreground_executor().spawn(send);
         cx.run_until_parked();
 
-        model.send_last_completion_stream_text_chunk("world");
-        model.end_last_completion_stream();
+        let request = fake.pending_completions_for(&model).pop().unwrap();
+        fake.send_text(&model, &request, "world");
+        fake.end_stream(&model, &request);
         send.await.unwrap();
         cx.run_until_parked();
 
@@ -9893,8 +10428,9 @@ mod internal_tests {
         });
         cx.run_until_parked();
 
-        summary_model.send_last_completion_stream_text_chunk("summary");
-        summary_model.end_last_completion_stream();
+        let summary_request = fake.pending_completions_for(&summary_model).pop().unwrap();
+        fake.send_text(&summary_model, &summary_request, "summary");
+        fake.end_stream(&summary_model, &summary_request);
 
         assert_eq!(summary.await.unwrap(), "summary");
         cx.run_until_parked();
@@ -9920,7 +10456,7 @@ mod internal_tests {
 
     #[gpui::test]
     async fn test_loaded_sessions_keep_state_until_last_close(cx: &mut TestAppContext) {
-        init_test(cx);
+        let fake = init_test(cx);
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
             "/",
@@ -9950,13 +10486,7 @@ mod internal_tests {
             agent.sessions.get(&session_id).unwrap().thread.clone()
         });
 
-        let model = cx.update(|cx| {
-            LanguageModelRegistry::read_global(cx)
-                .default_model()
-                .map(|default_model| default_model.model)
-                .expect("default test model should be available")
-        });
-        let fake_model = model.as_fake();
+        let model = fake.model("fake");
         thread.update(cx, |thread, cx| {
             thread.set_model(model.clone(), cx);
         });
@@ -9965,8 +10495,8 @@ mod internal_tests {
         let send = cx.foreground_executor().spawn(send);
         cx.run_until_parked();
 
-        fake_model.send_last_completion_stream_text_chunk("world");
-        fake_model.end_last_completion_stream();
+        fake.send_last_text(&model, "world");
+        fake.end_last(&model);
         send.await.unwrap();
         cx.run_until_parked();
 
@@ -10023,8 +10553,8 @@ mod internal_tests {
         let follow_up = cx.foreground_executor().spawn(follow_up);
         cx.run_until_parked();
 
-        fake_model.send_last_completion_stream_text_chunk("yes");
-        fake_model.end_last_completion_stream();
+        fake.send_last_text(&model, "yes");
+        fake.end_last(&model);
         follow_up.await.unwrap();
         cx.run_until_parked();
 
@@ -10126,7 +10656,7 @@ mod internal_tests {
     fn thread_entries(
         thread_store: &Entity<ThreadStore>,
         cx: &mut TestAppContext,
-    ) -> Vec<(acp::SessionId, String)> {
+    ) -> Vec<(acp_v2::SessionId, String)> {
         thread_store.read_with(cx, |store, _| {
             store
                 .entries()
@@ -10410,7 +10940,7 @@ mod internal_tests {
     #[gpui::test]
     async fn test_resumed_native_thread_keeps_curator_tools_out(cx: &mut TestAppContext) {
         init_test(cx);
-        let (_connection, agent, project, acp_thread) = setup_native_agent_session(cx).await;
+        let (_connection, agent, project, acp_thread, _fs) = setup_native_agent_session(cx).await;
         let session_id = cx.update(|cx| acp_thread.read(cx).session_id().clone());
         let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
         let db_thread = thread.read_with(cx, |thread, cx| thread.to_db(cx)).await;
@@ -10578,11 +11108,11 @@ mod internal_tests {
     async fn test_native_session_reads_curator_status_without_curator_mutations(
         cx: &mut TestAppContext,
     ) {
-        init_test(cx);
-        let (connection, agent, _project, acp_thread) = setup_native_agent_session(cx).await;
+        let fake = init_test(cx);
+        let (connection, agent, _project, acp_thread, _fs) = setup_native_agent_session(cx).await;
         let session_id = cx.update(|cx| acp_thread.read(cx).session_id().clone());
         let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
-        let model = Arc::new(FakeLanguageModel::default());
+        let model = fake.model("fake");
         cx.update(|cx| {
             thread.update(cx, |thread, cx| {
                 thread.set_model(model.clone(), cx);
@@ -10599,12 +11129,15 @@ mod internal_tests {
             acp_thread::AgentSessionClientUserMessageIds::prompt(
                 connection.as_ref(),
                 ClientUserMessageId::new(),
-                acp::PromptRequest::new(session_id, vec!["Check system status".into()]),
+                acp_v2::PromptRequest::new(session_id, vec!["Check system status".into()]),
                 cx,
             )
         });
         cx.run_until_parked();
-        let request = model.pending_completions().pop().expect("model request");
+        let request = fake
+            .pending_completions_for(&model)
+            .pop()
+            .expect("model request");
         assert_eq!(
             request
                 .tools
@@ -10644,7 +11177,7 @@ mod internal_tests {
     /// points" trap).
     #[gpui::test]
     async fn test_curator_session_registers_directive_tool(cx: &mut TestAppContext) {
-        init_test(cx);
+        let fake = init_test(cx);
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree("/", json!({ "a": {} })).await;
         let project = Project::test(fs.clone(), [Path::new("/a")], cx).await;
@@ -10700,18 +11233,21 @@ mod internal_tests {
                 );
             });
         });
-        let model = Arc::new(FakeLanguageModel::default());
+        let model = fake.model("fake");
         cx.update(|cx| thread.update(cx, |thread, cx| thread.set_model(model.clone(), cx)));
         let prompt_task = cx.update(|cx| {
             acp_thread::AgentSessionClientUserMessageIds::prompt(
                 agent.as_ref(),
                 ClientUserMessageId::new(),
-                acp::PromptRequest::new(session_id, vec!["Check system status".into()]),
+                acp_v2::PromptRequest::new(session_id, vec!["Check system status".into()]),
                 cx,
             )
         });
         cx.run_until_parked();
-        let request = model.pending_completions().pop().expect("model request");
+        let request = fake
+            .pending_completions_for(&model)
+            .pop()
+            .expect("model request");
         assert_eq!(
             request
                 .tools
@@ -10804,14 +11340,15 @@ mod internal_tests {
         );
     }
 
-    fn init_test(cx: &mut TestAppContext) {
+    /// Returns the fake provider that serves the registry's default model.
+    fn init_test(cx: &mut TestAppContext) -> Arc<FakeLanguageModelProvider> {
         env_logger::try_init().ok();
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
 
-            LanguageModelRegistry::test(cx);
-        });
+            LanguageModelRegistry::test(cx)
+        })
     }
 
     #[test]
@@ -10859,7 +11396,7 @@ mod internal_tests {
         agent: &Entity<NativeAgent>,
         acp_thread: &Entity<AcpThread>,
         thread: &Entity<Thread>,
-        draft: Vec<acp::ContentBlock>,
+        draft: Vec<acp_v2::ContentBlock>,
         cx: &mut TestAppContext,
     ) {
         acp_thread.update(cx, |acp_thread, cx| {
@@ -10873,32 +11410,58 @@ mod internal_tests {
 
 fn mcp_message_content_to_acp_content_block(
     content: context_server::types::MessageContent,
-) -> acp::ContentBlock {
+) -> acp_v2::ContentBlock {
     match content {
-        context_server::types::MessageContent::Text {
-            text,
-            annotations: _,
-        } => text.into(),
+        context_server::types::MessageContent::Text { text, annotations } => {
+            acp_v2::ContentBlock::Text(
+                acp_v2::TextContent::new(text).annotations(mcp_annotations_to_acp(annotations)),
+            )
+        }
         context_server::types::MessageContent::Image {
             data,
             mime_type,
-            annotations: _,
-        } => acp::ContentBlock::Image(acp::ImageContent::new(data, mime_type)),
+            annotations,
+        } => acp_v2::ContentBlock::Image(
+            acp_v2::ImageContent::new(data, mime_type)
+                .annotations(mcp_annotations_to_acp(annotations)),
+        ),
         context_server::types::MessageContent::Audio {
             data,
             mime_type,
-            annotations: _,
-        } => acp::ContentBlock::Audio(acp::AudioContent::new(data, mime_type)),
+            annotations,
+        } => acp_v2::ContentBlock::Audio(
+            acp_v2::AudioContent::new(data, mime_type)
+                .annotations(mcp_annotations_to_acp(annotations)),
+        ),
         context_server::types::MessageContent::Resource {
             resource,
-            annotations: _,
+            annotations,
         } => {
             let mut link =
-                acp::ResourceLink::new(resource.uri.to_string(), resource.uri.to_string());
+                acp_v2::ResourceLink::new(resource.uri.to_string(), resource.uri.to_string())
+                    .annotations(mcp_annotations_to_acp(annotations));
             if let Some(mime_type) = resource.mime_type {
-                link = link.mime_type(mime_type);
+                link = link.mime_type(acp_v2::MediaType::new(mime_type));
             }
-            acp::ContentBlock::ResourceLink(link)
+            acp_v2::ContentBlock::ResourceLink(link)
         }
     }
+}
+
+fn mcp_annotations_to_acp(
+    annotations: Option<context_server::types::MessageAnnotations>,
+) -> Option<acp_v2::Annotations> {
+    annotations.map(|annotations| {
+        acp_v2::Annotations::new()
+            .audience(annotations.audience.map(|audience| {
+                audience
+                    .into_iter()
+                    .map(|role| match role {
+                        context_server::types::Role::User => acp_v2::Role::User,
+                        context_server::types::Role::Assistant => acp_v2::Role::Assistant,
+                    })
+                    .collect::<Vec<_>>()
+            }))
+            .priority(annotations.priority)
+    })
 }

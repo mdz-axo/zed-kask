@@ -635,7 +635,7 @@ pub struct KanbanPanel {
     thread_picker: Entity<hkask_steer::ThreadPicker>,
     /// The session id to resume on the next `ensure_steer_conversation` —
     /// set by `open_thread`, consumed by `ensure_steer_conversation`.
-    pending_resume: Option<agent_client_protocol::schema::v1::SessionId>,
+    pending_resume: Option<agent_client_protocol::schema::v2::SessionId>,
     /// Subscriptions.
     _subscriptions: Vec<gpui::Subscription>,
 }
@@ -1057,7 +1057,7 @@ impl KanbanPanel {
     /// board the operator is looking at.
     fn open_thread(
         &mut self,
-        session_id: agent_client_protocol::schema::v1::SessionId,
+        session_id: agent_client_protocol::schema::v2::SessionId,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {

@@ -1412,10 +1412,8 @@ fn shipped_template_seed() -> &'static [(&'static str, &'static str)] {
 /// back to `paths::data_dir()/agents/skills/` so tests and the editor remain
 /// functional.
 ///
-/// In test builds, `paths::home_dir()` is hardcoded to a fixed path
-/// (e.g. `/Users/zed`), so all tests using this function operate on the
-/// same simulated home directory. Each test should use its own `FakeFs`
-/// instance to keep skill setups from leaking across tests.
+/// Tests see the real home directory here, so they should resolve this path
+/// against their own `FakeFs` instance rather than the real filesystem.
 pub fn global_skills_dir() -> PathBuf {
     // zed-kask: D28 — check the override first.
     if let Some(path) = global_skills_dir_override() {

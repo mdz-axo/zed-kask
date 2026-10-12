@@ -26,7 +26,7 @@ use ui::{Button, Icon, IconName, IconSize, PopoverMenuHandle, Tooltip, prelude::
 /// The type of the panel-supplied select callback: receives the chosen
 /// thread's session id and opens it in the panel's Steer surface.
 pub type ThreadSelectHandler =
-    Rc<dyn Fn(agent_client_protocol::schema::v1::SessionId, &mut Window, &mut App)>;
+    Rc<dyn Fn(agent_client_protocol::schema::v2::SessionId, &mut Window, &mut App)>;
 
 /// Sort threads most-recently-updated first, so the picker mirrors the
 /// sidebar's recency ordering regardless of store iteration order.
@@ -275,7 +275,7 @@ mod tests {
 
     fn thread(id: &str, title: &str, updated_minutes_ago: i64) -> DbThreadMetadata {
         DbThreadMetadata {
-            id: agent_client_protocol::schema::v1::SessionId::new(id),
+            id: agent_client_protocol::schema::v2::SessionId::new(id),
             parent_session_id: None,
             title: title.into(),
             updated_at: chrono::Utc::now() - chrono::Duration::minutes(updated_minutes_ago),

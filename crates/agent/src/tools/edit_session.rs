@@ -6,7 +6,7 @@ use super::tool_permissions::resolve_creatable_global_skill_path;
 use crate::{Thread, ToolCallEventStream};
 use acp_thread::Diff;
 use action_log::ActionLog;
-use agent_client_protocol::schema::v1::{self as acp, ToolCallLocation, ToolCallUpdateFields};
+use agent_client_protocol::schema::v2 as acp;
 use anyhow::Result;
 use collections::HashSet;
 use futures::{FutureExt, channel::oneshot};
@@ -299,8 +299,12 @@ pub(crate) async fn run_session(
             // stream into the buffer as they resolve, so a failure at edit N
             // used to leave edits 1..N-1 applied and saved while the tool
             // reported an error. Restore the pre-call text before saving.
-            let (_, partial_diff) = session.compute_new_text_and_diff(cx).await;
-            if !partial_diff.is_empty() {
+            // The condition is the pipeline's own edits-applied record, not
+            // the buffer diff: a buffer changed externally mid-call must
+            // never be reverted, and an external change alone must not
+            // claim a rollback happened.
+            let tool_edits_applied = session.tool_edits_applied();
+            if tool_edits_applied {
                 session.restore_original_text(cx);
             }
             session
@@ -308,15 +312,13 @@ pub(crate) async fn run_session(
                 .ensure_buffer_saved(&session.buffer, cx)
                 .await;
             let (_new_text, diff) = session.compute_new_text_and_diff(cx).await;
-            let error = if partial_diff.is_empty() {
-                error
-            } else {
+            let error = if tool_edits_applied {
                 format!("{error}\nNo edits were applied; the file is unchanged.")
+            } else {
+                error
             };
             if diff.is_empty() {
-                event_stream.update_fields(acp::ToolCallUpdateFields::new().content(vec![
-                    acp::ToolCallContent::Content(acp::Content::new(error.clone())),
-                ]));
+                event_stream.update_fields(|update| update.content(vec![error.clone().into()]));
             }
             Err(EditSessionOutput::Error {
                 error,
@@ -328,9 +330,7 @@ pub(crate) async fn run_session(
             error,
             session: None,
         } => {
-            event_stream.update_fields(acp::ToolCallUpdateFields::new().content(vec![
-                acp::ToolCallContent::Content(acp::Content::new(error.clone())),
-            ]));
+            event_stream.update_fields(|update| update.content(vec![error.clone().into()]));
             Err(EditSessionOutput::Error {
                 error,
                 input_path: None,
@@ -395,6 +395,11 @@ struct WritePipeline {
 struct EditPipeline {
     current_edit: Option<EditPipelineEntry>,
     file_changed_since_last_read: bool,
+    /// Whether this pipeline has applied any edit to the buffer. D78's
+    /// all-or-nothing rollback keys on this, not on the buffer diff: an
+    /// externally-changed buffer must never be reverted (and an external
+    /// change alone must not claim the rollback happened).
+    edits_applied: bool,
 }
 
 enum EditPipelineEntry {
@@ -419,6 +424,7 @@ impl Pipeline {
             EditSessionMode::Edit => Self::Edit(EditPipeline {
                 current_edit: None,
                 file_changed_since_last_read,
+                edits_applied: false,
             }),
         }
     }
@@ -461,11 +467,18 @@ impl WritePipeline {
 
 impl EditPipeline {
     fn ensure_resolving_old_text(&mut self, buffer: &Entity<Buffer>, cx: &mut AsyncApp) {
-        if self.current_edit.is_none() {
-            let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.text_snapshot());
-            self.current_edit = Some(EditPipelineEntry::ResolvingOldText {
-                matcher: StreamingFuzzyMatcher::new(snapshot),
-            });
+        match &mut self.current_edit {
+            None => {
+                let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.text_snapshot());
+                self.current_edit = Some(EditPipelineEntry::ResolvingOldText {
+                    matcher: StreamingFuzzyMatcher::new(snapshot),
+                });
+            }
+            Some(EditPipelineEntry::ResolvingOldText { matcher }) => {
+                let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.text_snapshot());
+                matcher.refresh(snapshot);
+            }
+            Some(EditPipelineEntry::StreamingNewText { .. }) => {}
         }
     }
 
@@ -538,10 +551,9 @@ impl EditPipeline {
                 let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
 
                 let line = snapshot.offset_to_point(range.start).row;
-                event_stream.update_fields(
-                    ToolCallUpdateFields::new()
-                        .locations(vec![ToolCallLocation::new(abs_path).line(Some(line))]),
-                );
+                event_stream.update_fields(|update| {
+                    update.locations(vec![acp::ToolCallLocation::new(abs_path).line(Some(line))])
+                });
 
                 let buffer_indent = snapshot.line_indent_for_row(line);
                 let query_lines = matcher.query_lines();
@@ -624,7 +636,7 @@ impl EditPipeline {
                 }
 
                 let char_ops = streaming_diff.push_new(&reindented);
-                apply_char_operations(
+                self.edits_applied |= apply_char_operations(
                     &char_ops,
                     buffer,
                     original_snapshot,
@@ -670,7 +682,7 @@ impl EditPipeline {
                     streaming_diff.push_new(&final_text)
                 };
                 char_ops.extend(streaming_diff.finish());
-                apply_char_operations(
+                self.edits_applied |= apply_char_operations(
                     &char_ops,
                     buffer,
                     &original_snapshot,
@@ -727,9 +739,9 @@ impl EditSession {
             project_path,
         } = target;
 
-        event_stream.update_fields(
-            ToolCallUpdateFields::new().locations(vec![ToolCallLocation::new(abs_path.clone())]),
-        );
+        event_stream.update_fields(|update| {
+            update.locations(vec![acp::ToolCallLocation::new(abs_path.clone())])
+        });
 
         cx.update(|cx| context.authorize(tool_name, &path, event_stream, cx))
             .await
@@ -869,6 +881,16 @@ impl EditSession {
         );
     }
 
+    /// Whether this session's pipelines applied any edit to the buffer —
+    /// the D78 rollback key. Deliberately not derived from the buffer diff:
+    /// an external change mid-call is not a tool edit.
+    fn tool_edits_applied(&self) -> bool {
+        match &self.pipeline {
+            Pipeline::Write(write) => write.content_written,
+            Pipeline::Edit(edit) => edit.edits_applied,
+        }
+    }
+
     async fn compute_new_text_and_diff(&self, cx: &mut AsyncApp) -> (String, String) {
         let new_snapshot = self.buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
         let (new_text, unified_diff) = cx
@@ -952,7 +974,7 @@ fn apply_char_operations(
     edit_cursor: &mut usize,
     action_log: &Entity<ActionLog>,
     cx: &mut AsyncApp,
-) {
+) -> bool {
     let mut edits: Vec<_> = Vec::new();
     for op in ops {
         match op {
@@ -971,8 +993,11 @@ fn apply_char_operations(
             }
         }
     }
-    if !edits.is_empty() {
+    if edits.is_empty() {
+        false
+    } else {
         agent_edit_buffer(buffer, edits, action_log, cx);
+        true
     }
 }
 
@@ -1174,9 +1199,7 @@ async fn resolve_dirty_buffer(
              was cancelled. Ask the user how they'd like to proceed before \
              retrying."
                 .to_string();
-            event_stream.update_fields(
-                acp::ToolCallUpdateFields::new().content(vec![error.clone().into()]),
-            );
+            event_stream.update_fields(|update| update.content(vec![error.clone().into()]));
             return Err(error);
         }
     }

@@ -2801,9 +2801,7 @@ fn main() {
         );
         command_palette::init(cx);
         let copilot_chat_configuration = copilot_chat::CopilotChatConfiguration {
-            enterprise_uri: language::language_settings::all_language_settings(None, cx)
-                .edit_predictions
-                .copilot
+            enterprise_uri: settings::CopilotSettings::get_global(cx)
                 .enterprise_uri
                 .clone(),
         };
@@ -3310,7 +3308,7 @@ fn wire_kask_inference_stack(
         return false;
     };
     let async_cx = cx.to_async();
-    let inference_model: Arc<dyn language_model::LanguageModel> = {
+    let inference_model: Arc<language_model::LanguageModel> = {
         // `kask.models.default_model` — its `Default` carries the code
         // default (operator ruling 2026-09-04: defaults in code so the
         // code works; the settings UI overrides). When the default model
@@ -3319,7 +3317,7 @@ fn wire_kask_inference_stack(
         // visible in Settings → AI.
         let kask_default = kask_settings.models.default_model.trim();
         if kask_default.is_empty() {
-            configured.model.clone()
+            Arc::new(configured)
         } else {
             match kask_bridge::resolve_model_names(model_registry, &[kask_default.to_string()], cx)
                 .0
@@ -3339,7 +3337,7 @@ fn wire_kask_inference_stack(
                          from LanguageModelRegistry — falling back to zed default",
                         kask_default
                     );
-                    configured.model.clone()
+                    Arc::new(configured)
                 }
             }
         }
@@ -3356,7 +3354,7 @@ fn wire_kask_inference_stack(
     // cancellation. See `INFERENCE_TIMEOUT_ENV`.
     kask_bridge::set_inference_timeout_secs(kask_settings.general.inference_timeout_secs);
     let (inference_port, inference_task) = kask_bridge::LanguageModelInferencePort::new(
-        inference_model.clone(),
+        inference_model,
         inference_timeout,
         kask_settings.general.max_concurrency as usize,
         kask_bridge::InferenceResilienceConfig {
@@ -5031,7 +5029,12 @@ fn load_user_themes_in_background(fs: Arc<dyn fs::Fs>, cx: &mut App) {
                 let Some(theme_path) = theme_path.log_err() else {
                     continue;
                 };
-                let Some(bytes) = fs.load_bytes(&theme_path).await.log_err() else {
+                let Some(bytes) = fs
+                    .load_bytes(&theme_path)
+                    .await
+                    .with_context(|| format!("loading theme bytes from {theme_path:?}"))
+                    .log_err()
+                else {
                     continue;
                 };
 
@@ -5063,7 +5066,11 @@ fn watch_themes(fs: Arc<dyn fs::Fs>, cx: &mut App) {
                     .is_some_and(|m| !m.is_dir)
                 {
                     let theme_registry = cx.update(|cx| ThemeRegistry::global(cx));
-                    if let Some(bytes) = fs.load_bytes(&event.path).await.log_err()
+                    if let Some(bytes) = fs
+                        .load_bytes(&event.path)
+                        .await
+                        .with_context(|| format!("loading theme bytes from {:?}", event.path))
+                        .log_err()
                         && load_user_theme(&theme_registry, &bytes).log_err().is_some()
                     {
                         cx.update(theme_settings::reload_theme);

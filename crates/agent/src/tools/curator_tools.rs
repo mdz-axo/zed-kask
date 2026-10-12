@@ -12,7 +12,7 @@
 
 use std::sync::Arc;
 
-use agent_client_protocol::schema::v1 as acp;
+use agent_client_protocol::schema::v2 as acp;
 use gpui::{App, Task};
 use hkask_types::process_global::ProcessGlobal;
 use schemars::JsonSchema;

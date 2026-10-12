@@ -212,7 +212,8 @@ fn inference_error_from_completion(error: LanguageModelCompletionError) -> Infer
         LanguageModelCompletionError::ProviderRejection {
             category: ProviderErrorCategory::EndpointNotFound,
             ..
-        } => InferenceError::Model(detail),
+        }
+        | LanguageModelCompletionError::ModelUnavailable { .. } => InferenceError::Model(detail),
         LanguageModelCompletionError::ApiReadResponseError { .. }
         | LanguageModelCompletionError::HttpSend { .. } => InferenceError::Connection(detail),
         LanguageModelCompletionError::ProviderRejection { .. }
@@ -511,7 +512,7 @@ impl LanguageModelInferencePort {
     /// foreground tasks. The semaphore is the enforcement point for the
     /// `kask.general.max_concurrency` setting (default 96).
     pub fn new(
-        model: Arc<dyn LanguageModel>,
+        model: Arc<LanguageModel>,
         inference_timeout: Duration,
         max_concurrency: usize,
         resilience_config: InferenceResilienceConfig,
@@ -520,7 +521,7 @@ impl LanguageModelInferencePort {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<InferenceRequest>();
         let (stream_tx, mut stream_rx) =
             tokio::sync::mpsc::unbounded_channel::<StreamInferenceRequest>();
-        let model_for_task = model.clone();
+        let model_for_task = model;
         let admission = Arc::new(Semaphore::new(
             max_concurrency
                 .max(1)
@@ -640,10 +641,10 @@ impl LanguageModelInferencePort {
     /// garbage/empty output that reads like an endpoint failure (observed:
     /// ollama OCR overrides "failing" while the local endpoint was fine).
     async fn resolve_model(
-        model_for_task: &Arc<dyn LanguageModel>,
+        model_for_task: &Arc<LanguageModel>,
         override_name: Option<&str>,
         cx: &AsyncApp,
-    ) -> Option<Arc<dyn LanguageModel>> {
+    ) -> Option<Arc<LanguageModel>> {
         if let Some(override_name) = override_name {
             let override_name = override_name.to_string();
             let resolved = cx.update(|cx| {
@@ -770,7 +771,7 @@ impl LanguageModelInferencePort {
     async fn acquire_and_collect(
         request: LanguageModelRequest,
         model_override: Option<String>,
-        model_for_task: &Arc<dyn LanguageModel>,
+        model_for_task: &Arc<LanguageModel>,
         cx: &AsyncApp,
         semaphore: &Arc<tokio::sync::Semaphore>,
         in_flight: Arc<std::sync::atomic::AtomicUsize>,
@@ -821,7 +822,7 @@ impl LanguageModelInferencePort {
         mut reply: R,
         circuit: InferenceCircuitPermit,
         deadline: Option<RequestDeadline>,
-        model_for_task: &Arc<dyn LanguageModel>,
+        model_for_task: &Arc<LanguageModel>,
         semaphore: &Arc<tokio::sync::Semaphore>,
         in_flight: Arc<std::sync::atomic::AtomicUsize>,
         recent_timeouts: &Arc<std::sync::Mutex<Vec<std::time::Instant>>>,
@@ -854,7 +855,7 @@ impl LanguageModelInferencePort {
     async fn collect_completion(
         request: LanguageModelRequest,
         model_override: Option<String>,
-        model_for_task: &Arc<dyn LanguageModel>,
+        model_for_task: &Arc<LanguageModel>,
         cx: &AsyncApp,
         progress: Option<
             &tokio::sync::mpsc::UnboundedSender<Result<InferenceStreamChunk, InferenceError>>,
@@ -868,11 +869,16 @@ impl LanguageModelInferencePort {
                     model_override.as_deref().unwrap_or("")
                 ))
             })?;
-        let mut stream = model
-            .stream_completion(request, cx)
+        let provider = cx
+            .update(|cx| {
+                language_model::LanguageModelRegistry::read_global(cx).provider_for_model(&model)
+            })
+            .map_err(inference_error_from_completion)?;
+        let mut stream = provider
+            .stream_completion(&model, request, cx)
             .await
             .map_err(inference_error_from_completion)?;
-        let model_name = model.name().0.to_string();
+        let model_name = model.name.0.to_string();
         let mut accumulator = StreamAccumulator::new(model_name.clone());
         while let Some(event) = stream.next().await {
             let delta = match (progress, event) {
@@ -1339,7 +1345,6 @@ mod tests {
     use hkask_types::ChatToolFunction;
     use hkask_types::template::LLMParameters;
     use hkask_types::{InferenceError, InferencePort};
-    use language_model::fake_provider::FakeLanguageModel;
     use language_model_core::LanguageModelToolChoice;
     use language_model_core::ProviderErrorCategory;
     use language_model_core::{LanguageModelCompletionError, LanguageModelProviderName};
@@ -1353,11 +1358,11 @@ mod tests {
         }
     }
 
-    /// Build a `LanguageModelInferencePort` over a fresh `FakeLanguageModel` —
+    /// Build a `LanguageModelInferencePort` over a fresh fake provider —
     /// the construction every resilience test repeats, varying only the
     /// timeout, the concurrency bound, and the resilience config. Returns the
-    /// model too: the fake-driving tests derive `model.as_fake()` locally (the
-    /// fake borrows the model, so it cannot cross this helper's boundary).
+    /// provider and its model too: the fake-driving tests send events through
+    /// the provider (`fake.send_last_*(&model, ..)`).
     fn test_port(
         cx: &mut gpui::TestAppContext,
         timeout: Duration,
@@ -1365,18 +1370,20 @@ mod tests {
         resilience: crate::InferenceResilienceConfig,
     ) -> (
         super::LanguageModelInferencePort,
-        Arc<dyn language_model::LanguageModel>,
+        Arc<language_model::fake_provider::FakeLanguageModelProvider>,
+        language_model::LanguageModel,
         gpui::Task<()>,
     ) {
-        let model: Arc<dyn language_model::LanguageModel> = Arc::new(FakeLanguageModel::default());
+        let fake = Arc::new(language_model::fake_provider::FakeLanguageModelProvider::default());
+        let model = fake.model("fake");
         let (port, task) = super::LanguageModelInferencePort::new(
-            model.clone(),
+            Arc::new(model.clone()),
             timeout,
             max_concurrency,
             resilience,
             cx.to_async(),
         );
-        (port, model, task)
+        (port, fake, model, task)
     }
 
     /// The canned `ProviderRejection` the resilience tests inject through the
@@ -1570,9 +1577,8 @@ mod tests {
     async fn missing_api_key_failures_do_not_open_the_transient_circuit(
         cx: &mut gpui::TestAppContext,
     ) {
-        let (port, model, _task) =
+        let (port, fake, model, _task) =
             test_port(cx, Duration::from_secs(300), 1, test_resilience_config());
-        let fake = model.as_fake();
 
         for attempt_index in 0..3 {
             let attempt_port = port.clone();
@@ -1583,9 +1589,12 @@ mod tests {
                     .await
             });
             cx.run_until_parked();
-            fake.send_last_completion_stream_error(LanguageModelCompletionError::NoApiKey {
-                provider: LanguageModelProviderName::new("OpenRouter"),
-            });
+            fake.send_last_error(
+                &model,
+                LanguageModelCompletionError::NoApiKey {
+                    provider: LanguageModelProviderName::new("OpenRouter"),
+                },
+            );
             cx.run_until_parked();
             assert!(matches!(attempt.await, Err(InferenceError::Auth(_))));
         }
@@ -1620,19 +1629,21 @@ mod tests {
         // arriving mid-stream must reach the MCP-server caller as
         // InferenceError::Generation carrying the wire fields, not the bare
         // "Provider returned error" Display.
-        let (port, model, _task) =
+        let (port, fake, model, _task) =
             test_port(cx, Duration::from_secs(300), 2, test_resilience_config());
-        let fake = model.as_fake();
 
         let generate =
             cx.spawn(async move |_cx| port.generate("test", &LLMParameters::default(), None).await);
         // Let the request reach the fake and open its stream.
         cx.run_until_parked();
-        fake.send_last_completion_stream_error(provider_rejection(
-            Some(http_client::StatusCode::BAD_GATEWAY),
-            "502",
-            ProviderErrorCategory::InternalServer,
-        ));
+        fake.send_last_error(
+            &model,
+            provider_rejection(
+                Some(http_client::StatusCode::BAD_GATEWAY),
+                "502",
+                ProviderErrorCategory::InternalServer,
+            ),
+        );
         cx.run_until_parked();
 
         let Err(error) = generate.await else {
@@ -1654,9 +1665,8 @@ mod tests {
     /// [P2] Constraining: automatic control is bounded to reversible admission denial
     #[gpui::test]
     async fn transient_provider_storm_opens_live_inference_circuit(cx: &mut gpui::TestAppContext) {
-        let (port, model, _task) =
+        let (port, fake, model, _task) =
             test_port(cx, Duration::from_secs(300), 2, test_resilience_config());
-        let fake = model.as_fake();
 
         for attempt_index in 0..3 {
             let attempt_port = port.clone();
@@ -1667,11 +1677,14 @@ mod tests {
                     .await
             });
             cx.run_until_parked();
-            fake.send_last_completion_stream_error(provider_rejection(
-                Some(http_client::StatusCode::BAD_GATEWAY),
-                "502",
-                ProviderErrorCategory::InternalServer,
-            ));
+            fake.send_last_error(
+                &model,
+                provider_rejection(
+                    Some(http_client::StatusCode::BAD_GATEWAY),
+                    "502",
+                    ProviderErrorCategory::InternalServer,
+                ),
+            );
             cx.run_until_parked();
             assert!(matches!(attempt.await, Err(InferenceError::Generation(_))));
         }
@@ -1689,7 +1702,7 @@ mod tests {
     /// post: one probe reaches the provider, succeeds, and closes the observed circuit
     #[gpui::test]
     async fn successful_live_half_open_probe_closes_circuit(cx: &mut gpui::TestAppContext) {
-        let (port, model, _task) = test_port(
+        let (port, fake, model, _task) = test_port(
             cx,
             Duration::from_secs(300),
             1,
@@ -1698,7 +1711,6 @@ mod tests {
                 open_duration: Duration::ZERO,
             },
         );
-        let fake = model.as_fake();
 
         let failed_port = port.clone();
         let failed = cx.spawn(async move |_cx| {
@@ -1707,11 +1719,14 @@ mod tests {
                 .await
         });
         cx.run_until_parked();
-        fake.send_last_completion_stream_error(provider_rejection(
-            Some(http_client::StatusCode::BAD_GATEWAY),
-            "502",
-            ProviderErrorCategory::InternalServer,
-        ));
+        fake.send_last_error(
+            &model,
+            provider_rejection(
+                Some(http_client::StatusCode::BAD_GATEWAY),
+                "502",
+                ProviderErrorCategory::InternalServer,
+            ),
+        );
         cx.run_until_parked();
         assert!(matches!(failed.await, Err(InferenceError::Generation(_))));
 
@@ -1722,12 +1737,13 @@ mod tests {
                 .await
         });
         cx.run_until_parked();
-        fake.send_last_completion_stream_event(
+        fake.send_last_event(
+            &model,
             language_model_core::LanguageModelCompletionEvent::Stop(
                 language_model_core::StopReason::EndTurn,
             ),
         );
-        fake.end_last_completion_stream();
+        fake.end_last(&model);
         cx.run_until_parked();
         assert!(probe.await.is_ok());
 
@@ -1759,7 +1775,7 @@ mod tests {
     /// post: the next request fails before dispatch with `InferenceError::CircuitOpen`
     #[gpui::test]
     async fn timeout_storm_opens_live_inference_circuit(cx: &mut gpui::TestAppContext) {
-        let (port, _model, _task) =
+        let (port, _fake, _model, _task) =
             test_port(cx, Duration::from_secs(2), 1, test_resilience_config());
 
         for attempt_index in 0..3 {
@@ -1790,7 +1806,7 @@ mod tests {
     /// post: the request times out at the hint, not the global.
     #[gpui::test]
     async fn request_timeout_hint_overrides_the_global_deadline(cx: &mut gpui::TestAppContext) {
-        let (port, _model, _task) =
+        let (port, _fake, _model, _task) =
             test_port(cx, Duration::from_secs(600), 1, test_resilience_config());
         let mut params = LLMParameters::default();
         params.timeout_hint_secs = Some(2);
@@ -1812,7 +1828,7 @@ mod tests {
     /// post: the deadline fires at the 1800s server cap.
     #[gpui::test]
     async fn request_timeout_hint_is_capped_at_the_server_maximum(cx: &mut gpui::TestAppContext) {
-        let (port, _model, _task) =
+        let (port, _fake, _model, _task) =
             test_port(cx, Duration::from_secs(600), 1, test_resilience_config());
         let mut params = LLMParameters::default();
         params.timeout_hint_secs = Some(999_999);
@@ -1837,9 +1853,8 @@ mod tests {
     async fn permanent_provider_failure_is_observed_without_opening_circuit(
         cx: &mut gpui::TestAppContext,
     ) {
-        let (port, model, _task) =
+        let (port, fake, model, _task) =
             test_port(cx, Duration::from_secs(300), 2, test_resilience_config());
-        let fake = model.as_fake();
         let attempt_port = port.clone();
         let attempt = cx.spawn(async move |_cx| {
             attempt_port
@@ -1847,11 +1862,10 @@ mod tests {
                 .await
         });
         cx.run_until_parked();
-        fake.send_last_completion_stream_error(provider_rejection(
-            None,
-            "499",
-            ProviderErrorCategory::Other,
-        ));
+        fake.send_last_error(
+            &model,
+            provider_rejection(None, "499", ProviderErrorCategory::Other),
+        );
         cx.run_until_parked();
         assert!(matches!(attempt.await, Err(InferenceError::Generation(_))));
 
@@ -1954,9 +1968,8 @@ mod tests {
     // so `completion_count()` (open stream senders) must never exceed 2.
     #[gpui::test]
     async fn concurrency_semaphore_bounds_in_flight_calls(cx: &mut gpui::TestAppContext) {
-        let (port, model, _task) =
+        let (port, fake, model, _task) =
             test_port(cx, Duration::from_secs(300), 2, test_resilience_config());
-        let fake = model.as_fake();
 
         // Start 4 calls
         // Fire 5 non-streaming requests. Each returns a future that resolves
@@ -1999,8 +2012,12 @@ mod tests {
 
         // Close one fake stream — regardless of its terminal validity, dropping
         // the request releases a permit and allows the 3rd request through.
-        let first_request = fake.pending_completions().into_iter().next().unwrap();
-        fake.end_completion_stream(&first_request);
+        let first_request = fake
+            .pending_completions_for(&model)
+            .into_iter()
+            .next()
+            .unwrap();
+        fake.end_stream(&model, &first_request);
         cx.run_until_parked();
 
         assert_eq!(
@@ -2015,9 +2032,8 @@ mod tests {
     /// expect: "Queue wait and stalled stream drain share the admission deadline" [P1]
     #[gpui::test]
     async fn queued_and_established_requests_share_deadline(cx: &mut gpui::TestAppContext) {
-        let (port, model, _receiver) =
+        let (port, fake, _model, _receiver) =
             test_port(cx, Duration::from_secs(2), 1, test_resilience_config());
-        let fake = model.as_fake();
         let first = {
             let port = port.clone();
             cx.spawn(async move |_| {
@@ -2052,9 +2068,8 @@ mod tests {
     async fn streaming_deadline_covers_unpolled_queue_and_drain(cx: &mut gpui::TestAppContext) {
         use futures_util::StreamExt;
         for poll_receiver in [false, true] {
-            let (port, model, _receiver) =
+            let (port, fake, _model, _receiver) =
                 test_port(cx, Duration::from_secs(2), 1, test_resilience_config());
-            let fake = model.as_fake();
             let mut stream = port.generate_stream("stream", &LLMParameters::default(), None);
             assert_eq!(port.admission.available_permits(), 1);
             if poll_receiver {
@@ -2084,7 +2099,8 @@ mod tests {
     async fn streaming_cancellation_releases_permits_with_disabled_deadline(
         cx: &mut gpui::TestAppContext,
     ) {
-        let (port, _model, _receiver) = test_port(cx, Duration::ZERO, 1, test_resilience_config());
+        let (port, _fake, _model, _receiver) =
+            test_port(cx, Duration::ZERO, 1, test_resilience_config());
         let stream = port.generate_stream("stream", &LLMParameters::default(), None);
         cx.run_until_parked();
         cx.executor().advance_clock(Duration::from_secs(3600));
@@ -2107,7 +2123,7 @@ mod tests {
     // request.
     #[gpui::test]
     async fn structured_emit_result_remains_required(cx: &mut gpui::TestAppContext) {
-        let (port, _model, _task) =
+        let (port, _fake, _model, _task) =
             test_port(cx, Duration::from_secs(300), 2, test_resilience_config());
 
         let messages = [ChatMessage::user(

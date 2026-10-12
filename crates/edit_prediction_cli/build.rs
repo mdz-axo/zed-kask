@@ -2,8 +2,8 @@
 // (`version.workspace = true` in crates/zed/Cargo.toml, enforced by
 // `kask/scripts/check-version-sync.sh`). Resolve the version from the
 // workspace root's [workspace.package].version only: the former
-// literal-in-zed-manifest scan (upstream-layout tolerance) fired only in
-// a tree where that sync gate already fails, and when it fired it
+// literal-in-zed-manifest scan (upstream-layout tolerance) fired only in a
+// tree where that sync gate already fails, and when it fired it
 // reported a different version than the app — the split-brain D7 exists
 // to prevent — so it is removed rather than kept as dead tolerance.
 fn zed_pkg_version() -> String {

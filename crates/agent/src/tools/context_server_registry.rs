@@ -1,5 +1,5 @@
 use crate::{AgentToolOutput, AnyAgentTool, ToolCallEventStream, ToolInput, ToolInputPayload};
-use agent_client_protocol::schema::v1 as acp;
+use agent_client_protocol::schema::v2 as acp;
 use anyhow::Result;
 use collections::{BTreeMap, HashMap, HashSet};
 use context_server::{ContextServerId, client::NotificationSubscription};
@@ -743,14 +743,12 @@ impl AnyAgentTool for KaskServerTool {
                     // path: fenced media blocks render deterministically.
                     let mut tool_call_content = Vec::new();
                     for hint in hkask_types::tool_response::display_hints_from_output_text(&text) {
-                        tool_call_content.push(acp::ToolCallContent::Content(acp::Content::new(
-                            acp::ContentBlock::Text(acp::TextContent::new(hint)),
+                        tool_call_content.push(acp::ToolCallContent::Content(Box::new(
+                            acp::Content::new(acp::ContentBlock::Text(acp::TextContent::new(hint))),
                         )));
                     }
                     if !tool_call_content.is_empty() {
-                        event_stream.update_fields(
-                            acp::ToolCallUpdateFields::new().content(tool_call_content),
-                        );
+                        event_stream.update_fields(|update| update.content(tool_call_content));
                     }
                     Ok(AgentToolOutput {
                         raw_output: value,
@@ -1237,18 +1235,18 @@ impl ContextServerTool {
                 match content {
                     context_server::types::ToolResponseContent::Text { text } => {
                         concatenated_text.push_str(&text);
-                        tool_call_content.push(acp::ToolCallContent::Content(acp::Content::new(
+                        tool_call_content.push(acp::ToolCallContent::from(
                             acp::ContentBlock::Text(acp::TextContent::new(text.clone())),
-                        )));
+                        ));
                         llm_output.push(LanguageModelToolResultContent::Text(text.into()));
                     }
                     context_server::types::ToolResponseContent::Image { data, mime_type } => {
-                        tool_call_content.push(acp::ToolCallContent::Content(acp::Content::new(
+                        tool_call_content.push(acp::ToolCallContent::from(
                             acp::ContentBlock::Image(acp::ImageContent::new(
                                 data.clone(),
                                 mime_type.clone(),
                             )),
-                        )));
+                        ));
                         let language_model_image = cx
                             .background_spawn({
                                 let mime_type = mime_type.clone();
@@ -1299,13 +1297,13 @@ impl ContextServerTool {
             for hint in
                 hkask_types::tool_response::display_hints_from_output_text(&concatenated_text)
             {
-                tool_call_content.push(acp::ToolCallContent::Content(acp::Content::new(
-                    acp::ContentBlock::Text(acp::TextContent::new(hint)),
+                tool_call_content.push(acp::ToolCallContent::Content(Box::new(
+                    acp::Content::new(acp::ContentBlock::Text(acp::TextContent::new(hint))),
                 )));
             }
             if !tool_call_content.is_empty() {
                 event_stream
-                    .update_fields(acp::ToolCallUpdateFields::new().content(tool_call_content));
+                    .update_fields(|update| update.content(tool_call_content));
             }
             let raw_output = serde_json::Value::String(concatenated_text);
             Ok(AgentToolOutput {

@@ -7,7 +7,7 @@
 use std::collections::{BTreeMap, HashSet};
 
 use acp_thread::AgentThreadEntry;
-use agent_client_protocol::schema::v1::ToolCallId;
+use agent_client_protocol::schema::v2::ToolCallId;
 use gpui::{AnyElement, Context, Entity, Render, SharedString, Window};
 use hkask_mcp_portfolio::{
     AttributionReport, CharacteristicsReport, ContributionReport, WhatIfReport,

@@ -55,7 +55,7 @@ pub struct SteerContext {
     /// Resume an existing thread (from the thread database) instead of
     /// starting a fresh one. `None` starts a new thread — the historical
     /// behavior. Set via `open_steer_thread`, not by panels directly.
-    pub resume_session_id: Option<agent_client_protocol::schema::v1::SessionId>,
+    pub resume_session_id: Option<agent_client_protocol::schema::v2::SessionId>,
 }
 
 impl SteerContext {
@@ -194,7 +194,7 @@ pub fn open_steer_thread(
     mut context: SteerContext,
     server_tools: &[&str],
     prefixes: &[&str],
-    session_id: agent_client_protocol::schema::v1::SessionId,
+    session_id: agent_client_protocol::schema::v2::SessionId,
     window: &mut Window,
     cx: &mut App,
 ) {

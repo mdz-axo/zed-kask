@@ -114,7 +114,7 @@ pub struct MediaPanel {
     thread_picker: Entity<hkask_steer::ThreadPicker>,
     /// The session id to resume on the next `ensure_steer` — set by
     /// `open_thread`, consumed by `ensure_steer`.
-    pending_resume: Option<agent_client_protocol::schema::v1::SessionId>,
+    pending_resume: Option<agent_client_protocol::schema::v2::SessionId>,
     /// The steer pane's share of the panel height (the bottom of the
     /// split). Drag the divider to change it; double-click the divider to
     /// reset it. In-memory only — the split is not serialized.
@@ -162,7 +162,7 @@ impl MediaPanel {
     /// next render re-wires it against the resumed conversation's thread.
     fn open_thread(
         &mut self,
-        session_id: agent_client_protocol::schema::v1::SessionId,
+        session_id: agent_client_protocol::schema::v2::SessionId,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {

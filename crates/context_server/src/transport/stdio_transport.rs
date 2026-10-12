@@ -14,7 +14,7 @@ use util::process::Child;
 use util::shell::Shell;
 use util::shell_builder::ShellBuilder;
 
-use crate::client::ModelContextServerBinary;
+use crate::client::{ModelContextServerBinary, StdinPrefix};
 use crate::transport::Transport;
 
 /// Minimal env vars a child process needs to function (resolve binaries,
@@ -62,7 +62,9 @@ impl StdioTransport {
         server_id: Arc<str>,
         cx: &AsyncApp,
     ) -> Result<Self> {
-        let builder = ShellBuilder::new(&Shell::System, cfg!(windows)).non_interactive();
+        let builder = ShellBuilder::new(&Shell::System, cfg!(windows))
+            .non_interactive()
+            .literal_args();
         let mut command =
             builder.build_std_command(Some(binary.executable.display().to_string()), &binary.args);
 
@@ -99,10 +101,12 @@ impl StdioTransport {
         let (stdout_sender, stdout_receiver) = async_channel::unbounded::<String>();
         let (stderr_sender, stderr_receiver) = async_channel::unbounded::<String>();
 
+        let stdin_prefix = binary.stdin_prefix;
         let log_server_id = server_id.clone();
         cx.spawn(async move |_| {
             let output_server_id = log_server_id.clone();
-            if let Err(error) = Self::handle_output(stdin, stdout_receiver, output_server_id).await
+            if let Err(error) =
+                Self::handle_output(stdin, stdin_prefix, stdout_receiver, output_server_id).await
             {
                 // A broken pipe is expected when the child exits (clean
                 // shutdown, credential failure, crash) — `handle_output`
@@ -162,6 +166,7 @@ impl StdioTransport {
 
     async fn handle_output<Stdin>(
         stdin: Stdin,
+        stdin_prefix: Option<StdinPrefix>,
         outbound_rx: async_channel::Receiver<String>,
         server_id: Arc<str>,
     ) -> Result<()>
@@ -169,6 +174,10 @@ impl StdioTransport {
         Stdin: AsyncWrite + Unpin + Send + 'static,
     {
         let mut stdin = BufWriter::new(stdin);
+        if let Some(StdinPrefix(prefix)) = stdin_prefix {
+            stdin.write_all(&prefix).await?;
+            stdin.flush().await?;
+        }
         let mut pinned_rx = Box::pin(outbound_rx);
         while let Some(message) = pinned_rx.next().await {
             log::trace!("context server {server_id} outgoing message: {}", message);

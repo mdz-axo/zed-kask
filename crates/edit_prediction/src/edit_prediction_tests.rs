@@ -1,20 +1,24 @@
-use client::{RefreshLlmTokenListener, UserStore, test::FakeServer};
+use client::{
+    Credentials, RefreshLlmTokenListener, UserStore,
+    test::{FakeServer, make_get_authenticated_user_response},
+};
 use clock::FakeSystemClock;
 use clock::ReplicaId;
 use cloud_api_types::{
-    CreateLlmTokenResponse, LlmToken, Organization, OrganizationConfiguration,
-    OrganizationEditPredictionConfiguration, OrganizationId, SettledEditPrediction,
+    CreateLlmTokenResponse, KnownOrUnknown, LlmToken, Organization, OrganizationConfiguration,
+    OrganizationEditPredictionConfiguration, OrganizationId, Plan, SettledEditPrediction,
     SubmitEditPredictionSettledBatchBody, SubmitEditPredictionSettledResponse,
 };
 use cloud_llm_client::{
     EditPredictionRejectReason, EditPredictionRejection, PredictEditsRequestTrigger,
-    RejectEditPredictionsBody,
+    RejectEditPredictionsBody, UsageLimit,
     predict_edits_v3::{
         PredictEditsV3Request, PredictEditsV3Response, RawCompletionChoice, RawCompletionRequest,
         RawCompletionResponse, RawCompletionUsage,
     },
     predict_edits_v4::{PredictEditsV4Request, PredictEditsV4Response},
 };
+use credentials_provider::CredentialsProvider;
 use db::AppDatabase;
 use edit_prediction_types::EditPredictionRequestTrigger;
 use feature_flags::FeatureFlagsSettings;
@@ -24,7 +28,7 @@ use futures::{
 };
 use gpui::App;
 use gpui::{
-    Entity, TestAppContext, UpdateGlobal,
+    AsyncApp, Entity, TestAppContext, UpdateGlobal,
     http_client::{FakeHttpClient, Response},
 };
 use indoc::indoc;
@@ -467,6 +471,87 @@ async fn test_request_events(cx: &mut TestAppContext) {
 
     assert_eq!(prediction.edits.len(), 1);
     assert_eq!(prediction.edits[0].1.as_ref(), " are you?");
+}
+
+#[gpui::test]
+async fn test_edit_history_releases_single_file_worktree_when_buffer_is_dropped(
+    cx: &mut TestAppContext,
+) {
+    let (ep_store, _requests) = init_test_with_fake_client(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/"),
+        json!({
+            "root": { "other.md": "other\n" },
+            "external.md": "one\n\nthree\n",
+        }),
+    )
+    .await;
+    let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/external.md"), cx)
+        })
+        .await
+        .unwrap();
+    let other_buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/root/other.md"), cx)
+        })
+        .await
+        .unwrap();
+    let worktree = project.read_with(cx, |project, cx| {
+        let (worktree, _) = project
+            .find_worktree(Path::new(path!("/external.md")), cx)
+            .unwrap();
+        assert!(worktree.read(cx).is_single_file());
+        assert!(!worktree.read(cx).is_visible());
+        worktree.downgrade()
+    });
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.register_buffer(&buffer, &project, cx);
+        ep_store.register_buffer(&other_buffer, &project, cx);
+    });
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit([(4..4, "two")], None, cx);
+    });
+    project
+        .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
+        .await
+        .unwrap();
+
+    cx.update(|_| drop(other_buffer));
+    cx.run_until_parked();
+    ep_store.read_with(cx, |ep_store, _| {
+        let project_state = &ep_store.projects[&project.entity_id()];
+        assert!(project_state.last_event.is_some());
+    });
+
+    let weak_buffer = buffer.downgrade();
+    cx.update(|_| drop(buffer));
+    cx.run_until_parked();
+    weak_buffer.assert_released();
+    worktree.assert_released();
+
+    let events = ep_store.read_with(cx, |ep_store, cx| {
+        ep_store.edit_history_for_project(&project, cx)
+    });
+    assert_eq!(
+        events
+            .iter()
+            .map(|event| {
+                let zeta_prompt::Event::BufferChange { diff, .. } = event.event.as_ref();
+                diff.as_str()
+            })
+            .collect::<Vec<_>>(),
+        [indoc! {"
+            @@ -1,3 +1,3 @@
+             one
+            -
+            +two
+             three
+        "}],
+    );
 }
 
 #[gpui::test]
@@ -2136,6 +2221,137 @@ async fn test_cloud_timeout_backs_off_zeta_requests(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_zed_cloud_predictions_skip_organizations_without_subscriptions(
+    cx: &mut TestAppContext,
+) {
+    let (ep_store, mut requests) = init_test_with_fake_client(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/root", json!({ "foo.md": "Hello!\nHow\nBye\n" }))
+        .await;
+    let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
+    let buffer = project
+        .update(cx, |project, cx| {
+            let path = project.find_project_path(path!("root/foo.md"), cx).unwrap();
+            project.open_buffer(path, cx)
+        })
+        .await
+        .unwrap();
+    let position = buffer
+        .read_with(cx, |buffer, _cx| buffer.snapshot())
+        .anchor_before(language::Point::new(1, 3));
+    let request_prediction = |ep_store: &Entity<EditPredictionStore>, cx: &mut TestAppContext| {
+        ep_store.update(cx, |ep_store, cx| {
+            ep_store.request_prediction(
+                &project,
+                &buffer,
+                position,
+                PredictEditsRequestTrigger::Other,
+                cx,
+            )
+        })
+    };
+
+    let organization = |id: &str| Organization {
+        id: OrganizationId(id.into()),
+        name: id.into(),
+        is_personal: false,
+    };
+    let mut authenticated_user = make_get_authenticated_user_response(1, "user".into());
+    authenticated_user.organizations = vec![organization("unsubscribed"), organization("paid")];
+    authenticated_user.plans_by_organization.insert(
+        OrganizationId("paid".into()),
+        KnownOrUnknown::Known(Plan::ZedBusiness),
+    );
+    let authenticated_user = serde_json::to_string(&authenticated_user).unwrap();
+    let local_completion_requests = Arc::new(Mutex::new(0));
+    let client = ep_store.read_with(cx, |ep_store, _cx| ep_store.client.clone());
+    client.http_client().as_fake().replace_handler({
+        let local_completion_requests = local_completion_requests.clone();
+        move |old_handler, request| {
+            let authenticated_user = authenticated_user.clone();
+            let local_completion_requests = local_completion_requests.clone();
+            async move {
+                let body = match request.uri().path() {
+                    "/client/users/me" => authenticated_user,
+                    "/v1/completions" => {
+                        *local_completion_requests.lock() += 1;
+                        serde_json::to_string(&RawCompletionResponse {
+                            id: "local".into(),
+                            object: "text_completion".into(),
+                            created: 0,
+                            model: "local".into(),
+                            choices: vec![RawCompletionChoice {
+                                text: String::new(),
+                                finish_reason: Some("stop".into()),
+                            }],
+                            usage: RawCompletionUsage {
+                                prompt_tokens: 0,
+                                completion_tokens: 0,
+                                total_tokens: 0,
+                            },
+                        })
+                        .unwrap()
+                    }
+                    _ => return old_handler(request).await,
+                };
+                Ok(Response::builder().body(body.into()).unwrap())
+            }
+        }
+    });
+    client.override_authenticate(|_| {
+        Task::ready(Ok(Credentials {
+            user_id: 1,
+            access_token: "test".into(),
+        }))
+    });
+    client.sign_in(false, &cx.to_async()).await.unwrap();
+    cx.run_until_parked();
+
+    let blocked_request = request_prediction(&ep_store, cx);
+    cx.run_until_parked();
+    assert_no_predict_request_ready(&mut requests.predict);
+    assert!(matches!(blocked_request.now_or_never(), Some(Ok(None))));
+
+    let set_provider = |provider, cx: &mut TestAppContext| {
+        cx.update_global::<SettingsStore, _>(|settings_store, cx| {
+            settings_store.update_user_settings(cx, |settings| {
+                let edit_predictions = settings
+                    .project
+                    .all_languages
+                    .edit_predictions
+                    .get_or_insert_default();
+                edit_predictions.provider = Some(provider);
+                edit_predictions.open_ai_compatible_api =
+                    Some(settings::CustomEditPredictionProviderSettingsContent {
+                        api_url: Some("http://localhost:8080/v1/completions".into()),
+                        model: Some("local".into()),
+                        prompt_format: Some(settings::EditPredictionPromptFormatContent::Zeta2),
+                        max_output_tokens: Some(64),
+                        prediction_debounce: None,
+                    });
+            });
+        });
+    };
+    cx.update(|cx| cx.set_http_client(client.http_client()));
+    set_provider(settings::EditPredictionProvider::OpenAiCompatibleApi, cx);
+    request_prediction(&ep_store, cx).await.unwrap();
+    assert_eq!(*local_completion_requests.lock(), 1);
+    set_provider(settings::EditPredictionProvider::Zed, cx);
+
+    let user_store = ep_store.read_with(cx, |ep_store, _cx| ep_store.user_store.clone());
+    user_store
+        .update(cx, |user_store, cx| {
+            user_store.set_current_organization(Arc::new(organization("paid")), cx)
+        })
+        .await
+        .unwrap();
+    let paid_request = request_prediction(&ep_store, cx);
+    let (_, paid_response) = requests.predict.next().await.unwrap();
+    paid_response.send(empty_response()).unwrap();
+    paid_request.await.unwrap();
+}
+
+#[gpui::test]
 async fn test_same_frame_duplicate_requests_deduplicated(cx: &mut TestAppContext) {
     let (ep_store, mut requests) = init_test_with_fake_client(cx);
     let fs = FakeFs::new(cx.executor());
@@ -2692,6 +2908,7 @@ fn init_test_with_fake_client_and_legacy_data_collection(
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
         disable_jumps_feature_flag(cx);
+        install_in_memory_credentials_provider(cx);
         // zed-kask: D24 — default.json sets the edit prediction provider to
         // `open_ai_compatible_api` for production (kask completion port
         // interception). Tests expect the upstream Zeta cloud path, so
@@ -2864,6 +3081,76 @@ fn set_test_organization(user_store: &Entity<UserStore>, cx: &mut TestAppContext
             )
         });
     });
+}
+
+#[gpui::test]
+async fn test_free_plan_edit_predictions_ended_for_zed_provider(cx: &mut TestAppContext) {
+    let (ep_store, _requests) = init_test_with_fake_client(cx);
+    let user_store = ep_store.read_with(cx, |ep_store, _| ep_store.user_store.clone());
+
+    let set_plan_and_usage = |plan, amount, cx: &mut TestAppContext| {
+        user_store.update(cx, |user_store, cx| {
+            user_store.set_current_organization_plan_for_test(plan, cx);
+            user_store.update_edit_prediction_usage(
+                EditPredictionUsage(client::RequestUsage {
+                    limit: UsageLimit::Limited(0),
+                    amount,
+                }),
+                cx,
+            );
+            cx.emit(client::user::Event::PrivateUserInfoUpdated);
+        });
+        cx.run_until_parked();
+    };
+    let set_provider = |provider: Option<EditPredictionProvider>, cx: &mut TestAppContext| {
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .get_or_insert_default()
+                        .provider = provider;
+                });
+            });
+        });
+    };
+    let excluded_from_plan = |cx: &mut TestAppContext| {
+        cx.read(|cx| zed_edit_predictions_excluded_from_plan(user_store.read(cx), cx))
+    };
+    let off_for_plan = |cx: &mut TestAppContext| {
+        cx.read(|cx| zed_edit_predictions_off_for_plan(user_store.read(cx), cx))
+    };
+    let notice_shown =
+        |cx: &mut TestAppContext| cx.read(|cx| FreePlanEditPredictionsEndedNotice::dismissed(cx));
+
+    set_provider(None, cx);
+    set_plan_and_usage(Plan::ZedPro, 250, cx);
+    assert!(!excluded_from_plan(cx));
+    assert!(!off_for_plan(cx));
+    assert!(!notice_shown(cx));
+
+    // Local Zeta models don't go through Zed's servers.
+    set_provider(Some(EditPredictionProvider::Ollama), cx);
+    set_plan_and_usage(Plan::ZedFree, 250, cx);
+    assert!(!excluded_from_plan(cx));
+    assert!(!notice_shown(cx));
+
+    // Free users who never accepted a prediction this period don't need to be told.
+    set_provider(None, cx);
+    set_plan_and_usage(Plan::ZedFree, 0, cx);
+    assert!(excluded_from_plan(cx));
+    assert!(off_for_plan(cx));
+    assert!(!notice_shown(cx));
+
+    // Explicitly choosing Zed keeps it on, so the status bar can explain why it isn't working.
+    set_provider(Some(EditPredictionProvider::Zed), cx);
+    assert!(excluded_from_plan(cx));
+    assert!(!off_for_plan(cx));
+
+    set_plan_and_usage(Plan::ZedFree, 250, cx);
+    assert!(notice_shown(cx));
 }
 
 #[gpui::test]
@@ -3260,6 +3547,7 @@ fn init_test(cx: &mut TestAppContext) {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
         disable_jumps_feature_flag(cx);
+        install_in_memory_credentials_provider(cx);
         // zed-kask: D24 — default.json sets the edit prediction provider to
         // `open_ai_compatible_api` for production (kask completion port
         // interception). Tests expect the upstream Zeta cloud path, so
@@ -3276,6 +3564,64 @@ fn disable_jumps_feature_flag(cx: &mut App) {
     cx.update_flags(false, vec![]);
 }
 
+// zed-kask: tests must never touch the OS keychain. The production
+// credentials provider is always the keystore keychain (see
+// `zed_credentials_provider::global`), and upstream's
+// `FakeServer::for_client` sign-in path persists credentials through it —
+// writing real keychain entries from tests on the async-std runtime, which
+// also trips the test scheduler's cross-thread determinism check. Install
+// an in-memory provider global before any `Client::new` reads it.
+#[derive(Default)]
+struct InMemoryCredentialsProvider(
+    parking_lot::Mutex<std::collections::HashMap<String, (String, Vec<u8>)>>,
+);
+
+impl CredentialsProvider for InMemoryCredentialsProvider {
+    fn read_credentials<'a>(
+        &'a self,
+        url: &'a str,
+        _cx: &'a AsyncApp,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<Option<(String, Vec<u8>)>>> + 'a>,
+    > {
+        let entry = self.0.lock().get(url).cloned();
+        async move { Ok(entry) }.boxed_local()
+    }
+
+    fn write_credentials<'a>(
+        &'a self,
+        url: &'a str,
+        username: &'a str,
+        password: &'a [u8],
+        _cx: &'a AsyncApp,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + 'a>> {
+        self.0
+            .lock()
+            .insert(url.to_string(), (username.to_string(), password.to_vec()));
+        async move { Ok(()) }.boxed_local()
+    }
+
+    fn delete_credentials<'a>(
+        &'a self,
+        url: &'a str,
+        _cx: &'a AsyncApp,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + 'a>> {
+        self.0.lock().remove(url);
+        async move { Ok(()) }.boxed_local()
+    }
+}
+
+fn install_in_memory_credentials_provider(cx: &mut App) {
+    if cx
+        .try_global::<zed_credentials_provider::ZedCredentialsProvider>()
+        .is_none()
+    {
+        cx.set_global(zed_credentials_provider::ZedCredentialsProvider(Arc::new(
+            InMemoryCredentialsProvider::default(),
+        )));
+    }
+}
+
 // zed-kask: D24 — override the edit prediction provider back to `zed`
 // in test settings. `default.json` sets it to `open_ai_compatible_api` for
 // production (kask completion port interception), but the test
@@ -3284,9 +3630,15 @@ fn disable_jumps_feature_flag(cx: &mut App) {
 // `is_cloud_zeta` is `false` and requests route through
 // `send_custom_server_request` to an unhandled URL, causing tests to
 // deadlock or fail with 404.
+//
+// The override writes the DEFAULT settings layer, not the user layer:
+// upstream tests clear the user provider (`set_provider(None)`) and
+// expect the default to resolve to `zed`, while the explicit-choice
+// semantics (`raw_user_settings().provider` staying `None`) must hold —
+// a user-layer override would break both.
 fn override_edit_prediction_provider_to_zed(cx: &mut App) {
     SettingsStore::update_global(cx, |store, cx| {
-        store.update_user_settings(cx, |settings| {
+        store.update_default_settings(cx, |settings| {
             settings
                 .project
                 .all_languages
@@ -4401,6 +4753,73 @@ async fn test_edit_prediction_settled_sample_data_requires_observing_all_events_
 
     let missed_request = settled_by_id.remove("prediction-missed").unwrap();
     assert_eq!(missed_request.sample_data, None);
+}
+
+#[gpui::test]
+async fn test_edit_prediction_settled_drops_sample_when_buffer_release_finalized_missed_event(
+    cx: &mut TestAppContext,
+) {
+    let (ep_store, mut requests, project, buffer) = init_sample_capture_test(
+        json!({
+            "LICENSE": MIT_LICENSE,
+            "foo.md": "one\n",
+            "other.md": "two\n",
+        }),
+        cx,
+    )
+    .await;
+    let other_buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/root/other.md"), cx)
+        })
+        .await
+        .unwrap();
+    let boundary = ep_store.update(cx, |ep_store, cx| {
+        ep_store.register_buffer(&other_buffer, &project, cx);
+        let project_state = &ep_store.projects[&project.entity_id()];
+        PromptHistoryBoundary {
+            first_event_seq: project_state.next_last_event_seq,
+            snapshot: None,
+        }
+    });
+
+    other_buffer.update(cx, |buffer, cx| {
+        buffer.edit([(0..0, "updated ")], None, cx);
+    });
+    cx.update(|_| drop(other_buffer));
+    cx.run_until_parked();
+    ep_store.read_with(cx, |ep_store, _| {
+        assert!(ep_store.projects[&project.entity_id()].last_event.is_none());
+    });
+
+    enqueue_sample_capture(
+        &ep_store,
+        &project,
+        &buffer,
+        "prediction-after-close",
+        Point::new(0, 0)..Point::new(1, 0),
+        CapturedPredictionContext {
+            repository_url: None,
+            revision: None,
+            uncommitted_diff: None,
+            buffer_diagnostics: Vec::new(),
+            editable_context: Vec::new(),
+        },
+        Some(boundary),
+        VecDeque::new(),
+        cx,
+    )
+    .await;
+    cx.executor()
+        .advance_clock(EDIT_PREDICTION_SETTLED_QUIESCENCE);
+    cx.run_until_parked();
+
+    let request = requests
+        .settled
+        .next()
+        .await
+        .expect("settled request should be sent");
+    assert_eq!(request.sample_data, None);
 }
 
 #[gpui::test]

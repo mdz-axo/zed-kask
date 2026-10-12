@@ -489,7 +489,7 @@ impl InferenceIpcServer {
                             let provider_id = provider.id().0;
                             provider.provided_models(cx).into_iter().map(move |model| {
                                 ModelListEntry {
-                                    name: format!("{}/{}", provider_id, model.name().0),
+                                    name: format!("{}/{}", provider_id, model.name.0),
                                     provider: provider_id.to_string(),
                                     supports_vision: model.supports_images(),
                                 }

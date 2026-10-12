@@ -1,6 +1,6 @@
 //! Generic provider-prefixed model-name resolution from the `LanguageModelRegistry`.
 //!
-//! Resolves names like `"OpenRouter/openai/gpt-5.2"` to `Arc<dyn LanguageModel>`
+//! Resolves names like `"OpenRouter/openai/gpt-5.2"` to `Arc<LanguageModel>`
 //! instances. Used by `LanguageModelInferencePort::generate_with_model` (model
 //! overrides from MCP servers) and by the composition root (`kask.models.default_model`).
 //! Formerly part of the fusion bridge (`resolve_fusion_models`) — the resolver
@@ -14,7 +14,7 @@ use language_model::{LanguageModel, LanguageModelProviderId, LanguageModelRegist
 
 /// Resolve provider-prefixed model names from the `LanguageModelRegistry`.
 ///
-/// Each name in `model_names` is resolved to an `Arc<dyn LanguageModel>`.
+/// Each name in `model_names` is resolved to an `Arc<LanguageModel>`.
 /// The key in the returned map is the original name string (so callers can
 /// route by name).
 ///
@@ -37,8 +37,8 @@ pub fn resolve_model_names(
     registry: &LanguageModelRegistry,
     model_names: &[String],
     cx: &App,
-) -> (HashMap<String, Arc<dyn LanguageModel>>, HashSet<String>) {
-    let mut resolved: HashMap<String, Arc<dyn LanguageModel>> = HashMap::new();
+) -> (HashMap<String, Arc<LanguageModel>>, HashSet<String>) {
+    let mut resolved: HashMap<String, Arc<LanguageModel>> = HashMap::new();
     let mut unresolvable: HashSet<String> = HashSet::new();
 
     for name in model_names {
@@ -82,7 +82,7 @@ fn resolve_model(
     registry: &LanguageModelRegistry,
     prefixed_name: &str,
     cx: &App,
-) -> Option<Arc<dyn LanguageModel>> {
+) -> Option<Arc<LanguageModel>> {
     // Try to split on the first `/` to get provider/model.
     if let Some((provider_id_str, model_id)) = prefixed_name.split_once('/') {
         let provider_id = LanguageModelProviderId(provider_id_str.to_string().into());
@@ -122,13 +122,13 @@ fn resolve_model(
             // default (text) model, which drops images.
             for model in provider.provided_models(cx) {
                 if override_matches(
-                    model.id().0.as_ref(),
-                    model.name().0.as_ref(),
-                    model.telemetry_id().as_str(),
+                    model.id.0.as_ref(),
+                    model.name.0.as_ref(),
+                    model.telemetry_id.as_str(),
                     model_id,
                     prefixed_name,
                 ) {
-                    return Some(model);
+                    return Some(Arc::new(model));
                 }
             }
         }
@@ -137,15 +137,18 @@ fn resolve_model(
     // No prefix or prefix match failed — search all providers, matching the
     // full string against every key (an unprefixed override can be a slug
     // id, a display name, or a telemetry id).
-    registry.available_models(cx).find(|m| {
-        override_matches(
-            m.id().0.as_ref(),
-            m.name().0.as_ref(),
-            m.telemetry_id().as_str(),
-            prefixed_name,
-            prefixed_name,
-        )
-    })
+    registry
+        .available_models(cx)
+        .find(|m| {
+            override_matches(
+                m.id.0.as_ref(),
+                m.name.0.as_ref(),
+                m.telemetry_id.as_str(),
+                prefixed_name,
+                prefixed_name,
+            )
+        })
+        .map(Arc::new)
 }
 
 #[cfg(test)]

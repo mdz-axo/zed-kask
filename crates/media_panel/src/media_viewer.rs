@@ -17,7 +17,7 @@
 use std::{collections::HashSet, time::Duration};
 
 use acp_thread::AgentThreadEntry;
-use agent_client_protocol::schema::v1::ToolCallId;
+use agent_client_protocol::schema::v2::ToolCallId;
 use gpui::{Context, Entity, Render, SharedString, Task, Window};
 use hkask_mcp_media::{
     tools::jobs::parse_job_list_response,
