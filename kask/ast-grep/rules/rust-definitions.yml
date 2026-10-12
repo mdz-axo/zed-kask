@@ -1,0 +1,70 @@
+# Definition-site index for symbol-anchored citation resolution (UC-3):
+# given a cited file:line, resolve the innermost enclosing definition and
+# its current start line, so a line-shifted citation can be re-anchored
+# mechanically instead of by hand. Names are captured from the `name`
+# field; impl blocks are covered by their methods' function_item spans
+# (innermost wins) and by rust-impls.yml for --find disambiguation.
+# Consumed by kask/scripts/resolve-citation-anchor.sh.
+#
+# Widened 2026-10-11 (the accepted UC-3 follow-up): the 60-citation shift
+# experiment left 13/60 citations unanchorable — const items, type
+# aliases, use paths. Kinds now cover the top-level item vocabulary:
+# functions (incl. trait signatures), structs, enums, traits, mods,
+# consts, statics, type aliases, macro_rules, extern crate, use paths
+# (the `argument` field carries the full path text). `crate_attributes`
+# is NOT a tree-sitter-rust kind (verified 2026-10-11) — inner `#![...]`
+# attributes stay unanchorable. Impl blocks live in rust-impls.yml.
+id: rust-definitions
+language: Rust
+severity: info
+message: definition
+rule:
+  any:
+    - kind: function_item
+      has:
+        field: name
+        pattern: $NAME
+    - kind: function_signature_item
+      has:
+        field: name
+        pattern: $NAME
+    - kind: struct_item
+      has:
+        field: name
+        pattern: $NAME
+    - kind: enum_item
+      has:
+        field: name
+        pattern: $NAME
+    - kind: trait_item
+      has:
+        field: name
+        pattern: $NAME
+    - kind: mod_item
+      has:
+        field: name
+        pattern: $NAME
+    - kind: const_item
+      has:
+        field: name
+        pattern: $NAME
+    - kind: static_item
+      has:
+        field: name
+        pattern: $NAME
+    - kind: type_item
+      has:
+        field: name
+        pattern: $NAME
+    - kind: macro_definition
+      has:
+        field: name
+        pattern: $NAME
+    - kind: extern_crate_declaration
+      has:
+        field: name
+        pattern: $NAME
+    - kind: use_declaration
+      has:
+        field: argument
+        pattern: $NAME

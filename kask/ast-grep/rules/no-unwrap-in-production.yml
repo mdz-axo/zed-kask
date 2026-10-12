@@ -1,0 +1,20 @@
+# .rules: "No `unwrap()` in production code — use `?` to propagate errors;
+# in test code prefer `expect` with a message."
+#
+# Structural, not textual: the pattern matches the call expression, so
+# string literals and comments never match (a textual grep false-positives
+# on both). `not.inside` excludes `#[cfg(test)]` modules by syntax —
+# attributes are children of the item in tree-sitter-rust, so the
+# composite kind+has form is used; a single `#[cfg(test)] mod ...` pattern
+# does not parse (multiple AST roots).
+id: no-unwrap-in-production
+language: Rust
+severity: error
+message: "unwrap() in production code — propagate with `?` (tests: expect with a message)"
+rule:
+  pattern: $X.unwrap()
+  not:
+    inside:
+      kind: mod_item
+      has:
+        pattern: '#[cfg(test)]'

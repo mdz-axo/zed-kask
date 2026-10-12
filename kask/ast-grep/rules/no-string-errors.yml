@@ -1,0 +1,18 @@
+# .rules / check-string-errors.sh scope: "No `Result<_, String>` in
+# library code — string error types discard structured error
+# information; use a thiserror enum (library) or anyhow (application)."
+#
+# Structural, not textual: the pattern matches the generic type node, so
+# a `Result<T, String>` split across lines IS matched (the line-based
+# pass's documented blind spot 1) and a nested-String Ok type —
+# `Result<(String, String), MyError>` — is NOT (the line-based pass's
+# documented blind spot 2: its regex false-positives there). The second
+# generic argument must be exactly the `String` type node.
+# Exclusions applied by the consuming script (check-string-errors.sh):
+# tests/examples dirs, main.rs, and `string-error-ok` marker lines.
+id: no-string-errors
+language: Rust
+severity: error
+message: "Result<_, String> — use a thiserror enum (library) or anyhow (application); string errors discard structured error information"
+rule:
+  pattern: Result<$T, String>
