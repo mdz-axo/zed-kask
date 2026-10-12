@@ -248,6 +248,39 @@ pub(crate) fn resolved_observations_from_snapshots(
     observations
 }
 
+/// The shared Gamma/CLOB request chain: send, read the body, classify HTTP
+/// failures, and parse the body as `T`. `service` names the endpoint family
+/// in error messages ("Gamma", "CLOB"); `what` names the payload in the
+/// parse-failure message.
+async fn fetch_json<T: serde::de::DeserializeOwned>(
+    client: &reqwest::Client,
+    url: &str,
+    query: &[(&str, String)],
+    service: &str,
+    what: &str,
+) -> Result<T, McpToolError> {
+    let response = client
+        .get(url)
+        .query(query)
+        .send()
+        .await
+        .map_err(|e| McpToolError::unavailable(format!("{service} request failed: {e}")))?;
+    let status = response.status();
+    let body = response
+        .text()
+        .await
+        .map_err(|e| McpToolError::unavailable(format!("{service} body read failed: {e}")))?;
+    if !status.is_success() {
+        return Err(classify_http_error(
+            &format!("Polymarket {service}"),
+            status,
+            &body,
+        ));
+    }
+    serde_json::from_str(&body)
+        .map_err(|e| McpToolError::unavailable(format!("{service} {what} parse failed: {e}")))
+}
+
 /// Fetch markets directly (not via events). `closed=true` returns
 /// resolved/closed markets — the resolution-check feed.
 pub async fn fetch_markets(
@@ -255,23 +288,14 @@ pub async fn fetch_markets(
     limit: u32,
     closed: bool,
 ) -> Result<Vec<GammaMarket>, McpToolError> {
-    let url = format!("{GAMMA_BASE}/markets");
-    let response = client
-        .get(&url)
-        .query(&[("limit", limit.to_string()), ("closed", closed.to_string())])
-        .send()
-        .await
-        .map_err(|e| McpToolError::unavailable(format!("Gamma request failed: {e}")))?;
-    let status = response.status();
-    let body = response
-        .text()
-        .await
-        .map_err(|e| McpToolError::unavailable(format!("Gamma body read failed: {e}")))?;
-    if !status.is_success() {
-        return Err(classify_http_error("Polymarket Gamma", status, &body));
-    }
-    serde_json::from_str(&body)
-        .map_err(|e| McpToolError::unavailable(format!("Gamma markets parse failed: {e}")))
+    fetch_json(
+        client,
+        &format!("{GAMMA_BASE}/markets"),
+        &[("limit", limit.to_string()), ("closed", closed.to_string())],
+        "Gamma",
+        "markets",
+    )
+    .await
 }
 
 /// One point on a CLOB price-history series.
@@ -289,27 +313,22 @@ pub async fn fetch_prices_history(
     client: &reqwest::Client,
     token_id: &str,
 ) -> Result<Vec<ClobPricePoint>, McpToolError> {
-    let url = "https://clob.polymarket.com/prices-history";
-    let response = client
-        .get(url)
-        .query(&[("market", token_id), ("interval", "1d"), ("fidelity", "60")])
-        .send()
-        .await
-        .map_err(|e| McpToolError::unavailable(format!("CLOB request failed: {e}")))?;
-    let status = response.status();
-    let body = response
-        .text()
-        .await
-        .map_err(|e| McpToolError::unavailable(format!("CLOB body read failed: {e}")))?;
-    if !status.is_success() {
-        return Err(classify_http_error("Polymarket CLOB", status, &body));
-    }
     #[derive(serde::Deserialize)]
     struct History {
         history: Vec<ClobPricePoint>,
     }
-    let parsed: History = serde_json::from_str(&body)
-        .map_err(|e| McpToolError::unavailable(format!("CLOB prices-history parse failed: {e}")))?;
+    let parsed: History = fetch_json(
+        client,
+        "https://clob.polymarket.com/prices-history",
+        &[
+            ("market", token_id.to_string()),
+            ("interval", "1d".to_string()),
+            ("fidelity", "60".to_string()),
+        ],
+        "CLOB",
+        "prices-history",
+    )
+    .await?;
     Ok(parsed.history)
 }
 
@@ -318,27 +337,18 @@ pub async fn fetch_events(
     client: &reqwest::Client,
     limit: u32,
 ) -> Result<Vec<GammaEvent>, McpToolError> {
-    let url = format!("{GAMMA_BASE}/events");
-    let response = client
-        .get(&url)
-        .query(&[
+    fetch_json(
+        client,
+        &format!("{GAMMA_BASE}/events"),
+        &[
             ("limit", limit.to_string()),
             ("active", "true".to_string()),
             ("closed", "false".to_string()),
-        ])
-        .send()
-        .await
-        .map_err(|e| McpToolError::unavailable(format!("Gamma request failed: {e}")))?;
-    let status = response.status();
-    let body = response
-        .text()
-        .await
-        .map_err(|e| McpToolError::unavailable(format!("Gamma body read failed: {e}")))?;
-    if !status.is_success() {
-        return Err(classify_http_error("Polymarket Gamma", status, &body));
-    }
-    serde_json::from_str(&body)
-        .map_err(|e| McpToolError::unavailable(format!("Gamma events parse failed: {e}")))
+        ],
+        "Gamma",
+        "events",
+    )
+    .await
 }
 
 #[cfg(test)]
