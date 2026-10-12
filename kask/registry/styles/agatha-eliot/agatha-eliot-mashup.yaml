@@ -109,4 +109,7 @@ embedding:
     salience_top_k: null
 
 validation:
-  centroid_distance_max: 0.18
+  # Calibrated 2026-10-11 against the built corpus (18 works, 20,005 passages):
+  # verbatim corpus text 0.328, exemplar-grounded in-domain generation 0.254 —
+  # the inherited 0.18 failed both. Out-of-domain prose measures 0.65+.
+  centroid_distance_max: 0.40

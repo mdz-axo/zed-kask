@@ -67,22 +67,22 @@ works:
 
   - title: "The Big Four"
     slug: big-four
-    url: "https://www.gutenberg.org/cache/epub/70119/pg70119.txt"
+    url: "https://www.gutenberg.org/cache/epub/70114/pg70114.txt"
     type: novel
 
   - title: "The Mystery of the Blue Train"
     slug: mystery-of-blue-train
-    url: "https://www.gutenberg.org/cache/epub/70052/pg70052.txt"
+    url: "https://www.gutenberg.org/cache/epub/72824/pg72824.txt"
     type: novel
 
   - title: "The Seven Dials Mystery"
     slug: seven-dials-mystery
-    url: "https://www.gutenberg.org/cache/epub/1635/pg1635.txt"
+    url: "https://www.gutenberg.org/cache/epub/75288/pg75288.txt"
     type: novel
 
   - title: "The Murder at the Vicarage"
     slug: murder-at-the-vicarage
-    url: "https://www.gutenberg.org/cache/epub/59261/pg59261.txt"
+    url: "https://www.gutenberg.org/cache/epub/78220/pg78220.txt"
     type: novel
 
   # ── Eliot ────────────────────────────────────────────────────────────────
@@ -192,7 +192,9 @@ foundational_rules:
 
 
 validation:
-  centroid_distance_max: 0.20
+  # Calibrated 2026-10-11 against the built corpus: verbatim corpus text 0.328,
+  # in-domain generation 0.254; the inherited 0.20 failed verbatim corpus text.
+  centroid_distance_max: 0.40
   exemplar_count_min: 3
   exemplar_count_max: 7
 
