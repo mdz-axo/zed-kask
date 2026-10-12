@@ -1588,6 +1588,28 @@ mod tool_behavior_tests {
         Ok(())
     }
 
+    /// Isolate `HKASK_ARTIFACTS_DIR` in a fresh tempdir for one test and
+    /// return `(temp, prior)` — the manual prior/set/restore prologue the
+    /// payload-persistence tests share. The explicit restore tail
+    /// ([`restore_artifacts_dir`]) is what these tests pin — the RAII guards
+    /// (`ArtifactsEnvGuard`, `IsolatedArtifacts`) live elsewhere. The
+    /// tempdir is returned, not dropped, so it outlives the call.
+    fn isolate_artifacts_dir() -> (tempfile::TempDir, Option<String>) {
+        let temp = tempfile::TempDir::new().expect("tempdir for artifacts isolation");
+        let prior = std::env::var("HKASK_ARTIFACTS_DIR").ok();
+        unsafe { std::env::set_var("HKASK_ARTIFACTS_DIR", temp.path()) };
+        (temp, prior)
+    }
+
+    /// Restore `HKASK_ARTIFACTS_DIR` to its pre-test value — the manual
+    /// restore tail paired with [`isolate_artifacts_dir`].
+    fn restore_artifacts_dir(prior: Option<String>) {
+        match prior {
+            Some(value) => unsafe { std::env::set_var("HKASK_ARTIFACTS_DIR", value) },
+            None => unsafe { std::env::remove_var("HKASK_ARTIFACTS_DIR") },
+        }
+    }
+
     /// Extension-fidelity round trip: a persisted image's file extension
     /// must match the format sniffed from its bytes. Regression pin for the
     /// JPEG-saved-as-.png defect — DeepInfra's FLUX serve returns JPEG and
@@ -1600,12 +1622,7 @@ mod tool_behavior_tests {
         // tokio Mutex — the guard is held across await points (the persist
         // calls are async); a std guard across an await is a clippy error.
         let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
-        let temp = tempfile::TempDir::new().expect("tempdir for artifacts isolation");
-        // Isolate the artifacts dir so the test never writes into the real
-        // ~/Documents/zk-data tree. Save/restore per the kask env-test
-        // pattern.
-        let prior = std::env::var("HKASK_ARTIFACTS_DIR").ok();
-        unsafe { std::env::set_var("HKASK_ARTIFACTS_DIR", temp.path()) };
+        let (_temp, prior) = isolate_artifacts_dir();
 
         let server = make_server();
 
@@ -1642,11 +1659,7 @@ mod tool_behavior_tests {
             "jpg",
             "re-sniffing the persisted file must agree with its extension"
         );
-
-        match prior {
-            Some(value) => unsafe { std::env::set_var("HKASK_ARTIFACTS_DIR", value) },
-            None => unsafe { std::env::remove_var("HKASK_ARTIFACTS_DIR") },
-        }
+        restore_artifacts_dir(prior);
     }
 
     /// Regression pin for the 2026-08-31 context bomb: the slim tool result
@@ -1657,9 +1670,7 @@ mod tool_behavior_tests {
     #[tokio::test]
     async fn generated_publication_strips_payload_and_returns_paths() {
         let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
-        let temp = tempfile::TempDir::new().expect("tempdir for artifacts isolation");
-        let prior = std::env::var("HKASK_ARTIFACTS_DIR").ok();
-        unsafe { std::env::set_var("HKASK_ARTIFACTS_DIR", temp.path()) };
+        let (_temp, prior) = isolate_artifacts_dir();
 
         let server = make_server();
         use base64::Engine;
@@ -1750,11 +1761,7 @@ mod tool_behavior_tests {
             error.to_string().contains("unrecognized"),
             "the error must name the unrecognized shape"
         );
-
-        match prior {
-            Some(value) => unsafe { std::env::set_var("HKASK_ARTIFACTS_DIR", value) },
-            None => unsafe { std::env::remove_var("HKASK_ARTIFACTS_DIR") },
-        }
+        restore_artifacts_dir(prior);
     }
 
     /// Pins the composition contract of `persist_slim_and_enrich` — the
@@ -1768,9 +1775,7 @@ mod tool_behavior_tests {
     #[tokio::test]
     async fn persist_slim_and_enrich_composes_path_and_display_hint() {
         let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
-        let temp = tempfile::TempDir::new().expect("tempdir for artifacts isolation");
-        let prior = std::env::var("HKASK_ARTIFACTS_DIR").ok();
-        unsafe { std::env::set_var("HKASK_ARTIFACTS_DIR", temp.path()) };
+        let (temp, prior) = isolate_artifacts_dir();
 
         let server = make_server();
         let gallery = server
@@ -1854,11 +1859,7 @@ mod tool_behavior_tests {
         ] {
             assert!(types.contains(expected), "missing OMC type {expected}");
         }
-
-        match prior {
-            Some(value) => unsafe { std::env::set_var("HKASK_ARTIFACTS_DIR", value) },
-            None => unsafe { std::env::remove_var("HKASK_ARTIFACTS_DIR") },
-        }
+        restore_artifacts_dir(prior);
     }
 
     /// A no-op inference port — gallery_refresh without face analysis never
