@@ -149,6 +149,28 @@ pub(crate) fn rank_images_by_tag_similarity(
     ranked
 }
 
+/// One media-block display hint per ranked path that resolves to a gallery
+/// asset — the shared display surface of the tags and semantic search
+/// cores. The caller projects its ranked tuples down to paths (the tuple
+/// shapes differ); the asset lookup and media-block shape are shared.
+fn ranked_image_display_hints<'a>(
+    assets: &[hkask_storage::gallery::ImageRecord],
+    paths: impl Iterator<Item = &'a String>,
+) -> Vec<String> {
+    paths
+        .filter_map(|path| {
+            let image = assets.iter().find(|image| image.relative_path == *path)?;
+            Some(crate::media_block::media_block_with_gallery_asset_id(
+                "image",
+                &image.absolute_path,
+                None,
+                None,
+                Some(&image.id),
+            ))
+        })
+        .collect()
+}
+
 #[tool_router(router = gallery_router, vis = "pub")]
 impl MediaServer {
     // ── Gallery tools ────────────────────────────────────────────────────────
@@ -351,19 +373,8 @@ impl MediaServer {
             .gallery_store
             .list_assets(&ga.gallery_id, 0, i64::MAX as usize)
             .map_err(map_gallery_store_error)?;
-        let display_hints: Vec<String> = ranked
-            .iter()
-            .filter_map(|(path, _, _)| {
-                let image = assets.iter().find(|image| image.relative_path == *path)?;
-                Some(crate::media_block::media_block_with_gallery_asset_id(
-                    "image",
-                    &image.absolute_path,
-                    None,
-                    None,
-                    Some(&image.id),
-                ))
-            })
-            .collect();
+        let display_hints: Vec<String> =
+            ranked_image_display_hints(&assets, ranked.iter().map(|(path, _, _)| path));
 
         let results: Vec<serde_json::Value> = ranked.into_iter().filter_map(|(path, score, matches)| {
             let image = assets.iter().find(|image| image.relative_path == path)?;
@@ -508,19 +519,8 @@ impl MediaServer {
             .gallery_store
             .list_assets(&ga.gallery_id, 0, i64::MAX as usize)
             .map_err(map_gallery_store_error)?;
-        let display_hints: Vec<String> = scored
-            .iter()
-            .filter_map(|(path, _)| {
-                let image = assets.iter().find(|image| image.relative_path == *path)?;
-                Some(crate::media_block::media_block_with_gallery_asset_id(
-                    "image",
-                    &image.absolute_path,
-                    None,
-                    None,
-                    Some(&image.id),
-                ))
-            })
-            .collect();
+        let display_hints: Vec<String> =
+            ranked_image_display_hints(&assets, scored.iter().map(|(path, _)| path));
 
         let results: Vec<serde_json::Value> = scored.into_iter().filter_map(|(path, score)| {
             let image = assets.iter().find(|image| image.relative_path == path)?;
