@@ -4787,6 +4787,34 @@ mod tool_behavior_tests {
         );
     }
 
+    /// Run one educt_export in `format` and return (content, output path,
+    /// parsed export metadata) — the call + path extraction + metadata
+    /// read/parse choreography the durable-export tests share, varying
+    /// exactly the format. The srt test keeps its inline choreography:
+    /// its per-test asserts (existence, cue count, export id, folder name)
+    /// interleave the shared steps.
+    async fn export_content_and_metadata(
+        server: &MediaServer,
+        transcript_id: &str,
+        format: &str,
+    ) -> (serde_json::Value, String, serde_json::Value) {
+        let result = server
+            .educt_export(Parameters(crate::types::EductExportRequest {
+                transcript_id: transcript_id.to_string(),
+                format: format.to_string(),
+            }))
+            .await
+            .expect("export succeeds");
+        let content = content_of(&result);
+        let output = content["output"].as_str().expect("output path").to_string();
+        let metadata_path = content["metadata_path"].as_str().expect("metadata path");
+        let metadata: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(metadata_path).expect("read export metadata"),
+        )
+        .expect("parse export metadata");
+        (content, output, metadata)
+    }
+
     #[tokio::test]
     async fn educt_export_srt_writes_captions() {
         let _artifacts = IsolatedArtifacts::new().await;
@@ -4879,21 +4907,9 @@ mod tool_behavior_tests {
             .await
             .expect("highlight stored");
 
-        let result = server
-            .educt_export(Parameters(crate::types::EductExportRequest {
-                transcript_id: transcript_id.clone(),
-                format: "highlights_csv".to_string(),
-            }))
-            .await
-            .expect("csv export succeeds");
-        let content = content_of(&result);
+        let (content, output, metadata) =
+            export_content_and_metadata(&server, &transcript_id, "highlights_csv").await;
         assert_eq!(content["rows"].as_u64(), Some(1));
-        let output = content["output"].as_str().expect("output path").to_string();
-        let metadata_path = content["metadata_path"].as_str().expect("metadata path");
-        let metadata: serde_json::Value = serde_json::from_str(
-            &std::fs::read_to_string(metadata_path).expect("read export metadata"),
-        )
-        .expect("parse export metadata");
         assert_eq!(metadata["transcript_id"], transcript_id);
         assert_eq!(metadata["format"], "highlights_csv");
         assert_eq!(metadata["effective_params"], content["effective_params"]);
@@ -4909,20 +4925,8 @@ mod tool_behavior_tests {
         let _artifacts = IsolatedArtifacts::new().await;
         let server = make_pass_server("{}".to_string());
         let transcript_id = store_two_word_transcript(&server).await;
-        let result = server
-            .educt_export(Parameters(crate::types::EductExportRequest {
-                transcript_id: transcript_id.clone(),
-                format: "corpus_text".to_string(),
-            }))
-            .await
-            .expect("corpus export succeeds");
-        let content = content_of(&result);
-        let output = content["output"].as_str().expect("output path").to_string();
-        let metadata_path = content["metadata_path"].as_str().expect("metadata path");
-        let metadata: serde_json::Value = serde_json::from_str(
-            &std::fs::read_to_string(metadata_path).expect("read export metadata"),
-        )
-        .expect("parse export metadata");
+        let (content, output, metadata) =
+            export_content_and_metadata(&server, &transcript_id, "corpus_text").await;
         assert_eq!(metadata["transcript_id"], transcript_id);
         assert_eq!(metadata["format"], "corpus_text");
         assert_eq!(metadata["effective_params"], content["effective_params"]);
