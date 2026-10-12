@@ -81,6 +81,27 @@ pub enum RotationError {
 
 /// Re-encrypt a quiesced SQLCipher database under a new passphrase.
 ///
+/// Canonicalize a database path and return it as UTF-8. Rotation and key
+/// verification both resolve the caller's path this way — the canonical
+/// form is what every downstream open and artifact check operates on, so
+/// a missing or non-UTF-8 path must fail identically in both.
+fn canonical_db_path(db_path: &str) -> Result<String, RotationError> {
+    let canonical = std::fs::canonicalize(db_path).map_err(|error| RotationError::Filesystem {
+        path: db_path.to_string(),
+        error,
+    })?;
+    canonical
+        .to_str()
+        .map(|path| path.to_string())
+        .ok_or_else(|| RotationError::Filesystem {
+            path: db_path.to_string(),
+            error: std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Canonical database path is not UTF-8",
+            ),
+        })
+}
+
 /// expect: "My stored data and search results survive a passphrase change" [P1]
 /// pre: every other database consumer has closed its handles
 /// post: a verified encrypted copy replaces the source; canonical embeddings are indexed
@@ -131,19 +152,8 @@ pub fn rotate_passphrase(
     ensure_no_recovery_artifacts(db_path)?;
     // Database::open creates missing files. Rotation must never manufacture a
     // fresh empty source when an interrupted activation removed the original.
-    let canonical = std::fs::canonicalize(db_path).map_err(|error| RotationError::Filesystem {
-        path: db_path.to_string(),
-        error,
-    })?;
-    let db_path = canonical
-        .to_str()
-        .ok_or_else(|| RotationError::Filesystem {
-            path: db_path.to_string(),
-            error: std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "Canonical database path is not UTF-8",
-            ),
-        })?;
+    let canonical = canonical_db_path(db_path)?;
+    let db_path = canonical.as_str();
     ensure_no_recovery_artifacts(db_path)?;
     #[cfg(unix)]
     {
@@ -397,19 +407,8 @@ pub fn export_database_keyed(
 /// pre:  the database file exists
 /// post: Ok(()) proves the passphrase matches; Err names the path and never mutates it
 pub fn verify_database_key(db_path: &str, passphrase: &str) -> Result<(), RotationError> {
-    let canonical = std::fs::canonicalize(db_path).map_err(|error| RotationError::Filesystem {
-        path: db_path.to_string(),
-        error,
-    })?;
-    let db_path = canonical
-        .to_str()
-        .ok_or_else(|| RotationError::Filesystem {
-            path: db_path.to_string(),
-            error: std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "Canonical database path is not UTF-8",
-            ),
-        })?;
+    let canonical = canonical_db_path(db_path)?;
+    let db_path = canonical.as_str();
     let database = Database::open(db_path, passphrase).map_err(|source| {
         RotationError::PassphraseMismatch {
             path: db_path.to_string(),
