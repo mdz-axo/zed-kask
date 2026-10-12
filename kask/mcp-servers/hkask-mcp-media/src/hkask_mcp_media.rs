@@ -3729,11 +3729,12 @@ mod tool_behavior_tests {
         assert_eq!(words[1]["end_ms"], serde_json::json!(1000));
     }
 
-    /// Store a two-word transcript and return its ID.
-    async fn store_two_word_transcript(server: &MediaServer) -> String {
+    /// The two-word timed bundle ("alpha" 0-500ms, "beta" 500-900ms) every
+    /// educt store test stages — the fixture behind `store_two_word_transcript`
+    /// and the stringified-transport pin, which vary only the transport form.
+    fn two_word_bundle() -> crate::transcript::TranscriptBundle {
         use crate::transcript::{TimedWord, TranscriptBundle};
-        use crate::types::EductStoreTranscriptRequest;
-        let bundle = TranscriptBundle {
+        TranscriptBundle {
             words: vec![
                 TimedWord {
                     word: "alpha".to_string(),
@@ -3749,7 +3750,13 @@ mod tool_behavior_tests {
                 },
             ],
             ..TranscriptBundle::new("/tmp/a.wav".to_string(), 1.0, "alpha beta".to_string())
-        };
+        }
+    }
+
+    /// Store a two-word transcript and return its ID.
+    async fn store_two_word_transcript(server: &MediaServer) -> String {
+        use crate::types::EductStoreTranscriptRequest;
+        let bundle = two_word_bundle();
         let stored = server
             .educt_store_transcript(Parameters(EductStoreTranscriptRequest {
                 transcript: hkask_types::AnyJsonValue(
@@ -5008,7 +5015,6 @@ mod tool_behavior_tests {
 
     #[tokio::test]
     async fn educt_store_transcript_accepts_the_stringified_transport_form() {
-        use crate::transcript::{TimedWord, TranscriptBundle};
         use crate::types::EductStoreTranscriptRequest;
 
         // Some MCP transports serialize loosely-typed object params into
@@ -5016,23 +5022,7 @@ mod tool_behavior_tests {
         // object-valued transcript arrived as a string and was rejected).
         // The tool must accept both forms.
         let server = make_server();
-        let bundle = TranscriptBundle {
-            words: vec![
-                TimedWord {
-                    word: "alpha".to_string(),
-                    start_ms: 0,
-                    end_ms: 500,
-                    confidence: None,
-                },
-                TimedWord {
-                    word: "beta".to_string(),
-                    start_ms: 500,
-                    end_ms: 900,
-                    confidence: None,
-                },
-            ],
-            ..TranscriptBundle::new("/tmp/a.wav".to_string(), 1.0, "alpha beta".to_string())
-        };
+        let bundle = two_word_bundle();
         let json_string =
             serde_json::to_string(&bundle).expect("serialize bundle to a JSON string");
         let stored = server
