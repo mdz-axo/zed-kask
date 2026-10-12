@@ -30,17 +30,52 @@ pub(crate) fn compute_budget(lines: usize, profile: Profile) -> (usize, bool) {
     (budget, budget >= lines)
 }
 
+/// Collect the input's lines and compute the profile budget — the shared
+/// prologue of the compress implementations. Returns `None` on passthrough
+/// (the profile's budget covers every line): the caller returns the input
+/// unchanged.
+fn budgeted_lines(input: &str, profile: Profile) -> Option<(Vec<&str>, usize)> {
+    let lines: Vec<&str> = input.lines().collect();
+    let (budget, passthrough) = compute_budget(lines.len(), profile);
+    if passthrough {
+        return None;
+    }
+    Some((lines, budget))
+}
+
 pub(crate) trait CondenserAlgorithm: Send + Sync {
     fn name(&self) -> &str;
     fn default_for(&self) -> &[ContextCategory];
     /// Compress the input and return (compressed_content, health_signals).
     /// `ontology_anchor` provides domain context for saliency weighting (P8.1).
     /// Health signals are empty when the algorithm performed within expected bounds.
+    ///
+    /// The default body carries the shared prologue — collect the input's
+    /// lines, compute the profile budget, and return the input unchanged on
+    /// passthrough — then delegates the budgeted body to
+    /// [`Self::compress_budgeted`].
     fn compress(
         &self,
         input: &str,
         profile: Profile,
-        category: ContextCategory,
+        _category: ContextCategory,
+        ontology_anchor: Option<&OntologyAnchor>,
+    ) -> (String, Vec<CondenserHealthSignal>) {
+        let Some((lines, budget)) = budgeted_lines(input, profile) else {
+            return (input.to_string(), vec![]);
+        };
+        self.compress_budgeted(input, &lines, budget, ontology_anchor)
+    }
+
+    /// The budgeted compression body — `lines` are the input's lines and
+    /// `budget` is the profile's line budget. The passthrough return is
+    /// handled by the [`Self::compress`] default; implementations select
+    /// from `lines` within `budget`.
+    fn compress_budgeted(
+        &self,
+        input: &str,
+        lines: &[&str],
+        budget: usize,
         ontology_anchor: Option<&OntologyAnchor>,
     ) -> (String, Vec<CondenserHealthSignal>);
 }
@@ -58,19 +93,13 @@ impl CondenserAlgorithm for RtkStyleAlgorithm {
             ContextCategory::BuildOutput,
         ]
     }
-    fn compress(
+    fn compress_budgeted(
         &self,
         input: &str,
-        profile: Profile,
-        _category: ContextCategory,
+        lines: &[&str],
+        budget: usize,
         ontology_anchor: Option<&OntologyAnchor>,
     ) -> (String, Vec<CondenserHealthSignal>) {
-        let lines: Vec<&str> = input.lines().collect();
-        let (budget, passthrough) = compute_budget(lines.len(), profile);
-        if passthrough {
-            return (input.to_string(), vec![]);
-        }
-
         // Ontology-aware head/tail split: FIBO financial data gets more tail
         // (summary/conclusion often carries key financial ratios)
         let density_factor = ontology_anchor.map(|a| a.density_factor()).unwrap_or(1.0);
@@ -163,20 +192,14 @@ impl CondenserAlgorithm for WordRankAlgorithm {
             ContextCategory::LogOutput,
         ]
     }
-    fn compress(
+    fn compress_budgeted(
         &self,
-        input: &str,
-        profile: Profile,
-        _category: ContextCategory,
+        _input: &str,
+        lines: &[&str],
+        budget: usize,
         ontology_anchor: Option<&OntologyAnchor>,
     ) -> (String, Vec<CondenserHealthSignal>) {
-        let lines: Vec<&str> = input.lines().collect();
-        let (budget, passthrough) = compute_budget(lines.len(), profile);
-        if passthrough {
-            return (input.to_string(), vec![]);
-        }
-
-        let freq = Self::compute_word_frequencies(&lines);
+        let freq = Self::compute_word_frequencies(lines);
 
         let mut scored: Vec<(usize, f64, &str)> = lines
             .iter()
@@ -192,7 +215,7 @@ impl CondenserAlgorithm for WordRankAlgorithm {
             scored.into_iter().take(budget).map(|(i, _, _)| i).collect();
         selected_indices.sort_unstable();
 
-        let result = join_with_ellipsis(&lines, &selected_indices);
+        let result = join_with_ellipsis(lines, &selected_indices);
         let health = if zero_count > lines.len() / 2 {
             vec![CondenserHealthSignal {
                 algorithm: "word_rank".into(),
@@ -373,19 +396,13 @@ impl CondenserAlgorithm for FlashrankAlgorithm {
             ContextCategory::Unknown,
         ]
     }
-    fn compress(
+    fn compress_budgeted(
         &self,
-        input: &str,
-        profile: Profile,
-        _category: ContextCategory,
+        _input: &str,
+        lines: &[&str],
+        budget: usize,
         _ontology_anchor: Option<&OntologyAnchor>,
     ) -> (String, Vec<CondenserHealthSignal>) {
-        let lines: Vec<&str> = input.lines().collect();
-        let (budget, passthrough) = compute_budget(lines.len(), profile);
-        if passthrough {
-            return (input.to_string(), vec![]);
-        }
-
         let alpha = 0.4f64;
         let beta = 0.3f64;
         let gamma = 0.3f64;
@@ -437,7 +454,7 @@ impl CondenserAlgorithm for FlashrankAlgorithm {
         let filled = selected_indices.len();
         let mut selected_indices: Vec<usize> = selected_indices.into_iter().collect();
         selected_indices.sort_unstable();
-        let result = join_with_ellipsis(&lines, &selected_indices);
+        let result = join_with_ellipsis(lines, &selected_indices);
 
         let health = if filled < budget {
             vec![CondenserHealthSignal {
@@ -920,22 +937,39 @@ mod tests {
             .boxed()
     }
 
+    /// Strategy: any compression profile.
+    fn profile_strategy() -> BoxedStrategy<Profile> {
+        select(&[
+            Profile::Heavy,
+            Profile::Normal,
+            Profile::Soft,
+            Profile::Light,
+        ])
+        .boxed()
+    }
+
+    /// Strategy: any context category.
+    fn category_strategy() -> BoxedStrategy<ContextCategory> {
+        select(&[
+            ContextCategory::ShellCommand,
+            ContextCategory::TestOutput,
+            ContextCategory::BuildOutput,
+            ContextCategory::FileContents,
+            ContextCategory::ConversationHistory,
+            ContextCategory::StructuredData,
+            ContextCategory::LogOutput,
+            ContextCategory::Unknown,
+        ])
+        .boxed()
+    }
+
     // For any input, re-compressing the output produces the same result.
     proptest! {
         #[test]
         fn compression_is_idempotent(
             input in arbitrary_input(),
-            profile in select(&[Profile::Heavy, Profile::Normal, Profile::Soft, Profile::Light]),
-            category in select(&[
-                ContextCategory::ShellCommand,
-                ContextCategory::TestOutput,
-                ContextCategory::BuildOutput,
-                ContextCategory::FileContents,
-                ContextCategory::ConversationHistory,
-                ContextCategory::StructuredData,
-                ContextCategory::LogOutput,
-                ContextCategory::Unknown,
-            ]),
+            profile in profile_strategy(),
+            category in category_strategy(),
         ) {
             let algo = RtkStyleAlgorithm;
             let (first, _) = algo.compress(&input, profile, category, None);
@@ -953,17 +987,8 @@ mod tests {
         #[test]
         fn compression_never_expands(
             input in arbitrary_input(),
-            profile in select(&[Profile::Heavy, Profile::Normal, Profile::Soft, Profile::Light]),
-            category in select(&[
-                ContextCategory::ShellCommand,
-                ContextCategory::TestOutput,
-                ContextCategory::BuildOutput,
-                ContextCategory::FileContents,
-                ContextCategory::ConversationHistory,
-                ContextCategory::StructuredData,
-                ContextCategory::LogOutput,
-                ContextCategory::Unknown,
-            ]),
+            profile in profile_strategy(),
+            category in category_strategy(),
         ) {
             let algo = RtkStyleAlgorithm;
             let (compressed, _) = algo.compress(&input, profile, category, None);
@@ -978,7 +1003,7 @@ mod tests {
         #[test]
         fn flashrank_fallback_never_expands(
             input in arbitrary_input(),
-            profile in select(&[Profile::Heavy, Profile::Normal, Profile::Soft, Profile::Light]),
+            profile in profile_strategy(),
         ) {
             let algo = FlashrankAlgorithm;
             let (compressed, _) =
@@ -994,7 +1019,7 @@ mod tests {
         #[test]
         fn compute_budget_invariants(
             lines in 0usize..10_000usize,
-            profile in select(&[Profile::Heavy, Profile::Normal, Profile::Soft, Profile::Light]),
+            profile in profile_strategy(),
         ) {
             let (budget, passthrough) = compute_budget(lines, profile);
 
