@@ -19,7 +19,7 @@ path = "src/hkask_types.rs"
 hkask-bridge-ontology.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-schemars.workspace = true
+schemars = { workspace = true, features = ["derive"] }
 uuid.workspace = true
 chrono.workspace = true
 thiserror.workspace = true
