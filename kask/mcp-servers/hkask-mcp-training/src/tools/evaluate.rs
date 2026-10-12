@@ -144,46 +144,34 @@ impl TrainingServer {
             }
 
             // Standard methods: parse ChatML messages format.
-            let mut examples: Vec<(String, String)> = Vec::new();
-            let mut skipped = 0;
-            for (i, line) in raw.lines().enumerate() {
-                let trimmed = line.trim();
-                if trimmed.is_empty() {
-                    continue;
-                }
-                skipped += 1;
-                let record: serde_json::Value = match serde_json::from_str(trimmed) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        tracing::warn!(target: "hkask.training.evaluate", line = i + 1, error = %e, "Skipping unparsable test line");
-                        continue;
+            let (mut examples, skipped) = Self::parse_jsonl_dataset(
+                &raw,
+                |line, e| {
+                    tracing::warn!(target: "hkask.training.evaluate", line, error = %e, "Skipping unparsable line");
+                },
+                |record| {
+                    let messages = record.get("messages").and_then(|m| m.as_array())?;
+                    let user_parts: Vec<&str> = messages
+                        .iter()
+                        .filter(|m| m.get("role").and_then(|r| r.as_str()) == Some("user"))
+                        .filter_map(|m| m.get("content").and_then(|c| c.as_str()))
+                        .collect();
+                    if user_parts.iter().all(|part| part.trim().is_empty()) {
+                        return None;
                     }
-                };
-                let messages = match record.get("messages").and_then(|m| m.as_array()) {
-                    Some(ms) => ms,
-                    None => continue,
-                };
-                let user_parts: Vec<&str> = messages
-                    .iter()
-                    .filter(|m| m.get("role").and_then(|r| r.as_str()) == Some("user"))
-                    .filter_map(|m| m.get("content").and_then(|c| c.as_str()))
-                    .collect();
-                if user_parts.iter().all(|part| part.trim().is_empty()) {
-                    continue;
-                }
-                let input = user_parts.join("\n");
-                let expected = messages
-                    .iter()
-                    .rev()
-                    .find(|m| m.get("role").and_then(|r| r.as_str()) == Some("assistant"))
-                    .and_then(|m| m.get("content").and_then(|c| c.as_str()))
-                    .unwrap_or("");
-                if expected.trim().is_empty() {
-                    continue;
-                }
-                examples.push((input, expected.to_string()));
-                skipped -= 1;
-            }
+                    let input = user_parts.join("\n");
+                    let expected = messages
+                        .iter()
+                        .rev()
+                        .find(|m| m.get("role").and_then(|r| r.as_str()) == Some("assistant"))
+                        .and_then(|m| m.get("content").and_then(|c| c.as_str()))
+                        .unwrap_or("");
+                    if expected.trim().is_empty() {
+                        return None;
+                    }
+                    Some((input, expected.to_string()))
+                },
+            );
 
             if examples.is_empty() {
                 return Err(McpToolError::invalid_argument(
@@ -284,17 +272,20 @@ impl TrainingServer {
         .await
     }
 
-    /// MMLU-style benchmark evaluation. Each line in the dataset has:
-    /// `question` (string), `choices` (2–6 non-empty strings), `answer` (available letter A–F),
-    /// `category` (optional string for per-category scoring).
-    async fn eval_benchmark(
-        &self,
+    /// Parse a JSONL evaluation dataset — the shared discipline of both
+    /// evaluation legs: blank lines skip silently, unparsable lines are
+    /// reported through `warn_unparsable` (the 1-based line number and the
+    /// parse error) and skipped, and `skipped` counts non-blank lines minus
+    /// the records the leg accepts. `parse_record` returns the extracted
+    /// example for records the leg accepts, `None` for records it skips.
+    /// The warn is a parameter because tracing targets are compile-time
+    /// callsite constants — each leg passes its own target literal.
+    fn parse_jsonl_dataset<T>(
         raw: &str,
-        adapter_id: &str,
-        model: &str,
-        max_examples: Option<usize>,
-    ) -> Result<serde_json::Value, McpToolError> {
-        let mut questions: Vec<(String, Vec<String>, String, String)> = Vec::new();
+        mut warn_unparsable: impl FnMut(usize, &serde_json::Error),
+        mut parse_record: impl FnMut(serde_json::Value) -> Option<T>,
+    ) -> (Vec<T>, usize) {
+        let mut accepted = Vec::new();
         let mut skipped = 0;
         for (i, line) in raw.lines().enumerate() {
             let trimmed = line.trim();
@@ -305,44 +296,69 @@ impl TrainingServer {
             let record: serde_json::Value = match serde_json::from_str(trimmed) {
                 Ok(v) => v,
                 Err(e) => {
-                    tracing::warn!(target: "hkask.training.evaluate.benchmark", line = i + 1, error = %e, "Skipping unparsable line");
+                    warn_unparsable(i + 1, &e);
                     continue;
                 }
             };
-            let question = record
-                .get("question")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            let choices = record
-                .get("choices")
-                .and_then(|v| v.as_array())
-                .and_then(|arr| {
-                    arr.iter()
-                        .map(|c| {
-                            c.as_str()
-                                .filter(|text| !text.trim().is_empty())
-                                .map(String::from)
-                        })
-                        .collect::<Option<Vec<String>>>()
-                });
-            let Some(choices) = choices.filter(|choices| (2..=6).contains(&choices.len())) else {
-                continue;
-            };
-            let answer = record.get("answer").and_then(|v| v.as_str()).unwrap_or("");
-            let category = record
-                .get("category")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown")
-                .to_string();
-            if question.trim().is_empty() {
-                continue;
+            if let Some(example) = parse_record(record) {
+                accepted.push(example);
+                skipped -= 1;
             }
-            let Some(answer) = choice_letter(answer, choices.len()) else {
-                continue;
-            };
-            questions.push((question.to_string(), choices, answer, category));
-            skipped -= 1;
         }
+        (accepted, skipped)
+    }
+
+    /// MMLU-style benchmark evaluation. Each line in the dataset has:
+    /// `question` (string), `choices` (2–6 non-empty strings), `answer` (available letter A–F),
+    /// `category` (optional string for per-category scoring).
+    async fn eval_benchmark(
+        &self,
+        raw: &str,
+        adapter_id: &str,
+        model: &str,
+        max_examples: Option<usize>,
+    ) -> Result<serde_json::Value, McpToolError> {
+        let (mut questions, skipped) = Self::parse_jsonl_dataset(
+            raw,
+            |line, e| {
+                tracing::warn!(target: "hkask.training.evaluate.benchmark", line, error = %e, "Skipping unparsable line");
+            },
+            |record| {
+                let question = record
+                    .get("question")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let choices = record
+                    .get("choices")
+                    .and_then(|v| v.as_array())
+                    .and_then(|arr| {
+                        arr.iter()
+                            .map(|c| {
+                                c.as_str()
+                                    .filter(|text| !text.trim().is_empty())
+                                    .map(String::from)
+                            })
+                            .collect::<Option<Vec<String>>>()
+                    });
+                let Some(choices) = choices.filter(|choices| (2..=6).contains(&choices.len()))
+                else {
+                    return None;
+                };
+                let answer = record.get("answer").and_then(|v| v.as_str()).unwrap_or("");
+                let category = record
+                    .get("category")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown")
+                    .to_string();
+                if question.trim().is_empty() {
+                    return None;
+                }
+                let Some(answer) = choice_letter(answer, choices.len()) else {
+                    return None;
+                };
+                Some((question.to_string(), choices, answer, category))
+            },
+        );
 
         if questions.is_empty() {
             return Err(McpToolError::invalid_argument(
