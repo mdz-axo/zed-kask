@@ -562,6 +562,23 @@ impl HMemStore {
         Ok(Some(result))
     }
 
+    /// Lease a pooled SQLite connection for an atomic h_mem transition — the
+    /// shared preamble of the atomic operations. `what` names the operation
+    /// in the "… requires a SqliteDriver" error when the driver carries no
+    /// pool; the lease failure is an infrastructure error.
+    fn pooled_sqlite_connection(
+        &self,
+        what: &str,
+    ) -> Result<r2d2::PooledConnection<crate::SqliteConnectionManager>, HMemError> {
+        let pool = self.driver.sqlite_pool().ok_or_else(|| {
+            HMemError::Infra(InfrastructureError::database(format!(
+                "{what} requires a SqliteDriver"
+            )))
+        })?;
+        pool.get()
+            .map_err(|error| HMemError::Infra(InfrastructureError::database(error.to_string())))
+    }
+
     /// Delete a primary EAV row and its related EAV row under one write lock.
     ///
     /// expect: "Deleting related durable records either removes both current keys or preserves both."
@@ -576,14 +593,7 @@ impl HMemStore {
         related_entity: &str,
         related_attribute: &str,
     ) -> Result<bool, HMemError> {
-        let pool = self.driver.sqlite_pool().ok_or_else(|| {
-            HMemError::Infra(InfrastructureError::database(
-                "atomic related-key deletion requires a SqliteDriver",
-            ))
-        })?;
-        let mut connection = pool
-            .get()
-            .map_err(|error| HMemError::Infra(InfrastructureError::database(error.to_string())))?;
+        let mut connection = self.pooled_sqlite_connection("atomic related-key deletion")?;
         let transaction = connection
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
             .map_err(|error| HMemError::Infra(InfrastructureError::database(error.to_string())))?;
@@ -634,14 +644,7 @@ impl HMemStore {
         required_entity: &str,
         required_attribute: &str,
     ) -> Result<Option<Vec<(String, String)>>, HMemError> {
-        let pool = self.driver.sqlite_pool().ok_or_else(|| {
-            HMemError::Infra(InfrastructureError::database(
-                "atomic procedure deletion requires a SqliteDriver",
-            ))
-        })?;
-        let mut connection = pool
-            .get()
-            .map_err(|error| HMemError::Infra(InfrastructureError::database(error.to_string())))?;
+        let mut connection = self.pooled_sqlite_connection("atomic procedure deletion")?;
         let transaction = connection
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
             .map_err(|error| HMemError::Infra(InfrastructureError::database(error.to_string())))?;
@@ -1459,12 +1462,17 @@ mod tests {
         Ok(())
     }
 
-    /// expect: "A commit failure rolls back data and marker on one connection; a later successful batch survives reopen" [P1]
-    /// post: after the operation returns, a second pooled connection sees no failed batch records
-    #[test]
-    fn atomic_batch_commit_failure_is_rolled_back_before_reuse_and_reopen() -> anyhow::Result<()> {
+    /// A file-backed SQLite database with WAL pragmas, sqlite-vec, and the
+    /// full h_mem schema initialized — the fixture the real-WAL-semantics
+    /// tests share (a file-backed pool, not the in-memory driver). `extra`
+    /// runs additional setup SQL on the same initializing connection. The
+    /// directory rides the return as the keep-alive for `path`.
+    fn file_backed_schema_db(
+        filename: &str,
+        extra: Option<&str>,
+    ) -> anyhow::Result<(tempfile::TempDir, std::path::PathBuf)> {
         let directory = tempfile::tempdir()?;
-        let path = directory.path().join("atomic-batch.sqlite");
+        let path = directory.path().join(filename);
         {
             let mut conn = rusqlite::Connection::open(&path)?;
             crate::init_wal_pragmas(&mut conn)?;
@@ -1473,15 +1481,28 @@ mod tests {
                 &include_str!("core/sql/schema.sql")
                     .replace("$DIM", &crate::embedding_dim().to_string()),
             )?;
-            conn.execute_batch(
+            if let Some(extra) = extra {
+                conn.execute_batch(extra)?;
+            }
+        }
+        Ok((directory, path))
+    }
+
+    /// expect: "A commit failure rolls back data and marker on one connection; a later successful batch survives reopen" [P1]
+    /// post: after the operation returns, a second pooled connection sees no failed batch records
+    #[test]
+    fn atomic_batch_commit_failure_is_rolled_back_before_reuse_and_reopen() -> anyhow::Result<()> {
+        let (_directory, path) = file_backed_schema_db(
+            "atomic-batch.sqlite",
+            Some(
                 "CREATE TABLE commit_parent (id INTEGER PRIMARY KEY);
                  CREATE TABLE commit_child (parent_id INTEGER REFERENCES commit_parent(id)
                      DEFERRABLE INITIALLY DEFERRED);
                  CREATE TRIGGER fail_at_commit AFTER INSERT ON hmems
                  WHEN NEW.entity = 'batch:marker'
                  BEGIN INSERT INTO commit_child VALUES (1); END;",
-            )?;
-        }
+            ),
+        )?;
         let pool = r2d2::Pool::builder().max_size(2).build(
             crate::SqliteConnectionManager::file(&path).with_init(crate::init_wal_pragmas),
         )?;
@@ -1613,17 +1634,7 @@ mod tests {
     #[test]
     fn concurrent_updates_on_a_wal_pool_do_not_fail_with_stale_snapshot_busy() -> anyhow::Result<()>
     {
-        let directory = tempfile::tempdir()?;
-        let path = directory.path().join("concurrent-update.sqlite");
-        {
-            let mut conn = rusqlite::Connection::open(&path)?;
-            crate::init_wal_pragmas(&mut conn)?;
-            crate::core::connection::init_sqlite_vec_on(&conn)?;
-            conn.execute_batch(
-                &include_str!("core/sql/schema.sql")
-                    .replace("$DIM", &crate::embedding_dim().to_string()),
-            )?;
-        }
+        let (_directory, path) = file_backed_schema_db("concurrent-update.sqlite", None)?;
         let pool = r2d2::Pool::builder().max_size(8).build(
             crate::SqliteConnectionManager::file(&path).with_init(crate::init_wal_pragmas),
         )?;
