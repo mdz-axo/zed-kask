@@ -272,7 +272,39 @@ impl MediaServer {
         .await
     }
 
-    // ── Audio tools ─────────────────────────────────────────────────────────
+    // ── Audio tools ─────────────────────────────────────────────────
+
+    /// Transcribe `audio_url` into a `TranscriptBundle`: admit the local
+    /// input, validate network URLs for SSRF (local paths skip the network
+    /// validator — see `is_local_media_path`), then run the provider
+    /// transcription. The admission guard stays at each tool body so its
+    /// scope covers the whole tool, not just the generate.
+    async fn transcribe_to_bundle(
+        &self,
+        audio_url: &str,
+        language: &Option<String>,
+    ) -> Result<TranscriptBundle, McpToolError> {
+        ensure_local_input_exists(audio_url)?;
+        if !crate::is_local_media_path(audio_url) {
+            validate_tool_url_with_dns(audio_url).await?;
+        }
+        let media_params = hkask_types::MediaGenerateParams {
+            audio_url: Some(audio_url.to_string()),
+            language: language.clone(),
+            ..Default::default()
+        };
+        let raw = self
+            .vision_port
+            .media_generate("transcribe", &media_params)
+            .await
+            .map_err(|e| classify_inference_error("Transcription failed", e))?;
+        Ok(transcript_bundle_from_raw(
+            &raw,
+            audio_url.to_string(),
+            language.clone(),
+            0.0,
+        ))
+    }
 
     #[tool(
         description = "Transcribe audio and return a synchronized TranscriptBundle with word-level timings (full_text carries the plain text). Enables interactive highlighting and click-to-seek in frontends, and is the ingest format for the educt transcript layers."
@@ -286,26 +318,7 @@ impl MediaServer {
     ) -> Result<String, McpToolError> {
         execute_tool(self, "transcribe_bundle", async {
             let _admission = self.admit_heavy_operation()?;
-            ensure_local_input_exists(&audio_url)?;
-            // Local recordings and fetched media are the primary transcript
-            // sources; the SSRF validator is for network URLs (see
-            // `is_local_media_path`).
-            if !crate::is_local_media_path(&audio_url) {
-                validate_tool_url_with_dns(&audio_url).await?;
-            }
-
-            let media_params = hkask_types::MediaGenerateParams {
-                audio_url: Some(audio_url.clone()),
-                language: language.clone(),
-                ..Default::default()
-            };
-            let raw = self
-                .vision_port
-                .media_generate("transcribe", &media_params)
-                .await
-                .map_err(|e| classify_inference_error("Transcription failed", e))?;
-
-            let bundle = transcript_bundle_from_raw(&raw, audio_url.clone(), language.clone(), 0.0);
+            let bundle = self.transcribe_to_bundle(&audio_url, &language).await?;
 
             Ok(serde_json::to_value(&bundle)
                 .unwrap_or_else(|_| serde_json::json!({"error": "Failed to serialize bundle"})))
@@ -326,43 +339,14 @@ impl MediaServer {
     ) -> Result<String, McpToolError> {
         execute_tool(self, "transcribe_and_store", async {
             let _admission = self.admit_heavy_operation()?;
-            ensure_local_input_exists(&audio_url)?;
-            // Same local-path rule as transcribe_bundle: the SSRF validator
-            // is for network URLs (see `is_local_media_path`).
-            if !crate::is_local_media_path(&audio_url) {
-                validate_tool_url_with_dns(&audio_url).await?;
-            }
-
-            let media_params = hkask_types::MediaGenerateParams {
-                audio_url: Some(audio_url.clone()),
-                language: language.clone(),
-                ..Default::default()
-            };
-            let raw = self
-                .vision_port
-                .media_generate("transcribe", &media_params)
-                .await
-                .map_err(|e| classify_inference_error("Transcription failed", e))?;
-
-            let bundle = transcript_bundle_from_raw(&raw, audio_url.clone(), language.clone(), 0.0);
+            let bundle = self.transcribe_to_bundle(&audio_url, &language).await?;
 
             let driver = &**self.gallery_store.driver();
-            let summary = crate::transcript_store::store_transcript(
+            crate::tools::educt::store_transcript_summary_value(
                 driver,
                 &bundle,
                 gallery_asset_id.as_deref(),
             )
-            .map_err(crate::tools::educt::map_store_error)?;
-
-            let mut result = serde_json::to_value(&summary)
-                .map_err(|e| McpToolError::internal(format!("serialize summary: {e}")))?;
-            if !summary.has_word_timings {
-                result["degradation"] = serde_json::json!(
-                    "no word-level timings — stored for text/segments only; layers \
-                     cannot anchor (NoWordTimings)"
-                );
-            }
-            Ok(result)
         })
         .await
     }

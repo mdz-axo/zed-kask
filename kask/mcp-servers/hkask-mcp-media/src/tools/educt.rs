@@ -370,6 +370,28 @@ fn is_audio_path(path: &str) -> bool {
         .any(|extension| lower.ends_with(extension))
 }
 
+/// Store `bundle` as a transcript record and render the summary JSON with
+/// the no-word-timings degradation surfaced when timings are absent — the
+/// shared tail of `educt_store_transcript` and audio's
+/// `transcribe_and_store`.
+pub(crate) fn store_transcript_summary_value(
+    driver: &dyn hkask_storage::database::driver::DatabaseDriver,
+    bundle: &TranscriptBundle,
+    gallery_asset_id: Option<&str>,
+) -> Result<serde_json::Value, McpToolError> {
+    let summary = transcript_store::store_transcript(driver, bundle, gallery_asset_id)
+        .map_err(map_store_error)?;
+    let mut result = serde_json::to_value(&summary)
+        .map_err(|e| McpToolError::internal(format!("serialize summary: {e}")))?;
+    if !summary.has_word_timings {
+        result["degradation"] = serde_json::json!(
+            "no word-level timings — stored for text/segments only; layers \
+             cannot anchor (NoWordTimings)"
+        );
+    }
+    Ok(result)
+}
+
 #[tool_router(router = educt_router, vis = "pub")]
 impl MediaServer {
     #[tool(
@@ -391,18 +413,7 @@ impl MediaServer {
                 ))
             })?;
             let driver = &**self.gallery_store.driver();
-            let summary =
-                transcript_store::store_transcript(driver, &bundle, gallery_asset_id.as_deref())
-                    .map_err(map_store_error)?;
-            let mut result = serde_json::to_value(&summary)
-                .map_err(|e| McpToolError::internal(format!("serialize summary: {e}")))?;
-            if !summary.has_word_timings {
-                result["degradation"] = serde_json::json!(
-                    "no word-level timings — stored for text/segments only; layers \
-                     cannot anchor (NoWordTimings)"
-                );
-            }
-            Ok(result)
+            store_transcript_summary_value(driver, &bundle, gallery_asset_id.as_deref())
         })
         .await
     }
