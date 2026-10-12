@@ -161,6 +161,36 @@ interior quantiles by source, refuses to overwrite output, and reports source
 coverage plus the selected `:0` count. It is a pilot scheduler, not a substitute
 for source-furniture filtering or retrieval calibration.
 
+### Calibration-run repair record (2026-10-10/11)
+
+The 2026-10-10 reseal above left one loose end this section closes. The
+zk-ref-open release bundle still named the pre-R5 run, and the installer's
+corpus stage (`install_corpus_bundle`,
+`kask/scripts/build/install-common.sh`) is the registration authority: it
+re-registers the release bundle into the curator manifest whenever the
+manifest's registered `run_id` mismatches the bundle's. A 2026-10-11 13:19
+install run clobbered a manual manifest repoint this way — same bundle in,
+same registration out. The durable fix was to republish the release from the
+repaired run: `kask/registry/zk-ref-open/bundle.json` names run `3f7533d6…`
+(278,670 passages), and all four parts were re-downloaded from the release
+and hash-verified against the committed manifest (4/4 OK). The up-to-date
+gate now converges — registered `run_id` == release `run_id` == committed
+manifest `run_id` — so install runs skip the corpus stage instead of
+clobbering the registration. Commits: `d81d70bc2c` (R5 provenance tier),
+`50bcd6ebaf` (dispatch stamps + the reseal tooling), `9b658c05f1` (the
+registry bundle repoint), `de18993c6d` (admission scoped to read-table
+schemas).
+
+The repair goal (`9c946da3`) recorded intake prediction 0.8, resolved
+achieved — Brier 0.04. Its turn-end memory ingestion never ran (a severed
+turn): the kanban DB holds the full create/judge/score chain, but zero
+curator-memory h_mems exist under `curator:goal:9c946da3…`, so the normal
+acknowledge path has no receipt. This section plus the commits are the
+goal's durable record; the curator-memory batch record
+`kanban:goal-retention`/`batch_prune_2026-10-11_corpus-repair` cites this
+location (the operator-approved batch-record path; precedent
+`batch_prune_2026-10-07_spreadsheet`).
+
 ### Document size and containment
 
 Normal PDF conversion passes the contained canonical path to Poppler and uses
