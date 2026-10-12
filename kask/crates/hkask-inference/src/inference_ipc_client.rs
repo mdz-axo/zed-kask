@@ -61,7 +61,6 @@ use hkask_types::{
     ChatMessage, ChatToolDefinition, EmbeddingGenerationError, InferenceError, InferencePort,
     InferenceResult, ToolDispatchPort,
 };
-use std::future::Future;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 
@@ -698,9 +697,7 @@ impl InferencePort for InferenceIpcClient {
         prompt: &str,
         parameters: &LLMParameters,
         tools: Option<&[ChatToolDefinition]>,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>,
-    > {
+    ) -> hkask_types::InferenceFuture<'_> {
         // No override — the same construction `generate_with_model` runs with
         // `model_override: None` (the params default this body used to rely on).
         self.generate_with_model(prompt, parameters, None, tools)
@@ -712,9 +709,7 @@ impl InferencePort for InferenceIpcClient {
         parameters: &LLMParameters,
         model_override: Option<&str>,
         tools: Option<&[ChatToolDefinition]>,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>,
-    > {
+    ) -> hkask_types::InferenceFuture<'_> {
         let params = InferenceParams {
             prompt: Some(prompt.to_string()),
             parameters: parameters.clone(),
@@ -732,9 +727,7 @@ impl InferencePort for InferenceIpcClient {
         parameters: &LLMParameters,
         model_override: Option<&str>,
         tools: Option<&[ChatToolDefinition]>,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>,
-    > {
+    ) -> hkask_types::InferenceFuture<'_> {
         let params = InferenceParams {
             messages: Some(messages.to_vec()),
             parameters: parameters.clone(),
@@ -756,9 +749,7 @@ impl InferencePort for InferenceIpcClient {
         images: &[String],
         parameters: &LLMParameters,
         model_override: Option<&str>,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>,
-    > {
+    ) -> hkask_types::InferenceFuture<'_> {
         let params = InferenceParams {
             prompt: Some(prompt.to_string()),
             images: Some(images.to_vec()),
@@ -811,15 +802,7 @@ impl InferencePort for InferenceIpcClient {
         async move { this.rerank_documents(&model, &query, &documents).await }.boxed()
     }
 
-    fn list_models<'a>(
-        &'a self,
-    ) -> std::pin::Pin<
-        Box<
-            dyn std::future::Future<Output = Result<Vec<hkask_types::ModelEntry>, InferenceError>>
-                + Send
-                + 'a,
-        >,
-    > {
+    fn list_models<'a>(&'a self) -> hkask_types::PortFuture<'a, Vec<hkask_types::ModelEntry>> {
         let this = self;
         Box::pin(async move {
             let entries = this.call_list_models().await.map_err(|e| {
@@ -851,9 +834,7 @@ impl ToolDispatchPort for InferenceIpcClient {
         server: &'a str,
         tool: &'a str,
         allowed: &'a [String],
-    ) -> std::pin::Pin<
-        Box<dyn Future<Output = Result<ChatToolDefinition, InferenceError>> + Send + 'a>,
-    > {
+    ) -> hkask_types::PortFuture<'a, ChatToolDefinition> {
         Box::pin(async move { self.get_tool_definition(server, tool, allowed).await })
     }
 
@@ -863,9 +844,7 @@ impl ToolDispatchPort for InferenceIpcClient {
         tool: &'a str,
         args: serde_json::Value,
         allowed: &'a [String],
-    ) -> std::pin::Pin<
-        Box<dyn Future<Output = Result<serde_json::Value, InferenceError>> + Send + 'a>,
-    > {
+    ) -> hkask_types::PortFuture<'a, serde_json::Value> {
         let server = server.to_string();
         let tool = tool.to_string();
         let allowed = allowed.to_vec();
@@ -881,9 +860,7 @@ impl hkask_types::WorktreeSpawnPort for InferenceIpcClient {
         worktree_name: Option<&'a str>,
         base_ref: Option<&'a str>,
         allowed_tools: &'a [String],
-    ) -> std::pin::Pin<
-        Box<dyn Future<Output = Result<String, hkask_types::InferenceError>> + Send + 'a>,
-    > {
+    ) -> hkask_types::PortFuture<'a, String> {
         Box::pin(async move {
             let info = self
                 .create_worktree_thread(prompt, title, worktree_name, base_ref, allowed_tools)

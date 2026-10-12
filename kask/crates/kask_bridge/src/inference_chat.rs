@@ -950,9 +950,7 @@ impl LanguageModelInferencePort {
         request: LanguageModelRequest,
         model_override: Option<String>,
         timeout_hint_secs: Option<u64>,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>,
-    > {
+    ) -> hkask_types::InferenceFuture<'_> {
         let (tx_reply, rx_reply) = oneshot::channel();
         async move {
             self.tx
@@ -1081,9 +1079,7 @@ impl InferencePort for LanguageModelInferencePort {
         prompt: &str,
         parameters: &LLMParameters,
         tools: Option<&[ChatToolDefinition]>,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>,
-    > {
+    ) -> hkask_types::InferenceFuture<'_> {
         self.generate_with_model(prompt, parameters, None, tools)
     }
 
@@ -1093,9 +1089,7 @@ impl InferencePort for LanguageModelInferencePort {
         parameters: &LLMParameters,
         model_override: Option<&str>,
         tools: Option<&[ChatToolDefinition]>,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>,
-    > {
+    ) -> hkask_types::InferenceFuture<'_> {
         let messages = prompt_messages(prompt);
         self.generate_with_messages(&messages, parameters, model_override, tools)
     }
@@ -1106,9 +1100,7 @@ impl InferencePort for LanguageModelInferencePort {
         parameters: &LLMParameters,
         model_override: Option<&str>,
         tools: Option<&[ChatToolDefinition]>,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>,
-    > {
+    ) -> hkask_types::InferenceFuture<'_> {
         let request = self.build_request(messages, parameters, tools);
         self.dispatch_completion(
             request,
@@ -1129,9 +1121,7 @@ impl InferencePort for LanguageModelInferencePort {
         images: &[String],
         parameters: &LLMParameters,
         model_override: Option<&str>,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>,
-    > {
+    ) -> hkask_types::InferenceFuture<'_> {
         // Vision models receive the task with its image, matching their multimodal
         // user-message contract rather than relying on a separate system instruction.
         let messages = vec![ChatMessage::user(prompt.to_string())];
@@ -1330,9 +1320,7 @@ impl InferencePort for NoModelInferencePort {
         _prompt: &str,
         _parameters: &LLMParameters,
         _tools: Option<&[ChatToolDefinition]>,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>,
-    > {
+    ) -> hkask_types::InferenceFuture<'_> {
         Box::pin(async {
             Err(InferenceError::Generation(
                 "No default LanguageModel configured — configure one in Settings → AI \
