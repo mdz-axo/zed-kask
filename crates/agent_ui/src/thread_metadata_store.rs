@@ -1895,6 +1895,8 @@ mod tests {
             ThreadMetadataStore::init_global(cx);
             ThreadStore::init_global(cx);
             language_model::LanguageModelRegistry::test(cx);
+            // Use an isolated DB so parallel tests can't overwrite our global key.
+            cx.set_global(db::AppDatabase::test_new());
         });
         cx.run_until_parked();
     }
