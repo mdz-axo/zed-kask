@@ -127,6 +127,19 @@ impl SerapiProvider {
 
     /// Extract a YouTube video ID from a URL or raw ID string.
     fn extract_video_id(query: &str) -> Option<String> {
+        // A valid 11-char YouTube video ID (alphanumeric + `_`/`-`) from the
+        // start of `candidate` — the shared tail of the URL-marker parses.
+        fn valid_video_id(candidate: &str) -> Option<String> {
+            let id: String = candidate.chars().take(11).collect();
+            if id.len() == 11
+                && id
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+            {
+                return Some(id);
+            }
+            None
+        }
         // Direct 11-char video ID (alphanumeric + _ -)
         if query.len() == 11
             && query
@@ -137,52 +150,42 @@ impl SerapiProvider {
         }
         // youtube.com/watch?v=VIDEO_ID
         if let Some(pos) = query.find("v=") {
-            let after = &query[pos + 2..];
-            let id: String = after.chars().take(11).collect();
-            if id.len() == 11
-                && id
-                    .chars()
-                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
-            {
+            if let Some(id) = valid_video_id(&query[pos + 2..]) {
                 return Some(id);
             }
         }
         // youtu.be/VIDEO_ID
         if let Some(pos) = query.find("youtu.be/") {
-            let after = &query[pos + 9..];
-            let id: String = after.chars().take(11).collect();
-            if id.len() == 11
-                && id
-                    .chars()
-                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
-            {
+            if let Some(id) = valid_video_id(&query[pos + 9..]) {
                 return Some(id);
             }
         }
         None
     }
 
-    /// Fetch a YouTube transcript via SerpAPI's youtube_video_transcript engine.
-    async fn fetch_transcript(&self, video_id: &str) -> Result<ProviderSearchOutput, WebError> {
-        let params: Vec<(&str, String)> = vec![
-            ("v", video_id.to_string()),
-            ("api_key", self.api_key.clone()),
-            ("engine", "youtube_video_transcript".to_string()),
-        ];
-
+    /// Send a SerpAPI GET with `params` and return the response body,
+    /// classifying a non-success status: 401/403 auth → unavailable, 429 →
+    /// rate-limited, else → provider error with the sanitized body. `label`
+    /// names the request in the transport-failure and generic-error messages
+    /// ("SerpAPI" or "SerpAPI transcript"); the auth, rate-limit, and
+    /// body-read messages are constant.
+    async fn get_classified(
+        &self,
+        params: &[(&str, String)],
+        label: &str,
+    ) -> Result<String, WebError> {
         let resp = self
             .client
             .get(self.base)
-            .query(&params)
+            .query(params)
             .send()
             .await
             .map_err(|e| {
                 WebError::ProviderUnavailable(format!(
-                    "SerpAPI transcript request failed: {}",
+                    "{label} request failed: {}",
                     e.without_url()
                 ))
             })?;
-
         let status = resp.status();
         let body = resp.text().await.map_err(|e| {
             WebError::ProviderUnavailable(format!("Serapi body read failed: {}", e.without_url()))
@@ -192,11 +195,22 @@ impl SerapiProvider {
                 401 | 403 => WebError::ProviderUnavailable(format!("SerpAPI auth error: {status}")),
                 429 => WebError::RateLimited(format!("SerpAPI rate limited: {status}")),
                 _ => WebError::ProviderError(format!(
-                    "SerpAPI transcript error {status}: {}",
+                    "{label} error {status}: {}",
                     hkask_inference::openai_compat::sanitize_error_body(&body)
                 )),
             });
         }
+        Ok(body)
+    }
+
+    /// Fetch a YouTube transcript via SerpAPI's youtube_video_transcript engine.
+    async fn fetch_transcript(&self, video_id: &str) -> Result<ProviderSearchOutput, WebError> {
+        let params: Vec<(&str, String)> = vec![
+            ("v", video_id.to_string()),
+            ("api_key", self.api_key.clone()),
+            ("engine", "youtube_video_transcript".to_string()),
+        ];
+        let body = self.get_classified(&params, "SerpAPI transcript").await?;
 
         let parsed: serde_json::Value = serde_json::from_str(&body).map_err(|e| {
             WebError::ProviderError(format!("Failed to parse SerpAPI transcript response: {e}"))
@@ -307,33 +321,7 @@ impl WebSearchProvider for SerapiProvider {
         ];
         params.extend(self.engine_params(query));
 
-        let resp = self
-            .client
-            .get(self.base)
-            .query(&params)
-            .send()
-            .await
-            .map_err(|e| {
-                WebError::ProviderUnavailable(format!(
-                    "SerpAPI request failed: {}",
-                    e.without_url()
-                ))
-            })?;
-
-        let status = resp.status();
-        let body = resp.text().await.map_err(|e| {
-            WebError::ProviderUnavailable(format!("Serapi body read failed: {}", e.without_url()))
-        })?;
-        if !status.is_success() {
-            return Err(match status.as_u16() {
-                401 | 403 => WebError::ProviderUnavailable(format!("SerpAPI auth error: {status}")),
-                429 => WebError::RateLimited(format!("SerpAPI rate limited: {status}")),
-                _ => WebError::ProviderError(format!(
-                    "SerpAPI error {status}: {}",
-                    hkask_inference::openai_compat::sanitize_error_body(&body)
-                )),
-            });
-        }
+        let body = self.get_classified(&params, "SerpAPI").await?;
 
         let parsed: serde_json::Value = serde_json::from_str(&body).map_err(|e| {
             WebError::ProviderError(format!("Failed to parse SerpAPI response: {e}"))
