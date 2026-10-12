@@ -902,3 +902,7 @@ pub(crate) use driver_model::{
     IMPLIED_GROWTH_HI, IMPLIED_GROWTH_LO, ProjectedFinancialModel, ProjectionAssumptions,
     ProjectionError, implied_growth, implied_net_margin_at_growth, project_financial_model,
 };
+
+// ── Shared test fixture — `financial_model/test_history.rs`
+#[cfg(test)]
+mod test_history;
