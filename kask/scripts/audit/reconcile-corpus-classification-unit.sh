@@ -16,6 +16,8 @@ for command in jq sort cmp sha256sum; do
         exit 69
     fi
 done
+here=$(cd "$(dirname "$0")" && pwd)
+source "$here/classification-shape.sh"
 if [[ ! -f "$queue" ]]; then
     echo "queue does not exist: $queue" >&2
     exit 66
@@ -126,19 +128,7 @@ if ! cmp -s "$input_refs" "$output_refs"; then
     echo "failed unit input/output identities differ" >&2
     exit 65
 fi
-if ! jq -s -e --argjson rows "$rows" '
-    length == $rows and
-    ([.[].entity_ref] | length == (unique | length)) and
-    all(.[];
-      if .classification.status == "classified" then
-        .classification.ontology_protocol == "published-term-resolution-v2" and
-        (.candidate_terms | type == "array" and length >= 3 and length <= 5) and
-        (.ontology_tags | type == "object") and
-        (.concepts | type == "array")
-      elif .classification.status == "failed" then
-        (.classification.reason | type == "string" and length > 0)
-      else false end)
-' "$output" >/dev/null; then
+if ! classification_shape_ok "$rows" "$output"; then
     echo "failed unit contains invalid classification states or shapes" >&2
     exit 65
 fi

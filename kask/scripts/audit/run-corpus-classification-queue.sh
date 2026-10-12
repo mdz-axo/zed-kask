@@ -26,6 +26,8 @@ for command in jq sha256sum cmp; do
         exit 69
     fi
 done
+here=$(cd "$(dirname "$0")" && pwd)
+source "$here/classification-shape.sh"
 if [[ ! "$concurrency" =~ ^[1-9][0-9]*$ || ! "$tag_batch_size" =~ ^[1-9][0-9]*$ ]]; then
     echo "concurrency and tag-batch-size must be positive integers" >&2
     exit 64
@@ -214,19 +216,7 @@ for row in "${units[@]}"; do
     trap 'rm -f "$input_refs" "$output_refs"' EXIT
     jq -r '.entity_ref' "$input" | sort > "$input_refs"
     jq -r '.entity_ref' "$output" | sort > "$output_refs"
-    if ! cmp -s "$input_refs" "$output_refs" || ! jq -s -e --argjson rows "$rows" '
-        length == $rows and
-        ([.[].entity_ref] | length == (unique | length)) and
-        all(.[];
-          if .classification.status == "classified" then
-            .classification.ontology_protocol == "published-term-resolution-v2" and
-            (.candidate_terms | type == "array" and length >= 3 and length <= 5) and
-            (.ontology_tags | type == "object") and
-            (.concepts | type == "array")
-          elif .classification.status == "failed" then
-            (.classification.reason | type == "string" and length > 0)
-          else false end)
-    ' "$output" >/dev/null; then
+    if ! cmp -s "$input_refs" "$output_refs" || ! classification_shape_ok "$rows" "$output"; then
         rm -f "$input_refs" "$output_refs"
         trap - EXIT
         trap 'strand_guard' EXIT
