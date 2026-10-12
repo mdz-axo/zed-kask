@@ -208,37 +208,14 @@ fn extract_ep_inputs(
         .and_then(economic_profit::adj_invested_capital)
         .unwrap_or(raw_invested_capital);
 
-    let current_price = profile_data
-        .get("price")
-        .and_then(|v| v.as_f64())
-        .unwrap_or(0.0);
-
-    let shares_outstanding = latest_income
-        .and_then(|m| {
-            m.get("weightedAverageShsOutDil")
-                .or_else(|| m.get("weightedAverageShsOut"))
-                .and_then(|v| v.as_f64())
-        })
-        .or_else(|| {
-            latest_metrics.and_then(|m| {
-                m.get("weightedAverageShsOutDil")
-                    .or_else(|| m.get("weightedAverageShsOut"))
-                    .and_then(|v| v.as_f64())
-            })
-        })
-        .or_else(|| {
-            profile_data
-                .get("sharesOutstanding")
-                .and_then(|v| v.as_f64())
-        })
-        .unwrap_or(1_000.0);
+    let EpMarketInputs {
+        current_price,
+        shares_outstanding,
+        fade_horizon,
+        stage1_years,
+    } = extract_ep_market_inputs(latest_income, latest_metrics, profile_data, req);
 
     let wacc = req.wacc.unwrap_or(0.10);
-    let fade_horizon = req
-        .moat_override
-        .or(req.moat_result)
-        .unwrap_or(economic_profit::FadeHorizon::Default);
-    let stage1_years = req.stage1_years.unwrap_or(3);
     let ic_growth_rate = req.ic_growth_rate.unwrap_or(0.0);
 
     let (roic_trend, roic_variability) =
@@ -376,6 +353,63 @@ fn compute_roic_trend_variability(metrics: &[serde_json::Value]) -> (f64, f64) {
     (trend, variability)
 }
 
+/// Market and horizon inputs shared by the industrial (WACC/discount) and
+/// financial-sector (CAPM/equity) EP extractions: the profile price, the
+/// diluted-share fallback chain (income → metrics → profile → 1,000), and
+/// the fade/stage request defaults. Byte-identical at both extraction
+/// sites — the ROIC/ROE computation around it is each family's own.
+struct EpMarketInputs {
+    current_price: f64,
+    shares_outstanding: f64,
+    fade_horizon: economic_profit::FadeHorizon,
+    stage1_years: u8,
+}
+
+fn extract_ep_market_inputs(
+    latest_income: Option<&serde_json::Value>,
+    latest_metrics: Option<&serde_json::Value>,
+    profile_data: &serde_json::Value,
+    req: &types::EpValuationRequest,
+) -> EpMarketInputs {
+    let current_price = profile_data
+        .get("price")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
+
+    let shares_outstanding = latest_income
+        .and_then(|m| {
+            m.get("weightedAverageShsOutDil")
+                .or_else(|| m.get("weightedAverageShsOut"))
+                .and_then(|v| v.as_f64())
+        })
+        .or_else(|| {
+            latest_metrics.and_then(|m| {
+                m.get("weightedAverageShsOutDil")
+                    .or_else(|| m.get("weightedAverageShsOut"))
+                    .and_then(|v| v.as_f64())
+            })
+        })
+        .or_else(|| {
+            profile_data
+                .get("sharesOutstanding")
+                .and_then(|v| v.as_f64())
+        })
+        .unwrap_or(1_000.0);
+
+    let fade_horizon = req
+        .moat_override
+        .or(req.moat_result)
+        .unwrap_or(economic_profit::FadeHorizon::Default);
+    let stage1_years = req.stage1_years.unwrap_or(3);
+
+    EpMarketInputs {
+        current_price,
+        shares_outstanding,
+        fade_horizon,
+        stage1_years,
+    }
+}
+
 // ── Equity-based EP inputs (financial-sector firms) ────────────────────────────
 
 struct EpEquityInputs {
@@ -435,36 +469,13 @@ fn extract_ep_inputs_equity(
     let beta = economic_profit::extract_beta(profile_data).unwrap_or(1.0);
     let coe = economic_profit::cost_of_equity(beta, req.risk_free_rate, req.equity_risk_premium);
 
-    let current_price = profile_data
-        .get("price")
-        .and_then(|v| v.as_f64())
-        .unwrap_or(0.0);
+    let EpMarketInputs {
+        current_price,
+        shares_outstanding,
+        fade_horizon,
+        stage1_years,
+    } = extract_ep_market_inputs(latest_income, latest_metrics, profile_data, req);
 
-    let shares_outstanding = latest_income
-        .and_then(|m| {
-            m.get("weightedAverageShsOutDil")
-                .or_else(|| m.get("weightedAverageShsOut"))
-                .and_then(|v| v.as_f64())
-        })
-        .or_else(|| {
-            latest_metrics.and_then(|m| {
-                m.get("weightedAverageShsOutDil")
-                    .or_else(|| m.get("weightedAverageShsOut"))
-                    .and_then(|v| v.as_f64())
-            })
-        })
-        .or_else(|| {
-            profile_data
-                .get("sharesOutstanding")
-                .and_then(|v| v.as_f64())
-        })
-        .unwrap_or(1_000.0);
-
-    let fade_horizon = req
-        .moat_override
-        .or(req.moat_result)
-        .unwrap_or(economic_profit::FadeHorizon::Default);
-    let stage1_years = req.stage1_years.unwrap_or(3);
     let equity_growth_rate = req.ic_growth_rate.unwrap_or(0.0);
 
     let (roe_trend, roe_variability) =
