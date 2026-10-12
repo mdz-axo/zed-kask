@@ -2,15 +2,11 @@
 
 use super::error::McpToolError;
 
-/// Validate a string identifier.
-/// Validate an identifier (tool name, server name, etc.).
-///
-/// expect: "The system validates tool input against safety and length constraints"
-/// pre:  name and value are non-empty, max_len > 0
-/// post: returns Ok(()) if valid (non-empty, ≤max_len, alphanumeric+hyphen+underscore+dot+colon)
-/// post: returns Err if invalid
+/// Shared non-empty and bounded-length checks for caller-named string
+/// fields: the identifier and path validators reject the same two
+/// degenerate shapes before their field-specific rules.
 #[must_use = "result must be used"]
-pub fn validate_identifier(name: &str, value: &str, max_len: usize) -> Result<(), McpToolError> {
+fn validate_nonempty_bounded(name: &str, value: &str, max_len: usize) -> Result<(), McpToolError> {
     if value.is_empty() {
         return Err(McpToolError::invalid_argument(format!(
             "{name} must not be empty"
@@ -22,6 +18,19 @@ pub fn validate_identifier(name: &str, value: &str, max_len: usize) -> Result<()
             value.len()
         )));
     }
+    Ok(())
+}
+
+/// Validate a string identifier.
+/// Validate an identifier (tool name, server name, etc.).
+///
+/// expect: "The system validates tool input against safety and length constraints"
+/// pre:  name and value are non-empty, max_len > 0
+/// post: returns Ok(()) if valid (non-empty, ≤max_len, alphanumeric+hyphen+underscore+dot+colon)
+/// post: returns Err if invalid
+#[must_use = "result must be used"]
+pub fn validate_identifier(name: &str, value: &str, max_len: usize) -> Result<(), McpToolError> {
+    validate_nonempty_bounded(name, value, max_len)?;
     if !value
         .chars()
         .all(|c| c.is_alphanumeric() || c == '_' || c == '.' || c == '-' || c == ':')
@@ -41,17 +50,7 @@ pub fn validate_identifier(name: &str, value: &str, max_len: usize) -> Result<()
 /// post: returns Err if invalid
 #[must_use = "result must be used"]
 pub fn validate_path(name: &str, value: &str, max_len: usize) -> Result<(), McpToolError> {
-    if value.is_empty() {
-        return Err(McpToolError::invalid_argument(format!(
-            "{name} must not be empty"
-        )));
-    }
-    if value.len() > max_len {
-        return Err(McpToolError::invalid_argument(format!(
-            "{name} exceeds maximum length of {max_len} (got {})",
-            value.len()
-        )));
-    }
+    validate_nonempty_bounded(name, value, max_len)?;
     if value.chars().any(|c| c == '\0' || c.is_control()) {
         return Err(McpToolError::invalid_argument(format!(
             "{name} contains a NUL or control character"
