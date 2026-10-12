@@ -1,6 +1,25 @@
 //! Generation tools — generate images, transform images, upscale, generate video, execute workflows.
 use crate::*;
 
+/// Resolve the caller's optional style preset onto `media_params`,
+/// rejecting unknown styles with the available list.
+fn apply_style_preset(
+    style: &Option<String>,
+    media_params: &mut hkask_types::MediaGenerateParams,
+) -> Result<(), McpToolError> {
+    if let Some(style_name) = style {
+        let preset = crate::style::get_preset(style_name).ok_or_else(|| {
+            McpToolError::invalid_argument(format!(
+                "unknown style '{}'; available styles: {}",
+                style_name,
+                crate::style::available_styles().join(", ")
+            ))
+        })?;
+        crate::style::apply_preset(media_params, &preset);
+    }
+    Ok(())
+}
+
 #[tool_router(router = generation_router, vis = "pub")]
 impl MediaServer {
     // ── Generation tools ────────────────────────────────────────────────────
@@ -36,16 +55,7 @@ impl MediaServer {
                 count: Some(count),
                 ..Default::default()
             };
-            if let Some(style_name) = &style {
-                let preset = crate::style::get_preset(style_name).ok_or_else(|| {
-                    McpToolError::invalid_argument(format!(
-                        "unknown style '{}'; available styles: {}",
-                        style_name,
-                        crate::style::available_styles().join(", ")
-                    ))
-                })?;
-                crate::style::apply_preset(&mut media_params, &preset);
-            }
+            apply_style_preset(&style, &mut media_params)?;
             let args = serde_json::to_value(&media_params).map_err(|error| {
                 McpToolError::internal(format!("encode image generation parameters: {error}"))
             })?;
@@ -192,16 +202,7 @@ impl MediaServer {
                 strength,
                 ..Default::default()
             };
-            if let Some(style_name) = &style {
-                let preset = crate::style::get_preset(style_name).ok_or_else(|| {
-                    McpToolError::invalid_argument(format!(
-                        "unknown style '{}'; available styles: {}",
-                        style_name,
-                        crate::style::available_styles().join(", ")
-                    ))
-                })?;
-                crate::style::apply_preset(&mut media_params, &preset);
-            }
+            apply_style_preset(&style, &mut media_params)?;
             let result = self
                 .vision_port
                 .media_generate("image_to_image", &media_params)
@@ -270,16 +271,7 @@ impl MediaServer {
                 duration,
                 ..Default::default()
             };
-            if let Some(style_name) = &style {
-                let preset = crate::style::get_preset(style_name).ok_or_else(|| {
-                    McpToolError::invalid_argument(format!(
-                        "unknown style '{}'; available styles: {}",
-                        style_name,
-                        crate::style::available_styles().join(", ")
-                    ))
-                })?;
-                crate::style::apply_preset(&mut media_params, &preset);
-            }
+            apply_style_preset(&style, &mut media_params)?;
             let result = self
                 .vision_port
                 .media_generate("generate_video", &media_params)
