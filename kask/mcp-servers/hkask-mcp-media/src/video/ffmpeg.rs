@@ -231,6 +231,32 @@ impl FfmpegRunner {
         Ok(())
     }
 
+    /// Write the concat list and run FFmpeg's concat demuxer with stream
+    /// copy into `output`. List formatting stays at the call site — video
+    /// entries escape embedded quotes, audio entries do not.
+    async fn concat_via_list(
+        &self,
+        list_path: &RollbackOwnedOutput,
+        list_content: &str,
+        output: &RollbackOwnedOutput,
+        label: &'static str,
+    ) -> Result<(), crate::MediaError> {
+        std::fs::write(list_path.path(), list_content)
+            .map_err(|e| crate::MediaError::Io(format!("Failed to write concat list: {e}")))?;
+        let mut command = Command::new(&self.ffmpeg_path);
+        command
+            .arg("-f")
+            .arg("concat")
+            .arg("-safe")
+            .arg("0")
+            .arg("-i")
+            .arg(list_path.path())
+            .arg("-c")
+            .arg("copy")
+            .arg(output.path());
+        Self::run_to_completion(command, label).await
+    }
+
     /// Probe a video file for metadata (duration, width, height, codec, fps).
     /// Uses `ffprobe` (bundled with ffmpeg) with JSON output.
     pub async fn probe(&self, input: &str) -> Result<VideoProbeInfo, crate::MediaError> {
@@ -568,21 +594,8 @@ impl FfmpegRunner {
             .map(|p| format!("file '{}'", p.replace('\'', "'\\''")))
             .collect::<Vec<_>>()
             .join("\n");
-        std::fs::write(list_path.path(), list_content)
-            .map_err(|e| crate::MediaError::Io(format!("Failed to write concat list: {}", e)))?;
-
-        let mut command = Command::new(&self.ffmpeg_path);
-        command
-            .arg("-f")
-            .arg("concat")
-            .arg("-safe")
-            .arg("0")
-            .arg("-i")
-            .arg(list_path.path())
-            .arg("-c")
-            .arg("copy")
-            .arg(output.path());
-        Self::run_to_completion(command, "concat").await?;
+        self.concat_via_list(&list_path, &list_content, &output, "concat")
+            .await?;
 
         let output = output.commit();
         tracing::info!(target: "hkask.mcp.media.ffmpeg", clip_count = video_paths.len(), output = %output.display(), "Videos concatenated");
@@ -701,28 +714,10 @@ impl FfmpegRunner {
         let list_path = RollbackOwnedOutput::new(self.output_path("txt"));
         let list_content: String = audio_paths
             .iter()
-            .map(|p| {
-                format!(
-                    "file '{}'
-",
-                    p
-                )
-            })
+            .map(|p| format!("file '{}'\n", p))
             .collect();
-        std::fs::write(list_path.path(), &list_content)
-            .map_err(|e| crate::MediaError::Io(format!("write concat list: {e}")))?;
-        let mut command = Command::new(&self.ffmpeg_path);
-        command
-            .arg("-f")
-            .arg("concat")
-            .arg("-safe")
-            .arg("0")
-            .arg("-i")
-            .arg(list_path.path())
-            .arg("-c")
-            .arg("copy")
-            .arg(output.path());
-        Self::run_to_completion(command, "audio concat").await?;
+        self.concat_via_list(&list_path, &list_content, &output, "audio concat")
+            .await?;
 
         let output = output.commit();
         tracing::info!(target: "hkask.mcp.media.ffmpeg", clip_count = audio_paths.len(), output = %output.display(), "Audio concatenated");
@@ -733,6 +728,30 @@ impl FfmpegRunner {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Write a fake ffmpeg shell script, mark it executable, and build a
+    /// runner over it. Returns the runner and its output directory; the
+    /// caller owns the TempDir keep-alive.
+    #[cfg(unix)]
+    fn fake_ffmpeg_runner(
+        root: &tempfile::TempDir,
+        script_name: &str,
+        script_body: &str,
+    ) -> Result<(FfmpegRunner, PathBuf), Box<dyn std::error::Error>> {
+        use std::os::unix::fs::PermissionsExt;
+
+        let fake_ffmpeg = root.path().join(script_name);
+        std::fs::write(&fake_ffmpeg, script_body)?;
+        let mut permissions = std::fs::metadata(&fake_ffmpeg)?.permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&fake_ffmpeg, permissions)?;
+        let output_dir = root.path().join("outputs");
+        let runner = FfmpegRunner::with_binary(
+            fake_ffmpeg.to_string_lossy().into_owned(),
+            output_dir.clone(),
+        );
+        Ok((runner, output_dir))
+    }
 
     /// expect: A missing local source keeps ffprobe's filesystem cause. [P1]
     #[tokio::test]
@@ -835,22 +854,12 @@ mod tests {
     #[tokio::test]
     async fn extracted_keyframes_match_pattern_and_are_cleanup_owned()
     -> Result<(), Box<dyn std::error::Error>> {
-        use std::os::unix::fs::PermissionsExt;
-
         let root = tempfile::tempdir()?;
-        let fake_ffmpeg = root.path().join("extract-one.sh");
-        std::fs::write(
-            &fake_ffmpeg,
+        let (runner, output_dir) = fake_ffmpeg_runner(
+            &root,
+            "extract-one.sh",
             "#!/bin/sh\nfor arg do pattern=$arg; done\noutput=$(printf '%s\\n' \"$pattern\" | sed 's/%03d/001/')\nprintf frame > \"$output\"\n",
         )?;
-        let mut permissions = std::fs::metadata(&fake_ffmpeg)?.permissions();
-        permissions.set_mode(0o755);
-        std::fs::set_permissions(&fake_ffmpeg, permissions)?;
-        let output_dir = root.path().join("outputs");
-        let runner = FfmpegRunner::with_binary(
-            fake_ffmpeg.to_string_lossy().into_owned(),
-            output_dir.clone(),
-        );
 
         let frames = runner.extract_keyframes("input.mp4", 2.0, 1).await?;
         assert_eq!(frames.len(), 1);
@@ -873,22 +882,12 @@ mod tests {
     #[tokio::test]
     async fn failed_keyframe_extraction_removes_partial_scratch_batch()
     -> Result<(), Box<dyn std::error::Error>> {
-        use std::os::unix::fs::PermissionsExt;
-
         let root = tempfile::tempdir()?;
-        let fake_ffmpeg = root.path().join("extract-then-fail.sh");
-        std::fs::write(
-            &fake_ffmpeg,
+        let (runner, output_dir) = fake_ffmpeg_runner(
+            &root,
+            "extract-then-fail.sh",
             "#!/bin/sh\nfor arg do pattern=$arg; done\noutput=$(printf '%s\\n' \"$pattern\" | sed 's/%03d/001/')\nprintf partial > \"$output\"\nprintf 'keyframe sentinel failure' >&2\nexit 23\n",
         )?;
-        let mut permissions = std::fs::metadata(&fake_ffmpeg)?.permissions();
-        permissions.set_mode(0o755);
-        std::fs::set_permissions(&fake_ffmpeg, permissions)?;
-        let output_dir = root.path().join("outputs");
-        let runner = FfmpegRunner::with_binary(
-            fake_ffmpeg.to_string_lossy().into_owned(),
-            output_dir.clone(),
-        );
 
         let error = runner
             .extract_keyframes("input.mp4", 2.0, 1)
@@ -906,22 +905,12 @@ mod tests {
     #[tokio::test]
     async fn failed_ffmpeg_rolls_back_partial_outputs_and_lists()
     -> Result<(), Box<dyn std::error::Error>> {
-        use std::os::unix::fs::PermissionsExt;
-
         let root = tempfile::tempdir()?;
-        let fake_ffmpeg = root.path().join("partial-then-fail.sh");
-        std::fs::write(
-            &fake_ffmpeg,
+        let (runner, output_dir) = fake_ffmpeg_runner(
+            &root,
+            "partial-then-fail.sh",
             "#!/bin/sh\nfor arg do output=$arg; done\nprintf partial > \"$output\"\nprintf 'injected partial-output failure' >&2\nexit 23\n",
         )?;
-        let mut permissions = std::fs::metadata(&fake_ffmpeg)?.permissions();
-        permissions.set_mode(0o755);
-        std::fs::set_permissions(&fake_ffmpeg, permissions)?;
-        let output_dir = root.path().join("outputs");
-        let runner = FfmpegRunner::with_binary(
-            fake_ffmpeg.to_string_lossy().into_owned(),
-            output_dir.clone(),
-        );
 
         let assert_rolled_back =
             |error: crate::MediaError| -> Result<(), Box<dyn std::error::Error>> {
