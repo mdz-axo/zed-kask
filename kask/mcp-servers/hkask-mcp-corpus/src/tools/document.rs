@@ -27,6 +27,55 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::io::Write;
 
+/// Parse a target-pages spec ("1-5,10") into the page-number set — shared by
+/// `corpus_is_complex` and `corpus_chunk`'s file path arm.
+fn parse_target_page_set(spec: &str) -> Result<std::collections::HashSet<usize>, McpToolError> {
+    Ok(crate::ocr::triage::parse_target_pages(spec)
+        .map_err(|e| McpToolError::invalid_argument(e.to_string()))?
+        .into_iter()
+        .collect())
+}
+
+/// Run the whole-document OCR pipeline for `file_path`, returning the OCR
+/// text — or `fallback` when the model is unavailable or the pipeline fails,
+/// with the failure warned under `warn_label`, never silent. Read failures
+/// propagate. Shared by `corpus_chunk`'s `NeedsOcr` and `PartialOcr` arms;
+/// the `ocr_pages` emptiness guard stays at the `PartialOcr` call site.
+async fn ocr_fallback_text(
+    service: &ConvertService<'_>,
+    file_path: &str,
+    fallback: String,
+    warn_label: &str,
+) -> Result<String, McpToolError> {
+    let Ok(model) = service.resolve_ocr_model(None).await else {
+        return Ok(fallback);
+    };
+    let resolved = crate::path_safety::contain_for_read(file_path)?;
+    let file_bytes = std::fs::read(&resolved)
+        .map_err(|e| map_corpus_io_error(e, &format!("Failed to read '{}'", file_path)))?;
+    let (file_format, _, _) = convert::detect_format(file_path);
+    match service
+        .ocr_via_pipeline(
+            &resolved,
+            file_format,
+            &file_bytes,
+            &model,
+            service.pipeline_executor(),
+        )
+        .await
+    {
+        Ok(outcome) => Ok(outcome.text),
+        Err(error) => {
+            tracing::warn!(
+                target: "hkask.docproc",
+                error = %error,
+                "chunk OCR pipeline failed — using {warn_label}"
+            );
+            Ok(fallback)
+        }
+    }
+}
+
 #[tool_router(router = document_router, vis = "pub")]
 impl CorpusServer {
     #[tool(
@@ -274,11 +323,7 @@ impl CorpusServer {
                 .map_err(crate::helpers::map_triage_error)?;
 
             if let Some(spec) = target_pages.as_deref().filter(|s| !s.trim().is_empty()) {
-                let target: std::collections::HashSet<usize> =
-                    crate::ocr::triage::parse_target_pages(spec)
-                        .map_err(|e| McpToolError::invalid_argument(e.to_string()))?
-                        .into_iter()
-                        .collect();
+                let target = parse_target_page_set(spec)?;
                 verdicts.retain(|v| target.contains(&v.page_number));
             }
 
@@ -454,7 +499,7 @@ impl CorpusServer {
             let service = ConvertService::from_corpus(self);
 
             // Resolve the source text
-            let mut source_text: String;
+            let source_text: String;
             let source_label: String;
 
 
@@ -469,11 +514,7 @@ impl CorpusServer {
                 // Use shared extract_text for format detection + text extraction
                 let mut extract_outcome = extract_text(file_path).await?;
                 if let Some(spec) = target_pages.as_deref().filter(|s| !s.trim().is_empty()) {
-                    let target: std::collections::HashSet<usize> =
-                        crate::ocr::triage::parse_target_pages(spec)
-                            .map_err(|e| McpToolError::invalid_argument(e.to_string()))?
-                            .into_iter()
-                            .collect();
+                    let target = parse_target_page_set(spec)?;
                     extract_outcome = filter_outcome_to_pages(extract_outcome, &target);
                 }
                 match extract_outcome {
@@ -504,35 +545,13 @@ impl CorpusServer {
                         // the partial native text when the pipeline is
                         // unavailable or fails — the degradation is warned,
                         // never silent.
-                        source_text = partial_text.clone();
-                        if let Ok(model) = service.resolve_ocr_model(None).await {
-                            let resolved = crate::path_safety::contain_for_read(file_path)?;
-                            let file_bytes = std::fs::read(&resolved).map_err(|e| {
-                                map_corpus_io_error(e, &format!("Failed to read '{}'", file_path))
-                            })?;
-                            let (file_format, _, _) = convert::detect_format(file_path);
-                            match service
-                                .ocr_via_pipeline(
-                                    &resolved,
-                                    file_format,
-                                    &file_bytes,
-                                    &model,
-                                    service.pipeline_executor(),
-                                )
-                                .await
-                            {
-                                Ok(outcome) => {
-                                    source_text = outcome.text;
-                                }
-                                Err(error) => {
-                                    tracing::warn!(
-                                        target: "hkask.docproc",
-                                        error = %error,
-                                        "chunk OCR pipeline failed — using partial native text"
-                                    );
-                                }
-                            }
-                        }
+                        source_text = ocr_fallback_text(
+                            &service,
+                            file_path,
+                            partial_text.clone(),
+                            "partial native text",
+                        )
+                        .await?;
                     }
                     ExtractOutcome::PartialOcr {
                         page_texts,
@@ -545,37 +564,12 @@ impl CorpusServer {
                         // page is silently lost. The joined native text is the
                         // fallback when the pipeline is unavailable or fails.
                         let partial = page_texts.join("\n\x0c");
-                        source_text = partial.clone();
-                        if !ocr_pages.is_empty()
-                            && let Ok(model) = service.resolve_ocr_model(None).await
-                        {
-                            let resolved = crate::path_safety::contain_for_read(file_path)?;
-                            let file_bytes = std::fs::read(&resolved).map_err(|e| {
-                                map_corpus_io_error(e, &format!("Failed to read '{}'", file_path))
-                            })?;
-                            let (file_format, _, _) = convert::detect_format(file_path);
-                            match service
-                                .ocr_via_pipeline(
-                                    &resolved,
-                                    file_format,
-                                    &file_bytes,
-                                    &model,
-                                    service.pipeline_executor(),
-                                )
-                                .await
-                            {
-                                Ok(outcome) => {
-                                    source_text = outcome.text;
-                                }
-                                Err(error) => {
-                                    tracing::warn!(
-                                        target: "hkask.docproc",
-                                        error = %error,
-                                        "chunk OCR pipeline failed — using joined native text"
-                                    );
-                                }
-                            }
-                        }
+                        source_text = if ocr_pages.is_empty() {
+                            partial
+                        } else {
+                            ocr_fallback_text(&service, file_path, partial, "joined native text")
+                                .await?
+                        };
                     }
                 }
                 source_label = file_path.clone();
