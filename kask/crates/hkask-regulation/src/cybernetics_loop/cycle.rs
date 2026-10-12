@@ -2777,6 +2777,23 @@ mod tests {
         }
     }
 
+    /// The circuit-observation test preamble: a fresh loop over the
+    /// resilience `source` with a recording escalation sink wired — shared
+    /// by the circuit-open and permanent-failure tests. The trailing
+    /// tick/sense call stays per test.
+    fn circuit_loop(
+        source: Arc<dyn crate::InferenceResilienceSource>,
+    ) -> (Arc<RecordingEscalationSink>, CyberneticsLoop) {
+        let escalation = Arc::new(RecordingEscalationSink::new());
+        let mut regulation =
+            CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())));
+        regulation.set_inference_resilience_source(source);
+        regulation.set_alert_escalation_sink(Some(
+            Arc::clone(&escalation) as Arc<dyn crate::AlertEscalationSink>
+        ));
+        (escalation, regulation)
+    }
+
     struct CursorRecordingResilienceSource {
         observation: crate::InferenceObservation,
         cursors: Mutex<Vec<u64>>,
@@ -2923,13 +2940,7 @@ mod tests {
                 crate::InferenceInterventionKind::CircuitOpened,
             ),
         });
-        let escalation = Arc::new(RecordingEscalationSink::new());
-        let mut regulation =
-            CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())));
-        regulation.set_inference_resilience_source(source);
-        regulation.set_alert_escalation_sink(Some(
-            Arc::clone(&escalation) as Arc<dyn crate::AlertEscalationSink>
-        ));
+        let (escalation, regulation) = circuit_loop(source);
 
         regulation.tick().await;
 
@@ -3073,13 +3084,7 @@ mod tests {
                 next_cursor: 1,
             },
         });
-        let escalation = Arc::new(RecordingEscalationSink::new());
-        let mut regulation =
-            CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())));
-        regulation.set_inference_resilience_source(source);
-        regulation.set_alert_escalation_sink(Some(
-            Arc::clone(&escalation) as Arc<dyn crate::AlertEscalationSink>
-        ));
+        let (escalation, regulation) = circuit_loop(source);
 
         regulation.sense().await;
 
@@ -3096,6 +3101,23 @@ mod tests {
         );
     }
 
+    /// The heartbeat/telemetry test preamble: a fresh tokio runtime, a
+    /// default ledger, and a capturing event sink — the pieces the tick-loop
+    /// tests block on. The loop construction stays per test: the resilience
+    /// wiring differs and is load-bearing (its absence is the signal test's
+    /// deviation source).
+    fn capturing_runtime() -> (
+        tokio::runtime::Runtime,
+        Arc<RwLock<RegulationLedger>>,
+        Arc<CapturingSink>,
+    ) {
+        (
+            tokio::runtime::Runtime::new().expect("tokio runtime"),
+            Arc::new(RwLock::new(RegulationLedger::default())),
+            Arc::new(CapturingSink(Mutex::new(Vec::new()))),
+        )
+    }
+
     /// Idle cycles emit exactly one heartbeat span per hour (tick 1, then
     /// every 360 ticks) carrying the all-zero payload plus `heartbeat: true`,
     /// `tick_count`, and the alert log's fill state. Without it, a converged
@@ -3103,11 +3125,9 @@ mod tests {
     /// silence.
     #[test]
     fn idle_loop_emits_hourly_heartbeat_span() {
-        let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+        let (runtime, ledger, sink) = capturing_runtime();
         runtime.block_on(async {
-            let ledger = Arc::new(RwLock::new(RegulationLedger::default()));
-            let sink = Arc::new(CapturingSink(Mutex::new(Vec::new())));
-            let mut regulation_loop = CyberneticsLoop::new(Arc::clone(&ledger))
+            let mut regulation_loop = CyberneticsLoop::new(ledger)
                 .with_event_sink(Arc::clone(&sink) as Arc<dyn hkask_types::RegulationSink>);
             regulation_loop.set_inference_resilience_source(Arc::new(HealthyResilienceSource));
 
@@ -3188,13 +3208,11 @@ mod tests {
     /// the boot heartbeat); ticks 4-5 sense the unwired-model deviation.
     #[test]
     fn signal_ticks_emit_telemetry_without_heartbeat_flag() {
-        let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+        let (runtime, ledger, sink) = capturing_runtime();
         runtime.block_on(async {
-            let ledger = Arc::new(RwLock::new(RegulationLedger::default()));
-            let sink = Arc::new(CapturingSink(Mutex::new(Vec::new())));
             // No inference health source: after the 3-tick grace the loop
             // senses the model-unavailable deviation on every tick.
-            let regulation_loop = CyberneticsLoop::new(Arc::clone(&ledger))
+            let regulation_loop = CyberneticsLoop::new(ledger)
                 .with_event_sink(Arc::clone(&sink) as Arc<dyn hkask_types::RegulationSink>);
 
             for _ in 0..5 {
