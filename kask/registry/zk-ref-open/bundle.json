@@ -2,34 +2,34 @@
   "schema_version": 1,
   "source_id": "zk-ref-open",
   "display_name": "zk-reference-open corpus (fine)",
-  "run_id": "3f7533d6db21be0146feac17e007c90929c4f1a351e2e0d16d2745780fd31a39",
+  "run_id": "b1583a102af1f21147f5a64e3adf771d190599f4ac1e1cb600ef07ae4f87057e",
   "expected_dimensions": 1024,
-  "expected_passage_count": 278670,
+  "expected_passage_count": 282947,
   "bundle_key": "zkref-open-public-bundle-key-2026-10",
   "assets": [
     {
       "name": "zk-ref-open.db.part-000",
-      "sha256": "036d8b4bef341c459798a5bda94f050ecb25bc9a10b154a5e5bd9c9457f6a33d"
+      "sha256": "5b706584a78a73c1b8ad7c6d8122787ea40f46f9e51b788a0e5eee72b33d8300"
     },
     {
       "name": "zk-ref-open.db.part-001",
-      "sha256": "94aba9f45b248a5b3f37214293ada0c0dd831f131ad02cff1afba577347536c0"
+      "sha256": "42d6169417e45128878967fb4f65064254ea46815b97510d1b3d7066a58c18b9"
     },
     {
       "name": "zk-ref-open.db.part-002",
-      "sha256": "24124b7aff4bb583943e81fc5b7c6f00aef92f6799c8e5d7d9cd2aa0fe5946d9"
+      "sha256": "d3328b0a71686bb3d7261b002a392baaf9f14d7e06be974a61f4c424df7783d0"
     },
     {
       "name": "zk-ref-open.db.part-003",
-      "sha256": "6512fbff427abc6a130a88cb2fe4b703d6cde407394dfede4eb667cb7881437c"
+      "sha256": "87a980eaf29527e9ff9ca598306bb1b7f6841e078e3befcf69559f781438722f"
     },
     {
       "name": "run-identity.json",
-      "sha256": "4d1adf53da2b8cdb1c7324f4bef7612199dd76b22a4989fd8aa22d91bd163747"
+      "sha256": "7e0c84b014e12cdd11dcfc6bbe165d431aa3a081ca05964b4fab4c15d7f751b6"
     },
     {
       "name": "representations-manifest.json",
-      "sha256": "5148a3a2048773c50af3801f9728a33b573730e8ee3b8e4ef503ec976ae829a4"
+      "sha256": "2d4e1b52e0c3adc540ef08aec80bd25a3b3af82d3fa2afacc3b25b9cf1aaded1"
     }
   ]
 }
