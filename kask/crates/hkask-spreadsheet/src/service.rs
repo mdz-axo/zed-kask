@@ -866,6 +866,34 @@ mod tests {
         }
     }
 
+    /// Test fixture: a workbook service rooted at `<tempdir>/workbooks`.
+    /// The TempDir rides along in the return — bind it (`dir` where a test
+    /// reads the tree, `_dir` otherwise) so the on-disk artifacts outlive
+    /// the service's handles; an unbound TempDir deletes them mid-test.
+    fn temp_workbook_service() -> (tempfile::TempDir, Arc<WorkbookService>) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let service =
+            WorkbookService::start_with_root(dir.path().join("workbooks")).expect("service starts");
+        (dir, service)
+    }
+
+    /// Test fixture: a ClearCell transaction against `Main` (1, 1) — the
+    /// minimal edit the rejection tests apply. The base ref and the
+    /// idempotency key are the caller's; the edit, access mode and
+    /// coordinate are the fixture.
+    fn clear_cell_transaction(base: SpreadsheetArtifactRef, idem: &str) -> EditTransaction {
+        EditTransaction::new(
+            base,
+            idem.into(),
+            SpreadsheetAccess::WorkbookWhatIf,
+            vec![CellEdit::ClearCell {
+                coordinate: hkask_types::spreadsheet::CellCoordinate::new("Main".into(), 1, 1)
+                    .expect("coordinate"),
+            }],
+        )
+        .expect("transaction is valid")
+    }
+
     /// SP-01: the fence format has one owner — `display_hint` constructs
     /// it, `hint_body` parses it back, and the body re-parses as the strict
     /// wire contract.
@@ -1002,9 +1030,7 @@ mod tests {
     /// publish → reopen exactly.
     #[test]
     fn table_to_xlsx_roundtrip_preserves_values() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let service =
-            WorkbookService::start_with_root(dir.path().join("workbooks")).expect("service starts");
+        let (_dir, service) = temp_workbook_service();
         let table = sample_table();
         let (artifact, _block) = publish_workbook(&service, table);
 
@@ -1029,9 +1055,7 @@ mod tests {
     /// revision evaluates the formula).
     #[test]
     fn formula_edits_recalculate_dependents() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let service =
-            WorkbookService::start_with_root(dir.path().join("workbooks")).expect("service starts");
+        let (_dir, service) = temp_workbook_service();
         let (base, _block) = publish_workbook(&service, sample_table());
 
         let transaction = EditTransaction::new(
@@ -1067,9 +1091,7 @@ mod tests {
     /// (digest-verified) still shows the original values.
     #[test]
     fn base_revision_unchanged_after_apply() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let service =
-            WorkbookService::start_with_root(dir.path().join("workbooks")).expect("service starts");
+        let (_dir, service) = temp_workbook_service();
         let (base, _block) = publish_workbook(&service, sample_table());
 
         let publication = block_on(
@@ -1115,9 +1137,7 @@ mod tests {
     /// (path escape at the contract; unknown id at the store).
     #[test]
     fn path_traversal_and_unknown_ids_rejected() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let service =
-            WorkbookService::start_with_root(dir.path().join("workbooks")).expect("service starts");
+        let (_dir, service) = temp_workbook_service();
 
         let escape = SpreadsheetArtifactRef::new("a/b".into(), "rev".into(), "a".repeat(64));
         assert!(matches!(escape, Err(SpreadsheetError::PathEscape { .. })));
@@ -1131,16 +1151,7 @@ mod tests {
             "unexpected error: {error}"
         );
 
-        let transaction = EditTransaction::new(
-            unknown,
-            "idem".into(),
-            SpreadsheetAccess::WorkbookWhatIf,
-            vec![CellEdit::ClearCell {
-                coordinate: hkask_types::spreadsheet::CellCoordinate::new("Main".into(), 1, 1)
-                    .expect("coordinate"),
-            }],
-        )
-        .expect("transaction is valid");
+        let transaction = clear_cell_transaction(unknown, "idem");
         let error = block_on(service.apply(transaction)).expect_err("unknown base must fail");
         assert!(
             matches!(error, SpreadsheetError::UnknownArtifact { .. }),
@@ -1152,9 +1163,7 @@ mod tests {
     /// stale base. Also at open: a corrupted/tampered revision is a conflict.
     #[test]
     fn digest_mismatch_produces_conflict() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let service =
-            WorkbookService::start_with_root(dir.path().join("workbooks")).expect("service starts");
+        let (_dir, service) = temp_workbook_service();
         let (base, _block) = publish_workbook(&service, sample_table());
 
         let stale =
@@ -1166,16 +1175,7 @@ mod tests {
             "unexpected error: {error}"
         );
 
-        let transaction = EditTransaction::new(
-            stale,
-            "idem-stale".into(),
-            SpreadsheetAccess::WorkbookWhatIf,
-            vec![CellEdit::ClearCell {
-                coordinate: hkask_types::spreadsheet::CellCoordinate::new("Main".into(), 1, 1)
-                    .expect("coordinate"),
-            }],
-        )
-        .expect("transaction is valid");
+        let transaction = clear_cell_transaction(stale, "idem-stale");
         let error = block_on(service.apply(transaction)).expect_err("stale base must conflict");
         assert!(
             matches!(error, SpreadsheetError::Conflict { .. }),
@@ -1187,9 +1187,7 @@ mod tests {
     /// not mint a second revision.
     #[test]
     fn repeated_idempotency_returns_same_result() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let service =
-            WorkbookService::start_with_root(dir.path().join("workbooks")).expect("service starts");
+        let (dir, service) = temp_workbook_service();
         let (base, _block) = publish_workbook(&service, sample_table());
 
         let transaction = EditTransaction::new(
@@ -1232,21 +1230,13 @@ mod tests {
         assert_eq!(revision_files(), 2, "no new revision minted on repeat");
 
         // A key reused for a different base is a typed error.
-        let wrong_base = EditTransaction::new(
-            SpreadsheetArtifactRef::new(
-                base.artifact_id.clone(),
-                second_ref.revision_id.clone(),
-                second_ref.content_digest,
-            )
-            .expect("ref shape is valid"),
-            "idem-repeat".into(),
-            SpreadsheetAccess::WorkbookWhatIf,
-            vec![CellEdit::ClearCell {
-                coordinate: hkask_types::spreadsheet::CellCoordinate::new("Main".into(), 1, 1)
-                    .expect("coordinate"),
-            }],
+        let mixed_ref = SpreadsheetArtifactRef::new(
+            base.artifact_id.clone(),
+            second_ref.revision_id.clone(),
+            second_ref.content_digest,
         )
-        .expect("transaction is valid");
+        .expect("ref shape is valid");
+        let wrong_base = clear_cell_transaction(mixed_ref, "idem-repeat");
         let error = block_on(service.apply(wrong_base))
             .expect_err("key reuse for a different base must fail");
         assert!(
@@ -1259,9 +1249,7 @@ mod tests {
     /// truncation) — and the caller may then explicitly choose a workbook.
     #[test]
     fn oversized_inline_publishes_typed_error() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let service =
-            WorkbookService::start_with_root(dir.path().join("workbooks")).expect("service starts");
+        let (_dir, service) = temp_workbook_service();
         let big = AnalyticalTable::new(
             "Big".into(),
             "Main".into(),
@@ -1314,9 +1302,7 @@ mod tests {
     /// JSON) and revalidates.
     #[test]
     fn published_block_round_trips_and_revalidates() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let service =
-            WorkbookService::start_with_root(dir.path().join("workbooks")).expect("service starts");
+        let (_dir, service) = temp_workbook_service();
         let (_artifact, block) = publish_workbook(&service, sample_table());
 
         let json = serde_json::to_string(&block).expect("serialize block");
@@ -1335,9 +1321,7 @@ mod tests {
     /// as the engine's error value — surfaced, never silent.
     #[test]
     fn unsupported_formula_surfaces_as_error() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let service =
-            WorkbookService::start_with_root(dir.path().join("workbooks")).expect("service starts");
+        let (_dir, service) = temp_workbook_service();
         let (base, _block) = publish_workbook(&service, sample_table());
 
         let parse_invalid = EditTransaction::new(
@@ -1389,9 +1373,7 @@ mod tests {
     /// staged state; nothing persists until apply.
     #[test]
     fn staged_edits_undo_redo_via_viewport() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let service =
-            WorkbookService::start_with_root(dir.path().join("workbooks")).expect("service starts");
+        let (dir, service) = temp_workbook_service();
         let (artifact, _block) = publish_workbook(&service, sample_table());
         let document = block_on(service.open(&artifact)).expect("open");
 
@@ -1440,9 +1422,7 @@ mod tests {
     /// §6: DataOnly publishes no block — a typed rejection, not a JSON dump.
     #[test]
     fn dataonly_publish_rejects() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let service =
-            WorkbookService::start_with_root(dir.path().join("workbooks")).expect("service starts");
+        let (_dir, service) = temp_workbook_service();
         let error = block_on(service.publish(
             origin(),
             sample_table(),
@@ -1461,9 +1441,7 @@ mod tests {
     /// filesystem path, no workbook bytes, and a bounded viewport.
     #[test]
     fn published_block_carries_only_opaque_identity() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let service =
-            WorkbookService::start_with_root(dir.path().join("workbooks")).expect("service starts");
+        let (dir, service) = temp_workbook_service();
         let (_artifact, block) = publish_workbook(&service, sample_table());
         let json = serde_json::to_value(&block).expect("serialize block");
         let text = json.to_string();
@@ -1480,9 +1458,7 @@ mod tests {
     /// handle's staged state.
     #[test]
     fn reopen_keeps_staged_state() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let service =
-            WorkbookService::start_with_root(dir.path().join("workbooks")).expect("service starts");
+        let (_dir, service) = temp_workbook_service();
         let (artifact, _block) = publish_workbook(&service, sample_table());
 
         let first = block_on(service.open(&artifact)).expect("first open");
