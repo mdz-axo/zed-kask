@@ -139,6 +139,38 @@ fn parse_financial_field_or(entry: &serde_json::Value, field: &str, fallback: f6
     }
 }
 
+/// The statement year of one API entry — `calendarYear`, else `fiscalYear`,
+/// else `date`, else "" (the caller skips empty years). Shared by the
+/// income, balance-sheet and cash-flow extraction loops; the skip guards
+/// stay per loop (the income loop also skips zero-revenue entries).
+fn statement_year(entry: &serde_json::Value) -> &str {
+    entry
+        .get("calendarYear")
+        .or_else(|| entry.get("fiscalYear"))
+        .or_else(|| entry.get("date"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+}
+
+/// Average consecutive same-year-beginning values of a series, keyed by
+/// the ending year — the DuPont average-assets/average-equity bases.
+/// Windows with repeated years or non-positive endpoints are skipped
+/// (no average across a gap or a meaningless sign).
+fn average_by_year(series: &[(String, f64)]) -> std::collections::HashMap<&str, f64> {
+    series
+        .windows(2)
+        .filter_map(|window| {
+            let [(previous_year, previous), (year, current)] = window else {
+                return None;
+            };
+            if previous_year == year || *previous <= 0.0 || *current <= 0.0 {
+                return None;
+            }
+            Some((year.as_str(), (previous + current) / 2.0))
+        })
+        .collect()
+}
+
 /// How reported costs bridge gross profit to operating income.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct OperatingCostBridge {
@@ -248,12 +280,7 @@ impl HistoricalSnapshot {
         let mut pre_tax_income: Vec<f64> = Vec::new();
 
         for entry in income_statements.iter().rev() {
-            let year = entry
-                .get("calendarYear")
-                .or_else(|| entry.get("fiscalYear"))
-                .or_else(|| entry.get("date"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
+            let year = statement_year(entry);
             let rev = parse_financial_field(entry, "revenue");
             let c = parse_financial_field(entry, "costOfRevenue");
             let d = parse_financial_field(entry, "depreciationAndAmortization");
@@ -297,12 +324,7 @@ impl HistoricalSnapshot {
         let mut ppe_net: Vec<(String, f64)> = Vec::new();
 
         for entry in balance_sheets.iter().rev() {
-            let year = entry
-                .get("calendarYear")
-                .or_else(|| entry.get("fiscalYear"))
-                .or_else(|| entry.get("date"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
+            let year = statement_year(entry);
             if year.is_empty() {
                 continue;
             }
@@ -384,12 +406,7 @@ impl HistoricalSnapshot {
         let mut capex: Vec<(String, f64)> = Vec::new();
         let mut dividends_paid: Vec<(String, f64)> = Vec::new();
         for entry in cash_flows.iter().rev() {
-            let year = entry
-                .get("calendarYear")
-                .or_else(|| entry.get("fiscalYear"))
-                .or_else(|| entry.get("date"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
+            let year = statement_year(entry);
             if year.is_empty() {
                 continue;
             }
@@ -574,32 +591,8 @@ impl HistoricalSnapshot {
             .iter()
             .map(|(year, value)| (year.as_str(), *value))
             .collect();
-        let average_assets_by_year: std::collections::HashMap<&str, f64> = self
-            .total_assets
-            .windows(2)
-            .filter_map(|window| {
-                let [(previous_year, previous), (year, current)] = window else {
-                    return None;
-                };
-                if previous_year == year || *previous <= 0.0 || *current <= 0.0 {
-                    return None;
-                }
-                Some((year.as_str(), (previous + current) / 2.0))
-            })
-            .collect();
-        let average_equity_by_year: std::collections::HashMap<&str, f64> = self
-            .total_equity
-            .windows(2)
-            .filter_map(|window| {
-                let [(previous_year, previous), (year, current)] = window else {
-                    return None;
-                };
-                if previous_year == year || *previous <= 0.0 || *current <= 0.0 {
-                    return None;
-                }
-                Some((year.as_str(), (previous + current) / 2.0))
-            })
-            .collect();
+        let average_assets_by_year = average_by_year(&self.total_assets);
+        let average_equity_by_year = average_by_year(&self.total_equity);
         let dividends_by_year: std::collections::HashMap<&str, f64> = self
             .dividends_paid
             .iter()
