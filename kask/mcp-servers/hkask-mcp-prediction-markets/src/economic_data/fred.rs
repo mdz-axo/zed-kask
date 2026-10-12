@@ -88,6 +88,20 @@ fn fred_url(endpoint: &str, api_key: &str, params: &[(&str, &str)]) -> String {
     url
 }
 
+/// Extract a string field from a FRED series JSON object, defaulting to `""`
+/// when absent or non-string — the per-field shape shared by the series
+/// listings (`series/search`, `/fred/series`, release series). The field
+/// lists stay per site: each tool's output shape is its own contract, and a
+/// remapped source key (e.g. `seasonal_adjustment` read from
+/// `seasonal_adjustment_short`) rides the explicit key parameter.
+fn series_str_field(series: &Value, key: &str) -> String {
+    series
+        .get(key)
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string()
+}
+
 // ── Tool implementations ────────────────────────────────────────────────────
 
 /// `fred_search_series`: Search FRED series by text.
@@ -127,13 +141,13 @@ pub async fn search_series(
         .iter()
         .map(|s| {
             serde_json::json!({
-                "id": s.get("id").and_then(|v| v.as_str()).unwrap_or(""),
-                "title": s.get("title").and_then(|v| v.as_str()).unwrap_or(""),
-                "units": s.get("units").and_then(|v| v.as_str()).unwrap_or(""),
-                "frequency": s.get("frequency").and_then(|v| v.as_str()).unwrap_or(""),
-                "seasonal_adjustment": s.get("seasonal_adjustment_short").and_then(|v| v.as_str()).unwrap_or(""),
-                "observation_start": s.get("observation_start").and_then(|v| v.as_str()).unwrap_or(""),
-                "observation_end": s.get("observation_end").and_then(|v| v.as_str()).unwrap_or(""),
+                "id": series_str_field(s, "id"),
+                "title": series_str_field(s, "title"),
+                "units": series_str_field(s, "units"),
+                "frequency": series_str_field(s, "frequency"),
+                "seasonal_adjustment": series_str_field(s, "seasonal_adjustment_short"),
+                "observation_start": series_str_field(s, "observation_start"),
+                "observation_end": series_str_field(s, "observation_end"),
                 "popularity": s.get("popularity").and_then(|v| v.as_i64()).unwrap_or(0),
             })
         })
@@ -237,18 +251,18 @@ fn series_info_from_body(body: &Value, series_id: &str) -> Result<Value, Economi
         .and_then(|arr| arr.first())
         .ok_or_else(|| EconomicDataError::InvalidParam(format!("series {series_id} not found")))?;
     Ok(serde_json::json!({
-        "id": s.get("id").and_then(|v| v.as_str()).unwrap_or(""),
-        "title": s.get("title").and_then(|v| v.as_str()).unwrap_or(""),
-        "units": s.get("units").and_then(|v| v.as_str()).unwrap_or(""),
-        "frequency": s.get("frequency").and_then(|v| v.as_str()).unwrap_or(""),
-        "frequency_short": s.get("frequency_short").and_then(|v| v.as_str()).unwrap_or(""),
-        "seasonal_adjustment": s.get("seasonal_adjustment").and_then(|v| v.as_str()).unwrap_or(""),
-        "seasonal_adjustment_short": s.get("seasonal_adjustment_short").and_then(|v| v.as_str()).unwrap_or(""),
-        "observation_start": s.get("observation_start").and_then(|v| v.as_str()).unwrap_or(""),
-        "observation_end": s.get("observation_end").and_then(|v| v.as_str()).unwrap_or(""),
-        "last_updated": s.get("last_updated").and_then(|v| v.as_str()).unwrap_or(""),
+        "id": series_str_field(s, "id"),
+        "title": series_str_field(s, "title"),
+        "units": series_str_field(s, "units"),
+        "frequency": series_str_field(s, "frequency"),
+        "frequency_short": series_str_field(s, "frequency_short"),
+        "seasonal_adjustment": series_str_field(s, "seasonal_adjustment"),
+        "seasonal_adjustment_short": series_str_field(s, "seasonal_adjustment_short"),
+        "observation_start": series_str_field(s, "observation_start"),
+        "observation_end": series_str_field(s, "observation_end"),
+        "last_updated": series_str_field(s, "last_updated"),
         "popularity": s.get("popularity").and_then(|v| v.as_i64()).unwrap_or(0),
-        "notes": s.get("notes").and_then(|v| v.as_str()).unwrap_or(""),
+        "notes": series_str_field(s, "notes"),
     }))
 }
 
@@ -328,10 +342,10 @@ pub async fn get_release(
         .iter()
         .map(|s| {
             serde_json::json!({
-                "id": s.get("id").and_then(|v| v.as_str()).unwrap_or(""),
-                "title": s.get("title").and_then(|v| v.as_str()).unwrap_or(""),
-                "units": s.get("units").and_then(|v| v.as_str()).unwrap_or(""),
-                "frequency": s.get("frequency").and_then(|v| v.as_str()).unwrap_or(""),
+                "id": series_str_field(s, "id"),
+                "title": series_str_field(s, "title"),
+                "units": series_str_field(s, "units"),
+                "frequency": series_str_field(s, "frequency"),
             })
         })
         .collect();
