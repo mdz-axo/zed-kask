@@ -293,67 +293,106 @@ impl crate::CorpusServer {
         &self,
         Parameters(params): Parameters<RewriteRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "corpus_rewrite",
-            async {
-                let db_passphrase = crate::helpers::resolve_corpus_passphrase()?;
-                crate::helpers::ensure_db_exists(&params.db_path)?;
-                let dimension = normalize_dimension(&params.dimension)?;
-                let dimension_guidance = match dimension.as_str() {
-                    "gentle" => "Rewrite this text to maximize agent-correctness. Docs ARE code — ensure every statement is actionable and unambiguous. Remove any stale references or outdated information.",
-                    "schriver" => "Rewrite this text for maximum findability. Use scannable headings, descriptive hyperlinks, and front-load key concepts. A reader must find their answer within 30 seconds.",
-                    "hopper" => "Rewrite this text for maximum accessibility. Make it comprehensible on first reading with zero prior context. Use plain language, active voice, and short sentences.",
-                    "lovelace" => "Rewrite this text for maximum precision. Make every specification independently verifiable — a reader must be able to write a test from this text alone.",
-                    _ => "Rewrite this text for all four dimensions of documentation excellence: agent-correctness (Gentle), findability (Schriver), accessibility (Hopper), and precision (Lovelace).",
-                };
+        execute_tool(self, "corpus_rewrite", async {
+            let db_passphrase = crate::helpers::resolve_corpus_passphrase()?;
+            crate::helpers::ensure_db_exists(&params.db_path)?;
+            let dimension = normalize_dimension(&params.dimension)?;
+            let prompt = rewrite_prompt(params.config_path.is_some(), &dimension, &params.content);
 
-                let prompt = format!(
-                    "{dimension_guidance}\n\nText to rewrite:\n\n{}",
-                    params.content
-                );
+            let gen_model = generation_model();
+            let mut config =
+                resolve_cognition_config(params.config_path.as_deref(), &params.author)?;
+            config.embedding.centroid_entity_ref =
+                crate::compose::style_centroid_ref(&params.author, Some(&dimension));
+            let centroid_entity_ref = config.embedding.centroid_entity_ref.clone();
 
-                let gen_model = generation_model();
-                let mut config = resolve_cognition_config(
-                    params.config_path.as_deref(),
-                    &params.author,
-                )?;
-                config.embedding.centroid_entity_ref =
-                    crate::compose::style_centroid_ref(&params.author, Some(&dimension));
-                let centroid_entity_ref = config.embedding.centroid_entity_ref.clone();
+            let inference_ctx =
+                InferenceContext::from_parts(Some(self.inference_router.clone()), &gen_model);
 
-                let inference_ctx = InferenceContext::from_parts(
-                    Some(self.inference_router.clone()),
-                    &gen_model,
-                );
+            let request = crate::compose::ComposeRequest {
+                prompt,
+                db_path: PathBuf::from(&params.db_path),
+                db_passphrase,
+                cognition: config,
+                inference_ctx,
+                no_validate: false,
+            };
 
-                let request = crate::compose::ComposeRequest {
-                    prompt,
-                    db_path: PathBuf::from(&params.db_path),
-                    db_passphrase,
-                    cognition: config,
-                    inference_ctx,
-                    no_validate: false,
-                };
+            let result = crate::compose::ComposeService::compose(request)
+                .await
+                .map_err(|e| map_service_error(e, "Rewrite failed"))?;
 
-                let result = crate::compose::ComposeService::compose(request)
-                    .await
-                    .map_err(|e| map_service_error(e, "Rewrite failed"))?;
-
-                Ok(json!({
-                    "rewritten": result.generated_prose,
-                    "dimension": dimension,
-                    "centroid_entity_ref": centroid_entity_ref,
-                    "centroid_missing": result.centroid_missing,
-                    "author": params.author,
-                    "exemplar_count": result.exemplar_count,
-                    "method_signals_missing": result.method_signals_missing,
-                    "excluded_model_mismatch": result.excluded_model_mismatch,
-                    "centroid_distance": result.validation.as_ref().map(|v| v.distance),
-                    "style_passed": result.validation.map(|v| v.passed),
-                }))
-            },
-        )
+            Ok(json!({
+                "rewritten": result.generated_prose,
+                "dimension": dimension,
+                "centroid_entity_ref": centroid_entity_ref,
+                "centroid_missing": result.centroid_missing,
+                "author": params.author,
+                "exemplar_count": result.exemplar_count,
+                "method_signals_missing": result.method_signals_missing,
+                "excluded_model_mismatch": result.excluded_model_mismatch,
+                "centroid_distance": result.validation.as_ref().map(|v| v.distance),
+                "style_passed": result.validation.map(|v| v.passed),
+            }))
+        })
         .await
+    }
+}
+
+/// The rewrite prompt. A supplied cognition config's `jinja2_template` is the
+/// prompt contract for config-supplied rewrites, so the doc-excellence
+/// dimension guidance is prepended only when no config is supplied (the four
+/// doc dimensions pass no config). Prepending it under a config fights the
+/// template's own contract — config-supplied restyles returned restructured
+/// prose (invented headings, tables, glossaries) until the guidance was
+/// skipped (observed 2026-10-11).
+fn rewrite_prompt(config_supplied: bool, dimension: &str, content: &str) -> String {
+    if config_supplied {
+        return content.to_string();
+    }
+    let dimension_guidance = dimension_guidance(dimension);
+    format!("{dimension_guidance}\n\nText to rewrite:\n\n{content}")
+}
+
+/// Doc-excellence guidance per quality dimension, prepended to config-less
+/// rewrites only.
+fn dimension_guidance(dimension: &str) -> &'static str {
+    match dimension {
+        "gentle" => {
+            "Rewrite this text to maximize agent-correctness. Docs ARE code — ensure every statement is actionable and unambiguous. Remove any stale references or outdated information."
+        }
+        "schriver" => {
+            "Rewrite this text for maximum findability. Use scannable headings, descriptive hyperlinks, and front-load key concepts. A reader must find their answer within 30 seconds."
+        }
+        "hopper" => {
+            "Rewrite this text for maximum accessibility. Make it comprehensible on first reading with zero prior context. Use plain language, active voice, and short sentences."
+        }
+        "lovelace" => {
+            "Rewrite this text for maximum precision. Make every specification independently verifiable — a reader must be able to write a test from this text alone."
+        }
+        _ => {
+            "Rewrite this text for all four dimensions of documentation excellence: agent-correctness (Gentle), findability (Schriver), accessibility (Hopper), and precision (Lovelace)."
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// expect: A config-supplied rewrite prompt carries no dimension guidance.
+    /// [P8] Motivating: the config template is the prompt contract; pre: content
+    /// plus config; post: prompt equals the content verbatim.
+    #[test]
+    fn config_supplied_rewrite_prompt_carries_no_dimension_guidance() {
+        let content = "Keep this prose exactly as structured.";
+        assert_eq!(rewrite_prompt(true, "composite", content), content);
+        let without_config = rewrite_prompt(false, "composite", content);
+        assert!(
+            without_config.starts_with(
+                "Rewrite this text for all four dimensions of documentation excellence"
+            )
+        );
+        assert!(without_config.contains(content));
     }
 }

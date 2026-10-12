@@ -179,6 +179,7 @@ impl CorpusServer {
             // disk path costs one read-only open (~180ms KDF) and one vec0
             // KNN (~3s) per query — noise beside the embed call every query
             // already pays.
+            let db_path_ignored = db_path.is_some() && ram.total_indexed > 0;
             let retrieval = match db_path.as_deref() {
                 Some(path) if ram.total_indexed == 0 => durable_retrieval(
                     path,
@@ -207,6 +208,13 @@ impl CorpusServer {
 
             if total_indexed == 0 {
                 result["note"] = json!("Index empty. Provide db_path to query a durable corpus database, or embed passages.");
+            }
+            if db_path_ignored {
+                result["note"] = json!(format!(
+                    "db_path ignored: the in-memory index owns this query (passages published \
+                     this process: {total_indexed}). Call corpus_clear_index before \
+                     db_path-directed queries."
+                ));
             }
             if missing_text > 0 {
                 result["missing_passage_text"] = json!(missing_text);

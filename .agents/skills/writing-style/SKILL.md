@@ -126,12 +126,17 @@ report), not just the tone.
    accumulates across a long document.
 3. For each unit call `corpus_rewrite` with `config_path` (the style's
    cognition config), `author`, the unit text as `content`, and the intended
-   quality `dimension` (default `composite`). Rewrite always validates against
-   `style:{author}:{dimension}:centroid`: a literary config supplies prompts
-   and thresholds but does not override that target. Rewrite has no
-   `no_validate` parameter. Confirm the target exists; `centroid_missing=true`
-   with null distance/pass is unvalidated, not a successful check
-   (`kask/mcp-servers/hkask-mcp-corpus/src/tools/compose_tools.rs:303–366`).
+   quality `dimension` (default `composite`). The `content` is the unit's
+   prose only — headings, tables, and code fences re-attach verbatim at
+   reassembly (step 4) — preceded by an explicit structure-preserving restyle
+   contract: only voice, cadence, and narrative texture change; every fact,
+   figure, citation marker, and quotation stays in place. Rewrite always
+   validates against `style:{author}:{dimension}:centroid`: a literary config
+   supplies prompts and thresholds but does not override that target. Rewrite
+   has no `no_validate` parameter. Confirm the target exists;
+   `centroid_missing=true` with null distance/pass is unvalidated, not a
+   successful check
+   (`kask/mcp-servers/hkask-mcp-corpus/src/tools/compose_tools.rs:292–339`).
 4. Reassemble the recomposed units, preserving the document's structure
    (headings, code blocks, tables stay verbatim — a style voice never
    rewrites code or identifiers).

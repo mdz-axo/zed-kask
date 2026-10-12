@@ -1242,6 +1242,45 @@ async fn retrieval_origin_isolation_and_path_aliases() {
     }
 }
 
+/// expect: A db_path named alongside a nonempty in-memory index is ignored visibly.
+/// [P8] Motivating: ignored-input visibility; pre: fresh in-memory publications
+/// plus a named db_path; post: note names the in-memory count and the clear-index action.
+#[tokio::test]
+async fn nonempty_index_surfaces_ignored_db_path_note() {
+    let directory = fixture();
+    let server = server(Arc::new(RecordingPort::default()));
+    content(
+        server
+            .corpus_embed(Parameters(embed_request(
+                directory.path(),
+                "memory.db",
+                ORIGINAL,
+            )))
+            .await,
+    );
+    let result = content(
+        server
+            .corpus_query(Parameters(query(
+                Some(&directory.path().join("does-not-exist.db")),
+                false,
+                true,
+            )))
+            .await,
+    );
+    assert_eq!(result["total_indexed"], 1, "nonempty index owns the query");
+    let note = result["note"].as_str().expect("ignored-db_path note");
+    assert!(note.contains("db_path ignored"), "{note}");
+    assert!(
+        note.contains("passages published this process: 1"),
+        "{note}"
+    );
+    assert!(note.contains("corpus_clear_index"), "{note}");
+    assert!(
+        !directory.path().join("does-not-exist.db").exists(),
+        "db_path was not consulted"
+    );
+}
+
 /// expect: A legacy vector without stored passage text cannot masquerade as grounded context.
 /// [P8] Motivating: visible grounding gap; pre: textless DB row; post: no generation call and explicit gap.
 #[tokio::test]
