@@ -17,6 +17,63 @@ impl TavilyProvider {
             api_key,
         })
     }
+
+    /// Read the response's status and body and classify a non-success
+    /// status into the typed error mapping — 401/403 unavailable, 429
+    /// rate-limited, else provider error with the sanitized body. `label`
+    /// names the operation in the generic-error message ("API" on the
+    /// search path, "browse" on the extract path). Returns the success
+    /// body text; the caller parses it with its own message.
+    async fn read_body_or_classify_error(
+        resp: reqwest::Response,
+        label: &str,
+    ) -> Result<String, WebError> {
+        let status = resp.status();
+        let body = resp
+            .text()
+            .await
+            .map_err(|e| WebError::ProviderUnavailable(format!("Tavily body read failed: {e}")))?;
+        if !status.is_success() {
+            return Err(match status.as_u16() {
+                401 | 403 => WebError::ProviderUnavailable(format!("Tavily auth error: {status}")),
+                429 => WebError::RateLimited(format!("Tavily rate limited: {status}")),
+                _ => WebError::ProviderError(format!(
+                    "Tavily {label} error {status}: {}",
+                    hkask_inference::openai_compat::sanitize_error_body(&body)
+                )),
+            });
+        }
+        Ok(body)
+    }
+
+    /// The lightweight liveness check both trait `health` methods delegate
+    /// to: a minimal search request, where 401/403 means the key is invalid
+    /// and 429 means the service is alive but rate-limited (healthy).
+    async fn health_check(&self) -> Result<(), WebError> {
+        let payload = serde_json::json!({
+            "api_key": self.api_key,
+            "query": "test",
+            "max_results": 1,
+        });
+        let resp = self
+            .client
+            .post(format!("{TAVILY_API_BASE}/search"))
+            .header("Content-Type", "application/json")
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|e| {
+                WebError::ProviderUnavailable(format!("Tavily health check failed: {e}"))
+            })?;
+        let status = resp.status();
+        if status.is_success() || status.as_u16() == 429 {
+            Ok(())
+        } else {
+            Err(WebError::ProviderUnavailable(format!(
+                "Tavily health check returned {status}"
+            )))
+        }
+    }
 }
 #[async_trait]
 impl WebSearchProvider for TavilyProvider {
@@ -50,21 +107,7 @@ impl WebSearchProvider for TavilyProvider {
             .await
             .map_err(|e| WebError::ProviderUnavailable(format!("Tavily request failed: {e}")))?;
 
-        let status = resp.status();
-        let body = resp
-            .text()
-            .await
-            .map_err(|e| WebError::ProviderUnavailable(format!("Tavily body read failed: {e}")))?;
-        if !status.is_success() {
-            return Err(match status.as_u16() {
-                401 | 403 => WebError::ProviderUnavailable(format!("Tavily auth error: {status}")),
-                429 => WebError::RateLimited(format!("Tavily rate limited: {status}")),
-                _ => WebError::ProviderError(format!(
-                    "Tavily API error {status}: {}",
-                    hkask_inference::openai_compat::sanitize_error_body(&body)
-                )),
-            });
-        }
+        let body = Self::read_body_or_classify_error(resp, "API").await?;
 
         let parsed: serde_json::Value = serde_json::from_str(&body).map_err(|e| {
             WebError::ProviderError(format!("Failed to parse Tavily response: {e}"))
@@ -105,32 +148,10 @@ impl WebSearchProvider for TavilyProvider {
     }
 
     async fn health(&self) -> Result<(), WebError> {
-        // Lightweight liveness check: send a minimal search request and verify
-        // we get a non-5xx response. A 401/403 means the key is invalid;
-        // a 429 means the service is alive but rate-limited (healthy).
-        let payload = serde_json::json!({
-            "api_key": self.api_key,
-            "query": "test",
-            "max_results": 1,
-        });
-        let resp = self
-            .client
-            .post(format!("{TAVILY_API_BASE}/search"))
-            .header("Content-Type", "application/json")
-            .json(&payload)
-            .send()
-            .await
-            .map_err(|e| {
-                WebError::ProviderUnavailable(format!("Tavily health check failed: {e}"))
-            })?;
-        let status = resp.status();
-        if status.is_success() || status.as_u16() == 429 {
-            Ok(())
-        } else {
-            Err(WebError::ProviderUnavailable(format!(
-                "Tavily health check returned {status}"
-            )))
-        }
+        // Lightweight liveness check: a minimal search request where 401/403
+        // means the key is invalid and 429 means the service is alive but
+        // rate-limited (healthy).
+        self.health_check().await
     }
 }
 
@@ -163,21 +184,7 @@ impl WebBrowseProvider for TavilyProvider {
             .await
             .map_err(|e| WebError::ProviderUnavailable(format!("Tavily browse failed: {e}")))?;
 
-        let status = resp.status();
-        let body = resp
-            .text()
-            .await
-            .map_err(|e| WebError::ProviderUnavailable(format!("Tavily body read failed: {e}")))?;
-        if !status.is_success() {
-            return Err(match status.as_u16() {
-                401 | 403 => WebError::ProviderUnavailable(format!("Tavily auth error: {status}")),
-                429 => WebError::RateLimited(format!("Tavily rate limited: {status}")),
-                _ => WebError::ProviderError(format!(
-                    "Tavily browse error {status}: {}",
-                    hkask_inference::openai_compat::sanitize_error_body(&body)
-                )),
-            });
-        }
+        let body = Self::read_body_or_classify_error(resp, "browse").await?;
 
         let parsed: serde_json::Value = serde_json::from_str(&body).map_err(|e| {
             WebError::ProviderError(format!("Failed to parse Tavily browse response: {e}"))
@@ -201,25 +208,6 @@ impl WebBrowseProvider for TavilyProvider {
 
     async fn health(&self) -> Result<(), WebError> {
         // Reuse the search health check — same auth path.
-        let payload =
-            serde_json::json!({ "api_key": self.api_key, "query": "test", "max_results": 1 });
-        let resp = self
-            .client
-            .post(format!("{TAVILY_API_BASE}/search"))
-            .header("Content-Type", "application/json")
-            .json(&payload)
-            .send()
-            .await
-            .map_err(|e| {
-                WebError::ProviderUnavailable(format!("Tavily health check failed: {e}"))
-            })?;
-        let status = resp.status();
-        if status.is_success() || status.as_u16() == 429 {
-            Ok(())
-        } else {
-            Err(WebError::ProviderUnavailable(format!(
-                "Tavily health check returned {status}"
-            )))
-        }
+        self.health_check().await
     }
 }
