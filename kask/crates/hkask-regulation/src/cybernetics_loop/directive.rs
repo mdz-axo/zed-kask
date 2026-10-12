@@ -744,6 +744,24 @@ mod tests {
         }
     }
 
+    /// The escalation-delivery test preamble: a capturing event sink, a fresh
+    /// loop with `escalation_sink` wired, one escalate directive sent and
+    /// processed — returns the event sink and its directive acknowledgments.
+    /// The escalation sink is the caller's (the scripted outcome under test);
+    /// the outcome asserts stay per test.
+    async fn escalate_with_sink(
+        escalation_sink: Arc<dyn crate::AlertEscalationSink>,
+    ) -> (Arc<CapturingSink>, Vec<serde_json::Value>) {
+        let sink = Arc::new(CapturingSink(Mutex::new(Vec::new())));
+        let (mut regulation_loop, tx) =
+            loop_with_sink(Arc::clone(&sink) as Arc<dyn hkask_types::RegulationSink>).await;
+        regulation_loop.set_alert_escalation_sink(Some(escalation_sink));
+        tx.send(escalate_directive()).expect("send escalation");
+        regulation_loop.process_inbox().await;
+        let acks = directive_acks(&sink);
+        (sink, acks)
+    }
+
     /// An undampened explicit escalation is delivered to the reviewable
     /// queue retaining domain, severity, and evidence — and the
     /// acknowledgment reports the confirmed queue outcome with the
@@ -820,19 +838,12 @@ mod tests {
     /// reports confirmed delivery to the board.
     #[tokio::test]
     async fn explicit_escalation_repeat_reports_confirmed_without_new_id() {
-        let sink = Arc::new(CapturingSink(Mutex::new(Vec::new())));
-        let (mut regulation_loop, tx) =
-            loop_with_sink(Arc::clone(&sink) as Arc<dyn hkask_types::RegulationSink>).await;
-        regulation_loop.set_alert_escalation_sink(Some(Arc::new(ScriptedEscalationSink {
+        let (_sink, acks) = escalate_with_sink(Arc::new(ScriptedEscalationSink {
             received: Mutex::new(Vec::new()),
             result: Ok(crate::AlertDeliveryOutcome::Confirmed(None)),
-        })
-            as Arc<dyn crate::AlertEscalationSink>));
+        }) as Arc<dyn crate::AlertEscalationSink>)
+        .await;
 
-        tx.send(escalate_directive()).expect("send escalation");
-        regulation_loop.process_inbox().await;
-
-        let acks = directive_acks(&sink);
         assert_eq!(acks.len(), 1);
         assert_eq!(outcome_of(&acks[0]), "confirmed");
         assert!(
@@ -864,21 +875,14 @@ mod tests {
     /// A failed board write is surfaced as attempted, never confirmed.
     #[tokio::test]
     async fn explicit_escalation_failed_write_reports_attempted() {
-        let sink = Arc::new(CapturingSink(Mutex::new(Vec::new())));
-        let (mut regulation_loop, tx) =
-            loop_with_sink(Arc::clone(&sink) as Arc<dyn hkask_types::RegulationSink>).await;
-        regulation_loop.set_alert_escalation_sink(Some(Arc::new(ScriptedEscalationSink {
+        let (_sink, acks) = escalate_with_sink(Arc::new(ScriptedEscalationSink {
             received: Mutex::new(Vec::new()),
             result: Err(crate::AlertPersistError::BoardWrite(
                 "board unavailable".to_string(),
             )),
-        })
-            as Arc<dyn crate::AlertEscalationSink>));
+        }) as Arc<dyn crate::AlertEscalationSink>)
+        .await;
 
-        tx.send(escalate_directive()).expect("send escalation");
-        regulation_loop.process_inbox().await;
-
-        let acks = directive_acks(&sink);
         assert_eq!(acks.len(), 1);
         assert_eq!(
             outcome_of(&acks[0]),
@@ -891,18 +895,11 @@ mod tests {
     /// durable outcome) is "attempted", distinct from confirmed.
     #[tokio::test]
     async fn explicit_escalation_best_effort_sink_reports_attempted() {
-        let sink = Arc::new(CapturingSink(Mutex::new(Vec::new())));
-        let (mut regulation_loop, tx) =
-            loop_with_sink(Arc::clone(&sink) as Arc<dyn hkask_types::RegulationSink>).await;
-        regulation_loop.set_alert_escalation_sink(Some(Arc::new(BestEffortEscalationSink(
-            Mutex::new(Vec::new()),
-        ))
-            as Arc<dyn crate::AlertEscalationSink>));
+        let (_sink, acks) =
+            escalate_with_sink(Arc::new(BestEffortEscalationSink(Mutex::new(Vec::new())))
+                as Arc<dyn crate::AlertEscalationSink>)
+            .await;
 
-        tx.send(escalate_directive()).expect("send escalation");
-        regulation_loop.process_inbox().await;
-
-        let acks = directive_acks(&sink);
         assert_eq!(acks.len(), 1);
         assert_eq!(outcome_of(&acks[0]), "attempted");
     }
