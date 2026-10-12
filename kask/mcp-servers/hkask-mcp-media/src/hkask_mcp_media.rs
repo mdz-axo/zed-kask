@@ -2055,7 +2055,8 @@ mod tool_behavior_tests {
 
     /// The two-gallery fixture every generated-gallery test uses: artifacts
     /// dir under the env guard, galleries A and B, A active at admission,
-    /// and a server over the shared store. The admission gate and the
+    /// a server over the shared store, and the `entered`/`resume` notify
+    /// pair every admission gate parks its operation on. The gate and the
     /// spawned operation stay at each call site — they are what the test
     /// varies. The roots and artifacts dir are held so the fixture's
     /// registrations outlive the test body.
@@ -2070,6 +2071,8 @@ mod tool_behavior_tests {
         gallery_b: hkask_storage::GalleryRecord,
         gallery_state: Arc<std::sync::Mutex<Option<GalleryState>>>,
         server: Arc<MediaServer>,
+        entered: Arc<tokio::sync::Notify>,
+        resume: Arc<tokio::sync::Notify>,
     }
 
     #[cfg(unix)]
@@ -2120,6 +2123,8 @@ mod tool_behavior_tests {
             gallery_b,
             gallery_state,
             server,
+            entered: Arc::new(tokio::sync::Notify::new()),
+            resume: Arc::new(tokio::sync::Notify::new()),
         })
     }
 
@@ -2602,27 +2607,19 @@ mod tool_behavior_tests {
     async fn audio_capture_files_under_the_generated_gallery()
     -> Result<(), Box<dyn std::error::Error>> {
         let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
-        let TwoGalleryArms {
-            _env,
-            _artifacts,
-            gallery_a_root: _gallery_a_root,
-            gallery_b_root,
-            store,
-            gallery_a,
-            gallery_b,
-            gallery_state,
-            server,
-        } = two_gallery_arms().await?;
-        let entered = Arc::new(tokio::sync::Notify::new());
-        let resume = Arc::new(tokio::sync::Notify::new());
+        // Field access (not a destructure): the keep-alive fixture fields
+        // (_env, _artifacts, gallery_a_root) must stay bound for the test
+        // body — a `..` rest or early drop deletes the artifacts dir (and
+        // the fake ffmpeg) before the operation spawns.
+        let arms = two_gallery_arms().await?;
         let _gate = crate::tools::audio::install_audio_admission_gate(
             crate::tools::audio::AudioAdmissionGate {
-                entered: entered.clone(),
-                resume: resume.clone(),
+                entered: arms.entered.clone(),
+                resume: arms.resume.clone(),
             },
         )?;
         let operation = {
-            let server = server.clone();
+            let server = arms.server.clone();
             tokio::spawn(async move {
                 server
                     .audio_capture(Parameters(AudioCaptureRequest { duration_secs: 1.0 }))
@@ -2630,21 +2627,22 @@ mod tool_behavior_tests {
             })
         };
         let (_content, asset_id) = switch_to_gallery_b_and_finish(
-            &entered,
-            &resume,
-            &gallery_state,
-            gallery_b_root.path(),
-            &gallery_b.id,
+            &arms.entered,
+            &arms.resume,
+            &arms.gallery_state,
+            arms.gallery_b_root.path(),
+            &arms.gallery_b.id,
             operation,
         )
         .await?;
 
-        let generated = store
+        let generated = arms
+            .store
             .containing(&crate::assets::generated_assets_dir())?
             .ok_or("generated gallery registered")?;
-        assert_eq!(store.get_by_id(&asset_id)?.gallery_id, generated.id);
-        assert_eq!(store.count_assets(&gallery_a.id)?, 0);
-        assert_eq!(store.count_assets(&gallery_b.id)?, 0);
+        assert_eq!(arms.store.get_by_id(&asset_id)?.gallery_id, generated.id);
+        assert_eq!(arms.store.count_assets(&arms.gallery_a.id)?, 0);
+        assert_eq!(arms.store.count_assets(&arms.gallery_b.id)?, 0);
         Ok(())
     }
 
@@ -3411,28 +3409,18 @@ mod tool_behavior_tests {
     async fn local_video_output_files_under_the_generated_gallery()
     -> Result<(), Box<dyn std::error::Error>> {
         let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
-        let TwoGalleryArms {
-            _env,
-            _artifacts,
-            gallery_a_root: _gallery_a_root,
-            gallery_b_root,
-            store,
-            gallery_a,
-            gallery_b,
-            gallery_state,
-            server,
-        } = two_gallery_arms().await?;
-        let entered = Arc::new(tokio::sync::Notify::new());
-        let resume = Arc::new(tokio::sync::Notify::new());
+        // Field access — the keep-alive fixture fields stay bound in `arms`
+        // (a `..` rest drops the artifacts dir before the operation spawns).
+        let arms = two_gallery_arms().await?;
         let _gate = crate::tools::processing::install_local_video_validation_gate(
             crate::tools::processing::LocalVideoValidationGate {
-                entered: entered.clone(),
-                resume: resume.clone(),
+                entered: arms.entered.clone(),
+                resume: arms.resume.clone(),
                 bypass_dns: true,
             },
         )?;
         let operation = {
-            let server = server.clone();
+            let server = arms.server.clone();
             tokio::spawn(async move {
                 server
                     .video_clip(Parameters(VideoClipRequest {
@@ -3444,21 +3432,21 @@ mod tool_behavior_tests {
             })
         };
         let (_content, asset_id) = switch_to_gallery_b_and_finish(
-            &entered,
-            &resume,
-            &gallery_state,
-            gallery_b_root.path(),
-            &gallery_b.id,
+            &arms.entered,
+            &arms.resume,
+            &arms.gallery_state,
+            arms.gallery_b_root.path(),
+            &arms.gallery_b.id,
             operation,
         )
         .await?;
 
         assert_eq!(
-            store.get_by_id(&asset_id)?.gallery_id,
-            generated_gallery(&store)
+            arms.store.get_by_id(&asset_id)?.gallery_id,
+            generated_gallery(&arms.store)
         );
-        assert_eq!(store.count_assets(&gallery_a.id)?, 0);
-        assert_eq!(store.count_assets(&gallery_b.id)?, 0);
+        assert_eq!(arms.store.count_assets(&arms.gallery_a.id)?, 0);
+        assert_eq!(arms.store.count_assets(&arms.gallery_b.id)?, 0);
         Ok(())
     }
 
@@ -3472,32 +3460,22 @@ mod tool_behavior_tests {
     async fn video_from_images_reads_active_sources_and_files_output_under_generated()
     -> Result<(), Box<dyn std::error::Error>> {
         let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
-        let TwoGalleryArms {
-            _env,
-            _artifacts,
-            gallery_a_root,
-            gallery_b_root,
-            store,
-            gallery_a,
-            gallery_b,
-            gallery_state,
-            server,
-        } = two_gallery_arms().await?;
-        let source_a = gallery_a_root.path().join("source-a.png");
-        let source_b = gallery_b_root.path().join("source-b.png");
-        add_test_image(&store, &gallery_a.id, &source_a, [255, 0, 0])?;
-        add_test_image(&store, &gallery_b.id, &source_b, [0, 255, 0])?;
-        let entered = Arc::new(tokio::sync::Notify::new());
-        let resume = Arc::new(tokio::sync::Notify::new());
+        // Field access — the keep-alive fixture fields stay bound in `arms`
+        // (a `..` rest drops the artifacts dir before the operation spawns).
+        let arms = two_gallery_arms().await?;
+        let source_a = arms.gallery_a_root.path().join("source-a.png");
+        let source_b = arms.gallery_b_root.path().join("source-b.png");
+        add_test_image(&arms.store, &arms.gallery_a.id, &source_a, [255, 0, 0])?;
+        add_test_image(&arms.store, &arms.gallery_b.id, &source_b, [0, 255, 0])?;
         let _gate = crate::tools::processing::install_local_video_validation_gate(
             crate::tools::processing::LocalVideoValidationGate {
-                entered: entered.clone(),
-                resume: resume.clone(),
+                entered: arms.entered.clone(),
+                resume: arms.resume.clone(),
                 bypass_dns: false,
             },
         )?;
         let operation = {
-            let server = server.clone();
+            let server = arms.server.clone();
             tokio::spawn(async move {
                 server
                     .video_from_images(Parameters(VideoFromImagesRequest {
@@ -3509,11 +3487,11 @@ mod tool_behavior_tests {
             })
         };
         let (content, asset_id) = switch_to_gallery_b_and_finish(
-            &entered,
-            &resume,
-            &gallery_state,
-            gallery_b_root.path(),
-            &gallery_b.id,
+            &arms.entered,
+            &arms.resume,
+            &arms.gallery_state,
+            arms.gallery_b_root.path(),
+            &arms.gallery_b.id,
             operation,
         )
         .await?;
@@ -3523,11 +3501,11 @@ mod tool_behavior_tests {
             source_a.to_string_lossy().as_ref()
         );
         assert_eq!(
-            store.get_by_id(&asset_id)?.gallery_id,
-            generated_gallery(&store)
+            arms.store.get_by_id(&asset_id)?.gallery_id,
+            generated_gallery(&arms.store)
         );
-        assert_eq!(store.count_assets(&gallery_a.id)?, 1);
-        assert_eq!(store.count_assets(&gallery_b.id)?, 1);
+        assert_eq!(arms.store.count_assets(&arms.gallery_a.id)?, 1);
+        assert_eq!(arms.store.count_assets(&arms.gallery_b.id)?, 1);
         Ok(())
     }
 
