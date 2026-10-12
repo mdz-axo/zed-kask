@@ -40,6 +40,53 @@ fn request(path: &Path, output: &Path) -> ConvertRequest {
     }
 }
 
+/// A CorpusServer whose OCR vision port always returns `response` — the
+/// construction the OCR protocol tests share (VisionPort + executor +
+/// server under the fixture template-root label), varying exactly the
+/// response body. Tests that assert on the port's call counter keep their
+/// inline construction (they need the handle).
+fn ocr_response_server(response: String) -> CorpusServer {
+    let port: Arc<dyn InferencePort> = Arc::new(VisionPort {
+        calls: 0.into(),
+        response,
+    });
+    let ocr = Arc::new(crate::ocr::llm_ocr::LlmOcrExecutor::new(port.clone()));
+    CorpusServer::new(
+        hkask_types::WebID::new(),
+        Some("fixture/ocr".into()),
+        port,
+        Default::default(),
+        ocr,
+    )
+}
+
+/// The staged-OCR fixture: sources/output/staging dirs under one tempdir,
+/// an 80-term book.txt in sources and its staged book.txt.txt twin — the
+/// prologue the staged-resume tests share. Returns
+/// (dir, sources, output, staging, text); the per-test report construction
+/// stays inline. The dir binding keeps the TempDir alive for the test.
+fn staged_ocr_fixture() -> anyhow::Result<(
+    tempfile::TempDir,
+    std::path::PathBuf,
+    std::path::PathBuf,
+    std::path::PathBuf,
+    String,
+)> {
+    let dir = fixture()?;
+    let sources = dir.path().join("sources");
+    let output = dir.path().join("extracted");
+    let staging = dir.path().join("extracted-ocr-staging");
+    std::fs::create_dir(&sources)?;
+    std::fs::create_dir(&staging)?;
+    let text = (0..80)
+        .map(|n| format!("term {n}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    std::fs::write(sources.join("book.txt"), &text)?;
+    std::fs::write(staging.join("book.txt.txt"), &text)?;
+    Ok((dir, sources, output, staging, text))
+}
+
 // An unreferenced sparse stream makes the PDF large without a large test
 // allocation. Real Poppler still reads the xref and the native page content.
 fn large_native_pdf(path: &Path) -> anyhow::Result<()> {
@@ -302,18 +349,7 @@ async fn ocr_protocol_separates_page_text_and_annotations() -> anyhow::Result<()
     let input = dir.path().join("control.png");
     crate::helpers::inked_page().save(&input)?;
     let body = "The pump runs for seventeen minutes.\n\n![Pump diagram](page_0_0_100_100.png)\n\nThe gauge reads five bars.";
-    let port: Arc<dyn InferencePort> = Arc::new(VisionPort {
-        calls: 0.into(),
-        response: format!("{PAGE_HEADER}{body}"),
-    });
-    let ocr = Arc::new(crate::ocr::llm_ocr::LlmOcrExecutor::new(port.clone()));
-    let server = CorpusServer::new(
-        hkask_types::WebID::new(),
-        Some("fixture/ocr".into()),
-        port,
-        Default::default(),
-        ocr,
-    );
+    let server = ocr_response_server(format!("{PAGE_HEADER}{body}"));
     let output = dir.path().join("text.txt");
     let mut request = request(&input, &output);
     request.force_ocr = true;
@@ -371,18 +407,7 @@ async fn ocr_protocol_rejects_bad_page_before_output() -> anyhow::Result<()> {
     .into_iter()
     .enumerate()
     {
-        let port: Arc<dyn InferencePort> = Arc::new(VisionPort {
-            calls: 0.into(),
-            response,
-        });
-        let ocr = Arc::new(crate::ocr::llm_ocr::LlmOcrExecutor::new(port.clone()));
-        let server = CorpusServer::new(
-            hkask_types::WebID::new(),
-            Some("fixture/ocr".into()),
-            port,
-            Default::default(),
-            ocr,
-        );
+        let server = ocr_response_server(response);
         let output = dir.path().join(format!("rejected-{index}.txt"));
         let mut request = request(&input, &output);
         request.force_ocr = true;
@@ -488,18 +513,7 @@ async fn staged_ocr_report_round_trips_without_reinference() -> anyhow::Result<(
 /// expect: [P4] A staged OCR extraction without its page verification cannot be resumed as success.
 #[tokio::test]
 async fn staged_ocr_without_report_stays_unverified() -> anyhow::Result<()> {
-    let dir = fixture()?;
-    let sources = dir.path().join("sources");
-    let output = dir.path().join("extracted");
-    let staging = dir.path().join("extracted-ocr-staging");
-    std::fs::create_dir(&sources)?;
-    std::fs::create_dir(&staging)?;
-    let text = (0..80)
-        .map(|n| format!("term {n}"))
-        .collect::<Vec<_>>()
-        .join(" ");
-    std::fs::write(sources.join("book.txt"), &text)?;
-    std::fs::write(staging.join("book.txt.txt"), &text)?;
+    let (_dir, sources, output, staging, text) = staged_ocr_fixture()?;
     let result = server()
         .corpus_convert(Parameters(request(&sources, &output)))
         .await?;
@@ -519,19 +533,8 @@ async fn staged_ocr_without_report_stays_unverified() -> anyhow::Result<()> {
 /// expect: [P4] Resuming staged text must surface its failed per-page verification, not hide it behind whole-file quality.
 #[tokio::test]
 async fn staged_ocr_resume_returns_failed_report() -> anyhow::Result<()> {
-    let dir = fixture()?;
-    let sources = dir.path().join("sources");
-    let output = dir.path().join("extracted");
-    let staging = dir.path().join("extracted-ocr-staging");
-    std::fs::create_dir(&sources)?;
-    std::fs::create_dir(&staging)?;
-    let text = (0..80)
-        .map(|n| format!("term {n}"))
-        .collect::<Vec<_>>()
-        .join(" ");
+    let (_dir, sources, output, staging, text) = staged_ocr_fixture()?;
     let source = sources.join("book.txt");
-    std::fs::write(&source, &text)?;
-    std::fs::write(staging.join("book.txt.txt"), &text)?;
     let report = serde_json::json!({"path":source,"method":"selective_ocr", "verification_passed":false,
         "ocr_protocol":crate::ocr::response::OCR_PROTOCOL,
         "page_count_match":true,"quality_failed_pages":[7],"error_count":0});
