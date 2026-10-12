@@ -28,7 +28,6 @@
 * No `mod.rs` files — use `src/module.rs` instead (CI: `check-no-mod-rs.sh`, fork surface).
 * New crates: specify `[lib] path = "..."` in `Cargo.toml` (e.g., `gpui.rs`, not `lib.rs`).
 * Build: use `./script/clippy` instead of `cargo clippy`.
-* Scoped `cargo test`/`clippy` selections: `-p <kask crate>` alone fails to compile `hkask-types` — its `chrono` usage (`Local::now()` at `agent_paths.rs:306`, `Utc::now()` in `time.rs`) needs chrono's `clock` feature, which the workspace spec (`default-features = false`) opens only through transitive feature unification on `kask_bridge`'s zed-crate dependency edges. Add `-p kask_bridge` to any scoped selection (CI's own form: `-p 'hkask-*' -p kask_bridge`); `--all-features` on the scoped crate does not substitute (live 2026-10-12: three failed runs before the CI form resolved it).
 * `str::split_once` CONSUMES the delimiter: `"500ms".split_once('m')` yields `("500", "s")` — the delimiter is in neither half. For (prefix, suffix) extraction use `find()` + `split_at()`. Hit live: retry-after parsing silently read 500ms as 500s.
 
 # Timers in tests
