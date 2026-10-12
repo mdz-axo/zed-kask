@@ -178,7 +178,7 @@ With `auto_compress_tool_results = false`, verify
 `compress_tool_result(tool, output)` returns the original. Enable it and verify
 the result is no larger than the source. The gate and dispatch are at
 `kask/crates/kask_bridge/src/condenser_bridge.rs:42-73`; focused tests are at
-`kask/crates/kask_bridge/src/condenser_bridge.rs:202-249`.
+`kask/crates/kask_bridge/src/condenser_bridge.rs:75-126`.
 
 #### 4. Verify preservation boundaries
 

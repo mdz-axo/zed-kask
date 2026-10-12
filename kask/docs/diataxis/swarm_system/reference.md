@@ -13,7 +13,7 @@ mds_categories: [domain, composition, trust]
 `hkask-mcp-swarm` registers 91 tools: 48 cloud and 43 non-cloud (36 local,
 4 knowledge, 3 A2A). The server pins the live count, name-set equality,
 and cloud partition in its `tool_surface_tests`
-(`kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:1016-1047`; the 48/36/4/3
+(`kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:981-1011`; the 48/36/4/3
 partition is the per-file count of the same `pub(crate) async fn swarm_*`
 signature pattern). The build script derives both lists from `swarm_*` function
 signatures and router annotations (`kask/mcp-servers/hkask-mcp-swarm/build.rs:36-74`).
@@ -75,7 +75,7 @@ All 48 are defined in
 
 The full 90-name surface is verified against the registered routers by the
 name-set pin tests at
-`kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:1037-1060`.
+`kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:981-1011`.
 
 ## Non-cloud tools — 42
 
@@ -187,7 +187,7 @@ result types (`kask/mcp-servers/hkask-mcp-kata-kanban/src/hkask_mcp_kata_kanban.
 ## Procedures
 
 These procedures use the current 91-tool surface: 48 cloud tools and 43
-non-cloud tools (`kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:1016-1047`).
+non-cloud tools (`kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:981-1011`).
 
 ### Choose the execution path
 

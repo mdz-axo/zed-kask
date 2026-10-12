@@ -117,14 +117,14 @@ else
   echo "case r5: FAIL (rc=$rc)"; printf '%s\n' "$out"; FAILURES=$((FAILURES + 1))
 fi
 out=$(bash "$RESOLVER" "$WORK/src/extra.rs" 8 2>&1); rc=$?
-if [ $rc -eq 0 ] && grep -q '^Holder	7$' <<<"$out"; then
-  echo "case r6 (doc comment between impl methods resolves to the impl): OK"
+if [ $rc -eq 0 ] && grep -q '^impl Holder	7$' <<<"$out"; then
+  echo "case r6 (doc comment between impl methods resolves to the impl, re-findable form): OK"
 else
   echo "case r6: FAIL (rc=$rc)"; printf '%s\n' "$out"; FAILURES=$((FAILURES + 1))
 fi
 out=$(bash "$RESOLVER" "$WORK/src/extra.rs" 9 2>&1); rc=$?
-if [ $rc -eq 0 ] && grep -q '^fetch	9$' <<<"$out"; then
-  echo "case r7 (innermost fn beats enclosing impl): OK"
+if [ $rc -eq 0 ] && grep -q '^Holder::fetch	9$' <<<"$out"; then
+  echo "case r7 (method inside impl returns the qualified re-findable name): OK"
 else
   echo "case r7: FAIL (rc=$rc)"; printf '%s\n' "$out"; FAILURES=$((FAILURES + 1))
 fi
@@ -145,6 +145,18 @@ if [ $rc -eq 2 ]; then
   echo "case r10 (unqualified ambiguous name still exits 2): OK"
 else
   echo "case r10: FAIL (rc=$rc)"; printf '%s\n' "$out"; FAILURES=$((FAILURES + 1))
+fi
+out=$(bash "$RESOLVER" --find "$WORK/src/extra.rs" 'impl Holder' 2>&1); rc=$?
+if [ $rc -eq 0 ] && [ "$out" = "7" ]; then
+  echo "case r11 (--find 'impl Type' re-finds the impl block): OK"
+else
+  echo "case r11: FAIL (rc=$rc)"; printf '%s\n' "$out"; FAILURES=$((FAILURES + 1))
+fi
+out=$(bash "$RESOLVER" --find "$WORK/src/extra.rs" 'std::collections::HashMap' 2>&1); rc=$?
+if [ $rc -eq 0 ] && [ "$out" = "1" ]; then
+  echo "case r12 (single-:: use path falls back to plain find): OK"
+else
+  echo "case r12: FAIL (rc=$rc)"; printf '%s\n' "$out"; FAILURES=$((FAILURES + 1))
 fi
 
 # ── Case 2: drifted excerpt → FAIL + verbatim re-anchor ───────────────────
@@ -187,7 +199,7 @@ fi
 
 echo "----"
 if [ "$FAILURES" -eq 0 ]; then
-  echo "mcp-review-citations selftest: all 14 cases behaved as expected"
+  echo "mcp-review-citations selftest: all 16 cases behaved as expected"
 else
   echo "mcp-review-citations selftest: $FAILURES case(s) misbehaved"
 fi

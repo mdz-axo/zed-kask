@@ -53,7 +53,7 @@ the existing implementation, not a shell-based oracle.[^response-regex]
 **Crate:** `kask/mcp-servers/hkask-mcp-swarm`
 **Tools:** 91 — 48 ABW cloud + 43 non-cloud, **both sets always exposed in either mode**.
 Count is pinned end-to-end by `tool_surface_is_exactly_91_registered_tools`
-(`kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:1021-1026`); the canonical list is build-script-generated:
+(`kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:985-990`); the canonical list is build-script-generated:
 `kask/mcp-servers/hkask-mcp-swarm/build.rs` scans router-annotated `swarm_*` functions
 (`kask/mcp-servers/hkask-mcp-swarm/build.rs:34-81`) and emits `TOOL_NAMES`, kept in agreement with the live router by
 `tool_names_const_matches_registered_surface`. The 91 functions split into 48 cloud
@@ -106,7 +106,7 @@ substrate. ABW and local tools both fit the same three surfaces.[^reynolds-swarm
 
 > The tables below document 27 core ABW tools; the canonical cloud list contains
 > 48 names and is separately pinned against `cloud_swarm_router`
-> (`cloud_swarm_tool_names_match_live_cloud_router`, `kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:1032`; the router is generated at `kask/mcp-servers/hkask-mcp-swarm/src/cloud_swarm_tools.rs:214`). The 21 untabulated tools are `swarm_update_agent`, the App surface (`swarm_create_app_direct`,
+> (`cloud_swarm_tool_names_match_live_cloud_router`, `kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:996`; the router is generated at `kask/mcp-servers/hkask-mcp-swarm/src/cloud_swarm_tools.rs:214`). The 21 untabulated tools are `swarm_update_agent`, the App surface (`swarm_create_app_direct`,
 > `swarm_update_app`, `swarm_publish_app`, `swarm_archive_app`, `swarm_get_app`,
 > `swarm_get_app_schema`, `swarm_spawn_app_workspace`, `swarm_list_app_workspaces`,
 > `swarm_fork_workspace_to_app`) and the workspace file/action surface
@@ -332,7 +332,7 @@ sequenceDiagram
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-RF-SWARM-001
 verified_date: 2026-10-11
-verified_against: kask/mcp-servers/hkask-mcp-swarm/src/cloud_swarm_tools.rs; kask/mcp-servers/hkask-mcp-swarm/src/spend_gate.rs:130,380,544; kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:1021-1026,1032; kask/mcp-servers/hkask-mcp-swarm/src/consent.rs:76,221,255
+verified_against: kask/mcp-servers/hkask-mcp-swarm/src/cloud_swarm_tools.rs; kask/mcp-servers/hkask-mcp-swarm/src/spend_gate.rs:130,380,544; kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:985-990,996; kask/mcp-servers/hkask-mcp-swarm/src/consent.rs:76,221,255
 status: VERIFIED
 -->
 

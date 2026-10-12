@@ -18,17 +18,22 @@
 #     line. Candidates: functions (incl. trait signatures), structs,
 #     enums, traits, mods, consts, statics, type aliases, macro_rules,
 #     extern crate, use paths (keyed by FULL path text), and impl
-#     blocks (keyed by implemented type) — a doc-comment line between
-#     an impl's methods resolves to the impl.
+#     blocks. The returned NAME is always re-findable by --find:
+#     a method inside an impl returns "Type::method" (disambiguated),
+#     an impl block returns "impl Type", everything else returns its
+#     plain name. A doc-comment line between an impl's methods resolves
+#     to "impl Type". Known limit: a top-level doc comment or blank
+#     line has no enclosing node (exit 1).
 #   resolve-citation-anchor.sh --find FILE NAME
 #     Prints the CURRENT start line of the definition named NAME;
-#     exit 0. Exit 1 when not found; exit 2 when ambiguous.
-#   resolve-citation-anchor.sh --find FILE 'Type::method'
-#     Impl-qualified disambiguation (2026-10-11): resolves a method
-#     defined in several impl blocks by the implemented type. Generic
-#     impls are normalized (`impl<T> Foo<T>` answers to `Foo::method`).
-#     Qualification is by the IMPLEMENTED type, not the trait
-#     (`impl Tr for Foo` answers to `Foo::...`).
+#     exit 0. Exit 1 when not found; exit 2 when ambiguous. NAME forms:
+#     plain ("beta", "std::collections::HashMap" for use paths),
+#     "Type::method" (impl-qualified; generic impls normalized, so
+#     `impl<T> Foo<T>` answers to `Foo::method`; qualification is by
+#     the IMPLEMENTED type — `impl Tr for Foo` answers to `Foo::...`),
+#     "impl Type" (an impl block). A single-"::" NAME that matches no
+#     impl falls back to the plain-definitions search, so use paths
+#     like "std::fmt" still resolve.
 #
 # Exit 3 is a usage/tooling error (bad args, missing tool).
 set -uo pipefail
@@ -39,7 +44,7 @@ DEFS_RULE="$SCRIPT_DIR/../ast-grep/rules/rust-definitions.yml"
 IMPLS_RULE="$SCRIPT_DIR/../ast-grep/rules/rust-impls.yml"
 
 usage() {
-  echo "usage: $0 FILE LINE | $0 --find FILE NAME | $0 --find FILE 'Type::method'" >&2
+  echo "usage: $0 FILE LINE | $0 --find FILE NAME | $0 --find FILE 'Type::method' | $0 --find FILE 'impl Type'" >&2
   exit 3
 }
 
@@ -70,12 +75,36 @@ defs() {
     || true
 }
 
-# TYPE<TAB>START<TAB>END per impl block.
+# "impl TYPE"<TAB>START<TAB>END per impl block — the "impl " prefix
+# (impossible in a Rust identifier) keeps impl rows distinguishable
+# from item rows in the combined stream.
 impls() {
   "$AST_GREP" scan --rule "$IMPLS_RULE" --json=stream "$1" 2>/dev/null \
     | jq -r 'select(.ruleId == "rust-impls")
-             | "\(.metaVariables.single.TYPE.text)\t\(.range.start.line + 1)\t\(.range.end.line + 1)"' \
+             | ("impl " + .metaVariables.single.TYPE.text) + "\t\(.range.start.line + 1)\t\(.range.end.line + 1)"' \
     || true
+}
+
+# The plain-definitions arm of --find: exact name match over defs().
+find_plain() {
+  defs "$1" | awk -F'\t' -v N="$2" '$1 == N { print $2 }'
+}
+
+# The impl-qualified arm: methods named M inside impl blocks of type T
+# (generics normalized off both sides).
+find_qualified() {
+  local file=$1 qtype=$2 qmethod=$3
+  local impl_spans
+  impl_spans=$(impls "$file" | awk -F'\t' -v QT="$qtype" '{ t = $1; sub(/^impl /, "", t); sub(/<.*/, "", t); if (t == QT) print $2 "\t" $3 }')
+  [ -n "$impl_spans" ] || return 1
+  defs "$file" | awk -F'\t' -v M="$qmethod" '$1 == M { print $2 }' \
+    | while IFS= read -r ds; do
+        while IFS=$'\t' read -r is ie; do
+          if [ "$ds" -ge "$is" ] && [ "$ds" -le "$ie" ]; then
+            printf '%s\n' "$ds"
+          fi
+        done <<< "$impl_spans"
+      done | sort -u
 }
 
 case "${1:-}" in
@@ -87,26 +116,18 @@ case "${1:-}" in
       echo "FAIL: file not found: $file" >&2
       exit 3
     }
-    if [[ "$name" == *"::"* && "$name" != *"::"*"::"* ]]; then
-      # Impl-qualified: Type::method. Normalize generics off both sides
-      # (`impl<T> Foo<T>` answers to `Foo::method`).
+    if [[ "$name" == "impl "* ]]; then
+      qtype=$(printf '%s' "${name#impl }" | sed 's/<.*//')
+      hits=$(impls "$file" | awk -F'\t' -v QT="$qtype" '{ t = $1; sub(/^impl /, "", t); sub(/<.*/, "", t); if (t == QT) print $2 }')
+    elif [[ "$name" == *"::"* ]]; then
       qtype=$(printf '%s' "${name%%::*}" | sed 's/<.*//')
       qmethod=${name##*::}
-      impl_spans=$(impls "$file" | awk -F'\t' -v QT="$qtype" '{ t = $1; sub(/<.*/, "", t); if (t == QT) print $2 "\t" $3 }')
-      if [ -z "$impl_spans" ]; then
-        echo "no impl block for type '$qtype' in $file" >&2
-        exit 1
-      fi
-      hits=$(defs "$file" | awk -F'\t' -v M="$qmethod" '$1 == M { print $2 }' \
-        | while IFS= read -r ds; do
-            while IFS=$'\t' read -r is ie; do
-              if [ "$ds" -ge "$is" ] && [ "$ds" -le "$ie" ]; then
-                printf '%s\n' "$ds"
-              fi
-            done <<< "$impl_spans"
-          done | sort -u)
+      hits=$(find_qualified "$file" "$qtype" "$qmethod") || hits=""
+      # A single-"::" name that matches no impl may be a use path
+      # (e.g. "std::fmt") — fall back to the plain-definitions search.
+      [ -z "$hits" ] && hits=$(find_plain "$file" "$name")
     else
-      hits=$(defs "$file" | awk -F'\t' -v N="$name" '$1 == N { print $2 }')
+      hits=$(find_plain "$file" "$name")
     fi
     count=$(printf '%s\n' "$hits" | grep -c . || true)
     if [ "$count" -eq 0 ]; then
@@ -141,6 +162,27 @@ case "${1:-}" in
       echo "no enclosing definition at $file:$line" >&2
       exit 1
     fi
-    printf '%s\n' "$found"
+    fname=$(printf '%s' "$found" | cut -f1)
+    fstart=$(printf '%s' "$found" | cut -f2)
+    if [[ "$fname" == "impl "* ]]; then
+      printf '%s\t%s\n' "$fname" "$fstart"
+    else
+      # A definition inside an impl returns "Type::name" so --find can
+      # re-find it without ambiguity.
+      qual=""
+      while IFS=$'\t' read -r iname istart iend; do
+        [[ "$iname" == "impl "* ]] || continue
+        it=${iname#impl }; it=${it%%<*}
+        if [ "$fstart" -ge "$istart" ] && [ "$fstart" -le "$iend" ]; then
+          qual=$it
+          break
+        fi
+      done <<< "$(impls "$file")"
+      if [ -n "$qual" ]; then
+        printf '%s::%s\t%s\n' "$qual" "$fname" "$fstart"
+      else
+        printf '%s\t%s\n' "$fname" "$fstart"
+      fi
+    fi
     ;;
 esac

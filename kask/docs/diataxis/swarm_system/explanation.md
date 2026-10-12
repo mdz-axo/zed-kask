@@ -14,7 +14,7 @@ The swarm system separates cloud authority, local execution, type admission,
 and result evaluation so each decision has one enforcement point. Its live MCP
 surface is 91 tools: 48 cloud tools and 43 non-cloud tools (36 local, 4
 knowledge, 3 A2A — count by pinning test for the total and per-file grep for
-the partition; `kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:1016-1047`).
+the partition; `kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:981-1011`).
 The Zed-side Steer surface renders its ABW/local tool split from the same
 build-generated name consts, never a hand-maintained list
 (`crates/swarm_panel/src/swarm_panel.rs:154-158`).
@@ -72,9 +72,9 @@ The build script discovers every `pub(crate) async fn swarm_*` function and
 separately derives the cloud subset from `cloud_swarm_router`
 (`kask/mcp-servers/hkask-mcp-swarm/build.rs:36-74`). The live-router tests then
 compare both the total name set and cloud partition against the registered
-routers (`kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:1026-1060`).
+routers (`kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:981-1011`).
 
-The 42-tool non-cloud complement is 35 local tools, four knowledge tools, and
+The 43-tool non-cloud complement is 36 local tools, four knowledge tools, and
 three A2A tools (per-file grep over the same signature pattern). `swarm_get_local_agent`
 supplies one-card detail and execution statistics; `swarm_workflow_check_local`
 validates a card's declared workflow before execution

@@ -25,8 +25,39 @@ if ! jq -e . "$ARTIFACT" > /dev/null 2>&1; then
 fi
 
 ROOT=$(git rev-parse --show-toplevel)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 pass=0
 fail=0
+
+# UC-3 (tree-sitter adoption proposal,
+# kask/docs/research/tree-sitter-adoption-proposal.md): mechanical
+# re-anchor suggestion for a failed citation — advisory output only, the
+# gate's exit contract is unchanged. Preference order: the excerpt's
+# current verbatim line when unique, else the enclosing definition's
+# current start line resolved structurally (resolve-citation-anchor.sh
+# over tree-sitter).
+suggest_reanchor() {
+  local file=$1 line=$2 excerpt=$3
+  local path="$ROOT/$file"
+  [ -f "$path" ] || return 0
+  if [ -n "$excerpt" ]; then
+    local n
+    n=$(grep -Fc -- "$excerpt" "$path" || true)
+    if [ "$n" -eq 1 ]; then
+      local re_line
+      re_line=$(grep -Fn -- "$excerpt" "$path" | cut -d: -f1)
+      echo "     re-anchor: excerpt found verbatim at $file:$re_line"
+      return 0
+    fi
+  fi
+  local def
+  def=$("$SCRIPT_DIR/resolve-citation-anchor.sh" "$path" "$line" 2>/dev/null) || return 0
+  local def_name def_line
+  def_name=$(printf '%s' "$def" | cut -f1)
+  def_line=$(printf '%s' "$def" | cut -f2)
+  [ -n "$def_name" ] || return 0
+  echo "     re-anchor: enclosing definition '$def_name' currently at $file:$def_line"
+}
 
 check_site() {
   local file=$1 line=$2 excerpt=$3 kind=$4
@@ -40,6 +71,7 @@ check_site() {
   max_line=$(wc -l < "$path")
   if [ "$line" -lt 1 ] || [ "$line" -gt "$max_line" ]; then
     echo "FAIL [$kind] $file:$line — line out of range (file has $max_line lines)"
+    suggest_reanchor "$file" "$line" "$excerpt"
     fail=$((fail + 1))
     return
   fi
@@ -49,6 +81,7 @@ check_site() {
     local to=$((line + 3))
     if ! sed -n "${from},${to}p" "$path" | grep -F -- "$excerpt" > /dev/null 2>&1; then
       echo "FAIL [$kind] $file:$line — excerpt not found within ±3 lines"
+      suggest_reanchor "$file" "$line" "$excerpt"
       fail=$((fail + 1))
       return
     fi

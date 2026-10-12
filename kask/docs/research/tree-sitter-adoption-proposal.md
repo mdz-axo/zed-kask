@@ -2,7 +2,7 @@
 title: "Tree-sitter Code-Graph Capability Research — zed-kask Adoption Proposal"
 audience: [architects, developers, agents]
 last_updated: 2026-10-11
-version: "1.0.0"
+version: "1.1.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [composition, trust]
@@ -15,7 +15,9 @@ answers carried by that acceptance: the proposal persists here; ast-grep
 joins the pinned external tools (the jscpd precedent); use cases land in
 priority order UC-1 → UC-2 → UC-3; the first rule pack is Rust-only.
 Implementation landed the same day and is recorded in §7 with measured
-experiment outcomes.
+experiment outcomes. **The four §7.3 follow-ups were accepted and landed
+the same day** ("proceed as recommended with items 1–4"), including the
+correction of this document's own false-absence citation reading (§7.2).
 
 ## 1. Premise verdict
 
@@ -118,9 +120,11 @@ definition re-resolve to the correct current line; 13/60 cite
 top-level lines no definition encloses (not symbol-anchorable by the
 v1 rule); 3 are ambiguous (same-named methods in multiple impls — the
 documented exit-2 path). Raw line anchors: 0% survive (47/47 moved
-exactly +10, outside the ±3 window). The kask/docs corpus itself
-measures 1656 unique `.rs` citations, 671 (41%) already citing files
-that no longer exist — the rot this closes is real.**
+exactly +10, outside the ±3 window). The initial corpus reading —
+"671 (41%) already citing files that no longer exist" — was FALSE
+ABSENCE (a root-only resolution sweep; corrected in §7.2), and the
+accepted follow-up landing lifts survival to 52/60 = 86% overall,
+52/55 = 94% of anchorable, residual classes documented (§7.3).**
 
 **UC-4 — AST clone detection for the duplication ratchet. REJECTED
 (Exist gate):** the observed ratchet trap was report-name *resolution*,
@@ -160,12 +164,15 @@ in-process structural queries.
   the `check-*-selftest.sh` CI glob.
 - **Implementation notes follow the four Karpathy principles:** Think
   Before Coding (the experiments ran before the pack grew), Simplicity
-  First (external CLI over in-tree engine; one rule, not a speculative
+  First (external CLI over in-tree engine; four rules at day's end, each
+  admitted at the `.rules` bar by a measured gap — not a speculative
   pack), Surgical Changes (the citations checker gained an advisory
-  suggestion — its exit contract unchanged; no textual check retired),
-  Goal-Driven Execution (each use case shipped with its falsifiable
-  claim as the acceptance test — and one claim was falsified and is
-  reported as such).
+  suggestion — its exit contract unchanged; the string-errors gate's
+  line-based matching was replaced by the structural rule in the
+  accepted follow-up, its exclusions preserved), Goal-Driven Execution
+  (each use case shipped with its falsifiable claim as the acceptance
+  test — and one claim was falsified, corrected, and is reported as
+  such).
 
 ## 6. Explicit non-uses
 
@@ -187,7 +194,7 @@ in-process structural queries.
 6. **Type-dependent rules** (e.g., `let _ =` on `Result`) — parse trees
    cannot know a call returns `Result`; those stay textual/approximate.
 
-## 7. Implementation record (2026-10-11, uncommitted)
+## 7. Implementation record (2026-10-11; the §7.3 follow-ups accepted and landed the same day)
 
 Files (all kask-side; no DIVERGENCE.md seam — no zed-side edit):
 
@@ -195,8 +202,10 @@ Files (all kask-side; no DIVERGENCE.md seam — no zed-side edit):
 - `kask/ast-grep/rules/no-unwrap-in-production.yml` — UC-2's rule
   (composite `not.inside kind: mod_item / has: '#[cfg(test)]'`).
 - `kask/ast-grep/rules/rust-definitions.yml` — UC-3's definition-site
-  rule (name captures + spans; impl blocks covered by their methods'
-  spans, innermost wins).
+  rule (name captures + spans; widened 2026-10-11 to the top-level item
+  vocabulary — functions incl. trait signatures, structs, enums, traits,
+  mods, consts, statics, type aliases, macro_rules, extern crate, use
+  paths; `crate_attributes` is not a tree-sitter-rust kind, verified).
 - `kask/scripts/ast-grep.sh` — UC-1's pinned wrapper
   (`AST_GREP_VERSION=0.50.0`, `npx --package @ast-grep/cli@…`; the
   package exposes two bins so plain `npx @ast-grep/cli` cannot pick one —
@@ -211,12 +220,29 @@ Files (all kask-side; no DIVERGENCE.md seam — no zed-side edit):
   (refresh, ratchet pass + decoy exclusion, net-new fail, empty surface,
   stale note).
 - `kask/scripts/resolve-citation-anchor.sh` — UC-3's resolver (enclosing
-  mode + `--find` mode + ambiguity exit 2).
+  mode + `--find` mode + ambiguity exit 2; widened 2026-10-11: enclosing
+  mode returns re-findable qualified names — `Type::method` for methods
+  inside impls, `impl Type` for impl blocks — and `--find` learns both
+  forms, with generic normalization).
+- `kask/ast-grep/rules/rust-impls.yml` — the impl-block index for
+  `--find Type::method` disambiguation.
+- `kask/ast-grep/rules/no-string-errors.yml` — the `Result<_, String>`
+  structural rule (context+selector form — the naive pattern parses as
+  a comparison and matches nothing; the trap is recorded in the rule).
+- `kask/scripts/check-string-errors.sh` — the string-errors gate,
+  structural since 2026-10-11 (the line-based grep is replaced; its
+  exclusions — tests/examples/target, main.rs, `string-error-ok` — are
+  preserved in the jq filter).
+- `kask/scripts/check-docs-citations.sh` — the docs-citation gate: every
+  `path.rs:line` citation in kask/docs resolves via a ladder (root →
+  doc-relative → unique suffix → unique basename); unresolvable files
+  fail, line drift and ambiguous bare names warn.
 - `kask/scripts/check-mcp-review-citations.sh` — extended with the
   advisory `re-anchor:` suggestion (exit contract unchanged).
-- `kask/scripts/check-mcp-review-citations-selftest.sh` — new; 7 cases
-  green (pass contract, resolver modes, drift + verbatim re-anchor,
-  vanished excerpt + structural re-anchor, out-of-range).
+- `kask/scripts/check-mcp-review-citations-selftest.sh` — new; 16 cases
+  green (pass contract, resolver modes incl. the widened kinds and
+  impl-qualified pins, drift + verbatim re-anchor, vanished excerpt +
+  structural re-anchor, out-of-range).
 
 ### 7.1 Seeded-corpus experiment (UC-1/UC-2 claim — confirmed)
 
@@ -233,8 +259,14 @@ call pattern misses every split form). Pre-registered thresholds
 ### 7.2 Citation-shift experiment (UC-3 claim — falsified as stated, refined and confirmed for the anchorable class)
 
 Sample: 60 of 985 repo-root-resolvable unique `.rs` citations in
-kask/docs (1656 total; 671 = 41% already cite deleted files — the rot
-is real). Per citation: resolve the enclosing definition pre-shift,
+kask/docs (1656 total). **Correction (2026-10-11): the initial "671 =
+41% already cite deleted files" reading was FALSE ABSENCE — a root-only
+resolution sweep; docs cite crate-relative paths (`src/hkask_mcp_media.rs`)
+and bare names (`thread.rs:160`) that resolve from doc context. The
+resolution ladder (`check-docs-citations.sh`) resolves every citation:
+0 rotted; the real defect class was 9 line-drift citations (re-pointed
+the same day, 13 textual sites across 6 docs) and 223 ambiguous bare
+names (warnings, resolved by doc context).** Per citation: resolve the enclosing definition pre-shift,
 insert 10 lines immediately above the cited line in a temp copy,
 re-resolve by name, compare against the expected current line.
 **Measured: 44/60 = 73% overall — the ≥90% claim over all citations is
@@ -249,21 +281,35 @@ files defeat ast-grep's language inference; top-of-file insertion
 simulated with mid-file expected-line arithmetic) — diagnosed, fixed,
 re-measured; the mechanism was sound, the harness was not.
 
-### 7.3 Follow-ups surfaced by measurement (not landed)
+### 7.3 Follow-ups (accepted 2026-10-11 — all four landed the same day)
 
-- Widen `rust-definitions.yml` to top-level item kinds (`use`, `const`,
-  `static`, `type`, macro definitions) — would convert part of the
-  13/60 non-anchorable class.
-- Disambiguate `--find` with impl-qualified names (`Type::method`) —
-  the 3 ambiguity residuals.
-- The 671 already-rotted citations are a `doc-update` worklist, not a
-  resolver change: the resolver re-anchors citations to *current*
-  lines; it cannot recover citations to deleted files (git history
-  can, out of scope here).
-- `check-string-errors.sh` documents its own multi-line blind spot
-  ("widen with a multiline tool when one is") — the structural layer
-  now exists; a `Result<_, String>` rule is a candidate for the next
-  pack admission, at the `.rules` bar.
+- **Widened kinds — LANDED.** `rust-definitions.yml` now covers the
+  top-level item vocabulary. The 13/60 non-anchorable class was mostly
+  const items, type aliases, use paths, and doc comments inside impl
+  blocks. Re-measured: noenc 13 → 5 (top-level doc comments and a blank
+  line — no node encloses them; the documented limit).
+- **Impl-qualified `--find` — LANDED.** `rust-impls.yml` + the resolver's
+  qualified names (`Type::method`, `impl Type`; enclosing mode returns
+  re-findable names). Re-measured: **52/60 = 86% overall, 52/55 = 94% of
+  anchorable**; residuals documented (2 ambiguous impl blocks — 4 impls
+  of `NativeAgentConnection`, 3 of `Thread`; 1 trait signature
+  `ResultExt::log_err`).
+- **The "671 rotted citations" worklist — RESOLVED AS FALSE ABSENCE.**
+  The ladder gate measures **0 rotted**; the real class was 9 line-drift
+  citations, re-pointed the same day (13 textual sites across 6 docs,
+  plus one stale count corrected: 42/35 → 43/36 non-cloud tools in the
+  swarm explanation). The gate lands green: 1664 resolved, 0 rotted,
+  0 line-drift, 223 ambiguous-name warnings.
+- **`Result<_, String>` structural rule — LANDED.** `no-string-errors.yml`
+  + the `check-string-errors.sh` structural rewrite (line-based pass
+  replaced, exclusions preserved). Measured: **0 instances** on the
+  real surface — a *pinned* zero (the selftest's 4 cases include the
+  multi-line violation the old pass could not see and the nested-String
+  Ok type it false-positived). The naive-pattern trap (a bare
+  `Result<$T, String>` pattern parses as a comparison and matches
+  nothing) is recorded in the rule — the selftest caught it after a
+  real-surface run had read "0 instances" consistently with both
+  "clean" and "broken".
 
 ## 8. Skill orchestration (all eight, none decorative)
 

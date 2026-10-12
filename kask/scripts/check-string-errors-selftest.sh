@@ -3,14 +3,19 @@
 #
 # Institutionalizes the .rules trap "A CI gate must be shown to fail before its
 # status: enforced is trusted" — applied to check-string-errors.sh per CI gate
-# sweep follow-up issue #6. The gate greps for `Result<_, String>` anti-patterns;
-# a broken regex or inverted condition would silently vacate it. This self-test
-# injects a synthetic `Result<_, String>` return type into a temp source file
-# and asserts the gate catches it.
+# sweep follow-up issue #6. The gate matches `Result<_, String>` anti-patterns
+# structurally (ast-grep rule, 2026-10-11); a broken rule or inverted
+# condition would silently vacate it. This self-test injects synthetic
+# fixtures and asserts the gate's verdict on each.
 #
-# Two cases:
+# Four cases (cases 3-4 pin the structural pass's two wins over the former
+# line-based grep — both were its documented blind spots):
 #   1. Violation: a .rs file with `-> Result<(), String>` → gate must exit 1.
 #   2. Clean: a .rs file with `-> Result<(), MyError>` → gate must exit 0.
+#   3. Multi-line violation: `Result<\n (),\n String\n>` split across
+#      lines → gate must exit 1 (the line-based pass could not see it).
+#   4. Nested-String Ok type: `Result<(String, String), MyError>` → gate
+#      must exit 0 (the line-based pass false-positived here).
 #
 # Exit codes:
 #   0 — all cases passed (gate is alive)
@@ -92,6 +97,63 @@ elif ! printf '%s\n' "$CASE2_OUT" | grep -q "OK"; then
   failures=$((failures + 1))
 else
   echo "OK (case 2 — clean): gate passed on proper error enum"
+fi
+
+# ──────────────────────────────────────────────────────────────────────
+# Case 3: multi-line violation — `Result<\n (),\n String\n>` split across
+# lines. The structural pass must catch it (the line-based pass could not).
+# ──────────────────────────────────────────────────────────────────────
+mkdir -p "$TMPDIR/case3/crates/hkask-selftest/src"
+cat > "$TMPDIR/case3/crates/hkask-selftest/src/lib.rs" <<'EOF'
+pub fn bad_multiline() -> Result<
+    (),
+    String
+> {
+    Err("selftest synthetic multi-line violation".to_string())
+}
+EOF
+
+set +e
+CASE3_OUT=$(SCAN_DIRS="$TMPDIR/case3/crates/hkask-*" bash "$GATE" 2>&1)
+CASE3_RC=$?
+set -e
+
+if [ "$CASE3_RC" -ne 1 ]; then
+  echo "FAIL (case 3 — multi-line violation): expected exit 1, got $CASE3_RC"
+  printf '%s\n' "$CASE3_OUT" | sed 's/^/    /'
+  failures=$((failures + 1))
+elif ! printf '%s\n' "$CASE3_OUT" | grep -q "FAIL"; then
+  echo "FAIL (case 3 — multi-line violation): exit 1 but 'FAIL' not in output"
+  printf '%s\n' "$CASE3_OUT" | sed 's/^/    /'
+  failures=$((failures + 1))
+else
+  echo "OK (case 3 — multi-line violation): structural pass sees the split signature"
+fi
+
+# ──────────────────────────────────────────────────────────────────────
+# Case 4: nested-String Ok type — `Result<(String, String), MyError>`.
+# The structural pass must NOT flag it (the line-based pass false-positived
+# here — its documented blind spot 2).
+# ──────────────────────────────────────────────────────────────────────
+mkdir -p "$TMPDIR/case4/crates/hkask-selftest/src"
+cat > "$TMPDIR/case4/crates/hkask-selftest/src/lib.rs" <<'EOF'
+pub struct MyError;
+pub fn nested_ok_string() -> Result<(String, String), MyError> {
+    Err(MyError)
+}
+EOF
+
+set +e
+CASE4_OUT=$(SCAN_DIRS="$TMPDIR/case4/crates/hkask-*" bash "$GATE" 2>&1)
+CASE4_RC=$?
+set -e
+
+if [ "$CASE4_RC" -ne 0 ]; then
+  echo "FAIL (case 4 — nested-String Ok type): expected exit 0, got $CASE4_RC"
+  printf '%s\n' "$CASE4_OUT" | sed 's/^/    /'
+  failures=$((failures + 1))
+else
+  echo "OK (case 4 — nested-String Ok type): no false positive on the Ok-side String"
 fi
 
 if [ "$failures" -eq 0 ]; then

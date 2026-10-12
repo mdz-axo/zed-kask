@@ -5,74 +5,99 @@
 # callers from matching on specific error variants. Use `thiserror` enums
 # for library code, `anyhow` for application binaries.
 #
+# Structural since 2026-10-11 (the tree-sitter adoption proposal's
+# accepted follow-up, kask/docs/research/tree-sitter-adoption-proposal.md):
+# the match runs via the pinned ast-grep instrument
+# (kask/scripts/ast-grep.sh) over the rule
+# kask/ast-grep/rules/no-string-errors.yml. The pattern matches the
+# generic TYPE node, which replaces the former line-based grep and
+# closes both of its documented blind spots:
+# - multi-line `Result<..., String>` — a signature split across lines
+#   was invisible to a single-line grep; an AST node has no lines.
+# - the nested-String false positive — `Result<(String, String), MyError>`
+#   matched the old regex; structurally the second generic argument
+#   must be exactly the `String` type node, so it does not match.
+# Comment lines never match (a comment is not a type node) — the old
+# comment-line skip is structural now.
+#
+# Requires node/npx (the jscpd pinning precedent in
+# check-duplication-ratchet.sh; the ast-grep version pin lives in
+# kask/scripts/ast-grep.sh, once).
+#
 # Enabled in CI via `.github/workflows/kask-invariants.yml` check job.
 # Run locally: `scripts/check-string-errors.sh`
 #
 # COVERAGE (known, accepted gaps — an advertised invariant must state what
 # it does not check):
-# - Line-based: a `Result<..., String>` split across lines so that no
-#   single line carries the full shape is not matched. No such signature
-#   has been observed; widen with a multiline tool when one is.
-# - An Ok type ending in a nested `String>` (e.g. `Result<(String, String),
-#   TypedError>`) false-positives. Zero instances today; a loud false
-#   positive is recoverable, a silent miss is not.
 # - Scope: every hkask-* crate — the kask subtree (crates/hkask-*,
 #   mcp-servers/hkask-*) and the zed-path widget/adapter crates
-#   (../crates/hkask-*). Only `kask_bridge` is out of scope: the D8 seam
-#   crosses the GPUI/tokio boundary where String errors are accepted.
+#   (../crates/hkask-*), widened 2026-09-30 to match
+#   check-unsafe-forbid.sh's coverage. Only `kask_bridge` is out of
+#   scope: the D8 seam crosses the GPUI/tokio boundary where String
+#   errors are accepted. See zed-host-architecture-plan.md §13.1.
+# - Exclusions preserved from the line-based pass: tests/ and examples/
+#   directories, main.rs binaries, build target/ directories, and
+#   `string-error-ok` marker lines (the justification lives in the
+#   surrounding doc comment — the same reviewable-suppression pattern
+#   as the dead-code baseline).
+# - The rule matches `Result<T, String>` exactly: `Box<String>` and
+#   `&str` error slots are not matched (the same scope the line-based
+#   pass had).
 
-set -euo pipefail
-cd "$(dirname "$0")/.."
+set -uo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$SCRIPT_DIR/.."
+
+AST_GREP="$SCRIPT_DIR/ast-grep.sh"
+RULE_FILE="$SCRIPT_DIR/../ast-grep/rules/no-string-errors.yml"
 
 # Overridable scan roots so the self-test (check-string-errors-selftest.sh)
 # can point the gate at a temp tree with a synthetic violation. Defaults to
 # the production source roots.
 SCAN_DIRS=( ${SCAN_DIRS:-crates/hkask-* mcp-servers/hkask-* ../crates/hkask-*} )
 
-FAIL=0
+command -v jq >/dev/null 2>&1 || {
+  echo "FAIL: jq not found — the gate parses ast-grep's stream JSON with jq." >&2
+  exit 1
+}
+[ -x "$AST_GREP" ] || {
+  echo "FAIL: $AST_GREP missing or not executable." >&2
+  exit 1
+}
+[ -f "$RULE_FILE" ] || {
+  echo "FAIL: rule file $RULE_FILE missing." >&2
+  exit 1
+}
+
+# Stream JSON: one match object per line on stdout; the error-severity
+# summary goes to stderr and the exit code is 1 when matches exist —
+# both expected, hence the redirect and || true (grep reads the temp
+# file, never a pipe — a pipe under pipefail SIGPIPEs the writer).
 TMPFILE=$(mktemp)
 trap 'rm -f "$TMPFILE"' EXIT
 
-# Collect all lines containing 'Result<' from hkask library code (exclude tests
-# and main.rs). Scan roots cover every hkask-* crate — the kask subtree's
-# crates/hkask-* + mcp-servers/hkask-* and the zed-path widget crates
-# ../crates/hkask-* (widened 2026-09-30: the hkask-* hygiene standard is
-# uniform across both trees, matching check-unsafe-forbid.sh's coverage).
-# Only the kask_bridge seam (D8) stays out — String errors are accepted at
-# the GPUI/tokio boundary. See zed-host-architecture-plan.md §13.1.
-grep -rn -- 'Result<' "${SCAN_DIRS[@]}" \
-    --include='*.rs' \
-    --exclude-dir=target \
-    2>/dev/null \
-    | grep -vE '/(tests|examples)/|main\.rs' \
-    > "$TMPFILE" || true
+"$AST_GREP" scan --rule "$RULE_FILE" --json=stream "${SCAN_DIRS[@]}" 2>/dev/null \
+  | jq -r 'select(.ruleId == "no-string-errors")
+           | select(.file | test("/(tests|examples|target)/") | not)
+           | select(.file | test("main\\.rs$") | not)
+           | select(.lines | contains("string-error-ok") | not)
+           | "\(.file):\(.range.start.line + 1):\(.text)"' > "$TMPFILE" || true
 
-while IFS=: read -r file line text; do
-    [ -z "$file" ] && continue
-    # Skip comment lines — doc text mentioning the rule (e.g. "Replaces
-    # `Result<_, String>` with MediaError") is not a violation.
-    [[ "$text" =~ ^[[:space:]]*// ]] && continue
-    # Skip justified sites: a `string-error-ok` marker suppresses the
-    # finding; the justification lives in the surrounding doc comment
-    # (same reviewable-suppression pattern as the dead-code baseline).
-    [[ "$text" == *string-error-ok* ]] && continue
-    # Match: Result<*, String> in ANY position — return, parameter, field,
-    # or bound. The error slot is the last type argument before `>`.
-    # The negative lookahead (?!\s*,) prevents false positives where `String>` is a
-    # type parameter inside the Ok type (e.g. Result<HashMap<String, String>, ServiceError>).
-    if echo "$text" | grep -qP -- 'Result<.+,\s*String\s*>(?!\s*,)'; then
-        echo "  ${file}:${line}:${text}"
-        FAIL=1
-    fi
+FAIL=0
+while IFS= read -r row; do
+  [ -n "$row" ] || continue
+  echo "  $row"
+  FAIL=1
 done < "$TMPFILE"
 
 if [ $FAIL -eq 0 ]; then
-    echo "OK: No Result<_, String> patterns found in library code."
-    exit 0
+  echo "OK: No Result<_, String> patterns found in library code."
+  exit 0
 else
-    echo ""
-    echo "FAIL: Result<_, String> patterns found. Replace String error types with thiserror enums."
-    echo "See: crates/hkask-keystore/src/error.rs (KeystoreError example)"
-    echo "     crates/hkask-inference/src/passage_tagging.rs (PassageTaggingError example)"
-    exit 1
+  echo ""
+  echo "FAIL: Result<_, String> patterns found. Replace String error types with thiserror enums."
+  echo "See: crates/hkask-keystore/src/error.rs (KeystoreError example)"
+  echo "     crates/hkask-inference/src/passage_tagging.rs (PassageTaggingError example)"
+  exit 1
 fi
