@@ -305,25 +305,15 @@ impl KanbanServer {
                         Ok(c) => c,
                         Err(e) => return Err(McpToolError::invalid_argument(e)),
                     };
-                    match self.service.board_create(self.webid, &name, &cols) {
-                        Ok(board) => Ok(serde_json::to_value(BoardCreateResponse {
+                    respond(
+                        self.service.board_create(self.webid, &name, &cols),
+                        |board| BoardCreateResponse {
                             board_id: board.id.to_string(),
                             name: board.name,
-                            columns: board
-                                .columns
-                                .iter()
-                                .map(|c| ColumnInfo {
-                                    id: c.id.to_string(),
-                                    name: c.name.clone(),
-                                    status: c.status.to_string(),
-                                    wip_limit: c.wip_limit,
-                                })
-                                .collect(),
+                            columns: column_infos(&board.columns),
                             ontology: kanban_type_to_pko("Board").map(|s| s.to_string()),
-                        })
-                        .map_err(|e| McpToolError::internal(e.to_string()))?),
-                        Err(e) => Err(map_kanban_error(e)),
-                    }
+                        },
+                    )
                 },
             ),
         )
@@ -336,31 +326,20 @@ impl KanbanServer {
         Parameters(BoardListRequest {}): Parameters<BoardListRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "kanban_board_list", async {
-            match self.service.board_list(&self.webid) {
-                Ok(boards) => Ok(serde_json::to_value(BoardListResponse {
+            respond(self.service.board_list(&self.webid), |boards| {
+                BoardListResponse {
                     boards: boards
                         .into_iter()
                         .map(|b| BoardInfo {
                             board_id: b.id.to_string(),
                             name: b.name,
                             column_count: b.columns.len(),
-                            columns: b
-                                .columns
-                                .iter()
-                                .map(|c| ColumnInfo {
-                                    id: c.id.to_string(),
-                                    name: c.name.clone(),
-                                    status: c.status.to_string(),
-                                    wip_limit: c.wip_limit,
-                                })
-                                .collect(),
+                            columns: column_infos(&b.columns),
                             ontology: kanban_type_to_pko("Board").map(|s| s.to_string()),
                         })
                         .collect(),
-                })
-                .map_err(|e| McpToolError::internal(e.to_string()))?),
-                Err(e) => Err(map_kanban_error(e)),
-            }
+                }
+            })
         })
         .await
     }
@@ -495,20 +474,17 @@ impl KanbanServer {
                         .into_iter()
                         .map(|c| VerificationCriterion::new(c.description))
                         .collect();
-                    match self
-                        .service
-                        .goal_create(goal_text, criteria, prediction, tid, self.webid)
-                    {
-                        Ok(goal) => Ok(serde_json::to_value(GoalCreateResponse {
+                    respond(
+                        self.service
+                            .goal_create(goal_text, criteria, prediction, tid, self.webid),
+                        |goal| GoalCreateResponse {
                             goal_id: goal.id.to_string(),
                             goal_text: goal.goal_text,
                             criteria_count: goal.criteria.len(),
                             prediction: goal.prediction,
                             ontology: kanban_type_to_pko("Goal").map(|s| s.to_string()),
-                        })
-                        .map_err(|e| McpToolError::internal(e.to_string()))?),
-                        Err(e) => Err(map_kanban_error(e)),
-                    }
+                        },
+                    )
                 },
             ),
         )
@@ -550,16 +526,15 @@ impl KanbanServer {
                 reasoning,
                 judged_at: chrono::Utc::now(),
             };
-            match self.service.goal_judge(gid, goal_verdict, self.webid) {
-                Ok(goal) => Ok(serde_json::to_value(GoalJudgeResponse {
+            respond(
+                self.service.goal_judge(gid, goal_verdict, self.webid),
+                |goal| GoalJudgeResponse {
                     goal_id: goal.id.to_string(),
                     verdict: verdict,
                     verdict_count: goal.verdicts.len(),
                     ontology: kanban_type_to_pko("kanban_goal_judge").map(|s| s.to_string()),
-                })
-                .map_err(|e| McpToolError::internal(e.to_string()))?),
-                Err(e) => Err(map_kanban_error(e)),
-            }
+                },
+            )
         })
         .await
     }
@@ -576,32 +551,28 @@ impl KanbanServer {
     ) -> Result<String, McpToolError> {
         execute_tool(self, "kanban_goal_score", async {
             let gid = parse_goal_id(&goal_id)?;
-            match self.service.goal_score(gid, achieved, self.webid) {
-                Ok(goal) => {
-                    let resolution = goal
-                        .resolution
-                        .as_ref()
-                        .expect("goal_score records a resolution");
-                    let note = if resolution.brier.is_none() {
-                        Some(
-                            "no intake prediction was recorded — Brier not computable \
-                                 (this is not a score of 0)"
-                                .to_string(),
-                        )
-                    } else {
-                        None
-                    };
-                    Ok(serde_json::to_value(GoalScoreResponse {
-                        goal_id: goal.id.to_string(),
-                        achieved,
-                        brier: resolution.brier,
-                        note,
-                        ontology: kanban_type_to_pko("kanban_goal_score").map(|s| s.to_string()),
-                    })
-                    .map_err(|e| McpToolError::internal(e.to_string()))?)
+            respond(self.service.goal_score(gid, achieved, self.webid), |goal| {
+                let resolution = goal
+                    .resolution
+                    .as_ref()
+                    .expect("goal_score records a resolution");
+                let note = if resolution.brier.is_none() {
+                    Some(
+                        "no intake prediction was recorded — Brier not computable \
+                             (this is not a score of 0)"
+                            .to_string(),
+                    )
+                } else {
+                    None
+                };
+                GoalScoreResponse {
+                    goal_id: goal.id.to_string(),
+                    achieved,
+                    brier: resolution.brier,
+                    note,
+                    ontology: kanban_type_to_pko("kanban_goal_score").map(|s| s.to_string()),
                 }
-                Err(e) => Err(map_kanban_error(e)),
-            }
+            })
         })
         .await
     }
@@ -642,8 +613,8 @@ impl KanbanServer {
         Parameters(GoalListRequest {}): Parameters<GoalListRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "kanban_goal_list", async {
-            match self.service.goal_list(&self.webid) {
-                Ok(goals) => Ok(serde_json::to_value(GoalListResponse {
+            respond(self.service.goal_list(&self.webid), |goals| {
+                GoalListResponse {
                     goals: goals
                         .into_iter()
                         .map(|g| GoalInfo {
@@ -663,10 +634,8 @@ impl KanbanServer {
                             created_at: g.created_at.to_rfc3339(),
                         })
                         .collect(),
-                })
-                .map_err(|e| McpToolError::internal(e.to_string()))?),
-                Err(e) => Err(map_kanban_error(e)),
-            }
+                }
+            })
         })
         .await
     }
@@ -714,18 +683,17 @@ impl KanbanServer {
                     }
                     spec.advances = citations;
 
-                    match self.service.task_create(bid, spec, self.webid) {
-                        Ok(task) => Ok(serde_json::to_value(TaskCreateResponse {
+                    respond(
+                        self.service.task_create(bid, spec, self.webid),
+                        |task| TaskCreateResponse {
                             task_id: task.id.to_string(),
                             board_id: task.board_id.to_string(),
                             title: task.title,
                             status: task.status.to_string(),
                             advances_count: task.advances.len(),
                             ontology: kanban_type_to_pko("Task").map(|s| s.to_string()),
-                        })
-                        .map_err(|e| McpToolError::internal(e.to_string()))?),
-                        Err(e) => Err(map_kanban_error(e)),
-                    }
+                        },
+                    )
                 },
             ),
         )
@@ -784,25 +752,24 @@ impl KanbanServer {
                 })
                 .transpose()?;
 
-            match self.service.task_update(
-                tid,
-                self.webid,
-                title,
-                description_update,
-                criteria_update,
-                priority_update,
-                labels,
-                advances_update,
-            ) {
-                Ok(task) => Ok(serde_json::to_value(TaskUpdateResponse {
+            respond(
+                self.service.task_update(
+                    tid,
+                    self.webid,
+                    title,
+                    description_update,
+                    criteria_update,
+                    priority_update,
+                    labels,
+                    advances_update,
+                ),
+                |task| TaskUpdateResponse {
                     task_id: task.id.to_string(),
                     title: task.title,
                     advances_count: task.advances.len(),
                     ontology: kanban_type_to_pko("Task").map(|s| s.to_string()),
-                })
-                .map_err(|e| McpToolError::internal(e.to_string()))?),
-                Err(e) => Err(map_kanban_error(e)),
-            }
+                },
+            )
         })
         .await
     }
@@ -825,8 +792,8 @@ impl KanbanServer {
                 },
                 None => TaskFilter::all(),
             };
-            match self.service.task_list(bid, filter) {
-                Ok(tasks) => Ok(serde_json::to_value(TaskListResponse {
+            respond(self.service.task_list(bid, filter), |tasks| {
+                TaskListResponse {
                     tasks: tasks
                         .into_iter()
                         .map(|t| {
@@ -851,10 +818,8 @@ impl KanbanServer {
                             }
                         })
                         .collect(),
-                })
-                .map_err(|e| McpToolError::internal(e.to_string()))?),
-                Err(e) => Err(map_kanban_error(e)),
-            }
+                }
+            })
         })
         .await
     }
@@ -890,8 +855,8 @@ impl KanbanServer {
                     )));
                 }
             };
-            match self.service.task_move(tid, target, self.webid) {
-                Ok(task) => Ok(serde_json::to_value(TaskMoveResponse {
+            respond(self.service.task_move(tid, target, self.webid), |task| {
+                TaskMoveResponse {
                     task_id: task.id.to_string(),
                     previous_status,
                     new_status: task.status.to_string(),
@@ -905,10 +870,8 @@ impl KanbanServer {
                             &task.status.to_string(),
                         )
                         .map(|s| s.to_string()),
-                })
-                .map_err(|e| McpToolError::internal(e.to_string()))?),
-                Err(e) => Err(map_kanban_error(e)),
-            }
+                }
+            })
         })
         .await
     }
@@ -920,15 +883,13 @@ impl KanbanServer {
     ) -> Result<String, McpToolError> {
         execute_tool(self, "kanban_task_assign", async {
             let tid = parse_task_id(&task_id)?;
-            match self.service.task_claim(tid, self.webid) {
-                Ok(task) => Ok(serde_json::to_value(TaskAssignResponse {
+            respond(self.service.task_claim(tid, self.webid), |task| {
+                TaskAssignResponse {
                     task_id: task.id.to_string(),
                     assignee: task.assignee.map(|a| a.to_string()).unwrap_or_default(),
                     ontology: kanban_type_to_pko("kanban_task_assign").map(|s| s.to_string()),
-                })
-                .map_err(|e| McpToolError::internal(e.to_string()))?),
-                Err(e) => Err(map_kanban_error(e)),
-            }
+                }
+            })
         })
         .await
     }
@@ -961,14 +922,12 @@ impl KanbanServer {
     ) -> Result<String, McpToolError> {
         execute_tool(self, "kanban_task_unassign", async {
             let tid = parse_task_id(&task_id)?;
-            match self.service.task_unassign(tid, self.webid) {
-                Ok(task) => Ok(serde_json::to_value(TaskUnassignResponse {
+            respond(self.service.task_unassign(tid, self.webid), |task| {
+                TaskUnassignResponse {
                     task_id: task.id.to_string(),
                     ontology: kanban_type_to_pko("Task").map(|s| s.to_string()),
-                })
-                .map_err(|e| McpToolError::internal(e.to_string()))?),
-                Err(e) => Err(map_kanban_error(e)),
-            }
+                }
+            })
         })
         .await
     }
@@ -985,17 +944,16 @@ impl KanbanServer {
             if evidence.trim().is_empty() {
                 return Err(McpToolError::invalid_argument("evidence must not be empty"));
             }
-            match self.service.task_verify(tid, &evidence, self.webid) {
-                Ok((task, verification)) => Ok(serde_json::to_value(TaskVerifyResponse {
+            respond(
+                self.service.task_verify(tid, &evidence, self.webid),
+                |(task, verification)| TaskVerifyResponse {
                     task_id: task.id.to_string(),
                     passed: verification.passed,
                     reasoning: verification.reasoning,
                     new_status: task.status.to_string(),
                     ontology: kanban_type_to_pko("kanban_task_verify").map(|s| s.to_string()),
-                })
-                .map_err(|e| McpToolError::internal(e.to_string()))?),
-                Err(e) => Err(map_kanban_error(e)),
-            }
+                },
+            )
         })
         .await
     }
@@ -1014,18 +972,17 @@ impl KanbanServer {
                     "comment body must not be empty",
                 ));
             }
-            match self.service.task_comment(tid, self.webid, &body) {
-                Ok(comment) => Ok(serde_json::to_value(TaskCommentResponse {
+            respond(
+                self.service.task_comment(tid, self.webid, &body),
+                |comment| TaskCommentResponse {
                     comment_id: comment.id.to_string(),
                     task_id: comment.task_id.to_string(),
                     author: comment.author.to_string(),
                     body: comment.body,
                     created_at: comment.created_at.to_rfc3339(),
                     ontology: kanban_type_to_pko("Comment").map(|s| s.to_string()),
-                })
-                .map_err(|e| McpToolError::internal(e.to_string()))?),
-                Err(e) => Err(map_kanban_error(e)),
-            }
+                },
+            )
         })
         .await
     }
@@ -1042,8 +999,9 @@ impl KanbanServer {
     ) -> Result<String, McpToolError> {
         execute_tool(self, "kanban_task_comments_since", async {
             let tid = parse_task_id(&task_id)?;
-            match self.service.task_comments_since(tid, since_index) {
-                Ok(comments) => {
+            respond(
+                self.service.task_comments_since(tid, since_index),
+                |comments| {
                     let total = comments.len() + since_index;
                     let mapped: Vec<TaskCommentResponse> = comments
                         .into_iter()
@@ -1056,15 +1014,13 @@ impl KanbanServer {
                             ontology: kanban_type_to_pko("Comment").map(|s| s.to_string()),
                         })
                         .collect();
-                    Ok(serde_json::to_value(TaskCommentsSinceResponse {
+                    TaskCommentsSinceResponse {
                         task_id: tid.to_string(),
                         comments: mapped,
                         total_count: total,
-                    })
-                    .map_err(|e| McpToolError::internal(e.to_string()))?)
-                }
-                Err(e) => Err(map_kanban_error(e)),
-            }
+                    }
+                },
+            )
         })
         .await
     }
@@ -1081,16 +1037,15 @@ impl KanbanServer {
             if path.trim().is_empty() {
                 return Err(McpToolError::invalid_argument("path must not be empty"));
             }
-            match self.service.task_add_deliverable(tid, &path, self.webid) {
-                Ok(task) => Ok(serde_json::to_value(TaskAddDeliverableResponse {
+            respond(
+                self.service.task_add_deliverable(tid, &path, self.webid),
+                |task| TaskAddDeliverableResponse {
                     task_id: task.id.to_string(),
                     deliverable_count: task.deliverables.len(),
                     ontology: kanban_type_to_pko("kanban_task_add_deliverable")
                         .map(|s| s.to_string()),
-                })
-                .map_err(|e| McpToolError::internal(e.to_string()))?),
-                Err(e) => Err(map_kanban_error(e)),
-            }
+                },
+            )
         })
         .await
     }
@@ -1633,6 +1588,36 @@ fn map_kanban_error(e: KanbanError) -> McpToolError {
         KanbanError::WipLimitExceeded { .. } => McpToolError::failed_precondition(e.to_string()),
         KanbanError::Internal(msg) => McpToolError::internal(msg),
     }
+}
+
+/// Shape one service call's result into a serialized MCP response: `Ok`
+/// maps through `build` and serializes (a serialization failure is an
+/// internal error), `Err` maps through `map_kanban_error`. The response
+/// construction is the caller's — each tool's response shape is its own
+/// contract; the match/serialize/error-mapping tail is shared.
+fn respond<T, R: serde::Serialize>(
+    result: Result<T, KanbanError>,
+    build: impl FnOnce(T) -> R,
+) -> Result<serde_json::Value, McpToolError> {
+    match result {
+        Ok(value) => Ok(serde_json::to_value(build(value))
+            .map_err(|e| McpToolError::internal(e.to_string()))?),
+        Err(e) => Err(map_kanban_error(e)),
+    }
+}
+
+/// Map a board's columns into their response form — shared by the board
+/// creation and listing tools.
+fn column_infos(columns: &[ColumnDef]) -> Vec<ColumnInfo> {
+    columns
+        .iter()
+        .map(|c| ColumnInfo {
+            id: c.id.to_string(),
+            name: c.name.clone(),
+            status: c.status.to_string(),
+            wip_limit: c.wip_limit,
+        })
+        .collect()
 }
 
 /// Run the kanban MCP server (used by binary target).
