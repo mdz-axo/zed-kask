@@ -5740,14 +5740,24 @@ mod gallery_lifecycle_tests {
         Ok(())
     }
 
-    /// expect: My gallery and mode survive restart, aliases, and switches; invalid roots never activate. [P1]
-    #[tokio::test]
-    async fn reopen_two_roots_aliases_and_failure_preserves_activation() -> TestResult {
+    /// A fresh fixture with two created subdirectories `first` and `second` —
+    /// the shared setup of the two-root gallery tests, which vary in what
+    /// they put inside the roots and assert after. The fixture is returned
+    /// (not dropped) so its registrations outlive the test body.
+    fn two_created_dir_roots()
+    -> std::io::Result<(tempfile::TempDir, std::path::PathBuf, std::path::PathBuf)> {
         let fixture = tempfile::tempdir()?;
         let first = fixture.path().join("first");
         let second = fixture.path().join("second");
         std::fs::create_dir(&first)?;
         std::fs::create_dir(&second)?;
+        Ok((fixture, first, second))
+    }
+
+    /// expect: My gallery and mode survive restart, aliases, and switches; invalid roots never activate. [P1]
+    #[tokio::test]
+    async fn reopen_two_roots_aliases_and_failure_preserves_activation() -> TestResult {
+        let (fixture, first, second) = two_created_dir_roots()?;
         png(&first.join("first.png"), 1);
         png(&second.join("second.png"), 2);
         let database = fixture.path().join("gallery.sqlite");
@@ -6157,11 +6167,7 @@ mod gallery_lifecycle_tests {
     /// expect: Switching galleries during vision never tags the new root or retargets later indices. [P1]
     #[tokio::test]
     async fn analysis_is_bound_before_await_and_rejects_changed_revision() -> TestResult {
-        let fixture = tempfile::tempdir()?;
-        let first = fixture.path().join("first");
-        let second = fixture.path().join("second");
-        std::fs::create_dir(&first)?;
-        std::fs::create_dir(&second)?;
+        let (fixture, first, second) = two_created_dir_roots()?;
         for name in ["a.png", "b.png"] {
             png(&first.join(name), 1);
             png(&second.join(name), 2);
