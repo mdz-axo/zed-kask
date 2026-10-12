@@ -3957,6 +3957,28 @@ mod tool_behavior_tests {
         assert_eq!(content_of(&layers)["count"].as_u64(), Some(1));
     }
 
+    /// Assert a rejected pass surfaces its named invariant and stores no
+    /// layer — the shared tail of the speaker/correction rejection tests,
+    /// varying exactly the invariant substring.
+    async fn assert_rejection_stores_no_layer(
+        server: &MediaServer,
+        transcript_id: &str,
+        message: &str,
+        invariant: &str,
+    ) {
+        assert!(
+            message.contains(invariant),
+            "the named invariant must surface: {message}"
+        );
+        let layers = server
+            .educt_list_layers(Parameters(crate::types::EductListLayersRequest {
+                transcript_id: transcript_id.to_string(),
+            }))
+            .await
+            .expect("list layers succeeds");
+        assert_eq!(content_of(&layers)["count"].as_u64(), Some(0));
+    }
+
     #[tokio::test]
     async fn educt_speaker_pass_rejects_overlapping_spans() {
         let server = make_pass_server(
@@ -3973,18 +3995,8 @@ mod tool_behavior_tests {
             }))
             .await
             .expect_err("overlapping spans must be rejected");
-        assert!(
-            error.message.contains("overlapping"),
-            "the named invariant must surface: {}",
-            error.message
-        );
-        let layers = server
-            .educt_list_layers(Parameters(crate::types::EductListLayersRequest {
-                transcript_id,
-            }))
-            .await
-            .expect("list layers succeeds");
-        assert_eq!(content_of(&layers)["count"].as_u64(), Some(0));
+        assert_rejection_stores_no_layer(&server, &transcript_id, &error.message, "overlapping")
+            .await;
     }
 
     #[tokio::test]
@@ -4359,18 +4371,8 @@ mod tool_behavior_tests {
             }))
             .await
             .expect_err("out-of-bounds edit must be rejected");
-        assert!(
-            error.message.contains("out of bounds"),
-            "the named invariant must surface: {}",
-            error.message
-        );
-        let layers = server
-            .educt_list_layers(Parameters(crate::types::EductListLayersRequest {
-                transcript_id,
-            }))
-            .await
-            .expect("list layers succeeds");
-        assert_eq!(content_of(&layers)["count"].as_u64(), Some(0));
+        assert_rejection_stores_no_layer(&server, &transcript_id, &error.message, "out of bounds")
+            .await;
     }
 
     #[tokio::test]
