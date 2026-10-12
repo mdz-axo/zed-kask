@@ -87,6 +87,21 @@ if [[ "$mode" == small-to-big ]]; then
     done
 fi
 
+# Representation-file shape gate shared by the retrieval and parent
+# representations: nonempty, every row carries a nonempty entity_ref and
+# source with text and a numeric word_count, and entity_refs are unique.
+# Bare call under set -e: a shape failure is the script's exit.
+validate_representation() {
+    jq -s -e '
+        length > 0 and
+        all(.[]; (.entity_ref | type == "string" and length > 0) and
+                  (.source | type == "string" and length > 0) and
+                  (.text | type == "string") and
+                  (.word_count | type == "number")) and
+        ([.[].entity_ref] | length == (unique | length))
+    ' "$1" >/dev/null
+}
+
 jq -s -e '
     length > 0 and
     all(.[]; (.query_id | type == "string" and length > 0) and
@@ -95,14 +110,7 @@ jq -s -e '
               (.evidence_quote | type == "string" and length > 0)) and
     ([.[].query_id] | length == (unique | length))
 ' "$queries" >/dev/null
-jq -s -e '
-    length > 0 and
-    all(.[]; (.entity_ref | type == "string" and length > 0) and
-              (.source | type == "string" and length > 0) and
-              (.text | type == "string") and
-              (.word_count | type == "number")) and
-    ([.[].entity_ref] | length == (unique | length))
-' "$retrieval_representation" >/dev/null
+validate_representation "$retrieval_representation"
 if [[ "$mode" == small-to-big ]]; then
     jq -s -e '
         length > 0 and
@@ -111,14 +119,7 @@ if [[ "$mode" == small-to-big ]]; then
                   (.parent_refs | type == "array" and length > 0)) and
         ([.[].child_ref] | length == (unique | length))
     ' "$child_parent_map" >/dev/null
-    jq -s -e '
-        length > 0 and
-        all(.[]; (.entity_ref | type == "string" and length > 0) and
-                  (.source | type == "string" and length > 0) and
-                  (.text | type == "string") and
-                  (.word_count | type == "number")) and
-        ([.[].entity_ref] | length == (unique | length))
-    ' "$parent_representation" >/dev/null
+    validate_representation "$parent_representation"
     jq -n -e \
         --slurpfile children "$retrieval_representation" \
         --slurpfile maps "$child_parent_map" \
@@ -421,6 +422,15 @@ def admit($contexts; $budget):
        end)
   | .budget_limited = (.skipped_contexts > 0);
 
+def rank_budget_metrics($candidates; $contexts; $admitted; $raw):
+  {rank_metrics:{
+     first_exact_rank:(([$candidates[] | select(.text | contains($raw.query_spec.evidence_quote)) | .rank] | first) // null),
+     first_correct_source_rank:(([$candidates[] | select(.source == $raw.query_spec.source) | .rank] | first) // null)},
+   budget_metrics:{
+     exact_evidence_found:any($contexts[]; .text | contains($raw.query_spec.evidence_quote)),
+     correct_source_found:any($contexts[]; .source == $raw.query_spec.source),
+     all_candidates_admitted:($admitted.budget_limited | not)}};
+
 def direct_result($raw; $rows; $budget):
   [$raw.retrieval.results | to_entries[]
    | (.key + 1) as $rank
@@ -436,18 +446,12 @@ def direct_result($raw; $rows; $budget):
   | $admitted.contexts as $contexts
   | {query_id:$raw.query_id,query:$raw.query_spec.query,expected_source:$raw.query_spec.source,
      evidence_quote:$raw.query_spec.evidence_quote,retrieval_results:$hits,contexts:$contexts,
-     rank_metrics:{
-       first_exact_rank:(([$hits[] | select(.text | contains($raw.query_spec.evidence_quote)) | .rank] | first) // null),
-       first_correct_source_rank:(([$hits[] | select(.source == $raw.query_spec.source) | .rank] | first) // null)},
-     budget_metrics:{
-       exact_evidence_found:any($contexts[]; .text | contains($raw.query_spec.evidence_quote)),
-       correct_source_found:any($contexts[]; .source == $raw.query_spec.source),
-       all_candidates_admitted:($admitted.budget_limited | not)},
      retrieved_words:$admitted.retrieved_words,budget_limited:$admitted.budget_limited,
      skipped_contexts:$admitted.skipped_contexts,oversized_contexts:$admitted.oversized_contexts,
      duplicate_overlap:duplicate_stats($contexts),
      source_fidelity_violations:[$hits[].violations[]?],
-     total_indexed:$raw.retrieval.total_indexed};
+     total_indexed:$raw.retrieval.total_indexed}
+  + rank_budget_metrics($hits; $contexts; $admitted; $raw);
 def small_result($raw; $children_by_ref; $maps_by_child; $parents_by_ref; $budget):
   [$raw.retrieval.results | to_entries[]
    | (.key + 1) as $rank
@@ -483,13 +487,6 @@ def small_result($raw; $children_by_ref; $maps_by_child; $parents_by_ref; $budge
   | {query_id:$raw.query_id,query:$raw.query_spec.query,expected_source:$raw.query_spec.source,
      evidence_quote:$raw.query_spec.evidence_quote,retrieval_results:$children,
      expanded_contexts:$expanded,contexts:$contexts,
-     rank_metrics:{
-       first_exact_rank:(([$expanded[] | select(.text | contains($raw.query_spec.evidence_quote)) | .rank] | first) // null),
-       first_correct_source_rank:(([$expanded[] | select(.source == $raw.query_spec.source) | .rank] | first) // null)},
-     budget_metrics:{
-       exact_evidence_found:any($contexts[]; .text | contains($raw.query_spec.evidence_quote)),
-       correct_source_found:any($contexts[]; .source == $raw.query_spec.source),
-       all_candidates_admitted:($admitted.budget_limited | not)},
      retrieved_words:$admitted.retrieved_words,budget_limited:$admitted.budget_limited,
      skipped_contexts:$admitted.skipped_contexts,oversized_contexts:$admitted.oversized_contexts,
      duplicate_overlap:duplicate_stats($contexts),
@@ -497,7 +494,8 @@ def small_result($raw; $children_by_ref; $maps_by_child; $parents_by_ref; $budge
      small_to_big:{retrieved_children:($children | length),
        boundary_crossing_children:([$children[] | select((.parent_refs | length) > 1)] | length),
        parent_expansion_count:($expanded | length),admitted_parent_count:($contexts | length)},
-     total_indexed:$raw.retrieval.total_indexed};
+     total_indexed:$raw.retrieval.total_indexed}
+  + rank_budget_metrics($expanded; $contexts; $admitted; $raw);
 
 (reduce $retrieval_rows[] as $row ({}; .[$row.entity_ref] = $row)) as $retrieval_by_ref
 | if $mode == "direct" then
