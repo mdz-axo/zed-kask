@@ -22,19 +22,27 @@ fn image_record_url(record: &hkask_storage::gallery::ImageRecord) -> Result<Stri
 }
 
 impl MediaServer {
-    /// Resolve an image index to a base64 data URL for vision LLM calls.
-    pub(crate) fn resolve_image_url(&self, image_index: usize) -> Result<String, MediaError> {
+    /// Resolve an image index to its gallery record — the shared preamble of
+    /// the index-resolution family: access the active gallery, fetch by index,
+    /// surface the storage failure as ImageNotFound naming the index.
+    fn resolve_image_record(
+        &self,
+        image_index: usize,
+    ) -> Result<hkask_storage::gallery::ImageRecord, MediaError> {
         let ga = self.access_gallery()?;
-
-        let img = self
-            .gallery_store
+        self.gallery_store
             .get_image(&ga.gallery_id, Some(image_index), None)
             .map_err(|e| {
                 MediaError::ImageNotFound(format!(
                     "Image not found at index {}: {}",
                     image_index, e
                 ))
-            })?;
+            })
+    }
+
+    /// Resolve an image index to a base64 data URL for vision LLM calls.
+    pub(crate) fn resolve_image_url(&self, image_index: usize) -> Result<String, MediaError> {
+        let img = self.resolve_image_record(image_index)?;
 
         let data = read_image_capped(&img.absolute_path)?;
         let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &data);
@@ -52,34 +60,14 @@ impl MediaServer {
 
     /// Resolve an image index to a filesystem path.
     pub(crate) fn resolve_image_path(&self, image_index: usize) -> Result<PathBuf, MediaError> {
-        let ga = self.access_gallery()?;
-
-        let img = self
-            .gallery_store
-            .get_image(&ga.gallery_id, Some(image_index), None)
-            .map_err(|e| {
-                MediaError::ImageNotFound(format!(
-                    "Image not found at index {}: {}",
-                    image_index, e
-                ))
-            })?;
+        let img = self.resolve_image_record(image_index)?;
 
         Ok(PathBuf::from(&img.absolute_path))
     }
 
     /// Resolve an image index to its SQLite image ID for tag persistence.
     pub(crate) fn resolve_image_id(&self, image_index: usize) -> Result<String, MediaError> {
-        let ga = self.access_gallery()?;
-
-        let img = self
-            .gallery_store
-            .get_image(&ga.gallery_id, Some(image_index), None)
-            .map_err(|e| {
-                MediaError::ImageNotFound(format!(
-                    "Image not found at index {}: {}",
-                    image_index, e
-                ))
-            })?;
+        let img = self.resolve_image_record(image_index)?;
 
         Ok(img.id)
     }
