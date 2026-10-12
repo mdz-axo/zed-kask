@@ -1065,33 +1065,7 @@ fn num_eq(
     args: &[LispValue],
     _budget: &mut EvalBudget,
 ) -> Result<LispValue, LispError> {
-    if args.len() < 2 {
-        return Err(LispError::Arity("= expects at least 2 args".into()));
-    }
-    // All-Int args compare as exact i64s — the f64 coercion lost every
-    // integer above 2^53 ((= 2^53+1 2^53) silently returned true; lisp-repair
-    // L2, pinned in the agent emission matrix).
-    let ints: Option<Vec<i64>> = args
-        .iter()
-        .map(|a| match a {
-            LispValue::Int(i) => Some(*i),
-            _ => None,
-        })
-        .collect();
-    if let Some(ints) = ints {
-        return Ok(LispValue::Bool(ints.windows(2).all(|w| w[0] == w[1])));
-    }
-    // Mixed numeric args: f64 comparison, with type errors PROPAGATED (the
-    // former `.ok()` swallow made (= 1 "x") silently false — `=` is
-    // numeric-only by the documented contract, so a non-number is a type
-    // error, never a silent false).
-    let first = as_f64(&args[0])?;
-    for a in &args[1..] {
-        if as_f64(a)? != first {
-            return Ok(LispValue::Bool(false));
-        }
-    }
-    Ok(LispValue::Bool(true))
+    compare_chain("=", args, |a, b| a == b, |a, b| a == b)
 }
 
 fn num_ne(
@@ -1099,32 +1073,17 @@ fn num_ne(
     args: &[LispValue],
     _budget: &mut EvalBudget,
 ) -> Result<LispValue, LispError> {
-    if args.len() < 2 {
-        return Err(LispError::Arity("!= expects at least 2 args".into()));
-    }
-    let ints: Option<Vec<i64>> = args
-        .iter()
-        .map(|a| match a {
-            LispValue::Int(i) => Some(*i),
-            _ => None,
-        })
-        .collect();
-    if let Some(ints) = ints {
-        return Ok(LispValue::Bool(ints.windows(2).all(|w| w[0] != w[1])));
-    }
-    let first = as_f64(&args[0])?;
-    for a in &args[1..] {
-        if as_f64(a)? == first {
-            return Ok(LispValue::Bool(false));
-        }
-    }
-    Ok(LispValue::Bool(true))
+    compare_chain("!=", args, |a, b| a != b, |a, b| a != b)
 }
 
-/// Exact-integer comparison helper for the ordered comparators: when every
-/// arg is an Int, compare as i64 (the f64 coercion misordered every integer
-/// above 2^53 — lisp-repair L2); otherwise fall back to f64 with type errors
-/// propagated.
+/// Comparison helper for every numeric comparator (=, !=, <, <=, >, >=):
+/// when every arg is an Int, compare as exact i64 — the f64 coercion lost
+/// every integer above 2^53 ((= 2^53+1 2^53) silently returned true;
+/// lisp-repair L2, pinned in the agent emission matrix). Otherwise fall
+/// back to f64 with type errors PROPAGATED — a non-number anywhere is a
+/// type error, never a silent false (the former `.ok()` swallow made
+/// (= 1 "x") silently false). Comparison runs over adjacent pairs, the
+/// documented 3+ arg contract for every numeric comparator.
 fn compare_chain(
     name: &str,
     args: &[LispValue],
@@ -1492,6 +1451,35 @@ fn concat_fn(
     Ok(LispValue::String(combined))
 }
 
+/// Needle-first string-pair extraction for the verbatim substring checks:
+/// arity 2 with both args strings, type errors naming the expected type.
+/// Needle-first follows `assoc`/`member` (searched-for first, searched-in
+/// second); per-check guards (empty needle, length) stay at the call site.
+fn string_pair<'a>(name: &str, args: &'a [LispValue]) -> Result<(&'a str, &'a str), LispError> {
+    if args.len() != 2 {
+        return Err(LispError::Arity(format!("{name} expects 2 args")));
+    }
+    let needle = match &args[0] {
+        LispValue::String(s) => s,
+        other => {
+            return Err(LispError::TypeError {
+                expected: "string".into(),
+                actual: type_of(other),
+            });
+        }
+    };
+    let subject = match &args[1] {
+        LispValue::String(s) => s,
+        other => {
+            return Err(LispError::TypeError {
+                expected: "string".into(),
+                actual: type_of(other),
+            });
+        }
+    };
+    Ok((needle, subject))
+}
+
 /// Substring containment: `(string-contains needle haystack)` returns true
 /// iff `needle` is a non-empty substring of `haystack`. Arg order follows
 /// `assoc`/`member` (searched-for first, searched-in second). An empty
@@ -1506,27 +1494,7 @@ fn string_contains_fn(
     args: &[LispValue],
     _budget: &mut EvalBudget,
 ) -> Result<LispValue, LispError> {
-    if args.len() != 2 {
-        return Err(LispError::Arity("string-contains expects 2 args".into()));
-    }
-    let needle = match &args[0] {
-        LispValue::String(s) => s,
-        other => {
-            return Err(LispError::TypeError {
-                expected: "string".into(),
-                actual: type_of(other),
-            });
-        }
-    };
-    let haystack = match &args[1] {
-        LispValue::String(s) => s,
-        other => {
-            return Err(LispError::TypeError {
-                expected: "string".into(),
-                actual: type_of(other),
-            });
-        }
-    };
+    let (needle, haystack) = string_pair("string-contains", args)?;
     if needle.is_empty() {
         return Err(LispError::Runtime(
             "string-contains: needle must be a non-empty string".into(),
@@ -1539,7 +1507,7 @@ fn string_contains_fn(
             haystack.len()
         )));
     }
-    Ok(LispValue::Bool(haystack.contains(needle.as_str())))
+    Ok(LispValue::Bool(haystack.contains(needle)))
 }
 
 /// Prefix check: `(starts-with prefix subject)` returns true iff `subject`
@@ -1557,33 +1525,13 @@ fn starts_with_fn(
     args: &[LispValue],
     _budget: &mut EvalBudget,
 ) -> Result<LispValue, LispError> {
-    if args.len() != 2 {
-        return Err(LispError::Arity("starts-with expects 2 args".into()));
-    }
-    let prefix = match &args[0] {
-        LispValue::String(s) => s,
-        other => {
-            return Err(LispError::TypeError {
-                expected: "string".into(),
-                actual: type_of(other),
-            });
-        }
-    };
-    let subject = match &args[1] {
-        LispValue::String(s) => s,
-        other => {
-            return Err(LispError::TypeError {
-                expected: "string".into(),
-                actual: type_of(other),
-            });
-        }
-    };
+    let (prefix, subject) = string_pair("starts-with", args)?;
     if prefix.is_empty() {
         return Err(LispError::Runtime(
             "starts-with: prefix must be a non-empty string".into(),
         ));
     }
-    Ok(LispValue::Bool(subject.starts_with(prefix.as_str())))
+    Ok(LispValue::Bool(subject.starts_with(prefix)))
 }
 
 /// Suffix check: `(ends-with suffix subject)` returns true iff `subject`
@@ -1595,33 +1543,13 @@ fn ends_with_fn(
     args: &[LispValue],
     _budget: &mut EvalBudget,
 ) -> Result<LispValue, LispError> {
-    if args.len() != 2 {
-        return Err(LispError::Arity("ends-with expects 2 args".into()));
-    }
-    let suffix = match &args[0] {
-        LispValue::String(s) => s,
-        other => {
-            return Err(LispError::TypeError {
-                expected: "string".into(),
-                actual: type_of(other),
-            });
-        }
-    };
-    let subject = match &args[1] {
-        LispValue::String(s) => s,
-        other => {
-            return Err(LispError::TypeError {
-                expected: "string".into(),
-                actual: type_of(other),
-            });
-        }
-    };
+    let (suffix, subject) = string_pair("ends-with", args)?;
     if suffix.is_empty() {
         return Err(LispError::Runtime(
             "ends-with: suffix must be a non-empty string".into(),
         ));
     }
-    Ok(LispValue::Bool(subject.ends_with(suffix.as_str())))
+    Ok(LispValue::Bool(subject.ends_with(suffix)))
 }
 
 /// Absolute value: `(abs x)` returns the magnitude of a numeric arg.

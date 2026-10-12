@@ -233,6 +233,33 @@ proptest! {
     }
 }
 
+/// `!=` compares adjacent pairs over 3+ args in BOTH numeric paths — the
+/// f64 fallback once compared every arg against the first, so
+/// `(!= 1.0 2.0 1.0)` returned false while `(!= 1 2 1)` returned true.
+/// `=`/`!=` are numeric-only: a non-number anywhere is a type error, never
+/// a silent false, even when an earlier pair already decided the result.
+#[test]
+fn numeric_comparators_pin_adjacent_pairs_and_type_errors() {
+    let env = serde_json::json!({});
+    for (form, want) in [
+        ("(!= 1 2 1)", serde_json::json!(true)),
+        ("(!= 1.0 2.0 1.0)", serde_json::json!(true)),
+        ("(!= 1.0 1.0 2.0)", serde_json::json!(false)),
+        ("(= 1 1 1)", serde_json::json!(true)),
+        ("(= 1.0 1.0 2.0)", serde_json::json!(false)),
+        ("(= 1.0 2.0 1.0)", serde_json::json!(false)),
+    ] {
+        let got = eval_sandboxed(form, &env).expect("comparison evaluates");
+        assert_eq!(got, want, "{form}");
+    }
+    for form in ["(= 1 2 \"x\")", "(!= 1.0 2.0 \"x\")"] {
+        assert!(
+            eval_sandboxed(form, &env).is_err(),
+            "{form} must be a type error, never a silent false"
+        );
+    }
+}
+
 /// Every builtin in the registry has a specimen that evaluates to its
 /// expected value. The registry is walked at test time — a builtin added
 /// without a specimen fails here (the tree-derived coverage rule), and a
