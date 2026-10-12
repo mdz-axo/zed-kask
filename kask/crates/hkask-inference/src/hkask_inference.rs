@@ -157,14 +157,7 @@ impl hkask_types::InferencePort for LazyInferencePort {
         prompt: &str,
         parameters: &hkask_types::template::LLMParameters,
         tools: Option<&[hkask_types::ChatToolDefinition]>,
-    ) -> std::pin::Pin<
-        Box<
-            dyn std::future::Future<
-                    Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
-                > + Send
-                + '_,
-        >,
-    > {
+    ) -> hkask_types::InferenceFuture<'_> {
         self.generate_with_model(prompt, parameters, None, tools)
     }
 
@@ -174,14 +167,7 @@ impl hkask_types::InferencePort for LazyInferencePort {
         images: &[String],
         parameters: &hkask_types::template::LLMParameters,
         model_override: Option<&str>,
-    ) -> std::pin::Pin<
-        Box<
-            dyn std::future::Future<
-                    Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
-                > + Send
-                + '_,
-        >,
-    > {
+    ) -> hkask_types::InferenceFuture<'_> {
         let prompt = prompt.to_string();
         let images = images.to_vec();
         let params = parameters.clone();
@@ -212,14 +198,7 @@ impl hkask_types::InferencePort for LazyInferencePort {
         parameters: &hkask_types::template::LLMParameters,
         model_override: Option<&str>,
         tools: Option<&[hkask_types::ChatToolDefinition]>,
-    ) -> std::pin::Pin<
-        Box<
-            dyn std::future::Future<
-                    Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
-                > + Send
-                + '_,
-        >,
-    > {
+    ) -> hkask_types::InferenceFuture<'_> {
         let prompt = prompt.to_string();
         let params = parameters.clone();
         let model_override = model_override.map(|s| s.to_string());
@@ -248,14 +227,7 @@ impl hkask_types::InferencePort for LazyInferencePort {
         parameters: &hkask_types::template::LLMParameters,
         model_override: Option<&str>,
         tools: Option<&[hkask_types::ChatToolDefinition]>,
-    ) -> std::pin::Pin<
-        Box<
-            dyn std::future::Future<
-                    Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
-                > + Send
-                + '_,
-        >,
-    > {
+    ) -> hkask_types::InferenceFuture<'_> {
         let messages = messages.to_vec();
         let params = parameters.clone();
         let model_override = model_override.map(|s| s.to_string());
@@ -338,16 +310,7 @@ impl hkask_types::InferencePort for LazyInferencePort {
         })
     }
 
-    fn list_models<'a>(
-        &'a self,
-    ) -> std::pin::Pin<
-        Box<
-            dyn std::future::Future<
-                    Output = Result<Vec<hkask_types::ModelEntry>, hkask_types::InferenceError>,
-                > + Send
-                + 'a,
-        >,
-    > {
+    fn list_models<'a>(&'a self) -> hkask_types::PortFuture<'a, Vec<hkask_types::ModelEntry>> {
         Box::pin(async {
             // Try the IPC bridge first.
             if let Some(Ok(client)) = InferenceIpcClient::from_env().await {
@@ -677,14 +640,7 @@ impl hkask_types::InferencePort for DirectEmbeddingPort {
         prompt: &str,
         parameters: &hkask_types::template::LLMParameters,
         _tools: Option<&[hkask_types::ChatToolDefinition]>,
-    ) -> std::pin::Pin<
-        Box<
-            dyn std::future::Future<
-                    Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
-                > + Send
-                + '_,
-        >,
-    > {
+    ) -> hkask_types::InferenceFuture<'_> {
         // No hidden default: route through the same visible chain as
         // `generate_with_model(None)` — the configured default
         // (`kask.models.default_model` / `HKASK_DEFAULT_MODEL`), else a
@@ -699,14 +655,7 @@ impl hkask_types::InferencePort for DirectEmbeddingPort {
         _images: &[String],
         _parameters: &hkask_types::template::LLMParameters,
         _model_override: Option<&str>,
-    ) -> std::pin::Pin<
-        Box<
-            dyn std::future::Future<
-                    Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
-                > + Send
-                + '_,
-        >,
-    > {
+    ) -> hkask_types::InferenceFuture<'_> {
         Box::pin(async {
             Err(hkask_types::InferenceError::Connection(
                 "vision inference unavailable on direct inference fallback".to_string(),
@@ -720,14 +669,7 @@ impl hkask_types::InferencePort for DirectEmbeddingPort {
         parameters: &hkask_types::template::LLMParameters,
         model_override: Option<&str>,
         _tools: Option<&[hkask_types::ChatToolDefinition]>,
-    ) -> std::pin::Pin<
-        Box<
-            dyn std::future::Future<
-                    Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
-                > + Send
-                + '_,
-        >,
-    > {
+    ) -> hkask_types::InferenceFuture<'_> {
         self.generate_with_messages(
             &[hkask_types::ChatMessage::user(prompt)],
             parameters,
@@ -742,14 +684,7 @@ impl hkask_types::InferencePort for DirectEmbeddingPort {
         parameters: &hkask_types::template::LLMParameters,
         model_override: Option<&str>,
         _tools: Option<&[hkask_types::ChatToolDefinition]>,
-    ) -> std::pin::Pin<
-        Box<
-            dyn std::future::Future<
-                    Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
-                > + Send
-                + '_,
-        >,
-    > {
+    ) -> hkask_types::InferenceFuture<'_> {
         // Resolve the model — the visible chain only (the operator's
         // spec: no hidden code constant may be the effective inference
         // model):
@@ -995,16 +930,7 @@ impl hkask_types::InferencePort for DirectEmbeddingPort {
         })
     }
 
-    fn list_models<'a>(
-        &'a self,
-    ) -> std::pin::Pin<
-        Box<
-            dyn std::future::Future<
-                    Output = Result<Vec<hkask_types::ModelEntry>, hkask_types::InferenceError>,
-                > + Send
-                + 'a,
-        >,
-    > {
+    fn list_models<'a>(&'a self) -> hkask_types::PortFuture<'a, Vec<hkask_types::ModelEntry>> {
         Box::pin(async {
             Err(hkask_types::InferenceError::Connection(
                 "list_models unavailable on direct inference fallback".to_string(),
@@ -1040,14 +966,7 @@ impl hkask_types::ToolDispatchPort for UnavailableToolDispatch {
         _server: &'a str,
         _tool: &'a str,
         _allowed: &'a [String],
-    ) -> std::pin::Pin<
-        Box<
-            dyn std::future::Future<
-                    Output = Result<hkask_types::ChatToolDefinition, hkask_types::InferenceError>,
-                > + Send
-                + 'a,
-        >,
-    > {
+    ) -> hkask_types::PortFuture<'a, hkask_types::ChatToolDefinition> {
         Box::pin(async {
             Err(hkask_types::InferenceError::Connection(format!(
                 "tool definition unavailable: {IPC_BRIDGE_UNAVAILABLE} — \
@@ -1062,13 +981,7 @@ impl hkask_types::ToolDispatchPort for UnavailableToolDispatch {
         _tool: &'a str,
         _args: serde_json::Value,
         _allowed: &'a [String],
-    ) -> std::pin::Pin<
-        Box<
-            dyn std::future::Future<Output = Result<serde_json::Value, hkask_types::InferenceError>>
-                + Send
-                + 'a,
-        >,
-    > {
+    ) -> hkask_types::PortFuture<'a, serde_json::Value> {
         Box::pin(async {
             Err(hkask_types::InferenceError::Connection(format!(
                 "tool dispatch unavailable: {IPC_BRIDGE_UNAVAILABLE} — \
@@ -1102,13 +1015,7 @@ impl hkask_types::WorktreeSpawnPort for UnavailableWorktreeSpawn {
         _worktree_name: Option<&'a str>,
         _base_ref: Option<&'a str>,
         _allowed_tools: &'a [String],
-    ) -> std::pin::Pin<
-        Box<
-            dyn std::future::Future<Output = Result<String, hkask_types::InferenceError>>
-                + Send
-                + 'a,
-        >,
-    > {
+    ) -> hkask_types::PortFuture<'a, String> {
         Box::pin(async {
             Err(hkask_types::InferenceError::Connection(format!(
                 "worktree spawn unavailable: {IPC_BRIDGE_UNAVAILABLE}"

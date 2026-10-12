@@ -34,6 +34,22 @@ pub type MediaFuture<'a> =
 pub type RerankFuture<'a> =
     Pin<Box<dyn Future<Output = Result<crate::ports::RerankBatch, InferenceError>> + Send + 'a>>;
 
+/// Future returned by the generate family — [`InferencePort::generate`],
+/// [`InferencePort::generate_with_model`],
+/// [`InferencePort::generate_with_messages`] and
+/// [`InferencePort::generate_vision`]. Same rationale as `EmbedFuture` —
+/// keeps the trait signature under clippy's `type_complexity` threshold.
+pub type InferenceFuture<'a> = PortFuture<'a, InferenceResult>;
+
+/// A pinned, `Send` port future resolving to `Result<T, InferenceError>` —
+/// the return shape of the typed long-tail port methods
+/// ([`InferencePort::generate_n`], [`ToolDispatchPort::tool_definition`],
+/// [`ToolDispatchPort::invoke_tool`],
+/// [`WorktreeSpawnPort::create_worktree_thread`]). The generate family
+/// resolves to [`InferenceResult`] via [`InferenceFuture`]; other outputs
+/// parameterize `T` directly.
+pub type PortFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, InferenceError>> + Send + 'a>>;
+
 /// Parameters for [`InferencePort::media_generate`].
 ///
 /// Carries the media-generation fields (image/video/speech/transcription)
@@ -116,7 +132,7 @@ pub trait ToolDispatchPort: Send + Sync {
         server: &'a str,
         tool: &'a str,
         allowed: &'a [String],
-    ) -> Pin<Box<dyn Future<Output = Result<ChatToolDefinition, InferenceError>> + Send + 'a>>;
+    ) -> PortFuture<'a, ChatToolDefinition>;
 
     /// Invoke a tool on a governed MCP server via the zed process.
     ///
@@ -135,7 +151,7 @@ pub trait ToolDispatchPort: Send + Sync {
         tool: &'a str,
         args: serde_json::Value,
         allowed: &'a [String],
-    ) -> Pin<Box<dyn Future<Output = Result<serde_json::Value, InferenceError>> + Send + 'a>>;
+    ) -> PortFuture<'a, serde_json::Value>;
 }
 
 impl ToolDispatchPort for Arc<dyn ToolDispatchPort> {
@@ -144,7 +160,7 @@ impl ToolDispatchPort for Arc<dyn ToolDispatchPort> {
         server: &'a str,
         tool: &'a str,
         allowed: &'a [String],
-    ) -> Pin<Box<dyn Future<Output = Result<ChatToolDefinition, InferenceError>> + Send + 'a>> {
+    ) -> PortFuture<'a, ChatToolDefinition> {
         self.as_ref().tool_definition(server, tool, allowed)
     }
 
@@ -154,7 +170,7 @@ impl ToolDispatchPort for Arc<dyn ToolDispatchPort> {
         tool: &'a str,
         args: serde_json::Value,
         allowed: &'a [String],
-    ) -> Pin<Box<dyn Future<Output = Result<serde_json::Value, InferenceError>> + Send + 'a>> {
+    ) -> PortFuture<'a, serde_json::Value> {
         self.as_ref().invoke_tool(server, tool, args, allowed)
     }
 }
@@ -173,7 +189,7 @@ pub trait WorktreeSpawnPort: Send + Sync {
         worktree_name: Option<&'a str>,
         base_ref: Option<&'a str>,
         allowed_tools: &'a [String],
-    ) -> Pin<Box<dyn Future<Output = Result<String, InferenceError>> + Send + 'a>>;
+    ) -> PortFuture<'a, String>;
 }
 
 pub trait InferencePort: Send + Sync {
@@ -182,7 +198,7 @@ pub trait InferencePort: Send + Sync {
         prompt: &str,
         parameters: &LLMParameters,
         tools: Option<&[ChatToolDefinition]>,
-    ) -> Pin<Box<dyn Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>>;
+    ) -> InferenceFuture<'_>;
 
     /// Falls back to `generate()` when `model_override` is `None`.
     fn generate_with_model(
@@ -191,7 +207,7 @@ pub trait InferencePort: Send + Sync {
         parameters: &LLMParameters,
         _model_override: Option<&str>,
         tools: Option<&[ChatToolDefinition]>,
-    ) -> Pin<Box<dyn Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>> {
+    ) -> InferenceFuture<'_> {
         self.generate(prompt, parameters, tools)
     }
 
@@ -213,7 +229,7 @@ pub trait InferencePort: Send + Sync {
         parameters: &LLMParameters,
         model_override: Option<&str>,
         tools: Option<&[ChatToolDefinition]>,
-    ) -> Pin<Box<dyn Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>> {
+    ) -> InferenceFuture<'_> {
         let prompt = messages
             .iter()
             .map(|m| format!("{}: {}", m.role, m.content))
@@ -243,8 +259,7 @@ pub trait InferencePort: Send + Sync {
         prompt: &str,
         parameters: &LLMParameters,
         n: usize,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<InferenceResult>, InferenceError>> + Send + '_>>
-    {
+    ) -> PortFuture<'_, Vec<InferenceResult>> {
         use futures_util::future::join_all;
         let futures: Vec<_> = (0..n)
             .map(|_| self.generate(prompt, parameters, None))
@@ -295,7 +310,7 @@ pub trait InferencePort: Send + Sync {
         _images: &[String],
         _parameters: &LLMParameters,
         _model_override: Option<&str>,
-    ) -> Pin<Box<dyn Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>> {
+    ) -> InferenceFuture<'_> {
         Box::pin(async {
             Err(InferenceError::VisionUnsupported(
                 "backend does not implement vision inference".to_string(),
