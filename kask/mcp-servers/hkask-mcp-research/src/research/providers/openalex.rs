@@ -42,19 +42,31 @@ impl OpenAlexProvider {
         }
     }
 
-    /// Resolve a typed identifier to its OpenAlex work record. Ok(None)
-    /// when there is no lookup path for the kind or no record exists (404).
-    pub(crate) async fn resolve(&self, id: &PaperId) -> Result<Option<PaperMetadata>, WebError> {
-        let Some(path) = Self::work_path(id) else {
-            return Ok(None);
-        };
-        let response = self.client.get(&path).send().await.map_err(|error| {
+    /// Send a GET and read the body — the shared transport spine of the
+    /// resolve and search surfaces (transport failures name the surface).
+    /// The status classification stays per-caller: resolve intercepts 404
+    /// as its no-record case before classifying, search classifies straight.
+    async fn send_read(
+        &self,
+        request: reqwest::RequestBuilder,
+    ) -> Result<(reqwest::StatusCode, String), WebError> {
+        let response = request.send().await.map_err(|error| {
             WebError::ProviderUnavailable(format!("OpenAlex request failed: {error}"))
         })?;
         let status = response.status();
         let body = response.text().await.map_err(|error| {
             WebError::ProviderUnavailable(format!("OpenAlex body read failed: {error}"))
         })?;
+        Ok((status, body))
+    }
+
+    /// Resolve a typed identifier to its OpenAlex work record. Ok(None)
+    /// when there is no lookup path for the kind or no record exists (404).
+    pub(crate) async fn resolve(&self, id: &PaperId) -> Result<Option<PaperMetadata>, WebError> {
+        let Some(path) = Self::work_path(id) else {
+            return Ok(None);
+        };
+        let (status, body) = self.send_read(self.client.get(&path)).await?;
         if status.as_u16() == 404 {
             return Ok(None);
         }
@@ -204,19 +216,13 @@ impl WebSearchProvider for OpenAlexProvider {
             ("search", query.query.clone()),
             ("per_page", query.num_results.to_string()),
         ];
-        let response = self
-            .client
-            .get(format!("{OPENALEX_API_BASE}/works"))
-            .query(&params)
-            .send()
-            .await
-            .map_err(|error| {
-                WebError::ProviderUnavailable(format!("OpenAlex request failed: {error}"))
-            })?;
-        let status = response.status();
-        let body = response.text().await.map_err(|error| {
-            WebError::ProviderUnavailable(format!("OpenAlex body read failed: {error}"))
-        })?;
+        let (status, body) = self
+            .send_read(
+                self.client
+                    .get(format!("{OPENALEX_API_BASE}/works"))
+                    .query(&params),
+            )
+            .await?;
         if !status.is_success() {
             return Err(match status.as_u16() {
                 429 => WebError::RateLimited(format!("OpenAlex rate limited: {status}")),
