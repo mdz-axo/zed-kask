@@ -15,6 +15,11 @@
 
 * jscpd 5.4.0's JSON reporter emits file names as path SUFFIXES — bare basenames for explicitly-passed files, partial paths for directory-scanned ones — never repo-relative paths. Resolving a report name as a repo-root path silently fails the upstream existence check and misclassifies upstream files as fork-owned (observed live: the R5 triage's first pass read 1403 clusters as fork-owned vs the true 675). Resolve report names by unique-suffix match against the scan set; ambiguous suffixes surface as multiple visible candidates and need explicit disambiguation, never a repo-root guess.
 
+# Structural analysis (ast-grep)
+
+* An ast-grep pattern in TYPE position needs `context`+`selector` — a bare `Result<$T, String>` pattern parses as a comparison expression (`a < b, c > d`) and matches NOTHING, silently. A "0 instances" scan is consistent with both a clean surface and a broken rule: pin every rule with a positive fixture (a synthetic violation it must catch — the `check-*-selftest.sh` pattern) before trusting zero (live 2026-10-11: the string-errors rule shipped broken while the real surface read "0 instances").
+* Path:line ratchet baselines drift under concurrent streams — a line-shifting edit in another stream's commit shows as equal net-new and stale counts (same instances, moved lines). Equal counts are the drift signature: confirm by per-file instance totals, absorb by refreshing the baseline in the commit that earns it (live 2026-10-11: 111 net-new / 111 stale, 468 instances both sides).
+
 # Rust coding guidelines
 
 * Project scripts are bash, not Python — audit/build scripts live under `kask/scripts/` as bash (operator ruling 2026-09-09). An embedded `python3` heredoc inside a bash script is fine for what bash cannot do (TOML parsing in `check-build-profile.sh`); a standalone `.py` script is not.
@@ -151,6 +156,7 @@ Use `cx.background_executor().timer(duration).await` in GPUI tests, not `smol::T
 * A sweep pattern that under-matches the semantic target (wrong plurality, casing, or form) reports false absence — validate the instrument against a known-positive before reading zero as "nothing there" (2026-09-29: a plural-heading grep recorded 8 false reference-model gaps; the bare-glob rule below covers zero-match patterns, this covers valid-but-narrow ones).
 * jq `(... | select(...)) as $x` runs its body ZERO times when the select matches nothing — a merge loop over entries silently drops every unpatched entry (2026-09-30: 357→17, twice in one recovery). Safe form: `([($patches[] | select(.slug == $e.slug))] | first // null) as $p`, or merge manifests in Python.
 * Verify the invariant, not the shape — `jq -e '.counts'` exits 0 on ANY object; a 5-entry manifest passed it and was installed as canonical (2026-09-30). After every manifest write, assert the count itself: `jq -e '(.entries|length) == 368'`.
+* The agent `terminal` runs dash, not bash — `$'\t'` ANSI-C quoting is not a tab there (it split paths at every literal `t` and produced a garbage measurement), and process substitution `<(...)` is a syntax error. Write measurement ladders as saved bash scripts (`kask/scripts/*.sh` under `#!/usr/bin/env bash`), or use `printf '\t'` and temp files (live 2026-10-11: a citation-rot ladder measured 614 rotted from a split path).
 
 # Test protocol traps
 
