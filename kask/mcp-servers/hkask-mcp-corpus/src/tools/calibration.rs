@@ -1388,16 +1388,7 @@ mod tests {
     }
 
     fn server() -> CorpusServer {
-        crate::helpers::seed_test_passphrase();
-        let port: Arc<dyn InferencePort> = Arc::new(NoInference);
-        let ocr = Arc::new(crate::ocr::llm_ocr::LlmOcrExecutor::new(Arc::clone(&port)));
-        CorpusServer::new(
-            hkask_types::WebID::new(),
-            None,
-            port,
-            Default::default(),
-            ocr,
-        )
+        crate::helpers::corpus_test_server(Arc::new(NoInference))
     }
 
     fn fixture() -> anyhow::Result<(tempfile::TempDir, BuildChunkRepresentationsRequest)> {

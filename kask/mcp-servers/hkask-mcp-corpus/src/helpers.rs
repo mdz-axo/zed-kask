@@ -504,6 +504,28 @@ pub(crate) fn seed_test_passphrase() {
     }
 }
 
+/// Build a `CorpusServer` over `port` for handler-level tests — the shared
+/// construction choreography of the NoInference fixtures: seed the test
+/// passphrase, wrap the port in the LLM OCR executor, construct the server.
+/// The per-file `NoInference` ports stay local — each file's panic message
+/// names what its own fixtures must not invoke.
+#[cfg(test)]
+pub(crate) fn corpus_test_server(
+    port: std::sync::Arc<dyn hkask_types::InferencePort>,
+) -> crate::CorpusServer {
+    seed_test_passphrase();
+    let ocr = std::sync::Arc::new(crate::ocr::llm_ocr::LlmOcrExecutor::new(
+        std::sync::Arc::clone(&port),
+    ));
+    crate::CorpusServer::new(
+        hkask_types::WebID::new(),
+        None,
+        port,
+        Default::default(),
+        ocr,
+    )
+}
+
 /// Point `HKASK_TEMPLATE_ROOT` at the repository's shipped template registry
 /// for this test process. `render_docproc_template` refuses to fall back to
 /// the working directory or the build checkout — its contract is "repository
