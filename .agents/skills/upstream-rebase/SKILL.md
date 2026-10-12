@@ -204,7 +204,13 @@ by checking them. A lesson that no case can falsify is not an amendment.
    Step 0 retired upstream's change deliberately, and upstream-added functions
    and tests must be present or accounted for (renamed, retired, or replaced).
    `-X ours`, `checkout --ours`, and marker-free indexes can silently drop
-   upstream work.
+   upstream work. Mechanical procedure, upstream side:
+   `git diff --name-only <base> <upstream> | sort` minus
+   `git diff --name-only <base> <fork-head> | sort` (`comm -23`) gives the
+   upstream-only files; `git diff <upstream> HEAD -- <that list>` must be
+   empty except files carrying a recorded re-home (2026-10-12: 587/588
+   identical; the one exception the D89 re-home). The both-changed remainder
+   is checked against the Step 0 records file-by-file.
 1. `cargo check -p <crate>` — the file compiles.
 2. `cargo test -p <crate> -- <pinning tests>` — all pinning tests pass.
 3. `bash kask/scripts/check-hkask-no-zed-deps.sh` — §13.1 invariant holds.
@@ -212,6 +218,42 @@ by checking them. A lesson that no case can falsify is not an amendment.
 5. `git diff upstream/main -- <file>` — no upstream line is modified except under a live D-row (retire/simplify work may remove fork lines).
 
 If any gate fails, return to Step 5 for that file with the failing command's output. At most 2 returns per file; a third failure halts the merge and goes to the operator with the failing output.
+
+## Post-merge test-fallout triage
+
+The verification gate surfaces fallout; this section diagnoses it. Check the
+failing test against these merge-recurrent classes before debugging production
+code:
+
+- **Fake snapshot semantics** — capacity/thinking arithmetic implying default
+  capabilities (a pre-shrink panic reporting ~1M-token windowing;
+  `thinking_allowed` false where the fork set it true). `fake.model()` returns
+  a clone: a test that mutates the stored model after capturing the snapshot
+  leaves the thread stale. Capture `update_model`'s return.
+- **Background-request races** — a test hangs, turn never completing: mid-turn
+  title generation races tool-result follow-ups on the registered fake.
+  Select requests by `CompletionIntent`, never by list position.
+- **Dropped fork setup blocks** — a fork test fails on behavior its own comment
+  says it pins: diff the test body against the fork parent; fake-API migration
+  drops load-bearing setup (settings blocks, parent-side `add_tool`).
+- **Merge-dedup collisions** — a fork test fails while its sibling passes:
+  same-named helpers from both parents; check which body kept the name.
+- **Upstream helpers × fork environment** — scheduler determinism panics
+  naming async-std/keychain: upstream `sign_in` helpers persist through the
+  fork's always-keychain provider; install a test credentials-provider global
+  first.
+- **Unregistered fake instance** — empty pending state on a fresh
+  `FakeLanguageModelProvider::default()`: bind to the registered provider
+  instance.
+
+Techniques: hangs block the harness's panic output — re-run with
+`--skip <hang-names>` to harvest the other panics; then run the hang isolated
+with `RUST_LOG=agent=debug -- --nocapture` and read the last log lines before
+hypothesizing (the 2026-10-12 hang class was a title-generation race, not the
+suspected timer deadlock). For any failing test, identify its parent-of-record
+first: diff the test against both parents — a test byte-identical to
+upstream's means the fork's code side is the suspect; a fork test's oracle is
+the fork parent.
 
 ## Composed Skills
 
@@ -313,12 +355,11 @@ trail for what changed.
 
 ### Branch & PR strategy
 
-Not found in `DIVERGENCE.md` or `.rules` (the `DIVERGENCE.md` runbook does not name
-a branch). **Proposal:** land on `main` via a PR from a short-lived
-`upstream-sync-<YYYY-MM-DD>` branch, created fresh per sync. Do not maintain a
-long-lived `upstream-sync` branch — it would accumulate conflicts against both
-`main` and `upstream/main`. Flagged as a proposal; verify the project's actual
-convention before adopting.
+**Convention (observed twice):** upstream syncs land directly on `main` as
+merge commits with the message `Merge upstream/main <sha> into zed-kask` —
+the 2026-09-24 sync and the 2026-10-12 merge (`8e32d2a127`) both landed this
+way. Do not create a per-sync branch or PR unless the operator asks for
+reviewability.
 
 ### Verification gate ordering (merge-level, before pushing the PR)
 
@@ -336,8 +377,12 @@ invariants first, then compile, then tests.
 4. `cargo check -p kask_bridge -p hkask-types -p hkask-mcp-server` — `DIV`
    runbook step 5 (intent is
    "verify the bridge + foundation still compile").
-5. `cargo test -p <affected-crates> -- <pinning-tests>` — per-file pinning tests
-   from Step 6.
+5. `cargo test -p <affected-crates>` — derive the crate set from the merge,
+   never memorize it: the crates of every file in
+   `git diff --name-only <base> <upstream-sha>` plus every seam file,
+   deduplicated. Run their full suites, not only the Step 6 pins — the
+   2026-10-12 merge's fallout landed in non-pin tests of crates outside every
+   memorized list.
 
 ### Recovery
 
