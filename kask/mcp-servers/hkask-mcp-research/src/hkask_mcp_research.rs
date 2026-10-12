@@ -3,6 +3,11 @@
 
 pub mod research;
 
+// Shared cfg(test) fixtures — `src/test_support.rs` (the media crate's
+// test_support precedent).
+#[cfg(test)]
+mod test_support;
+
 // Re-export service crate modules for test compatibility
 pub use crate::research::db;
 

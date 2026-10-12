@@ -66,47 +66,11 @@ pub async fn fetch_feed(
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use std::sync::atomic::Ordering;
 
     use super::discover_feeds;
     use crate::research::validated_fetch_client;
-
-    async fn http_fixture(response: Arc<Vec<u8>>) -> (String, Arc<AtomicUsize>) {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("bind fixture");
-        let address = listener.local_addr().expect("fixture address");
-        let hits = Arc::new(AtomicUsize::new(0));
-        let server_hits = hits.clone();
-        tokio::spawn(async move {
-            loop {
-                let Ok((mut socket, _)) = listener.accept().await else {
-                    return;
-                };
-                server_hits.fetch_add(1, Ordering::SeqCst);
-                let response = response.clone();
-                tokio::spawn(async move {
-                    let mut buffer = Vec::new();
-                    let mut chunk = [0u8; 512];
-                    loop {
-                        match socket.read(&mut chunk).await {
-                            Ok(0) | Err(_) => break,
-                            Ok(n) => {
-                                buffer.extend_from_slice(&chunk[..n]);
-                                if buffer.ends_with(b"\r\n\r\n") {
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                    let _ = socket.write_all(&response).await;
-                });
-            }
-        });
-        (format!("http://{address}"), hits)
-    }
+    use crate::test_support::http_fixture;
 
     /// expect: "Feed discovery must not follow a redirect into loopback
     /// services." [P4]
