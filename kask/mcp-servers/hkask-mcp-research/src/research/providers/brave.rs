@@ -1,4 +1,4 @@
-use super::{ProviderSearchOutput, WebError, WebSearchProvider};
+use super::{ProviderSearchOutput, WebError, WebSearchProvider, search_results_from};
 use crate::research::types::*;
 use async_trait::async_trait;
 
@@ -66,24 +66,12 @@ impl WebSearchProvider for BraveProvider {
         let parsed: serde_json::Value = serde_json::from_str(&body)
             .map_err(|e| WebError::ProviderError(format!("Failed to parse Brave response: {e}")))?;
 
-        let results = parsed["web"]["results"]
-            .as_array()
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|item| {
-                        Some(SearchResult {
-                            title: item["title"].as_str()?.to_string(),
-                            url: item["url"].as_str()?.to_string(),
-                            description: item["description"].as_str().map(|s| s.to_string()),
-                            source: item["source"].as_str().map(|s| s.to_string()),
-                            published: item["age"].as_str().map(|s| s.to_string()),
-                            oa_pdf_url: None,
-                            provider: None,
-                        })
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
+        let results = search_results_from(
+            &parsed["web"]["results"],
+            |item| item["description"].as_str().map(str::to_string),
+            |item| item["source"].as_str().map(str::to_string),
+            |item| item["age"].as_str().map(str::to_string),
+        );
 
         Ok(ProviderSearchOutput {
             results,

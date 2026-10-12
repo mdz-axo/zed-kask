@@ -1,6 +1,6 @@
 use super::{
     ProviderSearchOutput, WebBrowseProvider, WebError, WebExtractProvider, WebSearchProvider,
-    reqwest_error_detail,
+    reqwest_error_detail, search_results_from,
 };
 use crate::research::types::*;
 use async_trait::async_trait;
@@ -43,27 +43,17 @@ impl FirecrawlProvider {
 /// former `data`-as-array read was the v1 shape and silently returned zero
 /// results on every successful v2 call.
 fn parse_v2_search_results(parsed: &serde_json::Value) -> Vec<SearchResult> {
-    parsed["data"]["web"]
-        .as_array()
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|item| {
-                    Some(SearchResult {
-                        title: item["title"].as_str()?.to_string(),
-                        url: item["url"].as_str()?.to_string(),
-                        description: item["description"]
-                            .as_str()
-                            .or_else(|| item["snippet"].as_str())
-                            .map(|s| s.to_string()),
-                        source: None,
-                        published: None,
-                        oa_pdf_url: None,
-                        provider: None,
-                    })
-                })
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default()
+    search_results_from(
+        &parsed["data"]["web"],
+        |item| {
+            item["description"]
+                .as_str()
+                .or_else(|| item["snippet"].as_str())
+                .map(str::to_string)
+        },
+        |_| None,
+        |_| None,
+    )
 }
 #[async_trait]
 impl WebSearchProvider for FirecrawlProvider {

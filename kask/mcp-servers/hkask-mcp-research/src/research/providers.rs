@@ -61,6 +61,38 @@ pub(crate) fn reqwest_error_detail(error: &reqwest::Error) -> String {
     message
 }
 
+/// Map a provider response's results array into `SearchResult`s — the
+/// shared `as_array → filter_map → collect → unwrap_or_default` spine with
+/// the invariant title/url extraction (an entry missing either is
+/// filtered). The array value and the description/source/published
+/// extractions are the caller's — each provider's response shape is its
+/// own contract; only the spine is shared.
+pub(crate) fn search_results_from(
+    array: &serde_json::Value,
+    description: impl Fn(&serde_json::Value) -> Option<String>,
+    source: impl Fn(&serde_json::Value) -> Option<String>,
+    published: impl Fn(&serde_json::Value) -> Option<String>,
+) -> Vec<SearchResult> {
+    array
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|item| {
+                    Some(SearchResult {
+                        title: item["title"].as_str()?.to_string(),
+                        url: item["url"].as_str()?.to_string(),
+                        description: description(item),
+                        source: source(item),
+                        published: published(item),
+                        oa_pdf_url: None,
+                        provider: None,
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
 #[derive(Default)]
 pub struct ProviderSearchOutput {
     pub results: Vec<SearchResult>,
