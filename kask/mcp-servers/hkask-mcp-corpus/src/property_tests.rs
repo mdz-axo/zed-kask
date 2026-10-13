@@ -12,6 +12,22 @@
 use crate::helpers::{chunk_structure, chunk_word_bounds, tokens_to_words};
 use proptest::prelude::*;
 
+/// Chunk a generated word list through the corpus seam with the property
+/// suite's fixed knobs — the `t` ref prefix and `.!?` sentence boundary —
+/// so the hypotheses share one construction of the chunk set. The
+/// strategy domains stay per-test (each hypothesis declares its own); the
+/// conservation test keeps its own join (its source count reads the text).
+fn chunked(
+    words: &[String],
+    min_words: usize,
+    max_words: usize,
+    overlap_words: usize,
+) -> Vec<(String, String)> {
+    let text = words.join(" ");
+    chunk_structure(&text, "t", min_words, max_words, ".!?", overlap_words)
+        .expect("valid budgets chunk")
+}
+
 proptest! {
     /// Hypothesis: the word budget is honored — every chunk of any generated
     /// text carries at most `max_words` whitespace-delimited words.
@@ -22,9 +38,7 @@ proptest! {
         max_words in 9usize..=64,
         overlap_words in 0usize..=7,
     ) {
-        let text = words.join(" ");
-        let chunks = chunk_structure(&text, "t", min_words, max_words, ".!?", overlap_words)
-            .expect("valid budgets chunk");
+        let chunks = chunked(&words, min_words, max_words, overlap_words);
         for (entity_ref, chunk) in &chunks {
             let count = chunk.split_whitespace().count();
             prop_assert!(
@@ -47,9 +61,7 @@ proptest! {
         max_words in 9usize..=64,
         overlap_words in 1usize..=7,
     ) {
-        let text = words.join(" ");
-        let chunks = chunk_structure(&text, "t", min_words, max_words, ".!?", overlap_words)
-            .expect("valid budgets chunk");
+        let chunks = chunked(&words, min_words, max_words, overlap_words);
         for pair in chunks.windows(2) {
             let prev: Vec<&str> = pair[0].1.split_whitespace().collect();
             let next: Vec<&str> = pair[1].1.split_whitespace().collect();
@@ -109,9 +121,7 @@ proptest! {
         max_words in 9usize..=64,
         overlap_words in 1usize..=7,
     ) {
-        let text = words.join(" ");
-        let chunks = chunk_structure(&text, "t", min_words, max_words, ".!?", overlap_words)
-            .expect("valid budgets chunk");
+        let chunks = chunked(&words, min_words, max_words, overlap_words);
         for (index, (_, chunk)) in chunks.iter().enumerate().skip(1) {
             let count = chunk.split_whitespace().count();
             prop_assert!(
