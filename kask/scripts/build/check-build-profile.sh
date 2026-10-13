@@ -128,54 +128,62 @@ done
 # default allocator feature; mimalloc remains opt-in as upstream has it.
 
 # Exercise the wrapper without Cargo: profile selection must not silently
-# trigger a release dependency rebuild or weaken the lint coverage.
-python3 - "$ROOT/script/clippy" <<'PY'
-import os
-from pathlib import Path
-import subprocess
-import sys
-import tempfile
+# trigger a release dependency rebuild or weaken the lint coverage. A stub
+# cargo records its argv; the captured arguments must match the expected
+# clippy invocation exactly, and Cargo's failure status must propagate.
+# Bash-native probe (operator ruling 2026-10-13: zero Python — replaces the
+# python3 heredoc landed 2026-09-08, 5fd4bac424a).
+probe_dir="$(mktemp -d)"
+trap 'rm -rf "$probe_dir"' EXIT
+stub_cargo="$probe_dir/cargo-stub"
+arguments_file="$probe_dir/arguments"
+printf '#!/bin/sh\nprintf "%%s\\n" "$@" > "$CLIPPY_ARGUMENTS"\nexit "${CLIPPY_STATUS:-0}"\n' > "$stub_cargo"
+chmod 700 "$stub_cargo"
 
-wrapper = Path(sys.argv[1])
-with tempfile.TemporaryDirectory(prefix="kask-clippy-profile-") as directory:
-    directory = Path(directory)
-    arguments_file = directory / "arguments"
-    cargo = directory / "cargo-stub"
-    cargo.write_text('#!/bin/sh\nprintf "%s\\n" "$@" > "$CLIPPY_ARGUMENTS"\nexit "${CLIPPY_STATUS:-0}"\n')
-    cargo.chmod(0o700)
-    environment = dict(os.environ, CARGO=str(cargo), GITHUB_ACTIONS="true",
-                       HKASK_BUILD_JOBS="8", HKASK_SCCACHE_DIR=str(directory),
-                       CLIPPY_ARGUMENTS=str(arguments_file), CLIPPY_STATUS="0")
-    cases = [
-        (["-p", "kask_bridge"], []),
-        (["--release", "-p", "hkask-mcp"], []),
-        (["--profile", "release-mcp", "--package", "hkask-mcp"], []),
-        (["--profile=dev", "-p", "kask_bridge"], []),
-        # The bare workspace case must carry --exclude remote_server: under
-        # --all-features its debug-embed feature request unifies into the
-        # host rust-embed-impl and breaks dev-profile derives elsewhere in
-        # the graph (E0599). script/clippy appends the exclusion itself;
-        # this expectation pins it so it cannot silently regress. The
-        # -p/--package cases above pin the inverse — the exclusion must
-        # stay workspace-only.
-        ([], ["--workspace", "--exclude", "remote_server"]),
-    ]
-    for arguments, scope in cases:
-        result = subprocess.run(["bash", str(wrapper), *arguments], env=environment,
-                                capture_output=True, text=True, timeout=10)
-        if result.returncode != 0:
-            sys.exit(f"[FAIL] clippy wrapper failed: {result.stderr}")
-        observed = arguments_file.read_text().splitlines()
-        expected = ["clippy", *arguments, *scope, "--jobs", "8", "--all-targets",
-                    "--all-features", "--", "--deny", "warnings"]
-        if observed != expected:
-            sys.exit(f"[FAIL] clippy profile/coverage drift (D52): {observed!r}; expected {expected!r}")
-    environment["CLIPPY_STATUS"] = "42"
-    result = subprocess.run(["bash", str(wrapper), "-p", "hkask-mcp"], env=environment,
-                            capture_output=True, text=True, timeout=10)
-    if result.returncode != 42:
-        sys.exit("[FAIL] clippy wrapper must propagate Cargo's failure status (D52)")
-print("[OK] clippy wrapper: dev default, explicit profiles, lint coverage, failure propagation")
-PY
+run_stubbed_wrapper() {
+    # run_stubbed_wrapper <stub exit status> <wrapper arguments...>
+    timeout 10 env CARGO="$stub_cargo" GITHUB_ACTIONS=true HKASK_BUILD_JOBS=8 \
+        HKASK_SCCACHE_DIR="$probe_dir" CLIPPY_ARGUMENTS="$arguments_file" \
+        CLIPPY_STATUS="$1" bash "$ROOT/script/clippy" "${@:2}" \
+        >"$probe_dir/wrapper.log" 2>&1
+}
+
+expect_wrapper_args() {
+    # expect_wrapper_args <expected scope words...> -- <wrapper arguments...>
+    local -a scope=()
+    while [ "$1" != "--" ]; do scope+=("$1"); shift; done
+    shift
+    rm -f "$arguments_file"
+    local rc=0
+    run_stubbed_wrapper 0 "$@" || rc=$?
+    if [ "$rc" -ne 0 ]; then
+        fail "clippy wrapper failed (rc=$rc): $(tail -n 5 "$probe_dir/wrapper.log" 2>/dev/null)"
+    fi
+    [ -f "$arguments_file" ] || fail "clippy wrapper never reached cargo (no arguments recorded)"
+    local -a observed expected
+    mapfile -t observed < "$arguments_file"
+    expected=(clippy "$@" "${scope[@]}" "--jobs" 8 "--all-targets" "--all-features" "--" "--deny" "warnings")
+    if [ "${observed[*]}" != "${expected[*]}" ]; then
+        fail "clippy profile/coverage drift (D52): [${observed[*]}] != [${expected[*]}]"
+    fi
+}
+
+expect_wrapper_args -- -p kask_bridge
+expect_wrapper_args -- --release -p hkask-mcp
+expect_wrapper_args -- --profile release-mcp --package hkask-mcp
+expect_wrapper_args -- --profile=dev -p kask_bridge
+# The bare workspace case must carry --exclude remote_server: under
+# --all-features its debug-embed feature request unifies into the host
+# rust-embed-impl and breaks dev-profile derives elsewhere in the graph
+# (E0599). script/clippy appends the exclusion itself; this expectation
+# pins it so it cannot silently regress. The -p/--package cases above pin
+# the inverse — the exclusion must stay workspace-only.
+expect_wrapper_args --workspace --exclude remote_server --
+
+rc=0
+run_stubbed_wrapper 42 -p hkask-mcp || rc=$?
+if [ "$rc" -ne 42 ]; then
+    fail "clippy wrapper must propagate Cargo's failure status (D52): rc=$rc"
+fi
 
 echo "[OK] build-profile seam intact: release-mcp profile, split install build, jobs cap, CPU trace"
