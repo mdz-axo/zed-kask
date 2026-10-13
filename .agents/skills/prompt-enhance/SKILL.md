@@ -81,21 +81,40 @@ Array-valued context fields are plain JSON arrays — never stringified JSON. A 
 2. Validate the effort tier and output format (resolve defaults).
 3. Synthesize a minimal proxy eval set (3-5 representative inputs) for medium/high tiers; empty at low.
 4. Produce `prompt_type`, `semantic_classification`, `effort_tier`, `output_format_resolved`, `output_path_resolved`, `proxy_eval_set`, `risks`, `routing`, and `checkability_map`. For each consequential obligation choose `finite` (supported `lisp_eval`), `formal` (Lean 4 over stated assumptions), `empirical` (test or observation), `judgment` (evidence-based interpretation), or `none`. Leave the map empty if not applicable. These are *candidate* checks, not claims that any tool ran.
-5. Render with `prompt`, `task`, and optional `effort`, `output_format`, `output_path`, `context`. The template contract treats `task` as required even though it is not a user-facing skill input; use the user's task description. Do not invent missing values for optional inputs.
+5. Render with the full context shape — copy it, do not reconstruct it from prose (the 2026-10-07..13 rejections dropped fields in varying subsets):
+   ```json
+   { "prompt": "<the prompt>", "task": "<the user's task description>",
+     "effort": "<low|medium|high>", "output_format": "<inline|file|both>",
+     "output_path": "<omit unless user-supplied>", "context": "<omit unless supplied>" }
+   ```
+   `prompt` and `task` are required (the contract rejects their absence; `task` is not a user-facing skill input but the contract requires it — use the user's task description). `effort` defaults to `medium` and `output_format` to `inline`; `output_path` and `context` are optional — do not invent values for them.
 
 ### Step 2 — Rewrite (enhance-rewrite.j2)
 
 1. **Inline audit** (internal): scan for unresolved placeholders (Prohibition), semantic fragility (Guardrail), and structural accretion (essentialist G1+G2).
 2. **Typed rewrite**: apply type-specific moves based on `prompt_type` from step 1.
 3. **Mutation discipline**: each finding → at most one mutation; Prohibition findings must be addressed; Hypothesis-tier findings deferred.
-4. Render with original `prompt`, `task`, plus classify outputs `prompt_type`, `effort_tier`, `risks`, `checkability_map`, and `prior_enhanced_prompt: ""`, `critic_feedback: []` on the first pass. Produce `enhanced_prompt`, `acceptance_criteria`, `mutations_applied`, `mutations_deferred`, and `audit_findings` before proceeding. Assign checks only where they serve the request; proof does not establish that a proposition captures user intent, and computation depends on input provenance. Unrun checks remain explicitly proposed.
+4. Render with the full context shape — all eight fields are required; copy it, do not reconstruct it from prose:
+   ```json
+   { "prompt": "<the original prompt>", "prompt_type": "<from step 1>", "effort_tier": "<from step 1>",
+     "risks": <from step 1>, "checkability_map": <from step 1>, "task": "<the user's task>",
+     "prior_enhanced_prompt": "", "critic_feedback": [] }
+   ```
+   On a corrective re-render, `prior_enhanced_prompt` carries the previous rewrite and `critic_feedback` the verify step's `findings`. Produce `enhanced_prompt`, `acceptance_criteria`, `mutations_applied`, `mutations_deferred`, and `audit_findings` before proceeding. Assign checks only where they serve the request; proof does not establish that a proposition captures user intent, and computation depends on input provenance. Unrun checks remain explicitly proposed.
 
 ### Step 3 — Verify (enhance-verify.j2, medium/high only)
 
 1. Run grill-me self-challenge across Recall → Mechanism → Rationale → Edge Cases → Synthesis.
 2. Decoupled from step 2 — do not defend the prompt you (didn't) write (self-improvement §9.1).
 3. Tier-scaled rounds: 1 (Recall+Mechanism) at medium; up to 3 at high, escalation gated on prior-round Solid ≥80% (below 40% re-probes the same level).
-4. Render with `enhanced_prompt`, original `original_prompt`, `prompt_type`, `effort_tier`, `proxy_eval_set`, `acceptance_criteria`, `checkability_map`, and `round` (1 at medium, 1–3 at high). Produce `ratings`, `findings` (the failed-gap list that feeds a corrective Act), and `verdict` (`pass`, `rewrite_needed`, or `fail`). Challenge whether each proposed check actually establishes its claim and whether unrun checks are mislabeled as verified.
+4. Render with the full context shape — all eight fields are required; copy it, do not reconstruct it from prose:
+   ```json
+   { "enhanced_prompt": "<from step 2>", "original_prompt": "<the original prompt>",
+     "prompt_type": "<from step 1>", "effort_tier": "<from step 1>",
+     "proxy_eval_set": <from step 1>, "acceptance_criteria": <from step 2>,
+     "checkability_map": <from step 1>, "round": 1 }
+   ```
+   `round` is 1 at medium, 1–3 escalating at high. Produce `ratings`, `findings` (the failed-gap list that feeds a corrective Act), and `verdict` (`pass`, `rewrite_needed`, or `fail`). Challenge whether each proposed check actually establishes its claim and whether unrun checks are mislabeled as verified.
 5. Preserve the critic's specific failed checks and verdict. Skip this stage at low effort and set `grill_verdict = "skipped"`, `grill_ratings = []`; a skipped critic is not a `pass`.
 
 ### Local PDCA — Check and Act before output
@@ -106,7 +125,14 @@ Array-valued context fields are plain JSON arrays — never stringified JSON. A 
 
 ### Step 4 — Output (enhance-output-render.j2, deterministic render)
 
-1. Render with `enhanced_prompt`, `prompt_type`, `effort_tier`, `output_format_resolved`, `output_path_resolved`, `audit_findings`, `mutations_applied`, `mutations_deferred`, and flat `grill_verdict`/`grill_ratings` from verification (or skipped/empty at low effort). Do not pass a nested `verification` object. The retired `schema_defects` and `convergence_metric` fields have no producing stage and must not be required. Pass the four array fields as plain arrays of objects with the fields the template reads — `audit_findings`: `constraint_force`/`lens`/`finding`/`addressed`; `grill_ratings`: `area`/`rating`/`evidence`; `mutations_applied`: `finding`/`mutation`/`section`; `mutations_deferred`: `finding`/`reason` — never stringified JSON (the 2026-10-08 receipts: the change-log sections rendered placeholder rows while the summary line interpolated, because a stringified array iterates character-by-character; the template now rejects this loudly as `input_errors`).
+1. Render with the full context shape — all ten fields are required; copy it, do not reconstruct it from prose:
+   ```json
+   { "enhanced_prompt": "<from step 2>", "prompt_type": "<from step 1>", "effort_tier": "<from step 1>",
+     "output_format_resolved": "<from step 1>", "output_path_resolved": "<from step 1>",
+     "audit_findings": <from step 2>, "grill_ratings": <from step 3>, "grill_verdict": "<from step 3>",
+     "mutations_applied": <from step 2>, "mutations_deferred": <from step 2> }
+   ```
+   At low effort pass `grill_verdict: "skipped"` and `grill_ratings: []`. Do not pass a nested `verification` object. The retired `schema_defects` and `convergence_metric` fields have no producing stage and must not be required. Pass the four array fields as plain arrays of objects with the fields the template reads — `audit_findings`: `constraint_force`/`lens`/`finding`/`addressed`; `grill_ratings`: `area`/`rating`/`evidence`; `mutations_applied`: `finding`/`mutation`/`section`; `mutations_deferred`: `finding`/`reason` — never stringified JSON (the 2026-10-08 receipts: the change-log sections rendered placeholder rows while the summary line interpolated, because a stringified array iterates character-by-character; the template now rejects this loudly as `input_errors`).
 2. Deliver the rendered `delivered_output` to the user. `inline` displays it; `file` and `both` additionally require a separate file-write action. A render-only step NEVER writes a file (`output_path_written` stays empty). Report a path only after a successful write.
 3. Always include the change log: audit findings, critique verdict and ratings, applied and deferred mutations. A `rewrite_needed` or `fail` verdict must remain visible; do not report it as verified.
 4. This step makes no LLM call. The skill is not complete until its enhanced prompt is delivered, not merely rendered.
