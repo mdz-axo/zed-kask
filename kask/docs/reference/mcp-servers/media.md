@@ -237,7 +237,7 @@ supersedes the create-only activation / insert-only rescan behavior.
   explicit identity conflict.
 
 Enforcement: `GalleryStore::{open,reconcile,persist_analysis,get_by_id,list_assets}`
-in `kask/crates/hkask-storage/src/gallery.rs`; `GalleryState::scan` in
+in `kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs`; `GalleryState::scan` in
 `kask/mcp-servers/hkask-mcp-media/src/gallery/state.rs`; activation in `kask/mcp-servers/hkask-mcp-media/src/tools/gallery.rs`; analysis snapshots
 in `kask/mcp-servers/hkask-mcp-media/src/images.rs`; generated completion in `kask/mcp-servers/hkask-mcp-media/src/assets.rs`.
 

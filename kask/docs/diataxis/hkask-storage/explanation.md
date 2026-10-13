@@ -94,10 +94,10 @@ The gallery is an index over user-owned files, not a content-addressed copy. A
 `GalleryScan` carries physical `AssetObservation`s plus explicit coverage and
 errors; `GalleryStore::reconcile` applies all observations and safe missing
 transitions in one immediate transaction
-(`kask/crates/hkask-storage/src/gallery.rs:105-135,770-870`). Distinct paths with
+(`kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:105-135,770-870`). Distinct paths with
 equal content remain distinct assets. A changed hash preserves the stable image ID
 and marks metadata stale; a missing asset retains its row and can later be restored
-(`kask/crates/hkask-storage/src/gallery.rs:737-754,815-870`).
+(`kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:737-754,815-870`).
 
 ```mermaid
 stateDiagram-v2
@@ -118,20 +118,20 @@ stateDiagram-v2
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-STOR-006
 verified_date: 2026-09-28
-verified_against: kask/crates/hkask-storage/src/gallery.rs:105-135,737-754,770-870,881-940
+verified_against: kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:105-135,737-754,770-870,881-940
 status: VERIFIED
 -->
 
 `ReconcileResult::analysis_assets` names the exact added, changed, or restored
 records that need analysis; callers do not infer positional ranges
-(`kask/crates/hkask-storage/src/gallery.rs:126-135,770-870`). Analysis persistence
+(`kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:126-135,770-870`). Analysis persistence
 checks image ID, gallery ID, hash, and non-missing state before replacing model
 metadata, so a response for an old request cannot annotate a newer file revision
-(`kask/crates/hkask-storage/src/gallery.rs:881-940`).
+(`kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:881-940`).
 
 Workflow, generation, OMC creation-graph, album, face, and tag records hang from the
 same durable asset identity
-(`kask/crates/hkask-storage/src/gallery.rs:205-293,329-384`). Deleting an image
+(`kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:205-293,329-384`). Deleting an image
 therefore relies on foreign-key cascades instead of leaving detached lifecycle
 metadata.
 
@@ -142,7 +142,7 @@ run immediately afterward
 (`kask/crates/hkask-storage/src/core/connection.rs:347-392`). Domain-specific tables
 are created by their stores, including Regulation and gallery tables
 (`kask/crates/hkask-storage/src/regulation_store.rs:38-70`;
-`kask/crates/hkask-storage/src/gallery.rs:329-384`). The
+`kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:329-384`). The
 `define_driver_store!` macro makes construction fail if a store's schema
 initialization fails (`kask/crates/hkask-storage/src/core/store_macros.rs:44-71`).
 

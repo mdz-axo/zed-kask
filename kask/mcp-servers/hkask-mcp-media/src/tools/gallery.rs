@@ -125,7 +125,7 @@ fn refresh_status(scan_errors: &[String], stage_errors: &[&[String]]) -> &'stati
 /// similar-to-index modes — previously two inline copies of this loop (with
 /// gallery_search's detail-collecting variant a third).
 pub(crate) fn rank_images_by_tag_similarity(
-    all_tags: &[(hkask_storage::gallery::TagRecord, String)],
+    all_tags: &[(crate::gallery::TagRecord, String)],
     terms: &[String],
     min_similarity: f64,
     exclude_relative_path: Option<&str>,
@@ -154,7 +154,7 @@ pub(crate) fn rank_images_by_tag_similarity(
 /// cores. The caller projects its ranked tuples down to paths (the tuple
 /// shapes differ); the asset lookup and media-block shape are shared.
 fn ranked_image_display_hints<'a>(
-    assets: &[hkask_storage::gallery::ImageRecord],
+    assets: &[crate::gallery::ImageRecord],
     paths: impl Iterator<Item = &'a String>,
 ) -> Vec<String> {
     paths

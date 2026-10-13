@@ -8,7 +8,6 @@
 
 pub(crate) mod core;
 pub mod database;
-pub mod gallery;
 mod maintenance_inventory;
 pub mod rotation;
 pub use maintenance_inventory::{
@@ -38,8 +37,3 @@ pub use embeddings::{
 pub use hkask_types::HMemId;
 pub use hmem::{HMem, HMemError, HMemStore, Provenance};
 pub use regulation_store::RegulationArchive;
-
-pub use gallery::{
-    AssetCreationPublication, AssetObservation, FaceRegistryRecord, GalleryMode, GalleryRecord,
-    GalleryStore, GalleryStoreError, ImageRecord, PublishedAssetCreation, TagRecord,
-};

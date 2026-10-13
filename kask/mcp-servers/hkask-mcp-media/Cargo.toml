@@ -34,6 +34,7 @@ ab_glyph.workspace = true
 uuid.workspace = true
 nom-exif.workspace = true
 reqwest.workspace = true
+rusqlite.workspace = true
 tempfile.workspace = true
 
 [lib]

@@ -6,7 +6,7 @@ use crate::{MediaServer, read_image_capped};
 use std::path::PathBuf;
 
 /// Encode the captured revision, refusing a path whose contents changed since observation.
-fn image_record_url(record: &hkask_storage::gallery::ImageRecord) -> Result<String, MediaError> {
+fn image_record_url(record: &crate::gallery::ImageRecord) -> Result<String, MediaError> {
     use sha2::Digest;
     let bytes = read_image_capped(&record.absolute_path)?;
     let hash = format!("{:x}", sha2::Sha256::digest(&bytes));
@@ -28,7 +28,7 @@ impl MediaServer {
     fn resolve_image_record(
         &self,
         image_index: usize,
-    ) -> Result<hkask_storage::gallery::ImageRecord, MediaError> {
+    ) -> Result<crate::gallery::ImageRecord, MediaError> {
         let ga = self.access_gallery()?;
         self.gallery_store
             .get_image(&ga.gallery_id, Some(image_index), None)
@@ -89,7 +89,7 @@ impl MediaServer {
         value: &str,
         confidence: f64,
         model: &str,
-    ) -> Result<hkask_storage::gallery::TagRecord, hkask_storage::gallery::GalleryStoreError> {
+    ) -> Result<crate::gallery::TagRecord, crate::gallery::GalleryStoreError> {
         self.gallery_store
             .tag_image(image_id, tag_type, value, confidence, model)
     }
@@ -181,8 +181,8 @@ impl MediaServer {
         recursive: bool,
     ) -> Result<
         (
-            hkask_storage::gallery::GalleryScan,
-            hkask_storage::gallery::ReconcileResult,
+            crate::gallery::GalleryScan,
+            crate::gallery::ReconcileResult,
         ),
         MediaError,
     > {
@@ -232,7 +232,7 @@ impl MediaServer {
 
     pub(crate) async fn run_analysis_on_assets_detailed(
         &self,
-        records: &[hkask_storage::gallery::ImageRecord],
+        records: &[crate::gallery::ImageRecord],
         pipelines: &[String],
     ) -> AnalysisRunResult {
         if records.is_empty() {

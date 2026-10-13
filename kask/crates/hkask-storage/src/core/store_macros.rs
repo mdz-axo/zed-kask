@@ -78,8 +78,8 @@ pub use crate::database::driver::DatabaseDriver as DatabaseDriverTrait;
 #[macro_export]
 macro_rules! impl_from_db_error {
     ($error:ident, $infra_variant:ident) => {
-        impl From<super::database::types::DbError> for $error {
-            fn from(e: super::database::types::DbError) -> Self {
+        impl From<$crate::database::types::DbError> for $error {
+            fn from(e: $crate::database::types::DbError) -> Self {
                 $error::$infra_variant(hkask_types::InfrastructureError::from(e))
             }
         }

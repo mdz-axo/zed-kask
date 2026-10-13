@@ -4,7 +4,7 @@
 //! `map_media_error` classifies errors into MCP wire-level `McpToolError` kinds.
 
 use hkask_mcp_server::server::McpToolError;
-use hkask_storage::GalleryStoreError;
+use crate::gallery::GalleryStoreError;
 use hkask_types::{EmbeddingGenerationError, InferenceError};
 use thiserror::Error;
 

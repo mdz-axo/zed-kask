@@ -97,7 +97,7 @@ pub(crate) fn owning_gallery_id(
 ) -> Result<String, MediaError> {
     let home = gallery_store.open(
         &home.to_string_lossy(),
-        hkask_storage::GalleryMode::ReadOnly,
+        crate::gallery::GalleryMode::ReadOnly,
     )?;
     let file = file.canonicalize()?;
     Ok(gallery_store
@@ -199,11 +199,11 @@ impl StagedJobAsset {
                 .and_then(serde_json::Value::as_str)
                 .map(str::to_string)
         };
-        let publication = hkask_storage::AssetCreationPublication {
+        let publication = crate::gallery::AssetCreationPublication {
             asset_id: self.asset_id.clone(),
             task_id: self.task_id.clone(),
             created_at: self.created_at.clone(),
-            observation: hkask_storage::AssetObservation {
+            observation: crate::gallery::AssetObservation {
                 absolute_path: self.final_path.to_string_lossy().into_owned(),
                 hash,
                 width,

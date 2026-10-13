@@ -821,10 +821,10 @@ mod tests {
     fn gallery_root() -> (
         tempfile::TempDir,
         std::sync::Arc<SqliteDriver>,
-        hkask_storage::gallery::GalleryStore,
-        hkask_storage::gallery::GalleryRecord,
+        crate::gallery::GalleryStore,
+        crate::gallery::store::GalleryRecord,
     ) {
-        use hkask_storage::gallery::{GalleryMode, GalleryStore};
+        use crate::gallery::{GalleryMode, GalleryStore};
 
         let root = tempfile::tempdir().expect("gallery root");
         let pool = SqliteDriver::in_memory_pool().expect("in-memory SQLite pool");
@@ -842,12 +842,12 @@ mod tests {
     /// Add one audio asset to the gallery — the asset shape every
     /// transcript/gallery test links its transcript to.
     fn add_audio_asset(
-        gallery_store: &hkask_storage::gallery::GalleryStore,
+        gallery_store: &crate::gallery::GalleryStore,
         gallery_id: &str,
         media_path: &std::path::Path,
         hash: &str,
         size_bytes: u64,
-    ) -> hkask_storage::gallery::ImageRecord {
+    ) -> crate::gallery::ImageRecord {
         gallery_store
             .add_media(
                 gallery_id,

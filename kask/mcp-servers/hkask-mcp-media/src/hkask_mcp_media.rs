@@ -37,7 +37,7 @@ use gallery::GalleryState;
 use gallery::vision::{self};
 use hkask_mcp_server::server::{McpToolError, execute_tool, validate_tool_url_with_dns};
 use hkask_storage::database::sqlite::SqliteDriver;
-use hkask_storage::{GalleryMode, GalleryStore};
+use crate::gallery::{GalleryMode, GalleryStore};
 use hkask_types::InferencePort;
 use hkask_types::VoiceDesign;
 
@@ -713,7 +713,7 @@ mod dead_surface_pins {
 #[cfg(test)]
 mod integration_tests {
     use crate::gallery::GalleryState;
-    use hkask_storage::{GalleryMode, GalleryStore};
+    use crate::gallery::{GalleryMode, GalleryStore};
     use image::{Rgb, RgbImage};
     use std::sync::Arc;
     use tempfile::TempDir;
@@ -741,7 +741,7 @@ mod integration_tests {
         let gallery = store
             .open(
                 &temp.path().to_string_lossy(),
-                hkask_storage::GalleryMode::ReadOnly,
+                crate::gallery::GalleryMode::ReadOnly,
             )
             .expect("create gallery");
         assert_eq!(gallery.image_count, 0);
@@ -828,7 +828,7 @@ mod integration_tests {
         let gallery = store
             .open(
                 &temp.path().to_string_lossy(),
-                hkask_storage::GalleryMode::ReadOnly,
+                crate::gallery::GalleryMode::ReadOnly,
             )
             .expect("create gallery");
 
@@ -842,7 +842,7 @@ mod integration_tests {
 
     #[test]
     fn gallery_three_state_policy() {
-        use hkask_storage::GalleryMode;
+        use crate::gallery::GalleryMode;
         assert_eq!(GalleryMode::ReadOnly.as_str(), "read-only");
         assert_eq!(GalleryMode::CopyOnWrite.as_str(), "copy-on-write");
         assert_eq!(GalleryMode::Destructive.as_str(), "destructive");
@@ -1950,7 +1950,7 @@ mod tool_behavior_tests {
             tempfile::TempDir,
             Arc<GalleryStore>,
             Arc<hkask_storage::database::sqlite::SqliteDriver>,
-            hkask_storage::GalleryRecord,
+            crate::gallery::store::GalleryRecord,
         ),
         Box<dyn std::error::Error>,
     > {
@@ -2073,8 +2073,8 @@ mod tool_behavior_tests {
         gallery_a_root: tempfile::TempDir,
         gallery_b_root: tempfile::TempDir,
         store: Arc<GalleryStore>,
-        gallery_a: hkask_storage::GalleryRecord,
-        gallery_b: hkask_storage::GalleryRecord,
+        gallery_a: crate::gallery::store::GalleryRecord,
+        gallery_b: crate::gallery::store::GalleryRecord,
         gallery_state: Arc<std::sync::Mutex<Option<GalleryState>>>,
         server: Arc<MediaServer>,
         entered: Arc<tokio::sync::Notify>,
@@ -5551,7 +5551,7 @@ mod gallery_lifecycle_tests {
         _fixture: tempfile::TempDir,
         source: std::path::PathBuf,
         server: MediaServer,
-        asset: hkask_storage::ImageRecord,
+        asset: crate::gallery::ImageRecord,
         transcript: crate::transcript_store::TranscriptSummary,
     }
 
@@ -6250,7 +6250,7 @@ mod gallery_lifecycle_tests {
         (
             tempfile::TempDir,
             MediaServer,
-            hkask_storage::ImageRecord,
+            crate::gallery::ImageRecord,
             (u32, Vec<String>),
         ),
         Box<dyn std::error::Error>,

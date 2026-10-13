@@ -36,7 +36,7 @@ impl MediaServer {
         force: bool,
     ) -> Result<
         (
-            hkask_storage::FaceRegistryRecord,
+            crate::gallery::FaceRegistryRecord,
             Option<vision::FaceValidationResult>,
         ),
         McpToolError,
@@ -157,7 +157,7 @@ impl MediaServer {
     pub(crate) async fn run_face_matching(
         &self,
         ga: &GalleryAccess,
-        registry: &[hkask_storage::FaceRegistryRecord],
+        registry: &[crate::gallery::FaceRegistryRecord],
     ) -> (u32, Vec<String>) {
         let mut faces_matched = 0u32;
         let mut errors = Vec::new();

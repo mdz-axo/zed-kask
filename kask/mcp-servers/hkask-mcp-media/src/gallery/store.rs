@@ -9,9 +9,9 @@
 //! - `images`: path, hash, dimensions, gallery_id
 //! - `tags`: image_id, tag_type, value, confidence
 //! - `face_registry`: first_name, last_name, image_id, status, notes
-use crate::database::driver::{query_map, query_row};
-use crate::database::value::DbValue;
-use crate::{define_driver_store, impl_from_db_error};
+use hkask_storage::database::driver::{query_map, query_row};
+use hkask_storage::database::value::DbValue;
+use hkask_storage::{define_driver_store, impl_from_db_error};
 use hkask_types::InfrastructureError;
 use hkask_types::NotFound;
 use hkask_types::time::now_rfc3339;
@@ -360,7 +360,7 @@ impl GalleryStore {
     /// pre:  conn is a valid SQLite connection
     /// post: gallery tables created if not exists
     fn init_schema(
-        driver: &std::sync::Arc<dyn crate::database::driver::DatabaseDriver>,
+        driver: &std::sync::Arc<dyn hkask_storage::database::driver::DatabaseDriver>,
     ) -> Result<(), InfrastructureError> {
         driver.execute_batch(
             "CREATE TABLE IF NOT EXISTS galleries (
@@ -1317,8 +1317,8 @@ impl GalleryStore {
     }
     // ── Row mappers ──
     fn image_from_row(
-        row: &crate::database::value::DbRow,
-    ) -> Result<ImageRecord, crate::database::types::DbError> {
+        row: &hkask_storage::database::value::DbRow,
+    ) -> Result<ImageRecord, hkask_storage::database::types::DbError> {
         Ok(ImageRecord {
             id: row.get_str(0)?.to_string(),
             gallery_id: row.get_str(1)?.to_string(),
@@ -1336,8 +1336,8 @@ impl GalleryStore {
         })
     }
     fn tag_from_row(
-        row: &crate::database::value::DbRow,
-    ) -> Result<TagRecord, crate::database::types::DbError> {
+        row: &hkask_storage::database::value::DbRow,
+    ) -> Result<TagRecord, hkask_storage::database::types::DbError> {
         Ok(TagRecord {
             id: row.get_str(0)?.to_string(),
             image_id: row.get_str(1)?.to_string(),
@@ -1349,8 +1349,8 @@ impl GalleryStore {
         })
     }
     fn face_from_row(
-        row: &crate::database::value::DbRow,
-    ) -> Result<FaceRegistryRecord, crate::database::types::DbError> {
+        row: &hkask_storage::database::value::DbRow,
+    ) -> Result<FaceRegistryRecord, hkask_storage::database::types::DbError> {
         Ok(FaceRegistryRecord {
             id: row.get_str(0)?.to_string(),
             first_name: row.get_str(1)?.to_string(),
@@ -1672,8 +1672,8 @@ impl GalleryStore {
     }
 
     fn workflow_from_row(
-        row: &crate::database::value::DbRow,
-    ) -> std::result::Result<WorkflowRecord, crate::database::types::DbError> {
+        row: &hkask_storage::database::value::DbRow,
+    ) -> std::result::Result<WorkflowRecord, hkask_storage::database::types::DbError> {
         Ok(WorkflowRecord {
             id: row.get_str(0)?.to_string(),
             graph_json: row.get_str(1)?.to_string(),
@@ -1682,8 +1682,8 @@ impl GalleryStore {
     }
 
     fn generation_from_row(
-        row: &crate::database::value::DbRow,
-    ) -> std::result::Result<GenerationRecord, crate::database::types::DbError> {
+        row: &hkask_storage::database::value::DbRow,
+    ) -> std::result::Result<GenerationRecord, hkask_storage::database::types::DbError> {
         Ok(GenerationRecord {
             id: row.get_str(0)?.to_string(),
             image_id: row.get_str(1)?.to_string(),
@@ -1721,8 +1721,8 @@ impl GalleryStore {
     }
 
     fn omc_creation_graph_from_row(
-        row: &crate::database::value::DbRow,
-    ) -> std::result::Result<OmcCreationGraphRecord, crate::database::types::DbError> {
+        row: &hkask_storage::database::value::DbRow,
+    ) -> std::result::Result<OmcCreationGraphRecord, hkask_storage::database::types::DbError> {
         Ok(OmcCreationGraphRecord {
             image_id: row.get_str(0)?.to_string(),
             graph_json: row.get_str(1)?.to_string(),
@@ -1731,8 +1731,8 @@ impl GalleryStore {
     }
 
     fn album_from_row(
-        row: &crate::database::value::DbRow,
-    ) -> std::result::Result<AlbumRecord, crate::database::types::DbError> {
+        row: &hkask_storage::database::value::DbRow,
+    ) -> std::result::Result<AlbumRecord, hkask_storage::database::types::DbError> {
         Ok(AlbumRecord {
             id: row.get_str(0)?.to_string(),
             gallery_id: row.get_str(1)?.to_string(),
@@ -1749,7 +1749,7 @@ impl GalleryStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::database::sqlite::SqliteDriver;
+    use hkask_storage::database::sqlite::SqliteDriver;
     use std::sync::Arc;
 
     fn setup() -> GalleryStore {
@@ -2303,7 +2303,7 @@ mod tests {
     /// on. Uses a uuid-named temp dir (no `tempfile` dev-dep in this crate).
     #[test]
     fn gallery_lineage_survives_across_driver_instances() {
-        use crate::database::sqlite::SqliteDriver;
+        use hkask_storage::database::sqlite::SqliteDriver;
         let dir =
             std::env::temp_dir().join(format!("hkask_storage_durability_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();

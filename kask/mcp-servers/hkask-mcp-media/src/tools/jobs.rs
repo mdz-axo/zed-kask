@@ -576,9 +576,9 @@ mod tests {
         let server = server_with_port(Arc::new(ImmediateMedia), store.clone())?;
         let gallery = server.gallery_store.open(
             &root.to_string_lossy(),
-            hkask_storage::GalleryMode::ReadOnly,
+            crate::gallery::GalleryMode::ReadOnly,
         )?;
-        let mut state = GalleryState::new(root.to_path_buf(), hkask_storage::GalleryMode::ReadOnly);
+        let mut state = GalleryState::new(root.to_path_buf(), crate::gallery::GalleryMode::ReadOnly);
         state.gallery_id = Some(gallery.id.clone());
         *server
             .gallery_state
