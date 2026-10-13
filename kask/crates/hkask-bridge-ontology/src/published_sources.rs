@@ -641,6 +641,18 @@ pub const RDF_VOCABULARIES: &[RdfVocabulary] = &[
         iri: "https://movielabs.com/cw/rdf/schema/v2.8#",
         directory: "omc",
     },
+    RdfVocabulary {
+        namespace: "DPV",
+        prefix: "dpv",
+        iri: "https://w3id.org/dpv#",
+        directory: "dpv",
+    },
+    RdfVocabulary {
+        namespace: "CSO",
+        prefix: "cso",
+        iri: "https://cso.kmi.open.ac.uk/topics/",
+        directory: "cso",
+    },
 ];
 
 const RDF: &str = "http://www.w3.org/1999/02/22-rdf-syntax-ns#";

@@ -109,7 +109,9 @@ pub struct CanonicalTerms {
 }
 
 /// Full published domain vocabularies in stable resolution order. FIBO
-/// precedes RDF Data Cube; OMC precedes PKO for media terms.
+/// precedes RDF Data Cube; OMC precedes PKO for media terms. DPV and CSO are
+/// appended last so no existing domain resolution shifts: they claim only
+/// terms no earlier domain vocabulary already anchors.
 const PUBLISHED_DOMAIN: &[&str] = &[
     "FIBO",
     "RDF Data Cube",
@@ -124,6 +126,8 @@ const PUBLISHED_DOMAIN: &[&str] = &[
     "ML-Schema",
     "RDF",
     "RDFS",
+    "DPV",
+    "CSO",
 ];
 
 /// Full published vocabularies consulted after the domain and derived rungs,
@@ -380,6 +384,56 @@ mod tests {
             );
             assert!(resolved.source.is_some(), "{resolved:?}");
         }
+    }
+
+    /// expect: the rung-1 pins resolve their rulings — DPV publishes the
+    /// data-retention anchor (StorageDuration, DPV 2.0 §17.1.666 lineage)
+    /// and CSO publishes the inference research topic — while the distinct
+    /// finance sense of "retention" keeps its derived primary (no
+    /// collision), and CSO 3.3's missing fine-tuning topic (added in the
+    /// unobtainable 3.4) leaves that term honestly on the coarse core.
+    #[test]
+    fn rung1_pins_resolve_dpv_and_cso_rulings() {
+        let duration = resolve_term("dpv:StorageDuration");
+        assert_eq!(
+            (
+                duration.tier.as_str(),
+                duration.namespace.as_str(),
+                duration.concept.as_str()
+            ),
+            ("domain_supplement", "DPV", "dpv:StorageDuration"),
+            "{duration:?}"
+        );
+        assert!(
+            duration
+                .definition
+                .as_deref()
+                .is_some_and(|text| text.contains("storage")),
+            "{duration:?}"
+        );
+        let by_label = resolve_term("storage duration");
+        assert_eq!(by_label.concept, "dpv:StorageDuration", "{by_label:?}");
+
+        let inference = resolve_term("inference");
+        assert_eq!(
+            (
+                inference.tier.as_str(),
+                inference.namespace.as_str(),
+                inference.concept.as_str()
+            ),
+            ("domain_supplement", "CSO", "cso:inference"),
+            "{inference:?}"
+        );
+
+        let retention = resolve_term("retention");
+        assert_eq!(
+            (retention.tier.as_str(), retention.concept.as_str()),
+            ("derived", "retention"),
+            "{retention:?}"
+        );
+
+        let fine_tuning = resolve_term("fine-tuning");
+        assert_eq!(fine_tuning.tier.as_str(), "core", "{fine_tuning:?}");
     }
 
     /// expect: one word, several published senses — the formal upper sense
