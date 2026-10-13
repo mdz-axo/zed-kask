@@ -1,7 +1,7 @@
 ---
 title: "hkask-storage — Reference"
 audience: [architects, developers]
-last_updated: 2026-09-28
+last_updated: 2026-10-13
 version: "2.4.0"
 status: "Active"
 domain: "Persistence"
@@ -88,7 +88,7 @@ classDiagram
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-STOR-003
 verified_date: 2026-09-28
-verified_against: kask/crates/hkask-storage/src/core/connection.rs:166-192,301-452,474-536; kask/crates/hkask-storage/src/database/driver.rs:15-47; kask/crates/hkask-storage/src/database/sqlite.rs:42-117; kask/crates/hkask-storage/src/maintenance_inventory.rs:169-205,294-375; kask/crates/hkask-storage/src/hmem.rs:136-163; kask/crates/hkask-storage/src/embeddings.rs:64-110; kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:329; kask/crates/hkask-storage/src/regulation_store.rs:30-104
+verified_against: kask/crates/hkask-storage/src/core/connection.rs:166-192,301-452,474-536; kask/crates/hkask-storage/src/database/driver.rs:15-47; kask/crates/hkask-storage/src/database/sqlite.rs:42-117; kask/crates/hkask-storage/src/maintenance_inventory.rs:169-205,294-375; kask/crates/hkask-storage/src/hmem.rs:136-163; kask/crates/hkask-storage/src/embeddings.rs:64-110; kask/crates/hkask-storage/src/regulation_store.rs:30-104
 status: VERIFIED
 -->
 
@@ -106,58 +106,6 @@ status: VERIFIED
 
 A confirmation is an inventory receipt only. Quiescence and key publication are
 separate responsibilities.
-
-## Gallery and request-lifecycle entities
-
-The gallery store moved to the media crate (2026-10-13); the media MCP
-server is its sole consumer. The entities below are defined in
-`kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs` and re-exported through
-the media server's `gallery` module
-(`kask/mcp-servers/hkask-mcp-media/src/gallery.rs`).
-
-| Entity | Role | Evidence |
-|---|---|---|
-| `GalleryMode` | read-only, copy-on-write, or destructive policy | `kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:40-71` |
-| `GalleryRecord` | durable canonical root and aggregate view | `kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:75-83` |
-| `ImageRecord` | stable path identity, content revision, presence, metadata freshness | `kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:86-101` |
-| `AssetObservation` | one physical observation supplied by a scan request | `kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:105-113` |
-| `GalleryScan` | request coverage, observations, and errors | `kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:117-123` |
-| `ReconcileResult` | lifecycle counts plus exact assets requiring analysis | `kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:126-135` |
-| `TagRecord` | persisted annotation | `kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:205-213` |
-| `FaceRegistryRecord` | named face reference and status | `kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:218-227` |
-| `WorkflowRecord` / `WorkflowSummary` | full persisted workflow and bounded list row | `kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:233-246` |
-| `AlbumRecord` | nested metadata-only grouping | `kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:252-259` |
-| `GenerationRecord` | provider-independent generation lineage | `kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:266-285` |
-| `OmcCreationGraphRecord` | canonical MovieLabs OMC graph for one asset | `kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:289-293` |
-
-```mermaid
-stateDiagram-v2
-    [*] --> Added
-    Added --> Current: analysis matches ID and hash
-    Added --> Changed: same path gets new hash
-    Current --> Changed: same path gets new hash
-    Changed --> Current: matching reanalysis commits
-    Added --> Missing: complete scan no longer sees path
-    Current --> Missing: complete scan no longer sees path
-    Changed --> Missing: complete scan no longer sees path
-    Missing --> Restored: same path reappears
-    Restored --> Current: matching reanalysis commits
-```
-
-<!-- DIAGRAM_ALIGNMENT
-id: DIAG-STOR-004
-verified_date: 2026-09-28
-verified_against: kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:86-135,737-754,770-870,881-940
-status: VERIFIED
--->
-
-`GalleryStore::reconcile` commits observations and safe absence transitions in one
-transaction (`kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:770-870`). Errors in scan
-coverage suppress absence inference. `persist_analysis_for_tag_types` applies a
-response only while image ID, gallery ID, hash, and non-missing state still match
-(`kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:881-940`). Active list/count/index
-surfaces exclude missing records, while stable-ID inspection can include them
-(`kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:859-986`).
 
 ## Core schema
 
@@ -229,10 +177,11 @@ verified_against: kask/crates/hkask-storage/src/core/sql/schema.sql:1-28
 status: VERIFIED
 -->
 
-Store-owned schemas add `reg_records`, `reg_cursors`, and gallery lifecycle
-tables outside the core schema
-(`kask/crates/hkask-storage/src/regulation_store.rs:38-70`;
-`kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:329-384`). Escalation alerts do not
+Store-owned schemas add `reg_records` and `reg_cursors` outside the core
+schema (`kask/crates/hkask-storage/src/regulation_store.rs:38-70`). The gallery
+lifecycle tables moved with the gallery store to the media server (2026-10-13,
+commit `c85b1e4896`) — see
+[Media MCP Server Reference](../../reference/mcp-servers/media.md). Escalation alerts do not
 persist as storage rows: they reconcile into kanban board review cards through
 `BoardAlertEscalationSink` (`kask/crates/kask_bridge/src/algedonic_board.rs:227`).
 
@@ -394,26 +343,9 @@ separately; the inventory receipt is not a maintenance lease.
 Single-database rotation itself is implemented by `rotate_passphrase`
 (`kask/crates/hkask-storage/src/rotation.rs:115-302`).
 
-### Gallery scan and analysis requests
-
-When adding gallery-facing work, carry exact lifecycle entities rather than
-positional guesses:
-
-- `AssetObservation` describes one physical asset.
-- `GalleryScan` carries observations plus coverage and errors.
-- `ReconcileResult` reports added, changed, restored, missing, and unchanged counts
-  and returns exact `analysis_assets`.
-
-These types are defined at `kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:105-135` and
-consumed atomically by `GalleryStore::reconcile` at
-`kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:770-870`. Persist an analysis response
-through `persist_analysis_for_tag_types`; it refuses to
-apply an old request when image identity, hash, or presence no longer matches
-(`kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:881-940`).
-
 ## See also
 
-- [Why storage separates connection, inventory, and gallery identity](./explanation.md)
+- [Why storage separates connection and inventory concerns](./explanation.md)
 - [Standardized artifact storage](../../architecture/standardized-artifact-storage.md)
 
 ---

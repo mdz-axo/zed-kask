@@ -1,7 +1,7 @@
 ---
 title: "Media MCP Server Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-09-28
+last_updated: 2026-10-13
 version: "0.41.2"
 status: "Active"
 domain: "Composition"
@@ -86,7 +86,7 @@ DeepInfra native endpoints, need only its key, and reject model overrides.
 Invalid model selection maps to `invalid_argument`; missing config/key or
 provider 401/403 maps to `permission_denied`. For migration, qualify saved
 media model settings/replays and remove fixed-op model overrides. See the
-[inference policy](../../diataxis/hkask-inference/reference.md#media-routing-policy--operator-decision-2026-09-06).
+[inference policy](../../diataxis/hkask-inference/reference.md#configure-strict-media-routing).
 
 **Credentials:** the media server's registration allowlists `OPENROUTER_API_KEY`, `DEEPINFRA_API_KEY`, `HKASK_SERPAPI_API_KEY`, and `REDUCT_API_KEY` (`kask/crates/kask_bridge/src/mcp_servers.rs:493-499`). The first two serve the child-local `MediaRouter`; SerpApi supplies structured YouTube discovery metadata. Vision/chat/embed use the IPC bridge to zed's `LanguageModelRegistry`. The routes are distinct — `yt-dlp` is not a metadata provider and needs no credential.
 
@@ -249,6 +249,120 @@ Storage API callers use `open` and pass one canonical asset path to insertion.
 No providers, generation-job lifecycle, or D35 child-local routing changes are
 part of this decision. See the server README's gallery lifecycle section for
 regression test names.
+
+## Gallery store identity and reconciliation
+
+The gallery store moved from `hkask-storage` to this crate (2026-10-13, commit
+`c85b1e4896`); this server is its sole consumer. The gallery is an index over
+user-owned files, not a content-addressed copy. A `GalleryScan` carries
+physical `AssetObservation`s plus explicit coverage and errors;
+`GalleryStore::reconcile` applies all observations and safe missing
+transitions in one immediate transaction
+(`kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:105-135,770-870`). Distinct
+paths with equal content remain distinct assets. A changed hash preserves the
+stable image ID and marks metadata stale; a missing asset retains its row and
+can later be restored
+(`kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:737-754,815-870`).
+
+```mermaid
+stateDiagram-v2
+    [*] --> Observed: AssetObservation in GalleryScan
+    Observed --> Added: canonical path is new
+    Observed --> Changed: same path, new hash
+    Observed --> Restored: retained path reappears
+    Observed --> Unchanged: same path and hash
+    Added --> AnalysisRequested: returned in analysis_assets
+    Changed --> AnalysisRequested: returned in analysis_assets
+    Restored --> AnalysisRequested: returned in analysis_assets
+    AnalysisRequested --> Current: identity and hash still match
+    AnalysisRequested --> StaleRequest: identity, hash, or presence changed
+    Current --> Missing: complete error-free scan no longer sees path
+    Missing --> Restored: later scan sees same path
+```
+
+<!-- DIAGRAM_ALIGNMENT
+id: DIAG-RF-008
+verified_date: 2026-10-13
+verified_against: kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:105-135,737-754,770-870,881-940
+status: VERIFIED
+-->
+
+`ReconcileResult::analysis_assets` names the exact added, changed, or restored
+records that need analysis; callers do not infer positional ranges
+(`kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:126-135,770-870`). Analysis
+persistence checks image ID, gallery ID, hash, and non-missing state before
+replacing model metadata, so a response for an old request cannot annotate a
+newer file revision (`kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:881-940`).
+
+Workflow, generation, OMC creation-graph, album, face, and tag records hang
+from the same durable asset identity
+(`kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:205-293,329-384`). Deleting an
+image therefore relies on foreign-key cascades instead of leaving detached
+lifecycle metadata.
+
+## Gallery store entities
+
+All entities are defined in `kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs`
+and re-exported through the server's `gallery` module
+(`kask/mcp-servers/hkask-mcp-media/src/gallery.rs`).
+
+| Entity | Role | Evidence |
+|---|---|---|
+| `GalleryMode` | read-only, copy-on-write, or destructive policy | `kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:40-71` |
+| `GalleryRecord` | durable canonical root and aggregate view | `kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:75-83` |
+| `ImageRecord` | stable path identity, content revision, presence, metadata freshness | `kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:86-101` |
+| `AssetObservation` | one physical observation supplied by a scan request | `kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:105-113` |
+| `GalleryScan` | request coverage, observations, and errors | `kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:117-123` |
+| `ReconcileResult` | lifecycle counts plus exact assets requiring analysis | `kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:126-135` |
+| `TagRecord` | persisted annotation | `kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:205-213` |
+| `FaceRegistryRecord` | named face reference and status | `kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:218-227` |
+| `WorkflowRecord` / `WorkflowSummary` | full persisted workflow and bounded list row | `kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:233-246` |
+| `AlbumRecord` | nested metadata-only grouping | `kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:252-259` |
+| `GenerationRecord` | provider-independent generation lineage | `kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:266-285` |
+| `OmcCreationGraphRecord` | canonical MovieLabs OMC graph for one asset | `kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:289-293` |
+
+```mermaid
+stateDiagram-v2
+    [*] --> Added
+    Added --> Current: analysis matches ID and hash
+    Added --> Changed: same path gets new hash
+    Current --> Changed: same path gets new hash
+    Changed --> Current: matching reanalysis commits
+    Added --> Missing: complete scan no longer sees path
+    Current --> Missing: complete scan no longer sees path
+    Changed --> Missing: complete scan no longer sees path
+    Missing --> Restored: same path reappears
+    Restored --> Current: matching reanalysis commits
+```
+
+<!-- DIAGRAM_ALIGNMENT
+id: DIAG-RF-007
+verified_date: 2026-10-13
+verified_against: kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:86-135,737-754,770-870,881-940
+status: VERIFIED
+-->
+
+`GalleryStore::reconcile` commits observations and safe absence transitions in
+one transaction (`kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:770-870`). Errors
+in scan coverage suppress absence inference. `persist_analysis_for_tag_types`
+applies a response only while image ID, gallery ID, hash, and non-missing
+state still match (`kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:881-940`). Active
+list/count/index surfaces exclude missing records, while stable-ID inspection
+can include them (`kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:859-986`).
+
+### Gallery scan and analysis requests
+
+When adding gallery-facing work, carry exact lifecycle entities rather than
+positional guesses: `AssetObservation` describes one physical asset;
+`GalleryScan` carries observations plus coverage and errors; `ReconcileResult`
+reports added, changed, restored, missing, and unchanged counts and returns
+exact `analysis_assets`. These types are defined at
+`kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:105-135` and consumed atomically by
+`GalleryStore::reconcile` at
+`kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:770-870`. Persist an analysis response
+through `persist_analysis_for_tag_types`; it refuses to apply an old request
+when image identity, hash, or presence no longer matches
+(`kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:881-940`).
 
 ## Transcript-as-timeline model
 

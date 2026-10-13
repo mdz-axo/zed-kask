@@ -1,14 +1,14 @@
 ---
-title: "hkask-storage — Explanation: Boundaries, Maintenance, and Gallery Identity"
+title: "hkask-storage — Explanation: Boundaries and Maintenance"
 audience: [architects, developers]
-last_updated: 2026-09-28
+last_updated: 2026-10-13
 version: "2.3.0"
 status: "Active"
 domain: "Persistence"
 mds_categories: [trust, curation]
 ---
 
-# hkask-storage — Explanation: Boundaries, Maintenance, and Gallery Identity
+# hkask-storage — Explanation: Boundaries and Maintenance
 
 `hkask-storage` separates connection infrastructure, a database driver port, and
 domain stores. `Database` owns path preparation, passphrase validation, SQLCipher
@@ -88,61 +88,15 @@ quiescence grant and does not rotate or publish a passphrase
 This separation avoids a dangerous category error: knowing which files exist does
 not prove that every process has released them.
 
-## Why gallery identity follows paths rather than hashes
-
-The gallery is an index over user-owned files, not a content-addressed copy. A
-`GalleryScan` carries physical `AssetObservation`s plus explicit coverage and
-errors; `GalleryStore::reconcile` applies all observations and safe missing
-transitions in one immediate transaction
-(`kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:105-135,770-870`). Distinct paths with
-equal content remain distinct assets. A changed hash preserves the stable image ID
-and marks metadata stale; a missing asset retains its row and can later be restored
-(`kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:737-754,815-870`).
-
-```mermaid
-stateDiagram-v2
-    [*] --> Observed: AssetObservation in GalleryScan
-    Observed --> Added: canonical path is new
-    Observed --> Changed: same path, new hash
-    Observed --> Restored: retained path reappears
-    Observed --> Unchanged: same path and hash
-    Added --> AnalysisRequested: returned in analysis_assets
-    Changed --> AnalysisRequested: returned in analysis_assets
-    Restored --> AnalysisRequested: returned in analysis_assets
-    AnalysisRequested --> Current: identity and hash still match
-    AnalysisRequested --> StaleRequest: identity, hash, or presence changed
-    Current --> Missing: complete error-free scan no longer sees path
-    Missing --> Restored: later scan sees same path
-```
-
-<!-- DIAGRAM_ALIGNMENT
-id: DIAG-STOR-006
-verified_date: 2026-09-28
-verified_against: kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:105-135,737-754,770-870,881-940
-status: VERIFIED
--->
-
-`ReconcileResult::analysis_assets` names the exact added, changed, or restored
-records that need analysis; callers do not infer positional ranges
-(`kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:126-135,770-870`). Analysis persistence
-checks image ID, gallery ID, hash, and non-missing state before replacing model
-metadata, so a response for an old request cannot annotate a newer file revision
-(`kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:881-940`).
-
-Workflow, generation, OMC creation-graph, album, face, and tag records hang from the
-same durable asset identity
-(`kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:205-293,329-384`). Deleting an image
-therefore relies on foreign-key cascades instead of leaving detached lifecycle
-metadata.
-
 ## Why schemas remain store-owned
 
 Core tables are initialized from `core/sql/schema.sql`; column-level migrations
 run immediately afterward
 (`kask/crates/hkask-storage/src/core/connection.rs:347-392`). Domain-specific tables
-are created by their stores, including Regulation and gallery tables
-(`kask/crates/hkask-storage/src/regulation_store.rs:38-70`;
-`kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:329-384`). The
+are created by their stores, including the Regulation tables
+(`kask/crates/hkask-storage/src/regulation_store.rs:38-70`). The gallery store's tables
+moved with it to the media server (2026-10-13, commit `c85b1e4896`) — see
+[Media MCP Server Reference](../../reference/mcp-servers/media.md). The
 `define_driver_store!` macro makes construction fail if a store's schema
 initialization fails (`kask/crates/hkask-storage/src/core/store_macros.rs:44-71`).
 

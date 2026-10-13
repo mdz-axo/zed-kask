@@ -104,6 +104,12 @@ The LogiSheets plan's future-state block converted to a registered implementatio
 
 Git history is the archive of record. Every removed document names its active successor here. The dated Corpus size measurement above, not this lifecycle ledger, applies the document-count gate (all files, per [`DOCUMENTATION_STANDARDS.md`](architecture/DOCUMENTATION_STANDARDS.md) §3) and identifies the live YAML inventory.
 
+### Folded 2026-10-13 (gallery docs recomposition — C1 follow-up; the gallery store code moved to the media server in commit `c85b1e4896`)
+
+| Artifact | Successor |
+| --- | --- |
+| `diataxis/hkask-storage/{explanation,reference}.md` § Gallery sections | [`reference/mcp-servers/media.md`](reference/mcp-servers/media.md) § Gallery store identity and reconciliation + § Gallery store entities (the store's sole-consumer doc; diagrams re-registered `DIAG-STOR-004`→`DIAG-RF-007`, `DIAG-STOR-006`→`DIAG-RF-008`); the storage set describes only what `hkask-storage` ships. |
+
 ### Deleted 2026-10-11 (test-suite refresh — the working plan, executed to termination)
 
 | Artifact | Successor |

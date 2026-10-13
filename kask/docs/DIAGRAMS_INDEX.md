@@ -105,6 +105,8 @@ Every row below is an actual `(id, location)` metadata pair. Dates and statuses 
 | `DIAG-RF-004A` | [`reference/mcp-servers/companies.md`](./reference/mcp-servers/companies.md) | 2026-09-28 | VERIFIED |
 | `DIAG-RF-005` | [`reference/mcp-servers/scenarios.md`](./reference/mcp-servers/scenarios.md) | 2026-09-28 | VERIFIED |
 | `DIAG-RF-006` | [`reference/mcp-servers/media.md`](./reference/mcp-servers/media.md) | 2026-09-28 | VERIFIED |
+| `DIAG-RF-007` | [`reference/mcp-servers/media.md`](./reference/mcp-servers/media.md) | 2026-10-13 | VERIFIED |
+| `DIAG-RF-008` | [`reference/mcp-servers/media.md`](./reference/mcp-servers/media.md) | 2026-10-13 | VERIFIED |
 | `DIAG-RF-PM` | [`diagrams/ui-widgets.md`](./diagrams/ui-widgets.md) | 2026-09-28 | VERIFIED |
 | `DIAG-RF-PM-PIPELINE-001` | [`diagrams/ui-widgets.md`](./diagrams/ui-widgets.md) | 2026-09-28 | VERIFIED |
 | `DIAG-RF-SWARM-001` | [`reference/mcp-servers/swarm.md`](./reference/mcp-servers/swarm.md) | 2026-09-28 | VERIFIED |
@@ -116,9 +118,7 @@ Every row below is an actual `(id, location)` metadata pair. Dates and statuses 
 | `DIAG-STD-001` | [`architecture/DOCUMENTATION_STANDARDS.md`](./architecture/DOCUMENTATION_STANDARDS.md) | 2026-09-28 | VERIFIED |
 | `DIAG-STOR-002` | [`diataxis/hkask-storage/reference.md`](./diataxis/hkask-storage/reference.md) | 2026-09-28 | VERIFIED |
 | `DIAG-STOR-003` | [`diataxis/hkask-storage/reference.md`](./diataxis/hkask-storage/reference.md) | 2026-09-28 | VERIFIED |
-| `DIAG-STOR-004` | [`diataxis/hkask-storage/reference.md`](./diataxis/hkask-storage/reference.md) | 2026-09-28 | VERIFIED |
 | `DIAG-STOR-005` | [`diataxis/hkask-storage/explanation.md`](./diataxis/hkask-storage/explanation.md) | 2026-09-28 | VERIFIED |
-| `DIAG-STOR-006` | [`diataxis/hkask-storage/explanation.md`](./diataxis/hkask-storage/explanation.md) | 2026-09-28 | VERIFIED |
 | `DIAG-STOR-007` | [`diataxis/hkask-storage/reference.md`](./diataxis/hkask-storage/reference.md) | 2026-09-28 | VERIFIED |
 | `DIAG-STOR-008` | [`diataxis/hkask-storage/reference.md`](./diataxis/hkask-storage/reference.md) | 2026-09-28 | VERIFIED |
 | `DIAG-SWARM-010` | [`diataxis/swarm_system/reference.md`](./diataxis/swarm_system/reference.md) | 2026-09-28 | VERIFIED |
