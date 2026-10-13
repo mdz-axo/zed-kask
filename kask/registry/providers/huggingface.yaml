@@ -17,12 +17,24 @@ consumed_capabilities:
     source: kask/mcp-servers/hkask-mcp-training/src/huggingface.rs
 deliberate_non_consumption: []
 data_terms:
-  extracted_at: null
-  trains_on_customer_data: n/a
-  retention_published: unverified
+  # # B3 retention anchor: dpv:StorageDuration (DPV 2.3, vendored at kask/crates/hkask-bridge-ontology/sources/dpv/, commit 79311a6664)
+  extracted_at: "2026-10-13"
+  trains_on_customer_data: >-
+    no training clause in the privacy policy read (huggingface.co/privacy,
+    extracted 2026-10-13); private repositories are access-controlled (404 to
+    non-owners, per the Hub docs read via search 2026-10-13). An explicit
+    train-on-private-content statement was not located in the pages read
+    this run — evidence gap on the explicit stance.
+  retention_published: >-
+    yes — privacy policy section "B. Data retention": "We retain your
+    Information for as long as necessary to deliver the Services, to
+    comply with any applicable legal requirements..." (extracted 2026-10-13).
 status_surface:
-  status_page: unverified
-  sla: unverified
+  status_page: >-
+    https://status.huggingface.co live (HTTP 200, probed 2026-10-13).
+  sla: none found (probed 2026-10-13).
 pricing:
-  machine_readable: unverified
-first_audit_pending: true
+  machine_readable: >-
+    pricing published (huggingface.co/pricing, HTTP 200, probed 2026-10-13); no
+    machine-readable pricing source found this run.
+first_audit_pending: false

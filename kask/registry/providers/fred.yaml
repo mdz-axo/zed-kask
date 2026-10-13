@@ -16,12 +16,22 @@ consumed_capabilities:
     source: kask/crates/kask_bridge/src/mcp_servers.rs (prediction-markets server credentials)
 deliberate_non_consumption: []
 data_terms:
-  extracted_at: null
-  trains_on_customer_data: n/a
-  retention_published: unverified
+  extracted_at: "2026-10-13"
+  trains_on_customer_data: >-
+    blocked — FRED's legal pages were unreachable from this network this
+    run (fred.stlouisfed.org and /legal: connection failure, probed 2026-10-13);
+    terms of use not read. Honest evidence gap, not a clean pass.
+  retention_published: >-
+    blocked — same network failure (2026-10-13); FRED terms not read this run.
 status_surface:
-  status_page: unverified
-  sla: unverified
+  status_page: >-
+    blocked — fred.stlouisfed.org unreachable from this network (probed
+    2026-10-13).
+  sla: blocked (same probe, 2026-10-13).
 pricing:
-  machine_readable: n/a
-first_audit_pending: true
+  machine_readable: >-
+    known-free from the tree's integration (no API key required for the
+    FRED series endpoints, kask/mcp-servers/hkask-mcp-research), but the
+    terms page itself was not read this run — machine_readable stays
+    unverified pending a reachable probe.
+first_audit_pending: false

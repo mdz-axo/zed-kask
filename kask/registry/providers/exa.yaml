@@ -17,12 +17,25 @@ consumed_capabilities:
     source: kask/crates/kask_bridge/src/mcp_servers.rs (companies server credentials)
 deliberate_non_consumption: []
 data_terms:
-  extracted_at: null
-  trains_on_customer_data: unverified
-  retention_published: unverified
+  # # B3 retention anchor: dpv:StorageDuration (DPV 2.3, vendored at kask/crates/hkask-bridge-ontology/sources/dpv/, commit 79311a6664)
+  extracted_at: "2026-10-13"
+  trains_on_customer_data: >-
+    yes — training-permissive. Terms (exa.ai/terms, extracted 2026-10-13) §1.2(c)
+    grant Exa a "nonexclusive, royalty-free, transferable, sub-licensable,
+    worldwide, perpetual and irrevocable license" over User Input and
+    Output "to provide, develop and improve upon our products and
+    services"; the privacy policy (exa.ai/privacy) discloses use
+    "including by training and fine-tuning models that power our
+    Services".
+  retention_published: >-
+    no explicit retention-duration clause found in the terms or privacy
+    pages read 2026-10-13 — evidence gap on duration.
 status_surface:
-  status_page: unverified
-  sla: unverified
+  status_page: >-
+    https://status.exa.ai live (HTTP 200, probed 2026-10-13).
+  sla: none found in the terms read 2026-10-13.
 pricing:
-  machine_readable: unverified
-first_audit_pending: true
+  machine_readable: >-
+    pricing published (exa.ai/pricing, HTTP 200, probed 2026-10-13); no
+    machine-readable pricing source found this run.
+first_audit_pending: false

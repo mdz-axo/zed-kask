@@ -17,22 +17,34 @@ consumed_capabilities:
     source: kask/mcp-servers/hkask-mcp-training/src/providers/nebius.rs
   - capability: Data Services settings rows (project/subnet IDs)
     source: kask/crates/kask_bridge/src/inference_providers.rs
-config_env:
+config_env:  # from kask/crates/kask_bridge/src/mcp_servers.rs (training server config_env)
   - NEBIUS_PROJECT_ID
   - NEBIUS_SUBNET_ID
   - NEBIUS_GPU_PLATFORM
   - NEBIUS_GPU_PRESET
   - NEBIUS_IMAGE_FAMILY
   - NEBIUS_CLI_PATH
-  source: kask/crates/kask_bridge/src/mcp_servers.rs (training server config_env)
 deliberate_non_consumption: []
 data_terms:
-  extracted_at: null
-  trains_on_customer_data: unverified
-  retention_published: unverified
+  # # B3 retention anchor: dpv:StorageDuration (DPV 2.3, vendored at kask/crates/hkask-bridge-ontology/sources/dpv/, commit 79311a6664)
+  extracted_at: "2026-10-13"
+  trains_on_customer_data: >-
+    yes, scoped and opt-out — Nebius AI Studio Terms of Service (read
+    2026-10-13) process "both Input and Output data for the purpose of training
+    smaller Models used exclusively for Speculative Decoding", with an
+    opt-out ("If you prefer that we (i) do not store Your Inputs and
+    Outputs..."). Our consumption is the training cloud
+    (nebius_project_id / nebius_subnet_id), not AI Studio inference.
+  retention_published: >-
+    yes — AI Studio privacy policy (docs.studio.nebius.com/legal/privacy-policy,
+    extracted 2026-10-13) §5: personal data retained "only for as long as it is
+    necessary to fulfil the scopes described".
 status_surface:
-  status_page: unverified
-  sla: unverified
+  status_page: >-
+    https://status.nebius.com live (HTTP 200, probed 2026-10-13).
+  sla: none found in the pages read 2026-10-13.
 pricing:
-  machine_readable: unverified
-first_audit_pending: true
+  machine_readable: >-
+    pricing page not read this run (nebius.ai/pricing 404; docs.nebius.ai
+    live at 200 — probed 2026-10-13) — evidence gap on the pricing surface.
+first_audit_pending: false

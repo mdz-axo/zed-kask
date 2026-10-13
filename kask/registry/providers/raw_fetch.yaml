@@ -15,12 +15,15 @@ consumed_capabilities:
     source: kask/mcp-servers/hkask-mcp-research/src/research/providers/raw_fetch.rs
 deliberate_non_consumption: []
 data_terms:
-  extracted_at: null
-  trains_on_customer_data: n/a
-  retention_published: n/a
+  extracted_at: "2026-10-13"
+  trains_on_customer_data: >-
+    n/a — internal provider ("Raw Fetch (internal)"): no external vendor
+    behind it; no third-party terms apply. Fetch discipline is governed
+    in-tree.
+  retention_published: n/a — internal.
 status_surface:
-  status_page: n/a
-  sla: n/a
+  status_page: n/a — internal provider.
+  sla: n/a — internal provider.
 pricing:
-  machine_readable: n/a
+  machine_readable: n/a — internal provider, no cost surface.
 first_audit_pending: false

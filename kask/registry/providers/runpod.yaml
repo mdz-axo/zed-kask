@@ -17,26 +17,39 @@ consumed_capabilities:
     source: DIVERGENCE.md D29
   - capability: Data Services settings row ("RunPod (GPU cloud for training)")
     source: kask/crates/kask_bridge/src/inference_providers.rs
-config_env:
+config_env:  # from kask/crates/kask_bridge/src/mcp_servers.rs (training server config_env)
   - RUNPOD_TEMPLATE_ID
   - RUNPOD_GPU_TYPE_ID
   - RUNPOD_CONTAINER_DISK_GB
   - RUNPOD_DOCKER_IMAGE
   - RUNPOD_DOCKER_ARGS
   - HKASK_PODS_FILE
-  source: kask/crates/kask_bridge/src/mcp_servers.rs (training server config_env)
 deliberate_non_consumption:
   - capability: embeddings at the account api_url root
-    reason: no OpenAI-compatible root at https://api.runpod.io — each serverless
+    reason: "no OpenAI-compatible root at https://api.runpod.io — each serverless
       endpoint carries its own https://api.runpod.io/v2/{endpoint_id}/openai/v1
-      (kask/crates/kask_bridge/src/inference_providers.rs, serves_embeddings: false)
+      (kask/crates/kask_bridge/src/inference_providers.rs, serves_embeddings=false)"
 data_terms:
-  extracted_at: null
-  trains_on_customer_data: unverified
-  retention_published: unverified
+  # # B3 retention anchor: dpv:StorageDuration (DPV 2.3, vendored at kask/crates/hkask-bridge-ontology/sources/dpv/, commit 79311a6664)
+  extracted_at: "2026-10-13"
+  trains_on_customer_data: >-
+    no training clause found in the privacy policy read
+    (runpod.io/privacy, extracted 2026-10-13) — RunPod rents GPU capacity; the
+    training workloads are the customer's own (BYO data/models).
+  retention_published: >-
+    yes — privacy policy "Information Retention" section (extracted
+    2026-10-13): personal information generally retained to fulfill the purposes
+    collected, subject to legal/accounting requirements.
 status_surface:
-  status_page: unverified
-  sla: unverified
+  status_page: >-
+    https://runpod.statuspage.io live (HTTP 200, probed 2026-10-13;
+    status.runpod.io itself did not resolve).
+  sla: >-
+    yes — runpod.ai/service-level-agreement live (HTTP 200, probed 2026-10-13);
+    FAQ text read 2026-10-13: "Runpod provides a 99.99% uptime SLA" (enterprise
+    agreements add it as a contractual term).
 pricing:
-  machine_readable: unverified
-first_audit_pending: true
+  machine_readable: >-
+    pricing published (runpod.ai/pricing, HTTP 200, probed 2026-10-13); no
+    machine-readable pricing source found this run.
+first_audit_pending: false

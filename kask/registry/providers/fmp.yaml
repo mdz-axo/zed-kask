@@ -14,12 +14,24 @@ consumed_capabilities:
     source: kask/crates/kask_bridge/src/mcp_servers.rs (companies server credentials)
 deliberate_non_consumption: []
 data_terms:
-  extracted_at: null
-  trains_on_customer_data: unverified
-  retention_published: unverified
+  # # B3 retention anchor: dpv:StorageDuration (DPV 2.3, vendored at kask/crates/hkask-bridge-ontology/sources/dpv/, commit 79311a6664)
+  extracted_at: "2026-10-13"
+  trains_on_customer_data: >-
+    no training clause — financial-data vendor; the terms read
+    (site.financialmodelingprep.com/terms-of-service, extracted 2026-10-13)
+    center on data licensing: a Data Deletion Agreement exhibit requires
+    the customer to delete all FMP data on termination.
+  retention_published: >-
+    privacy policy live (site.financialmodelingprep.com/privacy-policy,
+    HTTP 200, probed 2026-10-13) but its retention text was not extracted this
+    run — evidence gap on duration.
 status_surface:
-  status_page: unverified
-  sla: unverified
+  status_page: >-
+    https://status.financialmodelingprep.com live (HTTP 200, probed 2026-10-13).
+  sla: none found (probed 2026-10-13).
 pricing:
-  machine_readable: unverified
-first_audit_pending: true
+  machine_readable: >-
+    pricing published (pricing-plans and developer/docs/pricing pages,
+    HTTP 200, probed 2026-10-13); no machine-readable pricing source found this
+    run.
+first_audit_pending: false

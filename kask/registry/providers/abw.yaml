@@ -17,12 +17,21 @@ consumed_capabilities:
     source: kask/mcp-servers/hkask-mcp-swarm
 deliberate_non_consumption: []
 data_terms:
-  extracted_at: null
-  trains_on_customer_data: unverified
-  retention_published: unverified
+  extracted_at: "2026-10-13"
+  trains_on_customer_data: >-
+    unverified — no public terms/privacy pages found this run
+    (agent-bestiary.world/terms and /privacy return 404; /docs is a JS-only
+    app unreadable via curl; probed 2026-10-13). The platform is API-first; terms
+    surface in-app, not on the public site.
+  retention_published: >-
+    unverified — no public retention policy found (same probe, 2026-10-13).
 status_surface:
-  status_page: unverified
-  sla: unverified
+  status_page: >-
+    none found — no public status page located this run (probed 2026-10-13).
+  sla: unverified — no SLA surface found (probed 2026-10-13).
 pricing:
-  machine_readable: unverified
-first_audit_pending: true
+  machine_readable: >-
+    none found — no public pricing page (404, probed 2026-10-13); credits are the
+    platform's internal unit (HKASK_ABW_MAX_CREDITS,
+    kask/mcp-servers/hkask-mcp-swarm/src/config.rs).
+first_audit_pending: false
