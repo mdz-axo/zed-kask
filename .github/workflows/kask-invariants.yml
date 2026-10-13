@@ -208,6 +208,8 @@ jobs:
           bash kask/scripts/check-skill-crossrefs.sh
           bash kask/scripts/check-forecast-conformance.sh
           bash kask/scripts/check-template-contracts.sh
+      - name: Provider profiles — every tree-adopted vendor has a registry profile carrying the contract keys
+        run: bash kask/scripts/check-provider-profiles.sh
       - name: Retired-skill record completeness — every retirement in range is recorded
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
