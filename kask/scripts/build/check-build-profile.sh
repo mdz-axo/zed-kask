@@ -44,20 +44,12 @@ grep -A5 '^\[profile\.release-mcp\]' "$CARGO_TOML" | grep -q 'lto = false' \
 grep -A5 '^\[profile\.release-mcp\]' "$CARGO_TOML" | grep -q 'codegen-units = 16' \
     || fail "[profile.release-mcp] must set codegen-units = 16 (D46)"
 
-# External dependencies must not inherit single-unit release codegen (D46;
-# absorbs the retired D50, which explicitly extended D46).
-python3 - "$CARGO_TOML" <<'PY'
-import sys
-import tomllib
-
-with open(sys.argv[1], "rb") as source:
-    release = tomllib.load(source)["profile"]["release"]
-packages = release.get("package", {})
-if packages.get("*", {}).get("codegen-units") != 16:
-    sys.exit("[FAIL] release external dependencies must use codegen-units = 16 (D46)")
-if packages.get("zed", {}).get("codegen-units") != 16 or release.get("lto") != "thin":
-    sys.exit("[FAIL] D46 must preserve zed's explicit codegen setting and thin LTO")
-PY
+# The [profile.release] package tables — external dependencies must not
+# inherit single-unit release codegen (D46; absorbs the retired D50), and
+# zed's explicit codegen setting and thin LTO must stay preserved — are
+# parsed, not grepped: owned by hkask-mcp-corpus/tests/build_profile.rs on
+# the workspace `toml` dep (operator ruling 2026-10-13: zero Python —
+# replaces the python3 tomllib heredoc landed 2026-09-08, e102d515e8a).
 
 # 2. install.sh uses the split build with a jobs cap.
 grep -q -- '--profile release-mcp' "$INSTALL_SH" \
