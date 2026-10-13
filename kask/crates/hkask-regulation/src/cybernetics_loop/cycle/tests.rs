@@ -18,9 +18,8 @@ fn unbound_metrics_cannot_become_quality_observations() {
     const CHILD: &str = "HKASK_UNBOUND_METRICS_TEST_CHILD";
     const COMPLETE: &str = "unbound-metrics-contract-exercised";
     if std::env::var_os(CHILD).is_some() {
-        let trace = std::path::PathBuf::from(
-            std::env::var_os("HKASK_TRACE_DIR").expect("fixture path"),
-        );
+        let trace =
+            std::path::PathBuf::from(std::env::var_os("HKASK_TRACE_DIR").expect("fixture path"));
         let fixture: serde_json::Value = serde_json::from_slice(
             &std::fs::read(trace.join("unrelated-run/metrics.json"))
                 .expect("forged metrics fixture"),
@@ -67,10 +66,13 @@ fn unbound_metrics_cannot_become_quality_observations() {
     )
     .expect("unbound metrics fixture");
     // Process-local environment avoids races with other tests/runtime workers.
-    let mut child =
-        tokio::process::Command::new(std::env::current_exe().expect("test executable"));
+    let mut child = tokio::process::Command::new(std::env::current_exe().expect("test executable"));
     child
-        .args(["--exact", "cybernetics_loop::cycle::tests::unbound_metrics_cannot_become_quality_observations", "--nocapture"])
+        .args([
+            "--exact",
+            "cybernetics_loop::cycle::tests::unbound_metrics_cannot_become_quality_observations",
+            "--nocapture",
+        ])
         .env(CHILD, "1")
         .env("HKASK_TRACE_DIR", &directory)
         .kill_on_drop(true);
@@ -331,10 +333,9 @@ async fn tick_does_not_verify_unapplied_ocr_advice() {
     });
     let archive = Arc::new(CapturingSink(Mutex::new(Vec::new())));
     let escalation = Arc::new(RecordingEscalationSink::new());
-    let mut regulation =
-        CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())))
-            .with_ocr_health_source(ocr.clone())
-            .with_event_sink(Arc::clone(&archive) as Arc<dyn hkask_types::RegulationSink>);
+    let mut regulation = CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())))
+        .with_ocr_health_source(ocr.clone())
+        .with_event_sink(Arc::clone(&archive) as Arc<dyn hkask_types::RegulationSink>);
     regulation.set_alert_escalation_sink(Some(escalation.clone()));
 
     regulation.tick().await;
@@ -378,8 +379,7 @@ async fn cap_exhaustion_is_detected_before_the_reset_replenishes() {
     let escalation = Arc::new(RecordingEscalationSink::new());
     let mut regulation_loop =
         CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())));
-    regulation_loop
-        .set_event_sink(Arc::clone(&archive) as Arc<dyn hkask_types::RegulationSink>);
+    regulation_loop.set_event_sink(Arc::clone(&archive) as Arc<dyn hkask_types::RegulationSink>);
     regulation_loop.set_alert_escalation_sink(Some(escalation.clone()));
 
     let agent = WebID::from_persona(b"agent-x");
@@ -502,9 +502,8 @@ async fn repeat_uses_the_delivery_result_without_a_second_board_read() {
         0,
     )));
     let archive = Arc::new(CapturingSink(Mutex::new(Vec::new())));
-    let mut regulation =
-        CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())))
-            .with_event_sink(archive.clone() as Arc<dyn hkask_types::RegulationSink>);
+    let mut regulation = CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())))
+        .with_event_sink(archive.clone() as Arc<dyn hkask_types::RegulationSink>);
     regulation.set_alert_escalation_sink(Some(recorder.clone()));
     let action = RegulatoryAction::with_metric(
         LoopId::Curation,
@@ -624,8 +623,7 @@ async fn experimentation_alert_carries_stuck_experiment_ids() {
         async fn stuck_running_experiments(
             &self,
             _stale_days: u32,
-        ) -> Result<Vec<String>, crate::sensor_provider::ExperimentationHealthError>
-        {
+        ) -> Result<Vec<String>, crate::sensor_provider::ExperimentationHealthError> {
             Ok(self.0.clone())
         }
     }
@@ -700,8 +698,7 @@ async fn tool_reliability_alert_carries_outcome_breakdown() {
     let archive = Arc::new(CapturingSink(Mutex::new(Vec::new())));
     let escalation = Arc::new(RecordingEscalationSink::new());
     let mut regulation_loop = CyberneticsLoop::new(Arc::clone(&ledger));
-    regulation_loop
-        .set_event_sink(Arc::clone(&archive) as Arc<dyn hkask_types::RegulationSink>);
+    regulation_loop.set_event_sink(Arc::clone(&archive) as Arc<dyn hkask_types::RegulationSink>);
     regulation_loop.set_alert_escalation_sink(Some(escalation.clone()));
     // The sense phase records the observation the alert routing looks
     // up; seed it directly so the test exercises the routing, not the bus.
@@ -927,8 +924,8 @@ fn verify_impact_store_error_retries_without_verdict() {
     runtime.block_on(async {
         let source = Arc::new(MockRolloutEventSource::failing("store down"));
         let regulation_loop = loop_with_source(Arc::clone(&source));
-        let preparation = regulation_loop
-            .prepare_impact_checks(&[rollout_impact_check("alpha", "pass_rate")]);
+        let preparation =
+            regulation_loop.prepare_impact_checks(&[rollout_impact_check("alpha", "pass_rate")]);
         let reports = regulation_loop.verify_impact(&preparation.ready).await;
         assert_eq!(preparation.retry.len(), 1, "the accepted check is retained");
         assert!(reports.is_empty(), "no report when the store errors");
@@ -1205,8 +1202,7 @@ fn from_cycle_fidelity_no_string_fallback() {
 /// tests' identical setup as a net-new intra-file cluster).
 fn loop_with_memory_observations() -> (Arc<MemoryObservations>, CyberneticsLoop) {
     let source = Arc::new(MemoryObservations(std::sync::atomic::AtomicUsize::new(0)));
-    let mut regulation =
-        CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())));
+    let mut regulation = CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())));
     regulation.set_memory_health_source(source.clone());
     (source, regulation)
 }
@@ -1606,8 +1602,7 @@ fn circuit_loop(
     source: Arc<dyn crate::InferenceResilienceSource>,
 ) -> (Arc<RecordingEscalationSink>, CyberneticsLoop) {
     let escalation = Arc::new(RecordingEscalationSink::new());
-    let mut regulation =
-        CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())));
+    let mut regulation = CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())));
     regulation.set_inference_resilience_source(source);
     regulation.set_alert_escalation_sink(Some(
         Arc::clone(&escalation) as Arc<dyn crate::AlertEscalationSink>
@@ -1654,9 +1649,8 @@ async fn failed_inference_receipt_persistence_does_not_advance_cursor() {
         fail_next: std::sync::atomic::AtomicBool::new(true),
         persisted: Mutex::new(Vec::new()),
     });
-    let mut regulation =
-        CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())))
-            .with_event_sink(Arc::clone(&sink) as Arc<dyn hkask_types::RegulationSink>);
+    let mut regulation = CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())))
+        .with_event_sink(Arc::clone(&sink) as Arc<dyn hkask_types::RegulationSink>);
     regulation.set_inference_resilience_source(Arc::clone(&source) as Arc<_>);
 
     regulation.sense().await;
@@ -1695,8 +1689,7 @@ async fn failed_inference_escalation_does_not_advance_cursor() {
         ),
         cursors: Mutex::new(Vec::new()),
     });
-    let mut regulation =
-        CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())));
+    let mut regulation = CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())));
     regulation.set_inference_resilience_source(Arc::clone(&source) as Arc<_>);
 
     regulation.sense().await;
@@ -1727,9 +1720,8 @@ async fn circuit_close_receipt_records_observed_recovery() {
             crate::InferenceInterventionKind::CircuitClosed,
         ),
     });
-    let mut regulation =
-        CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())))
-            .with_event_sink(Arc::clone(&sink) as Arc<dyn hkask_types::RegulationSink>);
+    let mut regulation = CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())))
+        .with_event_sink(Arc::clone(&sink) as Arc<dyn hkask_types::RegulationSink>);
     regulation.set_inference_resilience_source(source);
 
     regulation.sense().await;
@@ -1791,9 +1783,8 @@ async fn reopened_inference_circuit_routes_native_escalation() {
     });
     let escalation = Arc::new(ConfirmingEscalationSink::new());
     let event_sink = Arc::new(CapturingSink(Mutex::new(Vec::new())));
-    let mut regulation =
-        CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())))
-            .with_event_sink(Arc::clone(&event_sink) as Arc<dyn hkask_types::RegulationSink>);
+    let mut regulation = CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())))
+        .with_event_sink(Arc::clone(&event_sink) as Arc<dyn hkask_types::RegulationSink>);
     regulation.set_inference_resilience_source(source);
     regulation.set_alert_escalation_sink(Some(
         Arc::clone(&escalation) as Arc<dyn crate::AlertEscalationSink>
@@ -2145,8 +2136,7 @@ async fn alert_reconciliation_does_not_publish_advice_review() {
 /// expect: "Telemetry coalescing suppresses only exact steady state; changes, clearing, and measured transitions emit immediately" [P9]
 #[test]
 fn loop_telemetry_coalescer_preserves_transitions_and_reports_suppression() {
-    let regulation_loop =
-        CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())));
+    let regulation_loop = CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())));
     let signal = Signal::new(LoopId::Cybernetics, SignalMetric::ToolReliability, 0.2, 0.8);
     let first = Deviation::from_signal(&signal).expect("deviation");
     let first_decision =
@@ -2206,9 +2196,8 @@ fn fallback_alert_action() -> RegulatoryAction {
 #[tokio::test]
 async fn fallback_alert_condition_clearing_allows_recurrence() {
     let sink = Arc::new(CapturingSink(Mutex::new(Vec::new())));
-    let regulation_loop =
-        CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())))
-            .with_event_sink(sink.clone() as Arc<dyn hkask_types::RegulationSink>);
+    let regulation_loop = CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())))
+        .with_event_sink(sink.clone() as Arc<dyn hkask_types::RegulationSink>);
     let action = fallback_alert_action();
 
     regulation_loop.act(std::slice::from_ref(&action)).await;
@@ -2233,9 +2222,8 @@ async fn fallback_alert_persistence_failure_remains_retryable() {
         fail_next: std::sync::atomic::AtomicBool::new(true),
         persisted: Mutex::new(Vec::new()),
     });
-    let regulation_loop =
-        CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())))
-            .with_event_sink(sink.clone() as Arc<dyn hkask_types::RegulationSink>);
+    let regulation_loop = CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())))
+        .with_event_sink(sink.clone() as Arc<dyn hkask_types::RegulationSink>);
     let action = fallback_alert_action();
 
     assert!(!regulation_loop.route_action_as_alert(&action).await);
@@ -2264,9 +2252,8 @@ async fn persistent_fallback_alerts_do_not_displace_prior_informative_events() {
     );
     hkask_types::RegulationSink::persist(&*archive, &informative)
         .expect("persist informative event");
-    let regulation_loop =
-        CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())))
-            .with_event_sink(archive.clone() as Arc<dyn hkask_types::RegulationSink>);
+    let regulation_loop = CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())))
+        .with_event_sink(archive.clone() as Arc<dyn hkask_types::RegulationSink>);
 
     // No board sink is wired: this exercises the archive fallback,
     // not the production queue's pending-condition deduplication.
@@ -2278,9 +2265,9 @@ async fn persistent_fallback_alerts_do_not_displace_prior_informative_events() {
         .query_recent_algedonic(since, 500)
         .expect("recent algedonic log");
     assert!(
-        visible.iter().any(|event| {
-            event.observation["informative_before_persistent_condition"] == true
-        }),
+        visible
+            .iter()
+            .any(|event| { event.observation["informative_before_persistent_condition"] == true }),
         "one fallback condition must not consume the newest-first read budget"
     );
 }

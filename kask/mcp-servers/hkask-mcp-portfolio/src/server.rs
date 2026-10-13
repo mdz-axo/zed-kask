@@ -14,6 +14,7 @@ use crate::{
 };
 use hkask_mcp_server::server::{McpToolError, execute_tool, map_join_error};
 use hkask_spreadsheet::{PublishOptions, WorkbookService};
+use hkask_types::normalize_closed_vocab;
 use hkask_types::spreadsheet::{
     AnalyticalTable, ArtifactOrigin, ColumnKind, SpreadsheetAccess, SpreadsheetError, TableColumn,
     TableValue,
@@ -68,6 +69,83 @@ pub enum WhatIfPresentation {
     #[default]
     DataOnly,
     WorkbookWhatIf,
+}
+
+/// Deserialize [`WhatIfPresentation`] with closed-vocabulary normalization:
+/// surrounding whitespace and one symmetric layer of quotes are stripped
+/// before the exact variant name is matched — the same emission-noise
+/// tolerance the research server's `parse_closed_vocab` applies to its
+/// closed-vocab fields (operator ruling 2026-10-13). Misspellings and
+/// asymmetric wrapping still fail, naming the valid values.
+fn deserialize_what_if_presentation<'de, D>(deserializer: D) -> Result<WhatIfPresentation, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::Error as _;
+
+    let raw = <String as serde::Deserialize>::deserialize(deserializer)?;
+    let normalized = normalize_closed_vocab(&raw);
+    match normalized {
+        "DataOnly" => Ok(WhatIfPresentation::DataOnly),
+        "WorkbookWhatIf" => Ok(WhatIfPresentation::WorkbookWhatIf),
+        _ => Err(D::Error::custom(format!(
+            "presentation must be one of DataOnly, WorkbookWhatIf, got '{raw}'"
+        ))),
+    }
+}
+
+#[cfg(test)]
+mod presentation_deserialization_tests {
+    use super::*;
+
+    fn what_if_json(presentation: serde_json::Value) -> serde_json::Value {
+        serde_json::json!({
+            "portfolio": "probe-portfolio",
+            "date": "2026-10-13",
+            "hypothetical_transactions": [],
+            "presentation": presentation,
+        })
+    }
+
+    #[test]
+    fn presentation_normalizes_quoted_and_padded_emissions() {
+        // Operator ruling 2026-10-13: one layer of emission noise is
+        // accepted — the research server's normalize_closed_vocab tolerance.
+        let parsed: PortfolioWhatIfRequest =
+            serde_json::from_value(what_if_json(serde_json::json!(" \"WorkbookWhatIf\" ")))
+                .expect("normalized emission parses");
+        assert_eq!(parsed.presentation, WhatIfPresentation::WorkbookWhatIf);
+
+        let parsed: PortfolioWhatIfRequest =
+            serde_json::from_value(what_if_json(serde_json::json!("'DataOnly'")))
+                .expect("normalized emission parses");
+        assert_eq!(parsed.presentation, WhatIfPresentation::DataOnly);
+    }
+
+    #[test]
+    fn presentation_misspelling_names_valid_values() {
+        let err = serde_json::from_value::<PortfolioWhatIfRequest>(what_if_json(
+            serde_json::json!("DataOnlyy"),
+        ))
+        .expect_err("misspelling rejected");
+        let msg = err.to_string();
+        assert!(msg.contains("DataOnly"), "error names DataOnly: {msg}");
+        assert!(
+            msg.contains("WorkbookWhatIf"),
+            "error names WorkbookWhatIf: {msg}"
+        );
+    }
+
+    #[test]
+    fn presentation_absent_still_defaults_to_data_only() {
+        let parsed: PortfolioWhatIfRequest = serde_json::from_value(serde_json::json!({
+            "portfolio": "probe-portfolio",
+            "date": "2026-10-13",
+            "hypothetical_transactions": [],
+        }))
+        .expect("absent presentation defaults");
+        assert_eq!(parsed.presentation, WhatIfPresentation::DataOnly);
+    }
 }
 
 /// Build the what-if staging workbook table: the hypothetical transaction
@@ -297,7 +375,7 @@ pub struct PortfolioWhatIfRequest {
     /// The explicit presentation choice (§6): `DataOnly` (default) keeps the
     /// portfolio-viewer report; `WorkbookWhatIf` additionally publishes the
     /// transaction set and report deltas as an editable workbook revision.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_what_if_presentation")]
     pub presentation: WhatIfPresentation,
 }
 

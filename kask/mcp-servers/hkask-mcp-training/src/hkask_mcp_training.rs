@@ -1290,6 +1290,64 @@ mod smoke {
         Ok(())
     }
 
+    /// Brave-derived QA pairs never enter an assembled training dataset
+    /// (task c1d65229 — Brave API ToS clause xiii bans training AI models on
+    /// Search Results). The exclusion is surfaced, never silent.
+    #[tokio::test]
+    async fn assembly_excludes_brave_derived_pairs() -> anyhow::Result<()> {
+        let dir = AssemblyFixtureDir::new(std::env::temp_dir())?;
+        let db_path = dir.path().join("qa.db");
+        let store = hkask_memory::MemoryStore::open(
+            &db_path.to_string_lossy(),
+            "assembly-fixture",
+            hkask_storage::embedding_dim(),
+        )?;
+        let pair = |i: u32, origin: Option<&str>| {
+            let mut value = serde_json::json!({
+                "dataset": "selected", "source": "book", "bloom_level": "analyze",
+                "question": format!("Question {i}"), "answer": format!("Answer {i}"),
+            });
+            if let Some(origin) = origin {
+                value[hkask_types::corpus::ORIGIN_PROVIDER_FIELD] = serde_json::json!(origin);
+            }
+            hkask_storage::HMem::new(
+                &format!("training:qa:fixture:{i}"),
+                "training_qa_pair",
+                value,
+                WebID::new(),
+            )
+        };
+        store.store(pair(0, Some("brave")))?;
+        store.store(pair(1, None))?;
+        drop(store);
+
+        let mut server = make_server();
+        let mut request = assembly_request(&dir.path().join("train.jsonl"));
+        request.db_path = Some(db_path.to_string_lossy().into_owned());
+        request.passphrase = Some("assembly-fixture".into());
+        request.train_split = None;
+        request.max_examples = None;
+        request.system_prompt = None;
+        let response = server
+            .training_assemble_dataset(Parameters(request))
+            .await?;
+        let result =
+            hkask_types::tool_response::unwrap_tool_envelope(serde_json::from_str(&response)?);
+
+        assert_eq!(
+            result["brave_excluded"], 1,
+            "the brave pair is excluded and surfaced, got: {result}"
+        );
+        assert_eq!(result["total_matched"], 1);
+        let rows: Vec<serde_json::Value> = std::fs::read_to_string(dir.path().join("train.jsonl"))?
+            .lines()
+            .map(serde_json::from_str)
+            .collect::<Result<_, _>>()?;
+        assert_eq!(rows.len(), 1, "only the non-brave pair is assembled");
+        assert_eq!(rows[0]["messages"][0]["content"], "Question 1");
+        Ok(())
+    }
+
     /// Approved slice 6: an explicit wrong key is an authorization error,
     /// never an internal fault or an attempt to repair/recreate the database.
     #[tokio::test]

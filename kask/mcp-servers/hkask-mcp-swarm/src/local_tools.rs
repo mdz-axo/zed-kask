@@ -2901,7 +2901,7 @@ impl SwarmServer {
                 .await
                 .map_err(|e| {
                     map_local_swarm_error(LocalSwarmError::Unavailable(format!(
-                        "AI assist inference failed: {e}"
+                        "AI assist suggest inference failed: {e}"
                     )))
                 })?;
             let text = result.text;
@@ -2990,7 +2990,7 @@ impl SwarmServer {
             )
             .await
             .map_err(|e| {
-                LocalSwarmError::Unavailable(format!("AI assist inference failed: {e}"))
+                LocalSwarmError::Unavailable(format!("AI assist advisory inference failed: {e}"))
             })?;
         let text = result.text.trim();
         let parsed = serde_json::from_str::<serde_json::Value>(text).map_err(|e| {

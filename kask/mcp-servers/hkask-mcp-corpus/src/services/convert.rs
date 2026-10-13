@@ -1058,6 +1058,7 @@ impl<'a> ConvertService<'a> {
         let mut writer = std::io::BufWriter::new(temp_file);
         let mut total_chunks = 0usize;
         let mut indexed = 0usize;
+        let mut origin_stamped = 0usize;
         // A source that yields zero passages is data loss presented as
         // progress — the v2 corpus run lost 13 of 133 sources this way with
         // no error. Surfaced in the result (never silently dropped) so the
@@ -1070,6 +1071,10 @@ impl<'a> ConvertService<'a> {
                 .file_name()
                 .and_then(std::ffi::OsStr::to_str)
                 .ok_or_else(|| McpToolError::invalid_argument("Invalid source filename"))?;
+            // Origin provenance (task c1d65229): the source's sidecar (written
+            // by corpus_cache/corpus_cache_work when the caller declares an
+            // originating search provider) stamps every chunk row below.
+            let origin_provider = read_origin_sidecar(source);
             let source_prefix = format!("{}:{}", entity_ref_prefix, source_component(file_name));
 
             // Read the .txt file directly — no recursive MCP tool call.
@@ -1146,12 +1151,21 @@ impl<'a> ConvertService<'a> {
 
             use std::io::Write as _;
             for (entity_ref, passage_text) in &passages {
-                let row = json!({
+                let mut row = json!({
                     "entity_ref": entity_ref,
                     "source": file_name,
                     "text": passage_text,
                     "word_count": passage_text.split_whitespace().count(),
                 });
+                // Provenance stamp (task c1d65229): the originating search
+                // provider rides onto every chunk row so the
+                // tag→prompt→ingest→assemble chain can exclude Brave-derived
+                // content (Brave API ToS clause xiii bans training AI models
+                // on Search Results).
+                if let Some(provider) = &origin_provider {
+                    row[hkask_types::corpus::ORIGIN_PROVIDER_FIELD] = json!(provider);
+                    origin_stamped += 1;
+                }
                 serde_json::to_writer(&mut writer, &row).map_err(|e| {
                     McpToolError::internal(format!("Failed to serialize chunk: {e}"))
                 })?;
@@ -1188,12 +1202,42 @@ impl<'a> ConvertService<'a> {
             "source_id_encoding": "utf8-hex",
             "zero_chunk_files": zero_chunk_files,
             "boilerplate_exclusion_reports": boilerplate_exclusion_reports,
+            "origin_stamped": origin_stamped,
             "indexed": indexed,
         }))
     }
 }
 
 // ── Tool helpers ───────────────────────────────────────────────────────────
+
+/// Read a chunk source's `{stem}.origin.json` provenance sidecar (written by
+/// `corpus_cache`/`corpus_cache_work` when the caller declares an originating
+/// search provider). A missing sidecar reads as `None` — provenance
+/// unrecorded, never guessed. A malformed sidecar warns and reads as `None`:
+/// the Brave clause-xiii exclusion downstream acts on declared provenance,
+/// and an undeclared provider is not Brave.
+pub(crate) fn read_origin_sidecar(source: &std::path::Path) -> Option<String> {
+    let sidecar = source.with_extension("origin.json");
+    let text = std::fs::read_to_string(&sidecar).ok()?;
+    let value: serde_json::Value = match serde_json::from_str(&text) {
+        Ok(value) => value,
+        Err(error) => {
+            tracing::warn!(
+                target: "reg.pipeline.chunk",
+                sidecar = %sidecar.display(),
+                %error,
+                "origin sidecar is malformed — provenance reads as unrecorded"
+            );
+            return None;
+        }
+    };
+    let provider = value
+        .get(hkask_types::corpus::ORIGIN_PROVIDER_FIELD)?
+        .as_str()
+        .map(str::trim)
+        .filter(|provider| !provider.is_empty())?;
+    Some(provider.to_string())
+}
 
 /// Shared text extraction from a file path.
 ///

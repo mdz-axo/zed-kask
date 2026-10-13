@@ -424,6 +424,51 @@ pub enum SpreadsheetAccess {
     WorkbookWhatIf,
 }
 
+/// Deserialize [`SpreadsheetAccess`] with closed-vocabulary normalization:
+/// surrounding whitespace and one symmetric layer of quotes are stripped
+/// before the exact variant name is matched — the same emission-noise
+/// tolerance the research server's `parse_closed_vocab` applies to its
+/// closed-vocab fields (operator ruling 2026-10-13). Misspellings and
+/// asymmetric wrapping still fail, naming the valid values.
+fn deserialize_spreadsheet_access<'de, D>(deserializer: D) -> Result<SpreadsheetAccess, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::Error as _;
+
+    let raw = <String as serde::Deserialize>::deserialize(deserializer)?;
+    let normalized = normalize_closed_vocab(&raw);
+    match normalized {
+        "DataOnly" => Ok(SpreadsheetAccess::DataOnly),
+        "InlineTable" => Ok(SpreadsheetAccess::InlineTable),
+        "WorkbookWhatIf" => Ok(SpreadsheetAccess::WorkbookWhatIf),
+        _ => Err(D::Error::custom(format!(
+            "expected_access must be one of DataOnly, InlineTable, WorkbookWhatIf, got '{raw}'"
+        ))),
+    }
+}
+
+/// Strip surrounding whitespace and one symmetric layer of quotes from a
+/// closed-vocabulary field value — the canonical emission-noise normalizer
+/// for every closed-vocab MCP field (operator ruling 2026-10-13; the
+/// research server's original tolerance, hoisted here so each server
+/// imports it rather than re-implementing — the `resolve_db_passphrase`
+/// canonical-helper precedent). Interior quotes and asymmetric wrapping
+/// are preserved — they are data, not emission noise, and stay visible to
+/// validation. Byte slicing is safe because the strip guard matches ASCII
+/// quote bytes, which are always char boundaries.
+pub fn normalize_closed_vocab(raw: &str) -> &str {
+    let s = raw.trim();
+    if s.len() >= 2 {
+        let first = s.as_bytes()[0];
+        let last = s.as_bytes()[s.len() - 1];
+        if (first == b'"' && last == b'"') || (first == b'\'' && last == b'\'') {
+            return s[1..s.len() - 1].trim();
+        }
+    }
+    s
+}
+
 /// The analytical origin of a table: which server and tool produced it, with
 /// which arguments. The server-authoritative input of publication and the
 /// provenance a block carries about its source (distinct from the mutation
@@ -513,6 +558,7 @@ impl CellEdit {
 pub struct EditTransaction {
     pub base_artifact: SpreadsheetArtifactRef,
     pub idempotency_key: String,
+    #[serde(deserialize_with = "deserialize_spreadsheet_access")]
     pub expected_access: SpreadsheetAccess,
     pub edits: Vec<CellEdit>,
 }
@@ -939,6 +985,63 @@ mod tests {
         assert_round_trips(&SpreadsheetAccess::DataOnly);
         assert_round_trips(&SpreadsheetAccess::InlineTable);
         assert_round_trips(&SpreadsheetAccess::WorkbookWhatIf);
+    }
+
+    #[test]
+    fn edit_transaction_expected_access_normalizes_emission_noise() {
+        // Operator ruling 2026-10-13: closed-vocab fields accept one layer of
+        // LLM emission noise (surrounding whitespace, symmetric quotes) —
+        // the research server's normalize_closed_vocab tolerance.
+        let transaction = EditTransaction::new(
+            sample_artifact_ref(),
+            "idem-1".into(),
+            SpreadsheetAccess::WorkbookWhatIf,
+            vec![CellEdit::SetCell {
+                coordinate: CellCoordinate::new("Main".into(), 1, 1).expect("coordinate"),
+                value: TableValue::Number(30000.0),
+            }],
+        )
+        .expect("valid transaction");
+        for noisy in [" DataOnly ", "\"InlineTable\"", "'WorkbookWhatIf'"] {
+            let mut value = serde_json::to_value(&transaction).expect("serializable transaction");
+            value["expected_access"] = serde_json::json!(noisy);
+            let parsed: EditTransaction =
+                serde_json::from_value(value).expect("normalized emission parses");
+            let expected = match noisy.trim().trim_matches(['\"', '\'']) {
+                "DataOnly" => SpreadsheetAccess::DataOnly,
+                "InlineTable" => SpreadsheetAccess::InlineTable,
+                _ => SpreadsheetAccess::WorkbookWhatIf,
+            };
+            assert_eq!(parsed.expected_access, expected, "for emission {noisy}");
+        }
+    }
+
+    #[test]
+    fn edit_transaction_expected_access_misspelling_names_valid_values() {
+        let transaction = EditTransaction::new(
+            sample_artifact_ref(),
+            "idem-1".into(),
+            SpreadsheetAccess::DataOnly,
+            vec![CellEdit::SetCell {
+                coordinate: CellCoordinate::new("Main".into(), 1, 1).expect("coordinate"),
+                value: TableValue::Number(30000.0),
+            }],
+        )
+        .expect("valid transaction");
+        let mut value = serde_json::to_value(&transaction).expect("serializable transaction");
+        value["expected_access"] = serde_json::json!("DataOnlyy");
+        let err =
+            serde_json::from_value::<EditTransaction>(value).expect_err("misspelling rejected");
+        let msg = err.to_string();
+        assert!(msg.contains("DataOnly"), "error names DataOnly: {msg}");
+        assert!(
+            msg.contains("InlineTable"),
+            "error names InlineTable: {msg}"
+        );
+        assert!(
+            msg.contains("WorkbookWhatIf"),
+            "error names WorkbookWhatIf: {msg}"
+        );
     }
 
     #[test]

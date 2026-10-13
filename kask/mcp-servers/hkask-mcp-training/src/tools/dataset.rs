@@ -132,8 +132,21 @@ impl TrainingServer {
                 return Err(McpToolError::invalid_argument("No training_qa_pair h_mems found. Ingest QA pairs first with training_ingest_qa."));
             }
             let mut conversations: Vec<serde_json::Value> = Vec::new();
+            let mut brave_excluded = 0usize;
             for h_mem in &h_mems {
                 let value = &h_mem.value;
+                // Brave clause-xiii exclusion (task c1d65229): pairs whose
+                // canonical source was Brave-served never enter a training
+                // dataset — Brave's API ToS bans using Search Results to
+                // train AI models. Surfaced in the result, never silent.
+                if value
+                    .get(hkask_types::corpus::ORIGIN_PROVIDER_FIELD)
+                    .and_then(|v| v.as_str())
+                    .is_some_and(hkask_types::corpus::is_brave_origin)
+                {
+                    brave_excluded += 1;
+                    continue;
+                }
                 let q_ds = value.get("dataset").and_then(|v| v.as_str()).unwrap_or("");
                 let q_source = value.get("source").and_then(|v| v.as_str()).unwrap_or("");
                 let q_bloom = value.get("bloom_level").and_then(|v| v.as_str()).unwrap_or("");
@@ -148,7 +161,13 @@ impl TrainingServer {
                 conversations.push(json!({ "messages": messages }));
             }
             if conversations.is_empty() {
-                return Err(McpToolError::invalid_argument("No QA pairs matched the given filters."));
+                return Err(McpToolError::invalid_argument(if brave_excluded > 0 {
+                    format!(
+                        "All matched QA pairs are Brave-derived ({brave_excluded}) — excluded from training datasets (Brave API ToS clause xiii bans training AI models on Search Results)"
+                    )
+                } else {
+                    "No QA pairs matched the given filters.".to_string()
+                }));
             }
             let total = conversations.len();
             let limit = max_examples.unwrap_or(total).min(total);
@@ -179,6 +198,7 @@ impl TrainingServer {
             let train_items = &conversations[..train_count];
             let n = write_jsonl(&train_path, train_items)?;
             let mut result = json!({"train_examples": n, "train_path": output_path, "total_matched": total});
+            result["brave_excluded"] = json!(brave_excluded);
             if train_count < limit {
                 let test_path = PathBuf::from(format!("{}.test.jsonl", train_path.to_string_lossy()));
                 let test_items = &conversations[train_count..];

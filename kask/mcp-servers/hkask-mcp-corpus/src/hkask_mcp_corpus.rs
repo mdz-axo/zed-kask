@@ -913,6 +913,194 @@ mod smoke {
         assert!(!chunks.contains("References"));
     }
 
+    /// expect: chunk rows carry the originating search provider recorded at
+    /// cache time, so Brave-derived content is identifiable downstream and
+    /// excludable from QA/training paths (Brave API ToS clause xiii bans
+    /// training AI models on Search Results — task c1d65229).
+    /// pre: a source directory with one sidecar-stamped file and one unstamped
+    /// post: stamped rows carry origin_provider; unstamped rows carry none;
+    /// the summary surfaces origin_stamped
+    #[tokio::test]
+    async fn chunk_directory_stamps_origin_sidecar_provenance() {
+        use crate::tools::document::ChunkRequest;
+
+        let dir = std::path::Path::new("target/test-chunk-origin-sidecar");
+        let src = dir.join("src");
+        std::fs::create_dir_all(&src).expect("create scratch src dir");
+        std::fs::write(
+            src.join("brave.txt"),
+            "Brave served this search result text. It carries enough words to ".to_string()
+                + "chunk into a passage, clearing the minimum bound comfortably, "
+                + "with more varied words following here.",
+        )
+        .expect("write brave source");
+        std::fs::write(
+            src.join("plain.txt"),
+            "A plain unstamped source document with enough words to chunk into ".to_string()
+                + "a passage as well, clearing the minimum bound without any "
+                + "sidecar provenance attached.",
+        )
+        .expect("write plain source");
+        std::fs::write(
+            src.join("brave.origin.json"),
+            r#"{"label":"brave","origin_provider":"brave"}"#,
+        )
+        .expect("write origin sidecar");
+
+        let output = dir.join("out.jsonl");
+        let response = make_server()
+            .corpus_chunk(Parameters(ChunkRequest {
+                text: None,
+                path: None,
+                input_dir: Some(src.to_string_lossy().into_owned()),
+                output: Some(output.to_string_lossy().into_owned()),
+                entity_ref_prefix: "test-origin".into(),
+                max_tokens: Some(512),
+                overlap_tokens: Some(64),
+                strip_gutenberg: None,
+                multi_tier: Some(false),
+                coarse_max_tokens: None,
+                medium_max_tokens: None,
+                fine_max_tokens: None,
+                index: false,
+                target_pages: None,
+            }))
+            .await
+            .expect("directory chunk call succeeds");
+
+        let content =
+            hkask_types::tool_response::parse_tool_response(&response).expect("parse response");
+        let rows: Vec<serde_json::Value> = std::fs::read_to_string(&output)
+            .expect("read chunk output")
+            .lines()
+            .map(serde_json::from_str)
+            .collect::<Result<_, _>>()
+            .expect("parse chunk rows");
+        let brave_rows: Vec<_> = rows
+            .iter()
+            .filter(|row| row["source"] == "brave.txt")
+            .collect();
+        let plain_rows: Vec<_> = rows
+            .iter()
+            .filter(|row| row["source"] == "plain.txt")
+            .collect();
+        assert!(
+            !brave_rows.is_empty() && !plain_rows.is_empty(),
+            "both sources must chunk, got: {rows:?}"
+        );
+        for row in &brave_rows {
+            assert_eq!(
+                row["origin_provider"], "brave",
+                "sidecar provenance must ride the brave rows"
+            );
+        }
+        for row in &plain_rows {
+            assert!(
+                row.get("origin_provider").is_none(),
+                "unstamped rows carry no provenance"
+            );
+        }
+        assert_eq!(
+            content
+                .get("origin_stamped")
+                .and_then(serde_json::Value::as_u64),
+            Some(brave_rows.len() as u64),
+            "the summary must surface the stamped row count, got: {content}"
+        );
+    }
+
+    /// expect: Brave-derived chunks are excluded from QA generation and the
+    /// exclusion is surfaced (task c1d65229 — Brave API ToS clause xiii bans
+    /// training AI models on Search Results; a silent drop would let
+    /// Brave-sourced text reach QA/training datasets uncounted).
+    /// pre: two classified chunks, one stamped brave
+    /// post: prompts exist only for the unstamped chunk; brave_excluded == 1;
+    /// an all-brave corpus fails closed naming the clause
+    #[tokio::test]
+    async fn build_prompts_excludes_brave_derived_chunks() -> anyhow::Result<()> {
+        use crate::tools::corpus::BuildPromptsRequest;
+
+        let root = std::path::Path::new("target/test-corpus-brave-exclusion");
+        std::fs::create_dir_all(root)?;
+        let scratch = tempfile::tempdir_in(root)?;
+        let dir = scratch.path();
+        let tagged_path = dir.join("tagged.jsonl");
+        let prompts_path = dir.join("prompts.jsonl");
+
+        let classified = |entity_ref: &str, text: &str| {
+            serde_json::json!({
+                "entity_ref": entity_ref,
+                "classification": {"status": "classified", "ontology_protocol": hkask_bridge_ontology::term_resolution::TERM_RESOLUTION_PROTOCOL},
+                "source": "doc.txt",
+                "text": text,
+                "dimensions": ["what"],
+                "candidate_terms": ["corporation"],
+                "ontology_tags": {"fibo": [hkask_bridge_ontology::fibo::CORPORATION]},
+                "concepts": [hkask_bridge_ontology::fibo::CORPORATION],
+            })
+        };
+        let plain = classified(
+            "corpus:researcher:plain",
+            "A passage about capital returns and their durability.",
+        );
+        let mut brave = classified(
+            "corpus:researcher:brave",
+            "A Brave-served passage about capital returns.",
+        );
+        brave["origin_provider"] = serde_json::json!("brave");
+        std::fs::write(&tagged_path, format!("{plain}\n{brave}\n"))?;
+
+        let server = make_server();
+        let request = || {
+            Parameters(BuildPromptsRequest {
+                tagged_jsonl: tagged_path.to_string_lossy().to_string(),
+                output: prompts_path.to_string_lossy().to_string(),
+                db_path: None,
+                passphrase: None,
+                prefix: None,
+                context_k: 0,
+                qa_pairs_per_chunk: 2,
+                type_distribution: "1,1,1,1,1".to_string(),
+                max_pairs: 0,
+            })
+        };
+        let output = server
+            .corpus_build_prompts(request())
+            .await
+            .expect("mixed corpus builds prompts");
+        let parsed =
+            hkask_types::tool_response::parse_tool_response(&output).expect("parse response");
+        assert_eq!(
+            parsed["brave_excluded"], 1,
+            "the brave chunk is excluded and surfaced"
+        );
+        assert_eq!(
+            parsed["prompts_written"], 1,
+            "only the unstamped chunk generates prompts, got: {parsed}"
+        );
+        let prompts: Vec<serde_json::Value> = std::fs::read_to_string(&prompts_path)?
+            .lines()
+            .map(serde_json::from_str)
+            .collect::<Result<_, _>>()?;
+        assert_eq!(prompts.len(), 1);
+        assert_eq!(
+            prompts[0]["passages"][0]["chunk_ref"],
+            "corpus:researcher:plain"
+        );
+
+        // All-brave input fails closed naming the clause, never an empty success.
+        std::fs::write(&tagged_path, format!("{brave}\n"))?;
+        let error = server
+            .corpus_build_prompts(request())
+            .await
+            .expect_err("an all-brave corpus must not build prompts");
+        assert!(
+            error.message.contains("Brave"),
+            "the failure names the clause, got: {error}"
+        );
+        Ok(())
+    }
+
     /// `convert_directory` skips only outputs that pass the Stage-1
     /// word-count floor. The old `len > 50` byte check treated a 72-byte
     /// zero-word garbage extraction as a valid existing output, so a

@@ -468,7 +468,7 @@ impl rmcp::ServerHandler for MediaServer {}
 mod tool_surface_tests {
     use super::*;
 
-    // One macro call pins the surface two ways: the exact count (98) and
+    // One macro call pins the surface two ways: the exact count (102) and
     // the generated TOOL_NAMES set against the live rmcp surface. Catches
     // silent registration drops — a `#[tool]` impl block without
     // `#[tool_router]`, or a sub-router missing from `combined_router()`,

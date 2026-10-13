@@ -11,28 +11,12 @@ use super::WebError;
 /// fusion rather than hanging it.
 pub(crate) const COMPOUND_PROVIDER_TIMEOUT_SECS: u64 = 20;
 
-/// Normalize an LLM-emitted closed-vocabulary value before validation:
-/// trim surrounding whitespace, strip ONE layer of symmetric quotes
-/// (double or single), trim again. Tool-call emitters wrap enum values
-/// in quotes or padding — `strategy: "\"quick\""` arrives as the string
-/// `"quick"` and every closed-vocabulary parse site rejected it
-/// (observed live 2026-10-09: agents burned retries on `web_search`
-/// strategy/intent/provider before discovering the quoting). One layer
-/// only: a value that is genuinely `""` after stripping still fails
-/// validation with the teaching error, and interior quotes are preserved.
-/// Byte slicing is safe because the strip guard matches ASCII quote bytes,
-/// which are always char boundaries.
-pub(crate) fn normalize_closed_vocab(raw: &str) -> &str {
-    let s = raw.trim();
-    if s.len() >= 2 {
-        let first = s.as_bytes()[0];
-        let last = s.as_bytes()[s.len() - 1];
-        if (first == b'"' && last == b'"') || (first == b'\'' && last == b'\'') {
-            return s[1..s.len() - 1].trim();
-        }
-    }
-    s
-}
+/// The canonical emission-noise normalizer for closed-vocabulary fields
+/// lives in `hkask-types` (`hkask_types::normalize_closed_vocab`, hoisted
+/// there by operator ruling 2026-10-13 from this crate's original
+/// implementation); re-exported here at crate visibility so the existing
+/// `types::normalize_closed_vocab` import paths keep resolving.
+pub(crate) use hkask_types::normalize_closed_vocab;
 
 #[cfg(test)]
 mod normalize_closed_vocab_tests {

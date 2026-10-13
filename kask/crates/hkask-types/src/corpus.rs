@@ -14,6 +14,24 @@ pub fn is_corpus_passage_ref(entity_ref: &str) -> bool {
     !entity_ref.is_empty() && !entity_ref.ends_with(":centroid") && !entity_ref.contains(":rule:")
 }
 
+/// The originating search provider for search-derived content, recorded at
+/// ingestion (`corpus_cache`/`corpus_cache_work` sidecars) and carried on
+/// chunk rows, tagged chunks, and QA h_mem values through the pipeline.
+/// Brave Search results carry `"brave"` — its API ToS clause xiii bans using
+/// Search Results to train AI models, so Brave-derived content is excluded
+/// from every QA/training-bound path (prompt building, ingestion, dataset
+/// assembly).
+pub const ORIGIN_PROVIDER_FIELD: &str = "origin_provider";
+
+/// Brave Search's provider id (the research server's `SearchResultOutput`
+/// `providers` kind and the corpus provenance vocabulary's value).
+pub const BRAVE_ORIGIN: &str = "brave";
+
+/// Whether an originating-provider value is Brave (case-insensitive).
+pub fn is_brave_origin(provider: &str) -> bool {
+    provider.trim().eq_ignore_ascii_case(BRAVE_ORIGIN)
+}
+
 /// A source-attributed, exact quotation. This records a citation, not a verdict
 /// about the semantic support of the generated answer (PROV-O / Dublin Core).
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema, PartialEq, Eq)]
@@ -272,6 +290,14 @@ pub struct TaggedChunk {
     /// metrics and display; not consumed by the current retrieval path.
     #[serde(default)]
     pub word_count: usize,
+
+    /// Originating search provider for search-derived content (see
+    /// [`ORIGIN_PROVIDER_FIELD`]). Recorded at ingestion from the cache
+    /// provenance sidecar; `None` for non-search-derived sources. Brave
+    /// values exclude the chunk from QA/training-bound paths (Brave API ToS
+    /// clause xiii bans training AI models on Search Results).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin_provider: Option<String>,
 
     // ── Structural tags (always present) ─────────────────────────────────
     /// 5W1H interrogatory dimensions (Who/What/When/Where/Why/How). Multiple allowed.

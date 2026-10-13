@@ -315,6 +315,54 @@ impl CorpusServer {
                 &req.source_chunks_jsonl,
             )?;
 
+            // Brave clause-xiii exclusion (task c1d65229): QA candidates whose
+            // canonical source chunk is Brave-derived never reach
+            // training-bound storage — Brave's API ToS bans using Search
+            // Results to train AI models. The provenance map also stamps every
+            // training row and stored h_mem with its originating provider, so
+            // `training_assemble_dataset` can exclude any Brave-derived pair
+            // that reaches a DB by another path.
+            let (source_chunks, _dropped_source_rows) =
+                crate::helpers::read_jsonl_lenient::<hkask_types::corpus::TaggedChunk>(
+                    &req.source_chunks_jsonl,
+                    "source_chunks_jsonl",
+                )?;
+            let mut origin_by_ref: std::collections::HashMap<String, Option<String>> =
+                std::collections::HashMap::new();
+            let mut brave_refs: std::collections::HashSet<String> = std::collections::HashSet::new();
+            for chunk in &source_chunks {
+                if chunk
+                    .origin_provider
+                    .as_deref()
+                    .is_some_and(hkask_types::corpus::is_brave_origin)
+                {
+                    brave_refs.insert(chunk.entity_ref.clone());
+                }
+                origin_by_ref.insert(chunk.entity_ref.clone(), chunk.origin_provider.clone());
+            }
+            let brave_excluded = filtered
+                .iter()
+                .filter(|(_, qa)| {
+                    qa.chunk_ref
+                        .as_ref()
+                        .is_some_and(|chunk_ref| brave_refs.contains(chunk_ref))
+                })
+                .count();
+            if brave_excluded > 0 {
+                tracing::warn!(
+                    brave_excluded,
+                    "excluding Brave-derived QA candidates from ingestion (Brave API ToS clause xiii)"
+                );
+            }
+            let filtered: Vec<(usize, &ParsedQa)> = filtered
+                .into_iter()
+                .filter(|(_, qa)| {
+                    !qa.chunk_ref
+                        .as_ref()
+                        .is_some_and(|chunk_ref| brave_refs.contains(chunk_ref))
+                })
+                .collect();
+
             // Exact-match dedup (case-insensitive on instruction).
             //
             // Semantic dedup (SemDeDup: embed → k-means → within-cluster cosine
@@ -350,6 +398,7 @@ impl CorpusServer {
                 "filter_drops": qas.len() - filtered.len(),
                 "duplicates": filtered.len() - deduped_count,
                 "deduped": deduped_count,
+                "brave_excluded": brave_excluded,
                 "retained": deduped_count,
                 "stored": 0,
                 "stored_h_mems": 0,
@@ -369,7 +418,7 @@ impl CorpusServer {
             let mut train = String::new();
             for (line, qa) in &deduped {
                 let (row_key, answer_provenance) = grounding_fields(qa, *line, &gate)?;
-                let row = json!({
+                let mut row = json!({
                     "instruction": qa.instruction, "input": "", "output": qa.output,
                     "qa_type": qa.qa_type, "type": qa.response_type.as_deref().unwrap_or(&qa.qa_type),
                     "source": qa.source, "chunk_ref": qa.chunk_ref,
@@ -383,6 +432,15 @@ impl CorpusServer {
                         "answer_provenance": answer_provenance,
                     },
                 });
+                if let Some(origin) = qa
+                    .chunk_ref
+                    .as_ref()
+                    .and_then(|chunk_ref| origin_by_ref.get(chunk_ref))
+                    .cloned()
+                    .flatten()
+                {
+                    row[hkask_types::corpus::ORIGIN_PROVIDER_FIELD] = json!(origin);
+                }
                 train.push_str(
                     &serde_json::to_string(&row)
                         .map_err(|e| McpToolError::internal(format!("Serialize QA: {e}")))?,
@@ -426,6 +484,16 @@ impl CorpusServer {
                         "answer_provenance": answer_provenance,
                     },
                 });
+                let mut v = v;
+                if let Some(origin) = qa
+                    .chunk_ref
+                    .as_ref()
+                    .and_then(|chunk_ref| origin_by_ref.get(chunk_ref))
+                    .cloned()
+                    .flatten()
+                {
+                    v[hkask_types::corpus::ORIGIN_PROVIDER_FIELD] = json!(origin);
+                }
                 // Dual-axis anchoring (P5.4) in the first-class `ontology`
                 // column rather than the value blob: a generated QA pair is
                 // both a document (state axis: BIBO type + concepts as

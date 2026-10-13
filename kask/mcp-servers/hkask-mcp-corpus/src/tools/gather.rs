@@ -36,6 +36,8 @@ struct CacheWorkResult {
     slug: String,
     path: String,
     bytes_written: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    origin_provider: Option<String>,
 }
 
 // ── Request types ───────────────────────────────────────────────────────────
@@ -69,6 +71,13 @@ pub(crate) struct CacheWorkRequest {
     pub slug: String,
     pub content: String,
     pub cache_dir: String,
+    /// Originating search provider for search-derived content (e.g. "brave").
+    /// Recorded in a `{slug}.origin.json` sidecar next to the cached file so
+    /// chunking can stamp it on chunk rows; Brave-derived content is excluded
+    /// from QA/training-bound paths (Brave API ToS clause xiii bans training
+    /// AI models on Search Results).
+    #[serde(default)]
+    pub origin_provider: Option<String>,
 }
 
 // ── Tool implementations ────────────────────────────────────────────────────
@@ -228,10 +237,36 @@ impl CorpusServer {
             let bytes = params.content.as_bytes();
             match std::fs::write(&cache_path, bytes) {
                 Ok(()) => {
+                    // Provenance sidecar (task c1d65229): the originating
+                    // search provider travels with the cached file so
+                    // `chunk_directory` can stamp it on chunk rows. Fail closed
+                    // — a lost sidecar breaks the downstream license exclusion.
+                    let provider = params
+                        .origin_provider
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty());
+                    if let Some(provider) = provider {
+                        let sidecar = cache_dir.join(format!("{}.origin.json", params.slug));
+                        let body = serde_json::to_vec(&serde_json::json!({
+                            "slug": &params.slug,
+                            "origin_provider": provider,
+                        }))
+                        .map_err(|e| {
+                            McpToolError::internal(format!("Serialize origin sidecar: {e}"))
+                        })?;
+                        std::fs::write(&sidecar, body).map_err(|e| {
+                            map_corpus_io_error(
+                                e,
+                                &format!("Failed to write origin sidecar '{}'", sidecar.display()),
+                            )
+                        })?;
+                    }
                     let result = CacheWorkResult {
                         slug: params.slug.clone(),
                         path: cache_path.to_string_lossy().to_string(),
                         bytes_written: bytes.len() as u64,
+                        origin_provider: provider.map(str::to_string),
                     };
                     let output = serde_json::to_value(&result)
                         .unwrap_or_else(|_| serde_json::json!({"error": "serialization failed"}));

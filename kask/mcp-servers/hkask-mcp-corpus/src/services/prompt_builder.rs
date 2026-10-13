@@ -53,6 +53,38 @@ impl PromptBuilderService {
         if chunks.is_empty() {
             return Err(McpToolError::invalid_argument("tagged_jsonl is empty"));
         }
+        // Brave clause-xiii exclusion (task c1d65229): Brave-sourced chunks
+        // never enter QA generation — Brave's API ToS bans using Search
+        // Results to train AI models. Surfaced in the result, never silent.
+        let brave_excluded = chunks
+            .iter()
+            .filter(|chunk| {
+                chunk
+                    .origin_provider
+                    .as_deref()
+                    .is_some_and(hkask_types::corpus::is_brave_origin)
+            })
+            .count();
+        if brave_excluded > 0 {
+            tracing::warn!(
+                brave_excluded,
+                "excluding Brave-derived chunks from QA generation (Brave API ToS clause xiii)"
+            );
+        }
+        let chunks: Vec<_> = chunks
+            .into_iter()
+            .filter(|chunk| {
+                !chunk
+                    .origin_provider
+                    .as_deref()
+                    .is_some_and(hkask_types::corpus::is_brave_origin)
+            })
+            .collect();
+        if chunks.is_empty() {
+            return Err(McpToolError::invalid_argument(format!(
+                "all tagged chunks are Brave-derived ({brave_excluded}) — Brave API ToS clause xiii bans training AI models on Search Results"
+            )));
+        }
         let prefix = request.prefix.as_deref().unwrap_or("corpus:researcher:");
         let mut references = HashSet::new();
         for chunk in &chunks {
@@ -287,6 +319,7 @@ impl PromptBuilderService {
         crate::helpers::write_contained(&request.output, &output)?;
         Ok(serde_json::json!({
             "total_chunks": chunks.len(),
+            "brave_excluded": brave_excluded,
             "prompts_written": prompts_written,
             "pairs_requested": pairs_requested,
             "output": request.output,

@@ -207,10 +207,7 @@ impl OcrHealthSource for MockOcrHealth {
         if self.broken {
             Err(OcrHealthError::Unreadable {
                 path: std::path::PathBuf::from("mock-health.json"),
-                source: std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    "health file unreadable",
-                ),
+                source: std::io::Error::new(std::io::ErrorKind::Other, "health file unreadable"),
             })
         } else {
             Ok(self.recent_count)

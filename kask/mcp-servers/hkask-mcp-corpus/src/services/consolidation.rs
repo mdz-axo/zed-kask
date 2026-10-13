@@ -328,6 +328,27 @@ impl ConsolidationService {
                     .map(ExpertiseLevel::from_rank)
                     .unwrap_or_default();
 
+                // Merged origin provenance (task c1d65229): a synthesis of
+                // multiple members carries Brave if ANY member is Brave-derived
+                // (license-conservative — the merged text includes Brave
+                // content), else the members' uniform origin, else unrecorded.
+                let origin_provider = if cluster.iter().any(|&idx| {
+                    chunks[idx]
+                        .origin_provider
+                        .as_deref()
+                        .is_some_and(hkask_types::corpus::is_brave_origin)
+                }) {
+                    Some(hkask_types::corpus::BRAVE_ORIGIN.to_string())
+                } else {
+                    let first = cluster
+                        .first()
+                        .and_then(|&idx| chunks[idx].origin_provider.clone());
+                    let uniform = cluster
+                        .iter()
+                        .all(|&idx| chunks[idx].origin_provider == first);
+                    if uniform { first } else { None }
+                };
+
                 // Build ontology annotation prefix for consistent re-embedding.
                 // Consolidated chunks must use the same [ns: concepts] prefix as
                 // original chunks to maintain a consistent embedding space.
@@ -365,6 +386,7 @@ impl ConsolidationService {
                     concepts,
                     expertise_level,
                     salience,
+                    origin_provider,
                     consolidated_from,
                     ontology: Some(ontology),
                 });

@@ -15,7 +15,11 @@ impl CorpusServer {
     )]
     pub async fn corpus_cache(
         &self,
-        Parameters(CacheRequest { content, label }): Parameters<CacheRequest>,
+        Parameters(CacheRequest {
+            content,
+            label,
+            origin_provider,
+        }): Parameters<CacheRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "corpus_cache", async {
             if content.is_empty() {
@@ -55,11 +59,47 @@ impl CorpusServer {
 
             match std::fs::write(&cache_path, &content) {
                 Ok(()) => {
-                    let result = json!({
+                    // Provenance sidecar (task c1d65229): the originating search
+                    // provider travels with the cached file so `chunk_directory`
+                    // can stamp it on chunk rows; Brave-derived content is then
+                    // excluded from QA/training-bound paths (Brave API ToS
+                    // clause xiii bans training AI models on Search Results).
+                    // Fail closed — a lost sidecar breaks the downstream
+                    // license exclusion.
+                    let provider = origin_provider
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty());
+                    if let Some(provider) = provider {
+                        let sidecar = cache_dir.join(format!("{}.origin.json", safe_label));
+                        let body = serde_json::to_vec(&json!({
+                            "label": &label,
+                            "origin_provider": provider,
+                        }))
+                        .map_err(|e| {
+                            McpToolError::internal(format!("Serialize origin sidecar: {e}"))
+                        })?;
+                        std::fs::write(&sidecar, body).map_err(|e| {
+                            map_corpus_io_error(
+                                e,
+                                &format!("Failed to write origin sidecar '{}'", sidecar.display()),
+                            )
+                        })?;
+                    }
+                    let mut result = json!({
                         "label": label,
                         "path": cache_path.display().to_string(),
                         "size_bytes": content.len(),
                     });
+                    if let Some(provider) = provider {
+                        result[hkask_types::corpus::ORIGIN_PROVIDER_FIELD] = json!(provider);
+                        result["origin_sidecar"] = json!(
+                            cache_dir
+                                .join(format!("{}.origin.json", safe_label))
+                                .display()
+                                .to_string()
+                        );
+                    }
                     Ok(result)
                 }
                 Err(e) => Err(map_corpus_io_error(
@@ -414,6 +454,13 @@ pub(crate) struct CacheRequest {
     pub content: String,
     /// Label/key for the cached entry.
     pub label: String,
+    /// Originating search provider for search-derived content (e.g. "brave").
+    /// Recorded in a `{stem}.origin.json` sidecar next to the cached file so
+    /// chunking can stamp it on chunk rows; Brave-derived content is excluded
+    /// from QA/training-bound paths (Brave API ToS clause xiii bans training
+    /// AI models on Search Results).
+    #[serde(default)]
+    pub origin_provider: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

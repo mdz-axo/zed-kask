@@ -57,6 +57,9 @@ pub use curator::{CurationThresholdConfig, CuratorDirective, EscalationSeverity}
 pub use document::{Block, DocStructure, Page};
 pub use error::{DatabaseErrorKind, DbError, InfrastructureError, McpErrorKind, NotFound};
 pub use event::{RegulationRecord, RegulationSink};
+// The canonical closed-vocabulary emission-noise normalizer (operator
+// ruling 2026-10-13) — every closed-vocab MCP field parses through it.
+pub use spreadsheet::normalize_closed_vocab;
 
 pub use block_provenance::BlockProvenance;
 pub use id::{

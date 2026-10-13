@@ -1177,3 +1177,50 @@ fn ingest_request_defaults_pin_the_capabilities_reasoner_name() {
     assert_eq!(request.dataset, "capabilities-reasoner");
     assert_eq!(request.owner, "capabilities-reasoner");
 }
+
+/// Brave-derived QA candidates are excluded from ingestion and the exclusion
+/// is surfaced (task c1d65229 — Brave API ToS clause xiii bans training AI
+/// models on Search Results). The retained pair carries its originating
+/// provider onto the stored h_mem, so `training_assemble_dataset` can
+/// exclude any Brave-derived pair that reaches a DB by another path.
+#[tokio::test]
+async fn ingest_excludes_brave_derived_candidates() -> anyhow::Result<()> {
+    let directory = fixture()?;
+    let server = server();
+
+    let rows = two_flat_rows();
+    std::fs::write(directory.join("generated.jsonl"), rows.join("\n"))?;
+
+    // Canonical chunks derived from the candidates, then stamped: chunk 0
+    // Brave-served, chunk 1 tavily-served.
+    let mut chunks = chunk_rows_from_candidates(&rows)?;
+    for (chunk, origin) in chunks.iter_mut().zip(["brave", "tavily"]) {
+        chunk["origin_provider"] = json!(origin);
+    }
+    ground_chunks(&server, directory.path(), &chunks).await?;
+
+    let summary = content(
+        server
+            .corpus_ingest_qa(Parameters(request(directory.path(), false)))
+            .await?,
+    )?;
+    reconciles(&summary);
+    assert_eq!(
+        summary["brave_excluded"], 1,
+        "the brave-derived candidate is excluded and surfaced, got: {summary}"
+    );
+    assert_eq!(summary["retained"], 1);
+    assert_eq!(summary["stored"], 1);
+
+    // The stored pair is the tavily-sourced one, carrying its origin.
+    let store = hkask_memory::MemoryStore::open(
+        directory.join("memory.db").to_string_lossy().as_ref(),
+        PASSPHRASE,
+        hkask_storage::embedding_dim(),
+    )?;
+    let pairs = store.query_by_attribute_untouched("training_qa_pair")?;
+    assert_eq!(pairs.len(), 1, "only the non-brave pair is stored");
+    assert_eq!(pairs[0].value["chunk_ref"], "corpus:brooks:1");
+    assert_eq!(pairs[0].value["origin_provider"], "tavily");
+    Ok(())
+}

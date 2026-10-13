@@ -40,6 +40,12 @@ struct InputChunk {
     text: String,
     #[serde(default)]
     word_count: usize,
+    /// Originating search provider stamped by `chunk_directory` (task
+    /// c1d65229); carried onto the published `TaggedChunk` so the
+    /// QA/training-bound stages can exclude Brave-derived content (Brave
+    /// API ToS clause xiii bans training AI models on Search Results).
+    #[serde(default)]
+    origin_provider: Option<String>,
 }
 
 /// Validated structural judgments plus server-resolved ontology terms.
@@ -479,6 +485,7 @@ impl CorpusServer {
                         source: chunk.source.clone(),
                         text: chunk.text.clone(),
                         word_count: chunk.word_count,
+                        origin_provider: chunk.origin_provider.clone(),
                         dimensions,
                         dc_type: tags.dc_type,
                         dc_subject: tags.dc_subject,
