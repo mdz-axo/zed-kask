@@ -1,7 +1,7 @@
 ---
 title: "Corpus MCP Server — Reference"
 audience: [developers, operators]
-last_updated: 2026-09-28
+last_updated: 2026-10-13
 version: "0.41.2"
 status: "Active"
 domain: "MCP Servers"
@@ -41,7 +41,7 @@ operator data has been rebuilt, ingested or used for training.
 | | `corpus_embed` | Persist all selected embeddings, original passage text and source metadata |
 | | `corpus_extract_assertions` | Extract assertions from chunk text; optional tags guide predicates |
 | | `corpus_dedup_chunks` | Source-local similarity clustering; retain highest-salience representatives |
-| | `corpus_consolidate_chunks` | Synthesize source-local clusters, re-embed text, preserve derivation; synthesized tags are unverified |
+| | `corpus_consolidate_chunks` | Synthesize source-local clusters, re-embed text, preserve derivation; synthesized tags are unverified; merged rows carry the license-conservative origin (any Brave member ⇒ brave) |
 | QA output (5) | `corpus_build_prompts` | Classified primary rows plus complete-source DB context → prepared QA records |
 | | `corpus_generate_qa_batch` | Execute prepared messages unchanged with owned output and reconciled outcomes |
 | | `corpus_ground_generated_qa` | Deterministic zero-inference `corpus-qa-grounding-v1` bundle: byte-span claim records over canonical chunks plus server-recomputed ontology resolutions; records facts only, authorizes nothing |
@@ -75,30 +75,33 @@ the current `ocr_protocol` do not resume; no plain-text compatibility route exis
 
 ## Pipeline parameters
 
-Schema sources: `kask/mcp-servers/hkask-mcp-corpus/src/tools/document.rs:843-945`,
-`kask/mcp-servers/hkask-mcp-corpus/src/tools/tagging/ops.rs:565-593`, `kask/mcp-servers/hkask-mcp-corpus/src/tools/corpus.rs:586-656`, and
-`kask/mcp-servers/hkask-mcp-corpus/src/tools/compose_tools.rs:125-175`.
+Schema sources: `kask/mcp-servers/hkask-mcp-corpus/src/tools/document.rs:994-1097`,
+`kask/mcp-servers/hkask-mcp-corpus/src/tools/tagging/ops.rs:577-594`, `kask/mcp-servers/hkask-mcp-corpus/src/tools/corpus.rs:726-885`,
+`kask/mcp-servers/hkask-mcp-corpus/src/tools/compose_tools.rs:109-154`, `kask/mcp-servers/hkask-mcp-corpus/src/tools/storage.rs:452-464`, and
+`kask/mcp-servers/hkask-mcp-corpus/src/tools/gather.rs:70-81`.
 
 | Tool | Inputs and defaults |
 |---|---|
 | `corpus_convert` | `path`; optional `output`, `target_pages`; `force_ocr=false`, `include_structure=false`, `pdf_text_order=layout`. For a single PDF with verified column-order problems, `pdf_text_order=raw` follows the PDF's text-object order; directory, non-PDF and forced-OCR conversions reject `raw`. Reports include the text order only when native extraction contributed text. |
 | `corpus_is_complex` | PDF `path`; optional `target_pages`, `summary=false` |
 | `corpus_ocr` | `path`, optional `model` over the configured OCR model |
-| `corpus_chunk` | `text` or `path`, or `input_dir` with `output`; required `entity_ref_prefix`; optional `max_tokens`, `overlap_tokens`, `strip_gutenberg`, `multi_tier`, tier bounds, `target_pages`; `index=true`. Directory mode reports per-source bounded leading title/publisher/praise pages, contents/index/bibliography/reference sections, newsletter calls to action, distribution watermarks, isolated caption-only pages and inferred-image exclusions in `boilerplate_exclusion_reports`. |
+| `corpus_chunk` | `text` or `path`, or `input_dir` with `output`; required `entity_ref_prefix`; optional `max_tokens`, `overlap_tokens`, `strip_gutenberg`, `multi_tier`, tier bounds, `target_pages`; `index=true`. Directory mode reports per-source bounded leading title/publisher/praise pages, contents/index/bibliography/reference sections, newsletter calls to action, distribution watermarks, isolated caption-only pages and inferred-image exclusions in `boilerplate_exclusion_reports`. Directory mode also reads `{stem}.origin.json` provenance sidecars (written by the cache tools' `origin_provider`) and stamps `origin_provider` on that source's chunk rows, surfacing `origin_stamped` in the summary; unstamped files carry no provenance. |
 | `corpus_build_chunk_representations` | Immutable accepted source identities, output directory, namespace and complete current/fine/parent policies. Applies the canonical furniture filter once before every policy and seals source exclusion reports in a schema-v2 manifest; reconstruction targets the retained view. |
 | `corpus_tag_chunks` | `chunks_jsonl`, `output`; `concurrency` from shared ceiling, `tag_batch_size=10`, `dry_run=false` |
 | `corpus_embed` | `chunks_jsonl`, optional `tagged_jsonl`, `db_path`, `passphrase`, optional embedding `model`, `batch_size`; durable rows retain provider-confirmed actual model identity when available; every batch requests `dimensions = HKASK_EMBEDDING_DIM` (default 1024) so MRL models (default `OpenRouter/qwen/qwen3-embedding-8b`) emit the store's width, and re-embedding replaces prior vectors per `entity_ref` (idempotent) |
 | `corpus_embedding_inventory` | `chunks_jsonl`, existing `db_path`, `passphrase`, required provider-confirmed `expected_model`; returns exact missing/mismatched/retry refs without writes |
 | `corpus_export_bundle` | `run_dir` (sealed run: `run-identity.json`, `representations/manifest.json`, `<index_name>.db`), `output_dir` (no existing `bundle.json`), `source_id`, `display_name`, `index_name`, `bundle_key` (public, ≥8 chars). Verifies the run's seal, rekeys a copy to the bundle key, measures content pins, splits into parts, writes `bundle.json`; the sealed run is never modified |
-| `corpus_build_prompts` | `tagged_jsonl`, `output`; `prefix` defaults `corpus:researcher:`, `context_k=0`, `qa_pairs_per_chunk=2`, `type_distribution="1,1,1,1,1"` (exactly 5 comma-separated nonnegative weights — factual, conceptual, analyze, evaluate, create — with at least one nonzero; anything else is rejected, never partially parsed), `max_pairs=0`; optional `db_path`/`passphrase` are required only for positive context_k |
+| `corpus_build_prompts` | `tagged_jsonl`, `output`; `prefix` defaults `corpus:researcher:`, `context_k=0`, `qa_pairs_per_chunk=2`, `type_distribution="1,1,1,1,1"` (exactly 5 comma-separated nonnegative weights — factual, conceptual, analyze, evaluate, create — with at least one nonzero; anything else is rejected, never partially parsed), `max_pairs=0`; optional `db_path`/`passphrase` are required only for positive context_k. Brave-derived chunks (stamped `origin_provider: "brave"`) are excluded from QA generation with the exclusion surfaced; an all-Brave corpus fails closed naming Brave API ToS clause xiii (training AI models on Search Results) |
 
 | `corpus_generate_qa_batch` | `prompts_jsonl`, `quality_adjudications_jsonl`, `output`, `concurrency`, optional QA `model` |
 | `corpus_ground_generated_qa` | `generated_jsonl`, `source_chunks_jsonl` (tagged chunks classified under `published-term-resolution-v2`), `output_dir` — must not already exist |
-| `corpus_ingest_qa` | `generated_jsonl`, `grounding_manifest` (path to the bundle's `manifest.json`), `source_chunks_jsonl`, `output`, `db_path`, `passphrase`, `dataset`, `owner`, `dry_run=false`; pass dataset/owner explicitly |
+| `corpus_ingest_qa` | `generated_jsonl`, `grounding_manifest` (path to the bundle's `manifest.json`), `source_chunks_jsonl`, `output`, `db_path`, `passphrase`, `dataset`, `owner`, `dry_run=false`; pass dataset/owner explicitly. Brave-derived candidates are dropped after the structural filter (surfaced as `brave_excluded`, never silent); retained rows and stored h_mems carry their chunk's `origin_provider` when recorded |
 | `corpus_prepare_training_dataset` | `input_jsonl`, `output_jsonl`, operator-approved `base_model`, optional `system_prompt`, `dry_run=false` |
 | `corpus_centroid` | `author`, `db_path`, `passphrase`; optional contained `refs_file`, quality `dimension` |
 | `corpus_compose` | `prompt`, `author`, `db_path`, `passphrase`, optional `config_path`, `no_validate=false` |
 | `corpus_rewrite` | `content`, `author`, `db_path`, `passphrase`, `dimension=composite`, optional `config_path` |
+| `corpus_cache` | `content`, `label`; optional `origin_provider` — the originating search provider for search-derived content (e.g. "brave"), agent-declared at cache time and recorded in a `{stem}.origin.json` sidecar next to the cached file (a sidecar write failure fails the cache — fail-closed). Unrecorded means no provenance, not Brave |
+| `corpus_cache_work` | `slug`, `content`, `cache_dir`; optional `origin_provider` — same sidecar contract as `corpus_cache` (`{slug}.origin.json`) |
 
 ### Retrieval-calibration execution
 
@@ -410,7 +413,8 @@ nor performs semantic review — Stage 8 and operator acceptance remain external
 `prompt_id`, `provenance`, citations, metadata, the grounding identity object
 (protocol, manifest SHA-256, `row_key`, and the re-executed `answer_provenance`),
 and candidate terms resolved through the
-shared published-ontology resolver survive into retained JSONL and QA h_mems;
+shared published-ontology resolver survive into retained JSONL and QA h_mems,
+as does the source chunk's `origin_provider` when recorded;
 this tool creates no embeddings
 (`kask/mcp-servers/hkask-mcp-corpus/src/services/qa_grounding.rs`;
 `kask/mcp-servers/hkask-mcp-corpus/src/tools/corpus/qa_parsing.rs`;
@@ -419,6 +423,9 @@ this tool creates no embeddings
 - `total_nonblank_rows = generator_errors + malformed + parsed`.
 - `parsed = filter_drops + duplicates + retained`; `filtered = duplicates + retained`;
   `deduped = retained`.
+- `brave_excluded` partitions `filter_drops`: candidates whose source chunk is
+  Brave-derived are dropped after the structural filter, before dedup (Brave API
+  ToS clause xiii), surfaced in the result — never silent.
 - Non-dry `retained = stored + failed`; `stored_h_mems = stored`.
 - `status` is `dry_run` (no DB open/output writes), `complete`, or
   `partial_failure` with per-entity `storage_errors`. The output includes all
@@ -443,7 +450,8 @@ citation findings / missing checks or data / usage error, never launch approval.
 See the skill for canonical `grounding-verify`, semantic review and size gates.
 
 Pass the corpus `db_path` and `passphrase` to `training_assemble_dataset`; otherwise
-it reads the training server's separate store. `corpus_prepare_training_dataset`
+it reads the training server's separate store. Assembly filters Brave-stamped
+pairs out of the training set. `corpus_prepare_training_dataset`
 offers advisory PEFT settings. Training still requires operator base-model and
 LoRA approval; successful data preparation is not trained capability.
 
