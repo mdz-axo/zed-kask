@@ -688,21 +688,20 @@ fn eodhd_fixture() -> Value {
     })
 }
 
-/// An `eodhd_fixture()` mutated into one issuer's fundamentals: the General
-/// identity block (code, name, Common Stock, currency, ISIN, `{code}.US`
-/// primary ticker, not delisted) and the Financials currency symbols, all
-/// in `currency`. The four standard issuer fixtures each carried this
-/// mutation block before the helper (2026-10-09 duplication-ratchet pass);
-/// the GAP.PA per-row-currency and LEI-only variants keep their bespoke
-/// mutations — those differences are their tests' intent.
-fn eodhd_issuer(code: &str, name: &str, currency: &str, isin: &str) -> Value {
+/// An `eodhd_fixture()` mutated into one issuer's fundamentals base: the
+/// General identity block (code, name, Common Stock, currency, explicit
+/// primary ticker, not delisted) and the Financials currency symbols with
+/// the Cash_Flow block, all in `currency` — and no identity code (ISIN/LEI):
+/// the caller's identity shape is its own. `eodhd_issuer` builds its ISIN
+/// form on this base; the GAP.PA per-row-currency and LEI-only variants
+/// build their bespoke differences on it too.
+fn eodhd_issuer_base(code: &str, name: &str, ticker: &str, currency: &str) -> Value {
     let mut value = eodhd_fixture();
     value["General"]["Code"] = json!(code);
     value["General"]["Name"] = json!(name);
     value["General"]["Type"] = json!("Common Stock");
     value["General"]["CurrencyCode"] = json!(currency);
-    value["General"]["ISIN"] = json!(isin);
-    value["General"]["PrimaryTicker"] = json!(format!("{code}.US"));
+    value["General"]["PrimaryTicker"] = json!(ticker);
     value["General"]["IsDelisted"] = json!(false);
     value["Financials"]["Income_Statement"]["currency_symbol"] = json!(currency);
     value["Financials"]["Balance_Sheet"]["currency_symbol"] = json!(currency);
@@ -712,6 +711,18 @@ fn eodhd_issuer(code: &str, name: &str, currency: &str, isin: &str) -> Value {
             "2024-12-31": {"totalCashFromOperatingActivities":"170000000.00","capitalExpenditures":"-28000000.00","dividendsPaid":"-18000000.00"}
         }
     });
+    value
+}
+
+/// An `eodhd_issuer_base` plus the ISIN identity code and the `{code}.US`
+/// primary ticker — the standard issuer fixture. The four standard issuer
+/// fixtures each carried this mutation block before the helper (2026-10-09
+/// duplication-ratchet pass); the GAP.PA per-row-currency and LEI-only
+/// variants build on the same base and keep their bespoke differences
+/// per-site — those differences are their tests' intent.
+fn eodhd_issuer(code: &str, name: &str, currency: &str, isin: &str) -> Value {
+    let mut value = eodhd_issuer_base(code, name, &format!("{code}.US"), currency);
+    value["General"]["ISIN"] = json!(isin);
     value
 }
 
@@ -2949,25 +2960,13 @@ async fn expectations_gap_consolidates_eodhd_fundamentals_and_compact_skips_rese
     let directory = tempfile::tempdir().expect("temporary directory");
     let fixture = FixtureHttp::start(|path| {
         if path.starts_with("/eodhd/fundamentals/GAP.PA") {
-            let mut value = eodhd_fixture();
-            value["General"]["Code"] = json!("GAP");
-            value["General"]["Name"] = json!("Gap SA");
-            value["General"]["Type"] = json!("Common Stock");
-            value["General"]["CurrencyCode"] = json!("USD");
-            value["General"]["PrimaryTicker"] = json!("GAP.PA");
-            value["General"]["IsDelisted"] = json!(false);
-            value["Financials"]["Income_Statement"]["currency_symbol"] = json!("USD");
+            let mut value = eodhd_issuer_base("GAP", "Gap SA", "GAP.PA", "USD");
             // Live EODHD yearly entries carry currency_symbol per row —
             // statement_currency() reads it from the normalized rows.
-            value["Financials"]["Income_Statement"]["yearly"]["2025-12-31"]["currency_symbol"] = json!("USD");
-            value["Financials"]["Income_Statement"]["yearly"]["2024-12-31"]["currency_symbol"] = json!("USD");
-            value["Financials"]["Balance_Sheet"]["currency_symbol"] = json!("USD");
-            value["Financials"]["Cash_Flow"] = json!({
-                "currency_symbol":"USD","yearly":{
-                    "2025-12-31":{"totalCashFromOperatingActivities":"180000000.00","capitalExpenditures":"-30000000.00","dividendsPaid":"-20000000.00"},
-                    "2024-12-31":{"totalCashFromOperatingActivities":"170000000.00","capitalExpenditures":"-28000000.00","dividendsPaid":"-18000000.00"}
-                }
-            });
+            value["Financials"]["Income_Statement"]["yearly"]["2025-12-31"]["currency_symbol"] =
+                json!("USD");
+            value["Financials"]["Income_Statement"]["yearly"]["2024-12-31"]["currency_symbol"] =
+                json!("USD");
             return (200, value);
         }
         if path.starts_with("/eodhd/real-time/GAP.PA") {
@@ -3191,26 +3190,10 @@ async fn screen_data_failures_exclude_with_reasons_and_complete() {
 async fn expectations_template_reduces_and_reconciles_the_universe() {
     let directory = tempfile::tempdir().expect("temporary directory");
     // The LIQ fundamentals carry an LEI (not an ISIN) — the identity shape
-    // this test reconciles; the mutation stays visible here.
-    let liq_lei_fundamentals = {
-        let mut value = eodhd_fixture();
-        value["General"]["Code"] = json!("LIQ");
-        value["General"]["Name"] = json!("Liquid Issuer");
-        value["General"]["Type"] = json!("Common Stock");
-        value["General"]["CurrencyCode"] = json!("USD");
-        value["General"]["LEI"] = json!("549300LIQUIDSET01");
-        value["General"]["PrimaryTicker"] = json!("LIQ.US");
-        value["General"]["IsDelisted"] = json!(false);
-        value["Financials"]["Income_Statement"]["currency_symbol"] = json!("USD");
-        value["Financials"]["Balance_Sheet"]["currency_symbol"] = json!("USD");
-        value["Financials"]["Cash_Flow"] = json!({
-            "currency_symbol":"USD","yearly":{
-                "2025-12-31":{"totalCashFromOperatingActivities":"180000000.00","capitalExpenditures":"-30000000.00","dividendsPaid":"-20000000.00"},
-                "2024-12-31":{"totalCashFromOperatingActivities":"170000000.00","capitalExpenditures":"-28000000.00","dividendsPaid":"-18000000.00"}
-            }
-        });
-        value
-    };
+    // this test reconciles; the LEI rides on the issuer base (which sets no
+    // identity code) and stays visible here.
+    let mut liq_lei_fundamentals = eodhd_issuer_base("LIQ", "Liquid Issuer", "LIQ.US", "USD");
+    liq_lei_fundamentals["General"]["LEI"] = json!("549300LIQUIDSET01");
     let fixture = FixtureHttp::start(run_screen_fixture(
         vec![
             liquid_row(
