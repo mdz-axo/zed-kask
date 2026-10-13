@@ -1,7 +1,7 @@
 //! Filesystem observations for gallery reconciliation. Scanning never modifies source files.
 
-use crate::gallery::{AssetObservation, GalleryScan};
 pub use crate::gallery::GalleryMode;
+use crate::gallery::{AssetObservation, GalleryScan};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;

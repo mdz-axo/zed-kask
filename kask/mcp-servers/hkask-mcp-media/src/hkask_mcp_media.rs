@@ -33,11 +33,11 @@ pub use error::{
 
 // Bridge crates: shared ontological vocabulary (P5.4 dual-axis framework)
 
+use crate::gallery::{GalleryMode, GalleryStore};
 use gallery::GalleryState;
 use gallery::vision::{self};
 use hkask_mcp_server::server::{McpToolError, execute_tool, validate_tool_url_with_dns};
 use hkask_storage::database::sqlite::SqliteDriver;
-use crate::gallery::{GalleryMode, GalleryStore};
 use hkask_types::InferencePort;
 use hkask_types::VoiceDesign;
 

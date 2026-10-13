@@ -179,13 +179,7 @@ impl MediaServer {
         &self,
         gallery: &crate::GalleryAccess,
         recursive: bool,
-    ) -> Result<
-        (
-            crate::gallery::GalleryScan,
-            crate::gallery::ReconcileResult,
-        ),
-        MediaError,
-    > {
+    ) -> Result<(crate::gallery::GalleryScan, crate::gallery::ReconcileResult), MediaError> {
         let state = crate::GalleryState::new(gallery.root_path.clone(), gallery.mode.parse()?);
         let scan = state.scan(recursive, None);
         let result = self.gallery_store.reconcile(&gallery.gallery_id, &scan)?;

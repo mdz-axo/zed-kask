@@ -578,7 +578,8 @@ mod tests {
             &root.to_string_lossy(),
             crate::gallery::GalleryMode::ReadOnly,
         )?;
-        let mut state = GalleryState::new(root.to_path_buf(), crate::gallery::GalleryMode::ReadOnly);
+        let mut state =
+            GalleryState::new(root.to_path_buf(), crate::gallery::GalleryMode::ReadOnly);
         state.gallery_id = Some(gallery.id.clone());
         *server
             .gallery_state

@@ -1049,7 +1049,10 @@ impl MemoryStore {
         }
     }
 
-    pub(crate) fn lowest_confidence_h_mems(&self, limit: usize) -> Result<Vec<HMem>, MemoryStoreError> {
+    pub(crate) fn lowest_confidence_h_mems(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<HMem>, MemoryStoreError> {
         Ok(self.h_mem_store.query_lowest_confidence(limit)?)
     }
 
