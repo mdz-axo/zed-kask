@@ -1362,6 +1362,20 @@ mod tests {
         )
     }
 
+    /// Render the disposition-plan messages for a prepared prompt, joined
+    /// for substring assertions — the shared tail of the contract tests
+    /// that assert on the rendered prompt text. The prompt (and its QA-type
+    /// override) is the caller's; the render and join are the helper's.
+    fn rendered_plan_messages(prompt: &PreparedQaPrompt) -> String {
+        let messages =
+            render_disposition_plan_messages(prompt, &reviewed_admit(prompt)).expect("render");
+        messages
+            .iter()
+            .map(|message| message.content.as_str())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     fn accepted() -> Result<QaCompletion, QaCompletionError> {
         Ok(QaCompletion {
             text: json!([["factual", "Question?", "Answer.", ["e0"]]]).to_string(),
@@ -1632,13 +1646,7 @@ mod tests {
     fn prepared_contract_advertises_quality_gated_skips() {
         let mut prompt = prepared();
         prompt.qa_types = vec![QaType::Factual, QaType::Conceptual];
-        let messages =
-            render_disposition_plan_messages(&prompt, &reviewed_admit(&prompt)).expect("render");
-        let rendered = messages
-            .iter()
-            .map(|message| message.content.as_str())
-            .collect::<Vec<_>>()
-            .join("\n");
+        let rendered = rendered_plan_messages(&prompt);
         assert!(rendered.contains("conceptual_support_absent"));
         assert!(rendered.contains("contaminated_or_garbled"));
         assert!(rendered.contains("only retrieve a name"));
@@ -1663,13 +1671,7 @@ mod tests {
     fn staged_contract_restores_verified_canonical_evidence() {
         let mut prompt = prepared();
         prompt.qa_types = vec![QaType::Factual, QaType::Conceptual];
-        let messages =
-            render_disposition_plan_messages(&prompt, &reviewed_admit(&prompt)).expect("render");
-        let rendered = messages
-            .iter()
-            .map(|message| message.content.as_str())
-            .collect::<Vec<_>>()
-            .join("\n");
+        let rendered = rendered_plan_messages(&prompt);
         assert!(rendered.contains("primary_passage"));
         assert!(rendered.contains("e0"));
         assert!(!rendered.contains("chunk-1"));
