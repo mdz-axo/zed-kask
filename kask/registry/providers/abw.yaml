@@ -1,0 +1,28 @@
+# Provider profile — Agent Bestiary World. Structural contract pinned by
+# kask/scripts/check-provider-profiles.sh; semantic reading owned by the
+# provider-audit skill.
+id: abw
+name: Agent Bestiary World
+status: active
+roles:
+  - swarm-cloud
+keychain:
+  slot: kask://credentials/hkask_abw_api_key
+  env_var: HKASK_ABW_API_KEY
+  note: not shown in the Data Services UI — managed via the keychain by the
+    swarm server's governed launch path
+    (kask/crates/kask_bridge/src/inference_providers.rs)
+consumed_capabilities:
+  - capability: cloud workspace/agent CRUD (hire, delegate, apps)
+    source: kask/mcp-servers/hkask-mcp-swarm
+deliberate_non_consumption: []
+data_terms:
+  extracted_at: null
+  trains_on_customer_data: unverified
+  retention_published: unverified
+status_surface:
+  status_page: unverified
+  sla: unverified
+pricing:
+  machine_readable: unverified
+first_audit_pending: true

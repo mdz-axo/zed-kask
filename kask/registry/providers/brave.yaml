@@ -1,0 +1,25 @@
+# Provider profile — Brave Search. Structural contract pinned by
+# kask/scripts/check-provider-profiles.sh; semantic reading owned by the
+# provider-audit skill.
+id: brave
+name: Brave Search
+status: active
+roles:
+  - research-provider
+keychain:
+  slot: kask://credentials/brave
+  env_var: HKASK_BRAVE_API_KEY
+consumed_capabilities:
+  - capability: web search
+    source: kask/mcp-servers/hkask-mcp-research/src/research/providers/brave.rs
+deliberate_non_consumption: []
+data_terms:
+  extracted_at: null
+  trains_on_customer_data: unverified
+  retention_published: unverified
+status_surface:
+  status_page: unverified
+  sla: unverified
+pricing:
+  machine_readable: unverified
+first_audit_pending: true

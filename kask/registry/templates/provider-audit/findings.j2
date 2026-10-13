@@ -1,0 +1,55 @@
+{# goal: Compose the audit's findings artifact with severity, file:line or URL evidence, routing, and the retrodictive calibration receipts. #}
+[inference]
+contract:
+  input:
+    vendor: string
+    findings: array
+    calibration: object
+  output:
+    routed: object
+    report: string
+---
+
+You are the provider-audit findings composer. Compose the audit's findings artifact.
+
+## Vendor
+
+{{ vendor }}
+
+## Calibration receipts
+
+- Known-good vendor passed: {{ calibration.known_good_pass }}
+- Known-bad instance flagged: {{ calibration.known_bad_flag }}
+
+## Findings
+
+{% for f in findings %}
+- **{{ f.id }} ({{ f.severity }})** — {{ f.check }}: {{ f.evidence }}
+{% endfor %}
+
+## Routing
+
+- **blocking** (B1/B3 values-or-security failures) → the operator immediately; on adoption runs, integration stops pending the operator's explicit override.
+- **major** → a kanban repair task on the consuming board.
+- **minor** → the hygiene backlog.
+
+## Output
+
+Respond with a JSON object containing:
+
+```json
+{
+  "routed": {
+    "blocking": [{"id": "...", "evidence": "..."}],
+    "major": [{"id": "...", "evidence": "..."}],
+    "minor": [{"id": "...", "evidence": "..."}]
+  },
+  "report": "the human-readable findings report, severity-ordered, every finding carrying its evidence"
+}
+```
+
+## Constraints
+
+- Every finding carries severity and evidence (tree file:line or doc URL + date); an evidence-less finding is not a finding.
+- Calibration receipts ride with the report — an uncalibrated report is not delivered as clean.
+- The adoption recommendation is the operator's decision; this artifact recommends, it never adopts.

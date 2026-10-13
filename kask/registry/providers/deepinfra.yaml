@@ -1,0 +1,37 @@
+# Provider profile — DeepInfra. Structural contract pinned by
+# kask/scripts/check-provider-profiles.sh; semantic reading owned by the
+# provider-audit skill.
+id: deepinfra
+name: DeepInfra
+status: active
+roles:
+  - chat-inference
+  - embedding-provider
+  - media-provider
+  - rerank
+keychain:
+  slot: https://api.deepinfra.com/v1/openai
+  env_var: DEEPINFRA_API_KEY
+  note: the 2026-08-31 401 split-brain (a stale kask-slot copy feeding MCP
+    children a dead key) preceded the one-key-one-location consolidation
+    (DIVERGENCE.md D5) — the provider api_url slot is now the single location.
+consumed_capabilities:
+  - capability: chat completions (OpenAI-compatible, pre-seeded)
+    source: assets/settings/default.json (DIVERGENCE.md D69)
+  - capability: embeddings (/embeddings)
+    source: kask/crates/kask_bridge/src/inference_providers.rs
+  - capability: media ops — generate_image, image_to_image, remove_background, upscale, generate_speech, transcribe, generate_video, image_to_video
+    source: kask/crates/hkask-inference/src/media_providers.rs
+  - capability: rerank — Qwen/Qwen3-Reranker-8B
+    source: kask/crates/hkask-inference/src/model_constants.rs
+deliberate_non_consumption: []
+data_terms:
+  extracted_at: null
+  trains_on_customer_data: unverified
+  retention_published: unverified
+status_surface:
+  status_page: unverified
+  sla: unverified
+pricing:
+  machine_readable: unverified
+first_audit_pending: true

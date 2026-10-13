@@ -1,0 +1,39 @@
+# Provider profile — OpenRouter. Structural contract pinned by
+# kask/scripts/check-provider-profiles.sh; semantic reading (data terms,
+# status, pricing) owned by the provider-audit skill.
+id: openrouter
+name: OpenRouter
+status: active
+roles:
+  - chat-inference
+  - embedding-provider
+  - media-provider
+  - edit-prediction
+keychain:
+  slot: https://openrouter.ai/api/v1
+  env_var: OPENROUTER_API_KEY
+consumed_capabilities:
+  - capability: chat completions (OpenAI-compatible)
+    source: crates/language_models/src/provider/open_router.rs
+  - capability: embeddings (/embeddings)
+    source: kask/crates/kask_bridge/src/inference_providers.rs
+    note: default embedding model OpenRouter/qwen/qwen3-embedding-8b (kask/crates/hkask-inference/src/model_constants.rs)
+  - capability: media ops — generate_image, transcribe, chat_audio, chat_json, generate_video, image_to_video
+    source: kask/crates/hkask-inference/src/media_providers.rs
+  - capability: STT — openai/whisper-large-v3-turbo
+    source: kask/crates/hkask-inference/src/model_constants.rs
+  - capability: vision — openai/gpt-4o-mini
+    source: kask/crates/hkask-inference/src/model_constants.rs
+  - capability: edit predictions — z-ai/glm-5.2
+    source: DIVERGENCE.md D24
+deliberate_non_consumption: []
+data_terms:
+  extracted_at: null
+  trains_on_customer_data: unverified
+  retention_published: unverified
+status_surface:
+  status_page: unverified
+  sla: unverified
+pricing:
+  machine_readable: unverified
+first_audit_pending: true

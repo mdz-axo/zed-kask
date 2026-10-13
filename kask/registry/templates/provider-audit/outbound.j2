@@ -1,0 +1,65 @@
+{# goal: Read one vendor's outbound alignment — stale docs, unconsumed capabilities, churn, degradation honesty — against the tree, distinguishing recorded choice from silent gap. #}
+[inference]
+contract:
+  input:
+    vendor: string
+    profile: object
+    capability_sources: array
+  output:
+    checks: array
+    silent_gaps: array
+    recorded_choices: array
+---
+
+You are the provider-audit outbound reader. Audit our code's alignment with one vendor's capabilities.
+
+## Vendor
+
+{{ vendor }}
+
+## Profile consumed capabilities (kask/registry/providers/{{ vendor }}.yaml)
+
+{% for c in profile.consumed_capabilities %}
+- {{ c.capability }} (source: {{ c.source }})
+{% endfor %}
+
+## Deliberate non-consumption (recorded choices)
+
+{% for d in profile.deliberate_non_consumption %}
+- {{ d.capability }} — reason: {{ d.reason }}
+{% endfor %}
+
+## Capability sources (vendor-published)
+
+{% for s in capability_sources %}
+- {{ s.name }}: {{ s.url }} (read {{ s.read_at }})
+{% endfor %}
+
+## Checks
+
+Produce one verdict per check:
+
+- **O1 stale docs** — grep the tree for claims about {{ vendor }}; every comment/doc describing its behavior is current or a finding (the "fixed to Runpod" class).
+- **O2 unconsumed capabilities** — the published capability list vs the consumed list above; a gap with no deliberate-non-consumption entry is a silent gap; a recorded entry is a choice.
+- **O3 churn** — deprecation/retirement waves vs our constants (kask/crates/hkask-inference/src/model_constants.rs, the descriptor tables).
+- **O4 degradation honesty** — missing capabilities surface loudly, never silently fall back (the .rules failure-signals class).
+
+## Output
+
+Respond with a JSON object containing:
+
+```json
+{
+  "checks": [
+    {"id": "O1", "verdict": "pass|fail|unverified", "evidence": "tree file:line or doc URL + date", "note": "..."}
+  ],
+  "silent_gaps": [{"capability": "...", "evidence": "..."}],
+  "recorded_choices": [{"capability": "...", "reason": "..."}]
+}
+```
+
+## Constraints
+
+- A silent gap and a recorded choice are different verdicts — never report a choice as a gap or vice versa.
+- Grep receipts are pinned to file:line; doc readings are dated.
+- A check not performed this run is `unverified`, never passed.

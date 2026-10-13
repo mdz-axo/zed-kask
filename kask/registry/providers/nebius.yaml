@@ -1,0 +1,38 @@
+# Provider profile — Nebius. Structural contract pinned by
+# kask/scripts/check-provider-profiles.sh; semantic reading owned by the
+# provider-audit skill.
+id: nebius
+name: Nebius
+status: active
+roles:
+  - training-host
+keychain:
+  slot: none
+  env_var: ""
+  note: no API key is consumed in-tree — the training host authenticates via
+    SSH public key (~/.ssh/id_ed25519.pub) plus NEBIUS_* infrastructure IDs
+    (kask/mcp-servers/hkask-mcp-training/src/providers.rs NebiusHost::new)
+consumed_capabilities:
+  - capability: training host (axolotl/ludwig harnesses dispatched to GPU VMs)
+    source: kask/mcp-servers/hkask-mcp-training/src/providers/nebius.rs
+  - capability: Data Services settings rows (project/subnet IDs)
+    source: kask/crates/kask_bridge/src/inference_providers.rs
+config_env:
+  - NEBIUS_PROJECT_ID
+  - NEBIUS_SUBNET_ID
+  - NEBIUS_GPU_PLATFORM
+  - NEBIUS_GPU_PRESET
+  - NEBIUS_IMAGE_FAMILY
+  - NEBIUS_CLI_PATH
+  source: kask/crates/kask_bridge/src/mcp_servers.rs (training server config_env)
+deliberate_non_consumption: []
+data_terms:
+  extracted_at: null
+  trains_on_customer_data: unverified
+  retention_published: unverified
+status_surface:
+  status_page: unverified
+  sla: unverified
+pricing:
+  machine_readable: unverified
+first_audit_pending: true

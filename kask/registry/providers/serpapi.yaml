@@ -1,0 +1,35 @@
+# Provider profile — SerpAPI. Structural contract pinned by
+# kask/scripts/check-provider-profiles.sh; semantic reading owned by the
+# provider-audit skill.
+id: serpapi
+name: SerpAPI
+status: active
+roles:
+  - research-provider
+  - companies-data
+  - media-discovery
+keychain:
+  slot: kask://credentials/serpapi
+  env_var: HKASK_SERPAPI_API_KEY
+  note: the canonical spelling — the server previously read the
+    non-canonical HKASK_SERPAPI_KEY, which no allowlist or registry carried,
+    so the key never arrived; normalized on the kask/.env spelling
+    (kask/crates/kask_bridge/src/mcp_servers.rs comment)
+consumed_capabilities:
+  - capability: Google-index search (news, freshness)
+    source: kask/mcp-servers/hkask-mcp-research/src/research/providers/serapi.rs
+  - capability: companies corpus-mode transcript search
+    source: kask/crates/kask_bridge/src/mcp_servers.rs (companies server credentials)
+  - capability: YouTube discovery metadata
+    source: kask/crates/kask_bridge/src/mcp_servers.rs (media server credentials)
+deliberate_non_consumption: []
+data_terms:
+  extracted_at: null
+  trains_on_customer_data: unverified
+  retention_published: unverified
+status_surface:
+  status_page: unverified
+  sla: unverified
+pricing:
+  machine_readable: unverified
+first_audit_pending: true

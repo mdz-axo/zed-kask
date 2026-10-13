@@ -1,0 +1,27 @@
+# Provider profile — FRED (Federal Reserve Economic Data). Structural
+# contract pinned by kask/scripts/check-provider-profiles.sh; semantic
+# reading owned by the provider-audit skill.
+id: fred
+name: FRED
+status: active
+roles:
+  - prediction-markets-reference
+keychain:
+  slot: kask://credentials/fred
+  env_var: HKASK_FRED_API_KEY
+  note: optional — the prediction-markets server falls back to curated static
+    reference levels when absent (kask/crates/kask_bridge/src/inference_providers.rs)
+consumed_capabilities:
+  - capability: live reference-level fetches for base-event families
+    source: kask/crates/kask_bridge/src/mcp_servers.rs (prediction-markets server credentials)
+deliberate_non_consumption: []
+data_terms:
+  extracted_at: null
+  trains_on_customer_data: n/a
+  retention_published: unverified
+status_surface:
+  status_page: unverified
+  sla: unverified
+pricing:
+  machine_readable: n/a
+first_audit_pending: true

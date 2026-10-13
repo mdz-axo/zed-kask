@@ -1,0 +1,28 @@
+# Provider profile — Tavily. Structural contract pinned by
+# kask/scripts/check-provider-profiles.sh; semantic reading owned by the
+# provider-audit skill.
+id: tavily
+name: Tavily
+status: active
+roles:
+  - research-provider
+  - companies-data
+keychain:
+  slot: kask://credentials/tavily
+  env_var: HKASK_TAVILY_API_KEY
+consumed_capabilities:
+  - capability: web search (fast, answer boxes, content previews)
+    source: kask/mcp-servers/hkask-mcp-research/src/research/providers/tavily.rs
+  - capability: companies research search
+    source: kask/crates/kask_bridge/src/mcp_servers.rs (companies server credentials)
+deliberate_non_consumption: []
+data_terms:
+  extracted_at: null
+  trains_on_customer_data: unverified
+  retention_published: unverified
+status_surface:
+  status_page: unverified
+  sla: unverified
+pricing:
+  machine_readable: unverified
+first_audit_pending: true

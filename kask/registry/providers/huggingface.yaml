@@ -1,0 +1,28 @@
+# Provider profile — HuggingFace. Structural contract pinned by
+# kask/scripts/check-provider-profiles.sh; semantic reading owned by the
+# provider-audit skill.
+id: huggingface
+name: HuggingFace
+status: active
+roles:
+  - training-artifacts
+  - model-weights-host
+keychain:
+  slot: kask://credentials/hf_token
+  env_var: HF_TOKEN
+consumed_capabilities:
+  - capability: Runpod artifact publish path (datasets, adapters, models)
+    source: kask/crates/kask_bridge/src/mcp_servers.rs (training server — HKASK_HF_ARTIFACT_OWNER, HKASK_HF_DATASET_REPO, HKASK_HF_MODEL_REPO)
+  - capability: open-weight model hosting (base models for training)
+    source: kask/mcp-servers/hkask-mcp-training/src/huggingface.rs
+deliberate_non_consumption: []
+data_terms:
+  extracted_at: null
+  trains_on_customer_data: n/a
+  retention_published: unverified
+status_surface:
+  status_page: unverified
+  sla: unverified
+pricing:
+  machine_readable: unverified
+first_audit_pending: true

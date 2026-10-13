@@ -1,0 +1,27 @@
+# Provider profile — Reduct.video. Structural contract pinned by
+# kask/scripts/check-provider-profiles.sh; semantic reading owned by the
+# provider-audit skill.
+id: reduct
+name: Reduct.video
+status: active
+roles:
+  - media-cloud
+keychain:
+  slot: kask://credentials/reduct_api_key
+  env_var: REDUCT_API_KEY
+  note: the media child alone receives this secret
+    (kask/crates/kask_bridge/src/mcp_servers.rs)
+consumed_capabilities:
+  - capability: cloud recording/reel/highlight API
+    source: kask/mcp-servers/hkask-mcp-media (cloud tools)
+deliberate_non_consumption: []
+data_terms:
+  extracted_at: null
+  trains_on_customer_data: unverified
+  retention_published: unverified
+status_surface:
+  status_page: unverified
+  sla: unverified
+pricing:
+  machine_readable: unverified
+first_audit_pending: true

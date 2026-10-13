@@ -1,0 +1,38 @@
+# Provider profile — KiloCode (kilo.ai). Structural contract pinned by
+# kask/scripts/check-provider-profiles.sh; semantic reading owned by the
+# provider-audit skill.
+id: kilocode
+name: KiloCode
+status: active
+roles:
+  - chat-inference
+keychain:
+  slot: https://api.kilo.ai/api/gateway
+  env_var: KILOCODE_API_KEY
+consumed_capabilities:
+  - capability: chat completions gateway (OpenAI-compatible, pre-seeded)
+    source: assets/settings/default.json (DIVERGENCE.md D69)
+deliberate_non_consumption:
+  - capability: embeddings
+    reason: chat-only gateway — no /embeddings endpoint, no
+      DIRECT_EMBEDDING_PROVIDERS row (kask/crates/kask_bridge/src/inference_providers.rs)
+  - capability: MCP child credential injection
+    reason: no MCP server consumes KILOCODE_API_KEY — the key stays in the
+      provider slot and is not collected for child-process injection or
+      restart (DIVERGENCE.md D69)
+known_failure_modes:
+  - payment exhaustion surfaces as HTTP 503, not 402 — billing masquerades as
+    "service unavailable" (DIVERGENCE.md D69)
+  - tool-call repair (dedup, orphan cleanup, id normalization) is gateway-side
+  - model ids are nested (anthropic/claude-sonnet-4.5) — resolve by exact id
+    after the first-slash split
+data_terms:
+  extracted_at: null
+  trains_on_customer_data: unverified
+  retention_published: unverified
+status_surface:
+  status_page: unverified
+  sla: unverified
+pricing:
+  machine_readable: unverified
+first_audit_pending: true

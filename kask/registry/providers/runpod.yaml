@@ -1,0 +1,42 @@
+# Provider profile — RunPod. Structural contract pinned by
+# kask/scripts/check-provider-profiles.sh; semantic reading owned by the
+# provider-audit skill.
+id: runpod
+name: RunPod
+status: active
+roles:
+  - training-host
+  - ocr-inference
+keychain:
+  slot: https://api.runpod.io
+  env_var: RUNPOD_API_KEY
+consumed_capabilities:
+  - capability: training host (axolotl/ludwig harnesses dispatched to GPU pods)
+    source: kask/mcp-servers/hkask-mcp-training/src/providers/runpod.rs
+  - capability: dedicated LanguageModelProvider for OCR (RunPod/kask-ocr, olmOCR-2)
+    source: DIVERGENCE.md D29
+  - capability: Data Services settings row ("RunPod (GPU cloud for training)")
+    source: kask/crates/kask_bridge/src/inference_providers.rs
+config_env:
+  - RUNPOD_TEMPLATE_ID
+  - RUNPOD_GPU_TYPE_ID
+  - RUNPOD_CONTAINER_DISK_GB
+  - RUNPOD_DOCKER_IMAGE
+  - RUNPOD_DOCKER_ARGS
+  - HKASK_PODS_FILE
+  source: kask/crates/kask_bridge/src/mcp_servers.rs (training server config_env)
+deliberate_non_consumption:
+  - capability: embeddings at the account api_url root
+    reason: no OpenAI-compatible root at https://api.runpod.io — each serverless
+      endpoint carries its own https://api.runpod.io/v2/{endpoint_id}/openai/v1
+      (kask/crates/kask_bridge/src/inference_providers.rs, serves_embeddings: false)
+data_terms:
+  extracted_at: null
+  trains_on_customer_data: unverified
+  retention_published: unverified
+status_surface:
+  status_page: unverified
+  sla: unverified
+pricing:
+  machine_readable: unverified
+first_audit_pending: true

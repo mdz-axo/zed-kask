@@ -1,0 +1,25 @@
+# Provider profile — Firecrawl. Structural contract pinned by
+# kask/scripts/check-provider-profiles.sh; semantic reading owned by the
+# provider-audit skill.
+id: firecrawl
+name: Firecrawl
+status: active
+roles:
+  - research-provider
+keychain:
+  slot: kask://credentials/firecrawl
+  env_var: HKASK_FIRECRAWL_API_KEY
+consumed_capabilities:
+  - capability: web search + extract + browse (markdown output, JS-heavy pages)
+    source: kask/mcp-servers/hkask-mcp-research/src/research/providers/firecrawl.rs
+deliberate_non_consumption: []
+data_terms:
+  extracted_at: null
+  trains_on_customer_data: unverified
+  retention_published: unverified
+status_surface:
+  status_page: unverified
+  sla: unverified
+pricing:
+  machine_readable: unverified
+first_audit_pending: true

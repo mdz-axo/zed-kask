@@ -1,0 +1,26 @@
+# Provider profile — raw_fetch (internal). Structural contract pinned by
+# kask/scripts/check-provider-profiles.sh; semantic reading owned by the
+# provider-audit skill.
+id: raw_fetch
+name: Raw Fetch (internal)
+status: active
+roles:
+  - research-provider
+keychain:
+  slot: none
+  env_var: ""
+  note: internal raw-fetch utility — no external vendor contract
+consumed_capabilities:
+  - capability: direct URL fetch for research results
+    source: kask/mcp-servers/hkask-mcp-research/src/research/providers/raw_fetch.rs
+deliberate_non_consumption: []
+data_terms:
+  extracted_at: null
+  trains_on_customer_data: n/a
+  retention_published: n/a
+status_surface:
+  status_page: n/a
+  sla: n/a
+pricing:
+  machine_readable: n/a
+first_audit_pending: false

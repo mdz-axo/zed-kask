@@ -1,0 +1,25 @@
+# Provider profile — EODHD. Structural contract pinned by
+# kask/scripts/check-provider-profiles.sh; semantic reading owned by the
+# provider-audit skill.
+id: eodhd
+name: EODHD
+status: active
+roles:
+  - companies-data
+keychain:
+  slot: kask://credentials/eodhd
+  env_var: HKASK_EODHD_API_KEY
+consumed_capabilities:
+  - capability: end-of-day market data (prices, fundamentals)
+    source: kask/crates/kask_bridge/src/mcp_servers.rs (companies server credentials)
+deliberate_non_consumption: []
+data_terms:
+  extracted_at: null
+  trains_on_customer_data: unverified
+  retention_published: unverified
+status_surface:
+  status_page: unverified
+  sla: unverified
+pricing:
+  machine_readable: unverified
+first_audit_pending: true
