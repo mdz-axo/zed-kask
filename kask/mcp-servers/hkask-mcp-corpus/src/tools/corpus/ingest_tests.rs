@@ -1189,7 +1189,7 @@ async fn ingest_excludes_brave_derived_candidates() -> anyhow::Result<()> {
     let server = server();
 
     let rows = two_flat_rows();
-    std::fs::write(directory.join("generated.jsonl"), rows.join("\n"))?;
+    std::fs::write(directory.path().join("generated.jsonl"), rows.join("\n"))?;
 
     // Canonical chunks derived from the candidates, then stamped: chunk 0
     // Brave-served, chunk 1 tavily-served.
@@ -1214,7 +1214,11 @@ async fn ingest_excludes_brave_derived_candidates() -> anyhow::Result<()> {
 
     // The stored pair is the tavily-sourced one, carrying its origin.
     let store = hkask_memory::MemoryStore::open(
-        directory.join("memory.db").to_string_lossy().as_ref(),
+        directory
+            .path()
+            .join("memory.db")
+            .to_string_lossy()
+            .as_ref(),
         PASSPHRASE,
         hkask_storage::embedding_dim(),
     )?;

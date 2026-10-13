@@ -348,6 +348,7 @@ fn missing_outer_array_bracket_is_repaired_but_partial_semantics_are_rejected() 
         source: "test".to_string(),
         text: "passage".to_string(),
         word_count: 1,
+        origin_provider: None,
     }];
     for partial in [
         r#"[["item-0",[],["unfinished"#,

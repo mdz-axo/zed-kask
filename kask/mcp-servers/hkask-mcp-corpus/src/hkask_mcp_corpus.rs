@@ -1056,7 +1056,6 @@ mod smoke {
                 tagged_jsonl: tagged_path.to_string_lossy().to_string(),
                 output: prompts_path.to_string_lossy().to_string(),
                 db_path: None,
-                passphrase: None,
                 prefix: None,
                 context_k: 0,
                 qa_pairs_per_chunk: 2,

@@ -1295,7 +1295,10 @@ mod smoke {
     /// Search Results). The exclusion is surfaced, never silent.
     #[tokio::test]
     async fn assembly_excludes_brave_derived_pairs() -> anyhow::Result<()> {
-        let dir = AssemblyFixtureDir::new(std::env::temp_dir())?;
+        // The output must satisfy the tool's real path-containment gate — a
+        // /tmp fixture is rejected ("path escapes all allowed roots"), so the
+        // fixture lands under the crate root like the recall-clock test.
+        let dir = AssemblyFixtureDir::new(std::env::current_dir()?)?;
         let db_path = dir.path().join("qa.db");
         let store = hkask_memory::MemoryStore::open(
             &db_path.to_string_lossy(),
@@ -1321,7 +1324,7 @@ mod smoke {
         store.store(pair(1, None))?;
         drop(store);
 
-        let mut server = make_server();
+        let server = make_server();
         let mut request = assembly_request(&dir.path().join("train.jsonl"));
         request.db_path = Some(db_path.to_string_lossy().into_owned());
         request.passphrase = Some("assembly-fixture".into());

@@ -611,6 +611,7 @@ mod gather_path_safety_tests {
                 slug: "escape".to_string(),
                 cache_dir: cache_dir.to_string_lossy().into_owned(),
                 content: "attacker-controlled content".to_string(),
+                origin_provider: None,
             }))
             .await;
 
@@ -639,6 +640,7 @@ mod gather_path_safety_tests {
                 slug: "ordinary".to_string(),
                 cache_dir: cache_dir.to_string_lossy().into_owned(),
                 content: "ordinary content".to_string(),
+                origin_provider: None,
             }))
             .await
             .expect("ordinary write succeeds");
