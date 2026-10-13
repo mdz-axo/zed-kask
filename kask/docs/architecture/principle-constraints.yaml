@@ -59,9 +59,9 @@ principles:
         status: runtime_enforced
         scope: Action construction; not universal durable delivery or causal improvement
         owner: regulation maintainer
-        enforced_at: kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs
+        enforced_at: kask/crates/hkask-regulation/src/cybernetics_loop/cycle/tests.rs
         check:
-          path: kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs
+          path: kask/crates/hkask-regulation/src/cybernetics_loop/cycle/tests.rs
           symbol: build_regulation_action_produces_action_for_all_new_reasons
           command: cargo test -p hkask-regulation build_regulation_action_produces_action_for_all_new_reasons
       - id: ax-goal-outcome-claims
