@@ -398,6 +398,22 @@ impl CorpusServer {
                 let slot = limiter.acquire().await;
 
                 let batch_texts: Vec<String> = chunk_batch.iter().map(|c| c.2.clone()).collect();
+
+                // Record a whole-batch failure — the shared tail of the
+                // transport-failure and invalid-response arms: count the
+                // batch's rows as failed, extend the failed entity refs,
+                // and end the task Ok (the batch is spent; the summary
+                // reports it). Per-row publish failures keep their own
+                // tail (single-row count, push, continue).
+                let record_batch_failure = || -> Result<(), McpToolError> {
+                    failed.fetch_add(batch_len, std::sync::atomic::Ordering::Relaxed);
+                    failed_entity_refs
+                        .lock()
+                        .map_err(|_| McpToolError::internal("failed entity-ref lock poisoned"))?
+                        .extend(chunk_batch.iter().map(|chunk| chunk.0.clone()));
+                    Ok(())
+                };
+
                 let outcome = retry_with_backoff(
                     MAX_RETRIES,
                     "hkask.mcp.docproc.embed",
@@ -427,12 +443,7 @@ impl CorpusServer {
                             error = %e,
                             "Batch {batch_idx} failed after retries"
                         );
-                        failed.fetch_add(batch_len, std::sync::atomic::Ordering::Relaxed);
-                        failed_entity_refs
-                            .lock()
-                            .map_err(|_| McpToolError::internal("failed entity-ref lock poisoned"))?
-                            .extend(chunk_batch.iter().map(|chunk| chunk.0.clone()));
-                        return Ok(());
+                        return record_batch_failure();
                     }
                 };
 
@@ -447,12 +458,7 @@ impl CorpusServer {
                 let vectors = batch.vectors;
                 if let Err(error) = crate::index::validate_vectors(&vectors, batch_len) {
                     tracing::warn!(%error, "Invalid embedding batch response");
-                    failed.fetch_add(batch_len, std::sync::atomic::Ordering::Relaxed);
-                    failed_entity_refs
-                        .lock()
-                        .map_err(|_| McpToolError::internal("failed entity-ref lock poisoned"))?
-                        .extend(chunk_batch.iter().map(|chunk| chunk.0.clone()));
-                    return Ok(());
+                    return record_batch_failure();
                 }
 
                 for (c, vector) in chunk_batch.iter().zip(vectors.iter()) {
