@@ -103,11 +103,12 @@ The scan's counts, the approved-proposal count, the execution check and the post
 ### Phase 2 — Scan
 
 0. **Predict before scanning (calibration, P).** From the target's h_mem count and age profile alone, state the expected number of findings per class (contradiction, fragmentation, miscalibrated confidence, reification candidate) with one sentence of basis. Record them before the first query; Phase 6 reconciles them.
-1. Call `render_template` to render the scan template:
+1. **Inventory the memory architecture's own valves (before any maintenance proposal).** The memory system maintains itself; a session proposing manual maintenance must first reconcile the store's actual state against what the architecture is already doing — routine architecture behavior is not a finding (operator correction 2026-10-13). For curator memory, enumerate from the tree and live settings: the decay setting (`memory_life_days`, Settings → Kask → Memory — confidence decays with days since last recall, recall resets the clock), the distillation timer (compresses finished conversations into lessons, watermarks what it covered), the forgetting horizon (`forgetting_days`, default 7 days — deletes the covered conversation copies once the watermark ages past the horizon; rides the distillation timer), the manual prune valve (`curator_memory_prune` — the valve for residue the automatic chain can't reach), and the alarm layer (the memory-life and growth sensors). Reconcile the store's state against each valve (e.g., episodic-tier age span vs the forgetting horizon; row count vs the growth ceiling) and record the reconciliation. Any manual-maintenance proposal from this session names the valve it replicates or adjusts and the reason the automatic path hasn't already done the work.
+2. Call `render_template` to render the scan template:
    - template: `therapy/scan.j2`
    - variables: { "target": "<target name>", "target_type": "<curator|corpus|swarm>" }
 
-2. Following the template's guidance, scan the memory database for five categories of issues:
+3. Following the template's guidance, scan the memory database for five categories of issues:
 
    **a. Contradictions** — h_mems with the same entity+attribute but divergent values or confidence. Use `curator_memory_recall` (for curator) or `corpus_query` (for corpus) or `swarm_recall_local` (for swarm) to query by entity, then compare values. For curator memory, also use `curator_semantic_search` to find related entities that may contradict.
 
@@ -142,7 +143,7 @@ The scan's counts, the approved-proposal count, the execution check and the post
 
    Scan technique: prefer a complete read-only audit over sampling via recall tools — `sqlcipher "file:<db>?mode=ro" "PRAGMA key='<passphrase>'; ..."` against the live DB (WAL allows concurrent readers; the passphrase resolves via `HKASK_DB_PASSPHRASE`, default `allostery` on first run). Sampling through `curator_memory_recall`/`curator_semantic_search` misses systemic patterns and cannot see embedding-less entities at all. The MCP write tools remain the modification path. Direct SQL WRITES to `hmems` bypass the `value` column's JSON serialization — the 2026-09-01 session's bare-string values corrupted 4 rows and broke the first full-store scan (2026-09-04, surfaced by the backfill tool's dry run); if a SQL write is ever unavoidable, `json_quote` the value, and audit prior SQL-written rows with `json_valid(value)` before any full-store scan.
 
-3. Collect all findings as structured data. Each finding includes:
+4. Collect all findings as structured data. Each finding includes:
    - `id`: the finding's own identifier (F001-style) — Phase 3's `finding_id` references it.
    - `h_mem_id`: the ID of the problematic h_mem (or the cluster ID for reification candidates).
    - `entity`: the entity of the h_mem.
@@ -155,7 +156,7 @@ The scan's counts, the approved-proposal count, the execution check and the post
    - `source_h_mem_ids`: for reification candidates, the IDs of the memories that form the pattern.
    - `evidence`: the values/confidence/connectedness data that supports the finding. (Proposed resolutions are NOT finding fields — Phase 3 owns the proposal list.)
 
-4. Call `lisp_eval` to check the scan is non-trivial:
+5. Call `lisp_eval` to check the scan is non-trivial:
    - form: `(length findings)`
    - env: `{ "findings": <the scan output's findings array> }` — pass the findings array itself, not the whole scan output: an absent `findings` binding refuses with the engine's unbound-symbol error (a scan that produced no findings array is a broken scan, never a clean one), and an empty array legitimately reads 0.
    - If the result is 0, report "No issues found in {target}. Memory is clean." and exit.

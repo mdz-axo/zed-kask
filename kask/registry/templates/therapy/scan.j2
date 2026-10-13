@@ -18,7 +18,11 @@ You are scanning the {{ target_type }} memory database "{{ target }}" for therap
 
 ## Scan instructions
 
-Query the memory database and collect findings in five categories:
+First inventory the memory architecture's own valves (section 0) — the memory system maintains itself, and manual maintenance must be reconciled against what the architecture already does. Then query the memory database and collect findings in five categories:
+
+### 0. Architecture valve inventory (run before any maintenance proposal)
+
+The memory system maintains itself — reconcile the store's state against its built-in valves before interpreting anything as waste. For curator memory: the decay setting (`memory_life_days` — confidence decays with days since last recall; recall resets the clock), the distillation timer (compresses finished conversations into lessons, watermarks coverage), the forgetting horizon (`forgetting_days`, default 7 days — deletes covered conversation copies once the watermark ages past it; rides the distillation timer), the manual prune valve (`curator_memory_prune`), and the alarm sensors (memory-life, growth). Record each valve's setting and the store's corresponding state (e.g., episodic-tier age span vs the forgetting horizon; row count vs the growth ceiling). A maintenance finding must name the valve it replicates or adjusts and why the automatic path hasn't already done the work — routine architecture behavior is not a finding.
 
 ### 1. Contradictions
 

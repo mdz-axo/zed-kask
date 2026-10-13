@@ -60,3 +60,4 @@ review board and the kanban/curator tools.
 - Do not autonomously evaluate a skill from the session that ran it, accept a proposal without authority, or claim that a planned call succeeded.
 - Every verdict names the observation that could settle it. When that evidence is missing, investigate rather than mark Done.
 - A failed status/board/log/memory read remains an explicit visibility gap. The algedonic log approaching its cap triggers review, not deletion of the log.
+- A memory-maintenance finding proposed from this review names the memory-architecture valve it replicates or adjusts (decay setting, distillation cadence, forgetting horizon, manual prune valve, alarm sensors) and reconciles the store's state against that valve — routine architecture behavior is not a finding (operator correction 2026-10-13).
