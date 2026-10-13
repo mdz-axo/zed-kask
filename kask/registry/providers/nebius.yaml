@@ -39,6 +39,12 @@ data_terms:
     yes — AI Studio privacy policy (docs.studio.nebius.com/legal/privacy-policy,
     extracted 2026-10-13) §5: personal data retained "only for as long as it is
     necessary to fulfil the scopes described".
+  operator_ruling: >-
+    accept-as-is (operator ruling 2026-10-13): the AI Studio training clause
+    (speculative-decoding models, opt-out available) is scoped to AI Studio
+    inference; our consumption is the training cloud (NEBIUS_PROJECT_ID /
+    NEBIUS_SUBNET_ID), not AI Studio. Revisit if we consume AI Studio
+    inference or route sensitive data.
 status_surface:
   status_page: >-
     https://status.nebius.com live (HTTP 200, probed 2026-10-13).

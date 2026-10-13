@@ -32,6 +32,12 @@ data_terms:
     yes — privacy policy (tavily.com/privacy, extracted 2026-10-13) carries a
     Data Retention section: information retained as necessary to provide
     the Services and per the stated periods therein.
+  operator_ruling: >-
+    accept-as-is (operator ruling 2026-10-13): the §6 third-party training
+    clause is scoped to the AI Functionality; our consumption is the basic
+    search API, outside that section's definitions on the 2026-10-13 read.
+    Revisit if consumption expands to the AI Functionality or enters a
+    sensitive-data path.
 status_surface:
   status_page: >-
     https://status.tavily.com live (HTTP 200, probed 2026-10-13).
