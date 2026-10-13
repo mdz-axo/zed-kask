@@ -275,36 +275,12 @@ impl TrainingServer {
 #[cfg(test)]
 mod status_contract_tests {
     use crate::TrainingServer;
-    use crate::adapter::AdapterStore;
-    use crate::dataset::DatasetPipeline;
     use crate::providers::types::{PodStatus, TrainingJobStatus};
-    use crate::providers::{
-        HostProviderError, TrainingHarnessId, TrainingHost, TrainingHostId, TrainingJob,
-    };
+    use crate::providers::{HostProviderError, TrainingHost, TrainingJob};
     use crate::types::TrainStatusRequest;
-    use hkask_storage::database::driver::DatabaseDriver;
-    use hkask_storage::database::sqlite::SqliteDriver;
-    use hkask_types::ports::{InferenceError, InferencePort, InferenceResult};
-    use hkask_types::template::LLMParameters;
-    use hkask_types::{ChatToolDefinition, WebID};
+    use hkask_types::ports::InferenceError;
     use rmcp::handler::server::wrapper::Parameters;
-    use std::pin::Pin;
-    use std::sync::{Arc, Mutex};
-
-    /// No-op inference port — mirrors the smoke module's.
-    struct NoopInferencePort;
-
-    impl InferencePort for NoopInferencePort {
-        fn generate(
-            &self,
-            _prompt: &str,
-            _parameters: &LLMParameters,
-            _tools: Option<&[ChatToolDefinition]>,
-        ) -> Pin<Box<dyn Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>>
-        {
-            Box::pin(async { Err(InferenceError::NotConfigured("noop".into())) })
-        }
-    }
+    use std::sync::Arc;
 
     /// A host whose pod is up and Running — the D7 test fixture.
     struct RunningPodHost;
@@ -333,25 +309,12 @@ mod status_contract_tests {
     }
 
     fn server_with_running_host() -> TrainingServer {
-        let pool = SqliteDriver::in_memory_pool().expect("in-memory pool");
-        let driver: Arc<dyn DatabaseDriver> = Arc::new(SqliteDriver::new(pool));
-        let adapter_store = Arc::new(AdapterStore::from_driver(driver).expect("adapter store"));
-        let pipeline = Mutex::new(DatasetPipeline::new(
-            std::env::temp_dir().join("hkask-mcp-training-status-test"),
-        ));
-        let inference_port: Arc<dyn InferencePort> = Arc::new(NoopInferencePort);
-        TrainingServer::new(
-            WebID::new(),
-            None,
-            None,
+        crate::test_support::training_server_with(
             Box::new(RunningPodHost),
-            TrainingHostId::Runpod,
-            TrainingHarnessId::Axolotl,
-            pipeline,
-            adapter_store,
-            // job_store: none — the short-circuit fires before the store read.
-            None,
-            inference_port,
+            Arc::new(crate::test_support::NoopPort(
+                InferenceError::NotConfigured("noop".into()),
+            )),
+            "hkask-mcp-training-status-test",
         )
     }
 

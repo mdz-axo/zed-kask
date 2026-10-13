@@ -76,6 +76,9 @@ pub(crate) mod lora_validation;
 pub(crate) mod providers;
 pub(crate) mod types;
 
+#[cfg(test)]
+mod test_support;
+
 // Bridge crates: shared ontological vocabulary (P5.4 dual-axis framework)
 
 mod tools;
@@ -568,47 +571,15 @@ fn default_db_path_follows_standardized_layout() {
 #[cfg(test)]
 mod smoke {
     use crate::TrainingServer;
-    use crate::adapter::AdapterStore;
-    use crate::dataset::DatasetPipeline;
     use crate::providers::types::PodStatus;
-    use crate::providers::{
-        HostProviderError, TrainingHarnessId, TrainingHost, TrainingHostId, TrainingJob,
-        TrainingParams,
-    };
+    use crate::providers::{HostProviderError, TrainingHost, TrainingJob, TrainingParams};
     use crate::types::{TrainCancelRequest, TrainValidateConfigRequest};
-    use hkask_storage::database::driver::DatabaseDriver;
-    use hkask_storage::database::sqlite::SqliteDriver;
     use hkask_types::ports::{InferenceError, InferencePort, InferenceResult};
     use hkask_types::template::LLMParameters;
     use hkask_types::{ChatToolDefinition, WebID};
     use rmcp::handler::server::wrapper::Parameters;
     use std::pin::Pin;
     use std::sync::{Arc, Mutex};
-
-    /// No-op inference port — every call errors. Smoke tests only exercise
-    /// tools that never call inference; this just satisfies the struct field.
-    struct NoopInferencePort;
-
-    impl InferencePort for NoopInferencePort {
-        fn generate(
-            &self,
-            _prompt: &str,
-            _parameters: &LLMParameters,
-            _tools: Option<&[ChatToolDefinition]>,
-        ) -> Pin<
-            Box<
-                dyn std::future::Future<Output = Result<InferenceResult, InferenceError>>
-                    + Send
-                    + '_,
-            >,
-        > {
-            Box::pin(async {
-                Err(InferenceError::Connection(
-                    "noop inference port — not configured for smoke tests".into(),
-                ))
-            })
-        }
-    }
 
     /// Null training host — every call returns `NotConfigured`. The validate
     /// tool never calls the host; this only satisfies the struct field and
@@ -639,34 +610,15 @@ mod smoke {
         }
     }
 
-    /// Build a `TrainingServer` backed by an in-memory SQLite adapter store
-    /// and null ports — no credentials, no network, no on-disk state.
+    /// Build a `TrainingServer` backed by an in-memory adapter store and
+    /// null ports — no credentials, no network, no on-disk state.
     fn make_server() -> TrainingServer {
-        let pool = SqliteDriver::in_memory_pool()
-            .expect("in-memory sqlite pool must construct for smoke tests");
-        let driver: Arc<dyn DatabaseDriver> = Arc::new(SqliteDriver::new(pool));
-        let adapter_store = Arc::new(
-            AdapterStore::from_driver(driver)
-                .expect("AdapterStore::from_driver must succeed against a fresh in-memory pool"),
-        );
-        let pipeline = Mutex::new(DatasetPipeline::new(
-            std::env::temp_dir().join("hkask-mcp-training-smoke-cache"),
-        ));
-        let inference_port: Arc<dyn InferencePort> = Arc::new(NoopInferencePort);
-        TrainingServer::new(
-            WebID::new(),
-            // store: no MemoryStore — validate_config never reads it.
-            None,
-            // db_passphrase: no encrypted DB — validate_config never reads it.
-            None,
+        crate::test_support::training_server_with(
             Box::new(NullTrainingHost),
-            TrainingHostId::Runpod,
-            TrainingHarnessId::Axolotl,
-            pipeline,
-            adapter_store,
-            // job_store: no persistent job table — validate_config never reads it.
-            None,
-            inference_port,
+            Arc::new(crate::test_support::NoopPort(InferenceError::Connection(
+                "noop inference port — not configured for smoke tests".into(),
+            ))),
+            "hkask-mcp-training-smoke-cache",
         )
     }
 
