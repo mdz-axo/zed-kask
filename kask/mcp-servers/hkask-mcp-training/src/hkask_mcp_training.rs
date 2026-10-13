@@ -39,14 +39,15 @@
 //! Architecture:
 //!   Dataset file → DatasetPipeline → normalized ChatML → TrainingJob → TrainingHost → TrainedLoRAAdapter
 //!
-//! Host selection: Runpod is the only cloud host. Harness default is Axolotl;
+//! Host selection: two cloud hosts, Runpod and Nebius (`training.host` in
+//! settings.json, injected as `HKASK_TRAINING_HOST`; empty auto-detects
+//! from configured API keys). Harness default is Axolotl;
 //! per-job harness selection via `TrainingParams.harness` (operator-accepted
 //! from the lora-training skill's G6 gate) is honored at submit time.
 //! Retained harnesses are declarative YAML: Axolotl supports SFT; Ludwig
 //! supports SFT/DPO/KTO/ORPO/GRPO.
-//! Routed through the shared `hkask-services` config init. Host pluggability
-//! is via the `TrainingHost` trait, isolating the MCP surface from
-//! framework-specific details.
+//! Host pluggability is via the `TrainingHost` trait, isolating the MCP
+//! surface from framework-specific details.
 //!
 //! lora-training skill integration:
 //!   `training_validate_config` is the runtime enforcement point for the

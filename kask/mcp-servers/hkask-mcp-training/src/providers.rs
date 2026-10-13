@@ -8,9 +8,11 @@
 //! Architecture (cloud-only — no local training):
 //!   TrainingHostConfig × HarnessAdapter → cloud Host → TrainingJob
 //!
-//! Provider selection is driven by `training.harness` in settings.json,
-//! routed through `hkask-services` shared config init. The host is fixed
-//! to Runpod (cloud-only, single host).
+//! Host selection is driven by `training.host` in settings.json
+//! ("runpod" | "nebius"; empty auto-detects from configured API keys),
+//! injected as `HKASK_TRAINING_HOST` by the kask bridge's MCP env
+//! composition. Two cloud hosts are supported: Runpod and Nebius
+//! (`create_host`).
 
 pub(crate) mod harness;
 pub(crate) mod nebius;
