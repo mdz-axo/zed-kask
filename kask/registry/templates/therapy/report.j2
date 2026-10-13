@@ -1,5 +1,5 @@
 {# goal: Guide the report phase. #}
-{# Variables: target (string), findings (list), proposals (list), executions (list) #}
+{# Variables: target (string), findings (list), proposals (list, each with its approved flag), executions (list, each with its success flag) #}
 {# Output: a therapy session report #}
 [inference]
 contract:
@@ -16,8 +16,13 @@ contract:
 
 You are producing the therapy session report for "{{ target }}".
 
+{% set approved_proposals = proposals | selectattr("approved", "equalto", true) | list %}
+{% set contradiction_ids = findings | selectattr("issue_type", "equalto", "contradiction") | map(attribute="id") | list %}
+{% set fragmentation_ids = findings | selectattr("issue_type", "equalto", "fragmentation") | map(attribute="id") | list %}
+{% set confidence_ids = findings | selectattr("issue_type", "equalto", "miscalibrated_confidence") | map(attribute="id") | list %}
+
 {% if proposals %}
-## Approved Proposals
+## Proposals
 
 {{ proposals | tojson }}
 
@@ -34,27 +39,28 @@ You are producing the therapy session report for "{{ target }}".
 ### Memory hygiene summary (forgetting — not learning)
 
 - Contradictions found: {{ findings | selectattr("issue_type", "equalto", "contradiction") | list | length }}
-- Contradictions resolved: <count of approved + executed contradiction proposals>
+- Contradictions resolved: {{ approved_proposals | selectattr("finding_id", "in", contradiction_ids) | list | length }}
 - Fragmented memories found: {{ findings | selectattr("issue_type", "equalto", "fragmentation") | list | length }}
-- Fragmented memories resolved: <count>
+- Fragmented memories resolved: {{ approved_proposals | selectattr("finding_id", "in", fragmentation_ids) | list | length }}
 - Miscalibrated confidence found: {{ findings | selectattr("issue_type", "equalto", "miscalibrated_confidence") | list | length }}
-- Confidence recalibrated: <count>
-- Source memories purged (post-reification): <count>
-- Source memories condensed (post-reification): <count>
+- Confidence recalibrated: {{ approved_proposals | selectattr("finding_id", "in", confidence_ids) | list | length }}
+- Source memories purged (post-reification): {{ approved_proposals | selectattr("strategy", "equalto", "purge") | list | length }}
+- Source memories condensed (post-reification): {{ approved_proposals | selectattr("strategy", "equalto", "condense") | list | length }}
+- Executions succeeded: {{ executions | selectattr("success", "equalto", true) | list | length }} of {{ executions | list | length }}
 
 ### Reification summary (learning — closes the learning loop)
 
 - Reification candidates found: {{ findings | selectattr("issue_type", "equalto", "reification_candidate") | list | length }}
-- Skills created: <count>
-- Templates created: <count>
-- Rules created: <count>
+- Skills created: {{ approved_proposals | selectattr("strategy", "equalto", "create_skill") | list | length }}
+- Templates created: {{ approved_proposals | selectattr("strategy", "equalto", "create_template") | list | length }}
+- Rules created: {{ approved_proposals | selectattr("strategy", "equalto", "create_rule") | list | length }}
 
 ### Values alignment summary (when the values pass ran)
 
 - Charter version reviewed: <version>
 - Values practiced / thin / conflicted: <counts per value>
 - Conflicts found: {{ findings | selectattr("issue_type", "equalto", "charter_alignment") | list | length }} (each with lesson + value citations)
-- Practice gaps carded: <count>
+- Practice gaps carded: {{ approved_proposals | selectattr("strategy", "equalto", "record_practice_gap") | list | length }}
 
 ### Per-issue detail
 

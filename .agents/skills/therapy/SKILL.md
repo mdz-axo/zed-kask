@@ -301,10 +301,10 @@ the operator approved only partial merges is expected, not a failure.
    The gap is the session's calibration signal about this memory store, carried into the report's hygiene summary.
 1. Call `render_template` to render the report template:
    - template: `therapy/report.j2`
-   - variables: { "target": "<target name>", "findings": <scan findings>, "proposals": <approved proposals>, "executions": <execution results> }
+   - variables: { "target": "<target name>", "findings": <scan findings>, "proposals": <all proposals, each with its Phase-4 approved flag>, "executions": <execution results, each with its success flag> }
 
 2. Following the template's guidance, produce a therapy session report:
-   - **Memory hygiene summary**: how many contradictions resolved, how many fragmented memories merged/linked, how many confidence values recalibrated.
+   - **Memory hygiene summary**: how many contradictions resolved, how many fragmented memories merged/linked, how many confidence values recalibrated — every count over the render variables is computed by the template (approved proposals joined to finding classes; executions by success); compose prose around the rendered numbers, never re-type a count.
    - **Reification summary**: how many skills/templates/rules created, how many source memories purged or condensed, the cognitive load shed (estimated reduction in memory database size or retrieval noise).
    - **Values alignment summary** (when the values pass ran): values practiced / thin / conflicted, conflicts found with their lesson + value citations, practice gaps carded, and the charter version reviewed.
    - **Per-issue detail**: what was found, what was proposed, what was approved, what was executed, what was the outcome.
