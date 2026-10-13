@@ -143,7 +143,7 @@ one-to-one onto the three tiers:
 
 | zed-kask layer | Nervous-system tier | Why |
 | --- | --- | --- |
-| **Layer A — autonomous regulation** (fast, deterministic, in-code: retries, degradation surfacing, backpressure, self-healing) | Reflexive + autonomic | Fixed-in-code arcs with stored references (set points) and local, bounded responses; the regulation loop is homeostatic by construction (`hkask-regulation/src/set_points.rs:439`; `loops/signals.rs:332-343` — `Deviation` is the stored-expectation delta) |
+| **Layer A — autonomous regulation** (fast, deterministic, in-code: retries, degradation surfacing, backpressure, self-healing) | Reflexive + autonomic | Fixed-in-code arcs with stored references (set points) and local, bounded responses; the regulation loop is homeostatic by construction (`hkask-regulation/src/set_points.rs:396`; `loops/signals.rs:248-259` — `Deviation` is the stored-expectation delta) |
 | **Layer B — in-thread sensing** (conscious, in-process; surfaced to agent/human inside the active thread) | Sensorimotor | The agent's turn is a sensorimotor loop: act (tool call), observe (result), adjust — within one ongoing interaction; the TBP's repeating sensorimotor unit (Clay et al. 2024) |
 | **Layer C — periodic reflection** (curator + human reviewing logs and curator memory via therapy / algedonic-review) | Deliberative | Slow, model-revising; its output is a changed model (memories, set points, skill verdicts) that changes what A and B expect next |
 

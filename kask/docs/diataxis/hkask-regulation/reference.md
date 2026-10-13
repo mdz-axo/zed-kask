@@ -196,9 +196,9 @@ extractor separation associated here with Fermi's measurement practice.[^fermi]
 | `Sensor` trait | `kask/crates/hkask-regulation/src/sensor_provider.rs:27-35` |
 | `SensorBus` registry | `kask/crates/hkask-regulation/src/sensor_provider.rs:45-80` |
 | `SignalMetric` | `kask/crates/hkask-regulation/src/loops/signals.rs:14-112` |
-| `Signal` and `Deviation` | `kask/crates/hkask-regulation/src/loops/signals.rs:279-386` |
+| `Signal` and `Deviation` | `kask/crates/hkask-regulation/src/loops/signals.rs:189-288` |
 | `RegulationPolicy` | `kask/crates/hkask-regulation/src/regulation_policy.rs:90-102` |
-| `SetPoints` | `kask/crates/hkask-regulation/src/set_points.rs:110-459` |
+| `SetPoints` | `kask/crates/hkask-regulation/src/set_points.rs:110-398` |
 | Sensor wiring | `kask/crates/hkask-regulation/src/cybernetics_loop.rs:290-337` |
 | Central dispositions | `kask/crates/hkask-regulation/src/loops/actions.rs:143-160` |
 
@@ -218,7 +218,7 @@ flowchart TD
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-REG-002
 verified_date: 2026-09-28
-verified_against: kask/crates/hkask-regulation/src/sensor_provider.rs:27-80; kask/crates/hkask-regulation/src/cybernetics_loop.rs:290-337; kask/crates/hkask-regulation/src/loops/signals.rs:14-112,279-386; kask/crates/hkask-regulation/src/regulation_policy.rs:90-102; kask/crates/hkask-regulation/src/loops/actions.rs:143-160; kask/crates/hkask-regulation/src/set_points.rs:110-459
+verified_against: kask/crates/hkask-regulation/src/sensor_provider.rs:27-80; kask/crates/hkask-regulation/src/cybernetics_loop.rs:290-337; kask/crates/hkask-regulation/src/loops/signals.rs:14-112,189-288; kask/crates/hkask-regulation/src/regulation_policy.rs:90-102; kask/crates/hkask-regulation/src/loops/actions.rs:143-160; kask/crates/hkask-regulation/src/set_points.rs:110-398
 status: VERIFIED
 -->
 
@@ -260,7 +260,7 @@ Implement `Sensor` in `kask/crates/hkask-regulation/src/sensor_provider.rs`.
 Return healthy and degraded current observations; return `None` only when no
 current observation is available. Healthy readings are required so durable
 conditions can later be reconciled as recovered. `Signal::new` stamps the
-observation time (`kask/crates/hkask-regulation/src/loops/signals.rs:319-330`).
+observation time (`kask/crates/hkask-regulation/src/loops/signals.rs:235-246`).
 
 For a source exposing several independent conditions, use one sensor identity per
 metric so one deficit cannot hide another metric's recovery.
