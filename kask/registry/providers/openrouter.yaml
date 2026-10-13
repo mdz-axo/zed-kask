@@ -28,7 +28,7 @@ consumed_capabilities:
     source: DIVERGENCE.md D24
 deliberate_non_consumption: []
 data_terms:
-  # # B3 retention anchor: dpv:StorageDuration (DPV 2.3, vendored at kask/crates/hkask-bridge-ontology/sources/dpv/, commit 79311a6664)
+  # B3 retention anchor: dpv:StorageDuration (DPV 2.3, vendored at kask/crates/hkask-bridge-ontology/sources/dpv/, commit 79311a6664)
   extracted_at: "2026-10-13"
   trains_on_customer_data: >-
     no (OpenRouter itself) — privacy policy (openrouter.ai/privacy, last

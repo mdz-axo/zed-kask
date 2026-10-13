@@ -26,7 +26,7 @@ config_env:  # from kask/crates/kask_bridge/src/mcp_servers.rs (training server 
   - NEBIUS_CLI_PATH
 deliberate_non_consumption: []
 data_terms:
-  # # B3 retention anchor: dpv:StorageDuration (DPV 2.3, vendored at kask/crates/hkask-bridge-ontology/sources/dpv/, commit 79311a6664)
+  # B3 retention anchor: dpv:StorageDuration (DPV 2.3, vendored at kask/crates/hkask-bridge-ontology/sources/dpv/, commit 79311a6664)
   extracted_at: "2026-10-13"
   trains_on_customer_data: >-
     yes, scoped and opt-out — Nebius AI Studio Terms of Service (read

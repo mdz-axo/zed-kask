@@ -27,7 +27,7 @@ known_failure_modes:
   - model ids are nested (anthropic/claude-sonnet-4.5) — resolve by exact id
     after the first-slash split
 data_terms:
-  # # B3 retention anchor: dpv:StorageDuration (DPV 2.3, vendored at kask/crates/hkask-bridge-ontology/sources/dpv/, commit 79311a6664)
+  # B3 retention anchor: dpv:StorageDuration (DPV 2.3, vendored at kask/crates/hkask-bridge-ontology/sources/dpv/, commit 79311a6664)
   extracted_at: "2026-10-13"
   trains_on_customer_data: >-
     license-to-improve — Terms of Service §7.A (kilo.ai/terms, last
@@ -43,6 +43,11 @@ data_terms:
     yes — privacy policy (kilo.ai/privacy, extracted 2026-10-13): "Data Retention
     & Deletion: We retain this data as long as your Kilo Code account is
     active."
+  operator_ruling: >-
+    accept-as-is (operator ruling 2026-10-13): the license-to-improve
+    posture is accepted for current traffic — coding/chat workloads, no
+    private or personal data. Revisit if KiloCode enters a sensitive-data
+    path.
 status_surface:
   status_page: >-
     none found — status.kilo.ai unreachable and kilo.ai/status 404

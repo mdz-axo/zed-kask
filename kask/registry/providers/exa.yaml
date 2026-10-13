@@ -17,7 +17,7 @@ consumed_capabilities:
     source: kask/crates/kask_bridge/src/mcp_servers.rs (companies server credentials)
 deliberate_non_consumption: []
 data_terms:
-  # # B3 retention anchor: dpv:StorageDuration (DPV 2.3, vendored at kask/crates/hkask-bridge-ontology/sources/dpv/, commit 79311a6664)
+  # B3 retention anchor: dpv:StorageDuration (DPV 2.3, vendored at kask/crates/hkask-bridge-ontology/sources/dpv/, commit 79311a6664)
   extracted_at: "2026-10-13"
   trains_on_customer_data: >-
     yes — training-permissive. Terms (exa.ai/terms, extracted 2026-10-13) §1.2(c)
@@ -30,6 +30,11 @@ data_terms:
   retention_published: >-
     no explicit retention-duration clause found in the terms or privacy
     pages read 2026-10-13 — evidence gap on duration.
+  operator_ruling: >-
+    accept-as-is (operator ruling 2026-10-13): the training-permissive
+    posture is accepted for current traffic — search queries and research
+    content, no private or personal data. Revisit if Exa enters a
+    sensitive-data path.
 status_surface:
   status_page: >-
     https://status.exa.ai live (HTTP 200, probed 2026-10-13).

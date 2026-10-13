@@ -30,7 +30,7 @@ deliberate_non_consumption:
       endpoint carries its own https://api.runpod.io/v2/{endpoint_id}/openai/v1
       (kask/crates/kask_bridge/src/inference_providers.rs, serves_embeddings=false)"
 data_terms:
-  # # B3 retention anchor: dpv:StorageDuration (DPV 2.3, vendored at kask/crates/hkask-bridge-ontology/sources/dpv/, commit 79311a6664)
+  # B3 retention anchor: dpv:StorageDuration (DPV 2.3, vendored at kask/crates/hkask-bridge-ontology/sources/dpv/, commit 79311a6664)
   extracted_at: "2026-10-13"
   trains_on_customer_data: >-
     no training clause found in the privacy policy read
