@@ -471,19 +471,19 @@ impl KanbanService {
         Ok(task)
     }
 
-    /// Count tasks in a given status on a board (for WIP enforcement).
-    fn count_tasks_in_status(
-        &self,
-        board_id: BoardId,
-        status: TaskStatus,
-    ) -> Result<usize, KanbanError> {
+    /// Walk a board's task index and parse every indexed task row — the
+    /// shared spine of the per-board task reads (the WIP count and the
+    /// list). The board's existence check stays per-caller (the list tool
+    /// verifies it; the internal count runs on a board the caller already
+    /// verified); a row that fails to parse is skipped (both reads'
+    /// behavior).
+    fn board_tasks(&self, board_id: BoardId) -> Result<Vec<Task>, KanbanError> {
         let index_entity = format!("{BOARD_TASKS_PREFIX}{board_id}");
         let index_triples = self
             .store
             .query_by_entity(&index_entity)
             .map_err(|e| KanbanError::Internal(format!("index query failed: {e}")))?;
-
-        let mut count = 0usize;
+        let mut tasks = Vec::new();
         for idx_t in &index_triples {
             if let Some(task_id_str) = idx_t.value.as_str() {
                 let task_triples = self
@@ -491,15 +491,26 @@ impl KanbanService {
                     .query_by_entity_attribute(TASK_ENTITY, task_id_str)
                     .map_err(|e| KanbanError::Internal(format!("task query failed: {e}")))?;
                 for t in &task_triples {
-                    if let Ok(task) = serde_json::from_value::<Task>(t.value.clone())
-                        && task.status == status
-                    {
-                        count += 1;
+                    if let Ok(task) = serde_json::from_value::<Task>(t.value.clone()) {
+                        tasks.push(task);
                     }
                 }
             }
         }
-        Ok(count)
+        Ok(tasks)
+    }
+
+    /// Count tasks in a given status on a board (for WIP enforcement).
+    fn count_tasks_in_status(
+        &self,
+        board_id: BoardId,
+        status: TaskStatus,
+    ) -> Result<usize, KanbanError> {
+        Ok(self
+            .board_tasks(board_id)?
+            .iter()
+            .filter(|task| task.status == status)
+            .count())
     }
 
     /// List tasks on a board, optionally filtered.
@@ -520,37 +531,15 @@ impl KanbanService {
             })
         })?;
 
-        let index_entity = format!("{BOARD_TASKS_PREFIX}{board_id}");
-
-        // Get task IDs from the index
-        let index_triples = self
-            .store
-            .query_by_entity(&index_entity)
-            .map_err(|e| KanbanError::Internal(format!("index query failed: {e}")))?;
-
-        let mut tasks: Vec<Task> = Vec::new();
-        for idx_t in &index_triples {
-            if let Some(task_id_str) = idx_t.value.as_str() {
-                let task_triples = self
-                    .store
-                    .query_by_entity_attribute(TASK_ENTITY, task_id_str)
-                    .map_err(|e| KanbanError::Internal(format!("task query failed: {e}")))?;
-
-                for t in &task_triples {
-                    if let Ok(task) = serde_json::from_value::<Task>(t.value.clone()) {
-                        let status_match = filter.status.is_none_or(|s| task.status == s);
-                        let assignee_match =
-                            filter.assignee.is_none_or(|a| task.assignee == Some(a));
-                        let priority_match =
-                            filter.priority.is_none_or(|p| task.priority == Some(p));
-
-                        if status_match && assignee_match && priority_match {
-                            tasks.push(task);
-                        }
-                    }
-                }
-            }
-        }
+        let mut tasks: Vec<Task> = self
+            .board_tasks(board_id)?
+            .into_iter()
+            .filter(|task| {
+                filter.status.is_none_or(|s| task.status == s)
+                    && filter.assignee.is_none_or(|a| task.assignee == Some(a))
+                    && filter.priority.is_none_or(|p| task.priority == Some(p))
+            })
+            .collect();
 
         tasks.sort_by_key(|b| std::cmp::Reverse(b.created_at));
         if let Some(limit) = filter.limit {
