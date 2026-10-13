@@ -505,12 +505,44 @@ mod tests {
         Ok(())
     }
 
-    /// expect: "New relative outputs work without weakening path containment" [P4]
-    #[test]
+    /// Run this test's child branch in an isolated subprocess — the shared
+    /// parent tail of the env-sensitive containment tests: a fresh tempdir
+    /// with the caller's subdirectories, the current executable re-invoked
+    /// with `--exact <test_name>` from `work/`, the child marker env var
+    /// set, and the data/artifacts roots redirected into the tempdir. The
+    /// child branch's assertions are each test's own; the harness asserts
+    /// the child exited 0, surfacing its output on failure.
     #[allow(
         clippy::disallowed_methods,
         reason = "isolated synchronous test subprocess; never runs on GPUI"
     )]
+    fn run_child_exact(
+        child_env: &'static str,
+        test_name: &str,
+        dirs: &[&str],
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        for name in dirs {
+            std::fs::create_dir(directory.path().join(name))?;
+        }
+        let output = std::process::Command::new(std::env::current_exe()?)
+            .args(["--exact", test_name])
+            .current_dir(directory.path().join("work"))
+            .env(child_env, "1")
+            .env("HKASK_DATA_DIR", directory.path().join("data"))
+            .env("HKASK_ARTIFACTS_DIR", directory.path().join("artifacts"))
+            .output()?;
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(())
+    }
+
+    /// expect: "New relative outputs work without weakening path containment" [P4]
+    #[test]
     fn relative_write_paths_preserve_containment() -> Result<(), Box<dyn std::error::Error>> {
         const CHILD: &str = "HKASK_RELATIVE_WRITE_TEST_CHILD";
         if std::env::var_os(CHILD).is_some() {
@@ -545,27 +577,11 @@ mod tests {
             return Ok(());
         }
         // Only the child changes CWD/env; other tests retain their process state.
-        let directory = tempfile::tempdir()?;
-        for name in ["work", "outside", "data", "artifacts"] {
-            std::fs::create_dir(directory.path().join(name))?;
-        }
-        let output = std::process::Command::new(std::env::current_exe()?)
-            .args([
-                "--exact",
-                "server::validation::tests::relative_write_paths_preserve_containment",
-            ])
-            .current_dir(directory.path().join("work"))
-            .env(CHILD, "1")
-            .env("HKASK_DATA_DIR", directory.path().join("data"))
-            .env("HKASK_ARTIFACTS_DIR", directory.path().join("artifacts"))
-            .output()?;
-        assert!(
-            output.status.success(),
-            "{}\n{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-        Ok(())
+        run_child_exact(
+            CHILD,
+            "server::validation::tests::relative_write_paths_preserve_containment",
+            &["work", "outside", "data", "artifacts"],
+        )
     }
 
     /// A server may write only inside its own `{server}-mcp/` folder of the
@@ -573,10 +589,6 @@ mod tests {
     /// are rejected, while reads across the whole tree stay allowed
     /// (standardized-artifact-storage §0, operator ruling 2026-09-24).
     #[test]
-    #[allow(
-        clippy::disallowed_methods,
-        reason = "isolated synchronous test subprocess; never runs on GPUI"
-    )]
     fn artifact_writes_are_confined_to_the_owning_server() -> Result<(), Box<dyn std::error::Error>>
     {
         const CHILD: &str = "HKASK_ARTIFACT_OWNER_TEST_CHILD";
@@ -609,27 +621,11 @@ mod tests {
             );
             return Ok(());
         }
-        let directory = tempfile::tempdir()?;
-        for name in ["work", "data", "artifacts"] {
-            std::fs::create_dir(directory.path().join(name))?;
-        }
-        let output = std::process::Command::new(std::env::current_exe()?)
-            .args([
-                "--exact",
-                "server::validation::tests::artifact_writes_are_confined_to_the_owning_server",
-            ])
-            .current_dir(directory.path().join("work"))
-            .env(CHILD, "1")
-            .env("HKASK_DATA_DIR", directory.path().join("data"))
-            .env("HKASK_ARTIFACTS_DIR", directory.path().join("artifacts"))
-            .output()?;
-        assert!(
-            output.status.success(),
-            "{}\n{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-        Ok(())
+        run_child_exact(
+            CHILD,
+            "server::validation::tests::artifact_writes_are_confined_to_the_owning_server",
+            &["work", "data", "artifacts"],
+        )
     }
 
     /// The containment must accept paths under the CWD (the project root
