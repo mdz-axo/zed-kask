@@ -70,13 +70,13 @@ struct Posting {
 
 /// A lexical-leg hit: the row index and its BM25 score.
 #[derive(Debug)]
-pub struct LexicalHit {
+pub(crate) struct LexicalHit {
     pub row: u32,
     pub score: f64,
 }
 
 /// The rare-term inverted index over one sealed source.
-pub struct LexicalIndex {
+pub(crate) struct LexicalIndex {
     row_ids: Vec<String>,
     id_to_row: HashMap<String, u32>,
     /// Filename (document-identity) postings — never pruned, so a
@@ -203,7 +203,7 @@ impl LexicalIndex {
         hits
     }
 
-    pub fn row_by_id(&self, id: &str) -> Option<u32> {
+    pub(crate) fn row_by_id(&self, id: &str) -> Option<u32> {
         self.id_to_row.get(id).copied()
     }
 
@@ -211,7 +211,7 @@ impl LexicalIndex {
         self.row_ids.get(row as usize).map(String::as_str)
     }
 
-    pub fn is_metadata(&self, row: u32) -> bool {
+    pub(crate) fn is_metadata(&self, row: u32) -> bool {
         self.metadata_rows.contains(&row)
     }
 

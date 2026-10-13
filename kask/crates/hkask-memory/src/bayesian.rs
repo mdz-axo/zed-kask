@@ -45,7 +45,7 @@ pub(crate) fn days_since(dt: DateTime<Utc>) -> f64 {
 ///
 /// Based on Wozniak & Gorzelanczyk (1995): R(t) = exp(-t/S) where S is
 /// memory life in days.
-pub const DEFAULT_MEMORY_LIFE_DAYS: f64 = 90.0;
+pub(crate) const DEFAULT_MEMORY_LIFE_DAYS: f64 = 90.0;
 
 // ── Bayesian evidence pooling (log-odds) ───────────────────────────────────
 

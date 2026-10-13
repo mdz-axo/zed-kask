@@ -1167,7 +1167,7 @@ fn sorted_json(value: &serde_json::Value) -> serde_json::Value {
 /// compute seals through the same code the verifier checks against — a
 /// hand-copied canonicalizer in a test can drift and still pass, sealing
 /// against a stale algorithm.
-pub fn sealed_run_id(identity: &serde_json::Value) -> Result<String, serde_json::Error> {
+pub(crate) fn sealed_run_id(identity: &serde_json::Value) -> Result<String, serde_json::Error> {
     let mut canonical = serde_json::to_vec(&sorted_json(identity))?;
     canonical.push(b'\n');
     Ok(format!("{:x}", Sha256::digest(&canonical)))

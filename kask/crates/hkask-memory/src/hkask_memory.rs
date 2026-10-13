@@ -33,14 +33,13 @@ pub mod text_chunking; // Pure chunking helpers (no store access)
 pub use consolidation_service::MemoryConsolidator;
 pub use federated_recall::{
     BundleAsset, BundleManifest, ExternalPassageBatch, ExternalPassageHit, FederatedHit,
-    FederatedRecallError, FederatedSourceIdentity, FederatedSourceKind, FederatedSourceSpec,
-    FederatedSourcesManifest, MaterializationReceipt, MaterializedProvenance, RankedSourceBatch,
-    ReadOnlyPassageSource, interleave_ranked_batches,
+    FederatedRecallError, FederatedSourceKind, FederatedSourceSpec, FederatedSourcesManifest,
+    MaterializationReceipt, MaterializedProvenance, RankedSourceBatch, ReadOnlyPassageSource,
+    interleave_ranked_batches,
 };
 
 pub use memory_store::{
-    DedupOutcome, MemoryStore, MemoryStoreError, PruneOutcome, is_canonical_entity_key,
-    semantic_passage_for_h_mem,
+    MemoryStore, MemoryStoreError, is_canonical_entity_key, semantic_passage_for_h_mem,
 };
 pub use text_chunking::{chunk_text, strip_gutenberg_headers};
 
