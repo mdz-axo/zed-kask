@@ -1,6 +1,6 @@
 //! Approved slice3: public-tool identity and failure accounting, with no live services.
 use super::*;
-use hkask_types::{ChatToolDefinition, InferenceError, InferencePort, InferenceResult, WebID};
+use hkask_types::{ChatToolDefinition, InferenceError, InferencePort, InferenceResult};
 use serde_json::Value;
 use std::future::Future;
 use std::pin::Pin;
@@ -44,10 +44,7 @@ impl InferencePort for MockPort {
 }
 
 fn server(port: Arc<MockPort>) -> CorpusServer {
-    crate::helpers::seed_test_passphrase();
-    let port: Arc<dyn InferencePort> = port;
-    let ocr = Arc::new(crate::ocr::llm_ocr::LlmOcrExecutor::new(Arc::clone(&port)));
-    CorpusServer::new(WebID::new(), None, port, Default::default(), ocr)
+    crate::helpers::corpus_test_server(port)
 }
 
 fn tags(correlation_id: &str) -> Value {

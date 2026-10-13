@@ -190,10 +190,7 @@ fn ensure_offline_embedding_model_env() {
 
 fn server<T: InferencePort + 'static>(port: Arc<T>) -> CorpusServer {
     ensure_offline_embedding_model_env();
-    crate::helpers::seed_test_passphrase();
-    let port: Arc<dyn InferencePort> = port;
-    let ocr = Arc::new(crate::ocr::llm_ocr::LlmOcrExecutor::new(Arc::clone(&port)));
-    CorpusServer::new(WebID::new(), None, port, Default::default(), ocr)
+    crate::helpers::corpus_test_server(port)
 }
 
 fn fixture() -> tempfile::TempDir {
