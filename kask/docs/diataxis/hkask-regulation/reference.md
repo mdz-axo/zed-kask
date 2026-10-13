@@ -27,7 +27,7 @@ The crate root declares the current inventory at
 | `dampener` | directive deduplication and stagnation detection | `kask/crates/hkask-regulation/src/dampener.rs:100-110,231-263` |
 | `energy` | per-agent governed-call caps | `kask/crates/hkask-regulation/src/energy.rs:26-134` |
 | `inference_resilience` | typed snapshots, receipts, and observation source | `kask/crates/hkask-regulation/src/inference_resilience.rs:8-80` |
-| `metacognition` | health observation of the regulator itself | `kask/crates/hkask-regulation/src/metacognition.rs:167-260,410-447` |
+| `metacognition` | health observation of the regulator itself | `kask/crates/hkask-regulation/src/metacognition.rs:78-171,321-358` |
 | `regulation_policy` | metric-to-disposition rules | `kask/crates/hkask-regulation/src/regulation_policy.rs:18-102` |
 | `set_points` | defaults, configuration, loading, and validation | `kask/crates/hkask-regulation/src/set_points.rs:10-114,182-253,315-459` |
 | `loops` | shared loop, signal, deviation, and action types | `kask/crates/hkask-regulation/src/loops.rs:9-18` |
@@ -101,7 +101,7 @@ classDiagram
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-REG-003
 verified_date: 2026-09-28
-verified_against: kask/crates/hkask-regulation/src/cybernetics_loop.rs:197-202,566-664,780-850; kask/crates/hkask-regulation/src/runtime.rs:509-617; kask/crates/hkask-regulation/src/sensor_provider.rs:45-80; kask/crates/hkask-regulation/src/energy.rs:131-230; kask/crates/hkask-regulation/src/inference_resilience.rs:68-80; kask/crates/hkask-regulation/src/metacognition.rs:260-447; kask/crates/hkask-regulation/src/algedonic.rs:97-119
+verified_against: kask/crates/hkask-regulation/src/cybernetics_loop.rs:197-202,566-664,780-850; kask/crates/hkask-regulation/src/runtime.rs:509-617; kask/crates/hkask-regulation/src/sensor_provider.rs:45-80; kask/crates/hkask-regulation/src/energy.rs:131-230; kask/crates/hkask-regulation/src/inference_resilience.rs:68-80; kask/crates/hkask-regulation/src/metacognition.rs:171-358; kask/crates/hkask-regulation/src/algedonic.rs:97-119
 status: VERIFIED
 -->
 
