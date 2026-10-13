@@ -95,7 +95,7 @@ findings → re-assess → re-design → re-challenge.
 ### idiomatic-rust-design
 
 1. **Run `get_code_actions`** on the target code (in Zed sessions). Rust-analyzer's refactor suggestions are compiler-verified starting points.
-2. Design types that make wrong usage impossible by replacing `String` with validating newtypes, `bool` with two-variant enums, `Vec<T>` with non-empty types, raw integers with unit-aware newtypes, and invalid `Option<T>` with non-nullable types. Evaluate and extend the compiler's suggestions against the design goals.
+2. Design types that make wrong usage impossible by replacing `String` with validating newtypes, `bool` with two-variant enums, `Vec<T>` with non-empty types, raw integers with unit-aware newtypes, and invalid `Option<T>` with non-nullable types. Where a plain replacement type is not enough, extend the same move with the deeper pattern menu (absorbed from actionbook/rust-skills `m05-type-driven`): typestate — state machines as type parameters so invalid transitions do not compile (`Connection<Disconnected>` consumed to produce `Connection<Connected>`); sealed traits — a closed implementor set without closing use (`mod private { pub trait Sealed {} }`); marker traits — compile-time capability flags (`trait Validated {}`); `PhantomData<T>` — type-level relationships at zero runtime cost; ZST markers — unit structs as compile-time tags (`struct Invariant;`). Evaluate and extend the compiler's suggestions against the design goals.
 3. Map the ownership DAG for each value, explicitly choosing single owners, shared immutable access, shared mutable access, or borrowed access.
 4. Ensure every fallible function returns `Result<T, E>`, using `thiserror` for libraries and `anyhow` for applications, avoiding `unwrap()` in library code, and documenting all panics.
 5. Design traits that define capabilities rather than taxonomies, preferring many small traits, using `impl Trait` in return positions, deriving common traits, and implementing `From<T>` for conversions.
@@ -112,6 +112,17 @@ findings → re-assess → re-design → re-challenge.
 6. Challenge assumptions regarding correctness, performance, or safety by writing counterexamples that attempt to reach invalid states or expose hidden costs.
 7. Find deeper connections to broader Rust patterns, comparing the design to std library types, popular crates, applicable RFCs, and API guidelines.
 8. Produce refinement directives for each gap or edge case, stating the specific change required, the principle addressed, and the expected improvement. Note related compiler actions where available.
+
+## Curated external idiom annex
+
+Six rules from leonardomso/rust-skills (MIT; current for Rust 1.96, 2024 edition), selected from categories clippy does not lint — the gap the codified-lint oracle cannot close. Every entry is intrinsic guidance (P) until verified against the compiler/clippy oracles: cite the rule, then check the code.
+
+- [serde-enum-representation](https://raw.githubusercontent.com/leonardomso/rust-skills/master/rules/serde-enum-representation.md) — choose enum tagging deliberately: externally, internally, adjacently tagged, or untagged.
+- [serde-try-from-validate](https://raw.githubusercontent.com/leonardomso/rust-skills/master/rules/serde-try-from-validate.md) — validate while deserializing with `#[serde(try_from = "Raw")]`.
+- [mem-drop-order](https://raw.githubusercontent.com/leonardomso/rust-skills/master/rules/mem-drop-order.md) — struct fields drop top-to-bottom, locals in reverse declaration order; control drop order deliberately.
+- [unsafe-extern-block](https://raw.githubusercontent.com/leonardomso/rust-skills/master/rules/unsafe-extern-block.md) — Rust 2024: wrap `extern` blocks in `unsafe extern { }` and annotate each item `safe` or `unsafe`.
+- [unsafe-no-mangle-unsafe](https://raw.githubusercontent.com/leonardomso/rust-skills/master/rules/unsafe-no-mangle-unsafe.md) — Rust 2024: `#[unsafe(no_mangle)]`, `#[unsafe(export_name = "...")]`, `#[unsafe(link_section = "...")]` — not the bare attribute forms.
+- [async-cancel-safety](https://raw.githubusercontent.com/leonardomso/rust-skills/master/rules/async-cancel-safety.md) — futures used in `tokio::select!` branches must be cancellation-safe.
 
 ## Registry Templates
 
