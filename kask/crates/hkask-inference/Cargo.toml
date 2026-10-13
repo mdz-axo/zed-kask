@@ -3,7 +3,7 @@ name = "hkask-inference"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "IPC bridge client + shared inference configuration for hKask MCP servers"
+description = "IPC bridge client, shared inference configuration, and child-local media routing for hKask MCP servers"
 
 [lib]
 path = "src/hkask_inference.rs"

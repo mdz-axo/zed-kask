@@ -348,8 +348,8 @@ impl InferenceIpcServer {
     /// `embedding_port` is the port to dispatch embedding requests to (the
     /// `LanguageModelEmbeddingPort`). When `None`, `embed` requests return an
     /// error.
-    /// (image, video, speech, transcription via registered `MediaProvider`
-    /// backends). When `None`,.
+    /// Media generation (image, video, speech, transcription) never crosses
+    /// this bridge — it is child-local in each MCP server process.
     /// `tool_port` is the governed `McpRuntime` (as `ToolPort`) used for
     /// `tool_invoke` requests from MCP servers that run agent loops (e.g.
     /// `hkask-mcp-swarm`'s local delegate). When `None`, `tool_invoke`

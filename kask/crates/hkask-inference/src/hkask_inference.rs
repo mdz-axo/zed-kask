@@ -1,6 +1,6 @@
 #![cfg_attr(not(test), forbid(unsafe_code))]
 #![warn(clippy::let_underscore_future)]
-//! hKask Inference — the IPC bridge client + shared inference configuration.
+//! hKask Inference — IPC bridge client, shared inference configuration, and child-local media routing.
 //!
 //! In zed-kask, MCP server child processes do not hold API keys. Inference
 //! (chat, vision, embed, tool dispatch, worktree spawn, model listing) routes
