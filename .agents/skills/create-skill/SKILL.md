@@ -161,7 +161,7 @@ closes the finding.
 | 1 Research, 2 Describe, 3 Scaffold | P | Phase 4 checks; the operator |
 | Anchoring terms (Phase 1 step 3) | D | `onto_anchor` |
 | 4 Validate — mechanical | D | audit scripts and `cargo test -p agent --lib corpus_` exit counts |
-| 4 Validate — S1–S13 read | P | `skill-maintenance` validate, critiqued by the mechanical counts and the operator |
+| 4 Validate — S1–S14 read | P | `skill-maintenance` validate, critiqued by the mechanical counts and the operator |
 | 4 Functional trial | D when the predeclared result is checked by a tool or test; P when the operator judges it | the predeclared expected result for the trial task |
 | 5 Converge | D | the `lisp_eval` gate over the Phase 4 counts; at most 2 re-entries |
 | 3 Scaffold — pre-check scripts | D | `skill-corpus-prescreen.sh` and `skill-corpus-contract-audit.sh` exit counts; bound: two fix-and-rerun cycles |
@@ -169,7 +169,7 @@ closes the finding.
 | Translation — reconcile | D | the `lisp_eval` step-count form in the translation entry |
 
 This skill's own provenance: the Phase 0–5 loop copies Deming's PDCA; the
-artifact contract adapts `skill-maintenance`'s S1–S13/T1–T5 criteria;
+artifact contract adapts `skill-maintenance`'s S1–S14/T1–T5 criteria;
 Phase 0's routing adapts `skill-discovery`'s route phase; the
 ontology-anchoring procedure and the teaching patterns are project
 machinery (unanchored).
@@ -183,7 +183,7 @@ Plan:   Phase 0 — Discover     → Route against installed skills; extend or f
 Plan:   Phase 1 — Research     → Find academic/industry ontological anchors
 Plan:   Phase 2 — Describe     → Capture purpose, name, PDCA shape, delegates
 Do:     Phase 3 — Scaffold    → Generate SKILL.md + .j2 templates
-Check:  Phase 4 — Validate    → Count mechanical findings, S1–S13 failures, and run one functional trial
+Check:  Phase 4 — Validate    → Count mechanical findings, S1–S14 failures, and run one functional trial
 Check:  Phase 5 — Converge     → lisp_eval gate over the counts
 Act:    Phase 5 — Converge     → Re-enter at the phase that owns the failure — anchors first (1: missing anchors; artifact work on missing anchors is wasted, so scaffold findings wait for the next pass), else 3 (artifact/trial defects); at most 2 re-entries
 ```
@@ -280,6 +280,16 @@ Generate the skill artifacts:
      header key is decoration.
    - Jinja2 variables matching the contract inputs, and only those; every
      declared output named in the output instructions.
+   - **No model-typed deterministic outputs**: a count, verdict, or parsed
+     value that is a function of the template's own variables renders via
+     Jinja filters (`selectattr`|`length`), never a model-filled
+     placeholder ("<count of ...>") over in-scope data; list/count checks
+     route through `lisp_eval`. Render call points in the SKILL.md carry
+     complete copyable context shapes (fenced blocks naming every contract
+     field), never prose field lists an agent must reconstruct —
+     reconstruction drops fields (the prompt-enhance friction class). A
+     scaffold carrying either defect is a scaffold defect: fix before
+     Phase 4.
    - The expected JSON output shape.
 3. **Pre-check before handing over:** write the templates, then run
    `bash kask/scripts/audit/skill-corpus-prescreen.sh` and
@@ -307,7 +317,7 @@ Phase 4.
 
 #### How to write SKILL.md instructions that use tools
 
-Each instruction step should be concrete and tool-oriented:
+Each instruction step should be concrete and tool-oriented. A render call point carries the full context shape as a copyable fenced block (every contract field, required/defaulted/optional marked) — an agent copies it and fills values; a prose field list gets reconstructed from memory and drops fields (the prompt-enhance friction class).
 
 ```
 ### Step: Analyze (example)
@@ -410,7 +420,7 @@ D step name a real oracle, does any P step hide a cheap deterministic check)
 is judged in review. A skill that calls `lisp_eval` and labels itself "all P"
 is checkably wrong.
 
-### Phase 4 — Validate (mechanical counts, S1–S13, functional trial)
+### Phase 4 — Validate (mechanical counts, S1–S14, functional trial)
 
 1. **Mechanical checks (D).** Run via `terminal` and count the findings
    that name the new skill or its templates:
@@ -420,7 +430,7 @@ is checkably wrong.
    - `bash kask/scripts/audit/skill-corpus-s9-s10-sweep.sh`
    - `cargo test -p agent --lib corpus_` (template render and metadata strip; a failure counts once per failing test)
    Count from the full output (`grep -c` on the saved output), never from a truncated display. The sum is `scaffold_findings`.
-2. **S1–S13 read (P).** Call the `skill` tool with name
+2. **S1–S14 read (P).** Call the `skill` tool with name
    `skill-maintenance` and task "validate skill <name>", and work its
    validate phase. The `skill` tool returns instructions only: you perform
    the checks. Add each failed S/T check to `scaffold_findings`. A check you
@@ -491,3 +501,8 @@ To render a template, call `render_template` with the ref (e.g. `create-skill/sc
 - Core skills (`core: true` in frontmatter) are always-on, re-seeded on
   every startup, and cannot be shadowed by project-local skills of the
   same name. Only names in `CORE_SKILL_NAMES` may declare `core: true`.
+- A skill that proposes manual intervention in a self-maintaining system
+  (memory, regulation, distillation) must first inventory that system's
+  automatic mechanisms and reconcile the store's state against them —
+  routine architecture behavior is not a finding (operator correction
+  2026-10-13).
