@@ -379,6 +379,20 @@ mod tests {
         }
     }
 
+    /// The a → b → c chain fixture — P(a)=0.5, P(b|¬a)=0.1, P(b|a)=0.6,
+    /// P(c|¬b)=0.2, P(c|b)=0.7 — shared by the polytree and
+    /// backward-inference tests. The two-node fixtures keep their own
+    /// constructions (their priors and shapes are each test's own).
+    fn chain_nodes() -> Vec<PosteriorNode> {
+        let mut b = node("b", 0.0);
+        b.parents = vec!["a".into()];
+        b.dependencies = vec![dep("a", &[0.1, 0.6])];
+        let mut c = node("c", 0.0);
+        c.parents = vec!["b".into()];
+        c.dependencies = vec![dep("b", &[0.2, 0.7])];
+        vec![node("a", 0.5), b, c]
+    }
+
     #[test]
     fn root_uses_its_base_probability() {
         let nodes = vec![node("a", 0.7)];
@@ -471,14 +485,7 @@ mod tests {
 
     #[test]
     fn is_polytree_true_for_chain_false_for_diamond() {
-        let chain = |nodes: Vec<PosteriorNode>| nodes;
-        let mut b = node("b", 0.0);
-        b.parents = vec!["a".into()];
-        b.dependencies = vec![dep("a", &[0.1, 0.6])];
-        let mut c = node("c", 0.0);
-        c.parents = vec!["b".into()];
-        c.dependencies = vec![dep("b", &[0.2, 0.7])];
-        let chain = chain(vec![node("a", 0.5), b, c]);
+        let chain = chain_nodes();
         assert!(is_polytree(&chain));
 
         // Diamond: a → b, a → c, b → d, c → d — undirected cycle.
@@ -500,13 +507,7 @@ mod tests {
         // Chain a → b → c. Priors: P(a)=0.5, P(b|¬a)=0.1, P(b|a)=0.6,
         // P(c|¬b)=0.2, P(c|b)=0.7. Forward: P(b)=0.35, P(c)=0.375.
         // Evidence c=0.9 (high) → P(b) and P(a) should both increase.
-        let mut b = node("b", 0.0);
-        b.parents = vec!["a".into()];
-        b.dependencies = vec![dep("a", &[0.1, 0.6])];
-        let mut c = node("c", 0.0);
-        c.parents = vec!["b".into()];
-        c.dependencies = vec![dep("b", &[0.2, 0.7])];
-        let nodes = vec![node("a", 0.5), b, c];
+        let nodes = chain_nodes();
         let mut evidence = HashMap::new();
         evidence.insert(2, Evidence::Hard(0.9));
         let posteriors = recompute_posteriors(&nodes, &[0, 1, 2], &evidence);
