@@ -3,8 +3,8 @@
 //! Memory decay follows Wozniak & Gorzelanczyk (1995) two-component model
 //! of long-term memory, equation (3): R(t) = exp(-t/S).
 //!
-//! Where S is memory life in days (configurable, default 180 = 6×30 days)
-//! and t is days since most recent recall. At t = S, R = exp(-1) ≈ 0.368.
+//! Where S is memory life in days (configurable, default 90 days) and t
+//! is days since most recent recall. At t = S, R = exp(-1) ≈ 0.368.
 //!
 //! Bayesian evidence pooling (log-odds) combines independent confidence
 //! estimates for the same proposition.
@@ -37,14 +37,15 @@ pub(crate) fn days_since(dt: DateTime<Utc>) -> f64 {
 
 // ── Memory life constants ───────────────────────────────────────────────────
 
-/// Default memory life in days: 6 months × 30 days = 180 days.
+/// Default memory life in days: 90 days (a quarter).
 ///
-/// After 180 days without recall, confidence decays to exp(-1) ≈ 36.8%.
-/// Configurable via the `memory_life_days` admin setting.
+/// After 90 days without recall, confidence decays to exp(-1) ≈ 36.8%.
+/// Configurable via the `memory_life_days` admin setting (aligned to the
+/// operator's configured 90 on 2026-10-13; the prior default was 180).
 ///
 /// Based on Wozniak & Gorzelanczyk (1995): R(t) = exp(-t/S) where S is
 /// memory life in days.
-pub const DEFAULT_MEMORY_LIFE_DAYS: f64 = 6.0 * 30.0; // 180 days
+pub const DEFAULT_MEMORY_LIFE_DAYS: f64 = 90.0;
 
 // ── Bayesian evidence pooling (log-odds) ───────────────────────────────────
 

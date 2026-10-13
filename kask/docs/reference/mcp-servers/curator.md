@@ -65,7 +65,7 @@ path resolution finds the same root the agent uses
 - **Store**: `hkask_memory::MemoryStore` over the sovereign
   `agents/curator/curator.db` (SQLCipher). Memory decay follows the
   Wozniak-Gorzelanczyk forgetting curve; `HKASK_MEMORY_LIFE_DAYS` overrides
-  the 180-day default, and a malformed value warns naming the value rather
+  the 90-day default, and a malformed value warns naming the value rather
   than silently falling back.
 - **Credentials**: `HKASK_DB_PASSPHRASE` declared **required** — without it
   `open_curator_stores` cannot decrypt the DB and startup fails visibly

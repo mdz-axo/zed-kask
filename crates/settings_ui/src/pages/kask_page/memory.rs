@@ -37,6 +37,7 @@ pub(crate) fn render_memory_page(
     let recall_min_confidence = memory.recall_min_confidence.to_string();
     let auto_inject = memory.auto_inject;
     let memory_life_days = memory.memory_life_days.to_string();
+    let forgetting_days = memory.forgetting_days.to_string();
     let selected_ids = memory.federated_source_ids;
     let selected_source = match &sources {
         Ok(registered) if memory.federated_auto_inject && selected_ids.len() == 1 => registered
@@ -177,7 +178,7 @@ pub(crate) fn render_memory_page(
         "kask-memory-life-days",
         0,
         memory_life_days,
-        "180",
+        "90",
         "Memory Life (days)",
         |text| text.parse::<f64>().ok(),
         move |parsed, settings| {
@@ -187,6 +188,23 @@ pub(crate) fn render_memory_page(
                 .memory
                 .get_or_insert_default()
                 .memory_life_days = Some(parsed);
+        },
+    );
+
+    let forgetting_days_input = kask_input_field(
+        "kask-memory-forgetting-days",
+        0,
+        forgetting_days,
+        "7",
+        "Forgetting Horizon (days)",
+        |text| text.parse::<u64>().ok(),
+        move |parsed, settings| {
+            settings
+                .kask
+                .get_or_insert_default()
+                .memory
+                .get_or_insert_default()
+                .forgetting_days = Some(parsed);
         },
     );
 
@@ -259,6 +277,23 @@ pub(crate) fn render_memory_page(
                     .color(Color::Muted),
                 )
                 .child(memory_life_input),
+        )
+        .child(Divider::horizontal())
+        .child(
+            v_flex()
+                .gap_1()
+                .child(Label::new("Forgetting Horizon (days)"))
+                .child(
+                    Label::new(
+                        "Hard-forgetting horizon: the curator's background pass deletes a \
+                         finished conversation's covered transcript turns once its \
+                         distillation watermark is older than this many days (0 = \
+                         disabled). Read via HKASK_MEMORY_FORGETTING_DAYS.",
+                    )
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+                )
+                .child(forgetting_days_input),
         )
         .child(Divider::horizontal())
         .child(

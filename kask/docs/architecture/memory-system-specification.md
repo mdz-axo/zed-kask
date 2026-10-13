@@ -909,7 +909,7 @@ construction. Time-based and distillation-gated, never count-based
 `memory_store.rs:155`, `:563`
 
 Confidence decays by the Wozniak-Gorzelanczyk forgetting curve[^wg95]:
-`R(t) = exp(-t / S)` where `S` is `memory_life_days` (default 180) and `t`
+`R(t) = exp(-t / S)` where `S` is `memory_life_days` (default 90) and `t`
 is days since `recalled_at`. Decay is applied at recall time (`decayed`,
 `memory_store.rs:563`), not at write time. At recall, `touch_recall`
 resets the decay clock (`memory_store.rs:447`; storage layer at
@@ -1293,7 +1293,8 @@ Defined in `kask/crates/kask_bridge/src/settings.rs:234-281`; defaults at
 | `recall_limit`               | 5       | Max snippets to retrieve per recall                   |
 | `recall_min_confidence`      | 0.3     | Min confidence for a snippet to be injected           |
 | `auto_inject`                | true    | Whether to auto-inject recalled memories into prompts |
-| `memory_life_days`           | 180     | Decay constant S applied to bridge and curator-server stores on construction/reopen |
+| `memory_life_days`           | 90      | Decay constant S applied to bridge and curator-server stores on construction/reopen |
+| `forgetting_days`            | 7       | Distillation-gated hard-forgetting horizon in days (0 = disabled) — deletes covered conversation turns once their watermark ages past it; surfaced as the Forgetting Horizon field on Settings → Kask → Memory |
 
 **Enforcement update (2026-09-08, operator ruling 2026-09-07):**
 `RealMemoryPort::new` threads the setting into `CuratorStore`, including

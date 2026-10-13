@@ -193,7 +193,7 @@ fn normalize_value(value: &str) -> String {
     result.trim_end().to_string()
 }
 
-/// Default memory life in days: 180 days (6 months × 30).
+/// Default memory life in days: 90 days (a quarter).
 ///
 /// Wozniak & Gorzelanczyk (1995), equation (3): R(t) = exp(-t/S).
 pub(crate) const DEFAULT_MEMORY_LIFE_DAYS: f64 = crate::bayesian::DEFAULT_MEMORY_LIFE_DAYS;
@@ -210,7 +210,7 @@ const TURN_STORAGE_PREFIX: &str = "curator:thread:";
 ///
 /// Decay (Wozniak-Gorzelanczyk, 1995) is applied at recall time:
 /// `R(t) = exp(-t/S)` where `t` is days since `recalled_at` and `S` is
-/// `memory_life_days` (default 180). `touch_recall` resets the clock.
+/// `memory_life_days` (default 90). `touch_recall` resets the clock.
 ///
 /// Text chunking (`chunk_text`, `strip_gutenberg_headers`) is exposed as
 /// associated functions delegating to [`crate::text_chunking`] — they touch
@@ -1433,9 +1433,10 @@ mod tests {
     /// setting is behavior, not monitoring decoration." [P1]
     /// pre: two stores over in-memory drivers hold an identical h_mem whose
     /// recall clock was last touched 15 days ago; one store uses the default
-    /// S=180, the other the operator-configured S=30.
+    /// S=90, the other the operator-configured S=30.
     /// post: querying through the decay-applying path returns measurably
-    /// deeper decay under S=30 than S=180 — R(15/30) = exp(-0.5) ≈ 0.607
+    /// deeper decay under S=30 than S=90 — R(15/30) = exp(-0.5) ≈ 0.607
+    /// vs R(15/90) = exp(-1/6) ≈ 0.846 — so `with_memory_life_days`
     /// vs R(15/180) ≈ 0.920 — so `with_memory_life_days` demonstrably
     /// reaches the curve, not just a sensor field.
     #[test]
@@ -1480,13 +1481,13 @@ mod tests {
 
         assert!(
             decayed_short < decayed_default,
-            "S=30 must decay deeper than S=180 for the same recall age: \
+            "S=30 must decay deeper than S=90 for the same recall age: \
              {decayed_short} !< {decayed_default}"
         );
-        let expected_default = (-15.0_f64 / 180.0).exp();
+        let expected_default = (-15.0_f64 / 90.0).exp();
         assert!(
             (decayed_default - expected_default).abs() < 1e-9,
-            "default store must follow R(t)=exp(-t/180) from full confidence: \
+            "default store must follow R(t)=exp(-t/90) from full confidence: \
              {decayed_default} vs {expected_default}"
         );
     }

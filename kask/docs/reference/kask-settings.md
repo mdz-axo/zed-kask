@@ -238,7 +238,7 @@ There is no `KaskGuardSettings` struct. Direct chat is unguarded (provider-side 
 | `auto_inject` | `bool` | `true` | Auto-inject recalled memories into prompts |
 | `federated_auto_inject` | `bool` | `false` | Opt in to injecting selected federated sources into curator chat |
 | `federated_source_ids` | `Vec<String>` | `[]` | Source IDs selected from the curator federated sources manifest |
-| `memory_life_days` | `f64` | `180` | Memory life S in days (Wozniak-Gorzelanczyk forgetting curve `R(t) = exp(-t/S)`). Half-life is `S·ln(2)`. Applied when the bridge curator store is constructed/reopened; emitted as `HKASK_MEMORY_LIFE_DAYS` for the curator MCP server, which applies it on both embedding-capable and degraded store paths |
+| `memory_life_days` | `f64` | `90` | Memory life S in days (Wozniak-Gorzelanczyk forgetting curve `R(t) = exp(-t/S)`). Half-life is `S·ln(2)`. Applied when the bridge curator store is constructed/reopened; emitted as `HKASK_MEMORY_LIFE_DAYS` for the curator MCP server, which applies it on both embedding-capable and degraded store paths |
 | `distillation_cadence_secs` | `u64` | `600` | ALWAYS-mode distillation cadence in seconds (0 = disabled); the curator server's background pass distills finished threads into additive candidate lesson h_mems at the 0.5 confidence floor |
 | `distillation_idle_secs` | `u64` | `300` | A thread counts as finished when its newest turn is at least this many seconds old |
 | `forgetting_days` | `u64` | `7` | Distillation-gated forgetting age in days (0 = disabled); time-based and distillation-gated, never count-based. Default matches the curator server's `DEFAULT_FORGETTING_DAYS` |
@@ -247,7 +247,7 @@ These are the only `KaskMemorySettings` fields (`kask/crates/kask_bridge/src/set
 
 **Settings-flow closure (2026-09-08):** the content schema and `KaskMemorySettings` conversion feed the bridge's `RealMemoryPort::new` → `CuratorStore` → `MemoryStore::with_memory_life_days`. `emit_curator_distillation_env` emits a non-default value; the curator server's config allowlist admits it; `memory_life_days_from_env` validates it (malformed/non-positive/non-finite values warn and use the canonical default). The bridge regulation sensor reads the applied store, using a default estimate if the store is unavailable. These are constructor/reopen settings, not a new live bridge-reconfiguration mechanism.
 
-Step 6 of the settings-flow checklist is **already implemented**, not skipped: Settings → Kask → Memory renders the Memory Life field in `crates/settings_ui/src/pages/kask_page/memory.rs:163-178` and writes `settings.kask.memory.memory_life_days`. No new UI was added. Bridge store/emission/allowlist tests, the full Zed check, and scoped lint pass (evidence: `tasks/plan.md` in git history, last at `b1375ff3be`).
+Step 6 of the settings-flow checklist is **already implemented**, not skipped: Settings → Kask → Memory renders the Memory Life field in `crates/settings_ui/src/pages/kask_page/memory.rs:177-192` and writes `settings.kask.memory.memory_life_days` (2026-10-13: the page also renders the Forgetting Horizon field for `kask.memory.forgetting_days` at `:194-209`). No new UI was added. Bridge store/emission/allowlist tests, the full Zed check, and scoped lint pass (evidence: `tasks/plan.md` in git history, last at `b1375ff3be`).
 
 ## Condenser (`KaskCondenserSettings`)
 
@@ -640,7 +640,8 @@ process lifetime. Unset or unparsable values fall back to documented defaults
 | `HKASK_MCP_HEALTH_CHECK_INTERVAL_SECS` | `60` | Interval between proactive MCP server health checks. |
 | `HKASK_MCP_MAX_HEALTH_FAILURES` | `3` | Max consecutive health-check failures before the supervisor stops auto-healing. |
 | `HKASK_MCP_MAX_READ_BYTES` | `33554432` (32 MiB) | Read size cap for `read_capped` (CWE-400). 0 is rejected (would block all reads). |
-| `HKASK_MEMORY_LIFE_DAYS` | `180` | Memory retention in days (≈6 months). Controls decay constant in the Bayesian forgetting model. |
+| `HKASK_MEMORY_LIFE_DAYS` | `90` | Memory retention in days (≈ a quarter). Controls decay constant in the Bayesian forgetting model. |
+| `HKASK_MEMORY_FORGETTING_DAYS` | `7` | Distillation-gated hard-forgetting horizon in days (0 = disabled) — surfaced as the Forgetting Horizon field on Settings → Kask → Memory |
 | `HKASK_CHUNK_MAX_TOKENS` | `256` | Max tokens per chunk for document chunking (≈192 words, paragraph-level). |
 
 The skill-span history cap (`max_skill_span_history`) is configurable via the
