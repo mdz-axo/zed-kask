@@ -7919,6 +7919,7 @@ dependencies = [
  "async-trait",
  "base64 0.22.1",
  "calamine",
+ "dirs",
  "docx-rs",
  "encoding_rs",
  "hkask-bridge-ontology",
@@ -7926,7 +7927,6 @@ dependencies = [
  "hkask-lisp",
  "hkask-mcp-server",
  "hkask-memory",
- "hkask-services-core",
  "hkask-storage",
  "hkask-types",
  "image",
@@ -7939,12 +7939,15 @@ dependencies = [
  "schemars 1.0.4",
  "serde",
  "serde_json",
+ "serde_json_lenient",
  "serde_yaml_neo",
  "sha2 0.10.9",
  "tempfile",
  "thiserror 2.0.17",
  "tokio",
  "tracing",
+ "tracing-subscriber",
+ "uuid",
  "zed-reqwest",
 ]
 
@@ -8371,22 +8374,6 @@ dependencies = [
  "theme",
  "tracing",
  "ui",
-]
-
-[[package]]
-name = "hkask-services-core"
-version = "0.40.2"
-dependencies = [
- "dirs",
- "hkask-inference",
- "hkask-types",
- "serde",
- "serde_json",
- "serde_json_lenient",
- "thiserror 2.0.17",
- "tracing",
- "tracing-subscriber",
- "uuid",
 ]
 
 [[package]]

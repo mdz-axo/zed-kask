@@ -185,7 +185,7 @@ flowchart TD
     B --> C[tokens_to_words<br/>words = tokens / 1.33<br/>hkask-mcp-corpus/src/helpers.rs:356]
     B --> D{multi_tier}
     D -->|yes| E[coarse 2048 / medium 512 / fine 128 tokens<br/>document.rs:395-397]
-    D -->|no| F[single tier, default 256 tokens<br/>hkask-services-core/src/standalone_settings.rs:248]
+    D -->|no| F[single tier, default 256 tokens<br/>hkask-mcp-corpus services_core/standalone_settings.rs:234]
     E --> G[chunk_structure<br/>helpers.rs:429]
     F --> G
     G --> H[chunk_text_with_overlap<br/>hkask-memory/src/text_chunking.rs:211]
@@ -198,7 +198,7 @@ flowchart TD
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-RES-CHUNK-002
 verified_date: 2026-09-28
-verified_against: kask/mcp-servers/hkask-mcp-corpus/src/tools/document.rs:355-426; kask/mcp-servers/hkask-mcp-corpus/src/helpers.rs:356-429; kask/crates/hkask-memory/src/text_chunking.rs:20-311; kask/crates/hkask-services-core/src/standalone_settings.rs:248-277
+verified_against: kask/mcp-servers/hkask-mcp-corpus/src/tools/document.rs:355-426; kask/mcp-servers/hkask-mcp-corpus/src/helpers.rs:356-429; kask/crates/hkask-memory/src/text_chunking.rs:20-311; kask/mcp-servers/hkask-mcp-corpus/src/services_core/standalone_settings.rs:234-263
 status: VERIFIED
 -->
 

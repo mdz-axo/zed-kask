@@ -104,7 +104,7 @@ pub(crate) fn render_docproc_template(
 // One Environment construction and ServiceError wrapping for one-shot renders
 // (`compose.rs`).
 
-use hkask_services_core::{DomainKind, ErrorKind, ServiceError};
+use crate::services_core::{DomainKind, ErrorKind, ServiceError};
 
 /// Construct a `ServiceError` from a minijinja error.
 pub(crate) fn template_error(operation: &str, name: &str, e: minijinja::Error) -> ServiceError {

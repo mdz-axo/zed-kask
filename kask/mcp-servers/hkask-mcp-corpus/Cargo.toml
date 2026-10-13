@@ -61,7 +61,11 @@ serde_yaml_neo.workspace = true
 anyhow.workspace = true
 
 # Service layer (shared settings, models, paths)
-hkask-services-core.workspace = true
+# Service-layer foundation, folded from hkask-services-core (2026-10-13):
+# ServiceError taxonomy + the standalone HkaskSettings reader.
+dirs.workspace = true
+serde_json_lenient.workspace = true
+uuid.workspace = true
 
 [lib]
 name = "hkask_mcp_corpus"
@@ -73,6 +77,7 @@ path = "src/main.rs"
 
 [dev-dependencies]
 proptest = { workspace = true }
+tracing-subscriber.workspace = true
 
 [lints]
 workspace = true

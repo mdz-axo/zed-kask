@@ -485,7 +485,8 @@ concrete fields — no inlined `unwrap_or` defaults in the UI.
 
 ## Model-name constants must not be duplicated across crates
 
-Model-name defaults in kask_bridge and hkask-services-core must reference
+Model-name defaults in kask_bridge and hkask-mcp-corpus's services_core
+module (folded from hkask-services-core, 2026-10-13) must reference
 `hkask_inference::model_constants::DEFAULT_*_MODEL` as `const` references,
 not re-declare literals. The drift class (kask-bridge said
 `openrouter/z-ai/glm-5.2`, model_constants said `OpenRouter/z-ai/glm-5.2`,

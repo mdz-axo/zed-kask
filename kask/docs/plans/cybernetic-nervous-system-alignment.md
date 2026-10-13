@@ -300,7 +300,8 @@ behavior preservation, `./script/clippy` + crate tests + `cargo check
 - **CU-7 — Legacy-mode verification.** Named candidates — cite the
   production consumer or delete the mode: the standalone-launch
   tracing subscriber
-  (`hkask-services-core/src/standalone_settings.rs:391`); any
+  (`kask/mcp-servers/hkask-mcp-corpus/src/services_core/standalone_settings.rs:377`, originally
+  hkask-services-core line 391 before the 2026-10-13 fold); any
   `HKASK_USE_*` opt-in without a recorded consumer; settings knobs
   whose capability was deleted.
 - **CU-8 — Specification and doc updates ride with every slice.** The

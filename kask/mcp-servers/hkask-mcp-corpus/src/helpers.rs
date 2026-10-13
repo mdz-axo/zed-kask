@@ -173,21 +173,19 @@ pub(crate) fn map_database_error(
     }
 }
 
-/// Classify a `ServiceError` from the compose pipeline into the appropriate
-/// `McpToolError` kind via its semantic `ErrorKind`: `NotFound` → `not_found`,
-/// `Forbidden` → `permission_denied`, `BadRequest` → `invalid_argument`,
-/// `Conflict` → `failed_precondition`, `ServiceUnavailable` → `unavailable`.
+/// `ServiceError` from the compose pipeline into the appropriate
+/// `McpToolError` kind via its semantic `ErrorKind`: `Forbidden` → `permission_denied`,
+/// `BadRequest` → `invalid_argument`,
+/// `ServiceUnavailable` → `unavailable`.
 pub(crate) fn map_service_error(
-    error: hkask_services_core::ServiceError,
+    error: crate::services_core::ServiceError,
     context: &str,
 ) -> McpToolError {
-    use hkask_services_core::ErrorKind;
+    use crate::services_core::ErrorKind;
     let message = format!("{context}: {error}");
     match error.kind() {
-        ErrorKind::NotFound => McpToolError::not_found(message),
         ErrorKind::Forbidden => McpToolError::permission_denied(message),
         ErrorKind::BadRequest => McpToolError::invalid_argument(message),
-        ErrorKind::Conflict => McpToolError::failed_precondition(message),
         ErrorKind::ServiceUnavailable => McpToolError::unavailable(message),
     }
 }

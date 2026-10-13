@@ -74,7 +74,7 @@ The composition-root inventory under `kask/crates/` is:
 `hkask-bridge-ontology`, `hkask-condenser`, `hkask-email`,
 `hkask-event-store`, `hkask-forecast`, `hkask-inference`, `hkask-keystore`,
 `hkask-lisp`, `hkask-mcp`, `hkask-mcp-server`, `hkask-memory`,
-`hkask-regulation`, `hkask-services-core`, `hkask-spreadsheet`,
+`hkask-regulation`, `hkask-spreadsheet`,
 `hkask-steer-core`, `hkask-storage`, `hkask-tool-port`, `hkask-types`, and
 `kask_bridge`.
 

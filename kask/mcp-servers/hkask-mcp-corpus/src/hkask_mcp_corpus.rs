@@ -44,6 +44,7 @@ mod property_tests;
 mod retrieval_tests;
 
 pub(crate) mod services;
+pub(crate) mod services_core;
 pub(crate) mod template;
 pub(crate) mod text;
 pub(crate) mod tools;
@@ -63,7 +64,7 @@ pub(crate) use hkask_types::json_extract::extract_json_from_response;
 // Bridge crates: shared ontological vocabulary (P5.4 dual-axis framework)
 
 use hkask_mcp_server::server::{McpToolError, execute_tool};
-use hkask_services_core::standalone_settings::HkaskSettings;
+use crate::services_core::standalone_settings::HkaskSettings;
 use hkask_types::InferencePort;
 use hkask_types::template::LLMParameters;
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
@@ -453,7 +454,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                     // file). Unset means no OCR model — OCR-needing pages
                     // fail with a visible error naming the setting (never a
                     // hidden constant; the operator's no-hidden-models spec).
-                    let model = hkask_services_core::HkaskSettings::load().ocr_model();
+                    let model = crate::services_core::HkaskSettings::load().ocr_model();
                     if model.is_empty() { None } else { Some(model) }
                 });
 

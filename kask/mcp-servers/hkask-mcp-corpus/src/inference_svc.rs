@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use hkask_types::InferencePort;
 
-use hkask_services_core::ServiceError;
+use crate::services_core::ServiceError;
 
 /// Inference context for the corpus server.
 ///
@@ -54,8 +54,8 @@ impl InferenceService {
         // Return an error rather than silently falling back to a standalone
         // MediaRouter with env-var credentials.
         Err(ServiceError::Domain {
-            domain: hkask_services_core::DomainKind::Inference,
-            kind: hkask_services_core::ErrorKind::ServiceUnavailable,
+            domain: crate::services_core::DomainKind::Inference,
+            kind: crate::services_core::ErrorKind::ServiceUnavailable,
             source: None,
             message: format!(
                 "No inference port available — the zed IPC bridge is not configured. \

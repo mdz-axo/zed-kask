@@ -218,20 +218,6 @@ impl HkaskSettings {
         )
     }
 
-    /// Resolve the classifier model with env/settings/default priority.
-    ///
-    /// \[P5\] Motivating: Essentialism — service-layer orchestration earns its existence; no raw domain logic.
-    /// pre:  none (always succeeds)
-    /// post: returns effective classifier model string (env > settings > default)
-    #[must_use]
-    pub fn classifier_model(&self) -> String {
-        Self::resolve_model(
-            "HKASK_CLASSIFIER_MODEL",
-            &self.classifier_model,
-            &default_classifier_model(),
-        )
-    }
-
     /// Resolve the OCR model with env/settings/default priority.
     ///
     /// \[P5\] Motivating: Essentialism — service-layer orchestration earns its existence; no raw domain logic.

@@ -29,26 +29,18 @@
 //!
 //! # Module layout
 //!
-//! - `error.rs` (this file) — enum definition, `From` impls, `Display`
-//! - `message_key.rs` — `message_key()` derivation
-//! - `retryable.rs` — `is_retryable()` logic
+//! - `error.rs` (this file) — enum definition, `From` impls, `Display`, `kind()`
 
 use thiserror::Error;
 
 use hkask_types::InfrastructureError;
-use hkask_types::McpErrorKind;
 use hkask_types::{EmbeddingGenerationError, InferenceError};
 
 // ── Helper implementation modules ─────────────────────────────────────
 
-mod message_key;
-mod retryable;
-
 /// Discriminates error semantics for HTTP status code mapping.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ErrorKind {
-    NotFound,
-    Conflict,
     Forbidden,
     BadRequest,
     /// Transient infrastructure condition — the service is temporarily
@@ -97,17 +89,6 @@ pub enum ServiceError {
         source: Option<Box<dyn std::error::Error + Send + Sync>>,
     },
 
-    /// MCP tool call failed. Carries the semantic error kind for retryability
-    /// and Regulation observability. The `server` and `tool` fields identify the
-    /// failing MCP server and tool for debugging.
-    #[error("{kind}: {message} (server={server}, tool={tool})")]
-    McpTool {
-        kind: McpErrorKind,
-        server: String,
-        tool: String,
-        message: String,
-    },
-
     /// Upstream infrastructure error (lock poisoning, IO, etc.).
     #[error(transparent)]
     Infra(#[from] InfrastructureError),
@@ -126,7 +107,6 @@ pub enum ServiceError {
 /// Top-level domain for error routing and observability.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DomainKind {
-    Curator,
     Inference,
     Infrastructure,
     Memory,
@@ -136,22 +116,9 @@ pub enum DomainKind {
     // (219c74b180). Its two remaining call sites were mislabels: an
     // inference-port error (now Inference) and a template-render error
     // (now Infrastructure).
-    /// MCP tool invocations (out-of-process tool servers).
-    Mcp,
 }
 
 impl ServiceError {
-    /// Classify this error into its top-level domain.
-    pub fn domain(&self) -> DomainKind {
-        match self {
-            ServiceError::Domain { domain, .. } => *domain,
-            ServiceError::ModelService { .. } => DomainKind::Inference,
-            ServiceError::McpTool { .. } => DomainKind::Mcp,
-            ServiceError::Infra(_) => DomainKind::Infrastructure,
-            ServiceError::InvalidWebID { .. } => DomainKind::User,
-        }
-    }
-
     /// Return the semantic ErrorKind for HTTP status mapping.
     pub fn kind(&self) -> ErrorKind {
         match self {
@@ -160,14 +127,6 @@ impl ServiceError {
                 retryable: true, ..
             } => ErrorKind::ServiceUnavailable,
             ServiceError::ModelService { kind, .. } => *kind,
-            ServiceError::McpTool { kind, .. } => match kind {
-                McpErrorKind::NotFound => ErrorKind::NotFound,
-                McpErrorKind::PermissionDenied => ErrorKind::Forbidden,
-                McpErrorKind::Unavailable | McpErrorKind::Timeout | McpErrorKind::RateLimited => {
-                    ErrorKind::ServiceUnavailable
-                }
-                _ => ErrorKind::BadRequest,
-            },
             ServiceError::Infra(_) => ErrorKind::ServiceUnavailable,
             ServiceError::InvalidWebID { .. } => ErrorKind::Forbidden,
         }
