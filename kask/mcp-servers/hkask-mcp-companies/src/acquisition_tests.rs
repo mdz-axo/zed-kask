@@ -359,6 +359,40 @@ fn exchanges_list(pairs: &[(&str, &str)]) -> Value {
     json!(rows)
 }
 
+/// The screener FX responder — the full route closure the FX screener tests
+/// share: the exchanges-list arm over the caller's (code, currency)
+/// exchanges, the FOREX rate arms over the caller's (pair, date, close)
+/// rates, the screener arm serving the caller's (exchange, row) pairs (an
+/// exchange with no rows answers empty data), and the 404 fallback. Each
+/// test's rows are its own; the arm structure, the empty-data default, and
+/// the fallback are the fixture's.
+fn screener_fx_responder(
+    exchanges: &'static [(&'static str, &'static str)],
+    rates: &'static [(&'static str, &'static str, f64)],
+    rows: Vec<(&'static str, Value)>,
+) -> impl Fn(&str) -> (u16, Value) + Send + Sync + 'static {
+    move |path| {
+        if path.starts_with("/eodhd/exchanges-list") {
+            return (200, exchanges_list(exchanges));
+        }
+        if let Some(response) = forex_routes(path, rates) {
+            return response;
+        }
+        if path.starts_with("/eodhd/screener") {
+            if let Some(exchange) = decode_screener_exchange(path) {
+                let matching: Vec<Value> = rows
+                    .iter()
+                    .filter(|(row_exchange, _)| *row_exchange == exchange.as_str())
+                    .map(|(_, row)| row.clone())
+                    .collect();
+                return (200, json!({ "data": matching }));
+            }
+            return (200, json!({ "data": [] }));
+        }
+        (404, json!({ "error": "unexpected endpoint", "path": path }))
+    }
+}
+
 /// One EODHD screener row — the five-field shape the FX tests screen,
 /// varying by code, name, exchange, currency symbol, and cap.
 fn screener_row(code: &str, name: &str, exchange: &str, symbol: &str, cap: f64) -> Value {
@@ -2313,34 +2347,15 @@ async fn screener_converts_usd_bounds_for_each_exchange() {
 #[tokio::test]
 async fn screener_mixed_currency_exchange_queries_unbounded() {
     let (output, fixture) = screener_tool(
-        |path| {
-        if path.starts_with("/eodhd/exchanges-list") {
-            return (200, exchanges_list(&[("LSE", "GBP")]));
-        }
-        if let Some(response) = forex_routes(
-            path,
+        screener_fx_responder(
+            &[("LSE", "GBP")],
             &[("GBP", "2026-09-08", 0.75), ("JPY", "2026-09-08", 150.0)],
-        ) {
-            return response;
-        }
-        if path.starts_with("/eodhd/screener") {
-            return match decode_screener_exchange(path).as_deref() {
-                Some("US") => (
-                    200,
-                    json!({ "data": [screener_row("US0", "US Zero", "US", "$", 8_000_000_000.0)] }),
-                ),
-                Some("LSE") => (
-                    200,
-                    json!({ "data": [
-                        screener_row("GBP1", "UK One", "LSE", "£", 3_000_000_000.0),
-                        screener_row("JPY1", "Japan on London", "LSE", "¥", 450_000_000_000.0)
-                    ] }),
-                ),
-                _ => (200, json!({ "data": [] })),
-            };
-        }
-        (404, json!({ "error": "unexpected endpoint", "path": path }))
-        },
+            vec![
+                ("US", screener_row("US0", "US Zero", "US", "$", 8_000_000_000.0)),
+                ("LSE", screener_row("GBP1", "UK One", "LSE", "£", 3_000_000_000.0)),
+                ("LSE", screener_row("JPY1", "Japan on London", "LSE", "¥", 450_000_000_000.0)),
+            ],
+        ),
         json!({
                 "prompt": "US and UK listed companies with market capitalization between 2 billion and 200 billion",
                 "limit": 10
@@ -2383,31 +2398,15 @@ async fn screener_mixed_currency_exchange_queries_unbounded() {
 #[tokio::test]
 async fn screener_server_bounds_unreliable_exchange_queries_unbounded() {
     let (output, fixture) = screener_tool(
-        |path| {
-        if path.starts_with("/eodhd/exchanges-list") {
-            return (200, exchanges_list(&[("ST", "SEK")]));
-        }
-        if let Some(response) = forex_routes(path, &[("SEK", "2026-10-05", 10.0)]) {
-            return response;
-        }
-        if path.starts_with("/eodhd/screener") {
-            return match decode_screener_exchange(path).as_deref() {
-                Some("US") => (
-                    200,
-                    json!({ "data": [screener_row("US0", "US Zero", "US", "$", 8_000_000_000.0)] }),
-                ),
-                Some("ST") => (
-                    200,
-                    json!({ "data": [
-                        screener_row("SEK1", "Sweden One", "ST", "kr", 300_000_000_000.0),
-                        screener_row("SEK2", "Sweden Two", "ST", "kr", 2_000_000_000_000.0)
-                    ] }),
-                ),
-                _ => (200, json!({ "data": [] })),
-            };
-        }
-        (404, json!({ "error": "unexpected endpoint", "path": path }))
-        },
+        screener_fx_responder(
+            &[("ST", "SEK")],
+            &[("SEK", "2026-10-05", 10.0)],
+            vec![
+                ("US", screener_row("US0", "US Zero", "US", "$", 8_000_000_000.0)),
+                ("ST", screener_row("SEK1", "Sweden One", "ST", "kr", 300_000_000_000.0)),
+                ("ST", screener_row("SEK2", "Sweden Two", "ST", "kr", 2_000_000_000_000.0)),
+            ],
+        ),
         json!({
                 "prompt": "US and Sweden listed companies with market capitalization between 5 billion and 50 billion",
                 "limit": 10
@@ -2445,37 +2444,26 @@ async fn screener_server_bounds_unreliable_exchange_queries_unbounded() {
 #[tokio::test]
 async fn screener_fx_context_is_cached() {
     let directory = tempfile::tempdir().expect("temporary directory");
-    let fixture = FixtureHttp::start(|path| {
-        if path.starts_with("/eodhd/exchanges-list") {
-            return (200, exchanges_list(&[("LSE", "GBP")]));
-        }
-        if let Some(response) = forex_routes(
-            path,
-            &[("GBP", "2026-09-08", 0.75), ("JPY", "2026-09-08", 150.0)],
-        ) {
-            return response;
-        }
-        if path.starts_with("/eodhd/screener") {
-            return match decode_screener_exchange(path).as_deref() {
-                Some("US") => (
-                    200,
-                    json!({ "data": [{
-                        "code": "US0", "name": "US Zero", "exchange": "US",
-                        "currency_symbol": "$", "market_capitalization": 10_000_000_000.0
-                    }] }),
-                ),
-                Some("LSE") => (
-                    200,
-                    json!({ "data": [{
-                        "code": "JPY1", "name": "Japan One", "exchange": "LSE",
-                        "currency_symbol": "¥", "market_capitalization": 450_000_000_000.0
-                    }] }),
-                ),
-                _ => (200, json!({ "data": [] })),
-            };
-        }
-        (404, json!({ "error": "unexpected endpoint", "path": path }))
-    })
+    let fixture = FixtureHttp::start(screener_fx_responder(
+        &[("LSE", "GBP")],
+        &[("GBP", "2026-09-08", 0.75), ("JPY", "2026-09-08", 150.0)],
+        vec![
+            (
+                "US",
+                json!({
+                    "code": "US0", "name": "US Zero", "exchange": "US",
+                    "currency_symbol": "$", "market_capitalization": 10_000_000_000.0
+                }),
+            ),
+            (
+                "LSE",
+                json!({
+                    "code": "JPY1", "name": "Japan One", "exchange": "LSE",
+                    "currency_symbol": "¥", "market_capitalization": 450_000_000_000.0
+                }),
+            ),
+        ],
+    ))
     .await;
     providers::TEST_HTTP_ORIGIN
         .scope(fixture.origin.clone(), async {
@@ -2624,43 +2612,19 @@ async fn screener_unknown_exchange_code_is_dropped() {
 #[tokio::test]
 async fn screener_foreign_line_kept_when_home_bucket_empty() {
     let (output, _fixture) = screener_tool(
-        |path| {
-        if path.starts_with("/eodhd/exchanges-list") {
-            return (
-                200,
-                json!([
-                    {"Code": "US", "Currency": "USD"},
-                    {"Code": "LSE", "Currency": "GBP"},
-                    {"Code": "BUD", "Currency": "HUF"}
-                ]),
-            );
-        }
-        if let Some(response) = forex_routes(
-            path,
+        // The home bucket (BUD) carries no rows — EODHD's Budapest data is
+        // cap-less, so the converted bounds filter everything; the responder
+        // answers its query with empty data. London is mixed-currency:
+        // queried unbounded, so the Ft line arrives despite the GBP-converted
+        // bounds.
+        screener_fx_responder(
+            &[("LSE", "GBP"), ("BUD", "HUF")],
             &[("GBP", "2026-09-08", 0.75), ("HUF", "2026-09-08", 312.92)],
-        ) {
-            return response;
-        }
-        if path.starts_with("/eodhd/screener") {
-            return match decode_screener_exchange(path).as_deref() {
-                Some("US") => (
-                    200,
-                    json!({ "data": [screener_row("US0", "US Zero", "US", "$", 8_000_000_000.0)] }),
-                ),
-                // The home bucket delivers nothing (EODHD's Budapest data is
-                // cap-less — the converted bounds filter everything).
-                Some("BUD") => (200, json!({ "data": [] })),
-                // London is mixed-currency: queried unbounded, so the Ft line
-                // arrives despite the GBP-converted bounds.
-                Some("LSE") => (
-                    200,
-                    json!({ "data": [screener_row("HUF1", "Hungary One", "LSE", "Ft", 6_000_000_000_000.0)] }),
-                ),
-                _ => (200, json!({ "data": [] })),
-            };
-        }
-        (404, json!({ "error": "unexpected endpoint", "path": path }))
-        },
+            vec![
+                ("US", screener_row("US0", "US Zero", "US", "$", 8_000_000_000.0)),
+                ("LSE", screener_row("HUF1", "Hungary One", "LSE", "Ft", 6_000_000_000_000.0)),
+            ],
+        ),
         json!({
                 "prompt": "US, UK and Hungary listed companies with market capitalization between 2 billion and 200 billion",
                 "limit": 10
@@ -3658,35 +3622,15 @@ async fn screener_fx_list_failure_degrades_loudly() {
 #[tokio::test]
 async fn screener_ambiguous_kr_line_dropped_when_home_screened() {
     let (output, _fixture) = screener_tool(
-        |path| {
-        if path.starts_with("/eodhd/exchanges-list") {
-            return (200, exchanges_list(&[("LSE", "GBP"), ("ST", "SEK")]));
-        }
-        if let Some(response) = forex_routes(
-            path,
+        screener_fx_responder(
+            &[("LSE", "GBP"), ("ST", "SEK")],
             &[("GBP", "2026-09-08", 0.75), ("SEK", "2026-09-08", 10.0)],
-        ) {
-            return response;
-        }
-        if path.starts_with("/eodhd/screener") {
-            return match decode_screener_exchange(path).as_deref() {
-                Some("US") => (
-                    200,
-                    json!({ "data": [screener_row("US0", "US Zero", "US", "$", 8_000_000_000.0)] }),
-                ),
-                Some("LSE") => (
-                    200,
-                    json!({ "data": [screener_row("KRLSE", "Nordic on London", "LSE", "kr", 60_000_000_000.0)] }),
-                ),
-                Some("ST") => (
-                    200,
-                    json!({ "data": [screener_row("KRST", "Nordic at Home", "ST", "kr", 60_000_000_000.0)] }),
-                ),
-                _ => (200, json!({ "data": [] })),
-            };
-        }
-        (404, json!({ "error": "unexpected endpoint", "path": path }))
-        },
+            vec![
+                ("US", screener_row("US0", "US Zero", "US", "$", 8_000_000_000.0)),
+                ("LSE", screener_row("KRLSE", "Nordic on London", "LSE", "kr", 60_000_000_000.0)),
+                ("ST", screener_row("KRST", "Nordic at Home", "ST", "kr", 60_000_000_000.0)),
+            ],
+        ),
         json!({
                 "prompt": "US, UK and Sweden listed companies with market capitalization between 2 billion and 200 billion",
                 "limit": 10
