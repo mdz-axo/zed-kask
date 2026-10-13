@@ -279,7 +279,7 @@ jobs:
       - name: Install native build deps — mold linker (forced by
           .cargo/config.toml), ALSA headers (alsa-sys via cpal), nasm
           (vendored FFmpeg static build), ffmpeg (the runtime binaries
-          hkask-mcp-media shells out to: ffprobe gates Reduct local
+          hkask-mcp-media shells out to — ffprobe gates Reduct local
           uploads, ffmpeg renders video; the vendored ffmpeg-sys-next
           build provides link libraries, not the binaries on PATH)
         run: sudo apt-get update && sudo apt-get install -y mold libasound2-dev nasm jq ffmpeg

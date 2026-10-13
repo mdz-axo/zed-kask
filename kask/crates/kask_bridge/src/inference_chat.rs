@@ -1374,7 +1374,14 @@ mod tests {
         language_model::LanguageModel,
         gpui::Task<()>,
     ) {
-        let fake = Arc::new(language_model::fake_provider::FakeLanguageModelProvider::default());
+        // Upstream #64750 made LanguageModel plain data served by its
+        // provider: completions resolve the provider through the global
+        // registry (`read_global` → `provider_for_model`), so the fixture
+        // must install a registry — and it must hold the same fake
+        // instance the tests assert against. A bare fake (the pre-merge
+        // fixture) panics with "no state of type
+        // GlobalLanguageModelRegistry exists" on every completion.
+        let fake = cx.update(|cx| language_model::LanguageModelRegistry::test(cx));
         let model = fake.model("fake");
         let (port, task) = super::LanguageModelInferencePort::new(
             Arc::new(model.clone()),
