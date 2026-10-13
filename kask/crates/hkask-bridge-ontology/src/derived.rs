@@ -903,6 +903,14 @@ pub const DERIVED_CONCEPTS: &[DerivedConcept] = &[
         ],
         authority: "operator ruling 2026-10-10; IEEE Technology Navigator (Health Monitoring System); Tsalapati & Koubarakis, SHM: A Light-weight, Mid-level Ontology for Reliable System Health Monitoring (ISWC 2023)",
     },
+    DerivedConcept {
+        term: "fine_tuning",
+        aliases: &["fine tuning", "finetuning", "fine-tune"],
+        identity: "continued training of a pre-trained model on task-specific data, adapting its weights — fully or through parameter-efficient adapters such as LoRA — without changing the architecture",
+        definition: "The machine-learning sense: a model whose parameters were learned by pre-training on a large corpus is trained further on a smaller, task-specific dataset, so its behaviour adapts to the task while the architecture stays fixed. In zed-kask it names the lora-training pipeline (QLoRA adapters over a frozen base model). The research-area anchor is CSO 3.5's fine-tuning learning topic, with its neural, memory-efficient and parameter-efficient sub-topics; ISO/IEC 22989:2022 — the AI concepts vocabulary — defines training, machine learning and retraining but not fine-tuning, so no ISO definition is cited.",
+        constituents: &["machine learning", "model"],
+        authority: "operator ruling 2026-10-13; CSO 3.5, cso:fine-tuning_learning (vendored pin)",
+    },
 ];
 /// Normalization matches the onto_anchor tool's: lowercase alphanumeric
 /// characters only, separators and case folded away.

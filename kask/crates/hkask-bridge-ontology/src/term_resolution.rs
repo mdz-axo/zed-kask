@@ -390,8 +390,8 @@ mod tests {
     /// data-retention anchor (StorageDuration, DPV 2.0 §17.1.666 lineage)
     /// and CSO publishes the inference research topic — while the distinct
     /// finance sense of "retention" keeps its derived primary (no
-    /// collision), and CSO 3.3's missing fine-tuning topic (added in the
-    /// unobtainable 3.4) leaves that term honestly on the coarse core.
+    /// collision). The rung-2 CSO 3.5 pin publishes the fine-tuning
+    /// learning topic and the derived ruling resolves the bare term.
     #[test]
     fn rung1_pins_resolve_dpv_and_cso_rulings() {
         let duration = resolve_term("dpv:StorageDuration");
@@ -433,7 +433,69 @@ mod tests {
         );
 
         let fine_tuning = resolve_term("fine-tuning");
-        assert_eq!(fine_tuning.tier.as_str(), "core", "{fine_tuning:?}");
+        assert_eq!(
+            (fine_tuning.tier.as_str(), fine_tuning.concept.as_str()),
+            ("derived", "fine_tuning"),
+            "{fine_tuning:?}"
+        );
+
+        let topic = resolve_term("fine-tuning learning");
+        assert_eq!(
+            (
+                topic.tier.as_str(),
+                topic.namespace.as_str(),
+                topic.concept.as_str()
+            ),
+            ("domain_supplement", "CSO", "cso:fine-tuning_learning"),
+            "{topic:?}"
+        );
+        assert!(
+            topic
+                .source
+                .as_deref()
+                .is_some_and(|source| source.contains("CSO.3.5.owl")),
+            "{topic:?}"
+        );
+    }
+
+    /// expect: the rung-2 audit and service-level-agreement rulings resolve
+    /// published through DPV — dpv:Audit, dpv:ServiceLevelAgreement — with
+    /// the CSO service-level-agreement research topic listed as an
+    /// alternative. The ISO definitions (ISO 19011:2018 §3.1; ISO/IEC
+    /// 20000-10:2018 §3.2.20) are verified supporting authority, cite-only:
+    /// ISO bytes are copyrighted and never vendored.
+    #[test]
+    fn rung2_audit_and_sla_rulings_resolve_published() {
+        let audit = resolve_term("audit");
+        assert_eq!(
+            (audit.tier.as_str(), audit.concept.as_str()),
+            ("domain_supplement", "dpv:Audit"),
+            "{audit:?}"
+        );
+        assert!(
+            audit
+                .definition
+                .as_deref()
+                .is_some_and(|text| text.contains("systematic")),
+            "{audit:?}"
+        );
+
+        let sla = resolve_term("service level agreement");
+        assert_eq!(
+            (
+                sla.tier.as_str(),
+                sla.namespace.as_str(),
+                sla.concept.as_str()
+            ),
+            ("domain_supplement", "DPV", "dpv:ServiceLevelAgreement"),
+            "{sla:?}"
+        );
+        assert!(
+            sla.alternatives
+                .iter()
+                .any(|sense| sense.concept == "cso:service_level_agreement"),
+            "{sla:?}"
+        );
     }
 
     /// expect: one word, several published senses — the formal upper sense
