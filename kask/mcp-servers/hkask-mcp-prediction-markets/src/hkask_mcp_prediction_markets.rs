@@ -1424,35 +1424,20 @@ impl PredictionMarketsServer {
                 match provider_kalshi::fetch_markets(&self.http, Some(&series), limit).await {
                     Ok(markets) => {
                         let lines = Self::kalshi_catalog_lines(&markets);
-                        match cmp_index_builder::build_cmp_indices_from_lines(
-                            &lines,
-                            family,
-                            cmp_index_builder::Venue::Kalshi,
-                            &context,
-                            &config,
-                            &now,
-                        ) {
-                            Ok(set) => {
-                                let n = set.indices.len();
-                                for index in &set.indices {
-                                    match serde_json::to_value(index) {
-                                        Ok(v) => indices.push(v),
-                                        Err(e) => warnings.push(format!(
-                                            "kalshi index serialization failed: {e}"
-                                        )),
-                                    }
-                                }
-                                venue_reports.push(serde_json::json!({
-                                    "venue": "kalshi",
-                                    "indices": n,
-                                    "withheld_buckets": set.withheld_buckets,
-                                    "n_records_read": set.n_records_read,
-                                    "n_eligible": set.n_eligible,
-                                    "rejection_sample": set.rejection_sample,
-                                }));
-                            }
-                            Err(e) => warnings.push(format!("kalshi index construction: {e}")),
-                        }
+                        Self::absorb_venue_set(
+                            "kalshi",
+                            cmp_index_builder::build_cmp_indices_from_lines(
+                                &lines,
+                                family,
+                                cmp_index_builder::Venue::Kalshi,
+                                &context,
+                                &config,
+                                &now,
+                            ),
+                            &mut indices,
+                            &mut warnings,
+                            &mut venue_reports,
+                        );
                     }
                     Err(e) => warnings.push(format!("kalshi fetch failed: {e}")),
                 }
@@ -1486,35 +1471,20 @@ impl PredictionMarketsServer {
                                 serde_json::to_string(&record).ok()
                             })
                             .collect();
-                        match cmp_index_builder::build_cmp_indices_from_lines(
-                            &lines,
-                            family,
-                            cmp_index_builder::Venue::Polymarket,
-                            &context,
-                            &config,
-                            &now,
-                        ) {
-                            Ok(set) => {
-                                let n = set.indices.len();
-                                for index in &set.indices {
-                                    match serde_json::to_value(index) {
-                                        Ok(v) => indices.push(v),
-                                        Err(e) => warnings.push(format!(
-                                            "polymarket index serialization failed: {e}"
-                                        )),
-                                    }
-                                }
-                                venue_reports.push(serde_json::json!({
-                                    "venue": "polymarket",
-                                    "indices": n,
-                                    "withheld_buckets": set.withheld_buckets,
-                                    "n_records_read": set.n_records_read,
-                                    "n_eligible": set.n_eligible,
-                                    "rejection_sample": set.rejection_sample,
-                                }));
-                            }
-                            Err(e) => warnings.push(format!("polymarket index construction: {e}")),
-                        }
+                        Self::absorb_venue_set(
+                            "polymarket",
+                            cmp_index_builder::build_cmp_indices_from_lines(
+                                &lines,
+                                family,
+                                cmp_index_builder::Venue::Polymarket,
+                                &context,
+                                &config,
+                                &now,
+                            ),
+                            &mut indices,
+                            &mut warnings,
+                            &mut venue_reports,
+                        );
                     }
                     Err(e) => warnings.push(format!("polymarket fetch failed: {e}")),
                 }
@@ -1537,6 +1507,42 @@ impl PredictionMarketsServer {
             })
         })
         .await
+    }
+
+    /// Absorb one venue's index-set build into the cmp-indices accumulators —
+    /// the tail both venue arms of `market_cmp_indices` share: a built set
+    /// serializes its indices (a serialization failure warns, never aborts)
+    /// and reports its counts; a build failure warns with the venue named.
+    /// The venue label is the only thing that varies between the arms; the
+    /// accumulators are passed `&mut` (the fetch-failure arms warn too, so a
+    /// capturing closure would hold the borrow).
+    fn absorb_venue_set(
+        venue: &str,
+        result: Result<cmp_index_builder::ProvenancedCmpIndexSet, cmp_index_builder::CmpError>,
+        indices: &mut Vec<serde_json::Value>,
+        warnings: &mut Vec<String>,
+        venue_reports: &mut Vec<serde_json::Value>,
+    ) {
+        match result {
+            Ok(set) => {
+                let n = set.indices.len();
+                for index in &set.indices {
+                    match serde_json::to_value(index) {
+                        Ok(v) => indices.push(v),
+                        Err(e) => warnings.push(format!("{venue} index serialization failed: {e}")),
+                    }
+                }
+                venue_reports.push(serde_json::json!({
+                    "venue": venue,
+                    "indices": n,
+                    "withheld_buckets": set.withheld_buckets,
+                    "n_records_read": set.n_records_read,
+                    "n_eligible": set.n_eligible,
+                    "rejection_sample": set.rejection_sample,
+                }));
+            }
+            Err(e) => warnings.push(format!("{venue} index construction: {e}")),
+        }
     }
 
     /// Propose a curated economic context for a base-event family, with
