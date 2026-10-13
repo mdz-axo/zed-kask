@@ -188,6 +188,8 @@ jobs:
         run: bash kask/scripts/check-no-new-dead-code-allows.sh
       - name: String errors — no Result<_, String> in hkask library code
         run: bash kask/scripts/check-string-errors.sh
+      - name: Zero Python — no interpreter surface under kask/ or fork-owned workflows
+        run: bash kask/scripts/check-no-python.sh
       - name: Structural traps — no net-new unwrap() in production beyond the ratchet baseline
         run: |
           # jq for the gate's stream-JSON parsing (the duplication-ratchet
