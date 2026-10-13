@@ -8,14 +8,32 @@ use crate::test_support::{
     content, make_thread_server, recording_thread_server, write_fixture_card, write_fixture_cards,
 };
 
-#[tokio::test]
-async fn scoped_plan_broadcast_send_share_history_and_keep_verdict_and_board()
--> Result<(), Box<dyn std::error::Error>> {
-    let (_dir, server, recorder) = recording_thread_server("test-passphrase");
+/// The scoped-dispatch fixture both scoped tests share: a recording server
+/// under the test passphrase, fixture cards for members a/b plus the
+/// outsider, and the "scoped" swarm over the two members. The TempDir
+/// rides in the return — bind it (`_dir`) so the on-disk artifacts outlive
+/// the test body (a helper-dropped dir would delete them mid-test).
+fn scoped_fixture() -> Result<
+    (
+        tempfile::TempDir,
+        crate::SwarmServer,
+        std::sync::Arc<crate::test_support::RecordingInference>,
+        crate::local_swarms::LocalSwarm,
+    ),
+    Box<dyn std::error::Error>,
+> {
+    let (dir, server, recorder) = recording_thread_server("test-passphrase");
     write_fixture_cards(&server, &["a", "b", "outsider"])?;
     let swarm = server
         .local_swarms
         .create("scoped", "", vec!["a".into(), "b".into()])?;
+    Ok((dir, server, recorder, swarm))
+}
+
+#[tokio::test]
+async fn scoped_plan_broadcast_send_share_history_and_keep_verdict_and_board()
+-> Result<(), Box<dyn std::error::Error>> {
+    let (_dir, server, recorder, swarm) = scoped_fixture()?;
     let plan =
         |entries: Value, sid: Option<&str>| -> Result<ExecutePlanLocalRequest, serde_json::Error> {
             serde_json::from_value(json!({"delegations": entries, "swarm_id": sid}))
@@ -313,11 +331,7 @@ async fn independent_store_instances_serialize_history_and_sequences()
 #[tokio::test]
 async fn scoped_fanout_and_pipeline_commit_ordered_history_and_deny_nonmembers()
 -> Result<(), Box<dyn std::error::Error>> {
-    let (_dir, server, recorder) = recording_thread_server("test-passphrase");
-    write_fixture_cards(&server, &["a", "b", "outsider"])?;
-    let swarm = server
-        .local_swarms
-        .create("scoped", "", vec!["a".into(), "b".into()])?;
+    let (_dir, server, recorder, swarm) = scoped_fixture()?;
     let sid = &swarm.swarm_id;
     let fanout = content(
         &server
