@@ -124,6 +124,20 @@ fn insert_optional_field(
     Ok(())
 }
 
+/// Insert an App-manifest request's optional fields into a payload — the
+/// shared merge pattern of the App create-direct and update tools. The
+/// field list is the caller's: each tool's request type declares its own
+/// field order, `preserve_order` makes insertion the serialized byte order,
+/// and each site's list follows its own struct. The JSON key is the field
+/// ident, so a key string cannot drift from the field it selects.
+macro_rules! insert_app_fields {
+    ($payload:expr, $req:expr, [$($field:ident),* $(,)?]) => {
+        $(
+            insert_optional_field(&mut $payload, stringify!($field), $req.$field)?;
+        )*
+    };
+}
+
 /// Recursively scan a JSON value for "accepts" and "produces" arrays of
 /// strings, returning any labels that do not resolve in the PortRegistry.
 /// Used by  to catch decorative port labels in composed
@@ -1879,17 +1893,23 @@ impl SwarmServer {
             let mut payload = serde_json::json!({
                 "slug": req.slug,
             });
-            insert_optional_field(&mut payload, "name", req.name)?;
-            insert_optional_field(&mut payload, "tagline", req.tagline)?;
-            insert_optional_field(&mut payload, "description", req.description)?;
-            insert_optional_field(&mut payload, "homepage_url", req.homepage_url)?;
-            insert_optional_field(&mut payload, "icon_url", req.icon_url)?;
-            insert_optional_field(&mut payload, "composition_slug", req.composition_slug)?;
-            insert_optional_field(&mut payload, "schema_slug", req.schema_slug)?;
-            insert_optional_field(&mut payload, "schema_json", req.schema_json)?;
-            insert_optional_field(&mut payload, "workspace_template", req.workspace_template)?;
-            insert_optional_field(&mut payload, "metadata", req.metadata)?;
-            insert_optional_field(&mut payload, "visibility", req.visibility)?;
+            insert_app_fields!(
+                payload,
+                req,
+                [
+                    name,
+                    tagline,
+                    description,
+                    homepage_url,
+                    icon_url,
+                    composition_slug,
+                    schema_slug,
+                    schema_json,
+                    workspace_template,
+                    metadata,
+                    visibility,
+                ]
+            );
             let data = self
                 .client
                 .post("/apps", &payload)
@@ -1916,17 +1936,23 @@ impl SwarmServer {
             let req = parameters.0;
             require_non_empty(&[("slug", &req.slug)])?;
             let mut payload = serde_json::json!({});
-            insert_optional_field(&mut payload, "name", req.name)?;
-            insert_optional_field(&mut payload, "tagline", req.tagline)?;
-            insert_optional_field(&mut payload, "homepage_url", req.homepage_url)?;
-            insert_optional_field(&mut payload, "icon_url", req.icon_url)?;
-            insert_optional_field(&mut payload, "composition_slug", req.composition_slug)?;
-            insert_optional_field(&mut payload, "schema_slug", req.schema_slug)?;
-            insert_optional_field(&mut payload, "schema_json", req.schema_json)?;
-            insert_optional_field(&mut payload, "workspace_template", req.workspace_template)?;
-            insert_optional_field(&mut payload, "description", req.description)?;
-            insert_optional_field(&mut payload, "metadata", req.metadata)?;
-            insert_optional_field(&mut payload, "visibility", req.visibility)?;
+            insert_app_fields!(
+                payload,
+                req,
+                [
+                    name,
+                    tagline,
+                    homepage_url,
+                    icon_url,
+                    composition_slug,
+                    schema_slug,
+                    schema_json,
+                    workspace_template,
+                    description,
+                    metadata,
+                    visibility,
+                ]
+            );
             let data = self
                 .client
                 .request(
