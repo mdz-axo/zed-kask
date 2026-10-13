@@ -247,6 +247,22 @@ pub(crate) fn write_contained(output: &str, content: &str) -> Result<(), McpTool
     Ok(())
 }
 
+/// Parse one JSONL line into `T` with the shared strict-reader error
+/// mapping (`{label} line {n} is not valid JSON`, 1-based, counting all
+/// lines including empty ones). Shared by [`read_jsonl_stream`] and
+/// [`read_jsonl`]; the lenient reader keeps its own drop-counting tail.
+/// The line source (buffered Result lines vs in-memory `&str` lines) and
+/// the trim/skip-empty gate stay per-reader.
+fn parse_jsonl_line<T: DeserializeOwned>(
+    line: &str,
+    label: &str,
+    line_no: usize,
+) -> Result<T, McpToolError> {
+    serde_json::from_str(line).map_err(|e| {
+        McpToolError::invalid_argument(format!("{label} line {line_no} is not valid JSON: {e}"))
+    })
+}
+
 /// Stream a JSONL file line-by-line, parsing each non-empty line into `T`.
 ///
 /// Unlike [`read_jsonl`], this does NOT read the entire file into memory —
@@ -280,10 +296,7 @@ pub(crate) fn read_jsonl_stream<T: DeserializeOwned>(
         if line.is_empty() {
             continue;
         }
-        let v: T = serde_json::from_str(line).map_err(|e| {
-            McpToolError::invalid_argument(format!("{label} line {} is not valid JSON: {e}", i + 1))
-        })?;
-        out.push(v);
+        out.push(parse_jsonl_line(line, label, i + 1)?);
     }
     Ok(out)
 }
@@ -311,10 +324,7 @@ pub(crate) fn read_jsonl<T: DeserializeOwned>(
         if line.is_empty() {
             continue;
         }
-        let v: T = serde_json::from_str(line).map_err(|e| {
-            McpToolError::invalid_argument(format!("{label} line {} is not valid JSON: {e}", i + 1))
-        })?;
-        out.push(v);
+        out.push(parse_jsonl_line(line, label, i + 1)?);
     }
     Ok(out)
 }
