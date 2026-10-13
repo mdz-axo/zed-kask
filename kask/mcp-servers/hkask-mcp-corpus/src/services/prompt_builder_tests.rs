@@ -7,28 +7,16 @@ use crate::services::qa_pipeline::{PreparedQaPrompt, render_disposition_plan_mes
 use crate::tools::corpus::BuildPromptsRequest as ToolRequest;
 use crate::tools::corpus::QaType;
 use hkask_types::corpus::{ClassificationOutcome, TaggedChunk};
-use hkask_types::template::LLMParameters;
-use hkask_types::{ChatToolDefinition, InferenceError, InferencePort, InferenceResult};
 use rmcp::handler::server::wrapper::Parameters;
 use serde_json::json;
-use std::{future::Future, path::Path, pin::Pin, sync::Arc};
+use std::{path::Path, sync::Arc};
 
 const PASSPHRASE: &str = crate::helpers::TEST_PASSPHRASE;
 
-struct NoInference;
-impl InferencePort for NoInference {
-    fn generate(
-        &self,
-        _: &str,
-        _: &LLMParameters,
-        _: Option<&[ChatToolDefinition]>,
-    ) -> Pin<Box<dyn Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>> {
-        panic!("prompt building must not invoke a model")
-    }
-}
-
 fn server() -> CorpusServer {
-    crate::helpers::corpus_test_server(Arc::new(NoInference))
+    crate::helpers::corpus_test_server(Arc::new(crate::helpers::NoInference(
+        "prompt building must not invoke a model",
+    )))
 }
 
 fn fixture() -> anyhow::Result<tempfile::TempDir> {

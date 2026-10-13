@@ -12,20 +12,10 @@ const PASSPHRASE: &str = crate::helpers::TEST_PASSPHRASE;
 const ANSWERS: [&str; 4] = ["Thirty", "72 hours", "A collision", "exp(-E/kB T)"];
 const PARAPHRASE_ANSWER: &str = "about thirty, give or take";
 
-struct NoInference;
-impl InferencePort for NoInference {
-    fn generate(
-        &self,
-        _: &str,
-        _: &LLMParameters,
-        _: Option<&[ChatToolDefinition]>,
-    ) -> Pin<Box<dyn Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>> {
-        panic!("ingestion must not invoke inference")
-    }
-}
-
 fn server() -> CorpusServer {
-    crate::helpers::corpus_test_server(Arc::new(NoInference))
+    crate::helpers::corpus_test_server(Arc::new(crate::helpers::NoInference(
+        "ingestion must not invoke inference",
+    )))
 }
 
 fn fixture() -> anyhow::Result<tempfile::TempDir> {

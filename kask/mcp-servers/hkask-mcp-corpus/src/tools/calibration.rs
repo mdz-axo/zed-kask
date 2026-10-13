@@ -1369,26 +1369,13 @@ fn encode_source(source: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hkask_types::template::LLMParameters;
-    use hkask_types::{ChatToolDefinition, InferenceError, InferencePort, InferenceResult};
     use rmcp::handler::server::wrapper::Parameters;
-    use std::{future::Future, pin::Pin, sync::Arc};
-
-    struct NoInference;
-    impl InferencePort for NoInference {
-        fn generate(
-            &self,
-            _: &str,
-            _: &LLMParameters,
-            _: Option<&[ChatToolDefinition]>,
-        ) -> Pin<Box<dyn Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>>
-        {
-            panic!("representation construction must not invoke inference")
-        }
-    }
+    use std::sync::Arc;
 
     fn server() -> CorpusServer {
-        crate::helpers::corpus_test_server(Arc::new(NoInference))
+        crate::helpers::corpus_test_server(Arc::new(crate::helpers::NoInference(
+            "representation construction must not invoke inference",
+        )))
     }
 
     fn fixture() -> anyhow::Result<(tempfile::TempDir, BuildChunkRepresentationsRequest)> {

@@ -7,20 +7,10 @@ use rmcp::handler::server::wrapper::Parameters;
 use std::io::{Seek, Write};
 use std::{future::Future, path::Path, pin::Pin, sync::Arc};
 
-struct NoInference;
-impl InferencePort for NoInference {
-    fn generate(
-        &self,
-        _: &str,
-        _: &LLMParameters,
-        _: Option<&[ChatToolDefinition]>,
-    ) -> Pin<Box<dyn Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>> {
-        panic!("native document fixtures must not invoke inference")
-    }
-}
-
 fn server() -> CorpusServer {
-    crate::helpers::corpus_test_server(Arc::new(NoInference))
+    crate::helpers::corpus_test_server(Arc::new(crate::helpers::NoInference(
+        "native document fixtures must not invoke inference",
+    )))
 }
 
 fn fixture() -> anyhow::Result<tempfile::TempDir> {

@@ -514,11 +514,38 @@ pub(crate) fn seed_test_passphrase() {
     }
 }
 
+/// A panic-stub inference port for handler-level fixtures that must never
+/// reach a model — the shared `NoInference` contract. Each file's message
+/// rides its construction site (`NoInference("chunk fixtures must not
+/// invoke inference")`), so a leaked call's diagnostic still names the
+/// fixture surface that leaked it.
+#[cfg(test)]
+pub(crate) struct NoInference(pub &'static str);
+
+#[cfg(test)]
+impl hkask_types::InferencePort for NoInference {
+    fn generate(
+        &self,
+        _: &str,
+        _: &hkask_types::template::LLMParameters,
+        _: Option<&[hkask_types::ChatToolDefinition]>,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
+                > + Send
+                + '_,
+        >,
+    > {
+        panic!("{}", self.0)
+    }
+}
+
 /// Build a `CorpusServer` over `port` for handler-level tests — the shared
-/// construction choreography of the NoInference fixtures: seed the test
+/// construction choreography of the no-inference fixtures: seed the test
 /// passphrase, wrap the port in the LLM OCR executor, construct the server.
-/// The per-file `NoInference` ports stay local — each file's panic message
-/// names what its own fixtures must not invoke.
+/// The panic-stub port itself is shared (`NoInference`); each file's panic
+/// message rides its construction site.
 #[cfg(test)]
 pub(crate) fn corpus_test_server(
     port: std::sync::Arc<dyn hkask_types::InferencePort>,

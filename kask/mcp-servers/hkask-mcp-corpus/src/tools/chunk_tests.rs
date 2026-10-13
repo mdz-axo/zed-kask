@@ -1,26 +1,14 @@
 //! Approved slice2 contracts at the public corpus_chunk boundary; no inference or production state.
 use super::ChunkRequest;
 use crate::CorpusServer;
-use hkask_types::template::LLMParameters;
-use hkask_types::{ChatToolDefinition, InferenceError, InferencePort, InferenceResult};
 use rmcp::handler::server::wrapper::Parameters;
 use serde_json::{Value, json};
-use std::{future::Future, pin::Pin, sync::Arc};
-
-struct NoInference;
-impl InferencePort for NoInference {
-    fn generate(
-        &self,
-        _: &str,
-        _: &LLMParameters,
-        _: Option<&[ChatToolDefinition]>,
-    ) -> Pin<Box<dyn Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>> {
-        panic!("chunk fixtures must not invoke inference")
-    }
-}
+use std::sync::Arc;
 
 fn server() -> CorpusServer {
-    crate::helpers::corpus_test_server(Arc::new(NoInference))
+    crate::helpers::corpus_test_server(Arc::new(crate::helpers::NoInference(
+        "chunk fixtures must not invoke inference",
+    )))
 }
 
 fn fixture() -> anyhow::Result<tempfile::TempDir> {
