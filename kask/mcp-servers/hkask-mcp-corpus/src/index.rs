@@ -471,21 +471,29 @@ pub(crate) fn search_passages<'a>(
 mod tests {
     use super::*;
 
+    /// Insert one indexed passage row — the shared insertion spine of the
+    /// index fixtures: the (Ephemeral("test"), chunk:{position}) key with
+    /// the passage text, entity_ref metadata, and the caller's embedding
+    /// and model. The lock scope and the row iteration stay per-test.
+    fn seed_row(state: &mut IndexState, position: usize, embedding: Vec<f32>, model: &str) {
+        let entity_ref = format!("chunk:{position}");
+        state.passages.insert(
+            (Origin::Ephemeral("test".into()), entity_ref.clone()),
+            IndexedPassage {
+                text: Some("passage".into()),
+                metadata: json!({"entity_ref": entity_ref}),
+                embedding,
+                model: model.to_string(),
+            },
+        );
+    }
+
     fn index_with(embeddings: &[&[f32]]) -> PassageIndex {
         let index = PassageIndex::default();
         {
             let mut state = index.lock().expect("index lock");
             for (position, embedding) in embeddings.iter().enumerate() {
-                let entity_ref = format!("chunk:{position}");
-                state.passages.insert(
-                    (Origin::Ephemeral("test".into()), entity_ref.clone()),
-                    IndexedPassage {
-                        text: Some("passage".into()),
-                        metadata: json!({"entity_ref": entity_ref}),
-                        embedding: embedding.to_vec(),
-                        model: "test-model".to_string(),
-                    },
-                );
+                seed_row(&mut state, position, embedding.to_vec(), "test-model");
             }
         }
         index
@@ -543,16 +551,7 @@ mod tests {
                 (1, "qwen3-embedding:0.6b"),
                 (2, "Qwen/Qwen3-Embedding-8B"),
             ] {
-                let entity_ref = format!("chunk:{position}");
-                state.passages.insert(
-                    (Origin::Ephemeral("test".into()), entity_ref.clone()),
-                    IndexedPassage {
-                        text: Some("passage".into()),
-                        metadata: json!({"entity_ref": entity_ref}),
-                        embedding: vec![1.0, 0.0],
-                        model: model.to_string(),
-                    },
-                );
+                seed_row(&mut state, position, vec![1.0, 0.0], model);
             }
         }
 
@@ -581,16 +580,7 @@ mod tests {
         {
             let mut state = index.lock().expect("index lock");
             for position in 0..2 {
-                let entity_ref = format!("chunk:{position}");
-                state.passages.insert(
-                    (Origin::Ephemeral("test".into()), entity_ref.clone()),
-                    IndexedPassage {
-                        text: Some("passage".into()),
-                        metadata: json!({"entity_ref": entity_ref}),
-                        embedding: vec![1.0, 0.0],
-                        model: "qwen3-embedding:0.6b".to_string(),
-                    },
-                );
+                seed_row(&mut state, position, vec![1.0, 0.0], "qwen3-embedding:0.6b");
             }
         }
 
