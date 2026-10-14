@@ -264,7 +264,7 @@ fn nested_add_form(levels: usize) -> String {
 
 #[test]
 fn budget_camelcase_max_depth_alias_is_tolerated() {
-    // L1 decision (operator-vetoable): camelCase budget fields are tolerated
+    // Ratified (L1 / 2026-10-14): camelCase budget fields are tolerated
     // via serde aliases, so an explicit budget is APPLIED rather than silently
     // dropped. Pre-L1 this was a silent-ignore: the camelCase field was an
     // unknown field, serde dropped it, and the eval failed with the DEFAULT
@@ -336,8 +336,8 @@ fn walker_600_element_list_completes_at_default_budget() {
 // in the same change that landed the fix (lisp-repair L2: checked arithmetic
 // + integer-exact comparison). The pre-fix expectations live in the comments
 // as the before/after receipt. Naming: `lie_fix_*` = the corrected behavior
-// (was lie_specimen_*); `degradation_specimen_*` = the defensive-degradation
-// family (grouped for the operator's assoc ruling, NOT lies).
+// (was lie_specimen_* / degradation_specimen_* before the 2026-10-14 R-1..R-5
+// operator rulings).
 
 #[test]
 fn lie_fix_integer_overflow_errors_typed() {
@@ -396,21 +396,96 @@ fn lie_fix_f64_comparison_is_integer_exact() {
 }
 
 #[test]
-fn degradation_specimen_string_equals_silent_false_on_non_strings() {
-    // DEFECT-ADJACENT SPECIMEN (divergence D11, defensive-degradation
-    // family): string= returns false — not a type error — on non-string
-    // arguments (hkask_lisp.rs:1322-1325). Grouped with assoc's graceful
-    // degradation for the operator's ruling.
-    let out = run(json!({"form": "(string= 1 \"1\")", "env": {}}));
-    assert_eq!(out, Ok(json!(false)));
+fn lie_fix_string_equals_errors_on_non_string_and_allows_nil() {
+    // Operator ruling 2026-10-14 (R-2): string= errors with TypeError on
+    // non-string scalars/lists (matching `=`'s L2 lie-fix), while keeping
+    // Nil -> false so nullable JSON fields and absent-key `(assoc k obj)`
+    // in counting walkers (`d-without-oracle`, `count-sev`) evaluate to false.
+    let int_err = run(json!({"form": "(string= 1 \"1\")", "env": {}}));
+    assert_eq!(
+        int_err,
+        Err("type error: expected string, got int".to_string())
+    );
+    let bool_err = run(json!({"form": "(string= \"true\" true)", "env": {}}));
+    assert_eq!(
+        bool_err,
+        Err("type error: expected string, got boolean".to_string())
+    );
+    assert_eq!(
+        run(json!({"form": "(string= nil \"D\")", "env": {}})),
+        Ok(json!(false))
+    );
+    assert_eq!(
+        run(json!({"form": "(string= \"D\" nil)", "env": {}})),
+        Ok(json!(false))
+    );
+    assert_eq!(
+        run(json!({"form": "(string= nil nil)", "env": {}})),
+        Ok(json!(false))
+    );
 }
 
 #[test]
-fn degradation_specimen_nth_negative_index_silent_null() {
-    // DEFECT-ADJACENT SPECIMEN (defensive-degradation family): a negative
-    // nth index casts to a huge usize and returns Nil silently.
-    let out = run(json!({"form": "(nth -1 (list 1 2 3))", "env": {}}));
-    assert_eq!(out, Ok(Value::Null));
+fn lie_fix_nth_negative_index_errors_typed() {
+    // Operator ruling 2026-10-14 (R-1): a negative nth index is a typed
+    // Runtime error teaching 0-based indexing, never a wrap to usize::MAX
+    // that walks the spine and returns null silently. Out-of-bounds
+    // non-negative indices continue to return null.
+    let neg = run(json!({"form": "(nth -1 (list 1 2 3))", "env": {}}));
+    assert!(
+        matches!(neg, Err(ref e) if e.contains("nth: negative index -1") && e.contains("0-based")),
+        "got: {neg:?}"
+    );
+    assert_eq!(
+        run(json!({"form": "(nth 5 (list 1 2 3))", "env": {}})),
+        Ok(Value::Null)
+    );
+}
+
+#[test]
+fn assoc_strict_and_absent_key_teaching_close_vacuity_and_cdr_traps() {
+    // Operator ruling 2026-10-14 (R-3 & R-4):
+    // 1. `(assoc! key alist)` returns the value when present and errors naming
+    //    available keys in sorted order when absent.
+    assert_eq!(
+        run(json!({
+            "form": "(assoc! \"verdict\" row)",
+            "env": {"row": {"verdict": "BUG", "contract": "P8.4"}}
+        })),
+        Ok(json!("BUG"))
+    );
+    let missing = run(json!({
+        "form": "(assoc! \"tier\" row)",
+        "env": {"row": {"verdict": "BUG", "contract": "P8.4", "location": "a.rs:1"}}
+    }));
+    assert_eq!(
+        missing,
+        Err("runtime error: assoc!: key \"tier\" not found — available keys: [\"contract\", \"location\", \"verdict\"]".to_string())
+    );
+    // 2. `(assoc key 42)` rejects non-string primitive scalars as the alist.
+    let bad_alist = run(json!({"form": "(assoc \"k\" 42)", "env": {}}));
+    assert!(
+        matches!(bad_alist, Err(ref e) if e.contains("type error: expected list, got int")),
+        "got: {bad_alist:?}"
+    );
+    // 3. Numeric comparator on nil teaches the missing-key / assoc! recovery.
+    let num_nil = run(json!({
+        "form": "(> (assoc \"cnt\" row) 0)",
+        "env": {"row": {"count": 5}}
+    }));
+    assert!(
+        matches!(num_nil, Err(ref e) if e.contains("expected number, got nil") && e.contains("assoc!")),
+        "got: {num_nil:?}"
+    );
+    // 4. Common-Lisp `(cdr (assoc ...))` teaches that assoc returns the value directly.
+    let cdr_assoc = run(json!({
+        "form": "(cdr (assoc \"count\" row))",
+        "env": {"row": {"count": 5}}
+    }));
+    assert!(
+        matches!(cdr_assoc, Err(ref e) if e.contains("expected list, got int") && e.contains("returns the value directly")),
+        "got: {cdr_assoc:?}"
+    );
 }
 
 // ── L2: boundary determinism pins ──────────────────────────────────────

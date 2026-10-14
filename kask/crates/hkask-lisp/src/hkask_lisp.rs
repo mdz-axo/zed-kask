@@ -13,33 +13,28 @@
 //!   Special forms: quote, if, let, lambda, define, begin, and, or, not, cond
 //!   Built-in functions: car, cdr, cons, list, length, nth, reverse,
 //!     +, -, *, /, =, !=, <, <=, >, >=, is_null, numberp, listp, stringp,
-//!     assoc, append, string=, string-contains, starts-with, ends-with,
-//!     concat, abs, sqrt, max, min, eq, member
+//!     assoc, assoc!, append, string=, string-contains, starts-with,
+//!     ends-with, concat, abs, sqrt, max, min, eq, member
 //!
 //! Integer arithmetic is checked (overflow is a typed `Runtime` error, never
 //! a silent wrap), and all-Int comparisons are exact i64 (never coerced
 //! through f64 — lisp-repair L2).
 //!
-//! `assoc` is defensive: a non-list alist argument returns nil instead of
-//! erroring (see `assoc_fn` — LLM step outputs reach forms as JSON strings,
-//! and 36 call sites rely on graceful degradation — lisp-repair L0 count:
-//! 21 in `.agents/skills/`, 15 in `kask/`).
+//! `assoc` is defensive on `Nil` and `String` (LLM step outputs that reached
+//! forms as JSON strings return nil so `is_null` guards work), while
+//! rejecting non-string primitive scalars (`Int`, `Float`, `Bool`) as the
+//! alist argument.
 //!
-//! # Absent-key convention (form-authoring idiom)
+//! # Absent-key convention (`assoc` vs `assoc!`, operator ruling 2026-10-14)
 //!
-//! `assoc` on a MISSING key returns nil; `string=` on that nil returns false
-//! SILENTLY (the vacuity trap), while numeric comparisons on it error
-//! loudly — a form that reads a key its producer never emits either computes
-//! a vacuous result or fails without naming the missing key (observed live
-//! 2026-09-30: the bug-hunt convergence form's defect channel read `tier`
-//! where the oracle emits `verdict`, and was vacuously true until the
-//! batch-7 repair). The idiom: GUARD with `is_null` before comparing —
-//! `(if (is_null (assoc "k" obj)) <absent-branch> (string= (assoc "k" obj) "x"))`.
-//! An engine-level refuse on unguarded absent-key access is proposed to the
-//! lisp-repair program as a follow-up (operator-approved direction
-//! 2026-09-30); until it lands, the guard is the form author's
-//! responsibility, and the healthy pinned forms (diagnose's walk-check,
-//! bug-hunt's contract check) already follow it.
+//! - `(assoc key alist)` returns `nil` when `key` is absent; `(string= nil "x")`
+//!   returns `false` (null-safe for optional fields, while non-string scalars
+//!   like `(string= 1 "1")` error with `TypeError`).
+//! - `(assoc! key alist)` is the strict required-key lookup: when `key` is
+//!   absent, it errors with `Runtime` naming the missing key and the sorted
+//!   list of available keys on `alist` — closing the absent-key vacuity trap
+//!   (where a misspelled key like `"tier"` instead of `"verdict"` silently
+//!   returned `nil` on every element).
 //!
 //! # Infix Operator Notation
 //!
@@ -849,6 +844,7 @@ fn default_builtins() -> Vec<(&'static str, NativeFn)> {
         // which also passes for numbers and booleans).
         ("stringp", stringp),
         ("assoc", assoc_fn),
+        ("assoc!", assoc_strict_fn),
         // List concatenation. (append l1 l2 ...) joins multiple lists.
         // Nil arguments are treated as empty lists. Non-list, non-nil args
         // error. This is the standard Lisp `append` — it does NOT cons the
@@ -1227,6 +1223,11 @@ fn nth(
         return Err(LispError::Arity("nth expects 2 args".into()));
     }
     let idx = match &args[0] {
+        LispValue::Int(i) if *i < 0 => {
+            return Err(LispError::Runtime(format!(
+                "nth: negative index {i} — indices are 0-based non-negative integers; use (- (length list) 1) for the last element"
+            )));
+        }
         LispValue::Int(i) => *i as usize,
         _ => {
             return Err(LispError::TypeError {
@@ -1351,10 +1352,66 @@ fn assoc_fn(
         return Err(LispError::Arity("assoc expects 2 args".into()));
     }
     let key = &args[0];
-    let alist = match as_list(&args[1]) {
-        Ok(alist) => alist,
-        Err(_) => return Ok(LispValue::Nil),
+    let alist = match &args[1] {
+        // String values from LLM prose outputs degrade to Nil so existing
+        // `is_null` guards work; primitive non-string scalars (Int/Float/Bool)
+        // are rejected as type errors (operator ruling 2026-10-14, R-3).
+        LispValue::String(_) => return Ok(LispValue::Nil),
+        other => as_list(other)?,
     };
+    lookup_alist(key, &alist, budget).map(|found| found.unwrap_or(LispValue::Nil))
+}
+
+/// Strict association-list lookup: `(assoc! key alist)` returns the value
+/// associated with `key`, or errors naming `key` and the sorted list of
+/// available keys in `alist` when absent (operator ruling 2026-10-14, R-3).
+fn assoc_strict_fn(
+    _env: &Rc<RefCell<Env>>,
+    args: &[LispValue],
+    budget: &mut EvalBudget,
+) -> Result<LispValue, LispError> {
+    if args.len() != 2 {
+        return Err(LispError::Arity("assoc! expects 2 args".into()));
+    }
+    let key = &args[0];
+    let alist = as_list(&args[1])?;
+    if let Some(value) = lookup_alist(key, &alist, budget)? {
+        return Ok(value);
+    }
+    let mut available_keys = Vec::new();
+    let mut cursor = Some(alist.as_ref());
+    while let Some(node) = cursor {
+        if node.is_nil() {
+            break;
+        }
+        cursor = node.tail.as_deref();
+        if let LispValue::List(pair) = &node.head {
+            if let Some(value) = pair.tail.as_deref() {
+                if !value.is_nil() && value.tail.as_deref().is_none_or(List::is_nil) {
+                    if let LispValue::String(k) | LispValue::Symbol(k) = &pair.head {
+                        available_keys.push(k.clone());
+                    }
+                }
+            }
+        }
+    }
+    available_keys.sort();
+    available_keys.dedup();
+    let key_display = match key {
+        LispValue::String(s) => format!("{s:?}"),
+        LispValue::Symbol(s) => s.clone(),
+        other => format!("{other:?}"),
+    };
+    Err(LispError::Runtime(format!(
+        "assoc!: key {key_display} not found — available keys: {available_keys:?}"
+    )))
+}
+
+fn lookup_alist(
+    key: &LispValue,
+    alist: &Rc<List>,
+    budget: &mut EvalBudget,
+) -> Result<Option<LispValue>, LispError> {
     let mut cursor = Some(alist.as_ref());
     while let Some(node) = cursor {
         if node.is_nil() {
@@ -1375,11 +1432,11 @@ fn assoc_fn(
                 if let LispValue::String(text) | LispValue::Symbol(text) = &value.head {
                     budget.charge(text.len())?;
                 }
-                return Ok(value.head.clone());
+                return Ok(Some(value.head.clone()));
             }
         }
     }
-    Ok(LispValue::Nil)
+    Ok(None)
 }
 
 /// List concatenation: `(append l1 l2 ...)` joins multiple lists into one.
@@ -1414,7 +1471,9 @@ fn append_fn(
 }
 
 /// String equality: `(string= a b)` returns true iff both args are strings
-/// with equal content. Distinct from `=` which is numeric-only.
+/// with equal content. `Nil` (from nullable JSON fields or absent `assoc`
+/// keys) evaluates to false; non-string scalars/lists (`Int`, `Float`,
+/// `Bool`, `List`) error with `TypeError` (operator ruling 2026-10-14, R-2).
 fn string_eq_fn(
     _env: &Rc<RefCell<Env>>,
     args: &[LispValue],
@@ -1425,7 +1484,13 @@ fn string_eq_fn(
     }
     match (&args[0], &args[1]) {
         (LispValue::String(a), LispValue::String(b)) => Ok(LispValue::Bool(a == b)),
-        _ => Ok(LispValue::Bool(false)),
+        (LispValue::Nil, LispValue::String(_))
+        | (LispValue::String(_), LispValue::Nil)
+        | (LispValue::Nil, LispValue::Nil) => Ok(LispValue::Bool(false)),
+        (LispValue::String(_) | LispValue::Nil, other) | (other, _) => Err(LispError::TypeError {
+            expected: "string".into(),
+            actual: type_of(other),
+        }),
     }
 }
 

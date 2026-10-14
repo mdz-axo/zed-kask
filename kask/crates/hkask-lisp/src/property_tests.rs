@@ -383,6 +383,12 @@ fn every_registry_builtin_has_a_passing_specimen() {
         (
             "assoc",
             "(assoc \"b\" data)".into(),
+            data_env.clone(),
+            serde_json::json!("x"),
+        ),
+        (
+            "assoc!",
+            "(assoc! \"b\" data)".into(),
             data_env,
             serde_json::json!("x"),
         ),

@@ -34,7 +34,7 @@ pub struct LispEvalToolInput {
     /// `lambda`, `define`, `begin`, `and`, `or`, `not`, `cond`. Builtins:
     /// arithmetic (`+`, `-`, `*`, `/`, `=`, `!=`, `<`, `<=`, `>`, `>=`),
     /// `car`, `cdr`, `cons`, `list`, `length`, `nth`, `reverse`, `is_null`,
-    /// `numberp`, `listp`, `stringp`, `assoc`, `append`, `member`, `abs`,
+    /// `numberp`, `listp`, `stringp`, `assoc`, `assoc!`, `append`, `member`, `abs`,
     /// `sqrt`, `max`, `min`, `eq`, `string=`, `string-contains`,
     /// `starts-with`, `ends-with`, `concat`.
     /// Integer arithmetic is checked (overflow errors, never wraps silently)
@@ -304,6 +304,26 @@ pub fn evaluate_lisp(input: LispEvalToolInput) -> Result<Value, String> {
                  carrying objects (objects become association lists): \
                  {object_bindings:?}. If you wrapped a scalar in an object, \
                  pass the scalar directly: {{\"a\": 1}}, not {{\"a\": {{\"n\": 1}}}}"
+            )
+        }
+        hkask_lisp::LispError::TypeError { expected, actual }
+            if expected == "number" && actual == "nil" =>
+        {
+            "type error: expected number, got nil (if this value came from \
+             (assoc \"key\" obj), the key is missing or null — use (assoc! \
+             \"key\" obj) to list available keys, or guard with (is_null ...))"
+                .to_string()
+        }
+        hkask_lisp::LispError::TypeError { expected, actual }
+            if expected == "list"
+                && actual != "list"
+                && (input.form.contains("(assoc ") || input.form.contains("(assoc! "))
+                && (input.form.contains("(cdr ") || input.form.contains("(car ")) =>
+        {
+            format!(
+                "type error: expected {expected}, got {actual} (note: in lisp_eval, \
+                 (assoc key obj) returns the value directly, not a (key . value) \
+                 cons pair — omit (cdr ...) / (car ...) around assoc)"
             )
         }
         other => other.to_string(),

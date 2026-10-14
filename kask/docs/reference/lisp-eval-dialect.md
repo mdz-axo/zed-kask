@@ -1,8 +1,8 @@
 ---
 title: "The lisp_eval Dialect"
 audience: [agents, developers]
-last_updated: 2026-09-28
-version: "0.41.0"
+last_updated: 2026-10-14
+version: "0.42.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [composition, trust]
@@ -10,7 +10,7 @@ mds_categories: [composition, trust]
 
 # The `lisp_eval` Dialect
 
-This is the canonical reference for the symbolic-neural scaffolding pattern, the `form`/`env` contract, and the sandboxed dialect exposed by the built-in `lisp_eval` tool. The tool delegates to `hkask_lisp::eval_sandboxed_with_budget` (`crates/agent/src/tools/lisp_eval_tool.rs:272`; `kask/crates/hkask-lisp/src/hkask_lisp.rs:1943`).
+This is the canonical reference for the symbolic-neural scaffolding pattern, the `form`/`env` contract, and the sandboxed dialect exposed by the built-in `lisp_eval` tool. The tool delegates to `hkask_lisp::eval_sandboxed_with_budget` (`crates/agent/src/tools/lisp_eval_tool.rs:272`; `kask/crates/hkask-lisp/src/hkask_lisp.rs:2008`).
 
 ## Pattern
 
@@ -26,31 +26,33 @@ Unlike the paper's persistent SBCL process, each call is stateless. State crosse
 
 - `form` is the Lisp source string to evaluate.
 - `env` is a JSON object whose keys become top-level bindings. Values may be any JSON type — pass scalars directly (`{"a": 1, "b": true}`); an object value becomes an association list, so a wrapped scalar reaches arithmetic as a list and fails with a type error.
-- `max_steps` and `max_depth` bound evaluation. The tool defaults are 100,000 steps and depth 1,024 (tool-side defaults at `crates/agent/src/tools/lisp_eval_tool.rs:159-170`; the engine entry that applies them at `kask/crates/hkask-lisp/src/hkask_lisp.rs:1943`). Step cost is linear in list length since lisp-repair L3 — a 600-element walker costs ~7,900 steps — but recursive walkers still consume ~2–4 DEPTH frames per element, so raise `max_depth` for lists beyond ~250 elements.
+- `max_steps` and `max_depth` bound evaluation. The tool defaults are 100,000 steps and depth 1,024 (tool-side defaults at `crates/agent/src/tools/lisp_eval_tool.rs:159-170`; the engine entry that applies them at `kask/crates/hkask-lisp/src/hkask_lisp.rs:2008`). Step cost is linear in list length since lisp-repair L3 — a 600-element walker costs ~7,900 steps — but recursive walkers still consume ~2–4 DEPTH frames per element, so raise `max_depth` for lists beyond ~250 elements.
 - The result is converted back to JSON for the next reasoning step.
 
-Pass prior structured output through `env`, then read object members with `assoc` inside the form. `assoc` tests key presence; an empty string remains a present value and needs its own semantic or `length` check.
+Pass prior structured output through `env`, then read object members with `assoc` (optional/nullable key) or `assoc!` (required key) inside the form. `assoc` returns the value directly (not a `(key . value)` cons pair — do not wrap `assoc` in `cdr`); an empty string remains a present value and needs its own semantic or `length` check.
 
 ## Interpreter surface
 
-The built-in registry is installed by `default_builtins` (`kask/crates/hkask-lisp/src/hkask_lisp.rs:824-904`). Important dialect rules:
+The built-in registry is installed by `default_builtins` (`kask/crates/hkask-lisp/src/hkask_lisp.rs:819-900`). Important dialect rules:
 
 - Boolean literals are `true`, `false`, and `nil`; `t` is also truthy and is suitable as the final `cond` clause.
-- `=` is numeric equality and ERRORS on non-numbers (the numeric-only contract; a non-number argument is a type error, never a silent false). All-integer comparisons are exact i64 — never coerced through f64 (`kask/crates/hkask-lisp/src/hkask_lisp.rs:1063-1140`). Use `string=` for string-only equality (non-string arguments return false) and `eq` for structural equality (`:1418`, `:1671`).
-- `string-contains` takes the needle FIRST: `(string-contains "needle" "haystack")` — the searched-for string precedes the searched-in string, following the `assoc`/`member` convention (registry at `kask/crates/hkask-lisp/src/hkask_lisp.rs:872`, implementation at `:1492-1511`). An empty needle errors rather than matching anything; a needle longer than the haystack errors naming the probable reversal — reversed arguments return false silently otherwise (a 20-quote verification batch failed every check this way, 2026-09-28).
+- `=` is numeric equality and ERRORS on non-numbers (the numeric-only contract; a non-number argument is a type error, never a silent false). All-integer comparisons are exact i64 — never coerced through f64 (`kask/crates/hkask-lisp/src/hkask_lisp.rs:1059-1136`). Use `string=` for string-only equality (`nil` evaluates to false so nullable/absent JSON fields are null-safe, while non-string scalars/lists like `(string= 1 "1")` error with `TypeError`, `:1477`) and `eq` for structural equality (`:1736`).
+- `string-contains` takes the needle FIRST: `(string-contains "needle" "haystack")` — the searched-for string precedes the searched-in string, following the `assoc`/`member` convention (registry at `kask/crates/hkask-lisp/src/hkask_lisp.rs:868`, implementation at `:1557-1576`). An empty needle errors rather than matching anything; a needle longer than the haystack errors naming the probable reversal — reversed arguments return false silently otherwise (a 20-quote verification batch failed every check this way, 2026-09-28).
 - `append` joins lists; `nil` arguments behave as empty lists.
 - `concat` joins strings.
 - Prefix and infix arithmetic forms are both accepted, but infix is a token-level rewrite with sharp edges (all five behaviors verified live and pinned): bare `a + b` expands to `(+ a b)` and same-operator chains fold; MIXED operators do not associate (`1 + 2 * 3` parses as three top-level forms and the last one's value wins); a parenthesized `(a + b)` double-wraps and ERRORS — not equivalent to `(+ a b)`; and the rewriter also fires inside prefix forms (`(- 5 - 3)` → `(- (- 5 3))` → -2). Prefer prefix form around `let`, `if`, recursion, and nested logic.
 - `define` inside a `let` mutates that child environment. A `define` inside a called lambda mutates the call environment, not the captured parent; recursive helpers should accumulate through return values.
 - There is no `eval`, `load`, or `require` builtin.
 - Recursive walkers consume ~2–4 depth frames per element: raise `max_depth` explicitly for lists beyond ~250 elements rather than relying on the default 1,024. Step cost is no longer the binding constraint at that scale (linear since lisp-repair L3).
-- Integer arithmetic is CHECKED: overflow is a typed error, never a silent wrap (`(+ 9223372036854775807 1)` errors; `kask/crates/hkask-lisp/src/hkask_lisp.rs:928-1042`). `/` always returns a Float (`(/ 6 3)` → `2.0`) and division by zero errors; over 3+ arguments `!=` compares adjacent pairs.
-- `length` counts CHARACTERS on strings (`"héllo"` → 5; `kask/crates/hkask-lisp/src/hkask_lisp.rs:1192-1219`); the `string-contains` reversal guard compares BYTE lengths.
-- `stringp` tests for strings (`:1302`); `numberp` tests numbers; `listp` tests lists-or-nil.
+- Integer arithmetic is CHECKED: overflow is a typed error, never a silent wrap (`(+ 9223372036854775807 1)` errors; `kask/crates/hkask-lisp/src/hkask_lisp.rs:924-1038`). `/` always returns a Float (`(/ 6 3)` → `2.0`) and division by zero errors; over 3+ arguments `!=` compares adjacent pairs.
+- `length` counts CHARACTERS on strings (`"héllo"` → 5; `kask/crates/hkask-lisp/src/hkask_lisp.rs:1188-1215`); the `string-contains` reversal guard compares BYTE lengths.
+- `stringp` tests for strings (`:1303`); `numberp` tests numbers; `listp` tests lists-or-nil.
 - `starts-with` / `ends-with` (`(starts-with prefix subject)`, `(ends-with suffix subject)` — needle-first like `string-contains`): directional prefix/suffix checks with NO length guard — a prefix/suffix longer than the subject is a legitimate false, so these work where `string-contains`'s reversal guard would error (the adhd-mode lexical gate's case). Empty prefix/suffix errors (the `string-contains` precedent: a check that fires on correct output is worse than no check).
-- Defensive-degradation family (operator ruling pending): `assoc` on a non-list alist returns nil (36 call sites rely on it); `string=` on a non-string argument returns false (`:1418`); `nth` with a negative index returns nil.
-- Absent-key convention (operator-approved direction 2026-09-30, engine refuse proposed to the lisp-repair program): `assoc` on a missing key returns nil; `string=` on that nil returns false SILENTLY (the vacuity trap — the bug-hunt convergence form's defect channel read `tier` where the oracle emits `verdict` and was vacuously true until the 2026-09-30 batch-7 repair), while numeric comparisons on nil error loudly without naming the key. The form-authoring idiom: GUARD with `is_null` before comparing — `(if (is_null (assoc "k" obj)) <absent-branch> (string= (assoc "k" obj) "x"))`. The healthy pinned forms (diagnose's walk-check, bug-hunt's contract check) already follow it.
-- Cost model (lisp-repair L3): nodes are charged once at creation and once per actual traversal — `length` charges its walk (`:1192`), `nth`/`reverse`/`append` charge the to_vec spine plus string-head bytes (`charge_list_spine`, `:1717`), and `assoc`/`member`/`eq` charge deep structure. Argument passing costs one tick per argument plus top-level string/symbol bytes — never per node — so list walkers are linear in step cost.
+- `nth` is 0-based: a negative index errors with a teaching `Runtime` error (`nth: negative index -1 — indices are 0-based non-negative integers; use (- (length list) 1) for the last element`), while out-of-bounds non-negative indices return `nil` (operator ruling 2026-10-14, `:1217-1249`).
+- `assoc` vs `assoc!` and the absent-key convention (operator ruling 2026-10-14):
+  - `(assoc key alist)` (`:1346`) is the optional/nullable lookup: it returns `nil` when `key` is absent (or when `alist` is `nil` or a raw string from an LLM step), and rejects non-string primitive scalars (`Int`/`Float`/`Bool`) as `alist`. Guard optional keys with `is_null` before comparing, or rely on `(string= (assoc "k" obj) "x")` returning `false` on `nil`.
+  - `(assoc! key alist)` (`:1368`) is the strict required-key lookup: when `key` is absent, it errors naming the missing key and the sorted list of available keys on `alist` (`assoc!: key "tier" not found — available keys: ["contract", "location", "verdict"]`), closing the absent-key vacuity trap.
+- Cost model (lisp-repair L3): nodes are charged once at creation and once per actual traversal — `length` charges its walk (`:1188`), `nth`/`reverse`/`append` charge the to_vec spine plus string-head bytes (`charge_list_spine`, `:1782`), and `assoc`/`assoc!`/`member`/`eq` charge deep structure. Argument passing costs one tick per argument plus top-level string/symbol bytes — never per node — so list walkers are linear in step cost.
 
 ## Worked invariant check
 
