@@ -1,7 +1,7 @@
 ---
 title: "Ontology Bridge — API Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-09-28
+last_updated: 2026-10-13
 version: "0.44.1"
 status: "Active"
 domain: "Cross-cutting"
@@ -23,7 +23,7 @@ Ontology anchoring is a scope-broadening walk, never a single pick. When a
 concept has no fit in the narrowest applicable ontology, the anchor falls
 to progressively broader scopes until one fits:
 
-1. **Domain supplement** — exact terms from pinned published sources (FIBO Q2 Release, W3C RDF Data Cube, OMC, PKO/P-Plan/PROV, SEPIO, GOLEM/CIDOC-CRM/LRMoo, ML-Schema, RDF/RDFS). No local SDMX identifier registry participates in resolution.
+1. **Domain supplement** — exact terms from pinned published sources (FIBO Q2 Release, W3C RDF Data Cube, OMC, PKO/P-Plan/PROV, SEPIO, GOLEM/CIDOC-CRM/LRMoo, ML-Schema, RDF/RDFS, DPV, CSO). No local SDMX identifier registry participates in resolution.
 2. **Derived concept** — a recorded composition with identity and authority; operator rulings become durable here (`kask/crates/hkask-bridge-ontology/src/derived.rs`).
 3. **Upper ontology** — the full pinned SUMO distribution (tier `upper`).
 4. **General vocabulary** — the full schema.org release (tier `general_vocabulary`), after SUMO so a formal category is preferred.
@@ -45,7 +45,7 @@ Declared in `kask/crates/hkask-bridge-ontology/src/hkask_bridge_ontology.rs`: `a
 
 ### `published` — full vocabularies compiled from pinned sources
 
-`sources/SOURCES.lock` pins each published source (upstream URL, version, SHA-256, license); `build.rs` verifies the lock and emits the `published` index (concept ID, kind, name/labels, directly stated parents and inverse properties, source, definition when supplied, and separate publisher-stated `status` for deprecation or supersession). Coverage includes the complete pinned SUMO distribution (`tiny*` test subsets excluded), every layer of schema.org 30.1, DCMI terms/types, BIBO, CiTO, PKO, P-Plan, PROV, SEPIO, GOLEM, CIDOC-CRM, LRMoo, OMC, ML-Schema, RDF/RDFS and W3C RDF Data Cube. FIBO indexes the Q2 **Release** maturity selection only (157 modules, 6,443 terms), not Provisional. `fibo-release-modules.tsv` records Release module/namespace bindings checked against pinned sources, not a reduced term menu. The module constants are named consumer selections; the index is the vocabulary. `published::lookup(namespace, term)` returns matching senses by exact concept ID, local name or published label (case/separator-insensitive); `published::get` and `published::contains` look up a concept ID (`kask/crates/hkask-bridge-ontology/build.rs:26-87,136-316,322-403`; `kask/crates/hkask-bridge-ontology/src/published.rs:18-40,61-98,128-150`) .
+`sources/SOURCES.lock` pins each published source (upstream URL, version, SHA-256, license); `build.rs` verifies the lock and emits the `published` index (concept ID, kind, name/labels, directly stated parents and inverse properties, source, definition when supplied, and separate publisher-stated `status` for deprecation or supersession). Coverage includes the complete pinned SUMO distribution (`tiny*` test subsets excluded), every layer of schema.org 30.1, DCMI terms/types, BIBO, CiTO, PKO, P-Plan, PROV, SEPIO, GOLEM, CIDOC-CRM, LRMoo, OMC, ML-Schema, RDF/RDFS, W3C RDF Data Cube, DPV 2.3 and CSO 3.5. The Skillware paper (arXiv:2607.18970v3, CC BY 4.0) is pinned as a sha256-verified authority, not an indexed vocabulary — `read_rdf` skips non-RDF extensions. FIBO indexes the Q2 **Release** maturity selection only (157 modules, 6,443 terms), not Provisional. `fibo-release-modules.tsv` records Release module/namespace bindings checked against pinned sources, not a reduced term menu. The module constants are named consumer selections; the index is the vocabulary. `published::lookup(namespace, term)` returns matching senses by exact concept ID, local name or published label (case/separator-insensitive); `published::get` and `published::contains` look up a concept ID (`kask/crates/hkask-bridge-ontology/build.rs:26-87,136-316,322-403`; `kask/crates/hkask-bridge-ontology/src/published.rs:18-40,61-98,128-150`) .
 
 **Coverage boundaries:** Former `sdmx:` Information Model aliases are removed, not represented as published RDF identifiers. `data_cube` selects only three genuinely corresponding `qb:` concepts; a provider name alone does not establish a cube. Five unlicensed DOLCE-Lite-Plus `dlp:` constants and their corpus consumers were removed. FIBO Provisional is excluded. A missing publisher definition stays missing: e.g. the released but deprecated `fibo-be-corp-corp:BoardAgreement` omits `definition` in the serialized resolution and reports `status: "deprecated"` (`kask/crates/hkask-bridge-ontology/src/term_resolution.rs:62-72,339-352`), not a fabricated `"[deprecated]"` definition.
 
@@ -486,6 +486,12 @@ orthogonality invariant).
 
 ## See also
 
+- [Native ontologies — comprehensive inventory](native-ontologies.md) — every
+  vendored vocabulary with version, license, domain and live-probed example
+  resolutions (2026-10-13).
+- [Software ontology adoption — research record](../research/software-ontology-adoption.md)
+  — the survey, licensing research and ruling decision trail behind the
+  rung-1/rung-2 pins (2026-10-13).
 - [Architecture diagrams](../diagrams/architecture.md) — the ontology-bridge
   architecture and domain-selection flow (consolidated 2026-08-28).
 - [PRINCIPLES.md P5.4/P8.1](../architecture/core/PRINCIPLES.md) — the
