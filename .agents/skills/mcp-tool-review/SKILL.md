@@ -21,20 +21,19 @@ The review's own methodology models, each with its fidelity label:
 
 Per-tool anchors live in the **anchor registry** — every tool's anchor is a published reference model or a platform-convention class, never a private definition. A labeled-but-unfollowed model is a false provenance claim: never claim fidelity the process does not exercise.
 
-### Anchor registry (state as of 2026-10-02 — re-verify at run start)
+### Anchor registry (state as of 2026-10-14 — re-verify at run start)
 
 Ruled (verify with `onto_anchor` → tier `derived`):
 
 - `scenario planning` — Schwartz, The Art of the Long View (1991) + Chermack (2011); ruling 2026-09-25
 - `superforecasting` — Tetlock & Gardner (2015); ruling 2026-09-25
 - `Brier score` — Brier (1950); ruling 2026-09-18
+- `Bayesian network` — Pearl, Probabilistic Reasoning in Intelligent Systems (1988); ruling 2026-10-02
+- `discounted cash flow` — Damodaran, Investment Valuation (2012); origin Williams (1938); ruling 2026-10-02
+- `constant-maturity prediction` — Federal Reserve H.15 CMT methodology + the platform's `cmp-term-structure` reification; ruling 2026-10-02
+- `arbitrage` — Hull, Options, Futures and Other Derivatives; law of one price / no-arbitrage; ruling 2026-10-02
 
-Pending operator rulings (batched ask; NEVER assign a private definition while pending — gate the checks that rely on them and mark them `pending-rulings` in the artifact):
-
-- `Bayesian network` — proposed: Pearl, Probabilistic Reasoning in Intelligent Systems (1988)
-- `discounted cash flow` — proposed: Damodaran, Investment Valuation (2012); origin Williams (1938)
-- `constant-maturity prediction` — proposed: Federal Reserve H.15 CMT methodology + the platform's `cmp-term-structure` reification
-- `arbitrage` — proposed: law of one price / no-arbitrage (e.g., Hull, Options, Futures and Other Derivatives)
+Unruled anchors discovered during a server sweep must be surfaced in a batched ask (NEVER assign a private definition while pending — gate the checks that rely on them and mark them `pending-rulings` in the artifact).
 
 Fidelity labels: **functional** = check WHAT the model evaluates (purpose, outcomes); **technical** = check HOW the model works (mechanism ported faithfully); **both** = both check families. Labels are operator decisions (ask-first, batched). Recommended starting labels: `both` for the scenario-planning, superforecasting, and Brier groups; `technical` for the Bayesian-network composition group; `functional` for `contract_price_coherence` and `scenario_assess`. When the operator is unavailable, proceed on the stated recommendation and flag every default — never decide silently, and never run checks written for a recommendation the operator has flipped.
 
@@ -67,7 +66,7 @@ Utility tools (`scenario_status` and the `*_status` / `ping` family) have no pub
 
 4. Walk `kask/mcp-servers/<server>/src/` for `execute_tool(` registrations (grep; record file:line per tool). The pattern must tolerate line-wrapped call layouts — rustfmt wraps long registrations so the tool name sits on its own line (observed 2026-10-02: 4 of 32 prediction-markets registrations are multi-line; a single-line pattern undercounts and produced the skeleton's stale 28). A saved inventory artifact is re-verified against the current tree and live surface, never rebuilt — drift is a finding.
 5. Cross-check the live surface (`list_mcp_tools`, grouped by server id). Record ACTUAL server membership — tool names do not respect server boundaries.
-6. Reconcile in `lisp_eval`: source count == live count == reviewed count AND every live-registered name present in the source list. A server that fails enumeration is a finding, not a gap.
+6. Reconcile in `lisp_eval` (`MTR-1`: `(and (> source_count 0) (= source_count live_count) (= live_count reviewed_count) (= missing_in_source 0))`): source count == live count == reviewed count AND every live-registered name present in the source list. A server that fails enumeration is a finding, not a gap.
 
 ### Phase C — Metric space [D; oracle: declared before measuring]
 
@@ -95,7 +94,7 @@ One pass per tool per cycle. For each tool:
 
 18. Assemble the artifact per the contract — render `mcp-tool-review/findings-artifact` (or read `kask/registry/templates/mcp-tool-review/findings-artifact.j2`). Gated checks appear as `pending-rulings` entries.
 19. Run `bash kask/scripts/check-mcp-review-citations.sh <artifact.json>` — every citation must exist (file present, line in range, excerpt within ±3 lines). Fix and re-run at most twice; a third failure stops the run with the failures listed.
-20. Run the routing invariant in `lisp_eval`: `(and (= unclassified 0) (= ungated 0) (= bad_region 0) (>= operator_roles 1) (>= other_roles 1))` over the run's step classification.
+20. Run the routing invariant in `lisp_eval`: `(and (= unclassified 0) (= ungated 0) (= bad_region 0) (>= operator_roles 1) (>= other_roles 1))` over the run's step classification, and verify citation-check exit and actuator-routing completeness via `MTR-2`: `(and (= citation_script_exit 0) (= unrouted_findings 0) (= unanchored_tools 0))`.
 21. Critic pass [P; decoupled by rubric]: re-read each finding against its citation — would a reviewer checking the cited line see the claimed behavior? Drop or amend what fails; record the pass in the artifact.
 
 ### Phase G — Fix, pin, and route [D + P]

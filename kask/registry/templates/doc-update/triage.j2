@@ -14,7 +14,7 @@ contract:
     fold_plan: string
     ledger_entry: string
 ---
-## Condensation triage — {{ date }}
+## Condensation triage (`triage_table`) — {{ date }}
 
 Tree count before: {{ count_before }} (cap: < 75, working target 60)
 Tree count after (projected): {{ count_after }}
@@ -25,7 +25,7 @@ Tree count after (projected): {{ count_after }}
 | {{ row.path }} | {{ row.role }} | {{ row.reason }} | {{ row.successor_or_none }} |
 {%- endfor %}
 
-## Fold plan (FOLD rows only)
+## Fold plan (`fold_plan` — FOLD rows only)
 
 For each FOLD: name the target section in the successor doc, the content
 being carried forward, and the links that must be repointed.
@@ -36,7 +36,7 @@ being carried forward, and the links that must be repointed.
 | {{ row.source }} | {{ row.section }} | {{ row.content }} | {{ row.links }} |
 {%- endfor %}
 
-## Lifecycle ledger entry (append to kask/docs/README.md)
+## Lifecycle ledger entry (`ledger_entry` — append to kask/docs/README.md)
 
 ### Deleted {{ date }} ({{ reason_category }})
 
@@ -45,15 +45,3 @@ being carried forward, and the links that must be repointed.
 {%- for row in ledger_rows %}
 | {{ row.artifact }} | {{ row.successor }} |
 {%- endfor %}
-
-## Output
-
-Respond with a JSON object:
-
-```json
-{
-  "triage_table": "<the filled triage table>",
-  "fold_plan": "<the filled fold plan>",
-  "ledger_entry": "<the filled lifecycle-ledger entry>"
-}
-```

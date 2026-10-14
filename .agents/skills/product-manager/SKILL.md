@@ -59,9 +59,9 @@ requirement debt), or guesses the verdict (the goal loop never closes).
 
 | Step | Type | Oracle / critique |
 |------|------|-------------------|
-| 1 Render intake brief | D | `render_template` |
+| 1 Render intake brief | D | `render_template` + `PMB-2` (`lisp_eval` improvised-requirement refusal guard) |
 | 2–4 Ask, recover spec, record goal text | P | operator confirmation; spec recovery checked against `git log` |
-| 5 Check → Act gap test | P | the operator's answer; bounded at two question rounds |
+| 5 Check → Act gap test | P + D | the operator's answer + `PMB-1` (`lisp_eval` completeness & 2-round bound) |
 
 ## When to Use
 
@@ -164,7 +164,7 @@ durable decisions recorded in the curator's memory.
    for their ratification — per the spec-loss rule.
 4. Record the delivered requirement in the operator's words as the
    `goal_text` when the goal loop is active.
-5. **Check → Act (bounded intake PDCA).** Compare the operator's answer with the initial brief: is the outcome confirmed, is spec provenance explicit (including “no spec exists”), and are 2–4 observable criteria able to fail? If all hold, stop intake and hand the agreed target to `program-manager`; no second round is needed. If a field remains unconfirmed, name the exact remaining gap and ask once more *only about that gap*. On a second missing answer, stop as blocked rather than supplying a requirement yourself. An operator correction changes the target; re-render `product-manager/intake-brief` only with their corrected words. After delivery, the operator's confirmation against those criteria is the outer feedback loop; this intake check does not judge the work's outcome.
+5. **Check → Act (bounded intake PDCA).** Compare the operator's answer with the initial brief: is the outcome confirmed, is spec provenance explicit (including “no spec exists”), and are 2–4 observable criteria able to fail? Verify intake completeness and the 2-round bound deterministically in `lisp_eval` (`PMB-1`: `(and (= missing_count 0) (>= criteria_count 2) (<= criteria_count 4) (not (string= requirement "")) (not (string= spec_provenance "")) (<= rounds_used 2))` and `PMB-2`: `(if (= missing_count 0) (and (not (string= requirement "")) (not (string= spec_provenance "")) (>= criteria_count 2)) true)`). If all hold, stop intake and hand the agreed target to `program-manager`; no second round is needed. If a field remains unconfirmed, name the exact remaining gap and ask once more *only about that gap*. On a second missing answer, stop as blocked rather than supplying a requirement yourself. An operator correction changes the target; re-render `product-manager/intake-brief` only with their corrected words. After delivery, the operator's confirmation against those criteria is the outer feedback loop; this intake check does not judge the work's outcome.
 
 ## Regression case
 
@@ -178,14 +178,9 @@ All receipts executed live (2026-10-01, batch-13 audit):
   round present — the empty fields are the questions, and none were.
 - Intake-brief render, sparse context: the same render with empty
   criteria/constraints arrays still renders the question round — the
-  template's own refusal rule ("an empty missing_fields with empty required
-  fields is an improvised requirement — refuse it") is the intake check's
-  backstop, executed by the model that consumes the rendered prompt (the
-  render itself is deterministic Jinja substitution — no inference),
-  never by a form.
-
-The skill's D step is the render itself; there is no lisp_eval form to
-receipt — the oracle is `render_template`'s deterministic output.
+  template's refusal rule ("an empty missing_fields with empty required
+  fields is an improvised requirement — refuse it") is enforced by `PMB-2`
+  in `lisp_eval` (`{missing_count: 0, requirement: "", spec_provenance: "", criteria_count: 0}` → `false`), while `PMB-1` gates intake completion and the 2-round cap.
 
 ## Registry Templates
 

@@ -1,4 +1,4 @@
-{# goal: Run the 3-gate eliminative interrogation loop in either autonomous (agent evaluates and recommends without pause) or advisory (agent recommends, human accepts/rejects/overrides per gate) mode. Classify every finding by constraint-force (Prohibition → required, Guideline → suggested), escalate to human on retry exhaustion (3 max), abort on zero-delta completion. Delegates reasoning to deep-module (G1, G2) and coding-guidelines (G3) templates. #}
+{# goal: Run the 3-gate eliminative interrogation loop in either autonomous (agent evaluates and recommends without pause) or advisory (agent recommends, human accepts/rejects/overrides per gate) mode. Classify every finding by constraint-force (prohibition → required, guideline → suggested), escalate to human on retry exhaustion (3 max), abort on zero-delta completion. Delegates reasoning to deep-module (G1, G2) and coding-guidelines (G3) templates. #}
 [inference]
 contract:
   input:
@@ -181,7 +181,7 @@ For each gate evaluation, produce findings with constraint-force classification 
     {
       "item": "name or path of item evaluated",
       "issue": "description of the violation",
-      "constraint_force": "Prohibition|Guardrail|Guideline|Evidence|Hypothesis",
+      "constraint_force": "prohibition|guardrail|guideline|evidence|hypothesis",
       "required": true,
       "severity": "critical|high|medium|low",
       "action": "DELETE|MERGE|JUSTIFY|RETAIN",
@@ -236,7 +236,7 @@ When mode is `advisory`, after each gate evaluation, present to the human:
   "recommendations": [
     {
       "item": "ObjectStore wrapper",
-      "constraint_force": "Prohibition",
+      "constraint_force": "prohibition",
       "label": "REQUIRED",
       "why": "Zero behavior beyond direct S3 call. Pass-through abstraction.",
       "recommended_action": "DELETE",
@@ -245,7 +245,7 @@ When mode is `advisory`, after each gate evaluation, present to the human:
     },
     {
       "item": "CacheManager + MetricsCollector",
-      "constraint_force": "Guideline",
+      "constraint_force": "guideline",
       "label": "SUGGESTED",
       "why": "Both handle resource lifecycle with overlapping domains.",
       "recommended_action": "MERGE",
@@ -254,7 +254,7 @@ When mode is `advisory`, after each gate evaluation, present to the human:
     },
     {
       "item": "Module depth",
-      "constraint_force": "Evidence",
+      "constraint_force": "evidence",
       "label": "INFO",
       "why": "Depth score is 14 (per the delegate's pinned form).",
       "recommended_action": "RETAIN",
@@ -338,7 +338,6 @@ When all three gates pass AND the artifact is unchanged from the previous round:
     "essentialism_score": {
       "items_removed": 7,
       "total_items": 15,
-      "percentage": 46.7,
       "required_reductions": 3,
       "suggested_reductions": 3,
       "evidence_observations": 2,
@@ -355,24 +354,7 @@ When all three gates pass AND the artifact is unchanged from the previous round:
 }
 ```
 
-## Essentialism Score
-
-Compute after completion:
-
-```
-Score = (items_removed / total_items_initial) * 100
-
-Where:
-  items_removed = sum of all deletions across all gates and rounds
-  total_items_initial = the loop-start assessment's counted public items plus the wrappers, adapters and config structs G3 traced (the populations the gates actually count)
-
-Interpretation:
-  0%     — Artifact was already minimal (or the loop found nothing)
-  1-25%  — Minor reduction — artifact was mostly well-designed
-  26-50% — Significant reduction — artifact had accumulated cruft
-  51-75% — Major reduction — artifact was over-engineered
-  76-100% — Artifact was eliminated entirely (all behavior inlined or merged)
-```
+The invoking step computes the essentialism percentage and reduction band deterministically in `lisp_eval` (`ESS-2`, Step 12 of `SKILL.md`) from `items_removed` and `total_items`.
 
 ## Constraints
 

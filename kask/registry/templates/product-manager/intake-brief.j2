@@ -28,9 +28,7 @@ Produce the intake brief as a JSON object with EXACTLY these fields:
   "constraints": {{ constraints | tojson }},
   "standing_rules": {{ standing_rules | tojson }},
   "missing_fields": [
-    /* the fields above that the request did NOT provide, in ask-order:
-       requirement, spec_provenance, acceptance_criteria, constraints,
-       standing_rules — each with the one question that would fill it */
+    {"field": "requirement", "question": "What will you be able to do, or what stops being a problem, when this work is done?"}
   ]
 }
 

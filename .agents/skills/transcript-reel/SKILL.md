@@ -14,7 +14,7 @@ layers.
 
 ## Reference model and labels
 
-Reduct.video — the transcript bundled with its video as one linked artifact: correct the transcript, highlight passages, and edit the video by selecting transcript ranges, as defined by the Reduct API and user interface (`onto_anchor` → derived `transcript_linked_media`, operator ruling 2026-09-25). The educt layers are the local form of that model: corrections, speakers, highlights and the EDL are layers over an immutable word-level transcript, so the reel is cut from the text and the timings never move. The `reduct_*` tools reach the Reduct cloud workspace itself. OMC (`omc:Provenance`) names only the provenance vocabulary.
+Reduct.video — the transcript bundled with its video as one linked artifact: correct the transcript, highlight passages, and edit the video by selecting transcript ranges, as defined by the Reduct API and user interface (`onto_anchor` → derived `transcript_linked_media`, operator ruling 2026-09-25; text-based video editing per Berthouzoz, Li & Agrawala, 2012 `doi:10.1145/2185520.2185563` → `onto_anchor` `derived:edit_decision_list`). The educt layers are the local form of that model: corrections, speakers, highlights and the EDL are layers over an immutable word-level transcript, so the reel is cut from the text and the timings never move. The `reduct_*` tools reach the Reduct cloud workspace itself. OMC (`omc:Provenance`) names only the provenance vocabulary.
 
 - **Initial condition:** a stored transcript with word timings (Phase 1).
 - **Target condition:** the Convergence gate passes and every quote in the summary resolved with `educt_locate`.
@@ -66,7 +66,7 @@ Reduct.video — the transcript bundled with its video as one linked artifact: c
    changed word cardinality), call `educt_realign_transcript` to store
    the realignment layer — it re-anchors the corrected text onto the
    source timeline so the timed phases below (highlight pass, locate,
-   SRT) work; without it they fail with the unaligned precondition.
+   SRT) work; without it they fail with the unaligned precondition. Verify timing and realignment readiness in `lisp_eval` (`TR-1`): `(and has_word_timings (> words_count 0) (if (string= alignment "unaligned") realignment_stored true))`.
 4. Call `educt_paragraph_pass` for paragraph boundaries. Check the
    rejection_rate in the pass stats — a high rate means the model
    struggled; consider re-running after corrections.
@@ -98,11 +98,12 @@ Reduct.video — the transcript bundled with its video as one linked artifact: c
 
 ### Convergence
 
-11. Gate — call `lisp_eval` with:
-    - form: `(and (eq reel_exists 1) (> clip_count 0) (< rejection_rate 0.3))`
+11. Gate — call `lisp_eval` with (`TR-2`):
+    - form: `(and (eq reel_exists 1) (> clip_count 0) (< rejection_rate 0.3) (= unlocated_summary_quotes 0))`
     - env: `{ "reel_exists": <1 if render_edl returned a media path>,
               "clip_count": <EDL keep-op count>,
-              "rejection_rate": <paragraph pass rejection_rate> }`
+              "rejection_rate": <paragraph pass rejection_rate>,
+              "unlocated_summary_quotes": <count of summary quotes that failed educt_locate> }`
     If the reel is empty or the passes rejected heavily, re-enter at
     the failing phase (sharper highlight request, or corrections
     first) rather than delivering a broken reel. Bound: at most 2

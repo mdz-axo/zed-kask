@@ -1742,6 +1742,31 @@ pub const DERIVED_CONCEPTS: &[DerivedConcept] = &[
         ],
         authority: "operator ruling 2026-10-14 (Cohort 10 skill-corpus audit); Morris, Foundations of the Theory of Signs (1938); Carnap, Introduction to Semantics (1942)",
     },
+    DerivedConcept {
+        term: "occam_razor",
+        aliases: &[
+            "occam's razor",
+            "occams razor",
+            "minimum description length",
+            "mdl principle",
+        ],
+        identity: "entities, abstractions, and interface elements must not be multiplied beyond necessity; among candidate designs that satisfy the same behavioral contract, the one with the shortest description and smallest surface area is preferred",
+        definition: "Ray J. Solomonoff, 'A formal theory of inductive inference. Part I', Information and Control 7(1):1-22 (1964), doi:10.1016/s0019-9958(64)90223-2, and Jorma Rissanen, 'Modeling by shortest data description', Automatica 14(5):465-471 (1978), doi:10.1016/0005-1098(78)90005-5: formalizes the principle of parsimony (Occam's razor) as choosing the hypothesis or design that minimizes the combined length of the model and the deviations from it. In zed-kask it grounds essentialist's 'always take away, never add' 3-gate eliminative interrogation.",
+        constituents: &["deletion_test", "deep_module", "parsimony"],
+        authority: "operator ruling 2026-10-14 (Cohort 11 skill-corpus audit); Solomonoff, Information and Control 7(1):1-22 (1964), doi:10.1016/s0019-9958(64)90223-2; Rissanen, Automatica 14(5):465-471 (1978), doi:10.1016/0005-1098(78)90005-5",
+    },
+    DerivedConcept {
+        term: "edit_decision_list",
+        aliases: &["edl", "reel edl", "non-linear edit decision list"],
+        identity: "an ordered, deterministic sequence of timecode or word-range selection operations (Keep clips) derived from a source recording or timing-aligned transcript that specifies how media segments are cut and concatenated into a rendered reel without mutating the source media",
+        definition: "Floraine Berthouzoz, Wilmot Li & Maneesh Agrawala, 'Tools for placing cuts and transitions in interview video', ACM Transactions on Graphics 31(4):67 (2012), doi:10.1145/2185520.2185563, SMPTE 258M / CMX 3600 EDL specification, and MovieLabs OMC v2.8: represents a non-destructive edit as a list of source word/time ranges whose union-merged Keep operations drive lossless stream-copy rendering. In zed-kask it grounds educt_edl_from_highlights, educt_render_edl, and the transcript-reel skill.",
+        constituents: &[
+            "transcript_linked_media",
+            "word-range selection",
+            "non-destructive editing",
+        ],
+        authority: "operator ruling 2026-10-14 (Cohort 11 skill-corpus audit); Berthouzoz, Li & Agrawala, ACM TOG 31(4):67 (2012), doi:10.1145/2185520.2185563; SMPTE 258M",
+    },
 ];
 /// Normalization matches the onto_anchor tool's: lowercase alphanumeric
 /// characters only, separators and case folded away.
@@ -2631,6 +2656,39 @@ mod tests {
         ] {
             let concept =
                 resolve_derived(term).expect("Cohort 10 audit ruling must resolve in derived.rs");
+            assert_eq!(
+                concept.term, expected_term,
+                "{term} resolves to {expected_term}"
+            );
+            assert!(
+                concept.authority.contains(marker),
+                "{term}: {}",
+                concept.authority
+            );
+            assert!(
+                concept.authority.starts_with("operator ruling 2026-10-14"),
+                "{term} cites the 2026-10-14 ruling"
+            );
+        }
+    }
+
+    /// expect: [P5] The Cohort 11 skill-corpus audit rulings (2026-10-14)
+    /// resolve to their published authorities and never fall back to the
+    /// coarse 5W1H core anchor.
+    #[test]
+    fn cohort_11_audit_rulings_resolve_with_authority() {
+        for (term, expected_term, marker) in [
+            ("Occam's razor", "occam_razor", "Solomonoff"),
+            (
+                "minimum description length",
+                "occam_razor",
+                "10.1016/0005-1098(78)90005-5",
+            ),
+            ("edit decision list", "edit_decision_list", "Berthouzoz"),
+            ("EDL", "edit_decision_list", "10.1145/2185520.2185563"),
+        ] {
+            let concept =
+                resolve_derived(term).expect("Cohort 11 audit ruling must resolve in derived.rs");
             assert_eq!(
                 concept.term, expected_term,
                 "{term} resolves to {expected_term}"

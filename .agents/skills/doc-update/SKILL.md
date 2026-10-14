@@ -87,7 +87,7 @@ citations were not re-checked is unverified recomposition.
    resources, NOT files next to SKILL.md). Record every decision with a
    successor.
 4. Never delete without a successor named. Git history is the content
-   archive; the ledger is the map to it.
+   archive; the ledger is the map to it. Verify the Phase 0 triage cap and successor completeness in `lisp_eval` (`DU-1`) before starting Phase 1: `(and (< count_after 75) (= successorless_folds 0) (= count_after (- count_before deleted_or_folded)))`.
 
 ### Phase 1 — Ground (per docs-set, one pass each)
 
