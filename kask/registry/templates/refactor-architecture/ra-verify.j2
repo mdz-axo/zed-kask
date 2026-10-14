@@ -96,14 +96,11 @@ Inspect each actual surface adapter: it should call the selected service and tra
 
 Respond with a JSON object carrying **exactly** the contract's top-level fields: `verification_report`, `depth_test_results`, `dependency_check`, `code_hygiene_compliance`, `clippy_result`, `test_result`, and `checklist`.
 
-`verification_report` contains `domain`, `phase`, `overall_status` (`pass|fail|partial`), `target_condition_status` (`met|unmet|unmeasured`), and file:line or run-output evidence comparing initial and target conditions. A build-only pass leaves the target unmeasured and overall status partial. The depth list records touched modules, actual public-item counts, behavior hidden, deletion-test reasoning, and evidence; counts do not set a verdict by themselves. The dependency and code-hygiene objects record observed status and violations. `clippy_result` and `test_result` cite commands and their real outputs or say not run. Every checklist item (red seam test, green behavior, both adapters, deletion, dependency direction, target friction, and tests) carries `done|not_done|unmeasured` plus evidence; no Boolean defaults to true.
+`verification_report` contains `domain`, `phase`, `target_condition_status` (`met|unmet|unmeasured`), and file:line or run-output evidence comparing initial and target conditions; `overall_status` (`pass|fail|partial`) is derived deterministically from `checklist` and `target_condition_status` via `lisp_eval` `RA-2` (never self-reported by the model). A build-only pass leaves `target_condition_status` `"unmeasured"`, which `RA-2` evaluates to `"partial"`. The depth list records touched modules, actual public-item counts, behavior hidden, deletion-test reasoning, and evidence; counts do not set a verdict by themselves. The dependency and code-hygiene objects record observed status and violations. `clippy_result` and `test_result` cite commands and their real outputs or say not run. Every checklist item (red seam test, green behavior, both adapters, deletion, dependency direction, target friction, and tests) carries `done|not_done|unmeasured` plus evidence; no Boolean defaults to true.
 
 ## Constraints
 
 - Every verification must produce evidence (command output, file paths, line numbers).
 - If any check fails, report the specific failure with remediation steps.
 - Depth test must be applied honestly — shallow modules must be flagged.
-- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
-- Preserve the original prompt structure and formatting.
-- Handle missing variables gracefully (leave as-is or use default if specified).
 

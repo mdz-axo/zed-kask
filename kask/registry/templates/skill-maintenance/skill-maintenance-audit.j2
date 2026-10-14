@@ -6,7 +6,6 @@ contract:
     workspace_context: object
   output:
     staleness_report: object
-    health_scores: object
     coverage_gaps: array
     deprecation_recommendations: array
 ---
@@ -41,7 +40,7 @@ Audit all skills under `.agents/skills/`, one by one.
    removed dispatch vocabulary (not quotations or live render_template input),
    missing Constraints, instructions with no concrete actionable steps,
    contradictory instructions, malformed template `[inference]` headers (no
-   `---` terminator) or more than two `[inference]` blocks. Cite file:line and
+   `---` terminator) or more than one `[inference]` block or any body `[inference]` parameter stanza (per T4). Cite file:line and
    the observed defect, or expected path plus absence evidence. An unsupported
    suspicion belongs in `unverified_signals`, with no penalty.
 3. Apply one penalty per distinct verified root cause: critical −0.50 (missing
@@ -69,11 +68,8 @@ Respond with a JSON object for each skill:
       {"signal": "missing_template", "severity": "critical", "evidence": "path:line or expected path + absence evidence", "penalty": -0.50}
     ],
     "unverified_signals": [],
-    "not_checked": [],
-    "total_penalty": -0.50,
-    "raw_score": 0.50
+    "not_checked": []
   },
-  "health_scores": {"skill_name": 0.50, "status": "stale_warning"},
   "coverage_gaps": [],
   "deprecation_recommendations": [
     {"skill_name": "name", "action": "revise", "reason": "verified defect and specific repair; approval required for retirement"}

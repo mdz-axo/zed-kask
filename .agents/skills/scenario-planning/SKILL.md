@@ -21,10 +21,10 @@ this skill is the operating procedure for that pipeline.
 
 ## Initial and target condition
 
-- **Initial condition (T1):** the `scenario_triage` classification, the FramingDocument, and — when prior projects exist — `scenario_calibration` (resolved count, Brier, bias) passed as `prior_calibration`; on a first run it is null.
+- **Initial condition (T1):** the `scenario_triage` classification, the FramingDocument (`focal_question`, `time_horizon`, `in_scope`, `out_of_scope`), and — when prior projects exist — `scenario_calibration` (resolved count, Brier, bias) read as `prior_calibration` and applied automatically by Phase 3 Step 13 (`scenario_calibrate`) when ≥5 resolved forecasts exist; on a first run it is null.
 - **Target condition (T2):** the Convergence gate below passes and the Chermack assessment is reported.
 
-**D/P labelling.** Every `scenario_*` tool call is D (the server is the oracle: it rejects bad probabilities, conditional lengths and cycles, and computes marginals, Bayes, synthesis and Brier). The Convergence gate (step 21) is D too — a `lisp_eval` form over the scored counts. Framing answers are the operator's (human decision). Brainstorm events, conditionals, forces and narratives are P — including the focal-question render's `refined_question` and the implications-indicators render's strategies, indicators and monitoring plan — critiqued by the separate `scenario-quality-gate` render (scenarios), `scenario_cross_validate` (divergence > 0.15 → `grill-me`, probability estimates), and, at resolution, Brier (events). Force selection is critiqued by `driving-forces.j2`'s internal independence rule plus the gate's axis-span criterion.
+**D/P labelling.** Every `scenario_*` tool call is D (the server is the oracle: it rejects bad probabilities, conditional lengths and cycles, and computes marginals, Bayes, synthesis and Brier). The quadrant bucketing `SP-1`, the quality-gate pass predicate `SP-2`, and the Convergence gate (step 21) are D — `lisp_eval` forms over the scored counts and ratings. Framing answers are the operator's (human decision). Brainstorm events, conditionals, forces and narratives are P — including the `driving-forces` micro/STEEP enumeration and the `implications-indicators` render's strategies, indicators and monitoring plan — critiqued by the separate `scenario-quality-gate` render (scenarios) + `SP-2`, `scenario_cross_validate` (divergence > 0.15 → `grill-me`, probability estimates), and, at resolution, Brier (events). Force selection is critiqued by `driving-forces.j2`'s internal independence rule, `SP-1`'s quadrant check, and the gate's axis-span criterion.
 
 ## When to Use
 
@@ -96,24 +96,35 @@ futures to plan against, not one probability). It extends the framing into
 the Schwartz narrative set; the event tree from Phase 2 remains the
 quantified backbone.
 
-10. Render `scenario-planning/key-forces` with the refined focal question,
-   planning horizon, domain and any `market_match` candidates as
-   `market_context`; then `scenario-planning/driving-forces` (STEEP
-   importance × uncertainty) to select two independent critical
-   uncertainties as axes. `scenario-planning/focal-question` refines the
-   question first when the framing document left it unbounded.
-11. Render `scenario-planning/axes-and-narratives` for the four quadrant
-   narratives, then `scenario-planning/scenario-quality-gate` with the
-   scenarios AND the two axis definitions (`axis_1`, `axis_2`) — the gate's
-   axis-span coverage criterion is checked against the actual axes, not
-   inferred from narratives. A separate render, it scores divergence,
-   consistency and coverage (0–1). A failing
-   gate revises the narratives its fix notes name and re-runs once (max 2
-   cycles); a second failure delivers the scenarios with the fix notes shown.
-12. Render `scenario-planning/implications-indicators` for robust and
-   contingent strategies and observable early-warning indicators. Carry
-   whether indicators were defined into Phase 5's `scenario_assess`
-   (`has_early_warning_indicators`, a boolean).
+10. Render `scenario-planning/driving-forces` with the FramingDocument's
+   `focal_question`, `planning_horizon`, `domain`, and any `market_match`
+   candidates as `market_context` (single `market` record shape) to enumerate
+   microenvironment key forces, map STEEP driving forces (rated 1–5 on
+   importance and uncertainty), and select two independent critical
+   uncertainties as axes. Then run `lisp_eval` `SP-1` to partition
+   `driving_forces` into the 2×2 `importance_uncertainty_matrix` quadrants
+   (`importance >= 4` and `uncertainty >= 4` for high/high) and verify both
+   `critical_uncertainties` fall in the high-importance, high-uncertainty
+   quadrant:
+   - form: `(begin (define hi-hi (lambda (fs) (if (is_null fs) (list) (let ((f (car fs))) (if (and (>= (cdr (assoc "importance" f)) 4) (>= (cdr (assoc "uncertainty" f)) 4)) (cons (cdr (assoc "force" f)) (hi-hi (cdr fs))) (hi-hi (cdr fs))))))) (let ((q1 (hi-hi driving_forces))) (list q1 (= (length critical_uncertainties) 2) (not (is_null (member (cdr (assoc "force" (nth 0 critical_uncertainties))) q1))) (not (is_null (member (cdr (assoc "force" (nth 1 critical_uncertainties))) q1))))))`
+   - env: `{ "driving_forces": <driving_forces>, "critical_uncertainties": <critical_uncertainties> }`
+11. Render `scenario-planning/axes-and-narratives` with `focal_question`,
+   `critical_uncertainties`, and `planning_horizon` for the four quadrant
+   narratives, then `scenario-planning/scenario-quality-gate` with
+   `scenarios`, `focal_question`, and the two axis definitions (`axis_1`,
+   `axis_2`) — the gate's axis-span coverage criterion is checked against the
+   actual axes, not inferred from narratives. A separate render, it scores
+   divergence, consistency and coverage (0–1) and flags parametric variation.
+   Compute `gate_pass` deterministically via `lisp_eval` `SP-2`:
+   - form: `(and (= scenario_count 4) (not parametric_variation_flag) (>= divergence_score 0.6) (>= consistency_score 0.6) (>= coverage_score 0.6))`
+   - env: `{ "scenario_count": <length of scenarios>, "parametric_variation_flag": <bool>, "divergence_score": <num>, "consistency_score": <num>, "coverage_score": <num> }`
+   A failing gate revises the narratives its fix notes name and re-runs once
+   (max 2 cycles); a second failure delivers the scenarios with the fix notes
+   shown.
+12. Render `scenario-planning/implications-indicators` with `focal_question`
+   and `scenarios` for robust and contingent strategies and observable
+   early-warning indicators. Carry whether indicators were defined into
+   Phase 5's `scenario_assess` (`has_early_warning_indicators`, a boolean).
 
 ### Phase 3 — Quantify and update (Tetlock)
 
@@ -211,21 +222,17 @@ run here.
 | Template | Purpose |
 |----------|---------|
 | `type-framing.j2` | MAIA per-type framing defaults: default horizon, subject semantics, event question patterns, and basis guidance for the framing conversation. |
-| `focal-question.j2` | Refine and bound the focal question with decision relevance, time horizon, and scope boundaries. |
-| `key-forces.j2` | Identify and cluster micro-level forces, rated for impact and predictability. |
-| `driving-forces.j2` | Map STEEP driving forces on importance × uncertainty and select two independent critical uncertainties. |
+| `driving-forces.j2` | Enumerate microenvironment key forces, map STEEP driving forces on importance × uncertainty, and select two independent critical uncertainties. |
 | `axes-and-narratives.j2` | Four divergent quadrant narratives on the two axes. |
-| `scenario-quality-gate.j2` | Separate gate scoring divergence, consistency and coverage (0–1) with fix notes. |
+| `scenario-quality-gate.j2` | Separate gate scoring divergence, consistency and coverage (0–1) with fix notes; `gate_pass` computed by `SP-2` `lisp_eval`. |
 | `implications-indicators.j2` | Robust and contingent strategies with observable early-warning indicators. |
 
-To render a template, call `render_template` with the ref (e.g. `scenario-planning/key-forces`) and these inputs:
+To render a template, call `render_template` with the ref (e.g. `scenario-planning/driving-forces`) and these inputs:
 - `type-framing.j2`: `scenario_type`, `subject`
-- `focal-question.j2`: `focal_question`, `planning_horizon`, `domain`, `prior_calibration`
-- `key-forces.j2`: `refined_question`, `planning_horizon`, `domain`, `market_context`
-- `driving-forces.j2`: `refined_question`, `key_forces`
-- `axes-and-narratives.j2`: `refined_question`, `critical_uncertainties`, `planning_horizon`
-- `scenario-quality-gate.j2`: `scenarios`, `refined_question`, `axis_1`, `axis_2`
-- `implications-indicators.j2`: `refined_question`, `scenarios`
+- `driving-forces.j2`: `focal_question`, `planning_horizon`, `domain`, `market_context`
+- `axes-and-narratives.j2`: `focal_question`, `critical_uncertainties`, `planning_horizon`
+- `scenario-quality-gate.j2`: `scenarios`, `focal_question`, `axis_1`, `axis_2`
+- `implications-indicators.j2`: `focal_question`, `scenarios`
 
 ## Constraints
 

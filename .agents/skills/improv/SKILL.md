@@ -21,12 +21,11 @@ Johnstone, *Impro: Improvisation and the Theatre* (1979) — accepting and build
 
 | Step | Type | Oracle / critique |
 |------|------|-------------------|
-| Mode selection; every mode's reply | P | the human participant |
-| Yes But literal forbidden words (partial) | D | `lisp_eval` check below; catches literal words only, not contradiction |
+| Mode selection (`improv-select`); every mode's reply | P | the human participant |
+| Kata pre-router (`IMP-1`) | D | `lisp_eval` deterministic mapping of `kata_stage` overrides before invoking `improv-select` |
+| Yes But literal forbidden words (`IMP-2`, partial) | D | `lisp_eval` check below; catches literal words only, not contradiction |
 | Plussing seed confidence ranking | P | a model estimate used only to rank seeds — never reported as a finding |
-| Freestyling time tracking | P | the agent tracks `time_remaining` against the declared `time_bound` (no machine timer reads it back); the bound is the checkable |
-| Riffing step counting | P | the agent tracks `steps_remaining` against `return_policy`'s max_steps; the must-resolve rule is the checkable |
-| Selector kata overrides | P | kata-improvement's coaching-question numbering (as numbered in its SKILL.md) — the binding drifts if kata renumbers |
+| Freestyling & Riffing bounds (`IMP-3`: `time_remaining`, `next_speaker`, `steps_remaining`) | D | `lisp_eval` arithmetic over `time_bound`, `elapsed_secs`, `participants`, `turn_index`, `max_steps`, and `steps_taken` |
 
 ## When to Use
 
@@ -44,12 +43,15 @@ Johnstone, *Impro: Improvisation and the Theatre* (1979) — accepting and build
 
 ## Instructions
 
-### Mode Selection (`improv-select`)
-1. Evaluate conversation context, current contribution, active mode, and prior contributions.
-2. Select the best-fit improv mode from {plussing, yes-and, yes-but, freestyling, riffing}.
-3. Do NOT apply the mode — the agent then renders the selected mode's template.
+### Mode Selection (`IMP-1` + `improv-select`)
+1. First run deterministic `lisp_eval` pre-router `IMP-1` when a kata stage or override is present in context (`q4 -> yes-but`, `q5/observation-drill -> plussing`, `pdca-cycle -> yes-and`):
+   - form: `(cond ((string= kata_stage "q4") "yes-but") ((or (string= kata_stage "q5") (string= kata_stage "observation-drill")) "plussing") ((string= kata_stage "pdca-cycle") "yes-and") (true "none"))`
+   - env: `{ "kata_stage": <"q4"|"q5"|"observation-drill"|"pdca-cycle"|"none"> }`
+   When `IMP-1` returns a mode other than `"none"`, use that mode directly and skip `improv-select.j2`.
+2. Otherwise, render `improv/improv-select` to evaluate conversation context, current contribution, active mode, and prior contributions, and select the best-fit improv mode from {plussing, yes-and, yes-but, freestyling, riffing}.
+3. Do NOT apply the mode in the selector — the agent then renders the selected mode's template.
 4. If `active_mode` is provided and still context-appropriate, keep it.
-5. Apply kata-specific overrides: Q4 → yes-but, Q5 → plussing, observation drill → plussing, five-questions drill → yes-and.
+5. Apply kata-specific overrides: Q4 → yes-but, Q5 → plussing, observation drill → plussing, pdca-cycle drill → yes-and.
 6. Default to `plussing` when no rule fires.
 7. Return `{mode, rationale}`.
 
@@ -59,36 +61,39 @@ Johnstone, *Impro: Improvisation and the Theatre* (1979) — accepting and build
 3. Build constructively on the top 3 seeds by that estimate, extending with new dimensions, implications, or next steps.
 4. Never explicitly negate. Criticism is deletion-by-omission.
 5. If nothing is agreeable, redirect constructively without referencing the disagreeable content.
-6. Return `{selected_seeds, build, discarded_count, reg_span}`.
+6. Return `{selected_seeds, build, discarded_count}`.
 
 ### Yes And (`improv-yes-and`)
 1. Accept the whole contribution unchanged; acknowledge it explicitly.
 2. Extend with a novel additive layer — a new dimension, implication, example, or next step.
 3. Signal that the extension is additive, not substitutive; the accepted base must remain intact and visible.
-4. Return `{accepted_base, extension, reg_span}`.
+4. Return `{accepted_base, extension}`.
 
 ### Yes But (`improv-yes-but`)
 1. Accept the whole contribution unchanged; acknowledge it explicitly.
 2. Identify a boundary condition that narrows scope: resource constraint, compatibility requirement, risk to mitigate, or sequencing consideration.
 3. Frame as additive guidance ("yes, and let's also account for…"), not rejection. Do not say "no," "wrong," "can't," or "impossible."
 4. Ensure the constraint narrows without contradicting the accepted base.
-5. Return `{accepted_base, constraint, reg_span}`.
-6. Partial check: call `lisp_eval` with `reply` bound to the reply text and `(begin (define bad (lambda (ws) (if (= (length ws) 0) (list) (if (string-contains (car ws) reply) (cons (car ws) (bad (cdr ws))) (bad (cdr ws)))))) (bad (list " no " " no," "No " "No," "wrong" "can't" "cannot" "impossible")))`. A non-empty list names the literal words to remove. An empty list does not prove the reply avoids contradiction; that stays the human's judgment.
+5. Return `{accepted_base, constraint}`.
+6. Partial check (`IMP-2`): call `lisp_eval` with `reply` bound to the reply text and `(begin (define bad (lambda (ws) (if (= (length ws) 0) (list) (if (string-contains (car ws) reply) (cons (car ws) (bad (cdr ws))) (bad (cdr ws)))))) (bad (list " no " " no," "No " "No," "wrong" "can't" "cannot" "impossible")))`. A non-empty list names the literal words to remove. An empty list does not prove the reply avoids contradiction; that stays the human's judgment.
 
 ### Freestyling (`improv-freestyling`)
 1. Initiate the session with a declared time bound and participant list.
 2. Cycle through participants in round-robin order; each turn is short (1–3 sentences), associative, and builds on the prior turn's energy.
-3. Track time remaining; when the time bound is reached, signal session end and summarize emergent themes.
-4. Record all turns for Regulation coherence analysis (the `reg_span` outputs have no automated consumer yet — emitted for the operator's Regulation review; not yet enforced).
-5. Mark each turn `[freestyle turn N by AGENT] content`.
-6. Return `{turn, time_remaining, next_speaker, session_summary, reg_span}`.
+3. Compute `time_remaining` and `next_speaker` deterministically via `lisp_eval` `IMP-3` (when time expires, signal session end and summarize emergent themes):
+   - form: `(list (max 0 (- time_bound elapsed_secs)) (nth next_idx participants))`
+   - env: `{ "time_bound": <secs>, "elapsed_secs": <secs>, "participants": <participant array>, "next_idx": <(turn_index + 1) mod length(participants)> }`
+4. Mark each turn `[freestyle turn N by AGENT] content`.
+5. Return `{turn, session_summary}` from the template plus `IMP-3`'s `{time_remaining, next_speaker}`.
 
 ### Riffing (`improv-riffing`)
 1. Diverge from the seed contribution; identify an interesting dimension, implication, or "what if."
 2. Explore the tangent independently — go deep, wide, or weird without group constraint.
-3. Resolve per return policy: `ReturnToGroup` (synthesize and bridge back), `SpawnThread` (create new thread), or `ReturnAfterSteps { max_steps }` (explore up to N steps then return).
+3. Resolve per return policy: `ReturnToGroup` (synthesize and bridge back), `SpawnThread` (create new thread), or `ReturnAfterSteps { max_steps }` (explore up to N steps then return). Compute `steps_remaining` deterministically via `lisp_eval` `IMP-3`:
+   - form: `(max 0 (- max_steps (length steps_taken)))`
+   - env: `{ "max_steps": <max_steps>, "steps_taken": <steps_taken array> }`
 4. The riff must resolve — it cannot hang indefinitely.
-5. Return `{tangent, outcome, synthesis, thread_id, steps_remaining, reg_span}`.
+5. Return `{tangent, outcome, synthesis, thread_id}` from the template plus `IMP-3`'s `steps_remaining`.
 
 ## Regression case
 

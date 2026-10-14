@@ -6,8 +6,6 @@ contract:
     entities: array
   output:
     relations: array
-    relation_count: integer
-    orphan_entities: array
 ---
 {# Reference: Banko et al. 2007 "Open Information Extraction from the Web" (IJCAI). #}
 {# Distinction: These are OpenIE (arg1, relation, arg2) tuples, NOT RDF triples #}
@@ -47,13 +45,12 @@ Before extracting relations, resolve coreference: if a pronoun ("she", "it", "th
 - The subject and object must reference entities from the provided entity list (after coreference resolution).
 - Every relation must carry a `trigger_span` whose trigger text appears verbatim in the source; its offsets are approximate.
 - Assign a **confidence score** (0.0-1.0) for each relation based on textual clarity.
-- Mark any entity that has **no detected relations** as an isolated entity (graph-theory term: isolated vertex; reported in `orphan_entities`).
 
 ## Examples
 
 Source: "Alice manages the engineering team. She reports to Bob, the CTO."
 Entities: ["Alice", "Bob", "engineering team", "CTO"]
-{"relations":[{"subject":"Alice","predicate":"manages","object":"engineering team","confidence":0.95,"trigger_span":{"start":6,"end":13},"source_evidence":"Alice manages the engineering team"},{"subject":"Alice","predicate":"reports_to","object":"Bob","confidence":0.95,"trigger_span":{"start":41,"end":51},"source_evidence":"She reports to Bob","coreference_note":"'She' resolved to 'Alice'"},{"subject":"Bob","predicate":"classified_as","object":"CTO","confidence":0.90,"trigger_span":{"start":57,"end":66},"source_evidence":"Bob, the CTO"}],"relation_count":3,"orphan_entities":[]}
+{"relations":[{"subject":"Alice","predicate":"manages","object":"engineering team","confidence":0.95,"trigger_span":{"start":6,"end":13},"source_evidence":"Alice manages the engineering team"},{"subject":"Alice","predicate":"reports_to","object":"Bob","confidence":0.95,"trigger_span":{"start":41,"end":51},"source_evidence":"She reports to Bob","coreference_note":"'She' resolved to 'Alice'"},{"subject":"Bob","predicate":"classified_as","object":"CTO","confidence":0.90,"trigger_span":{"start":57,"end":66},"source_evidence":"Bob, the CTO"}]}
 
 ## Output Requirements
 
@@ -71,9 +68,7 @@ Respond with a JSON object:
       "source_evidence": "Quote from source text supporting this relation",
       "coreference_note": "optional: pronoun resolution applied"
     }
-  ],
-  "relation_count": 8,
-  "orphan_entities": ["Entity with no detected relations"]
+  ]
 }
 ```
 
@@ -81,8 +76,4 @@ Respond with a JSON object:
 
 - Only extract relations grounded in the source text — do not infer relationships not supported by evidence.
 - Confidence must reflect textual clarity: 0.9+ = explicitly stated, 0.7-0.9 = clearly implied, 0.5-0.7 = plausible inference.
-- Isolated entities (reported in `orphan_entities`) are not errors — some entities genuinely have no relations in the text (graph-theory: isolated vertex).
-- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
-- Preserve the original prompt structure and formatting.
-- Handle missing variables gracefully (leave as-is or use default if specified).
 

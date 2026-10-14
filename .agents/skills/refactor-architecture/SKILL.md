@@ -8,12 +8,12 @@ description: "End-to-end architecture refactoring: discover friction, rank deepe
 
 End-to-end architecture refactoring skill. Merges the discovery phase (formerly improve-codebase-architecture) and the execution phase (formerly refactor-service-layer) into a single skill with a unified PDCA loop:
 
-1. **Explore** — Walk the codebase to find architectural friction: shallow modules, tight coupling, missing locality, wide import surfaces, untestable code.
-2. **Candidates** — Rank deepening candidates by leverage, locality, and testability. Ask the user which to explore.
-3. **Deepen** — Walk the design tree for the selected candidate: define the deepened module shape, identify seams and adapters, confirm the test surface.
-4. **Audit** — Audit cross-surface duplication (CLI, API, MCP) and classify each operation as Identical, Divergent, Surface-only, or Pass-through. Apply the deletion test.
-5. **Strangle** — Plan and execute the strangler-fig migration for the selected domain: write failing tests, implement the service, wire adapters, delete duplicate logic. One domain per commit.
-6. **Verify** — Verify surgical completeness: dependency direction, depth test, code-hygiene compliance (no stubs, no deprecation attributes, behavioral tests), clippy, test suite, surface adapter thinness.
+1. **Explore & Candidates** (`ra-explore`) — Walk the codebase to find architectural friction (shallow modules, tight coupling, missing locality, wide import surfaces, untestable code), apply the deletion test, and rank deepening candidates by leverage, locality, and testability for the user to select.
+2. **Deepen** (`ra-deepen`) — Walk the design tree for the selected candidate: define the deepened module shape, identify seams and adapters, confirm the test surface.
+3. **Route** (`RA-1` `lisp_eval`) — Deterministically route the user's explicit decision signal (`proceed_to_refactor`, `need_more_data`, `defer_or_reject`) to `ra-audit`, `diagnose`, or ADR recording.
+4. **Audit** (`ra-audit`) — Audit cross-surface duplication (CLI, API, MCP) and classify each operation as Identical, Divergent, Surface-only, or Pass-through. Apply the deletion test.
+5. **Strangle** (`ra-strangle`) — Plan and execute the strangler-fig migration for the selected domain: write failing tests, implement the service, wire adapters, delete duplicate logic. One domain per commit.
+6. **Verify** (`ra-verify` + `RA-2` `lisp_eval`) — Verify surgical completeness: dependency direction, depth test, code-hygiene compliance (no stubs, no deprecation attributes, behavioral tests), clippy, test suite, surface adapter thinness, with `overall_status` derived deterministically via `RA-2`.
 
 Includes the migration-strategy phase (folded from the standalone strangler-fig skill). Composes `tdd` (ra-strangle's failing-then-passing seam tests), `coding-guidelines` (surgical change scope), `pragmatic-semantics` (the five-force constraint classification in ra-audit/ra-strangle), and `deep-module` (the depth test and the deletion test applied throughout; the design tree is this skill's own — ra-deepen walks it) as methodological guidance.
 
@@ -33,9 +33,9 @@ Includes the migration-strategy phase (folded from the standalone strangler-fig 
 
 | Step | Type | Oracle / critique |
 |------|------|-------------------|
-| ra-explore, ra-candidates, ra-deepen, ra-audit | P | the user's candidate selection; ra-verify's observed outputs |
-| ra-route | P (operator-gated: a human signal, not a deterministic oracle) | the user's explicit decision signal |
-| ra-strangle tests and builds; ra-verify | D | the failing-then-passing tests, `cargo check`, `cargo test`, `./script/clippy` |
+| ra-explore, ra-deepen, ra-audit | P | the user's candidate selection; ra-verify's observed outputs |
+| RA-1 decision router | D (`lisp_eval` over the operator's explicit `decision` string) | the user's explicit decision signal |
+| ra-strangle tests and builds; ra-verify + RA-2 `overall_status` | D | the failing-then-passing tests, `cargo check`, `cargo test`, `./script/clippy`, and `RA-2` `lisp_eval` |
 
 ## When to Use
 
@@ -60,19 +60,9 @@ Includes the migration-strategy phase (folded from the standalone strangler-fig 
 1. Walk the codebase organically to find architectural friction — note where you experience difficulty understanding, navigating, or testing rather than applying rigid heuristics.
 2. Classify each friction point by signal: understanding one concept requires bouncing between many small modules; interface nearly as complex as the implementation; pure functions extracted for testability while real bugs hide in how they are called; tightly-coupled modules leaking across seams; untestable code through the current interface; wide import surfaces or circular dependencies.
 3. Apply the deletion test to suspected shallow modules — if complexity vanishes, the module was a pass-through; if complexity reappears across N callers, it earns its keep.
-4. Use the project's domain vocabulary throughout.
-5. Flag friction points that contradict known ADRs, but do not recommend revisiting them unless the friction is severe.
-6. Do not propose interfaces or refactors — this template is exploration only.
-
-### ra-candidates
-
-1. Assess each friction point and shallow module to propose deepening candidates — refactors that turn shallow modules into deep ones.
-2. For each candidate, specify the files involved, the problem (why the current architecture causes friction), the solution (what would change), the benefits, and the recommendation strength (`Strong`, `Worth exploring`, or `Speculative`).
-3. Explain every candidate's benefits in terms of locality (how change, bugs, and knowledge concentrate), leverage (how callers benefit from the deeper interface), and testability (how tests would improve).
-4. Surface ADR conflicts only when the friction is real enough to warrant revisiting — mark them clearly.
-5. Rank the candidates and identify the top recommendation with rationale.
-6. Ask the user which candidate to explore.
-7. Do not propose interfaces yet — wait for the user to select a candidate.
+4. Propose deepening candidates from the observed friction points and shallow modules: specify `files`, `problem`, `solution`, `benefits` (`locality`, `leverage`, `testability`), `recommendation` (`Strong`, `Worth exploring`, or `Speculative`), and `adr_conflict`.
+5. Rank the candidates, state `top_recommendation`, and ask the user which candidate to explore (`question_for_user`).
+6. Defer concrete public interface items (`pub fn` / `trait` / `type` signatures) to `ra-deepen` until the user selects a candidate.
 
 ### ra-deepen
 
@@ -85,12 +75,15 @@ Includes the migration-strategy phase (folded from the standalone strangler-fig 
 7. Propose ADRs sparingly — only when the decision is hard to reverse, surprising without context, and the result of a real trade-off.
 8. Offer to record an ADR when the user rejects a candidate with a load-bearing reason that a future explorer would need.
 
-### ra-route
+### RA-1 — Decision Routing (`lisp_eval`)
 
-1. Route only an explicit `proceed_to_refactor`, `need_more_data`, or `defer_or_reject` signal. An absent/unknown decision is `invalid` and asks the user; it is not a silent rejection.
-2. If proceeding to refactor: continue to the audit phase (ra-audit) to classify duplication and plan the strangler-fig migration.
-3. If more data is needed: recommend the `diagnose` skill, and specify what measurements are needed, how to instrument, and what thresholds would confirm or refute the hypothesis.
-4. If deferring or rejecting: produce a decision summary with reasoning, and if a load-bearing reason was given, recommend recording it as an ADR with a suggested title and body.
+1. Route the user's explicit `decision` signal deterministically via `lisp_eval` `RA-1` (do not use an LLM template to route a 3-way enum):
+   - form: `(cond ((string= decision "proceed_to_refactor") (list "proceed_to_refactor" "ra-audit")) ((string= decision "need_more_data") (list "need_more_data" "diagnose")) ((string= decision "defer_or_reject") (list "defer_or_reject" "record_adr")) (true (list "invalid" "ask_operator")))`
+   - env: `{ "decision": <user decision string> }`
+2. If `"proceed_to_refactor"`: continue to the audit phase (`ra-audit`) to classify duplication and plan the strangler-fig migration.
+3. If `"need_more_data"`: recommend the `diagnose` skill, and specify what measurements are needed, how to instrument, and what thresholds would confirm or refute the hypothesis.
+4. If `"defer_or_reject"`: produce a decision summary with reasoning, and if a load-bearing reason was given, recommend recording it as an ADR with a suggested title and body.
+5. If `"invalid"`: do not infer rejection or proceed — ask the user for an explicit decision.
 
 ### ra-audit
 
@@ -118,45 +111,40 @@ Includes the migration-strategy phase (folded from the standalone strangler-fig 
 3. Check code-hygiene compliance: no `todo!()`/`unimplemented!()` stubs, no new `#[deprecated]` attributes (prefer deletion over deprecation), and all tests at the selected seam verify stated behavioral properties, not implementation structure.
 4. Run clippy and the test suite across the service, CLI, API, and workspace crates.
 5. Verify surface adapter thinness by ensuring CLI and API adapters contain only service calls, formatting, and error mapping.
-6. Produce a structured `pass|fail|partial` report with observed command outputs and file:line evidence. Missing evidence is `unmeasured`, not a pass.
+6. Produce a structured report with observed command outputs and file:line evidence. Missing evidence is `unmeasured`, not a pass. Compute `overall_status` (`"pass"`, `"fail"`, or `"partial"`) deterministically via `lisp_eval` `RA-2` from `target_condition_status` (`"met"`, `"unmet"`, `"unmeasured"`) and the `checklist` statuses (`"done"`, `"not_done"`, `"unmeasured"`):
+   - form: `(begin (define any-eq (lambda (v xs) (if (is_null xs) false (if (string= v (car xs)) true (any-eq v (cdr xs)))))) (define all-eq (lambda (v xs) (if (is_null xs) true (if (string= v (car xs)) (all-eq v (cdr xs)) false)))) (cond ((or (string= target_condition_status "unmet") (any-eq "not_done" checklist_statuses)) "fail") ((and (string= target_condition_status "met") (all-eq "done" checklist_statuses)) "pass") (true "partial")))`
+   - env: `{ "target_condition_status": <"met"|"unmet"|"unmeasured">, "checklist_statuses": <array of status strings from checklist> }`
 7. Compare the result to the initial and target conditions, not only a checklist. Before a migration, pass both as top-level context to `ra-verify`; require observed evidence that the selected friction decreased while all affected surfaces still satisfy the user's behavioral expectation. A passing build with persistent friction is `continue`, not `done`. On a failing check, fix the identified cause and re-verify at most twice for this domain; a third failure stops with its evidence. When the target passes, stop this domain. Explore another only on a new user-selected target, never automatically.
 
 ## Registry Templates
 
 | Template | Purpose |
 |----------|---------|
-| `ra-explore.j2` | Explore the codebase for architectural friction: shallow modules, tight coupling, missing locality, wide import surfaces, untested code. Apply the deletion test to suspected shallowness. |
-| `ra-candidates.j2` | Present deepening candidates with files, problem, solution, benefits (leverage and locality), and recommendation strength. Use hKask domain vocabulary. Ask user which to explore. |
+| `ra-explore.j2` | Explore the codebase for architectural friction (shallow modules, tight coupling, missing locality, wide import surfaces, untested code), apply the deletion test, and rank deepening candidates with benefits (leverage, locality, testability) for the user to select. |
 | `ra-deepen.j2` | Grill loop for a selected candidate: walk the design tree, define the deepened module shape, identify seams and adapters, confirm test surface. Update glossary and ADRs inline as decisions crystallize. |
-| `ra-route.j2` | Route a deepened architecture design to the appropriate follow-up action (proceed_to_refactor, need_more_data, defer_or_reject). |
 | `ra-audit.j2` | Audit and classify all duplicated operations across CLI, API, and MCP surfaces. Apply the deletion test to each candidate. Produce RDF triples, classification table, and mermaid entity-relationship diagram of the duplication landscape. |
 | `ra-strangle.j2` | Plan the strangler-fig migration for a selected domain: define the new service operation, design CLI/API adapters, identify duplication to delete, and list verification steps. Enforces one-domain-per-commit discipline, dependency direction checks, and surgical change scope. |
-| `ra-verify.j2` | Verify surgical completeness after a domain migration or full extraction: dependency direction, depth test, code-hygiene compliance (no stubs, no deprecation attributes, behavioral tests), clippy, test suite, deletion test on service modules. Produces a structured pass/fail report. |
+| `ra-verify.j2` | Verify surgical completeness after a domain migration or full extraction: dependency direction, depth test, code-hygiene compliance (no stubs, no deprecation attributes, behavioral tests), clippy, test suite, deletion test on service modules; `overall_status` derived via `RA-2` `lisp_eval`. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `refactor-architecture/ra-explore`) and a context object with the required variables.
 
 Template context variables (from each template's [inference] contract):
 - `ra-audit.j2`: `focus_area`, `code_context`, `known_adrs`, `constraint_forces`
-- `ra-candidates.j2`: `friction_points`, `shallow_modules`, `focus_area`, `known_adrs`
 - `ra-deepen.j2`: `selected_candidate`, `focus_area`, `known_adrs`, `glossary_terms`
 - `ra-explore.j2`: `focus_area`, `code_context`, `known_adrs`
-- `ra-route.j2`: `decision`, `deepened_design`
 - `ra-strangle.j2`: `domain`, `target_condition`, `service_module_name`, `current_cli_path`, `current_api_path`, `known_adrs`, `constraint_forces`
 - `ra-verify.j2`: `domain`, `migration_phase`, `initial_condition`, `target_condition`, `code_context`, `known_adrs`
 
 ## Regression case
 
-Receipt executed live (2026-10-01, backfill pass): `render_template`
-`refactor-architecture/ra-verify` with a domain/migration context renders
-the verification checklist whose discipline is unmeasured-never-pass — a
-build-only pass leaves the target condition `unmeasured` and the overall
-status `partial`. The skill's D oracles are the cargo commands
-(check/test/clippy), not lisp_eval forms; the deterministic render is the
-receipt, and the commands it names are run at use time.
+Receipts executed live through `lisp_eval` and `render_template`:
+- `RA-1` decision router (`lisp_eval`): `decision = "proceed_to_refactor"` → `["proceed_to_refactor", "ra-audit"]`; `decision = "need_more_data"` → `["need_more_data", "diagnose"]`; `decision = "defer_or_reject"` → `["defer_or_reject", "record_adr"]`; `decision = "maybe"` → `["invalid", "ask_operator"]`.
+- `RA-2` verification status (`lisp_eval`): `target_condition_status = "unmeasured"`, `checklist_statuses = ["done", "done", "unmeasured"]` → `"partial"` (a build-only pass leaves the target condition `unmeasured` and the overall status `partial`); `target_condition_status = "met"` with all `"done"` → `"pass"`; any `"unmet"` or `"not_done"` → `"fail"`.
+- `render_template` `refactor-architecture/ra-verify` with a domain/migration context renders the verification checklist whose discipline is unmeasured-never-pass; the cargo commands (`cargo check`, `cargo test`, `./script/clippy`) are run at use time.
 
 ## Constraints
 
-- Exploration without a selected candidate remains advisory, never migration authority; the user's explicit signal (ra-route) gates any refactor.
+- Exploration without a selected candidate remains advisory, never migration authority; the user's explicit signal (`RA-1`) gates any refactor.
 - One domain per commit, surgical change scope: every changed line traces to the extraction; no cross-domain refactors, no style changes.
 - Dependency direction is inviolable: CLI/API route to services, services route to domain crates, no circular dependencies.
 - Duplicate business logic is deleted only after both adapters pass their behavioral checks — never while the previous logic is still the verified path.

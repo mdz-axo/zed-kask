@@ -1,8 +1,8 @@
-{# goal: Map extracted entities and relations to a target schema. Resolves field mappings, infers missing fields from context, and reports field-level coverage and unresolved fields. #}
+{# goal: Map extracted entities and relations to a target schema. Resolves field mappings, infers missing fields from context, and reports unresolved fields. #}
 {# Reference: Information Extraction → Schema Alignment, formalized in #}
 {#   the TAC KBP (Knowledge Base Population) slot-filling task (2009-2014). #}
 {#   Type coercion follows the JSON Schema Validation spec (Wright & Andrews, #}
-{#   draft-07+). Coverage ratio is a standard IE metric (populated/total). #}
+{#   draft-07+). Coverage ratio is computed deterministically via lisp_eval (SE-3). #}
 [inference]
 contract:
   input:
@@ -13,7 +13,6 @@ contract:
     unmapped_text: array
   output:
     extracted_data: object
-    field_coverage: object
     inferred_fields: array
     unresolved_fields: array
 ---
@@ -84,7 +83,7 @@ Transform the identified entities into structured JSON that conforms to the targ
 Source: "Acme Corp acquired Beta Inc for $4.2B on March 15, 2025."
 Schema: {"type":"object","properties":{"acquirer":{"type":"string"},"target":{"type":"string"},"price_usd":{"type":"number"},"date":{"type":"string"}},"required":["acquirer","target"]}
 Entities: [{"entity_text":"Acme Corp","entity_type":"organization","schema_field":"acquirer","confidence":0.95},{"entity_text":"Beta Inc","entity_type":"organization","schema_field":"target","confidence":0.95},{"entity_text":"$4.2B","entity_type":"quantity","schema_field":"price_usd","confidence":0.90},{"entity_text":"March 15, 2025","entity_type":"date","schema_field":"date","confidence":0.98}]
-{"extracted_data":{"acquirer":"Acme Corp","target":"Beta Inc","price_usd":4200000000,"date":"2025-03-15"},"field_coverage":{"total_fields":4,"populated_fields":4,"coverage_ratio":1.0},"unresolved_fields":[],"coercion_log":["price_usd: '$4.2B' → 4200000000 (number)","date: 'March 15, 2025' → '2025-03-15' (ISO 8601)"],"confidence":0.92}
+{"extracted_data":{"acquirer":"Acme Corp","target":"Beta Inc","price_usd":4200000000,"date":"2025-03-15"},"inferred_fields":[],"unresolved_fields":[]}
 
 ## Output Requirements
 
@@ -95,11 +94,6 @@ Respond with a JSON object:
   "extracted_data": {
     "field1": "value1",
     "field2": 42
-  },
-  "field_coverage": {
-    "total_fields": 10,
-    "populated_fields": 8,
-    "coverage_ratio": 0.8
   },
   "inferred_fields": [
     {
@@ -119,7 +113,4 @@ Respond with a JSON object:
 - Inferred fields must clearly state the reasoning and confidence level.
 - Never fabricate data — if a field cannot be populated, leave it out of `extracted_data` and list it in `unresolved_fields`.
 - Type coercion must respect the schema type definitions.
-- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
-- Preserve the original prompt structure and formatting.
-- Handle missing variables gracefully (leave as-is or use default if specified).
 

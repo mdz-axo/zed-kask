@@ -3,10 +3,10 @@
 contract:
   input:
     target_file: string
-    step_2_result: object
-    step_3_result: object
-    step_4_result: object
-    step_5_result: object
+    inventory_result: object
+    decision_result: object
+    execution_result: object
+    verification_result: object
     task: string
   output:
     divergence_md_updated: boolean
@@ -20,10 +20,10 @@ update DIVERGENCE.md and produce the final report for the re-application.
 ## Context
 
 **Target file:** `{{ target_file }}`
-**Functional inventory (step 2):** {{ step_2_result }}
-**Strategy decision (step 3):** {{ step_3_result }}
-**Execution results (step 4):** {{ step_4_result }}
-**Verification results (step 5):** {{ step_5_result }}
+**Functional inventory:** {{ inventory_result }}
+**Strategy decision:** {{ decision_result }}
+**Execution results:** {{ execution_result }}
+**Verification results:** {{ verification_result }}
 **User task:** {{ task }}
 
 ## What to do

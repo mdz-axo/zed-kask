@@ -29,7 +29,7 @@ kask-wiring changes without carrying forward accumulated cruft.
 | **Mapped re-application** | File is under-marked (< 50% of kask call sites carry markers), has cruft, or has compile bugs | Medium       | High   |
 | **Destroy and rebuild**   | Never                                                                                         | Catastrophic | High   |
 
-**Decision rule:** if the fork's file has > 2× the upstream line count, or < 50% of kask call sites carry `// zed-kask:` markers, use mapped re-application. Otherwise use git merge. Compute it in `lisp_eval` from the four counts `assess.j2` gathers — never by hand:
+**Decision rule (`UR-1`):** if the fork's file has > 2× the upstream line count, or < 50% of kask call sites carry `// zed-kask:` markers, use mapped re-application. Otherwise use git merge. Gather the four counts via shell (`wc -l <target_file>`, `git show <upstream_ref>:<target_file> | wc -l`, `grep -c "kask_bridge::\|hkask_\|hkask-" <target_file>`, `grep -c "// zed-kask:" <target_file>`) and compute `assessment_result` in `lisp_eval` `UR-1` — never by hand:
 
 ```
 form: (let ((dens (if (= sites 0) 1 (/ markers sites)))) (list dens (if (or (> fork (* 2 upstream)) (< dens 0.5)) (quote mapped-reapplication) (quote git-merge))))
@@ -51,10 +51,10 @@ There is no external reference model. The per-seam retire / simplify / retain de
 
 | Step | Type | Oracle / critique |
 |------|------|-------------------|
-| 0 Survival, 2 Constraint force, 3 Dependency graph | P | the operator on NEEDS OPERATOR DECISION; each record's counterexample |
-| 1 Inventory, 4 Insertion points, strategy rule | D | `git`, `grep`, `lisp_eval` |
-| 5 Re-apply | P | the Verification gate |
-| 6 Pins, 8 Cleanup, Verification gate | D | `cargo check`/`cargo test`, the isolation scripts |
+| 0 Survival, 2 Constraint force, 3 Dependency graph | P | the operator on NEEDS OPERATOR DECISION; each record's counterexample; `UR-2` `lisp_eval` inventory gate |
+| 1 Inventory, 4 Insertion points, strategy rule (`UR-1`) | D | `git`, `grep`, `lisp_eval` (`UR-1`, `UR-2`) |
+| 5 Re-apply | P | the Verification gate + `UR-3` `lisp_eval` |
+| 6 Pins, 8 Cleanup, Verification gate (`UR-3`) | D | `cargo check`/`cargo test`, the isolation scripts, `UR-3` `lisp_eval` |
 | 7 DIVERGENCE.md update | D | grep: the row's named file paths and pin tests exist in the tree |
 | 9 Reflect | P | the operator accepts or rejects each amendment |
 
@@ -126,6 +126,12 @@ Output: a table mapping each unit to its constraint force + enforcement point + 
 For each functional unit, identify what it _defines_ and what it _uses_. This produces a DAG. The re-application order must be a topological sort — this is where use-before-def bugs come from: incremental fork evolution violates the DAG by inserting a use before its definition.
 
 Output: a dependency table (unit → defines → uses → must-come-after).
+
+Verify the extracted `inventory_result` (`map.j2` output) with `lisp_eval` gate `UR-2` before proceeding to `decide.j2` — every unit in `functional_units` must appear in `topological_order` and every `"Prohibition"` unit in `constraint_force_table` must have a non-empty `enforcement_point`:
+```
+form: (begin (define proh-ok (lambda (rows) (if (is_null rows) true (let ((r (car rows))) (if (string= (cdr (assoc "force" r)) "Prohibition") (and (not (string= (cdr (assoc "enforcement_point" r)) "")) (proh-ok (cdr rows))) (proh-ok (cdr rows))))))) (and (= (length functional_units) (length topological_order)) (> (length functional_units) 0) (proh-ok constraint_force_table)))
+env:  { "functional_units": <functional_units>, "topological_order": <topological_order>, "constraint_force_table": <constraint_force_table> }
+```
 
 ### Step 4 — Map insertion points in clean upstream
 
@@ -216,6 +222,9 @@ by checking them. A lesson that no case can falsify is not an amendment.
 3. `bash kask/scripts/check-hkask-no-zed-deps.sh` — §13.1 invariant holds.
 4. `grep -c "// zed-kask:" <file>` — marker count matches the functional unit count.
 5. `git diff upstream/main -- <file>` — no upstream line is modified except under a live D-row (retire/simplify work may remove fork lines).
+6. Run `lisp_eval` gate `UR-3` over the execution and verification results (`verification_result`):
+   - form: `(and compiled tests_passed invariant_holds (= marker_count unit_count))`
+   - env: `{ "compiled": <bool>, "tests_passed": <bool>, "invariant_holds": <bool>, "marker_count": <int>, "unit_count": <length of functional_units> }`
 
 If any gate fails, return to Step 5 for that file with the failing command's output. At most 2 returns per file; a third failure halts the merge and goes to the operator with the failing output.
 
@@ -264,16 +273,20 @@ The full process, with the `main.rs` functional inventory (28 units), DAG, and c
 
 | Template | Purpose |
 |----------|---------|
-| `assess.j2` | Assess a D-seam file against the strategy decision rule. Extract line counts, kask call site count, marker count. Recommend merge vs. mapped re-application. |
 | `map.j2` | Extract the functional inventory (F1, F2, ...), classify each unit by constraint force, and build the dependency DAG. |
-| `decide.j2` | Reconcile the file's seams against Step 0's survival records (deciding fresh only when Step 0 was skipped) and apply the essentialist deletion test (G1): is full re-application necessary, or is surgical marking + pinning sufficient? Consumes Step 0's records plus assess's and map's outputs.
+| `decide.j2` | Reconcile the file's seams against Step 0's survival records (deciding fresh only when Step 0 was skipped) and apply the essentialist deletion test (G1): is full re-application necessary, or is surgical marking + pinning sufficient? Consumes `survival_records`, `assessment_result` (`UR-1`), and `inventory_result` (`map.j2`). |
 | `execute.j2` | Execute the chosen strategy: add markers + pinning tests (surgical), or re-apply onto clean upstream in topological order (full re-application). |
 | `document.j2` | Update DIVERGENCE.md and produce the final report. |
 | `reflect.j2` | After the merge commit: compare what happened against this skill, and propose amendments each tied to a falsifiable held-out case. |
 
-To render a template, call the `render_template` tool with the template ref (e.g., `upstream-rebase/assess`) and a context object with the required variables.
+To render a template, call the `render_template` tool with the template ref (e.g., `upstream-rebase/map`) and a context object with the required variables:
+- `map.j2`: `target_file`, `upstream_ref`, `assessment_result`, `task`
+- `decide.j2`: `target_file`, `survival_records`, `assessment_result`, `inventory_result`, `task`
+- `execute.j2`: `target_file`, `upstream_ref`, `inventory_result`, `decision_result`, `task`
+- `document.j2`: `target_file`, `inventory_result`, `decision_result`, `execution_result`, `verification_result`, `task`
+- `reflect.j2`: `merge_commit`, `seam_decisions`, `execution_log`, `prior_held_out_cases`, `task`
 
-Run verification gates (cargo check/test, isolation script) with `terminal`; use `lisp_eval` only for arithmetic such as marker density. Template order: Step 0's all-rows survival review and Step 4's insertion-point mapping (per unit, the upstream landmark line — no template renders either) are direct agent work; then, per surviving seam file, `assess` → `map` → `decide` → `execute` → `document`, then `reflect` after the merge commit. The templates carry their own internal pipeline numbering — bind each `step_N_result` input to the named artifact, not to the SKILL.md's step numbers: `decide.j2`'s `step_0_records` = Step 0's all-rows survival records (null when Step 0 was skipped), `step_1_result` = assess's output (the assessment) and `step_2_result` = map's output (the functional inventory); `execute.j2`'s `step_2_result` = map's output and `step_3_result` = decide's output (the strategy decision); `document.j2`'s `step_2_result` through `step_5_result` = map's, decide's, execute's, and the verification gate's outputs respectively.
+Run verification gates (cargo check/test, isolation script) with `terminal` and deterministic checks (`UR-1`, `UR-2`, `UR-3`) with `lisp_eval`. Template order: Step 0's all-rows survival review (`survival_records`), `UR-1`'s per-file shell metrics + `lisp_eval` strategy rule (`assessment_result`), and Step 4's insertion-point mapping are direct agent work; then, per surviving seam file, `map` (`inventory_result`, checked by `UR-2`) → `decide` (`decision_result`) → `execute` (`execution_result`, checked by the Verification gate + `UR-3` producing `verification_result`) → `document`, then `reflect` after the merge commit.
 
 ## Regression case
 

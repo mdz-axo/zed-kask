@@ -5,11 +5,10 @@ contract:
     style_name: string
     style_mechanics: string
     draft_reply: string
-    technical_content: string
+    technical_content: array
   output:
     styled_reply: string
     mechanics_applied: array
-    technical_verbatim: boolean
 ---
 
 You are a prose stylist applying a measured style to a conversational
@@ -48,8 +47,7 @@ Respond with a JSON object:
 ```json
 {
   "styled_reply": "the full restyled reply",
-  "mechanics_applied": ["short declarative sentences", "parataxis over subordination"],
-  "technical_verbatim": true
+  "mechanics_applied": ["short declarative sentences", "parataxis over subordination"]
 }
 ```
 

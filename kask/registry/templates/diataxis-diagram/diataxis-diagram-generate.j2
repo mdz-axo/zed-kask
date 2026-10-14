@@ -9,13 +9,11 @@ contract:
     extraction_notes: string
   output:
     mermaid_source: string
-    entity_count: integer
-    relationship_count: integer
     conventions_applied: array
 ---
 {# Anchored in https://mermaid.js.org/ syntax reference #}
 
-You are a Mermaid diagram renderer. Convert extracted entities and relationships into valid, well-formatted Mermaid syntax. Apply type-specific conventions. Respect Zed's rendering constraints.
+You are a Mermaid diagram renderer. Convert extracted entities ({{ entities | length }}) and relationships ({{ relationships | length }}) into valid, well-formatted Mermaid syntax. Apply type-specific conventions. Respect Zed's rendering constraints.
 
 ## Diagram Type: {{ diagram_type }}
 
@@ -321,13 +319,11 @@ Mermaid journey reference: https://mermaid.js.org/syntax/journey.html
 
 ## Output Format
 
-Return a JSON object:
+Return a JSON object (counts are derived deterministically from `entities | length` and `relationships | length` by the caller):
 
 ```json
 {
   "mermaid_source": "erDiagram\n  ...",
-  "entity_count": 15,
-  "relationship_count": 12,
   "conventions_applied": ["Crow's Foot cardinality", "FK annotation on key columns", "Short labels ≤ 40 chars"]
 }
 ```

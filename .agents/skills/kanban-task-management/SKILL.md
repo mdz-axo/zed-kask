@@ -54,20 +54,21 @@ is unverified, not complete.
 
 ## Instructions
 
-The first step (`triage.j2`) examines the available inputs and determines
-which phase to run:
+Step 0 (deterministic triage and preflight, **`KTM-1`** via `lisp_eval`) examines the available inputs, verifies goal-criterion `advances` readiness for decomposition, and checks column WIP limits (`count(column_tasks) < wip_limit`):
+- form: `(list (cond (has_project_description "decompose") (has_task_to_delegate "delegate") (has_board_id "operate") (t "missing_input")) (and goal_confirmed (> advances_count 0)) (< (length column_tasks) wip_limit))`
+- env: `{ "has_project_description": <bool>, "has_task_to_delegate": <bool>, "has_board_id": <bool>, "goal_confirmed": <bool>, "advances_count": <int>, "column_tasks": <array of tasks in target column>, "wip_limit": <column WIP limit> }`
 
 | Input present | Phase | Steps |
 |---|---|---|
-| `project_description` | decompose | gather-context → decompose-tasks → review-tasks → populate-board |
-| `task_to_delegate` | delegate | configure-spawn → `kanban_task_spawn` → `kanban_task_delegate_result` |
-| `board_id` | operate | monitor-board → coordinate-agents → track-deliverables → move-tasks → verify-completion → escalate |
+| `project_description` | decompose | `decompose-tasks` → `review-tasks` → `kanban_board_create` + `kanban_task_create` |
+| `task_to_delegate` | delegate | `configure-spawn` → `kanban_task_spawn` → `kanban_task_delegate_result` |
+| `board_id` | operate | `kanban_board_list` + `kanban_task_list` → `coordinate-agents` → `track-deliverables` → `kanban_task_move` → `verify-completion` → `escalate` |
 
-Templates for non-active phases are not rendered. Before Decompose, confirm the operator's functional goal, 2–4 observable criteria and any existing goal identity; an inferred goal is only a question. When confirmed and no goal exists, call `kanban_goal_create` once with the operator's `goal_text`, criteria and a stable idempotency key; retain its `goal_id` and verbatim criterion text for `kanban_task_create.advances`. If the user has not confirmed the target, stop before board creation. The triage result names only the active phase.
+Templates for non-active phases are not rendered. Before Decompose, confirm the operator's functional goal, 2–4 observable criteria and any existing goal identity; an inferred goal is only a question. When confirmed and no goal exists, call `kanban_goal_create` once with the operator's `goal_text`, criteria and a stable idempotency key; retain its `goal_id` and verbatim criterion text for `kanban_task_create.advances` (verified by `KTM-1`). Render `kanban-task-management/decompose-tasks` with `project_description`, `target_task_hours`, `goals`, `constraints`, and `resources`; it emits `project_name`, `tasks`, and `recomposition`. Then render `kanban-task-management/review-tasks` with `tasks` and `project_name`, and create the board (`kanban_board_create`) and accepted tasks (`kanban_task_create`) directly via MCP tools. If the user has not confirmed the target, stop before board creation. For Delegate, render `kanban-task-management/configure-spawn` with `task` and `available_skills`.
 
 ### Reference models and labels
 
-Anderson, *Kanban: Successful Evolutionary Change* (2010) — visualize work, limit WIP, manage flow; Wake, "INVEST in Good Stories" (2003) for task shape. Board state and every transition are D (the kanban tools are the oracle; `kanban_task_list` re-reads confirm a move took). Decomposition, delegation briefs and the judgment that Review evidence is sufficient are P, critiqued by `kanban_task_verify` evidence and by the operator, who owns acceptance.
+Anderson, *Kanban: Successful Evolutionary Change* (2010) — visualize work, limit WIP, manage flow (`onto_anchor` → derived `kanban`, `work_in_progress_limit`); Wake, "INVEST in Good Stories" (2003) for task shape (`onto_anchor` → derived `invest_criteria`). Board state, phase triage/WIP check (`KTM-1`), oracle-tier reduction (`KTM-2`), and every transition are D (the kanban tools are the oracle; `kanban_task_list` re-reads confirm a move took). Decomposition, delegation briefs and the judgment that Review evidence is sufficient are P, critiqued by `kanban_task_verify` evidence and by the operator, who owns acceptance.
 
 ### Delegate result handoff
 
@@ -80,7 +81,7 @@ One bounded PDCA applies to the active phase: Plan from the initial and target c
 1. Re-run `kanban_task_list` — the Check signal is two lists: tasks in
    Review without verification evidence, and InProgress tasks with no
    activity since the last sweep (staleness threshold per the operator).
-2. Act per finding: call `kanban_task_verify` only after the operator confirms a Review task's observed pass evidence; its nonempty `evidence` is the pass signal and moves that task to Done. Comment on a failed/unsupported submission without calling verify, and return it for rework — render `kanban-task-management/coordinate-agents` with `triage_phase`, `board_name` and `active_tasks` (the re-listed board's active tasks) to prepare the replies. Comment to unblock stalled tasks. Escalations render `kanban-task-management/escalate` with `triage_phase`, `board_name` and `escalation_candidates` (from coordinate-agents' output).
+2. Act per finding: render `kanban-task-management/track-deliverables` with `task` and `deliverables` to assess deliverable readiness, and render `kanban-task-management/verify-completion` with `task_id`, `task_title`, `criteria`, `deliverables`, and `evidence` to classify per-criterion oracle tiers, then reduce the oracle-tier lattice deterministically via **`KTM-2`** (`lisp_eval`). Call `kanban_task_verify` only after `KTM-2` passes and the operator confirms a Review task's observed pass evidence; its nonempty `evidence` is the pass signal and moves that task to Done. Comment on a failed/unsupported submission without calling verify, and return it for rework — render `kanban-task-management/coordinate-agents` with `board_name` and `active_tasks` (the re-listed board's active tasks) to prepare the replies. Comment to unblock stalled tasks. Escalations render `kanban-task-management/escalate` with `board_name` and `escalation_candidates` (from coordinate-agents' output).
 3. Re-list to confirm the transitions took.
 4. Reconcile the IDs in `unverified_review` and `stalled_in_progress` against the *newly re-listed board* before calling `lisp_eval` with `(and (= (length unverified_review) 0) (= (length stalled_in_progress) 0))`. This gate checks sweep obstacles only; it does not prove the functional goal was achieved. On a mismatch or a surviving blocker, stop after this one sweep and escalate with the actual task IDs.
 5. Clean up (storage Cleanup rule). When every task on the board is Done and its deliverables are recorded outside the board, ask the operator to confirm closure, then call `kanban_board_delete(board_id)` and re-run `kanban_board_list` to confirm. A board with any open, Review or blocked task is kept and named in the report with its open task IDs; never delete it to make a sweep look clean.
@@ -121,35 +122,32 @@ classifies each criterion's evidence:
 
 A criterion is satisfied only by `ran-and-pasted` or `demonstrated`
 evidence; `asserted` does not satisfy — the floor tier is never the
-ceiling. The recorded evidence string carries the tier prefix
-(`[oracle: demonstrated] ...`), so a board reader sees what class of
-verification closed the task. "Tests pass" without the pasted output
-is asserted; the pasted command and exit code are ran-and-pasted.
+ceiling. Reduce the per-criterion oracle classes deterministically via `lisp_eval` gate **`KTM-2`**:
+- form: `(and (> criteria_count 0) (= criteria_count (+ ran_and_pasted_count demonstrated_count)) (= asserted_count 0) (if (> demonstrated_count 0) "demonstrated" "ran-and-pasted"))`
+- env: `{ "criteria_count": <total criteria>, "ran_and_pasted_count": <satisfied with ran-and-pasted>, "demonstrated_count": <satisfied with demonstrated>, "asserted_count": <classified as asserted> }`
+
+When `KTM-2` evaluates to `"ran-and-pasted"` or `"demonstrated"`, the recorded evidence string carries that tier prefix (`[oracle: demonstrated] ...`), so a board reader sees what class of verification closed the task; when `false` (any `asserted` or unsatisfied criterion), verification fails. "Tests pass" without the pasted output is asserted; the pasted command and exit code are ran-and-pasted.
 
 ## Registry Templates
 
 | Template | Purpose |
 |----------|---------|
-| `triage.j2` | Triage step. Examines available inputs (project_description, task_to_delegate, board_id) and determines which phase to run: decompose, delegate, or operate. |
-| `gather-context.j2` | Extract structured project context: project name, goals, constraints, resources, and target task size. Phase: decompose. |
-| `decompose-tasks.j2` | Decompose a project into INVEST-compliant tasks with vertical slicing, dependencies, recomposition strategy, and acceptance criteria. Phase: decompose. |
-| `review-tasks.j2` | Review decomposed tasks for INVEST compliance, completeness, and recomposition viability. Phase: decompose. Tasks in `modified` carry specific change recommendations — apply the changes and include the revised tasks in the accepted pool before populate-board (a structural change re-enters review). |
-| `populate-board.j2` | Convert accepted tasks into board-ready format. Includes post-step instructions for the agent to call kanban_board_create and kanban_task_create. Phase: decompose. Consumes review-tasks' `accepted` array (plus the applied `modified` revisions) as its `accepted_tasks` input. |
+| `decompose-tasks.j2` | Decompose a project into INVEST-compliant tasks with vertical slicing, dependencies, recomposition strategy, and acceptance criteria; emits `project_name`, `tasks`, and `recomposition`. Phase: decompose. |
+| `review-tasks.j2` | Review decomposed tasks for INVEST compliance, completeness, and recomposition viability. Phase: decompose. Tasks in `modified` carry specific change recommendations — apply the changes and include the revised tasks in the accepted pool before creating tasks via `kanban_task_create` (a structural change re-enters review). |
 | `configure-spawn.j2` | Configure spawn parameters: delegation level, skills, memory scope. Includes post-step instructions for the agent to call kanban_task_spawn. Phase: delegate. |
-| `monitor-board.j2` | Monitor board state, identify blockers, flag overdue tasks. Includes pre-step instructions for the agent to fetch board data via kanban_board_list and kanban_task_list. Phase: operate. |
 | `coordinate-agents.j2` | Read active-task comment threads and prepare actionable replies. Includes post-step instructions for the agent to call kanban_task_comment. Phase: operate. |
 | `track-deliverables.j2` | Assess deliverables for completeness. Includes post-step instructions for the agent to call kanban_task_move and kanban_task_add_deliverable. Phase: operate. |
-| `move-tasks.j2` | Recommend status transitions based on evidence. Includes post-step instructions for the agent to call kanban_task_move. Phase: operate. |
-| `verify-completion.j2` | Assess evidence criterion by criterion; comment and return failed work without a pass signal, and call `kanban_task_verify` only after operator-confirmed Review success. |
+| `verify-completion.j2` | Assess evidence criterion by criterion; comment and return failed work without a pass signal, and call `kanban_task_verify` only after `KTM-2` passes and operator-confirmed Review success. |
 | `escalate.j2` | Convert unresolved issues into human-operator-ready escalations. Includes post-step instructions for the agent to call kanban_task_comment. Phase: operate. |
 
-To render a template, call the `render_template` tool with the template ref (e.g., `kanban-task-management/triage`) and a context object with the required variables — each template's `[inference]` contract is the authoritative input list. The contract audit checks each template's contract-to-body agreement; cross-template producer→consumer seams (one step's output feeding the next step's input) are this skill's own chain to verify at render time.
+To render a template, call the `render_template` tool with the template ref (e.g., `kanban-task-management/decompose-tasks`) and a context object with the required variables — each template's `[inference]` contract is the authoritative input list. The contract audit checks each template's contract-to-body agreement; cross-template producer→consumer seams (one step's output feeding the next step's input) are this skill's own chain to verify at render time.
 
 ## Regression case
 
-All receipts executed live through `lisp_eval` (2026-10-01, backfill pass),
-over the sweep gate:
+All receipts executed live through `lisp_eval`, over `KTM-1`, `KTM-2`, and the sweep gate:
 
+- `KTM-1` with `{ "has_project_description": true, "has_task_to_delegate": false, "has_board_id": false, "goal_confirmed": true, "advances_count": 2, "column_tasks": [1, 2], "wip_limit": 3 }` → `["decompose", true, true]`.
+- `KTM-2` with `{ "criteria_count": 3, "ran_and_pasted_count": 2, "demonstrated_count": 1, "asserted_count": 0 }` → `"demonstrated"` (and `false` when `asserted_count > 0`).
 - Empty unverified-review and stalled-in-progress lists → `true`.
 - One unverified review card → `false`.
 

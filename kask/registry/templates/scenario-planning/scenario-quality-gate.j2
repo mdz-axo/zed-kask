@@ -3,11 +3,10 @@
 contract:
   input:
     scenarios: array
-    refined_question: string
+    focal_question: string
     axis_1: object
     axis_2: object
   output:
-    gate_pass: boolean
     gate_findings: array
     divergence_score: number
     consistency_score: number
@@ -17,9 +16,9 @@ contract:
 
 You are an independent quality assessor evaluating scenario planning outputs. You did NOT generate these scenarios — your role is unbiased evaluation. Apply rigorous standards.
 
-## Refined Focal Question
+## Focal Question
 
-{{ refined_question }}
+{{ focal_question }}
 
 ## Scenario Axes
 
@@ -79,8 +78,8 @@ Do the four scenarios collectively span the uncertainty space defined by the foc
 
 ## Thresholds
 
-- `gate_pass` = `true` only if there are exactly four scenarios and **all three** scores are ≥ 0.60.
-- If the set does not contain exactly four scenarios, or any score < 0.60, `gate_pass` = `false` and the corresponding `gate_findings` entry must explain what failed and how to fix it.
+- `gate_pass` is computed deterministically by the caller via `lisp_eval` `SP-2`: `(and (= scenario_count 4) (not parametric_variation_flag) (>= divergence_score 0.6) (>= consistency_score 0.6) (>= coverage_score 0.6))`.
+- If the set does not contain exactly four scenarios, `parametric_variation_flag` is `true`, or any score < 0.60, the corresponding `gate_findings` entry must set `status` to `"fail"` and explain what failed and how to fix it.
 - An individual finding entry must include `check` (divergence/consistency/coverage), `status` (pass/fail), and `note`.
 
 ## Output Requirements
@@ -89,7 +88,6 @@ Respond with a JSON object:
 
 ```json
 {
-  "gate_pass": true,
   "divergence_score": 0.85,
   "consistency_score": 0.90,
   "coverage_score": 0.75,
@@ -118,10 +116,7 @@ Respond with a JSON object:
 
 - You are evaluating, not generating. Do not rewrite or improve the scenarios.
 - Scores must be justified by specific evidence from the scenario narratives. Vague scores are invalid.
-- If `gate_pass` is `false`, each failing dimension must have a specific, actionable fix note.
+- For any dimension scored below 0.60 (or when `parametric_variation_flag` is `true`), its `gate_findings` entry must have a specific, actionable fix note.
 - Do not let scenario naming influence substantive quality scores — names are only 0.15 of divergence.
 - The `parametric_variation_flag` must be `true` if any two end states differ only in degree, not kind.
-- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
-- Preserve the original prompt structure and formatting.
-- Handle missing variables gracefully (leave as-is or use default if specified).
 

@@ -13,7 +13,6 @@ contract:
     corroborated: array
     survived_by_default: array
     falsification_log: array
-    verdict: string
 ---
 
 You are an eliminative-inference agent. Apply the observations to the hypotheses and
@@ -80,15 +79,7 @@ A map of test description → observed outcome (e.g., `{"<test description>": "<
 
 3. **Corroborate survivors.** Only a hypothesis tested by an observation that could have falsified it and whose prediction matched is corroborated — it survived a test that could have falsified it. Corroboration is not confirmation: surviving does not make the hypothesis more likely in any absolute sense, only more resilient. State which test corroborated it and which alternatives that test eliminated.
 
-4. **Handle every untested survivor.** A survivor without a corroborating observation this cycle is recorded in `survived_by_default` — ALL three kinds: hypotheses flagged irreducible (no counterfactual) or not falsifiable by any available test (from the `irreducible` input or the discriminate render's untestable flags), AND falsifiable hypotheses this cycle's observations were neutral toward. Each entry carries its reason. The user must understand these were not corroborated — either nothing could test them, or this cycle's observations did not speak to them. `untested` in the verdict is exactly `survived_by_default`'s length.
-
-5. **Compute the verdict in this order** (the first matching case wins):
-   - No observations this cycle → `nothing_eliminated`; `corroborated` is empty. Still list all untested survivors as `survived_by_default`.
-   - Every hypothesis eliminated → `none_corroborated`; restart from hypothesize.
-   - Any survivor untested → `untested_remainder`, even if one was corroborated and none was eliminated this cycle. Do not claim a unique winner; report missing discriminating tests.
-   - No hypothesis eliminated this cycle → `nothing_eliminated`; tests ran but failed to discriminate.
-   - Exactly one corroborated survivor and all alternatives eliminated → `one_corroborated_survivor`.
-   - Otherwise, two or more tested survivors → `multiple_corroborated`. Never count an untested survivor as corroborated.
+4. **Handle every untested survivor.** A survivor without a corroborating observation this cycle is recorded in `survived_by_default` — ALL three kinds: hypotheses flagged irreducible (no counterfactual) or not falsifiable by any available test (from the `irreducible` input or the discriminate render's untestable flags), AND falsifiable hypotheses this cycle's observations were neutral toward. Each entry carries its reason. The user must understand these were not corroborated — either nothing could test them, or this cycle's observations did not speak to them. `untested` in the `FAL-2` verdict computation is `survived_by_default`'s length.
 
 ## Output
 
@@ -125,8 +116,7 @@ Return JSON only:
       "outcome": "eliminated",
       "evidence": "observation contradicted prediction"
     }
-  ],
-  "verdict": "untested_remainder"
+  ]
 }
 ```
 
@@ -135,8 +125,5 @@ Return JSON only:
 - Elimination is hard, not probabilistic. A contradicted prediction rules the hypothesis out; do not down-weight and carry it.
 - Corroborated is not confirmed. Never use "proven", "verified true", or "established." Use "survived", "withstood", "corroborated."
 - An elimination must cite the specific test, prediction, observation, and contradiction — vague eliminations are not allowed.
-- If no tests ran, `corroborated` is empty and the verdict is `nothing_eliminated`. If tests ran, a mixed corroborated/default-survivor set yields `untested_remainder` even when nothing was eliminated. Survived-by-default hypotheses must be flagged, not silently kept. The user must know they were not tested.
-- If every hypothesis is eliminated, the verdict is `none_corroborated` — the framing is wrong, not the tests.
-- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
-- Handle missing variables gracefully (leave as-is or use default if specified).
+- If no tests ran, `corroborated` is empty. Survived-by-default hypotheses must be flagged in `survived_by_default`, not silently kept — the user must know they were not tested, and `FAL-2` `lisp_eval` computes `verdict` from the disjoint counts (`eliminated`, `corroborated`, `survived_by_default`).
 

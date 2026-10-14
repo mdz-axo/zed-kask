@@ -1,4 +1,4 @@
-{# goal: Apply Weinberg oracle, pragmatic-semantics IS/OUGHT classification, epistemic mode labeling, provenance tracing, and grill-me self-challenge to probe findings. Reproducibility separated from confidence; file:line citation required. #}
+{# goal: Apply Weinberg oracle, pragmatic-semantics IS/OUGHT classification, epistemic mode labeling, provenance tracing, grill-me self-challenge, Beizer taxonomy classification, severity rating, pattern signature, and fix suggestion to probe findings in one pass. Reproducibility separated from confidence; file:line citation required; aggregate counts computed by BH-1 lisp_eval. #}
 [inference]
 contract:
   input:
@@ -7,10 +7,7 @@ contract:
     quality_criteria: string
   output:
     evaluated_findings: array
-    confirmed_bugs: integer
-    potential_bugs: integer
-    contract_gaps: integer
-    rejected_findings: integer
+    rejected_findings: array
 ---
 {# Phase 3 — ORACLE (Weinberg definition + pragmatic-semantics + grill-me) #}
 {#
@@ -78,8 +75,8 @@ Every finding MUST include:
 - `location.line_approx` — line number or line range
 - `evidence` — the exact code you read (verbatim snippet, ≤5 lines)
 
-Findings without these are REJECTED at the oracle gate. Count them in
-`rejected_findings` with reason `"missing_citation"`. This makes the
+Findings without these are REJECTED at the oracle gate. Record each rejected finding in
+`rejected_findings` as `{"id": "...", "reason": "missing_citation"}`. This makes the
 "do not fabricate findings" prohibition mechanical rather than voluntary.
 
 ## Pragmatic-Semantics Classification
@@ -111,9 +108,31 @@ For each potential bug, challenge your own verdict:
 - Would a reviewer dismiss this as a non-bug?
 - If confidence < 0.80, explicitly state what would increase it.
 
+## Beizer Taxonomy & Severity Classification (folded from taxonomize)
+
+Classify every evaluated finding into exactly one Beizer category, assign a severity rating justified by the evidence, and emit a concrete `pattern_signature` and `fix_suggestion`:
+
+| Category | Description |
+|----------|------------|
+| requirements | The spec is wrong or missing (~30% of bugs) |
+| structural | Control flow / data flow errors |
+| data | Overflow, underflow, boundary, initialization |
+| coding | Wrong logic, missing error checks, edge cases |
+| interface | Contract violations, parameter gaps |
+| integration | Component interaction failures |
+| timing | Race conditions, ordering assumptions |
+| configuration | Environment settings, feature flags |
+
+| Severity | Criteria |
+|----------|----------|
+| CRITICAL | Data loss, security vulnerability, unrecoverable crash |
+| HIGH | Incorrect behavior, silent failure, wrong results |
+| MEDIUM | Degraded experience, missing validation, suboptimal path |
+| LOW | Cosmetic, unlikely edge case, minor inefficiency |
+
 ## Output
 
-Respond with a JSON object:
+Respond with a JSON object (aggregate counts and taxonomy summaries are computed deterministically by `BH-1` `lisp_eval`):
 
 ```json
 {
@@ -130,26 +149,29 @@ Respond with a JSON object:
       "epistemic_mode": "declarative | probabilistic | subjunctive",
       "provenance": "direct_measurement | inference | assessment",
       "grill_me_challenge": "self-challenge result and resolution",
-      "evidence": "verbatim code snippet read from the cited location (≤5 lines)"
+      "evidence": "verbatim code snippet read from the cited location (≤5 lines)",
+      "beizer_category": "data | structural | coding | interface | integration | timing | configuration | requirements",
+      "severity": "CRITICAL | HIGH | MEDIUM | LOW",
+      "pattern_signature": "how to detect this class of bug elsewhere — grep-able or structural, suitable for the next expedition's probe to consume",
+      "fix_suggestion": "if obvious, suggest a fix; otherwise 'needs investigation'"
     }
   ],
-  "confirmed_bugs": 0,
-  "potential_bugs": 0,
-  "contract_gaps": 0,
-  "rejected_findings": 0
+  "rejected_findings": [
+    { "id": "RAW-002", "reason": "missing_citation | self_challenge_invalidated" }
+  ]
 }
 ```
 
 ## Constraints
 
-- Every finding must have IS/OUGHT, epistemic mode, provenance, AND reproducibility labels.
+- Every finding must have IS/OUGHT, epistemic mode, provenance, reproducibility, `beizer_category`, `severity`, `pattern_signature`, AND `fix_suggestion` fields.
+- Every finding must have exactly one Beizer category, and severity must be justified by the evidence in the finding.
+- Pattern signatures must be concrete enough for the next expedition's probe to consume (grep-able string or structural description) — vague signatures like "look for similar patterns" are not acceptable.
+- Do not fabricate fix suggestions — `"needs investigation"` is valid.
 - Every finding must cite a concrete file:line and include a verbatim code snippet.
-- Findings without citations are rejected, not silently dropped.
+- Findings without citations are rejected into `rejected_findings` (`{id, reason}`), not silently dropped.
 - The grill-me challenge must be specific to the finding, not generic.
 - Downgrade unverifiable findings — a subjunctive presented as declarative is an error.
 - If confidence is below 0.60, the finding is an OBSERVATION, not a bug.
 - Reproducibility does NOT downgrade confidence. `hard_to_reproduce` with high
   confidence stays POTENTIAL_BUG.
-- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
-- Preserve the original prompt structure and formatting.
-- Handle missing variables gracefully (leave as-is or use default if specified).

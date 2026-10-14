@@ -376,7 +376,7 @@ It encodes this process plus:
   isolation script (`check-zed-isolation.sh`) → `./script/clippy` → the full
   verification gate (`cargo fmt --check`, `cargo nextest run -p 'hkask-*' -p
   kask_bridge`) → pinning tests.
-- **Registry templates:** `assess.j2`, `map.j2`, `decide.j2`, `execute.j2`,
+- **Registry templates:** `map.j2`, `decide.j2`, `execute.j2`,
   `document.j2`, `reflect.j2` under `kask/registry/templates/upstream-rebase/`, rendered
   via the `render_template` tool, with `lisp_eval` verification gates between
   LLM steps.

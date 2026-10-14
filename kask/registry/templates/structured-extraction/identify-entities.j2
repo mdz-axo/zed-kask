@@ -1,4 +1,4 @@
-{# goal: Identify entities in unstructured text against a target schema with extraction hints. Tracks unmapped text and entity count. #}
+{# goal: Identify entities in unstructured text against a target schema with extraction hints and track unmapped text. #}
 {# Reference: Named Entity Recognition (NER), formalized in BBN's 1997 #}
 {#   "Identification of Named Entities" and the MUC-7 / CoNLL-2003 shared tasks. #}
 {#   Entity types follow the BBN / IACE type system (person, organization, #}
@@ -13,7 +13,6 @@ contract:
   output:
     entities: array
     unmapped_text: array
-    entity_count: integer
 ---
 
 You are an entity extraction specialist identifying structured data in unstructured text.
@@ -52,7 +51,7 @@ Also identify any text segments that contain structured information but don't cl
 
 Source: "Acme Corp acquired Beta Inc for $4.2B on March 15, 2025."
 Schema: {"acquirer":"string","target":"string","price_usd":"number","date":"string"}
-{"entities":[{"entity_text":"Acme Corp","entity_type":"organization","schema_field":"acquirer","confidence":0.95,"location":{"start":0,"end":9}},{"entity_text":"Beta Inc","entity_type":"organization","schema_field":"target","confidence":0.95,"location":{"start":19,"end":27}},{"entity_text":"$4.2B","entity_type":"quantity","schema_field":"price_usd","confidence":0.90,"location":{"start":32,"end":37}},{"entity_text":"March 15, 2025","entity_type":"date","schema_field":"date","confidence":0.98,"location":{"start":41,"end":55}}],"unmapped_text":[],"entity_count":4}
+{"entities":[{"entity_text":"Acme Corp","entity_type":"organization","schema_field":"acquirer","confidence":0.95,"location":{"start":0,"end":9}},{"entity_text":"Beta Inc","entity_type":"organization","schema_field":"target","confidence":0.95,"location":{"start":19,"end":27}},{"entity_text":"$4.2B","entity_type":"quantity","schema_field":"price_usd","confidence":0.90,"location":{"start":32,"end":37}},{"entity_text":"March 15, 2025","entity_type":"date","schema_field":"date","confidence":0.98,"location":{"start":41,"end":55}}],"unmapped_text":[]}
 
 ## Output Requirements
 
@@ -69,8 +68,7 @@ Respond with a JSON object:
       "location": {"start": 0, "end": 42}
     }
   ],
-  "unmapped_text": ["text segments with potential structure but unclear mapping"],
-  "entity_count": 12
+  "unmapped_text": ["text segments with potential structure but unclear mapping"]
 }
 ```
 
@@ -80,7 +78,4 @@ Respond with a JSON object:
 - If a schema field has no corresponding entity, omit it rather than inventing one.
 - Confidence scores must reflect genuine extraction certainty.
 - `entity_text` must be copied verbatim from the source — it is checked by substring match, and a non-matching entity is dropped. Offsets are approximate.
-- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
-- Preserve the original prompt structure and formatting.
-- Handle missing variables gracefully (leave as-is or use default if specified).
 

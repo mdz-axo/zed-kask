@@ -2,23 +2,17 @@
 [inference]
 contract:
   input:
-    triage_phase: string
     project_description: string
     target_task_hours: number|null
     goals: array
     constraints: array
     resources: array
   output:
+    project_name: string
     tasks: array
     recomposition: object
 ---
 
-{% if triage_phase and triage_phase != 'decompose' %}
-This step is not active for the current phase ({{ triage_phase }}). Return:
-```json
-{"skipped": true, "phase": "{{ triage_phase }}"}
-```
-{% else %}
 You are a task decomposition expert. Your job is to break down a project into discrete, independently verifiable kanban tasks that follow INVEST criteria.
 
 ## The Project
@@ -88,7 +82,7 @@ No target task size was supplied. Size tasks by INVEST's vertical-slice principl
    - **integration_order**: Ordered list of task titles showing the assembly sequence
    - **final_verification**: How to verify the fully reassembled deliverable works end-to-end
 
-Return a JSON object with a "tasks" array AND a "recomposition" object. Each task must have all fields specified above. Do not include tasks that are trivial (under 30 minutes). Group related work into coherent tasks rather than splitting into micro-tasks.
+Return a JSON object with a "project_name" string, a "tasks" array, AND a "recomposition" object. Each task must have all fields specified above. Do not include tasks that are trivial (under 30 minutes). Group related work into coherent tasks rather than splitting into micro-tasks.
 
 8. **Kata Guidance** — Include optional guidance on how Toyota Kata practices can be applied to each task. This is SOFT guidance — suggestions, not requirements. The system will learn from experience when katas are most useful.
 
@@ -98,4 +92,3 @@ Return a JSON object with a "tasks" array AND a "recomposition" object. Each tas
    - **coaching_guidance**: For the agent managing this task — what coaching approach helps? "Ask the agent what ONE obstacle they're addressing, not all of them. Use `kanban_task_kata_prompt` with stage `coaching` for the 5-question dialogue."
 
    Include a "kata_guidance" object in the output with per-task suggestions. This is optional — omit it if katas don't naturally apply to a task.
-{% endif %}

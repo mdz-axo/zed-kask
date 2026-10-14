@@ -78,10 +78,20 @@ report), not just the tone.
 
 ## Instructions
 
+### Pre-router — Gate `WS-1` (D — `lisp_eval` 5-voice generation guard)
+
+Before running Mode 1 or Mode 2 (or recommending a generation voice via `writing-style/style-recommend` with `document_brief` and `available_styles`), check with `lisp_eval` that the requested `style_name` is one of the 5 literary generation voices and not a non-generation technical corpus (`gentle-lovelace`, `david-dunning`):
+
+```lisp
+(not (is_null (member style_name (list "hemingway" "woolf" "agatha-eliot" "jane-wilde" "ulysses-s-twain"))))
+```
+
+If `WS-1` returns `false`, stop before calling `corpus_compose` or rendering `writing-style/conversational-turn` and explain that `gentle-lovelace` and `david-dunning` are evaluation/centroid corpora without generation configs (for dimension-specific documentation rewrites, use `corpus_rewrite` directly with `dimension`).
+
 ### Mode 1 — Conversational style turn
 
 1. The operator names a style for the session ("talk to me in
-   Hemingway"). Load the style's catalog row: its voice rules live in the
+   Hemingway"). Run `WS-1` on `style_name`, then load the style's catalog row: its voice rules live in the
    cognition config's `jinja2_template`, its measurable signature in the
    corpus's declared methods (`read_file` both YAMLs — e.g.
    `kask/registry/styles/hemingway/corpus.yaml:169-179`).
@@ -89,14 +99,17 @@ report), not just the tone.
    config's template, the signal thresholds from the corpus's declared
    methods (hemingway: `adjective_density_max 5.0`, `parataxis_ratio_min 0.6`).
    These are the measurable signature.
-3. Adopt the voice for the turn: compose the reply following the
-   mechanics. A one-shot `corpus_compose` call is NOT required for every
+3. Adopt the voice for the turn: render `writing-style/conversational-turn` with `style_name`, `style_mechanics`, `draft_reply`, and `technical_content` (an array of exact technical strings — code snippets, identifiers, file paths, commands, numbers, URLs — extracted from `draft_reply` that must survive verbatim), or compose directly following the mechanics. A one-shot `corpus_compose` call is NOT required for every
    conversational turn — the config's rules are the prompt. Validation is
    available only through `corpus_rewrite` (Mode 3 step 3), which measures
    the rewrite it produces — not the draft itself; a draft that must stand
    verbatim is reported unvalidated, never pretended measured. Run it when
    the operator asks for authenticity and the turn may be rewritten.
-4. Style off: the operator says so, or the session ends. Like adhd-mode,
+4. **Gate `WS-2` (D — `lisp_eval` verbatim technical-content check):** Verify that every item in the `technical_content` array appears verbatim in `styled_reply` using `string-contains` (needle first, haystack second — replaces self-reported `technical_verbatim`):
+   - form: `(begin (define all-present (lambda (items reply) (if (is_null items) true (and (string-contains (car items) reply) (all-present (cdr items) reply))))) (all-present technical_content styled_reply))`
+   - env: `{ "technical_content": <array of technical strings>, "styled_reply": <restyled reply string> }`
+   If `WS-2` returns `false`, restore the corrupted technical token from `draft_reply` and re-run `WS-2` before sending.
+5. Style off: the operator says so, or the session ends. Like adhd-mode,
    the style applies to output shape, never to technical content —
    facts, code, file paths stay verbatim under any voice.
 
@@ -170,9 +183,10 @@ report), not just the tone.
 
 | Step | Type | Oracle / critique |
 |------|------|-------------------|
+| Pre-router `WS-1` (5-voice generation guard) | D | `lisp_eval` membership check against the 5 literary voices |
 | Mode 2 compose, Mode 3 rewrite | P | the tool-reported centroid distance against the config's `centroid_distance_max`; the operator on a miss |
 | Mode 3 structure parity | D | `grep -c` counts and the `lisp_eval` equality |
-| Mode 1 conversational turn | P | unvalidated unless a rewrite-validation pass is run (it measures the rewrite, not the draft); the operator |
+| Mode 1 conversational turn + `WS-2` verbatim check | P + D gate | `WS-2` `lisp_eval` `string-contains` loop over `technical_content`; style is unvalidated unless a rewrite-validation pass is run |
 | style-recommend render | D render feeding P | `render_template` (D); the recommendation is P, critiqued by the operator and the corpus-shape heuristic |
 
 ## Convergence

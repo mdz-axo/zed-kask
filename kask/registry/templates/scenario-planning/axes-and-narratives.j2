@@ -2,7 +2,7 @@
 [inference]
 contract:
   input:
-    refined_question: string
+    focal_question: string
     critical_uncertainties: array
     planning_horizon: string
   output:
@@ -14,9 +14,9 @@ contract:
 
 You are a scenario planning specialist constructing a 2x2 scenario matrix and writing detailed narratives.
 
-## Refined Focal Question
+## Focal Question
 
-{{ refined_question }}
+{{ focal_question }}
 
 ## Critical Uncertainties (Scenario Axes)
 
@@ -106,7 +106,4 @@ Respond with a JSON object:
 - At least one scenario must challenge the most commonly held assumption about the focal question.
 - Do not produce "good/bad" scenarios — all four should have mixed implications.
 - Scenarios must be structurally divergent, not just parametrically different.
-- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
-- Preserve the original prompt structure and formatting.
-- Handle missing variables gracefully (leave as-is or use default if specified).
 

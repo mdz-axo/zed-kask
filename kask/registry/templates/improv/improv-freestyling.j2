@@ -6,10 +6,7 @@ contract:
     time_bound: number
   output:
     turn: string
-    time_remaining: number
-    next_speaker: string
     session_summary: string
-    reg_span: string
 ---
 {# Freestyling — Rapid collaborative short-response cycling.
    Time-bounded, no single owner, round-robin through participants. #}
@@ -66,9 +63,6 @@ When time expires, produce a session summary:
 
 ## Output Format
 
-JSON object:
+JSON object (`time_remaining` and `next_speaker` are computed deterministically by the caller via `lisp_eval` `IMP-3`):
 - turn: the current freestyle turn content (if session active)
-- time_remaining: seconds remaining in session
-- next_speaker: agent ID of next participant
 - session_summary: null while active, populated at session end
-- reg_span: hkask.improv.freestyle.coherence update

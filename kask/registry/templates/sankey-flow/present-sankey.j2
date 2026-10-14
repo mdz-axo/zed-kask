@@ -20,8 +20,7 @@ contract:
     weight_unit: string
     conservation_mode: string
     conservation_check: string
-    node_count: integer
-    edge_count: integer
+    nodes: array
     edges: array
     mermaid_source:
       type: string
@@ -44,7 +43,7 @@ contract:
 
 {# ── Description ── #}
 
-This diagram visualizes a {{ domain | replace("-", " ") }} flow with {{ node_count }} nodes and {{ edge_count }} edges. Measured weights are in {{ weight_unit }}; any `value=1` placeholders are unitless and named in the flow annotations. Conservation mode: **{{ conservation_mode }}**{% if conservation_mode == "mandatory" %} — each internal node requires an observed inflow/outflow check; see status below.{% elif conservation_mode == "asserted" %} — report observed discrepancies; enforce only if the user requires conservation.{% elif conservation_mode == "none" %} — conservation is skipped; do not invent balancing branches.{% endif %}
+This diagram visualizes a {{ domain | replace("-", " ") }} flow with {{ nodes | length }} nodes and {{ edges | length }} edges. Measured weights are in {{ weight_unit }}; any `value=1` placeholders are unitless and named in the flow annotations. Conservation mode: **{{ conservation_mode }}**{% if conservation_mode == "mandatory" %} — each internal node requires an observed inflow/outflow check; see status below.{% elif conservation_mode == "asserted" %} — report observed discrepancies; enforce only if the user requires conservation.{% elif conservation_mode == "none" %} — conservation is skipped; do not invent balancing branches.{% endif %}
 
 {# ── Mermaid diagram ── #}
 
@@ -72,4 +71,4 @@ This diagram visualizes a {{ domain | replace("-", " ") }} flow with {{ node_cou
 
 ---
 
-Output path: {{ output_path | default("(not specified)") }}
+Output path: {{ output_path | default("docs/diagrams/sankey-" ~ domain ~ "-" ~ subject ~ ".md") }}

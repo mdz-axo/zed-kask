@@ -6,7 +6,7 @@ description: "Explanation Quality Markers: score the predictive 12 with market_s
 # EQM — Explanation Quality Markers (Measure and Improve)
 
 Measurement instrument for forecast-rationale quality, grounded in Karvetski,
-Huang, Kučinskas et al. (2026), "Measuring Judgment Quality in Natural-Language
+Huang, Kučinskas et al. (2026, arXiv:2606.30987), "Measuring Judgment Quality in Natural-Language
 Explanations: Evidence from Forecasting Tournaments" — Forecasting Research
 Institute. The paper defines the EQM instrument — 60 theory-guided marker patterns across six families; the reference catalog carries all 60 verbatim from Appendix A.4; the live `market_score_rationale` tool scores the predictive 12 using an LLM. Aggregate only complete tool results to forecast- and forecaster-level composites,
 validates against realized outcomes, and emits calibration feedback.
@@ -37,7 +37,7 @@ validates against realized outcomes, and emits calibration feedback.
 
 | Anchor | How it shapes the skill |
 |---|---|
-| Karvetski et al. (2026) — the EQM method (`onto_anchor` → derived `explanation_quality_marker`, operator ruling 2026-09-25) | The marker instrument (LLM-scored 0/1/2), composite, asymmetric signal, forecast-level + forecaster-level prediction. Defines the Score → Aggregate → Validate → Feedback shape. |
+| Karvetski et al. (2026, arXiv:2606.30987) — the EQM method (`onto_anchor` → derived `explanation_quality_marker`, operator ruling 2026-09-25) | The marker instrument (LLM-scored 0/1/2), composite, asymmetric signal, forecast-level + forecaster-level prediction. Defines the Score → Aggregate → Validate → Feedback shape. |
 | Tetlock Brier scoring (via superforecasting) | The outcome ground truth that validates EQM scores against accuracy. |
 | PKO (Procedural Knowledge Ontology) | The skill models a measurement procedure: specification (which EQMs, which rationales) / execution (LLM scoring) / verification (outcome correlation). |
 | Dublin Core | Metadata for the rationale corpus (forecaster id, question id, timestamp, resolution status) needed by forecaster-level aggregation. |
@@ -53,19 +53,20 @@ skill's decision rule encodes this asymmetry:
   positive endorsement, not a "strong rationale" claim. Reserve "strong" for
   forecasters whose EQM composite correlates with accuracy on realized outcomes.
 
-  ## D/P labelling
+## D/P labelling
 
-  Marker identification over a rationale, red-flag interpretation, and
-  Improve-phase rationale revision are P — judgment, critiqued by the
-  alignment check against the stated forecast probability and by gaming
-  detection on realized outcomes. The scoring call is P too, executed by a
-  tool-owned LLM (`market_score_rationale`) and calibrated by eqm-validate
-  against outcomes; the ID-reconciliation check and every mean, Brier and
-  correlation runs in `lisp_eval` over the scorer's returned values and the
-  recorded outcomes (the deterministic helpers below). The instrument
-  measures the written rationale; it does not vouch for the forecast.
+Marker identification over a rationale, red-flag interpretation, and
+Improve-phase rationale revision are P — judgment, critiqued by the
+alignment check against the stated forecast probability and by gaming
+detection on realized outcomes. The scoring call is P too, executed by a
+tool-owned LLM (`market_score_rationale`) and calibrated by eqm-validate
+against outcomes; subset admission (`EQM-1`), failing-marker target extraction
+(`EQM-2`), the ID-reconciliation check, and every mean, Brier and
+correlation run in `lisp_eval` over the scorer's returned values and the
+recorded outcomes (the deterministic helpers below). The instrument
+measures the written rationale; it does not vouch for the forecast.
 
-  ## Instructions
+## Instructions
 
 ### Deterministic helpers (D — `lisp_eval`)
 
@@ -82,18 +83,17 @@ Every mean, Brier score and correlation in this skill is computed with these def
 
 Correlation requires ≥5 pairs; below that report `Undetermined` (matches the scenarios server's 5-resolved-forecast floor). A zero-variance series makes `pearson` divide by zero — report `Undetermined` for it too.
 
-### eqm-select (P — subset choice; critique: operator)
+### eqm-select (D — `lisp_eval` `EQM-1` subset gate and batch preparation)
 
-1. Admit only `predictive_12`, the MCP tool's fixed KEY_EQMS set. The 60-marker catalog is reference material (the paper's verbatim pattern set), not a 60-marker scorer; a `full_60` or `domain_tuned` request returns `selected_subset: "unsupported"` with an `unsupported_reason` and stops before paid tool calls.
-2. Gather the rationale corpus: array of {rationale, forecast_probability,
-   question, forecaster_id?, timestamp} objects (the timestamp orders the
-   corpus — the Dublin Core metadata row and the gaming rule's
-   subsequent-resolved-cohort requirement both depend on it).
-3. Prepare the scoring batch; label ~$0.007 per rationale as the paper/tool's indicative estimate, not an observed provider charge.
+1. Admit only `predictive_12`, the MCP tool's fixed KEY_EQMS set, using `lisp_eval` (`EQM-1` — subset admission and batch cost gate; no LLM wrapper template):
+   - form: `(if (and (string= eqm_subset "predictive_12") (> batch_len 0) (<= batch_len 10)) (list "predictive_12" (* batch_len 0.007)) (list "unsupported" 0))`
+   - env: `{ "eqm_subset": <requested subset>, "batch_len": <number of rationales> }`
+   The 60-marker catalog is reference material (the paper's verbatim pattern set), not a 60-marker scorer; a `full_60` or `domain_tuned` request returns `"unsupported"` and stops before paid tool calls.
+2. Gather the rationale corpus: array of `{rationale, forecast_probability, question, forecaster_id?, timestamp}` objects (the timestamp orders the corpus — the Dublin Core metadata row and the gaming rule's subsequent-resolved-cohort requirement both depend on it). Label `batch_len * $0.007` as the paper/tool's indicative estimate, not an observed provider charge.
 
-### eqm-score (P scorer, tool-owned — `market_score_rationale`; calibrated by eqm-validate against outcomes)
+### eqm-score (P scorer, tool-owned — direct `market_score_rationale`; calibrated by eqm-validate against outcomes)
 
-1. Call `market_score_rationale` (hkask-mcp-prediction-markets) per rationale.
+1. Call `market_score_rationale` (hkask-mcp-prediction-markets) directly per rationale (no LLM wrapper template).
 2. Collect per-rationale EqmResult: composite_score, scores, red_flags,
    green_flags, interpretation, model, caveat, missing_eqms.
 3. The MCP tool is the single source of truth for the 12-EQM LLM scoring; do not reimplement it. A failed tool call propagates as a batch failure. For each result, load the 12 IDs marked `predictive: true` in `eqm-catalog.yaml` and compare them to the returned `scores[].id` using `lisp_eval`: `(begin (define all-present (lambda (xs ys) (if (is_null xs) t (and (member (car xs) ys) (all-present (cdr xs) ys))))) (and (= (length expected_ids) 12) (= (length expected_ids) (length observed_ids)) (all-present expected_ids observed_ids) (all-present observed_ids expected_ids)))`. A nonempty `missing_eqms`, an absent/duplicate ID, or any failed call makes the batch incomplete. Retain raw evidence but stop numeric aggregation and overconfidence-bias calculation; zero-filled missing markers are not observed low-quality scores.
@@ -152,22 +152,18 @@ reasoning. All three mitigations are required:
 
 Steps:
 
-1. **Direction** — render `eqm/eqm-imp-direction`: raise EQM passage rate,
-   red-flag elimination before green-flag polish; confirm the probability to
-   preserve and the evidence sources available.
-2. **Current condition** — render `eqm/eqm-imp-current` over a fresh
-   `market_score_rationale` result (failing markers, red-flag screen, composite).
-3. **Target** (P targets; D composite) — render `eqm/eqm-imp-target`: marker-level targets from each EQM description in `eqm-catalog.yaml` (the source of truth), red flags first, one step beyond the current condition.
-   Compute the target-set summary with `lisp_eval`
-   `(- (sum helps_targets) (sum hurts_targets))` unless the operator set it. This subset summary is not the whole-rationale composite and cannot by itself close the loop.
-4. **Predict** (P — calibrated by operator-scored Brier on the recorded goal) — render `eqm/eqm-imp-predict`: "intervention X raises marker Y
+1. **Direction, Current Condition, and Target (`EQM-2`, D)** — score the rationale directly with `market_score_rationale` (confirming `forecast_probability` to preserve and available evidence sources). Extract failing markers, prioritize hurts (red flags) before helps (green flags), compute one-step marker targets (`hurts > 0` → `max(0, score - 1)`, `helps < 2` → `min(2, score + 1)`), and compute the target-set summary deterministically with `lisp_eval` (`EQM-2` — failing-marker target extraction and prioritization; replaces the former `eqm-imp-direction`, `eqm-imp-current`, and `eqm-imp-target` wrapper templates):
+   - form: `(begin (define hurts-fail (lambda (ms) (if (is_null ms) (list) (let ((m (car ms))) (if (and (string= (assoc "direction" m) "hurts") (> (assoc "score" m) 0)) (cons (list (assoc "id" m) "hurts" (assoc "score" m) (max 0 (- (assoc "score" m) 1))) (hurts-fail (cdr ms))) (hurts-fail (cdr ms))))))) (define helps-fail (lambda (ms) (if (is_null ms) (list) (let ((m (car ms))) (if (and (string= (assoc "direction" m) "helps") (< (assoc "score" m) 2)) (cons (list (assoc "id" m) "helps" (assoc "score" m) (min 2 (+ (assoc "score" m) 1))) (helps-fail (cdr ms))) (helps-fail (cdr ms))))))) (let ((prioritized (append (hurts-fail scores) (helps-fail scores)))) (list prioritized (- (sum helps_targets) (sum hurts_targets)))))`
+   - env: `{ "scores": <scores[] from market_score_rationale>, "helps_targets": <target scores for helps markers>, "hurts_targets": <target scores for hurts markers> }`
+   Join each failing marker's `id` to its verbatim `description` in `kask/registry/templates/eqm/eqm-catalog.yaml` (the single source of truth for what a score of 2 or 0 looks like) to form `prioritized_markers` and `failing_markers` before rendering `eqm-imp-predict` and `eqm-imp-experiment`. This subset summary is not the whole-rationale composite and cannot by itself close the loop.
+2. **Predict** (P — calibrated by operator-scored Brier on the recorded goal) — render `eqm/eqm-imp-predict`: "intervention X raises marker Y
    from A to B", with a confidence. Record it with `kanban_goal_create`
    (`goal_text` `eqm: <prediction>`, the confidence as `prediction`) so the
    operator can score it.
-5. **Experiment** (P — critiqued by re-scoring and the three mitigations) — render `eqm/eqm-imp-experiment` and produce the rewrite
+3. **Experiment** (P — critiqued by re-scoring and the three mitigations) — render `eqm/eqm-imp-experiment` and produce the rewrite
    under the three mitigations.
-6. **Check** (D) — re-score the *same predictive-12* set, requiring complete coverage and the original probability; compare the submitted forecast probability to the original with `lisp_eval` `(= original_probability revised_probability)`. Join each selected `marker_target.id` to its fresh score; missing/duplicate IDs, an unknown direction, or a score outside 0–2 are not a pass. Call `lisp_eval` with the `marker_targets` records (`id`, `direction`, `current_score` from the new tool response, `target_score`) and the `misses` form below; judge the goal (`kanban_goal_judge`) with actual per-marker evidence. The intake Brier score arrives only when the operator resolves the goal.
-7. **Act** — a nonempty failing-marker list names the next experiment; if empty and at least one target was checked, stop. Stop immediately on a *supported* `gaming_suspected` verdict, or after 8 iterations with remaining markers named. Missing outcomes leave external accuracy `Undetermined`, never a claim that the rationale is proven ungamed.
+4. **Check** (D) — re-score the *same predictive-12* set, requiring complete coverage and the original probability; compare the submitted forecast probability to the original with `lisp_eval` `(= original_probability revised_probability)`. Join each selected `marker_target.id` to its fresh score; missing/duplicate IDs, an unknown direction, or a score outside 0–2 are not a pass. Call `lisp_eval` with the `marker_targets` records (`id`, `direction`, `current_score` from the new tool response, `target_score`) and the `misses` form below; judge the goal (`kanban_goal_judge`) with actual per-marker evidence. The intake Brier score arrives only when the operator resolves the goal.
+5. **Act** — a nonempty failing-marker list names the next experiment; if empty and at least one target was checked, stop. Stop immediately on a *supported* `gaming_suspected` verdict, or after 8 iterations with remaining markers named. Missing outcomes leave external accuracy `Undetermined`, never a claim that the rationale is proven ungamed.
 
 ### Convergence
 
@@ -187,27 +183,17 @@ An empty result closes only when every selected marker has a fresh score and the
 
 | Template | Purpose |
 |----------|---------|
-| `eqm-select.j2` | Admit the live predictive 12; return unsupported for full-60/domain-tuned requests, prepare a sourced scoring batch and indicative cost. |
-| `eqm-score.j2` | Score rationales via the market_score_rationale MCP tool. Collect per-rationale EqmResult: composite_score, scores, red_flags, green_flags. The MCP tool is the single source of truth for 12-EQM LLM scoring. |
-| `eqm-aggregate.j2` | Aggregate per-rationale scores to forecast-level and forecaster-level composites. Apply the asymmetric decision rule: red_flag_screen (high confidence) vs green_flag_endorsement (weak). Compute overconfidence_bias. |
+| `eqm-aggregate.j2` | Group per-rationale scores to forecast-level and forecaster-level structures and apply the asymmetric decision rule: red_flag_screen (high confidence) vs green_flag_endorsement (weak). Means and overconfidence_bias are computed via `lisp_eval`. |
 | `eqm-validate.j2` | Interpret caller-computed Brier/correlation over comparable resolved outcomes; unchanged probability on the same forecast cannot diagnose gaming. Missing cohorts remain Undetermined. |
-| `eqm-imp-direction.j2` | Improve step 1: direction — raise passage rate, red flags first; confirm the probability to preserve. |
-| `eqm-imp-current.j2` | Improve step 2: current condition from a fresh `market_score_rationale` result. |
-| `eqm-imp-target.j2` | Improve step 3: marker-level targets from EQM descriptions, red flags first. |
-| `eqm-imp-predict.j2` | Improve step 4: a specific intervention-to-marker prediction with confidence. |
-| `eqm-imp-experiment.j2` | Improve step 5: rewrite the rationale for each failing marker with real evidence, preserving the probability. |
-| `eqm-catalog.yaml` | Reference: the paper's full 60 EQM definitions from Karvetski et al. (2026) Appendix A.4, verbatim, organized by the paper's six theory-informed families. The 12 markers selected for the live scorer are marked `predictive: true` — a hypothesis-faithful curation (the paper's Appendix C training experiment supports the helps-picks; the directional hypotheses are the paper's), NOT a paper-licensed top-12 ranking: the paper's LASSO tables (A.7/A.9) weight several of the chosen 12 near zero while excluding stronger patterns. The equal-weight composite (Σhelps − Σhurts) is likewise a skill-side simplification of the paper's LASSO-weighted composite — disclosed here, not presented under the paper's umbrella. Single source of truth for EQM definitions as published; the MCP tool's KEY_EQMS const carries the predictive 12's operational scoring descriptions. |
+| `eqm-imp-predict.j2` | Improve step 2: a specific intervention-to-marker prediction with confidence over the `EQM-2` prioritized markers and catalog descriptions. |
+| `eqm-imp-experiment.j2` | Improve step 3: rewrite the rationale for each failing marker with real evidence, preserving the probability. |
+| `eqm-catalog.yaml` | Reference: the paper's full 60 EQM definitions from Karvetski et al. (2026, arXiv:2606.30987) Appendix A.4, verbatim, organized by the paper's six theory-informed families. The 12 markers selected for the live scorer are marked `predictive: true` — a hypothesis-faithful curation (the paper's Appendix C training experiment supports the helps-picks; the directional hypotheses are the paper's), NOT a paper-licensed top-12 ranking: the paper's LASSO tables (A.7/A.9) weight several of the chosen 12 near zero while excluding stronger patterns. The equal-weight composite (Σhelps − Σhurts) is likewise a skill-side simplification of the paper's LASSO-weighted composite — disclosed here, not presented under the paper's umbrella. Single source of truth for EQM definitions as published; the MCP tool's KEY_EQMS const carries the predictive 12's operational scoring descriptions. |
 
-To render a template, call the `render_template` tool with the template ref (e.g., `eqm/eqm-select`) and a context object with the required variables.
+To render a template, call the `render_template` tool with the template ref (e.g., `eqm/eqm-aggregate`) and a context object with the required variables.
 
 Template context variables (from each template's [inference] contract):
-- `eqm-select.j2`: `rationales`, `eqm_subset`, `domain`
-- `eqm-score.j2`: `scoring_batch`, `selected_subset`
 - `eqm-aggregate.j2`: `per_rationale_scores`, `forecaster_groups`
 - `eqm-validate.j2`: `forecaster_level_composite`, `realized_outcomes`, `per_rationale_scores`, `outcome_statistics`
-- `eqm-imp-direction.j2`: `rationale`, `forecast_probability`, `question`, `target_markers`, `target_composite`
-- `eqm-imp-current.j2`: `rationale`, `forecast_probability`, `question`, `direction`
-- `eqm-imp-target.j2`: `current_composite`, `failing_markers`, `red_flag_screen`, `target_markers`, `target_composite`
 - `eqm-imp-predict.j2`: `target_condition`, `prioritized_markers`, `current_composite`, `target_composite_score`
 - `eqm-imp-experiment.j2`: `rationale`, `forecast_probability`, `question`, `prediction`, `target_condition`, `failing_markers`
 

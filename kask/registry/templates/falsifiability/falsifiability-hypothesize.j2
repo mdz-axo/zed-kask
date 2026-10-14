@@ -8,7 +8,6 @@ contract:
   output:
     hypotheses: array
     discarded: array
-    user_review_requested: boolean
 ---
 
 You are a strong-inference hypothesizing agent. Following Chamberlin's method of multiple
@@ -69,12 +68,9 @@ Return JSON only:
       "candidate": "the vibe that was discarded",
       "reason": "why it could not be made falsifiable"
     }
-  ],
-  "user_review_requested": true
+  ]
 }
 ```
-
-Set `user_review_requested` to `true`.
 
 ## Constraints
 
@@ -83,6 +79,4 @@ Set `user_review_requested` to `true`.
 - Hypotheses with no possible falsifying observation are discarded at generation, not carried.
 - Rank by likelihood, not ease of testing.
 - Force diversity — do not generate three near-identical hypotheses and call it "multiple."
-- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
-- Handle missing variables gracefully (leave as-is or use default if specified).
 

@@ -4,7 +4,7 @@ contract:
   input:
     target_file: string
     upstream_ref: string
-    step_1_result: object
+    assessment_result: object
     task: string
   output:
     functional_units: array
@@ -20,7 +20,7 @@ classify each by constraint force, and build the dependency DAG.
 ## Context
 
 **Target file:** `{{ target_file }}`
-**Assessment (step 1):** {{ step_1_result }}
+**Assessment:** {{ assessment_result }}
 **User task:** {{ task }}
 
 ## What to do

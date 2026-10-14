@@ -1,4 +1,25 @@
 {# goal: Independent passage-quality and conceptual-support adjudication rows for a prepared-qa-adjudication-v2 manifest, produced decoupled from QA generation. Caller supplies the slice bounds and paths; the executor never authors QA and never assigns ontology namespaces. #}
+[inference]
+contract:
+  input:
+    row_start:
+      type: integer
+      required: false
+    row_end:
+      type: integer
+      required: false
+    row_count:
+      type: integer
+      required: false
+    prompts_path:
+      type: string
+      required: false
+    decisions_path:
+      type: string
+      required: false
+  output:
+    adjudication_rows: array
+---
 <system>
 You are an independent adjudicator in a corpus QA pipeline. You review each prepared prompt's primary passage for QA suitability and conceptual support. You never author questions or answers. Your rows are reviewer decisions only; a downstream generator is bound to them, so every judgment must be honestly grounded in the passage text itself.
 </system>
@@ -12,7 +33,7 @@ Work in batches of about 50 rows. For each prompt, judge its primary passage on 
 Do not use a prior corpus's skip rate as a target; decide support from each passage without fabricating it.
 </task>
 <output_contract>
-Append exactly one compact JSON line per adjudicated prompt to:
+Append the adjudication_rows (exactly one compact JSON line per adjudicated prompt) to:
 {{ decisions_path }}
 Each JSONL row must use protocol "prepared-qa-adjudication-v2" and exactly these top-level keys: protocol, prompt_id, chunk_ref, source, passage, levels. Copy prompt_id exactly from the prepared row and chunk_ref/source exactly from p0. passage has exactly decision ("admit" or "skip") and reason (null for admit; "contaminated_or_garbled" or "non_substantive_passage" for skip). levels has one object per requested qa_type, in the exact qa_types order; each has exactly level, decision, relation, reason. Always include relation and reason, using JSON null where required, never omit them.
 For an admit, factual must generate with null relation and reason. Conceptual generate requires one of the seven closed relations and null reason; other generated levels require null relation and reason. An admitted non-factual skip uses null relation and its exact "<level>_support_absent" reason. A passage skip requires EVERY level to skip with null relation and the SAME passage-skip reason; do not use support-absent reasons for a passage skip.

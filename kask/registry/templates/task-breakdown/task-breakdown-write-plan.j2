@@ -8,7 +8,7 @@ contract:
     tasks: array
     slices: array
     risks: array
-    evaluation_result: object
+    gate_result: object
     refinement_directives: array
     phases: array
     checkpoints: array
@@ -62,10 +62,10 @@ the plan is always anchored to what it's achieving.
 ```
 {% endif %}
 
-## Evaluation Result
+## Quality Gate Result
 
 ```json
-{{ evaluation_result | tojson }}
+{{ gate_result | tojson }}
 ```
 
 {% if refinement_directives %}
@@ -84,11 +84,11 @@ iterations.
 
 ## PKO Grounding (Process Axis)
 
-Emit `pko_anchors` alongside the markdown. The plan is a PKO `Procedure` (process axis)
-targeting a `ProcedureTarget` (the spec). Each task is a `Step`; each phase a `MultiStep`;
-acceptance criteria are `requiresAction`; verification is `StepVerification` (tests/build
-map to `requiresFunction`); risks are `IssueOccurrence`; open questions are
-`UserQuestionOccurrence`; checkpoints are `UserFeedbackOccurrence`. The `plan.md`
+Emit `pko_anchors` alongside the markdown. The plan is a PKO `pko:Procedure` (process axis).
+Each task is a `pplan:Step`; each phase a `pplan:MultiStep`;
+acceptance criteria are `requiresAction`; verification is `pko:StepVerification` (tests/build
+map to `requiresFunction`); risks are `pko:IssueOccurrence`; open questions are
+`pko:UserQuestionOccurrence`; checkpoints are `pko:UserFeedbackOccurrence`. The `plan.md`
 *document* itself carries DC+BIBO state metadata (title/creator/date, `bibo:Document`) —
 PKO grounds the *structure*, DC+BIBO grounds the *document*. Per P5.4, sample both axes;
 do not over-specify either.
@@ -167,9 +167,9 @@ Respond with a JSON object:
   "output_paths": ["~/Documents/zk-data/skills/task-breakdown/{date}-{run}/plan.md", "~/Documents/zk-data/skills/task-breakdown/{date}-{run}/todo.md"],
   "pko_anchors": {
     "procedure": "pko:Procedure",
-    "procedure": "pko:Procedure",
     "tasks": [{"task_id": "t1", "concept": "pplan:Step", "verification": "pko:StepVerification"}],
     "phases": [{"concept": "pplan:MultiStep"}],
+    "checkpoints": [{"concept": "pko:UserFeedbackOccurrence"}],
     "risks": [{"concept": "pko:IssueOccurrence"}],
     "open_questions": [{"concept": "pko:UserQuestionOccurrence"}]
   }
@@ -184,7 +184,4 @@ Respond with a JSON object:
   open questions.
 - `todo.md` must be a checklist grouped by phase — scannable, not verbose.
 - Do not invent tasks not present in the input `tasks` array.
-- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
-- Preserve the original prompt structure and formatting.
-- Handle missing variables gracefully (leave as-is or use default if specified).
 

@@ -935,6 +935,438 @@ pub const DERIVED_CONCEPTS: &[DerivedConcept] = &[
         constituents: &["character", "work"],
         authority: "operator ruling 2026-10-13 (open-loops proposal adopted); Pianzola et al., GOLEM Ontology for Narrative and Fiction v1.1, doi:10.5281/zenodo.14911396 (vendored pin)",
     },
+    DerivedConcept {
+        term: "fitts_law",
+        aliases: &["fitts's law", "fittss law", "fitts law"],
+        identity: "movement time to acquire a target is a logarithmic function of the ratio of distance to target width: MT = a + b log2(2D / W)",
+        definition: "Paul M. Fitts, 'The information capacity of the human motor system in controlling the amplitude of movement', Journal of Experimental Psychology 47(6):381-391 (1954): small or distant interactive targets increase acquisition time and error rate. In zed-kask it grounds kask-seam-audit's minimum target-width floor (28-32px mouse floor) in the measured-layout loop.",
+        constituents: &["target width", "distance", "movement time"],
+        authority: "operator ruling 2026-10-14 (Cohort 1 skill-corpus audit); Fitts, Journal of Experimental Psychology 47(6):381-391 (1954)",
+    },
+    DerivedConcept {
+        term: "requisite_variety",
+        aliases: &[
+            "law of requisite variety",
+            "ashby's law",
+            "ashbys law",
+            "ashby requisite variety",
+        ],
+        identity: "only variety can destroy variety: a regulator's variety of responses must be at least as large as the variety of disturbances it must regulate (V_R >= V_D - V_O)",
+        definition: "W. Ross Ashby, An Introduction to Cybernetics (1956), Ch. 11 'Requisite Variety': for a regulator to hold outcomes within an acceptable target set against a set of disturbances, its repertoire of distinct responses must span the disturbance classes. In zed-kask it grounds pragmatic-cybernetics, swarm-intelligence's variety_coverage >= 0.9 target over required task transforms, and self-improvement's variety check across PDCA iterations.",
+        constituents: &["cybernetic_feedback_loop", "disturbance", "regulator"],
+        authority: "operator ruling 2026-10-14 (Cohort 1 skill-corpus audit); Ashby, An Introduction to Cybernetics (1956), Ch. 11",
+    },
+    DerivedConcept {
+        term: "spin_glass",
+        aliases: &[
+            "spin glasses",
+            "frustrated landscape",
+            "replica symmetry breaking",
+        ],
+        identity: "a disordered system with competing (frustrated) interactions whose rugged energy landscape has exponentially many metastable valleys separated by energy barriers, breaking ergodicity",
+        definition: "Giorgio Parisi, 'Infinite Number of Order Parameters for Spin-Glasses', Physical Review Letters 43(23):1754 (1979), doi:10.1103/physrevlett.43.1754 (Nobel Prize in Physics 2021), over the Sherrington-Kirkpatrick model (1975): competing constraints prevent simultaneous satisfaction (frustration), trapping the system in local metastable valleys that store history and cannot be exited by local hill-climbing without crossing an energy barrier. In zed-kask it grounds gradient-hunter's substrate ontology for non-ergodic code/system deserts.",
+        constituents: &["frustration", "metastable state", "energy barrier"],
+        authority: "operator ruling 2026-10-14 (Cohort 1 skill-corpus audit); Parisi, Physical Review Letters 43(23):1754 (1979), doi:10.1103/physrevlett.43.1754",
+    },
+    DerivedConcept {
+        term: "allosteric_regulation",
+        aliases: &[
+            "allostery",
+            "allosteric coupling",
+            "allosteric population shift",
+            "mwc model",
+        ],
+        identity: "effector binding at a distal site shifts the conformational ensemble population at the active site without direct steric contact",
+        definition: "Monod, Wyman & Changeux, 'On the nature of allosteric transitions: a plausible model', Journal of Molecular Biology 12(1):88-118 (1965): regulation at a distance through a conformational equilibrium shift across coupled states. In zed-kask it grounds gradient-hunter's allosteric population shift shape and broken-allosteric-coupling reason class when an upstream context or task fails to shift an orchestrator's downstream strategy ensemble.",
+        constituents: &["distal site", "conformational ensemble", "coupling"],
+        authority: "operator ruling 2026-10-14 (Cohort 1 skill-corpus audit); Monod, Wyman & Changeux, Journal of Molecular Biology 12(1):88-118 (1965)",
+    },
+    DerivedConcept {
+        term: "regression_discontinuity_design",
+        aliases: &["regression discontinuity", "rdd"],
+        identity: "causal identification of a treatment effect from a discontinuous jump in outcome at a known assignment threshold along a continuous running variable",
+        definition: "Thistlethwaite & Campbell, 'Regression-discontinuity analysis: An alternative to the ex post facto experiment', Journal of Educational Psychology 51(6):309-317 (1960): observations just below and just above a deterministic cutoff are comparable, so a step change at the threshold identifies the local regime effect. In zed-kask it grounds gradient-hunter's regression-discontinuity boundary shape.",
+        constituents: &["running variable", "threshold", "treatment effect"],
+        authority: "operator ruling 2026-10-14 (Cohort 1 skill-corpus audit); Thistlethwaite & Campbell, Journal of Educational Psychology 51(6):309-317 (1960)",
+    },
+    DerivedConcept {
+        term: "kanban",
+        aliases: &[
+            "kanban method",
+            "kanban board",
+            "kanban system",
+            "pull system",
+        ],
+        identity: "a visual pull system that makes work visible across workflow stages and regulates flow by bounding work in progress",
+        definition: "Taiichi Ohno, Toyota Production System: Beyond Large-Scale Production (1988; Japanese ed. 1978), and David J. Anderson, Kanban: Successful Evolutionary Change for Your Technology Business (2010): work items move across explicit workflow states only when downstream capacity is available (pull, not push), with explicit column policies and WIP limits governing flow. In zed-kask it grounds hkask-mcp-kata-kanban and the kanban-task-management skill.",
+        constituents: &["workflow state", "pull signal", "work_in_progress_limit"],
+        authority: "operator ruling 2026-10-14 (Cohort 2 skill-corpus audit); Ohno, Toyota Production System (1988); Anderson, Kanban: Successful Evolutionary Change for Your Technology Business (2010)",
+    },
+    DerivedConcept {
+        term: "work_in_progress_limit",
+        aliases: &["wip limit", "wip limits", "work-in-progress limit"],
+        identity: "an explicit upper bound on the number of work items concurrently in a workflow state, turning capacity saturation into a visible pull signal",
+        definition: "David J. Anderson, Kanban (2010), grounded in Little's Law (John D. C. Little, 'A Proof for the Queuing Formula: L = lambda W', Operations Research 9(3):383-387, 1961): bounding concurrent work in progress (L) bounds average lead time (W = L / lambda) and surfaces bottlenecks immediately instead of buffering queues. In zed-kask it grounds KanbanColumn::wip_limit and kanban-task-management's WIP-limit gate before moving tasks into InProgress or Review.",
+        constituents: &["kanban", "concurrency bound", "lead time"],
+        authority: "operator ruling 2026-10-14 (Cohort 2 skill-corpus audit); Anderson, Kanban (2010); Little, Operations Research 9(3):383-387 (1961)",
+    },
+    DerivedConcept {
+        term: "invest_criteria",
+        aliases: &["invest", "invest backlog item", "invest task decomposition"],
+        identity: "six quality criteria for a well-formed work item: Independent, Negotiable, Valuable, Estimable, Small, and Testable",
+        definition: "Bill Wake, 'INVEST in Good Stories, and SMART Tasks' (xp123.com, August 17, 2003): a work item or user story is ready for execution when it is Independent (minimal order coupling), Negotiable (captures essence, not over-constrained contract details), Valuable (delivers observable outcome), Estimable (understood well enough to size), Small (completable within one iteration), and Testable (carries falsifiable acceptance criteria). In zed-kask it grounds kanban-task-management's decomposition rubric.",
+        constituents: &["independence", "value", "testability"],
+        authority: "operator ruling 2026-10-14 (Cohort 2 skill-corpus audit); Wake, 'INVEST in Good Stories, and SMART Tasks' (2003)",
+    },
+    DerivedConcept {
+        term: "fermi_decomposition",
+        aliases: &[
+            "fermi estimation",
+            "fermi problem",
+            "fermi breakdown",
+            "fermi sub-questions",
+        ],
+        identity: "decomposing an unknown quantity or probability into a structured combination of smaller, more checkable sub-estimates so errors partially cancel",
+        definition: "Enrico Fermi's order-of-magnitude decomposition method, operationalized for probabilistic forecasting by Tetlock & Gardner, Superforecasting: The Art and Science of Prediction (2015), Ch. 5: break a complex target question into tractable constituent sub-questions (knowable vs unknowable drivers), estimate each component explicitly, and combine them mathematically. In zed-kask it grounds superforecasting's Stage 2 (stage_2_fermi.j2), scenario_calibrate's sub_questions, and kanban_goal_create's observable criteria decomposition.",
+        constituents: &["sub-question", "component estimate", "superforecasting"],
+        authority: "operator ruling 2026-10-14 (Cohort 2 skill-corpus audit); Tetlock & Gardner, Superforecasting (2015); Fermi estimation (Wikidata Q1141521)",
+    },
+    DerivedConcept {
+        term: "reference_class_forecasting",
+        aliases: &["reference class", "outside view", "base rate anchoring"],
+        identity: "anchoring a prediction on the empirical distribution (base rate) of outcomes in a relevant reference class of past cases before adjusting for case-specific inside-view particulars",
+        definition: "Kahneman & Tversky, 'Intuitive prediction: Biases and corrective procedures', TIMS Studies in Management Science 12:313-327 (1979), and Flyvbjerg, 'From Nobel Prize to Project Management: Getting Risks Right', Project Management Journal 37(3):5-15 (2006); operationalized in Tetlock & Gardner, Superforecasting (2015), Ch. 3: select an empirical reference class of comparable historical instances, establish its statistical base rate first (the outside view), and only then adjust toward case-specific causal evidence (the inside view). In zed-kask it grounds superforecasting's Stage 3 (stage_3_outside_view.j2) and scenario_calibrate's reference_class / base_rate fields.",
+        constituents: &["base rate", "outside view", "inside view"],
+        authority: "operator ruling 2026-10-14 (Cohort 2 skill-corpus audit); Kahneman & Tversky (1979); Flyvbjerg, Project Management Journal 37(3):5-15 (2006); Tetlock & Gardner, Superforecasting (2015)",
+    },
+    DerivedConcept {
+        term: "critical_uncertainties",
+        aliases: &["critical uncertainty", "scenario axes"],
+        identity: "the two independent driving forces rated highest in both importance for the focal decision and uncertainty of outcome, forming the orthogonal axes of a 2x2 scenario matrix",
+        definition: "Peter Schwartz, The Art of the Long View: Planning for the Future in an Uncertain World (1991; Wilk review doi:10.1016/0024-6301(91)90051-o): after mapping STEEP driving forces on importance and uncertainty, select the two most impactful and uncertain forces that are causally independent of each other to span four divergent quadrant futures. In zed-kask it grounds scenario-planning's Phase 2b (driving-forces.j2 and axes-and-narratives.j2).",
+        constituents: &["scenario_planning", "driving force", "uncertainty"],
+        authority: "operator ruling 2026-10-14 (Cohort 3 skill-corpus audit); Schwartz, The Art of the Long View (1991), doi:10.1016/0024-6301(91)90051-o",
+    },
+    DerivedConcept {
+        term: "early_warning_indicators",
+        aliases: &[
+            "early indicators",
+            "leading indicators",
+            "scenario tripwires",
+        ],
+        identity: "observable, measurable signals tracked after scenario construction that reveal which scenario trajectory is beginning to unfold and trigger contingent strategies",
+        definition: "Peter Schwartz, The Art of the Long View (1991), Step 8 'Selection of Leading Indicators and Signposts', and Thomas J. Chermack, Scenario Planning in Organizations (2011; doi:10.1177/1534484304270637): concrete, observable tripwires tied to specific scenario narratives that monitor which future is materializing in time to activate contingent hedges. In zed-kask it grounds scenario-planning's implications-indicators.j2 and scenario_assess's has_early_warning_indicators metric.",
+        constituents: &[
+            "scenario_planning",
+            "observable signal",
+            "contingent strategy",
+        ],
+        authority: "operator ruling 2026-10-14 (Cohort 3 skill-corpus audit); Schwartz, The Art of the Long View (1991); Chermack, Scenario Planning in Organizations (2011), doi:10.1177/1534484304270637",
+    },
+    DerivedConcept {
+        term: "deletion_test",
+        aliases: &["ousterhout deletion test", "module deletion test"],
+        identity: "mentally deleting a module or abstraction to test whether its complexity vanishes — proving it was a shallow pass-through — or reappears across callers — proving it hides real complexity and earns its keep",
+        definition: "John Ousterhout, A Philosophy of Software Design (2018), Ch. 4 'Modules Should Be Deep' and Ch. 7.1 'Pass-through methods': evaluate an abstraction by asking what happens if it is removed; if callers absorb no meaningful logic because the module merely forwarded parameters, it is shallow overhead to eliminate. In zed-kask it grounds deep-module, refactor-architecture, essentialist G1, and upstream-rebase's decide.j2.",
+        constituents: &["deep_module", "interface", "implementation complexity"],
+        authority: "operator ruling 2026-10-14 (Cohort 3 skill-corpus audit); Ousterhout, A Philosophy of Software Design (2018), Ch. 4 & Ch. 7",
+    },
+    DerivedConcept {
+        term: "architecture_decision_record",
+        aliases: &[
+            "adr",
+            "adrs",
+            "architectural decision record",
+            "architectural decision records",
+        ],
+        identity: "a short, versioned document capturing one architecturally significant decision, the context and forces behind it, the decision itself, and its consequences",
+        definition: "Michael Nygard, 'Documenting Architecture Decisions' (Cognitect Blog, November 15, 2011): record each architecturally significant decision in source control with Title, Status, Context, Decision, and Consequences so future maintainers understand the trade-offs rather than re-litigating or accidentally reversing them. In zed-kask it grounds refactor-architecture's known_adrs and adr_proposals.",
+        constituents: &["context", "decision", "consequences"],
+        authority: "operator ruling 2026-10-14 (Cohort 3 skill-corpus audit); Nygard, 'Documenting Architecture Decisions', Cognitect (2011)",
+    },
+    DerivedConcept {
+        term: "entity_relationship_diagram",
+        aliases: &[
+            "erd",
+            "entity-relationship model",
+            "er diagram",
+            "entity relationship model",
+        ],
+        identity: "a structural data model and diagram notation representing entities, their typed attributes, and cardinality-constrained relationships",
+        definition: "Peter Pin-Shan Chen, 'The entity-relationship model—toward a unified view of data', ACM Transactions on Database Systems 1(1):9-36 (1976), doi:10.1145/320434.320440: models a domain's schema as entity sets, attribute types/keys, and relationships with explicit cardinality ratios (1:1, 1:N, M:N). In zed-kask it grounds diataxis-diagram's erd extraction and Crow's Foot Mermaid erDiagram rendering.",
+        constituents: &["entity", "attribute", "relationship", "cardinality"],
+        authority: "operator ruling 2026-10-14 (Cohort 3 skill-corpus audit); Chen, ACM Transactions on Database Systems 1(1):9-36 (1976), doi:10.1145/320434.320440",
+    },
+    DerivedConcept {
+        term: "state_diagram",
+        aliases: &[
+            "statechart",
+            "statecharts",
+            "state machine diagram",
+            "harel statechart",
+        ],
+        identity: "a directed graph of discrete states, guarded transitions, and hierarchical composite or orthogonal states modeling reactive system behavior",
+        definition: "David Harel, 'Statecharts: a visual formalism for complex systems', Science of Computer Programming 8(3):231-274 (1987), doi:10.1016/0167-6423(87)90035-9: extends finite-state transition diagrams with hierarchical depth (composite states), concurrency (fork/join orthogonal regions), and guarded event-triggered transitions. In zed-kask it grounds diataxis-diagram's stateDiagram-v2 extraction and rendering.",
+        constituents: &["state", "transition", "guard condition", "composite state"],
+        authority: "operator ruling 2026-10-14 (Cohort 3 skill-corpus audit); Harel, Science of Computer Programming 8(3):231-274 (1987), doi:10.1016/0167-6423(87)90035-9",
+    },
+    DerivedConcept {
+        term: "topological_sort",
+        aliases: &[
+            "topological ordering",
+            "topological order",
+            "kahn's algorithm",
+        ],
+        identity: "a linear ordering of the vertices of a directed acyclic graph such that for every directed edge u -> v, vertex u precedes v in the ordering",
+        definition: "Arthur B. Kahn, 'Topological sorting of large networks', Communications of the ACM 5(11):558-562 (1962), doi:10.1145/368996.369025: schedules a network of precedence-constrained tasks into a valid linear execution sequence; a complete ordering of all |V| vertices exists if and only if the directed graph contains no cycles. In zed-kask it grounds upstream-rebase's functional-unit re-application order (map.j2 and execute.j2) and scenario_quantify's event-tree evaluation order.",
+        constituents: &[
+            "directed_acyclic_graph",
+            "precedence constraint",
+            "linear ordering",
+        ],
+        authority: "operator ruling 2026-10-14 (Cohort 3 skill-corpus audit); Kahn, Communications of the ACM 5(11):558-562 (1962), doi:10.1145/368996.369025",
+    },
+    DerivedConcept {
+        term: "adjacent_possible",
+        aliases: &["the adjacent possible", "kauffman adjacent possible"],
+        identity: "the set of novel states, products, or economic niches reachable in a single combinatorial step from the current configuration of a system",
+        definition: "Stuart A. Kauffman, Investigations (Oxford University Press, 2000): biological and economic systems expand non-ergodically into the 'adjacent possible' — the frontier of configurations one reaction or combination away from what currently exists; each realized innovation reconfigures the frontier and makes new niches possible. In zed-kask it grounds company-research-flash Lens 5 (lens-five-frameworks.j2) and company-research-deep's economic-trajectory and imagine-longrange stages.",
+        constituents: &[
+            "combinatorial innovation",
+            "non-ergodicity",
+            "economic niche",
+        ],
+        authority: "operator ruling 2026-10-14 (Cohort 4 skill-corpus audit); Kauffman, Investigations, Oxford University Press (2000)",
+    },
+    DerivedConcept {
+        term: "earnings_quality",
+        aliases: &[
+            "accruals quality",
+            "accruals anomaly",
+            "forensic accounting",
+        ],
+        identity: "the degree to which reported accounting earnings reflect sustainable cash-backed economic performance rather than non-repeating accruals or aggressive recognition",
+        definition: "Richard G. Sloan, 'Do Stock Prices Fully Reflect Information in Accruals and Cash Flows about Future Earnings?', The Accounting Review 71(3):289-315 (1996); Discussion in Review of Accounting Studies (1999), doi:10.1023/a:1009682117424; Dechow, Ge & Schrand, Journal of Accounting and Economics 50(2-3):344-401 (2010): earnings backed by operating cash flows persist at a higher rate than earnings driven by working-capital accruals. In zed-kask it grounds company-research-flash's forensic-pre-screen and forensic-full stages.",
+        constituents: &["operating cash flow", "accruals", "revenue recognition"],
+        authority: "operator ruling 2026-10-14 (Cohort 4 skill-corpus audit); Sloan, The Accounting Review 71(3):289-315 (1996); doi:10.1023/a:1009682117424",
+    },
+    DerivedConcept {
+        term: "conservation_of_energy",
+        aliases: &[
+            "first law of thermodynamics",
+            "mass-energy conservation",
+            "flow conservation",
+        ],
+        identity: "in a closed or steady-state node without storage, total inflow equals total outflow",
+        definition: "The first law of thermodynamics and continuity principle applied to flow networks by Mario Schmidt, 'The Sankey Diagram in Energy and Material Flow Management', Journal of Industrial Ecology 12(1):82-94 and 12(2):173-185 (2008), doi:10.1111/j.1530-9290.2008.00004.x: for conserved quantities (energy, mass, and balanced accounting allocations), the sum of inputs into any internal node equals the sum of outputs leaving it. In zed-kask it grounds sankey-flow's mandatory conservation mode and per-node lisp_eval balance check.",
+        constituents: &["sankey_diagram", "inflow", "outflow"],
+        authority: "operator ruling 2026-10-14 (Cohort 4 skill-corpus audit); Schmidt, Journal of Industrial Ecology 12(1):82-94 (2008), doi:10.1111/j.1530-9290.2008.00004.x",
+    },
+    DerivedConcept {
+        term: "open_information_extraction",
+        aliases: &["openie", "open ie"],
+        identity: "domain-independent extraction of relational tuples (arg1, relation, arg2) from text where the relation phrase is surface text from the sentence rather than a pre-specified ontology IRI",
+        definition: "Banko, Cafarella, Soderland, Broadhead & Etzioni, 'Open Information Extraction from the Web', IJCAI (2007), and Soderland et al., 'Adapting Open Information Extraction to Domain-Specific Relations', AI Magazine 31(3) (2010), doi:10.1609/aimag.v31i3.2305: extracts binary relational tuples whose predicates are short surface verb phrases from the source text, distinct from closed-vocabulary RDF triples. In zed-kask it grounds structured-extraction's extract-relations.j2.",
+        constituents: &["subject", "surface predicate", "object", "trigger span"],
+        authority: "operator ruling 2026-10-14 (Cohort 4 skill-corpus audit); Banko et al., IJCAI (2007); Soderland et al., AI Magazine 31(3) (2010), doi:10.1609/aimag.v31i3.2305",
+    },
+    DerivedConcept {
+        term: "coreference_resolution",
+        aliases: &["coreference", "anaphora resolution"],
+        identity: "partitioning referring expressions — pronouns, definite noun phrases, proper names — into equivalence clusters that denote the same discourse entity",
+        definition: "Sameer Pradhan et al., 'CoNLL-2012 Shared Task: Modeling Multilingual Unrestricted Coreference in OntoNotes', EMNLP-CoNLL (2012), OpenAlex W2155069789: resolving anaphoric mentions (such as 'she', 'it', 'the company') to their canonical antecedent entity before extracting relational tuples. In zed-kask it grounds structured-extraction's coreference step in extract-relations.j2.",
+        constituents: &["referring expression", "antecedent", "entity cluster"],
+        authority: "operator ruling 2026-10-14 (Cohort 4 skill-corpus audit); Pradhan et al., CoNLL-2012 Shared Task (2012), OpenAlex W2155069789",
+    },
+    DerivedConcept {
+        term: "value_chain",
+        aliases: &["wardley value chain", "porter value chain"],
+        identity: "the dependency-ordered chain of activities and components required to fulfill an anchored user need, ordered by visibility from user-facing capabilities at the top to foundational infrastructure at the bottom",
+        definition: "Michael E. Porter, Competitive Advantage: Creating and Sustaining Superior Performance (Free Press, 1985), and Simon Wardley, Wardley Maps: Topographical intelligence in business (2016): the vertical axis of a Wardley map, anchoring at the top on the user and user need and tracing the directed graph of dependent components downward by decreasing visibility to the user. In zed-kask it grounds wardley-mapper and company-research's wardley-anchor.j2.",
+        constituents: &["wardley_map", "user need", "component dependency"],
+        authority: "operator ruling 2026-10-14 (Cohort 4 skill-corpus audit); Porter, Competitive Advantage (1985); Wardley, Wardley Maps (2016)",
+    },
+    DerivedConcept {
+        term: "commoditization",
+        aliases: &["commoditize", "evolutionary drift"],
+        identity: "the climatic rightward evolution of components from Genesis and Custom-Built through Product/Rental to standardized, ubiquitous Commodity/Utility",
+        definition: "Simon Wardley, Wardley Maps: Topographical intelligence in business (2016), Ch. 3 'Evolution': competition and supply-and-demand forces drive every component rightward along the evolution axis from novel Genesis through bespoke Custom and off-the-shelf Product to standardized Commodity/Utility, turning former differentiators into cost-of-doing-business utilities and enabling higher-order component creation. In zed-kask it grounds wardley-mapper's should_commoditize flag and movement synthesis.",
+        constituents: &["wardley_map", "evolution axis", "utility"],
+        authority: "operator ruling 2026-10-14 (Cohort 4 skill-corpus audit); Wardley, Wardley Maps (2016), Ch. 3",
+    },
+    DerivedConcept {
+        term: "style_transfer",
+        aliases: &["text style transfer", "arbitrary style transfer"],
+        identity: "rewriting a source text to match the syntactic, lexical, and rhetorical signature of a target exemplar voice while preserving its propositional and technical content",
+        definition: "Emily Reif et al., 'A Recipe for Arbitrary Text Style Transfer with Large Language Models', ACL (2022), doi:10.18653/v1/2022.acl-short.94: retrieval-augmented in-context exemplar prompting that transforms surface voice, clause structure, and cadence while holding underlying factual and technical tokens invariant. In zed-kask it grounds writing-style and corpus_compose / corpus_rewrite.",
+        constituents: &[
+            "exemplar retrieval",
+            "voice signature",
+            "content preservation",
+        ],
+        authority: "operator ruling 2026-10-14 (Cohort 4 skill-corpus audit); Reif et al., ACL (2022), doi:10.18653/v1/2022.acl-short.94",
+    },
+    DerivedConcept {
+        term: "stylometry",
+        aliases: &["computational stylometry", "burrows delta"],
+        identity: "quantitative measurement of linguistic and distributional features of texts to characterize authorial or stylistic distance",
+        definition: "John F. Burrows, ''Delta': a Measure of Stylistic Difference and a Guide to Likely Authorship', Literary and Linguistic Computing 17(3):267-287 (2002), doi:10.1093/llc/17.3.267, and Efstathios Stamatatos, 'A survey of modern authorship attribution methods', JASIST 60(3):538-556 (2009), doi:10.1002/asi.21001: measuring stylistic proximity between a candidate text and a reference author corpus. In zed-kask it grounds writing-style's centroid-distance validation disclosure.",
+        constituents: &["author corpus", "stylistic distance", "cosine_distance"],
+        authority: "operator ruling 2026-10-14 (Cohort 4 skill-corpus audit); Burrows, LLC 17(3):267-287 (2002), doi:10.1093/llc/17.3.267; Stamatatos, JASIST 60(3):538-556 (2009), doi:10.1002/asi.21001",
+    },
+    DerivedConcept {
+        term: "cosine_distance",
+        aliases: &["cosine similarity", "angular distance"],
+        identity: "1 - (u . v) / (||u|| ||v||), measuring directional divergence between two non-zero vectors in an inner-product embedding space independent of vector magnitude",
+        definition: "Gerard Salton, A. Wong & C. S. Yang, 'A Vector Space Model for Automatic Indexing', Communications of the ACM 18(11):613-620 (1975): the complement of the cosine of the angle between two embedding vectors, ranging from 0.0 (collinear) to 2.0 (opposite). In zed-kask it grounds hkask-mcp-corpus's centroid_distance_max validation gate in corpus_compose and corpus_rewrite and corpus_dedup_chunks / corpus_consolidate_chunks.",
+        constituents: &["inner product", "embedding vector", "centroid"],
+        authority: "operator ruling 2026-10-14 (Cohort 4 skill-corpus audit); Salton, Wong & Yang, Communications of the ACM 18(11):613-620 (1975)",
+    },
+    DerivedConcept {
+        term: "cash_conversion_cycle",
+        aliases: &["ccc", "working capital cycle"],
+        identity: "DSO + DIO - DPO, measuring the time in days between cash outlay for working-capital inputs and cash collection from sales",
+        definition: "Verlyn D. Richards & Eugene J. Laughlin, 'A Cash Conversion Cycle Approach to Liquidity Analysis', Financial Management 9(1):32-38 (1980): combines days sales outstanding (receivables), days inventory outstanding (inventory), and days payables outstanding (payables) into the net duration capital is tied up in operating working capital. In zed-kask it grounds working_capital_cycle and company-research-deep's CFO working-capital signposts.",
+        constituents: &[
+            "days sales outstanding",
+            "days inventory outstanding",
+            "days payables outstanding",
+        ],
+        authority: "operator ruling 2026-10-14 (Cohort 5 skill-corpus audit); Richards & Laughlin, Financial Management 9(1):32-38 (1980)",
+    },
+    DerivedConcept {
+        term: "audit_evidence",
+        aliases: &[
+            "isa 500",
+            "vouching and tracing",
+            "evidence reliability hierarchy",
+        ],
+        identity: "information used in arriving at audit conclusions, evaluated by sufficiency and appropriateness across the reliability hierarchy and directional testing (vouching claims to sources and tracing sources to the report)",
+        definition: "IAASB, International Standard on Auditing (ISA) 500: Audit Evidence (2009): assertions are tested in two directions — vouching (from report claim to supporting source record for existence and accuracy) and tracing (from source records to the report for completeness) — graded by source reliability (audited statements > interim filings > transcripts > press releases > web) with inquiry alone never constituting corroboration. In zed-kask it grounds grounding-verify and company-research's evidence-review.j2.",
+        constituents: &["assertion", "vouching", "tracing", "provenance"],
+        authority: "operator ruling 2026-10-14 (Cohort 5 skill-corpus audit); IAASB, International Standard on Auditing ISA 500: Audit Evidence (2009)",
+    },
+    DerivedConcept {
+        term: "materiality",
+        aliases: &["isa 320", "audit materiality"],
+        identity: "misstatements or omissions are material if they could reasonably be expected to influence the decisions of users taken on the basis of the report",
+        definition: "IAASB, International Standard on Auditing (ISA) 320: Materiality in Planning and Performing an Audit (2009): verification effort is scoped to load-bearing claims whose falsity or omission would alter the report's conclusions or the user's decision, rather than expending budget on incidental phrasing. In zed-kask it grounds grounding-verify and company-research's evidence-review.j2.",
+        constituents: &[
+            "audit_evidence",
+            "load-bearing assertion",
+            "decision relevance",
+        ],
+        authority: "operator ruling 2026-10-14 (Cohort 5 skill-corpus audit); IAASB, International Standard on Auditing ISA 320 (2009)",
+    },
+    DerivedConcept {
+        term: "vertical_slice",
+        aliases: &["vertical slicing", "tracer bullet"],
+        identity: "a work increment that cuts through all architectural layers required to deliver one observable, end-to-end testable behavior",
+        definition: "Andrew Hunt & David Thomas, The Pragmatic Programmer (1999), and Bill Wake, 'INVEST in Good Stories, and SMART Tasks' (2003): decomposing work into narrow end-to-end feature paths across types, ports, services, and surfaces rather than horizontal single-layer batches, so each slice leaves the system working and verifiable. In zed-kask it grounds task-breakdown and tdd.",
+        constituents: &[
+            "invest_criteria",
+            "end-to-end behavior",
+            "verification seam",
+        ],
+        authority: "operator ruling 2026-10-14 (Cohort 5 skill-corpus audit); Hunt & Thomas, The Pragmatic Programmer (1999); Wake (2003)",
+    },
+    DerivedConcept {
+        term: "compensation_masking",
+        aliases: &["compensatory aggregation", "non-compensatory threshold"],
+        identity: "the failure mode of linear weighted-sum aggregation in which high scores on secondary criteria mask a severe deficiency on a critical criterion, mitigated by per-criterion floor or veto thresholds",
+        definition: "Ralph L. Keeney & Howard Raiffa, Decisions with Multiple Objectives (1976), and Valerie Belton & Theodor J. Stewart, Multiple Criteria Decision Analysis: An Integrated Approach (2002): in additive multi-criteria scoring, trade-offs between weights allow a catastrophic failure on one dimension to hide behind a passing weighted average unless a non-compensatory per-criterion veto threshold is enforced. In zed-kask it grounds mcda and task-breakdown's quality-gate veto (max score <= 0.30).",
+        constituents: &[
+            "multi_criteria_decision_analysis",
+            "weighted sum",
+            "veto threshold",
+        ],
+        authority: "operator ruling 2026-10-14 (Cohort 5 skill-corpus audit); Keeney & Raiffa (1976); Belton & Stewart, Multiple Criteria Decision Analysis (2002)",
+    },
+    DerivedConcept {
+        term: "good_regulator_theorem",
+        aliases: &["good regulator", "conant-ashby theorem"],
+        identity: "every good regulator of a system must be a model of that system",
+        definition: "Roger C. Conant & W. Ross Ashby, 'Every good regulator of a system must be a model of that system', International Journal of Systems Science 1(2):89-97 (1970), doi:10.1080/00207727008920220: any regulator that achieves optimal regulation of a system's outcomes must contain a homomorphic representation of the system being regulated. In zed-kask it grounds pragmatic-cybernetics, task-breakdown's context_summary, code-review's change_model, and bug-hunt's crate_model.",
+        constituents: &[
+            "cybernetic_feedback_loop",
+            "system model",
+            "requisite_variety",
+        ],
+        authority: "operator ruling 2026-10-14 (Cohort 5 skill-corpus audit); Conant & Ashby, International Journal of Systems Science 1(2):89-97 (1970), doi:10.1080/00207727008920220",
+    },
+    DerivedConcept {
+        term: "counterfactual",
+        aliases: &["structural counterfactual", "actual causation"],
+        identity: "evaluating what outcome would obtain in a structural causal model if a hypothesized cause were surgically intervened upon while holding background exogenous variables and confounders fixed",
+        definition: "Judea Pearl, Causality (Cambridge University Press, 2009), and Joseph Y. Halpern & Judea Pearl, 'Causes and Explanations: A Structural-Model Approach. Part I: Causes', British Journal for the Philosophy of Science 56(4):843-887 (2005), doi:10.1093/bjps/axi147: a minimal-world query testing whether effect Y would still occur under do(not X) with all confounders held constant. In zed-kask it grounds falsifiability's falsifiability-counterfactual.j2 and superforecasting's Stage 3 inside view.",
+        constituents: &["falsifiability", "do_calculus", "confounder"],
+        authority: "operator ruling 2026-10-14 (Cohort 5 skill-corpus audit); Pearl, Causality (2009); Halpern & Pearl, BJPS 56(4):843-887 (2005), doi:10.1093/bjps/axi147",
+    },
+    DerivedConcept {
+        term: "do_calculus",
+        aliases: &["do-operator", "causal intervention"],
+        identity: "the formal interventional operator do(X = x) that replaces the causal mechanism determining X with a constant assignment while leaving all other mechanisms intact",
+        definition: "Judea Pearl, 'Causal diagrams for empirical research', Biometrika 82(4):669-688 (1995), and Causality (2009): distinguishes causal intervention P(Y | do(X = x)) — surgical graph mutilation removing incoming edges into X — from observational conditioning P(Y | X = x). In zed-kask it grounds falsifiability's counterfactual construction.",
+        constituents: &["counterfactual", "directed_acyclic_graph", "intervention"],
+        authority: "operator ruling 2026-10-14 (Cohort 5 skill-corpus audit); Pearl, Biometrika 82(4):669-688 (1995); Pearl, Causality (2009)",
+    },
+    DerivedConcept {
+        term: "cognitive_load",
+        aliases: &["intrinsic cognitive load", "extraneous cognitive load"],
+        identity: "the amount of working-memory information a developer or reader must hold simultaneously to understand or safely modify a module or interface",
+        definition: "John Sweller, 'Cognitive load during problem solving: Effects on learning', Cognitive Science 12(2):257-285 (1988), and John Ousterhout, A Philosophy of Software Design (2018), Ch. 2: system complexity manifests as the mental burden placed on readers by shallow abstractions, scattered state, and obscure invariants. In zed-kask it grounds code-review's Form axis, deep-module, and adhd-mode.",
+        constituents: &["deep_module", "working memory", "interface simplicity"],
+        authority: "operator ruling 2026-10-14 (Cohort 5 skill-corpus audit); Sweller, Cognitive Science 12(2):257-285 (1988); Ousterhout, A Philosophy of Software Design (2018)",
+    },
+    DerivedConcept {
+        term: "change_amplification",
+        aliases: &["shotgun surgery"],
+        identity: "the symptom of software complexity in which a seemingly simple logical change requires modifications across many separate files, methods, or call sites",
+        definition: "John Ousterhout, A Philosophy of Software Design (2018), Ch. 2.1 'Symptoms of Complexity': when knowledge or policy is duplicated across shallow modules instead of encapsulated behind a deep interface, every change fans out across multiple locations. In zed-kask it grounds code-review, deep-module, and refactor-architecture.",
+        constituents: &["deep_module", "locality", "coupling"],
+        authority: "operator ruling 2026-10-14 (Cohort 5 skill-corpus audit); Ousterhout, A Philosophy of Software Design (2018), Ch. 2.1",
+    },
+    DerivedConcept {
+        term: "exploratory_testing",
+        aliases: &[
+            "session-based test management",
+            "testing charter",
+            "htsm",
+            "heuristic test strategy model",
+        ],
+        identity: "simultaneous learning, test design, and test execution guided by time-boxed charters and heuristic test strategy models rather than pre-scripted test procedures",
+        definition: "Cem Kaner, Testing Computer Software (1988), James Bach, 'Exploratory Testing Explained' (2003) and Heuristic Test Strategy Model (2006), and Elisabeth Hendrickson, Explore It!: Reduce Risk and Increase Confidence with Exploratory Testing (Pragmatic Bookshelf, 2013): structured, charter-driven investigation of software quality threats ('Explore [target] with [resources] to discover [information]'). In zed-kask it grounds bug-hunt.",
+        constituents: &["testing charter", "heuristic", "test_oracle"],
+        authority: "operator ruling 2026-10-14 (Cohort 5 skill-corpus audit); Kaner (1988); Bach & Bolton, HTSM (2006); Hendrickson, Explore It! (2013)",
+    },
+    DerivedConcept {
+        term: "test_oracle",
+        aliases: &["oracle problem", "weinberg oracle"],
+        identity: "a mechanism — specified contract, metamodel, consistency invariant, or human quality criterion — for determining whether a system's observed behavior on a test or probe is acceptable",
+        definition: "Elaine J. Weyuker, 'On Testing Non-Testable Programs', The Computer Journal 25(4):465-470 (1982), Jerry Weinberg, Quality Software Management (1992), and Earl T. Barr et al., 'The Oracle Problem in Software Testing: A Survey', IEEE Transactions on Software Engineering 41(5):507-525 (2015), doi:10.1109/tse.2014.2372785: distinguishes specified contract violations from heuristic pattern matches and unverified observations. In zed-kask it grounds bug-hunt's bug-hunt-oracle.j2 and tdd.",
+        constituents: &["verification_oracle", "contract", "quality criterion"],
+        authority: "operator ruling 2026-10-14 (Cohort 5 skill-corpus audit); Weyuker (1982); Weinberg (1992); Barr et al., IEEE TSE 41(5):507-525 (2015), doi:10.1109/tse.2014.2372785",
+    },
+    DerivedConcept {
+        term: "mutation_testing",
+        aliases: &["mutation analysis", "surviving mutant"],
+        identity: "evaluating test-suite fault-detection adequacy by injecting small syntactic faults (mutants) into program source and measuring whether the test suite fails (kills the mutant) or passes (leaving a surviving mutant)",
+        definition: "Richard A. DeMillo, Richard J. Lipton & Frederick G. Sayward, 'Hints on Test Data Selection: Help for the Practicing Programmer', IEEE Computer 11(4):34-41 (1978), and Yue Jia & Mark Harman, 'An Analysis and Survey of the Development of Mutation Testing', IEEE Transactions on Software Engineering 37(5):649-678 (2011), doi:10.1109/tse.2010.62: surviving mutants pinpoint concrete code paths where the test suite is blind. In zed-kask it grounds bug-hunt's mutation-guided chartering and verification-compression's fault-detection preservation.",
+        constituents: &["mutant", "test_oracle", "fault detection"],
+        authority: "operator ruling 2026-10-14 (Cohort 5 skill-corpus audit); DeMillo, Lipton & Sayward (1978); Jia & Harman, IEEE TSE 37(5):649-678 (2011), doi:10.1109/tse.2010.62",
+    },
+    DerivedConcept {
+        term: "bug_taxonomy",
+        aliases: &["beizer bug taxonomy", "beizer taxonomy", "defect taxonomy"],
+        identity: "a structured classification of software defects across requirements, structural/control-flow, data, coding, interface, integration, timing/concurrency, and configuration categories",
+        definition: "Boris Beizer, Software Testing Techniques, 2nd ed. (Van Nostrand Reinhold, 1990): categorizes software bugs by their structural and lifecycle origin so test strategy and exploratory probes target the failure modes characteristic of the system's architecture. In zed-kask it grounds bug-hunt's charter focus and finding classification.",
+        constituents: &[
+            "exploratory_testing",
+            "defect category",
+            "pattern signature",
+        ],
+        authority: "operator ruling 2026-10-14 (Cohort 5 skill-corpus audit); Beizer, Software Testing Techniques, 2nd ed. (1990)",
+    },
 ];
 /// Normalization matches the onto_anchor tool's: lowercase alphanumeric
 /// characters only, separators and case folded away.
@@ -1290,6 +1722,286 @@ mod tests {
                 resolve_derived(form).map(|concept| concept.term),
                 Some(term),
                 "{form} resolves to {term}"
+            );
+        }
+    }
+
+    /// expect: [P5] The Cohort 1 skill-corpus audit rulings (2026-10-14)
+    /// resolve to their published authorities and never fall back to the
+    /// coarse 5W1H core anchor.
+    #[test]
+    fn cohort_1_audit_rulings_resolve_with_authority() {
+        for (term, expected_term, marker) in [
+            ("Fitts's law", "fitts_law", "Fitts"),
+            ("fittss_law", "fitts_law", "1954"),
+            ("requisite variety", "requisite_variety", "Ashby"),
+            ("law of requisite variety", "requisite_variety", "1956"),
+            ("spin glass", "spin_glass", "Parisi"),
+            (
+                "frustrated landscape",
+                "spin_glass",
+                "10.1103/physrevlett.43.1754",
+            ),
+            ("allosteric regulation", "allosteric_regulation", "Monod"),
+            (
+                "allosteric population shift",
+                "allosteric_regulation",
+                "1965",
+            ),
+            (
+                "regression discontinuity design",
+                "regression_discontinuity_design",
+                "Thistlethwaite",
+            ),
+            ("RDD", "regression_discontinuity_design", "1960"),
+        ] {
+            let concept =
+                resolve_derived(term).expect("Cohort 1 audit ruling must resolve in derived.rs");
+            assert_eq!(
+                concept.term, expected_term,
+                "{term} resolves to {expected_term}"
+            );
+            assert!(
+                concept.authority.contains(marker),
+                "{term}: {}",
+                concept.authority
+            );
+            assert!(
+                concept.authority.starts_with("operator ruling 2026-10-14"),
+                "{term} cites the 2026-10-14 ruling"
+            );
+        }
+    }
+
+    /// expect: [P5] The Cohort 2 skill-corpus audit rulings (2026-10-14)
+    /// resolve to their published authorities and never fall back to the
+    /// coarse 5W1H core anchor.
+    #[test]
+    fn cohort_2_audit_rulings_resolve_with_authority() {
+        for (term, expected_term, marker) in [
+            ("kanban", "kanban", "Ohno"),
+            ("kanban method", "kanban", "Anderson"),
+            ("work in progress limit", "work_in_progress_limit", "Little"),
+            ("WIP limit", "work_in_progress_limit", "Anderson"),
+            ("INVEST criteria", "invest_criteria", "Wake"),
+            ("invest", "invest_criteria", "2003"),
+            ("Fermi decomposition", "fermi_decomposition", "Tetlock"),
+            ("Fermi estimation", "fermi_decomposition", "Q1141521"),
+            (
+                "reference class forecasting",
+                "reference_class_forecasting",
+                "Kahneman",
+            ),
+            ("outside view", "reference_class_forecasting", "Flyvbjerg"),
+        ] {
+            let concept =
+                resolve_derived(term).expect("Cohort 2 audit ruling must resolve in derived.rs");
+            assert_eq!(
+                concept.term, expected_term,
+                "{term} resolves to {expected_term}"
+            );
+            assert!(
+                concept.authority.contains(marker),
+                "{term}: {}",
+                concept.authority
+            );
+            assert!(
+                concept.authority.starts_with("operator ruling 2026-10-14"),
+                "{term} cites the 2026-10-14 ruling"
+            );
+        }
+    }
+
+    /// expect: [P5] The Cohort 3 skill-corpus audit rulings (2026-10-14)
+    /// resolve to their published authorities and never fall back to the
+    /// coarse 5W1H core anchor.
+    #[test]
+    fn cohort_3_audit_rulings_resolve_with_authority() {
+        for (term, expected_term, marker) in [
+            (
+                "critical uncertainties",
+                "critical_uncertainties",
+                "Schwartz",
+            ),
+            ("scenario axes", "critical_uncertainties", "1991"),
+            (
+                "early warning indicators",
+                "early_warning_indicators",
+                "Schwartz",
+            ),
+            ("scenario tripwires", "early_warning_indicators", "Chermack"),
+            ("deletion test", "deletion_test", "Ousterhout"),
+            ("module deletion test", "deletion_test", "2018"),
+            (
+                "architecture decision record",
+                "architecture_decision_record",
+                "Nygard",
+            ),
+            ("ADR", "architecture_decision_record", "2011"),
+            (
+                "entity relationship diagram",
+                "entity_relationship_diagram",
+                "Chen",
+            ),
+            (
+                "ERD",
+                "entity_relationship_diagram",
+                "10.1145/320434.320440",
+            ),
+            ("state diagram", "state_diagram", "Harel"),
+            (
+                "statechart",
+                "state_diagram",
+                "10.1016/0167-6423(87)90035-9",
+            ),
+            ("topological sort", "topological_sort", "Kahn"),
+            (
+                "topological ordering",
+                "topological_sort",
+                "10.1145/368996.369025",
+            ),
+        ] {
+            let concept =
+                resolve_derived(term).expect("Cohort 3 audit ruling must resolve in derived.rs");
+            assert_eq!(
+                concept.term, expected_term,
+                "{term} resolves to {expected_term}"
+            );
+            assert!(
+                concept.authority.contains(marker),
+                "{term}: {}",
+                concept.authority
+            );
+            assert!(
+                concept.authority.starts_with("operator ruling 2026-10-14"),
+                "{term} cites the 2026-10-14 ruling"
+            );
+        }
+    }
+
+    /// expect: [P5] The Cohort 4 skill-corpus audit rulings (2026-10-14)
+    /// resolve to their published authorities and never fall back to the
+    /// coarse 5W1H core anchor.
+    #[test]
+    fn cohort_4_audit_rulings_resolve_with_authority() {
+        for (term, expected_term, marker) in [
+            ("adjacent possible", "adjacent_possible", "Kauffman"),
+            ("earnings quality", "earnings_quality", "Sloan"),
+            (
+                "accruals quality",
+                "earnings_quality",
+                "10.1023/a:1009682117424",
+            ),
+            (
+                "conservation of energy",
+                "conservation_of_energy",
+                "Schmidt",
+            ),
+            (
+                "flow conservation",
+                "conservation_of_energy",
+                "10.1111/j.1530-9290.2008.00004.x",
+            ),
+            (
+                "open information extraction",
+                "open_information_extraction",
+                "Banko",
+            ),
+            (
+                "OpenIE",
+                "open_information_extraction",
+                "10.1609/aimag.v31i3.2305",
+            ),
+            (
+                "coreference resolution",
+                "coreference_resolution",
+                "Pradhan",
+            ),
+            (
+                "anaphora resolution",
+                "coreference_resolution",
+                "CoNLL-2012",
+            ),
+            ("value chain", "value_chain", "Porter"),
+            ("commoditization", "commoditization", "Wardley"),
+            ("style transfer", "style_transfer", "Reif"),
+            ("stylometry", "stylometry", "Burrows"),
+            ("Burrows Delta", "stylometry", "10.1093/llc/17.3.267"),
+            ("cosine distance", "cosine_distance", "Salton"),
+            ("cosine similarity", "cosine_distance", "1975"),
+        ] {
+            let concept =
+                resolve_derived(term).expect("Cohort 4 audit ruling must resolve in derived.rs");
+            assert_eq!(
+                concept.term, expected_term,
+                "{term} resolves to {expected_term}"
+            );
+            assert!(
+                concept.authority.contains(marker),
+                "{term}: {}",
+                concept.authority
+            );
+            assert!(
+                concept.authority.starts_with("operator ruling 2026-10-14"),
+                "{term} cites the 2026-10-14 ruling"
+            );
+        }
+    }
+
+    /// expect: [P5] The Cohort 5 skill-corpus audit rulings (2026-10-14)
+    /// resolve to their published authorities and never fall back to the
+    /// coarse 5W1H core anchor.
+    #[test]
+    fn cohort_5_audit_rulings_resolve_with_authority() {
+        for (term, expected_term, marker) in [
+            ("cash conversion cycle", "cash_conversion_cycle", "Richards"),
+            ("CCC", "cash_conversion_cycle", "1980"),
+            ("audit evidence", "audit_evidence", "ISA 500"),
+            ("vouching and tracing", "audit_evidence", "IAASB"),
+            ("materiality", "materiality", "ISA 320"),
+            ("vertical slice", "vertical_slice", "Hunt & Thomas"),
+            ("compensation masking", "compensation_masking", "Keeney"),
+            (
+                "good regulator theorem",
+                "good_regulator_theorem",
+                "Conant & Ashby",
+            ),
+            (
+                "good regulator",
+                "good_regulator_theorem",
+                "10.1080/00207727008920220",
+            ),
+            ("counterfactual", "counterfactual", "Halpern & Pearl"),
+            ("do calculus", "do_calculus", "Pearl"),
+            ("do-operator", "do_calculus", "1995"),
+            ("cognitive load", "cognitive_load", "Sweller"),
+            ("change amplification", "change_amplification", "Ousterhout"),
+            ("exploratory testing", "exploratory_testing", "Hendrickson"),
+            ("HTSM", "exploratory_testing", "Bach"),
+            ("test oracle", "test_oracle", "Barr"),
+            ("oracle problem", "test_oracle", "10.1109/tse.2014.2372785"),
+            ("mutation testing", "mutation_testing", "Jia & Harman"),
+            (
+                "surviving mutant",
+                "mutation_testing",
+                "10.1109/tse.2010.62",
+            ),
+            ("bug taxonomy", "bug_taxonomy", "Beizer"),
+        ] {
+            let concept =
+                resolve_derived(term).expect("Cohort 5 audit ruling must resolve in derived.rs");
+            assert_eq!(
+                concept.term, expected_term,
+                "{term} resolves to {expected_term}"
+            );
+            assert!(
+                concept.authority.contains(marker),
+                "{term}: {}",
+                concept.authority
+            );
+            assert!(
+                concept.authority.starts_with("operator ruling 2026-10-14"),
+                "{term} cites the 2026-10-14 ruling"
             );
         }
     }

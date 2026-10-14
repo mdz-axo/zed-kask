@@ -4,8 +4,8 @@ contract:
   input:
     target_file: string
     upstream_ref: string
-    step_2_result: object
-    step_3_result: object
+    inventory_result: object
+    decision_result: object
     task: string
   output:
     markers_added: integer
@@ -25,8 +25,8 @@ re-application) on the target D-seam file.
 ## Context
 
 **Target file:** `{{ target_file }}`
-**Functional inventory (step 2):** {{ step_2_result }}
-**Strategy decision (step 3):** {{ step_3_result }}
+**Functional inventory:** {{ inventory_result }}
+**Strategy decision:** {{ decision_result }}
 **User task:** {{ task }}
 
 ## What to do

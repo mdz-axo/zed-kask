@@ -1,34 +1,29 @@
 {# goal: Map qualitative brand identity inputs (industry, audience, values) to formal logo design parameters (style, type, shape, palette, density) using strategic brand reasoning. From Martin's Minimum Viable Brand. #}
-{# Legacy pre-convention metadata (template_type: KnowAct, hand-rolled parameter list) retained for provenance only — the renderer never parses this shape, and unwrapped it leaked verbatim into the rendered prompt (2026-09-27 registry sweep).
-# Logo Discovery — Brand-to-Visual Mapping (KnowAct)
-# Maps qualitative brand attributes to formal design parameters.
-# From Made By James (Martin) Minimum Viable Brand methodology.
-
 [inference]
-template_type: KnowAct
-name: media_logo_discovery_map
-version: "1.0.0"
-description: "Map brand identity inputs to formal logo design parameters using strategic reasoning"
-model_type: default
-parameters:
-  - name: name
-    type: string
-    required: true
-    description: "Business or group name"
-  - name: industry
-    type: string
-    required: true
-    description: "Industry context"
-  - name: audience
-    type: string
-    required: false
-    description: "Target audience description"
-  - name: values
-    type: string
-    required: false
-    description: "Core brand values as comma-separated list"
+contract:
+  input:
+    name:
+      type: string
+      non_blank: true
+    industry:
+      type: string
+      non_blank: true
+    audience:
+      type: string
+      required: false
+    values:
+      type: string
+      required: false
+  output:
+    style: string
+    logo_type: string
+    dominant_shape: string
+    typography_class: string
+    palette_direction: string
+    palette_hex: array
+    density: string
+    rationale: string
 ---
-#}
 You are a brand strategist. Given a business identity brief, recommend formal logo design parameters.
 
 Business: {{ name }}

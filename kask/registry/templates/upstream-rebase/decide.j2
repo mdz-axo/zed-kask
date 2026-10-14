@@ -3,9 +3,9 @@
 contract:
   input:
     target_file: string
-    step_0_records: object|null
-    step_1_result: object
-    step_2_result: object
+    survival_records: object|null
+    assessment_result: object
+    inventory_result: object
     task: string
   output:
     seam_decisions: array
@@ -25,17 +25,17 @@ sufficient.
 ## Context
 
 **Target file:** `{{ target_file }}`
-**Assessment (step 1):** {{ step_1_result }}
-**Functional inventory (step 2):** {{ step_2_result }}
+**Assessment:** {{ assessment_result }}
+**Functional inventory:** {{ inventory_result }}
 **User task:** {{ task }}
 
 ## Seam survival (before G1)
 
-{% if step_0_records %}
+{% if survival_records %}
 **Step 0's survival records (authoritative):**
 
 ```json
-{{ step_0_records | tojson }}
+{{ survival_records | tojson }}
 ```
 
 For each D-seam the file carries, reconcile against the record: confirm the

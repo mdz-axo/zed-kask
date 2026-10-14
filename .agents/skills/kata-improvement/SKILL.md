@@ -5,7 +5,7 @@ description: "4-step Improvement Kata templates for scientific capability develo
 
 # Kata Improvement
 
-4-step Improvement Kata templates for scientific capability development. Step 1: Understand Direction. Step 2: Grasp Current Condition. Step 3: Establish Target Condition. Step 4: Experiment (PDCA). Each step references prior outputs. The cycle closes with before/after measurement. Includes beginner_mode drills (folded from kata-starter): Five Questions, PDCA Cycle, and Observation Drill for foundational scientific thinking habit-building; agents graduate when automaticity exceeds 0.5 across two consecutive sessions on the same drill. The Coaching Kata (folded from kata-coaching, 2026-09-28) is the coach role that runs the five questions against a learner's storyboard — the same kata seen from the other chair.
+4-step Improvement Kata templates for scientific capability development. Step 1: Understand Direction. Step 2: Grasp Current Condition. Step 3: Establish Target Condition. Step 4: Experiment (PDCA). Each step references prior outputs. The cycle closes with before/after measurement. Includes beginner_mode drills (folded from kata-starter): Observation Drill and PDCA Cycle for foundational scientific thinking habit-building; agents graduate when automaticity exceeds 0.5 across two consecutive sessions on both drills. The Coaching Kata (folded from kata-coaching, 2026-09-28) is the coach role that runs the five questions against a learner's storyboard — the same kata seen from the other chair.
 
 
 ## Reference model
@@ -23,11 +23,15 @@ Rother, *Toyota Kata* (2010) and the Lean Enterprise Institute lexicon — `onto
 - When designing rapid PDCA experiments with testable predictions toward the target.
 - When coaching a human or agent learner through their kata with the five coach questions (Coaching Kata) — the learner's storyboard is the input, the learner's own words are the output.
 - When computing a convergence metric from the step-4 Check forms to evaluate PDCA cycle coherence.
-- When an agent needs to build foundational scientific thinking habits through beginner_mode drills (folded from kata-starter): Five Questions, PDCA Cycle on a trivial process, or Observation Drill separating facts (IS) from interpretations (OUGHT).
+- When an agent needs to build foundational scientific thinking habits through beginner_mode drills (folded from kata-starter): Observation Drill separating facts (IS) from interpretations (OUGHT), or PDCA Cycle on a trivial process.
 
 ## Beginner-mode drills
 
-The three drills build the kata's foundational habits before the four-step practice. Selection: render `kata-improvement/beginner-selector` with the learner's practice history; it routes to the appropriate drill (Observation Drill for a first session or >7 days since last practice; a drill scoring below 0.3 automaticity is targeted; balanced scores rotate through all three). Each drill runs one session, produces its declared output, and self-assesses automaticity on a 0–1 scale (the learner's own honest rating, not a test score). Graduate when automaticity exceeds 0.5 across two consecutive sessions on the same drill.
+The two surviving starter drills (`kata-improvement/beginner-observation-drill` and `kata-improvement/beginner-pdca-cycle`) build the kata's foundational habits before the four-step practice. Selection and graduation are deterministic (D) via `lisp_eval` gate **`KI-1`**:
+- form: `(cond ((or (= history_count 0) (>= days_since_last 7) (< obs_auto 0.3)) "beginner-observation-drill") ((< pdca_auto 0.3) "beginner-pdca-cycle") ((and (> obs_auto_prev 0.5) (> obs_auto 0.5) (> pdca_auto_prev 0.5) (> pdca_auto 0.5)) "graduated") ((<= obs_auto pdca_auto) "beginner-observation-drill") (t "beginner-pdca-cycle"))`
+- env: `{ "history_count": <prior drill sessions>, "days_since_last": <days since last drill>, "obs_auto": <latest observation-drill automaticity>, "obs_auto_prev": <prior observation-drill automaticity>, "pdca_auto": <latest pdca-cycle automaticity>, "pdca_auto_prev": <prior pdca-cycle automaticity> }`
+
+Render the selected drill (`kata-improvement/beginner-observation-drill` or `kata-improvement/beginner-pdca-cycle`) with `{ "context": <object>, "learner_bot": <string>, "previous_steps": <array|null> }`. Each drill runs one session, produces its declared output, and self-assesses automaticity on a 0–1 scale (P — the learner's own honest rating, not a test score). Graduate when automaticity exceeds 0.5 across two consecutive sessions on both drills (`KI-1` returns `"graduated"`).
 
 ## When NOT to Use
 
@@ -38,6 +42,7 @@ The three drills build the kata's foundational habits before the four-step pract
 
 ### improvement-step1-direction
 
+Render `kata-improvement/improvement-step1-direction` with `context`, `learner_bot`, `previous_steps`, `prior_kanban`, and `prior_boards`:
 1. Articulate the direction before measuring progress toward it.
 2. Answer what the challenge is with specific, measurable statements.
 3. Describe what excellent performance looks like in measurable terms.
@@ -47,6 +52,7 @@ The three drills build the kata's foundational habits before the four-step pract
 
 ### improvement-step2-current
 
+Render `kata-improvement/improvement-step2-current` with `context`, `learner_bot`, and `previous_steps`:
 1. Go and see to gather the facts; do not assume—measure.
 2. Collect real data to describe the actual performance now.
 3. List every metric describing the current state with method and source.
@@ -57,6 +63,7 @@ The three drills build the kata's foundational habits before the four-step pract
 
 ### improvement-step3-target
 
+Render `kata-improvement/improvement-step3-target` with `context`, `learner_bot`, and `previous_steps`:
 1. Declare a specific, measurable target condition reachable within this session's PDCA cycles (at most the skill's iteration bound), beyond your current knowledge threshold. The Lean Enterprise Institute's human practice sets the target about two weeks out; an agent practices the kata within one session (operator ruling 2026-09-24), so the horizon is counted in bounded experiments, not calendar time.
 2. Identify every obstacle between current and target conditions to create an Obstacles Parking Lot.
 3. Select the ONE most consequential obstacle to address first.
@@ -65,6 +72,7 @@ The three drills build the kata's foundational habits before the four-step pract
 
 ### improvement-step4-experiment
 
+Render `kata-improvement/improvement-step4-experiment` with `context`, `learner_bot`, and `previous_steps`:
 1. Design a PDCA experiment against ONE obstacle.
 2. Plan your next step: make it specific, actionable, and one change at a time.
 3. Plan your expectation: state your prediction and why (the theory you're testing).
@@ -83,38 +91,45 @@ The three drills build the kata's foundational habits before the four-step pract
 - **Learner:** named by `learner_bot` — the operator, or a local agent reached with `swarm_delegate_local`. The learner's own words come back as `learner_answer`. Reading the learner's storyboard is context for the coach's questions, not a substitute for the learner answering.
 - **Initial condition:** the learner's current storyboard (step 1–4 outputs above: target, `metric_before`, obstacles, last experiment and its result).
 - **Target condition:** after Q5, the learner has stated in their own words a measurable target, a data-grounded actual condition, one focus obstacle, a next step with a testable prediction, and a committed check point — each coach assessment names what the template emits: Q1 `clear`, Q2 `data-driven`, Q3 `focused`, Q4 `testable`, Q5 `tight-loop`.
-- **Loop:** each question runs ASK (render without `learner_answer`) then ASSESS (render with it). A non-passing assessment asks one follow-up (max 2 per question); still failing, record the gap and move on — the gap is coaching data, not a reason to answer for the learner.
-- **D/P:** the questions are fixed text (D). The learner's answers are the learner's. The coach's assessments are P, critiqued by the next session's observed result: an assessment of `testable` whose prediction could not be checked is a coaching miss to record.
+- **Loop:** for each question, emit the fixed coach question directly as D text (no ASK template render), wait for the learner's answer (`learner_answer`), then run Phase ASSESS by rendering the coaching template with `{ "context": <object>, "learner_bot": <string>, "previous_steps": <array|null>, "learner_answer": <non-empty string> }`. A non-passing assessment asks one follow-up (max 2 per question); still failing, record the gap and move on — the gap is coaching data, not a reason to answer for the learner.
+- **Coaching gate (`KI-2`, D):** after Q5, verify the follow-up budget (`<= 2` per question) and the five assessment criteria via `lisp_eval`:
+  - form: `(and (<= q1_followups 2) (<= q2_followups 2) (<= q3_followups 2) (<= q4_followups 2) (<= q5_followups 2) (string= q1_assessment "clear") (string= q2_assessment "data-driven") (string= q3_assessment "focused") (string= q4_assessment "testable") (string= q5_assessment "tight-loop"))`
+  - env: `{ "q1_followups": <0..2>, "q2_followups": <0..2>, "q3_followups": <0..2>, "q4_followups": <0..2>, "q5_followups": <0..2>, "q1_assessment": <string>, "q2_assessment": <string>, "q3_assessment": <string>, "q4_assessment": <string>, "q5_assessment": <string> }`
+- **D/P:** the five questions are fixed text emitted directly (D):
+  1. `"What is your target condition?"`
+  2. `"What is the actual condition now?"`
+  3. `"What obstacles do you see preventing you from reaching the target? Which ONE are you addressing now?"`
+  4. `"What is your next step? What do you expect?"`
+  5. `"How quickly can we go and see what we learned?"`
+  The learner's answers are the learner's. The coach's assessments are P, critiqued by the next session's observed result: an assessment of `testable` whose prediction could not be checked is a coaching miss to record.
 
-1. **Q1 — target** (`kata-improvement/coaching-q1-target`): ask what the target condition is; the learner states the measurable target, experiment bound and success criteria, never the coach. If vague, ask for specific, measurable, verifiable.
-2. **Q2 — actual** (`coaching-q2-actual`): ask what the actual condition is now; probe whether statements rest on measured data or assumptions; challenge interpretations stated as facts by asking what was observed.
-3. **Q3 — obstacles** (`coaching-q3-obstacles`): ask what obstacles block the target and which single one is being addressed now; require the learner to justify the priority; if several are listed unprioritized, force the selection of one.
-4. **Q4 — experiment** (`coaching-q4-experiment`): ask the next step and the expected result; require exactly what will be done and what is predicted; an action without a prediction is sent back for one.
-5. **Q5 — learn** (`coaching-q5-learn`): ask how quickly the learner can go and see; require the check point, the metric, and what would prove the theory wrong.
+1. **Q1 — target** (`kata-improvement/coaching-q1-target`): emit `"What is your target condition?"` directly (D); once `learner_answer` is supplied, render `kata-improvement/coaching-q1-target` with `context`, `learner_bot`, `previous_steps`, and `learner_answer` to assess whether the learner stated the measurable target, experiment bound and success criteria (`clear` vs `vague`).
+2. **Q2 — actual** (`kata-improvement/coaching-q2-actual`): emit `"What is the actual condition now?"` directly (D); once `learner_answer` is supplied, render `kata-improvement/coaching-q2-actual` with `context`, `learner_bot`, `previous_steps`, and `learner_answer` to assess whether statements rest on measured data or assumptions (`data-driven` vs `assumption-based`).
+3. **Q3 — obstacles** (`kata-improvement/coaching-q3-obstacles`): emit `"What obstacles do you see preventing you from reaching the target? Which ONE are you addressing now?"` directly (D); once `learner_answer` is supplied, render `kata-improvement/coaching-q3-obstacles` with `context`, `learner_bot`, `previous_steps`, and `learner_answer` to assess whether a single priority obstacle is chosen (`focused` vs `scattered`).
+4. **Q4 — experiment** (`kata-improvement/coaching-q4-experiment`): emit `"What is your next step? What do you expect?"` directly (D); once `learner_answer` is supplied, render `kata-improvement/coaching-q4-experiment` with `context`, `learner_bot`, `previous_steps`, and `learner_answer` to assess whether the action carries a testable prediction (`testable` vs `untestable`).
+5. **Q5 — learn** (`kata-improvement/coaching-q5-learn`): emit `"How quickly can we go and see what we learned?"` directly (D); once `learner_answer` is supplied, render `kata-improvement/coaching-q5-learn` with `context`, `learner_bot`, `previous_steps`, and `learner_answer` to assess the committed check point, metric, and falsifier (`tight-loop` vs `open-loop`).
 
 ## Registry Templates
 
 | Template | Purpose |
 |----------|---------|
-| `beginner-selector.j2` | Select appropriate starter drill based on practice history and automaticity. If no history, start with Observation Drill. If automaticity is low in a specific drill, target that drill. If 7+ days since last practice, restart with Observation Drill. |
-| `beginner-five-questions.j2` | Five Questions Drill — exercise asking the 5 coaching questions in order on a trivial process (making toast, brewing coffee). |
 | `beginner-pdca-cycle.j2` | PDCA Cycle Drill — practice Plan-Do-Check-Act on a trivial, measurable process. |
 | `beginner-observation-drill.j2` | Observation Drill — practice separating observed facts (IS) from interpretations (OUGHT). |
-| `coaching-q1-target.j2` | Coaching Kata Q1 — What is the Target Condition? Ground the learner in their goal. |
-| `coaching-q2-actual.j2` | Coaching Kata Q2 — What is the Actual Condition now? Ground the learner in data. |
-| `coaching-q3-obstacles.j2` | Coaching Kata Q3 — What obstacles? Which ONE now? Force prioritization. |
-| `coaching-q4-experiment.j2` | Coaching Kata Q4 — Next step? Expected result? Drive action with a prediction. |
-| `coaching-q5-learn.j2` | Coaching Kata Q5 — How quickly can we go and see? Close the feedback loop. |
+| `coaching-q1-target.j2` | Coaching Kata Q1 (ASSESS) — assess the learner's Target Condition answer (`clear` vs `vague`). |
+| `coaching-q2-actual.j2` | Coaching Kata Q2 (ASSESS) — assess the learner's Actual Condition answer (`data-driven` vs `assumption-based`). |
+| `coaching-q3-obstacles.j2` | Coaching Kata Q3 (ASSESS) — assess the learner's Obstacles prioritization (`focused` vs `scattered`). |
+| `coaching-q4-experiment.j2` | Coaching Kata Q4 (ASSESS) — assess the learner's Next Step and expected result (`testable` vs `untestable`). |
+| `coaching-q5-learn.j2` | Coaching Kata Q5 (ASSESS) — assess the learner's committed check point (`tight-loop` vs `open-loop`). |
 | `improvement-step1-direction.j2` | Step 1 of the Improvement Kata — understand the strategic direction and challenge from the level above. |
 | `improvement-step2-current.j2` | Step 2 of the Improvement Kata — grasp the current condition by gathering facts and data to establish a baseline. |
 | `improvement-step3-target.j2` | Step 3 of the Improvement Kata — establish a measurable next target condition bounded in experiments, not calendar time. |
 | `improvement-step4-experiment.j2` | Step 4 of the Improvement Kata — define next experiment with testable predictions toward the target. |
 
-To render a template, call the `render_template` tool with the template ref (e.g., `kata-improvement/beginner-selector`) and a context object with the required variables.
+To render a template, call the `render_template` tool with the template ref (e.g., `kata-improvement/beginner-observation-drill`) and a context object with the required variables.
 
-Template context variables (from each template's [inference] contract — the 13 templates share a uniform shape):
+Template context variables (from each template's [inference] contract — the 11 templates share a uniform shape):
 - All templates: `context` (object), `learner_bot` (string), `previous_steps` (array|null)
-- Coaching templates (q1–q5) additionally: `learner_answer` (string|null — present for the ASSESS render, absent for the ASK render)
+- Coaching templates (q1–q5) additionally: `learner_answer` (string — required for the ASSESS render; the ASK phase emits fixed D question text directly)
 - `improvement-step1-direction.j2` additionally: `prior_kanban` (object|null), `prior_boards` (object|null)
 
 ## Regression case
@@ -125,10 +140,8 @@ gap-to-target `(- metrics_target metric_after)` = 3 and improvement
 `(- metric_after metric_before)` = 2. Verify the gap-to-target is 0 when
 the target is met (metric_after = metrics_target) and the improvement is
 negative when the metric regressed (metric_after < metric_before).
-Render one coaching template (e.g., `kata-improvement/coaching-q1-target`)
-with a contract-conformant context — the ASK render (no `learner_answer`)
-and the ASSESS render (with it) both execute. All receipts through the
-live tool, re-executed 2026-09-30 (batch-9 re-audit).
+Run `KI-1` with `{ "history_count": 2, "days_since_last": 2, "obs_auto": 0.6, "obs_auto_prev": 0.55, "pdca_auto": 0.4, "pdca_auto_prev": 0.35 }` → `"beginner-pdca-cycle"`, and `KI-2` with `{ "q1_followups": 1, "q2_followups": 0, "q3_followups": 2, "q4_followups": 1, "q5_followups": 0, "q1_assessment": "clear", "q2_assessment": "data-driven", "q3_assessment": "focused", "q4_assessment": "testable", "q5_assessment": "tight-loop" }` → `true`.
+Render `kata-improvement/coaching-q1-target` with a contract-conformant context including a non-empty `learner_answer` (`{ "context": {}, "learner_bot": "agent-a", "previous_steps": [], "learner_answer": "Reach 95% pass rate within 3 experiments, measured by the test runner." }`) to verify the ASSESS render executes.
 
 ## Constraints
 

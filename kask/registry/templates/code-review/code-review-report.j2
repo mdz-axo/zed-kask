@@ -58,17 +58,11 @@ is the separate, user-gated implement phase.
 predicted_findings: {{ predicted_findings | default(0) }}
 predicted_blockers: {{ predicted_blockers | default(0) }}
 
-## Step 0 — Reconcile the prediction (D)
+## Step 0 — Reconcile the prediction and compute counts/verdict (`CR-2`, D)
 
-The perspectives step 0 recorded `predicted_findings` / `predicted_blockers`
-before detection. Reconcile them against the found counts:
-- `found_findings` = adjudicated findings + rejected findings (all detected)
-- `found_blockers` = severity_counts.blockers
+Before rendering or finalizing the report, the agent runs `CR-2` `lisp_eval` (D) over `adjudicated_findings`, `rejected_findings`, `prior_blockers`, `predicted_findings`, `predicted_blockers`, `open_blockers`, and `health_assessment` (`"improves" | "regresses" | "neutral"`) to deterministically compute `severity_counts`, `blocker_delta`, the prediction gap `(list (- found_findings predicted_findings) (- found_blockers predicted_blockers))`, and `verdict` (`Approve | Request changes | Comment`).
 
-Compute the gap with `lisp_eval` (D):
-`(list (- found_findings predicted_findings) (- found_blockers predicted_blockers))`
-
-Report all four numbers plus the gap in `review.prediction_reconciliation`.
+Report all four prediction numbers plus the gap in `review.prediction_reconciliation`.
 A gap is not a defect; an unreported gap is — it is the only signal that the
 reviewer's model of the change was wrong.
 

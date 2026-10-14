@@ -9,7 +9,6 @@ contract:
   output:
     change_model: object
     scope_summary: string
-    size_class: string
     critical_paths: array
     focus_axes: array
     machine_checks: object
@@ -49,8 +48,6 @@ This is iteration N+1. The previous pass produced these signals; consume them.
   the prior pass already exhausted it (state so explicitly if so).
 - **lessons_learned**: distill into 1-3 scope adjustments (e.g., a recurring
   defect class that needs deeper coverage this pass).
-- **blockers**: the prior blocker count — adjudicate will compute blocker_delta
-  against this; record it in change_model for downstream use.
 {% else %}
 ## Prior Review Feedback
 No prior review — this is a first pass. Scope from scratch.
@@ -84,15 +81,16 @@ size_class "empty", empty critical_paths, and stop. Recover the stated spec
 from the user's task, relevant docs, and history; if it cannot be recovered,
 ask the user rather than inventing intent or issuing a spec-based verdict.
 
-## Step 2 — Fagan change sizing
+## Step 2 — Fagan change sizing (offloaded to `CR-0` `lisp_eval`)
 
-Classify the change size:
+Record the real diff line count (`lines_changed` = insertions + deletions) in `scope_summary`; after this template returns `critical_paths`, the agent derives `size_class` deterministically via `CR-0` `lisp_eval`:
 | size_class | lines changed (real) | guidance |
 |---|---|---|
-| trivial | < ~20 AND non-critical | lightweight review; deep multi-axis pass optional |
-| good | ~100 | reviewable in one sitting |
-| acceptable | ~300 | acceptable if a single logical change |
-| too_large | > ~1000 | request a split BEFORE merging; give a concrete split plan |
+| empty | 0 | empty diff — stop |
+| trivial | < 20 AND no critical_paths | lightweight review; deep multi-axis pass optional |
+| good | <= 100 | reviewable in one sitting |
+| acceptable | <= 1000 (> 100, or < 20 with critical_paths) | acceptable if a single logical change |
+| too_large | > 1000 | request a split BEFORE merging; give a concrete split plan |
 
 Also watch FILE size, not just diff size: a small diff can push an already-
 large file past a healthy boundary (~1000 total lines). Flag files that the
@@ -117,9 +115,6 @@ Describe:
   shared module / cross-crate surfaces?
 - **observed_characteristics**: async, unsafe, trait objects, concurrency,
   FFI, macros — these drive which PERFECT/addyosmani axes deserve emphasis.
-- **prior_blockers**: `prior_review.blockers` if present, else 0 (the
-  scope-side record for the change model; adjudicate computes blocker_delta
-  against `prior_review.blockers` directly — it does not read this field).
 
 ## Step 5 — Resolve focus
 
@@ -161,12 +156,10 @@ Respond with a JSON object:
     "intent_vs_spec": "...",
     "module_boundaries_crossed": ["..."],
     "observed_characteristics": ["async", "unsafe", "trait_objects", "concurrency", "ffi", "macros"],
-    "prior_blockers": 0,
     "reviewer_is_author": false
   },
   "machine_checks": {"ran": ["..."], "skipped": null, "findings": [{"file": "...", "line": "...", "tool": "...", "message": "..."}]},
-  "scope_summary": "one-line: N files, M lines, size_class, critical paths",
-  "size_class": "trivial | good | acceptable | too_large | empty",
+  "scope_summary": "one-line: N files, M lines, critical paths",
   "critical_paths": [
     {"file": "...", "region": "...", "reason": "auth | payments | data_writes | concurrency | unsafe | ffi | secrets | external_data | load_bearing"}
   ],

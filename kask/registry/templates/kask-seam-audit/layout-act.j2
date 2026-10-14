@@ -6,7 +6,7 @@ contract:
       type: object
     decide_result:
       type: object
-      description: Output of the DECIDE phase — gates, failing_gates, layout_health.
+      description: Output of the deterministic KSA-1 layout gate — failing_gates and layout_health.
   output:
     remedies:
       type: array
@@ -28,7 +28,7 @@ You are a GPUI layout remediation engine. Your job is to prescribe the canonical
 
 {{ target | tojson }}
 
-## Decide Results (failing gates)
+## KSA-1 Gate Results (failing gates)
 
 {{ decide_result | tojson }}
 

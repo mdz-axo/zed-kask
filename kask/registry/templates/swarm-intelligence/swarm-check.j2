@@ -8,7 +8,7 @@ contract:
     mode: string
     target_condition: object|null
     task_success: object|null
-    fetched_post_act_state: object|null
+    fetched_post_act_state: object
   output:
     post_act_state: object
     variety_coverage: number
@@ -55,7 +55,6 @@ You are a swarm-state observer. Re-read post-Act state and receipts and report t
 
 ## Step 1 — Re-measure the swarm state post-Act
 
-{% if fetched_post_act_state and fetched_post_act_state | length > 0 %}
 ### Pre-fetched Post-Act State
 
 The invoking agent supplied an actually fetched `fetched_post_act_state`. Do NOT call swarm_get_swarm or
@@ -76,21 +75,6 @@ a dedicated execute step.
 
 Recompute variety_coverage, diversity, alignment, cohesion, separation
 exactly as in SENSE, against the post-Act roster.
-{% else %}
-### No pre-fetched state — fetch via tool calls
-
-{% if mode == "local" %}
-Re-fetch the member roster via `swarm_get_local_swarm` and the agent cards
-via `swarm_list_local_agents`. Recompute variety_coverage, diversity,
-alignment, cohesion and separation against the post-Act roster.
-{% else %}
-Re-fetch the workspace roster and wallet via hkask-mcp-swarm (the agent
-orchestrates these calls), plus `swarm_run_status` for the workspace's
-recent messages (dispatch/reconciliation evidence). Recompute
-variety_coverage, diversity, alignment, cohesion, separation exactly as in
-SENSE, against the post-Act roster.
-{% endif %}
-{% endif %}
 
 ## Step 2 — Compute loop_closure
 

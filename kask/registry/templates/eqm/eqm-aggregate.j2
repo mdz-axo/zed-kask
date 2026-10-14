@@ -1,4 +1,4 @@
-{# goal: Aggregate per-rationale scores to forecast-level and forecaster-level composites. Apply the asymmetric decision rule: red_flag_screen (high confidence) vs green_flag_endorsement (weak). Compute overconfidence_bias. #}
+{# goal: Aggregate per-rationale scores to forecast-level and forecaster-level composites. Apply the asymmetric decision rule: red_flag_screen (high confidence) vs green_flag_endorsement (weak). #}
 [inference]
 contract:
   input:
@@ -9,7 +9,6 @@ contract:
     forecaster_level_composite: object
     red_flag_screen: array
     green_flag_endorsement: array
-    overconfidence_bias: number
     failing_marker_summary: array
 ---
 {# Phase 3 — AGGREGATE (DO: aggregate scores, apply asymmetric decision rule) #}
@@ -157,7 +156,6 @@ Respond with a JSON object:
       "note": "..."
     }
   ],
-  "overconfidence_bias": 0.25,
   "failing_marker_summary": [
     {
       "forecaster_id": "...",

@@ -51,3 +51,27 @@ uncited or not adjudicated; 0 means clean. Pass it to `final-report` as
 ```
 (begin (define n (lambda (fs adj) (if (= (length fs) 0) 0 (+ (if (or (and (= (length (assoc "file_line" (car fs))) 0) (not (assoc "deferred" (car fs)))) (not (member (assoc "id" (car fs)) adj))) 1 0) (n (cdr fs) adj))))) (n findings adjudicated_ids))
 ```
+
+## KSA-1 — measured-layout 5-gate check
+
+Evaluate the 5 Fagan hard gates deterministically over `layout-sense`'s outputs (`overflow_delta`, `fitts_violations`, `primary_action_visible`, `text_column_residual`, `has_text_column`, `on_grid_spacing`, `action_count`, `action_budget`). Returns `(list all_gates_passed failing_gates)`.
+
+```
+(let ((g1 (and (<= overflow_delta 0) (= (length fitts_violations) 0))) (g2 primary_action_visible) (g3 (or (not has_text_column) (>= text_column_residual 160))) (g4 on_grid_spacing) (g5 (<= action_count action_budget))) (let ((failed (append (if g1 (list) (list "no_overflow")) (append (if g2 (list) (list "primary_action_visible")) (append (if g3 (list) (list "text_column_min_width")) (append (if g4 (list) (list "on_grid_spacing")) (if g5 (list) (list "action_count_budget")))))))) (list (= (length failed) 0) failed)))
+```
+
+## KSA-2 — MCDA weighted score verification
+
+Compute each candidate's weighted score `Σ(score × weight)` deterministically from `scores` (`[s_sec, s_code, s_ui, s_cost]`) and `weights` (`[w_sec, w_code, w_ui, w_cost]`).
+
+```
+(+ (* (nth 0 scores) (nth 0 weights)) (* (nth 1 scores) (nth 1 weights)) (* (nth 2 scores) (nth 2 weights)) (* (nth 3 scores) (nth 3 weights)))
+```
+
+## KSA-3 — final-report track, severity, and defense-layer counts
+
+Compute `findings_per_track`, `findings_per_severity`, and `defense_layer_coverage` deterministically from the three tracks' finding lists (`sec_findings`, `arch_findings`, `ui_findings`) and `missing_layers` instead of asking `final-report.j2` to count them.
+
+```
+(begin (define count-sev (lambda (fs s) (if (is_null fs) 0 (+ (if (string= (assoc "severity" (car fs)) s) 1 0) (count-sev (cdr fs) s))))) (let ((all (append sec_findings (append arch_findings ui_findings)))) (list (list (length sec_findings) (length arch_findings) (length ui_findings)) (list (count-sev all "critical") (count-sev all "high") (count-sev all "medium") (count-sev all "low") (count-sev all "info")) (list (- total_layers (length missing_layers)) (length missing_layers)))))
+```

@@ -7,13 +7,9 @@ contract:
     gorilla_scores: object
   output:
     capability_assessments: object
-    floor_violations: array
-    ceiling_violations: array
-    maturity_blocks: array
-    maintained: array
     rationale: string
 ---
-{# goal: Test the GORILLA 4-dim scores against capability floor, ceiling and maturity-gate limits. Types each GORILLA dimension (Obvious Problem, Invisible Gorilla, Combinatorial Solution, Choke Point) against a capability registry with floor, ceiling, and maturity-gate limits. The GORILLA score (0–100) is the elicited potential; the capability assessment determines whether that score is credible against the company's observed behavior and maturity. #}
+{# goal: Test the GORILLA 4-dim scores against capability floor, ceiling and maturity-gate limits. Types each GORILLA dimension (Obvious Problem, Invisible Gorilla, Combinatorial Solution, Choke Point) against a capability registry with floor, ceiling, and maturity-gate limits. The GORILLA score (0–100) is the elicited potential; the capability assessment determines whether that score is credible against the company's observed behavior and maturity, and lisp_eval (CRD-2) deterministically partitions violations and computes the effective score and verdict. #}
 {# #}
 {# The capability-limit check is self-contained here. It does NOT re-score #}
 {# the dimensions — the gorilla-4dim template already did that. It #}
@@ -179,10 +175,6 @@ Record for completeness.
       "evidence": "specific facts from the Company Board"
     }
   },
-  "floor_violations": ["dimension names with floor violations"],
-  "ceiling_violations": ["dimension names with ceiling violations"],
-  "maturity_blocks": ["dimension names blocked by maturity gates"],
-  "maintained": ["dimension names with no violation"],
   "rationale": "one paragraph summarizing the capability assessment"
 }
 ```

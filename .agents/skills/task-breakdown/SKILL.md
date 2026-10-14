@@ -15,21 +15,14 @@ Decompose work into verifiable vertical slices with acceptance criteria and chec
 
 ## D/P labelling
 
-Decomposition, dependency mapping, and the raw criterion scores are P — the
-producer's judgment, critiqued by the independently checked quality gate. The
-weighted arithmetic is D: the seven-criterion total and `gate_pass` are
-recomputed in `lisp_eval` from the raw scores, never from the model's stated
-total — the gate re-derives every score from the plan itself, and a
-model-supplied `gate_pass` that disagrees with the deterministic result is a
-finding, not authority. Missing or invalid dimensions stop evaluation instead
-of counting as zero.
+Decomposition, dependency mapping, and the raw criterion scores (`gate_scores`) are P — judgment, critiqued by the independent quality gate (`task-breakdown-quality-gate.j2`). Catastrophic-plan short-circuiting (`TB-1` `plan_escalation` over `tasks`) and the weighted-criterion arithmetic (`TB-2` `gate_weighted_total` and `gate_pass` from `gate_scores`) are D (`lisp_eval`), never model-emitted. Missing or invalid dimensions stop evaluation instead of counting as zero.
 
 ## When to Use
 
 - Decompose work into small, verifiable, vertically-sliced tasks with explicit acceptance criteria and checkpoints before any implementation begins.
 - When you need a convergent PDCA loop: gather read-only context and dependency graph, decompose by slicing and writing tasks in one producer, evaluate against weighted criteria, iterate until the plan is stable, then finalize.
 - When implementation order must follow a dependency graph built bottom-up (foundations first) rather than ad-hoc task ordering.
-- When a plan needs an independent quality gate to detect self-assessment bias and compensation masking distinct from the producer-coupled evaluation step.
+- When a plan needs an independent quality gate to detect compensation masking and emit task-addressable refinement directives.
 - When the deliverable is `plan.md` + `todo.md` with PKO process-axis anchors (Procedure, Step, StepVerification, etc.) and DC+BIBO document metadata, plus a Refinement History section making the PDCA loop visible.
 - When the installed `skill_catalog` is available and each task should carry a `skill_match_query` for skill-discovery (route) consumption.
 
@@ -63,30 +56,23 @@ of counting as zero.
 7. Group tasks into phases (Foundation, Core Features, Polish) and place checkpoints between phases; a checkpoint verifies all tests pass, the application builds, the core user flow works end-to-end, and the human has reviewed before proceeding.
 8. When parallelizing: safely parallelize independent feature slices; keep migrations, shared state changes, and dependency chains sequential; coordinate features that share a trait contract by defining the contract first.
 9. When `skill_catalog` is provided: include a `skill_match_query` field per task — a natural-language capability description consumed by skill-discovery (route). Do NOT match skills yourself; just describe the capability need. Omit the field when `skill_catalog` is absent.
-10. Algedonic escalation (VSM S1→S5 short-circuit): after producing the tasks array, check for catastrophic conditions and emit a `plan_escalation` entry IN ADDITION to the normal output — `all_tasks_xl`, `no_dependencies_multi_task`, `no_acceptance_criteria`, or `empty_decomposition`. Each entry carries `reason`, `description`, `severity: "critical"`, and `recommended_action`. If none are met, emit `plan_escalation: []`.
-11. Produce a JSON object with `slices`, `tasks`, `phases`, `checkpoints`, and `plan_escalation`.
-
-### task-breakdown-evaluate
-
-1. Score the task breakdown against the seven criteria in `task-breakdown-evaluate.j2`: target-condition coverage (0.20), task sizing (0.20), vertical-slice integrity (0.15), acceptance-criteria specificity (0.15), dependency ordering (0.10), checkpoint presence (0.10), red-flag absence (0.10). These local weights sum to 1; the published Improvement Kata does not prescribe them.
-2. Score each criterion from 0 (perfect) to 1 (severely deficient); be honest — inflated scores produce worse plans.
-3. Task-count awareness: in the sizing criterion, add +0.10 if task count > 20 (too granular) or < 3 (too coarse), clamped so the sizing score stays in [0,1]; no adjustment in the 3–20 healthy range. This is in addition to existing XL/L checks.
-4. Use the `context_summary` (Good Regulator) to check project-specific conventions — testing patterns, file-path consistency with module structure, and crate dependency ordering — not just generic criteria.
-5. Check for red flags: implementation begins without a written task list; a task says "implement the feature" without acceptance criteria; no verification steps; all tasks XL-sized; no checkpoints; dependency order not considered; "and" in a task title; a task touches more than ~5 files without stated justification (cross-crate Rust features legitimately touch 5–7 files with justification).
-6. After the template returns all seven raw scores, require each to be numeric in [0,1] and call `lisp_eval` to compute `weighted_total` from those scores, never from the model's stated total: `(+ (* 0.20 target_condition_coverage) (* 0.20 task_sizing) (* 0.15 vertical_slice_integrity) (* 0.15 ac_specificity) (* 0.10 dependency_ordering) (* 0.10 checkpoint_presence) (* 0.10 red_flag_absence))`. Missing or invalid dimensions stop evaluation; compare the template's reported total and surface a mismatch rather than trusting it.
-7. For each criterion scored above 0.00, emit a specific, actionable, task-addressable refinement directive that names the criterion, states what is wrong, and describes the expected fix; do not emit directives for criteria scored at 0.00.
-8. Produce a JSON object with `scores`, `weighted_total`, `refinement_directives`, and `red_flags`.
+10. Produce a JSON object with `slices`, `tasks`, `phases`, and `checkpoints`.
+11. **Algedonic escalation (`TB-1`, D — `lisp_eval`, no template):** after `task-breakdown-decompose.j2` returns `tasks`, run `lisp_eval` to check for catastrophic plan conditions (`empty_decomposition`, `all_tasks_xl`, `no_dependencies_multi_task`, `no_acceptance_criteria`) before invoking the quality gate:
+    - form: `(begin (define all-xl (lambda (ts) (if (is_null ts) t (and (string= (assoc "estimated_scope" (car ts)) "XL") (all-xl (cdr ts)))))) (define any-deps (lambda (ts) (if (is_null ts) nil (let ((d (assoc "dependencies" (car ts)))) (or (and (listp d) (> (length d) 0) (not (string= (car d) "None"))) (any-deps (cdr ts))))))) (define any-acs (lambda (ts) (if (is_null ts) nil (let ((a (assoc "acceptance_criteria" (car ts)))) (or (and (listp a) (> (length a) 0)) (any-acs (cdr ts))))))) (if (is_null tasks) (list "empty_decomposition") (append (if (all-xl tasks) (list "all_tasks_xl") (quote ())) (append (if (and (> (length tasks) 1) (not (any-deps tasks))) (list "no_dependencies_multi_task") (quote ())) (if (not (any-acs tasks)) (list "no_acceptance_criteria") (quote ()))))))`
+    - env: `{ "tasks": <tasks array from decompose> }`. If the returned list is non-empty, halt and surface the catastrophic escalation reasons to the operator before running the quality gate.
 
 ### task-breakdown-quality-gate
 
-1. Evaluate the plan independently — do NOT trust the producer's self-assessment; `evaluation_result` is provided for bias detection only.
-2. Use the `context_summary` (Good Regulator) to check project-specific conventions independently of the producer's evaluation.
-3. Re-derive every score from the plan itself using the same seven weighted criteria. Recompute `gate_weighted_total` via `lisp_eval` with the step-6 form above, binding the *gate's* independently assigned scores; do not reuse the producer's numbers.
-4. Score each criterion 0 (perfect) to 1 (severely deficient), honestly.
-5. Flag any dimension where your score diverges from the producer's by more than 0.2 as a `bias_delta` finding.
-6. Detect compensation masking: if any single criterion exceeds 0.30, set `gate_pass` to false regardless of the weighted total.
-7. Recompute `gate_pass` with `lisp_eval` from the gate's raw scores and computed total: `(and (<= gate_weighted_total 0.15) (<= (max target_condition_coverage task_sizing vertical_slice_integrity ac_specificity dependency_ordering checkpoint_presence red_flag_absence) 0.30))`. If any score is missing or invalid, stop instead of treating it as zero; a model-supplied `gate_pass` that disagrees with the deterministic result is a finding, not authority.
-8. Produce a JSON object with `gate_scores`, `gate_weighted_total`, `gate_pass`, and `gate_findings`.
+1. Evaluate the plan independently using `task-breakdown-quality-gate.j2` against the seven weighted criteria: target-condition coverage (0.20), task sizing (0.20), vertical-slice integrity (0.15), acceptance-criteria specificity (0.15), dependency ordering (0.10), checkpoint presence (0.10), red-flag absence (0.10). These local weights sum to 1; the published Improvement Kata does not prescribe them.
+2. Score each criterion from 0 (perfect) to 1 (severely deficient), honestly — inflated scores produce worse plans.
+3. Task-count awareness: in the `task_sizing` criterion, add +0.10 if task count > 20 (too granular) or < 3 (too coarse), clamped so the sizing score stays in [0,1]; no adjustment in the 3–20 healthy range. This is in addition to existing XL/L checks.
+4. Use the `context_summary` (Good Regulator) to check project-specific conventions — testing patterns, file-path consistency with module structure, and crate dependency ordering — not just generic criteria. Inspect `checkpoints` (`{after_task_ids, label, checks}`) and `phases` directly.
+5. Check for red flags: implementation begins without a written task list; a task says "implement the feature" without acceptance criteria; no verification steps; all tasks XL-sized; no checkpoints; dependency order not considered; "and" in a task title; a task touches more than ~5 files without stated justification (cross-crate Rust features legitimately touch 5–7 files with justification); a task does not trace to the target condition (orphan task).
+6. For each criterion scored above 0.00, emit a specific, actionable, task-addressable refinement directive in `refinement_directives` (`{criterion, what_is_wrong, expected_fix}`); do not emit directives for criteria scored at 0.00.
+7. Produce a JSON object from the template with `gate_scores`, `gate_findings`, `refinement_directives`, and `red_flags`.
+8. **Deterministic gate computation (`TB-2`, D — `lisp_eval`):** after the template returns all seven raw scores in `gate_scores`, require each to be numeric in [0,1] and compute `gate_weighted_total` and `gate_pass` (including the 0.30 compensation-masking ceiling) in one `lisp_eval` call:
+   - form: `(let ((total (+ (* 0.20 target_condition_coverage) (* 0.20 task_sizing) (* 0.15 vertical_slice_integrity) (* 0.15 ac_specificity) (* 0.10 dependency_ordering) (* 0.10 checkpoint_presence) (* 0.10 red_flag_absence))) (worst (max target_condition_coverage task_sizing vertical_slice_integrity ac_specificity dependency_ordering checkpoint_presence red_flag_absence))) (list total (and (<= total 0.15) (<= worst 0.30))))`
+   - env: `{ "target_condition_coverage": <score>, "task_sizing": <score>, "vertical_slice_integrity": <score>, "ac_specificity": <score>, "dependency_ordering": <score>, "checkpoint_presence": <score>, "red_flag_absence": <score> }`. If any score is missing or invalid, stop instead of treating it as zero. Assemble `gate_result` as `{gate_scores, gate_weighted_total, gate_pass, gate_findings, refinement_directives, red_flags}` for downstream consumption.
 
 ### task-breakdown-write-plan
 
@@ -103,19 +89,18 @@ of counting as zero.
 
 After the quality gate, before write-plan:
 
-1. If the gate's `gate_weighted_total` exceeds 0.15 and refinement directives exist, loop back to DECOMPOSE with directives as focused, task-addressable improvement targets. The gate's total is the convergence metric — not the producer-coupled evaluate step's total.
+1. If `TB-2`'s `gate_weighted_total` exceeds 0.15 (or `gate_pass` is false) and `refinement_directives` exist, loop back to DECOMPOSE with directives as focused, task-addressable improvement targets.
 2. `refinement_directives` are explicitly routed back to decompose (mechanical and documented).
 3. Carry `prior_gate_weighted_total` forward so you can detect a stable-but-unconverged plan. Each iteration narrows the gap.
-4. On convergence (gate_weighted_total <= 0.15 and gate_pass true), proceed to write-plan.
+4. On convergence (`gate_weighted_total <= 0.15` and `gate_pass` true), proceed to write-plan with `gate_result`.
 
 ## Registry Templates
 
 | Template | Purpose |
 |----------|---------|
 | `task-breakdown-plan.j2` | PLAN phase — read-only mode. Grasp the current condition relative to the target condition: identify what exists now (patterns, conventions, existing modules), build the dependency graph, and note risks/unknowns. Anchored on target_condition (mapped from {{ task }}). Validates empty target_condition to prevent silent convergence on an empty plan. No code is written. Produces context summary, dependency graph, and risk register. |
-| `task-breakdown-decompose.j2` | DO phase — single producer: decompose the target condition into component target conditions (sub-tasks) AND write each task in one step. Each task is a sub-target with acceptance criteria framed as "what must be true for this sub-target to be achieved." emits plan_escalation for catastrophic plans (all XL, no deps in multi-task plan, no ACs, empty decomposition) as algedonic short-circuit. Each task carries slice_id/feature_path, acceptance criteria, verification, dependencies, files, scope (XS/S/M/L — no XL), and skill_match_query (a natural-language capability description consumed by skill-discovery (route) when the skill_catalog input is provided). The PDCA loop re-enters here so refinement directives are task-addressable and re-slicing + re-writing happen together. |
-| `task-breakdown-evaluate.j2` | CHECK phase — score the plan against seven weighted criteria: target condition coverage (0.20 — do the tasks collectively achieve the target?), task sizing (0.20, now includes task-count awareness — >20 or <3 tasks penalized), vertical-slice integrity (0.15), acceptance-criteria specificity (0.15), dependency ordering (0.10), checkpoint presence (0.10), red-flag absence (0.10). Receives context_summary for project-specific convention checking (Good Regulator). Emits specific refinement_directives for criteria above threshold — directives are task-addressable (consumed by decompose). |
-| `task-breakdown-quality-gate.j2` | Independent quality gate — evaluates the plan WITHOUT self-assessment bias, distinct from the producer-coupled evaluate step. Scores seven criteria including target_condition_coverage. Receives context_summary for independent project-specific convention checking. Scores the seven criteria independently, flags compensation masking, and detects bias deltas vs the producer's self-assessment. |
+| `task-breakdown-decompose.j2` | DO phase — single producer: decompose the target condition into component target conditions (sub-tasks) AND write each task in one step. Each task is a sub-target with acceptance criteria framed as "what must be true for this sub-target to be achieved." Each task carries slice_id/feature_path, acceptance criteria, verification, dependencies, files, scope (XS/S/M/L — no XL), and skill_match_query (a natural-language capability description consumed by skill-discovery (route) when the skill_catalog input is provided). Catastrophic plan conditions are checked deterministically by `TB-1` `lisp_eval`. The PDCA loop re-enters here so refinement directives are task-addressable and re-slicing + re-writing happen together. |
+| `task-breakdown-quality-gate.j2` | Independent CHECK quality gate — scores the plan against seven weighted criteria: target condition coverage (0.20), task sizing (0.20, including task-count awareness for >20 or <3 tasks), vertical-slice integrity (0.15), acceptance-criteria specificity (0.15), dependency ordering (0.10), checkpoint presence (0.10), red-flag absence (0.10). Receives context_summary for project-specific convention checking (Good Regulator) and emits gate_findings, task-addressable refinement_directives, and red_flags; `TB-2` `lisp_eval` computes `gate_weighted_total` and `gate_pass`. |
 | `task-breakdown-write-plan.j2` | ACT phase — finalize the plan into plan.md (target condition, overview, architecture decisions, phased task list with checkpoints, risks, open questions) and todo.md (checklist-style task list), with a pko_anchors map giving each element a PKO process-axis identity. Includes the target condition at the top of plan.md so the plan is always anchored to what it's achieving. Includes Refinement History section in plan.md documenting what was refined across PDCA iterations, making the loop visible in the artifact. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `task-breakdown/task-breakdown-plan`) and a context object with the required variables.
@@ -123,25 +108,21 @@ To render a template, call the `render_template` tool with the template ref (e.g
 Template context variables (from each template's [inference] contract):
 - `task-breakdown-plan.j2`: `target_condition`, `crate_scope`, `code_context`, `task`
 - `task-breakdown-decompose.j2`: `context_summary`, `dependency_graph`, `risks`, `refinement_directives`, `parallelization_hint`, `skill_catalog`
-- `task-breakdown-evaluate.j2`: `tasks`, `dependency_graph`, `slices`, `context_summary`, `target_condition`, `phases`, `checkpoints`
-- `task-breakdown-quality-gate.j2`: `tasks`, `slices`, `dependency_graph`, `evaluation_result`, `context_summary`, `target_condition`, `phases`, `checkpoints`
-- `task-breakdown-write-plan.j2`: `context_summary`, `target_condition`, `dependency_graph`, `tasks`, `slices`, `risks`, `evaluation_result`, `refinement_directives`, `phases`, `checkpoints`
+- `task-breakdown-quality-gate.j2`: `tasks`, `slices`, `dependency_graph`, `context_summary`, `target_condition`, `phases`, `checkpoints`
+- `task-breakdown-write-plan.j2`: `context_summary`, `target_condition`, `dependency_graph`, `tasks`, `slices`, `risks`, `gate_result`, `refinement_directives`, `phases`, `checkpoints`
 
 ## Regression case
 
-Run the weighted-total form through `lisp_eval` with representative scores
-(all seven in [0,1]): the result must equal the hand-computed weighted sum.
-Run the gate form both ways: with all scores under the thresholds
-(gate_weighted_total <= 0.15 AND max score <= 0.30) -> true; with any
-single score above 0.30 (e.g. ac_specificity=0.4) -> false (compensation
-masking — the gate fails regardless of the weighted total). Also verify
-the weighted total exceeds 0.15 with inflated scores -> gate false. All
-receipts executed through the live tool 2026-09-29.
+Run the `TB-2` weighted-total and gate form through `lisp_eval` with representative scores
+(all seven in [0,1]): the first element must equal the hand-computed weighted sum,
+and the second element is `gate_pass` (`true` when `total <= 0.15` AND `max score <= 0.30`;
+`false` when any single score exceeds 0.30, e.g. `ac_specificity=0.4` — compensation
+masking — or when `total > 0.15`). Run `TB-1` on an empty task list (`["empty_decomposition"]`)
+and a healthy multi-task list (`[]`). All receipts executed through the live tool.
 
 ## Constraints
 
 - `task-breakdown-plan.j2`: Read-only mode — no code proposals, file edits, or implementation sketches. Empty-spec validation is mandatory before producing any output.
-- `task-breakdown-decompose.j2`: Every task is a vertical feature path, not a horizontal layer. No task may be XL. No "and" in a task title. The "~5 files" limit is advisory for cross-crate Rust features (legitimate 5–7 file touches allowed with justification). Every task must have acceptance criteria AND a verification step AND declared dependencies (or "None"). Dependency order must be respected. `skill_match_query` is required per task when `skill_catalog` is provided, omitted otherwise. `plan_escalation` is emitted for catastrophic conditions (algedonic short-circuit).
-- `task-breakdown-evaluate.j2`: Score each criterion independently 0–1; do not inflate. Weighted_total must lie in [0,1]. Only emit refinement directives for criteria scored above 0.00. Task-count awareness (>20 or <3) applies to the sizing criterion only.
-- `task-breakdown-quality-gate.j2`: Independent evaluation — do not inherit the producer's scores. Compensation masking: any single criterion > 0.30 forces `gate_pass: false`. Report `bias_delta` only where |your_score − producer_score| > 0.2 for that criterion.
+- `task-breakdown-decompose.j2`: Every task is a vertical feature path, not a horizontal layer. No task may be XL. No "and" in a task title. The "~5 files" limit is advisory for cross-crate Rust features (legitimate 5–7 file touches allowed with justification). Every task must have acceptance criteria AND a verification step AND declared dependencies (or "None"). Dependency order must be respected. `skill_match_query` is required per task when `skill_catalog` is provided, omitted otherwise. Catastrophic conditions are gated via `TB-1` `lisp_eval`.
+- `task-breakdown-quality-gate.j2`: Independent evaluation — score each criterion independently 0–1; do not inflate. Task-count awareness (>20 or <3) applies to `task_sizing` only. Only emit `refinement_directives` for criteria scored above 0.00. `TB-2` `lisp_eval` computes `gate_weighted_total` and `gate_pass` (compensation masking: any single criterion > 0.30 forces `gate_pass` false).
 - `task-breakdown-write-plan.j2`: Both files must be complete, self-contained markdown. `plan.md` must include overview, architecture decisions, phased task list with checkpoints, risks table, open questions, and (when refinement occurred) Refinement History. `todo.md` must be a checklist grouped by phase. Do not invent tasks not present in the input `tasks` array.

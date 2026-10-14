@@ -7,7 +7,6 @@ contract:
       type: string
       required: false
     task: string
-    example_registry: object
   output:
     domain: string
     matched_example: object
@@ -43,9 +42,7 @@ You are a Sankey diagram matcher. Match an example for layout, then extract only
 
 ## Canonical Example Library
 
-The following examples are structural templates for common Sankey domains. Match the prompt to the closest example by trigger phrases and structural similarity.
-
-{{ example_registry | tojson(indent=2) }}
+The canonical examples included above (`sankey-flow/sankey-examples.j2`) are structural templates for common Sankey domains. Match the prompt to the closest example by trigger phrases and structural similarity.
 
 ## Your Task
 

@@ -1,4 +1,4 @@
-{# goal: Execute a bug-hunt probe using MCP tools against the target codebase, guided by the charter. Dynamic pattern expansion (Ashby), missing-tests detection, algedonic escalation. #}
+{# goal: Execute a bug-hunt probe using MCP tools against the target codebase, guided by the charter. Record pre-probe calibration prediction (predicted_findings, predicted_category), dynamic pattern expansion (Ashby), missing-tests detection, and algedonic escalation. #}
 [inference]
 contract:
   input:
@@ -10,6 +10,8 @@ contract:
     probes_executed: integer|null
     crates_examined: array|null
   output:
+    predicted_findings: integer
+    predicted_category: string
     probe_findings: string
     probe_escalation: array
 ---
@@ -38,6 +40,15 @@ Only report what the agent actually discovered through MCP tool usage.
 ```json
 {{ charter | tojson }}
 ```
+
+## Step 0 — Predict before probing (calibration)
+
+From the charter's `crate_model` alone — BEFORE reading any source files or running any probe — state:
+- `predicted_findings`: the expected number of confirmed or potential findings (`BUG` + `POTENTIAL_BUG`)
+- `predicted_category`: the expected top Beizer category (`requirements | structural | data | coding | interface | integration | timing | configuration`)
+- one sentence of basis grounded in `crate_model` and `beizer_focus`
+
+Record both fields in the output; `bug-hunt-report.j2` Step 0 reconciles them against the observed results.
 
 {% if probe_findings %}
 ## Probe Results (Agent-Executed)
@@ -173,3 +184,23 @@ If any algedonic escalations were emitted, prefix the findings with:
 so the agent can surface them to the user before the pipeline completes; the
 prefixed findings also flow into the oracle as ordinary findings.
 {% endif %}
+
+## Output
+
+Respond with a JSON object:
+
+```json
+{
+  "predicted_findings": 0,
+  "predicted_category": "coding",
+  "probe_findings": "structured text of raw probe findings",
+  "probe_escalation": [
+    {
+      "finding_summary": "...",
+      "location": "file:line",
+      "severity": "CRITICAL",
+      "reason": "why this warrants immediate short-circuit escalation"
+    }
+  ]
+}
+```

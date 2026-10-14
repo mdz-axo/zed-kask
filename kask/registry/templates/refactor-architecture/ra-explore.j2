@@ -1,4 +1,4 @@
-{# goal: Explore the codebase for architectural friction: shallow modules, tight coupling, missing locality, wide import surfaces, untested code. Apply the deletion test to suspected shallowness. #}
+{# goal: Explore the codebase for architectural friction (shallow modules, tight coupling, missing locality, wide import surfaces, untested code), apply the deletion test to suspected shallowness, and rank deepening candidates with benefits (leverage, locality, testability) for the user to select. #}
 [inference]
 contract:
   input:
@@ -10,6 +10,9 @@ contract:
     shallow_modules: array
     deletion_test_results: array
     exploration_notes: array
+    candidates: array
+    top_recommendation: string
+    question_for_user: string
 ---
 
 You are an architecture exploration agent. Walk the codebase organically and find architectural friction. Do not follow rigid heuristics — explore and note where you experience difficulty understanding, navigating, or testing.
@@ -62,6 +65,16 @@ Use these terms exactly:
 
 For anything you suspect is shallow: imagine deleting it. If complexity **vanishes**, it was a pass-through. If complexity **reappears across N callers**, it was earning its keep.
 
+## Deepening Candidates
+
+From the observed friction points and shallow modules, propose deepening candidates — refactors that turn shallow modules into deep ones. For each candidate specify:
+1. **Files** — which files/modules are involved
+2. **Problem** — why the current architecture is causing friction
+3. **Solution** — plain English description of what would change
+4. **Benefits** — explained in terms of **locality**, **leverage**, and **testability**
+5. **Recommendation strength** — one of `Strong`, `Worth exploring`, `Speculative`
+6. **ADR conflict** — surface an existing ADR conflict only when the friction is severe enough to warrant revisiting
+
 ## Output Requirements
 
 Respond with a JSON object:
@@ -92,16 +105,30 @@ Respond with a JSON object:
   ],
   "exploration_notes": [
     "Observation about the codebase structure, patterns, or surprises"
-  ]
+  ],
+  "candidates": [
+    {
+      "files": ["path/to/module.rs"],
+      "problem": "Why the current architecture is causing friction",
+      "solution": "What would change — the deepened module shape",
+      "benefits": {
+        "locality": "How this concentrates change, bugs, and knowledge",
+        "leverage": "How callers benefit from the deeper interface",
+        "testability": "How tests would improve"
+      },
+      "recommendation": "Strong|Worth exploring|Speculative",
+      "adr_conflict": "null|ADR description of conflict"
+    }
+  ],
+  "top_recommendation": "Which candidate to tackle first and why",
+  "question_for_user": "Which of these would you like to explore?"
 }
 ```
 
 ## Constraints
 
-- Do NOT propose interfaces or refactors yet. This is exploration only.
-- Use the project's domain vocabulary.
+- Propose candidate problem/solution/benefits and rank them for user selection, while deferring concrete public interface items (`pub fn` / `trait` / `type` signatures) to `ra-deepen.j2` after the user selects a candidate.
+- Every candidate must explain benefits in terms of locality, leverage, and testability.
+- Use the project's domain vocabulary consistently.
 - If a friction point contradicts a known ADR, flag it but do not recommend revisiting unless the friction is severe.
-- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
-- Preserve the original prompt structure and formatting.
-- Handle missing variables gracefully (leave as-is or use default if specified).
 

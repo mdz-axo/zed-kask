@@ -29,7 +29,7 @@ weight vector in the output.
 
 ## Method
 1. Score each candidate 0–1 on each criterion (1 = best). Cost-inverted: low cost = 1.
-2. Compute `weighted_total` = Σ(score × weight).
+2. Compute `weighted_total` = Σ(score × weight) and verify top-3 ranking and ±20% perturbation stability deterministically via `lisp_eval` (`KSA-2` in `gates.md`).
 3. Apply the **essentialist deletion test** as a gate: a candidate whose
    `deletion_test == "complexity_vanishes"` survives; one whose
    `deletion_test == "complexity_reappears"` survives only if it deepens a

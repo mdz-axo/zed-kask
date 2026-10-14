@@ -117,9 +117,9 @@ If the prompt does not match any domain, default to **process** with conservatio
 
 The first pass is example-anchored MATCH → ADAPT → deterministic Check → render (2 LLM calls + 1 render). Only a measured edge-mapping error permits one ADAPT correction; intentional non-conservation or missing user data is disclosed, not optimized away. No open-ended quality-scoring loop.
 
-1. **MATCH.** Render `sankey-flow/sankey-match` with the user's `prompt`/`task`, an optional `hint`, and `example_registry: {}` (the included canonical library supplies the examples; do not author a private registry). Select the best-fit flow domain by observed unit and shape, then extract only the user's actual nodes, edges and weights. Does NOT interrogate — missing data is marked as placeholder (value=1). For income statements with losses, negative profits flow into Total Revenue as sources (Revenue + |Loss| = Total Expenses). If the prompt references an external source (URL, file, database), note it for research delegation. If the prompt spans two domains, classify both and plan two diagrams.
+1. **MATCH.** Render `sankey-flow/sankey-match` with the user's `prompt`, `task`, and optional `hint` (the included canonical library `sankey-flow/sankey-examples.j2` supplies the examples; do not pass a private registry). Select the best-fit flow domain by observed unit and shape, then extract only the user's actual nodes, edges and weights. Does NOT interrogate — missing data is marked as placeholder (value=1). For income statements with losses, negative profits flow into Total Revenue as sources (Revenue + |Loss| = Total Expenses). If the prompt references an external source (URL, file, database), note it for research delegation. If the prompt spans two domains, classify both and plan two diagrams.
 
-2. **ADAPT.** Fill only the user's extracted data into the example layout. Render Mermaid CSV with `verification_gap: ""` on the first pass. The example is never authority to invent a branch. Compare the rendered CSV rows one-to-one with the sourced edge list (IDs, weights, extras, omissions); ADAPT's own `conservation_check` string is not proof. On a mapping error, rerender ADAPT once with that exact mismatch as `verification_gap`, preserving the original edges. If mapping still differs, stop rather than show an unverified diagram.
+2. **ADAPT.** Render `sankey-flow/sankey-adapt` with `domain`, `matched_example`, `conservation_mode`, `ontology_anchor`, `weight_unit`, `subject`, `nodes`, `edges`, `match_notes`, and `verification_gap: ""` on the first pass. Fill only the user's extracted data into the example layout. The example is never authority to invent a branch. Compare the rendered CSV rows one-to-one with the sourced edge list (IDs, weights, extras, omissions) via `SFW-2` below. On a mapping error, rerender ADAPT once with that exact mismatch as `verification_gap`, preserving the original edges. If mapping still differs, stop rather than show an unverified diagram.
    - Node labels: title case, ≤ 30 characters. If a label is longer, abbreviate and document the abbreviation in the description paragraph.
    - Node IDs: identical to labels (Mermaid Sankey uses labels as IDs).
    - Order edges so that sources appear before targets in the CSV — this improves Mermaid's layout heuristics.
@@ -136,7 +136,8 @@ The first pass is example-anchored MATCH → ADAPT → deterministic Check → r
 
    After delegation, validate the extracted spec: are all weights sourced? Are all nodes present? If gaps remain, mark them as placeholders — do not re-delegate the whole task.
 
-3. **CHECK.** A grand-total comparison can hide unbalanced internal nodes. For `mandatory` mode, require numeric sourced weights with comparable units and no unitless placeholders; otherwise the status is `unverified` with the missing inputs named. On measured edges, call `lisp_eval` with `edges` bound to reconciled `{source,target,weight}` records and this form, which emits `[node,inflow,outflow]` for each target that also has outgoing flow:
+3. **CHECK (`SFW-1` and `SFW-2` in `lisp_eval`).**
+   - **Gate `SFW-1` (node-level conservation):** A grand-total comparison can hide unbalanced internal nodes. For `mandatory` mode, require numeric sourced weights with comparable units and no unitless placeholders; otherwise the status is `unverified` with the missing inputs named. On measured edges, call `lisp_eval` with `edges` bound to reconciled `{source,target,weight}` records and this form, which emits `[node,inflow,outflow]` for each target that also has outgoing flow:
 
    ```lisp
    (begin
@@ -148,7 +149,18 @@ The first pass is example-anchored MATCH → ADAPT → deterministic Check → r
 
    Check its `node_rows` with `lisp_eval` form `(begin (define balanced (lambda (rows epsilon) (if (= (length rows) 0) t (and (<= (abs (- (nth 1 (car rows)) (nth 2 (car rows)))) epsilon) (balanced (cdr rows) epsilon))))) (balanced node_rows epsilon))`, with `epsilon: 0.01`. Duplicate rows for a node are harmless; report its discrepancy once. An empty `node_rows` means no internal node was checked: mark `unverified`, not vacuously balanced. A false result is `discrepancy` with node-level values; true over nonempty rows is `observed_balanced`. In `asserted` mode, check measured values and flag discrepancies, but only enforce conservation if the user claims it. In `none` mode return `skipped`, never `verified: true`. Arithmetic on supplied edges does not prove extraction accuracy.
 
-4. **ACT / surface.** On a reconciled first pass, render `present-sankey.j2` immediately, with match's `subject`, the `domain`, `weight_unit`, `conservation_mode`, the observed `conservation_check` (overriding ADAPT's proposal), the `node_count`/`edge_count`, `edges`, ADAPT's `mermaid_source`, `adapt_notes`, and ADAPT's `output_path`. Override ADAPT's proposed `conservation_check` with the observed node-level result or the explicit `discrepancy`, `unverified`, or `skipped` status. A real discrepancy is reported, never balanced by inventing a branch. On an edge-mapping error, the one ADAPT correction in step 2 is the only re-entry. Surface the fenced ```mermaid block directly rather than burying it in JSON.
+   - **Gate `SFW-2` (CSV / Mermaid directive check):** Verify with `lisp_eval` that `mermaid_source` carries the `sankey-beta` directive, contains no forbidden Zed Mermaid directives (`%%{init`, `classDef`), and contains every sourced edge's endpoints:
+
+   ```lisp
+   (begin
+     (define edges-present (lambda (es src) (if (is_null es) true (let ((e (car es))) (and (string-contains (assoc "source" e) src) (string-contains (assoc "target" e) src) (edges-present (cdr es) src))))))
+     (and (string-contains "sankey-beta" mermaid_source)
+          (not (string-contains "%%{init" mermaid_source))
+          (not (string-contains "classDef" mermaid_source))
+          (edges-present edges mermaid_source)))
+   ```
+
+4. **ACT / surface.** On a reconciled first pass, render `sankey-flow/present-sankey` immediately with `subject`, `domain`, `weight_unit`, `conservation_mode`, `conservation_check` (the deterministic status from `SFW-1`), `nodes`, `edges`, `mermaid_source`, and optional `adapt_notes` and `output_path` (`docs/diagrams/sankey-{domain}-{subject}.md`). The template computes `{{ nodes | length }}` and `{{ edges | length }}` directly. A real discrepancy is reported, never balanced by inventing a branch. On an edge-mapping error (`SFW-2` false), the one ADAPT correction in step 2 is the only re-entry. Surface the fenced ```mermaid block directly rather than burying it in JSON.
 
 ## Research Delegation — Detailed Protocol
 

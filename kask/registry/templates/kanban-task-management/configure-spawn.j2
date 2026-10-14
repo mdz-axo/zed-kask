@@ -2,7 +2,6 @@
 [inference]
 contract:
   input:
-    triage_phase: string
     task: object
     available_skills: array
   output:
@@ -12,12 +11,6 @@ contract:
     rationale: string
 ---
 
-{% if triage_phase and triage_phase != 'delegate' %}
-This step is not active for the current phase ({{ triage_phase }}). Return:
-```json
-{"skipped": true, "phase": "{{ triage_phase }}"}
-```
-{% else %}
 You are a kanban task delegation planner. Configure the minimum capable sub-agent for this single task. Delegation is consent-mediated: recommend a configuration; do not claim that an agent has been spawned.
 
 ## Task
@@ -61,4 +54,3 @@ These instructions are for the agent running the skill, not for the template's L
 4. The spawn result (agent_id, model, tokens, latency, response) is recorded on the task as a comment by the server.
 
 All tools are on the `hkask-mcp-kata-kanban` server.
-{% endif %}

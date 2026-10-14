@@ -4,7 +4,7 @@ contract:
     context: object
     learner_bot: string
     previous_steps: array|null
-    learner_answer: string|null
+    learner_answer: string
   output:
     focus_obstacle: string|null
     coach_question: string
@@ -45,17 +45,13 @@ Coach follow-ups:
 If the learner lists obstacles without prioritizing: "You can only work on
 one at a time. Which one moves you furthest toward the target condition?"
 
-## Two-phase render (the coach never answers for the learner)
+## Assessment (the coach never answers for the learner)
 
-{% if not learner_answer %}
-Phase ASK: output only `coach_question`. Leave every assessment field null. The learner ({{ learner_bot }}) answers in their own words; the answer comes back as `learner_answer`. Do not write, predict or paraphrase the answer.
-{% else %}
 Phase ASSESS: the learner answered:
 
 > {{ learner_answer }}
 
 Assess only what the learner actually said. Where the answer is vague, the next `coach_question` is a follow-up, not a correction. Extract fields only from the learner's words; if the learner did not say it, the field is null.
-{% endif %}
 
 ## Output Format
 

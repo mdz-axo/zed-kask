@@ -51,12 +51,13 @@ iterations: {{ iterations }}
 
 Produce a consolidated report with: (1) a verdict (Pass / Conditional / Fail)
 derived from the defense-layer coverage + whether any blocking finding remains
-unremediated; (2) the count of findings per track and per severity; (3) the
-MCDA top-3 and whether `stable_under_perturbation` held; (4) the applied
-remediations (with test descriptions) and the hard-stop decision; (5) the
-deliverable paths (reports under `kask/research/seam-audit/`, templates under
-`kask/registry/templates/kask-seam-audit/`); (6) the convergence score and
-iteration count. Cite `file:line` throughout.
+unremediated (per-track/severity counts and defense-layer coverage counts are
+computed deterministically by the `KSA-3` `lisp_eval` form in `gates.md`, not
+counted by the model); (2) the MCDA top-3 and whether `stable_under_perturbation`
+held; (3) the applied remediations (with test descriptions) and the hard-stop
+decision; (4) the deliverable paths (ledger at `kask/docs/research/d-seam-audit.md`,
+templates under `kask/registry/templates/kask-seam-audit/`); (5) the convergence
+score and iteration count. Cite `file:line` throughout.
 
 ## Output (JSON only)
 
@@ -64,16 +65,13 @@ iteration count. Cite `file:line` throughout.
 {
   "report": {
     "verdict": "Pass|Conditional|Fail",
-    "findings_per_track": { "security": N, "architecture": N, "ui": N },
-    "findings_per_severity": { "critical": N, "high": N, "medium": N, "low": N, "info": N },
-    "defense_layer_coverage": { "covered": N, "missing": N, "missing_layers": [ ... ] },
     "mcda_top3": [ { "id": "...", "weighted_total": 0.0 } ],
     "mcda_stable_under_perturbation": true,
     "applied_remediations": [ { "id": "...", "test_description": "..." } ],
     "hard_stop_triggered": false,
     "deferred_remediations": [ { "id": "...", "reason": "..." } ],
     "deliverable_paths": {
-      "reports": "kask/research/seam-audit/",
+      "reports": "kask/docs/research/d-seam-audit.md",
       "skill_templates": "kask/registry/templates/kask-seam-audit/"
     },
     "convergence_score": 0,

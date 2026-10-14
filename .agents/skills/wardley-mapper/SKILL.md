@@ -13,8 +13,8 @@ Generic Wardley mapping methodology. Given a set of components and their relatio
 Wardley, *Wardley Maps* (2016) — `onto_anchor` → derived `wardley_map` (operator ruling 2026-09-25): anchor on a user need, lay out the value chain, position each component by evolution.
 
 - **Initial condition:** the target system description and any supplied component inventory or previous map.
-- **Target condition:** the Convergence gate passes and the map plus recommendations reach the chat through `present-map`.
-- **D/P labelling:** inventory, evolution classification, coordinates, movement and recommendations are P — judgment, critiqued by the operator and by the requirement that every recommendation trace to a named component and movement. The Convergence gate and `present-map` (pure rendering) are D. An evolution class is a judgment against Wardley's characteristics, not a measurement; say so when data is sparse.
+- **Target condition:** the `WM-1` and `WM-2` `lisp_eval` gates pass and the map plus recommendations reach the chat through `present-map`.
+- **D/P labelling:** inventory, evolution classification, coordinates, movement and recommendations are P — judgment, critiqued by the operator and by the requirement that every recommendation trace to a named component and movement. `WM-1` (stage-band coordinate and dependency closure check), `WM-2` (recommendation component traceability check), and `present-map` (pure rendering) are D. An evolution class is a judgment against Wardley's characteristics, not a measurement; say so when data is sparse.
 
 ## When to Use
 
@@ -32,61 +32,42 @@ Wardley, *Wardley Maps* (2016) — `onto_anchor` → derived `wardley_map` (oper
 
 ## Instructions
 
+The skill runs as a 4-step process (`inventory-components` → `classify-evolution` + `WM-1` → `synthesize-recommendations` + `WM-2` → `present-map`).
+
 ### inventory-components
 
-1. Enumerate every component in the target system.
+1. Render `wardley-mapper/inventory-components` with `target_system` and `component_inventory`. Enumerate every component in the target system.
 2. Capture the name, type (infrastructure, platform_service, user_facing, conceptual, protocol), dependencies, and description for each component.
 3. Consider infrastructure, platform services, user-facing capabilities, and conceptual components.
 4. Be exhaustive to avoid blind spots, and note any gaps or assumptions if the system description is sparse.
 
 ### classify-evolution
 
-1. Classify each component on the Wardley evolution axis (Genesis, Custom, Product, Commodity).
-2. Assess components based on maturity, adoption, standardization, and differentiation criteria.
-3. Assign industry standards with open-source equivalents to Commodity.
-4. Assign strategic differentiators to Product or Custom (if still emerging).
-5. Assign experimental or actively designed components to Genesis.
-6. Assign stable but non-standardized components to Custom.
-
-### map-value-chain
-
-1. Place each classified component on the value chain map.
-2. Assign an x-coordinate for evolution position (0.0 = Genesis, 1.0 = Commodity).
-3. Assign a y-coordinate for value chain position (0.0 = infrastructure, 1.0 = user-facing).
-4. Define dependency links to other components by name.
-5. Generate a Mermaid quadrant chart visualizing the map.
-
-### identify-movement
-
-1. Analyze the current map for strategic movement across five dimensions.
-2. Identify components to commoditize (Custom components providing no differentiation).
-3. Identify components to keep at Product (strategic differentiators).
-4. Identify over-commoditized components that should move left toward Custom to recover differentiation.
-5. Identify missing components or gaps in the value chain.
-6. Identify drift by comparing the current map to a previous map, if provided.
+1. Render `wardley-mapper/classify-evolution` with `components` (from `inventory-components`). Classify each component on the Wardley evolution axis (Genesis, Custom, Product, Commodity) and place it on the value chain map with `(x, y, links)` and a Mermaid `quadrantChart` (`map_diagram`).
+2. Assess components based on maturity, adoption, standardization, and differentiation criteria:
+   - Industry standards with open-source equivalents → `Commodity`, `x` in `[0.75, 1.0]`
+   - Stable, rentable, off-the-shelf components → `Product`, `x` in `[0.50, 0.75)`
+   - Bespoke, emerging components → `Custom`, `x` in `[0.25, 0.50)`
+   - Experimental or uncharted components → `Genesis`, `x` in `[0.0, 0.25)`
+3. Assign `y` for value-chain visibility (`0.0` = infrastructure, `1.0` = user-facing) and `links` to other inventoried components by name.
+4. Generate `map_diagram` (`quadrantChart` visualizing the value chain).
+5. **Gate `WM-1` (D — `lisp_eval`):** Verify that every component has an evolution class whose `x` coordinate falls inside its stage band (`[0.0,0.25)`, `[0.25,0.50)`, `[0.50,0.75)`, `[0.75,1.0]`), `y` in `[0.0, 1.0]`, all `links` resolve to inventoried component names, and `map_diagram` starts with/contains `"quadrantChart"`:
+   - form: `(begin (define band-ok (lambda (c) (let ((ev (assoc "evolution" c)) (x (assoc "x" c)) (y (assoc "y" c))) (and (>= y 0.0) (<= y 1.0) (cond ((string= ev "Genesis") (and (>= x 0.0) (< x 0.25))) ((string= ev "Custom") (and (>= x 0.25) (< x 0.50))) ((string= ev "Product") (and (>= x 0.50) (< x 0.75))) ((string= ev "Commodity") (and (>= x 0.75) (<= x 1.0))) (t false)))))) (define links-ok (lambda (ls names) (if (is_null ls) true (and (not (is_null (member (car ls) names))) (links-ok (cdr ls) names))))) (define all-ok (lambda (cs names) (if (is_null cs) true (and (band-ok (car cs)) (links-ok (assoc "links" (car cs)) names) (all-ok (cdr cs) names))))) (all-ok components component_names))`
+   - env: `{ "components": <classified components array>, "component_names": <list of component name strings> }`
+   Bound: one re-entry — re-run `classify-evolution` for any out-of-band or unresolved components; a second pass that still leaves gaps notes them as assumptions in the map.
 
 ### synthesize-recommendations
 
-1. Synthesize actionable strategic recommendations from the movement analysis and current map.
-2. Identify commoditization targets, investment priorities, divestment candidates, ecosystem plays, and alignment checks.
-3. Trace every recommendation to a specific component and movement in the analysis.
-4. Prioritize recommendations by impact (highest first).
-5. Be specific in the recommended actions.
-6. Flag uncertainty and lower confidence for recommendations based on sparse data.
-
-### Convergence
-
-1. Gate — call `lisp_eval` with:
-   - form: `(and (eq (length unclassified_components) 0) (eq (length unresolved_dependencies) 0))`
-   - env: `{ "unclassified_components": <components still without an evolution class>,
-             "unresolved_dependencies": <dependency links naming components not in the inventory> }`
-   Bound: one re-entry — re-run classify-evolution for the named components;
-   a second pass that still leaves gaps notes them as assumptions in the map
-   (inventory-components step 4 already requires this) instead of iterating.
+1. Render `wardley-mapper/synthesize-recommendations` with `current_map` (the classified components from `classify-evolution`) and optional `previous_map` (when comparing drift against a prior map).
+2. Analyze strategic movement across five dimensions: components to commoditize (`Custom` components providing no differentiation), components to keep at `Product` (strategic differentiators), over-commoditized components, missing value-chain components, and drift from `previous_map` (if provided). Emit `movements` and `movement_summary`.
+3. Synthesize actionable strategic `recommendations` (commoditize, invest, divest, ecosystem, alignment), prioritized by impact, with `rationale`.
+4. **Gate `WM-2` (D — `lisp_eval`):** Verify that every recommendation traces to a named component in `component_names` (or a `"missing"` movement component) and carries a numeric `confidence` in `[0.0, 1.0]`:
+   - form: `(begin (define rec-ok (lambda (r names) (let ((c (assoc "component" r)) (conf (assoc "confidence" r))) (and (not (is_null (member c names))) (>= conf 0.0) (<= conf 1.0))))) (define all-recs-ok (lambda (rs names) (if (is_null rs) true (and (rec-ok (car rs) names) (all-recs-ok (cdr rs) names))))) (all-recs-ok recommendations valid_names))`
+   - env: `{ "recommendations": <recommendations array>, "valid_names": <component_names plus any missing-movement component names> }`
 
 ### present-map
 
-1. Rendering step (`present-map.j2` via `render_template`): surfaces the quadrant chart (from map-value-chain's `map_diagram`) and strategic recommendations (from synthesize-recommendations) as a single markdown string containing a fenced ```mermaid block.
+1. Rendering step (`wardley-mapper/present-map` via `render_template` with `map_diagram`, `recommendations`, and optional `rationale`): surfaces the quadrant chart (from `classify-evolution`'s `map_diagram`) and strategic recommendations (from `synthesize-recommendations`) as a single markdown string containing a fenced ```mermaid block.
 2. This is the process's final user-facing output — without this step, the diagram stays buried in an intermediate step result and never reaches the chat stream.
 3. Deterministic (no LLM call) — pure Jinja2 rendering via `render_template`.
 
@@ -95,21 +76,17 @@ Wardley, *Wardley Maps* (2016) — `onto_anchor` → derived `wardley_map` (oper
 | Template | Purpose |
 |----------|---------|
 | `inventory-components.j2` | Inventory all components in a target system. Enumerates every component with name, type, dependencies, and description. Exhaustive — missing components create map blind spots. |
-| `classify-evolution.j2` | Classify each component on the Wardley evolution axis (Genesis, Custom, Product, Commodity) using maturity, adoption, standardization, and differentiation criteria. |
-| `map-value-chain.j2` | Place each classified component on the value chain map (Y: visibility, X: evolution) with coordinates and dependency links. Generates a Mermaid quadrant chart. |
-| `identify-movement.j2` | Identify strategic movement: what to commoditize, what to keep at Product, what's over-commoditized, what's missing, and drift from a previous map. |
-| `synthesize-recommendations.j2` | Synthesize actionable strategic recommendations (commoditize, invest, divest, ecosystem, alignment) from the movement analysis and map. Prioritized by impact, specific, traceable to components. |
-| `present-map.j2` | Rendering template — surfaces the quadrant chart (from map-value-chain) and strategic recommendations (from synthesize-recommendations) as a single markdown string containing a fenced ```mermaid block. This is the process's final user-facing output: without it, the diagram stays buried in an intermediate step result and never reaches the chat stream. Deterministic (no LLM call). |
+| `classify-evolution.j2` | Classify each component on the Wardley evolution axis (Genesis `[0.0,0.25)`, Custom `[0.25,0.50)`, Product `[0.50,0.75)`, Commodity `[0.75,1.0]`), place it on the value chain `(x, y, links)`, and generate a Mermaid `quadrantChart` (`map_diagram`). |
+| `synthesize-recommendations.j2` | Identify strategic movement (`movements`, `movement_summary`, including drift from optional `previous_map`) and synthesize actionable strategic recommendations (commoditize, invest, divest, ecosystem, alignment) traceable to components. |
+| `present-map.j2` | Rendering template — surfaces the quadrant chart (from `classify-evolution`) and strategic recommendations (from `synthesize-recommendations`) as a single markdown string containing a fenced ```mermaid block. Deterministic (no LLM call). |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `wardley-mapper/inventory-components`) and a context object with the required variables.
 
 Template context variables (from each template's [inference] contract):
-- `classify-evolution.j2`: `components`
-- `identify-movement.j2`: `current_map`, `previous_map`
 - `inventory-components.j2`: `target_system`, `component_inventory`
-- `map-value-chain.j2`: `classified_components`
-- `synthesize-recommendations.j2`: `movement_analysis`, `current_map`
-- `present-map.j2` (pure render; its `[inference]` header declares inputs only, no model call): `map_diagram` (string — the mermaid quadrant chart text), `recommendations` (array of objects, each `{category, component, recommendation, priority, confidence, rationale}` — all plain strings; passing an array of strings renders N/A rows), `rationale` (string — the assessment paragraph)
+- `classify-evolution.j2`: `components`
+- `synthesize-recommendations.j2`: `current_map`, `previous_map` (optional)
+- `present-map.j2` (pure render; its `[inference]` header declares inputs only, no model call): `map_diagram` (string — the mermaid quadrant chart text), `recommendations` (array of objects, each `{category, component, recommendation, priority, confidence, rationale}` — all plain strings; passing an array of strings renders N/A rows), `rationale` (optional string — the assessment paragraph)
 
 
 ## Regression case

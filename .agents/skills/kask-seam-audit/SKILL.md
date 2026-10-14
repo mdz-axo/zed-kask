@@ -65,11 +65,14 @@ Converge: lisp open count (uncited/unadjudicated -> 0) within the batch; max 2 r
 Final: commit the ledger per completed batch; report remaining rows explicitly as pending
 ```
 
-The Gate A, B, C, FA and Converge forms live in
+The Gate A, B, C, FA, Converge, `KSA-1` (5-gate layout check), `KSA-2` (MCDA
+weighted score), and `KSA-3` (track/severity/defense-layer counts) forms live in
 `kask/registry/templates/kask-seam-audit/gates.md` (read it with `read_file`);
-the measured-layout gate form lives in this SKILL.md (the layout loop,
-step 3). Run them with `lisp_eval` over the template outputs. The Converge count is
-passed to `final-report` as `convergence_score`; the model never supplies it.
+the measured-layout gate form `KSA-1` is also shown in this SKILL.md (the layout loop,
+step 2). Run them with `lisp_eval` over the template outputs. The Converge count is
+passed to `final-report` as `convergence_score`, and `KSA-3` computes the per-track,
+per-severity, and defense-layer counts directly rather than asking `final-report` to
+count them; the model never supplies them.
 
 - **Initial condition:** the live and retired seams in `DIVERGENCE.md`, the operator's `prior_rules`, the audited commit, and `kask/docs/research/d-seam-audit.md` (if present).
 - **Target condition per batch:** every selected behavior has an evidence-backed advisory verdict and a pin status, the ledger is committed, and unresolved decisions have an owner. Pending rows are not audited rows. Gate C applies to remediations, not record-only updates.
@@ -122,11 +125,13 @@ container, or when a layout looks cramped — not for logic-only or test-only
 changes. Measurements are D when taken from the code (widths, counts); the
 remedy choice is P, critiqued by the adversarial probes.
 
-1. **Measure** (`kask-seam-audit/layout-sense`) — container width (dock ~300–400px, center ~600px+), each child's minimum width, the text column's residual width.
-2. **Count** (`kask-seam-audit/layout-orient`) — interactive elements against the ≤5 primary budget (Hick's Law); sibling card conventions. The Rosenholtz congestion score is a model estimate reported for context; no gate reads it.
-3. **Gate** (`kask-seam-audit/layout-decide`) — five yes/no gates: no overflow, primary action visible, text column ≥ min width, on-grid spacing, action count ≤ budget. Call `lisp_eval` with form `(and (= (length failed_gates) 0) (= (length probe_failures) 0))`, env `{ "failed_gates": <layout-decide's `failing_gates`>, "probe_failures": <layout-review's `failing_gates` — the gates broken under probes> }` (the templates output `failing_gates`; the form env binds `failed_gates`/`probe_failures` — pass the mapped names).
-4. **Remedy** (`kask-seam-audit/layout-act`) — for each failing gate, the canonical GPUI remedy: secondary actions behind `PopoverMenu` with an `IconName::Ellipsis` trigger, `.truncate()` on labels, `flex_shrink_0()` on fixed elements, `min_w_0()` on flexible text columns, or hide-secondary.
-5. **Probe** (`kask-seam-audit/layout-review`) — a 40-character button label, a German string (~30% longer), a 300px container (the agent panel's minimum dock width, `MIN_PANEL_WIDTH` at `crates/agent_ui/src/agent_panel.rs:108`), 7 actions, and an empty description. Any broken probe rejects the layout and re-enters step 4. Bound: max 2 remedy rounds; a third failing gate set rejects the change — hide the secondary actions or defer, and say so.
+1. **Measure & Orient** (`kask-seam-audit/layout-sense`) — render with `target`, `container_width` (dock ~300–400px, center ~600px+), and optional `codebase_context` to measure each child's minimum width, the text column's residual width, `action_count` against `action_budget` (≤5 primary per Hick's Law), `sibling_patterns`, `consistency_violation`, `primary_action_visible`, and `on_grid_spacing`.
+2. **Gate (`KSA-1`, D)** — evaluate the five yes/no Fagan gates deterministically with `lisp_eval` over `layout-sense`'s outputs (no LLM gate-decider template):
+   - form: `(let ((g1 (and (<= overflow_delta 0) (= (length fitts_violations) 0))) (g2 primary_action_visible) (g3 (or (not has_text_column) (>= text_column_residual 160))) (g4 on_grid_spacing) (g5 (<= action_count action_budget))) (let ((failed (append (if g1 (list) (list "no_overflow")) (append (if g2 (list) (list "primary_action_visible")) (append (if g3 (list) (list "text_column_min_width")) (append (if g4 (list) (list "on_grid_spacing")) (if g5 (list) (list "action_count_budget")))))))) (list (= (length failed) 0) failed)))`
+   - env: `{ "overflow_delta": <from layout-sense>, "fitts_violations": <from layout-sense>, "primary_action_visible": <from layout-sense>, "has_text_column": <true|false>, "text_column_residual": <from layout-sense>, "on_grid_spacing": <from layout-sense>, "action_count": <from layout-sense>, "action_budget": 5 }`
+   After running `layout-review`, verify overall completion with `lisp_eval` form `(and (= (length failed_gates) 0) (= (length probe_failures) 0))`, env `{ "failed_gates": <KSA-1 failed list>, "probe_failures": <layout-review's failing_gates> }`.
+3. **Remedy** (`kask-seam-audit/layout-act`) — render with `target` and `decide_result` (the `KSA-1` gate result); for each failing gate, prescribe the canonical GPUI remedy: secondary actions behind `PopoverMenu` with an `IconName::Ellipsis` trigger, `.truncate()` on labels, `flex_shrink_0()` on fixed elements, `min_w_0()` on flexible text columns, or hide-secondary.
+4. **Probe** (`kask-seam-audit/layout-review`) — render with `target`, `act_result`, and `decide_result`: a 40-character button label, a German string (~30% longer), a 300px container (the agent panel's minimum dock width, `MIN_PANEL_WIDTH` at `crates/agent_ui/src/agent_panel.rs:108`), 7 actions, and an empty description. Any broken probe rejects the layout and re-enters step 3. Bound: max 2 remedy rounds; a third failing gate set rejects the change — hide the secondary actions or defer, and say so.
 
 Patterns checked: `min_w_0()` on flexible text columns; `flex_shrink_0()` on fixed-width elements; `.truncate()` on labels; `PopoverMenu::new(id).trigger_with_tooltip(IconButton::new(id, IconName::Ellipsis), Tooltip::text(...))` for overflow; `ContextMenu::build(...)` for menu items; `gap_1()`/`gap_2()` on the 4px/8px grid.
 
@@ -138,15 +143,13 @@ Patterns checked: `min_w_0()` on flexible text columns; `flex_shrink_0()` on fix
 | `audit-security.j2` | DO — self-contained security review of the 10 priority surfaces (OWASP LLM Top-10, MITRE ATLAS, NIST SSDF, defense-layer coverage). Every finding cites file:line. |
 | `audit-architecture.j2` | DO — find dead surface (trait-with-one-impl, helper-test-only, folded re-exports) and deepening candidates; apply the essentialist deletion test with grep-verified caller counts. |
 | `audit-ui.j2` | DO — measured-layout discipline + Zed interaction-language gaps across kask-owned GPUI widgets; Toggle-vs-ToggleFocus and deploy-and-focus traps. |
-| `layout-sense.j2` | Layout loop step 1: measure container and child minimum widths; flag overflow and the text column's residual width (Fitts's Law, flexbox overflow). |
-| `layout-orient.j2` | Layout loop step 2: count interactive elements against the ≤5 budget and compare sibling conventions (Hick's Law, Nielsen consistency). |
-| `layout-decide.j2` | Layout loop step 3: the five yes/no layout gates and a pass/fail decision. |
-| `layout-act.j2` | Layout loop step 4: the canonical GPUI remedy per failing gate. |
-| `layout-review.j2` | Layout loop step 5: adversarial probes that reject a layout that breaks a gate. |
-| `adjudicate.j2` | CHECK — classify each finding by constraint force, run the deletion test, and check the feedback loop. Produces annotated_findings. |
-| `mcda.j2` | CHECK — rank remediation candidates against four weighted criteria and run a ±20% sensitivity analysis. Each score traces to a finding. |
-| `remediate.j2` | ACT — apply only mcda top-ranked remediations surviving essentialist; pin each with a test; declare within_kask per touched file; set hard_stop if any touch requires an upstream non-D-seam edit. |
-| `final-report.j2` | Consolidate the three tracks, defense-layer coverage, MCDA, applied remediations, hard-stop decision, and convergence score. Cite file:line. |
+| `layout-sense.j2` | Layout loop step 1: measure container and child minimum widths, count primary interactive elements against the ≤5 Hick's Law budget, compare sibling conventions, and record primary-action and grid-alignment observations for KSA-1. |
+| `layout-act.j2` | Layout loop step 3: the canonical GPUI remedy per failing gate from KSA-1. |
+| `layout-review.j2` | Layout loop step 4: adversarial probes that reject a layout that breaks a gate. |
+| `adjudicate.j2` | CHECK — classify each finding by constraint force, run the deletion test, and check the feedback loop. Produces annotated_findings (`task`, `security_findings`, `arch_findings`, `ui_findings`, `prior_verdicts`). |
+| `mcda.j2` | CHECK — rank remediation candidates against four weighted criteria (`KSA-2` `lisp_eval` score verification) and run a ±20% sensitivity analysis (`task`, `annotated_findings`, `operator_priority`). Each score traces to a finding. |
+| `remediate.j2` | ACT — apply only mcda top-ranked remediations surviving essentialist (`task`, `top3`, `ranked_remediations`, `seam_map`); pin each with a test; declare within_kask per touched file; set hard_stop if any touch requires an upstream non-D-seam edit. |
+| `final-report.j2` | Consolidate the three tracks, MCDA, applied remediations, hard-stop decision, and convergence score (`task`, `seam_map`, `security_track`, `arch_track`, `ui_track`, `annotated_findings`, `mcda`, `applied_remediations`, `hard_stop`, `convergence_score`, `iterations`); per-track/severity/defense-layer counts are computed via `KSA-3` in `gates.md`. Cite file:line. |
 
 Gate-defect repair is handled inline: if Gate A/B/C finds defects, re-run the
 parent template (`seam-map.j2`, the audit template, or `remediate.j2`) with

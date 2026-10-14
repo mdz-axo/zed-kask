@@ -13,7 +13,6 @@ contract:
     final_answer: string
     hypothesis: object
     hypothesis_verified: boolean
-    total_thoughts_used: integer
     branches_explored: array
     revisions_made: array
     delegation_requests: array
@@ -212,7 +211,6 @@ During thinking, you may recognize a thought needs analysis beyond what reasonin
   "final_answer": "The complete, synthesized answer.",
   "hypothesis": {"statement": "...", "verification_method": "...", "confidence": 0.85},
   "hypothesis_verified": true,
-  "total_thoughts_used": 5,
   "branches_explored": [{"branchId": "alt", "fromThought": 2, "outcome": "dead-end", "thoughtsInBranch": [4]}],
   "revisions_made": [{"revisedThought": 3, "revisionThought": 6, "reason": "..."}],
   "delegation_requests": [

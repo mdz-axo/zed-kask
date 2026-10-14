@@ -10,13 +10,13 @@ Superforecasting pipeline following Tetlock's Good Judgment Project methodology.
 
 ## Reference model
 
-Tetlock & Gardner, *Superforecasting: The Art and Science of Prediction* (2015) — `onto_anchor` → derived `superforecasting` (operator ruling 2026-09-25). Brier (1950) → derived `brier_score`. Each stage below is labelled **D** (deterministic, oracle named) or **P** (probabilistic, calibration or critique named).
+Tetlock & Gardner, *Superforecasting: The Art and Science of Prediction* (2015) — `onto_anchor` → derived `superforecasting`, `fermi_decomposition`, and `reference_class_forecasting` (operator ruling 2026-09-25). Brier (1950) → derived `brier_score`. Each stage below is labelled **D** (deterministic, oracle named) or **P** (probabilistic, calibration or critique named).
 
 ## D/P labelling
 
-Every stage heading below carries its label. **D**: the six `lisp_eval` forms
-(the stage-2 rate check and anchor check, the stage-4 posterior, the stage-5
-weighted average, the gate pass rule, the market-prior gate); the
+Every stage heading below carries its label. **D**: the eight `lisp_eval` forms
+(the stage-0 triage gate `SF-1`, the stage-2 rate check and anchor check, the stage-4 posterior, the stage-5
+weighted average, the stage-5/stage-6 compensation-masking and defensible-range gate `SF-2`, the gate pass rule, the market-prior gate); the
 `scenario_*` server oracles (triage classification, quantify rejection,
 calibration); `forecast_persist`; and Brier at resolution. **P**: triage,
 Fermi decomposition, outside-view comparability, and dragonfly-eye
@@ -56,7 +56,10 @@ one outcome.
 1. Evaluate whether a forecasting question is worth investing significant effort in.
 2. Classify the question into "clocklike" (easy), "goldilocks" (just right), or "cloudlike" (unpredictable) — Tetlock's regularity axis, this skill's own judgment. Cross-check with `scenario_triage`'s specification-quality classification (`well_specified` / `goldilocks` / `needs_refinement`): the tool scores whether the question is specified enough to score, this step whether it is regular enough to forecast; proceed only when both land in the goldilocks zone.
 3. Assess if there is sufficient publicly available information, if the outcome is determined by analyzable factors, if research would improve accuracy, and if the time horizon is appropriate.
-4. Before proceeding, require a specified observable outcome, resolution criteria, and a deadline; if any are missing, ask for a sharper question instead of inventing them. If no supported `scenario_type` or bounded `time_horizon` fits, report null and do not proceed into the scenario tree. A forecast probability is evaluated by calibration across resolved cases, not falsified by one outcome. Recommend proceeding only when the question is in the goldilocks zone **and** can later be resolved; carry the criteria and deadline unchanged into stage 7's record.
+4. Before proceeding, require a specified observable outcome, resolution criteria, and a deadline; if any are missing, ask for a sharper question instead of inventing them. Verify Stage 0 triage alignment with `scenario_triage` and non-empty `resolution_criteria` / `resolution_deadline` deterministically via `lisp_eval` gate **`SF-1`**:
+   - form: `(and (string= triage_zone "goldilocks") (or (string= scenario_triage_class "well_specified") (string= scenario_triage_class "goldilocks")) (not (string= resolution_criteria "")) (not (string= resolution_deadline "")))`
+   - env: `{ "triage_zone": <stage_0_triage zone>, "scenario_triage_class": <scenario_triage classification>, "resolution_criteria": <string>, "resolution_deadline": <string> }`
+   If `SF-1` is false or no supported `scenario_type` or bounded `time_horizon` fits, report null and do not proceed into the scenario tree. A forecast probability is evaluated by calibration across resolved cases, not falsified by one outcome. Recommend proceeding only when `SF-1` passes; carry the criteria and deadline unchanged into stage 7's record.
 
 ### stage_1_fermi_decompose (P — critique: stage 3's falsifiability delegation; structural limits checked by `scenario_quantify` rejection)
 
@@ -124,12 +127,15 @@ The former single inside-view step is split into three steps. Generation and cou
 3. Avoid hedge words and use specific percentages matched to evidence quality.
 4. Assess confidence level (low, medium, high) based on evidence quality, model agreement, and reference class stability.
 5. Justify the specific probability and precision against the pipeline's evidence trail.
-6. Define a defensible range of probabilities that would also be reasonable.
+6. Define a defensible range of probabilities (`[range_low, range_high]`) that would also be reasonable, and verify Stage 5 compensation-masking detection plus Stage 6 defensible-range containment deterministically via `lisp_eval` gate **`SF-2`**:
+   - form: `(list (or (< min_criterion_score 4) (> (- max_criterion_score min_criterion_score) 5)) (and (<= range_low final_probability) (<= final_probability range_high) (< range_low range_high)))`
+   - env: `{ "min_criterion_score": <lowest criterion score 1..10 on a model>, "max_criterion_score": <highest criterion score 1..10 on that model>, "range_low": <defensible range lower bound>, "final_probability": <stage 6 final_probability>, "range_high": <defensible range upper bound> }`
+   The first element flags compensation masking on the evaluated model; the second must be `true` (`final_probability` strictly inside a non-degenerate `[range_low, range_high]`) before proceeding to stage 7.
 
-### stage_7_record (P content; resolution criteria and deadline D-copied from stage 0)
+### stage_7_record (P content; envelope fields D-interpolated from stage inputs)
 
 1. Create a structured record of the forecast for later tracking, scoring, and post-mortem analysis.
-2. Include a unique tracking ID, timestamp, full question text, resolution criteria, probability, and confidence.
+2. `stage_7_record.j2` D-interpolates the envelope fields (`question`, `probability`, `confidence`, `resolution_criteria`, `expiration_date`) directly from the stage inputs, while the model synthesizes `reasoning_summary`, `key_assumptions`, `timestamp`, and `tracking_id`.
 3. Summarize the reasoning and list key assumptions made.
 4. Define what would count as resolution and what evidence will determine the outcome.
 5. Set an expiration date for when the forecast should be evaluated.
@@ -226,11 +232,11 @@ probability (alignment invariant) — before re-invoking superforecasting.
 Render `superforecasting/stage_0_triage` twice — once with a representative
 goldilocks-zone question carrying resolution criteria and a deadline (pass),
 once with the deadline omitted (the triage must refuse to proceed rather
-than invent one). Run the six pinned `lisp_eval` forms with representative
-envs: the stage-2 rate check returns `invalid` on a zero sample and the
+than invent one). Run the eight pinned `lisp_eval` forms with representative
+envs: `SF-1` passes only when `triage_zone` is `"goldilocks"`, `scenario_triage_class` is `"well_specified"` or `"goldilocks"`, and `resolution_criteria`/`resolution_deadline` are non-empty; the stage-2 rate check returns `invalid` on a zero sample and the
 computed rate otherwise; the anchor check bounds `p` to [0, 1]; the stage-4
 posterior form updates a prior; the stage-5 weighted average synthesizes the
-3-model case (extend the sums for more models); the gate form passes only
+3-model case (extend the sums for more models); `SF-2` flags compensation masking and verifies `range_low <= final_probability <= range_high` with `range_low < range_high`; the gate form passes only
 when all four scores are >= 0.60; the market-prior gate requires
 `stale_buckets = 0` and `without_snapshot_rate < 0.2`.
 

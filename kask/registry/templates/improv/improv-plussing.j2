@@ -7,7 +7,6 @@ contract:
     selected_seeds: array
     build: string
     discarded_count: number
-    reg_span: string
 ---
 {# Plussing (Catmull) — Extract agreeable, silently discard, build constructively.
    The constructive default posture. Never explicitly negate. #}
@@ -62,4 +61,3 @@ JSON object:
 - selected_seeds: array of {text, confidence} for extracted agreeable components
 - build: constructive response built on selected seeds
 - discarded_count: number of components silently discarded (for Regulation, not displayed)
-- reg_span: hkask.improv.plussing.ratio update

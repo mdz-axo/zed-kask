@@ -1,4 +1,4 @@
-{# goal: Defect COLLECTION — turn raw observations into tiered, evidence-backed verdicts via pragmatic-semantics + falsifiability + grill-me + no-fiction citation. Derive severity from constraint force with linter-overlap suppression (machine findings exempt). Compute blocker_delta vs prior_review. Does NOT re-scan the code. #}
+{# goal: Defect COLLECTION — turn raw observations into tiered, evidence-backed verdicts via pragmatic-semantics + falsifiability + grill-me + no-fiction citation. Derive severity and waivable from constraint force (`CR-1`) with linter-overlap suppression (machine findings exempt). Does NOT re-scan the code. #}
 [inference]
 contract:
   input:
@@ -8,9 +8,7 @@ contract:
     prior_review: object
   output:
     adjudicated_findings: array
-    severity_counts: object
     rejected_findings: array
-    blocker_delta: integer
 ---
 {# Phase 3 — ADJUDICATE (collection: semantics + falsifiability + grill-me + no-fiction) #}
 {#
@@ -143,13 +141,8 @@ finding is a Should-fix with confidence ≤ 0.6, not a Blocker.
   bug is dishonest).
 - Do not rubber-stamp. "LGTM without evidence" is a failure mode.
 - Do not block on taste alone.
-- If raw_findings is empty, return all-zero counts — a CLEAN PASS is valid; do
-  not fabricate findings to look thorough.
-
-## Step 8 — Compute blocker_delta
-
-blocker_delta = (Blocker count this pass) − prior_review.blockers (0 if absent).
-A negative delta means progress; zero means stable; positive means new blockers.
+- If raw_findings is empty, return empty `adjudicated_findings` and `rejected_findings` — a CLEAN PASS is valid; do
+  not fabricate findings to look thorough. `severity_counts`, `blocker_delta`, the prediction gap, and `verdict` are computed deterministically by `CR-2` `lisp_eval` after this phase.
 
 ## Output
 
@@ -180,11 +173,9 @@ Respond with a JSON object:
       "fix_suggestion_hint": "direction of a remedy if obvious, else 'see report'"
     }
   ],
-  "severity_counts": {"blockers": 0, "should_fix": 0, "nit": 0, "fyi": 0},
   "rejected_findings": [
     {"raw_id": "RAW-...", "reason": "missing_citation | self_challenge_invalidated | unfalsifiable"}
-  ],
-  "blocker_delta": 0
+  ]
 }
 ```
 
@@ -195,17 +186,16 @@ Respond with a JSON object:
 - Every finding carries IS/OUGHT, epistemic mode, provenance, constraint force,
   confidence, a falsifier, a grill-me resolution, and a verbatim citation —
   missing any → reject (not silently drop).
-- Severity is derived from constraint force (not ad-hoc importance); a taste
+- Severity and `waivable` are derived deterministically via `CR-1` `lisp_eval` from constraint force (not ad-hoc importance); a taste
   finding is never a Blocker; subjunctive/assessment never exceeds Should-fix;
   confidence < 0.60 downgrades one tier; tool-covered findings are FYI at most
   (machine findings exempt — never suppressed).
 - `waivable` is true only for a Blocker whose force (or `violated_force`) is
   Guardrail. `waiver` stays null here; only the operator fills it, in the
   review, with a stated reason. Never set a waiver yourself.
-- An empty raw_findings list yields all-zero counts (clean pass is valid). Do
+- An empty raw_findings list yields empty `adjudicated_findings` (clean pass is valid). Do
   not fabricate findings.
 - Corroborated ≠ confirmed; never output "proven"/"verified true". Use
   "upheld"/"withstood".
 - A finding with no falsifier is a preference → Nit/FYI, not a defect.
-- blocker_delta is computed against prior_review.blockers (0 if absent).
 - Handle missing variables gracefully.

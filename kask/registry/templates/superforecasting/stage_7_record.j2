@@ -61,17 +61,22 @@ Set up for later error analysis:
 
 ## Output
 
-Respond with a JSON object containing:
-- forecast_record: Object with {
-    question: string,
-    probability: float,
-    confidence: string,
-    timestamp: string (ISO 8601),
-    resolution_criteria: string,
-    expiration_date: string|null,
-    reasoning_summary: string,
-    key_assumptions: array of strings
-  }
-- tracking_id: string (unique identifier for this forecast)
+Respond with a JSON object containing `forecast_record` and `tracking_id`, where the deterministic envelope fields (`question`, `probability`, `confidence`, `resolution_criteria`, `expiration_date`) are D-interpolated directly from the stage inputs and you synthesize `reasoning_summary`, `key_assumptions`, `timestamp`, and `tracking_id`:
+
+```json
+{
+  "forecast_record": {
+    "question": {{ forecasting_question | tojson }},
+    "probability": {{ final_probability }},
+    "confidence": {{ confidence_level | tojson }},
+    "timestamp": "<ISO 8601 timestamp>",
+    "resolution_criteria": {{ resolution_criteria | tojson }},
+    "expiration_date": {{ expiration_date | tojson }},
+    "reasoning_summary": "<concise synthesis of the pipeline's outside view, causal pathways, evidence updates, and calibration>",
+    "key_assumptions": ["<key assumption 1>", "<key assumption 2>"]
+  },
+  "tracking_id": "<unique identifier for this forecast>"
+}
+```
 
 After recording, preserve the tracking ID and resolved outcome so the forecast can be scored later with the scenarios server's `scenario_score` tool.

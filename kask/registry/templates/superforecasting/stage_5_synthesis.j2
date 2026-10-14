@@ -6,7 +6,7 @@ contract:
     hypothesis_analysis: object
   output:
     causal_models: array
-    synthesized_probability: float
+    synthesized_probability_judgment: float
     dissenting_views: array
     model_weights: array
 ---
@@ -102,6 +102,5 @@ Respond with a JSON object containing:
   }
 - model_weights: Array of objects with {
     model_name: string,
-    weight: float,
     compensation_warning: boolean
   }

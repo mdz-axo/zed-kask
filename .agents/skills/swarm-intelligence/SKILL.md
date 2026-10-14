@@ -26,7 +26,7 @@ workspaces. (Verified live 2026-08-01.)
 
 ## Surface ontologies
 
-- **Onto4MAT** (Kiesel et al. 2022): `Team { hasAlignmentWithTeam,
+- **Onto4MAT** (Hepworth, Baxter & Abbass, 2022, arXiv:2203.12955): `Team { hasAlignmentWithTeam,
 hasCohesionWithTeam, hasTeamSeparation, hasInfluence }`, `Agent { hasSpeed,
 hasHeading, hasEnergy, hasDistanceToGoal }`, `Formation`. The measurable
   substrate for swarm state.
@@ -42,11 +42,17 @@ hasHeading, hasEnergy, hasDistanceToGoal }`, `Formation`. The measurable
 
 SENSE, ORIENT and DECIDE judgments (deficit classification, composition moves,
 tuning choices) are P — critiqued by the Go See loop (human observation) and
-by the observed receipts in CHECK. The pinned arithmetic is D: the
-convergence distance and target gate, the receipt-coverage check, the
-loop_closure ratio, the failed-signature comparison, and the C7 influence
-guard run in `lisp_eval` over sensed state and actual
-receipts — the model never supplies the convergence score. ACT renders
+by the observed receipts in CHECK. The pinned arithmetic is D: the `SWM-1`
+variety_coverage, diversity, cohesion, separation, and per_agent_metrics
+computations in SENSE, the `SWM-2` deficit-classification, latency-outlier
+(>2x median), and C5 fault-attribution priority rule in ORIENT, the `SWM-3`
+local steering preflight check, the convergence distance and target gate, the
+receipt-coverage check, the loop_closure ratio, the failed-signature comparison,
+and the C7 influence guard all run in `lisp_eval` over sensed state and actual
+receipts — the model never supplies the convergence score.
+- `SWM-1` (`lisp_eval` SENSE metrics): `(let ((vc (if (= req_count 0) 1.0 (if (= agent_count 0) 0.0 (/ cov_count req_count)))) (div (if (= agent_count 0) 0.0 (/ distinct_type_model_count agent_count))) (coh (if (= dep_count 0) 1.0 (/ sat_dep_count dep_count))) (sep (if (= agent_count 0) 0.0 (/ distinct_tuple_count agent_count)))) (list vc div coh sep (= req_count 0)))`, env `{ "req_count": <|required_transforms|>, "cov_count": <|required_transforms ∩ covered_transforms|>, "agent_count": <|agents|>, "distinct_type_model_count": <|distinct (agent_type, model)|>, "dep_count": <|required dependencies|>, "sat_dep_count": <|satisfied dependencies|>, "distinct_tuple_count": <|distinct (agent_type, model, temperature)|> }`.
+- `SWM-2` (`lisp_eval` ORIENT deficit & latency outlier check): `(let ((deficit (cond ((< lc 1.0) "loop_break") ((< vc 0.9) "variety_deficit") ((or (< div 0.25) (not coherence_non_decreasing)) "coherence_deficit") (t "on_target")))) (begin (define outliers (lambda (xs thr) (if (is_null xs) (list) (if (> (nth 1 (car xs)) thr) (cons (car (car xs)) (outliers (cdr xs) thr)) (outliers (cdr xs) thr))))) (list deficit (outliers agent_latencies (* 2 median_latency)))))`, env `{ "vc": <variety_coverage>, "div": <diversity>, "lc": <loop_closure>, "coherence_non_decreasing": <bool>, "agent_latencies": <[[agent_id, latency_ms], ...]>, "median_latency": <median latency_ms> }`.
+ACT renders
 intents, never executed receipts; execution comes only from the live tools
 (consent-gated ABW spend; local no-credit dispatch), and a rendered plan is
 not a swarm state change. A task-success target requires an actual
@@ -229,12 +235,11 @@ delegation array and its results are the StepExecutions.
   or explicit per-entry error, in input order; only the returned `results`
   array becomes `delegate_results`.
 
-1. **Plan (P):** take the delegation subset of `emitted_calls` and render
-   `swarm-intelligence/swarm-steer-direct` with `task`, `swarm_id` and the
-   unmodified plan. No delegations → report `empty` and make no call.
-   Otherwise check 1–10 entries, roster membership and evaluator shape before
-   labelling the directive `ready`. Rendering a directive is not executing it.
-2. **Do (D):** call `swarm_execute_plan_local` once with that directive. If
+1. **Preflight (`SWM-3`, D):** take the delegation subset of `emitted_calls` from `swarm-act.j2`'s `steering_directive` and validate 1–10 entries, roster membership, and evaluator shape deterministically with `lisp_eval` (`SWM-3` — local steering preflight; replaces the deleted `swarm-steer-direct.j2` wrapper template):
+   - form: `(begin (define all-members (lambda (ds r) (if (is_null ds) t (and (member (assoc "agent_name" (car ds)) r) (all-members (cdr ds) r))))) (define valid-evals (lambda (ds) (if (is_null ds) t (let ((ev (assoc "evaluator" (car ds)))) (and (or (is_null ev) (and (member (assoc "evaluator" ev) (list "contains" "not_contains" "regex")) (> (length (assoc "spec" ev)) 0))) (valid-evals (cdr ds))))))) (if (= (length delegations) 0) "empty" (if (and (<= (length delegations) 10) (all-members delegations roster) (valid-evals delegations)) "ready" "invalid")))`
+   - env: `{ "delegations": <delegate subset of emitted_calls>, "roster": <member agent ids in swarm_id> }`
+   `"empty"` → make no call; `"invalid"` → stop and fix preflight before calling the tool.
+2. **Do (D):** when `SWM-3` returns `"ready"`, call `swarm_execute_plan_local` once with `swarm_id` and `delegations` from `swarm-act.j2`'s `steering_directive`. If
    the tool errors instead of returning a complete `results` array, report
    the execution state unknown (earlier calls may have run); do not retry or
    fabricate receipts.
@@ -321,7 +326,7 @@ the surviving record).
 
 ## Registry
 
-- Templates: `kask/registry/templates/swarm-intelligence/swarm-{sense,orient,decide,act,check,steer-direct,compose-guide}.j2`
+- Templates: `kask/registry/templates/swarm-intelligence/swarm-{sense,orient,decide,act,check,compose-guide}.j2`
 - Live process: read the selected ABW or local roster → SENSE → ORIENT → DECIDE → check proposed moves against observed failed signatures and actual consent/permissions → ACT emits intents → execute only in explicitly selected steering mode → CHECK re-reads state and receipts → compute receipt coverage, distance and target gate with `lisp_eval` → carry observed iteration history into a bounded next cycle. A rendered phase alone does not call an MCP tool.
 - No registered `swarm.*` filter, accumulator or second-order monitor primitives exist. Record failed edits and task-board/receipt fault evidence explicitly; `lisp_eval` handles only the pinned arithmetic and exact-signature checks, while Go See is human observation. Do not report a nonexistent compute step as executed.
 - MCP tool surface (consult current registration rather than a fixed count):
@@ -389,9 +394,8 @@ the surviving record).
 | `swarm-sense.j2` | Measure the current swarm state. In `abw` mode, fetch the ABW workspace roster and wallet; in `local` mode, read the member roster and local agent registry. Optionally probe an agent's consolidated knowledge graph via `swarm_search_knowledge` (fermi v0.10.26 — the embedder was broken platform-wide for 6 weeks and is now fixed) when the roster's accepts/produces is ambiguous about whether an agent covers a required transform. Compute Onto4MAT team properties: alignment (delegation-graph density from produces/accepts overlap), cohesion (fraction of required dependencies satisfied), separation (distinct (agent_type, model, temperature) tuples / agent count). Derive required_transforms from the task. Consumes prior_iteration.next_focus when present (feedback loop closure). Vacuous-truth defaults: empty required_transforms → variety_coverage 1.0 + trivial_task flag; empty swarm → diversity 0.0, variety 0.0. |
 | `swarm-orient.j2` | Classify the gap between sensed state and target condition into one of three deficit classes (or on-target): (a) variety deficit — required_transforms not covered; (b) coherence deficit — Thagard coherence flat/declining OR diversity below floor (premature convergence, the PSO/ACO failure mode); (c) loop-break — un-reconciled dispatches or un-acknowledged curator data-sharing. Mode-agnostic: operates on the state shape from SENSE, not the data source. Delegates to pragmatic-cybernetics for the 5-property assessment (polarity, delay, gain, closure, fidelity) when the deficit is a loop-break. Classifies the coordination problem (Axelrod): cooperation (repeated, shadow of the future) vs division-of-labor (one-shot, complementary capabilities). |
 | `swarm-decide.j2` | Propose measured-deficit responses using PSO/ACO/Reynolds as analogies, not executed numerical algorithms. Local composition uses named-swarm roster add/remove without deleting saved cards; ABW removal uses `swarm_fire` under the workspace contract. The one-level delegation invariant still applies. |
-| `swarm-act.j2` | Prepare ABW consent-gated or local no-credit action intents. Rendering emits a plan, never an executed-call receipt; the invoking Curator/human runs the selected live tools and retains their results. |
-| `swarm-check.j2` | Re-read post-Act state and observed receipts; local `loop_closure` covers both successful and explicit error entries in order, while a dispatch error remains an independent alert. Supply measured axes for the caller's `lisp_eval` distance/target gate. Zero actual delegations are vacuously receipted, but unexecuted plans are not. |
-| `swarm-steer-direct.j2` | Steering a local swarm, step 1: from the plan and local swarm id, check member agents and produce one scoped `swarm_execute_plan_local` call with optional deterministic evaluators, the `LocalDelegateResult` collection shape, and the feedback instruction. |
+| `swarm-act.j2` | Prepare ABW consent-gated or local no-credit action intents (`decisions`, `swarm_id`, `task`, `mode`, `steering_mode`) and emit `steering_directive` for local (`swarm_execute_plan_local`, gated by `SWM-3`) or cloud (`swarm_xaman`) steering. Rendering emits a plan, never an executed-call receipt; the invoking Curator/human runs the selected live tools and retains their results. |
+| `swarm-check.j2` | Re-read post-Act state and observed receipts (`pre_act_state`, `act_result`, `swarm_id`, `mode`, `target_condition`, `task_success`, `fetched_post_act_state`); local `loop_closure` covers both successful and explicit error entries in order, while a dispatch error remains an independent alert. Supply measured axes for the caller's `lisp_eval` distance/target gate. Zero actual delegations are vacuously receipted, but unexecuted plans are not. |
 | `swarm-compose-guide.j2` | Reference/authoring template for agent and swarm composition. Given a composition request (surface: agent|swarm, mode: abw|local, action: suggest|validate, plus partial fields), it produces either suggested completions for unfilled fields (action=suggest) or a validation verdict over the supplied fields (action=validate). Encodes the canonical field definitions (name, agent_type, description, system_prompt, mission, agents) and the ABW/local backend considerations (credit-cost consent-gated catalogue vs local filesystem registry without credits). Mirrors the inline prompt used by the `swarm_ai_assist` MCP tool — this template is the single source of truth the panel and the process share. Consumed by the DECIDE phase when it proposes an `author_agent` move (no catalogue agent covers a required transform); also available for standalone invocation from the swarm panel. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `swarm-intelligence/swarm-sense`) and a context object with the required variables.

@@ -67,7 +67,7 @@ is the knowledge needed to see it).
 ### meta-grasp-current (Kata Step 1: Grasp Current Condition)
 
 1. Measure the agent's actual metacognitive state — don't assume, measure.
-2. Identify obstacles (typed, severity-rated), surface assumptions, count grounded claims.
+2. Identify obstacles (typed, severity-rated), surface assumptions, count grounded claims, and enumerate `options` (compute the option count deterministically via `lisp_eval` `(length options)`).
 3. Produce current_artifacts (Dublin Core) and current_procedure (PKO) with a checkable source/receipt for every claimed `exists`, `grounded`, or `complete` state. Uncited or ambiguous states are `unmeasured`, not a zero contribution to the gap.
 4. On refinement cycles, compare to the previous grasp and note what changed.
 
@@ -94,8 +94,11 @@ is the knowledge needed to see it).
 
 Use when the gap is in understanding a problem that needs several dependent reasoning steps, not in calibrating a known one. It runs inside Step 4; the Kata steps around it are unchanged.
 
-1. Render `metacognition/inquiry-engine` with `problem`, `domain`, `constraints`, `max_thoughts` (≤ 20; 12 is the default) and the prior cycle's `prior_chain`, `prior_delegation_results` and `prior_skill_match_results`. It generates, branches, revises and verifies thoughts and emits `delegation_requests` and `skill_match_queries`.
-2. For each `delegation_requests` entry, render the matching delegation template: `metacognition/inquiry-delegate-hypothesis-framer` (question framing, FINER + PICO), `metacognition/inquiry-delegate-mcda` (choice among alternatives), `metacognition/inquiry-delegate-diagnose` (a bug or regression), or `metacognition/inquiry-delegate-falsifiability` (a counterfactual or an untestable claim). Render the matching delegate with the FULL `delegation_requests` array — each delegate filters to its own skill's entries and returns an array under `result` when multiple match. For `skill_match_queries`, render `skill-discovery/skill-discovery-route` with `task_description`, `task_context`, the actual installed `skill_catalog`, `max_recommendations: 3`, and its required `epistemic_state: {}` when no independently supported confidence/type was supplied. An empty object disables the boost; never invent 0.5 or an uncertainty type. Do this for at most three follow-up skills.
+1. Render `metacognition/inquiry-engine` with `problem`, `domain`, `constraints`, `max_thoughts` (≤ 20; 12 is the default) and the prior cycle's `prior_chain`, `prior_delegation_results` and `prior_skill_match_results`. It generates, branches, revises and verifies thoughts and emits `delegation_requests` and `skill_match_queries` (total thoughts used is computed deterministically as `(length thought_chain)`).
+2. For each `delegation_requests` entry, route deterministically via `lisp_eval` gate **`MC-1`** to the canonical skill (`hypothesis-framer`, `mcda`, `diagnose`, or `falsifiability`):
+   - form: `(if (and (<= (length delegation_requests) 3) (or (string= requested_skill "hypothesis-framer") (string= requested_skill "mcda") (string= requested_skill "diagnose") (string= requested_skill "falsifiability"))) requested_skill "route_to_skill_discovery")`
+   - env: `{ "delegation_requests": <the delegation_requests array>, "requested_skill": <entry.skill> }`
+   Invoke the matched canonical skill (`hypothesis-framer`, `mcda`, `diagnose`, or `falsifiability`) via the `skill` tool (not a local shadow template). When `MC-1` returns `"route_to_skill_discovery"` or for `skill_match_queries`, render `skill-discovery/skill-discovery-route` with `task_description`, `task_context`, the actual installed `skill_catalog`, `max_recommendations: 3`, and its required `epistemic_state: {}` when no independently supported confidence/type was supplied. An empty object disables the boost; never invent 0.5 or an uncertainty type. Do this for at most three follow-up skills.
 3. Feed the delegation and skill-match results back into the next engine render. The engine's `final_answer` and `hypothesis_verified` become the post-experiment current condition.
 
 ### Convergence (Steps 5-9: Check + Act)
@@ -116,11 +119,7 @@ The counts are probabilistic (P — model-produced, critiqued by the operator wh
 | `meta-establish-target.j2` | Declare the target metacognitive state — what sufficient meta-knowledge looks like for this goal. Produces target_artifacts and target_procedure for gap computation. |
 | `meta-predict.j2` | Predict a task-specific calibration and gap reduction, with confidence in [0,1]; Brier calibration waits for the operator's goal resolution. |
 | `meta-experiment.j2` | Apply the predicted calibration — Falstaffian perspective rotation, ellipsis analysis, or strategy adjustment. Re-measure the current condition after the experiment. Produces new current_artifacts and current_procedure. |
-| `inquiry-engine.j2` | Inquiry experiment: branching, revising chain of thought that emits deep-dive delegation requests and skill-match queries. |
-| `inquiry-delegate-hypothesis-framer.j2` | Delegation: frame a research question and testable hypothesis (FINER + PICO). |
-| `inquiry-delegate-mcda.j2` | Delegation: weigh and rank alternatives with sensitivity. |
-| `inquiry-delegate-diagnose.j2` | Delegation: structured root-cause diagnosis of a bug or regression. |
-| `inquiry-delegate-falsifiability.j2` | Delegation: eliminative inference for a counterfactual or an untestable claim. |
+| `inquiry-engine.j2` | Inquiry experiment: branching, revising chain of thought that emits deep-dive delegation requests (routed via `MC-1` to canonical skills) and skill-match queries. |
 | `ellipsis-analysis.j2` | Apply Bloom's five-step method to detect gaps in context, classify them as ellipsis (deliberate) or leak (unintentional), and find what is not inferno (Calvino: the exceptional, supported element worth preserving). Used by the experiment step for ellipsis perspective. |
 
 To render a template, call `render_template` with the template ref and these **top-level** context keys (not nested under `variables`). Pass the prior step's result as the named condition, not as `current_grasp` or `predicted_calibration`:
@@ -133,7 +132,6 @@ To render a template, call `render_template` with the template ref and these **t
 | `metacognition/meta-experiment` | `goal`, `current_condition` (Step 1 result), `prediction` (Step 3 result) | `perspectives`, `context_text`, `prev_experiment` |
 | `metacognition/ellipsis-analysis` | `text`, `expectations`, `biases`, `assumptions`, `domain` | — |
 | `metacognition/inquiry-engine` | `problem`, `domain`, `constraints`, `max_thoughts` | `prior_chain`, `prior_delegation_results`, `prior_skill_match_results` |
-| `metacognition/inquiry-delegate-*` | `delegation_requests` | — |
 
 A `render_template` call renders the prompt; it does not execute the inference step or produce that step's result. Use the measured result of each step when supplying the next step's condition.
 

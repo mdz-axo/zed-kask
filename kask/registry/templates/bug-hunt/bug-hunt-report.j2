@@ -1,11 +1,10 @@
-{# goal: Produce a structured JSON bug report from charter, oracle, and taxonomy results. Emits lessons_learned and pattern_signatures for feedback loop closure. #}
+{# goal: Produce a structured JSON bug report from charter, oracle findings, and BH-1 oracle_summary. Emits lessons_learned and pattern_signatures for feedback loop closure. #}
 [inference]
 contract:
   input:
     charter: object
     evaluated_findings: array
-    classified_findings: array
-    taxonomy_summary: object
+    oracle_summary: object
     quality_criteria: string
     probes_executed: integer
     files_read: integer
@@ -41,14 +40,14 @@ You are a bug report compiler. Produce a structured JSON bug report from all pri
 {{ charter | tojson }}
 ```
 
-## Evaluated Findings (Oracle)
+## Evaluated Findings (Oracle + Taxonomy)
 ```json
 {{ evaluated_findings | tojson }}
 ```
 
-## Classified Findings (Taxonomy)
+## Oracle Summary (from `BH-1` `lisp_eval`)
 ```json
-{{ classified_findings | tojson }}
+{{ oracle_summary | tojson }}
 ```
 
 ## Expedition Metadata
@@ -67,9 +66,9 @@ You are a bug report compiler. Produce a structured JSON bug report from all pri
 ## Step 0 — Reconcile the prediction (D)
 
 The probe step 0 recorded `predicted_findings` and `predicted_category` before
-probing. Reconcile them against the observed results:
-- `confirmed_findings` = confirmed_bugs + potential_bugs (the oracle's counts)
-- `observed_category` = the taxonomy_summary category with the highest count
+probing. Reconcile them against the observed results in `oracle_summary` (computed by `BH-1` `lisp_eval`):
+- `confirmed_findings` = `oracle_summary.confirmed_bugs + oracle_summary.potential_bugs`
+- `observed_category` = the `oracle_summary.by_category` category with the highest count
 
 Compute the count gap with `lisp_eval` (D):
 `(- confirmed_findings predicted_findings)`
@@ -151,9 +150,9 @@ iterations. Treat them as first-class outputs, not afterthoughts.
 
 ### Report Persistence
 
-After producing the report JSON, the agent writes it to the trace filesystem
-as `bug-hunt-report.json` in the current run's trace directory (fixed filename,
-expedition_id inside the JSON) using the `write_file` tool.
+After producing the report JSON, the agent creates the run directory and writes the report to
+`~/Documents/zk-data/skills/bug-hunt/{date}-{run}/bug-hunt-report.json` (fixed filename,
+`expedition_id` inside the JSON) via `terminal` (built-in file tools cannot write under `~/Documents/zk-data`).
 
 The report is the durable record of the expedition: later expeditions consume
 it via `prior_expedition`, and an operator can read it to target test gaps at
@@ -161,15 +160,9 @@ the found locations.
 
 ## Constraints
 
-- Consolidate findings from oracle + taxonomy into a single findings array
-  (join by id: the oracle's evaluated_findings carry location and evidence;
-  the taxonomy's classified_findings carry category, severity, signature).
-- `summary.taxonomy_coverage` comes from the taxonomize's `taxonomy_summary`
-  (by_category / by_severity) — do not recompute it from classified_findings.
+- Carry `evaluated_findings` directly into `findings` — each oracle finding already carries location, evidence, verdict, confidence, reproducibility, `beizer_category`, `severity`, `pattern_signature`, and `fix_suggestion`.
+- Populate `summary` (`confirmed_bugs`, `potential_bugs`, `contract_gaps`, `rejected_findings`, and `taxonomy_coverage.by_category` / `by_severity`) directly from `oracle_summary` (computed by `BH-1` `lisp_eval`) — do not recompute them by hand.
 - Each finding must include all fields: id, summary, location, verdict, confidence, reproducibility, beizer_category, severity, evidence, pattern_signature, fix_suggestion.
-- Summary counts must be accurate, including rejected_findings from the oracle.
+- Summary counts must be accurate, including rejected_findings from `oracle_summary`.
 - lessons_learned must be concrete and actionable, not generic platitudes.
 - pattern_signatures must be derived from actual findings, not fabricated.
-- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
-- Preserve the original prompt structure and formatting.
-- Handle missing variables gracefully (leave as-is or use default if specified).

@@ -2,7 +2,7 @@
 [inference]
 contract:
   input:
-    refined_question: string
+    focal_question: string
     scenarios: array
   output:
     per_scenario_implications: array
@@ -14,9 +14,9 @@ contract:
 
 You are a scenario planning specialist extracting actionable implications, strategies, and early indicators from constructed scenarios.
 
-## Refined Focal Question
+## Focal Question
 
-{{ refined_question }}
+{{ focal_question }}
 
 ## Scenarios
 
@@ -87,7 +87,8 @@ Respond with a JSON object:
     {
       "strategy": "Description of the contingent strategy",
       "triggered_by": "Which scenario triggers this",
-      "trigger_indicator": "The specific observable signal"
+      "trigger_indicator": "The specific observable signal",
+      "constraint_force": "Guardrail"
     }
   ],
   "early_indicators": [
@@ -108,7 +109,4 @@ Respond with a JSON object:
 - Every robust and contingent strategy must include a `constraint_force` of `Prohibition`, `Guardrail`, or `Guideline`.
 - Early indicators must be measurable and observable — not vague trends.
 - At least 2 robust strategies and 2 early indicators per scenario.
-- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
-- Preserve the original prompt structure and formatting.
-- Handle missing variables gracefully (leave as-is or use default if specified).
 

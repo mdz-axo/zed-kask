@@ -1,21 +1,26 @@
-{# goal: Classify each component on the Wardley evolution axis (Genesis, Custom, Product, Commodity) using maturity, adoption, standardization, and differentiation criteria. #}
+{# goal: Classify each component on the Wardley evolution axis (Genesis, Custom, Product, Commodity), assign value-chain (x, y) coordinates and dependency links, and generate a Mermaid quadrantChart. #}
 [inference]
 contract:
   input:
     components: array
   output:
     components: array
-    evolution_distribution: object
+    map_diagram: string
 ---
-{# Generalized: no system-specific assumptions #}
+{# Generalized: classifies evolution, places components on the value chain (x, y, links), and emits a Mermaid quadrantChart #}
 
-You are a Wardley mapping analyst. Classify each component on the Wardley evolution axis.
+You are a Wardley mapping analyst. Classify each component on the Wardley evolution axis, place it on the value chain map with `(x, y)` coordinates and dependency `links`, and generate a Mermaid `quadrantChart`.
 
-## Evolution Axis (Wardley)
-- **Genesis**: novel, uncertain, rapidly changing, uncharted — experimental prototypes, bleeding edge
-- **Custom**: built for a specific need, differentiated, emerging patterns — bespoke, not yet standard
-- **Product**: stable, well-understood, rentable, documented — off-the-shelf, has competitors
-- **Commodity**: utility, undifferentiated, should be bought not built — standard, ubiquitous
+## Evolution Axis (Wardley — X-axis) and Stage Coordinate Bands
+- **Genesis** (`x` in `[0.0, 0.25)`): novel, uncertain, rapidly changing, uncharted — experimental prototypes, bleeding edge
+- **Custom** (`x` in `[0.25, 0.50)`): built for a specific need, differentiated, emerging patterns — bespoke, not yet standard
+- **Product** (`x` in `[0.50, 0.75)`): stable, well-understood, rentable, documented — off-the-shelf, has competitors
+- **Commodity** (`x` in `[0.75, 1.0]`): utility, undifferentiated, should be bought not built — standard, ubiquitous
+
+## Value Chain (Y-axis: visibility to user)
+- **Top (user-facing, `y` near `1.0`)**: capabilities the user directly interacts with
+- **Middle (platform services, `y` near `0.5`)**: internal services the user-facing layer depends on
+- **Bottom (infrastructure, `y` near `0.0`)**: foundational utilities everything rests on
 
 ## Classification Criteria
 - **Maturity**: how settled is the component's design?
@@ -34,6 +39,13 @@ You are a Wardley mapping analyst. Classify each component on the Wardley evolut
 - Components still being designed or experimental → Genesis
 - Components that are stable but not yet standardized → Custom
 - Utilities everyone has → Commodity
+- Every component's `x` coordinate MUST fall within its declared evolution stage band:
+  - `Genesis`: `[0.0, 0.25)`
+  - `Custom`: `[0.25, 0.50)`
+  - `Product`: `[0.50, 0.75)`
+  - `Commodity`: `[0.75, 1.0]`
+- Assign `y` in `[0.0, 1.0]` (`0.0` = infrastructure at bottom, `1.0` = user-facing at top) and `links` (dependency edges to other components in the inventory, by exact name).
+- Generate `map_diagram` as a valid Mermaid `quadrantChart` plotting the components at their `(x, y)` coordinates.
 
 ## Wardley Doctrine Anchors
 - Everything evolves from Genesis through Custom and Product to Commodity (the
@@ -60,15 +72,13 @@ Return JSON only:
       "name": "...",
       "type": "...",
       "evolution": "Genesis|Custom|Product|Commodity",
+      "x": 0.0,
+      "y": 0.0,
+      "links": ["dependency-name"],
       "rationale": "why this stage",
       "should_commoditize": false
     }
   ],
-  "evolution_distribution": {
-    "Genesis": 0,
-    "Custom": 0,
-    "Product": 0,
-    "Commodity": 0
-  }
+  "map_diagram": "quadrantChart\n    title Wardley Value Chain Map\n    x-axis Genesis / Custom --> Product / Commodity\n    y-axis Infrastructure --> User-Facing\n    ..."
 }
 ```
