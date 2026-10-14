@@ -318,8 +318,6 @@ pub(crate) struct CorpusTranscriptResult {
     pub excluded: Vec<ExcludedVideo>,
 }
 
-const SERPAPI_BASE: &str = "https://serpapi.com/search";
-
 pub async fn fetch_corpus_transcripts(
     client: &reqwest::Client,
     symbol: &str,
@@ -334,20 +332,11 @@ pub async fn fetch_corpus_transcripts(
         ("engine", "youtube".to_string()),
         ("num", max_results.to_string()),
     ];
-    let search_response = client
-        .get(SERPAPI_BASE)
-        .query(&search_params)
-        .send()
+    let search_json = hkask_mcp_server::serpapi_get_json(client, &search_params)
         .await
-        .map_err(|error| {
-            McpToolError::unavailable(format!("SerpAPI YouTube search failed: {error}"))
+        .map_err(|e| {
+            McpToolError::unavailable(format!("SerpAPI YouTube search failed: {}", e.message))
         })?;
-    let search_body = search_response.text().await.map_err(|error| {
-        McpToolError::unavailable(format!("SerpAPI search body read failed: {error}"))
-    })?;
-    let search_json: serde_json::Value = serde_json::from_str(&search_body).map_err(|error| {
-        McpToolError::unavailable(format!("SerpAPI search returned malformed JSON: {error}"))
-    })?;
     let video_results = hkask_types::serpapi::youtube_video_results(&search_json);
     let mut transcripts = Vec::new();
     let mut excluded = Vec::new();
@@ -421,18 +410,9 @@ async fn fetch_youtube_transcript(
         ("api_key", serpapi_key.to_string()),
         ("engine", "youtube_video_transcript".to_string()),
     ];
-    let response = client
-        .get(SERPAPI_BASE)
-        .query(&params)
-        .send()
+    let parsed = hkask_mcp_server::serpapi_get_json(client, &params)
         .await
-        .map_err(|error| anyhow::anyhow!("request failed: {error}"))?;
-    let body = response
-        .text()
-        .await
-        .map_err(|error| anyhow::anyhow!("body read failed: {error}"))?;
-    let parsed: serde_json::Value =
-        serde_json::from_str(&body).map_err(|error| anyhow::anyhow!("malformed JSON: {error}"))?;
+        .map_err(|error| anyhow::anyhow!("{}", error.message))?;
     let snippets = parsed["transcripts"]
         .as_array()
         .or_else(|| parsed["organic_results"].as_array())

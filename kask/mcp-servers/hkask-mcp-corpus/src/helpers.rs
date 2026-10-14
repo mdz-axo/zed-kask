@@ -192,6 +192,18 @@ pub(crate) fn open_memory_store(
         .map_err(|e| hkask_mcp_server::server::map_database_error(e, "Cannot open memory DB"))
 }
 
+pub(crate) fn open_existing_memory_store(
+    db_path: &str,
+    passphrase: &str,
+) -> Result<hkask_memory::MemoryStore, McpToolError> {
+    if passphrase.is_empty() {
+        return Err(passphrase_unavailable());
+    }
+    let dim = crate::embedding_dim();
+    hkask_memory::MemoryStore::open_existing(db_path, passphrase, dim)
+        .map_err(|e| hkask_mcp_server::server::map_database_error(e, "Cannot open memory DB"))
+}
+
 /// Write `content` to a caller-supplied `output` path under containment.
 /// Single enforcement point for the corpus output writes of
 /// `corpus_dedup_chunks`, `corpus_ingest_qa`, `corpus_prepare_training_dataset`,

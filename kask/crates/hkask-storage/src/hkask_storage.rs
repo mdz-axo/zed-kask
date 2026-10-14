@@ -20,7 +20,7 @@ pub use core::DatabaseDriverTrait;
 pub use core::connection::{
     Database, DatabaseError, LeasedSqliteConnection, SqliteConnectionManager,
 };
-pub use core::{embedding_dim, open_database, open_or_repair, sanitize_path};
+pub use core::{embedding_dim, open_database, open_existing, open_or_repair, sanitize_path};
 pub use database::{DatabaseDriver, SqliteDriver, WAL_PRAGMA_BATCH, init_wal_pragmas};
 pub use hkask_types::time::now_rfc3339;
 pub use rotation::{RotationError, export_database_keyed, rotate_passphrase, verify_database_key};

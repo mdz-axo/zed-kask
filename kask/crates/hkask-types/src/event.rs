@@ -148,7 +148,6 @@ const CANONICAL_NAMESPACES: &[&str] = &[
     // 2026-09-03) ──
     "reg.batch.concurrency",
     // ── LoRA training (config validation and runtime alerts, training server) ──
-    "reg.lora",
     "reg.lora.audit",
     "reg.lora.runtime",
     // ── Skill (activation outcomes and operator feedback) ──
@@ -293,11 +292,11 @@ impl SpanCategory {
     pub fn from_short_name(s: &str) -> Self {
         let prefix = s.split('.').next().unwrap_or(s);
         match prefix {
-            "variety" | "outcome" | "alert" => Self::Cybernetics,
-            "curation" | "spec" => Self::Curation,
+            "cybernetics" | "variety" | "outcome" | "alert" | "sensor" => Self::Cybernetics,
+            "curation" | "curator" | "spec" => Self::Curation,
             "inference" => Self::Inference,
-            "pod" | "connector" => Self::Memory,
-            "skill" => Self::Skill,
+            "memory" | "consolidation" | "pod" | "connector" => Self::Memory,
+            "skill" | "kata" => Self::Skill,
             _ => Self::Unknown,
         }
     }
@@ -543,5 +542,68 @@ pub trait RegulationSink: Send + Sync {
     ) -> Result<bool, crate::InfrastructureError> {
         self.persist(event)?;
         Ok(true)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::regulation::RegulationSpan;
+
+    #[test]
+    fn all_span_kinds_and_regulation_spans_resolve_in_canonical_namespaces() {
+        for kind in [
+            SpanKind::ToolCompleted,
+            SpanKind::CurationDirectiveAcknowledged,
+            SpanKind::VarietyAlgedonicAlert,
+            SpanKind::ImpactVerified,
+            SpanKind::ActionBlocked,
+            SpanKind::RegulatoryPlateauDetected,
+            SpanKind::LoopMetricsTelemetry,
+            SpanKind::ToolOutcomeBreakdown,
+            SpanKind::InferenceCircuitTransition,
+            SpanKind::InferenceObservedRecovery,
+        ] {
+            let span = Span::from_kind(kind);
+            assert!(
+                CANONICAL_NAMESPACES.contains(&span.namespace.as_str()),
+                "SpanKind::{kind:?} namespace '{}' must be in CANONICAL_NAMESPACES",
+                span.namespace.as_str()
+            );
+        }
+
+        for reg_span in [RegulationSpan::Curation, RegulationSpan::MemoryEncode] {
+            let ns = SpanNamespace::try_from(reg_span)
+                .expect("RegulationSpan must convert to SpanNamespace");
+            assert_eq!(ns.as_str(), reg_span.as_str());
+        }
+    }
+
+    #[test]
+    fn span_category_classifies_canonical_loop_families() {
+        for (namespace, expected) in [
+            ("reg.cybernetics", SpanCategory::Cybernetics),
+            ("reg.variety", SpanCategory::Cybernetics),
+            ("reg.outcome", SpanCategory::Cybernetics),
+            ("reg.alert", SpanCategory::Cybernetics),
+            ("reg.sensor.memory", SpanCategory::Cybernetics),
+            ("reg.curation", SpanCategory::Curation),
+            ("reg.curator.directive", SpanCategory::Curation),
+            ("reg.curator.metacognition", SpanCategory::Curation),
+            ("reg.inference", SpanCategory::Inference),
+            ("reg.memory", SpanCategory::Memory),
+            ("reg.memory.encode", SpanCategory::Memory),
+            ("reg.memory.decay", SpanCategory::Memory),
+            ("reg.consolidation", SpanCategory::Memory),
+            ("reg.skill", SpanCategory::Skill),
+            ("reg.kata", SpanCategory::Skill),
+        ] {
+            let parsed = SpanNamespace::new(namespace).expect("canonical namespace");
+            assert_eq!(
+                parsed.category(),
+                expected,
+                "namespace '{namespace}' misclassified"
+            );
+        }
     }
 }

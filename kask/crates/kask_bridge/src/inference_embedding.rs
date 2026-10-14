@@ -223,9 +223,8 @@ impl LanguageModelEmbeddingPort {
                         }
                         .await;
 
-                        if let Err(result) = req.reply.send(result) {
+                        if req.reply.send(result).is_err() {
                             tracing::trace!(target: "hkask.inference", "embedding reply dropped — caller cancelled");
-                            let _ = result;
                         }
                     });
                 }

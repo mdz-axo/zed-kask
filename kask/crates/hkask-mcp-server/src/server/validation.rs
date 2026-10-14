@@ -179,6 +179,7 @@ pub fn map_database_error(error: hkask_storage::DatabaseError, context: &str) ->
     use hkask_storage::DatabaseError;
     let message = format!("{context}: {error}");
     match error {
+        DatabaseError::NotFound { .. } => McpToolError::not_found(message),
         DatabaseError::PassphraseMismatch(_) => McpToolError::permission_denied(message),
         DatabaseError::KeyDerivation(_) => McpToolError::permission_denied(format!(
             "{message}. Set HKASK_DB_PASSPHRASE to a non-empty passphrase"

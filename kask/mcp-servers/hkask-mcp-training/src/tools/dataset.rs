@@ -92,11 +92,6 @@ impl TrainingServer {
             // training DB. Without this override, QA pairs ingested via the
             // corpus pipeline are invisible to the training assembler.
             let h_mems = if let Some(db_path) = db_path.as_deref() {
-                if !std::path::Path::new(db_path).is_file() {
-                    return Err(McpToolError::not_found(format!(
-                        "memory database does not exist: {db_path}"
-                    )));
-                }
                 let passphrase = passphrase
                     .clone()
                     .or_else(|| self.db_passphrase.clone())
@@ -106,7 +101,7 @@ impl TrainingServer {
                         "db_path provided but passphrase is empty",
                     ));
                 }
-                let store = hkask_memory::MemoryStore::open(
+                let store = hkask_memory::MemoryStore::open_existing(
                     db_path,
                     &passphrase,
                     hkask_storage::embedding_dim(),

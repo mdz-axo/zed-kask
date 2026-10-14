@@ -55,3 +55,23 @@ const fn hex_digit(nibble: u8) -> char {
         _ => '0',
     }
 }
+
+/// Execute a GET query against `https://serpapi.com/search` and parse the
+/// JSON response body. Shared by `hkask-mcp-companies` and `hkask-mcp-corpus`.
+pub async fn serpapi_get_json(
+    client: &reqwest::Client,
+    params: &[(&str, String)],
+) -> Result<serde_json::Value, McpToolError> {
+    let response = client
+        .get("https://serpapi.com/search")
+        .query(params)
+        .send()
+        .await
+        .map_err(|error| McpToolError::unavailable(format!("request failed: {error}")))?;
+    let body = response
+        .text()
+        .await
+        .map_err(|error| McpToolError::unavailable(format!("body read failed: {error}")))?;
+    serde_json::from_str(&body)
+        .map_err(|error| McpToolError::unavailable(format!("malformed JSON: {error}")))
+}

@@ -1,11 +1,8 @@
 //! Style composition — exemplar retrieval, prose generation, centroid validation.
 
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use hkask_memory::MemoryStore;
-use hkask_storage::database::sqlite::SqliteDriver;
-use hkask_storage::{EmbeddingStore, HMemStore, open_or_repair};
 use hkask_types::template::LLMParameters;
 use serde::Deserialize;
 
@@ -188,58 +185,19 @@ pub(crate) fn style_centroid_ref(author: &str, dimension: Option<&str>) -> Strin
     }
 }
 
-/// Open the style-corpus memory infrastructure: open-or-repair the
-/// SQLCipher database, pool its connections, and build the HMem +
-/// embedding stores over one driver. Returns the `MemoryStore` plus a
-/// direct embedding store over the same pool — compose's centroid-
-/// validation path reads the stored centroid through the direct store
-/// (bypassing the KNN-shaped `MemoryStore` API); `style_centroid` drops
-/// it. The pool is standalone (r2d2 owns its connections), so the
-/// `Database` handle ending here is behavior-identical to the previous
-/// scope-held binding. `from_driver` is side-effect-free, so the
-/// ride-along store costs nothing at the drop site.
 fn open_style_memory_store(
     db_path: &std::path::Path,
     db_passphrase: &str,
     dim: usize,
-) -> Result<(MemoryStore, EmbeddingStore), ServiceError> {
-    let db = open_or_repair(&db_path.to_string_lossy(), db_passphrase).map_err(|e| {
+) -> Result<MemoryStore, ServiceError> {
+    MemoryStore::open_existing(&db_path.to_string_lossy(), db_passphrase, dim).map_err(|e| {
         ServiceError::Domain {
             kind: ErrorKind::BadRequest,
             domain: DomainKind::Storage,
             source: None,
             message: e.to_string(),
         }
-    })?;
-    let pool = db.sqlite_pool().map_err(|e| ServiceError::Domain {
-        kind: ErrorKind::BadRequest,
-        domain: DomainKind::Storage,
-        source: None,
-        message: format!("SQLite pool creation failed: {e}"),
-    })?;
-    let driver: Arc<dyn hkask_storage::database::driver::DatabaseDriver> =
-        Arc::new(SqliteDriver::new(pool.clone()));
-    let h_mem_store = HMemStore::from_driver(Arc::clone(&driver))?;
-    let embedding_store = EmbeddingStore::from_driver(Arc::clone(&driver), dim).map_err(|e| {
-        ServiceError::Domain {
-            kind: ErrorKind::BadRequest,
-            domain: DomainKind::Storage,
-            source: None,
-            message: e.to_string(),
-        }
-    })?;
-    let direct = EmbeddingStore::from_driver(
-        Arc::new(SqliteDriver::new(pool))
-            as Arc<dyn hkask_storage::database::driver::DatabaseDriver>,
-        dim,
-    )
-    .map_err(|e| ServiceError::Domain {
-        kind: ErrorKind::BadRequest,
-        domain: DomainKind::Storage,
-        source: None,
-        message: e.to_string(),
-    })?;
-    Ok((MemoryStore::new(h_mem_store, embedding_store), direct))
+    })
 }
 
 // ── Service ──────────────────────────────────────────────────────────────
@@ -292,7 +250,7 @@ impl ComposeService {
         }
 
         // 1. Open DB + construct memory infrastructure
-        let (store, embedding_store_direct) = open_style_memory_store(
+        let store = open_style_memory_store(
             &request.db_path,
             &request.db_passphrase,
             request.cognition.embedding.dim,
@@ -534,7 +492,10 @@ impl ComposeService {
         let validation = if request.no_validate {
             None
         } else {
-            match embedding_store_direct.get(&request.cognition.embedding.centroid_entity_ref) {
+            match store
+                .embedding_store()
+                .get(&request.cognition.embedding.centroid_entity_ref)
+            {
                 Ok(centroid_embedding) => {
                     let prose_vector = inference
                         .embed_with_dimensions(
@@ -595,8 +556,7 @@ impl ComposeService {
     pub(crate) fn style_centroid(
         request: CentroidComputeRequest,
     ) -> Result<CentroidComputeResult, ServiceError> {
-        let (store, _direct) =
-            open_style_memory_store(&request.db_path, &request.db_passphrase, request.dim)?;
+        let store = open_style_memory_store(&request.db_path, &request.db_passphrase, request.dim)?;
 
         let prefix = format!("style:{}:", request.author);
         let centroid_entity_ref = style_centroid_ref(&request.author, request.dimension.as_deref());

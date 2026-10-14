@@ -1008,8 +1008,7 @@ impl From<KaskPredictionMarketsSettingsContent> for KaskPredictionMarketsSetting
 }
 
 impl From<KaskScenariosSettingsContent> for KaskScenariosSettings {
-    fn from(c: KaskScenariosSettingsContent) -> Self {
-        let _ = c;
+    fn from(_c: KaskScenariosSettingsContent) -> Self {
         Self::default()
     }
 }

@@ -10,7 +10,7 @@ use hkask_mcp_server::server::{McpToolError, map_io_error};
 use hkask_memory::MemoryStore;
 use serde_json::{Value, json};
 
-use crate::helpers::{map_memory_store_error, open_memory_store};
+use crate::helpers::{map_memory_store_error, open_existing_memory_store, open_memory_store};
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Origin {
@@ -352,7 +352,7 @@ impl PassageIndex {
     /// even when subsequent durable deletion fails; failures never claim zero counts.
     pub fn purge(&self, path: &str, passphrase: &str, prefix: &str) -> Result<Value, McpToolError> {
         let mut state = self.lock()?;
-        let store = open_memory_store(path, passphrase)?;
+        let store = open_existing_memory_store(path, passphrase)?;
         let origin = database_origin(path)?;
         state.passages.retain(|(entry_origin, entity_ref), _| {
             entry_origin != &origin || !entity_ref.starts_with(prefix)

@@ -61,20 +61,22 @@ impl ThreadPicker {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<Picker<ThreadPickerDelegate>> {
-        if self.picker.is_none() {
-            let delegate = ThreadPickerDelegate::new(
-                self.on_select.clone(),
-                cx.foreground_executor().clone(),
-                cx.background_executor().clone(),
-                cx,
-            );
-            self.picker = Some(cx.new(|cx| {
-                Picker::list(delegate, window, cx)
-                    .show_scrollbar(true)
-                    .initial_width(rems(28.))
-            }));
-        }
-        self.picker.as_ref().unwrap().clone()
+        let on_select = &self.on_select;
+        self.picker
+            .get_or_insert_with(|| {
+                let delegate = ThreadPickerDelegate::new(
+                    on_select.clone(),
+                    cx.foreground_executor().clone(),
+                    cx.background_executor().clone(),
+                    cx,
+                );
+                cx.new(|cx| {
+                    Picker::list(delegate, window, cx)
+                        .show_scrollbar(true)
+                        .initial_width(rems(28.))
+                })
+            })
+            .clone()
     }
 }
 

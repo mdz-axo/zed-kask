@@ -109,19 +109,18 @@ impl SqliteDriver {
     /// schema (the same one `Database::sqlite_pool` runs in production). This
     /// eliminates the divergent `CREATE TABLE IF NOT EXISTS hmems` that test
     /// helpers previously duplicated with different column sets.
+    /// Load sqlite-vec and initialize the canonical `hmems`/`embeddings` schema.
+    fn init_canonical_schema(conn: &mut rusqlite::Connection) -> rusqlite::Result<()> {
+        crate::core::connection::init_sqlite_vec_on(conn)?;
+        let schema = include_str!("../core/sql/schema.sql");
+        let dim = crate::core::connection::embedding_dim();
+        conn.execute_batch(&schema.replace("$DIM", &dim.to_string()))
+    }
+
     pub fn in_memory_pool() -> Result<Pool<SqliteConnectionManager>, r2d2::Error> {
         let manager = SqliteConnectionManager::memory().with_init(|conn| {
             conn.execute_batch("PRAGMA foreign_keys = ON;")?;
-            // Load sqlite-vec before schema init — schema.sql creates a
-            // `vec0` virtual table, which fails with "no such module: vec0"
-            // (aborting the whole batch and leaving zero tables created) if
-            // the extension isn't loaded. Mirrors the production pool init in
-            // `core::connection::Database::sqlite_pool`.
-            crate::core::connection::init_sqlite_vec_on(conn)?;
-            let schema = include_str!("../core/sql/schema.sql");
-            let dim = crate::core::connection::embedding_dim();
-            conn.execute_batch(&schema.replace("$DIM", &dim.to_string()))?;
-            Ok(())
+            Self::init_canonical_schema(conn)
         });
         Pool::builder().max_size(1).build(manager)
     }
@@ -153,18 +152,7 @@ impl SqliteDriver {
     /// `max_size(1)` and serializes everything on a single connection,
     /// where no interleaving is possible.
     pub fn file_pool_with_schema(path: &str) -> Result<Pool<SqliteConnectionManager>, r2d2::Error> {
-        let manager = SqliteConnectionManager::file(path).with_init(|conn| {
-            // Load sqlite-vec before schema init — schema.sql creates a
-            // `vec0` virtual table, which fails with "no such module: vec0"
-            // (aborting the whole batch and leaving zero tables created) if
-            // the extension isn't loaded. Mirrors `in_memory_pool` and the
-            // production pool init in `core::connection::Database::sqlite_pool`.
-            crate::core::connection::init_sqlite_vec_on(conn)?;
-            let schema = include_str!("../core/sql/schema.sql");
-            let dim = crate::core::connection::embedding_dim();
-            conn.execute_batch(&schema.replace("$DIM", &dim.to_string()))?;
-            Ok(())
-        });
+        let manager = SqliteConnectionManager::file(path).with_init(Self::init_canonical_schema);
         Pool::builder().max_size(8).build(manager)
     }
 

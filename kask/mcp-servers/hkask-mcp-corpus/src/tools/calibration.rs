@@ -293,14 +293,7 @@ fn embedding_inventory(
     }
 
     let requested_refs = requested.iter().cloned().collect::<Vec<_>>();
-    let store =
-        hkask_memory::MemoryStore::open(&request.db_path, &passphrase, crate::embedding_dim())
-            .map_err(|error| {
-                McpToolError::internal(format!(
-                    "cannot open embedding database {}: {error}",
-                    request.db_path
-                ))
-            })?;
+    let store = crate::helpers::open_existing_memory_store(&request.db_path, &passphrase)?;
     let stored = store
         .embedding_models_for_refs(&requested_refs)
         .map_err(|error| McpToolError::internal(format!("cannot inventory embeddings: {error}")))?;

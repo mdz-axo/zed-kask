@@ -45,7 +45,13 @@ pub fn decoy_literal() -> String { ".unwrap() in a literal".to_string() }
 mod tests {
     use super::*;
     #[test]
-    fn t() { assert_eq!(use_one(), 2); }
+    fn t() { assert_eq!(prod_a().unwrap(), 2); }
+}
+EOF
+cat > "$WORK/crates/selftest-widget/src/tests.rs" <<'EOF'
+#[test]
+fn standalone_test_file_decoy() {
+    assert_eq!(Some(2).unwrap(), 2);
 }
 EOF
 

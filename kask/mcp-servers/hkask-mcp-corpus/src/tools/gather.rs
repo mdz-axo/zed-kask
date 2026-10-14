@@ -725,20 +725,9 @@ async fn search_youtube_for_company(
         ("num", limit.to_string()),
     ];
 
-    let response = client
-        .get("https://serpapi.com/search")
-        .query(&params)
-        .send()
+    let parsed = hkask_mcp_server::serpapi_get_json(&client, &params)
         .await
-        .map_err(|error| anyhow::anyhow!("request failed: {error}"))?;
-
-    let body = response
-        .text()
-        .await
-        .map_err(|error| anyhow::anyhow!("body read failed: {error}"))?;
-
-    let parsed: serde_json::Value =
-        serde_json::from_str(&body).map_err(|error| anyhow::anyhow!("malformed JSON: {error}"))?;
+        .map_err(|error| anyhow::anyhow!("{}", error.message))?;
 
     let videos = hkask_types::serpapi::youtube_video_results(&parsed);
 

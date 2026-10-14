@@ -252,6 +252,17 @@ impl MemoryStore {
         Self::from_database(database, db_path, dim)
     }
 
+    /// Open an existing SQLCipher database for read-write access without
+    /// creating directories or a new database file when `db_path` is absent.
+    pub fn open_existing(
+        db_path: &str,
+        passphrase: &str,
+        dim: usize,
+    ) -> Result<Self, hkask_storage::DatabaseError> {
+        let database = hkask_storage::open_existing(db_path, passphrase)?;
+        Self::from_database(database, db_path, dim)
+    }
+
     /// Open an existing SQLCipher database for sealed, read-only retrieval.
     ///
     /// The storage handle enforces SQLite read-only flags and skips schema,

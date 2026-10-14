@@ -23,8 +23,8 @@ pub use server::{
 };
 pub use server::{
     MAX_READ_BYTES, contain_for_read, contain_for_write, map_database_error, map_infra_error,
-    map_io_error, map_join_error, map_memory_store_error, read_capped, url_encode_query_value,
-    write_contained,
+    map_io_error, map_join_error, map_memory_store_error, read_capped, serpapi_get_json,
+    url_encode_query_value, write_contained,
 };
 
 /// Run an MCP server with stdio transport.

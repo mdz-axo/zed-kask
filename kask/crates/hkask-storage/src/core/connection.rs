@@ -181,6 +181,8 @@ pub enum DatabaseError {
     PassphraseMismatch(String),
     #[error("Corrupted database — file is not a valid SQLite database: {0}")]
     Corrupted(String),
+    #[error("Database does not exist: {path}")]
+    NotFound { path: String },
     #[error("Database inventory is unavailable: {0}")]
     Inventory(String),
     #[error("Database maintenance lease unavailable for {path}: {reason}")]
@@ -194,6 +196,7 @@ pub enum DatabaseError {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DatabaseAccess {
     ReadWrite,
+    ReadWriteExisting,
     ReadOnly,
 }
 
@@ -266,6 +269,14 @@ impl Database {
                 }
                 path.to_string()
             }
+            DatabaseAccess::ReadWriteExisting => {
+                if !std::path::Path::new(path).is_file() {
+                    return Err(DatabaseError::NotFound {
+                        path: path.to_string(),
+                    });
+                }
+                path.to_string()
+            }
             DatabaseAccess::ReadOnly => {
                 let canonical =
                     std::fs::canonicalize(path).map_err(|error| DatabaseError::ReadOnlyOpen {
@@ -307,6 +318,12 @@ impl Database {
 
     pub fn open(path: &str, passphrase: &str) -> Result<Self, DatabaseError> {
         Self::open_impl(path, passphrase, None, DatabaseAccess::ReadWrite)
+    }
+
+    /// Open an existing SQLCipher database for read-write WAL access without
+    /// creating directories or a new database file when `path` is absent.
+    pub fn open_existing(path: &str, passphrase: &str) -> Result<Self, DatabaseError> {
+        Self::open_impl(path, passphrase, None, DatabaseAccess::ReadWriteExisting)
     }
 
     /// Open an existing SQLCipher database for sealed retrieval.
@@ -809,6 +826,15 @@ impl Drop for Database {
 /// corrupt file returns `Corrupted`.
 pub fn open_or_repair(path: &str, passphrase: &str) -> Result<Database, DatabaseError> {
     let db = Database::open(path, passphrase)?;
+    db.sqlite_pool()?;
+    Ok(db)
+}
+
+/// Open an existing SQLCipher database and initialize its connection pool,
+/// refusing with [`DatabaseError::NotFound`] before any directory or file
+/// creation if `path` does not exist.
+pub fn open_existing(path: &str, passphrase: &str) -> Result<Database, DatabaseError> {
+    let db = Database::open_existing(path, passphrase)?;
     db.sqlite_pool()?;
     Ok(db)
 }

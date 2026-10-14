@@ -2114,7 +2114,7 @@ fn open_swarm_memory_store(
         })?,
     };
     let path = swarm_memory_db_path();
-    let store = hkask_memory::MemoryStore::open(
+    let store = hkask_memory::MemoryStore::open_existing(
         &path.to_string_lossy(),
         &passphrase,
         hkask_storage::embedding_dim(),
@@ -2122,7 +2122,7 @@ fn open_swarm_memory_store(
     .map_err(|error| {
         hkask_mcp_server::map_database_error(
             error,
-            &format!("cannot open swarm memory DB {}", path.display()),
+            &format!("Cannot open swarm memory DB at {}", path.display()),
         )
     })?;
     let removed = store.delete_orphaned_embeddings().map_err(|error| {

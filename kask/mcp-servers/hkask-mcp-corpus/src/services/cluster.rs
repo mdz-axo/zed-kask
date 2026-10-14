@@ -8,7 +8,7 @@
 use hkask_mcp_server::server::McpToolError;
 use hkask_types::corpus::TaggedChunk;
 
-use crate::helpers::{map_memory_store_error, open_memory_store};
+use crate::helpers::{map_memory_store_error, open_existing_memory_store};
 use crate::tools::corpus::clustering::cluster_within_source;
 
 /// Chunks plus their pre-normalized embeddings, grouped for clustering.
@@ -41,7 +41,7 @@ pub(crate) fn load_clusters(
         return Err(McpToolError::invalid_argument("tagged_jsonl is empty"));
     }
 
-    let store = open_memory_store(db_path, passphrase)?;
+    let store = open_existing_memory_store(db_path, passphrase)?;
     let embeddings = store
         .embeddings_by_prefix(prefix)
         .map_err(|e| map_memory_store_error(e, "Embedding query failed"))?;

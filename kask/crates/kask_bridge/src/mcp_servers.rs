@@ -132,10 +132,6 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             // Process-wide concurrency ceiling from KaskGeneralSettings —
             // used as the default for embedding concurrency.
             "HKASK_MAX_CONCURRENCY",
-            "HKASK_OCR_SIMPLE_MAX",
-            "HKASK_OCR_MODERATE_MAX",
-            "HKASK_OCR_SAMPLE_RATE",
-            "HKASK_OCR_TUNEABLE",
             "HKASK_TEMPLATE_ROOT",
             "HKASK_DEFAULT_MODEL",
             "HKASK_CLASSIFIER_MODEL",
@@ -143,8 +139,6 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             hkask_inference::model_constants::QA_GENERATION_MODEL_ENV,
             // Legacy consolidation selector; not used by QA generation.
             "HKASK_QA_MODEL",
-            // Model cache TTL — read by model_cache.rs, falls back to 4h default.
-            "HKASK_MODEL_CACHE_TTL_SECS",
             // Content guard toggle — read by guard_content() in
             // hkask_mcp_corpus.rs, defaults to true.
             "HKASK_ENABLE_CONTENT_GUARD",
@@ -193,14 +187,10 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             // provisioning, so the curator MCP server reads from the same
             // `agents/curator/curator.db` the agent writes curator copies to.
             "HKASK_CURATOR_DB",
-            // Curator WebID — stashed in a non-global env var by the deferred
-            // task. `mcp_env()` maps this to `HKASK_WEBID` for the curator
-            // server only, so other MCP servers don't inherit the curator's
-            // identity.
-            "HKASK_CURATOR_WEBID",
             // The mapped `HKASK_WEBID` — `mcp_env()` injects this from
-            // `HKASK_CURATOR_WEBID`. Must be in the allowlist so the
-            // per-server filter passes it through.
+            // `HKASK_CURATOR_WEBID` (consumed in the parent process). Must be
+            // in the allowlist so the per-server filter passes it through to
+            // the curator child only.
             "HKASK_WEBID",
             // Data dir — needed so `resolve_under_data_dir` in
             // `open_curator_stores` finds the same root as the agent.
@@ -272,15 +262,8 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             // config; moved from `credentials` to align with the pattern used
             // by every other DB-path env var in the registry.
             "HKASK_KANBAN_DB",
-            // Local-swarm delegation surface (`kanban_task_spawn`) — the spawn
-            // path mirrors hkask-mcp-swarm's `run()` so both processes share
-            // the same ledger/agent-registry. Without these entries, a
-            // settings-derived `HKASK_ABW_MAX_CREDITS` (emitted by `mcp_env()`
-            // when `swarm.max_credits_per_dispatch` is overridden) and the
-            // swarm-root-derived `HKASK_LOCAL_AGENTS_DIR` are silently dropped
-            // by `filter_config_env_for_server`, and spawned agents fall back
-            // to defaults that diverge from the swarm server's.
-            "HKASK_ABW_MAX_CREDITS",
+            // Local-swarm delegation surface (`kanban_task_spawn`) — shares the
+            // swarm-root-derived `HKASK_LOCAL_AGENTS_DIR` with hkask-mcp-swarm.
             "HKASK_LOCAL_AGENTS_DIR",
         ],
     },
@@ -763,12 +746,15 @@ pub async fn build_mcp_server_env(
             if server.config_env.contains(&env_var.as_str())
                 && !server.credentials.contains(&env_var.as_str())
                 && !env.contains_key(&env_var)
-                && let Ok(Some((_username, password))) =
-                    credentials_provider.read_credentials(&url, cx).await
-                && let Ok(value) = String::from_utf8(password)
-                && !value.is_empty()
+                && let Some(value) = read_non_empty_keychain_credential(
+                    credentials_provider,
+                    server_id,
+                    &env_var,
+                    &url,
+                    cx,
+                )
+                .await
             {
-                let value = trim_credential_for_injection(server_id, &env_var, value);
                 env.insert(env_var, value);
             }
         }
@@ -798,12 +784,10 @@ pub async fn build_mcp_server_env(
             env.insert(env_var, value);
             continue;
         }
-        if let Ok(Some((_username, password))) =
-            credentials_provider.read_credentials(&url, cx).await
-            && let Ok(value) = String::from_utf8(password)
-            && !value.is_empty()
+        if let Some(value) =
+            read_non_empty_keychain_credential(credentials_provider, server_id, &env_var, &url, cx)
+                .await
         {
-            let value = trim_credential_for_injection(server_id, &env_var, value);
             env.insert(env_var, value);
             continue;
         }
@@ -905,6 +889,21 @@ pub async fn build_mcp_server_env(
 /// All other credentials have NO default — a miss keeps warning so "not
 /// configured" stays visible to the operator.
 const DEFAULT_PASSPHRASE_ENV_VARS: [&str; 1] = ["HKASK_DB_PASSPHRASE"];
+
+async fn read_non_empty_keychain_credential(
+    credentials_provider: &dyn credentials_provider::CredentialsProvider,
+    server_id: &str,
+    env_var: &str,
+    url: &str,
+    cx: &gpui::AsyncApp,
+) -> Option<String> {
+    let (_username, password) = credentials_provider
+        .read_credentials(url, cx)
+        .await
+        .ok()??;
+    let value = String::from_utf8(password).ok().filter(|v| !v.is_empty())?;
+    Some(trim_credential_for_injection(server_id, env_var, value))
+}
 
 /// Trim surrounding whitespace from a keychain-read credential before env
 /// injection. Keychain values are pasted by hand; a trailing newline from a
@@ -1895,9 +1894,13 @@ mod tests {
         assert!(main.contains("for server_id in to_stop {\n                kask_bridge::revoke_delegation_grant(server_id);\n                runtime.stop_server(server_id).await;"));
     }
 
+    static ENV_TEST_LOCK: std::sync::LazyLock<tokio::sync::Mutex<()>> =
+        std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
+
     /// expect: "Only loaded children receive stable parent-held grants, and unload cannot remint authority" [P1]
     #[tokio::test]
     async fn delegated_grants_follow_settings_and_launch_lifecycle() {
+        let _guard = ENV_TEST_LOCK.lock().await;
         let provider = MockCredentialsProvider {
             secrets: crate::credential_urls_for_mcp()
                 .into_iter()
@@ -1984,6 +1987,7 @@ mod tests {
     #[tokio::test]
     async fn build_mcp_server_env_forwards_allowlisted_operator_overrides_and_data_service_config_slots()
      {
+        let _guard = ENV_TEST_LOCK.lock().await;
         let settings = crate::KaskSettings::default();
         let mut secrets: std::collections::HashMap<String, Vec<u8>> =
             crate::credential_urls_for_mcp()
@@ -2034,6 +2038,100 @@ mod tests {
         );
     }
 
+    #[test]
+    fn all_13_mcp_servers_allowlists_match_source_env_reads() {
+        fn collect_rs_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+            let entries = std::fs::read_dir(dir)
+                .unwrap_or_else(|e| panic!("failed to read {}: {e}", dir.display()));
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    collect_rs_files(&path, out);
+                } else if path.extension().and_then(|s| s.to_str()) == Some("rs") {
+                    let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+                    if !name.ends_with("_tests.rs")
+                        && name != "tests.rs"
+                        && name != "test_support.rs"
+                    {
+                        out.push(path);
+                    }
+                }
+            }
+        }
+
+        let mcp_servers_root =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../mcp-servers");
+        let prefixes = [
+            "std::env::var(\"",
+            "env::var(\"",
+            "std::env::var_os(\"",
+            "env::var_os(\"",
+            "parse_env_warn(\"",
+            "parse_env_u64(\"",
+            "required_env(\"",
+            "configured(\"",
+            "resolve_model(\"",
+            "resolve_credential(\"",
+            "credentials.get(\"",
+        ];
+
+        for server in BUILT_IN_MCP_SERVERS {
+            let src_dir = mcp_servers_root.join(server.binary).join("src");
+            let mut files = Vec::new();
+            collect_rs_files(&src_dir, &mut files);
+
+            let mut read_vars = std::collections::BTreeSet::new();
+            for file in files {
+                let content = std::fs::read_to_string(&file)
+                    .unwrap_or_else(|e| panic!("failed to read {}: {e}", file.display()));
+                // Stop at the first #[cfg(test)] marker so test-only env vars are ignored.
+                let prod_content = content.split("#[cfg(test)]").next().unwrap_or(&content);
+                for prefix in &prefixes {
+                    let mut rest = prod_content;
+                    while let Some(idx) = rest.find(prefix) {
+                        rest = &rest[idx + prefix.len()..];
+                        if let Some(end) = rest.find('"') {
+                            let var_name = &rest[..end];
+                            if var_name != "HOME" && var_name != "PATH" {
+                                read_vars.insert(var_name.to_string());
+                            }
+                            rest = &rest[end + 1..];
+                        }
+                    }
+                }
+                // Media model env constants in `hkask_mcp_media::models`.
+                for (const_ref, env_name) in [
+                    ("configured(TTS_ENV)", "HKASK_MEDIA_TTS_MODEL"),
+                    ("configured(STT_ENV)", "HKASK_MEDIA_STT_MODEL"),
+                    ("configured(VISION_ENV)", "HKASK_MEDIA_VISION_MODEL"),
+                    ("configured(IMAGE_GEN_ENV)", "HKASK_MEDIA_IMAGE_GEN_MODEL"),
+                ] {
+                    if prod_content.contains(const_ref) {
+                        read_vars.insert(env_name.to_string());
+                    }
+                }
+            }
+
+            let allowed: std::collections::BTreeSet<&str> = server
+                .credentials
+                .iter()
+                .copied()
+                .chain(server.config_env.iter().copied())
+                .collect();
+
+            for var in &read_vars {
+                assert!(
+                    allowed.contains(var.as_str()),
+                    "MCP server '{}' ({}) reads env var '{}' in production src/, \
+                     but it is missing from BuiltinMcpServer::{{credentials, config_env}}",
+                    server.id,
+                    server.binary,
+                    var
+                );
+            }
+        }
+    }
+
     /// Pin the load-bearing filter order in `build_mcp_server_env`: config is
     /// filtered first, then credentials are resolved and merged into the
     /// already-filtered map. The two filters apply to disjoint key sets — a
@@ -2048,6 +2146,7 @@ mod tests {
     /// composed output — not the config value, and not absent.
     #[tokio::test]
     async fn build_mcp_server_env_composed_path_credential_survives_config_filter() {
+        let _guard = ENV_TEST_LOCK.lock().await;
         // The swarm server's `credentials` allowlist includes
         // `HKASK_DB_PASSPHRASE`. We inject a mock keychain secret
         // for its credential URL and assert it lands in the composed env.
@@ -2130,6 +2229,7 @@ mod tests {
     /// composed path.
     #[tokio::test]
     async fn build_mcp_server_env_composed_path_filters_unallowed_config() {
+        let _guard = ENV_TEST_LOCK.lock().await;
         // Build settings whose `mcp_env()` emits a curator-only config var.
         // We can't easily mutate `mcp_env()` directly, so we rely on the
         // real `KaskSettings::default()` — if it emits `HKASK_MXROUTE_SERVER`,
