@@ -138,12 +138,14 @@ verification code.
    No mapping means retain the artifact. The candidate graph must enumerate
    every retained artifact's full five-field signal rows, not just totals.
    In `execute` record the approved source scope and exact candidate diff;
-   in `analyze` source snapshots must remain identical.
+   in `analyze` source snapshots must remain identical. Then run deterministic
+   `lisp_eval` gate `VC-1`:
+   - form: `(and (= total_steps (+ (length keep_ids) (length compress_ids) (length delete_ids))) (= (length unbacked_expectations) 0) (= (length unpreserved_falsifiers) 0))`
+   - env: `{ "total_steps": <count>, "keep_ids": <retained ids>, "compress_ids": <merged/compressed ids>, "delete_ids": <removed ids>, "unbacked_expectations": <list>, "unpreserved_falsifiers": <list> }`
 
 ### CHECK — Prove graph preservation and run the experiment
 
-8. Call `skill` for `lean-prover`, then call `read_file` for
-   `kask/registry/templates/verification-compression/proof.j2`. From the ONE
+8. Call `skill` for `lean-prover`. From the ONE
    observed inventory and candidate, publish two graph JSON artifacts: the
    before graph and a candidate graph. Write this run's graphs, proof, logs
    and `manifest.json` under the artifacts route
@@ -154,19 +156,16 @@ verification code.
    `before` and `after` (artifact_id + full five-field signal), and
    `removed_mappings` (removed_artifact + retained_artifact + same signal).
    The candidate graph keeps the same `required` and `before` arrays as the
-   before graph. Do not select a convenient key subset. Run
-   `bash kask/scripts/audit/generate-verification-preservation-proof.sh
-   <candidate-graph.json> <new-proof.lean>`: it rejects incomplete keys,
+   before graph. Do not select a convenient key subset. Run the deterministic
+   script `kask/scripts/generate-verification-preservation-proof.sh`
+   (`bash kask/scripts/audit/generate-verification-preservation-proof.sh
+   <candidate-graph.json> <new-proof.lean>`): it rejects incomplete keys,
    missing mappings, and lost signals and deterministically emits the only
-   admissible Lean instance. Never hand-author or edit the resulting proof.
-   Run `lean <new-proof.lean>` (or the configured Lean binary) and preserve
-   exit code, stdout/stderr, version, graph hash, and proof hash. The
-   Lean binary must select a toolchain: an elan shim with no default
-   toolchain exits non-zero with no output — pass the pinned toolchain
-   (e.g. a wrapper running `lean +leanprover/lean4:v4.34.0`), and record
-   `lean --version` from that same binary. The `proof.j2` context is
-   `baseline_graph` (the before-graph JSON), `candidate_graph` (the
-   candidate-graph JSON), and `lean_binary` (that pinned binary). Run
+   admissible Lean instance directly without rendering a template. Never
+   hand-author or edit the resulting proof. Check the generated `.lean` file
+   via `lean_check` (or the configured pinned Lean binary, e.g. a wrapper
+   running `lean +leanprover/lean4:v4.34.0`) and preserve exit code,
+   stdout/stderr, version, graph hash, and proof hash. Run
    `bash kask/scripts/test-generate-verification-preservation-proof.sh
    <lean-binary>` to check both the valid graph and a missing-signal proof
    fail case. Any `sorry`, missing toolchain, timeout, graph rejection,
@@ -180,8 +179,10 @@ verification code.
    their complete scope and computed diff match the operator-authorized change.
    A changed source is not a changed oracle. Run before/after timings in the
    declared `timing_scope`. If both states are selected, measure them separately;
-   never substitute a warm sample for a cold claim. Re-run every discriminating fault from step 4 and
-   require the allowed-change control to keep passing.
+   never substitute a warm sample for a cold claim. Re-run every discriminating fault from step 4,
+   require the allowed-change control to keep passing, and run deterministic `lisp_eval` gate `VC-2` at `experiment.j2`:
+   - form: `(and (= baseline_oracle_matches proposed_oracle_matches) (= regressions_detected 0) (= seeded_faults_caught baseline_faults_caught) (< proposed_duration_ms baseline_duration_ms))`
+   - env: `{ "baseline_oracle_matches": <count>, "proposed_oracle_matches": <count>, "regressions_detected": <count>, "seeded_faults_caught": <count>, "baseline_faults_caught": <count>, "proposed_duration_ms": <ms>, "baseline_duration_ms": <ms> }`
 10. Call `read_file` for
     `kask/registry/templates/verification-compression/experiment.j2` and produce
     the result. Capture the exact graph, all before/after source snapshots,
@@ -297,7 +298,6 @@ measured remainder to the operator.
 |----------|---------|
 | `verification-compression/inventory.j2` | Build the expectation-to-oracle verification graph and measured baseline. |
 | `verification-compression/elimination.j2` | Synthesize falsifiability, architecture, and essentialist outputs into one safe reduction candidate. |
-| `verification-compression/proof.j2` | Convert the removed→retained signal mapping into explicit Lean preservation obligations. |
 | `verification-compression/experiment.j2` | Compare fixed-oracle before/after observations and issue the non-compensable verdict. |
 
 To render a template, call the `render_template` tool with the template ref and a context object with the required variables.
@@ -305,7 +305,6 @@ To render a template, call the `render_template` tool with the template ref and 
 Template context variables (from each template's [inference] contract):
 - `inventory.j2`: `target`, `authorized_contract`, `required_expectations`, `artifact_inventory`, `timing_observations`
 - `elimination.j2`: `inventory`, `falsification_result`, `architecture_result`, `essentialist_result`, `mode`
-- `proof.j2`: `baseline_graph`, `candidate_graph`, `lean_binary`
 - `experiment.j2`: `baseline`, `candidate`, `lean_result`, `before_observations`, `after_observations`, `targets`, `mode`, `receipt`
 
 ## Regression case

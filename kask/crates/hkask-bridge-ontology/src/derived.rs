@@ -1367,6 +1367,104 @@ pub const DERIVED_CONCEPTS: &[DerivedConcept] = &[
         ],
         authority: "operator ruling 2026-10-14 (Cohort 5 skill-corpus audit); Beizer, Software Testing Techniques, 2nd ed. (1990)",
     },
+    DerivedConcept {
+        term: "curry_howard_correspondence",
+        aliases: &[
+            "curry-howard isomorphism",
+            "curry howard",
+            "propositions as types",
+            "formulae-as-types",
+        ],
+        identity: "the structural isomorphism between formal logic and computational type systems in which propositions correspond to types, proofs correspond to programs, and proof normalization corresponds to evaluation",
+        definition: "William A. Howard, 'The Formulae-as-Types Notion of Construction', in To H.B. Curry: Essays on Combinatory Logic, Lambda Calculus and Formalism (Academic Press, 1980), pp. 479-490, and Philip Wadler, 'Propositions as Types', Communications of the ACM 58(12):75-84 (2015): a proposition is inhabited as a type if and only if it has a constructive proof term. In zed-kask it grounds lean-prover's Prop/Type discipline and verification-compression's proof obligations.",
+        constituents: &["proposition", "type system", "proof term"],
+        authority: "operator ruling 2026-10-14 (Cohort 6 skill-corpus audit); Howard, 'The Formulae-as-Types Notion of Construction' (1980)",
+    },
+    DerivedConcept {
+        term: "test_suite_reduction",
+        aliases: &["test suite minimization", "regression test selection"],
+        identity: "selecting a minimal representative subset of verification steps or test cases that preserves the full coverage of specified requirements, falsifiers, and fault-detection obligations of the original suite",
+        definition: "Mary Jean Harrold, Rajiv Gupta & Mary Lou Soffa, 'A Methodology for Controlling the Size of a Test Suite', ACM Transactions on Software Engineering and Methodology 2(3):270-285 (1993), doi:10.1145/152388.152391, and Milos Gligoric et al., 'Practical Regression Test Selection with Dynamic File Dependencies', ISSTA (2015), doi:10.1145/2568225.2568271: reduces verification runtime by eliminating redundant steps only when requirement coverage and fault-detection capability are provably preserved. In zed-kask it grounds verification-compression.",
+        constituents: &[
+            "regression_testing",
+            "requirement coverage",
+            "fault detection",
+        ],
+        authority: "operator ruling 2026-10-14 (Cohort 6 skill-corpus audit); Harrold, Gupta & Soffa, ACM TOSEM 2(3):270-285 (1993), doi:10.1145/152388.152391; Gligoric et al. (2015), doi:10.1145/2568225.2568271",
+    },
+    DerivedConcept {
+        term: "portability",
+        aliases: &["vendor portability", "switching cost", "lock-in resistance"],
+        identity: "the degree of effectiveness and efficiency with which a system, model weight, or component can be transferred from one hardware, software, or provider environment to another without vendor lock-in",
+        definition: "ISO/IEC 25010:2023 (Systems and software engineering — Systems and software Quality Requirements and Evaluation (SQuaRE) — Product quality model, cite-only): product quality characteristic encompassing adaptability, installability, and replaceability across environments. In zed-kask it grounds Principle P1 (Open-Source Model Portability) and provider-audit's inbound and retirement evaluations.",
+        constituents: &["adaptability", "replaceability", "open weights"],
+        authority: "operator ruling 2026-10-14 (Cohort 6 skill-corpus audit); ISO/IEC 25010:2023 (cite-only)",
+    },
+    DerivedConcept {
+        term: "socratic_method",
+        aliases: &[
+            "socratic questioning",
+            "socratic interrogation",
+            "dialectical questioning",
+        ],
+        identity: "a disciplined questioning procedure that systematically probes recall, mechanism, rationale, edge cases, and synthesis to expose hidden assumptions and contradictions",
+        definition: "Richard Paul & Linda Elder, The Art of Socratic Questioning (Foundation for Critical Thinking, 2006): structured inquiry that tests understanding rather than surface fluency by escalating from factual recall through causal mechanism and design rationale to adversarial boundary cases and cross-concept synthesis. In zed-kask it grounds grill-me and prompt-enhance's high-effort critique escalation loop.",
+        constituents: &["assumption probing", "counterexample", "synthesis"],
+        authority: "operator ruling 2026-10-14 (Cohort 6 skill-corpus audit); Paul & Elder, The Art of Socratic Questioning (2006)",
+    },
+    DerivedConcept {
+        term: "premortem",
+        aliases: &["project premortem", "prospective hindsight"],
+        identity: "a prospective hindsight risk-analysis procedure that assumes before execution that a design or project has failed and generates concrete causal explanations for that failure",
+        definition: "Gary Klein, 'Performing a Project Premortem', Harvard Business Review 85(9):18-19 (2007), grounded in Deborah J. Mitchell, J. Edward Russo & Nancy Pennington, 'Back to the Future: Temporal Perspective in the Explanation of Events', Journal of Behavioral Decision Making 2(1):25-38 (1989): imagining that a failure has already occurred increases the identification of specific failure modes by ~30% compared to standard risk brainstorming. In zed-kask it grounds program-manager's design-gate.j2.",
+        constituents: &["prospective hindsight", "failure mode", "mitigation"],
+        authority: "operator ruling 2026-10-14 (Cohort 6 skill-corpus audit); Klein, Harvard Business Review 85(9):18-19 (2007); Mitchell, Russo & Pennington (1989)",
+    },
+    DerivedConcept {
+        term: "is_ought_problem",
+        aliases: &[
+            "is-ought gap",
+            "hume's guillotine",
+            "humes guillotine",
+            "is ought distinction",
+        ],
+        identity: "the epistemic and logical boundary separating descriptive statements of what is the case (IS) from normative or prescriptive statements of what ought to be the case (OUGHT)",
+        definition: "David Hume, A Treatise of Human Nature (1739), Book III, Part I, Section I: a normative prescription ('ought') cannot be deductively derived from purely descriptive factual premises ('is') without an explicit bridging goal, value, or specification contract. In zed-kask it grounds pragmatic-semantics and code-review's IS/OUGHT adjudication.",
+        constituents: &[
+            "descriptive assertion",
+            "normative prescription",
+            "specification",
+        ],
+        authority: "operator ruling 2026-10-14 (Cohort 6 skill-corpus audit); Hume, A Treatise of Human Nature (1739), Book III, Part I, Section I",
+    },
+    DerivedConcept {
+        term: "optimality_theory",
+        aliases: &[
+            "ot ranking",
+            "strict dominance hierarchy",
+            "violable constraints",
+        ],
+        identity: "a constraint-satisfaction framework in which candidates are evaluated against a strict lexicographic dominance hierarchy of violable constraints (C1 >> C2 >> ... >> Cn)",
+        definition: "Alan Prince & Paul Smolensky, Optimality Theory: Constraint Interaction in Generative Grammar (1993 Technical Report; Blackwell, 2004), doi:10.1002/9780470759400: constraints are ranked in a strict dominance hierarchy where any single violation of a higher-ranked constraint is fatal compared to arbitrarily many violations of lower-ranked constraints. In zed-kask it grounds pragmatic-semantics' conflict resolution (Hard >> Strong >> Weak).",
+        constituents: &[
+            "constraint hierarchy",
+            "lexicographic dominance",
+            "optimal candidate",
+        ],
+        authority: "operator ruling 2026-10-14 (Cohort 6 skill-corpus audit); Prince & Smolensky, Optimality Theory (1993/2004), doi:10.1002/9780470759400",
+    },
+    DerivedConcept {
+        term: "epistemic_modality",
+        aliases: &["epistemic certainty", "evidential modality"],
+        identity: "qualification of a statement according to the speaker's or agent's degree of certainty, evidentiary basis, and commitment to the truth of the proposition",
+        definition: "F. R. Palmer, Mood and Modality (Cambridge University Press, 1986; 2nd ed. 2001): distinguishes epistemic modality (the status of the proposition with respect to knowledge and evidence — declarative fact, calibrated probability, subjunctive possibility) from deontic modality (obligation and permission — hard, strong, and weak constraints). In zed-kask it grounds pragmatic-semantics' certainty-level classification.",
+        constituents: &[
+            "declarative fact",
+            "probabilistic estimate",
+            "subjunctive hypothesis",
+        ],
+        authority: "operator ruling 2026-10-14 (Cohort 6 skill-corpus audit); Palmer, Mood and Modality, Cambridge University Press (1986/2001)",
+    },
 ];
 /// Normalization matches the onto_anchor tool's: lowercase alphanumeric
 /// characters only, separators and case folded away.
@@ -1990,6 +2088,61 @@ mod tests {
         ] {
             let concept =
                 resolve_derived(term).expect("Cohort 5 audit ruling must resolve in derived.rs");
+            assert_eq!(
+                concept.term, expected_term,
+                "{term} resolves to {expected_term}"
+            );
+            assert!(
+                concept.authority.contains(marker),
+                "{term}: {}",
+                concept.authority
+            );
+            assert!(
+                concept.authority.starts_with("operator ruling 2026-10-14"),
+                "{term} cites the 2026-10-14 ruling"
+            );
+        }
+    }
+
+    /// expect: [P5] The Cohort 6 skill-corpus audit rulings (2026-10-14)
+    /// resolve to their published authorities and never fall back to the
+    /// coarse 5W1H core anchor.
+    #[test]
+    fn cohort_6_audit_rulings_resolve_with_authority() {
+        for (term, expected_term, marker) in [
+            (
+                "Curry-Howard correspondence",
+                "curry_howard_correspondence",
+                "Howard",
+            ),
+            (
+                "propositions as types",
+                "curry_howard_correspondence",
+                "1980",
+            ),
+            ("test suite reduction", "test_suite_reduction", "Harrold"),
+            (
+                "regression test selection",
+                "test_suite_reduction",
+                "10.1145/152388.152391",
+            ),
+            ("portability", "portability", "25010"),
+            ("Socratic method", "socratic_method", "Paul & Elder"),
+            ("Socratic questioning", "socratic_method", "2006"),
+            ("premortem", "premortem", "Klein"),
+            ("prospective hindsight", "premortem", "Mitchell"),
+            ("is-ought problem", "is_ought_problem", "Hume"),
+            ("Hume's guillotine", "is_ought_problem", "1739"),
+            (
+                "Optimality Theory",
+                "optimality_theory",
+                "Prince & Smolensky",
+            ),
+            ("OT ranking", "optimality_theory", "10.1002/9780470759400"),
+            ("epistemic modality", "epistemic_modality", "Palmer"),
+        ] {
+            let concept =
+                resolve_derived(term).expect("Cohort 6 audit ruling must resolve in derived.rs");
             assert_eq!(
                 concept.term, expected_term,
                 "{term} resolves to {expected_term}"

@@ -28,8 +28,19 @@ The commands that were run and their observed results (from the DoD
 checklist). Failures and not-runs stated as such.
 
 ## Open items
-{{ open_items }}
+{% if open_items %}
+| # | Item | Closure state | Owner |
+|---|------|---------------|-------|
+{% for item in open_items %}
+| {{ item[0] }} | {{ item[1] }} | {{ item[2] }} | {{ item[3] }} |
+{% endfor %}
+{% else %}
+None exist (searched and verified clean).
+{% endif %}
 Found-but-not-fixed, blocked verifications, parallel-stream hazards.
+Each entry is a flat list `["<id>", "<title>", "<state>", "owner:<owner>"]`
+with `state` in `{fixed-verified, delegated-tracked, operator-decision, reported-abandoned}`
+and `owner` in `{self, sub-agent:<label>, operator, none}`.
 An empty list must mean "none exist", not "none looked for".
 
 ## Decisions recorded

@@ -42,9 +42,10 @@ Statement classification (all axes of semantics-classify-statement, the tiers an
 4. Identify both the process axis (PKO) and state axis (DC+BIBO) if the statement is dual-axis.
 5. Map the statement to its constraint force (Prohibition, Guardrail, Guideline, Evidence, or Hypothesis) based on its ontological and epistemic modes.
 6. Classify the provenance of the statement (Specification, Design, Implementation, Runtime, Memory, Inference, External, or Unknown — the trace's data-layer hierarchy; `Runtime` replaces the former `Observation`, same concept).
-7. Judge a base confidence (P), then compute the final confidence with `lisp_eval` (D) — tier modifier, clamp to [0,1], Unknown-provenance ceiling 0.3 (a specification claimed but not checked is treated as unknown — the floor never applies to an unchecked spec), Specification floor 0.8 only when the spec was actually checked as current:
-   - form: `(let ((c (max 0 (min 1 (+ base (cond ((string= tier "fibo") 0.10) ((string= tier "sumo") 0.05) ((string= tier "unanchored") -0.15) (t 0))))))) (cond ((or (string= prov "unknown") (and (string= prov "specification") (not spec_checked))) (min c 0.3)) ((and (string= prov "specification") spec_checked) (max c 0.8)) (t c)))`
-   - env: `{ "base": <judged base confidence>, "tier": "fibo|sumo|core|unanchored" (derived from ontology_anchor: `fibo-*` → fibo, `sumo:*` → sumo, `unanchored` → unanchored, every other anchor → core, i.e. no modifier), "prov": <provenance, lower-case>, "spec_checked": <true only if the named spec was verified current> }`
+7. Emit unadjusted `base_confidence` and `spec_checked` from Step 1 (`semantics-classify-statement.j2`), then after Step 2 `onto_anchor` resolution compute the final adjusted confidence deterministically with `lisp_eval` gate `PS-1` (preventing double-counting of FIBO/SUMO ontology modifiers):
+   - form: `(min 1.0 (max 0.0 (+ base_confidence (if fibo_anchored 0.05 0.0) (if sumo_anchored 0.03 0.0) (if spec_checked 0.05 0.0) (if unanchored -0.10 0.0))))`
+   - env: `{ "base_confidence": <unadjusted base confidence from Step 1>, "fibo_anchored": <true|false from onto_anchor>, "sumo_anchored": <true|false from onto_anchor>, "spec_checked": <true only if the named spec was verified current>, "unanchored": <true|false> }`
+   - For Unknown provenance (or a specification claimed but not checked), apply the 0.3 ceiling and the 0.8 checked-specification floor over the resulting confidence.
 
 ### semantics-provenance-trace
 
@@ -64,7 +65,10 @@ Statement classification (all axes of semantics-classify-statement, the tiers an
 4. Break ties within the same epistemic mode by constraint force (Prohibition > Guardrail > Guideline > Evidence > Hypothesis).
 5. Break ties within the same constraint force by provenance authority (Specification > Design > Implementation > Runtime > Memory > External > Inference > Unknown — External ranks below every hKask layer and above inference; its domain authority flows through the Tier-5 anchoring, operator ruling 2026-09-30).
 6. Use ontology anchoring as the final tiebreaker, prioritizing the Tier-5 anchoring rank (FIBO over SUMO, unanchored as lowest priority — the rank is adoption-based, not the confidence modifier).
-7. (D) Once each statement's five classifications are fixed, the ranking is a lexicographic comparison — compute it with `lisp_eval`, never judge it. Encode each statement as its rank on each tier (0 = strongest, in the orders of steps 2–6) and compare: `(begin (define cmp (lambda (a b) (cond ((is_null a) "tie") ((< (car a) (car b)) "first") ((> (car a) (car b)) "second") (t (cmp (cdr a) (cdr b)))))) (cmp a b))`, env `{ "a": [<5 tier ranks>], "b": [<5 tier ranks>] }`. The classifications themselves remain P.
+7. (D) Once each statement's classifications are fixed, verify strict Optimality Theory lexicographic dominance with `lisp_eval` gate `PS-2` (and use the 5-tier rank comparator for full tie-breaking):
+   - `PS-2` form: `(or (< winner_t1_violations runner_up_t1_violations) (and (= winner_t1_violations runner_up_t1_violations) (< winner_t2_violations runner_up_t2_violations)) (and (= winner_t1_violations runner_up_t1_violations) (= winner_t2_violations runner_up_t2_violations) (<= winner_t3_violations runner_up_t3_violations)))`
+   - `PS-2` env: `{ "winner_t1_violations": <count>, "runner_up_t1_violations": <count>, "winner_t2_violations": <count>, "runner_up_t2_violations": <count>, "winner_t3_violations": <count>, "runner_up_t3_violations": <count> }`
+   - Full 5-tier comparator: `(begin (define cmp (lambda (a b) (cond ((is_null a) "tie") ((< (car a) (car b)) "first") ((> (car a) (car b)) "second") (t (cmp (cdr a) (cdr b)))))) (cmp a b))`, env `{ "a": [<5 tier ranks>], "b": [<5 tier ranks>] }`. The classifications themselves remain P.
 8. Determine the winning statement and select a resolution strategy (Override, Scope, Defer, Escalate, or Confirm if no conflict exists).
 9. Escalate to human review if two Prohibitions conflict or if the comparison returns `tie`.
 
@@ -80,6 +84,9 @@ Standalone analysis: it classifies computation steps (P8.4), not statements, and
 2. Emit the tag: `{ "step": <step id>, "regime": "D" | "P:propose-verify" | "P:probabilistic" | "P:forecast", "oracle": <the named oracle, gate, server or resolution mechanism>, "critique": <what checks this label>, "mismatch_diseases": <the flagged diseases, each naming its step> }`.
 3. Flag both mismatch diseases: a P step that could be D is a precision-improvement candidate; a D step where the answer has genuine multiplicity is false certainty.
 4. Label hybrid steps at sub-step granularity (precedent: `falsifiability` splits its step 5 into a P call and a D verdict). `render_template` is D (deterministic render) feeding P (model consumption) — label the render and the consumption separately.
+5. (D) When building the constraint/routing table in Step 4, run `lisp_eval` gate `PS-3` to verify every statement/step is routed and every P step is gated:
+   - form: `(and (= total_statements (+ d_routed_count p_routed_count)) (= unrouted_count 0) (= ungated_p_steps 0))`
+   - env: `{ "total_statements": <count>, "d_routed_count": <count>, "p_routed_count": <count>, "unrouted_count": <count>, "ungated_p_steps": <count> }`
 
 ### Convergence
 

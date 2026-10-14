@@ -171,6 +171,9 @@ insert is D — the returned h_mem id.
    — or is it a hallucination waiting to be baked in?
 3. Surface the design record to the operator when the choice changes
    experience or reverses a prior ratification. Otherwise proceed.
+4. Run deterministic `lisp_eval` gate `PM-1` on the `design-review.j2` output to enforce P5.5 deletion targets on replacement tasks:
+   - form: `(and (> (length premortem_failure_modes) 0) (if is_replacement_task (> (length deleted_targets) 0) true) (= (length unmapped_requirements) 0))`
+   - env: `{ "premortem_failure_modes": <list of pre-mortem failure modes>, "is_replacement_task": <true|false>, "deleted_targets": <list of replaced paths/files to delete>, "unmapped_requirements": <list of requirements lacking a design mapping> }`
 
 ### Phase 3 — Execute (governed coding)
 
@@ -272,8 +275,8 @@ insert is D — the returned h_mem id.
    item is a flat list `("<id>" "<title>" "<state>" "owner:<owner>")` —
    object-shaped entries read red: an object's alist form makes `member`
    miss silently, which once read green (the shape guard below closes
-   that). Render `program-manager/delivery-rubric` for the ledger table,
-   then call `lisp_eval`:
+   that). The open-items ledger table is rendered as part of
+   `program-manager/closeout-report`; call `lisp_eval`:
    form: `(let ((count-token (lambda (items token) (if (= 0 (length items)) 0 (+ (if (member token (car items)) 1 0) (count-token (cdr items) token))))) (nonflat (lambda (items) (if (= 0 (length items)) 0 (+ (if (listp (car (car items))) 1 0) (nonflat (cdr items))))))) (let ((abandoned (count-token findings "reported-abandoned")) (unowned (count-token findings "owner:none")) (shape (nonflat findings))) (if (> shape 0) (quote red) (if (and (= abandoned 0) (= unowned 0)) (quote green) (quote red)))))`
    env: `{ "findings": <the open-items ledger as flat lists> }`
    `red` → return to Phase 1 and give every red item a closure path
@@ -301,14 +304,13 @@ insert is D — the returned h_mem id.
 |---|---|---|
 | `design-review.j2` | Produce Phase 2's design record. | `requirement`, `spec_provenance`, `design_pattern`, `invariants`, `lazy_version` (the pre-mortem: the hack the lazy version would embed) |
 | `dod-checklist.j2` | Phase 4's Definition of Done checklist. | `change_summary`, `residue_targets` |
-| `closeout-report.j2` | Phase 5's closeout report. | `goal_text`, `functional_outcome`, `open_items`, `learning` |
-| `delivery-rubric.j2` | Phase 5 step 5's open-items ledger table. | `findings` (the flat-list convention above) |
+| `closeout-report.j2` | Phase 5's closeout report (including the open-items closure ledger table). | `goal_text`, `functional_outcome`, `open_items`, `learning` |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `program-manager/design-review`) and a context object with the required variables.
 
 ## Regression case
 
-Run a small governed change (one file, one behavior) through the loop with a two-item open-items ledger: (i) render `program-manager/design-review` with the design record's five inputs; (ii) render `program-manager/dod-checklist` with the change summary and residue targets; (iii) render `program-manager/closeout-report` with goal, outcome, the ledger, and the learning; (iv) render `program-manager/delivery-rubric` with the findings; (v) run the closure-ledger form three ways — a green flat ledger (both items owned and closed) → green; a red flat ledger (one `reported-abandoned`, one `owner:none`) → red; and a ledger with one object-shaped entry → red (the shape guard). The three-way form check is executed live through `lisp_eval` (receipts above).
+Run a small governed change (one file, one behavior) through the loop with a two-item open-items ledger: (i) render `program-manager/design-review` with the design record's five inputs and check gate `PM-1`; (ii) render `program-manager/dod-checklist` with the change summary and residue targets; (iii) render `program-manager/closeout-report` with goal, outcome, the open-items ledger table, and the learning; (iv) run the closure-ledger form three ways — a green flat ledger (both items owned and closed) → green; a red flat ledger (one `reported-abandoned`, one `owner:none`) → red; and a ledger with one object-shaped entry → red (the shape guard). The three-way form check is executed live through `lisp_eval` (receipts above).
 
 ## Convergence
 

@@ -27,16 +27,17 @@ use ui::SharedString;
 pub struct RenderTemplateToolInput {
     /// Template reference, e.g. "essentialist/essentialist-flow". The tool
     /// resolves this against the registry templates directory, trying the
-    /// ref as-is, then with `.j2` appended, then with `.yaml` appended.
+    /// ref as-is, then with `.j2` appended.
+    #[serde(deserialize_with = "deserialize_template_ref_field")]
     pub template_ref: String,
     /// Context variables for Jinja2 interpolation. Keys become template
     /// variables (e.g., `{{ task }}`, `{{ artifact }}`). Values must be
     /// JSON-serializable.
     ///
-    /// Uses `AnyJsonValue` for values (not `serde_json::Value`) because
-    /// `schemars` renders `Value` as bare `true` in `additionalProperties`,
-    /// which breaks strict-schema providers — context variables silently
-    /// don't arrive.
+    /// Uses `AnyJsonValue` for values (not `serde_json::Value`) with
+    /// `permissive_json_map_schema` so the outer schema is `type: object`
+    /// while `additionalProperties` is `{}` (scalars stay unwrapped and no
+    /// bare boolean schema is emitted).
     ///
     /// `deserialize_context_field` tolerates models that emit `context` as a
     /// stringified JSON string instead of a bare object, and teaches on every
@@ -44,7 +45,20 @@ pub struct RenderTemplateToolInput {
     /// accepted shape (lisp-repair L1 — an error that does not teach produces
     /// identical retries).
     #[serde(default, deserialize_with = "deserialize_context_field")]
+    #[schemars(schema_with = "super::permissive_json_map_schema")]
     pub context: std::collections::HashMap<String, hkask_types::AnyJsonValue>,
+}
+
+fn deserialize_template_ref_field<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    deserialize_teaching_field(
+        deserializer,
+        "template_ref",
+        "a string template reference like \"essentialist/essentialist-flow\"",
+        false,
+    )
 }
 
 fn deserialize_context_field<'de, D>(
@@ -127,7 +141,7 @@ pub fn render_registry_template(input: &RenderTemplateToolInput) -> Result<Strin
             .to_string()
     })?;
 
-    // Resolve the template file, trying ref as-is, .j2, then .yaml.
+    // Resolve the template file, trying ref as-is, then .j2.
     let content = read_template_file(base_path, &input.template_ref)?;
 
     validate_contract_inputs(&content, &input.context).map_err(|error| {
@@ -285,23 +299,51 @@ fn contract_input_is_required(specification: &serde_yaml::Value) -> bool {
         .is_some_and(|value| value.split('|').any(|part| part.trim() == "null"))
 }
 
-fn template_metadata_header(content: &str) -> Option<&str> {
-    let mut working = content.trim_start();
+/// Split a template into its optional `[inference]` metadata header and its
+/// renderable body. Leading `{# … #}` Jinja comments are skipped before
+/// checking for `[inference]`. Using a single splitter for both
+/// `template_metadata_header` and `strip_frontmatter` guarantees contract
+/// validation and frontmatter stripping cannot disagree on whether a header is
+/// present (e.g. when `[inference]` has trailing whitespace or CRLF endings).
+fn split_template_frontmatter(content: &str) -> (Option<&str>, &str) {
+    let mut working = content;
     loop {
-        if !working.lines().next()?.trim().starts_with("{#") {
+        let Some(first_line) = working.lines().next() else {
+            return (None, content);
+        };
+        if !first_line.trim().starts_with("{#") {
             break;
         }
-        let close_pos = working.find("#}")?;
-        working = working.get(close_pos + 2..)?.trim_start_matches('\n');
+        let Some(close_pos) = working.find("#}") else {
+            return (None, working);
+        };
+        working = working[close_pos + 2..].trim_start_matches(['\r', '\n']);
     }
 
-    // The registry's only header convention is `[inference]`-keyed metadata
-    // terminated by a lone `---` line. The legacy leading-`---` YAML
-    // frontmatter branch was deleted (2026-09-22): zero shipped templates
-    // used it; a file opening with `---` is treated as headerless body.
-    let metadata = working.strip_prefix("[inference]\n")?;
-    let end = metadata.find("\n---\n")?;
-    metadata.get(..end)
+    let Some(first_line) = working.lines().next() else {
+        return (None, working);
+    };
+    if first_line.trim() == "[inference]" {
+        let after_marker = working
+            .get(first_line.len()..)
+            .unwrap_or("")
+            .trim_start_matches(['\r', '\n']);
+        let mut offset = 0usize;
+        for line in after_marker.split_inclusive('\n') {
+            let trimmed = line.trim_end_matches(['\r', '\n']);
+            if trimmed == "---" {
+                let header = &after_marker[..offset];
+                let body = &after_marker[offset + line.len()..];
+                return (Some(header), body);
+            }
+            offset += line.len();
+        }
+    }
+    (None, working)
+}
+
+fn template_metadata_header(content: &str) -> Option<&str> {
+    split_template_frontmatter(content).0
 }
 
 /// Strip the template metadata header from a template file, leaving only
@@ -331,36 +373,7 @@ fn template_metadata_header(content: &str) -> Option<&str> {
 /// were removed corpus-wide on 2026-09-28; `all_registry_templates_conform`
 /// rejects their reintroduction.
 fn strip_frontmatter(content: &str) -> String {
-    let mut working: &str = content;
-
-    // Skip leading Jinja `{# … #}` comment lines first — templates carry a
-    // goal comment above the header.
-    loop {
-        let first = working.lines().next().unwrap_or("").trim();
-        if first.starts_with("{#") {
-            // Jinja comment — may span multiple lines. Skip through the line
-            // containing the closing `#}`.
-            match working.find("#}") {
-                Some(close_pos) => {
-                    working = &working[close_pos + 2..];
-                    working = working.trim_start_matches('\n');
-                }
-                None => break, // Unterminated comment — leave the rest alone.
-            }
-        } else {
-            break;
-        }
-    }
-    let first_line = working.lines().next().unwrap_or("").trim();
-    if first_line == "[inference]" {
-        // Find the terminating lone `---` line and take everything after it.
-        if let Some(pos) = working.find("\n---\n") {
-            working = &working[pos + 1..];
-            working = working.strip_prefix("---\n").unwrap_or(working);
-        }
-    }
-
-    working.trim().to_string()
+    split_template_frontmatter(content).1.trim().to_string()
 }
 
 /// Bind a loader that resolves `{% include %}` names against the registry
@@ -806,6 +819,48 @@ mod tests {
             serde_json::from_value(input).expect("bare object must parse");
         assert_eq!(result.context.len(), 1);
         assert!(result.context.contains_key("task"));
+    }
+
+    #[test]
+    fn context_schema_advertises_permissive_values() {
+        let schema =
+            serde_json::to_value(schemars::schema_for!(RenderTemplateToolInput)).expect("schema");
+        assert_eq!(
+            schema["properties"]["context"]["type"],
+            serde_json::json!("object")
+        );
+        assert_eq!(
+            schema["properties"]["context"]["additionalProperties"],
+            serde_json::json!({})
+        );
+        assert!(schema["properties"]["context"].get("properties").is_none());
+        assert!(hkask_types::find_boolean_schema_positions(&schema).is_empty());
+    }
+
+    #[test]
+    fn header_with_trailing_whitespace_or_crlf_does_not_bypass_contract_validation() {
+        for header_line in ["[inference]   \n", "[inference]\r\n"] {
+            let template =
+                format!("{header_line}contract:\n  input:\n    required_key: string\n---\nbody");
+            let stripped = strip_frontmatter(&template);
+            assert_eq!(stripped, "body", "strip_frontmatter stripped the header");
+            let err = validate_contract_inputs(&template, &std::collections::HashMap::new())
+                .expect_err("contract validation must not be bypassed when header is stripped");
+            assert!(err.contains("required_key"), "got: {err}");
+        }
+    }
+
+    #[test]
+    fn non_string_template_ref_teaches_field_and_shape() {
+        let err = serde_json::from_value::<RenderTemplateToolInput>(
+            serde_json::json!({"template_ref": 42, "context": {}}),
+        )
+        .expect_err("non-string template_ref must be rejected");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("template_ref: received number 42"),
+            "got: {msg}"
+        );
     }
 }
 

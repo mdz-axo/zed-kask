@@ -22,7 +22,7 @@ use ui::SharedString;
 ///
 /// 1. **Domain supplement** — pinned published sources (FIBO Q2 Release,
 ///    W3C RDF Data Cube, OMC, PKO/P-Plan/PROV, SEPIO,
-///    GOLEM/CIDOC-CRM/LRMoo, ML-Schema, RDF/RDFS).
+///    GOLEM/CIDOC-CRM/LRMoo, ML-Schema, RDF/RDFS, DPV, CSO).
 ///    Never force a term into an ontology that has no place for it.
 /// 2. **Derived concepts** — recorded compositions over anchored
 ///    constituents, each carrying its identity and its authority
@@ -58,13 +58,15 @@ pub struct OntoAnchorToolInput {
     /// The domain term to anchor (e.g. "net margin", "corporation",
     /// "market capitalization") or a full prefixed URI
     /// (e.g. "fibo-be-le-cb:Corporation").
+    #[serde(deserialize_with = "deserialize_term_field")]
     term: String,
     /// Optional relation question. Omit for the original resolution-only result.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_relation_query_field")]
     relation_query: Option<RelationQuery>,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct RelationQuery {
     /// Destination term for a shortest directed path; omit to inspect outgoing edges.
     #[serde(default)]
@@ -72,6 +74,32 @@ pub struct RelationQuery {
     /// Bounded hop count (1–4); defaults to 2 for a path, 1 for neighbors.
     #[serde(default)]
     max_hops: Option<u8>,
+}
+
+fn deserialize_term_field<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    super::deserialize_teaching_field(
+        deserializer,
+        "term",
+        "a domain term string like \"net margin\" or \"fibo-be-le-cb:Corporation\"",
+        false,
+    )
+}
+
+fn deserialize_relation_query_field<'de, D>(
+    deserializer: D,
+) -> Result<Option<RelationQuery>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    super::deserialize_teaching_field(
+        deserializer,
+        "relation_query",
+        "an optional object like {\"to\": \"net margin\", \"max_hops\": 2} (stringified JSON or null also accepted)",
+        true,
+    )
 }
 
 /// Existing resolution JSON stays unchanged unless a relation query is made.
@@ -402,5 +430,40 @@ mod tests {
                 "{term}: the walk must terminate on a real anchor"
             );
         }
+    }
+
+    #[test]
+    fn relation_query_accepts_stringified_json_and_rejects_unknown_fields_with_teaching() {
+        let stringified: OntoAnchorToolInput = serde_json::from_value(serde_json::json!({
+            "term": "sustainable growth rate",
+            "relation_query": "{\"to\": \"net margin\", \"max_hops\": 2}"
+        }))
+        .expect("stringified relation_query must parse");
+        let rq = stringified.relation_query.expect("relation_query present");
+        assert_eq!(rq.to.as_deref(), Some("net margin"));
+        assert_eq!(rq.max_hops, Some(2));
+
+        let unknown_field = serde_json::from_value::<OntoAnchorToolInput>(serde_json::json!({
+            "term": "sustainable growth rate",
+            "relation_query": {"target": "net margin"}
+        }))
+        .expect_err("unknown field in relation_query must not silently degrade to neighbor query");
+        let msg = unknown_field.to_string();
+        assert!(
+            msg.contains("relation_query: received an object")
+                && msg.contains("unknown field `target`"),
+            "got: {msg}"
+        );
+
+        let non_string_term = serde_json::from_value::<OntoAnchorToolInput>(serde_json::json!({
+            "term": 99
+        }))
+        .expect_err("non-string term must fail with teaching error");
+        assert!(
+            non_string_term
+                .to_string()
+                .contains("term: received number 99"),
+            "got: {non_string_term}"
+        );
     }
 }

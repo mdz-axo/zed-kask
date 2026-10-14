@@ -127,6 +127,23 @@ fn describe_json_shape(raw: &serde_json::Value) -> String {
     }
 }
 
+/// Advertised schema for open `HashMap<String, AnyJsonValue>` tool parameter
+/// maps (`lisp_eval.env`, `render_template.context`): object-typed outer (so
+/// the model sends a JSON object) with permissive value schemas (`{}` — so
+/// scalars stay scalars instead of being wrapped into `type: object` values).
+pub(crate) fn permissive_json_map_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    let mut map = serde_json::Map::new();
+    map.insert(
+        "type".to_string(),
+        serde_json::Value::String("object".to_string()),
+    );
+    map.insert(
+        "additionalProperties".to_string(),
+        serde_json::Value::Object(serde_json::Map::new()),
+    );
+    schemars::Schema::from(map)
+}
+
 /// Detect a path-filter pattern that provably matches no file, so the
 /// "No matches found" it produces can be told apart from a genuine empty
 /// search. Both the `grep` tool's `include_pattern` and `find_path`'s glob

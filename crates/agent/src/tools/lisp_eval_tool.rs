@@ -72,7 +72,7 @@ pub struct LispEvalToolInput {
     /// accepted shape (an error that does not teach produces identical
     /// retries — the 2026-09-28 audit lockout anatomy).
     #[serde(default, deserialize_with = "deserialize_env_field")]
-    #[schemars(schema_with = "permissive_env_map_schema")]
+    #[schemars(schema_with = "super::permissive_json_map_schema")]
     env: std::collections::HashMap<String, hkask_types::AnyJsonValue>,
     /// Maximum evaluation steps (default 100000). Prevents infinite loops.
     /// The `maxSteps` alias tolerates camelCase emissions so an explicit budget
@@ -130,30 +130,6 @@ where
         "a JSON object like {\"binding\": value} (a stringified JSON object is also accepted)",
         true,
     )
-}
-
-/// The env map's advertised schema: object-typed outer (the model sends a
-/// JSON object), permissive value schemas (scalars stay scalars). Overrides
-/// the default `HashMap<String, AnyJsonValue>` schema, which advertises each
-/// value as `type: object` — schema-following providers then wrap scalars,
-/// which arrive as association lists and fail numeric forms (live-observed
-/// 2026-10-01: the gpui-bench audit critic's 8/8 wrapped emissions, "type
-/// error: expected number, got list"). The value schema is an empty SCHEMA
-/// object, never a bare boolean — Ollama's `api.ToolProperty` rejects
-/// booleans in schema positions — and the outer schema carries
-/// `additionalProperties` explicitly so schema preprocessing cannot tighten
-/// it into "no properties allowed".
-fn permissive_env_map_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
-    let mut map = serde_json::Map::new();
-    map.insert(
-        "type".to_string(),
-        serde_json::Value::String("object".to_string()),
-    );
-    map.insert(
-        "additionalProperties".to_string(),
-        serde_json::Value::Object(serde_json::Map::new()),
-    );
-    schemars::Schema::from(map)
 }
 
 fn deserialize_max_steps_field<'de, D>(deserializer: D) -> Result<u64, D::Error>
@@ -374,9 +350,10 @@ mod tests {
     //   2. `AnyJsonValue` — schema emits `{}` (any value). This avoided the
     //      boolean rejection but the model still didn't populate the parameter
     //      (no `type` signal → env arrives as null → "unbound symbol").
-    //   3. `HashMap<String, AnyJsonValue>` — schema emits `{"type":"object",
-    //      "additionalProperties":{}}`, giving the model a clear object signal.
-    //      This matches the working `render_template` context pattern.
+    //   3. `HashMap<String, AnyJsonValue>` with `permissive_json_map_schema` —
+    //      schema emits `{"type":"object","additionalProperties":{}}`, giving
+    //      the model a clear object signal while keeping value schemas
+    //      permissive (shared with `render_template.context`).
     // These tests verify the interpreter itself is correct (they call
     // `eval_sandboxed_with_budget` directly). The tool wrapper fix (schema
     // shape) needs a process rebuild to take effect live.

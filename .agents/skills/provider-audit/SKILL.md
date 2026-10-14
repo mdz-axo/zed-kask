@@ -19,10 +19,9 @@ Two-directional provider contract audit over kask-adopted vendors — inbound (d
 
 | Step | Type | Oracle / critique |
 |------|------|-------------------|
-| Enumerate (derive) | D | `bash kask/scripts/check-provider-profiles.sh` — the adopted set derived from tree anchors, never memory |
-| Enumerate (record) | D | `render_template` over the script's derived set |
+| Enumerate (derive) | D | `bash kask/scripts/check-provider-profiles.sh` and `lisp_eval` gate `PA-1` — the adopted set derived from tree anchors, never memory |
 | Inbound B1–B6 | P | the operator; every verdict cites dated evidence (doc URL + extraction date, probe receipt, or tree file:line) |
-| Outbound O1–O4 | P (O1 grep receipts are D-assisted) | the operator; grep receipts pinned to file:line |
+| Outbound O1–O4 | P (O1 grep receipts are D-assisted; `PA-2` `lisp_eval` gate) | the operator; grep receipts pinned to file:line |
 | Calibration | D | `lisp_eval` gate over the retrodiction receipts |
 | Findings routing | P | the operator accepts/rejects/overrides |
 | Adoption recommendation | P | the operator decides; contested merits route to `mcda` |
@@ -57,7 +56,10 @@ Fix the trigger (adoption | drift | scheduled | announcement | retirement) and t
 ### Step 2 — Enumerate (D)
 
 1. Run `bash kask/scripts/check-provider-profiles.sh` via `terminal`. It derives the adopted set from five tree anchors — inference descriptor ids (`INFERENCE_PROVIDERS`), media provider structs, training host ids, research provider modules, and `DATA_SERVICES` credential keys — and pins the structural contract: a profile per adopted vendor, required keys present, id/status consistency, no zombie retirements, no active orphans.
-2. Render `provider-audit/enumerate` with the script's derived set and the profile directory listing; record the enumeration with per-vendor sources. A gate violation is a finding before any semantic reading begins.
+2. Run deterministic `lisp_eval` gate `PA-1` over the script's exit code, the enumerated profiles, and any unmapped crates:
+   - form: `(and (= check_script_exit_code 0) (> (length profiles_enumerated) 0) (= (length unmapped_crates) 0))`
+   - env: `{ "check_script_exit_code": <0|nonzero>, "profiles_enumerated": <list of profile ids>, "unmapped_crates": <list of unmapped crates> }`
+   A gate violation is a finding before any semantic reading begins.
 
 ### Step 3 — Load profiles
 
@@ -84,6 +86,11 @@ Render `provider-audit/outbound` with the vendor, its profile, and the capabilit
 - **O2 unconsumed capabilities:** the vendor's published capability list vs the profile's `consumed_capabilities`; a gap with no `deliberate_non_consumption` entry is a silent-gap finding; a recorded entry is a choice.
 - **O3 churn:** deprecation/retirement waves vs our constants (`kask/crates/hkask-inference/src/model_constants.rs`, the descriptor tables).
 - **O4 degradation honesty:** missing capabilities surface loudly, never silently fall back (the `.rules` failure-signals class).
+
+After completing `outbound` and before composing `findings`, run deterministic `lisp_eval` gate `PA-2`:
+
+- form: `(and (= (length uncited_outbound_findings) 0) (if retire_recommended (> (length replacement_providers) 0) true))`
+- env: `{ "uncited_outbound_findings": <list of outbound findings lacking file:line or URL+date>, "retire_recommended": <true|false>, "replacement_providers": <list of replacement provider ids> }`
 
 ### Step 6 — Calibration (Check, D)
 
@@ -134,13 +141,11 @@ Call `lisp_eval`:
 
 | Template | Purpose |
 |----------|---------|
-| `enumerate.j2` | Derive the adopted-vendor enumeration from the tree anchors (inference descriptors, media structs, training hosts, research modules, data-service keys) and reconcile it against the profile layer. |
 | `inbound.j2` | Read one vendor's inbound contract — credential slot, error taxonomy, data terms, status surface, pricing, values posture — against the project's principles, producing dated evidence for every check. |
 | `outbound.j2` | Read one vendor's outbound alignment — stale docs, unconsumed capabilities, churn, degradation honesty — against the tree, distinguishing recorded choice from silent gap. |
 | `findings.j2` | Compose the audit's findings artifact with severity, file:line or URL evidence, routing, and the retrodictive calibration receipts. |
 
-To render a template, call `render_template` with the ref (e.g. `provider-audit/enumerate`):
-- `enumerate.j2`: `trigger`, `anchors`, `profile_dir_listing`
+To render a template, call `render_template` with the ref (e.g. `provider-audit/inbound`):
 - `inbound.j2`: `vendor`, `profile`, `trigger`
 - `outbound.j2`: `vendor`, `profile`, `capability_sources`
 - `findings.j2`: `vendor`, `findings`, `calibration`
