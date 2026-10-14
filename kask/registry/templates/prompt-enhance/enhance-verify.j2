@@ -22,6 +22,21 @@ contract:
     round:
       type: integer
       description: Grill round (1 at medium; 1-3 escalating at high)
+    unfold_mode_resolved:
+      type: string
+      default: rewrite_only
+      required: false
+      description: Resolved unfolding mode from Step 1
+    reference_models:
+      type: array
+      default: []
+      required: false
+      description: Reference models bound in Step 1.5
+    unfolded_plan:
+      type: array
+      default: []
+      required: false
+      description: Unfolded inquiry branches or dependency-ordered tasks from Step 2
   output:
     ratings:
       type: array
@@ -87,6 +102,13 @@ For each item in `proxy_eval_set`, mentally simulate: would this enhanced prompt
 
 Compare `checkability_map` with the enhanced prompt. For each proposed oracle, ask whether it establishes the intended claim under stated assumptions, whether it is known to exist, and whether the prompt clearly distinguishes a planned check from an executed one. Lean proves a stated proposition, not its correspondence to user intent; `lisp_eval` calculates over supplied inputs, not their provenance. Flag invented support and any unrun check represented as verified. For `judgment` or `none`, do not demand a formal proof.
 
+## Reference-Model Governance & Unfolding Challenge
+
+When `unfold_mode_resolved` is `inquiry` or `task_graph` (or `reference_models` / `unfolded_plan` are non-empty):
+1. **Governance vs. Name-Dropping (`Guardrail`):** Check whether each entry in `reference_models` actively governs a concrete mechanism, discriminating question, attenuator/amplifier, or verification oracle in `unfolded_plan` and `enhanced_prompt`. Flag decorative citation name-dropping as a `Guardrail` Gap.
+2. **Non-Fabrication on Coarse/Missing Anchors (`Prohibition`):** If any entry in `reference_models` has `status: "coarse_anchor"` or `"unanchored_in_zk_ref_open"`, verify that the prompt discloses the coarse anchor and requests an operator ruling rather than inventing a reference model citation. Fabricated citations are a `Prohibition` Gap (`verdict: rewrite_needed`).
+3. **DAG & Essentialist Cap (`Guardrail`):** Verify that `unfolded_plan` is acyclic, has ≤ 7 items, and that `clarify_first` prompts do not hallucinate task scope.
+
 ## Verdict Logic
 
 - **pass** — all areas Solid, all acceptance criteria met, proxy eval set handled well. Proceed to output.
@@ -111,6 +133,9 @@ Re-scan the enhanced prompt for unresolved template placeholders (`<UPPERCASE_NA
   "proxy_eval_set": {{ proxy_eval_set | tojson }},
   "acceptance_criteria": {{ acceptance_criteria | tojson }},
   "checkability_map": {{ checkability_map | tojson }},
+  "unfold_mode_resolved": {{ unfold_mode_resolved | default("rewrite_only") | tojson }},
+  "reference_models": {{ reference_models | default([]) | tojson }},
+  "unfolded_plan": {{ unfolded_plan | default([]) | tojson }},
   "round": {{ round | tojson }}
 }
 ```

@@ -33,6 +33,7 @@ General-purpose prompt enhancement skill for the zed-kask platform. Classifies p
 | `output_format` | `inline` \| `file` \| `both` | `inline`   | How to deliver the result                                                       |
 | `output_path`   | string                       | (derived)  | Explicit path for `file`/`both`; default `~/Documents/zk-data/skills/prompt-enhance/{date}-{run}/enhanced-<type>.md` |
 | `context`       | object                       | (optional) | Target model, intended consumer, existing eval set                              |
+| `unfold_mode`   | `auto` \| `rewrite_only` \| `inquiry` \| `task_graph` | `auto` | Controls whether the prompt is only rewritten or unfolded into a reference-model-anchored inquiry or dependency-ordered task graph |
 
 ## Effort Tiers
 
@@ -60,12 +61,14 @@ The *Taxonomy anchor* column uses the four aspects of Liu et al., "A comprehensi
 
 | Step | Type | Oracle / critique |
 |------|------|-------------------|
-| 1 Classify, 2 Rewrite | P | decoupled critic in step 3 (medium/high); none at low, reported `skipped` |
-| 3 Verify | P | decoupled grill-me critic; its verdict is reported, never upgraded |
-| 4 Output render | D | `render_template` (no model call) |
+| 1 Classify (`pragmatic-semantics` + `hypothesis-framer` + `metacognition`) | P | decoupled critic in step 3 (medium/high); none at low, reported `skipped` |
+| 1.5 Anchor (`onto_anchor` + `zk-ref-open` via `curator_federated_search`) | D+P | `onto_anchor` (D) + `curator_federated_search` filtered to `source_id == "zk-ref-open"` / `source_kind == "corpus"` (D retrieval, P selection); skipped at `low` or `rewrite_only`/`clarify_first` |
+| 2 Rewrite & Unfold (`pragmatic-cybernetics` + `improv` + `essentialist`) | P | decoupled critic in step 3 (medium/high); none at low, reported `skipped` |
+| 3 Verify (`grill-me`) | P | decoupled grill-me critic; its verdict is reported, never upgraded |
+| 4 Output render (`kata-improvement`) | D | `render_template` (no model call) |
 | File write (`file`/`both`) | D | the write tool's success receipt |
-| Local PDCA Check | P | medium/high: the verify verdict; low: generator self-inspection of the inline audit — no independent critic, the independent verdict stays `skipped` |
-| Local PDCA Act | P | re-verify after the one corrective re-render (medium/high); bound: one correction |
+| Local PDCA Check (`kata-improvement`) | P | medium/high: the verify verdict; low: generator self-inspection of the inline audit — no independent critic, the independent verdict stays `skipped` |
+| Local PDCA Act (`kata-improvement`) | P | re-verify after the one corrective re-render (medium/high); bound: one correction |
 
 Anchors: the 7-type taxonomy adapts Liu et al. (2026) — §The 7-Type Taxonomy; the verify escalation adapts the grill-me protocol (grounding: Socratic questioning, core-rung `onto_anchor`, operator ruling pending); the local PDCA loop copies Deming's cycle.
 
@@ -77,45 +80,63 @@ Array-valued context fields are plain JSON arrays — never stringified JSON. A 
 
 ### Step 1 — Classify (enhance-classify.j2)
 
-1. Classify the input prompt against the 7-type taxonomy using pragmatic-semantics IS/OUGHT + epistemic-mode axes.
-2. Validate the effort tier and output format (resolve defaults).
-3. Synthesize a minimal proxy eval set (3-5 representative inputs) for medium/high tiers; empty at low.
-4. Produce `prompt_type`, `semantic_classification`, `effort_tier`, `output_format_resolved`, `output_path_resolved`, `proxy_eval_set`, `risks`, `routing`, and `checkability_map`. For each consequential obligation choose `finite` (supported `lisp_eval`), `formal` (Lean 4 over stated assumptions), `empirical` (test or observation), `judgment` (evidence-based interpretation), or `none`. Leave the map empty if not applicable. These are *candidate* checks, not claims that any tool ran.
-5. Render with the full context shape — copy it, do not reconstruct it from prose (the 2026-10-07..13 rejections dropped fields in varying subsets):
+1. **Semantic classification (`pragmatic-semantics`)**: classify the input prompt against the 7-type taxonomy using IS/OUGHT + epistemic-mode + provenance axes, and extract 2–4 domain/methodology `anchor_terms` when unfolding applies.
+2. **Inquiry & objective framing (`hypothesis-framer`)**: apply the FINER admissibility gate and PICO/counterfactual structure (`finer_pico_framing`) to extract explicit and implied objectives, target conditions, and counterfactual falsifiers. If user intent is missing or untestable, set `unfold_mode_resolved = "clarify_first"` and populate `clarifying_questions` rather than inventing scope.
+3. **Unfold triage & calibration prior (`metacognition`)**: validate `effort` and `output_format`, resolve `unfold_mode_resolved` (`rewrite_only` for trivial/single-step prompts, `inquiry` for reasoning/research prompts, `task_graph` for multi-step coding/agent-task prompts, or `clarify_first` when intent is missing), and record `intake_confidence` (`0.0–1.0`) for downstream Brier calibration.
+4. Synthesize a minimal proxy eval set (3-5 representative inputs) for medium/high tiers; empty at low.
+5. Produce `prompt_type`, `semantic_classification`, `effort_tier`, `output_format_resolved`, `output_path_resolved`, `unfold_mode_resolved`, `intake_confidence`, `anchor_terms`, `finer_pico_framing`, `proxy_eval_set`, `risks`, `routing`, and `checkability_map`. For each consequential obligation choose `finite` (supported `lisp_eval`), `formal` (Lean 4 over stated assumptions), `empirical` (test or observation), `judgment` (evidence-based interpretation), or `none`. Leave the map empty if not applicable. These are *candidate* checks, not claims that any tool ran.
+6. Render with the full context shape — copy it, do not reconstruct it from prose (the 2026-10-07..13 rejections dropped fields in varying subsets):
    ```json
    { "prompt": "<the prompt>", "task": "<the user's task description>",
      "effort": "<low|medium|high>", "output_format": "<inline|file|both>",
+     "unfold_mode": "<auto|rewrite_only|inquiry|task_graph>",
      "output_path": "<omit unless user-supplied>", "context": "<omit unless supplied>" }
    ```
-   `prompt` and `task` are required (the contract rejects their absence; `task` is not a user-facing skill input but the contract requires it — use the user's task description). `effort` defaults to `medium` and `output_format` to `inline`; `output_path` and `context` are optional — do not invent values for them.
+   `prompt` and `task` are required (the contract rejects their absence; `task` is not a user-facing skill input but the contract requires it — use the user's task description). `effort` defaults to `medium`, `output_format` to `inline`, and `unfold_mode` to `auto`; `output_path` and `context` are optional — do not invent values for them.
 
-### Step 2 — Rewrite (enhance-rewrite.j2)
+### Step 1.5 — Anchor (`onto_anchor` + `zk-ref-open`, medium/high when `unfold_mode_resolved` is `inquiry` or `task_graph`)
 
-1. **Inline audit** (internal): scan for unresolved placeholders (Prohibition), semantic fragility (Guardrail), and structural accretion (essentialist G1+G2).
-2. **Typed rewrite**: apply type-specific moves based on `prompt_type` from step 1.
-3. **Mutation discipline**: each finding → at most one mutation; Prohibition findings must be addressed; Hypothesis-tier findings deferred.
-4. Render with the full context shape — all eight fields are required; copy it, do not reconstruct it from prose:
+1. When `effort_tier` is `medium` or `high` AND `unfold_mode_resolved` is `inquiry` or `task_graph`:
+   - Call `onto_anchor` in parallel on the 2–4 `anchor_terms` from Step 1.
+   - Run one bounded `curator_federated_search(query, limit=5)` call (or `corpus_query`) and filter results to `source_id == "zk-ref-open"` (or `source_kind == "corpus"`) so episodic chat turns are never cited as published reference models.
+   - Assemble `reference_models` as a plain JSON array of objects (`reference_model_id`, `provenance`, `discovery_capability_unlocked`, `execution_capability_unlocked`, `status`). If `onto_anchor` terminates at `5w1h_core` or `zk-ref-open` has no relevant passage, record `status: "coarse_anchor"` / `"unanchored_in_zk_ref_open"` and require an operator ruling — never fabricate a reference model citation.
+2. When `effort_tier` is `low` OR `unfold_mode_resolved` is `rewrite_only` or `clarify_first`, skip tool calls and pass `reference_models: []`.
+
+### Step 2 — Rewrite & Unfold (enhance-rewrite.j2)
+
+1. **Inline audit** (internal): scan for unresolved placeholders (Prohibition), semantic fragility (Guardrail), and structural accretion (`essentialist` Exist/Surface/Contract gates, ≤ 7 top-level blocks and ≤ 7 unfolded items).
+2. **Reference-model binding & controlled unfolding (`pragmatic-cybernetics` + `improv` + `essentialist`)**:
+   - Bind each entry in `reference_models` to concrete discovery capabilities (blind spots, missing variables, counterfactuals) and execution capabilities (sensors, attenuators, amplifiers, D-gates). Honor the `coarse_anchor` non-fabrication prohibition.
+   - Apply constructive *Plussing* (`improv`) according to `unfold_mode_resolved`: unfold into falsifiable hypothesis branches (`inquiry`), a dependency-ordered task DAG with `depends_on`, `d_p_mode`, and `verification_oracle` (`task_graph`), a clarifying-question prompt (`clarify_first`), or a tight single-task rewrite (`rewrite_only`).
+   - Prune via `essentialist` 3-gate interrogation: remove any unfolded task/branch or instruction block whose deletion does not degrade the target condition.
+3. **Typed rewrite & mutation discipline**: apply type-specific moves based on `prompt_type` from step 1; each finding → at most one mutation; Prohibition findings must be addressed; Hypothesis-tier findings deferred.
+4. Render with the full context shape — copy it, do not reconstruct it from prose:
    ```json
    { "prompt": "<the original prompt>", "prompt_type": "<from step 1>", "effort_tier": "<from step 1>",
      "risks": <from step 1>, "checkability_map": <from step 1>, "task": "<the user's task>",
-     "prior_enhanced_prompt": "", "critic_feedback": [] }
+     "unfold_mode_resolved": "<from step 1>", "finer_pico_framing": <from step 1>,
+     "reference_models": <from step 1.5>, "prior_enhanced_prompt": "", "critic_feedback": [] }
    ```
-   On a corrective re-render, `prior_enhanced_prompt` carries the previous rewrite and `critic_feedback` the verify step's `findings`. Produce `enhanced_prompt`, `acceptance_criteria`, `mutations_applied`, `mutations_deferred`, and `audit_findings` before proceeding. Assign checks only where they serve the request; proof does not establish that a proposition captures user intent, and computation depends on input provenance. Unrun checks remain explicitly proposed.
+   On a corrective re-render, `prior_enhanced_prompt` carries the previous rewrite and `critic_feedback` the verify step's `findings`. Produce `enhanced_prompt`, `unfolded_plan`, `acceptance_criteria`, `mutations_applied`, `mutations_deferred`, and `audit_findings` before proceeding. Assign checks only where they serve the request; proof does not establish that a proposition captures user intent, and computation depends on input provenance. Unrun checks remain explicitly proposed.
 
 ### Step 3 — Verify (enhance-verify.j2, medium/high only)
 
-1. Run grill-me self-challenge across Recall → Mechanism → Rationale → Edge Cases → Synthesis.
+1. Run `grill-me` self-challenge across Recall → Mechanism → Rationale → Edge Cases → Synthesis, plus the **Reference-Model Governance & Unfolding Challenge** (verifying that cited `zk-ref-open` models govern tasks rather than decorative name-dropping, that `coarse_anchor` fallbacks are unfabricated, and that `unfolded_plan` is acyclic and ≤ 7 items).
 2. Decoupled from step 2 — do not defend the prompt you (didn't) write (self-improvement §9.1).
 3. Tier-scaled rounds: 1 (Recall+Mechanism) at medium; up to 3 at high, escalation gated on prior-round Solid ≥80% (below 40% re-probes the same level).
-4. Render with the full context shape — all eight fields are required; copy it, do not reconstruct it from prose:
+4. Render with the full context shape — copy it, do not reconstruct it from prose:
    ```json
    { "enhanced_prompt": "<from step 2>", "original_prompt": "<the original prompt>",
      "prompt_type": "<from step 1>", "effort_tier": "<from step 1>",
      "proxy_eval_set": <from step 1>, "acceptance_criteria": <from step 2>,
-     "checkability_map": <from step 1>, "round": 1 }
+     "checkability_map": <from step 1>, "unfold_mode_resolved": "<from step 1>",
+     "reference_models": <from step 1.5>, "unfolded_plan": <from step 2>, "round": 1 }
    ```
    `round` is 1 at medium, 1–3 escalating at high. Produce `ratings`, `findings` (the failed-gap list that feeds a corrective Act), and `verdict` (`pass`, `rewrite_needed`, or `fail`). Challenge whether each proposed check actually establishes its claim and whether unrun checks are mislabeled as verified.
 5. Preserve the critic's specific failed checks and verdict. Skip this stage at low effort and set `grill_verdict = "skipped"`, `grill_ratings = []`; a skipped critic is not a `pass`.
+6. Run deterministic `lisp_eval` gate `PE-2` after the critique step to enforce the escalation bound:
+   - form: `(and (<= rounds_executed 3) (<= pdca_corrections 1) (if (= verdict "pass") (= blocking_defects 0) true))`
+   - env: `{ "rounds_executed": <1..3>, "pdca_corrections": <0..1>, "verdict": "<pass|rewrite_needed|fail|skipped>", "blocking_defects": <count of unresolved Prohibition-tier defects> }`
 
 ### Local PDCA — Check and Act before output
 
@@ -125,14 +146,16 @@ Array-valued context fields are plain JSON arrays — never stringified JSON. A 
 
 ### Step 4 — Output (enhance-output-render.j2, deterministic render)
 
-1. Render with the full context shape — all ten fields are required; copy it, do not reconstruct it from prose:
+1. Render with the full context shape — copy it, do not reconstruct it from prose:
    ```json
    { "enhanced_prompt": "<from step 2>", "prompt_type": "<from step 1>", "effort_tier": "<from step 1>",
      "output_format_resolved": "<from step 1>", "output_path_resolved": "<from step 1>",
      "audit_findings": <from step 2>, "grill_ratings": <from step 3>, "grill_verdict": "<from step 3>",
-     "mutations_applied": <from step 2>, "mutations_deferred": <from step 2> }
+     "mutations_applied": <from step 2>, "mutations_deferred": <from step 2>,
+     "unfold_mode_resolved": "<from step 1>", "reference_models": <from step 1.5>,
+     "unfolded_plan": <from step 2> }
    ```
-   At low effort pass `grill_verdict: "skipped"` and `grill_ratings: []`. Do not pass a nested `verification` object. The retired `schema_defects` and `convergence_metric` fields have no producing stage and must not be required. Pass the four array fields as plain arrays of objects with the fields the template reads — `audit_findings`: `constraint_force`/`lens`/`finding`/`addressed`; `grill_ratings`: `area`/`rating`/`evidence`; `mutations_applied`: `finding`/`mutation`/`section`; `mutations_deferred`: `finding`/`reason` — never stringified JSON (the 2026-10-08 receipts: the change-log sections rendered placeholder rows while the summary line interpolated, because a stringified array iterates character-by-character; the template now rejects this loudly as `input_errors`).
+   At low effort pass `grill_verdict: "skipped"`, `grill_ratings: []`, `reference_models: []`, and `unfolded_plan: []` (if `rewrite_only`). Do not pass a nested `verification` object. The retired `schema_defects` and `convergence_metric` fields have no producing stage and must not be required. Pass the six array fields (`audit_findings`, `grill_ratings`, `mutations_applied`, `mutations_deferred`, `reference_models`, `unfolded_plan`) as plain arrays of objects with the fields the template reads — never stringified JSON (the 2026-10-08 receipts: the change-log sections rendered placeholder rows while the summary line interpolated, because a stringified array iterates character-by-character; the template now rejects this loudly as `input_errors`).
 2. Deliver the rendered `delivered_output` to the user. `inline` displays it; `file` and `both` additionally require a separate file-write action. A render-only step NEVER writes a file (`output_path_written` stays empty). Report a path only after a successful write.
 3. Always include the change log: audit findings, critique verdict and ratings, applied and deferred mutations. A `rewrite_needed` or `fail` verdict must remain visible; do not report it as verified.
 4. This step makes no LLM call. The skill is not complete until its enhanced prompt is delivered, not merely rendered.

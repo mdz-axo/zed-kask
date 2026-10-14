@@ -31,6 +31,16 @@ contract:
     task:
       type: string
       description: The user's task description (injected per .rules skill-cascade-context rule)
+    unfold_mode:
+      type: string
+      enum:
+      - auto
+      - rewrite_only
+      - inquiry
+      - task_graph
+      default: auto
+      required: false
+      description: Whether to only rewrite or unfold into an inquiry or dependency-ordered task graph
   output:
     prompt_type:
       type: string
@@ -71,6 +81,23 @@ contract:
     risks:
       type: array
       description: Type-specific risks surfaced for Phase 2 attention
+    unfold_mode_resolved:
+      type: string
+      enum:
+      - rewrite_only
+      - inquiry
+      - task_graph
+      - clarify_first
+      description: Resolved unfolding mode from metacognition + hypothesis-framer triage
+    intake_confidence:
+      type: number
+      description: Metacognitive prediction (0.0-1.0) that the enhanced/unfolded prompt will satisfy the target condition
+    anchor_terms:
+      type: array
+      description: 2-4 domain/methodology terms to resolve via onto_anchor and zk-ref-open (empty if rewrite_only or clarify_first)
+    finer_pico_framing:
+      type: object
+      description: Hypothesis-framer FINER admissibility, explicit/implied objectives, counterfactual falsifier, and clarifying_questions
 ---
 {# Phase 1: Classify prompt type, select effort tier, synthesize proxy eval set #}
 {# goal: Classify the input prompt against the 7-type taxonomy (coding, reasoning, creative, classification, extraction, agent-task, meta) using pragmatic-semantics IS/OUGHT + epistemic-mode axes. Select the effort tier (low/medium/high) and validate the output_format (inline/file/both, default inline). Synthesize a minimal proxy eval set (3-5 representative inputs) for medium/high tiers so downstream phases have a signal to optimize against. Produces the routing decision that drives step 2. #}
@@ -116,7 +143,7 @@ Classify the prompt's primary claims on three axes:
 
 Flag any Inference-tier claim with confidence ≤ 0.3 as fragile — these are Phase 2 audit targets.
 
-## Step 2 — Type Classification
+## Step 2 — Type Classification & Unfold Triage (hypothesis-framer + metacognition)
 
 Pick exactly one type from the 7-type table. If the prompt is genuinely mixed, pick the dominant type and note the secondary in `risks`. Use these discriminators:
 - Code present or requested → `coding`
@@ -126,6 +153,15 @@ Pick exactly one type from the 7-type table. If the prompt is genuinely mixed, p
 - Unstructured input → structured fields → `extraction`
 - Tool use, iteration, environment → `agent-task`
 - Prompt about prompts → `meta`
+
+Next, apply **hypothesis-framer (FINER + PICO/counterfactual)** and **metacognition (unfold triage + intake confidence)**:
+1. Evaluate whether the user's intent is feasible, testable, and specific enough to act on (`finer_pico_framing`). Extract explicit and implied objectives and a minimal counterfactual falsifier. If critical functional intent is missing or untestable, set `unfold_mode_resolved = "clarify_first"` and populate `clarifying_questions` rather than inventing scope.
+2. Otherwise, resolve `unfold_mode` (default `auto`) into `unfold_mode_resolved`:
+   - `rewrite_only`: trivial, single-step, or purely stylistic prompts where multi-task unfolding would over-engineer.
+   - `inquiry`: research, diagnosis, or `reasoning` prompts that benefit from competing falsifiable hypotheses and discriminating probes.
+   - `task_graph`: multi-step `coding`, `agent-task`, or `meta` prompts that benefit from a dependency-ordered task DAG anchored in reference models.
+3. Record `intake_confidence` (`0.0–1.0`): your metacognitive prediction that the enhanced/unfolded prompt will satisfy the user's target condition.
+4. When `unfold_mode_resolved` is `inquiry` or `task_graph`, extract 2–4 domain or methodology terms in `anchor_terms` for Step 1.5 (`onto_anchor` + `zk-ref-open`). Leave `anchor_terms` empty (`[]`) when `rewrite_only` or `clarify_first`.
 
 ## Step 3 — Checkability routing
 
@@ -165,6 +201,7 @@ Produce the `routing` object: rewrite always runs, verify runs at medium/high, o
   "prompt": {{ prompt | tojson }},
   "effort": {{ effort | tojson }},
   "output_format": {{ output_format | tojson }},
+  "unfold_mode": {{ unfold_mode | default("auto") | tojson }},
   "output_path": {{ output_path | tojson }},
   "context": {{ context | tojson }},
   "task": {{ task | tojson }}
@@ -180,6 +217,16 @@ Return JSON only:
   "effort_tier": "low|medium|high",
   "output_format_resolved": "inline|file|both",
   "output_path_resolved": "resolved path or empty string",
+  "unfold_mode_resolved": "rewrite_only|inquiry|task_graph|clarify_first",
+  "intake_confidence": 0.85,
+  "anchor_terms": ["term1", "term2"],
+  "finer_pico_framing": {
+    "admissible": true,
+    "explicit_objectives": ["objective 1"],
+    "implied_objectives": ["objective 2"],
+    "counterfactual_falsifier": "what observation would falsify or break the goal",
+    "clarifying_questions": []
+  },
   "semantic_classification": {
     "ontological_mode": "IS|OUGHT|mixed",
     "epistemic_mode": "declarative|probabilistic|subjunctive|mixed",

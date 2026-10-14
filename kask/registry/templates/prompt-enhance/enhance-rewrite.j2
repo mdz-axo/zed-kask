@@ -26,10 +26,28 @@ contract:
     critic_feedback:
       type: array
       description: Specific failed checks from the critic; empty on first pass
+    unfold_mode_resolved:
+      type: string
+      enum: [rewrite_only, inquiry, task_graph, clarify_first]
+      default: rewrite_only
+      required: false
+      description: Resolved unfolding mode from Step 1 triage
+    finer_pico_framing:
+      type: object
+      required: false
+      description: FINER/PICO objective framing from Step 1
+    reference_models:
+      type: array
+      default: []
+      required: false
+      description: Plain JSON array of onto_anchor + zk-ref-open reference models from Step 1.5 (empty at low tier or rewrite_only)
   output:
     enhanced_prompt:
       type: string
       description: The full rewritten prompt text, self-contained
+    unfolded_plan:
+      type: array
+      description: Plain JSON array of unfolded inquiry branches or dependency-ordered task nodes (max 7 items per essentialist cap)
     mutations_applied:
       type: array
       description: Which issues were addressed and how
@@ -57,6 +75,20 @@ Scan the prompt for these issue classes. Findings are internal; they drive your 
 **Lens 1 — Semantic fragility.** Flag Inference-tier claims (persona assertions, behavioral assumptions not grounded in docs/observation). Flag OUGHT/IS conflicts (prompt prescribes behavior the model doesn't actually exhibit). These are Guardrail-tier.
 
 **Lens 2 — Structural accretion (essentialist).** Count instruction blocks. >7 is Guardrail-tier (the prompt is over-constrained). Sections that are pass-through (deleting them would not change model behavior) are Guideline-tier.
+
+## Step 1.5 — Reference-Model Binding & Controlled Unfolding (pragmatic-cybernetics + improv + essentialist)
+
+When `unfold_mode_resolved` is `inquiry`, `task_graph`, or `clarify_first`, apply these three disciplines before finalizing the rewrite:
+1. **Reference-Model Binding (`pragmatic-cybernetics`):** For each model in `reference_models` (from `onto_anchor` and `zk-ref-open`), map:
+   - `discovery_capability_unlocked`: what blind spots, perturbation variety, or missing variables the reference model reveals.
+   - `execution_capability_unlocked`: what sensors, attenuators, amplifiers, or deterministic D-gates (`lisp_eval`, `lean_check`, tests) the reference model prescribes.
+   - **No-Match / Coarse-Anchor Fallback (Prohibition against Fabrication):** If an anchor terminated at `5w1h_core` or returned zero `zk-ref-open` matches (`status: "coarse_anchor"` / `"unanchored_in_zk_ref_open"`), explicitly mark it as unanchored and request an operator ruling — NEVER fabricate a published reference model or citation.
+2. **Controlled Unfolding via Constructive *Plussing* (`improv`):**
+   - If `unfold_mode_resolved == "inquiry"`, unfold the seed prompt into 2–5 competing falsifiable hypotheses, minimal counterfactuals, and discriminating evidence probes in `unfolded_plan`.
+   - If `unfold_mode_resolved == "task_graph"`, unfold into 2–7 dependency-ordered tasks in `unfolded_plan`, each with `id`, `title`, `depends_on` (array of upstream task IDs), `d_p_mode` (`D` or `P`), `reference_model_id`, and `verification_oracle`.
+   - If `unfold_mode_resolved == "clarify_first"`, do not invent scope; structure `enhanced_prompt` around the discriminating functional questions from `finer_pico_framing.clarifying_questions`.
+   - If `unfold_mode_resolved == "rewrite_only"`, keep `unfolded_plan: []` and perform a tight single-pass rewrite.
+3. **Recursive Eliminative Prune (`essentialist`):** Subject every unfolded branch/task to the *Exist*, *Surface*, and *Contract* gates. Delete any item whose removal does not degrade the target condition. Enforce a hard cap of ≤ 7 top-level prompt sections and ≤ 7 items in `unfolded_plan`.
 
 ## Step 2 — Typed Rewrite
 
@@ -104,6 +136,9 @@ The `enhanced_prompt` is the full text of the rewritten prompt, ready to hand to
   "risks": {{ risks | tojson }},
   "checkability_map": {{ checkability_map | tojson }},
   "task": {{ task | tojson }},
+  "unfold_mode_resolved": {{ unfold_mode_resolved | default("rewrite_only") | tojson }},
+  "finer_pico_framing": {{ finer_pico_framing | default({}) | tojson }},
+  "reference_models": {{ reference_models | default([]) | tojson }},
   "prior_enhanced_prompt": {{ prior_enhanced_prompt | tojson }},
   "critic_feedback": {{ critic_feedback | tojson }}
 }
@@ -115,6 +150,9 @@ Return JSON only:
 ```json
 {
   "enhanced_prompt": "the full rewritten prompt text",
+  "unfolded_plan": [
+    {"id": "T1", "title": "step or hypothesis title", "d_p_mode": "D|P", "depends_on": [], "reference_model_id": "anchor or zk-ref-open id", "verification_oracle": "check or probe"}
+  ],
   "mutations_applied": [
     {"finding": "what was wrong", "mutation": "what was changed", "section": "which section"}
   ],
