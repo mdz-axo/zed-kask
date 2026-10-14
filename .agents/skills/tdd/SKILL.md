@@ -58,10 +58,7 @@ A **seam** is the public boundary where you observe behavior without reaching
 inside: a crate's `pub` API, an MCP tool called through `Parameters`, a GPUI
 entity driven through `TestAppContext`, a CLI or script exit code.
 
-**Test only at agreed seams.** Before writing any test, write down the seams
-under test and confirm them with the user. No test is written at an
-unconfirmed seam. Ask: "What's the public interface, and which seams should we
-test?" When the interface's shape is itself in question, consult `deep-module`.
+**Test only at agreed seams.** Before writing any test, render `tdd/tdd-seams` to propose the seams under test, validate the proposal deterministically via `lisp_eval` (`TDD-1`: `(and (> seams_count 0) (= invalid_layers_count 0) (= impl_oracles_count 0) (= internal_mocks_count 0))`), and confirm them with the user. No test is written at an unconfirmed seam. Ask: "What's the public interface, and which seams should we test?" When the interface's shape is itself in question, consult `deep-module`.
 
 Pick the layer the obligation needs (testing-protocol §The four layers):
 
@@ -114,6 +111,7 @@ failure. Inject boundaries through traits the code already takes
   An `open` cycle names what is missing: a test that never failed, a seam
   never agreed, an expected value derived from the code, or a provenance
   value that is absent or not a string.
+- **Close the slice with `TDD-2` (`lisp_eval`).** After all cycles for the slice close and `./script/clippy` plus the crate's tests run, verify `(and (= open_cycles_count 0) (> closed_cycles_count 0) (= clippy_exit_code 0) (= test_exit_code 0))`.
 
 ## Registry Templates
 

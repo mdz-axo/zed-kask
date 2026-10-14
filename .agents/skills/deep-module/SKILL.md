@@ -57,7 +57,7 @@ does not compute from the counted items is not a score.
 
 1. **Direction 1 — Caller's perspective**: For each caller, imagine inlining the module's logic at the call site. Determine what complexity would reappear: state management, error handling, invariant enforcement, coordination logic. Assess whether the inline replacement is trivial (a few lines) or substantial.
 2. **Direction 2 — Module's perspective**: For each public function, imagine replacing it with a direct call to the module's dependency. Determine whether any behavior would be lost, any invariants broken, or any complexity management eliminated.
-3. Apply the decision matrix: complexity reappears + behavior lost → **EXTRACT**; complexity reappears + complexity vanishes → **DEEPEN**; trivial replacement + behavior lost → **MERGE**; trivial replacement + complexity vanishes → **DELETE**.
+3. Apply the decision matrix deterministically in `lisp_eval` (`DM-1`): `(if complexity_reappears (if behavior_lost (list "EXTRACT" "guardrail") (list "DEEPEN" "guideline")) (if behavior_lost (list "MERGE" "prohibition") (list "DELETE" "prohibition")))` (complexity reappears + behavior lost → **EXTRACT**; complexity reappears + complexity vanishes → **DEEPEN**; trivial replacement + behavior lost → **MERGE**; trivial replacement + complexity vanishes → **DELETE**).
 4. Produce a definitive recommendation with a rationale citing concrete complexity examples, not vague claims. If the module has a single consumer, flag it as an inline candidate.
 
 ### 3. Design the Deep Module Interface
@@ -68,7 +68,7 @@ does not compute from the counted items is not a score.
 4. Hide information: keep algorithms, data structures, caching, internal state, business rules, validation logic, and the identity of dependencies private.
 5. Design one unified error enum per module: map dependency errors to module-level variants (never leak dependency error types), add context to each variant.
 6. Design one config struct: passed at construction time, validated on construction (fail early), with defaults for optional values.
-7. Project the depth score with the same step-1.3 form over the designed interface's total public items (functions + types + traits + constants + sub-modules), so projected and assessed depth are comparable. Target ≥100 (Deep), minimum ≥50 (Adequate).
+7. Project the depth score with the same step-1.3 form over the designed interface's total public items (functions + types + traits + constants + sub-modules), so projected and assessed depth are comparable. Target ≥100 (Deep), minimum ≥50 (Adequate). Verify the ≤7 public-function cap and single error/config design in `lisp_eval` (`DM-2`): `(if design_skipped true (and (<= public_functions 7) (= error_enums_count 1) (= config_structs_count 1)))`.
 
 ### 4. Check Convergence
 

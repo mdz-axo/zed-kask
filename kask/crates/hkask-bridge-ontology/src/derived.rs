@@ -1629,6 +1629,74 @@ pub const DERIVED_CONCEPTS: &[DerivedConcept] = &[
         constituents: &["product type", "sum type", "exhaustive pattern matching"],
         authority: "operator ruling 2026-10-14 (Cohort 8 skill-corpus audit); Burstall, MacQueen & Sannella (1980); Pierce (2002); Jung et al., PACMPL 2(POPL) (2017), doi:10.1145/3158154",
     },
+    DerivedConcept {
+        term: "null_hypothesis",
+        aliases: &["null hypotheses", "h0", "nil hypothesis"],
+        identity: "the baseline statistical proposition (H0) — asserting zero treatment effect, no association, or an effect outside a prespecified equivalence/non-inferiority margin delta — tested for refutation before the research hypothesis (H1) is supported",
+        definition: "Ronald A. Fisher, The Design of Experiments (Oliver & Boyd, 1935), and Jerzy Neyman & Egon S. Pearson, 'On the Problem of the Most Efficient Tests of Statistical Hypotheses', Philosophical Transactions of the Royal Society A 231:289-337 (1933): the default proposition against which experimental evidence is evaluated; for superiority/difference designs H0 states zero difference, whereas for non-inferiority or equivalence designs H0 states that the difference lies outside the acceptable margin delta. In zed-kask it grounds hypothesis-framer's hypothesis-operationalize.j2.",
+        constituents: &[
+            "falsifiability",
+            "research hypothesis",
+            "non_inferiority_margin",
+        ],
+        authority: "operator ruling 2026-10-14 (Cohort 9 skill-corpus audit); Fisher, The Design of Experiments (1935); Neyman & Pearson, Phil. Trans. R. Soc. A 231:289-337 (1933)",
+    },
+    DerivedConcept {
+        term: "non_inferiority_margin",
+        aliases: &[
+            "equivalence margin",
+            "delta margin",
+            "consort non-inferiority margin",
+        ],
+        identity: "the prespecified clinically or operationally acceptable boundary (delta > 0) by which a new intervention may be worse than an active control without losing acceptability",
+        definition: "Gilda Piaggio et al., 'Reporting of Noninferiority and Equivalence Randomized Trials: Extension of the CONSORT 2010 Statement', JAMA 308(24):2594-2604 (2012), doi:10.1001/jama.2012.87802: in non-inferiority trials (H0: Delta <= -delta vs H1: Delta > -delta) and equivalence trials (H0: |Delta| >= delta vs H1: |Delta| < delta), the margin delta must be justified a priori; without a defined delta, the hypothesis is untestable. In zed-kask it grounds hypothesis-framer's testability gate.",
+        constituents: &["null_hypothesis", "pico", "effect size"],
+        authority: "operator ruling 2026-10-14 (Cohort 9 skill-corpus audit); Piaggio et al., JAMA 308(24):2594-2604 (2012), doi:10.1001/jama.2012.87802",
+    },
+    DerivedConcept {
+        term: "working_memory",
+        aliases: &["working memory capacity", "short-term working memory"],
+        identity: "the capacity-bounded cognitive system that temporarily holds and manipulates task-relevant information during reasoning, comprehension, and action execution",
+        definition: "Alan Baddeley, 'Working memory: looking back and looking forward', Nature Reviews Neuroscience 4(10):829-839 (2003), doi:10.1038/nrn1201, and George A. Miller, 'The magical number seven, plus or minus two: Some limits on our capacity for processing information', Psychological Review 63(2):81-97 (1956), doi:10.1037/h0043158: because working-memory slots decay across turns and saturate above ~5-7 chunks, interfaces and prose must restate current state explicitly and bound ungrouped lists. In zed-kask it grounds adhd-mode's 5-item list cap and per-turn state restatement.",
+        constituents: &["cognitive_load", "chunking", "executive_function"],
+        authority: "operator ruling 2026-10-14 (Cohort 9 skill-corpus audit); Baddeley, Nature Reviews Neuroscience 4(10):829-839 (2003), doi:10.1038/nrn1201; Miller, Psychological Review 63(2):81-97 (1956), doi:10.1037/h0043158",
+    },
+    DerivedConcept {
+        term: "executive_function",
+        aliases: &[
+            "executive functions",
+            "behavioral inhibition",
+            "task initiation",
+        ],
+        identity: "the self-regulatory cognitive processes — task initiation, behavioral inhibition, working-memory maintenance, and goal-directed action sequencing — governing purposeful behavior",
+        definition: "Russell A. Barkley, 'Behavioral inhibition, sustained attention, and executive functions: Constructing a unifying theory of ADHD', Psychological Bulletin 121(1):65-94 (1997), doi:10.1037/0033-2909.121.1.65: models ADHD as a deficit in behavioral inhibition and four executive functions (working memory, self-regulation of affect/motivation, internalization of speech, reconstitution). In zed-kask it grounds adhd-mode's structural rules: lead with the next action, number steps, suppress tangents, and end with one concrete next action.",
+        constituents: &["working_memory", "task initiation", "tangent suppression"],
+        authority: "operator ruling 2026-10-14 (Cohort 9 skill-corpus audit); Barkley, Psychological Bulletin 121(1):65-94 (1997), doi:10.1037/0033-2909.121.1.65",
+    },
+    DerivedConcept {
+        term: "test_driven_development",
+        aliases: &["tdd", "red-green-refactor", "red before green"],
+        identity: "a software development discipline that progresses in narrow vertical slices at confirmed public seams by writing a failing test first (Red), implementing the minimal production code to pass it (Green), and verifying against an independent oracle",
+        definition: "Kent Beck, Test-Driven Development: By Example (Addison-Wesley, 2002): write a single automated test for a desired behavior at a public boundary, watch it fail for the expected reason (Red), write the minimal production code to make it pass (Green), and refactor while keeping tests green. In zed-kask it grounds the tdd skill and testing-protocol.",
+        constituents: &["vertical_slice", "test_oracle", "regression_testing"],
+        authority: "operator ruling 2026-10-14 (Cohort 9 skill-corpus audit); Beck, Test-Driven Development: By Example (2002)",
+    },
+    DerivedConcept {
+        term: "test_double",
+        aliases: &["test doubles", "boundary fake", "mock object"],
+        identity: "a stand-in object (dummy, stub, spy, mock, or fake) substituted only at external system boundaries via trait injection while keeping internal collaborators real",
+        definition: "Gerard Meszaros, xUnit Test Patterns: Refactoring Test Code (Addison-Wesley, 2007): classifies stand-in objects used in automated tests (Dummy, Stub, Spy, Mock, Fake). In zed-kask, test doubles are restricted to external system boundaries (HTTP providers, clock, randomness) injected via ports (InferencePort, ToolPort), never internal domain modules or capability-stripped server constructors. In zed-kask it grounds tdd's Mocking rules.",
+        constituents: &["test_harness", "test_driven_development", "system boundary"],
+        authority: "operator ruling 2026-10-14 (Cohort 9 skill-corpus audit); Meszaros, xUnit Test Patterns (2007)",
+    },
+    DerivedConcept {
+        term: "agent_to_agent_protocol",
+        aliases: &["a2a protocol", "a2a", "agent2agent", "agent2agent protocol"],
+        identity: "an inter-agent delegation and communication protocol in which agents advertise typed capabilities and skills via an AgentCard and exchange scoped Message turns that produce durable Task and Artifact records",
+        definition: "Agent2Agent (A2A) Protocol Specification: defines five core protocol objects — AgentCard (JSON capability advertisement with input/output modes, skills, and auth), Task (unit of delegated work with lifecycle state), Message (communication turn), Artifact (durable task output), and Part (typed content unit). In zed-kask it grounds swarm_a2a_card, swarm_a2a_send, swarm_a2a_broadcast, and local-research-swarm.",
+        constituents: &["agent card", "task", "artifact"],
+        authority: "operator ruling 2026-10-14 (Cohort 9 skill-corpus audit); Agent2Agent (A2A) Protocol Specification (agent2agent.info)",
+    },
 ];
 /// Normalization matches the onto_anchor tool's: lowercase alphanumeric
 /// characters only, separators and case folded away.
@@ -2426,6 +2494,65 @@ mod tests {
             assert!(
                 concept.authority.starts_with("operator ruling 2026-"),
                 "{term} cites the ruling"
+            );
+        }
+    }
+
+    /// expect: [P5] The Cohort 9 skill-corpus audit rulings (2026-10-14)
+    /// resolve to their published authorities and never fall back to the
+    /// coarse 5W1H core anchor.
+    #[test]
+    fn cohort_9_audit_rulings_resolve_with_authority() {
+        for (term, expected_term, marker) in [
+            ("null hypothesis", "null_hypothesis", "Fisher"),
+            ("H0", "null_hypothesis", "Neyman & Pearson"),
+            (
+                "non-inferiority margin",
+                "non_inferiority_margin",
+                "Piaggio",
+            ),
+            (
+                "equivalence margin",
+                "non_inferiority_margin",
+                "10.1001/jama.2012.87802",
+            ),
+            ("working memory", "working_memory", "Baddeley"),
+            (
+                "working memory capacity",
+                "working_memory",
+                "10.1037/h0043158",
+            ),
+            ("executive function", "executive_function", "Barkley"),
+            (
+                "executive functions",
+                "executive_function",
+                "10.1037/0033-2909.121.1.65",
+            ),
+            ("test-driven development", "test_driven_development", "Beck"),
+            ("TDD", "test_driven_development", "2002"),
+            ("test double", "test_double", "Meszaros"),
+            ("boundary fake", "test_double", "2007"),
+            (
+                "Agent2Agent protocol",
+                "agent_to_agent_protocol",
+                "agent2agent.info",
+            ),
+            ("A2A protocol", "agent_to_agent_protocol", "A2A"),
+        ] {
+            let concept =
+                resolve_derived(term).expect("Cohort 9 audit ruling must resolve in derived.rs");
+            assert_eq!(
+                concept.term, expected_term,
+                "{term} resolves to {expected_term}"
+            );
+            assert!(
+                concept.authority.contains(marker),
+                "{term}: {}",
+                concept.authority
+            );
+            assert!(
+                concept.authority.starts_with("operator ruling 2026-10-14"),
+                "{term} cites the 2026-10-14 ruling"
             );
         }
     }

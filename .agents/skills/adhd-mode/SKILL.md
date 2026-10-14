@@ -59,10 +59,12 @@ clarity-requiring part. When a process skill is active, its content
 obligations are delivered in full — compression arranges prose, never deletes
 content.
 
+When `adhd-mode/caveman-compress` runs, verify word-count reduction and sacred-snippet preservation deterministically in `lisp_eval` (`ADHD-1`): `(and (< comp_words orig_words) (string-contains sacred_snippet compressed_response))`.
+
 ### Per-turn gate
 
 Initial condition: the composed draft and its turn type. Target condition:
-Form G returns `send` and Form C returns `content-complete`, or the best
+Form G returns `send` and Form C returns `content-complete` (`ADHD-2`: `(and (string= form_g_verdict "send") (string= form_c_verdict "content-complete"))`), or the best
 draft is sent with a one-line note after 2 revision passes.
 
 Run this gate on every response while the mode is on. Apply the Constraints
@@ -71,7 +73,7 @@ draft.
 
 1. Compose the draft under Constraints. If a process skill is active, its
    content obligations must all be delivered. When the turn has a known type (assess,
-   directives, verify, code-answer) and you are not yet fluent in its shape,
+   verify, code-answer) and you are not yet fluent in its shape,
    call `render_template` with template `adhd-mode/turn-shape` and context
    `{ "turn_type": "<type>", "content_obligations": [<obligations from the
    active process skill, or []>] }`, and compose following the rendered shape
@@ -143,7 +145,7 @@ env: `required` (the active process skill's content obligations), `sections`
 | Template | Purpose |
 |----------|---------|
 | `pre-send-gate.j2` | Extraction checklist for the per-turn gate: gate fields extracted as evidence (not verdicts) from the composed draft, feeding lisp_eval Forms G and C. |
-| `turn-shape.j2` | Per-turn-type shape spec (assess, directives, verify, code-answer), generic over the active process skill's content obligations. |
+| `turn-shape.j2` | Per-turn-type shape spec (assess, verify, code-answer), generic over the active process skill's content obligations. |
 | `caveman-compress.j2` | Compression pass for the compressed variant: drop articles, filler, pleasantries, and empty hedging from the connective prose between structural elements while preserving real-uncertainty hedges, technical substance, sacred text (code, errors, URLs), and the structural elements. Absorbed from the caveman skill 2026-09-09. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `adhd-mode/pre-send-gate`) and a context object with the required variables.

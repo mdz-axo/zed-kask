@@ -41,7 +41,8 @@ Return JSON:
   "hidden_internals": [],
   "error_design": null,
   "config_design": null,
-  "depth_projection": {"public_functions": 0, "public_types": 0, "estimated_implementation_lines": 0, "projected_depth_score": null, "classification": "NoInput", "notes": "No deletion test result provided — cannot design interface"}
+  "depth_projection": {"public_functions": 0, "public_types": 0, "public_traits": 0, "public_constants": 0, "public_modules": 0, "estimated_implementation_lines": 0, "notes": "No deletion test result provided — cannot design interface"},
+  "design_skipped": true
 }
 ```
 {% endif %}
@@ -203,10 +204,9 @@ Respond with a JSON object:
     "public_constants": 0,
     "public_modules": 0,
     "estimated_implementation_lines": 520,
-    "projected_depth_score": 130,
-    "classification": "Deep",
-    "notes": "Projected score of 130 meets the Deep threshold (>100). Four public functions encapsulate 520 lines of session management complexity."
-  }
+    "notes": "Four public functions encapsulate 520 lines of session management complexity; projected depth score and classification are computed by Step 1.3 lisp_eval."
+  },
+  "design_skipped": false
 }
 ```
 

@@ -9,8 +9,6 @@ contract:
   output:
     interface_inventory: object
     behavior_estimate: object
-    depth_score: object
-    classification: string
     red_flags: array
     recommendations: array
 ---
@@ -41,9 +39,8 @@ Return JSON:
 {
   "interface_inventory": null,
   "behavior_estimate": null,
-  "depth_score": {"score": null, "classification": "NoSource", "formula": "N/A", "threshold_met": false, "distance_to_deep": null, "provenance_note": "No source provided"},
   "red_flags": ["module_source is empty — cannot assess depth"],
-  "recommendations": [{"text": "Provide module source or skip assessment", "constraint_force": "Guardrail"}]
+  "recommendations": [{"text": "Provide module source or skip assessment", "constraint_force": "guardrail"}]
 }
 ```
 {% endif %}
@@ -160,31 +157,21 @@ Respond with a JSON object:
       "Concurrent access serialization"
     ]
   },
-  "depth_score": {
-    "score": 60,
-    "classification": "Adequate",
-    "formula": "480 / total_interface_items (5 + 2 + 0 + 1 + 0) = 60.0",
-    "threshold_met": true,
-    "distance_to_deep": 40,
-    "provenance_note": "Thresholds are kask operationalizations of Ousterhout's qualitative criterion (2018, Ch. 4) — Evidence-tier, not normative"
-  },
-  "classification": "Adequate",
   "red_flags": [],
   "recommendations": [
-    {"text": "Module is adequate — consider merging SessionConfig and SessionSummary into a single type to improve depth score", "constraint_force": "Guideline"},
-    {"text": "Monitor interface creep as features are added", "constraint_force": "Guideline"}
+    {"text": "Module is adequate — consider merging SessionConfig and SessionSummary into a single type to improve depth score", "constraint_force": "guideline"},
+    {"text": "Monitor interface creep as features are added", "constraint_force": "guideline"}
   ]
 }
 ```
+
+The invoking step computes `[depth_score, classification]` deterministically in `lisp_eval` (`SKILL.md:49`) from `behavior_estimate.implementation_lines` and `interface_inventory.total_interface_items`.
 
 ## Constraints
 
 - Count public items mechanically — don't guess.
 - Estimate behavior conservatively — err on the side of undercounting.
 - Flag all red flags even if the depth score is acceptable.
-- If `total_interface_items == 0`, return `classification: "Empty"` with `depth_score: null` — do not divide by zero.
-- Every recommendation MUST carry a `constraint_force` field: `Prohibition`, `Guardrail`, `Guideline`, `Evidence`, or `Hypothesis` (the pragmatic-semantics hub's capitalized enum).
+- Every recommendation MUST carry a lowercase `constraint_force` field: `prohibition`, `guardrail`, `guideline`, `evidence`, or `hypothesis`.
 - Depth score thresholds are Evidence (Ousterhout's empirical observation), not Prohibition — present them as such.
-- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
-- Handle missing variables gracefully (leave as-is or use default if specified).
 

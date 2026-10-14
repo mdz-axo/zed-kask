@@ -24,26 +24,14 @@ arranges, never deletes):
 
 ## Shape specs by turn type
 
-### assess (diagnostic report, no implementation)
+### assess (diagnostic assessment and constrained implementation plan)
 
-1. First line: the top finding or the decision request — something the reader
-   can act on now.
+1. First line: the top finding, headline (step count, line estimate, files touched), or decision request — something the reader can act on now.
 2. Assumptions, each with confidence and alternative.
-3. Simplicity risks, severity-ranked (split must/nice if over five).
+3. Simplicity risks and at-risk anti-patterns, severity-ranked (split must/nice if over five).
 4. Goals (2–5, verifiable).
-5. Numbered minimum steps, one bounded action each, verification checkpoint
-   trailing each step.
-6. Last line: ONE next action — a ratification or decision, since assessment
-   does not implement.
-
-### directives (constrained implementation plan)
-
-1. First line: headline — step count, line estimate, files touched, any
-   flagged risk.
-2. Numbered steps: action verb first; files, lines, and verification after.
-3. At-risk anti-patterns only (five at most).
-4. Last line: the next action — proceed (if unflagged) or approve the flagged
-   step.
+5. Numbered minimum steps: action verb first; files, line estimate, and verification checkpoint trailing each step.
+6. Last line: ONE next action — a ratification, decision, or approval of a flagged step.
 
 ### verify (compliance audit)
 

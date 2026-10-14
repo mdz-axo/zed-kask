@@ -10,7 +10,6 @@ contract:
     research_question: string
     finer_scores: object
     refinement_suggestions: array
-    overall_finer_rating: string
     most_concerning_dimension: string
 ---
 
@@ -116,7 +115,6 @@ Respond with a JSON object:
     "ethical": { "score": 0, "rationale": "..." },
     "relevant": { "score": 0, "rationale": "..." }
   },
-  "overall_finer_rating": "strong|adequate|weak|critical_flaw",
   "most_concerning_dimension": "feasible|interesting|novel|ethical|relevant",
   "refinement_suggestions": [
     { "dimension": "feasible", "issue": "...", "suggestion": "..." }
@@ -124,11 +122,7 @@ Respond with a JSON object:
 }
 ```
 
-Rating scale (aligned with the gate's below-7 refinement threshold — a dimension at 6 is NOT adequate: it earns a refinement suggestion and fails the convergence gate's weak_finer check):
-- **strong**: All dimensions ≥ 8
-- **adequate**: All dimensions ≥ 7 (the gate's threshold — anything below 7 is weak_finer)
-- **weak**: One or more dimensions below 7
-- **critical_flaw**: Any dimension below 3 — the question needs fundamental rethinking
+The invoking step computes `overall_finer_rating` (`strong|adequate|weak|critical_flaw`) deterministically in `lisp_eval` (`HF-1`) from the five dimension scores.
 
 ## Constraints
 
@@ -137,7 +131,4 @@ Rating scale (aligned with the gate's below-7 refinement threshold — a dimensi
 - If a dimension scores below 5, the refinement suggestion must propose a concrete fix
 - The research question is a question, not a statement — verify the form
 - Do not narrow the question so far that it becomes trivial
-- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution)
-- Preserve the original prompt structure and formatting
-- Handle missing variables gracefully (leave as-is or use default if specified)
 

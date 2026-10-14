@@ -221,7 +221,4 @@ Respond with a single JSON object:
 - The alignment check must be honest — flag misalignments, don't paper over them
 - The feasibility recheck must acknowledge constraints introduced by specific objectives
 - **Non-inferiority/equivalence margin**: When hypothesis_type is `non_inferiority` or `equivalence`, you MUST specify a justified `non_inferiority_margin` (δ) in the testability_assessment. If δ is not defined, set `overall_testability` to `not_testable` and flag this in testability_concerns. Do not label an inaccessible comparator `defined_comparison: true`.
-- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution)
-- Preserve the original prompt structure and formatting
-- Handle missing variables gracefully (leave as-is or use default if specified)
 
