@@ -13,10 +13,10 @@
 //!
 //!   gather → process (chunk/tag/embed/assertions) → output (QA training | compose)
 //!
-//! Tools (26):
+//! Tools (27):
 //! - Gather:     corpus_discover, corpus_cache_work, corpus_discover_company
 //! - Process:    corpus_convert, corpus_ocr, corpus_is_complex, corpus_chunk,
-//!   corpus_build_chunk_representations, corpus_embedding_inventory, corpus_tag_chunks, corpus_embed, corpus_extract_assertions,
+//!   corpus_build_chunk_representations, corpus_embedding_inventory, corpus_export_bundle, corpus_tag_chunks, corpus_embed, corpus_extract_assertions,
 //!   corpus_dedup_chunks, corpus_consolidate_chunks
 //! - QA output:  corpus_build_prompts, corpus_generate_qa_batch, corpus_ground_generated_qa,
 //!   corpus_ingest_qa, corpus_prepare_training_dataset, corpus_purge_qa

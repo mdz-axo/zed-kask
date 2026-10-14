@@ -1,8 +1,8 @@
 ---
 title: "MDS — Minimal Domain Specification"
 audience: [architects, developers, agents]
-last_updated: 2026-10-07
-version: "0.42.1"
+last_updated: 2026-10-13
+version: "0.42.2"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]
@@ -79,7 +79,7 @@ The ontology is re-anchored to the **19 surviving hKask crates** (18 `hkask-*` +
 
 ### 1.4 Service and runtime subsystems
 
-**Crate:** the last `hkask-services-*` crate (`hkask-services-core`) was folded into `hkask-mcp-corpus` as its `services_core` module (2026-10-13) — it had exactly one consumer and failed the deletion test. The editor process owns one `McpRuntime`; it spawns the 13 MCP binaries as child processes over stdio, discovers their tools, and governs dispatch (`kask/crates/hkask-mcp/src/runtime.rs:4-12,646-655,749-751`; registry at `kask/crates/kask_bridge/src/mcp_servers.rs:55-572`). There is no daemon or `KaskCore` singleton.
+**Crate:** the last `hkask-services-*` crate (`hkask-services-core`) was folded into `hkask-mcp-corpus` as its `services_core` module (2026-10-13) — it had exactly one consumer and failed the deletion test. The editor process owns one `McpRuntime`; it spawns the 13 MCP binaries as child processes over stdio, discovers their tools, and governs dispatch (`kask/crates/hkask-mcp/src/runtime.rs:4-12,646-655,749-751`; registry at `kask/crates/kask_bridge/src/mcp_servers.rs:49-573`). There is no daemon or `KaskCore` singleton.
 
 The deleted subcrates (`hkask-services-chat`, `hkask-services-onboarding`, `hkask-services-skill`, `hkask-services-wallet`) are **removed**. Their jobs moved to zed-kask surfaces:
 
@@ -167,7 +167,7 @@ The corpus server provides tools for style corpus management, prose generation, 
 
 | Server | Tools | Domain | Status |
 |--------|-------|--------|--------|
-| `hkask-mcp-corpus` | Gather: `corpus_discover`, `corpus_cache_work`, `corpus_discover_company`; process: `corpus_convert`, `corpus_ocr`, `corpus_is_complex`, `corpus_chunk`, `corpus_build_chunk_representations`, `corpus_embedding_inventory`, `corpus_tag_chunks`, `corpus_embed`, `corpus_extract_assertions`, `corpus_dedup_chunks`, `corpus_consolidate_chunks`; QA: `corpus_build_prompts`, `corpus_generate_qa_batch`, `corpus_ground_generated_qa`, `corpus_ingest_qa`, `corpus_prepare_training_dataset`, `corpus_purge_qa`; compose: `corpus_compose`, `corpus_rewrite`, `corpus_centroid`; manage: `corpus_cache`, `corpus_query`, `corpus_clear_index` | Corpus gathering + processing + QA generation + style exemplar composition | ✅ Implemented: 26 tools, enumerated at `kask/mcp-servers/hkask-mcp-corpus/src/hkask_mcp_corpus.rs:16-24` and pinned by `tool_surface_is_exactly_26_registered_tools` at `:286-289` |
+| `hkask-mcp-corpus` | Gather: `corpus_discover`, `corpus_cache_work`, `corpus_discover_company`; process: `corpus_convert`, `corpus_ocr`, `corpus_is_complex`, `corpus_chunk`, `corpus_build_chunk_representations`, `corpus_embedding_inventory`, `corpus_export_bundle`, `corpus_tag_chunks`, `corpus_embed`, `corpus_extract_assertions`, `corpus_dedup_chunks`, `corpus_consolidate_chunks`; QA: `corpus_build_prompts`, `corpus_generate_qa_batch`, `corpus_ground_generated_qa`, `corpus_ingest_qa`, `corpus_prepare_training_dataset`, `corpus_purge_qa`; compose: `corpus_compose`, `corpus_rewrite`, `corpus_centroid`; manage: `corpus_cache`, `corpus_query`, `corpus_clear_index` | Corpus gathering + processing + QA generation + style exemplar composition | ✅ Implemented: 27 tools, enumerated at `kask/mcp-servers/hkask-mcp-corpus/src/hkask_mcp_corpus.rs:16-24` and pinned by `tool_surface_is_exactly_27_registered_tools` at `:320-325` |
 
 ### 4.3 Style Exemplar Architecture
 
@@ -531,7 +531,7 @@ graph TD
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-MDS-001
 verified_date: 2026-09-28
-verified_against: crates/zed/src/main.rs:791-795,912-914,1317-1323; kask/crates/hkask-mcp/src/runtime.rs:4-12,646-655,749-751; kask/crates/kask_bridge/src/mcp_servers.rs:55-549; kask/crates/hkask-inference/src/hkask_inference.rs:190-390; kask/crates/hkask-keystore/Cargo.toml:12-16; crates/media_panel/src/media_panel.rs:235-250
+verified_against: crates/zed/src/main.rs:791-795,912-914,1317-1323; kask/crates/hkask-mcp/src/runtime.rs:4-12,646-655,749-751; kask/crates/kask_bridge/src/mcp_servers.rs:49-573; kask/crates/hkask-inference/src/hkask_inference.rs:190-390; kask/crates/hkask-keystore/Cargo.toml:12-16; crates/media_panel/src/media_panel.rs:235-250
 status: VERIFIED
 -->
 

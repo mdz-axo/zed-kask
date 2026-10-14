@@ -1,8 +1,8 @@
 ---
 title: "hKask Core and MCP Review — Repair and Improvement Plan"
 audience: [developers, architects, agents, operators]
-last_updated: 2026-10-05
-version: "0.10.2"
+last_updated: 2026-10-13
+version: "0.11.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]
@@ -51,18 +51,18 @@ The architecture is coherent, but authority, interruption, and recovery semantic
 
 ### Inventory measured during review
 
-Offline Cargo metadata reported 299 workspace members, including **19 libraries under `kask/crates/` and 12 MCP server packages**. The measured workspace release was 0.40.0.
+Offline Cargo metadata reported 299 workspace members, including **19 libraries under `kask/crates/` and 12 MCP server packages**. The measured workspace release was 0.40.0. (Current tree, re-verified 2026-10-13: 18 libraries — `hkask-services-core` was folded into `hkask-mcp-corpus` as its `services_core` module and deleted, commit `8fb33f8e73` — and 13 MCP server packages, the experimentation server having been added.)
 
 | Responsibility | Libraries |
 | --- | --- |
 | Contracts and vocabulary | `hkask-types`, `hkask-bridge-ontology`, `hkask-tool-port` |
 | Persistence and memory | `hkask-storage`, `hkask-event-store`, `hkask-memory`, `hkask-keystore` |
-| Execution infrastructure | `hkask-mcp`, `hkask-mcp-server`, `hkask-inference`, `hkask-services-core` |
+| Execution infrastructure | `hkask-mcp`, `hkask-mcp-server`, `hkask-inference` (`hkask-services-core` folded into `hkask-mcp-corpus` as its `services_core` module, 2026-10-13, commit `8fb33f8e73`) |
 | Computation and capabilities | `hkask-forecast`, `hkask-lisp`, `hkask-condenser`, `hkask-spreadsheet` |
 | Regulation and interaction support | `hkask-regulation`, `hkask-email`, `hkask-steer-core` |
 | Zed-side integration exception | `kask_bridge` |
 
-Servers: companies, corpus, curator, kata-kanban, media, portfolio, prediction-markets, research, scenarios, spreadsheet, swarm, training. Discover the execution-time inventory anew from manifests and `kask/crates/kask_bridge/src/mcp_servers.rs:55–539`; do not hardcode these counts in new tests.
+Servers: companies, corpus, curator, experimentation, kata-kanban, media, portfolio, prediction-markets, research, scenarios, spreadsheet, swarm, training. Discover the execution-time inventory anew from manifests and `kask/crates/kask_bridge/src/mcp_servers.rs:49–573`; do not hardcode these counts in new tests.
 
 ### Observed boundaries and paths
 

@@ -2,7 +2,7 @@
 title: "Corpus MCP Server — Reference"
 audience: [developers, operators]
 last_updated: 2026-10-13
-version: "0.41.2"
+version: "0.42.0"
 status: "Active"
 domain: "MCP Servers"
 mds_categories: [domain, composition, trust, lifecycle]
@@ -12,9 +12,9 @@ mds_categories: [domain, composition, trust, lifecycle]
 
 The editor-managed MCP server processes documents into retrievable passages,
 classified chunks, evidence-carrying QA and style centroids. There is one current
-schema contract and **26 registered tools**, pinned by
-`tool_surface_is_exactly_26_registered_tools` at
-`kask/mcp-servers/hkask-mcp-corpus/src/hkask_mcp_corpus.rs:278-288`.
+schema contract and **27 registered tools**, pinned by
+`tool_surface_is_exactly_27_registered_tools` at
+`kask/mcp-servers/hkask-mcp-corpus/src/hkask_mcp_corpus.rs:320-325`.
 Parameter additions do not add tools.
 
 The [crate README](../../../mcp-servers/hkask-mcp-corpus/README.md) owns the detailed
@@ -30,7 +30,7 @@ operator data has been rebuilt, ingested or used for training.
 | Gather (3) | `corpus_discover` | Discover an author's works and prepare a corpus manifest |
 | | `corpus_discover_company` | Discover company documents from an approved-source manifest |
 | | `corpus_cache_work` | Cache extracted work text by slug for reuse |
-| Process (11) | `corpus_convert` | Extract document/directory text; quality-gated directory resume and explicit OCR staging |
+| Process (12) | `corpus_convert` | Extract document/directory text; quality-gated directory resume and explicit OCR staging |
 | | `corpus_ocr` | Process PDF/image pages with the configured image-capable OCR model and verification report |
 | | `corpus_is_complex` | Cheap PDF triage; optional compact summary |
 | | `corpus_chunk` | Shared bounded word windows with real overlap; directory single-tier or file/text multi-tier |
@@ -164,7 +164,7 @@ interior quantiles by source, refuses to overwrite output, and reports source
 coverage plus the selected `:0` count. It is a pilot scheduler, not a substitute
 for source-furniture filtering or retrieval calibration.
 
-### Calibration-run repair record (2026-10-10/11)
+### Calibration-run repair record (2026-10-10/11; release realigned 2026-10-12)
 
 The 2026-10-10 reseal above left one loose end this section closes. The
 zk-ref-open release bundle still named the pre-R5 run, and the installer's
@@ -174,15 +174,24 @@ re-registers the release bundle into the curator manifest whenever the
 manifest's registered `run_id` mismatches the bundle's. A 2026-10-11 13:19
 install run clobbered a manual manifest repoint this way — same bundle in,
 same registration out. The durable fix was to republish the release from the
-repaired run: `kask/registry/zk-ref-open/bundle.json` names run `3f7533d6…`
-(278,670 passages), and all four parts were re-downloaded from the release
-and hash-verified against the committed manifest (4/4 OK). The up-to-date
-gate now converges — registered `run_id` == release `run_id` == committed
-manifest `run_id` — so install runs skip the corpus stage instead of
-clobbering the registration. Commits: `d81d70bc2c` (R5 provenance tier),
-`50bcd6ebaf` (dispatch stamps + the reseal tooling), `9b658c05f1` (the
-registry bundle repoint), `de18993c6d` (admission scoped to read-table
-schemas).
+repaired run (then run `3f7533d6…`, 278,670 passages; all four parts
+re-downloaded from the release and hash-verified against the committed
+manifest, 4/4 OK). The up-to-date gate now converges — registered `run_id`
+== release `run_id` == committed manifest `run_id` — so install runs skip
+the corpus stage instead of clobbering the registration. Commits:
+`d81d70bc2c` (R5 provenance tier), `50bcd6ebaf` (dispatch stamps + the
+reseal tooling), `9b658c05f1` (the registry bundle repoint), `de18993c6d`
+(admission scoped to read-table schemas).
+
+The release was repointed once more on 2026-10-12 (`f0443737d5`): the run
+spec had lagged the representations manifest by five sources (424 vs 429 —
+the 2026-10-07 rebuild additions were never realigned), the live serving DB
+was missing those sources' current-tier rows (107 refs), and the seal was
+re-derived after the parity sweep (run `b1583a10…` → `fcca9215…`,
+self-verified). The committed `kask/registry/zk-ref-open/bundle.json`
+therefore names run `fcca9215…` with 282,947 expected passages — the
+current release identity. The repair-era run ids above are the historical
+record of that repair, not the live manifest.
 
 The repair goal (`9c946da3`) recorded intake prediction 0.8, resolved
 achieved — Brier 0.04. Its turn-end memory ingestion never ran (a severed

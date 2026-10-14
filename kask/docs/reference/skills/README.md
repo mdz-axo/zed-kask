@@ -1,8 +1,8 @@
 ---
 title: "Skill Registry — Reference"
 audience: [developers, skill-authors, agents]
-last_updated: 2026-10-05
-version: "0.41.0"
+last_updated: 2026-10-13
+version: "0.42.0"
 status: "Active"
 domain: "Core"
 mds_categories: [domain, composition]
@@ -30,7 +30,7 @@ mds_categories: [domain, composition]
 >
 > **Layout:** A skill is a directory under `.agents/skills/<name>/` (repo root, not under `kask/`)
 > containing a `SKILL.md` file with YAML frontmatter (`name`, `description`, and optional metadata)
-> plus a markdown body of process instructions. **61 skills** are authored here and available in every zed-kask install. **276 Jinja2 templates across 57
+> plus a markdown body of process instructions. **63 skills** are authored here and available in every zed-kask install. **281 Jinja2 templates across 58
 > template namespaces** remain under `kask/registry/templates/` for use by `render_template`; these
 > are companion resources, not the source of truth for skill execution.
 
@@ -48,12 +48,12 @@ carrier of the loop itself.
 
 ---
 
-## Registry counts (verified 2026-09-30)
+## Registry counts (re-verified 2026-10-13)
 
 | Surface | Count | Notes |
 |---------|-------|-------|
-| `SKILL.md` directories (`.agents/skills/*/`, repo root) | **60** | filesystem count: `find .agents/skills -mindepth 2 -maxdepth 2 -name SKILL.md` |
-| Template namespaces (`kask/registry/templates/*/`) | **57** (**276** `.j2` templates) | Companion Jinja2 resources for `render_template`; counts come directly from the current tree |
+| `SKILL.md` directories (`.agents/skills/*/`, repo root) | **63** | filesystem count: `find .agents/skills -mindepth 2 -maxdepth 2 -name SKILL.md` |
+| Template namespaces (`kask/registry/templates/*/`) | **58** (**281** `.j2` templates) | Companion Jinja2 resources for `render_template`; counts come directly from the current tree |
 
 **The SKILL.md is the source of truth.** A skill is its `SKILL.md`. Template crates are
 read-only resources the skill body may reference via `render_template`.
@@ -67,7 +67,7 @@ annual. The embedded seed payload equals the authored tree (pinned in
 
 ---
 
-## Skills (61)
+## Skills (63)
 
 ### Research, markets and forecasting
 
@@ -118,6 +118,7 @@ annual. The embedded seed payload equals the authored tree (pinned in
 | `prompt-enhance` | General-purpose prompt enhancement: 7-type taxonomy routing with 3-tier effort knob |
 | `local-research-swarm` | Coordinate a project-sized, source-grounded research effort across a local agent roster, with a kanban board for work state and scoped A2A handoffs |
 | `swarm-intelligence` | Agent-swarm composition PDCA (SENSE → ORIENT → DECIDE → ACT → CHECK → CONVERGE), its receipt-checked local steering loop, and the swarm panel's agent/swarm authoring aid |
+| `system-maintenance` | Weekly system maintenance for this machine over the `~/system-maintenance/` scripts: run the health check, interpret warnings, preview and classify cleanups with probe-before-delete, execute the disposable class only, surface manual-review items, verify with reconciled measurements, and report a ledger |
 | `lora-training` | LoRA/QLoRA training config and contract enforcement: 8-gate PEFT method selection, 19-gate phase-aware audit (math/quantization/data/forgetting/harness/runtime/persistence) |
 
 ### Coding in your project
@@ -162,11 +163,14 @@ annual. The embedded seed payload equals the authored tree (pinned in
 | `kask-seam-audit` | Convergent multi-skill audit of the zed-kask Kask-Zed seam (`DIVERGENCE.md` is the current numbered-seam authority); its measured-layout loop also runs standalone for GPUI cards and panels |
 | `mcp-tool-review` | Anchor a built-in MCP server's tools to published reference models and audit their functionality and quality — inventory reconciliation, fidelity-labeled checks, measured probes, bounded passes, and a findings artifact whose file:line citations are script-verified and routed to actuators |
 | `upstream-rebase` | Manage upstream Zed rebases for zed-kask: per-D-seam-file strategy, mapped re-application, test-pin, DIVERGENCE.md update |
+| `provider-audit` | Two-directional provider contract audit over kask-adopted vendors: inbound (provider alignment with principles P1–P4 and values V1–V8) and outbound (our code's alignment with provider capabilities), over the profile layer at `kask/registry/providers/`; carries the provider lifecycle — adoption gate, drift trigger, scheduled cadence, announcement trigger, retirement pass |
 | `doc-update` | Realign the kask/docs tree with the code: condensation triage (<75 cap, working target 60), ground-compare-recompose per docs-set, file:line citation gates, corpus-tool decision point |
 | `improv` | Agent interaction grammar (Plussing, Yes And, Freestyling, Riffing) |
 
-> **Filesystem reality (verified 2026-10-05):** `.agents/skills/` contains 61
-> `SKILL.md` directories (`mcp-tool-review` added 2026-10-02, `a353d629f5`). Merged by operator decision 2026-09-24:
+> **Filesystem reality (re-verified 2026-10-13):** `.agents/skills/` contains 63
+> `SKILL.md` directories (`mcp-tool-review` added 2026-10-02, `a353d629f5`;
+> `provider-audit` added 2026-10-13 with its template namespace and the
+> provider profile registry; `system-maintenance` added 2026-10-10). Merged by operator decision 2026-09-24:
 > `gemba-walk` into `algedonic-review`, `skill-router` into `skill-discovery`
 > (route phase), `sequential-inquiry` into
 > `metacognition`, `swarm-compose-guide` into `swarm-intelligence`,
@@ -180,5 +184,5 @@ annual. The embedded seed payload equals the authored tree (pinned in
 > `superforecasting` (Market-prior calibration check). Folded 2026-09-28
 > (commit `ebcd901c80`): `kata-coaching` into `kata-improvement` — the five
 > coaching templates moved to `kask/registry/templates/kata-improvement/`.
-> `kask/registry/templates/` contains 57
-> template namespaces holding 276 `.j2` and 2 `.jinja` files.
+> `kask/registry/templates/` contains 58
+> template namespaces holding 281 `.j2` and 2 `.jinja` files.

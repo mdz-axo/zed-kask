@@ -2,7 +2,7 @@
 title: "Media MCP Server Reference"
 audience: [developers, architects, agents]
 last_updated: 2026-10-13
-version: "0.41.2"
+version: "0.42.0"
 status: "Active"
 domain: "Composition"
 mds_categories: [composition, domain]
@@ -704,6 +704,100 @@ Three tests pin the mapping: `omc_mapping_covers_all_registered_tools` (every re
 - **Prompt enrichment:** `expand_prompt` → `generate_image` (`num_images` for variants) / `generate_video`
 - **YouTube discovery and acquisition:** `youtube_search` (SerpApi metadata and ranking) → select URL → `video_fetch` (yt-dlp binary retrieval) → `video_clip` / `video_add_caption` / `video_to_gif` / `video_remix`; `video_extract_frames` turns keyframes back into searchable assets
 - **Async generation:** `job_submit` → `job_status` (poll) → `job_cancel` if needed; `workflow_save` / `workflow_load` to persist multi-step recipes
+
+## Redesign record (2026-10-06/07)
+
+The server was reviewed from scratch against four verified reference models —
+MovieLabs OMC 2.8 (the creation vocabulary; every tool maps to an OMC
+concept via `omc::tool_to_omc`), the Reduct.video transcript-linked-media
+discipline (operator ruling 2026-09-25; the educt layer system's source),
+the Reduct.video v3 API reference (the cloud write surface's pinned
+contract), and the crate README's ratified contracts — through a
+seven-phase FINER-gated PDCA review. All phases (0–6) completed
+2026-10-06: a 39-primitive model across 8 families reconciled to the
+102-tool pin via `lisp_eval`, a contract-level fidelity pass, a line-by-line
+depth pass over all 102 tools in five tranches (findings MF-9…MF-15, all
+closed), an integration review, a formal layer, a proposal set, and the
+improvement plan. The four review docs (review, findings, proposals,
+improvement plan) were consolidated into this reference on 2026-10-13 and
+live in git history (`1a8c500c12`..`42f885b0e3`).
+
+**The five operator-named target conditions (MF-1…MF-5), all closed:**
+
+- **MF-1 Reduct cloud write surface** — closed `f66b136fe2` + follow-up
+  `f371a75a74` (pin 99→102): `reduct_add_recording_highlight`,
+  `reduct_publish_reel`, and `reduct_edit_recording_highlight` implement
+  the pinned v3 contracts (fixture-tested request path/body, parsed
+  acknowledgement, HTTP refusal; token values never returned). Four
+  capabilities adjudicated out of scope with per-capability contract-status
+  reasons: strikethroughs, redactions, and media download (the v3 reference
+  lists paths without body/response schema — implementing would guess the
+  wire format), and transcript correction (the v3 API exposes no such
+  endpoint; local re-alignment exists since MF-2).
+- **MF-2 transcript re-alignment** — closed `c9a5c3b855`:
+  `educt_realign_transcript` (the 99th tool) with the reached-when pin; every
+  timed consumer honors the realignment path.
+- **MF-3 face-recognition build-out** — closed as still deferred; reopens on
+  an explicit build directive (`3602bf7a08`). The vision-LLM design (no
+  local geometric matching) is recorded under Key paths.
+- **MF-4 embedding-error typing** — closed `1a8c500c12`: typed
+  `EmbeddingGenerationError::NotConfigured` + `DirectEmbeddingPortError`
+  with per-failure-mode mapping; the string-matching classifier and its stale
+  doc deleted.
+- **MF-5 DNS-rebinding TOCTOU window** — closed as accepted risk (operator
+  ruling, `2b43f6ca29`); revisit on server deployment with valuable internal
+  services or untrusted-content URL sources.
+
+**Decisions with standing force:**
+
+- **Zero-DELETE cloud posture** (media-lead design decision 2026-10-06,
+  revisitable on demand): the surface has never exposed a cloud DELETE
+  tool; highlight delete's v3 contract stays pinned for a posture change.
+- **The primitive model is complete at the primitive level** — every gap the
+  four reference models imply is decision-recorded, none accidental: face
+  build-out (MF-3), cloud DELETEs (posture above), contractless cloud
+  capabilities (MF-1 adjudication), DNS-rebinding (MF-5).
+- **Phase 4 Lean layer deferred with trigger** (not forced): the re-anchored
+  interpolation contract gained its second oracle —
+  `reanchored_interpolation_contract_holds_across_a_sweep`, an 864-case
+  span×token sweep asserting the contract identities independent of the
+  slicing formula (`src/transcript_layers.rs`); EDL Keep-range union
+  coverage and Keep-op disjointness already carried two oracles each. The
+  drafted Lean spec pin did not check under core Lean 4.34 (the needed
+  lemmas require positivity the contract does not carry) and was deleted —
+  a non-checking spec pin is a broken artifact. Reopens if the contract
+  gains algebraic structure the sweep cannot express, with Mathlib as the
+  prerequisite decision.
+- **PR-S1 executed as a stale-doc correction** (vetoable at algedonic
+  review): the `transcript-reel` skill's correction step now names
+  `educt_realign_transcript` after an unaligned `educt_apply_corrections`
+  (`fb22b0b4d5`).
+
+**Accepted limitations (ruled, watched):**
+
+- **MF-7 publish wire contract** — the object body `{"publish": true}` was
+  REFUTED by the operator-authorized live probe 2026-10-07 (HTTP 400 twice,
+  isolating the body shape); the corrected bare-bool body (the reference's
+  property-endpoint payload convention, page 39) is executed at the
+  construction site. The re-probe (post-rebuild, before the first
+  production publish) is the open confirmation.
+- **MF-8 job-history ephemerality** — the job controller is in-memory,
+  documented and surfaced in tool descriptions; trigger: a workflow that
+  depends on job history across restarts reopens this as a persistence
+  proposal.
+
+**Commit ledger:** `1a8c500c12` (MF-4 + the review/findings docs) →
+`c9a5c3b855` (MF-2) → `f66b136fe2` (MF-1) → `f371a75a74` (highlight edit,
+pin 101→102) → `3602bf7a08` (MF-3 decision) → `2b43f6ca29` (MF-5 ruling) →
+`d6821b5d18` (proposals + improvement-plan docs) → `fb22b0b4d5` (PR-S1) →
+`5700eca5cf`/`42f885b0e3`/`9c8f380d50` (record updates). Live receipts,
+verified in the current tree: the 102-tool pin
+(`tool_surface_is_exactly_102_registered_tools`), the OMC mapping coverage
+test, `MAX_CAPTURE_DURATION_SECS`/`MAX_REDUCT_UPLOAD_BYTES` imported from
+`hkask_types::media_limits` at every capping site (PR-M1), the collage
+publishing through `publish_local_media` with gallery row + lineage
+(`collage_publishes_through_canonical_storage`, PR-M2), and the bare-bool
+publish body (MF-7 fix).
 
 ## Cross-links
 

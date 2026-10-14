@@ -117,7 +117,7 @@ Every row below is an actual `(id, location)` metadata pair. Dates and statuses 
 | `DIAG-STATE-TASK-STATUS` | [`diagrams/kanban.md`](./diagrams/kanban.md) | 2026-09-28 | VERIFIED |
 | `DIAG-STD-001` | [`architecture/DOCUMENTATION_STANDARDS.md`](./architecture/DOCUMENTATION_STANDARDS.md) | 2026-09-28 | VERIFIED |
 | `DIAG-STOR-002` | [`diataxis/hkask-storage/reference.md`](./diataxis/hkask-storage/reference.md) | 2026-09-28 | VERIFIED |
-| `DIAG-STOR-003` | [`diataxis/hkask-storage/reference.md`](./diataxis/hkask-storage/reference.md) | 2026-09-28 | VERIFIED |
+| `DIAG-STOR-003` | [`diataxis/hkask-storage/reference.md`](./diataxis/hkask-storage/reference.md) | 2026-10-13 | VERIFIED |
 | `DIAG-STOR-005` | [`diataxis/hkask-storage/explanation.md`](./diataxis/hkask-storage/explanation.md) | 2026-09-28 | VERIFIED |
 | `DIAG-STOR-007` | [`diataxis/hkask-storage/reference.md`](./diataxis/hkask-storage/reference.md) | 2026-09-28 | VERIFIED |
 | `DIAG-STOR-008` | [`diataxis/hkask-storage/reference.md`](./diataxis/hkask-storage/reference.md) | 2026-09-28 | VERIFIED |

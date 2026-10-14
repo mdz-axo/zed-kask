@@ -1,8 +1,8 @@
 ---
 title: "Memory System Specification"
 audience: [developers, architects, agents, operators]
-last_updated: 2026-10-08
-version: "5.3.0"
+last_updated: 2026-10-13
+version: "5.3.1"
 status: "Active"
 domain: "Lifecycle"
 mds_categories: [lifecycle, domain, curation, trust]
@@ -121,13 +121,13 @@ narrative generation loop.
   (`consolidation_service.rs:1-8`; enforced by the absence of any such phase
   in `consolidate`, `consolidation_service.rs:38-135`)
 - No query-embedding cache — every recall embeds the query fresh
-  (`memory.rs:673-691`)
+  (`memory.rs:838-853`)
 - No zed-agent recall — recall is curator-scoped (operator ruling 2026-09-28):
   `BridgeContextInjector::inject_context` returns empty for non-curator
   threads, and the curator recalls via the inherent `recall_context_curator` /
-  `recall_thread_curator` methods (`memory.rs:691-735`).
+  `recall_thread_curator` methods (`memory.rs:728-761`).
   The `MemoryPort` trait's `recall_context` / `recall_thread` keep their
-  default no-op implementations as the port contract (`kask/crates/hkask-types/src/ports/memory_port.rs:155,173`);
+  default no-op implementations as the port contract (`kask/crates/hkask-types/src/ports/memory_port.rs:164,182`);
   `RealMemoryPort` no longer overrides them (`memory.rs:492`).
 - External-evidence injection is opt-in for Curator chat and off by default.
   The Memory page uses one `Auto-Inject Memories` master switch and a dropdown:

@@ -1,8 +1,8 @@
 ---
 title: "zed-kask — Minimal-Divergence Fork Architecture & Migration Plan"
 audience: [architects, integrators]
-last_updated: 2026-09-28
-version: "0.44.1"
+last_updated: 2026-10-13
+version: "0.45.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [composition, trust, lifecycle]
@@ -75,12 +75,12 @@ Inference routing (`crates/language_model`, `language_model_core`, `language_mod
 
 ### 2.2 hKask keeps (unique: curator + sovereignty + tools) — compiled into zed-kask
 
-**Status (2026-09-28):** **19 kask crates** under `kask/crates/` (18 `hkask-*` + `kask_bridge`) plus **13 MCP server crates** under `kask/mcp-servers/` and zed-side crates (`swarm_panel`, `kanban_panel`, `portfolio_panel`, `hkask-steer`, `hkask-viz-core`, `hkask-*-widget`, `hkask-tool-invoker`, `marketplace_ui_common`). The `kask_extensions_ui` crate was removed 2026-08-20 (skill marketplace retired); the `hkask-conversation-injector` zed-side crate was removed 2026-09-28 (D21 retirement, commit `fa95c2b8c7`). 13 MCP servers on disk (curator may be unloaded via `kask.mcp.overrides`).
+**Status (re-verified 2026-10-13):** **19 kask crates** under `kask/crates/` (18 `hkask-*` + `kask_bridge`; `hkask-services-core` was folded into `hkask-mcp-corpus` as its `services_core` module and deleted 2026-10-13, commit `8fb33f8e73`) plus **13 MCP server crates** under `kask/mcp-servers/` and zed-side crates (`swarm_panel`, `kanban_panel`, `portfolio_panel`, `hkask-steer`, `hkask-viz-core`, `hkask-*-widget`, `hkask-tool-invoker`, `marketplace_ui_common`). The `kask_extensions_ui` crate was removed 2026-08-20 (skill marketplace retired); the `hkask-conversation-injector` zed-side crate was removed 2026-09-28 (D21 retirement, commit `fa95c2b8c7`). 13 MCP servers on disk (curator may be unloaded via `kask.mcp.overrides`).
 
 | Crate                                                                                     | Why irreducible                                                                                                                                                                                                                                                                                                            |
 | ----------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `hkask-types`                                                                             | Foundation: IDs, `InferencePort` trait (single/stream/message/vision/embed/list/rerank plus child-local `media_generate`; no `generate_batch` method; `kask/crates/hkask-types/src/ports/inference_port.rs:184-409`), `MemoryPort`, Regulation records, Curator directives, vocab, `VoiceDesign`, and `ExpectProposal`. |
-| `hkask-storage`                                                                           | **Sovereignty:** per-user/curator data directory encrypted private sphere (P11.1). SQLCipher-encrypted SQLite with sqlite-vec virtual tables for vectors (`kask/crates/hkask-storage/src/core/connection.rs:157`, `kask/crates/hkask-storage/src/core/sql/schema.sql:7`). Hosts the media `GalleryStore` (D35).                                                                                                                                                       |
+| `hkask-storage`                                                                           | **Sovereignty:** per-user/curator data directory encrypted private sphere (P11.1). SQLCipher-encrypted SQLite with sqlite-vec virtual tables for vectors (`kask/crates/hkask-storage/src/core/connection.rs:157`, `kask/crates/hkask-storage/src/core/sql/schema.sql:7`). The media `GalleryStore` moved to the media server crate (2026-10-13, commit `c85b1e4896` — `kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs`); hkask-storage keeps the storage layer only.                                                                                                                                                       |
 | `hkask-memory`                                                                            | Unique memory + confidence-based consolidation.                                                                                                                                                                                                                                                                           |
 | `hkask-regulation`                                                                        | Cybernetic nervous system (`reg.*`, variety, algedonic, set-points). Per-agent governed tool calls are bounded by `CallCapManager` (1 call charged per `McpRuntime::invoke`, resets per tick). 21 source files / 13,082 lines (measured 2026-09-28: `find src -name '*.rs' -exec cat {} + | wc -l`).                      |
 | `hkask-tool-port`                                                                        | **`ToolPort` dispatch seam** (`kask/crates/hkask-tool-port/src/tool_port.rs:89`). Not an enforcement point: it holds no tokens, no authorization check, and no taint labels (taint check removed: its inputs were constants).                                                                                                                                                                                                                                                                       |
@@ -94,15 +94,15 @@ Inference routing (`crates/language_model`, `language_model_core`, `language_mod
 | `hkask-condenser`                                                                         | In-process thread condensation via `kask_bridge::BridgeThreadCondenser`.                                                                                                                                                                                                                                                  |
 | 13 MCP servers (on-disk set)                                                              | **The tools** — child processes over stdio (D3), governed by the in-process `McpRuntime`.                                                                                                                                                                                                                                                                             |
 
-### 2.3 MCP load set (12 on disk)
+### 2.3 MCP load set (13 on disk)
 
-The original 16 MCP servers were pruned to 10, then the **media** server was recovered (D35, 2026-08-28) and the **spreadsheet** server was added (2026-09-18) — **12 on disk**: `companies`, `corpus`, `curator`, `kata-kanban`, `media`, `portfolio`, `prediction-markets`, `research`, `scenarios`, `spreadsheet`, `swarm`, `training`. The `BUILT_IN_MCP_SERVERS` constant in `kask/crates/kask_bridge/src/mcp_servers.rs:55-549` enumerates them (media entry at `mcp_servers.rs:485-528`); `builtin_mcp_server_ids()` (`mcp_servers.rs:553-555`) derives the ID list.[^anthropic-mcp]
+The original 16 MCP servers were pruned to 10, then the **media** server was recovered (D35, 2026-08-28), the **spreadsheet** server was added (2026-09-18), and the **experimentation** server was added (2026-10-05) — **13 on disk**: `companies`, `corpus`, `curator`, `experimentation`, `kata-kanban`, `media`, `portfolio`, `prediction-markets`, `research`, `scenarios`, `spreadsheet`, `swarm`, `training`. The `BUILT_IN_MCP_SERVERS` constant in `kask/crates/kask_bridge/src/mcp_servers.rs:49-573` enumerates them (media entry at `mcp_servers.rs:487-549`, experimentation entry at `:551-572`); `builtin_mcp_server_ids()` (`mcp_servers.rs:577-579`) derives the ID list.[^anthropic-mcp]
 
-| On disk (12)                                                                                                          |
+| On disk (13)                                                                                                          |
 | --------------------------------------------------------------------------------------------------------------------- |
-| `companies`, `corpus`, `curator`, `kata-kanban`, `media`, `portfolio`, `prediction-markets`, `research`, `scenarios`, `spreadsheet`, `swarm`, `training` |
+| `companies`, `corpus`, `curator`, `experimentation`, `kata-kanban`, `media`, `portfolio`, `prediction-markets`, `research`, `scenarios`, `spreadsheet`, `swarm`, `training` |
 
-> The Curator MCP server is distinct from the native Curator agent and may be disabled by settings. The media server is pinned at exactly 102 registered tools by `tool_surface_is_exactly_102_registered_tools` (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:453`); its OMC mapping is checked across the same registered set at `:483-489`.
+> The Curator MCP server is distinct from the native Curator agent and may be disabled by settings. The media server is pinned at exactly 102 registered tools by `tool_surface_is_exactly_102_registered_tools` (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:485`); its OMC mapping is checked across the same registered set at `:492`.
 
 ---
 
@@ -295,7 +295,7 @@ sets without duplicating their implementation prose. In particular:
 - D10 is retired because the Kask panel is deleted.
 - D25 is a shared `ChatCompletionEventMapper` mapping.
 - D34 is absent from the active table; no `generate_batch` bridge exists.
-- D35 is the child-local media path and 102-tool media server (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:453,483-489`).
+- D35 is the child-local media path and 102-tool media server (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:485,492`).
 - D38, D49, D50, and D53 are folded into D37, D42, D46, and D54.
 - The latest active numbered seam is the final row of `DIVERGENCE.md`'s table.
 

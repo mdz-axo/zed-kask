@@ -1,8 +1,8 @@
 ---
 title: "zed-kask Documentation"
 audience: [developers, architects, agents, operators]
-last_updated: 2026-10-07
-version: "2.6.3"
+last_updated: 2026-10-13
+version: "2.7.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]
@@ -10,13 +10,13 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 
 # zed-kask Documentation
 
-> **zed-kask** is a minimal-divergence fork of the [Zed editor](https://zed.dev) with the hKask agent platform compiled in-process. The agent runtime, skills, Regulation nervous system, and sovereign memory run inside the editor as native surfaces; 13 managed MCP servers are launched as child processes over stdio by Zed's `context_server` host (`kask/crates/kask_bridge/src/mcp_servers.rs:55-572`).
+> **zed-kask** is a minimal-divergence fork of the [Zed editor](https://zed.dev) with the hKask agent platform compiled in-process. The agent runtime, skills, Regulation nervous system, and sovereign memory run inside the editor as native surfaces; 13 managed MCP servers are launched as child processes over stdio by Zed's `context_server` host (`kask/crates/kask_bridge/src/mcp_servers.rs:49-573`).
 
 **Canonical reference:** [`architecture/zed-host-architecture-plan.md`](architecture/zed-host-architecture-plan.md) describes the composition root and current crate inventory. The authoritative integration surface is [`DIVERGENCE.md`](../../DIVERGENCE.md), which lists current and retired numbered seams (retired numbers are never reused).
 
 **Per-crate docs:** [`diataxis/INDEX.md`](diataxis/INDEX.md) lists 19 retained artifacts across 10 cross-cutting sets. Eight tutorials were folded on 2026-09-16; on 2026-09-28 the eight per-crate how-to documents were folded into their set references (each reference gained a Procedures section) and the hkask-tool-port explanation was folded into its reference; `diataxis/hkask-mcp-server/tutorial.md` is the one retained tutorial.
 
-**Corpus size (measured 2026-10-11):** 82 Markdown documents and one live YAML inventory, 83 files total (`find kask/docs -type f | wc -l`) — under the formal **fewer-than-85** count gate (cap raised 79 → 85 by operator ruling 2026-10-07, justified by the experimentation and spreadsheet MCP servers' reference documentation and the Magnifica Humanitas values charter ([`core/magnifica-humanitas.md`](architecture/core/magnifica-humanitas.md)) grounding P1–P12; first raised 75 → 79 the same day to accommodate the post-consolidation corpus), with a working **75-file target** (raised 60 → 75 on the same ruling) as the condensation direction (cap and target set by operator ruling 2026-09-30, [`DOCUMENTATION_STANDARDS.md`](architecture/DOCUMENTATION_STANDARDS.md) §3). On 2026-10-07 the scenario redesign plan set consolidated into `reference/mcp-servers/scenarios.md` (−4) and the spreadsheet-capability redesign set consolidated into [`reference/mcp-servers/spreadsheet.md`](reference/mcp-servers/spreadsheet.md) § Redesign record (−3; tombstones below); the session-by-session count history is the lifecycle ledger below and git history. [`principle-constraints.yaml`](architecture/principle-constraints.yaml) is a live governance inventory consumed by `kask/scripts/check-principle-constraints.sh`, not a deletion candidate.
+**Corpus size (measured 2026-10-13, end of the doc-update condensation pass):** 81 Markdown documents and one live YAML inventory, 82 files total (`find kask/docs -type f | wc -l`) — **under** the formal **fewer-than-85** count gate. This pass consolidated the media-server redesign set into [`reference/mcp-servers/media.md`](reference/mcp-servers/media.md) § Redesign record (−4) and deleted the point-in-time curiosity study (−1, tombstone below), while the concurrent ontology program added three operator-carded records ([`reference/native-ontologies.md`](reference/native-ontologies.md), [`research/ontology-anchoring-review.md`](research/ontology-anchoring-review.md), [`research/ontology-open-loops-resolution.md`](research/ontology-open-loops-resolution.md)) — net 86 → 82. The working **75-file target** (raised 60 → 75 by operator ruling 2026-10-07) remains the condensation direction; the gap to it is governed by recorded rulings — the 2026-10-05 retain ruling on the eight diataxis explanations alone protects 8 files ("an OUGHT taxonomy change, not condensation"), and the 2026-10-06 reversal restored the media onboarding record verbatim. Cap history: raised 79 → 85 by operator ruling 2026-10-07, justified by the experimentation and spreadsheet MCP servers' reference documentation and the Magnifica Humanitas values charter ([`core/magnifica-humanitas.md`](architecture/core/magnifica-humanitas.md)) grounding P1–P12; first raised 75 → 79 the same day; cap and target set by operator ruling 2026-09-30, [`DOCUMENTATION_STANDARDS.md`](architecture/DOCUMENTATION_STANDARDS.md) §3. [`principle-constraints.yaml`](architecture/principle-constraints.yaml) is a live governance inventory consumed by `kask/scripts/check-principle-constraints.sh`, not a deletion candidate.
 
 ## Repair and improvement plans
 
@@ -49,7 +49,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 | [`reference/testing-protocol.md`](reference/testing-protocol.md) | User expectation contracts, test-layer assignment, bounded proofs, and test-evidence validation. |
 | [`reference/verification-ladder.md`](reference/verification-ladder.md) | The five verification rungs (presence, liveness, truth, grounding, binding), their zed-kask homes and clocks, the provenance lattice, and the open rung gaps. |
 | [`reference/regulation-spans.md`](reference/regulation-spans.md) | Regulation tracing, persisted records, and actual MCP outcome paths. |
-| [`reference/mcp-servers/README.md`](reference/mcp-servers/README.md) | MCP server registry — 13 built-in servers and the fleet tool surface. |
+| [`reference/mcp-servers/README.md`](reference/mcp-servers/README.md) | MCP server registry — 13 built-in servers, 415 registered tools fleet-wide, and the fleet tool surface. |
 | [`reference/mcp-servers/companies.md`](reference/mcp-servers/companies.md) | Companies server — valuation, forecasting, and portfolio analysis. |
 | [`reference/mcp-servers/corpus.md`](reference/mcp-servers/corpus.md) | Corpus server — gather → process → output pipeline. |
 | [`reference/mcp-servers/curator.md`](reference/mcp-servers/curator.md) | Curator server — sovereign memory, regulation readback, and the algedonic log (15 tools). |
@@ -63,11 +63,12 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 | [`reference/mcp-servers/spreadsheet.md`](reference/mcp-servers/spreadsheet.md) | Spreadsheet server — LogiSheets-backed workbook surface (2 tools). |
 | [`reference/mcp-servers/swarm.md`](reference/mcp-servers/swarm.md) | Swarm server — Agent Bestiary World and local substrate (91 tools). |
 | [`reference/mcp-servers/training.md`](reference/mcp-servers/training.md) | Training server — consent-gated LoRA/QLoRA training jobs, datasets, validation, evaluation (9 tools). |
-| [`reference/skills/README.md`](reference/skills/README.md) | Registry of 61 skills, 57 template namespaces, and 276 `.j2` resources. |
+| [`reference/skills/README.md`](reference/skills/README.md) | Registry of 63 skills, 58 template namespaces, and 281 `.j2` resources. |
 | [`loop-register.md`](loop-register.md) | Loop audit register — 25 system loops (L24 the experimentation protocol, L25 experimentation-health sensing, added 2026-09-30/10-01) with audit verdicts, three-layer (A/B/C) classifications with per-row sense→report→actuate maps and INV1–INV6 alignment verdicts (pass 3), deferred operator decisions, and the change-log ledger. |
 | [`reference/kask-settings.md`](reference/kask-settings.md) | Kask settings and environment reference. |
 | [`reference/lisp-eval-dialect.md`](reference/lisp-eval-dialect.md) | Sandboxed `lisp_eval` dialect and `form`/`env` contract. |
 | [`reference/ontology-bridge.md`](reference/ontology-bridge.md) | Published-vocabulary bridge, exact term resolver, and `onto_anchor` ladder. |
+| [`reference/native-ontologies.md`](reference/native-ontologies.md) | Native-ontologies inventory — every natively-available vocabulary (248 pinned files across 20 source directories), each one's prefixes, version, license and domain, live-probed example resolutions, the 91-ruling derived registry, and the ladder tiers in functional terms; companion to `ontology-bridge.md` (API) and `research/software-ontology-adoption.md` (decision trail). Added 2026-10-13. |
 | [`reference/lora-training-catalog.md`](reference/lora-training-catalog.md) | LoRA training method, gate, harness, and nine-tool catalog. |
 | [`reference/upstream-rebase-process.md`](reference/upstream-rebase-process.md) | Upstream rebase process and removal principles for the numbered D-seams. |
 
@@ -88,7 +89,6 @@ The LogiSheets plan's future-state block converted to a registered implementatio
 
 | Document | Description |
 | --- | --- |
-| [`research/artificial-curiosity-capability-space.md`](research/artificial-curiosity-capability-space.md) | Source-grounded curiosity mechanism study, separate seven-source follow-up, and bounded renderer-only capability-probe pilot; no tested curiosity selection capability. |
 | [`research/chunking-for-rag-research.md`](research/chunking-for-rag-research.md) | Prior-art study of RAG text-chunking patterns and reference models, and the corpus pipeline's alignment and gaps against them. Recommendations only — not implemented. |
 | [`research/kanban-board-reference-models.md`](research/kanban-board-reference-models.md) | Reference models for kanban board naming/navigation (Wekan, Planka, Kan, Kanboard), the kata-kanban's alignment and gaps against them, and the implemented shaping/test plan. |
 | [`research/deterministic-vs-probabilistic-compute-routing.md`](research/deterministic-vs-probabilistic-compute-routing.md) | When deterministic vs probabilistic compute fits: routing claim with falsifiers, Shannon/Gibbs entropy analogy tested (Jaynes, Landauer bridges and breakdowns), and a problem matrix whose game axis splits into recurrence and world closure. Hypotheses only — no routing implemented. Added 2026-09-27. |
@@ -99,10 +99,30 @@ The LogiSheets plan's future-state block converted to a registered implementatio
 | [`research/cybernetic-nervous-system-reference-model.md`](research/cybernetic-nervous-system-reference-model.md) | Reference model (admitted by operator ruling 2026-09-30): the mammal-general afferent/efferent + expectation/prediction-error + reflexive/sensorimotor/deliberative structure, its mapping to loop layers A/B/C with named invariants INV1–INV6, and the surprise-gated logging principle with its information-efficiency argument. All citations resolved (research run 4b9a3b3ed05bf860; 0 resolution failures). Added 2026-09-30. |
 | [`research/experimentation-reference-model.md`](research/experimentation-reference-model.md) | The experimentation program's reference model (promoted from the repair plan §P8, 2026-10-05): the vary-locally/select-centrally/retain-durably pattern, the shard map, the generalized experiment protocol, guardrails and meta-metrics with research anchors, the locked operator rulings (Q0–Q7), and the registry's CNS connection map. The execution records remain in the plan §P8. |
 | [`research/tree-sitter-adoption-proposal.md`](research/tree-sitter-adoption-proposal.md) | Tree-sitter code-graph capability research and adoption proposal: the partially-confirmed underuse premise (0 structural instruments kask-side vs 131 upstream `tree_sitter::` refs), the 7-capability cited matrix with the parser-not-graph-engine boundary, essentialist-screened use cases (3 survive, 2 rejected, 1 deferred), and the landed structural layer (pinned ast-grep instrument, unwrap ratchet gate over 468 baselined instances, symbol-anchored citation re-anchoring) with measured experiment outcomes — one pre-registered claim falsified as stated, corrected, and reported. Accepted 2026-10-11; the four measured follow-ups landed the same day: widened resolver kinds + impl-qualified find (86% overall / 94% anchorable citation survival), the docs-citation ladder gate (0 rotted — the "671 rotted" reading was false absence; 9 line-drift citations re-pointed across 6 docs), and the `Result<_, String>` structural rule replacing the string-errors gate's line-based matching. |
+| [`research/install-build-ci-reference-models.md`](research/install-build-ci-reference-models.md) | Install, build, and CI scripts — reference models from published practice (rustup, Homebrew, nix-installer, Google Shell Style Guide, ShellCheck), the 2026-10-11 pre-fix audit (F1–F7, every one fixed in the same change), the landed corpus-bundle install stage (up-to-date gate, physical resume, atomic assembly), and the conformance gate + selftest that pin the practice. Added 2026-10-11. |
+| [`research/software-ontology-adoption.md`](research/software-ontology-adoption.md) | Software ontology adoption — rung-1 and rung-2 research record: the five load-bearing terms (inference, service level agreement, fine-tuning, data retention, audit) resolved through the vendored DPV 2.3 and CSO 3.5 pins, the per-candidate licensing research mapped onto the zk-ref-open allowlist posture, the five rulings with their authorities, and the honest open register (SEON deferred, Skillware pinned but not yet cited). Added 2026-10-13. |
+| [`research/ontology-anchoring-review.md`](research/ontology-anchoring-review.md) | Ontological anchoring review (task `49ed2320`) — the anchoring hierarchy and multi-domain chunk-linking methodology reviewed: ladder-tier coverage, the derived-registry discipline, and the review's findings over the pinned vocabularies. Added 2026-10-13. |
+| [`research/ontology-open-loops-resolution.md`](research/ontology-open-loops-resolution.md) | Ontology open loops — resolution paths (decision-ready proposal): the seven open loops from the anchoring review, each with proposed resolution path, effort, and the operator decision it awaits. Added 2026-10-13. |
+| [`research/media-server-lead-onboarding.md`](research/media-server-lead-onboarding.md) | Media MCP server lead-developer onboarding — tree-grounded orientation for the media server: where everything lives and what to do first, every load-bearing claim cited. |
 
 ## Document lifecycle ledger
 
 Git history is the archive of record. Every removed document names its active successor here. The dated Corpus size measurement above, not this lifecycle ledger, applies the document-count gate (all files, per [`DOCUMENTATION_STANDARDS.md`](architecture/DOCUMENTATION_STANDARDS.md) §3) and identifies the live YAML inventory.
+
+### Deleted 2026-10-13 (doc-update condensation — the point-in-time curiosity study; no capability, no consumer)
+
+| Artifact | Successor |
+| --- | --- |
+| `research/artificial-curiosity-capability-space.md` | Git history (the study, the seven-source follow-up, and the renderer-only pilot — the 2026-09-23 fold's full content — remain at `aa7f6ce4eb` and prior). The study's own verdict stood: **no distinct curiosity skill** — the analyzed skill set was consolidated out 2026-09-24, no curiosity-selection capability exists in the tree (verified by search 2026-09-28), and zero docs, skills, or scripts linked the record. The one standing decision survives here: promote a curiosity-probe capability only after it wins a repeatable, uniquely valuable input/output contract in a cost-matched test. |
+
+### Consolidated 2026-10-13 (media-server redesign set — doc-update condensation, the scenarios/spreadsheet precedent)
+
+| Artifact | Successor |
+| --- | --- |
+| `research/media-server-redesign-review.md` | [`reference/mcp-servers/media.md`](reference/mcp-servers/media.md) § Redesign record (method summary — the four verified reference models, the FINER-gated phase verdicts, the 39-primitive/8-family model reconciled to the 102-tool pin); git history (`1a8c500c12`..`42f885b0e3`) holds the full review. |
+| `research/media-server-redesign-findings.md` | [`reference/mcp-servers/media.md`](reference/mcp-servers/media.md) § Redesign record (the five target conditions MF-1…MF-5 with closure commits, the depth-pass closure MF-9…MF-15, the Phase-4 two-oracle verdicts and the Lean-deferred trigger); the per-tranche line-by-line audit narrative remains in git history. |
+| `research/media-server-redesign-proposals.md` | The landed proposals are the code and its pins (PR-M1 the `media_limits` imports, PR-M2 `collage_publishes_through_canonical_storage`, PR-S1 the skill line `fb22b0b4d5`); the standing decisions and receipts are recorded in the Redesign record. |
+| `research/media-server-redesign-improvement-plan.md` | [`reference/mcp-servers/media.md`](reference/mcp-servers/media.md) § Redesign record (the execution status — all slices DONE/CLOSED — the commit ledger, and the live receipts verified in the current tree); git history holds the slice-by-slice narrative. |
 
 ### Folded 2026-10-13 (gallery docs recomposition — C1 follow-up; the gallery store code moved to the media server in commit `c85b1e4896`)
 
@@ -228,7 +248,7 @@ The eight tutorial removals landed in `5881f1f406fafe12f4fc65a549dbf1eb0a62ca84`
 - [x] Internal links target retained documents; the eight folded how-to documents' links were repointed to their set references (2026-09-28).
 - [x] Diagram metadata has unique-ID/location registry parity (108 records, tree-verified 2026-10-05).
 - [x] Edited citations use full repository-relative paths; 525 sampled citations resolved (2026-09-28), and the 2026-10-05 deep-alignment run re-verified every citation it touched against live code (the compaction entry points and pin sample, the d-seam DIVERGENCE rows, kanban R1, the 13 live tool-surface pin sites, `SignalMetric` at `signals.rs:14`) with the tree-wide relative-link sweep resolving.
-- [x] Document count is 83, under the fewer-than-85 cap (raised 79 → 85 by operator ruling 2026-10-07, justified by the experimentation and spreadsheet MCP servers' reference documentation and the Magnifica Humanitas values charter grounding P1–P12) with a working 75-file target (raised 60 → 75 on the same ruling) — the spreadsheet-capability redesign set consolidation (−3 files, the proven scenarios pattern) landed the same day; measured 2026-10-11 (`find kask/docs -type f | wc -l`).
+- [x] Document count is 82, under the fewer-than-85 cap (measured 2026-10-13, `find kask/docs -type f | wc -l`): this pass consolidated the media-server redesign set (−4) and deleted the curiosity study (−1); the concurrent ontology program added three carded records (+3); net 86 → 82. The 75-file working target remains the condensation direction — the recorded retain rulings (the diataxis explanations, the onboarding reversal) govern the remaining gap.
 
 ## See also
 

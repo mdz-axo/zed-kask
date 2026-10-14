@@ -1,8 +1,8 @@
 ---
 title: "kask_bridge — Reference"
 audience: [developers, architects, agents working at the zed↔hKask seam]
-last_updated: 2026-10-05
-version: "1.5.2"
+last_updated: 2026-10-13
+version: "1.5.3"
 status: "Active"
 domain: "Integration"
 mds_categories: [domain, composition, trust, lifecycle]
@@ -115,7 +115,7 @@ by `run_pending_db_passphrase_rotation` (`crates/zed/src/main.rs:373`) — see
 | `KaskGeneralSettings` | concurrency 96; timeout 300s; circuit threshold 3; open interval 30s | `kask/crates/kask_bridge/src/settings.rs:130-138` |
 | `KaskMcpSettings` | load defaults; empty overrides; empty delegated-tool grants | `kask/crates/kask_bridge/src/settings.rs:161-168` |
 | `KaskCuratorSettings` | always on; algedonic threshold 0.8 | `kask/crates/kask_bridge/src/settings.rs:196-203` |
-| `KaskMemorySettings` | consolidation 300s; confidence 0.3; recall 5 at 0.3; auto-inject; distillation 600s/300s; memory life 90 from `MemoryStore::default_memory_life_days`; forgetting 7 | `kask/crates/kask_bridge/src/settings.rs:284-297`; `kask/crates/hkask-memory/src/memory_store.rs:186` |
+| `KaskMemorySettings` | consolidation 300s; confidence 0.3; recall 5 at 0.3; auto-inject; federated auto-inject off with empty `federated_source_ids`; distillation 600s/300s; memory life 90 from `MemoryStore::default_memory_life_days`; forgetting 7 | `kask/crates/kask_bridge/src/settings.rs:284-300`; `kask/crates/hkask-memory/src/memory_store.rs:199` |
 | `KaskCondenserSettings` | normal profile; incoming-result compression off | `kask/crates/kask_bridge/src/settings.rs:320-326` |
 | `KaskCompaniesSettings` | staleness 0; no Fermi override; required return 0.15 | `kask/crates/kask_bridge/src/settings.rs:352-358` |
 | `KaskCorpusSettings` | dimension 1024; embedding default `OpenRouter/qwen/qwen3-embedding-8b` (MRL — every embed request carries `dimensions = embedding_dim`); template root `kask/registry` | `kask/crates/kask_bridge/src/settings.rs:377-383` |

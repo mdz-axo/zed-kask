@@ -2,7 +2,7 @@
 title: "hkask-storage — Reference"
 audience: [architects, developers]
 last_updated: 2026-10-13
-version: "2.4.0"
+version: "2.4.1"
 status: "Active"
 domain: "Persistence"
 mds_categories: [domain, trust, lifecycle]
@@ -71,7 +71,6 @@ classDiagram
     }
     class HMemStore
     class EmbeddingStore
-    class GalleryStore
     class RegulationArchive
 
     SqliteDriver ..|> DatabaseDriver
@@ -80,15 +79,14 @@ classDiagram
     DatabaseInventory --> ConfirmedInventory
     HMemStore --> DatabaseDriver
     EmbeddingStore --> DatabaseDriver
-    GalleryStore --> DatabaseDriver
     RegulationArchive --> DatabaseDriver
 
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-STOR-003
-verified_date: 2026-09-28
-verified_against: kask/crates/hkask-storage/src/core/connection.rs:166-192,301-452,474-536; kask/crates/hkask-storage/src/database/driver.rs:15-47; kask/crates/hkask-storage/src/database/sqlite.rs:42-117; kask/crates/hkask-storage/src/maintenance_inventory.rs:169-205,294-375; kask/crates/hkask-storage/src/hmem.rs:136-163; kask/crates/hkask-storage/src/embeddings.rs:64-110; kask/crates/hkask-storage/src/regulation_store.rs:30-104
+verified_date: 2026-10-13
+verified_against: kask/crates/hkask-storage/src/core/connection.rs:166-192,301-452,474-536; kask/crates/hkask-storage/src/database/driver.rs:15-47; kask/crates/hkask-storage/src/database/sqlite.rs:42-117; kask/crates/hkask-storage/src/maintenance_inventory.rs:169-205,294-375; kask/crates/hkask-storage/src/hmem.rs:136-163; kask/crates/hkask-storage/src/embeddings.rs:64-110; kask/crates/hkask-storage/src/regulation_store.rs:30-104 — GalleryStore node removed 2026-10-13: the gallery store moved to the media server (commit c85b1e4896, kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs); zero GalleryStore references remain under kask/crates/hkask-storage/src/
 status: VERIFIED
 -->
 

@@ -1,8 +1,8 @@
 ---
 title: "Curator MCP Server Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-10-01
-version: "0.42.0"
+last_updated: 2026-10-13
+version: "0.42.1"
 status: "Active"
 domain: "Composition"
 mds_categories: [domain, composition, trust, lifecycle]
@@ -25,39 +25,39 @@ ORIENT surface) classify its loops.
 
 The server reads from the same `agents/curator/curator.db` the agent writes
 curator copies to — one store, two processes, no sync
-(`mcp_servers.rs:193-194`). `HKASK_WEBID` is mapped to this server only, so
-its writes carry the curator's identity (`mcp_servers.rs:197-198`), and the
+(`mcp_servers.rs:186-188`). `HKASK_WEBID` is mapped to this server only, so
+its writes carry the curator's identity (`mcp_servers.rs:189-197`), and the
 path resolution finds the same root the agent uses
-(`open_curator_stores`, `hkask_mcp_curator.rs:229`).
+(`open_curator_stores`, `hkask_mcp_curator.rs:2467`).
 
 ## Tool groups
 
-- **Recall and consult** — `curator_semantic_search` (`:594`),
-  `curator_federated_search` (`:705`, sealed corpus sources in one
-  source-aware retrieval), `curator_memory_recall` (`:882`),
-  `curator_consult` (`:1017`), `curator_ping` (`:445`). The recall path
+- **Recall and consult** — `curator_semantic_search` (`:663`),
+  `curator_federated_search` (`:761`, sealed corpus sources in one
+  source-aware retrieval), `curator_memory_recall` (`:938`),
+  `curator_consult` (`:1037`), `curator_ping` (`:514`). The recall path
   covers the entity_ref JOIN — an embedding stored under an entity with no
   h_mem is an orphan the KNN path must surface, never silently drop.
   Recall/search results carry each h_mem's `provenance` tier
   (`tool_observed` | `model_inference`) so a caller can separate
   machine-observed records from model synthesis (R5).
-- **Memory writes** — `memory_insert` (`:1447`, evidence-cited: rejects
+- **Memory writes** — `memory_insert` (`:1394`, evidence-cited: rejects
   inserts without a supporting h_mem id; stamps the extraction ceiling
   `provenance: model_inference` — the request schema offers no tier field
   to claim — and refuses a colliding insert: a differing value for an
   existing `(entity, attribute)` key is surfaced by id and routed to
-  resolution, never silently coexisting), `memory_update` (`:1623`,
+  resolution, never silently coexisting), `memory_update` (`:1570`,
   Bayesian log-odds confidence combination — revision by id, unaffected
   by the collision gate), `memory_resolve_contradiction`
-  (`:1700`, forget or update-confidence with a cited reason),
-  `curator_memory_extract` (`:1975`, turn-history candidates — machine
-  ingestion, ungated), `curator_memory_backfill_embeddings` (`:1912`).
-- **Hygiene** — `curator_memory_prune` (`:1710`, age-gated with the
-  spare-recalled-within escape), `curator_memory_dedup` (`:1789`,
+  (`:1647`, forget or update-confidence with a cited reason),
+  `curator_memory_extract` (`:1922`, turn-history candidates — machine
+  ingestion, ungated), `curator_memory_backfill_embeddings` (`:1859`).
+- **Hygiene** — `curator_memory_prune` (`:1741`, age-gated with the
+  spare-recalled-within escape), `curator_memory_dedup` (`:1820`,
   normalized-string value dedup).
-- **Regulation surfaces** — `reg_query` (`:1234`, the RegulationRecord
-  archive readback), `curator_algedonic_log` (`:1199`, the review cycle's
-  algedonic entries), `curator_report_skill_use_issue` (`:1312`, the
+- **Regulation surfaces** — `reg_query` (`:1199`, the RegulationRecord
+  archive readback), `curator_algedonic_log` (`:1164`, the review cycle's
+  algedonic entries), `curator_report_skill_use_issue` (`:1277`, the
   skill-use incident path).
 
 ## Architecture
@@ -69,7 +69,8 @@ path resolution finds the same root the agent uses
   than silently falling back.
 - **Credentials**: `HKASK_DB_PASSPHRASE` declared **required** — without it
   `open_curator_stores` cannot decrypt the DB and startup fails visibly
-  (`hkask_mcp_curator.rs:2391`; the canonical 2-tier chain at `:216`).
+  (`hkask_mcp_curator.rs:297`; the canonical 2-tier chain at
+  `kask/crates/hkask-mcp-server/src/server/credentials.rs:76`).
   No email-transport vars are injected here — the curator server has no
   email role (`mcp_servers.rs:184`).
 - **Distillation**: `DistillationConfig::from_env()` — the consolidation
