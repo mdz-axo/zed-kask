@@ -808,9 +808,7 @@ impl hkask_types::InferencePort for DirectEmbeddingPort {
     }
 
     fn embed<'a>(&'a self, model: &str, texts: &[String]) -> hkask_types::EmbedFuture<'a> {
-        let model = model.to_string();
-        let texts = texts.to_vec();
-        Box::pin(async move { self.embed_with_identity(&model, &texts).await })
+        self.embed_with_dimensions(model, texts, None)
     }
 
     fn embed_with_identity<'a>(

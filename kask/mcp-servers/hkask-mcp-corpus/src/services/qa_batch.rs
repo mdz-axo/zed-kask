@@ -15,7 +15,6 @@ use hkask_mcp_server::server::McpToolError;
 use hkask_types::{ChatMessage, InferencePort, InferenceResult};
 
 use crate::batch::{ADAPTIVE_CONCURRENCY_FLOOR, AdaptiveLimiter, MAX_RETRIES, retry_with_backoff};
-use crate::helpers::map_corpus_io_error;
 use crate::services::qa_adjudication::{
     QA_ADJUDICATION_PROTOCOL, ReviewedPassageDecision, ReviewedQaAdjudications,
     read_complete_adjudications,
@@ -26,6 +25,7 @@ use crate::services::qa_pipeline::{
     parse_disposition_plan_response, qa_llm_parameters, read_prompts,
     render_disposition_plan_messages, render_planned_qa_messages,
 };
+use hkask_mcp_server::server::map_io_error;
 
 use crate::tools::semantic::qa::map_qa_inference_error;
 
@@ -206,7 +206,7 @@ impl QaBatchService {
         crate::path_safety::distinct_output_path(&quality_adjudications_jsonl, &output)?;
         let lease = QaOutputLease::acquire(output_path)?;
         let file = std::fs::File::create(&lease.path).map_err(|error| {
-            map_corpus_io_error(error, &format!("Cannot create output file '{output}'"))
+            map_io_error(error, &format!("Cannot create output file '{output}'"))
         })?;
         lease.opened.store(true, Ordering::Relaxed);
         // No BufWriter: cancellation must not depend on an unchecked drop-time

@@ -1016,7 +1016,7 @@ impl MediaServer {
                 .render_prompt("video_caption", &vars)
                 .map_err(|e| McpToolError::internal(format!("Template render failed: {}", e)))?;
 
-            let (vision_model, _vision_label) = self.require_vision().await?;
+            let (vision_model, _vision_label) = self.require_vision()?;
             let params = hkask_types::template::LLMParameters::default();
             let mut image_b64s = Vec::with_capacity(image_urls.len());
             for url in &image_urls {

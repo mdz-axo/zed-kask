@@ -9,9 +9,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::batch::BatchOutcome;
-use crate::helpers::{map_corpus_io_error, read_jsonl};
+use crate::helpers::read_jsonl;
 use crate::services::qa_adjudication::{ReviewedLevelDecision, ReviewedQaAdjudication};
 use crate::tools::corpus::{QaType, qa_type_instruction};
+use hkask_mcp_server::server::map_io_error;
 
 use crate::{CONTENT_GUARD_INSTRUCTION, McpToolError, extract_json_from_response};
 
@@ -990,10 +991,10 @@ impl<W: Write> QaOutput<W> {
         })?;
         self.writer
             .write_all(&bytes)
-            .map_err(|error| map_corpus_io_error(error, "Cannot write QA output"))?;
+            .map_err(|error| map_io_error(error, "Cannot write QA output"))?;
         self.writer
             .write_all(b"\n")
-            .map_err(|error| map_corpus_io_error(error, "Cannot write QA output newline"))?;
+            .map_err(|error| map_io_error(error, "Cannot write QA output newline"))?;
         Ok(())
     }
 
@@ -1146,7 +1147,7 @@ impl<W: Write> QaOutput<W> {
     fn flush(&mut self) -> Result<(), McpToolError> {
         self.writer
             .flush()
-            .map_err(|error| map_corpus_io_error(error, "Cannot flush QA output"))
+            .map_err(|error| map_io_error(error, "Cannot flush QA output"))
     }
 
     pub fn finish(mut self, output: &str) -> Result<serde_json::Value, McpToolError> {

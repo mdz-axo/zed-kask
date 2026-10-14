@@ -36,7 +36,7 @@ pub use crate::security::{
 pub use context::{CapabilityTier, CredentialRequirement, ServerContext};
 pub use credentials::{parse_env_warn, resolve_credential, resolve_db_passphrase};
 pub use error::{McpError, McpToolError};
-pub use http_helpers::classify_http_error;
+pub use http_helpers::{classify_http_error, url_encode_query_value};
 pub use tool_span::{ToolContext, execute_tool, record_tool_usage};
 pub use transport::run_stdio_server;
 pub use validation::{
@@ -44,6 +44,6 @@ pub use validation::{
     set_artifact_owner, write_contained,
 };
 pub use validation::{
-    map_infra_error, map_io_error, map_join_error, map_memory_store_error, validate_identifier,
-    validate_path,
+    map_database_error, map_infra_error, map_io_error, map_join_error, map_memory_store_error,
+    validate_identifier, validate_path,
 };

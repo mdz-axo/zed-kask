@@ -155,20 +155,9 @@ pub fn domain_bias_delta(store: Option<&ForecastStore>, category: &str) -> f64 {
         return 0.0;
     }
 
-    // Reuse the calibration-curve logic: weighted bias across bins with
-    // enough samples. This is the same computation as
-    // `compute_calibration_curve`'s `overconfidence_score`, but filtered to
-    // the domain category.
-    let mut bins: Vec<(u64, u64, f64)> = vec![(0, 0, 0.0); 10];
-    for record in &resolved {
-        let occurred = record.outcome.unwrap_or(false);
-        let bin_idx = ((record.probability * 10.0) as usize).min(9);
-        bins[bin_idx].0 += 1;
-        if occurred {
-            bins[bin_idx].1 += 1;
-        }
-        bins[bin_idx].2 += record.probability;
-    }
+    // Reuse the calibration-curve binning from `assess::accumulate_calibration_bins`,
+    // filtered to the domain category.
+    let (bins, _) = super::assess::accumulate_calibration_bins(&resolved);
 
     let mut weighted_bias = 0.0;
     let mut bias_weight = 0.0;

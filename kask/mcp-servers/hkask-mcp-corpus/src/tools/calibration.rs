@@ -396,7 +396,7 @@ fn export_bundle(request: ExportBundleRequest) -> Result<serde_json::Value, McpT
     }
     let identity: serde_json::Value =
         serde_json::from_slice(&fs::read(&identity_path).map_err(|error| {
-            crate::helpers::map_corpus_io_error(error, "Cannot read run identity")
+            hkask_mcp_server::server::map_io_error(error, "Cannot read run identity")
         })?)
         .map_err(|error| {
             McpToolError::invalid_argument(format!("run identity is not valid JSON: {error}"))
@@ -441,16 +441,16 @@ fn export_bundle(request: ExportBundleRequest) -> Result<serde_json::Value, McpT
         )));
     }
     fs::create_dir_all(&output_dir).map_err(|error| {
-        crate::helpers::map_corpus_io_error(error, "Cannot create the output dir")
+        hkask_mcp_server::server::map_io_error(error, "Cannot create the output dir")
     })?;
     let work_dir = output_dir.join(".export-work");
     if work_dir.exists() {
         fs::remove_dir_all(&work_dir).map_err(|error| {
-            crate::helpers::map_corpus_io_error(error, "Cannot clear a stale export work dir")
+            hkask_mcp_server::server::map_io_error(error, "Cannot clear a stale export work dir")
         })?;
     }
     fs::create_dir_all(&work_dir).map_err(|error| {
-        crate::helpers::map_corpus_io_error(error, "Cannot create the export work dir")
+        hkask_mcp_server::server::map_io_error(error, "Cannot create the export work dir")
     })?;
 
     let result = export_bundle_staged(
@@ -505,7 +505,10 @@ fn export_bundle_staged(
             let size = sidecar
                 .metadata()
                 .map_err(|error| {
-                    crate::helpers::map_corpus_io_error(error, "Cannot inspect an export sidecar")
+                    hkask_mcp_server::server::map_io_error(
+                        error,
+                        "Cannot inspect an export sidecar",
+                    )
                 })?
                 .len();
             if size > 0 {
@@ -514,7 +517,7 @@ fn export_bundle_staged(
                 )));
             }
             fs::remove_file(&sidecar).map_err(|error| {
-                crate::helpers::map_corpus_io_error(error, "Cannot remove an export sidecar")
+                hkask_mcp_server::server::map_io_error(error, "Cannot remove an export sidecar")
             })?;
         }
     }
@@ -533,14 +536,14 @@ fn export_bundle_staged(
     let identity_asset = output_dir.join("run-identity.json");
     let representations_asset = output_dir.join("representations-manifest.json");
     fs::copy(run_dir.join("run-identity.json"), &identity_asset).map_err(|error| {
-        crate::helpers::map_corpus_io_error(error, "Cannot place the run identity asset")
+        hkask_mcp_server::server::map_io_error(error, "Cannot place the run identity asset")
     })?;
     fs::copy(
         run_dir.join("representations").join("manifest.json"),
         &representations_asset,
     )
     .map_err(|error| {
-        crate::helpers::map_corpus_io_error(error, "Cannot place the representations asset")
+        hkask_mcp_server::server::map_io_error(error, "Cannot place the representations asset")
     })?;
     assets.push(BundleAsset {
         name: "run-identity.json".to_string(),
@@ -564,8 +567,9 @@ fn export_bundle_staged(
     let bundle_path = output_dir.join("bundle.json");
     let serialized = serde_json::to_vec_pretty(&bundle)
         .map_err(|error| McpToolError::internal(format!("bundle serialization failed: {error}")))?;
-    fs::write(&bundle_path, serialized)
-        .map_err(|error| crate::helpers::map_corpus_io_error(error, "Cannot write bundle.json"))?;
+    fs::write(&bundle_path, serialized).map_err(|error| {
+        hkask_mcp_server::server::map_io_error(error, "Cannot write bundle.json")
+    })?;
     // Round-trip through the production loader: the emitted file must
     // admit exactly as a later installation reads it.
     let reloaded = BundleManifest::load(&bundle_path).map_err(|error| {
@@ -587,7 +591,7 @@ fn export_bundle_staged(
     for asset in &reloaded.assets {
         total_bytes += fs::metadata(output_dir.join(&asset.name))
             .map_err(|error| {
-                crate::helpers::map_corpus_io_error(error, "Cannot measure a shipped asset")
+                hkask_mcp_server::server::map_io_error(error, "Cannot measure a shipped asset")
             })?
             .len();
     }
@@ -669,7 +673,8 @@ fn split_into_parts(
     source_id: &str,
 ) -> Result<Vec<BundleAsset>, McpToolError> {
     use std::io::Read;
-    let io = |error: std::io::Error, what: &str| crate::helpers::map_corpus_io_error(error, what);
+    let io =
+        |error: std::io::Error, what: &str| hkask_mcp_server::server::map_io_error(error, what);
     let mut source = fs::File::open(source)
         .map_err(|error| io(error, "Cannot open the rekeyed copy for splitting"))?;
     let mut assets: Vec<BundleAsset> = Vec::new();
@@ -742,13 +747,13 @@ fn split_into_parts(
 
 fn sha256_file(path: &Path) -> Result<String, McpToolError> {
     let mut file = fs::File::open(path).map_err(|error| {
-        crate::helpers::map_corpus_io_error(error, "Cannot open a file for hashing")
+        hkask_mcp_server::server::map_io_error(error, "Cannot open a file for hashing")
     })?;
     let mut hasher = Sha256::new();
     let mut buffer = [0_u8; 64 * 1024];
     loop {
         let read = std::io::Read::read(&mut file, &mut buffer).map_err(|error| {
-            crate::helpers::map_corpus_io_error(error, "Cannot read a file for hashing")
+            hkask_mcp_server::server::map_io_error(error, "Cannot read a file for hashing")
         })?;
         if read == 0 {
             break;

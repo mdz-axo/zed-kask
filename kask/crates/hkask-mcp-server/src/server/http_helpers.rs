@@ -25,3 +25,33 @@ pub fn classify_http_error(service: &str, status: reqwest::StatusCode, body: &st
         _ => McpToolError::internal(msg),
     }
 }
+
+/// Percent-encode a query-parameter value per RFC 3986 (unreserved + `+` for
+/// space). Prevents caller-controlled values from injecting extra query params
+/// (`&limit=...`) or truncating the URL (`#`).
+#[must_use]
+pub fn url_encode_query_value(s: &str) -> String {
+    let mut encoded = String::with_capacity(s.len() * 3);
+    for byte in s.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                encoded.push(byte as char);
+            }
+            b' ' => encoded.push('+'),
+            _ => {
+                encoded.push('%');
+                encoded.push(hex_digit(byte >> 4));
+                encoded.push(hex_digit(byte & 0x0f));
+            }
+        }
+    }
+    encoded
+}
+
+const fn hex_digit(nibble: u8) -> char {
+    match nibble {
+        0..=9 => (b'0' + nibble) as char,
+        10..=15 => (b'A' + (nibble - 10)) as char,
+        _ => '0',
+    }
+}

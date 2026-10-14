@@ -55,7 +55,7 @@ status: VERIFIED
 
 | Field | Role |
 |-------|------|
-| `vision_port: Arc<dyn InferencePort>` | Vision/chat AND media generation (image/video/speech/transcription) via `InferencePort::media_generate`; also `embed` and `list_vision_models` for the gallery embedding path |
+| `vision_port: Arc<dyn InferencePort>` | Vision/chat AND media generation (image/video/speech/transcription) via `InferencePort::media_generate`; also `embed` for the gallery embedding path |
 | `gallery_state: Arc<Mutex<Option<GalleryState>>>` | Currently-organized gallery; `None` until `gallery_organize` runs |
 | `gallery_store: Arc<GalleryStore>` | Durable SQLite-backed store (tags, faces, lineage, albums) |
 | `template_env: minijinja::Environment` | Jinja2 prompt templates for vision calls |
@@ -114,7 +114,7 @@ The kask settings UI can populate the five `HKASK_MEDIA_*_MODEL` overrides (TTS,
 - **ffmpeg** — required by all local video tools and `audio_trim`/`audio_concat`. `require_ffmpeg` returns `McpToolError::unavailable("ffmpeg not found on system PATH — video tools unavailable.")` when absent (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:328-338`). `video_info` additionally uses ffprobe, bundled with ffmpeg (`kask/mcp-servers/hkask-mcp-media/src/tools/processing.rs:1299` tool description).
 - **SerpApi** — required by `youtube_search` for structured discovery metadata. Search never invokes `yt-dlp`; missing credentials return `permission_denied` naming `HKASK_SERPAPI_API_KEY`.
 - **yt-dlp** — required only by `video_fetch` to retrieve media bytes for durable local publication from platform URLs (YouTube, Vimeo). It is not used for search or metadata. `require_yt_dlp` returns `unavailable` with install instructions when absent.
-- **Vision-capable provider** — required by describe/analyze/caption/expand-prompt tools. `require_vision` returns `permission_denied` directing the operator to enable a vision model in the kask inference provider settings (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:351-361`).
+- **Vision-capable provider** — required by describe/analyze/caption/expand-prompt tools. `require_vision` resolves `HKASK_MEDIA_VISION_MODEL` (`kask.models.media_vision_model`) and returns `permission_denied` naming `HKASK_MEDIA_VISION_MODEL` when unset (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:371-379`).
 
 **Image size cap:** gallery images larger than 32 MiB are rejected before base64 encoding to prevent OOM (`MAX_IMAGE_READ_BYTES`, `kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:61-63`).
 
@@ -773,14 +773,13 @@ live in git history (`1a8c500c12`..`42f885b0e3`).
 - **MF-7 publish wire contract — closed (live-verified 2026-10-14):** the
   object body `{"publish": true}` was REFUTED by the operator-authorized live
   probe 2026-10-07 (HTTP 400 twice, isolating the body shape); the corrected
-  bare-bool body (`serde_json::json!(publish)` in `src/tools/reduct.rs:1083`,
+  bare-bool body (`serde_json::json!(publish)` in `src/tools/reduct.rs:1085`,
   matching the v3 reference's property-endpoint payload convention on page 39)
-  was confirmed live 2026-10-14 after rebuilding and restarting `hkask-mcp-media`
-  against the operator's throwaway Axolotl project (`2771e9d5f4`, reel
-  `c1a49628a0`). Verbatim probe receipt:
-  `{"note":"the share token value is never returned; the public link is visible in the Reduct app","publish":true,"reel_id":"c1a49628a0","share_token_present":true,"source":"reduct_cloud"}`
-  (HTTP 200, 281 ms), independently confirmed by `reduct_reel_detail` read-back
-  (`{"block_state":"provider_map","blocks":{"4a69f06f":{"duration":1,"order":1,"title":"probe card","type":"title"}},"publication_state":"published","reel_id":"c1a49628a0","share_tokens":"redacted","source":"reduct_cloud","title":"MF-7 publish wire-name probe (throwaway — safe to delete)"}`).
+  was confirmed live 2026-10-14 in both directions (`true` and `false`) after
+  rebuilding and restarting `hkask-mcp-media` against the operator's throwaway
+  Axolotl project (`2771e9d5f4`, reel `c1a49628a0`). Verbatim probe receipts:
+  - `publish: true` → `{"note":"the share token value is never returned; the public link is visible in the Reduct app","publish":true,"reel_id":"c1a49628a0","share_token_present":true,"source":"reduct_cloud"}` (HTTP 200, 281 ms), independently confirmed by `reduct_reel_detail` read-back (`publication_state: "published"`).
+  - `publish: false` → `{"note":"the share token value is never returned; the public link is visible in the Reduct app","publish":false,"reel_id":"c1a49628a0","share_token_present":false,"source":"reduct_cloud"}` (HTTP 200, 204 ms), independently confirmed by `reduct_reel_detail` read-back (`publication_state: "unpublished"`, leaving the throwaway reel unpublished).
 - **MF-8 job-history ephemerality** — the job controller is in-memory,
   documented and surfaced in tool descriptions; trigger: a workflow that
   depends on job history across restarts reopens this as a persistence

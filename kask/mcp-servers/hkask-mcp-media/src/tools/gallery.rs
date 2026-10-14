@@ -200,7 +200,20 @@ impl MediaServer {
                 }
             };
 
-            let mut state = GalleryState::new(PathBuf::from(&path), gallery_mode.clone());
+            let raw_path = PathBuf::from(&path);
+            if !raw_path.exists() {
+                return Err(McpToolError::not_found(format!(
+                    "Gallery path does not exist: {}",
+                    raw_path.display()
+                )));
+            }
+            if !raw_path.is_dir() {
+                return Err(McpToolError::invalid_argument(format!(
+                    "Gallery path is not a directory: {}",
+                    raw_path.display()
+                )));
+            }
+            let mut state = GalleryState::new(raw_path, gallery_mode.clone());
             state.validate().map_err(map_media_error)?;
             let record = self
                 .gallery_store
@@ -691,7 +704,7 @@ impl MediaServer {
                 .render_prompt("caption", &vars)
                 .map_err(|e| McpToolError::internal(format!("Template render failed: {}", e)))?;
 
-            let (vision_model, _vision_label) = self.require_vision().await?;
+            let (vision_model, _vision_label) = self.require_vision()?;
             let params = hkask_types::template::LLMParameters::default();
             let image_b64 = crate::gallery::vision::load_image_as_png_base64(&image_url)
                 .await
@@ -774,7 +787,6 @@ impl MediaServer {
 
             let vision_label = self
                 .resolve_vision_model()
-                .await
                 .map(|(_, label)| label)
                 .unwrap_or_else(|| "none".to_string());
 
@@ -878,7 +890,7 @@ impl MediaServer {
                 .resolve_image_url(image_index)
                 .map_err(map_media_error)?;
 
-            let (vision_model, _vision_label) = self.require_vision().await?;
+            let (vision_model, _vision_label) = self.require_vision()?;
 
             let validation = vision::validate_face_reference(
                 &self.vision_port,
@@ -958,12 +970,24 @@ impl MediaServer {
                 })?
             };
 
-            if !folder.is_dir() {
-                return Err(McpToolError::invalid_argument(format!(
+            if !folder.exists() {
+                return Err(McpToolError::not_found(format!(
                     "Face folder does not exist: {}",
                     folder.display()
                 )));
             }
+            if !folder.is_dir() {
+                return Err(McpToolError::invalid_argument(format!(
+                    "Face folder is not a directory: {}",
+                    folder.display()
+                )));
+            }
+            let folder = folder.canonicalize().map_err(|e| {
+                hkask_mcp_server::server::map_io_error(
+                    e,
+                    &format!("Cannot resolve face folder '{}'", folder.display()),
+                )
+            })?;
 
             self.run_face_scan_folder(&folder, force).await
         })
@@ -1001,7 +1025,7 @@ impl MediaServer {
         execute_tool(self, "face_remove", async {
             self.gallery_store
                 .remove_face(&face_id)
-                .map_err(|e| McpToolError::not_found(format!("Face not found: {e}")))?;
+                .map_err(map_gallery_store_error)?;
             Ok(serde_json::json!({
                 "status": "removed",
                 "face_id": face_id,
@@ -1023,6 +1047,11 @@ impl MediaServer {
         }): Parameters<GalleryTimelineRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "gallery_timeline", async {
+            if !matches!(period.as_str(), "year" | "month" | "decade") {
+                return Err(McpToolError::invalid_argument(format!(
+                    "Invalid period '{period}': must be year, month, or decade"
+                )));
+            }
             let ga = self.access_gallery().map_err(map_media_error)?;
 
             // Asset identity travels with every timeline result so inline and
@@ -1057,10 +1086,14 @@ impl MediaServer {
 
                 let period_key = match period.as_str() {
                     "month" => date_str.chars().take(7).collect(),
-                    "decade" => date_str
-                        .get(..3)
-                        .map(|s| format!("{}0s", s))
-                        .unwrap_or_else(|| "unknown".to_string()),
+                    "decade" => {
+                        let prefix: String = date_str.chars().take(3).collect();
+                        if prefix.chars().count() == 3 {
+                            format!("{prefix}0s")
+                        } else {
+                            "unknown".to_string()
+                        }
+                    }
                     _ => date_str.chars().take(4).collect(),
                 };
 
@@ -1520,7 +1553,7 @@ impl MediaServer {
                             kind,
                             &record.absolute_path,
                             crate::omc::tool_to_omc("gallery_add_media"),
-                            Some(&crate::media_block::Provenance::for_tool(
+                            Some(&crate::media_block::provenance_for_tool(
                                 "gallery_add_media",
                                 serde_json::json!({"path": path, "media_type": kind}),
                                 None,

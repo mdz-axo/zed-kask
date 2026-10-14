@@ -572,17 +572,12 @@ pub(crate) fn synthesize_perspectives(
 // ── Calibration Tracking ────────────────────────────────────────────────────
 
 /// Compute a calibration curve from stored forecasts.
-pub fn compute_calibration_curve(store: &ForecastStore) -> Result<CalibrationCurve, ScenarioError> {
-    let resolved: Vec<&StoredForecastRecord> = store.resolved();
-
-    if resolved.is_empty() {
-        return Err(ScenarioError::NoForecastData);
-    }
-
+pub(crate) fn accumulate_calibration_bins(
+    resolved: &[&StoredForecastRecord],
+) -> (Vec<(u64, u64, f64)>, f64) {
     let mut bins: Vec<(u64, u64, f64)> = vec![(0, 0, 0.0); 10];
     let mut total_brier = 0.0;
-
-    for record in &resolved {
+    for record in resolved {
         let occurred = record.outcome.unwrap_or(false);
         let bin_idx = ((record.probability * 10.0) as usize).min(9);
         bins[bin_idx].0 += 1;
@@ -592,6 +587,17 @@ pub fn compute_calibration_curve(store: &ForecastStore) -> Result<CalibrationCur
         bins[bin_idx].2 += record.probability;
         total_brier += brier_score(record.probability, occurred);
     }
+    (bins, total_brier)
+}
+
+pub fn compute_calibration_curve(store: &ForecastStore) -> Result<CalibrationCurve, ScenarioError> {
+    let resolved: Vec<&StoredForecastRecord> = store.resolved();
+
+    if resolved.is_empty() {
+        return Err(ScenarioError::NoForecastData);
+    }
+
+    let (bins, total_brier) = accumulate_calibration_bins(&resolved);
 
     let n = resolved.len() as f64;
     let overall_brier = total_brier / n;

@@ -217,7 +217,7 @@ pub(crate) fn read_complete_adjudications(
             )));
         }
         let prompt = prompt_by_id.get(row.prompt_id.as_str()).ok_or_else(|| {
-            McpToolError::invalid_argument(format!(
+            McpToolError::not_found(format!(
                 "Adjudication references unknown prompt_id '{}'",
                 row.prompt_id
             ))
@@ -310,7 +310,7 @@ pub(crate) fn read_complete_adjudications(
             .filter(|prompt| !decisions.contains_key(&prompt.prompt_id))
             .map(|prompt| prompt.prompt_id.as_str())
             .collect::<Vec<_>>();
-        return Err(McpToolError::invalid_argument(format!(
+        return Err(McpToolError::failed_precondition(format!(
             "Reviewed adjudications cover {} of {} prompts; missing: {}",
             decisions.len(),
             prompts.len(),

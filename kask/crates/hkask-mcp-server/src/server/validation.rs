@@ -167,6 +167,28 @@ pub fn map_memory_store_error(
     }
 }
 
+/// Classify a `DatabaseError` from opening a SQLCipher/SQLite database into the
+/// appropriate `McpToolError` kind: a passphrase mismatch or key-derivation
+/// failure is an auth/credential failure (`permission_denied`) — `KeyDerivation`
+/// is raised when `HKASK_DB_PASSPHRASE` is unset/empty, which is a missing
+/// credential, not an infrastructure fault; a corrupted DB file is a
+/// caller-fixable data problem (`invalid_argument`); SQLite/SQLCipher
+/// failures are infrastructure (`internal`).
+#[must_use = "result must be used"]
+pub fn map_database_error(error: hkask_storage::DatabaseError, context: &str) -> McpToolError {
+    use hkask_storage::DatabaseError;
+    let message = format!("{context}: {error}");
+    match error {
+        DatabaseError::PassphraseMismatch(_) => McpToolError::permission_denied(message),
+        DatabaseError::KeyDerivation(_) => McpToolError::permission_denied(format!(
+            "{message}. Set HKASK_DB_PASSPHRASE to a non-empty passphrase"
+        )),
+        DatabaseError::Corrupted(_) => McpToolError::invalid_argument(message),
+        DatabaseError::Sqlite(_) | DatabaseError::SqlCipher(_) => McpToolError::internal(message),
+        _ => McpToolError::internal(message),
+    }
+}
+
 /// Default read size cap for [`read_capped`] (32 MiB). Bounds a hostile or
 /// mistaken path from exhausting memory (CWE-400).
 ///

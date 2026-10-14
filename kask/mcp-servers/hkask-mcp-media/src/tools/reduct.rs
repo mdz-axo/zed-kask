@@ -1069,9 +1069,11 @@ async fn edit_recording_highlight(
 /// an unnamed `<class 'bool'>` body parameter — not a lost name, the
 /// bare-value shape). LIVE-PINNED (MF-7 closed 2026-10-14): the object form
 /// `{"publish": true}` was refuted 2026-10-07 (HTTP 400 twice); the bare-bool
-/// form was confirmed live 2026-10-14 on the throwaway Axolotl reel
-/// `c1a49628a0` (HTTP 200, `publish: true`, `share_token_present: true`,
-/// independent `reduct_reel_detail` read-back `publication_state: "published"`).
+/// form was confirmed live 2026-10-14 in both directions (`true` and `false`)
+/// on the throwaway Axolotl reel `c1a49628a0` (`publish: true` →
+/// `share_token_present: true` + `publication_state: "published"`;
+/// `publish: false` → `share_token_present: false` +
+/// `publication_state: "unpublished"`).
 /// Acknowledgement `{"<reel id>": {"publish": ..., "share_token": ...}}`.
 async fn publish_reel(
     key: Option<&str>,

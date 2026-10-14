@@ -903,8 +903,8 @@ async fn memory_citation_round_trip_from_tool_surface() {
 }
 
 /// Evidence citations that name no existing h_mem must be rejected as
-/// `invalid_argument` with the reason surfaced — both a well-formed UUID
-/// that matches no row and a malformed ID that cannot parse.
+/// `not_found`, while a malformed ID that cannot parse as a UUID is rejected
+/// as `invalid_argument`.
 #[tokio::test]
 async fn memory_insert_rejects_missing_or_malformed_evidence() {
     let server = make_server();
@@ -920,8 +920,8 @@ async fn memory_insert_rejects_missing_or_malformed_evidence() {
         .await
         .expect_err("a citation matching no h_mem must fail");
     assert!(
-        matches!(error.kind, hkask_types::McpErrorKind::InvalidArgument),
-        "a missing citation is an argument error, not internal — got: {error:?}",
+        matches!(error.kind, hkask_types::McpErrorKind::NotFound),
+        "a missing citation is not_found, not internal — got: {error:?}",
     );
     assert!(
         error.message.contains("not found"),

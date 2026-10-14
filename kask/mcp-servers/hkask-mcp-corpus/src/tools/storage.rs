@@ -1,10 +1,10 @@
 //! Storage and query tools — cache, passage query, similarity.
-use crate::helpers::map_corpus_io_error;
 use crate::index::{IndexedPassage, Retrieval, RetrievedPassage};
 use crate::{
     CorpusServer, LLMParameters, McpToolError, Parameters, execute_tool, json,
     render_docproc_template, tool, tool_router,
 };
+use hkask_mcp_server::server::{map_io_error, write_contained};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
@@ -38,7 +38,7 @@ impl CorpusServer {
             );
 
             if let Err(e) = std::fs::create_dir_all(&cache_dir) {
-                return Err(map_corpus_io_error(
+                return Err(map_io_error(
                     e,
                     &format!("Failed to create cache directory '{}'", cache_dir.display()),
                 ));
@@ -55,58 +55,50 @@ impl CorpusServer {
                     }
                 })
                 .collect();
-            let cache_path = cache_dir.join(format!("{}.md", safe_label));
+            let cache_target = cache_dir.join(format!("{}.md", safe_label));
+            let cache_target_str = cache_target
+                .to_str()
+                .ok_or_else(|| McpToolError::invalid_argument("cache path is not valid UTF-8"))?;
+            let cache_path = write_contained(cache_target_str, content.as_bytes())?;
 
-            match std::fs::write(&cache_path, &content) {
-                Ok(()) => {
-                    // Provenance sidecar (task c1d65229): the originating search
-                    // provider travels with the cached file so `chunk_directory`
-                    // can stamp it on chunk rows; Brave-derived content is then
-                    // excluded from QA/training-bound paths (Brave API ToS
-                    // clause xiii bans training AI models on Search Results).
-                    // Fail closed — a lost sidecar breaks the downstream
-                    // license exclusion.
-                    let provider = origin_provider
-                        .as_deref()
-                        .map(str::trim)
-                        .filter(|value| !value.is_empty());
-                    if let Some(provider) = provider {
-                        let sidecar = cache_dir.join(format!("{}.origin.json", safe_label));
-                        let body = serde_json::to_vec(&json!({
-                            "label": &label,
-                            "origin_provider": provider,
-                        }))
-                        .map_err(|e| {
-                            McpToolError::internal(format!("Serialize origin sidecar: {e}"))
-                        })?;
-                        std::fs::write(&sidecar, body).map_err(|e| {
-                            map_corpus_io_error(
-                                e,
-                                &format!("Failed to write origin sidecar '{}'", sidecar.display()),
-                            )
-                        })?;
-                    }
-                    let mut result = json!({
-                        "label": label,
-                        "path": cache_path.display().to_string(),
-                        "size_bytes": content.len(),
-                    });
-                    if let Some(provider) = provider {
-                        result[hkask_types::corpus::ORIGIN_PROVIDER_FIELD] = json!(provider);
-                        result["origin_sidecar"] = json!(
-                            cache_dir
-                                .join(format!("{}.origin.json", safe_label))
-                                .display()
-                                .to_string()
-                        );
-                    }
-                    Ok(result)
-                }
-                Err(e) => Err(map_corpus_io_error(
-                    e,
-                    &format!("Failed to write cache file '{}'", cache_path.display()),
-                )),
+            // Provenance sidecar (task c1d65229): the originating search
+            // provider travels with the cached file so `chunk_directory`
+            // can stamp it on chunk rows; Brave-derived content is then
+            // excluded from QA/training-bound paths (Brave API ToS
+            // clause xiii bans training AI models on Search Results).
+            // Fail closed — a lost sidecar breaks the downstream
+            // license exclusion.
+            let provider = origin_provider
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty());
+            if let Some(provider) = provider {
+                let sidecar = cache_dir.join(format!("{}.origin.json", safe_label));
+                let sidecar_str = sidecar.to_str().ok_or_else(|| {
+                    McpToolError::invalid_argument("sidecar path is not valid UTF-8")
+                })?;
+                let body = serde_json::to_vec(&json!({
+                    "label": &label,
+                    "origin_provider": provider,
+                }))
+                .map_err(|e| McpToolError::internal(format!("Serialize origin sidecar: {e}")))?;
+                write_contained(sidecar_str, &body)?;
             }
+            let mut result = json!({
+                "label": label,
+                "path": cache_path.display().to_string(),
+                "size_bytes": content.len(),
+            });
+            if let Some(provider) = provider {
+                result[hkask_types::corpus::ORIGIN_PROVIDER_FIELD] = json!(provider);
+                result["origin_sidecar"] = json!(
+                    cache_dir
+                        .join(format!("{}.origin.json", safe_label))
+                        .display()
+                        .to_string()
+                );
+            }
+            Ok(result)
         })
         .await
     }

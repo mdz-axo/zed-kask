@@ -259,7 +259,7 @@ impl SwarmConfig {
                     .collect::<Vec<_>>()
             });
         let memory_passphrase = non_empty_or_env(
-            std::env::var("HKASK_DB_PASSPHRASE").ok(),
+            hkask_mcp_server::server::resolve_db_passphrase(&std::collections::HashMap::new()).ok(),
             default.memory_passphrase,
         );
         let memory_db_raw = std::env::var("HKASK_SWARM_MEMORY_DB")

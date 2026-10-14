@@ -4,18 +4,8 @@ use crate::{HkaskSettings, json};
 use hkask_mcp_server::server::McpToolError;
 use serde::de::DeserializeOwned;
 
-/// Classify a `std::io::Error` from a caller-facing file operation into the
-/// appropriate `McpToolError` kind. Alias of the canonical
-/// `hkask_mcp_server::server::map_io_error` (NotFound/PermissionDenied are
-/// caller-fixable; others remain internal) kept under the corpus-local name
-/// so existing call sites stay readable.
-pub(crate) use hkask_mcp_server::server::map_io_error as map_corpus_io_error;
-
 /// Classify a `MemoryStoreError` from a memory-DB operation into the
-/// appropriate `McpToolError` kind. Alias of the canonical
-/// `hkask_mcp_server::server::map_memory_store_error` (shared with the
-/// training server) kept under the corpus-local name so existing call sites
-/// stay readable.
+/// appropriate `McpToolError` kind.
 pub(crate) use hkask_mcp_server::server::map_memory_store_error;
 
 // ── Corpus DB passphrase ───────────────────────────────────────────────────
@@ -148,31 +138,6 @@ pub(crate) fn map_triage_error(error: crate::ocr::triage::TriageError) -> McpToo
     }
 }
 
-/// Classify a `DatabaseError` from opening a memory DB into the appropriate
-/// `McpToolError` kind: a passphrase mismatch or key-derivation failure is
-/// an auth/credential failure (`permission_denied`) — `KeyDerivation` is
-/// raised when `HKASK_DB_PASSPHRASE` is unset/empty, which is a missing
-/// credential, not an infrastructure fault; a corrupted DB file is a
-/// caller-fixable data problem (`invalid_argument`); SQLite/SQLCipher
-/// failures are infrastructure (`internal`).
-pub(crate) fn map_database_error(
-    error: hkask_storage::DatabaseError,
-    context: &str,
-) -> McpToolError {
-    use hkask_storage::DatabaseError;
-    let message = format!("{context}: {error}");
-    match error {
-        DatabaseError::PassphraseMismatch(_) => McpToolError::permission_denied(message),
-        DatabaseError::KeyDerivation(_) => McpToolError::permission_denied(format!(
-            "{message}. Set HKASK_DB_PASSPHRASE to a non-empty passphrase"
-        )),
-        DatabaseError::Corrupted(_) => McpToolError::invalid_argument(message),
-        DatabaseError::Sqlite(_) | DatabaseError::SqlCipher(_) => McpToolError::internal(message),
-        // Non-exhaustive enum: future variants stay internal (conservative).
-        _ => McpToolError::internal(message),
-    }
-}
-
 /// `ServiceError` from the compose pipeline into the appropriate
 /// `McpToolError` kind via its semantic `ErrorKind`: `Forbidden` → `permission_denied`,
 /// `BadRequest` → `invalid_argument`,
@@ -224,7 +189,7 @@ pub(crate) fn open_memory_store(
     }
     let dim = crate::embedding_dim();
     hkask_memory::MemoryStore::open(db_path, passphrase, dim)
-        .map_err(|e| map_database_error(e, "Cannot open memory DB"))
+        .map_err(|e| hkask_mcp_server::server::map_database_error(e, "Cannot open memory DB"))
 }
 
 /// Write `content` to a caller-supplied `output` path under containment.

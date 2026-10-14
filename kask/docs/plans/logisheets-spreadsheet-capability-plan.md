@@ -394,9 +394,9 @@ Evidence (scratch harness outside the workspace, Rust 1.97.1):
 moved to `hkask_types::block_provenance` — now `Serialize` + `PartialEq` as
 well, so MCP-side block construction can author it directly;
 `hkask-tool-invoker` re-exports it and all six widget/panel consumers compile
-unchanged (zero call-site edits; the media server's hand-mirrored `Provenance`
-duplicate in `hkask-mcp-media/media_block.rs` is now removable as
-follow-up). New `hkask_types::spreadsheet` module: `AnalyticalTable` /
+unchanged (`hkask-mcp-media/src/media_block.rs` unified onto
+`hkask_types::BlockProvenance` 2026-10-14, deleting its local `Provenance`
+duplicate). New `hkask_types::spreadsheet` module: `AnalyticalTable` /
 `TableColumn` / `TableValue` / `ColumnKind`, `CellCoordinate`,
 `SpreadsheetViewport`, `SpreadsheetArtifactRef` (opaque single-segment ids —
 path escape rejected at the contract), `SpreadsheetAccess`

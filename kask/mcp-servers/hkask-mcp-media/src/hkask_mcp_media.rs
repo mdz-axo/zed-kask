@@ -181,9 +181,8 @@ hkask_mcp_server::mcp_server!(
         /// (image/video/speech/transcription) dispatches to the local
         /// `MediaRouter` with this process's env-injected keys — no IPC
         /// round-trip. `generate_vision` handles
-        /// face/object/color/composition/caption analysis; `embed` and
-        /// `list_vision_models` handle the gallery embedding and
-        /// model-resolution paths.
+        /// face/object/color/composition/caption analysis; `embed` handles
+        /// the gallery embedding path.
         pub vision_port: Arc<dyn InferencePort>,
         pub gallery_state: Arc<Mutex<Option<GalleryState>>>,
         pub gallery_store: Arc<GalleryStore>,
@@ -370,14 +369,15 @@ impl MediaServer {
         }
     }
 
-    /// Return the best available vision model or an error if none is configured.
-    async fn require_vision(&self) -> Result<(String, String), McpToolError> {
-        self.resolve_vision_model().await.ok_or_else(|| {
-            McpToolError::permission_denied(
-                "No vision-capable provider configured. Vision LLMs route through zed's \
-                 LanguageModelRegistry via the inference IPC bridge — enable a vision \
-                 model in the kask inference provider settings.",
-            )
+    /// Return the configured vision model (`HKASK_MEDIA_VISION_MODEL`) or a
+    /// fail-visible `permission_denied` error naming the env var.
+    fn require_vision(&self) -> Result<(String, String), McpToolError> {
+        self.resolve_vision_model().ok_or_else(|| {
+            McpToolError::permission_denied(format!(
+                "no vision model configured — set {} (injected from kask.models.media_vision_model); \
+                 kask never falls back to a hidden code constant or catalog guess",
+                models::VISION_ENV
+            ))
         })
     }
 
@@ -5499,6 +5499,7 @@ mod gallery_lifecycle_tests {
     type TestResult = Result<(), Box<dyn std::error::Error>>;
 
     fn server(database: &Path, inference: Arc<dyn InferencePort>) -> MediaServer {
+        unsafe { std::env::set_var(crate::models::VISION_ENV, "OpenRouter/test-vision") };
         let pool = SqliteDriver::file_pool(database.to_str().expect("UTF-8 fixture path"))
             .expect("unencrypted SQLite");
         let store =
@@ -6060,10 +6061,9 @@ mod gallery_lifecycle_tests {
     }
 
     /// The shared vision test double: `vision_response` supplies the
-    /// per-test `generate_vision` text and `list_models` advertises the
-    /// vision-capable test model the analysis path resolves. The `barrier`
-    /// variant parks the first call on `entered`/`resume` so a test can
-    /// switch gallery state mid-analysis.
+    /// per-test `generate_vision` text. The `barrier` variant parks the
+    /// first call on `entered`/`resume` so a test can switch gallery state
+    /// mid-analysis.
     struct StubVisionPort {
         entered: tokio::sync::Notify,
         resume: tokio::sync::Notify,
@@ -6132,15 +6132,6 @@ mod gallery_lifecycle_tests {
                 Err(hkask_types::InferenceError::NotConfigured(
                     "test only supports vision".into(),
                 ))
-            })
-        },
-        list_models(self): {
-            Box::pin(async {
-                Ok(vec![hkask_types::ports::ModelEntry {
-                    prefixed_name: "OpenRouter/test-vision".into(),
-                    model: "test-vision".into(),
-                    supports_vision: true,
-                }])
             })
         },
         generate_vision(self, prompt, images): {
@@ -6361,15 +6352,6 @@ mod gallery_lifecycle_tests {
                 Err(hkask_types::InferenceError::NotConfigured(
                     "test only supports media_generate".into(),
                 ))
-            })
-        },
-        list_models(self): {
-            Box::pin(async {
-                Ok(vec![hkask_types::ports::ModelEntry {
-                    prefixed_name: "OpenRouter/test-vision".into(),
-                    model: "test-vision".into(),
-                    supports_vision: true,
-                }])
             })
         },
         generate_vision(self, _prompt, _images): {

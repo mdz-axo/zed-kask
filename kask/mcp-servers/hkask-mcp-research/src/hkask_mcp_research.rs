@@ -216,55 +216,26 @@ pub(crate) fn map_db_error(e: anyhow::Error) -> McpToolError {
     McpToolError::internal(message)
 }
 
-/// The run-ledger field shape shared by the search and find-similar
-/// result outputs: both carry url, title, published, source, and a content
-/// preview falling back to the description as the excerpt.
-trait RunSourceFields {
-    fn url(&self) -> &str;
-    fn title(&self) -> &str;
-    fn published(&self) -> Option<&str>;
-    fn source(&self) -> Option<&str>;
-    fn excerpt(&self) -> Option<String>;
-}
-
-macro_rules! impl_run_source_fields {
-    ($ty:ty) => {
-        impl RunSourceFields for $ty {
-            fn url(&self) -> &str {
-                &self.url
-            }
-            fn title(&self) -> &str {
-                &self.title
-            }
-            fn published(&self) -> Option<&str> {
-                self.published.as_deref()
-            }
-            fn source(&self) -> Option<&str> {
-                self.source.as_deref()
-            }
-            fn excerpt(&self) -> Option<String> {
-                self.content_preview
-                    .clone()
-                    .or_else(|| self.description.clone())
-            }
-        }
-    };
-}
-impl_run_source_fields!(SearchResultOutput);
-impl_run_source_fields!(FindSimilarResultOutput);
-
 /// Map one search or find-similar result to its run-ledger record — the
 /// shared field shape of the two ledger appends. `provider` is the
 /// caller's variation: the search path names the result's contributing
 /// providers, the find-similar path names Exa (the findSimilar origin).
-fn run_source_record(result: &impl RunSourceFields, provider: Option<String>) -> RunSourceRecord {
+fn run_source_record(
+    url: &str,
+    title: &str,
+    published: Option<&str>,
+    source: Option<&str>,
+    content_preview: Option<&str>,
+    description: Option<&str>,
+    provider: Option<String>,
+) -> RunSourceRecord {
     RunSourceRecord {
-        url: result.url().to_string(),
+        url: url.to_string(),
         provider,
-        title: Some(result.title().to_string()),
-        published: result.published().map(str::to_string),
-        source: result.source().map(str::to_string),
-        excerpt: result.excerpt(),
+        title: Some(title.to_string()),
+        published: published.map(str::to_string),
+        source: source.map(str::to_string),
+        excerpt: content_preview.or(description).map(str::to_string),
     }
 }
 
@@ -667,7 +638,17 @@ impl ResearchServer {
                 let records: Vec<RunSourceRecord> = search_output
                     .results
                     .iter()
-                    .map(|result| run_source_record(result, result.providers.first().cloned()))
+                    .map(|result| {
+                        run_source_record(
+                            &result.url,
+                            &result.title,
+                            result.published.as_deref(),
+                            result.source.as_deref(),
+                            result.content_preview.as_deref(),
+                            result.description.as_deref(),
+                            result.providers.first().cloned(),
+                        )
+                    })
                     .collect();
                 let note = self.append_run_ledger(run_id, records).await;
                 output["run_ledger"] = note;
@@ -737,7 +718,17 @@ impl ResearchServer {
                 let records: Vec<RunSourceRecord> = fs_output
                     .results
                     .iter()
-                    .map(|result| run_source_record(result, Some("exa".to_string())))
+                    .map(|result| {
+                        run_source_record(
+                            &result.url,
+                            &result.title,
+                            result.published.as_deref(),
+                            result.source.as_deref(),
+                            result.content_preview.as_deref(),
+                            result.description.as_deref(),
+                            Some("exa".to_string()),
+                        )
+                    })
                     .collect();
                 let note = self.append_run_ledger(run_id, records).await;
                 output["run_ledger"] = note;

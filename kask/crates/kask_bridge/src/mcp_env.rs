@@ -381,30 +381,75 @@ pub(crate) fn emit_media_env(
     }
 }
 
-/// Pass through operator shell overrides for server knobs that have no
-/// `KaskSettings` field. These are read by the servers via `std::env::var`
-/// with in-code defaults, but under governed launch the child environment is
-/// cleared (`cmd.env_clear()`), so a shell-set value never reaches the
-/// process unless `mcp_env()` carries it and the server's `config_env`
-/// allowlist admits it. Without this passthrough, the allowlist entries for
-/// these vars advertise a delivery path that nothing sources (an
-/// allowlist entry naming a credential that nothing ever sources, in
-/// config form). Only non-empty parent values are forwarded — an empty shell
-/// var is not a meaningful override.
-const OPERATOR_OVERRIDE_ENV_VARS: &[&str] = &[
-    // swarm — event-store path + retention knobs (hkask_mcp_swarm.rs,
-    // local_tools.rs).
-    "HKASK_SWARM_EVENTS_PATH",
-    "HKASK_SWARM_BODY_RETENTION_HOURS",
-    "HKASK_SWARM_ROLLOUT_RETENTION_DAYS",
+/// Settings-struct-backed `config_env` keys emitted by `KaskSettings::mcp_env`.
+///
+/// These are governed by `KaskSettings` fields (including deliberate `Default`
+/// suppression so unset settings fall back to server defaults). Every OTHER
+/// `BuiltinMcpServer::config_env` key is an operator/process env override with
+/// no `KaskSettings` field, forwarded from the parent environment by
+/// [`emit_operator_override_env`] so it survives `cmd.env_clear()`.
+const SETTINGS_BACKED_CONFIG_ENV_VARS: &[&str] = &[
+    "HKASK_DATA_DIR",
+    "HKASK_ARTIFACTS_DIR",
+    "HKASK_MAX_CONCURRENCY",
+    "HKASK_WEBID",
+    "HKASK_CURATOR_WEBID",
+    "HKASK_MEMORY_DISTILLATION_CADENCE_SECS",
+    "HKASK_MEMORY_DISTILLATION_IDLE_SECS",
+    "HKASK_MEMORY_FORGETTING_DAYS",
+    "HKASK_MEMORY_LIFE_DAYS",
+    "HKASK_MCP_SERVER_IDS",
+    "HKASK_RESEARCH_DB",
+    "HKASK_CHRONIC_STALENESS_DAYS",
+    "HKASK_INVESTOR_REQUIRED_RETURN",
+    "HKASK_FERMI_DEFAULTS",
+    "HKASK_TRANSACTIONS_DIR",
+    "HKASK_EMBEDDING_DIM",
+    "HKASK_EMBEDDING_MODEL",
+    "HKASK_TEMPLATE_ROOT",
+    "HKASK_SCENARIOS_DATA",
+    "HKASK_PREDICTION_MARKETS_DATA",
+    "HKASK_PREDICTION_MARKETS_CACHE_TTL_SECS",
+    "HKASK_PREDICTION_MARKETS_BASE_EVENTS",
+    "HKASK_SWARM_MODE",
+    "HKASK_ABW_API_URL",
+    "HKASK_ABW_MAX_CREDITS",
+    "HKASK_ABW_CURATOR_CONSENT_DEFAULT",
+    "HKASK_LOCAL_AGENTS_DIR",
+    "HKASK_LOCAL_SWARMS_DIR",
+    "HKASK_ABW_DEFAULT_AGENT_MODEL",
+    "HKASK_A2A_HTTP_ENABLE",
+    "HKASK_SWARM_MEMORY_DB",
+    "HKASK_SWARM_EMBEDDING_DIM",
+    "HKASK_TRAINING_HOST",
+    "HKASK_TRAINING_CACHE_DIR",
+    "HKASK_MEDIA_TTS_MODEL",
+    "HKASK_MEDIA_STT_MODEL",
+    "HKASK_MEDIA_VISION_MODEL",
+    "HKASK_MEDIA_IMAGE_GEN_MODEL",
+    "HKASK_MEDIA_VIDEO_MODEL",
+    "HKASK_DEFAULT_MODEL",
+    "HKASK_CLASSIFIER_MODEL",
+    hkask_inference::model_constants::QA_GENERATION_MODEL_ENV,
+    "HKASK_OCR_MODEL",
+    "HKASK_RERANK_MODEL",
 ];
 
+/// Pass through operator/process overrides for server `config_env` knobs that
+/// have no `KaskSettings` field. Derived directly from
+/// [`crate::BUILT_IN_MCP_SERVERS`] so every allowlisted `config_env` key has a
+/// real delivery source across `cmd.env_clear()` without a parallel static list.
 pub(crate) fn emit_operator_override_env(env: &mut std::collections::HashMap<String, String>) {
-    for name in OPERATOR_OVERRIDE_ENV_VARS {
-        if let Ok(value) = std::env::var(name)
-            && !value.trim().is_empty()
-        {
-            env.insert(name.to_string(), value);
+    for server in crate::BUILT_IN_MCP_SERVERS {
+        for &name in server.config_env {
+            if SETTINGS_BACKED_CONFIG_ENV_VARS.contains(&name) || env.contains_key(name) {
+                continue;
+            }
+            if let Ok(value) = std::env::var(name)
+                && !value.trim().is_empty()
+            {
+                env.insert(name.to_string(), value);
+            }
         }
     }
 }

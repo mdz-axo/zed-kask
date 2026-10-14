@@ -8,8 +8,8 @@
 //! and generates a corpus.yaml. `corpus_cache_work` caches extracted text
 //! content to disk for reuse by the embedding pipeline.
 
-use crate::helpers::map_corpus_io_error;
 use crate::{CorpusServer, McpToolError, Parameters, execute_tool, tool, tool_router};
+use hkask_mcp_server::server::{McpToolError, map_io_error, write_contained};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -206,77 +206,50 @@ impl CorpusServer {
             }
 
             let cache_dir = crate::path_safety::contain_for_write(&params.cache_dir)?;
-            // zed-kask: D-seam — F4. Containing only `cache_dir` and then
-            // joining the leaf afterward leaves the leaf itself unvalidated:
-            // an existing symlink at `{slug}.txt` (planted earlier, or the
-            // ancestor directory retargeted between this check and the write
-            // below) would redirect the write outside the allowed root.
-            // Re-run containment on the full joined path so the leaf's own
-            // symlink chain is resolved and checked, not just its parent's.
-            // This closes the "existing symlink leaf" case; it does not by
-            // itself close the TOCTOU race where a symlink is planted in the
-            // gap between this check and the `std::fs::write` below — that
-            // requires a symlink-resistant atomic open (O_NOFOLLOW), tracked
-            // as follow-up scope, not claimed fixed here.
-            let cache_path = crate::path_safety::contain_for_write(
-                cache_dir
-                    .join(format!("{}.txt", params.slug))
-                    .to_str()
-                    .ok_or_else(|| {
-                        McpToolError::invalid_argument("cache path is not valid UTF-8")
-                    })?,
-            )?;
-
             if let Err(e) = std::fs::create_dir_all(&cache_dir) {
-                return Err(map_corpus_io_error(
+                return Err(map_io_error(
                     e,
                     &format!("Failed to create cache directory '{}'", cache_dir.display()),
                 ));
             }
 
+            let cache_target = cache_dir.join(format!("{}.txt", params.slug));
+            let cache_target_str = cache_target
+                .to_str()
+                .ok_or_else(|| McpToolError::invalid_argument("cache path is not valid UTF-8"))?;
             let bytes = params.content.as_bytes();
-            match std::fs::write(&cache_path, bytes) {
-                Ok(()) => {
-                    // Provenance sidecar (task c1d65229): the originating
-                    // search provider travels with the cached file so
-                    // `chunk_directory` can stamp it on chunk rows. Fail closed
-                    // — a lost sidecar breaks the downstream license exclusion.
-                    let provider = params
-                        .origin_provider
-                        .as_deref()
-                        .map(str::trim)
-                        .filter(|value| !value.is_empty());
-                    if let Some(provider) = provider {
-                        let sidecar = cache_dir.join(format!("{}.origin.json", params.slug));
-                        let body = serde_json::to_vec(&serde_json::json!({
-                            "slug": &params.slug,
-                            "origin_provider": provider,
-                        }))
-                        .map_err(|e| {
-                            McpToolError::internal(format!("Serialize origin sidecar: {e}"))
-                        })?;
-                        std::fs::write(&sidecar, body).map_err(|e| {
-                            map_corpus_io_error(
-                                e,
-                                &format!("Failed to write origin sidecar '{}'", sidecar.display()),
-                            )
-                        })?;
-                    }
-                    let result = CacheWorkResult {
-                        slug: params.slug.clone(),
-                        path: cache_path.to_string_lossy().to_string(),
-                        bytes_written: bytes.len() as u64,
-                        origin_provider: provider.map(str::to_string),
-                    };
-                    let output = serde_json::to_value(&result)
-                        .unwrap_or_else(|_| serde_json::json!({"error": "serialization failed"}));
-                    Ok(output)
-                }
-                Err(e) => Err(map_corpus_io_error(
-                    e,
-                    &format!("Failed to write cache file '{}'", cache_path.display()),
-                )),
+            let cache_path = write_contained(cache_target_str, bytes)?;
+
+            // Provenance sidecar (task c1d65229): the originating
+            // search provider travels with the cached file so
+            // `chunk_directory` can stamp it on chunk rows. Fail closed
+            // — a lost sidecar breaks the downstream license exclusion.
+            let provider = params
+                .origin_provider
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty());
+            if let Some(provider) = provider {
+                let sidecar = cache_dir.join(format!("{}.origin.json", params.slug));
+                let sidecar_str = sidecar.to_str().ok_or_else(|| {
+                    McpToolError::invalid_argument("sidecar path is not valid UTF-8")
+                })?;
+                let body = serde_json::to_vec(&serde_json::json!({
+                    "slug": &params.slug,
+                    "origin_provider": provider,
+                }))
+                .map_err(|e| McpToolError::internal(format!("Serialize origin sidecar: {e}")))?;
+                write_contained(sidecar_str, &body)?;
             }
+            let result = CacheWorkResult {
+                slug: params.slug.clone(),
+                path: cache_path.to_string_lossy().to_string(),
+                bytes_written: bytes.len() as u64,
+                origin_provider: provider.map(str::to_string),
+            };
+            let output = serde_json::to_value(&result)
+                .unwrap_or_else(|_| serde_json::json!({"error": "serialization failed"}));
+            Ok(output)
         })
         .await
     }

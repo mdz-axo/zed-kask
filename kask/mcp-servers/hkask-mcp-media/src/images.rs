@@ -106,8 +106,7 @@ fn split_model_label(prefixed: String) -> (String, String) {
 }
 
 /// Pure core of the env-configured vision model resolution: `Some(value)`
-/// resolves to (prefixed, label), `None`/blank values resolve to `None`
-/// (the registry heuristic then picks).
+/// resolves to (prefixed, label), `None`/blank values resolve to `None`.
 fn configured_vision_model_from(env_value: Option<String>) -> Option<(String, String)> {
     env_value
         .filter(|m| !m.trim().is_empty())
@@ -135,43 +134,11 @@ impl AnalysisRunResult {
 }
 
 impl MediaServer {
-    /// Resolve the vision model for the tagging pipelines.
-    ///
-    /// The env-configured model (settings default or operator override,
-    /// injected as `HKASK_MEDIA_VISION_MODEL`) wins — deterministic. The
-    /// registry heuristic below is the fallback for direct-CLI runs without
-    /// injected env: it picks the first OpenRouter vision model the registry
-    /// reports, which is whatever the catalog lists first — the live gap
-    /// 2026-09-04 resolved to a reasoning-mandatory model that rejected
-    /// every non-reasoning tagging call ("Reasoning is mandatory for this
-    /// endpoint and cannot be disabled").
-    pub(crate) async fn resolve_vision_model(&self) -> Option<(String, String)> {
-        if let Some(configured) = configured_vision_model() {
-            return Some(configured);
-        }
-
-        let models = match self.vision_port.list_vision_models().await {
-            Ok(models) => models,
-            Err(e) => {
-                tracing::warn!(
-                    target: "hkask.media",
-                    error = %e,
-                    "list_vision_models failed — inference port unavailable, returning None"
-                );
-                return None;
-            }
-        };
-
-        for model in &models {
-            // Match case-insensitively: the IPC model list uses zed provider
-            // ids such as "openrouter", not the display name "OpenRouter".
-            let prefix = model.prefixed_name.split('/').next().unwrap_or("");
-            if prefix.eq_ignore_ascii_case("openrouter") {
-                return Some(split_model_label(model.prefixed_name.clone()));
-            }
-        }
-
-        None
+    /// Resolve the configured vision model (`HKASK_MEDIA_VISION_MODEL`),
+    /// returning `None` when unset — no catalog-order fallback (all five
+    /// media model settings follow the operator's no-hidden-models rule).
+    pub(crate) fn resolve_vision_model(&self) -> Option<(String, String)> {
+        configured_vision_model()
     }
 
     /// Scan the given gallery (resolved by the caller before any await).
@@ -232,15 +199,15 @@ impl MediaServer {
         if records.is_empty() {
             return AnalysisRunResult::default();
         }
-        let (vision_model, vision_label) = match self.resolve_vision_model().await {
+        let (vision_model, vision_label) = match self.resolve_vision_model() {
             Some(v) => v,
             None => {
                 return AnalysisRunResult {
-                    errors: vec![
-                        "No vision model available — configure a vision-capable provider (OpenRouter)"
-                            .to_string(),
-                    ],
-                    ..Default::default()
+                    errors: vec![format!(
+                        "No vision model configured — set {} (injected from kask.models.media_vision_model)",
+                        crate::models::VISION_ENV
+                    )],
+                    ..AnalysisRunResult::default()
                 };
             }
         };

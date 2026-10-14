@@ -44,7 +44,7 @@ impl MediaServer {
         let (status, notes, validation) = if force {
             (FaceStatus::Valid, user_notes.to_string(), None)
         } else {
-            let (vision_model, _vision_label) = self.require_vision().await?;
+            let (vision_model, _vision_label) = self.require_vision()?;
             let v = vision::validate_face_reference(
                 &self.vision_port,
                 &self.template_env,
@@ -170,10 +170,13 @@ impl MediaServer {
             }
         };
 
-        let vision_model = match self.resolve_vision_model().await {
+        let vision_model = match self.resolve_vision_model() {
             Some((m, _label)) => m,
             None => {
-                errors.push("Face matching skipped: no vision model available".to_string());
+                errors.push(format!(
+                    "Face matching skipped: no vision model configured (set {})",
+                    crate::models::VISION_ENV
+                ));
                 return (0, errors);
             }
         };
@@ -302,6 +305,17 @@ impl MediaServer {
             }
         };
 
+        if std::fs::symlink_metadata(&sidecar)
+            .map(|m| m.file_type().is_symlink())
+            .unwrap_or(true)
+        {
+            return Err(MediaError::SidecarInvalid(format!(
+                "{}: refusing symlinked sidecar: {}",
+                fname,
+                sidecar.display()
+            )));
+        }
+
         let sidecar_text = std::fs::read_to_string(&sidecar)
             .map_err(|e| MediaError::Io(format!("{}: failed to read sidecar: {}", fname, e)))?;
 
@@ -367,7 +381,11 @@ impl MediaServer {
             .filter_map(|e| e.ok())
         {
             let path = entry.path();
-            if !path.is_file() {
+            if entry.file_type().is_symlink() {
+                errors.push(format!("Symlink not scanned: {}", path.display()));
+                continue;
+            }
+            if !entry.file_type().is_file() {
                 continue;
             }
             let ext = path

@@ -22,8 +22,9 @@ pub use server::{
     validate_identifier, validate_path, validate_tool_url_permissive, validate_tool_url_with_dns,
 };
 pub use server::{
-    MAX_READ_BYTES, contain_for_read, contain_for_write, map_infra_error, map_io_error,
-    map_join_error, map_memory_store_error, read_capped, write_contained,
+    MAX_READ_BYTES, contain_for_read, contain_for_write, map_database_error, map_infra_error,
+    map_io_error, map_join_error, map_memory_store_error, read_capped, url_encode_query_value,
+    write_contained,
 };
 
 /// Run an MCP server with stdio transport.

@@ -372,7 +372,7 @@ async fn process_single_page(
         Err(e) => {
             if watch.record_failure(&e) {
                 tracing::error!(
-                    target: "reg.pipeline.ocr.unreachable",
+                    target: "reg.pipeline.ocr",
                     page_index,
                     consecutive = ENDPOINT_UNREACHABLE_CONSECUTIVE,
                     "inference endpoint unreachable — aborting the run; the file stays pending, relaunch when the host returns"

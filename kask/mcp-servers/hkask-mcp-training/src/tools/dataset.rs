@@ -92,6 +92,12 @@ impl TrainingServer {
             // training DB. Without this override, QA pairs ingested via the
             // corpus pipeline are invisible to the training assembler.
             let h_mems = if let Some(db_path) = db_path.as_deref() {
+                if !std::path::Path::new(db_path).is_file() {
+                    return Err(McpToolError::not_found(format!(
+                        "memory database does not exist: {db_path}"
+                    )));
+                }
+                let resolved_db = hkask_mcp_server::contain_for_read(db_path)?;
                 let passphrase = passphrase
                     .clone()
                     .or_else(|| self.db_passphrase.clone())
@@ -101,23 +107,19 @@ impl TrainingServer {
                         "db_path provided but passphrase is empty",
                     ));
                 }
-                let store = hkask_memory::MemoryStore::open(db_path, &passphrase, hkask_storage::embedding_dim())
-                    .map_err(|error| {
-                        use hkask_storage::DatabaseError;
-                        let message = format!("Cannot open memory DB '{db_path}': {error}");
-                        match error {
-                            DatabaseError::PassphraseMismatch(_) => McpToolError::permission_denied(message),
-                            DatabaseError::KeyDerivation(_) => McpToolError::permission_denied(format!(
-                                "{message}. Set HKASK_DB_PASSPHRASE to a non-empty passphrase"
-                            )),
-                            DatabaseError::Corrupted(_) => McpToolError::invalid_argument(message),
-                            DatabaseError::Sqlite(_) | DatabaseError::SqlCipher(_) => {
-                                McpToolError::internal(message)
-                            }
-                            _ => McpToolError::internal(message),
-                        }
-                    })?;
-                store.query_by_attribute_untouched("training_qa_pair")
+                let store = hkask_memory::MemoryStore::open(
+                    &resolved_db.to_string_lossy(),
+                    &passphrase,
+                    hkask_storage::embedding_dim(),
+                )
+                .map_err(|error| {
+                    hkask_mcp_server::map_database_error(
+                        error,
+                        &format!("Cannot open memory DB '{db_path}'"),
+                    )
+                })?;
+                store
+                    .query_by_attribute_untouched("training_qa_pair")
                     .map_err(|e| map_memory_store_error(e, "semantic memory query"))?
             } else {
                 let Some(store) = &self.store else {
@@ -125,11 +127,14 @@ impl TrainingServer {
                         "Semantic memory not available — set HKASK_MEMORY_DB and HKASK_DB_PASSPHRASE, or provide db_path",
                     ));
                 };
-                store.query_by_attribute_untouched("training_qa_pair")
+                store
+                    .query_by_attribute_untouched("training_qa_pair")
                     .map_err(|e| map_memory_store_error(e, "semantic memory query"))?
             };
             if h_mems.is_empty() {
-                return Err(McpToolError::invalid_argument("No training_qa_pair h_mems found. Ingest QA pairs first with training_ingest_qa."));
+                return Err(McpToolError::failed_precondition(
+                    "No training_qa_pair h_mems found. Ingest QA pairs first with training_ingest_qa.",
+                ));
             }
             let mut conversations: Vec<serde_json::Value> = Vec::new();
             let mut brave_excluded = 0usize;

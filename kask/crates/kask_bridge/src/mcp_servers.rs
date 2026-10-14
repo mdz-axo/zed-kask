@@ -154,6 +154,12 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             "HKASK_OCR_TRIAGE_FULL_PAGE_PT",
             "HKASK_OCR_TRIAGE_EMBEDDED_IMAGE_PT",
             "HKASK_OCR_TRIAGE_TUNEABLE",
+            // OCR inference deadline hint — read by ocr_timeout_hint_secs() in
+            // ocr/llm_ocr.rs, falls back to 1200s.
+            "HKASK_OCR_INFERENCE_TIMEOUT_SECS",
+            // Chunk token budget override — read by HkaskSettings::chunk_max_tokens()
+            // in services_core/standalone_settings.rs.
+            "HKASK_CHUNK_MAX_TOKENS",
             // OCR vision model override — read by ctx.credentials.get() in
             // hkask_mcp_corpus.rs and std::env::var in corpus/embed/ocr.rs.
             // Without this, operator OCR model overrides are silently dropped.
@@ -240,6 +246,10 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             // model configured" — the exact gap observed live 2026-09-04
             // (the allowlist must align with actual env-var reads).
             "HKASK_EMBEDDING_MODEL",
+            // Swarm memory DB path — read by `swarm_memory_db_path()` in
+            // `hkask_mcp_curator.rs` for `curator_memory_backfill_embeddings`
+            // when `store = "swarm"`.
+            "HKASK_SWARM_MEMORY_DB",
         ],
     },
     BuiltinMcpServer {
@@ -481,6 +491,10 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             "NEBIUS_GPU_PRESET",
             "NEBIUS_IMAGE_FAMILY",
             "NEBIUS_CLI_PATH",
+            // Swarm rollout event-store path — read via
+            // `hkask_types::agent_paths::swarm_events_db_path()` in
+            // `training_bridge_rollouts` (`tools/rollout_bridge.rs`).
+            "HKASK_SWARM_EVENTS_PATH",
         ],
     },
     BuiltinMcpServer {
@@ -731,7 +745,33 @@ pub async fn build_mcp_server_env(
         tools.extend(crate::host_skill_tools::SKILL_TOOLS.map(String::from));
     }
     if let Some(grant) = crate::delegation_grants::grant_for_server(server_id, &tools) {
-        env.insert(crate::delegation_grants::GRANT_ENV.to_string(), grant);
+        env.insert(
+            hkask_types::inference_ipc::TOOL_GRANT_ENV.to_string(),
+            grant,
+        );
+    }
+
+    // 1b. Non-secret `DATA_SERVICES` config rows (e.g. `NEBIUS_PROJECT_ID`,
+    //     `NEBIUS_SUBNET_ID`) live in `server.config_env` rather than
+    //     `server.credentials` so they do not log missing-credential warnings
+    //     on machines that do not use Nebius, while still exposing UI rows in
+    //     Data Services (`kask://credentials/nebius_*`). When the parent
+    //     shell did not already set them via `emit_operator_override_env`,
+    //     read the UI-persisted keychain slot quietly.
+    if let Some(server) = find_server(server_id) {
+        for (env_var, url) in crate::credential_urls_for_mcp() {
+            if server.config_env.contains(&env_var.as_str())
+                && !server.credentials.contains(&env_var.as_str())
+                && !env.contains_key(&env_var)
+                && let Ok(Some((_username, password))) =
+                    credentials_provider.read_credentials(&url, cx).await
+                && let Ok(value) = String::from_utf8(password)
+                && !value.is_empty()
+            {
+                let value = trim_credential_for_injection(server_id, &env_var, value);
+                env.insert(env_var, value);
+            }
+        }
     }
 
     // 2. Credentials: resolve URLs, filter per-server, read from keychain.
@@ -1884,7 +1924,7 @@ mod tests {
         assert!(schema["properties"]["delegated_tools"].is_object());
         let first = build_mcp_server_env("swarm", &settings, &provider, None, None, &cx).await;
         let token = first
-            .get(crate::delegation_grants::GRANT_ENV)
+            .get(hkask_types::inference_ipc::TOOL_GRANT_ENV)
             .expect("token")
             .to_string();
         assert!(crate::delegation_grants::parent_allows(
@@ -1900,16 +1940,22 @@ mod tests {
         }
         let again = build_mcp_server_env("swarm", &settings, &provider, None, None, &cx).await;
         assert_eq!(
-            again.get(crate::delegation_grants::GRANT_ENV),
+            again.get(hkask_types::inference_ipc::TOOL_GRANT_ENV),
             Some(token.as_str())
         );
         let other = build_mcp_server_env("portfolio", &settings, &provider, None, None, &cx).await;
-        assert!(other.get(crate::delegation_grants::GRANT_ENV).is_none());
+        assert!(
+            other
+                .get(hkask_types::inference_ipc::TOOL_GRANT_ENV)
+                .is_none()
+        );
         settings.mcp.overrides.insert("swarm".into(), false);
         crate::revoke_delegation_grant("swarm");
         let unloaded = build_mcp_server_env("swarm", &settings, &provider, None, None, &cx).await;
         assert!(
-            unloaded.get(crate::delegation_grants::GRANT_ENV).is_none(),
+            unloaded
+                .get(hkask_types::inference_ipc::TOOL_GRANT_ENV)
+                .is_none(),
             "observer env diff must not remint an unloaded grant"
         );
         assert!(!crate::delegation_grants::parent_allows(
@@ -1919,7 +1965,7 @@ mod tests {
         settings.mcp.overrides.insert("swarm".into(), true);
         let reloaded = build_mcp_server_env("swarm", &settings, &provider, None, None, &cx).await;
         assert_ne!(
-            reloaded.get(crate::delegation_grants::GRANT_ENV),
+            reloaded.get(hkask_types::inference_ipc::TOOL_GRANT_ENV),
             Some(token.as_str())
         );
         settings
@@ -1927,8 +1973,65 @@ mod tests {
             .delegated_tools
             .insert("swarm".into(), vec!["research/*".into()]);
         let invalid = build_mcp_server_env("swarm", &settings, &provider, None, None, &cx).await;
-        assert!(invalid.get(crate::delegation_grants::GRANT_ENV).is_none());
+        assert!(
+            invalid
+                .get(hkask_types::inference_ipc::TOOL_GRANT_ENV)
+                .is_none()
+        );
         crate::revoke_delegation_grant("swarm");
+    }
+
+    #[tokio::test]
+    async fn build_mcp_server_env_forwards_allowlisted_operator_overrides_and_data_service_config_slots()
+     {
+        let settings = crate::KaskSettings::default();
+        let mut secrets: std::collections::HashMap<String, Vec<u8>> =
+            crate::credential_urls_for_mcp()
+                .into_iter()
+                .map(|(_, url)| (url, b"disposable-test-secret".to_vec()))
+                .collect();
+        secrets.insert(
+            "kask://credentials/nebius_project_id".to_string(),
+            b"nebius-proj-from-keychain".to_vec(),
+        );
+        let provider = MockCredentialsProvider { secrets };
+        unsafe {
+            std::env::set_var("HKASK_CURATOR_DB", "/tmp/test-curator-override.db");
+            std::env::set_var("RUNPOD_TEMPLATE_ID", "tpl-override-123");
+            std::env::remove_var("NEBIUS_PROJECT_ID");
+        }
+        let cx = gpui::TestAppContext::single().to_async();
+        let curator_env =
+            build_mcp_server_env("curator", &settings, &provider, None, None, &cx).await;
+        let training_env =
+            build_mcp_server_env("training", &settings, &provider, None, None, &cx).await;
+        unsafe {
+            std::env::remove_var("HKASK_CURATOR_DB");
+            std::env::remove_var("RUNPOD_TEMPLATE_ID");
+        }
+        assert_eq!(
+            curator_env.get("HKASK_CURATOR_DB"),
+            Some("/tmp/test-curator-override.db"),
+            "HKASK_CURATOR_DB set by main.rs must survive build_mcp_server_env for curator"
+        );
+        assert_eq!(
+            curator_env.get("HKASK_SWARM_MEMORY_DB"),
+            settings
+                .mcp_env()
+                .get("HKASK_SWARM_MEMORY_DB")
+                .map(String::as_str),
+            "HKASK_SWARM_MEMORY_DB must reach curator for swarm backfill sweep"
+        );
+        assert_eq!(
+            training_env.get("RUNPOD_TEMPLATE_ID"),
+            Some("tpl-override-123"),
+            "non-settings config_env overrides must survive build_mcp_server_env"
+        );
+        assert_eq!(
+            training_env.get("NEBIUS_PROJECT_ID"),
+            Some("nebius-proj-from-keychain"),
+            "DATA_SERVICES config_env entries must resolve from keychain when not overridden in shell"
+        );
     }
 
     /// Pin the load-bearing filter order in `build_mcp_server_env`: config is

@@ -1420,7 +1420,7 @@ impl CuratorServer {
                     map_memory_store_error(e, "Failed to verify evidence h_mem")
                 })?;
             if evidence.is_none() {
-                return Err(McpToolError::invalid_argument(format!(
+                return Err(McpToolError::not_found(format!(
                     "Evidence h_mem '{id}' not found — memory_insert requires an existing citation",
                     id = req.evidence_h_mem_id
                 )));
@@ -1651,6 +1651,12 @@ impl CuratorServer {
         execute_tool(self, "memory_resolve_contradiction", async {
             let stores = self.db.get();
             let memory = stores.memory()?;
+
+            if req.h_mem_ids.is_empty() || req.h_mem_ids.iter().any(|id| id.trim().is_empty()) {
+                return Err(McpToolError::invalid_argument(
+                    "h_mem_ids must contain at least one non-empty h_mem ID",
+                ));
+            }
 
             let target_id = req
                 .target_h_mem_id
@@ -1883,7 +1889,7 @@ impl CuratorServer {
             let stores = self.db.get();
             let memory: Arc<hkask_memory::MemoryStore> = match store_target {
                 BackfillStore::Curator => stores.memory()?.clone(),
-                BackfillStore::Swarm => open_swarm_memory_store()?,
+                BackfillStore::Swarm => open_swarm_memory_store(self.db.passphrase.as_deref())?,
             };
 
             match mode {
@@ -2090,9 +2096,12 @@ fn swarm_memory_db_path() -> std::path::PathBuf {
 /// fail every backfill write with a UNIQUE constraint error, so the
 /// store is swept at open. A sweep failure fails closed: the backfill
 /// writes would fail on the same lock anyway.
-fn open_swarm_memory_store() -> Result<Arc<hkask_memory::MemoryStore>, McpToolError> {
-    let passphrase =
-        hkask_mcp_server::resolve_credential("HKASK_DB_PASSPHRASE").map_err(|error| {
+fn open_swarm_memory_store(
+    cached_passphrase: Option<&str>,
+) -> Result<Arc<hkask_memory::MemoryStore>, McpToolError> {
+    let passphrase = match cached_passphrase.filter(|p| !p.is_empty()) {
+        Some(passphrase) => passphrase.to_owned(),
+        None => resolve_db_passphrase(&std::collections::HashMap::new()).map_err(|error| {
             tracing::warn!(
                 target: "hkask.mcp.curator",
                 %error,
@@ -2102,12 +2111,8 @@ fn open_swarm_memory_store() -> Result<Arc<hkask_memory::MemoryStore>, McpToolEr
                 "HKASK_DB_PASSPHRASE is not resolvable — the swarm store sweep is unavailable \
                  (relaunch with HKASK_DB_PASSPHRASE in the server env)",
             )
-        })?;
-    if passphrase.is_empty() {
-        return Err(McpToolError::permission_denied(
-            "HKASK_DB_PASSPHRASE resolved empty — the swarm store sweep is unavailable",
-        ));
-    }
+        })?,
+    };
     let path = swarm_memory_db_path();
     let store = hkask_memory::MemoryStore::open(
         &path.to_string_lossy(),
@@ -2115,10 +2120,10 @@ fn open_swarm_memory_store() -> Result<Arc<hkask_memory::MemoryStore>, McpToolEr
         hkask_storage::embedding_dim(),
     )
     .map_err(|error| {
-        McpToolError::internal(format!(
-            "cannot open swarm memory DB {}: {error}",
-            path.display()
-        ))
+        hkask_mcp_server::map_database_error(
+            error,
+            &format!("cannot open swarm memory DB {}", path.display()),
+        )
     })?;
     let removed = store.delete_orphaned_embeddings().map_err(|error| {
         McpToolError::internal(format!(

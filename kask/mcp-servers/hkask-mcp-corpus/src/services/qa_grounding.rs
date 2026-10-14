@@ -568,13 +568,13 @@ pub(crate) fn build_grounding_bundle(request: &GroundQaRequest) -> Result<Value,
 
     let rows_body = serialize_rows(&rows)?;
     let candidates_bytes = std::fs::read(&request.generated_jsonl).map_err(|error| {
-        crate::helpers::map_corpus_io_error(
+        hkask_mcp_server::server::map_io_error(
             error,
             &format!("Cannot read '{}'", request.generated_jsonl),
         )
     })?;
     let chunks_bytes = std::fs::read(&request.source_chunks_jsonl).map_err(|error| {
-        crate::helpers::map_corpus_io_error(
+        hkask_mcp_server::server::map_io_error(
             error,
             &format!("Cannot read '{}'", request.source_chunks_jsonl),
         )
@@ -620,7 +620,7 @@ pub(crate) fn build_grounding_bundle(request: &GroundQaRequest) -> Result<Value,
         None => tempfile::Builder::new().prefix("qa-grounding-").tempdir(),
     }
     .map_err(|error| {
-        crate::helpers::map_corpus_io_error(
+        hkask_mcp_server::server::map_io_error(
             error,
             &format!(
                 "Cannot create temporary bundle near '{}'",
@@ -630,7 +630,7 @@ pub(crate) fn build_grounding_bundle(request: &GroundQaRequest) -> Result<Value,
     })?;
     let rows_path = temporary.path().join(GROUNDING_ROWS_FILE);
     std::fs::write(&rows_path, rows_body.as_bytes()).map_err(|error| {
-        crate::helpers::map_corpus_io_error(
+        hkask_mcp_server::server::map_io_error(
             error,
             &format!("Cannot write '{}'", rows_path.display()),
         )
@@ -681,7 +681,7 @@ pub(crate) fn build_grounding_bundle(request: &GroundQaRequest) -> Result<Value,
         McpToolError::internal(format!("Cannot serialize grounding manifest: {error}"))
     })?;
     std::fs::write(&manifest_path, manifest_body.as_bytes()).map_err(|error| {
-        crate::helpers::map_corpus_io_error(
+        hkask_mcp_server::server::map_io_error(
             error,
             &format!("Cannot write '{}'", manifest_path.display()),
         )
@@ -692,7 +692,7 @@ pub(crate) fn build_grounding_bundle(request: &GroundQaRequest) -> Result<Value,
             "Cannot publish bundle '{}' (the destination may already exist): {error}",
             output_path.display()
         );
-        crate::helpers::map_corpus_io_error(error, &detail)
+        hkask_mcp_server::server::map_io_error(error, &detail)
     })?;
 
     Ok(json!({

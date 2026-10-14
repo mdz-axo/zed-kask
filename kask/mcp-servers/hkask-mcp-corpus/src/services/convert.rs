@@ -23,13 +23,12 @@
 
 use std::sync::Arc;
 
-use hkask_mcp_server::server::McpToolError;
+use hkask_mcp_server::server::{McpToolError, map_io_error};
 use hkask_types::InferencePort;
 use serde_json::{Value, json};
 
 use crate::backend::markdown_pages_to_structure;
 use crate::convert::{decode_html_entities, detect_format, strip_html_comments};
-use crate::helpers::map_corpus_io_error;
 use crate::ocr::PipelineOutcome;
 use crate::ocr::decimation;
 use crate::ocr::llm_ocr::LlmOcrExecutor;
@@ -642,7 +641,7 @@ impl<'a> ConvertService<'a> {
         };
 
         let metadata = std::fs::metadata(&resolved)
-            .map_err(|e| map_corpus_io_error(e, &format!("Failed to inspect file '{path}'")))?;
+            .map_err(|e| map_io_error(e, &format!("Failed to inspect file '{path}'")))?;
         if !metadata.is_file() {
             return Err(McpToolError::invalid_argument(format!(
                 "'{path}' is not a file"
@@ -1011,13 +1010,12 @@ impl<'a> ConvertService<'a> {
             .map_err(|e| McpToolError::new(e.kind, e.to_json_string()))?;
         let output_path = contain_for_write(output)?;
 
-        let entries = std::fs::read_dir(&input_dir).map_err(|e| {
-            map_corpus_io_error(e, &format!("Failed to read '{}'", input_dir.display()))
-        })?;
+        let entries = std::fs::read_dir(&input_dir)
+            .map_err(|e| map_io_error(e, &format!("Failed to read '{}'", input_dir.display())))?;
         let mut sources = Vec::new();
         for entry in entries {
             let source = entry
-                .map_err(|e| map_corpus_io_error(e, "Failed to enumerate chunk source"))?
+                .map_err(|e| map_io_error(e, "Failed to enumerate chunk source"))?
                 .path();
             if !source.extension().is_some_and(|ext| ext == "txt") {
                 continue;
@@ -1029,7 +1027,7 @@ impl<'a> ConvertService<'a> {
             // Resolve each txt child before inspecting/reading it; never silently skip errors.
             let resolved = contain_for_read(source_path)?;
             let metadata = std::fs::metadata(&resolved).map_err(|e| {
-                map_corpus_io_error(e, &format!("Failed to inspect '{}'", source.display()))
+                map_io_error(e, &format!("Failed to inspect '{}'", source.display()))
             })?;
             if metadata.is_file() {
                 sources.push((source, resolved));
@@ -1045,7 +1043,7 @@ impl<'a> ConvertService<'a> {
 
         if let Some(parent) = output_path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| {
-                map_corpus_io_error(e, &format!("Failed to create '{}'", parent.display()))
+                map_io_error(e, &format!("Failed to create '{}'", parent.display()))
             })?;
         }
         // RAII removes partial output on any error; an existing output is not
@@ -1054,7 +1052,7 @@ impl<'a> ConvertService<'a> {
             .parent()
             .ok_or_else(|| McpToolError::invalid_argument("Output must have a parent directory"))?;
         let temp_file = tempfile::NamedTempFile::new_in(parent)
-            .map_err(|e| map_corpus_io_error(e, "Failed to create chunk output temporary file"))?;
+            .map_err(|e| map_io_error(e, "Failed to create chunk output temporary file"))?;
         let mut writer = std::io::BufWriter::new(temp_file);
         let mut total_chunks = 0usize;
         let mut indexed = 0usize;
@@ -1082,9 +1080,8 @@ impl<'a> ConvertService<'a> {
             // format detection and OCR are handled by corpus_convert. Preserve
             // this extracted-book path's uncapped read policy (not the generic
             // 32 MiB document read cap). UTF-8/read failures remain errors.
-            let source_text = std::fs::read_to_string(resolved).map_err(|e| {
-                map_corpus_io_error(e, &format!("Failed to read '{}'", source.display()))
-            })?;
+            let source_text = std::fs::read_to_string(resolved)
+                .map_err(|e| map_io_error(e, &format!("Failed to read '{}'", source.display())))?;
             // Captured before `source_text` is moved into `processed` — the
             // zero-chunk warn below reports the pre-processing size.
             let source_word_count = source_text.split_whitespace().count();
@@ -1171,7 +1168,7 @@ impl<'a> ConvertService<'a> {
                 })?;
                 writer
                     .write_all(b"\n")
-                    .map_err(|e| map_corpus_io_error(e, "Failed to write chunks"))?;
+                    .map_err(|e| map_io_error(e, "Failed to write chunks"))?;
                 total_chunks += 1;
             }
         }
@@ -1179,12 +1176,12 @@ impl<'a> ConvertService<'a> {
         use std::io::Write as _;
         writer
             .flush()
-            .map_err(|e| map_corpus_io_error(e, "Failed to flush chunks"))?;
+            .map_err(|e| map_io_error(e, "Failed to flush chunks"))?;
         let temp_file = writer
             .into_inner()
-            .map_err(|e| map_corpus_io_error(e.into_error(), "Failed to finish chunks"))?;
+            .map_err(|e| map_io_error(e.into_error(), "Failed to finish chunks"))?;
         temp_file.persist(&output_path).map_err(|e| {
-            map_corpus_io_error(
+            map_io_error(
                 e.error,
                 &format!("Failed to publish '{}'", output_path.display()),
             )
@@ -1278,7 +1275,7 @@ pub(crate) async fn extract_text_with_order(
 
     let resolved = contain_for_read(path)?;
     let metadata = std::fs::metadata(&resolved)
-        .map_err(|e| map_corpus_io_error(e, &format!("Failed to inspect file '{path}'")))?;
+        .map_err(|e| map_io_error(e, &format!("Failed to inspect file '{path}'")))?;
     if !metadata.is_file() || metadata.len() == 0 {
         return Err(McpToolError::invalid_argument(format!(
             "File '{path}' must be a nonempty regular file"

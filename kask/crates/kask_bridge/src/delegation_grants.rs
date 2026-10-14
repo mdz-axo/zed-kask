@@ -4,7 +4,6 @@
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
 
-pub(crate) use hkask_types::inference_ipc::TOOL_GRANT_ENV as GRANT_ENV;
 /// A host effect, explicitly selected in the same parent-owned grant registry.
 pub(crate) const WORKTREE_SPAWN: &str = "host/create_worktree_thread";
 struct Grant {

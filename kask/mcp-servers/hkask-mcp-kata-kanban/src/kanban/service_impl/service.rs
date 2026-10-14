@@ -621,7 +621,6 @@ impl KanbanService {
 
         task.status = target;
         task.updated_at = chrono::Utc::now();
-        let _ = actor;
 
         self.update_task_triple(&task)?;
 

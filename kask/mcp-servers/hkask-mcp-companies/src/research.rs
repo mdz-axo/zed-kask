@@ -311,7 +311,7 @@ async fn search_brave(
 ) -> Result<Vec<ResearchClaim>, anyhow::Error> {
     let url = format!(
         "https://api.search.brave.com/res/v1/web/search?q={}&count=5",
-        urlencoding(query)
+        hkask_mcp_server::url_encode_query_value(query)
     );
 
     let resp = client
@@ -333,31 +333,6 @@ async fn search_brave(
         serde_json::from_str(&body_text).map_err(|e| anyhow!("Brave parse error: {e}"))?;
 
     parse_brave_results(&parsed)
-}
-
-fn urlencoding(s: &str) -> String {
-    let mut encoded = String::with_capacity(s.len() * 3);
-    for byte in s.bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                encoded.push(byte as char);
-            }
-            b' ' => encoded.push('+'),
-            _ => {
-                encoded.push('%');
-                encoded.push(hex_char(byte >> 4));
-                encoded.push(hex_char(byte & 0x0F));
-            }
-        }
-    }
-    encoded
-}
-
-fn hex_char(n: u8) -> char {
-    match n {
-        0..=9 => (b'0' + n) as char,
-        _ => (b'A' + (n - 10)) as char,
-    }
 }
 
 fn parse_brave_results(parsed: &Value) -> Result<Vec<ResearchClaim>, anyhow::Error> {

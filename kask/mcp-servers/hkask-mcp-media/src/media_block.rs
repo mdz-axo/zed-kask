@@ -13,6 +13,7 @@
 //! preserves paths and metadata verbatim, including quotes and newlines.
 
 use crate::omc;
+use hkask_types::BlockProvenance;
 
 /// Format a ```media fenced block for inclusion in tool responses.
 ///
@@ -39,7 +40,7 @@ pub fn media_block_with_omc(
     kind: &str,
     src: &str,
     omc: Option<&str>,
-    provenance: Option<&Provenance>,
+    provenance: Option<&BlockProvenance>,
 ) -> String {
     media_block_with_gallery_asset_id(kind, src, omc, provenance, None)
 }
@@ -48,7 +49,7 @@ pub(crate) fn media_block_with_gallery_asset_id(
     kind: &str,
     src: &str,
     omc: Option<&str>,
-    provenance: Option<&Provenance>,
+    provenance: Option<&BlockProvenance>,
     gallery_asset_id: Option<&str>,
 ) -> String {
     let mut body = serde_json::json!({"kind": kind, "src": src});
@@ -64,38 +65,13 @@ pub(crate) fn media_block_with_gallery_asset_id(
     format!("```media\n{body}\n```")
 }
 
-/// Server-authoritative provenance baked into a ```media block body so the
-/// media widget can re-issue the originating tool (Explain). Mirrors `hkask_tool_invoker::BlockProvenance`
-/// but lives in the MCP server crate (no GPUI dependency) so the server can
-/// serialize it into the block body.
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct Provenance {
-    /// The MCP tool name that produced this block (e.g. `"generate_image"`).
-    pub tool: String,
-    /// The MCP server name (always `"hkask-mcp-media"` for this server).
-    pub server: String,
-    /// The args the tool was invoked with, as a JSON object.
-    pub args: serde_json::Value,
-    /// The `reg.*` span id under which the producing tool call was traced.
-    pub span_id: Option<String>,
-}
-
-impl Provenance {
-    /// Build provenance for a tool invocation. The server name is fixed to
-    /// `hkask-mcp-media`; the caller supplies the tool name, args, and span.
-    pub fn for_tool(tool: &str, args: serde_json::Value, span_id: Option<String>) -> Self {
-        Self {
-            tool: tool.to_string(),
-            server: "hkask-mcp-media".to_string(),
-            args,
-            span_id,
-        }
-    }
-}
-
-/// Format a ```media block for an image asset.
-pub fn image_block(src: &str) -> String {
-    media_block("image", src)
+/// Build `BlockProvenance` for a tool invocation on this server (`hkask-mcp-media`).
+pub(crate) fn provenance_for_tool(
+    tool: &str,
+    args: serde_json::Value,
+    span_id: Option<String>,
+) -> BlockProvenance {
+    BlockProvenance::for_server_tool("hkask-mcp-media", tool, args, span_id)
 }
 
 /// Build an OMC-tagged, provenance-carrying display hint for a tool output,
@@ -121,7 +97,7 @@ pub fn enrich_with_omc_and_provenance(
 ) -> serde_json::Value {
     if let Some(src) = extract_src(&result, kind) {
         let omc = omc::tool_to_omc(tool);
-        let provenance = Provenance::for_tool(tool, args, span_id);
+        let provenance = provenance_for_tool(tool, args, span_id);
         let gallery_asset_id = result
             .get("gallery_asset_id")
             .and_then(serde_json::Value::as_str);
@@ -164,7 +140,7 @@ mod tests {
     #[test]
     fn media_blocks_round_trip_escaped_paths() -> Result<(), Box<dyn std::error::Error>> {
         let source = "/tmp/雪/quote\"-back\\slash\nimage.png";
-        let provenance = Provenance::for_tool(
+        let provenance = provenance_for_tool(
             "generate_image",
             serde_json::json!({"prompt": "quote\"\n雪"}),
             Some("span-1".into()),
@@ -201,7 +177,7 @@ mod tests {
 
     #[test]
     fn test_media_block_with_omc_includes_tag_and_provenance() {
-        let prov = Provenance::for_tool(
+        let prov = provenance_for_tool(
             "generate_image",
             serde_json::json!({"prompt": "a cat"}),
             Some("span-1".into()),

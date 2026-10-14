@@ -180,7 +180,7 @@ fn publish_document_in_dir<T: serde::Serialize + ?Sized>(
         serde_json::Value::String(format.label().to_string()),
     );
     let provenance =
-        crate::media_block::Provenance::for_tool("educt_export", effective_value.clone(), None);
+        crate::media_block::provenance_for_tool("educt_export", effective_value.clone(), None);
     let created_at = hkask_types::time::now_rfc3339();
     let metadata = serde_json::json!({
         "export_id": export_id,

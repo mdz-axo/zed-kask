@@ -62,7 +62,7 @@ impl TrainingServer {
             // monitor — single-sourced in swarm_events_db_path.
             let events_path = hkask_types::agent_paths::swarm_events_db_path();
             if !std::path::Path::new(&events_path).exists() {
-                return Err(McpToolError::invalid_argument(format!(
+                return Err(McpToolError::not_found(format!(
                     "event store not found at '{events_path}' — run the rollout harness \
                          (swarm_eval_agent_local) first"
                 )));

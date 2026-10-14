@@ -6,11 +6,11 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 
-use hkask_mcp_server::server::McpToolError;
+use hkask_mcp_server::server::{McpToolError, map_io_error};
 use hkask_memory::MemoryStore;
 use serde_json::{Value, json};
 
-use crate::helpers::{map_corpus_io_error, map_memory_store_error, open_memory_store};
+use crate::helpers::{map_memory_store_error, open_memory_store};
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Origin {
@@ -91,7 +91,7 @@ pub(crate) struct PassageIndex {
 fn database_origin(path: &str) -> Result<Origin, McpToolError> {
     std::fs::canonicalize(path)
         .map(Origin::Database)
-        .map_err(|error| map_corpus_io_error(error, "Cannot canonicalize corpus database"))
+        .map_err(|error| map_io_error(error, "Cannot canonicalize corpus database"))
 }
 
 impl PassageIndex {

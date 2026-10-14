@@ -407,7 +407,7 @@ impl OcrExecutor for LlmOcrExecutor {
         // and go to the model.
         if crate::ocr::blank::is_blank_page(&normalized) {
             tracing::info!(
-                target: "reg.pipeline.ocr.blank",
+                target: "reg.pipeline.ocr",
                 page_index,
                 "page pre-detected blank — skipping the vision call"
             );
@@ -435,7 +435,7 @@ impl OcrExecutor for LlmOcrExecutor {
                 Err(OcrError::RotationRequested { correction }) if !rotation_retried => {
                     rotation_retried = true;
                     tracing::info!(
-                        target: "reg.pipeline.ocr.rotation",
+                        target: "reg.pipeline.ocr",
                         page_index,
                         correction,
                         "page requested rotation — re-rendering rotated and retrying once"

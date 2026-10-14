@@ -22,7 +22,7 @@
 //! `../../escape` are rejected.
 
 pub(crate) use hkask_mcp_server::server::{
-    MAX_READ_BYTES, contain_for_read, contain_for_write, read_capped,
+    MAX_READ_BYTES, contain_for_read, contain_for_write, map_io_error, read_capped,
 };
 
 /// Resolve a QA destination before opening it, including a symlink whose final
@@ -45,9 +45,8 @@ pub(crate) fn distinct_output_path(
         }
         match std::fs::symlink_metadata(&output) {
             Ok(metadata) if metadata.is_symlink() => {
-                let target = std::fs::read_link(&output).map_err(|error| {
-                    crate::helpers::map_corpus_io_error(error, "Cannot resolve output symlink")
-                })?;
+                let target = std::fs::read_link(&output)
+                    .map_err(|error| map_io_error(error, "Cannot resolve output symlink"))?;
                 let parent = output.parent().ok_or_else(|| {
                     McpToolError::invalid_argument("Output has no parent directory")
                 })?;
@@ -56,10 +55,7 @@ pub(crate) fn distinct_output_path(
             Ok(_) => break,
             Err(error) if error.kind() == ErrorKind::NotFound => break,
             Err(error) => {
-                return Err(crate::helpers::map_corpus_io_error(
-                    error,
-                    "Cannot inspect output path",
-                ));
+                return Err(map_io_error(error, "Cannot inspect output path"));
             }
         }
     }
@@ -69,9 +65,8 @@ pub(crate) fn distinct_output_path(
     #[cfg(unix)]
     if !aliases_input {
         use std::os::unix::fs::MetadataExt;
-        let input_metadata = std::fs::metadata(&input).map_err(|error| {
-            crate::helpers::map_corpus_io_error(error, "Cannot inspect input path")
-        })?;
+        let input_metadata = std::fs::metadata(&input)
+            .map_err(|error| map_io_error(error, "Cannot inspect input path"))?;
         match std::fs::metadata(&output) {
             Ok(metadata) => {
                 aliases_input = metadata.dev() == input_metadata.dev()
@@ -79,10 +74,7 @@ pub(crate) fn distinct_output_path(
             }
             Err(error) if error.kind() == ErrorKind::NotFound => {}
             Err(error) => {
-                return Err(crate::helpers::map_corpus_io_error(
-                    error,
-                    "Cannot inspect output path",
-                ));
+                return Err(map_io_error(error, "Cannot inspect output path"));
             }
         }
     }

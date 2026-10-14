@@ -17,17 +17,14 @@ use crate::transcript_select::{EdlEntry, EdlOp, WordRange};
 
 /// Generate the `InferencePort` impl for a media test stub. `generate` is
 /// the text surface — most media stubs never exercise it (one body:
-/// panic, a canned error, or a canned result); `list_models` and
-/// `generate_vision` are the vision surfaces (the gallery analysis path
-/// resolves a vision model through `list_models` and analyzes through
-/// `generate_vision`); `media_generate` is the media-generation surface.
+/// panic, a canned error, or a canned result); `generate_vision` is the
+/// vision surface; `media_generate` is the media-generation surface.
 /// Every arm after `generate` is emitted only when supplied — otherwise
 /// the stub keeps the trait default for that method.
 macro_rules! media_inference_stub {
     (
         $name:ident,
         generate($gen_self:ident, $prompt:ident): $generate:block
-        $(, list_models($lm_self:ident): $list_models:block)?
         $(, generate_vision($gv_self:ident, $gv_prompt:ident, $gv_images:ident): $generate_vision:block)?
         $(, media_generate($media_self:ident, $op:ident, $media_params:ident): $media_generate:block)?
         $(,)?
@@ -46,20 +43,6 @@ macro_rules! media_inference_stub {
                         + '_,
                 >,
             > $generate
-
-            $(fn list_models(
-                &$lm_self,
-            ) -> std::pin::Pin<
-                Box<
-                    dyn std::future::Future<
-                            Output = Result<
-                                Vec<hkask_types::ports::ModelEntry>,
-                                hkask_types::InferenceError,
-                            >,
-                        > + Send
-                        + '_,
-                >,
-            > $list_models)?
 
             $(fn generate_vision(
                 &$gv_self,

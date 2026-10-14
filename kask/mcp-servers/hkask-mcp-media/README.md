@@ -375,11 +375,13 @@ the BARE JSON body, the reference's property-endpoint payload convention
 (page 39: "request payload equal to the new value"); the object form
 `{"publish": true}` was REFUTED by a live probe 2026-10-07 — HTTP 400
 twice, on an empty reel and one with a block, isolating the body shape — and
-the bare-bool form was CONFIRMED by live re-probe 2026-10-14 on the throwaway
-Axolotl reel `c1a49628a0` in project `2771e9d5f4`, returning HTTP 200 with
-`{"note":"the share token value is never returned; the public link is visible in the Reduct app","publish":true,"reel_id":"c1a49628a0","share_token_present":true,"source":"reduct_cloud"}`
-and verified by independent `reduct_reel_detail` read-back showing
-`publication_state: "published"`). The
+the bare-bool form was CONFIRMED by live re-probe 2026-10-14 in both directions
+(`publish: true` and `publish: false`) on the throwaway Axolotl reel
+`c1a49628a0` in project `2771e9d5f4`, returning HTTP 200 with
+`publish: true, share_token_present: true` → `publication_state: "published"`
+and `publish: false, share_token_present: false` →
+`publication_state: "unpublished"` on independent `reduct_reel_detail`
+read-back). The
 publish parameter is never defaulted — `true` asks the provider to create a
 share token, a publicly accessible link — and the token VALUE is never
 returned (the response reports publish state and token presence; the link is

@@ -14,7 +14,6 @@
 //! `convert_directory` stays here (on `CorpusServer`) because it recurses
 //! through the `corpus_convert` tool wrapper to preserve per-file Regulation
 //! spans; it does not call the OCR helpers directly.
-use crate::helpers::map_corpus_io_error;
 use crate::services::convert::{
     ConvertService, ExtractOutcome, extract_text, filter_outcome_to_pages,
 };
@@ -22,6 +21,7 @@ use crate::{
     CorpusServer, McpToolError, Parameters, chunk_structure, chunk_word_bounds, convert,
     execute_tool, json, sanitize_links, serialize_passages, tokens_to_words, tool, tool_router,
 };
+use hkask_mcp_server::server::map_io_error;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -52,7 +52,7 @@ async fn ocr_fallback_text(
     };
     let resolved = crate::path_safety::contain_for_read(file_path)?;
     let file_bytes = std::fs::read(&resolved)
-        .map_err(|e| map_corpus_io_error(e, &format!("Failed to read '{}'", file_path)))?;
+        .map_err(|e| map_io_error(e, &format!("Failed to read '{}'", file_path)))?;
     let (file_format, _, _) = convert::detect_format(file_path);
     match service
         .ocr_via_pipeline(
@@ -145,7 +145,7 @@ impl CorpusServer {
                     let destination = crate::path_safety::contain_for_write(output_path)?;
                     if let Some(parent) = destination.parent() {
                         std::fs::create_dir_all(parent).map_err(|e| {
-                            map_corpus_io_error(
+                            map_io_error(
                                 e,
                                 &format!("Failed to create '{}'", parent.display()),
                             )
@@ -202,16 +202,16 @@ impl CorpusServer {
                         McpToolError::invalid_argument("Conversion report must have a parent")
                     })?;
                     let mut temporary = tempfile::NamedTempFile::new_in(parent).map_err(|e| {
-                        map_corpus_io_error(e, "Failed to create conversion report temporary file")
+                        map_io_error(e, "Failed to create conversion report temporary file")
                     })?;
                     serde_json::to_writer(&mut temporary, &result).map_err(|e| {
                         McpToolError::internal(format!("Cannot serialize conversion report: {e}"))
                     })?;
                     temporary.flush().map_err(|e| {
-                        map_corpus_io_error(e, "Failed to flush conversion report")
+                        map_io_error(e, "Failed to flush conversion report")
                     })?;
                     temporary.persist(&report_destination).map_err(|e| {
-                        map_corpus_io_error(e.error, "Failed to publish conversion report")
+                        map_io_error(e.error, "Failed to publish conversion report")
                     })?;
                     result["report"] = serde_json::json!(report_path);
                 }
@@ -714,7 +714,7 @@ impl CorpusServer {
 
             let output_dir = output.as_path();
             std::fs::create_dir_all(output_dir).map_err(|e| {
-                map_corpus_io_error(
+                map_io_error(
                     e,
                     &format!("Failed to create output directory '{}'", output_dir.display()),
                 )
@@ -722,7 +722,7 @@ impl CorpusServer {
 
             let mut sources = std::fs::read_dir(&path)
                 .map_err(|e| {
-                    map_corpus_io_error(e, &format!("Failed to read directory '{}'", path.display()))
+                    map_io_error(e, &format!("Failed to read directory '{}'", path.display()))
                 })?
                 .filter_map(Result::ok)
                 .map(|entry| entry.path())

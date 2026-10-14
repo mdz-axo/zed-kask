@@ -448,10 +448,15 @@ impl ExperimentationStore {
         }
         let id = format!("fit_{}", uuid::Uuid::new_v4().simple());
         let created_at = chrono::Utc::now().to_rfc3339();
-        // The shared INSERT parameters — both the ceiling-gated and the
-        // no-ceiling statements bind the same seven record values; the
-        // gated statement appends the ceiling as ?8.
-        let mut params = vec![
+        let ceiling = experiment.max_runs.ok_or_else(|| {
+            ExperimentationError::BudgetExhausted(experiment_id.to_string(), run_count, 0)
+        })?;
+        // Single-statement atomicity (the crate's INSERT OR IGNORE shape):
+        // the budget condition and the write are ONE statement, so two
+        // concurrent fitness_record calls cannot both pass the check —
+        // SQLite serializes writers and the second statement's WHERE
+        // sees the first's committed SUM.
+        let params = [
             DbValue::Text(id.clone()),
             DbValue::Text(experiment_id.to_string()),
             DbValue::Text(variant_id.to_string()),
@@ -459,52 +464,28 @@ impl ExperimentationStore {
             DbValue::Integer(run_count as i64),
             DbValue::Text(value_column(scores)?),
             DbValue::Text(created_at.clone()),
+            DbValue::Integer(ceiling as i64),
         ];
-        if let Some(ceiling) = experiment.max_runs {
-            // Single-statement atomicity (the crate's INSERT OR IGNORE shape):
-            // the budget condition and the write are ONE statement, so two
-            // concurrent fitness_record calls cannot both pass the check —
-            // SQLite serializes writers and the second statement's WHERE
-            // sees the first's committed SUM. A check-then-insert pair here
-            // was racy under rmcp's concurrent dispatch (observed live
-            // 2026-10-01: two run_count=1 records landed 57µs apart against
-            // a ceiling of 1).
-            params.push(DbValue::Integer(ceiling as i64));
-            let inserted = self.driver.execute(
-                "INSERT INTO fitness_records \
-                 (id, experiment_id, variant_id, runs, run_count, scores, created_at) \
-                 SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7 \
-                 WHERE ?5 + COALESCE((SELECT SUM(run_count) FROM fitness_records \
-                   WHERE experiment_id = ?2), 0) <= ?8",
-                &params,
+        let inserted = self.driver.execute(
+            "INSERT INTO fitness_records \
+             (id, experiment_id, variant_id, runs, run_count, scores, created_at) \
+             SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7 \
+             WHERE ?5 + COALESCE((SELECT SUM(run_count) FROM fitness_records \
+               WHERE experiment_id = ?2), 0) <= ?8",
+            &params,
+        )?;
+        if inserted == 0 {
+            let row = self.driver.query_optional(
+                "SELECT COALESCE(SUM(run_count), 0) FROM fitness_records \
+                 WHERE experiment_id = ?1",
+                &[DbValue::Text(experiment_id.to_string())],
             )?;
-            if inserted == 0 {
-                // Diagnostic only — the refusal above is the atomic gate;
-                // this read may race a concurrent record by one run in the
-                // message (cosmetic, never in the enforcement).
-                let row = self.driver.query_optional(
-                    "SELECT COALESCE(SUM(run_count), 0) FROM fitness_records \
-                     WHERE experiment_id = ?1",
-                    &[DbValue::Text(experiment_id.to_string())],
-                )?;
-                let recorded = row.and_then(|row| row.get_int(0).ok()).unwrap_or(0).max(0) as u64;
-                return Err(ExperimentationError::BudgetExhausted(
-                    experiment_id.to_string(),
-                    recorded + run_count,
-                    ceiling,
-                ));
-            }
-        } else {
-            // No ceiling: a pre-§P8.9 record (NULL max_runs). Every such
-            // experiment is already resolved, so the ExperimentResolved
-            // check above fires first — this branch is unreachable in
-            // practice and kept only for the type system.
-            self.driver.execute(
-                "INSERT INTO fitness_records \
-                 (id, experiment_id, variant_id, runs, run_count, scores, created_at) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                &params,
-            )?;
+            let recorded = row.and_then(|row| row.get_int(0).ok()).unwrap_or(0).max(0) as u64;
+            return Err(ExperimentationError::BudgetExhausted(
+                experiment_id.to_string(),
+                recorded + run_count,
+                ceiling,
+            ));
         }
         Ok(FitnessRecord {
             id,

@@ -20,9 +20,8 @@
 //!
 //! The type previously lived beside the GPUI-dependent `ToolInvoker` code, so
 //! MCP-side block construction could not depend on it without dragging GPUI
-//! into a server process — the media MCP server carries a hand-mirrored
-//! duplicate (`Provenance::for_tool`) for exactly this reason. The move gives
-//! every side one Zed-free, server-authoritative provenance contract;
+//! into a server process. Living in `hkask-types` gives every side (including
+//! `hkask-mcp-media`) one Zed-free, server-authoritative provenance contract;
 //! `hkask-tool-invoker` re-exports it so existing widget imports compile
 //! unchanged.
 
@@ -48,6 +47,21 @@ pub struct BlockProvenance {
 }
 
 impl BlockProvenance {
+    /// Build provenance for a server-authored tool invocation.
+    pub fn for_server_tool(
+        server: impl Into<String>,
+        tool: impl Into<String>,
+        args: Value,
+        span_id: Option<String>,
+    ) -> Self {
+        Self {
+            tool: Some(tool.into()),
+            server: Some(server.into()),
+            args,
+            span_id,
+        }
+    }
+
     /// Whether this provenance is sufficient to re-issue the tool: it needs
     /// both a tool name and a server name. Widgets use this to decide whether
     /// to show an active affordance or a disabled "ask the agent" hint.

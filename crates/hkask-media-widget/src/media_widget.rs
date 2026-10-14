@@ -4,15 +4,9 @@
 //!
 //! When the parsed block carries an OMC concept tag + provenance (the
 //! `media_block::enrich_with_omc_and_provenance` path), the widget also renders
-//! two affordances:
-//! - **Explain** (F): dispatches the OMC-aware explain tool (`describe_image`
-//!   or `gallery_analyze`) via `shared_tool_invoker()`. The OMC concept drives
-//!   the tool selection — the first implementation of the "I" pattern
-//!   (ontology-bounded affordances).
-//! - **I disagree** (C): composes a provenance-scoped revision request and
-//!   injects it back into the active conversation via `shared_injector()`
-//!   (D21 widget→agent seam). Falls back to a copyable draft when no injector
-//!   is active (repo `.rules`).
+//! the **Explain** affordance: dispatches the OMC-aware explain tool
+//! (`describe_image` or `gallery_analyze`) via `shared_tool_invoker()`. The OMC
+//! concept drives the tool selection — ontology-bounded affordances.
 
 use futures::AsyncReadExt as _;
 use gpui::{
@@ -1116,9 +1110,9 @@ impl MediaWidget {
         (position.into(), marks.into(), self.trim_range().is_some())
     }
 
-    /// Render the OMC-driven affordance bar (Explain + I disagree) when the
-    /// block carries provenance. Older blocks without provenance render only
-    /// the media + transport (no affordances) — the additive contract.
+    /// Render the OMC-driven affordance bar (Explain) when the block carries
+    /// dispatchable provenance. Blocks without provenance render only the
+    /// media + transport (no affordances) — the additive contract.
     fn render_affordances(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
         // Only render affordances when the block carries dispatchable provenance
         // (tool + server present). Older blocks without provenance render
