@@ -76,6 +76,8 @@ CREATE INDEX IF NOT EXISTS idx_educt_transcripts_media_path
     ON transcripts(media_path);
 CREATE INDEX IF NOT EXISTS idx_educt_transcripts_asset
     ON transcripts(gallery_asset_id);
+CREATE INDEX IF NOT EXISTS idx_educt_transcripts_source_asset
+    ON transcripts(source_gallery_asset_id);
 CREATE INDEX IF NOT EXISTS idx_educt_layers_transcript
     ON transcript_layers(transcript_id);
 CREATE INDEX IF NOT EXISTS idx_educt_exports_transcript
@@ -97,11 +99,6 @@ BEGIN
      WHERE transcript_id = OLD.id;
     DELETE FROM transcript_layers WHERE transcript_id = OLD.id;
 END;
-";
-
-const POST_MIGRATION_SCHEMA_SQL: &str = "
-CREATE INDEX IF NOT EXISTS idx_educt_transcripts_source_asset
-    ON transcripts(source_gallery_asset_id);
 ";
 
 const ASSET_DETACH_TRIGGER_SQL: &str = "
@@ -239,30 +236,10 @@ pub enum TranscriptStoreError {
     },
 }
 
-/// Create and forward-update the transcript aggregate schema. Existing rows
-/// retain their original gallery identity before the live link becomes
-/// detachable.
+/// Create the transcript aggregate schema and gallery-asset detach trigger.
 pub fn ensure_schema(driver: &dyn DatabaseDriver) -> Result<(), TranscriptStoreError> {
     driver.execute_batch(SCHEMA_SQL)?;
-    add_column_if_missing(driver, "transcripts", "source_gallery_asset_id", "TEXT")?;
-    add_column_if_missing(driver, "transcripts", "detached_at", "TEXT")?;
-    driver.execute(
-        "UPDATE transcripts SET source_gallery_asset_id = gallery_asset_id \
-         WHERE source_gallery_asset_id IS NULL AND gallery_asset_id IS NOT NULL",
-        &[],
-    )?;
-    driver.execute_batch(POST_MIGRATION_SCHEMA_SQL)?;
     if table_exists(driver, "gallery_images")? {
-        driver.execute(
-            "UPDATE transcripts
-                SET gallery_asset_id = NULL,
-                    detached_at = COALESCE(detached_at, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-              WHERE gallery_asset_id IS NOT NULL
-                AND NOT EXISTS (
-                    SELECT 1 FROM gallery_images WHERE id = transcripts.gallery_asset_id
-                )",
-            &[],
-        )?;
         driver.execute_batch(ASSET_DETACH_TRIGGER_SQL)?;
     }
     Ok(())
@@ -275,24 +252,6 @@ fn table_exists(driver: &dyn DatabaseDriver, table: &str) -> Result<bool, Transc
             &[DbValue::Text(table.to_string())],
         )?
         .is_some())
-}
-
-fn add_column_if_missing(
-    driver: &dyn DatabaseDriver,
-    table: &str,
-    column: &str,
-    column_type: &str,
-) -> Result<(), TranscriptStoreError> {
-    let rows = driver.query(&format!("PRAGMA table_info({table})"), &[])?;
-    let exists = rows
-        .iter()
-        .any(|row| row.get_str(1).is_ok_and(|name| name == column));
-    if !exists {
-        driver.execute_batch(&format!(
-            "ALTER TABLE {table} ADD COLUMN {column} {column_type};"
-        ))?;
-    }
-    Ok(())
 }
 
 /// Persist a transcript bundle. Multiple transcriptions of the same media
@@ -899,47 +858,6 @@ mod tests {
                 note: String::new(),
             }],
         })
-    }
-
-    /// dcterms:identifier: `transcript_store::ensure_schema`
-    /// expect: Opening an existing transcript database preserves rows and equips them with immutable source identity.
-    /// [P1] Motivating: Lifecycle repair must not erase durable transcripts created before the relationship schema.
-    #[test]
-    fn forward_schema_preserves_and_backfills_existing_transcript_rows() {
-        let driver = driver();
-        driver
-            .execute_batch(
-                "CREATE TABLE transcripts (
-                    id TEXT PRIMARY KEY,
-                    media_path TEXT NOT NULL,
-                    gallery_asset_id TEXT,
-                    bundle_json TEXT NOT NULL,
-                    words_count INTEGER NOT NULL,
-                    language TEXT,
-                    model TEXT,
-                    audio_duration_secs REAL NOT NULL,
-                    created_at TEXT NOT NULL
-                );
-                INSERT INTO transcripts VALUES (
-                    'transcript-1', '/tmp/source.wav', 'asset-1', '{}', 0,
-                    NULL, NULL, 0.0, '2026-09-01T00:00:00Z'
-                );",
-            )
-            .expect("old transcript schema");
-
-        ensure_schema(&*driver).expect("forward schema");
-
-        let row = driver
-            .query_optional(
-                "SELECT gallery_asset_id, source_gallery_asset_id, detached_at \
-                 FROM transcripts WHERE id = 'transcript-1'",
-                &[],
-            )
-            .expect("query migrated row")
-            .expect("row preserved");
-        assert_eq!(row.get_str(0).expect("live asset"), "asset-1");
-        assert_eq!(row.get_str(1).expect("source asset"), "asset-1");
-        assert!(matches!(row.get(2).expect("detached field"), DbValue::Null));
     }
 
     #[test]

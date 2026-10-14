@@ -1067,10 +1067,11 @@ async fn edit_recording_highlight(
 /// bool value (the reference's property-endpoint convention, page 39:
 /// "request payload equal to the new value"; the PDF's publish section shows
 /// an unnamed `<class 'bool'>` body parameter — not a lost name, the
-/// bare-value shape). LIVE-PINNED 2026-10-07: the object form
-/// `{"publish": true}` was refuted by the provider (HTTP 400, twice —
-/// empty reel and with a block, so the body shape, not the reel state);
-/// the bare-bool form is the re-probe's confirmation target.
+/// bare-value shape). LIVE-PINNED (MF-7 closed 2026-10-14): the object form
+/// `{"publish": true}` was refuted 2026-10-07 (HTTP 400 twice); the bare-bool
+/// form was confirmed live 2026-10-14 on the throwaway Axolotl reel
+/// `c1a49628a0` (HTTP 200, `publish: true`, `share_token_present: true`,
+/// independent `reduct_reel_detail` read-back `publication_state: "published"`).
 /// Acknowledgement `{"<reel id>": {"publish": ..., "share_token": ...}}`.
 async fn publish_reel(
     key: Option<&str>,

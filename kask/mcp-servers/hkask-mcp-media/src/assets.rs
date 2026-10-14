@@ -871,7 +871,7 @@ pub(crate) fn media_op_kind(op: &str) -> Option<&'static str> {
 /// every `media_generate` tool returns: the persisted path plus the
 /// provider's non-payload metadata, enriched with the OMC-tagged,
 /// provenance-carrying display hint (so the media widget can dispatch the
-/// "Explain" affordance and compose back the "I disagree" gesture).
+/// "Explain" affordance).
 ///
 /// The single composition and publication path. It stages provider payloads,
 /// commits each Asset with its generation lineage and OMC creation graph, then

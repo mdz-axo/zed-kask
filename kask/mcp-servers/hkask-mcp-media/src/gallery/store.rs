@@ -138,39 +138,6 @@ fn database_error(error: impl std::fmt::Display) -> InfrastructureError {
     InfrastructureError::database(error.to_string())
 }
 
-/// A table's column names, read inside a migration transaction — the
-/// PRAGMA table_info probe the forward schema update gates its steps on.
-fn table_columns(
-    transaction: &rusqlite::Transaction<'_>,
-    table: &str,
-) -> Result<Vec<String>, InfrastructureError> {
-    transaction
-        .prepare(&format!("PRAGMA table_info({table})"))
-        .map_err(database_error)?
-        .query_map([], |row| row.get::<_, String>(1))
-        .map_err(database_error)?
-        .collect::<rusqlite::Result<Vec<_>>>()
-        .map_err(database_error)
-}
-
-/// Two string columns read as (String, String) pairs inside a migration
-/// transaction.
-fn string_pairs<P: rusqlite::Params>(
-    transaction: &rusqlite::Transaction<'_>,
-    sql: &str,
-    params: P,
-) -> Result<Vec<(String, String)>, InfrastructureError> {
-    transaction
-        .prepare(sql)
-        .map_err(database_error)?
-        .query_map(params, |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-        })
-        .map_err(database_error)?
-        .collect::<rusqlite::Result<Vec<_>>>()
-        .map_err(database_error)
-}
-
 /// Canonicalize existing paths; retain normalized absolute identities when files are offline.
 ///
 /// An absent path still resolves its existing symlink ancestors: the deepest
@@ -389,6 +356,8 @@ impl GalleryStore {
                 ON gallery_images(gallery_id);
             CREATE INDEX IF NOT EXISTS idx_gallery_images_hash
                 ON gallery_images(hash);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_gallery_images_identity
+                ON gallery_images(gallery_id, absolute_path);
             CREATE TABLE IF NOT EXISTS gallery_tags (
                 id TEXT PRIMARY KEY,
                 image_id TEXT NOT NULL REFERENCES gallery_images(id) ON DELETE CASCADE,
@@ -441,66 +410,6 @@ impl GalleryStore {
             CREATE INDEX IF NOT EXISTS idx_gallery_album_members_image
                 ON gallery_album_members(image_id);",
         )?;
-        // One forward schema update. Never deduplicate by deleting a record: it may
-        // own different tags, album memberships, face references or generation lineage.
-        let pool = driver
-            .sqlite_pool()
-            .ok_or_else(|| database_error("GalleryStore requires SQLite"))?;
-        let mut connection = pool.get().map_err(database_error)?;
-        let transaction = connection
-            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
-            .map_err(database_error)?;
-        let columns = table_columns(&transaction, "gallery_images")?;
-        if !columns.iter().any(|column| column == "missing") {
-            transaction
-                .execute_batch(
-                    "ALTER TABLE gallery_images ADD COLUMN missing INTEGER NOT NULL DEFAULT 0;
-                ALTER TABLE gallery_images ADD COLUMN metadata_stale INTEGER NOT NULL DEFAULT 0;",
-                )
-                .map_err(database_error)?;
-            let roots = string_pairs(&transaction, "SELECT id, root_path FROM galleries", [])?;
-            for (gallery_id, root) in roots {
-                let root = asset_path(&root).map_err(database_error)?;
-                transaction
-                    .execute(
-                        "UPDATE galleries SET root_path = ?1 WHERE id = ?2",
-                        params![root.to_string_lossy(), gallery_id],
-                    )
-                    .map_err(|error| {
-                        database_error(format!(
-                            "Gallery root identity conflict; no records removed: {error}"
-                        ))
-                    })?;
-                let images = string_pairs(
-                    &transaction,
-                    "SELECT id, absolute_path FROM gallery_images WHERE gallery_id = ?1",
-                    [&gallery_id],
-                )?;
-                for (image_id, absolute) in images {
-                    let absolute = asset_path(&absolute).map_err(database_error)?;
-                    let relative = absolute.strip_prefix(&root).unwrap_or(&absolute);
-                    transaction.execute("UPDATE gallery_images SET absolute_path = ?1, relative_path = ?2 WHERE id = ?3",
-                        params![absolute.to_string_lossy(), relative.to_string_lossy(), image_id]).map_err(database_error)?;
-                }
-            }
-        }
-        transaction.execute_batch("CREATE UNIQUE INDEX IF NOT EXISTS idx_gallery_images_identity ON gallery_images(gallery_id, absolute_path);")
-            .map_err(|error| database_error(format!("Gallery asset identity conflict; resolve duplicate paths explicitly, no records removed: {error}")))?;
-        // Counts have one read path: aggregate active rows, not cached counters.
-        let columns = table_columns(&transaction, "galleries")?;
-        if columns.iter().any(|column| column == "image_count") {
-            transaction.execute_batch("ALTER TABLE galleries DROP COLUMN image_count; ALTER TABLE galleries DROP COLUMN total_size_bytes;").map_err(database_error)?;
-        }
-        // The face_registry `embedding` column is gone: the local-cosine
-        // matching path it served was removed (LLM-produced "embeddings" are
-        // not geometrically consistent); face matching is vision-LLM only.
-        let columns = table_columns(&transaction, "face_registry")?;
-        if columns.iter().any(|column| column == "embedding") {
-            transaction
-                .execute_batch("ALTER TABLE face_registry DROP COLUMN embedding;")
-                .map_err(database_error)?;
-        }
-        transaction.commit().map_err(database_error)?;
         Ok(())
     }
     /// expect: Reopening a gallery restores its identity and original permissions.
@@ -1833,44 +1742,6 @@ mod tests {
         Ok((store, directory, gallery, path, image))
     }
 
-    /// The absent-alias fixture the two alias-migration tests share: a
-    /// temp root holding a `real` directory and an `alias` symlink to it,
-    /// a gallery over the root, and one image row for `real/clip.mp4`
-    /// (hash "hash") — the clip file itself never exists.
-    #[cfg(unix)]
-    fn absent_alias_store() -> Result<
-        (
-            GalleryStore,
-            tempfile::TempDir,
-            std::path::PathBuf,
-            std::path::PathBuf,
-            GalleryRecord,
-            ImageRecord,
-        ),
-        Box<dyn std::error::Error>,
-    > {
-        let fixture = tempfile::tempdir()?;
-        let real = fixture.path().join("real");
-        std::fs::create_dir(&real)?;
-        let alias = fixture.path().join("alias");
-        std::os::unix::fs::symlink(&real, &alias)?;
-        let store = setup();
-        let gallery = store.open(
-            fixture.path().to_str().expect("UTF-8 root"),
-            GalleryMode::ReadOnly,
-        )?;
-        let image = store.add_image(
-            &gallery.id,
-            &real.join("clip.mp4").to_string_lossy(),
-            "hash",
-            1,
-            1,
-            "png",
-            10,
-        )?;
-        Ok((store, fixture, real, alias, gallery, image))
-    }
-
     #[test]
     fn create_gallery_returns_record() {
         let store = setup();
@@ -2402,50 +2273,31 @@ mod tests {
         Ok(())
     }
 
-    /// expect: Forward schema updates preserve metadata, and ambiguous duplicate identities stop explicitly. [P1]
-    #[test]
-    fn forward_schema_preserves_data_and_refuses_duplicate_identity()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let (store, _directory, gallery, _path, image) = store_with_hashed_image()?;
-        store.tag_image(&image.id, "caption", "Original annotation", 1.0, "user")?;
-        store.driver.execute_batch(
-            "DROP INDEX idx_gallery_images_identity;
-            ALTER TABLE gallery_images DROP COLUMN missing;
-            ALTER TABLE gallery_images DROP COLUMN metadata_stale;
-            ALTER TABLE galleries ADD COLUMN image_count INTEGER NOT NULL DEFAULT 99;
-            ALTER TABLE galleries ADD COLUMN total_size_bytes INTEGER NOT NULL DEFAULT 99;",
-        )?;
-        let migrated = GalleryStore::from_driver(store.driver.clone())?;
-        assert_eq!(migrated.get_tags(&image.id)?.len(), 1);
-        assert_eq!(migrated.get(&gallery.id)?.image_count, 1);
-        assert_eq!(migrated.get(&gallery.id)?.total_size_bytes, 10);
-        migrated.driver.execute_batch("DROP INDEX idx_gallery_images_identity;
-            INSERT INTO gallery_images SELECT 'duplicate', gallery_id, relative_path, absolute_path, hash, width, height, format, size_bytes, added_at, media_type, missing, metadata_stale FROM gallery_images;")?;
-        migrated.tag_image(
-            "duplicate",
-            "caption",
-            "Conflicting annotation",
-            1.0,
-            "user",
-        )?;
-        let error = match GalleryStore::from_driver(migrated.driver.clone()) {
-            Ok(_) => panic!("duplicate identity accepted"),
-            Err(error) => error,
-        };
-        assert!(error.to_string().contains("identity conflict"), "{error}");
-        assert_eq!(migrated.get_tags(&image.id)?.len(), 1);
-        assert_eq!(migrated.get_tags("duplicate")?.len(), 1);
-        assert_eq!(migrated.count_assets(&gallery.id)?, 2);
-        Ok(())
-    }
-
     /// expect: An absent file's alias spelling resolves through existing
     /// symlink ancestors, so a returning file recovers its original identity. [P1]
     #[cfg(unix)]
     #[test]
     fn absent_alias_path_resolves_existing_ancestors_and_keeps_identity()
     -> Result<(), Box<dyn std::error::Error>> {
-        let (store, _fixture, real, alias, gallery, image) = absent_alias_store()?;
+        let fixture = tempfile::tempdir()?;
+        let real = fixture.path().join("real");
+        std::fs::create_dir(&real)?;
+        let alias = fixture.path().join("alias");
+        std::os::unix::fs::symlink(&real, &alias)?;
+        let store = setup();
+        let gallery = store.open(
+            fixture.path().to_str().expect("UTF-8 root"),
+            GalleryMode::ReadOnly,
+        )?;
+        let image = store.add_image(
+            &gallery.id,
+            &alias.join("clip.mp4").to_string_lossy(),
+            "hash",
+            1,
+            1,
+            "png",
+            10,
+        )?;
         // The file is absent — only the ancestor symlink exists.
         let via_alias = asset_path(&alias.join("clip.mp4").to_string_lossy())?;
         let via_real = asset_path(&real.join("clip.mp4").to_string_lossy())?;
@@ -2453,30 +2305,13 @@ mod tests {
             via_alias, via_real,
             "absent alias spelling must denote one identity"
         );
-
-        // The legacy record carries the unresolved alias spelling; the forward
-        // schema update must rewrite it to the resolved spelling so a returning
-        // file re-attaches to the same record (tags, albums, lineage intact).
         store.tag_image(&image.id, "caption", "My clip", 1.0, "user")?;
-        store.driver.execute(
-            "UPDATE gallery_images SET absolute_path = ?1 WHERE id = ?2",
-            &[
-                alias.join("clip.mp4").to_string_lossy().into_owned().into(),
-                image.id.clone().into(),
-            ],
-        )?;
-        store.driver.execute_batch(
-            "DROP INDEX idx_gallery_images_identity;
-            ALTER TABLE gallery_images DROP COLUMN missing;
-            ALTER TABLE gallery_images DROP COLUMN metadata_stale;",
-        )?;
-        let migrated = GalleryStore::from_driver(store.driver.clone())?;
-        let record = migrated.get_by_id(&image.id)?;
+        let record = store.get_by_id(&image.id)?;
         assert_eq!(Path::new(&record.absolute_path), real.join("clip.mp4"));
-        assert_eq!(migrated.get_tags(&image.id)?.len(), 1);
+        assert_eq!(store.get_tags(&image.id)?.len(), 1);
         // The file returns under the real directory — same identity, same ID.
         std::fs::write(real.join("clip.mp4"), b"returned bytes")?;
-        let restored = migrated.add_image(
+        let restored = store.add_image(
             &gallery.id,
             &real.join("clip.mp4").to_string_lossy(),
             "hash",
@@ -2490,41 +2325,7 @@ mod tests {
             "returning file must recover the same identity"
         );
         assert_eq!(restored.added_at, image.added_at);
-        assert_eq!(migrated.get_tags(&image.id)?.len(), 1);
-        Ok(())
-    }
-
-    /// expect: Two absent records whose alias spellings resolve to one
-    /// canonical path stop the open explicitly — no silent merge, no deletion. [P1]
-    #[cfg(unix)]
-    #[test]
-    fn conflicting_absent_alias_spellings_fail_explicitly() -> Result<(), Box<dyn std::error::Error>>
-    {
-        let (store, _fixture, real, alias, gallery, image) = absent_alias_store()?;
-        // Legacy state: two records for the same absent file — one under the
-        // alias spelling, one under the real spelling — predating the status
-        // columns. The canonicalizing schema update must refuse to merge them.
-        store.driver.execute_batch(&format!(
-            "DROP INDEX idx_gallery_images_identity;
-            ALTER TABLE gallery_images DROP COLUMN missing;
-            ALTER TABLE gallery_images DROP COLUMN metadata_stale;
-            UPDATE gallery_images SET absolute_path = '{alias}' WHERE id = '{id}';
-            INSERT INTO gallery_images SELECT 'real-spelling', gallery_id, relative_path, '{real}', hash, width, height, format, size_bytes, added_at, media_type FROM gallery_images WHERE id = '{id}';",
-            alias = alias.join("clip.mp4").to_string_lossy(),
-            real = real.join("clip.mp4").to_string_lossy(),
-            id = image.id,
-        ))?;
-        let error = match GalleryStore::from_driver(store.driver.clone()) {
-            Ok(_) => panic!("conflicting alias spellings accepted"),
-            Err(error) => error,
-        };
-        assert!(error.to_string().contains("identity conflict"), "{error}");
-        // Both records survive untouched — the operator resolves the ambiguity.
-        let rows = store.driver.query(
-            "SELECT id FROM gallery_images WHERE gallery_id = ?1",
-            &[gallery.id.into()],
-        )?;
-        assert_eq!(rows.len(), 2);
+        assert_eq!(store.get_tags(&image.id)?.len(), 1);
         Ok(())
     }
 }

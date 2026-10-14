@@ -232,21 +232,13 @@ lexically), so `/alias/clip.mp4` and `/real/clip.mp4` denote one identity even
 while the file is offline — a missing file cannot split an asset record across
 two spellings.
 
-**Forward schema update:** add `missing`/`metadata_stale`, canonicalize existing
-identities, enforce unique `(gallery_id, absolute_path)`, and remove cached gallery
-count/size columns in favor of active-row aggregates. Existing annotations and
-relations are preserved. Ambiguous duplicate identities stop opening with an
-explicit conflict; no automatic record merge or DB deletion occurs. There are no
-legacy read paths or API aliases. `GalleryStore::open` replaces `create`, and
-insertion derives the relative path rather than accepting a second path identity.
+Schema DDL creates `missing` and `metadata_stale` directly and enforces unique `(gallery_id, absolute_path)`; gallery count/size derive from active-row aggregates, with no legacy read paths, API aliases, or migration shims. `GalleryStore::open` opens or creates the canonical root, and insertion derives the relative path from the canonical absolute path.
 
 Pins: `gallery_reopen_restores_requested_root`, `gallery_rescan_preserves_identity`,
 `gallery_lifecycle_tests` (including `generate_image_files_every_variant_under_the_generated_gallery`
-and `invalid_analysis_outputs_retain_staleness`), and storage's
-`path_upsert_retains_annotations_and_deterministic_positions`,
-`absent_alias_path_resolves_existing_ancestors_and_keeps_identity`,
-`conflicting_absent_alias_spellings_fail_explicitly`,
-and `forward_schema_preserves_data_and_refuses_duplicate_identity`.
+and `invalid_analysis_outputs_retain_staleness`), and `gallery::store::tests`
+(`path_upsert_retains_annotations_and_deterministic_positions` and
+`absent_alias_path_resolves_existing_ancestors_and_keeps_identity`).
 
 ## Transcript-as-timeline reference model
 
@@ -382,7 +374,12 @@ with `start_time`/`end_time` seconds and optional labels; a color tag like
 the BARE JSON body, the reference's property-endpoint payload convention
 (page 39: "request payload equal to the new value"); the object form
 `{"publish": true}` was REFUTED by a live probe 2026-10-07 — HTTP 400
-twice, on an empty reel and one with a block, isolating the body shape). The
+twice, on an empty reel and one with a block, isolating the body shape — and
+the bare-bool form was CONFIRMED by live re-probe 2026-10-14 on the throwaway
+Axolotl reel `c1a49628a0` in project `2771e9d5f4`, returning HTTP 200 with
+`{"note":"the share token value is never returned; the public link is visible in the Reduct app","publish":true,"reel_id":"c1a49628a0","share_token_present":true,"source":"reduct_cloud"}`
+and verified by independent `reduct_reel_detail` read-back showing
+`publication_state: "published"`). The
 publish parameter is never defaulted — `true` asks the provider to create a
 share token, a publicly accessible link — and the token VALUE is never
 returned (the response reports publish state and token presence; the link is
@@ -451,7 +448,7 @@ model overrides for background removal/upscale. See the
 
 ## Face recognition — design decision
 
-Face recognition relies on vision-LLM calls, not local code. The implementation surface is the minijinja (j2) prompt templates — `validate_face_ref` (reference validation) and `match_faces` (two-image same-person comparison) in `src/templates.rs` — dispatched through the inference port, the same pattern as every other vision capability in this server. There is no local embedding model and no local geometric matching; a previous LLM-produced-"embedding" cosine path was removed because LLMs cannot emit geometrically consistent vectors, and its store column was dropped with it (the forward schema update removes `face_registry.embedding` from pre-existing DBs). Full build-out of the face-recognition feature is **deferred — decision recorded 2026-10-06**: the build-out was presented for ruling twice (2026-10-06, options: keep deferred / build on the LLM-template surface with acceptance criteria) and the operator directed proceeding without a build directive, so the deferral stands and reopens on an explicit build directive. Triggering condition: a workflow needing multi-reference voting or match reliability beyond the current two-template core. Any future expansion (e.g. better matching prompts, multi-reference voting) stays on the LLM-template surface.
+Face recognition relies on vision-LLM calls, not local code. The implementation surface is the minijinja (j2) prompt templates — `validate_face_ref` (reference validation) and `match_faces` (two-image same-person comparison) in `src/templates.rs` — dispatched through the inference port, the same pattern as every other vision capability in this server. There is no local embedding model and no local geometric matching; a previous LLM-produced-"embedding" cosine path was removed because LLMs cannot emit geometrically consistent vectors. Full build-out of the face-recognition feature is **deferred — decision recorded 2026-10-06**: the build-out was presented for ruling twice (2026-10-06, options: keep deferred / build on the LLM-template surface with acceptance criteria) and the operator directed proceeding without a build directive, so the deferral stands and reopens on an explicit build directive. Triggering condition: a workflow needing multi-reference voting or match reliability beyond the current two-template core. Any future expansion (e.g. better matching prompts, multi-reference voting) stays on the LLM-template surface.
 
 ## Quick Start
 

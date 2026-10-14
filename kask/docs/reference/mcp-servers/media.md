@@ -1,7 +1,7 @@
 ---
 title: "Media MCP Server Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-10-13
+last_updated: 2026-10-14
 version: "0.42.0"
 status: "Active"
 domain: "Composition"
@@ -230,25 +230,16 @@ supersedes the create-only activation / insert-only rescan behavior.
   filesystem operation fails. Local-vs-network classification is syntactic rather
   than existence-based, so a missing local source reaches the filesystem/FFmpeg
   boundary and retains its original cause instead of becoming a URL syntax error.
-- Canonicalization of an absent path resolves its existing symlink ancestors
+  - Canonicalization of an absent path resolves its existing symlink ancestors
   (deepest existing prefix canonicalized, absent remainder appended lexically),
-  so alias and real spellings of a missing file denote one identity. Conflicting
-  spellings that resolve to one canonical path stop the schema update with an
-  explicit identity conflict.
+  so alias and real spellings of a missing file denote one identity.
 
 Enforcement: `GalleryStore::{open,reconcile,persist_analysis,get_by_id,list_assets}`
 in `kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs`; `GalleryState::scan` in
 `kask/mcp-servers/hkask-mcp-media/src/gallery/state.rs`; activation in `kask/mcp-servers/hkask-mcp-media/src/tools/gallery.rs`; analysis snapshots
 in `kask/mcp-servers/hkask-mcp-media/src/images.rs`; generated completion in `kask/mcp-servers/hkask-mcp-media/src/assets.rs`.
 
-The forward schema update preserves metadata while adding status flags,
-canonicalizing identities and enforcing path uniqueness. Cached count/size columns
-are removed. Conflicting duplicate identities produce an explicit open failure,
-not a silent merge or DB deletion. All subsequent reads use the current schema.
-Storage API callers use `open` and pass one canonical asset path to insertion.
-No providers, generation-job lifecycle, or D35 child-local routing changes are
-part of this decision. See the server README's gallery lifecycle section for
-regression test names.
+The schema defines `missing` and `metadata_stale` directly, enforces `(gallery_id, absolute_path)` uniqueness, and derives active counts/size from SQLite rows with no migration shims or legacy read paths. Storage API callers use `open` and pass one canonical asset path to insertion. No providers, generation-job lifecycle, or D35 child-local routing changes are part of this decision. See the server README's gallery lifecycle section for regression test names.
 
 ## Gallery store identity and reconciliation
 
@@ -258,11 +249,11 @@ user-owned files, not a content-addressed copy. A `GalleryScan` carries
 physical `AssetObservation`s plus explicit coverage and errors;
 `GalleryStore::reconcile` applies all observations and safe missing
 transitions in one immediate transaction
-(`kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:105-135,770-870`). Distinct
+(`kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:105-135,682-778`). Distinct
 paths with equal content remain distinct assets. A changed hash preserves the
 stable image ID and marks metadata stale; a missing asset retains its row and
 can later be restored
-(`kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:737-754,815-870`).
+(`kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:649-676,682-778`).
 
 ```mermaid
 stateDiagram-v2
@@ -282,21 +273,21 @@ stateDiagram-v2
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-RF-008
-verified_date: 2026-10-13
-verified_against: kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:105-135,737-754,770-870,881-940
+verified_date: 2026-10-14
+verified_against: kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:105-135,649-676,682-778,792-845
 status: VERIFIED
 -->
 
 `ReconcileResult::analysis_assets` names the exact added, changed, or restored
 records that need analysis; callers do not infer positional ranges
-(`kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:126-135,770-870`). Analysis
+(`kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:126-135,682-778`). Analysis
 persistence checks image ID, gallery ID, hash, and non-missing state before
 replacing model metadata, so a response for an old request cannot annotate a
-newer file revision (`kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:881-940`).
+newer file revision (`kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:792-845`).
 
 Workflow, generation, OMC creation-graph, album, face, and tag records hang
 from the same durable asset identity
-(`kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:205-293,329-384`). Deleting an
+(`kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:205-293,329-413`). Deleting an
 image therefore relies on foreign-key cascades instead of leaving detached
 lifecycle metadata.
 
@@ -337,18 +328,18 @@ stateDiagram-v2
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-RF-007
-verified_date: 2026-10-13
-verified_against: kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:86-135,737-754,770-870,881-940
+verified_date: 2026-10-14
+verified_against: kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:86-135,649-676,682-778,792-845
 status: VERIFIED
 -->
 
 `GalleryStore::reconcile` commits observations and safe absence transitions in
-one transaction (`kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:770-870`). Errors
+one transaction (`kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:682-778`). Errors
 in scan coverage suppress absence inference. `persist_analysis_for_tag_types`
 applies a response only while image ID, gallery ID, hash, and non-missing
-state still match (`kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:881-940`). Active
+state still match (`kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:792-845`). Active
 list/count/index surfaces exclude missing records, while stable-ID inspection
-can include them (`kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:859-986`).
+can include them (`kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:780-900`).
 
 ### Gallery scan and analysis requests
 
@@ -359,14 +350,14 @@ reports added, changed, restored, missing, and unchanged counts and returns
 exact `analysis_assets`. These types are defined at
 `kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:105-135` and consumed atomically by
 `GalleryStore::reconcile` at
-`kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:770-870`. Persist an analysis response
+`kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:682-778`. Persist an analysis response
 through `persist_analysis_for_tag_types`; it refuses to apply an old request
 when image identity, hash, or presence no longer matches
-(`kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:881-940`).
+(`kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs:792-845`).
 
 ## Transcript-as-timeline model
 
-The 15 `educt_*` tools implement the interaction model published by Reduct.video:
+The 16 `educt_*` tools implement the interaction model published by Reduct.video:
 word-timed transcript selections become media ranges; labeled highlights compose
 into ordered Reel Keep operations; Cut operations implement strikethrough editing;
 and render/export are non-destructive projections. These tools remain local
@@ -424,9 +415,12 @@ reported the Axolotl throwaway Reel as `unpublished` with all sixteen blocks
 intact and no token returned. The PDF documents publishing, but no private
 Reel render or download endpoint.
 Read-back via `reduct_reel_detail` is separate; a submitted ID is not proof
-of rendering. Page 41 lists strikethrough paths but no request/response schema;
-strikethroughs, redaction, publishing and the other undocumented mutations
-remain unsupported. See the media server README for the operation boundary.
+of rendering. Page 41 lists strikethrough paths without a request/response
+schema; strikethroughs, redaction, and media download remain out of scope (see
+the Redesign record below), while highlight creation/edit
+(`reduct_add_recording_highlight`, `reduct_edit_recording_highlight`) and reel
+publication (`reduct_publish_reel`, live-verified 2026-10-14) implement the
+pinned v3 write contracts. See the media server README for the operation boundary.
 
 Transcript, layer, document-export, and rendered-Asset relationships share the
 media database. Deleting a transcript atomically removes its editable layers while
@@ -440,9 +434,10 @@ The latest correction layer now supplies the working transcript for inspection,
 locate, semantic highlighting, SRT, and corpus export. One-to-one replacement
 tokens inherit the corresponding cloned source word's timing; the stored source
 bundle never changes. Cardinality-changing corrections remain readable and
-text-exportable but carry an explicit unaligned state, and timing-dependent tools
-return `FailedPrecondition`. Reduct can re-align these edits server-side; local
-re-transcription/re-alignment remains the explicit capability gap.
+text-exportable, and `educt_realign_transcript` (2026-10-06, MF-2) projects
+re-anchored timings by slicing each edit's source span equally so all timed
+consumers work again without modifying the immutable source bundle. Without a
+realignment layer, timing-dependent tools return `FailedPrecondition`.
 
 Official reference surface:
 <https://reduct.video/product/edit-video/> and
@@ -629,7 +624,7 @@ response contracts are pinned in `jobs.rs`, `tools/jobs.rs`, and `assets.rs`.
 | `workflow_load` | Load a saved workflow by ID; returns the serialized JSON graph. |
 | `workflow_delete` | Delete a saved workflow by ID; produced assets are not affected. |
 
-### Transcript timeline (`kask/mcp-servers/hkask-mcp-media/src/tools/educt.rs`, 15 tools)
+### Transcript timeline (`kask/mcp-servers/hkask-mcp-media/src/tools/educt.rs`, 16 tools)
 
 `educt_store_transcript`, `educt_list_transcripts`, `educt_get_transcript`, `educt_delete_transcript`, `educt_store_layer`, `educt_list_layers`, `educt_paragraph_pass`, `educt_speaker_pass`, `educt_correction_pass`, `educt_apply_corrections`, `educt_realign_transcript`, `educt_highlight_pass`, `educt_edl_from_highlights`, `educt_render_edl`, `educt_export`, and `educt_locate` implement the non-destructive transcript/layer/EDL model described above (`kask/mcp-servers/hkask-mcp-media/src/tools/educt.rs`).
 
@@ -656,7 +651,7 @@ The Reduct group implements the cloud transcript/reel surface described in the T
 | `reduct_recording_highlights` | Read the provider's ID-keyed highlight JSON for one recording (up to 2 MiB); keeps labels, text and timing fields as returned |
 | `reduct_add_recording_highlight` | Create a highlight on a Reduct recording (v3 pages 23-24: POST start_time/end_time seconds, optional labels; a color tag like #orange selects a non-yellow color); returns a submitted highlight ID — MF-1 |
 | `reduct_edit_recording_highlight` | Partially edit an existing Reduct recording highlight (v3 pages 24-25: POST only the provided fields; a provided labels list OVERWRITES per the reference's warning); returns a submitted acknowledgement — MF-1 follow-up |
-| `reduct_publish_reel` | Set a Reduct reel's publication flag (v3 pages 33-34: POST the bool as the bare JSON body — the property-endpoint payload convention, live-probe-corrected 2026-10-07; true asks the provider to create a share token, a publicly accessible link); the token VALUE is never returned — the response reports publish state and token presence — MF-1 |
+| `reduct_publish_reel` | Set a Reduct reel's publication flag (v3 pages 33-34: POST the bool as the bare JSON body — the property-endpoint payload convention, live-probe-corrected 2026-10-07 and live-confirmed 2026-10-14; true asks the provider to create a share token, a publicly accessible link); the token VALUE is never returned — the response reports publish state and token presence — MF-1 / MF-7 |
 | `reduct_recording_status` | Get Reduct's JSON transcription/recording status for a known project and recording ID; read-only |
 | `reduct_recording_transcript` | Read an existing Reduct recording transcript in json or txt format (up to 8 MiB); provider structure is not re-timed or substituted |
 
@@ -699,7 +694,7 @@ Three tests pin the mapping: `omc_mapping_covers_all_registered_tools` (every re
 ## Key paths
 
 - **Gallery lifecycle:** `gallery_organize` → `gallery_analyze` (persist tags) → `gallery_search` (tags or semantic mode) / `gallery_timeline`; `gallery_refresh` after adding files; `gallery_add_media` for non-image assets
-- **Face pipeline:** `face_validate` → `face_register` (or `face_scan_folder` in bulk) → `gallery_refresh` with `include_faces=true` → `gallery_name_face` → `gallery_search` by person name. **Design decision (2026-08-29):** face recognition relies on vision-LLM calls, not local code — the implementation surface is the minijinja (j2) templates `validate_face_ref` and `match_faces` (`kask/mcp-servers/hkask-mcp-media/src/templates.rs`) dispatched through the inference port, like every other vision capability in this server. No local embedding model, no local geometric matching (an LLM-produced-"embedding" cosine path was removed — LLMs cannot emit geometrically consistent vectors, and its `face_registry.embedding` store column was dropped with it via the forward schema update). Full build-out is deferred.
+- **Face pipeline:** `face_validate` → `face_register` (or `face_scan_folder` in bulk) → `gallery_refresh` with `include_faces=true` → `gallery_name_face` → `gallery_search` by person name. **Design decision (2026-08-29):** face recognition relies on vision-LLM calls, not local code — the implementation surface is the minijinja (j2) templates `validate_face_ref` and `match_faces` (`kask/mcp-servers/hkask-mcp-media/src/templates.rs`) dispatched through the inference port, like every other vision capability in this server. No local embedding model, no local geometric matching (an LLM-produced-"embedding" cosine path was removed — LLMs cannot emit geometrically consistent vectors). Full build-out is deferred.
 - **Generation with lineage:** `generate_image` → save to gallery → `gallery_organize`/`gallery_refresh` → `gallery_record_generation` → later `gallery_reproduce` or `gallery_lineage`/`gallery_asset_detail`
 - **Prompt enrichment:** `expand_prompt` → `generate_image` (`num_images` for variants) / `generate_video`
 - **YouTube discovery and acquisition:** `youtube_search` (SerpApi metadata and ranking) → select URL → `video_fetch` (yt-dlp binary retrieval) → `video_clip` / `video_add_caption` / `video_to_gif` / `video_remix`; `video_extract_frames` turns keyframes back into searchable assets
@@ -775,12 +770,17 @@ live in git history (`1a8c500c12`..`42f885b0e3`).
 
 **Accepted limitations (ruled, watched):**
 
-- **MF-7 publish wire contract** — the object body `{"publish": true}` was
-  REFUTED by the operator-authorized live probe 2026-10-07 (HTTP 400 twice,
-  isolating the body shape); the corrected bare-bool body (the reference's
-  property-endpoint payload convention, page 39) is executed at the
-  construction site. The re-probe (post-rebuild, before the first
-  production publish) is the open confirmation.
+- **MF-7 publish wire contract — closed (live-verified 2026-10-14):** the
+  object body `{"publish": true}` was REFUTED by the operator-authorized live
+  probe 2026-10-07 (HTTP 400 twice, isolating the body shape); the corrected
+  bare-bool body (`serde_json::json!(publish)` in `src/tools/reduct.rs:1083`,
+  matching the v3 reference's property-endpoint payload convention on page 39)
+  was confirmed live 2026-10-14 after rebuilding and restarting `hkask-mcp-media`
+  against the operator's throwaway Axolotl project (`2771e9d5f4`, reel
+  `c1a49628a0`). Verbatim probe receipt:
+  `{"note":"the share token value is never returned; the public link is visible in the Reduct app","publish":true,"reel_id":"c1a49628a0","share_token_present":true,"source":"reduct_cloud"}`
+  (HTTP 200, 281 ms), independently confirmed by `reduct_reel_detail` read-back
+  (`{"block_state":"provider_map","blocks":{"4a69f06f":{"duration":1,"order":1,"title":"probe card","type":"title"}},"publication_state":"published","reel_id":"c1a49628a0","share_tokens":"redacted","source":"reduct_cloud","title":"MF-7 publish wire-name probe (throwaway — safe to delete)"}`).
 - **MF-8 job-history ephemerality** — the job controller is in-memory,
   documented and surfaced in tool descriptions; trigger: a workflow that
   depends on job history across restarts reopens this as a persistence

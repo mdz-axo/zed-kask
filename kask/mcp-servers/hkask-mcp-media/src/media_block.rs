@@ -7,9 +7,9 @@
 //!
 //! The block body carries OMC concept tags + server-authoritative provenance
 //! (tool, server, args, span_id) so the media widget can dispatch the
-//! OMC-driven "Explain" affordance and compose-back the "I disagree" gesture.
+//! OMC-driven "Explain" affordance.
 //! Ontology and provenance are intentional optional metadata: blocks without
-//! them render without explain/compose-back affordances. JSON serialization
+//! them render without explain affordances. JSON serialization
 //! preserves paths and metadata verbatim, including quotes and newlines.
 
 use crate::omc;
@@ -34,7 +34,7 @@ pub fn media_block(kind: &str, src: &str) -> String {
 /// `ontology` field (the widget falls back to its default explain tool). `provenance` is
 /// the server-authoritative record of which tool produced this artifact, with
 /// which args, under which regulation span — `None` omits the field (the widget
-/// renders without dispatch/compose-back affordances).
+/// renders without dispatch affordances).
 pub fn media_block_with_omc(
     kind: &str,
     src: &str,
@@ -65,8 +65,7 @@ pub(crate) fn media_block_with_gallery_asset_id(
 }
 
 /// Server-authoritative provenance baked into a ```media block body so the
-/// media widget can re-issue the originating tool (Explain) or compose a
-/// revision request (I disagree). Mirrors `hkask_tool_invoker::BlockProvenance`
+/// media widget can re-issue the originating tool (Explain). Mirrors `hkask_tool_invoker::BlockProvenance`
 /// but lives in the MCP server crate (no GPUI dependency) so the server can
 /// serialize it into the block body.
 #[derive(Debug, Clone, serde::Serialize)]
