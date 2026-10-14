@@ -76,21 +76,31 @@ invariant (P5.4): one axis is always Dublin Core or PKO, so every artifact
 has a common mapping regardless of domain
 (`kask/crates/hkask-bridge-ontology/src/axis.rs:1-16`).
 
-**Finding A — the axis selector has zero production consumers.** A
-whole-tree grep finds `select_ontology_anchor` called only from its own
-crate's tests and the README usage example; no MCP server, no kask crate,
-no zed crate calls it. The portfolio widget implements its own per-metric
-ladder walk instead (D54). The selector is a designed surface awaiting a
-consumer — dead-surface territory, not a live defect.
+**Finding A (corrected same-day) — the axis selector has one production
+consumer: the condenser.** An earlier draft of this review claimed zero
+consumers, read from a paginated grep whose first page happened to contain
+only `axis.rs` matches — the truncated-sweep trap. The full count finds
+`hkask-condenser/src/engine.rs:60` calling `select_ontology_anchor(tool_name)`
+on every tool-result compression (the anchor's tier label feeds telemetry
+and its density expectation feeds the algorithm selection,
+`engine.rs:58-71`), with its test at `algorithms.rs:896-901` and type
+imports at `types.rs:20`. The portfolio widget remains a second,
+independent anchoring path — its own per-metric ladder walk (D54) — that
+does not go through the selector. The error is recorded here, not smoothed
+over.
 
-**Finding B — the axis selector's namespace set predates the rung-1 pins.**
-`OntologyNamespace` (`kask/crates/hkask-bridge-ontology/src/axis.rs:49-68`)
-carries FIBO, SEPIO, GOLEM, ML-Schema, Data Cube, OMC, SUMO — **no DPV, no
-CSO**. A privacy or research-topic domain hint cannot route to the
-vocabularies that now own those domains. With zero consumers this is
-latent, not live; it becomes real the moment a consumer lands. (The module
-doc's illustrative supplement list also lagged the enum; corrected in the
-same pass as this review.)
+**Finding B — the axis selector's namespace set predates the rung-1 pins
+(live via the condenser).** `OntologyNamespace`
+(`kask/crates/hkask-bridge-ontology/src/axis.rs:49-68`) carries FIBO,
+SEPIO, GOLEM, ML-Schema, Data Cube, OMC, SUMO — **no DPV, no CSO**. The
+condenser routes every tool name through this enum, so a tool name hinting
+at privacy or research-topic vocabulary falls to the SUMO arm instead of
+the vocabularies that now own those domains. Practical impact today is
+small — the anchor feeds compression density expectations, not
+correctness (`axis.rs:125-147`), and few tool names hint privacy or
+cso topics — but the gap is live, not latent. (The module doc's
+illustrative supplement list also lagged the enum; corrected in the same
+pass as this review.)
 
 ## 3. Methodology per domain space
 
@@ -176,9 +186,10 @@ how many domain positions one chunk can record.
 selector picks one ontology per artifact; the term-level resolver picks one
 primary sense per term across many ontologies. There is no path today that
 says "this artifact is a FIBO artifact, and this chunk within it also holds
-a DPV position" — the artifact anchor and the chunk's term anchors live on
-separate surfaces. With the selector unconsumed (Finding A), this is a
-design observation, not a live loss.
+a DPV position" — the artifact anchor (the condenser's tool-name-derived
+pick) and the chunk's term anchors live on separate surfaces. This is a
+design observation, not a live loss: no consumer today needs both on one
+record.
 
 ### 4.3 What a multi-domain anchoring would need (decision-ready)
 
@@ -201,20 +212,23 @@ review** — each stays with the operator:
 - **Option 3 — extend the axis selector (DPV/CSO) and compose it with term
   resolution.** Consequence: `OntologyNamespace` gains variants; keyword
   routing for privacy (`dpv`) and research-topic (`cso`) hints; the
-  artifact anchor and chunk anchors could then share a vocabulary.
-  **Prerequisite:** a consumer — extending an unconsumed selector is
-  speculative generality (the trait-with-one-impl class). Recommended only
-  alongside the first real artifact-anchoring consumer.
+  artifact anchor and chunk anchors could then share a vocabulary. The
+  selector is consumed (the condenser, Finding A), so an extension is not
+  speculative generality — but it is a design decision: density factors to
+  set per variant (`axis.rs:125-147`) and keyword arms to choose. Worth
+carding as an operator decision on Finding B, not landing unprompted.
 
-**Recommendation:** Option 1 now (this document is the record); Options 2
-and 3 carded as proposals, triggered by their named consumers. The cheap
-exception already taken: the stale axis module doc corrected in the same
-pass (a comment fix, no behavior change).
+**Recommendation:** Option 1 now (this document is the record); Option 2
+carded awaiting a named consumer; Option 3 carded as an operator decision
+on Finding B (the selector is consumed, so the extension is live design
+work, not speculative). The cheap exception already taken: the stale axis
+module doc corrected in the same pass (a comment fix, no behavior change).
 
 ## 5. Open register
 
-- Finding A (zero-consumer selector) and Finding B (stale namespace set)
-  revisit together when an artifact-anchoring consumer is proposed.
+- Finding B (DPV/CSO missing from `OntologyNamespace`) is live via the
+  condenser; the extension — with density factors per variant — is an
+  operator decision, carded as Option 3.
 - Options 2 and 3 await their named consumers; adoption is the operator's.
 - The salience design (raw terms over canonical concepts) is deliberate and
   correct while coarse-core resolution is common; revisit only if the
