@@ -256,12 +256,7 @@ fn embedding_inventory(
             "expected_model must be non-empty",
         ));
     }
-    if !Path::new(&request.db_path).is_file() {
-        return Err(McpToolError::not_found(format!(
-            "embedding database does not exist: {}",
-            request.db_path
-        )));
-    }
+    crate::helpers::ensure_db_exists(&request.db_path)?;
 
     // The DB passphrase resolves server-side only (fail-closed; never an
     // empty-key open).

@@ -156,12 +156,7 @@ pub(crate) fn ensure_local_input_exists(input: &str) -> Result<(), McpToolError>
         return Ok(());
     }
     let path = input.strip_prefix("file://").unwrap_or(input);
-    if !std::path::Path::new(path).exists() {
-        return Err(McpToolError::not_found(format!(
-            "input file not found: {input}"
-        )));
-    }
-    Ok(())
+    hkask_mcp_server::ensure_existing_file(path, "input file")
 }
 
 /// Lock-free snapshot of gallery state — safe to hold across .await points.

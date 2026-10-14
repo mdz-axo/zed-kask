@@ -40,8 +40,8 @@ pub use http_helpers::{classify_http_error, serpapi_get_json, url_encode_query_v
 pub use tool_span::{ToolContext, execute_tool, record_tool_usage};
 pub use transport::run_stdio_server;
 pub use validation::{
-    MAX_READ_BYTES, contain_for_read, contain_for_write, read_capped, resolve_max_read_bytes,
-    set_artifact_owner, write_contained,
+    MAX_READ_BYTES, contain_for_read, contain_for_write, ensure_existing_dir, ensure_existing_file,
+    read_capped, resolve_max_read_bytes, set_artifact_owner, write_contained,
 };
 pub use validation::{
     map_database_error, map_infra_error, map_io_error, map_join_error, map_memory_store_error,

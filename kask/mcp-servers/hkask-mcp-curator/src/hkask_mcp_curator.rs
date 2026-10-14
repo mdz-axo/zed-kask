@@ -15,37 +15,27 @@
 //! to the single built-in `curator_status` AgentTool; do not mirror it
 //! in this child process or reconstruct its reading from event history.
 
+pub(crate) mod backfill;
+pub(crate) mod db;
 pub(crate) mod distillation;
 pub(crate) mod federated;
 pub(crate) mod forgetting;
-
 pub(crate) mod thread_turns;
 pub mod types;
 
-// Bridge crates: shared ontological vocabulary (P5.4 dual-axis framework)
+pub use db::{CuratorDb, CuratorStores};
 
 use hkask_mcp_server::server::{
-    McpToolError, execute_tool, map_infra_error, map_memory_store_error, resolve_db_passphrase,
+    McpToolError, execute_tool, map_infra_error, map_memory_store_error,
 };
-
-use hkask_storage::database::sqlite::SqliteDriver;
-
 use hkask_types::regulation::RegulationSpan;
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 use serde_json::json;
-use std::path::PathBuf;
 use std::sync::Arc;
-
-use std::sync::RwLock;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use types::*;
 
 const SERVER_NAME: &str = "hkask-mcp-curator";
-
-/// Minimum interval between self-heal re-open attempts, so a DB outage does
-/// not trigger a full DB open + store construction on every tool call.
-const HEAL_RETRY_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// Cap on fragments one entity may contribute to semantic recall. A thread
 /// entity holds one h_mem per turn; without a cap a single chatty thread
@@ -96,6 +86,40 @@ struct SemanticRecall {
     /// in tool responses so an embedding-model migration window reads as
     /// degradation, never as an empty store.
     excluded_model_mismatch: usize,
+}
+
+fn degradation_note(
+    resolution_failures: usize,
+    excluded_model_mismatch: usize,
+    yielded: usize,
+) -> Option<String> {
+    let mut notes = Vec::new();
+    if resolution_failures > 0 {
+        notes.push(resolution_failure_note(resolution_failures, yielded));
+    }
+    if excluded_model_mismatch > 0 {
+        notes.push(model_mismatch_note(excluded_model_mismatch));
+    }
+    (!notes.is_empty()).then(|| notes.join("; "))
+}
+
+/// Parse an `HMemId` UUID and fetch the existing row by ID (`invalid_argument`
+/// on malformed UUID, `not_found` when the row is absent).
+fn fetch_existing_h_mem(
+    memory: &hkask_memory::MemoryStore,
+    field_name: &str,
+    raw_id: &str,
+    not_found_message: String,
+    fetch_error_ctx: &str,
+) -> Result<(hkask_storage::HMemId, hkask_storage::HMem), McpToolError> {
+    let id = raw_id.parse::<hkask_storage::HMemId>().map_err(|e| {
+        McpToolError::invalid_argument(format!("Invalid {field_name} '{raw_id}': {e}"))
+    })?;
+    let h_mem = memory
+        .get_by_id(&id)
+        .map_err(|e| map_memory_store_error(e, fetch_error_ctx))?
+        .ok_or_else(|| McpToolError::not_found(not_found_message))?;
+    Ok((id, h_mem))
 }
 
 /// Note naming the KNN hits that failed h_mem resolution, shared by every
@@ -196,299 +220,6 @@ fn comparable_payload(value: &serde_json::Value) -> serde_json::Value {
         object.remove("_note");
     }
     value
-}
-
-/// The curator's stores, backed by the curator's
-/// sovereign `curator.db`. Grouped so the self-healing handle can swap the whole
-/// set atomically after a re-open.
-///
-/// Named fields (not a positional tuple): tools address stores by name, so
-/// adding or reordering a store cannot silently rebind a `..` destructuring
-/// to the wrong store.
-#[derive(Clone)]
-pub struct CuratorStores {
-    pub regulation_store: Option<Arc<hkask_storage::RegulationArchive>>,
-    /// The curator's unified memory. One store holds all of the curator's
-    /// h_mems — the `HMemOntology` blob on each h_mem carries dual-axis
-    /// anchoring (PKO process + DC state), so no second store handle is
-    /// needed. The `curator_memory_recall` `recall_shape` parameter selects
-    /// the recall shape (perspective-scoped vs entity-wide), not a store.
-    pub memory: Option<Arc<hkask_memory::MemoryStore>>,
-}
-
-impl CuratorStores {
-    /// All stores `None` — the DB-open level failed and a re-open may help.
-    fn all_none(&self) -> bool {
-        self.regulation_store.is_none() && self.memory.is_none()
-    }
-
-    /// Empty store set — used when the DB cannot be opened at all.
-    pub fn empty() -> Self {
-        Self {
-            regulation_store: None,
-            memory: None,
-        }
-    }
-
-    fn regulation_store(&self) -> Result<&Arc<hkask_storage::RegulationArchive>, McpToolError> {
-        self.regulation_store
-            .as_ref()
-            .ok_or_else(|| McpToolError::permission_denied("RegulationArchive not available"))
-    }
-
-    fn memory(&self) -> Result<&Arc<hkask_memory::MemoryStore>, McpToolError> {
-        self.memory
-            .as_ref()
-            .ok_or_else(|| McpToolError::permission_denied("MemoryStore not available"))
-    }
-}
-
-/// Self-healing handle over the curator's sovereign `curator.db` — the MCP-side
-/// mirror of `CuratorStores` in `kask_bridge::memory`.
-///
-/// When the DB cannot be opened at startup (transient SQLCipher lock from a
-/// previous server instance), every tool call
-/// re-attempts the open via `get()`. A successful heal restores the curator's
-/// full tool surface mid-process — no server restart. Failure is never
-/// silent: construction failure logs `error!`, each failed heal attempt
-/// warns once per outage round (re-armed on heal), a successful heal logs
-/// `info!`.
-pub struct CuratorDb {
-    stores: RwLock<CuratorStores>,
-    db_path: Option<String>,
-    passphrase: Option<String>,
-    federated_manifest_path: PathBuf,
-    federated_sources: std::sync::Mutex<Option<Arc<federated::FederatedSourceRegistry>>>,
-    /// The decay constant applied to every (re)opened memory store. Resolved
-    /// once from env at construction so construction and heals apply the
-    /// same operator setting.
-    memory_life_days: f64,
-    heal_attempt_logged: AtomicBool,
-    /// Tests construct handles with no valid path — healing disabled.
-    heal_enabled: bool,
-    /// Last heal attempt — gates re-opens so a DB outage doesn't trigger a
-    /// full open + store construction on every tool call.
-    last_heal_attempt: std::sync::Mutex<Option<std::time::Instant>>,
-}
-
-impl CuratorDb {
-    fn from_context(ctx: &hkask_mcp_server::server::ServerContext) -> Self {
-        let db_path = std::env::var("HKASK_CURATOR_DB").unwrap_or_else(|_| {
-            let p = hkask_types::agent_paths::agent_db("curator");
-            let resolved = hkask_types::agent_paths::resolve_under_data_dir(&p);
-            if let Some(parent) = resolved.parent()
-                && let Err(e) = std::fs::create_dir_all(parent)
-            {
-                tracing::warn!(
-                    target: "hkask.mcp.curator",
-                    error = %e,
-                    path = ?parent,
-                    "Failed to create curator data directory — DB open will likely fail"
-                );
-            }
-            resolved.to_string_lossy().to_string()
-        });
-        // Resolve passphrase via the canonical 2-tier chain
-        // (ctx.credentials → resolve_credential which does env → keychain).
-        // The `required` startup declaration guarantees this resolves for
-        // production launches (transport refuses startup naming the var);
-        // the Err arm is the defensive tail — there is no in-memory store
-        // behind it, so stores stay down until relaunch.
-        let passphrase = match resolve_db_passphrase(&ctx.credentials) {
-            Ok(passphrase) => Some(passphrase),
-            Err(error) => {
-                tracing::warn!(
-                    target: "hkask.mcp.curator",
-                    %error,
-                    "Curator stores stay down — DB-backed tools return permission_denied until relaunch with HKASK_DB_PASSPHRASE resolvable"
-                );
-                None
-            }
-        };
-        let heal_enabled = passphrase.is_some();
-        let memory_life_days = memory_life_days_from_env();
-        let stores = open_curator_stores(
-            Some(db_path.as_str()),
-            passphrase.as_deref(),
-            memory_life_days,
-        );
-        let federated_manifest_path = federated::default_manifest_path();
-        let this = Self {
-            stores: RwLock::new(stores),
-            db_path: Some(db_path),
-            passphrase,
-            federated_manifest_path,
-            federated_sources: std::sync::Mutex::new(None),
-            memory_life_days,
-            heal_attempt_logged: AtomicBool::new(false),
-            heal_enabled,
-            last_heal_attempt: std::sync::Mutex::new(None),
-        };
-        if Self::db_level_down_from(&this.stores) {
-            if this.heal_enabled {
-                tracing::error!(
-                    target: "hkask.mcp.curator",
-                    db_path = ?this.db_path,
-                    "Curator DB unavailable — ALL curator stores (escalations, \
-                     regulation archive, memory, token registry) \
-                     are down. Every tool call re-attempts the open \
-                     (self-healing); check that no other process holds the \
-                     SQLCipher lock and that HKASK_DB_PASSPHRASE matches the \
-                     keychain."
-                );
-            } else {
-                // No passphrase — healing can't succeed, so say so rather
-                // than promising re-attempts that will never happen.
-                tracing::error!(
-                    target: "hkask.mcp.curator",
-                    db_path = ?this.db_path,
-                    "Curator DB unavailable and HKASK_DB_PASSPHRASE is not \
-                     set — curator stores will stay down until the server is \
-                     restarted with the passphrase configured. Set \
-                     HKASK_DB_PASSPHRASE (keychain-provisioned) and relaunch."
-                );
-            }
-        }
-        this
-    }
-
-    /// True when the DB-open level failed (all four stores `None`) — the
-    /// case a re-open can fix. Partial degradation (a per-store `from_driver`
-    /// failure leaving some stores `Some`) is NOT healable by re-open and
-    /// must not churn re-opens on every tool call.
-    /// Construct a `CuratorDb` directly from pre-built stores — the test
-    /// seam. Healing is disabled (no path, no passphrase), mirroring the
-    /// "tests construct handles with no valid path" contract noted on
-    /// `heal_enabled`. `#[doc(hidden)]` because this exists for the
-    /// `tests/tool_behavior.rs` integration suite, not for downstream
-    /// consumers — the production path is `from_context`.
-    #[doc(hidden)]
-    pub fn from_stores(stores: CuratorStores) -> Self {
-        Self {
-            stores: RwLock::new(stores),
-            db_path: None,
-            passphrase: None,
-            federated_manifest_path: PathBuf::new(),
-            federated_sources: std::sync::Mutex::new(None),
-            memory_life_days: hkask_memory::MemoryStore::default_memory_life_days(),
-            heal_attempt_logged: AtomicBool::new(false),
-            heal_enabled: false,
-            last_heal_attempt: std::sync::Mutex::new(None),
-        }
-    }
-
-    #[doc(hidden)]
-    pub fn from_stores_with_federated_manifest(
-        stores: CuratorStores,
-        manifest_path: PathBuf,
-        passphrase: String,
-    ) -> Self {
-        Self {
-            stores: RwLock::new(stores),
-            db_path: None,
-            passphrase: Some(passphrase),
-            federated_manifest_path: manifest_path,
-            federated_sources: std::sync::Mutex::new(None),
-            memory_life_days: hkask_memory::MemoryStore::default_memory_life_days(),
-            heal_attempt_logged: AtomicBool::new(false),
-            heal_enabled: false,
-            last_heal_attempt: std::sync::Mutex::new(None),
-        }
-    }
-
-    fn federated_sources(&self) -> Arc<federated::FederatedSourceRegistry> {
-        let mut cached = self.federated_sources.lock().unwrap_or_else(|poisoned| {
-            tracing::warn!(target: "hkask.mcp.curator", "Federated source cache lock poisoned; revalidating source identities");
-            poisoned.into_inner()
-        });
-        if let Some(registry) = cached.as_ref()
-            && registry.unchanged()
-        {
-            return Arc::clone(registry);
-        }
-        let fresh = Arc::new(federated::FederatedSourceRegistry::load(
-            &self.federated_manifest_path,
-            self.passphrase.as_deref(),
-        ));
-        *cached = Some(Arc::clone(&fresh));
-        fresh
-    }
-
-    fn db_level_down(stores: &CuratorStores) -> bool {
-        stores.all_none()
-    }
-
-    fn db_level_down_from(stores: &RwLock<CuratorStores>) -> bool {
-        match stores.read() {
-            Ok(guard) => Self::db_level_down(&guard),
-            Err(_) => true,
-        }
-    }
-
-    /// Read the current store set, attempting a re-open when the DB-level
-    /// open has failed.
-    fn get(&self) -> CuratorStores {
-        if self.heal_enabled && Self::db_level_down_from(&self.stores) && self.heal_due() {
-            self.try_heal();
-        }
-        match self.stores.read() {
-            Ok(guard) => guard.clone(),
-            Err(_) => CuratorStores::empty(),
-        }
-    }
-
-    /// Gate heal re-open attempts to at most one per `HEAL_RETRY_INTERVAL`.
-    fn heal_due(&self) -> bool {
-        let now = std::time::Instant::now();
-        let mut last = self
-            .last_heal_attempt
-            .lock()
-            .unwrap_or_else(|p| p.into_inner());
-        if let Some(prev) = *last
-            && now.duration_since(prev) < HEAL_RETRY_INTERVAL
-        {
-            return false;
-        }
-        *last = Some(now);
-        true
-    }
-
-    fn try_heal(&self) {
-        let fresh = open_curator_stores(
-            self.db_path.as_deref(),
-            self.passphrase.as_deref(),
-            self.memory_life_days,
-        );
-        let fresh_ok = !Self::db_level_down(&fresh);
-        match self.stores.write() {
-            Ok(mut guard) => {
-                let was_down = Self::db_level_down(&guard);
-                if fresh_ok && was_down {
-                    *guard = fresh;
-                    tracing::info!(
-                        target: "hkask.mcp.curator",
-                        db_path = ?self.db_path,
-                        "Curator DB healed — curator stores restored"
-                    );
-                    self.heal_attempt_logged.store(false, Ordering::Relaxed);
-                } else if !fresh_ok && !self.heal_attempt_logged.swap(true, Ordering::Relaxed) {
-                    tracing::warn!(
-                        target: "hkask.mcp.curator",
-                        db_path = ?self.db_path,
-                        "Curator DB still unavailable after re-open attempt — \
-                         curator tools will keep returning permission_denied"
-                    );
-                }
-            }
-            Err(e) => {
-                tracing::warn!(
-                    target: "hkask.mcp.curator",
-                    error = %e,
-                    "Curator DB stores lock poisoned — cannot attempt heal"
-                );
-            }
-        }
-    }
 }
 
 hkask_mcp_server::mcp_server!(
@@ -674,7 +405,7 @@ impl CuratorServer {
             // language question actually matches — the exact-entity leg
             // below only matches when the query IS an entity name.
             match self.semantic_recall_fragments(&req.query, limit).await {
-                Ok(recall) if !recall.fragments.is_empty() => {
+                Ok(recall) => {
                     let serialized: Vec<serde_json::Value> = recall
                         .fragments
                         .iter()
@@ -687,17 +418,16 @@ impl CuratorServer {
                         "mode": "semantic",
                         "results": serialized,
                     });
-                    let mut notes: Vec<String> = Vec::new();
-                    if recall.resolution_failures > 0 {
-                        notes.push(resolution_failure_note(recall.resolution_failures, yielded));
-                    }
                     if recall.excluded_model_mismatch > 0 {
                         result["model_mismatch_excluded"] =
                             json!(recall.excluded_model_mismatch);
-                        notes.push(model_mismatch_note(recall.excluded_model_mismatch));
                     }
-                    if !notes.is_empty() {
-                        result["note"] = json!(notes.join("; "));
+                    if let Some(note) = degradation_note(
+                        recall.resolution_failures,
+                        recall.excluded_model_mismatch,
+                        yielded,
+                    ) {
+                        result["note"] = json!(note);
                     }
                     Ok(result)
                 }
@@ -725,30 +455,6 @@ impl CuratorServer {
                         "note": format!("semantic recall unavailable — fell back to exact-entity lookup: {reason}"),
                         "results": serialized,
                     }))
-                }
-                Ok(recall) => {
-                    // Every KNN hit failed to resolve, or none matched. When
-                    // hits failed, a bare count:0 would read as "genuinely
-                    // no similar memories" — say resolution failed instead
-                    // (the empty-result-as-success trap).
-                    let mut result = json!({
-                        "count": 0,
-                        "mode": "semantic",
-                        "results": [],
-                    });
-                    let mut notes: Vec<String> = Vec::new();
-                    if recall.resolution_failures > 0 {
-                        notes.push(resolution_failure_note(recall.resolution_failures, 0));
-                    }
-                    if recall.excluded_model_mismatch > 0 {
-                        result["model_mismatch_excluded"] =
-                            json!(recall.excluded_model_mismatch);
-                        notes.push(model_mismatch_note(recall.excluded_model_mismatch));
-                    }
-                    if !notes.is_empty() {
-                        result["note"] = json!(notes.join("; "));
-                    }
-                    Ok(result)
                 }
             }
         })
@@ -831,21 +537,11 @@ impl CuratorServer {
                         // gate excluded — must not vanish behind a clean Ready:
                         // the counts ride the reason so Ready + result_count 0
                         // cannot read as "the curator store is empty".
-                        reason: (recall.resolution_failures > 0
-                            || recall.excluded_model_mismatch > 0)
-                            .then(|| {
-                                let mut notes = Vec::new();
-                                if recall.resolution_failures > 0 {
-                                    notes.push(resolution_failure_note(
-                                        recall.resolution_failures,
-                                        hits.len(),
-                                    ));
-                                }
-                                if recall.excluded_model_mismatch > 0 {
-                                    notes.push(model_mismatch_note(recall.excluded_model_mismatch));
-                                }
-                                notes.join("; ")
-                            }),
+                        reason: degradation_note(
+                            recall.resolution_failures,
+                            recall.excluded_model_mismatch,
+                            hits.len(),
+                        ),
                         result_count: hits.len(),
                     });
                     batches.push(hkask_memory::RankedSourceBatch {
@@ -1088,18 +784,12 @@ impl CuratorServer {
                     // gate excluded — must not vanish: name the counts so
                     // partial (or fully failed) recall reads as degraded, not
                     // as missing memories.
-                    let mut notes: Vec<String> = Vec::new();
-                    if recall.resolution_failures > 0 {
-                        notes.push(resolution_failure_note(
-                            recall.resolution_failures,
-                            entity_wide_count,
-                        ));
-                    }
-                    if recall.excluded_model_mismatch > 0 {
-                        notes.push(model_mismatch_note(recall.excluded_model_mismatch));
-                    }
-                    if !notes.is_empty() {
-                        let note = json!(notes.join("; "));
+                    if let Some(note) = degradation_note(
+                        recall.resolution_failures,
+                        recall.excluded_model_mismatch,
+                        entity_wide_count,
+                    ) {
+                        let note = json!(note);
                         entity_wide_json["note"] = note.clone();
                         perspective_json["note"] = note;
                     }
@@ -1399,32 +1089,16 @@ impl CuratorServer {
             let stores = self.db.get();
             let memory = stores.memory()?;
 
-            // Parse the evidence h_mem ID.
-            let evidence_id = req
-                .evidence_h_mem_id
-                .parse::<hkask_storage::HMemId>()
-                .map_err(|e| {
-                    McpToolError::invalid_argument(format!(
-                        "Invalid evidence_h_mem_id '{id}': {e}",
-                        id = req.evidence_h_mem_id
-                    ))
-                })?;
-
-            // Verify the evidence h_mem exists — by ID, not by entity ref:
-            // `query_deduped_untouched` is entity-keyed and no entity is a
-            // bare UUID, so the previous entity-keyed lookup rejected every
-            // citation and the tool could never insert.
-            let evidence = memory
-                .get_by_id(&evidence_id)
-                .map_err(|e| {
-                    map_memory_store_error(e, "Failed to verify evidence h_mem")
-                })?;
-            if evidence.is_none() {
-                return Err(McpToolError::not_found(format!(
-                    "Evidence h_mem '{id}' not found — memory_insert requires an existing citation",
-                    id = req.evidence_h_mem_id
-                )));
-            }
+            let (_evidence_id, _evidence) = fetch_existing_h_mem(
+                memory,
+                "evidence_h_mem_id",
+                &req.evidence_h_mem_id,
+                format!(
+                    "Evidence h_mem '{}' not found — memory_insert requires an existing citation",
+                    req.evidence_h_mem_id
+                ),
+                "Failed to verify evidence h_mem",
+            )?;
 
             // The write-path contradiction check (R5, fermi's "unverified is
             // a work item" discipline inverted: a *conflicting* value is not
@@ -1575,32 +1249,13 @@ impl CuratorServer {
             let stores = self.db.get();
             let memory = stores.memory()?;
 
-            let h_mem_id = req
-                .h_mem_id
-                .parse::<hkask_storage::HMemId>()
-                .map_err(|e| {
-                    McpToolError::invalid_argument(format!(
-                        "Invalid h_mem_id '{id}': {e}",
-                        id = req.h_mem_id
-                    ))
-                })?;
-
-            // Fetch the existing h_mem to get its current value and confidence
-            // — by ID, not by entity ref. The previous entity-keyed lookup
-            // (`query_deduped_untouched` with the bare UUID) could never
-            // match — no entity is a bare UUID — so every update attempt
-            // returned not_found and the tool never updated anything (the
-            // same bug class memory_insert's evidence check and
-            // memory_resolve_contradiction were fixed for).
-            let existing_h_mem = memory
-                .get_by_id(&h_mem_id)
-                .map_err(|e| map_memory_store_error(e, "Failed to fetch h_mem for update"))?
-                .ok_or_else(|| {
-                    McpToolError::not_found(format!(
-                        "h_mem '{id}' not found",
-                        id = req.h_mem_id
-                    ))
-                })?;
+            let (h_mem_id, existing_h_mem) = fetch_existing_h_mem(
+                memory,
+                "h_mem_id",
+                &req.h_mem_id,
+                format!("h_mem '{}' not found", req.h_mem_id),
+                "Failed to fetch h_mem for update",
+            )?;
 
             // Bayesian-combine the new confidence with the existing one.
             let new_confidence_raw = hkask_types::Confidence::new(req.new_confidence);
@@ -1658,31 +1313,13 @@ impl CuratorServer {
                 ));
             }
 
-            let target_id = req
-                .target_h_mem_id
-                .parse::<hkask_storage::HMemId>()
-                .map_err(|e| {
-                    McpToolError::invalid_argument(format!(
-                        "Invalid target_h_mem_id '{id}': {e}",
-                        id = req.target_h_mem_id
-                    ))
-                })?;
-
-            // Verify the target exists — by ID, not by entity ref. The
-            // previous entity-keyed lookup (`query_deduped_untouched` with
-            // the bare UUID) could never match — no entity is a bare UUID —
-            // so every resolution attempt returned not_found and the tool
-            // never resolved anything (the same bug class memory_insert's
-            // evidence check was fixed for).
-            let target_h_mem = memory
-                .get_by_id(&target_id)
-                .map_err(|e| map_memory_store_error(e, "Failed to fetch target h_mem"))?
-                .ok_or_else(|| {
-                    McpToolError::not_found(format!(
-                        "Target h_mem '{id}' not found",
-                        id = req.target_h_mem_id
-                    ))
-                })?;
+            let (target_id, target_h_mem) = fetch_existing_h_mem(
+                memory,
+                "target_h_mem_id",
+                &req.target_h_mem_id,
+                format!("Target h_mem '{}' not found", req.target_h_mem_id),
+                "Failed to fetch target h_mem",
+            )?;
 
             match req.strategy.as_str() {
                 "forget" => {
@@ -1868,8 +1505,8 @@ impl CuratorServer {
     ) -> Result<String, McpToolError> {
         execute_tool(self, "curator_memory_backfill_embeddings", async {
             let mode = match req.mode.as_deref().map(str::trim) {
-                None | Some("") | Some("missing") => BackfillMode::Missing,
-                Some("model_mismatch") => BackfillMode::ModelMismatch,
+                None | Some("") | Some("missing") => backfill::BackfillMode::Missing,
+                Some("model_mismatch") => backfill::BackfillMode::ModelMismatch,
                 Some(other) => {
                     return Err(McpToolError::invalid_argument(format!(
                         "mode must be \"missing\" or \"model_mismatch\", got \"{other}\""
@@ -1877,8 +1514,8 @@ impl CuratorServer {
                 }
             };
             let store_target = match req.store.as_deref().map(str::trim) {
-                None | Some("") | Some("curator") => BackfillStore::Curator,
-                Some("swarm") => BackfillStore::Swarm,
+                None | Some("") | Some("curator") => backfill::BackfillStore::Curator,
+                Some("swarm") => backfill::BackfillStore::Swarm,
                 Some(other) => {
                     return Err(McpToolError::invalid_argument(format!(
                         "store must be \"curator\" or \"swarm\", got \"{other}\""
@@ -1888,13 +1525,15 @@ impl CuratorServer {
 
             let stores = self.db.get();
             let memory: Arc<hkask_memory::MemoryStore> = match store_target {
-                BackfillStore::Curator => stores.memory()?.clone(),
-                BackfillStore::Swarm => open_swarm_memory_store(self.db.passphrase.as_deref())?,
+                backfill::BackfillStore::Curator => stores.memory()?.clone(),
+                backfill::BackfillStore::Swarm => {
+                    backfill::open_swarm_memory_store(self.db.passphrase.as_deref())?
+                }
             };
 
             match mode {
-                BackfillMode::Missing => {
-                    backfill_missing_passages(
+                backfill::BackfillMode::Missing => {
+                    backfill::backfill_missing_passages(
                         self.inference_port.as_ref(),
                         &memory,
                         store_target,
@@ -1902,8 +1541,8 @@ impl CuratorServer {
                     )
                     .await
                 }
-                BackfillMode::ModelMismatch => {
-                    backfill_model_mismatched_rows(
+                backfill::BackfillMode::ModelMismatch => {
+                    backfill::backfill_model_mismatched_rows(
                         self.inference_port.as_ref(),
                         &memory,
                         req.dry_run.unwrap_or(false),
@@ -2049,349 +1688,6 @@ pub(crate) async fn embed_for_semantic_recall(
     }
 }
 
-// ── Memory backfill sweep helpers ─────────────────────────────────────────
-
-/// The sweep's two modes: restore missing passages, or re-embed rows the
-/// search model gate excludes.
-enum BackfillMode {
-    Missing,
-    ModelMismatch,
-}
-
-/// The sweep's two store targets: the curator's own memory DB, or the
-/// shared swarm memory DB.
-enum BackfillStore {
-    Curator,
-    Swarm,
-}
-
-/// The swarm server's sole embed path stores delegation response chunks
-/// (`hkask-mcp-swarm/src/local_knowledge.rs`); the swarm-store missing-mode
-/// backfill mirrors that eligibility exactly rather than guessing a
-/// knowledge-layer shape the swarm store does not have.
-const SWARM_RESPONSE_CHUNK_ATTRIBUTE: &str = "delegation:response_chunk";
-
-/// Resolve the shared swarm memory DB path. Mirrors
-/// `kask_bridge::identity::resolve_swarm_memory_db_path`: an absolute
-/// `HKASK_SWARM_MEMORY_DB` wins; anything else resolves under the shared
-/// kask data dir (the swarm server's own default, `mcp/swarm/memory.db`).
-fn swarm_memory_db_path() -> std::path::PathBuf {
-    match std::env::var("HKASK_SWARM_MEMORY_DB")
-        .ok()
-        .filter(|raw| !raw.trim().is_empty())
-    {
-        Some(raw) if std::path::Path::new(&raw).is_absolute() => raw.into(),
-        Some(raw) => hkask_types::agent_paths::resolve_under_data_dir(std::path::Path::new(&raw)),
-        None => hkask_types::agent_paths::resolve_under_data_dir(std::path::Path::new(
-            "mcp/swarm/memory.db",
-        )),
-    }
-}
-
-/// Open the shared swarm memory DB for the sweep. The passphrase resolves
-/// through the canonical env chain — a missing or empty key is
-/// `permission_denied` naming the env var, never a silent empty-key open.
-/// Orphaned vec0 shadow rows (metadata deleted without vec access, e.g.
-/// the 2026-09-28 SQL pass) collide on re-insert at the reused rowid and
-/// fail every backfill write with a UNIQUE constraint error, so the
-/// store is swept at open. A sweep failure fails closed: the backfill
-/// writes would fail on the same lock anyway.
-fn open_swarm_memory_store(
-    cached_passphrase: Option<&str>,
-) -> Result<Arc<hkask_memory::MemoryStore>, McpToolError> {
-    let passphrase = match cached_passphrase.filter(|p| !p.is_empty()) {
-        Some(passphrase) => passphrase.to_owned(),
-        None => resolve_db_passphrase(&std::collections::HashMap::new()).map_err(|error| {
-            tracing::warn!(
-                target: "hkask.mcp.curator",
-                %error,
-                "HKASK_DB_PASSPHRASE resolution failed — the swarm store sweep is permission_denied"
-            );
-            McpToolError::permission_denied(
-                "HKASK_DB_PASSPHRASE is not resolvable — the swarm store sweep is unavailable \
-                 (relaunch with HKASK_DB_PASSPHRASE in the server env)",
-            )
-        })?,
-    };
-    let path = swarm_memory_db_path();
-    let store = hkask_memory::MemoryStore::open_existing(
-        &path.to_string_lossy(),
-        &passphrase,
-        hkask_storage::embedding_dim(),
-    )
-    .map_err(|error| {
-        hkask_mcp_server::map_database_error(
-            error,
-            &format!("Cannot open swarm memory DB at {}", path.display()),
-        )
-    })?;
-    let removed = store.delete_orphaned_embeddings().map_err(|error| {
-        McpToolError::internal(format!(
-            "orphaned-embedding sweep failed on swarm memory DB {}: {error}",
-            path.display()
-        ))
-    })?;
-    if removed > 0 {
-        tracing::warn!(
-            target: "hkask.mcp.curator",
-            removed,
-            "swarm memory DB carried orphaned embedding rows — swept at open"
-        );
-    }
-    Ok(Arc::new(store))
-}
-
-/// The gate's two-form predicate: a stored row is mismatched when its
-/// recorded model matches neither the requested form nor the provider-
-/// confirmed actual form — the same comparison `EmbeddingStore::search`
-/// excludes on. A row with no recorded model can never match either form.
-fn model_is_mismatched(stored: Option<&str>, requested: &str, actual: Option<&str>) -> bool {
-    match stored {
-        None => true,
-        Some(stored) => stored != requested && actual != Some(stored),
-    }
-}
-
-/// Missing-passage backfill: h_mems whose exact canonical passage has no
-/// embedding row. Over the curator store this is the knowledge-layer sweep
-/// (turns, distillation watermarks, and goal rows excluded); over the swarm
-/// store eligibility mirrors the swarm server's own embed path —
-/// delegation response chunks only.
-async fn backfill_missing_passages(
-    inference_port: &dyn hkask_types::InferencePort,
-    memory: &hkask_memory::MemoryStore,
-    store_target: BackfillStore,
-    dry_run: bool,
-) -> Result<serde_json::Value, McpToolError> {
-    // Every h_mem (empty prefix matches all entities — all rows are
-    // current; forgotten rows are deleted, not filtered out).
-    let active = memory
-        .h_mems_by_entity_prefix("")
-        .map_err(|e| map_memory_store_error(e, "Failed to scan active h_mems"))?;
-
-    let is_excluded = |entity: &str| {
-        entity.starts_with(thread_turns::SHARED_TURN_PREFIX)
-            || entity.starts_with(distillation::WATERMARK_PREFIX)
-            || entity.starts_with("curator:goal:")
-    };
-    let eligible = |h_mem: &hkask_storage::HMem| match store_target {
-        BackfillStore::Curator => !is_excluded(&h_mem.entity),
-        BackfillStore::Swarm => h_mem.attribute == SWARM_RESPONSE_CHUNK_ATTRIBUTE,
-    };
-
-    // Candidates are passage-scoped: one successful vector under an entity
-    // never hides a failed sibling h_mem.
-    let mut candidates: Vec<(&hkask_storage::HMem, String)> = Vec::new();
-    // Rows with no embeddable text are named, not just counted, so an
-    // operator can see which memories stay invisible to semantic recall.
-    let mut unsupported: Vec<serde_json::Value> = Vec::new();
-    for h_mem in active.iter().filter(|h_mem| eligible(h_mem)) {
-        let Some(passage) = hkask_memory::semantic_passage_for_h_mem(h_mem) else {
-            unsupported.push(json!({
-                "h_mem_id": h_mem.id.to_string(),
-                "entity": h_mem.entity,
-                "attribute": h_mem.attribute,
-                "reason": "value has no string, recall_text or text field",
-            }));
-            continue;
-        };
-        let already_embedded = memory
-            .has_embedding_for_passage(&h_mem.entity, &passage)
-            .map_err(|error| {
-                map_memory_store_error(error, "Failed to inspect passage-level embedding coverage")
-            })?;
-        if !already_embedded {
-            candidates.push((h_mem, passage));
-        }
-    }
-
-    if dry_run {
-        return Ok(json!({
-            "dry_run": true,
-            "mode": "missing",
-            "store": match store_target { BackfillStore::Curator => "curator", BackfillStore::Swarm => "swarm" },
-            "candidate_count": candidates.len(),
-            "unsupported_count": unsupported.len(),
-            "unsupported": unsupported,
-            "candidates": candidates.iter().map(|(h_mem, _passage)| json!({
-                "h_mem_id": h_mem.id.to_string(),
-                "entity": h_mem.entity,
-                "attribute": h_mem.attribute,
-            })).collect::<Vec<_>>(),
-            "guidance": "Dry run — nothing embedded. Re-run without dry_run to backfill."
-        }));
-    }
-
-    let candidate_count = candidates.len();
-    let mut results = Vec::with_capacity(candidate_count);
-    let mut embedded_count = 0usize;
-    let mut failed_count = 0usize;
-    for (h_mem, embed_text) in candidates {
-        let embedded =
-            embed_for_semantic_recall(inference_port, memory, &h_mem.entity, &embed_text).await;
-        if embedded {
-            embedded_count += 1;
-        } else {
-            failed_count += 1;
-        }
-        results.push(json!({
-            "h_mem_id": h_mem.id.to_string(),
-            "entity": h_mem.entity,
-            "attribute": h_mem.attribute,
-            "embedded": embedded,
-        }));
-    }
-
-    RegulationSpan::Curation.emit("memory_embeddings_backfilled");
-
-    Ok(json!({
-        "mode": "missing",
-        "store": match store_target { BackfillStore::Curator => "curator", BackfillStore::Swarm => "swarm" },
-        "candidate_count": candidate_count,
-        "backfilled": embedded_count,
-        "failed": failed_count,
-        "unsupported_count": unsupported.len(),
-        "unsupported": unsupported,
-        "results": results,
-        "guidance": "Embeddings are backfilled per exact canonical passage. Goal rows are excluded and never repaired here. Failed candidates remain passage-level candidates on re-run."
-    }))
-}
-
-/// Model-mismatch sweep — the write side of the search model gate
-/// (a4174ed658): stored rows whose recorded model matches neither the
-/// current requested embedding model nor its provider-confirmed actual
-/// form are re-embedded under the current model, so recall stops excluding
-/// them. Each stale row is deleted by exact (entity, passage) before its
-/// replacement is stored — siblings under the same entity survive; a
-/// failure between delete and store leaves a missing passage the
-/// missing-mode backfill recovers by design.
-async fn backfill_model_mismatched_rows(
-    inference_port: &dyn hkask_types::InferencePort,
-    memory: &hkask_memory::MemoryStore,
-    dry_run: bool,
-) -> Result<serde_json::Value, McpToolError> {
-    let Some(requested_model) = curator_embedding_model() else {
-        return Err(McpToolError::failed_precondition(
-            "no embedding model configured — set kask.models.embedding_model \
-             (injected as HKASK_EMBEDDING_MODEL); the model-mismatch sweep \
-             cannot run without the model to re-embed under",
-        ));
-    };
-
-    // Probe once to learn the provider-confirmed actual form — the second
-    // identity the search gate accepts. A failed probe degrades to the
-    // requested-form-only comparison, surfaced here rather than silent.
-    let probe = inference_port
-        .embed_with_dimensions(
-            &requested_model,
-            std::slice::from_ref(&"model-mismatch sweep identity probe".to_string()),
-            Some(hkask_storage::embedding_dim() as u32),
-        )
-        .await;
-    let actual_model = match &probe {
-        Ok(batch) => batch.actual_model.clone(),
-        Err(error) => {
-            tracing::warn!(
-                target: "hkask.mcp.curator",
-                %error,
-                "identity probe failed — model-mismatch selection compares \
-                 against the requested form only"
-            );
-            None
-        }
-    };
-
-    let rows = memory
-        .all_embeddings_with_text()
-        .map_err(|e| map_memory_store_error(e, "Failed to scan stored embeddings"))?;
-
-    // `all_with_text` yields (entity_ref, vector, passage_text, model) —
-    // the passage is nullable, the model is not.
-    let mut candidates: Vec<(String, String, String)> = Vec::new();
-    let mut unsupported: Vec<serde_json::Value> = Vec::new();
-    for (entity, _vector, passage, stored_model) in rows {
-        if !model_is_mismatched(
-            Some(stored_model.as_str()),
-            &requested_model,
-            actual_model.as_deref(),
-        ) {
-            continue;
-        }
-        let Some(passage) = passage.filter(|p| !p.trim().is_empty()) else {
-            unsupported.push(json!({
-                "entity": entity,
-                "stored_model": stored_model,
-                "reason": "no stored passage text — the row cannot be re-embedded \
-                           from its source; delete it and re-ingest the source passage",
-            }));
-            continue;
-        };
-        candidates.push((entity, passage, stored_model));
-    }
-
-    if dry_run {
-        return Ok(json!({
-            "dry_run": true,
-            "mode": "model_mismatch",
-            "requested_model": requested_model,
-            "actual_model": actual_model,
-            "candidate_count": candidates.len(),
-            "unsupported_count": unsupported.len(),
-            "unsupported": unsupported,
-            "candidates": candidates.iter().map(|(entity, _passage, stored_model)| json!({
-                "entity": entity,
-                "stored_model": stored_model,
-            })).collect::<Vec<_>>(),
-            "guidance": "Dry run — nothing re-embedded. Re-run without dry_run to sweep."
-        }));
-    }
-
-    let candidate_count = candidates.len();
-    let mut results = Vec::with_capacity(candidate_count);
-    let mut re_embedded = 0usize;
-    let mut failed = 0usize;
-    for (entity, passage, stored_model) in candidates {
-        let retired = memory
-            .delete_embedding_by_entity_ref_and_passage(&entity, &passage)
-            .map_err(|e| map_memory_store_error(e, "Failed to retire the stale-model row"))?;
-        let embedded = if retired == 0 {
-            // The row vanished between scan and sweep — surfaced as a
-            // failure below, never silently skipped.
-            false
-        } else {
-            embed_for_semantic_recall(inference_port, memory, &entity, &passage).await
-        };
-        if embedded {
-            re_embedded += 1;
-        } else {
-            failed += 1;
-        }
-        results.push(json!({
-            "entity": entity,
-            "stored_model": stored_model,
-            "re_embedded": embedded,
-        }));
-    }
-
-    RegulationSpan::Curation.emit("memory_embeddings_backfilled");
-
-    Ok(json!({
-        "mode": "model_mismatch",
-        "requested_model": requested_model,
-        "actual_model": actual_model,
-        "candidate_count": candidate_count,
-        "re_embedded": re_embedded,
-        "failed": failed,
-        "unsupported_count": unsupported.len(),
-        "unsupported": unsupported,
-        "results": results,
-        "guidance": "Stale-model rows are re-embedded under the current model \
-                     (delete-then-store per exact passage; siblings survive). A row \
-                     that fails between delete and store becomes a missing passage \
-                     the missing-mode backfill recovers."
-    }))
-}
-
 pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
     // Construct the inference port before entering the sync server-
     // construction closure. `resolve_inference_port` is async (it constructs
@@ -2428,140 +1724,6 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
     .await
 }
 
-/// Resolve the memory decay constant from `HKASK_MEMORY_LIFE_DAYS`. Absent →
-/// the store default (180). Malformed values warn naming the value and fall
-/// back to the default — never a silent fallback. The env var is emitted by
-/// the bridge only when the setting differs from the default, so an absent
-/// var and a default setting produce the same store.
-fn memory_life_days_from_env() -> f64 {
-    match std::env::var("HKASK_MEMORY_LIFE_DAYS") {
-        Ok(raw) => parse_memory_life_days_value(&raw),
-        Err(_) => hkask_memory::MemoryStore::default_memory_life_days(),
-    }
-}
-
-/// Pure parse for the decay constant — separated so the malformed path is
-/// testable without env mutation (env writes are unsafe in edition 2024).
-fn parse_memory_life_days_value(raw: &str) -> f64 {
-    match raw.trim().parse::<f64>() {
-        Ok(value) if value.is_finite() && value > 0.0 => value,
-        _ => {
-            tracing::warn!(
-                target: "hkask.mcp.curator",
-                env = "HKASK_MEMORY_LIFE_DAYS",
-                value = %raw,
-                "Malformed memory life setting — must be a positive number of days; using default"
-            );
-            hkask_memory::MemoryStore::default_memory_life_days()
-        }
-    }
-}
-
-/// Open the curator's sovereign `curator.db` and construct all four stores from
-/// a single shared driver. Called at construction and on every heal attempt.
-/// All-or-nothing on the DB-open steps (a failure before store construction
-/// returns all `None`s); per-store `from_driver` failures degrade only that
-/// store.
-///
-/// `memory_life_days` is the decay constant S (R(t) = exp(-t/S), spec §7) the
-/// store actually uses at recall — resolved once from
-/// `HKASK_MEMORY_LIFE_DAYS` (emitted by the bridge's
-/// `emit_curator_distillation_env`) so the operator's
-/// `kask.memory.memory_life_days` setting governs real decay, not just the
-/// regulation sensor that reports it.
-fn open_curator_stores(
-    db_path: Option<&str>,
-    passphrase: Option<&str>,
-    memory_life_days: f64,
-) -> CuratorStores {
-    let Some(db_path) = db_path else {
-        tracing::warn!(target: "hkask.mcp.curator", "Curator DB path not resolved");
-        return CuratorStores::empty();
-    };
-    let Some(passphrase) = passphrase else {
-        tracing::warn!(target: "hkask.mcp.curator", "HKASK_DB_PASSPHRASE not set");
-        return CuratorStores::empty();
-    };
-
-    let db = match hkask_storage::open_or_repair(db_path, passphrase) {
-        Ok(db) => db,
-        Err(e) => {
-            tracing::warn!(target: "hkask.mcp.curator", error = %e, "Failed to open curator DB");
-            return CuratorStores::empty();
-        }
-    };
-    let pool = match db.sqlite_pool() {
-        Ok(p) => p,
-        Err(e) => {
-            tracing::warn!(target: "hkask.mcp.curator", error = %e, "Failed to get SQLite pool");
-            return CuratorStores::empty();
-        }
-    };
-    let driver: Arc<dyn hkask_storage::database::driver::DatabaseDriver> =
-        Arc::new(SqliteDriver::new(pool));
-    let embedding_dim = hkask_storage::embedding_dim();
-    let embedding_store = match hkask_storage::EmbeddingStore::from_driver(
-        Arc::clone(&driver),
-        embedding_dim,
-    ) {
-        Ok(s) => Some(s),
-        Err(e) => {
-            tracing::warn!(target: "hkask.mcp.curator", error = %e, "Failed to create EmbeddingStore — semantic recall degraded");
-            None
-        }
-    };
-
-    // Memory degrades independently of the Regulation archive below — a
-    // memory failure must not take down Regulation queries.
-    //
-    // An unavailable EmbeddingStore must NOT disable curator memory: the
-    // semantic tools (`curator_semantic_search`, `curator_consult`) degrade
-    // to exact-entity lookup (surfaced in the tool output), and
-    // `curator_memory_recall` recalls by entity/EAV regardless. Before the
-    // store unification the h_mem half survived an embedding failure because
-    // it was a separate handle; falling back to the embedding-free
-    // constructor preserves that degradation boundary instead of coupling
-    // all recall to the embedding index.
-    let memory = match hkask_storage::HMemStore::from_driver(Arc::clone(&driver)) {
-        Ok(h_mem_store) => match embedding_store {
-            Some(embeddings) => Some(Arc::new(
-                hkask_memory::MemoryStore::new(h_mem_store, embeddings)
-                    .with_memory_life_days(memory_life_days),
-            )),
-            None => match hkask_memory::MemoryStore::try_new_without_embeddings(h_mem_store) {
-                Ok(store) => {
-                    tracing::warn!(
-                        target: "hkask.mcp.curator",
-                        "EmbeddingStore unavailable — curator memory opened without \
-                         embeddings; entity/EAV recall works, vector similarity does not"
-                    );
-                    Some(Arc::new(store.with_memory_life_days(memory_life_days)))
-                }
-                Err(e) => {
-                    tracing::warn!(target: "hkask.mcp.curator", error = %e, "Failed to open curator memory without embeddings — curator recall degraded");
-                    None
-                }
-            },
-        },
-        Err(e) => {
-            tracing::warn!(target: "hkask.mcp.curator", error = %e, "Failed to create HMemStore — curator recall degraded");
-            None
-        }
-    };
-    let regulation_store = match hkask_storage::RegulationArchive::from_driver(Arc::clone(&driver))
-    {
-        Ok(store) => Some(Arc::new(store)),
-        Err(e) => {
-            tracing::warn!(target: "hkask.mcp.curator", error = %e, "Failed to create RegulationArchive");
-            None
-        }
-    };
-    CuratorStores {
-        regulation_store,
-        memory,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     /// expect: "The curator server refuses startup without its DB
@@ -2586,58 +1748,6 @@ mod tests {
             "HKASK_DB_PASSPHRASE must be declared required — the curator has no \
              in-memory fallback (CuratorStores::empty), so an optional declaration \
              starts a server whose every DB-backed tool call fails"
-        );
-    }
-
-    use super::*;
-
-    /// expect: "A malformed memory-life setting warns and falls back to the
-    /// default — never a silent fallback." [P1]
-    #[test]
-    fn parse_memory_life_days_value_warns_and_defaults_on_malformed() {
-        assert_eq!(parse_memory_life_days_value("30"), 30.0);
-        assert_eq!(parse_memory_life_days_value(" 45.5 "), 45.5);
-        let default = hkask_memory::MemoryStore::default_memory_life_days();
-        assert_eq!(parse_memory_life_days_value("soon"), default);
-        assert_eq!(parse_memory_life_days_value(""), default);
-        assert_eq!(parse_memory_life_days_value("-5"), default);
-        assert_eq!(parse_memory_life_days_value("inf"), default);
-    }
-
-    /// expect: "The `kask.memory.memory_life_days` setting governs the store's
-    /// actual decay — not just the regulation sensor that reports it." [P1]
-    /// pre: an encrypted curator DB exists; the decay constant is passed at
-    /// open time exactly as `from_context` resolves it from
-    /// `HKASK_MEMORY_LIFE_DAYS`.
-    /// post: the opened memory store carries the configured constant, and
-    /// the default constant arrives when no override is configured.
-    #[test]
-    fn open_curator_stores_applies_configured_memory_life_days() {
-        let directory = tempfile::tempdir().expect("tempdir");
-        let db_path = directory.path().join("curator.db");
-        let db_path = db_path.to_str().expect("UTF-8 path");
-        hkask_storage::open_or_repair(db_path, "test-passphrase").expect("create db");
-
-        let stores = open_curator_stores(Some(db_path), Some("test-passphrase"), 30.0);
-        let memory = stores.memory.expect("memory store");
-        assert_eq!(
-            memory.memory_life_days(),
-            30.0,
-            "the configured decay constant must reach the store that actually decays"
-        );
-
-        let stores_default = open_curator_stores(
-            Some(db_path),
-            Some("test-passphrase"),
-            hkask_memory::MemoryStore::default_memory_life_days(),
-        );
-        assert_eq!(
-            stores_default
-                .memory
-                .expect("memory store")
-                .memory_life_days(),
-            hkask_memory::MemoryStore::default_memory_life_days(),
-            "without an override the store uses the default decay constant"
         );
     }
 }

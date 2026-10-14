@@ -1,7 +1,9 @@
 #![forbid(unsafe_code)]
 #![warn(clippy::let_underscore_future)]
 
+pub(crate) mod evidence_service;
 pub mod research;
+pub(crate) mod synthetic_service;
 
 // Shared cfg(test) fixtures — `src/test_support.rs` (the media crate's
 // test_support precedent).
@@ -24,37 +26,34 @@ use reqwest::Client;
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 use rusqlite::Connection;
 
+use crate::evidence_service::{
+    map_spreadsheet_error, run_source_record, search_url_in_domains, sensitivity_json,
+    supporting_evidence_note, validate_extraction,
+};
 use crate::research::db::*;
+use crate::synthetic_service::items_synthetic_feed;
 use hkask_spreadsheet::PublishOptions;
 use hkask_types::spreadsheet::{
-    AnalyticalTable, ArtifactOrigin, ColumnKind, SpreadsheetAccess, SpreadsheetError, TableColumn,
-    TableValue,
+    AnalyticalTable, ArtifactOrigin, ColumnKind, SpreadsheetAccess, TableColumn, TableValue,
 };
 
 use crate::research::{
-    AnnotateResearchRunRequest, ArtifactScore, BeginResearchRunRequest, BrowseOutput,
-    BrowseRequest, CiteSourcesRequest, CiteStyle, Continuation, DEFAULT_CACHE_MAX_ENTRIES,
-    DEFAULT_CACHE_TTL_SECS, DEFAULT_PROFILE, DeleteSyntheticRequest, DiscoverRequest,
-    EditTagRequest, EvaluateEvidenceRequest, EvidencePresentation, EvidenceReport, ExtractOptions,
-    ExtractOutput, ExtractRequest, FetchRequest, FindSimilarOutput, FindSimilarRequest,
-    FindSimilarResultOutput, FinishResearchRunRequest, GetEntriesRequest, GetResearchRunRequest,
-    ImportOpmlRequest, ListSubscriptionsRequest, MAX_CACHE_MAX_ENTRIES, MAX_CACHE_TTL_SECS,
-    MAX_INSTRUCTION_LENGTH, MAX_JSON_PROMPT_LENGTH, MAX_JSON_SCHEMA_BYTES, MAX_QUERY_LENGTH,
-    MAX_URL_LENGTH, MarkReadRequest, NewResearchRun, PingOutput, ProviderProfileOutput,
-    ProviderRecommendation, RateLimiter, RerankInfo, RerankOutcome, ResolvePaperRequest,
-    ResponseCache, RunSourceRecord, SearchMetadata, SearchOutput, SearchQuery, SearchRequest,
-    SearchResultOutput, SearchStrategy, SensitivityStatus, SubscribeRequest, SynthesizeRequest,
-    UnreadCountRequest, UnsubscribeRequest, WebSearchPort, build_provider_pool, cache_key,
-    discover_feeds, fetch_feed, llm_rerank, normalize_closed_vocab, parse_closed_vocab,
-    parse_closed_vocab_const, provider_profile, score_evidence_set, validated_fetch_client,
+    AnnotateResearchRunRequest, BeginResearchRunRequest, BrowseOutput, BrowseRequest,
+    CiteSourcesRequest, CiteStyle, Continuation, DEFAULT_CACHE_MAX_ENTRIES, DEFAULT_CACHE_TTL_SECS,
+    DEFAULT_PROFILE, DeleteSyntheticRequest, DiscoverRequest, EditTagRequest,
+    EvaluateEvidenceRequest, EvidencePresentation, ExtractOptions, ExtractOutput, ExtractRequest,
+    FetchRequest, FindSimilarOutput, FindSimilarRequest, FindSimilarResultOutput,
+    FinishResearchRunRequest, GetEntriesRequest, GetResearchRunRequest, ImportOpmlRequest,
+    ListSubscriptionsRequest, MAX_CACHE_MAX_ENTRIES, MAX_CACHE_TTL_SECS, MAX_INSTRUCTION_LENGTH,
+    MAX_JSON_PROMPT_LENGTH, MAX_JSON_SCHEMA_BYTES, MAX_QUERY_LENGTH, MAX_URL_LENGTH,
+    MarkReadRequest, NewResearchRun, PingOutput, ProviderProfileOutput, ProviderRecommendation,
+    RateLimiter, RerankInfo, RerankOutcome, ResolvePaperRequest, ResponseCache, RunSourceRecord,
+    SearchMetadata, SearchOutput, SearchQuery, SearchRequest, SearchResultOutput, SearchStrategy,
+    SubscribeRequest, SynthesizeRequest, UnreadCountRequest, UnsubscribeRequest, WebSearchPort,
+    build_provider_pool, cache_key, discover_feeds, fetch_feed, llm_rerank, normalize_closed_vocab,
+    parse_closed_vocab, parse_closed_vocab_const, provider_profile, score_evidence_set,
+    validated_fetch_client,
 };
-
-/// Dispatch a [`SpreadsheetError`] through the canonical per-variant
-/// classification ([`SpreadsheetError::mcp_kind`] — the single owner of
-/// the taxonomy, SP-01); the delegation keeps the call sites named.
-fn map_spreadsheet_error(error: SpreadsheetError) -> McpToolError {
-    McpToolError::new(error.mcp_kind(), error.to_string())
-}
 
 // ── Constants ──
 
@@ -65,56 +64,7 @@ const RATE_LIMIT_MAX_REQUESTS: u32 = 30;
 const RATE_LIMIT_WINDOW_SECS: u64 = 60;
 /// Maximum response body size for feed/synthetic fetches (64 MiB). Prevents
 /// OOM from malicious or misconfigured feeds that serve unbounded content.
-const MAX_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
-
-/// Enforce the caller's domain boundary even when a provider ignores its
-/// domain parameters. A host suffix matches only at a dot boundary, never
-/// inside a longer hostname or a URL's userinfo/path.
-fn search_url_in_domains(url: &str, include: &[String], exclude: &[String]) -> bool {
-    if include.is_empty() && exclude.is_empty() {
-        return true;
-    }
-    let Ok(parsed) = reqwest::Url::parse(url) else {
-        return false;
-    };
-    let Some(host) = parsed.host_str() else {
-        return false;
-    };
-    let host = host.to_ascii_lowercase();
-    let matches_domain = |raw: &String| {
-        let domain = raw.trim().trim_start_matches('.').to_ascii_lowercase();
-        !domain.is_empty()
-            && (host == domain
-                || host
-                    .strip_suffix(&domain)
-                    .is_some_and(|prefix| prefix.ends_with('.')))
-    };
-    (include.is_empty() || include.iter().any(matches_domain))
-        && !exclude.iter().any(matches_domain)
-}
-
-#[cfg(test)]
-mod domain_filter_tests {
-    use super::search_url_in_domains;
-
-    #[test]
-    fn parsed_host_boundary_rejects_lookalikes_and_userinfo() {
-        let official = vec!["amf-france.org".to_string()];
-        assert!(search_url_in_domains(
-            "https://bdif.amf-france.org/back/api/v1/documents/notice.pdf",
-            &official,
-            &[],
-        ));
-        for url in [
-            "https://notamf-france.org/notice",
-            "https://amf-france.org.evil.test/notice",
-            "https://amf-france.org@evil.test/notice",
-            "not a url",
-        ] {
-            assert!(!search_url_in_domains(url, &official, &[]), "{url}");
-        }
-    }
-}
+pub(crate) const MAX_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
 
 // ── ResearchServer ──
 
@@ -214,77 +164,6 @@ pub(crate) fn map_db_error(e: anyhow::Error) -> McpToolError {
         };
     }
     McpToolError::internal(message)
-}
-
-/// Map one search or find-similar result to its run-ledger record — the
-/// shared field shape of the two ledger appends. `provider` is the
-/// caller's variation: the search path names the result's contributing
-/// providers, the find-similar path names Exa (the findSimilar origin).
-fn run_source_record(
-    url: &str,
-    title: &str,
-    published: Option<&str>,
-    source: Option<&str>,
-    content_preview: Option<&str>,
-    description: Option<&str>,
-    provider: Option<String>,
-) -> RunSourceRecord {
-    RunSourceRecord {
-        url: url.to_string(),
-        provider,
-        title: Some(title.to_string()),
-        published: published.map(str::to_string),
-        source: source.map(str::to_string),
-        excerpt: content_preview.or(description).map(str::to_string),
-    }
-}
-
-/// Build the synthetic feed from extracted items — the shared tail of the
-/// item-producing extractor arms (llm_schema; pdf_ocr with items; css and
-/// json_path). Returns the feed with its entries assigned and the entry
-/// count. The diff-hash arms keep their own shape (a single hash entry).
-fn items_synthetic_feed(
-    items: Vec<crate::research::synthetic::ExtractedItem>,
-    source_url: &str,
-    title: &str,
-    description: &str,
-) -> (feed_rs::model::Feed, usize) {
-    let entries = crate::research::synthetic::items_to_entries(items, title);
-    let count = entries.len();
-    let mut feed = crate::research::synthetic::build_synthetic_feed(source_url, title, description);
-    feed.entries = entries;
-    (feed, count)
-}
-
-/// Insert extracted entries and update the synthetic feed's status in one
-/// transaction — the shared commit tail of the two fetch paths (diff-hash
-/// with its new content hash; item extraction without). Returns the
-/// stream's fetch summary, or maps the DB/join failure.
-async fn commit_synthetic_entries(
-    db: r2d2::Pool<hkask_storage::SqliteConnectionManager>,
-    feed_id: i64,
-    entries: Vec<feed_rs::model::Entry>,
-    extract_hash: Option<String>,
-    stream_id: &str,
-) -> Result<serde_json::Value, McpToolError> {
-    let result = spawn_db(db, move |conn| {
-        let tx =
-            rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Deferred)?;
-        let new_count = insert_entries(&tx, feed_id, &entries)?;
-        update_synthetic_status(&tx, feed_id, new_count, extract_hash.as_deref(), None)?;
-        tx.commit()?;
-        Ok::<usize, anyhow::Error>(new_count)
-    })
-    .await;
-    match result {
-        Ok(Ok(new_count)) => Ok(serde_json::json!({
-            "stream_id": stream_id,
-            "new_entries": new_count,
-            "fetched": true,
-        })),
-        Ok(Err(e)) => Err(map_db_error(e)),
-        Err(e) => Err(map_join_error(e, "db task failed")),
-    }
 }
 
 /// Require the research database, returning an Err if not configured.
@@ -1361,34 +1240,10 @@ impl ResearchServer {
                     McpToolError::invalid_argument(format!("invalid extractor_spec JSON: {e}"))
                 })?;
 
-            // Validate the source URL (SSRF defense).
-            hkask_mcp_server::server::validate_tool_url_permissive(&req.source_url)?;
-
-            // Fetch the source.
-            let response = self
-                .rss_client
-                .get(&req.source_url)
-                .send()
+            let body = self
+                .fetch_synthetic_source_bytes(&req.source_url)
                 .await
-                .map_err(|e| McpToolError::unavailable(format!("fetch source: {e}")))?;
-            let status = response.status();
-            if !status.is_success() {
-                return Err(McpToolError::unavailable(format!(
-                    "source returned HTTP {}",
-                    status
-                )));
-            }
-            let body = response.bytes().await.map_err(|e| {
-                McpToolError::unavailable(format!("read source body: {e}"))
-            })?;
-            if body.len() > MAX_RESPONSE_BYTES {
-                return Err(McpToolError::unavailable(format!(
-                    "source body is {} bytes ({:.1} MiB) — exceeds the {} byte limit",
-                    body.len(),
-                    body.len() as f64 / (1024.0 * 1024.0),
-                    MAX_RESPONSE_BYTES
-                )));
-            };
+                .map_err(|(_, e)| e)?;
 
             let title = req.title.clone().unwrap_or_else(|| req.source_url.clone());
             let description = req.description.clone().unwrap_or_default();
@@ -1400,39 +1255,21 @@ impl ResearchServer {
             let folder = req.folder.clone();
             let want_subscribe = req.subscribe.unwrap_or(true);
 
-            // Extract items. For css/json_path/diff_hash, use the sync extract()
-            // function. For llm_schema and pdf_ocr, use the async pool-based
-            // extractors.
-            let (feed, _entry_count, extract_hash) = match kind {
-                crate::research::synthetic::ExtractorKind::DiffHash => {
-                    let (feed, hash) =
-                        crate::research::synthetic::build_diff_hash_feed(&body, &source_url, &title);
+            let (feed, _entry_count, extract_hash) =
+                if kind == crate::research::synthetic::ExtractorKind::DiffHash {
+                    let (feed, hash) = crate::research::synthetic::build_diff_hash_feed(
+                        &body,
+                        &source_url,
+                        &title,
+                    );
                     let count = feed.entries.len();
                     (feed, count, Some(hash))
-                }
-                crate::research::synthetic::ExtractorKind::LlmSchema => {
-                    let items = crate::research::synthetic::extract_llm_schema(
-                        self.pool.as_ref(),
-                        &spec,
-                        &source_url,
-                    )
-                    .await
-                    .map_err(McpToolError::from)?;
-                    let (feed, count) =
-                        items_synthetic_feed(items, &source_url, &title, &description);
-                    (feed, count, None)
-                }
-                crate::research::synthetic::ExtractorKind::PdfOcr => {
-                    let items = crate::research::synthetic::extract_pdf_ocr(
-                        self.pool.as_ref(),
-                        &spec,
-                        &source_url,
-                        &body,
-                    )
-                    .await
-                    .map_err(McpToolError::from)?;
-                    if items.is_empty() {
-                        // diff_hash post-processing or empty PDF.
+                } else {
+                    let items = self
+                        .extract_synthetic_items(kind, &spec, &source_url, &body)
+                        .await?;
+                    if kind == crate::research::synthetic::ExtractorKind::PdfOcr && items.is_empty()
+                    {
                         let (feed, hash) = crate::research::synthetic::build_diff_hash_feed(
                             &body,
                             &source_url,
@@ -1445,21 +1282,7 @@ impl ResearchServer {
                             items_synthetic_feed(items, &source_url, &title, &description);
                         (feed, count, None)
                     }
-                }
-                _ => {
-                    // css or json_path — sync extraction.
-                    let items = crate::research::synthetic::extract(
-                        kind,
-                        &spec,
-                        &source_url,
-                        &body,
-                    )
-                    .map_err(McpToolError::from)?;
-                    let (feed, count) =
-                        items_synthetic_feed(items, &source_url, &title, &description);
-                    (feed, count, None)
-                }
-            };
+                };
 
             // Insert into DB: create feeds row, synthetic_feeds row, entries.
             let feed_title = feed
@@ -1537,142 +1360,6 @@ impl ResearchServer {
             handle_db_result!(result, |v| v)
         })
         .await
-    }
-
-    /// Shared synthetic feed fetch logic. Called by both `rss_fetch` (when it
-    /// detects a `synthetic://` URL).
-    /// The `feed_url` must already be resolved and start with `synthetic://`.
-    async fn fetch_synthetic_inner(
-        &self,
-        stream_id: &str,
-        feed_url: String,
-    ) -> Result<serde_json::Value, McpToolError> {
-        let db = require_research_db!(self);
-
-        // Look up the synthetic feed binding.
-        let feed_url_for_lookup = feed_url.clone();
-        let synth_row = spawn_db(db.clone(), move |conn| {
-            lookup_synthetic_by_feed_url(conn, &feed_url_for_lookup)
-        })
-        .await;
-        let synth = match synth_row {
-            Ok(Ok(Some(row))) => row,
-            Ok(Ok(None)) => {
-                return Err(McpToolError::not_found("synthetic feed binding not found"));
-            }
-            Ok(Err(e)) => return Err(map_db_error(e)),
-            Err(e) => return Err(map_join_error(e, "db lookup failed")),
-        };
-
-        // Parse the extractor kind and spec.
-        let kind: crate::research::synthetic::ExtractorKind =
-            synth.extractor_kind.parse().map_err(McpToolError::from)?;
-        let spec: crate::research::synthetic::ExtractorSpec =
-            serde_json::from_str(&synth.extractor_spec).map_err(|e| {
-                McpToolError::internal(format!("invalid stored extractor_spec: {e}"))
-            })?;
-
-        // Validate and fetch the source URL.
-        hkask_mcp_server::server::validate_tool_url_permissive(&synth.source_url)?;
-        let response = self
-            .rss_client
-            .get(&synth.source_url)
-            .send()
-            .await
-            .map_err(|e| McpToolError::unavailable(format!("fetch source: {e}")))?;
-        let status = response.status();
-        if !status.is_success() {
-            // Record the error.
-            let err_msg = format!("source returned HTTP {status}");
-            let feed_id = synth.feed_id;
-            let err_for_db = err_msg.clone();
-            // Best-effort status write: the tool error below is the caller's
-            // answer, but a lost status write must be observable — a later
-            // feed listing would otherwise show a stale status with no trace.
-            match spawn_db(db.clone(), move |conn| {
-                update_synthetic_status(conn, feed_id, 0, None, Some(&err_for_db))
-            })
-            .await
-            {
-                Ok(Ok(())) => {}
-                Ok(Err(db_error)) => tracing::warn!(
-                    target: "hkask.web",
-                    feed_id,
-                    error = %db_error,
-                    "synthetic-feed error-status write failed — the feed record will show a stale status"
-                ),
-                Err(join_error) => tracing::warn!(
-                    target: "hkask.web",
-                    feed_id,
-                    error = %join_error,
-                    "synthetic-feed error-status write was lost — the feed record will show a stale status"
-                ),
-            }
-            return Err(McpToolError::unavailable(err_msg));
-        }
-        let body = response
-            .bytes()
-            .await
-            .map_err(|e| McpToolError::unavailable(format!("read source body: {e}")))?;
-        if body.len() > MAX_RESPONSE_BYTES {
-            return Err(McpToolError::unavailable(format!(
-                "source body is {} bytes ({:.1} MiB) — exceeds the {} byte limit",
-                body.len(),
-                body.len() as f64 / (1024.0 * 1024.0),
-                MAX_RESPONSE_BYTES
-            )));
-        };
-
-        // For diff_hash: check if content changed.
-        if kind == crate::research::synthetic::ExtractorKind::DiffHash {
-            let new_hash = crate::research::synthetic::content_hash(&body);
-            if Some(new_hash.as_str()) == synth.last_extract_hash.as_deref() {
-                return Ok(serde_json::json!({
-                    "stream_id": stream_id,
-                    "new_entries": 0,
-                    "fetched": true,
-                    "not_modified": true,
-                }));
-            }
-            // Content changed — create a new entry.
-            let (feed, hash) = crate::research::synthetic::build_diff_hash_feed(
-                &body,
-                &synth.source_url,
-                &synth.source_url,
-            );
-            commit_synthetic_entries(db, synth.feed_id, feed.entries, Some(hash), stream_id).await
-        } else {
-            // css, json_path, llm_schema, or pdf_ocr extraction.
-            let items = match kind {
-                crate::research::synthetic::ExtractorKind::LlmSchema => {
-                    crate::research::synthetic::extract_llm_schema(
-                        self.pool.as_ref(),
-                        &spec,
-                        &synth.source_url,
-                    )
-                    .await
-                    .map_err(McpToolError::from)?
-                }
-                crate::research::synthetic::ExtractorKind::PdfOcr => {
-                    crate::research::synthetic::extract_pdf_ocr(
-                        self.pool.as_ref(),
-                        &spec,
-                        &synth.source_url,
-                        &body,
-                    )
-                    .await
-                    .map_err(McpToolError::from)?
-                }
-                _ => {
-                    // css or json_path — sync extraction.
-                    crate::research::synthetic::extract(kind, &spec, &synth.source_url, &body)
-                        .map_err(McpToolError::from)?
-                }
-            };
-
-            let entries = crate::research::synthetic::items_to_entries(items, &synth.source_url);
-            commit_synthetic_entries(db, synth.feed_id, entries, None, stream_id).await
-        }
     }
 
     #[tool(description = "List all synthetic feeds with their specs and last-extraction stats")]
@@ -1922,60 +1609,6 @@ impl ResearchServer {
             }
         })
         .await
-    }
-
-    /// Append server-observed records to a run's ledger (the
-    /// non-repudiation path). Best-effort by design: the outcome is
-    /// returned as a `run_ledger` note for the tool's output —
-    /// `{"recorded": n, "already_recorded": m}` on success (m = URLs the
-    /// run already held; first observation wins), `{"recorded": 0, "error": ...}` on
-    /// failure or when the DB is not configured. Never silent in either
-    /// direction (the reliability pattern: the public response
-    /// surfaces persistence outcomes).
-    async fn append_run_ledger(
-        &self,
-        run_id: &str,
-        records: Vec<RunSourceRecord>,
-    ) -> serde_json::Value {
-        let Some(database) = self.research_db.clone() else {
-            return serde_json::json!({
-                "recorded": 0,
-                "error": "research database not available — set HKASK_DB_PASSPHRASE \
-                          to record runs (HKASK_RESEARCH_DB only for a custom location)",
-            });
-        };
-        let run_id_for_task = run_id.to_string();
-        let submitted = records.len();
-        let append = spawn_db(database, move |connection| {
-            crate::research::runs::append_run_sources(connection, &run_id_for_task, &records)
-        })
-        .await;
-        match append {
-            // First observation wins: a URL the run already holds is kept, not
-            // re-inserted, so name it rather than report a bare zero.
-            Ok(Ok(inserted)) => serde_json::json!({
-                "recorded": inserted,
-                "already_recorded": submitted.saturating_sub(inserted),
-            }),
-            Ok(Err(error)) => {
-                tracing::warn!(
-                    target: "hkask.research.runs",
-                    run_id,
-                    error = %error,
-                    "run ledger append failed"
-                );
-                serde_json::json!({ "recorded": 0, "error": error.to_string() })
-            }
-            Err(error) => {
-                tracing::warn!(
-                    target: "hkask.research.runs",
-                    run_id,
-                    error = %error,
-                    "run ledger append task failed"
-                );
-                serde_json::json!({ "recorded": 0, "error": error.to_string() })
-            }
-        }
     }
 
     #[tool(
@@ -2544,71 +2177,6 @@ impl ResearchServer {
             },
         )
         .await
-    }
-}
-
-/// Never present binary or a downgraded provider response as a successful extraction.
-fn validate_extraction(
-    requested_format: &str,
-    actual_format: Option<&str>,
-    content: Option<&str>,
-) -> Result<(), McpToolError> {
-    let content = content.ok_or_else(|| McpToolError::internal("Extraction has no content"))?;
-    if content.starts_with("%PDF-") {
-        return Err(McpToolError::internal(
-            "Provider returned raw PDF bytes; use a PDF extraction provider",
-        ));
-    }
-    if actual_format != Some(requested_format) {
-        return Err(McpToolError::internal(format!(
-            "Provider returned {:?} instead of requested {requested_format} extraction",
-            actual_format
-        )));
-    }
-    if requested_format == "json" && serde_json::from_str::<serde_json::Value>(content).is_err() {
-        return Err(McpToolError::internal(
-            "Provider returned invalid JSON for structured extraction",
-        ));
-    }
-    Ok(())
-}
-
-// ── evaluate_evidence output helpers ──
-
-/// The SEPIO:0000440 (has-supporting-evidence) note in the duplicate-aware
-/// model's terms: independent units corroborate, or the artifacts are one
-/// duplicated unit — never a domain count that syndication inflates.
-fn supporting_evidence_note(score: &ArtifactScore, scored: &EvidenceReport) -> serde_json::Value {
-    if score.corroboration_count > 1 {
-        serde_json::Value::String(format!(
-            "{} independent evidence units corroborate the evidence base",
-            score.corroboration_count
-        ))
-    } else if scored.sourced_count > 1 {
-        serde_json::Value::String(format!(
-            "{} artifacts form one evidence unit — duplication, not independent corroboration",
-            scored.sourced_count
-        ))
-    } else {
-        serde_json::Value::Null
-    }
-}
-
-/// The wire form of the sensitivity report.
-fn sensitivity_json(sensitivity: &SensitivityStatus) -> serde_json::Value {
-    match sensitivity {
-        SensitivityStatus::Stable { profiles_evaluated } => serde_json::json!({
-            "status": "stable",
-            "profiles_evaluated": profiles_evaluated,
-        }),
-        SensitivityStatus::Unstable { driver } => serde_json::json!({
-            "status": "unstable",
-            "driver": driver.name(),
-        }),
-        SensitivityStatus::NotEvaluable { reason } => serde_json::json!({
-            "status": "not_evaluable",
-            "reason": reason,
-        }),
     }
 }
 

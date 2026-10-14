@@ -201,18 +201,7 @@ impl MediaServer {
             };
 
             let raw_path = PathBuf::from(&path);
-            if !raw_path.exists() {
-                return Err(McpToolError::not_found(format!(
-                    "Gallery path does not exist: {}",
-                    raw_path.display()
-                )));
-            }
-            if !raw_path.is_dir() {
-                return Err(McpToolError::invalid_argument(format!(
-                    "Gallery path is not a directory: {}",
-                    raw_path.display()
-                )));
-            }
+            hkask_mcp_server::ensure_existing_dir(&raw_path, "Gallery path")?;
             let mut state = GalleryState::new(raw_path, gallery_mode.clone());
             state.validate().map_err(map_media_error)?;
             let record = self
@@ -981,18 +970,7 @@ impl MediaServer {
                 })?
             };
 
-            if !folder.exists() {
-                return Err(McpToolError::not_found(format!(
-                    "Face folder does not exist: {}",
-                    folder.display()
-                )));
-            }
-            if !folder.is_dir() {
-                return Err(McpToolError::invalid_argument(format!(
-                    "Face folder is not a directory: {}",
-                    folder.display()
-                )));
-            }
+            hkask_mcp_server::ensure_existing_dir(&folder, "Face folder")?;
             let folder = folder.canonicalize().map_err(|e| {
                 hkask_mcp_server::server::map_io_error(
                     e,

@@ -190,6 +190,50 @@ pub fn map_database_error(error: hkask_storage::DatabaseError, context: &str) ->
     }
 }
 
+fn ensure_existing_path(
+    path: &std::path::Path,
+    label: &str,
+    expect_dir: bool,
+) -> Result<(), McpToolError> {
+    if !path.exists() {
+        return Err(McpToolError::not_found(format!(
+            "{label} does not exist: {}",
+            path.display()
+        )));
+    }
+    let valid_kind = if expect_dir {
+        path.is_dir()
+    } else {
+        path.is_file()
+    };
+    if !valid_kind {
+        let kind_name = if expect_dir { "directory" } else { "file" };
+        return Err(McpToolError::invalid_argument(format!(
+            "{label} is not a {kind_name}: {}",
+            path.display()
+        )));
+    }
+    Ok(())
+}
+
+/// Verify that `path` exists on disk (`not_found` when absent) and is a
+/// regular file (`invalid_argument` when it is a directory or non-file).
+pub fn ensure_existing_file(
+    path: impl AsRef<std::path::Path>,
+    label: &str,
+) -> Result<(), McpToolError> {
+    ensure_existing_path(path.as_ref(), label, false)
+}
+
+/// Verify that `path` exists on disk (`not_found` when absent) and is a
+/// directory (`invalid_argument` when it is a file or non-directory).
+pub fn ensure_existing_dir(
+    path: impl AsRef<std::path::Path>,
+    label: &str,
+) -> Result<(), McpToolError> {
+    ensure_existing_path(path.as_ref(), label, true)
+}
+
 /// Default read size cap for [`read_capped`] (32 MiB). Bounds a hostile or
 /// mistaken path from exhausting memory (CWE-400).
 ///

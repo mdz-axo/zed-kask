@@ -109,12 +109,7 @@ fn passphrase_unavailable() -> McpToolError {
 /// that does not exist — the former `invalid_argument` followed the
 /// inventory precedent before the contract unified the class.
 pub(crate) fn ensure_db_exists(db_path: &str) -> Result<(), McpToolError> {
-    if !std::path::Path::new(db_path).is_file() {
-        return Err(McpToolError::not_found(format!(
-            "embedding database does not exist: {db_path}"
-        )));
-    }
-    Ok(())
+    hkask_mcp_server::ensure_existing_file(db_path, "embedding database")
 }
 
 /// Record one inference call's measured usage into the executing

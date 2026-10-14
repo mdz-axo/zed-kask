@@ -676,11 +676,12 @@ mod tests {
         );
     }
 
-    /// The pass is idempotent: deleted turns stay deleted, deleted
-    /// embeddings stay deleted, a second pass changes nothing.
-    #[test]
-    fn forgetting_is_idempotent() {
-        let (memory, _driver) = store_with_driver();
+    fn seed_old_distilled_thread() -> (
+        hkask_memory::MemoryStore,
+        Arc<dyn hkask_storage::database::driver::DatabaseDriver>,
+        chrono::DateTime<chrono::Utc>,
+    ) {
+        let (memory, driver) = store_with_driver();
         let now = chrono::Utc::now();
         let old = now - chrono::Duration::days(10);
         seed_turn(
@@ -691,6 +692,14 @@ mod tests {
         );
         seed_embedding(&memory, "curator:thread:old-thread", "old turn", 1.0);
         seed_watermark(&memory, "old-thread", old);
+        (memory, driver, now)
+    }
+
+    /// The pass is idempotent: deleted turns stay deleted, deleted
+    /// embeddings stay deleted, a second pass changes nothing.
+    #[test]
+    fn forgetting_is_idempotent() {
+        let (memory, _driver, now) = seed_old_distilled_thread();
 
         let first = forget_distilled_threads(&memory, now, 7).expect("first pass");
         assert_eq!(first.turns_deleted, 1);
@@ -714,17 +723,7 @@ mod tests {
     /// without vec access).
     #[test]
     fn forgetting_sweeps_orphaned_vectors() {
-        let (memory, driver) = store_with_driver();
-        let now = chrono::Utc::now();
-        let old = now - chrono::Duration::days(10);
-        seed_turn(
-            &memory,
-            "curator:thread:old-thread",
-            "old turn",
-            old - chrono::Duration::days(1),
-        );
-        seed_embedding(&memory, "curator:thread:old-thread", "old turn", 1.0);
-        seed_watermark(&memory, "old-thread", old);
+        let (memory, driver, now) = seed_old_distilled_thread();
 
         // Orphan the embedding: delete the metadata row directly, leaving
         // the vector row (the shape a metadata-only SQL deletion leaves).
