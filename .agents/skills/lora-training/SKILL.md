@@ -91,14 +91,14 @@ and the runtime enforces the hard contracts the audit established.
 
 ## Instructions
 
-Process order: recommend with `select-method` from declared evidence → operator selects a concrete configuration → optionally validate a declared dataset with `training_validate_config` → audit selected configuration → report. The sections below are lookup steps, not evidence that a runtime tool ran.
+Process order: recommend with `select-method` from declared evidence → operator selects a concrete configuration → optionally validate a declared dataset with `training_validate_config` → audit selected configuration with `audit-config` → compute readiness and lossless summary counts in `lisp_eval`. The sections below are lookup steps, not evidence that a runtime tool ran.
 
-### `lora-training/preflight-dataset`
+### Dataset Preflight (`training_validate_config`, D)
 
-1. After the operator selects concrete `params`, call `training_validate_config` with those params and the declared `dataset_path` (and `base_model` when known); unwrap the tool envelope and use its actual `dataset_format` and `findings`. A render of `preflight-dataset.j2` does not read the file or run this validation. A tool error leaves G-D0 unassessed.
+1. After the operator selects concrete `params`, call `training_validate_config` with those params and the declared `dataset_path` (and `base_model` when known); unwrap the tool envelope and use its actual `dataset_format` and `findings`. A tool error leaves G-D0 unassessed.
 2. Report the runtime's four-state `dataset_format.verdict`: `ready`, `needs_mapping`, `incompatible`, or `undetermined` when detection/evidence fails. Do not convert `undetermined` to `ready`.
 3. When `needs_mapping`, report the runtime's `mapping_code` as an unexecuted external-harness suggestion; do not add a Python script or dependency to this Rust repository. `ready` requires an observed ready verdict from `training_validate_config`, not an assumption that normalization ran.
-4. This phase is skipped when `dataset_path` is absent, with a named evidence gap; pass `dataset_validation: {}` to audit-config and never imply an observed format. The skill does not execute training or modify dataset files.
+4. This phase is skipped when `dataset_path` is absent, with a named evidence gap; pass `dataset_validation: {}` to `audit-config` and never imply an observed format. The skill does not execute training or modify dataset files.
 
 ### `lora-training/select-method`
 
@@ -229,36 +229,26 @@ Every finding has exactly these fields:
 Do not create alternate finding shapes. A recommendation never overwrites
 `selected_method`, and unavailable evidence never becomes an observed violation.
 
-### `lora-training/report`
+### Report Synthesis & Lossless Reconciliation (D)
 
-1. Render `lora-training/report` with the unchanged operator `selected_method`, `host`, normalized `findings`, `gate_results`, and the `computed_readiness` returned by Step 8's coverage and precedence checks. Reject missing inputs rather than synthesizing a method or verdict. Consume normalized findings without adding, removing, renaming, repairing, or reclassifying fields.
-2. Present complete findings unchanged; grouped views may organize them by phase,
-   state, or severity only.
-3. Report counts for all eight states and four phases. Keep selected method,
-   advisory method recommendations, and readiness separate.
-4. Record `deferred`, `planned`, and `not_evaluated` requirements as contract
-   gaps with the next evidence needed; exclude `not_applicable`. Do not mutate
-   findings to create gaps.
-5. Preserve `computed_readiness` unchanged. The caller's `lisp_eval` checks own gate-ID coverage and precedence (`Refuse > Fail > Conditional > Deferred > Not evaluated > Pass`); a different method recommendation cannot change the result. If coverage was not checked, report `Not evaluated`, never an inferred pass.
-6. Preserve claim-appropriate citations and report exact phase, state,
-   severity, and evidence-kind counts.
+1. Verify static rank budget and must-merge DoRA/bias invariants in `lisp_eval` (`LT-1`):
+   - form: `(and (< lora_r (* 0.5 d_min)) (< lora_r d_min) (if must_merge (not use_dora) true))`
+2. Present the `audit-config` normalized `findings`, `contract_gaps`, `gate_results`, and `computed_readiness` (returned by Step 8's coverage and precedence checks) without adding, removing, renaming, repairing, or reclassifying fields. Verify lossless finding counts and host consistency in `lisp_eval` (`LT-2`):
+   - form: `(and (= findings_count grouped_count) (= input_errors_count 0) all_hosts_match)`
+3. Report counts for all eight states and four phases. Keep selected method, advisory method recommendations, and readiness separate.
 
 ## Registry Templates
 
 | Template | Purpose |
 |----------|---------|
-| `preflight-dataset.j2` | Deterministically present the observed `training_validate_config.dataset_format` four-state verdict and findings after operator-selected params; missing format is `undetermined`, never ready. Does not execute mapping code or training. |
 | `select-method.j2` | Apply a deterministic 8-gate refinement without overwriting earlier constraints or operator requirements. G6 reasons over the retained capability space (2 harnesses × 5 methods × 3 hosts × cost models) when provider_capabilities is supplied. G2 and G3 refine using prior_training_history when supplied (Good Regulator compliance). Consumes prior_iteration when present (the previous in-session PDCA turn). |
-| `audit-config.j2` | Audit the selected configuration with the applicable subset of 19 declared gates, preserving citations and refuse escalations. Consumes actual `dataset_validation` findings when available and `runtime_metrics` for G-R1 when supplied; unmeasured gates remain unassessed. G-P1 checks declared persistence setup before submit. |
-| `report.j2` | Synthesize audit findings with concrete config evidence, source citations (arXiv paper sections + PEFT v0.19.0 doc sections), severity (critical/high/medium/low), gate ID, and remediation. Preserve the normalized Finding schema, identify contract gaps, and separate recommendation from phase-aware readiness. Produce verdicts from evidence-backed states without reclassifying findings. |
+| `audit-config.j2` | Audit the selected configuration with the applicable subset of 19 declared gates, preserving citations, contract gaps, and refuse escalations. Consumes actual `dataset_validation` findings when available and `runtime_metrics` for G-R1 when supplied; unmeasured gates remain unassessed. G-P1 checks declared persistence setup before submit. |
 
-To render a template, call the `render_template` tool with the template ref (e.g., `lora-training/preflight-dataset`) with a context object carrying the required variables.
+To render a template, call the `render_template` tool with the template ref (e.g., `lora-training/select-method`) with a context object carrying the required variables.
 
 Template context variables (from each template's [inference] contract):
-- `preflight-dataset.j2`: `host`, `dataset_validation`
 - `select-method.j2`: `training_config_path`, `dataset_path`, `model_size_b`, `memory_budget_gb`, `inference_constraint`, `task_distance`, `quality_vs_cost`, `knowledge_preservation_required`, `host`, `harness_preference`, `trainer_preference`, `adapter_purpose`, `dataset_format_hint`, `provider_capabilities`, `prior_training_history`, `prior_iteration`
 - `audit-config.j2`: `config_paths`, `selected_method`, `host`, `dataset_validation`, `runtime_metrics`
-- `report.j2`: `findings`, `gate_results`, `selected_method`, `computed_readiness`, `host`
 
 ## Regression case
 

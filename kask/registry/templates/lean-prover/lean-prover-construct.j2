@@ -13,7 +13,6 @@ contract:
     proof_rationale: array
     termination_proof: string
     ecosystem_references: array
-    construct_score: float
     verification_status: string
     compiler_actions_used: array
     reasoning: string
@@ -135,7 +134,6 @@ In agent chat, use `lean_check` with `path` set to the saved local project-relat
   "ecosystem_references": [
     {"reference": "Mathlib lemma/tactic", "relevance": "how it applies to this proof"}
   ],
-  "construct_score": 0.0,
   "verification_status": "unverified|checked|failed|incomplete", 
   "compiler_actions_used": [
     {"action": "code action name", "result": "what it suggested", "verified": false}
@@ -144,4 +142,4 @@ In agent chat, use `lean_check` with `path` set to the saved local project-relat
 }
 ```
 
-`construct_score`: 1.0 only after the exact proof checks with no holes and its `#print axioms` dependencies satisfy the declared policy. Set `verification_status` to `unverified` until Lean is run and the diagnostics and axiom output are inspected; a tool status of `checked_not_axiom_audited` does not meet this gate. A generated proof or code action is not a checked theorem.
+Set `verification_status` to `unverified` until Lean is run and the diagnostics and axiom output are inspected; a tool status of `checked_not_axiom_audited` does not meet this gate. A generated proof or code action is not a checked theorem.

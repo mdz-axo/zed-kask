@@ -104,7 +104,7 @@ training job or proves unobserved gates passed.[^lora-contract-gates]
 | Gate | ID | Purpose | Source |
 |------|----|---------|--------|
 | Adapter purpose | G0 | Establishes what kind of adapter is being produced (instruction, reasoning, vision, preference, reward_model). Determines baseline rank, target modules, and learning-forgetting posture. Runs first, constrains all subsequent gates. | Biderman et al. arXiv:2405.09673; Raschka 2025 |
-| Dataset analysis | G-D0 | Recommendation uses declared format hint only. After operator selection, `training_validate_config` can check an actual dataset path and return `dataset_format` plus G-D0/G-D1 findings; `preflight-dataset.j2` presents that result. No token/role/vision profile is produced. | TRL dataset formats; runtime response in `tools/validate.rs` |
+| Dataset analysis | G-D0 | Recommendation uses declared format hint only. After operator selection, `training_validate_config` can check an actual dataset path and return `dataset_format` plus G-D0/G-D1 findings directly to `audit-config.j2`. No token/role/vision profile is produced. | TRL dataset formats; runtime response in `tools/validate.rs` |
 | Inference constraint | G1 | Must-merge vs dynamic-switching vs either-ok. Constrains adapter form. | LoRA §4.2 |
 | Memory budget | G2 | Full precision vs quantized 4bit. Model_size_b × 2 as approximate floor only. | QLoRA §3 |
 | Task distance | G3 | Refines rank_range within G0 baseline. Light/moderate/heavy. | LoRA §4.3; Biderman et al. |

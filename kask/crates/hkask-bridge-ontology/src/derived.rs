@@ -193,7 +193,11 @@ pub const DERIVED_CONCEPTS: &[DerivedConcept] = &[
     },
     DerivedConcept {
         term: "cybernetic_feedback_loop",
-        aliases: &["feedback loop"],
+        aliases: &[
+            "feedback loop",
+            "negative feedback",
+            "negative feedback loop",
+        ],
         identity: "sense -> compare against a set point -> act to reduce the deviation -> the effect is sensed again",
         definition: "The self-regulation pattern: a system measures its own state, compares the measurement against a reference, and acts to reduce the deviation, with the action's effect entering the next measurement. Broken when any leg is missing, delayed beyond usefulness, or silent.",
         constituents: &["observation", "set point", "correction"],
@@ -1239,6 +1243,8 @@ pub const DERIVED_CONCEPTS: &[DerivedConcept] = &[
         aliases: &[
             "isa 500",
             "vouching and tracing",
+            "vouching",
+            "tracing",
             "evidence reliability hierarchy",
         ],
         identity: "information used in arriving at audit conclusions, evaluated by sufficiency and appropriateness across the reliability hierarchy and directional testing (vouching claims to sources and tracing sources to the report)",
@@ -1464,6 +1470,164 @@ pub const DERIVED_CONCEPTS: &[DerivedConcept] = &[
             "subjunctive hypothesis",
         ],
         authority: "operator ruling 2026-10-14 (Cohort 6 skill-corpus audit); Palmer, Mood and Modality, Cambridge University Press (1986/2001)",
+    },
+    DerivedConcept {
+        term: "rank_reversal",
+        aliases: &["rank reversals", "ahp rank reversal", "weight flip"],
+        identity: "a change in the relative ordering of decision alternatives induced by perturbing criterion weights or by adding or removing an alternative under a multi-criteria aggregation rule",
+        definition: "Valerie Belton & Tony Gear, 'On a short-coming of Saaty's method of analytic hierarchies', Omega 11(3):228-230 (1983), and Evangelos Triantaphyllou, 'Two new cases of rank reversals when the AHP and some of its additive variants are used that do not occur with the multiplicative AHP', Journal of Multi-Criteria Decision Analysis 10(1):11-25 (2001), doi:10.1002/mcda.284: measures sensitivity of a multi-criteria ranking by identifying the smallest relative one-at-a-time weight perturbation (min_flip) that changes the top-ranked alternative. In zed-kask it grounds mcda's sensitivity-analysis stage.",
+        constituents: &[
+            "multi_criteria_decision_analysis",
+            "sensitivity analysis",
+            "weight perturbation",
+        ],
+        authority: "operator ruling 2026-10-14 (Cohort 7 skill-corpus audit); Belton & Gear, Omega 11(3):228-230 (1983); Triantaphyllou, J. MCDA 10(1):11-25 (2001), doi:10.1002/mcda.284",
+    },
+    DerivedConcept {
+        term: "catastrophic_forgetting",
+        aliases: &[
+            "catastrophic interference",
+            "knowledge forgetting",
+            "intruder dimensions",
+        ],
+        identity: "the degradation of a pre-trained model's previously acquired capabilities and knowledge when its weights are updated on a new task distribution",
+        definition: "Michael McCloskey & Neal J. Cohen, 'Catastrophic Interference in Connectionist Networks: The Sequential Learning Problem', Psychology of Learning and Motivation 24:109-165 (1989), Robert M. French, 'Catastrophic forgetting in connectionist networks', Trends in Cognitive Sciences 3(4):128-135 (1999), and Dan Biderman et al., 'LoRA Learns Less and Forgets Less', TMLR (2024), arXiv:2405.09673: fine-tuning updates can overwrite pre-trained representations unless constrained by low-rank adapters or knowledge-preserving subspace initialization (such as CorDA-KP). In zed-kask it grounds lora-training's G5 knowledge-preservation gate.",
+        constituents: &["fine_tuning", "knowledge preservation", "low-rank subspace"],
+        authority: "operator ruling 2026-10-14 (Cohort 7 skill-corpus audit); McCloskey & Cohen (1989); French (1999); Biderman et al., arXiv:2405.09673 (2024)",
+    },
+    DerivedConcept {
+        term: "dependent_type",
+        aliases: &[
+            "dependent types",
+            "dependent type theory",
+            "pi type",
+            "sigma type",
+        ],
+        identity: "a type family indexed by terms (B : A -> Sort u), generalized by dependent product types (Pi) and dependent sum types (Sigma)",
+        definition: "Nicolaas Govert de Bruijn, 'The mathematical language AUTOMATH, its usage, and some of its extensions', Lecture Notes in Mathematics 125 (1970), doi:10.1007/bfb0060623, Per Martin-Lof, Intuitionistic Type Theory (Bibliopolis, 1984), and Mario Carneiro, 'The Type Theory of Lean' (CMU Master's Thesis, 2019): types may depend on values, allowing universal quantifiers (forall x : A, P x) to be represented as dependent function types and constructive witness-carrying existentials as Sigma types in Type (distinct from proof-irrelevant Exists in Prop). In zed-kask it grounds lean-prover.",
+        constituents: &[
+            "curry_howard_correspondence",
+            "universal quantification",
+            "constructive witness",
+        ],
+        authority: "operator ruling 2026-10-14 (Cohort 7 skill-corpus audit); de Bruijn, LNM 125 (1970), doi:10.1007/bfb0060623; Martin-Lof (1984); Carneiro (2019)",
+    },
+    DerivedConcept {
+        term: "proof_irrelevance",
+        aliases: &["propositional extensionality", "subsingleton elimination"],
+        identity: "the type-theoretic principle that for any proposition P : Prop and any two proofs h1 h2 : P, h1 and h2 are definitionally equal (h1 == h2)",
+        definition: "Mario Carneiro, 'The Type Theory of Lean' (2019), and Leonardo de Moura & Sebastian Ullrich, 'The Lean 4 Theorem Prover and Programming Language', CADE-28 (2021), doi:10.1007/978-3-030-79876-5_37: any two inhabitants of a proposition in Prop are definitionally equal when they exist, ensuring proofs carry no runtime data and cannot be pattern-matched to extract witnesses into Type (restricted large elimination), while never permitting uninhabited Props or sorryAx holes. In zed-kask it grounds lean-prover's Prop/Type boundary discipline.",
+        constituents: &[
+            "curry_howard_correspondence",
+            "dependent_type",
+            "type_erasure",
+        ],
+        authority: "operator ruling 2026-10-14 (Cohort 7 skill-corpus audit); Carneiro, 'The Type Theory of Lean' (2019); de Moura & Ullrich, CADE-28 (2021), doi:10.1007/978-3-030-79876-5_37",
+    },
+    DerivedConcept {
+        term: "type_erasure",
+        aliases: &["proof erasure", "runtime erasure"],
+        identity: "the compilation pass that removes type arguments and Prop proof terms before code generation because runtime execution cannot branch on proof structure",
+        definition: "Edwin Brady, Conor McBride & James McKinna, 'Inductive Families Need Not Store Their Indices', TYPES (2003), Mario Carneiro, 'The Type Theory of Lean' (2019), and Leonardo de Moura & Sebastian Ullrich, CADE-28 (2021), doi:10.1007/978-3-030-79876-5_37: because propositions in Prop are proof-irrelevant and large elimination into Type is restricted to subsingletons, proof terms erase completely at compile time with zero runtime overhead. In zed-kask it grounds lean-prover's erasure verification.",
+        constituents: &["proof_irrelevance", "compilation", "zero runtime overhead"],
+        authority: "operator ruling 2026-10-14 (Cohort 7 skill-corpus audit); Brady, McBride & McKinna (2003); Carneiro (2019); de Moura & Ullrich (2021), doi:10.1007/978-3-030-79876-5_37",
+    },
+    DerivedConcept {
+        term: "delta_debugging",
+        aliases: &["ddmin", "input minimization", "test case minimization"],
+        identity: "an automated binary-search minimization algorithm (ddmin) that partitions a failure-inducing input or change set against a deterministic oracle until a 1-minimal failure-inducing subset is isolated",
+        definition: "Andreas Zeller & Ralf Hildebrandt, 'Simplifying and isolating failure-inducing input', IEEE Transactions on Software Engineering 28(2):183-200 (2002), doi:10.1109/32.988498, and Zeller, Why Programs Fail (2009): systematically narrows a failing test case or configuration to the smallest configuration where removing any single element causes the failure to disappear. In zed-kask it grounds diagnose's minimal reproduction loop.",
+        constituents: &[
+            "scientific_debugging",
+            "minimal reproduction",
+            "test_oracle",
+        ],
+        authority: "operator ruling 2026-10-14 (Cohort 7 skill-corpus audit); Zeller & Hildebrandt, IEEE TSE 28(2):183-200 (2002), doi:10.1109/32.988498",
+    },
+    DerivedConcept {
+        term: "git_bisect",
+        aliases: &["bisection debugging", "commit bisection"],
+        identity: "binary search over a directed acyclic commit graph using a deterministic test oracle to isolate the exact first commit that introduced a regression in O(log N) steps",
+        definition: "Andreas Zeller, 'Yesterday, my program worked. Today, it does not. Why?', ESEC/FSE (1999), doi:10.1145/318774.318946, and Linus Torvalds & Junio C. Hamano, git-bisect(1) manual: halves the commit range between a known-good ancestor and a known-bad descendant at each step by executing a deterministic reproducer script (git bisect run). In zed-kask it grounds diagnose's bisection feedback-loop strategy.",
+        constituents: &["delta_debugging", "directed_acyclic_graph", "test_oracle"],
+        authority: "operator ruling 2026-10-14 (Cohort 7 skill-corpus audit); Zeller, ESEC/FSE (1999), doi:10.1145/318774.318946",
+    },
+    DerivedConcept {
+        term: "scope_creep",
+        aliases: &["feature creep", "unrequested scope"],
+        identity: "uncontrolled expansion of a task's changes beyond its stated functional requirements — unrequested features, speculative configurability, or adjacent-code refactoring",
+        definition: "Project Management Institute, A Guide to the Project Management Body of Knowledge (PMBOK Guide), and Andrej Karpathy's LLM coding principles (reified in coding-guidelines): adding features, abstractions, formatting changes, or adjacent refactors not requested by the user increases diff surface and defect risk without serving the functional goal. In zed-kask it grounds coding-guidelines' Surgical Changes and Simplicity First principles.",
+        constituents: &["specification", "surgical change", "yagni"],
+        authority: "operator ruling 2026-10-14 (Cohort 8 skill-corpus audit); PMBOK Guide; Karpathy LLM coding principles",
+    },
+    DerivedConcept {
+        term: "yagni",
+        aliases: &["you aren't gonna need it", "you arent gonna need it"],
+        identity: "do not add functionality, abstractions, or configurability on speculation about future needs; implement only what the immediate requirement demands",
+        definition: "Kent Beck, Extreme Programming Explained: Embrace Change (Addison-Wesley, 1999), and Ronald E. Jeffries, 'You're NOT gonna need it!' (1998): speculative generality charges immediate implementation, testing, and cognitive-load costs for hypothetical future requirements that rarely materialize as imagined. In zed-kask it grounds coding-guidelines' Simplicity First principle and essentialist.",
+        constituents: &["deletion_test", "cognitive_load", "scope_creep"],
+        authority: "operator ruling 2026-10-14 (Cohort 8 skill-corpus audit); Beck, Extreme Programming Explained (1999); Jeffries (1998)",
+    },
+    DerivedConcept {
+        term: "cognitive_dissonance",
+        aliases: &["dissonance resolution", "festinger cognitive dissonance"],
+        identity: "the epistemic tension arising when a cognitive system or memory store holds mutually contradictory assertions simultaneously, resolved by reducing importance, adding consonant evidence, or removing the dissonant element",
+        definition: "Leon Festinger, A Theory of Cognitive Dissonance (Stanford University Press, 1957), doi:10.1515/9781503620766: contradictory cognitions produce pressure toward resolution through three canonical strategies — reducing the weight/confidence of dissonant elements, adding reconciling consonant cognitions, or removing (forgetting) the falsified dissonant cognition. In zed-kask it grounds therapy's contradiction-resolution taxonomy and memory_resolve_contradiction.",
+        constituents: &["contradiction", "confidence", "reconciliation"],
+        authority: "operator ruling 2026-10-14 (Cohort 8 skill-corpus audit); Festinger, A Theory of Cognitive Dissonance (1957), doi:10.1515/9781503620766",
+    },
+    DerivedConcept {
+        term: "reification",
+        aliases: &["knowledge reification", "lesson reification"],
+        identity: "converting accumulated episodic experience and tacit patterns into durable, executable artifacts — skills, prompt templates, or project rules — that proactively govern future action",
+        definition: "Etienne Wenger, Communities of Practice: Learning, Meaning, and Identity (Cambridge University Press, 1998), and Ikujiro Nonaka & Hirotaka Takeuchi, The Knowledge-Creating Company (Oxford University Press, 1995): the process of giving concrete, persistent form to abstract experience so past lessons guide future behavior directly without depending on episodic recall. In zed-kask it grounds therapy's learning-loop closure (experience -> memory -> therapy -> skill/template/rule).",
+        constituents: &["skill", "episodic memory", "proactive guidance"],
+        authority: "operator ruling 2026-10-14 (Cohort 8 skill-corpus audit); Wenger, Communities of Practice (1998); Nonaka & Takeuchi (1995)",
+    },
+    DerivedConcept {
+        term: "homeostasis",
+        aliases: &["homeostatic regulation", "ultrastability"],
+        identity: "the capacity of a self-regulating system to maintain its essential variables within acceptable bounds despite external disturbances",
+        definition: "Walter B. Cannon, 'Organization for Physiological Homeostasis', Physiological Reviews 9(3):399-431 (1929), doi:10.1152/physrev.1929.9.3.399, and W. Ross Ashby, Design for a Brain (1952): closed-loop negative feedback and requisite regulator variety hold critical system variables within their viable operating band against environmental disturbances. In zed-kask it grounds pragmatic-cybernetics and hkask-regulation.",
+        constituents: &[
+            "cybernetic_feedback_loop",
+            "requisite_variety",
+            "viable_system_model",
+        ],
+        authority: "operator ruling 2026-10-14 (Cohort 8 skill-corpus audit); Cannon, Physiological Reviews 9(3):399-431 (1929), doi:10.1152/physrev.1929.9.3.399; Ashby, Design for a Brain (1952)",
+    },
+    DerivedConcept {
+        term: "typestate",
+        aliases: &["typestate pattern", "compile-time state machine"],
+        identity: "a static type-system discipline in which the valid operations on an object depend on its current execution state encoded in its type, making invalid state transitions compile-time errors",
+        definition: "Robert E. Strom & Shaula Yemini, 'Typestate: A programming language concept for enhancing software reliability', IEEE Transactions on Software Engineering 12(1):157-171 (1986), doi:10.1109/tse.1986.6312929: refines ordinary types with state-dependent operation availability; in Rust, affine move semantics and PhantomData type parameters consume the pre-transition value and return the post-transition type so use-before-init and invalid transitions fail to compile. In zed-kask it grounds idiomatic-rust's Principle 1 (Make invalid states unrepresentable).",
+        constituents: &["dependent_type", "move semantics", "state_diagram"],
+        authority: "operator ruling 2026-10-14 (Cohort 8 skill-corpus audit); Strom & Yemini, IEEE TSE 12(1):157-171 (1986), doi:10.1109/tse.1986.6312929",
+    },
+    DerivedConcept {
+        term: "zero_cost_abstraction",
+        aliases: &[
+            "zero-cost abstractions",
+            "zero overhead principle",
+            "zero-overhead abstraction",
+        ],
+        identity: "what you do not use, you do not pay for, and what you do use compiles down to machine code no less efficient than hand-written lower-level code",
+        definition: "Bjarne Stroustrup, The Design and Evolution of C++ (Addison-Wesley, 1994), §4.5 'Zero-overhead rule', and Steve Klabnik & Carol Nichols, The Rust Programming Language, Ch. 13: generic abstractions, iterators, newtypes, and ownership checks are resolved at compile time via monomorphization and inlining without hidden runtime boxing or dispatch overhead. In zed-kask it grounds idiomatic-rust's Principle 4.",
+        constituents: &["monomorphization", "inlining", "compilation"],
+        authority: "operator ruling 2026-10-14 (Cohort 8 skill-corpus audit); Stroustrup, The Design and Evolution of C++ (1994), §4.5; Klabnik & Nichols, The Rust Programming Language",
+    },
+    DerivedConcept {
+        term: "algebraic_data_type",
+        aliases: &[
+            "algebraic data types",
+            "adt",
+            "sum and product types",
+            "discriminated union",
+        ],
+        identity: "a composite type formed by product types (structs/tuples) and discriminated sum types (tagged enums with exhaustive pattern matching)",
+        definition: "Rod M. Burstall, David B. MacQueen & Donald T. Sannella, 'HOPE: An experimental applicative language', LISP Conference (1980), Benjamin C. Pierce, Types and Programming Languages (MIT Press, 2002), and Ralf Jung et al., 'RustBelt: securing the foundations of the Rust programming language', PACMPL 2(POPL) (2017), doi:10.1145/3158154: combines products (conjunction of fields) and sums (disjunction of variants checked exhaustively by match) to model domain invariants exactly. In zed-kask it grounds idiomatic-rust's type-design methodology.",
+        constituents: &["product type", "sum type", "exhaustive pattern matching"],
+        authority: "operator ruling 2026-10-14 (Cohort 8 skill-corpus audit); Burstall, MacQueen & Sannella (1980); Pierce (2002); Jung et al., PACMPL 2(POPL) (2017), doi:10.1145/3158154",
     },
 ];
 /// Normalization matches the onto_anchor tool's: lowercase alphanumeric
@@ -2155,6 +2319,113 @@ mod tests {
             assert!(
                 concept.authority.starts_with("operator ruling 2026-10-14"),
                 "{term} cites the 2026-10-14 ruling"
+            );
+        }
+    }
+
+    /// expect: [P5] The Cohort 7 skill-corpus audit rulings (2026-10-14)
+    /// resolve to their published authorities and never fall back to the
+    /// coarse 5W1H core anchor.
+    #[test]
+    fn cohort_7_audit_rulings_resolve_with_authority() {
+        for (term, expected_term, marker) in [
+            ("rank reversal", "rank_reversal", "Triantaphyllou"),
+            ("AHP rank reversal", "rank_reversal", "10.1002/mcda.284"),
+            (
+                "catastrophic forgetting",
+                "catastrophic_forgetting",
+                "McCloskey & Cohen",
+            ),
+            (
+                "catastrophic interference",
+                "catastrophic_forgetting",
+                "2405.09673",
+            ),
+            ("dependent type", "dependent_type", "de Bruijn"),
+            ("dependent types", "dependent_type", "10.1007/bfb0060623"),
+            ("proof irrelevance", "proof_irrelevance", "Carneiro"),
+            (
+                "type erasure",
+                "type_erasure",
+                "10.1007/978-3-030-79876-5_37",
+            ),
+            ("proof erasure", "type_erasure", "Carneiro"),
+            ("vouching", "audit_evidence", "ISA 500"),
+            ("tracing", "audit_evidence", "ISA 500"),
+            ("delta debugging", "delta_debugging", "Zeller & Hildebrandt"),
+            ("ddmin", "delta_debugging", "10.1109/32.988498"),
+            ("git bisect", "git_bisect", "10.1145/318774.318946"),
+        ] {
+            let concept =
+                resolve_derived(term).expect("Cohort 7 audit ruling must resolve in derived.rs");
+            assert_eq!(
+                concept.term, expected_term,
+                "{term} resolves to {expected_term}"
+            );
+            assert!(
+                concept.authority.contains(marker),
+                "{term}: {}",
+                concept.authority
+            );
+            assert!(
+                concept.authority.starts_with("operator ruling 2026-10-14"),
+                "{term} cites the 2026-10-14 ruling"
+            );
+        }
+    }
+
+    /// expect: [P5] The Cohort 8 skill-corpus audit rulings (2026-10-14)
+    /// resolve to their published authorities and never fall back to the
+    /// coarse 5W1H core anchor.
+    #[test]
+    fn cohort_8_audit_rulings_resolve_with_authority() {
+        for (term, expected_term, marker) in [
+            ("scope creep", "scope_creep", "PMBOK"),
+            ("feature creep", "scope_creep", "Karpathy"),
+            ("YAGNI", "yagni", "Beck"),
+            ("you aren't gonna need it", "yagni", "Jeffries"),
+            ("cognitive dissonance", "cognitive_dissonance", "Festinger"),
+            (
+                "dissonance resolution",
+                "cognitive_dissonance",
+                "10.1515/9781503620766",
+            ),
+            ("reification", "reification", "Wenger"),
+            ("homeostasis", "homeostasis", "Cannon"),
+            (
+                "homeostatic regulation",
+                "homeostasis",
+                "10.1152/physrev.1929.9.3.399",
+            ),
+            ("negative feedback", "cybernetic_feedback_loop", "Wiener"),
+            ("typestate", "typestate", "Strom & Yemini"),
+            ("typestate pattern", "typestate", "10.1109/tse.1986.6312929"),
+            (
+                "zero-cost abstraction",
+                "zero_cost_abstraction",
+                "Stroustrup",
+            ),
+            ("algebraic data type", "algebraic_data_type", "Jung"),
+            (
+                "algebraic data types",
+                "algebraic_data_type",
+                "10.1145/3158154",
+            ),
+        ] {
+            let concept =
+                resolve_derived(term).expect("Cohort 8 audit ruling must resolve in derived.rs");
+            assert_eq!(
+                concept.term, expected_term,
+                "{term} resolves to {expected_term}"
+            );
+            assert!(
+                concept.authority.contains(marker),
+                "{term}: {}",
+                concept.authority
+            );
+            assert!(
+                concept.authority.starts_with("operator ruling 2026-"),
+                "{term} cites the ruling"
             );
         }
     }

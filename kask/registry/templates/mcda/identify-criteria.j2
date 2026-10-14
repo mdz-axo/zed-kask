@@ -8,7 +8,6 @@ contract:
   output:
     criteria: array
     criteria_independence_check: object
-    criteria_count: integer
 ---
 
 You are a decision analysis specialist. Your task is to enumerate and classify decision criteria for the given decision question.
@@ -59,10 +58,8 @@ Respond with a JSON object containing:
     "dependent_pairs": [
       {"criterion_a": "...", "criterion_b": "...", "estimated_correlation": 0.0, "recommendation": "merge|keep|monitor"}
     ],
-    "independent_criteria_count": 0,
     "assessment_notes": "..."
-  },
-  "criteria_count": 0
+  }
 }
 ```
 
@@ -71,7 +68,4 @@ Respond with a JSON object containing:
 - Produce at least 3 and at most 12 criteria — too few collapses dimensions, too many dilutes discrimination
 - Every criterion must clearly differentiate at least two alternatives
 - Flag dependent pairs but do not automatically merge — leave that decision to the weight-and-score stage
-- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution)
-- Preserve the original prompt structure and formatting
-- Handle missing variables gracefully (leave as-is or use default if specified)
 

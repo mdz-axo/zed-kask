@@ -9,7 +9,6 @@ contract:
   output:
     recommendations: array
     uncovered_capabilities: array
-    coverage_assessment: string
     boost_applied: object
 ---
 {# goal: ROUTE phase of skill-discovery — match a task or capability gap against the installed skill catalog and return ranked skill recommendations with fit scores plus uncovered capabilities for detect-gap. #}
@@ -101,13 +100,11 @@ Respond with a JSON object:
 
 ```json
 {
-  "coverage_assessment": "full|partial|none",
   "boost_applied": {"applied": false, "reason": "no epistemic_state supplied (self-reported by the caller when present)"},
   "recommendations": [
     {
       "rank": 1,
       "skill_name": "skill-name",
-      "fit_score": 0.85,
       "dimension_scores": {
         "capability_overlap": 0.9,
         "description_alignment": 0.8,
@@ -132,15 +129,7 @@ Respond with a JSON object:
 ## Constraints
 
 - Evaluate every skill in the catalog — do not skip skills that seem irrelevant without scoring them.
-- fit_score must be a float in [0.0, 1.0], computed as the weighted sum of dimension scores. Report the three dimension scores; the invoking step recomputes fit_score, the boost and the coverage band with `lisp_eval`, and that result is authoritative.
-- dimension_scores must each be in [0.0, 1.0].
-- Rank recommendations by fit_score descending.
+- Report the three dimension scores (`dimension_scores` each in [0.0, 1.0]); the invoking step computes `fit_score`, the boost, the 0.30 floor, and `coverage_assessment` (`full|partial|none`) with `lisp_eval`, and that result is authoritative.
 - Return at most {{ max_recommendations | default(3) }} recommendations.
-- Only include recommendations with fit_score ≥ 0.30 — below that, the skill is not a useful match.
-- If coverage_assessment is "full", uncovered_capabilities must be an empty array.
-- If coverage_assessment is "none", recommendations may be empty but uncovered_capabilities must be non-empty.
-- Do not recommend skill-discovery as a match — they are meta-skills, not task-execution skills.
-- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
-- Preserve the original prompt structure and formatting.
-- Handle missing variables gracefully (leave as-is or use default if specified).
+- Do not recommend skill-discovery as a match — it is a meta-skill, not a task-execution skill.
 

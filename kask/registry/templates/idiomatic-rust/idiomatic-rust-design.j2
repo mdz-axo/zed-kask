@@ -13,7 +13,6 @@ contract:
     type_design_rationale: array
     ownership_rationale: string
     ecosystem_references: array
-    design_score: float
     compiler_actions_used: array
     reasoning: string
 ---
@@ -149,7 +148,6 @@ Reference the current Rust ecosystem. For each design decision, cite:
     {"resource": "thiserror", "why": "Derive Error for library error types"},
     {"resource": "RFC 243", "why": "? operator for error propagation"}
   ],
-  "design_score": 0.9,
   "compiler_actions_used": [
     {"action": "extract_struct", "location": "file.rs:42", "extended": true, "rationale": "Compiler suggested extraction; extended with validation in TryFrom"}
   ],
@@ -157,5 +155,4 @@ Reference the current Rust ecosystem. For each design decision, cite:
 }
 ```
 
-`design_score`: 1.0 = maximally idiomatic, 0.0 = still needs fundamental rethinking.
 `compiler_verified`: true if the type design was verified by a compiler code action (extrinsic), false if LLM-originated (intrinsic — lower confidence).

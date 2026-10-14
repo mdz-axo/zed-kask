@@ -7,6 +7,7 @@ contract:
     system_context: string
   output:
     vsm_mapping: object
+    algedonic_channel: boolean
     viability_assessment: string
     unviable_components: array
 ---
@@ -73,6 +74,7 @@ Respond with a JSON object:
     "S4_intelligence": ["Component list"],
     "S5_policy": ["Component list"]
   },
+  "algedonic_channel": true,
   "viability_assessment": "Overall assessment: viable|degraded|unviable — and why",
   "unviable_components": [
     {
@@ -92,7 +94,4 @@ Respond with a JSON object:
 - S4 must have spec-drift detection capability; without it, the system cannot adapt.
 - S5 must reference Magna Carta principles explicitly; policy without sovereignty is not policy.
 - Do not propose external monitoring — hKask is headless. Regulation spans provide observability.
-- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
-- Preserve the original prompt structure and formatting.
-- Handle missing variables gracefully (leave as-is or use default if specified).
 

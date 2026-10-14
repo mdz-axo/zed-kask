@@ -12,7 +12,8 @@ contract:
     assumptions_challenged: array
     edge_cases: array
     refinement_directives: array
-    refute_score: float
+    erasure_classification: object
+    prop_type_boundary: string
     compiler_grounding: object
     reasoning: string
 ---
@@ -131,7 +132,13 @@ which Curry-Howard principle it addresses, and how much it improves the proof.
   "refinement_directives": [
     {"directive": "specific change to make", "targets": "which part of the proof", "principle_addressed": 1, "expected_improvement": "high|medium|low", "compiler_action": "what to run to verify"}
   ],
-  "refute_score": 0.0,
+  "erasure_classification": {
+    "universe": "Prop | Type",
+    "erases": null,
+    "proof_relevant": null,
+    "allows_large_elimination": null
+  },
+  "prop_type_boundary": "clean | violation — description of any boundary crossing",
   "compiler_grounding": {
     "diagnostics_confirmed": 0,
     "counterexamples_confirmed": 0,
@@ -143,4 +150,4 @@ which Curry-Howard principle it addresses, and how much it improves the proof.
 }
 ```
 
-The JSON values illustrate shape, not observations; populate counts only from actual runs. `refute_score`: 0.0 = no evidenced issue found, not a substitute for Lean verification. Higher = more evidenced issues. Record exit status and diagnostic for each case; missing tools or diagnostics mean `unverified`.
+The JSON values illustrate shape, not observations; populate counts only from actual runs. Record exit status and diagnostic for each case; missing tools or diagnostics mean `unverified`.

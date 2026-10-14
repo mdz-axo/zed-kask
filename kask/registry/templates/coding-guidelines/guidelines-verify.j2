@@ -10,7 +10,6 @@ contract:
   output:
     violations: array
     compliance_score: object
-    passed: boolean
     recommendations: array
 ---
 
@@ -112,25 +111,19 @@ Respond with a JSON object:
     "think_before_coding": 0.0,
     "simplicity_first": 0.0,
     "surgical_changes": 0.0,
-    "goal_driven_execution": 0.0,
-    "overall": 0.0
+    "goal_driven_execution": 0.0
   },
-  "passed": true,
   "recommendations": [
     "Specific, actionable recommendation"
   ]
 }
 ```
 
-Scoring: 1.0 = full compliance, 0.0 = severe violation. Overall is the arithmetic mean of the four principle scores; the invoking step recomputes it with lisp_eval and that value is authoritative.
-`passed` is `true` only if there are zero critical violations and overall ≥ 0.7.
+Scoring: 1.0 = full compliance, 0.0 = severe violation. The invoking step computes the overall mean and pass/fail verdict in `lisp_eval` (`CG-2`) and that result is authoritative.
 
 ## Constraints
 
 - Be strict. A 200-line solution that could be 50 lines is a critical violation of Simplicity First.
 - A diff that touches files unrelated to the task is a violation of Surgical Changes.
 - Missing success criteria is a critical violation of Goal-Driven Execution.
-- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
-- Preserve the original prompt structure and formatting.
-- Handle missing variables gracefully (leave as-is or use default if specified).
 

@@ -35,8 +35,8 @@ Each compiler diagnostic is interpreted through the Hoare lens:
 
 ## D/P labelling
 
-Design proposals (type-driven solutions, LSP-informed code actions), the inquiry's `assessment_score`, the design's `design_score`, and the
-adversarial review's verdicts (including its `critique_score`) are P — judgment, critiqued by the compiler and
+Design proposals (type-driven solutions, LSP-informed code actions) and the
+adversarial review's verdicts are P — judgment, critiqued by the compiler and
 clippy as the extrinsic oracles. The verification is D: diagnostics errors on
 the proposed code, new `./script/clippy` warnings versus the baseline, and
 compiler-confirmed findings, counted from the actual tool output and computed
@@ -62,7 +62,7 @@ critique the compiler contradicts is overruled.
 Plan:  Phase 1 — Inquiry   → Assess against Hoare's principles using rust-analyzer diagnostics as ground truth
 Do:    Phase 2 — Design    → Propose type-driven solutions informed by LSP code actions
 Check: Phase 3 — Challenge → Adversarial review verified by find_references, diagnostics, and clippy
-Check: Phase 4 — Converge  → evaluate the Improvement Measure gate (compiler-confirmed finding stability — the critique score is reported, never gated on)
+Check: Phase 4 — Converge  → evaluate the Improvement Measure gate (compiler-confirmed finding stability)
 Act:   Phase 5 — Loop      → Re-enter inquiry (step 1) with refinement directives from challenge
 ```
 
@@ -77,7 +77,7 @@ findings → re-assess → re-design → re-challenge.
 - form: `(cond ((not clippy_ran) "undetermined") ((> errors 0) "continue") ((> new_warnings 0) "continue") ((and (>= (length confirmed) 3) (< (* (- (nth 1 confirmed) (nth 0 confirmed)) (- (nth 2 confirmed) (nth 1 confirmed))) 0)) "oscillating") (t "converged"))`
 - env: `{ "clippy_ran": <true only if clippy ran on the proposed code>, "errors": <diagnostics errors>, "new_warnings": <clippy warnings not in the baseline>, "confirmed": [<compiler-confirmed finding counts, last three iterations, oldest first>] }`
 
-**Max iterations**: 3. `oscillating` (the confirmed-finding count went up then down, or down then up) escalates to the operator rather than looping. `undetermined` — no clippy run, so the challenge was LLM-only — never counts as converged. The challenge's `critique_score` is the model's own assessment (P): report it, never gate on it.
+**Max iterations**: 3. `oscillating` (the confirmed-finding count went up then down, or down then up) escalates to the operator rather than looping. `undetermined` — no clippy run, so the challenge was LLM-only — never counts as converged. Gate inquiry completeness via `IR-1` (`(and diagnostics_ran (= unexplained_diagnostics 0) (> invariants_count 0))`) and challenge compile/blast-radius via `IR-2` (`(and proposed_code_compiles (= new_diagnostics 0) (>= find_references_count 0))`).
 
 ## Instructions
 

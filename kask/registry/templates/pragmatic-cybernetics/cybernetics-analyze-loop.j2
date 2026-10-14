@@ -73,7 +73,4 @@ Respond with a JSON object:
 - A loop with any property rated "broken" or "none" is a broken loop — diagnose it explicitly.
 - Remediation must be specific: name the mechanism, the parameter, the code path.
 - Do not propose adding monitoring stacks (Prometheus, Grafana) — hKask is headless. Regulation spans provide observability.
-- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
-- Preserve the original prompt structure and formatting.
-- Handle missing variables gracefully (leave as-is or use default if specified).
 

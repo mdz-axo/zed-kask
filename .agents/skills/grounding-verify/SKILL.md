@@ -514,13 +514,15 @@ floor.
    floor to 0 — say so ("floor 1 over graded claims; 3 pending could
    still lower it to 0"). When the floor is already 0, pending changes
    nothing — no verdict a pending claim could hold would lower a floor
-   already resting at the bottom — and the caveat is omitted.
+   always resting at the bottom — and the caveat is omitted.
 
-3. Derive and report the confidence band from the floor, the source
+3. Derive and report the confidence band deterministically via `lisp_eval` (`GV-2`) from the floor, the source
    conflicts, and the decoupling field (the Fermi `hud_contract.rs`
    `confidence_for` adaptation — derived from the provenance verdict,
-   never accepted from the model): the band caps at `medium` for an
-   `in_thread` run (a self-check, no matter how strong the claims), at
+   never accepted from the model):
+   - form: `(if (= floor 0) "low" (if (or (string= decoupling "in_thread") (> unresolved_conflicts 0) (> pending_count 0) (= floor 1)) "medium" "high"))`
+   - env: `{ "floor": <provenance_floor>, "decoupling": "<spawn_agent|in_thread>", "unresolved_conflicts": <count>, "pending_count": <count> }`
+   The band caps at `medium` for an `in_thread` run (a self-check, no matter how strong the claims), at
    `medium` when unresolved material `source_conflicts` are present, and
    at `medium` when `pending_count` > 0 and the floor is above 0 (the
    pending claims could still move it; a floor already at 0 is priced by
@@ -581,7 +583,8 @@ floor.
    - template_ref: `grounding-verify/compile-error-log`
    - context: `{ "hallucination_findings": {{ hallucination_findings }}, "rounding_notes": {{ rounding_notes }}, "source_conflicts": {{ source_conflicts }} }`
    The log is append-only within the run — a correction records both
-   the prior and the corrected value; it never erases the original.
+   the prior and the corrected value; it never erases the original. Verify that `totals` reconcile with class E/W/N counts and all `why` justifications are at least 40 characters via `lisp_eval` (`GV-1`):
+   - form: `(and (= corrected_count e_count) (= warnings_count w_count) (= data_notes_count n_count) (>= min_why_len 40))`
 
 4. The `verified_claims` registry is append-only within a verification
    run. A claim verified as `tool_verified` stays `tool_verified`. A

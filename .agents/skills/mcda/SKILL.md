@@ -13,7 +13,7 @@ Multi-Criteria Decision Analysis. Identifies decision criteria, weights and scor
 
 Belton & Stewart, *Multiple Criteria Decision Analysis: An Integrated Approach* (2002) — weighted-sum value model and sensitivity analysis; Keeney & Raiffa, *Decisions with Multiple Objectives* (1976) — swing weighting. `onto_anchor` → derived `multi_criteria_decision_analysis` (operator ruling 2026-09-25).
 
-**D/P labelling.** Criteria, classification, weights and raw scores are P (judgment; critique: the operator, and the sensitivity analysis shows how much the decision depends on them). Normalization, composites, ranking, perturbation and robustness class are D (`lisp_eval`, helpers below). The compensation-masking check is deterministic in nature and executes in the `rank-alternatives` render over the `lisp_eval` composites — the threshold comparison has no separate form; the render carries it.
+**D/P labelling.** Criteria, classification, weights and raw scores are P (judgment; critique: the operator, and the sensitivity analysis shows how much the decision depends on them). Normalization, composites, ranking, compensation-masking threshold detection (`MCDA-2`), perturbation and robustness class are D (`lisp_eval`, helpers below).
 
 ## Initial and target condition
 
@@ -63,6 +63,7 @@ env: `W` = raw weights (one per criterion), `ALTS` = one list per alternative of
 5. Produce at least 3 and at most 12 criteria — too few collapses dimensions, too many dilutes discrimination.
 6. Ensure every criterion clearly differentiates at least two alternatives.
 7. Flag dependent pairs but do not automatically merge — leave that decision to the weight-and-score stage.
+8. (D) Verify criteria count and independence flag reconciliation in `lisp_eval` (`MCDA-1`): `(and (>= criteria_count 3) (<= criteria_count 12) (= (length dependent_corrs) flagged_count))`.
 
 ### weight-and-score
 
@@ -76,35 +77,24 @@ env: `W` = raw weights (one per criterion), `ALTS` = one list per alternative of
 8. (D) Rank alternatives by composite descending (rank 1 = best).
 9. If two alternatives have identical composite scores, assign the same rank and skip the next rank.
 
-### rank-alternatives
-
-1. Render `mcda/rank-alternatives` with the `lisp_eval` composites as `composite_scores`, the `raw / 10` values as `normalized_scores`, and `danger_threshold` supplied explicitly (0.3 unless the decision question fixes a veto level — the contract requires the field); rank consistent with that input — do not re-rank arbitrarily.
-2. Identify the top choice by composite score.
-3. For the top-ranked alternative, identify any criterion where the normalized score is below the danger threshold (supplied as `danger_threshold`, 0.3 unless the decision question fixes a veto level).
-4. Check whether that criterion is critical (weight >0.1 or marked as essential by the decision question).
-5. If a critical criterion has a score below the threshold, flag a compensation warning and assess severity as minor (one weak criterion, non-critical) or major (weak on critical criterion).
-6. For every ranked alternative, identify both a strength and a weakness.
-7. Provide an actionable recommendation: proceed, investigate further, or add a veto criterion.
-
 ### sensitivity-analysis
 
-1. (D) Compute `min_flip` with `lisp_eval` (helpers above): each weight is perturbed one at a time by ±1%, 2%, 3%, 5% and 10% of its value, renormalized, and the composites recomputed; `min_flip` is the smallest change that changes the top choice.
-2. (D) Identify critical weights: for each weight, the same grid gives the smallest change that flips the top choice, its direction, and the new top choice.
-3. (D) Classify robustness from `min_flip`: **robust** = `"none"` (no flip within 10%); **moderate** = smallest flip above 5% and at most 10%; **fragile** = a flip at 5% or less.
-4. (P) Render `mcda/sensitivity-analysis` with the full contract context (`decision_question`, `ranking`, `weights`, `normalized_scores`, `min_flip`, `critical_weights`) to interpret what the critical weights mean for the decision.
-5. If the criteria independence check from Stage 1 identified dependent pairs (correlation >0.7), warn that OAT perturbation underestimates true sensitivity and suggest a combined perturbation test shifting both correlated weights simultaneously.
-6. Provide a recommendation addressing whether to proceed, gather more data, or restructure criteria.
+1. (D) Detect compensation masking on the top-ranked alternative in `lisp_eval` (`MCDA-2`): `(begin (define has-masked (lambda (ws ss thresh) (if (is_null ws) false (or (and (> (car ws) 0.1) (< (car ss) thresh)) (has-masked (cdr ws) (cdr ss) thresh))))) (has-masked crit_weights top_scores danger_threshold))` where `danger_threshold` is 0.3 unless the decision question fixes a veto level.
+2. (D) Compute `min_flip` with `lisp_eval` (helpers above): each weight is perturbed one at a time by ±1%, 2%, 3%, 5% and 10% of its value, renormalized, and the composites recomputed; `min_flip` is the smallest change that changes the top choice.
+3. (D) Identify critical weights: for each weight, the same grid gives the smallest change that flips the top choice, its direction, and the new top choice.
+4. (D) Classify robustness from `min_flip`: **robust** = `"none"` (no flip within 10%); **moderate** = smallest flip above 5% and at most 10%; **fragile** = a flip at 5% or less.
+5. (P) Render `mcda/sensitivity-analysis` with the full contract context (`decision_question`, `ranking`, `weights`, `normalized_scores`, `criteria`, `danger_threshold`, `min_flip`, `critical_weights`) to identify each alternative's key strength and weakness, interpret compensation masking warnings, and assess what the critical weights mean for the decision.
+6. If the criteria independence check from Stage 1 identified dependent pairs (correlation >0.7), warn that OAT perturbation underestimates true sensitivity and suggest a combined perturbation test shifting both correlated weights simultaneously.
+7. Provide an actionable recommendation addressing whether to proceed, gather more data, add a veto criterion, or restructure criteria.
 
 ### Convergence
 
-7. Gate — call `lisp_eval` with:
+8. Gate — call `lisp_eval` with:
    - form: `(or (string= min_flip "none") (> min_flip 0.05))`
    - env: `{ "min_flip": <the lisp_eval min_flip result> }`
    Robust or moderate outcomes (no flip at 5% or less) close the loop. A
    fragile outcome re-enters weight-and-score once with the critical-weight
-   findings — add the veto criterion the rank-alternatives recommendation
-   (step 7) names, or restructure the criteria the sensitivity-analysis
-   recommendation (step 6) names. Bound: max 2 restructurings; a third
+   findings — add a veto criterion or restructure the criteria. Bound: max 2 restructurings; a third
    fragile outcome is reported honestly with the critical weights — the
    decision is the operator's, not the loop's.
 
@@ -113,17 +103,15 @@ env: `W` = raw weights (one per criterion), `ALTS` = one list per alternative of
 | Template | Purpose |
 |----------|---------|
 | `identify-criteria.j2` | Identify and classify decision criteria as benefit or cost dimensions. Validates criteria independence and produces a structured criterion set. |
-| `rank-alternatives.j2` | Rank alternatives by composite scores with compensation masking detection. Produces a top choice recommendation with warnings for cases where strong performance on one criterion masks poor performance. |
-| `sensitivity-analysis.j2` | Interpret the `lisp_eval`-computed perturbation results (`min_flip`, `critical_weights`): what the critical weights mean for the decision, rank-reversal implications, and the robustness class. The perturbation itself is computed by `lisp_eval`, not by this render. |
 | `weight-and-score.j2` | Weight criteria and score alternatives using the specified weighting method (direct or swing). Produces raw weights and raw scores; composites and ranking are computed by `lisp_eval`. |
+| `sensitivity-analysis.j2` | Synthesize the `lisp_eval`-computed ranking, compensation masking check (`MCDA-2`), and perturbation results (`min_flip`, `critical_weights`): top choice, compensation warnings, rank-reversal implications, and robustness class. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `mcda/identify-criteria`) and a context object with the required variables.
 
 Template context variables (from each template's [inference] contract):
 - `identify-criteria.j2`: `decision_question`, `alternatives`, `criteria_hints`
 - `weight-and-score.j2`: `decision_question`, `alternatives`, `criteria`, `weighting_method`
-- `rank-alternatives.j2`: `decision_question`, `composite_scores`, `normalized_scores`, `criteria`, `danger_threshold`
-- `sensitivity-analysis.j2`: `decision_question`, `ranking`, `weights`, `normalized_scores`, `min_flip`, `critical_weights`
+- `sensitivity-analysis.j2`: `decision_question`, `ranking`, `weights`, `normalized_scores`, `criteria`, `danger_threshold`, `min_flip`, `critical_weights`
 
 ## Regression case
 

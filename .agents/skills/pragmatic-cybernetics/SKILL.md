@@ -52,6 +52,7 @@ comes from the form's output, never from the analyst's confidence.
 4. Propose attenuation strategies to reduce system variety for each identified deficit.
 5. Propose amplification strategies to increase regulator variety for each identified deficit.
 6. Reference concrete hKask mechanisms (Regulation spans, crates, data structures, or configuration parameters) for all recommendations.
+7. Compute `ashby_status` deterministically in `lisp_eval` (`PC-1`): `(if (= observed_states 0) "idle_no_signal" (let ((deficit (- system_variety regulator_variety))) (if (<= deficit 0) "satisfied" (if (and (> critical_threshold 0) (> deficit critical_threshold)) "critical" "deficit"))))`.
 
 ### cybernetics-vsm-map
 
@@ -60,7 +61,7 @@ comes from the form's output, never from the analyst's confidence.
 3. Verify S3 has both monitoring and resource-allocation paths to S1.
 4. Verify S4 has spec-drift and algedonic sensing capability.
 5. Verify S5 has clear policy that S3/S4 can reference.
-6. Verify the algedonic channel (S1 → S5 direct) exists and is not blocked.
+6. Verify the algedonic channel (S1 → S5 direct) exists and is not blocked (`algedonic_channel: boolean`), and check S1..S5 coverage via `lisp_eval` (`PC-2`): `(and (> s1_count 0) (> s2_count 0) (> s3_count 0) (> s4_count 0) (> s5_count 0) algedonic_channel)`.
 7. Assess overall system viability (viable, degraded, or unviable) based on the mapping.
 8. Identify unviable components and define the required structural interventions for viability.
 

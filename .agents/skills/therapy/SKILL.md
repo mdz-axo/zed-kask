@@ -223,6 +223,7 @@ The scan's counts, the approved-proposal count, the execution check and the post
    - `reification_target`: for reification proposals, the skill/template/rule to create.
    - `reason`: why this resolution is proposed (citing the finding and the grounding).
    - `requires_approval`: true (all modifications require user approval).
+   - Verify proposal completeness and approval flags via `lisp_eval` (`TH-1`): `(and (= findings_count proposals_count) (= unapproved_auto_count 0))`.
 
 ### Phase 4 — User review and approval
 
@@ -247,7 +248,7 @@ The scan's counts, the approved-proposal count, the execution check and the post
 1. For each approved proposal, execute the corresponding tool call:
 
    **System-defect fixes (the wiring repairs) — execute FIRST:**
-   - Apply the approved code fix with its pinning test, then validate with the crate's test suite and clippy gate. Only after the writer is fixed should hygiene proposals touching the same rows execute — otherwise the next write re-corrupts them.
+   - Apply the approved code fix with its pinning test, then validate with the crate's test suite and clippy gate. Only after the writer is fixed should hygiene proposals touching the same rows execute — otherwise the next write re-corrupts them. Gate hygiene execution on `lisp_eval` (`TH-2`): `(if (> system_defect_count 0) wiring_repairs_verified true)`.
 
    **Memory hygiene proposals:**
    - `memory_insert` for "add_consonant" and "link" strategies.
@@ -339,7 +340,7 @@ The skill's forms are executed at audit and use time, never anchored in code.
 ## Constraints
 
 - **User sovereignty.** The memory system is transparent to the user and respects user sovereignty. The user can see what's in memory (read-only tools available to all threads), approve all modifications (no autonomous editing), run without memory loops (the zed agent has no memory), and purge any memory at any time. The system serves the user, not the other way around.
-- **Therapy on curator memory must run from a Curator agent panel session.** The curator must remember the act of therapy — the forgetting, the reification, the lessons learned. Therapy run from the zed agent modifies curator memory without the curator's awareness, breaking the cybernetic loop. Forgetting works as long as it is done with awareness and has a purpose.
+- **Therapy on curator memory runs from a Curator agent panel session by default.** Running from a zed-agent session is permitted only under explicit operator approval and only with the `curator-process|therapy_session_<date>` awareness row recorded so the cybernetic loop closes (per the 2026-10-08 ruling in When to Use). Forgetting works as long as it is done with awareness and has a purpose.
 - **User approval required for all modifications.** The skill proposes; the user approves. No autonomous memory modification or skill creation.
 - **Evidence-grounded proposals.** Every proposal must cite the specific h_mems and data that support the finding. No free-association.
 - **Two distinct processes — do not conflate.** Memory hygiene (resolving contradictions, purging, condensing) is forgetting, not learning. Reification (extracting meaning, creating skills/templates/rules) is learning. Forgetting is a hygiene side-effect of successful reification, not part of the learning loop.

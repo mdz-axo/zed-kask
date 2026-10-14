@@ -94,22 +94,19 @@ Act:   Phase 4 — Erase     → Check Prop/Type claims; revise and rerun or rep
 
 1. Render `lean-prover/lean-prover-refute` with the actual compiler output. For a decidable universal claim, try a specific counterexample as a *separate* `example : ¬ P witness := by decide`; a failed attempt to prove `P witness` is evidence about that instance, not a universal proof of negation. Distinguish false proposition, invalid tactic, missing instance, and missing import.
 2. Run a negative control expected to fail (`example : 1 = 2 := by decide`) and inspect the error, not just its exit status. In a Prop/Type question also test `Exists` elimination into data. See `kask/scripts/test-lean-prover-skill.sh` for runnable controls; give it a Lean binary path.
-3. Call `lisp_eval` only for deterministic *workflow bookkeeping*, e.g. `form: (and (= (length obligations) (length checks)) (not (member "unverified" checks)) (not (member "failed" checks)))`, `env: {"obligations":["base","step"],"checks":["verified","verified"]}`. This checks counts and statuses supplied by the agent, not Lean syntax, semantics, axioms, or proof validity. Always retain the corresponding Lean logs. The form is a floor, not a proof gate: it rejects only `unverified` and `failed` — a `sorry`-carrying check (`warnings`) or an `axioms_present` status passes this bookkeeping form and is caught by the axiom-policy gate (step 3 statuses and `#print axioms`), never by this form. On failure, revise from the diagnostic and rerun at most twice; otherwise report the unsolved obligation.
-
-### lean-prover-erase
-
-1. Render `lean-prover/lean-prover-erase` only when a Prop/Type, elimination, or runtime-computation claim matters. `Exists` cannot expose its witness as `Nat` by pattern matching; `Sigma`/`Subtype` retain data. Some `Prop` eliminators (e.g. `False`, `Eq`) support elimination into `Type`; verify each particular recursor by checking a Lean example rather than guessing from the universe.
-2. Proof irrelevance is **not** permission to replace a proof by `sorry` or `trivial`. Audit the exact theorem's `#print axioms` output, then report the checked statement, assumed axioms, and whether any erasure claim was actually tested.
-3. Converge only when all chosen positive declarations check, expected negatives fail for the intended reason, axiom policy holds, and no outcome remains unverified. Re-enter anchor on a changed statement/assumption, construct on a proof error, or stop after two corrections with the remaining gap.
+3. Call `lisp_eval` to enforce the strict compiler & axiom-policy gate (`LP-1`), the Prop-to-Type boundary (`LP-2`), and workflow bookkeeping:
+   - `LP-1`: `(and (= exit_code 0) (= sorry_warnings 0) (string= completion_status "axiom_free") (not (member "sorryAx" axioms_used)) (not (member "Lean.ofReduceBool" axioms_used)))`
+   - `LP-2`: `(if (and (string= universe "Prop") eliminates_into_type) allows_large_elim true)`
+   - Bookkeeping: `(and (= (length obligations) (length checks)) (not (member "unverified" checks)) (not (member "failed" checks)))`
+   `Exists` cannot expose its witness as `Nat` by pattern matching (`Exists.casesOn` into `Type` is rejected); `Sigma`/`Subtype` retain data. Proof irrelevance is **not** permission to replace a proof by `sorry` or `trivial`. Always retain the corresponding Lean logs and `#print axioms` output. Converge only when all chosen positive declarations pass `LP-1` and `LP-2`, expected negatives fail for the intended reason, and no outcome remains unverified.
 
 ## Registry Templates
 
 | Template | Purpose |
 |----------|---------|
-| `lean-prover-anchor.j2` | Anchor a proof obligation against the Curry-Howard correspondence and the Prop/Type discipline. Classify the proposition (Prop vs Type), identify the proof obligation's structure (universal, existential, implication, conjunction), determine the appropriate proof method (term mode, tactic mode, decide, native_decide), and assess whether the proposition is decidable. |
-| `lean-prover-construct.j2` | Construct a Lean proof for the anchored obligation. Choose between term mode (explicit proof terms) and tactic mode (imperative proof steps). Apply the appropriate tactics (intro, apply, exact, induction, simp, rw, decide). Handle termination via structural recursion or well-founded recursion. Produce a proof that compiles. |
-| `lean-prover-refute.j2` | Adversarial review of a proof attempt. Search for counterexamples that invalidate the proposition. Identify failed proof paths (tactics that don't apply, induction that doesn't terminate, simp lemmas that loop). Challenge proof irrelevance assumptions. Test edge cases (empty types, uninhabited Props, proof terms that don't erase). Produce refinement directives for each failure. |
-| `lean-prover-erase.j2` | Reason about proof erasure and irrelevance. Determine which proof terms are computationally relevant (in Type) vs irrelevant (in Prop). Assess whether the proof erases to a no-op or carries computational content. Identify small vs large elimination. Verify that the proof doesn't leak computational content across the Prop/Type boundary. |
+| `lean-prover-anchor.j2` | Anchor a proof obligation against the Curry-Howard correspondence and the Prop/Type discipline. |
+| `lean-prover-construct.j2` | Construct a Lean proof for the anchored obligation via term or tactic mode and verify termination. |
+| `lean-prover-refute.j2` | Adversarial review of a proof attempt and Prop/Type erasure boundary (`erasure_classification`, `prop_type_boundary`). |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `lean-prover/lean-prover-anchor`) and a context object with the required variables.
 
@@ -117,7 +114,6 @@ Template context variables (from each template's [inference] contract):
 - `lean-prover-anchor.j2`: `proof_obligation`, `existing_proof`, `context`, `lean_diagnostics`, `iteration_focus`
 - `lean-prover-construct.j2`: `proof_obligation`, `anchor`, `existing_proof`, `lean_code_actions`, `iteration_focus`
 - `lean-prover-refute.j2`: `proof_obligation`, `proof_attempt`, `anchor`, `lean_diagnostics`
-- `lean-prover-erase.j2`: `proof_obligation`, `proof_attempt`, `anchor`, `erase_diagnostics`
 
 ## Regression case
 

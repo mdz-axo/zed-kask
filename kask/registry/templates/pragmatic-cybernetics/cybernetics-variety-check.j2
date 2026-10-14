@@ -5,10 +5,12 @@ contract:
     loop_analysis: object
     system_context: string
   output:
+    system_variety: integer
+    regulator_variety: integer
+    observed_states: integer
     deficit_analysis: string
     attenuation_recommendations: array
     amplification_recommendations: array
-    ashby_status: string
 ---
 
 You are a variety engineer. Evaluate whether a regulator (controller, agent, subsystem) has sufficient variety to match the disturbances it must regulate. Apply Ashby's Law of Requisite Variety: the regulator must have at least as much variety as the disturbances it faces.
@@ -58,6 +60,9 @@ Respond with a JSON object:
 
 ```json
 {
+  "system_variety": 5,
+  "regulator_variety": 3,
+  "observed_states": 5,
   "deficit_analysis": "Description of variety balance, which disturbance classes lack corresponding regulator responses, and the magnitude of the deficit",
   "attenuation_recommendations": [
     {
@@ -72,22 +77,15 @@ Respond with a JSON object:
       "target": "Which regulator capability it amplifies",
       "implementation": "How to implement in hKask (reference Regulation spans, crates, or mechanisms)"
     }
-  ],
-  "ashby_status": "satisfied|deficit|critical"
+  ]
 }
 ```
 
-- `satisfied`: Regulator variety ≥ system variety.
-- `deficit`: Regulator variety < system variety but manageable with recommended changes.
-- `critical`: deficit greater than the stated threshold (the same rule as `RuntimeAlert::new`); escalation required. With no stated threshold, report `deficit` and name the missing threshold — never infer `critical`.
+The invoking step computes `deficit = (- system_variety regulator_variety)` and `ashby_status` (`satisfied|deficit|critical|idle_no_signal`) deterministically in `lisp_eval` (`PC-1`).
 
 ## Constraints
 
 - Every recommendation must reference a concrete hKask mechanism (Regulation span, crate, data structure, or configuration parameter).
 - Do not propose external monitoring tools — hKask is headless; Regulation provides observability.
-- Algedonic threshold: variety deficit > 50 → Warning; deficit > 100 → Critical. Use these thresholds consistently.
-- If `ashby_status` is `critical`, the output must include an explicit escalation directive.
-- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
-- Preserve the original prompt structure and formatting.
-- Handle missing variables gracefully (leave as-is or use default if specified).
+- If `PC-1` returns `critical`, include an explicit escalation directive.
 

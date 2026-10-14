@@ -89,7 +89,4 @@ If `has_correct_seam` is false, set `regression_test_code` to an empty string an
 - If no correct seam exists, do NOT write a shallow test that gives false confidence.
 - All `[DIAG-xxxx]` tags must be removed before declaring done.
 - The commit/PR message must state the confirmed hypothesis.
-- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
-- Preserve the original prompt structure and formatting.
-- Handle missing variables gracefully (leave as-is or use default if specified).
 

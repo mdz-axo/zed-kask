@@ -18,6 +18,7 @@ contract:
     source_citations: array
     refuse_escalation: array
     rejected_findings: integer
+    contract_gaps: array
 ---
 {# Evidence-backed only; selected method is never silently replaced. #}
 
@@ -305,8 +306,10 @@ OUTPUT FORMAT
 JSON object with `config_paths`, `parameters_extracted`, `selected_method`,
 `method_recommendations`, `findings` (normalized and unchanged),
 `gate_results`, `host`, `source_citations`, `refuse_escalation` (operator-facing
-entries for refuse findings), and `rejected_findings` (count of findings
-rejected for missing citations). The caller computes readiness separately.
+entries for refuse findings), `rejected_findings` (count of findings
+rejected for missing citations), and `contract_gaps` (any `deferred`, `planned`,
+or `not_evaluated` requirements with the next evidence needed, excluding `not_applicable`).
+The caller computes readiness separately.
 
 5W1H GATE CHECK (P5): Who = operator / host; What = phase-aware
 training contract audit; Where = declared workspace paths; When = static,

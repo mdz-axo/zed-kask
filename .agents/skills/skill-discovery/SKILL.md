@@ -62,7 +62,7 @@ unverified routing.
 5. If coverage is partial or none, emit `uncovered_capabilities` (the detect-gap input): each with `capability`, `task_pattern`, `closest_skill`, `gap_type` (coverage|feature|epistemic).
 6. `epistemic_state` is optional and self-reported by the caller; no skill or tool measures it today. When it is provided with confidence < 0.5, apply a +0.20 boost to trigger-alignment for certainty-finding skills; clamp to [0.0, 1.0]. Record `boost_applied` (true/false) and its reason in the output so the boost can be checked.
 7. Do not recommend skill-discovery as a match — it is a meta-skill.
-8. Respond with a JSON object: `coverage_assessment`, `recommendations`, `uncovered_capabilities`, and `boost_applied` (with its reason — the audit trail for the one P judgment feeding the D recomputation; the route template's output contract carries all four).
+8. Respond with a JSON object from the route template (`recommendations`, `uncovered_capabilities`, `boost_applied`) plus the `lisp_eval`-computed `fit_score` and `coverage_assessment`, and verify route consistency via `lisp_eval` (`SD-1`): `(and (<= recs_count max_recs) (if (string= coverage "full") (= uncovered_count 0) true) (if (string= coverage "none") (> uncovered_count 0) true))`.
 9. Re-entry: when coverage is partial or none AND the catalog has changed since this route ran (a candidate was installed), re-run route once against the grown catalog. Bound: max 2 routing passes per task; a second partial result emits the gap signals and stops.
 
 ### skill-discovery-detect-gap
@@ -77,7 +77,7 @@ unverified routing.
 8. Evaluate every task pattern without skipping niche patterns.
 9. Ensure each gap references exactly one category, even if it spans multiple task patterns.
 10. Justify impact scoring using task pattern frequency and consequence.
-11. Do not recommend `ignore` for any gap with `critical` or `high` impact.
+11. Do not recommend `ignore` for any gap with `critical` or `high` impact. Verify completeness and non-ignore invariants in `lisp_eval` (`SD-2`): `(and (= patterns_evaluated total_patterns) (= high_critical_ignored_count 0))`.
 12. Classify `epistemic` gaps distinctly from `knowledge` gaps: `knowledge` means missing facts or information; `epistemic` means missing certainty-finding methods or perspective-rotation tools. An `epistemic` gap is flagged when an agent reports low confidence and no installed skill addresses the uncertainty type (perspective_blind, context_loss, conflict).
 
 ### skill-discovery-evaluate
@@ -87,7 +87,7 @@ unverified routing.
 3. Assess instruction quality to ensure steps are imperative, concrete, actionable, bounded in scope, and have clear trigger conditions.
 4. Check Magna Carta compliance and system constraints, including user sovereignty (P1), affirmative consent (P2), generative space (P3), clear boundaries (P4), headless compliance, Regulation span validity, and crate path validity.
 5. Score each of the 16 checks (4 format, 5 quality, 7 safety) from 0 to 2, where 0 is fail, 1 is partial, and 2 is pass. The maximum is 32.
-6. Respond with a JSON object containing `format_validation`, `quality_evaluation`, `safety_evaluation`, `overall_score`, `recommendation`, and `recommendation_reason` (the evaluate template's output contract carries all six).
+6. The evaluate template emits `format_validation`, `quality_evaluation`, `safety_evaluation`, and `recommendation_reason`; combine with the `lisp_eval`-computed `overall_score` and `recommendation`.
 7. Score every check without omitting any.
 8. Compute `overall_score` and the recommendation in `lisp_eval`, never by hand. Bind `fmt`, `q` and `s` to the format, quality and safety score lists and `threshold` to the installable minimum:
    `(begin (define sum (lambda (xs) (if (= (length xs) 0) 0 (+ (car xs) (sum (cdr xs)))))) (let ((total (+ (sum fmt) (sum q) (sum s)))) (list total (if (member 0 s) "reject" (if (< total threshold) "revise" "install")))))`

@@ -34,18 +34,15 @@ The assessment (step 1), the constrained plan (step 2) and the audit's four prin
 
 ## Instructions
 
-1. **Assess before implementing.** Analyze the coding task against the four Karpathy principles before any implementation begins. Surface every hidden assumption, flag every over-engineering risk, and define verifiable success criteria. State assumptions explicitly with confidence levels and alternative interpretations. Identify simplicity risks with severity and concrete simplifications. Flag scope creep. Transform vague tasks into 2–5 verifiable goals. Outline minimum implementation steps, each with a verification checkpoint. Do not implement anything — this step is purely diagnostic.
+1. **Assess and generate constrained directives before implementing (`guidelines-assess`).** Analyze the coding task against the four Karpathy principles before any implementation begins. Surface every hidden assumption, flag every over-engineering risk, define 2–5 verifiable success criteria, and produce a `constrained_plan` where each step specifies `files_to_touch` (no more, no less), `files_not_to_touch`, `lines_estimate` (flag steps exceeding 50 lines as a simplicity risk), and a verification checkpoint, plus `guardrails` and `assumption_log`. Treat the seven canonical anti-patterns (`anti-patterns.j2`) as explicitly forbidden: unsolicited docstring/formatting changes, single-use abstractions, unrequested flexibility, adjacent-code refactoring, impossible-scenario error handling, unrequested logging/telemetry, and style changes outside task scope. Do not implement anything in this step. Gate the constrained plan with `lisp_eval` (`CG-1`): `(and (>= criteria_count 2) (<= criteria_count 5) (<= max_step_lines 50) (= untraceable_files 0))`.
 
-2. **Generate constrained implementation directives.** Take the assessment and produce a constrained plan. For each step, specify exactly which files to touch (no more, no less), which files not to touch, an estimated line count (flag steps exceeding 50 lines as a simplicity risk), and a verification method. Produce guardrails covering maximum scope, forbidden patterns, and style matching rules. Maintain an assumption log of resolved assumptions and how they were decided. Treat the seven canonical anti-patterns as explicitly forbidden: unsolicited docstring/formatting changes, single-use abstractions, unrequested flexibility, adjacent-code refactoring, impossible-scenario error handling, unrequested logging/telemetry, and style changes outside task scope.
+2. **Verify the implementation against all four principles (`guidelines-verify`).** Audit the implementation or proposed diff. Check that assumptions were stated explicitly, multiple interpretations were presented, unclear points were questioned, and simpler approaches were considered. Confirm every feature was explicitly requested, no single-use abstractions exist, the solution is minimum code, and no speculative features or impossible-scenario error handling remain. Verify every changed line traces to the user's request, adjacent code is untouched, existing style is matched, orphan imports from your changes are removed, and pre-existing dead code was left alone (mentioned, not deleted). Confirm success criteria are defined and verifiable, tests exist for stated goals, and each criterion can be verified independently. Produce a violations report with principle, severity, location, and correction, and score compliance per principle (1.0 = full compliance, 0.0 = severe violation).
 
-3. **Verify the implementation against all four principles.** Audit the implementation or proposed diff. Check that assumptions were stated explicitly, multiple interpretations were presented, unclear points were questioned, and simpler approaches were considered. Confirm every feature was explicitly requested, no single-use abstractions exist, the solution is minimum code, and no speculative features or impossible-scenario error handling remain. Verify every changed line traces to the user's request, adjacent code is untouched, existing style is matched, orphan imports from your changes are removed, and pre-existing dead code was left alone (mentioned, not deleted). Confirm success criteria are defined and verifiable, tests exist for stated goals, and each criterion can be verified independently. Produce a violations report with principle, severity, location, and correction. Score compliance per principle (1.0 = full compliance, 0.0 = severe violation); overall is the arithmetic mean. Mark passed only if there are zero critical violations and overall ≥ 0.7. Be strict — a 200-line solution that could be 50 lines is a critical violation.
-
-4. **Close the loop.** On a failing audit (any critical violation, or
+3. **Close the loop (`CG-2`).** On a failing audit (any critical violation, or
    overall < 0.7), apply the violations report's corrections to the
    diff and re-run this audit step. Gate — call `lisp_eval` with:
-   - form: `(and (eq (length critical_violations) 0) (>= overall_score 0.7))`
-   - env: `{ "critical_violations": <the violations report's critical entries as a list — the length IS the count, derived from the report rather than asserted by the model>,
-            "overall_score": <the mean of the four principle scores, computed with lisp_eval `(/ (+ s1 s2 s3 s4) 4)` — not the model's stated total> }`
+   - form: `(let ((overall (/ (+ s1 s2 s3 s4) 4))) (and (= (length critical_violations) 0) (>= overall 0.7)))`
+   - env: `{ "critical_violations": <the violations report's critical entries as a list>, "s1": <think_before_coding>, "s2": <simplicity_first>, "s3": <surgical_changes>, "s4": <goal_driven_execution> }`
    The four principle scores and the violation list are P (the audit's judgment, critiqued by the operator); the mean, the critical-count length, and the gate are D — every gate input is derived, never model-asserted.
    Bound: max 2 audit cycles (initial + one correction pass); a second
    failing audit is delivered with the violations report and the score — the
@@ -72,16 +69,14 @@ When an output-shaping skill (e.g., adhd-mode) is active in the session:
 
 | Template | Purpose |
 |----------|---------|
-| `anti-patterns.j2` | Shared Jinja2 fragment listing the seven canonical Karpathy anti-patterns. Included by coding-guidelines/guidelines-apply via {% include %}. Not a standalone inference template — no `[inference]` header or contract; rendering it directly yields the bare fragment with no task context. |
-| `guidelines-assess.j2` | Assess a coding task against four behavioral principles before implementation. Surfaces assumptions, simplicity risks, scope creep warnings, and success criteria. |
-| `guidelines-apply.j2` | Generate constrained implementation directives from the assessment. Produces file-level guardrails, forbidden patterns, and style matching rules. |
-| `guidelines-verify.j2` | Verify an implementation or diff against all four principles. Produces a violations report, compliance scores, and corrective recommendations. |
+| `anti-patterns.j2` | Shared Jinja2 fragment listing the seven canonical Karpathy anti-patterns. Included by coding-guidelines/guidelines-assess via {% include %}. Not a standalone inference template — no `[inference]` header or contract; rendering it directly yields the bare fragment with no task context. |
+| `guidelines-assess.j2` | Assess a coding task against four behavioral principles before implementation and generate constrained implementation directives (`assumptions`, `simplicity_risks`, `scope_creep_warnings`, `success_criteria`, `constrained_plan`, `guardrails`, `assumption_log`). |
+| `guidelines-verify.j2` | Verify an implementation or diff against all four principles. Produces a violations report, per-principle compliance scores, and corrective recommendations. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `coding-guidelines/guidelines-assess`) and a context object with the required variables.
 
 Template context variables (from each template's [inference] contract):
 - `guidelines-assess.j2`: `task_description`, `code_context`
-- `guidelines-apply.j2`: `task_description`, `assumptions`, `simplicity_risks`, `scope_creep_warnings`, `success_criteria`, `plan`
 - `guidelines-verify.j2`: `task_description`, `assumptions`, `success_criteria`, `constrained_plan`, `diff_preview`
 - `anti-patterns.j2` is a shared Jinja2 fragment (no contract, not standalone-renderable) — do not render it directly.
 

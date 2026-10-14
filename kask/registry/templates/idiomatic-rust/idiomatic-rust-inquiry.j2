@@ -14,7 +14,6 @@ contract:
     error_domain: object
     principle_violations: array
     improvement_targets: array
-    assessment_score: float
     compiler_grounding: object
     reasoning: string
 ---
@@ -144,7 +143,6 @@ Then synthesize:
   "improvement_targets": [
     {"target": "specific change", "principle_addressed": 1, "impact": "high|medium|low", "effort": "small|medium|large", "compiler_action": "related LSP code action if any"}
   ],
-  "assessment_score": 0.85,
   "compiler_grounding": {
     "diagnostics_interpreted": 5,
     "principles_confirmed_by_compiler": [2, 7],
@@ -155,5 +153,4 @@ Then synthesize:
 }
 ```
 
-`assessment_score`: 1.0 = perfectly idiomatic, 0.0 = completely unidiomatic. Higher is better.
 `compiler_confirmed`: true if a compiler diagnostic confirms this violation (extrinsic evidence), false if the LLM identified it without compiler help (intrinsic reasoning only — lower confidence).

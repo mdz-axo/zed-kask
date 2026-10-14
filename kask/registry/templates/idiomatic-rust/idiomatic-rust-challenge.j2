@@ -13,7 +13,6 @@ contract:
     assumptions_challenged: array
     connections: array
     refinement_directives: array
-    critique_score: float
     compiler_grounding: object
     reasoning: string
 ---
@@ -149,7 +148,6 @@ For each gap or edge case, state: what specifically must change, which principle
   "refinement_directives": [
     {"directive": "specific change to make", "targets": "which part of the design", "principle_addressed": 1, "expected_improvement": "high|medium|low", "compiler_action": "related LSP code action or clippy lint if any"}
   ],
-  "critique_score": 0.7,
   "compiler_grounding": {
     "find_references_count": 12,
     "proposed_code_compiles": true,
@@ -161,5 +159,4 @@ For each gap or edge case, state: what specifically must change, which principle
 }
 ```
 
-`critique_score`: 0.0 = design survives all challenges perfectly. Higher = more issues found. A score above 0.5 means significant refinement is needed.
 `compiler_confirmed`: true if a compiler diagnostic or clippy lint confirms this gap (extrinsic evidence), false if the LLM identified it without compiler help (intrinsic — lower confidence).
