@@ -160,8 +160,11 @@ the 2026 redline is a revision, not a retraction.
 
 - **SEON revision** (approval #3) — not granted; any SEON adoption waits on
   the operator.
-- **Skillware-derived software-process rulings** — future work; the paper is
-  pinned and ready, the rulings are not yet requested.
+- **Skillware-derived software-process rulings** — the `skill` ruling
+  landed 2026-10-13 (operator adoption of the open-loops proposal,
+  `research/ontology-open-loops-resolution.md` §3.1); the remaining
+  terms (`skillware_unit`, `lifecycle_continuity`, `agent_host`) await
+  load-bearing usage.
 - **CSO >= 3.4 re-attempt** — superseded: 3.5 landed via the versioning
   endpoint (section 5). The blocked item is closed, not re-chased.
 - **Comprehensive native-ontology inventory** (task `4d6b7ff1`) and the

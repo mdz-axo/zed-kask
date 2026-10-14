@@ -28,7 +28,7 @@ shape, the axis selector); `research/software-ontology-adoption.md` is the
 decision trail for what was adopted and why. This document is the inventory.
 
 Current counts: **248 pinned files across 20 source directories** — 19
-indexed vocabularies plus one non-RDF authority pin — and **91 derived
+indexed vocabularies plus one non-RDF authority pin — and **94 derived
 rulings** in the registry.
 
 ## 2. The resolution ladder in functional terms
@@ -111,10 +111,11 @@ Namespace IRIs and directory bindings are declared in
   particular assertion") — the grounding-verify evidence discipline's
   vocabulary.
 - **GOLEM** — narrative and fiction, extending CIDOC-CRM and LRMoo.
-  Honest note: the bare term `narrative` does **not** resolve — GOLEM's
-  topics are `gc:`-prefixed and none matches the bare word under
-  normalization, so it stays on the coarse core with a ruling-request
-  note.
+  The bare term `narrative` resolves through the derived `narrative`
+  ruling (operator ruling 2026-10-13), anchored on GOLEM's own ontology
+  description — GOLEM's topics are `gc:`-prefixed and none matches the
+  bare word under exact normalization, so the ruling is the honest path,
+  never a fabricated published anchor.
 - **CIDOC-CRM** — cultural heritage. `document` resolves
   `crm:E31_Document` ("identifiable immaterial items that make
   propositions about reality"); `activity` lists `crm:E7_Activity` as an
@@ -150,7 +151,7 @@ Namespace IRIs and directory bindings are declared in
 
 ## 4. The derived registry
 
-Ninety-one rulings (`kask/crates/hkask-bridge-ontology/src/derived.rs:47-913`),
+Ninety-four rulings (`kask/crates/hkask-bridge-ontology/src/derived.rs:47-938`),
 each a `DerivedConcept` with: canonical `term`, `aliases`, a
 machine-checkable `identity`, a `definition` stating load-bearing
 semantics so a violation is nameable, `constituents` that must themselves
@@ -158,7 +159,7 @@ resolve through the ladder (never a fabricated anchor), and an `authority`
 — an operator ruling with its date, a published standard, or both. The
 `every_entry_cites_authority` test pins the no-fabricated-definitions
 discipline; resolution is exact under the same normalization
-(`resolve_derived`, `kask/crates/hkask-bridge-ontology/src/derived.rs:909`).
+(`resolve_derived`, `kask/crates/hkask-bridge-ontology/src/derived.rs:941`).
 
 Grouped by the domains they serve: finance (the DuPont family, valuation,
 expectations investing), forecasting and calibration (Brier, calibration,
@@ -177,10 +178,12 @@ alongside their published vocabularies).
 
 - **Exact match only.** A term resolves only when it equals a concept ID,
   local name, or published label under normalization. Bare phrases that
-  look like they should resolve but do not — `narrative`, `personal
-  knowledge`, `knowledge asset`, `training` — stay on the coarse core with
-  a ruling-request note, never a private definition. That is the design:
-  a false specific anchor is worse than the real but coarse ground.
+  look like they should resolve but do not — `personal knowledge`,
+  `knowledge asset` — stay on the coarse core with a ruling-request note,
+  never a private definition. (`narrative` and `training` left this list
+  2026-10-13 via derived rulings — GOLEM and ISO/IEC 22989:2022
+  respectively.) That is the design: a false specific anchor is worse than
+  the real but coarse ground.
 - **Every sense is listed.** One word, several published senses: the
   ladder picks the primary by rung order and lists the rest in
   `alternatives` with source and definition — `agent` returns PROV

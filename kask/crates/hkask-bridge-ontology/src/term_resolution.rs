@@ -498,6 +498,48 @@ mod tests {
         );
     }
 
+    /// expect: the 2026-10-13 open-loops rulings resolve derived — skill
+    /// (the vendored Skillware paper), training (ISO/IEC 22989:2022 3.3.15,
+    /// cite-only), narrative (the vendored GOLEM v1.1) — each citing its
+    /// authority, with every constituent resolving above the coarse core
+    /// (a derived entry never fabricates a constituent anchor).
+    #[test]
+    fn open_loop_rulings_resolve_derived_with_resolved_constituents() {
+        for (term, marker) in [
+            ("skill", "arXiv:2607.18970v3"),
+            ("training", "ISO/IEC 22989:2022"),
+            ("narrative", "GOLEM"),
+        ] {
+            let resolved = resolve_term(term);
+            assert_eq!(
+                (resolved.tier.as_str(), resolved.namespace.as_str()),
+                ("derived", "derived"),
+                "{resolved:?}"
+            );
+            assert!(
+                resolved
+                    .authority
+                    .as_deref()
+                    .is_some_and(|authority| authority.contains(marker)),
+                "{resolved:?}"
+            );
+        }
+        for constituent in [
+            "task",
+            "agent",
+            "machine learning",
+            "model",
+            "character",
+            "work",
+        ] {
+            let resolved = resolve_term(constituent);
+            assert_ne!(
+                resolved.tier, "core",
+                "{constituent} (constituent of a 2026-10-13 ruling): {resolved:?}"
+            );
+        }
+    }
+
     /// expect: one word, several published senses — the formal upper sense
     /// is chosen and the web-vocabulary sense is listed, never dropped.
     #[test]

@@ -911,6 +911,30 @@ pub const DERIVED_CONCEPTS: &[DerivedConcept] = &[
         constituents: &["machine learning", "model"],
         authority: "operator ruling 2026-10-13; CSO 3.5, cso:fine-tuning_learning (vendored pin)",
     },
+    DerivedConcept {
+        term: "skill",
+        aliases: &["agent skill", "skill artifact"],
+        identity: "persistent natural-language behavioral source specifying reusable task behavior, managed as an independently identified software unit, activated by a skills-compatible agent host",
+        definition: "The Skillware sense (Fan & Lan, arXiv:2607.18970v3, vendored pin): a Skill Artifact is 'an addressable artifact whose primary behavioral source specifies reusable task behavior for activation and execution by a skills-compatible agent' (3.2), and a Skillware Unit is 'the separately addressable identity that acquires, activates, versions, maintains, and removes the carrier' (3.2). Three necessary conditions operationalize category membership: behavioral primacy, independent software identity, and an Agent Host execution relationship (abstract). In zed-kask a skill is the SKILL.md + templates unit loaded by agent_skills — the system's capability unit.",
+        constituents: &["task", "agent"],
+        authority: "operator ruling 2026-10-13 (open-loops proposal adopted); Fan & Lan, Skillware: A Software Ontology and Engineering Lifecycle for Persistent Behavioral Artifacts, arXiv:2607.18970v3 (vendored pin, SOURCES.lock line 251)",
+    },
+    DerivedConcept {
+        term: "training",
+        aliases: &["model training"],
+        identity: "process to determine or improve the parameters of a machine learning model by using training data",
+        definition: "The machine-learning sense (ISO/IEC 22989:2022, 3.3.15, cite-only — ISO bytes are copyrighted, never vendored): 'process to determine or to improve the parameters of a machine learning model, based on a machine learning algorithm, by using training data' (the source text carries inline cross-references to 3.1.23, 3.2.10 and 3.3.16, elided here). The nameable violation is applying it to non-ML senses (workforce training). In zed-kask it names the lora-training pipeline (QLoRA adapters over a frozen base model). No cso:training topic exists in CSO 3.5 (grepped), so the derived ruling is the honest path, never a fabrication over a published anchor.",
+        constituents: &["machine learning", "model"],
+        authority: "operator ruling 2026-10-13 (open-loops proposal adopted); ISO/IEC 22989:2022, 3.3.15",
+    },
+    DerivedConcept {
+        term: "narrative",
+        aliases: &[],
+        identity: "a structured account of events, characters, social relationships and settings whose components influence one another, modeled domain-independently of any single work",
+        definition: "The GOLEM sense (Pianzola et al., GOLEM Ontology v1.1, vendored pin): 'Narrative phenomena can be viewed as interconnected systems in which various components influence one another', with the key elements of narrative structure — events, characters, social relationships, and settings — interrelating (golem_v1-1.ttl ontology description); GOLEM models narratives and fiction independently of their specific domains, as an extension of CIDOC-CRM and LRMoo. The bare term matches no gc: topic under exact normalization, so the derived ruling is the honest path.",
+        constituents: &["character", "work"],
+        authority: "operator ruling 2026-10-13 (open-loops proposal adopted); Pianzola et al., GOLEM Ontology for Narrative and Fiction v1.1, doi:10.5281/zenodo.14911396 (vendored pin)",
+    },
 ];
 /// Normalization matches the onto_anchor tool's: lowercase alphanumeric
 /// characters only, separators and case folded away.

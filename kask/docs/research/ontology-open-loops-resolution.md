@@ -147,7 +147,13 @@ mine to execute.
   §5 (raw candidate terms over canonical concepts, correct while coarse-core
   resolution is common).
 
-## 3. The proposed rulings (drafts — adoption is the operator's)
+## 3. The proposed rulings (adopted 2026-10-13 — "proceed as proposed")
+
+The three drafts below were adopted by the operator's 2026-10-13
+"proceed as proposed" and landed in the derived registry the same day
+(`skill`, `training`, `narrative`), pinned by
+`open_loop_rulings_resolve_derived_with_resolved_constituents`. The drafts
+are retained as the ruling record.
 
 ### 3.1 `skill` — authority: the vendored Skillware paper
 
