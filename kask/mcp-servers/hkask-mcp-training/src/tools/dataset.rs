@@ -97,7 +97,6 @@ impl TrainingServer {
                         "memory database does not exist: {db_path}"
                     )));
                 }
-                let resolved_db = hkask_mcp_server::contain_for_read(db_path)?;
                 let passphrase = passphrase
                     .clone()
                     .or_else(|| self.db_passphrase.clone())
@@ -108,7 +107,7 @@ impl TrainingServer {
                     ));
                 }
                 let store = hkask_memory::MemoryStore::open(
-                    &resolved_db.to_string_lossy(),
+                    db_path,
                     &passphrase,
                     hkask_storage::embedding_dim(),
                 )

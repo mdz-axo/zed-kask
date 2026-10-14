@@ -1391,6 +1391,26 @@ mod smoke {
         Ok(())
     }
 
+    #[tokio::test]
+    async fn assembly_nonexistent_db_path_is_not_found_without_creating_db() -> anyhow::Result<()> {
+        let dir = AssemblyFixtureDir::new(std::env::temp_dir())?;
+        let missing_db = dir.path().join("does-not-exist.db");
+        let mut server = make_server();
+        server.db_passphrase = Some("correct-fixture-key".into());
+        let mut request = assembly_request(&dir.path().join("out.jsonl"));
+        request.db_path = Some(missing_db.to_string_lossy().into_owned());
+        let error = server
+            .training_assemble_dataset(Parameters(request))
+            .await
+            .expect_err("nonexistent db_path must fail with not_found");
+        assert_eq!(error.kind, hkask_types::McpErrorKind::NotFound);
+        assert!(
+            !missing_db.exists(),
+            "read-only assembly must not create a stray SQLCipher file on disk"
+        );
+        Ok(())
+    }
+
     /// Pull the `{"content": <value>}` success envelope out of a tool's
     /// `String` output via the canonical parser; a tool output that fails
     /// to parse is a test failure.

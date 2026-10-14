@@ -713,7 +713,9 @@ mod tests {
             "HKASK_DATA_DIR must always be emitted — without it, MCP servers \
              cannot resolve database paths consistently"
         );
-        let dir = env.get("HKASK_DATA_DIR").unwrap();
+        let dir = env
+            .get("HKASK_DATA_DIR")
+            .expect("HKASK_DATA_DIR checked above");
         assert!(
             !dir.is_empty(),
             "HKASK_DATA_DIR must resolve to a non-empty path even for default settings"

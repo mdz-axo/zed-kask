@@ -9,7 +9,7 @@
 //! content to disk for reuse by the embedding pipeline.
 
 use crate::{CorpusServer, McpToolError, Parameters, execute_tool, tool, tool_router};
-use hkask_mcp_server::server::{McpToolError, map_io_error, write_contained};
+use hkask_mcp_server::server::{map_io_error, write_contained};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
