@@ -29,7 +29,12 @@ const REASONING_TOOL_NAME: &str = "reasoning/think";
 /// The editor's skill tools, served on the IPC tool path (kask_bridge
 /// `host_skill_tools`). Offered only to cards that declare skills.
 const HOST_SKILL: &str = "host/skill";
-const HOST_SKILL_TOOLS: [&str; 3] = [HOST_SKILL, "host/render_template", "host/lisp_eval"];
+const HOST_SKILL_TOOLS: [&str; 4] = [
+    HOST_SKILL,
+    "host/render_template",
+    "host/lisp_eval",
+    "host/onto_anchor",
+];
 
 /// A single reasoning step recorded by the model via the `reasoning/think`
 /// tool. Inspired by Agno's `ReasoningTools.think`/`analyze` pattern: each
@@ -275,9 +280,10 @@ impl AgentExecutor {
         // `server/tool` names). This list is the allowlist: a model call for
         // any tool not declared here is never dispatched.
         // Declared skills run through the editor's own skill tools
-        // (`host/skill`, `host/render_template`, `host/lisp_eval`) on the same
-        // allowlisted IPC path as `mcp_tools`; `host/skill` is further limited
-        // to the card's declared skill names below.
+        // (`host/skill`, `host/render_template`, `host/lisp_eval`,
+        // `host/onto_anchor`) on the same allowlisted IPC path as `mcp_tools`;
+        // `host/skill` is further limited to the card's declared skill names
+        // below.
         let skill_tools = (!agent.capabilities.skills.is_empty())
             .then_some(HOST_SKILL_TOOLS.as_slice())
             .unwrap_or_default();
@@ -1106,7 +1112,12 @@ mod tests {
         let calls = dispatch.0.lock().unwrap();
         assert_eq!(calls[0].0, "host/skill");
         assert_eq!(calls[0].1["name"], "tdd");
-        for tool in ["host/skill", "host/render_template", "host/lisp_eval"] {
+        for tool in [
+            "host/skill",
+            "host/render_template",
+            "host/lisp_eval",
+            "host/onto_anchor",
+        ] {
             assert!(calls[0].2.iter().any(|t| t == tool), "{tool} allowlisted");
         }
     }

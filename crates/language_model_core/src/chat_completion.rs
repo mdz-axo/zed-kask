@@ -587,14 +587,15 @@ impl ChatCompletionEventMapper {
             }
         }
 
-        // zed-kask: D36 — some providers finish tool calls with "stop". Reuse
-        // the normal drain without reviving calls rejected as ambiguous —
-        // but an EOF-classified argument fragment (the input ended
-        // mid-JSON) is a stream cut under ANY finish reason: classify it as
-        // truncation, dispatch nothing, and emit no stop event so the turn
-        // cannot end cleanly.
+        // zed-kask: D36 — some providers finish tool calls with "stop" or
+        // "error" (live 2026-10-14: OpenRouter emitted complete tool calls
+        // followed by finish_reason="error", which left all tool calls at
+        // is_input_complete=false and flushed them as "Tool canceled by user").
+        // Reuse the normal drain without reviving calls rejected as ambiguous —
+        // and classify any EOF-truncated argument fragment as truncation,
+        // dispatching nothing and emitting no stop event.
         let finish_reason = match choice.finish_reason.as_deref() {
-            Some("stop")
+            Some(reason @ ("stop" | "error"))
                 if !self.tool_call_accumulation_failed && !self.tool_calls.calls.is_empty() =>
             {
                 if let Some(found) = self.first_eof_truncated_tool_call() {
@@ -602,7 +603,7 @@ impl ChatCompletionEventMapper {
                     return events;
                 }
                 log::warn!(
-                    "finish_reason=\"stop\" but {} tool calls were accumulated; draining",
+                    "finish_reason={reason:?} but {} tool calls were accumulated; draining",
                     self.tool_calls.calls.len()
                 );
                 Some("tool_calls")
@@ -1221,6 +1222,75 @@ mod tests {
             mapper.map_event(event).as_slice(),
             [Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn))]
         ));
+    }
+
+    #[test]
+    fn error_finish_with_complete_tool_calls_drains_as_tool_use_stop() {
+        // Live incident 2026-10-14 (kanban task b186ae67): OpenRouter emitted
+        // complete tool-call arguments in delta chunks (which map_event emits
+        // with is_input_complete=false) and then sent finish_reason="error" on
+        // the trailing chunk. Because only finish_reason="stop" was remapped,
+        // map_event logged "Unexpected chat completion stop_reason: \"error\""
+        // and emitted Stop(EndTurn) without draining self.tool_calls — leaving
+        // every tool call at is_input_complete=false, which
+        // Thread::flush_pending_message then flushed as "Tool canceled by user".
+        let chunks = serde_json::from_value(json!([
+            {"choices": [{"delta": {"tool_calls": [
+                {"index": 0, "id": "call_1", "function": {
+                    "name": "read_file", "arguments": "{\"path\":\"src/lib.rs\"}"
+                }},
+                {"index": 1, "id": "call_2", "function": {
+                    "name": "grep", "arguments": "{\"regex\":\"foo\"}"
+                }}
+            ]}}]},
+            {"choices": [{"finish_reason": "error"}]}
+        ]))
+        .expect("valid stream chunks");
+        let events = map_completion_results(chunks);
+        let complete_calls: Vec<_> = events
+            .iter()
+            .filter_map(|event| match event {
+                Ok(LanguageModelCompletionEvent::ToolUse(tool_use))
+                    if tool_use.is_input_complete =>
+                {
+                    Some(tool_use.name.as_ref())
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(complete_calls, vec!["read_file", "grep"]);
+        assert!(matches!(
+            events.last(),
+            Some(Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)))
+        ));
+    }
+
+    #[test]
+    fn error_finish_with_eof_fragment_is_classified_as_truncated() {
+        // Companion to error_finish_with_complete_tool_calls_drains_as_tool_use_stop:
+        // when finish_reason="error" arrives with an EOF-truncated argument
+        // fragment, D36 classifies it as ToolCallTruncated (never Stop(EndTurn),
+        // which would flush as "Tool canceled by user").
+        let event = serde_json::from_value(json!({"choices": [{
+            "delta": {"tool_calls": [{"index": 0, "id": "call_1", "function": {
+                "name": "terminal", "arguments": "{\"command\":\"cargo test"
+            }}]},
+            "finish_reason": "error"
+        }]}))
+        .expect("valid stream envelope with an EOF fragment");
+        let events = map_completion_results(vec![event]);
+        assert!(matches!(
+            events.last(),
+            Some(Err(LanguageModelCompletionError::ToolCallTruncated {
+                tool_name,
+                ..
+            })) if tool_name == "terminal"
+        ));
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, Ok(LanguageModelCompletionEvent::Stop(_))))
+        );
     }
 
     #[test]

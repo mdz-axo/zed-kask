@@ -175,17 +175,23 @@ impl AgentTool for OntoAnchorTool {
                     format!("failed to receive input: {e}"),
                 ))
             })?;
-            let traversal = input.relation_query.map(|query| {
-                let max_hops = query
-                    .max_hops
-                    .unwrap_or(if query.to.is_some() { 2 } else { 1 });
-                graph().traverse(&input.term, query.to.as_deref(), max_hops)
-            });
-            Ok(OntoAnchorToolOutput {
-                resolution: resolve_term(&input.term),
-                traversal,
-            })
+            Ok(resolve_onto_anchor(&input))
         })
+    }
+}
+
+/// The tool's resolution and optional graph traversal, shared with delegated
+/// `host/onto_anchor` dispatch.
+pub fn resolve_onto_anchor(input: &OntoAnchorToolInput) -> OntoAnchorToolOutput {
+    let traversal = input.relation_query.as_ref().map(|query| {
+        let max_hops = query
+            .max_hops
+            .unwrap_or(if query.to.is_some() { 2 } else { 1 });
+        graph().traverse(&input.term, query.to.as_deref(), max_hops)
+    });
+    OntoAnchorToolOutput {
+        resolution: resolve_term(&input.term),
+        traversal,
     }
 }
 

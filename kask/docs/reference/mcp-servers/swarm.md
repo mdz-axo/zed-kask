@@ -524,13 +524,13 @@ executor does not silently switch to another model.
 
 ### Local-agent execution gaps (audited 2026-09-22)
 
-- **Declared skills: wired (2026-09-24).** A card with non-empty
+- **Declared skills: wired (2026-09-24; `host/onto_anchor` added 2026-10-14).** A card with non-empty
   `LocalAgentCapabilities::skills` is offered the editor's own skill tools —
-  `host/skill`, `host/render_template`, `host/lisp_eval` — on the existing
+  `host/skill`, `host/render_template`, `host/lisp_eval`, `host/onto_anchor` — on the existing
   allowlisted IPC tool path (`kask_bridge/src/host_skill_tools.rs` wraps the
   governed `ToolPort`; each tool calls the same function as its in-editor
   tool, over the app-published `SkillIndex` catalog the Curator reads).
-  The swarm server's parent grant always includes these three tools.
+  The swarm server's parent grant always includes these four tools.
   `host/skill` is limited to the card's declared names; a card without skills
   is not offered them. Pinned by `declared_skill_loads_through_the_host_skill_tool`,
   `undeclared_skill_is_refused_before_dispatch`,

@@ -1,5 +1,6 @@
-//! The editor's skill tools (`skill`, `render_template`, `lisp_eval`) exposed
-//! to delegated agents as `host/*` tools on the existing IPC tool path.
+//! The editor's skill tools (`skill`, `render_template`, `lisp_eval`,
+//! `onto_anchor`) exposed to delegated agents as `host/*` tools on the existing
+//! IPC tool path.
 //!
 //! This wraps the governed `ToolPort` rather than adding a dispatch route: the
 //! IPC `ToolDefinition`/`ToolInvoke` handlers, their allowlist checks, and the
@@ -14,7 +15,12 @@ pub(crate) const SERVER: &str = "host";
 /// Read-only skill access: catalog content and pure computation, which every
 /// in-editor thread already has. Granted without a `delegated_tools` entry;
 /// the caller's card allowlist still applies.
-pub(crate) const SKILL_TOOLS: [&str; 3] = ["host/skill", "host/render_template", "host/lisp_eval"];
+pub(crate) const SKILL_TOOLS: [&str; 4] = [
+    "host/skill",
+    "host/render_template",
+    "host/lisp_eval",
+    "host/onto_anchor",
+];
 
 pub(crate) type SkillRequest = (String, tokio::sync::oneshot::Sender<Result<String, String>>);
 
@@ -49,6 +55,12 @@ fn run_pure(tool: &str, args: serde_json::Value) -> Result<serde_json::Value, St
         "lisp_eval" => agent::evaluate_lisp(
             serde_json::from_value(args).map_err(|e| format!("invalid lisp_eval input: {e}"))?,
         ),
+        "onto_anchor" => {
+            let input: agent::OntoAnchorToolInput = serde_json::from_value(args)
+                .map_err(|e| format!("invalid onto_anchor input: {e}"))?;
+            serde_json::to_value(agent::resolve_onto_anchor(&input))
+                .map_err(|e| format!("failed to serialize onto_anchor output: {e}"))
+        }
         other => Err(format!("unknown host tool '{other}'")),
     }
 }
@@ -94,6 +106,7 @@ impl ToolPort for HostSkillToolPort {
             "skill" => Some(info::<agent::SkillTool>(tool)),
             "render_template" => Some(info::<agent::RenderTemplateTool>(tool)),
             "lisp_eval" => Some(info::<agent::LispEvalTool>(tool)),
+            "onto_anchor" => Some(info::<agent::OntoAnchorTool>(tool)),
             _ => None,
         };
         Box::pin(async move { info })
@@ -141,12 +154,32 @@ mod tests {
     #[tokio::test]
     async fn host_tools_advertise_the_editor_tool_schemas() {
         let (port, _rx) = port();
-        for tool in ["skill", "render_template", "lisp_eval"] {
+        for tool in ["skill", "render_template", "lisp_eval", "onto_anchor"] {
             let info = port.get_tool_info(SERVER, tool).await.expect("host tool");
             assert!(info.input_schema.is_object(), "{tool}");
             assert!(!info.description.is_empty(), "{tool}");
         }
         assert!(port.get_tool_info(SERVER, "terminal").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn onto_anchor_runs_the_editor_resolver() {
+        let (port, _rx) = port();
+        let value = port
+            .invoke(
+                SERVER,
+                "onto_anchor",
+                serde_json::json!({
+                    "term": "sustainable growth rate",
+                    "relation_query": {"to": "net margin", "max_hops": 2}
+                }),
+                webid(),
+            )
+            .await
+            .expect("onto_anchor evaluated");
+        assert_eq!(value["concept"], "sustainable_growth_rate");
+        assert_eq!(value["tier"], "derived");
+        assert_eq!(value["traversal"]["status"], "path_found");
     }
 
     #[tokio::test]
