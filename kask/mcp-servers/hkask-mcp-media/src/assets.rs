@@ -894,21 +894,87 @@ pub(crate) async fn persist_slim_and_enrich(
     Ok(enriched)
 }
 
-/// Download asset bytes from an HTTP URL.
-pub(crate) async fn download_asset(url: &str) -> Result<Vec<u8>, MediaError> {
-    // Use a simple reqwest GET — the media server process has network access.
-    let client = reqwest::Client::new();
-    let resp = client
+/// Maximum size for a downloaded provider asset (128 MiB — matches the
+/// server's upload ceiling; bounds in-memory staging against runaway or
+/// malicious provider URLs).
+const MAX_DOWNLOAD_ASSET_BYTES: usize = 128 * 1024 * 1024;
+const DOWNLOAD_ASSET_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
+pub(crate) async fn validate_download_url(
+    url: &str,
+    allow_loopback_fixture: bool,
+) -> Result<(), MediaError> {
+    if allow_loopback_fixture
+        && let Ok(parsed) = reqwest::Url::parse(url)
+        && matches!(parsed.scheme(), "http" | "https")
+        && parsed.username().is_empty()
+        && parsed.password().is_none()
+        && matches!(parsed.host_str(), Some("127.0.0.1" | "::1" | "[::1]"))
+    {
+        return Ok(());
+    }
+    hkask_mcp_server::server::validate_tool_url_with_dns(url)
+        .await
+        .map_err(|e| {
+            MediaError::AssetPersistence(format!("invalid asset URL {url}: {}", e.message))
+        })
+}
+
+pub(crate) async fn download_asset_with_limit(
+    url: &str,
+    max_bytes: usize,
+    allow_loopback_fixture: bool,
+) -> Result<Vec<u8>, MediaError> {
+    validate_download_url(url, allow_loopback_fixture).await?;
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .redirect_policy(reqwest::redirect::Policy::none())
+        .timeout(DOWNLOAD_ASSET_TIMEOUT)
+        .build()
+        .map_err(|e| MediaError::AssetPersistence(format!("build download client: {e}")))?;
+    let mut resp = client
         .get(url)
         .send()
         .await
-        .and_then(|resp| resp.error_for_status())
         .map_err(|e| MediaError::AssetPersistence(format!("download {url}: {e}")))?;
-    let bytes = resp
-        .bytes()
+    let status = resp.status();
+    if status.is_redirection() {
+        return Err(MediaError::AssetPersistence(format!(
+            "download {url}: refusing HTTP {status} redirect"
+        )));
+    }
+    if !status.is_success() {
+        return Err(MediaError::AssetPersistence(format!(
+            "download {url}: HTTP {status}"
+        )));
+    }
+    if let Some(content_length) = resp.content_length()
+        && content_length > max_bytes as u64
+    {
+        return Err(MediaError::AssetPersistence(format!(
+            "download {url}: content-length {content_length} exceeds {max_bytes}-byte limit"
+        )));
+    }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = resp
+        .chunk()
         .await
-        .map_err(|e| MediaError::AssetPersistence(format!("read bytes from {url}: {e}")))?;
-    Ok(bytes.to_vec())
+        .map_err(|e| MediaError::AssetPersistence(format!("read bytes from {url}: {e}")))?
+    {
+        if chunk.len() > max_bytes.saturating_sub(bytes.len()) {
+            return Err(MediaError::AssetPersistence(format!(
+                "download {url}: response exceeds {max_bytes}-byte limit"
+            )));
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(bytes)
+}
+
+/// Download asset bytes from a validated HTTP(S) URL with redirect refusal,
+/// timeout, and a 128 MiB size cap.
+pub(crate) async fn download_asset(url: &str) -> Result<Vec<u8>, MediaError> {
+    download_asset_with_limit(url, MAX_DOWNLOAD_ASSET_BYTES, cfg!(test)).await
 }
 
 /// Decode a `data:{mime};base64,{data}` URI into bytes + extension.
@@ -989,7 +1055,78 @@ pub(crate) fn infer_image_dimensions(bytes: &[u8]) -> (u32, u32) {
 
 #[cfg(test)]
 mod tests {
-    use super::{PARTIAL_WRITE_FAILURE_DIR, image_ext_from_bytes, stage_job_asset_in_dir};
+    use super::{
+        PARTIAL_WRITE_FAILURE_DIR, download_asset_with_limit, image_ext_from_bytes,
+        stage_job_asset_in_dir, validate_download_url,
+    };
+
+    #[tokio::test]
+    async fn download_asset_enforces_url_validation_redirect_refusal_and_size_cap() {
+        use std::io::{Read, Write};
+
+        // 1. Production URL validation rejects loopback/private IPs and non-http schemes.
+        for bad_url in [
+            "http://127.0.0.1:8080/asset.png",
+            "http://169.254.169.254/latest/meta-data",
+            "file:///etc/passwd",
+        ] {
+            assert!(
+                validate_download_url(bad_url, false).await.is_err(),
+                "expected {bad_url} to fail production SSRF preflight"
+            );
+        }
+
+        // 2. Redirects are refused rather than followed.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind redirect fixture");
+        let addr = listener.local_addr().expect("redirect addr");
+        let peer = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept redirect request");
+            let mut buf = [0u8; 512];
+            let _ = stream.read(&mut buf);
+            stream
+                .write_all(
+                    b"HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:1/\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                )
+                .expect("write redirect response");
+        });
+        let redirect_err = download_asset_with_limit(&format!("http://{addr}/redirect"), 64, true)
+            .await
+            .expect_err("redirect must be refused");
+        peer.join().expect("redirect fixture thread");
+        assert!(
+            redirect_err.to_string().contains("refusing HTTP 302"),
+            "unexpected redirect error: {redirect_err}"
+        );
+
+        // 3. Responses exceeding max_bytes fail closed.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind size fixture");
+        let addr = listener.local_addr().expect("size addr");
+        let peer = std::thread::spawn(move || {
+            for body in [&b"0123456789"[..], &b"0123"[..]] {
+                let (mut stream, _) = listener.accept().expect("accept size request");
+                let mut buf = [0u8; 512];
+                let _ = stream.read(&mut buf);
+                let header = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                stream.write_all(header.as_bytes()).expect("write header");
+                stream.write_all(body).expect("write body");
+            }
+        });
+        let over_cap = download_asset_with_limit(&format!("http://{addr}/big"), 8, true)
+            .await
+            .expect_err("oversized payload must fail");
+        assert!(
+            over_cap.to_string().contains("exceeds 8-byte limit"),
+            "unexpected size-cap error: {over_cap}"
+        );
+        let within_cap = download_asset_with_limit(&format!("http://{addr}/small"), 8, true)
+            .await
+            .expect("payload within limit succeeds");
+        peer.join().expect("size fixture thread");
+        assert_eq!(within_cap, b"0123");
+    }
 
     #[tokio::test]
     async fn partial_staged_write_failure_leaves_no_asset_and_preserves_error() {

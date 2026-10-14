@@ -855,11 +855,22 @@ impl MediaServer {
                 if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&tag.value)
                     && parsed["face_index"].as_u64() == Some(face_group as u64)
                 {
-                    let new_value = serde_json::json!({
+                    let mut new_value = serde_json::json!({
                         "face_index": face_group,
                         "name": resolved_name,
                     });
-                    self.persist_tag(&tag.image_id, "face", &new_value.to_string(), 1.0, "user")
+                    if let Some(bbox) = parsed.get("bbox").cloned() {
+                        new_value["bbox"] = bbox;
+                    }
+                    self.gallery_store
+                        .replace_tag(
+                            &tag.id,
+                            &tag.image_id,
+                            "face",
+                            &new_value.to_string(),
+                            1.0,
+                            "user",
+                        )
                         .map_err(map_gallery_store_error)?;
                     renamed += 1;
                 }

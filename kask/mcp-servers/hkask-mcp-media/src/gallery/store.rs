@@ -1019,6 +1019,52 @@ impl GalleryStore {
             created_at: now,
         })
     }
+
+    /// Update an existing tag row in place (used by `run_face_matching` and
+    /// `gallery_name_face` to enrich a detected face tag with its matched or
+    /// user-supplied identity without leaving a duplicate unnamed `face` row
+    /// behind).
+    pub fn replace_tag(
+        &self,
+        tag_id: &str,
+        image_id: &str,
+        tag_type: &str,
+        value: &str,
+        confidence: f64,
+        model_used: &str,
+    ) -> std::result::Result<TagRecord, GalleryStoreError> {
+        let now = now_rfc3339();
+        let affected = self.driver.execute(
+            "UPDATE gallery_tags
+                SET value = ?1, confidence = ?2, model_used = ?3, created_at = ?4
+              WHERE id = ?5 AND image_id = ?6 AND tag_type = ?7",
+            &[
+                DbValue::Text(value.to_string()),
+                DbValue::Real(confidence),
+                DbValue::Text(model_used.to_string()),
+                DbValue::Text(now.clone()),
+                DbValue::Text(tag_id.to_string()),
+                DbValue::Text(image_id.to_string()),
+                DbValue::Text(tag_type.to_string()),
+            ],
+        )?;
+        if affected == 0 {
+            return Err(GalleryStoreError::NotFound(NotFound {
+                entity_type: "tag".to_string(),
+                id: tag_id.to_string(),
+            }));
+        }
+        Ok(TagRecord {
+            id: tag_id.to_string(),
+            image_id: image_id.to_string(),
+            tag_type: tag_type.to_string(),
+            value: value.to_string(),
+            confidence,
+            model_used: model_used.to_string(),
+            created_at: now,
+        })
+    }
+
     /// Get all tags for an image.
     ///
     /// expect: "The system provides durable storage for gallery data"

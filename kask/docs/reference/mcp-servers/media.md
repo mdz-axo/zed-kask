@@ -619,7 +619,7 @@ response contracts are pinned in `jobs.rs`, `tools/jobs.rs`, and `assets.rs`.
 
 | Tool | Description |
 |------|-------------|
-| `workflow_save` | Save a media generation workflow definition (serialized JSON) to the gallery; returns the workflow ID. |
+| `workflow_save` | Validate and save a ComfyUI/fal.ai-style `WorkflowGraph` DAG (`{name?, description?, inputs?, steps: [{id, tool, params?}]}` — 1–64 steps with unique `id`s, `tool` names in `TOOL_NAMES`, and topological upstream `{"$from": "<step_id>", "field": "..."}` bindings) to the gallery; returns the workflow ID. |
 | `workflow_list` | List all saved workflows, newest first. |
 | `workflow_load` | Load a saved workflow by ID; returns the serialized JSON graph. |
 | `workflow_delete` | Delete a saved workflow by ID; produced assets are not affected. |
@@ -694,7 +694,7 @@ Three tests pin the mapping: `omc_mapping_covers_all_registered_tools` (every re
 ## Key paths
 
 - **Gallery lifecycle:** `gallery_organize` → `gallery_analyze` (persist tags) → `gallery_search` (tags or semantic mode) / `gallery_timeline`; `gallery_refresh` after adding files; `gallery_add_media` for non-image assets
-- **Face pipeline:** `face_validate` → `face_register` (or `face_scan_folder` in bulk) → `gallery_refresh` with `include_faces=true` → `gallery_name_face` → `gallery_search` by person name. **Design decision (2026-08-29):** face recognition relies on vision-LLM calls, not local code — the implementation surface is the minijinja (j2) templates `validate_face_ref` and `match_faces` (`kask/mcp-servers/hkask-mcp-media/src/templates.rs`) dispatched through the inference port, like every other vision capability in this server. No local embedding model, no local geometric matching (an LLM-produced-"embedding" cosine path was removed — LLMs cannot emit geometrically consistent vectors). Full build-out is deferred.
+- **Face pipeline:** `face_validate` → `face_register` (or `face_scan_folder` in bulk) → `gallery_refresh` with `include_faces=true` → `gallery_name_face` → `gallery_search` by person name. **Design decision (2026-08-29, tightened 2026-10-14):** face recognition relies on vision-LLM calls, not local code — the implementation surface is the minijinja (j2) templates `validate_face_ref` and `match_faces` (`kask/mcp-servers/hkask-mcp-media/src/templates.rs`) dispatched through the inference port. `run_face_matching` (`src/faces.rs`) groups reference portraits by `(first_name, last_name)` for best-of multi-reference matching, replaces unnamed `face` tags in place via `GalleryStore::replace_tag` with `bbox` preserved, skips already-named `face` tags on subsequent refreshes, and surfaces crop failures instead of sending uncropped images.
 - **Generation with lineage:** `generate_image` → save to gallery → `gallery_organize`/`gallery_refresh` → `gallery_record_generation` → later `gallery_reproduce` or `gallery_lineage`/`gallery_asset_detail`
 - **Prompt enrichment:** `expand_prompt` → `generate_image` (`num_images` for variants) / `generate_video`
 - **YouTube discovery and acquisition:** `youtube_search` (SerpApi metadata and ranking) → select URL → `video_fetch` (yt-dlp binary retrieval) → `video_clip` / `video_add_caption` / `video_to_gif` / `video_remix`; `video_extract_frames` turns keyframes back into searchable assets

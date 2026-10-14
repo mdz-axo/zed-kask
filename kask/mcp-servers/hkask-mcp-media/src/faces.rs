@@ -181,28 +181,48 @@ impl MediaServer {
             }
         };
 
+        // Group registry entries by person `(first_name, last_name)` in
+        // first-seen order so multiple reference portraits for the same person
+        // act as a best-of reference set (early-exiting within a person's
+        // references when confidence >= 0.85).
+        let mut person_groups: Vec<((String, String), Vec<&crate::gallery::FaceRegistryRecord>)> =
+            Vec::new();
+        for reg_entry in registry {
+            let key = (reg_entry.first_name.clone(), reg_entry.last_name.clone());
+            if let Some((_, entries)) = person_groups.iter_mut().find(|(k, _)| *k == key) {
+                entries.push(reg_entry);
+            } else {
+                person_groups.push((key, vec![reg_entry]));
+            }
+        }
+
         for (tag, _path) in &all_tags {
             if tag.tag_type != "face" {
                 continue;
             }
 
-            let face_image_id = &tag.image_id;
-
-            // Parse the tag value once — used for both bbox extraction and
-            // face_index preservation on match.
+            // Parse the tag value once — used for already-matched skip, bbox
+            // extraction, and face_index/bbox preservation on match.
             let parsed: Option<serde_json::Value> = serde_json::from_str(&tag.value).ok();
+            let already_named = parsed
+                .as_ref()
+                .and_then(|v| v.get("name").or_else(|| v.get("registry_id")))
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|s| !s.trim().is_empty());
+            if already_named {
+                continue;
+            }
+
+            let face_image_id = &tag.image_id;
             let face_bbox = parsed.as_ref().and_then(|v| v.get("bbox").cloned());
 
             let query_url = if let Some(ref bbox) = face_bbox {
                 match self.crop_face_region(face_image_id, bbox) {
                     Ok(cropped_url) => cropped_url,
-                    Err(_) => match self.resolve_image_url_by_id(face_image_id) {
-                        Ok(url) => url,
-                        Err(e) => {
-                            errors.push(format!("Face tag {}: {}", tag.id, e));
-                            continue;
-                        }
-                    },
+                    Err(e) => {
+                        errors.push(format!("Face tag {} crop failed: {}", tag.id, e));
+                        continue;
+                    }
                 }
             } else {
                 match self.resolve_image_url_by_id(face_image_id) {
@@ -214,58 +234,74 @@ impl MediaServer {
                 }
             };
 
-            for reg_entry in registry {
-                // Vision LLM `match_faces` two-image comparison — the only
-                // comparator. (A previous cosine fast-path on LLM-produced
-                // "embeddings" was removed: LLMs cannot emit geometrically
-                // consistent vectors, so those scores were noise.)
-                let ref_url = match self.resolve_image_url_by_id(&reg_entry.image_id) {
-                    Ok(url) => url,
-                    Err(e) => {
-                        errors.push(format!("Registry entry {}: {}", reg_entry.id, e));
-                        continue;
-                    }
-                };
+            for ((first_name, last_name), entries) in &person_groups {
+                let mut best_match: Option<(&crate::gallery::FaceRegistryRecord, f64)> = None;
+                for reg_entry in entries {
+                    // Vision LLM `match_faces` two-image comparison — the only
+                    // comparator.
+                    let ref_url = match self.resolve_image_url_by_id(&reg_entry.image_id) {
+                        Ok(url) => url,
+                        Err(e) => {
+                            errors.push(format!("Registry entry {}: {}", reg_entry.id, e));
+                            continue;
+                        }
+                    };
 
-                match vision::match_faces(
-                    &self.vision_port,
-                    &self.template_env,
-                    &ref_url,
-                    &query_url,
-                    Some(vision_model.as_str()),
-                )
-                .await
-                {
-                    Ok(result) => {
-                        if result.is_match && result.confidence >= 0.7 {
-                            let name = format!("{} {}", reg_entry.first_name, reg_entry.last_name);
-                            let face_index = parsed.as_ref().and_then(|v| v["face_index"].as_u64());
-                            let new_value = serde_json::json!({
-                                "face_index": face_index,
-                                "name": name,
-                                "match_confidence": result.confidence,
-                                "registry_id": reg_entry.id,
-                                "method": "vision_llm",
-                            });
-                            match self.persist_tag(
-                                &tag.image_id,
-                                "face",
-                                &new_value.to_string(),
-                                result.confidence,
-                                vision_model.as_str(),
-                            ) {
-                                Ok(_) => faces_matched += 1,
-                                Err(error) => errors.push(format!(
-                                    "Match {} vs {} could not persist: {}",
-                                    reg_entry.id, tag.id, error
-                                )),
+                    match vision::match_faces(
+                        &self.vision_port,
+                        &self.template_env,
+                        &ref_url,
+                        &query_url,
+                        Some(vision_model.as_str()),
+                    )
+                    .await
+                    {
+                        Ok(result) => {
+                            if result.is_match && result.confidence >= 0.7 {
+                                let replace = best_match
+                                    .is_none_or(|(_, best_conf)| result.confidence > best_conf);
+                                if replace {
+                                    best_match = Some((*reg_entry, result.confidence));
+                                }
+                                if result.confidence >= 0.85 {
+                                    break;
+                                }
                             }
-                            break;
+                        }
+                        Err(e) => {
+                            errors.push(format!("Match {} vs {}: {}", reg_entry.id, tag.id, e));
                         }
                     }
-                    Err(e) => {
-                        errors.push(format!("Match {} vs {}: {}", reg_entry.id, tag.id, e));
+                }
+
+                if let Some((matched_entry, confidence)) = best_match {
+                    let name = format!("{first_name} {last_name}");
+                    let face_index = parsed.as_ref().and_then(|v| v["face_index"].as_u64());
+                    let mut new_value = serde_json::json!({
+                        "face_index": face_index,
+                        "name": name,
+                        "match_confidence": confidence,
+                        "registry_id": matched_entry.id,
+                        "method": "vision_llm",
+                    });
+                    if let Some(bbox) = face_bbox.clone() {
+                        new_value["bbox"] = bbox;
                     }
+                    match self.gallery_store.replace_tag(
+                        &tag.id,
+                        &tag.image_id,
+                        "face",
+                        &new_value.to_string(),
+                        confidence,
+                        vision_model.as_str(),
+                    ) {
+                        Ok(_) => faces_matched += 1,
+                        Err(error) => errors.push(format!(
+                            "Match {} vs {} could not persist: {}",
+                            matched_entry.id, tag.id, error
+                        )),
+                    }
+                    break;
                 }
             }
         }
@@ -495,4 +531,298 @@ pub(crate) fn default_face_folder() -> Option<std::path::PathBuf> {
         }
     }
     Some(dir)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gallery::{GalleryMode, GalleryStore};
+    use hkask_storage::database::sqlite::SqliteDriver;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
+
+    struct CountingMatchPort {
+        calls: AtomicUsize,
+        responses: Vec<&'static str>,
+    }
+
+    impl CountingMatchPort {
+        fn new(responses: Vec<&'static str>) -> Self {
+            Self {
+                calls: AtomicUsize::new(0),
+                responses,
+            }
+        }
+    }
+
+    crate::test_support::media_inference_stub! {
+        CountingMatchPort,
+        generate(self, _prompt): {
+            panic!("face matching must not call text generate")
+        },
+        generate_vision(self, _prompt, _images): {
+            let idx = self.calls.fetch_add(1, Ordering::SeqCst);
+            let text = self
+                .responses
+                .get(idx)
+                .copied()
+                .unwrap_or(r#"{"match":false,"confidence":0.1,"reasoning":"no","matching_features":[],"differing_features":[]}"#)
+                .to_string();
+            Box::pin(async move {
+                Ok(hkask_types::InferenceResult {
+                    text,
+                    model: "test-vision".into(),
+                    usage: Default::default(),
+                    finish_reason: "stop".into(),
+                    tool_calls: vec![],
+                    reasoning: None,
+                    cost_usd: None,
+                })
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn run_face_matching_aggregates_multi_ref_replaces_in_place_and_skips_matched() {
+        unsafe { std::env::set_var(crate::models::VISION_ENV, "OpenRouter/test-vision") };
+        let dir = tempfile::tempdir().expect("tempdir");
+        let driver = SqliteDriver::in_memory_driver();
+        let store = Arc::new(GalleryStore::from_driver(driver).expect("store"));
+        let gallery = store
+            .open(&dir.path().to_string_lossy(), GalleryMode::ReadOnly)
+            .expect("open gallery");
+
+        let write_png = |name: &str, color: u8| -> std::path::PathBuf {
+            let path = dir.path().join(name);
+            image::RgbImage::from_pixel(4, 4, image::Rgb([color, 0, 0]))
+                .save(&path)
+                .expect("save png");
+            path
+        };
+        let compute_hash = |path: &std::path::Path| -> String {
+            let bytes = std::fs::read(path).expect("read png");
+            format!("{:x}", sha2::Sha256::digest(&bytes))
+        };
+
+        let ref1_path = write_png("alice_ref1.png", 10);
+        let ref2_path = write_png("alice_ref2.png", 20);
+        let query_path = write_png("group_photo.png", 30);
+
+        let ref1_img = store
+            .add_image(
+                &gallery.id,
+                &ref1_path.to_string_lossy(),
+                &compute_hash(&ref1_path),
+                4,
+                4,
+                "png",
+                64,
+            )
+            .expect("add ref1");
+        let ref2_img = store
+            .add_image(
+                &gallery.id,
+                &ref2_path.to_string_lossy(),
+                &compute_hash(&ref2_path),
+                4,
+                4,
+                "png",
+                64,
+            )
+            .expect("add ref2");
+        let query_img = store
+            .add_image(
+                &gallery.id,
+                &query_path.to_string_lossy(),
+                &compute_hash(&query_path),
+                4,
+                4,
+                "png",
+                64,
+            )
+            .expect("add query");
+
+        let _reg1 = store
+            .register_face("Alice", "Lovelace", &ref1_img.id, "valid", "profile")
+            .expect("reg1");
+        let reg2 = store
+            .register_face("Alice", "Lovelace", &ref2_img.id, "valid", "frontal")
+            .expect("reg2");
+
+        // Detected face tag with bbox and no name yet.
+        let initial_tag = serde_json::json!({
+            "face_index": 0,
+            "bbox": {"x_pct": 10.0, "y_pct": 10.0, "w_pct": 50.0, "h_pct": 50.0}
+        });
+        store
+            .tag_image(
+                &query_img.id,
+                "face",
+                &initial_tag.to_string(),
+                0.85,
+                "detector",
+            )
+            .expect("tag_image");
+
+        // First reference evaluated scores 0.55 (below 0.7 threshold), second scores 0.82 (match).
+        let port = Arc::new(CountingMatchPort::new(vec![
+            r#"{"match":true,"confidence":0.55,"reasoning":"partial","matching_features":[],"differing_features":["angle"]}"#,
+            r#"{"match":true,"confidence":0.82,"reasoning":"strong","matching_features":["eyes","jawline"],"differing_features":[]}"#,
+        ]));
+        let server = MediaServer::new(
+            hkask_types::WebID::new(),
+            port.clone(),
+            Arc::new(Mutex::new(None)),
+            store.clone(),
+            crate::templates::create_env().expect("templates"),
+            crate::video::FfmpegRunner::detect(),
+            crate::video::YtDlpRunner::detect(),
+            crate::jobs::new_job_store(),
+            None,
+            None,
+        );
+        let ga = crate::GalleryAccess {
+            gallery_id: gallery.id.clone(),
+            image_count: 3,
+            root_path: dir.path().to_path_buf(),
+            mode: "read-only".to_string(),
+            total_size_bytes: 192,
+        };
+        let registry = store.list_faces(Some("valid")).expect("list faces");
+
+        let (matched, errors) = server.run_face_matching(&ga, &registry).await;
+        assert_eq!(matched, 1, "errors: {errors:?}");
+        assert!(errors.is_empty());
+        assert_eq!(port.calls.load(Ordering::SeqCst), 2);
+
+        // Exactly one face tag remains on query_img (replaced in place, no duplicate),
+        // carrying the matched name, reg2's registry_id, and preserved bbox.
+        let tags = store.get_tags(&query_img.id).expect("get_tags");
+        assert_eq!(
+            tags.len(),
+            1,
+            "unnamed tag must be replaced in place, not duplicated"
+        );
+        let matched_json: serde_json::Value = serde_json::from_str(&tags[0].value).expect("json");
+        assert_eq!(matched_json["name"], "Alice Lovelace");
+        assert_eq!(matched_json["match_confidence"], 0.82);
+        assert!(
+            matched_json["registry_id"] == reg2.id || matched_json["registry_id"] == _reg1.id,
+            "matched registry_id must belong to Alice Lovelace"
+        );
+        assert!(
+            matched_json.get("bbox").is_some(),
+            "bbox must be preserved on match"
+        );
+
+        // A second pass skips the already-matched face tag with zero vision calls.
+        let (matched_again, errors_again) = server.run_face_matching(&ga, &registry).await;
+        assert_eq!(matched_again, 0);
+        assert!(errors_again.is_empty());
+        assert_eq!(
+            port.calls.load(Ordering::SeqCst),
+            2,
+            "already-matched face tag must not trigger additional vision calls"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_face_matching_surfaces_crop_failure_without_full_image_fallback() {
+        unsafe { std::env::set_var(crate::models::VISION_ENV, "OpenRouter/test-vision") };
+        let dir = tempfile::tempdir().expect("tempdir");
+        let driver = SqliteDriver::in_memory_driver();
+        let store = Arc::new(GalleryStore::from_driver(driver).expect("store"));
+        let gallery = store
+            .open(&dir.path().to_string_lossy(), GalleryMode::ReadOnly)
+            .expect("open gallery");
+
+        let ref_path = dir.path().join("ref.png");
+        image::RgbImage::from_pixel(4, 4, image::Rgb([10, 0, 0]))
+            .save(&ref_path)
+            .expect("save ref");
+        let ref_bytes = std::fs::read(&ref_path).expect("read ref");
+        let ref_hash = format!("{:x}", sha2::Sha256::digest(&ref_bytes));
+        let ref_img = store
+            .add_image(
+                &gallery.id,
+                &ref_path.to_string_lossy(),
+                &ref_hash,
+                4,
+                4,
+                "png",
+                64,
+            )
+            .expect("add ref");
+        store
+            .register_face("Alice", "Lovelace", &ref_img.id, "valid", "")
+            .expect("register face");
+
+        // Query image has a stale hash on disk so `crop_face_region` fails with a
+        // revision mismatch — `run_face_matching` must surface the crop error and
+        // NOT fall back to sending the uncropped image.
+        let query_path = dir.path().join("query.png");
+        image::RgbImage::from_pixel(4, 4, image::Rgb([20, 0, 0]))
+            .save(&query_path)
+            .expect("save query");
+        let query_img = store
+            .add_image(
+                &gallery.id,
+                &query_path.to_string_lossy(),
+                "stale-hash",
+                4,
+                4,
+                "png",
+                64,
+            )
+            .expect("add query");
+        let tag_val = serde_json::json!({
+            "face_index": 0,
+            "bbox": {"x_pct": 0.0, "y_pct": 0.0, "w_pct": 50.0, "h_pct": 50.0}
+        });
+        store
+            .tag_image(
+                &query_img.id,
+                "face",
+                &tag_val.to_string(),
+                0.85,
+                "detector",
+            )
+            .expect("tag query");
+
+        let port = Arc::new(CountingMatchPort::new(vec![]));
+        let server = MediaServer::new(
+            hkask_types::WebID::new(),
+            port.clone(),
+            Arc::new(Mutex::new(None)),
+            store.clone(),
+            crate::templates::create_env().expect("templates"),
+            crate::video::FfmpegRunner::detect(),
+            crate::video::YtDlpRunner::detect(),
+            crate::jobs::new_job_store(),
+            None,
+            None,
+        );
+        let ga = crate::GalleryAccess {
+            gallery_id: gallery.id.clone(),
+            image_count: 2,
+            root_path: dir.path().to_path_buf(),
+            mode: "read-only".to_string(),
+            total_size_bytes: 128,
+        };
+        let registry = store.list_faces(Some("valid")).expect("list faces");
+
+        let (matched, errors) = server.run_face_matching(&ga, &registry).await;
+        assert_eq!(matched, 0);
+        assert_eq!(errors.len(), 1, "crop failure must be surfaced: {errors:?}");
+        assert!(
+            errors[0].contains("crop failed"),
+            "unexpected error: {}",
+            errors[0]
+        );
+        assert_eq!(
+            port.calls.load(Ordering::SeqCst),
+            0,
+            "crop failure must not fall back to a full-image vision call"
+        );
+    }
 }

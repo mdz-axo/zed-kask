@@ -80,19 +80,6 @@ impl MediaServer {
         let record = self.gallery_store.get_by_id(image_id)?;
         image_record_url(&record)
     }
-
-    /// Persist a single tag, returning the durable record or the original storage failure.
-    pub(crate) fn persist_tag(
-        &self,
-        image_id: &str,
-        tag_type: &str,
-        value: &str,
-        confidence: f64,
-        model: &str,
-    ) -> Result<crate::gallery::TagRecord, crate::gallery::GalleryStoreError> {
-        self.gallery_store
-            .tag_image(image_id, tag_type, value, confidence, model)
-    }
 }
 
 /// Split a provider-prefixed model name into (prefixed_name, label) — the

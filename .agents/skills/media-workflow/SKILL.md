@@ -9,7 +9,9 @@ Multi-tool media generation pipelines that chain `hkask-mcp-media` server tools 
 
 ## Reference model
 
-MovieLabs Ontology for Media Creation (OMC) — the creation-graph vocabulary the media server records for every asset (`kask/crates/hkask-bridge-ontology/src/omc.rs`; `gallery_asset_detail` returns the OMC creation graph). The pipeline topologies themselves are house recipes with no published source: known-good tool orderings, each proven by its Verification-loop acceptance property, not by a methodology. The Logo pipeline's five design gates cite Bokhua (see `media/logo-formal-prompt`).
+- **MovieLabs Ontology for Media Creation (OMC v2.8)** — the creation-graph vocabulary the media server records for every asset (`kask/crates/hkask-bridge-ontology/src/omc.rs`; `gallery_asset_detail` returns the OMC creation graph).
+- **ComfyUI node/link DAGs & fal.ai parameterized workflows** — the structural model for persisted workflow definitions (`workflow_save` / `workflow_load` in `kask/mcp-servers/hkask-mcp-media/src/tools/workflows.rs`): a workflow graph (`{name?, description?, inputs?, steps: [{id, tool, params?}]}`) is a topologically ordered, acyclic DAG of steps whose `tool` names are verified against the server's registered `TOOL_NAMES` and whose inter-step parameter bindings (`{"$from": "<step_id>", "field": "<output_field>"}`) reference upstream steps. When persisting a reusable workflow or recording provenance on its deliverables, save the DAG via `workflow_save` and pass the returned `workflow_id` to `gallery_record_generation` so `gallery_asset_detail` links the produced assets back to the workflow definition.
+- **Bokhua, *Principles of Logo Design*** — the Logo pipeline's five formal design gates (see `media/logo-formal-prompt`).
 
 ## Initial and target condition
 

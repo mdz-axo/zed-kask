@@ -141,7 +141,10 @@ once per frame, and reports partial completion explicitly.
 `job_list` defaults to 20 rows, accepts at most 256, and returns `total` plus
 `has_more`; the panel displays the subset rather than presenting it as the
 whole history. Job history is process-local: restart loss and bounded terminal
-retention are disclosed at list/status/cancel boundaries. Workflow listing is
+retention are disclosed at list/status/cancel boundaries. `workflow_save`
+validates a ComfyUI/fal.ai-style `WorkflowGraph` DAG (1–64 topologically ordered
+`steps`/`nodes` with unique `id`s, `tool` names in `TOOL_NAMES`, and verified
+upstream `{"$from": "<step_id>", "field": "..."}` bindings). Workflow listing is
 bounded to summaries (default 100, maximum 256); `workflow_load` is the only
 list/load surface that returns the full graph.
 
@@ -450,7 +453,7 @@ model overrides for background removal/upscale. See the
 
 ## Face recognition — design decision
 
-Face recognition relies on vision-LLM calls, not local code. The implementation surface is the minijinja (j2) prompt templates — `validate_face_ref` (reference validation) and `match_faces` (two-image same-person comparison) in `src/templates.rs` — dispatched through the inference port, the same pattern as every other vision capability in this server. There is no local embedding model and no local geometric matching; a previous LLM-produced-"embedding" cosine path was removed because LLMs cannot emit geometrically consistent vectors. Full build-out of the face-recognition feature is **deferred — decision recorded 2026-10-06**: the build-out was presented for ruling twice (2026-10-06, options: keep deferred / build on the LLM-template surface with acceptance criteria) and the operator directed proceeding without a build directive, so the deferral stands and reopens on an explicit build directive. Triggering condition: a workflow needing multi-reference voting or match reliability beyond the current two-template core. Any future expansion (e.g. better matching prompts, multi-reference voting) stays on the LLM-template surface.
+Face recognition relies on vision-LLM calls, not local code. The implementation surface is the minijinja (j2) prompt templates — `validate_face_ref` (reference validation) and `match_faces` (two-image same-person comparison) in `src/templates.rs` — dispatched through the inference port, the same pattern as every other vision capability in this server. There is no local embedding model and no local geometric matching; a previous LLM-produced-"embedding" cosine path was removed because LLMs cannot emit geometrically consistent vectors. `run_face_matching` (`src/faces.rs`) groups valid `face_registry` entries by `(first_name, last_name)` so multiple reference portraits for the same person evaluate as a best-of set (early-exiting at confidence ≥ 0.85), replaces unnamed `face` tags in place via `GalleryStore::replace_tag` while preserving `bbox`, skips already-identified `face` tags on subsequent refreshes, and surfaces crop errors rather than falling back to uncropped full images. Full build-out beyond this vision-LLM surface remains **deferred — decision recorded 2026-10-06**.
 
 ## Quick Start
 
