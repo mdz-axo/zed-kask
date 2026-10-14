@@ -1697,6 +1697,51 @@ pub const DERIVED_CONCEPTS: &[DerivedConcept] = &[
         constituents: &["agent card", "task", "artifact"],
         authority: "operator ruling 2026-10-14 (Cohort 9 skill-corpus audit); Agent2Agent (A2A) Protocol Specification (agent2agent.info)",
     },
+    DerivedConcept {
+        term: "bloom_taxonomy",
+        aliases: &[
+            "bloom's taxonomy",
+            "blooms taxonomy",
+            "krathwohl taxonomy",
+            "taxonomy of educational objectives",
+        ],
+        identity: "a hierarchical classification of cognitive complexity progressing from factual recall and comprehension through application and analysis to evaluation and synthesis",
+        definition: "Benjamin S. Bloom, Max D. Engelhart, Edward J. Furst, Walker H. Hill & David R. Krathwohl, Taxonomy of Educational Objectives: The Classification of Educational Goals (Longmans, 1956), and David R. Krathwohl, 'A Revision of Bloom's Taxonomy: An Overview', Theory Into Practice 41(4):212-218 (2002), doi:10.1207/s15430421tip4104_2: structures cognitive operations along an ordered hierarchy of complexity. In zed-kask it grounds grill-me's 5-level interrogation ladder (Recall -> Mechanism -> Rationale -> Edge Cases -> Synthesis) and corpus_build_prompts's type_distribution.",
+        constituents: &["socratic_method", "cognitive complexity", "synthesis"],
+        authority: "operator ruling 2026-10-14 (Cohort 10 skill-corpus audit); Bloom et al. (1956); Krathwohl, Theory Into Practice 41(4):212-218 (2002), doi:10.1207/s15430421tip4104_2",
+    },
+    DerivedConcept {
+        term: "zone_of_proximal_development",
+        aliases: &["zpd", "vygotsky zpd", "instructional scaffolding"],
+        identity: "the cognitive band between what a learner can solve independently and what they cannot solve even with guidance, targeted by adaptive difficulty adjustment",
+        definition: "Lev S. Vygotsky, Mind in Society: The Development of Higher Psychological Processes (Harvard University Press, 1978), and David Wood, Jerome S. Bruner & Gail Ross, 'The role of tutoring in problem solving', Journal of Child Psychology and Psychiatry 17(2):89-100 (1976): adaptive instruction probes at the frontier of current competence, escalating difficulty when mastery is high and holding or reprobing when mastery is partial. In zed-kask it grounds grill-me's Feedback gate escalation thresholds (solid_ratio >= 0.80 -> escalate; 0.40..0.79 -> hold; < 0.40 -> reprobe; retire after 3 Gap attempts).",
+        constituents: &["bloom_taxonomy", "socratic_method", "adaptive escalation"],
+        authority: "operator ruling 2026-10-14 (Cohort 10 skill-corpus audit); Vygotsky, Mind in Society (1978); Wood, Bruner & Ross (1976)",
+    },
+    DerivedConcept {
+        term: "retrieval_augmented_generation",
+        aliases: &["rag", "retrieve-cite-verify"],
+        identity: "conditioning language-model generation on non-parametric passages retrieved from an indexed document corpus so claims are anchored to explicit source passages and verifiable by substring checks",
+        definition: "Patrick Lewis et al., 'Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks', NeurIPS 33:9459-9474 (2020), arXiv:2005.11401: combines parametric language-model memory with non-parametric retrieved text passages so generated assertions cite retrieved source chunks rather than relying on ungrounded parametric recall. In zed-kask it grounds listening's apply-template-rag.j2 and corpus_query.",
+        constituents: &["maia_listening", "source passage", "substring verification"],
+        authority: "operator ruling 2026-10-14 (Cohort 10 skill-corpus audit); Lewis et al., NeurIPS (2020), arXiv:2005.11401",
+    },
+    DerivedConcept {
+        term: "semiotics",
+        aliases: &[
+            "syntax and semantics",
+            "syntax-semantics distinction",
+            "syntactics and semantics",
+        ],
+        identity: "the formal division of sign systems into syntactics (relations among formal expressions independent of interpretation), semantics (relations between expressions and their designated meanings or truth conditions), and pragmatics (relations between expressions and their users in context)",
+        definition: "Charles W. Morris, Foundations of the Theory of Signs (University of Chicago Press, 1938), and Rudolf Carnap, Introduction to Semantics (Harvard University Press, 1942): distinguishes syntactic operations (governed solely by formal formation and transformation rules over symbols) from semantic operations (governed by designation, denotation, and truth conditions). In zed-kask it grounds region-routing's syntactic-vs-semantic representation axis crossed with Turing's deterministic-vs-probabilistic process axis.",
+        constituents: &[
+            "deterministic_computation",
+            "probabilistic_computation",
+            "pragmatic_semantics",
+        ],
+        authority: "operator ruling 2026-10-14 (Cohort 10 skill-corpus audit); Morris, Foundations of the Theory of Signs (1938); Carnap, Introduction to Semantics (1942)",
+    },
 ];
 /// Normalization matches the onto_anchor tool's: lowercase alphanumeric
 /// characters only, separators and case folded away.
@@ -2541,6 +2586,51 @@ mod tests {
         ] {
             let concept =
                 resolve_derived(term).expect("Cohort 9 audit ruling must resolve in derived.rs");
+            assert_eq!(
+                concept.term, expected_term,
+                "{term} resolves to {expected_term}"
+            );
+            assert!(
+                concept.authority.contains(marker),
+                "{term}: {}",
+                concept.authority
+            );
+            assert!(
+                concept.authority.starts_with("operator ruling 2026-10-14"),
+                "{term} cites the 2026-10-14 ruling"
+            );
+        }
+    }
+
+    /// expect: [P5] The Cohort 10 skill-corpus audit rulings (2026-10-14)
+    /// resolve to their published authorities and never fall back to the
+    /// coarse 5W1H core anchor.
+    #[test]
+    fn cohort_10_audit_rulings_resolve_with_authority() {
+        for (term, expected_term, marker) in [
+            ("Bloom's taxonomy", "bloom_taxonomy", "Krathwohl"),
+            (
+                "taxonomy of educational objectives",
+                "bloom_taxonomy",
+                "10.1207/s15430421tip4104_2",
+            ),
+            (
+                "zone of proximal development",
+                "zone_of_proximal_development",
+                "Vygotsky",
+            ),
+            ("ZPD", "zone_of_proximal_development", "1978"),
+            (
+                "retrieval-augmented generation",
+                "retrieval_augmented_generation",
+                "Lewis",
+            ),
+            ("RAG", "retrieval_augmented_generation", "2005.11401"),
+            ("semiotics", "semiotics", "Morris"),
+            ("syntax and semantics", "semiotics", "Carnap"),
+        ] {
+            let concept =
+                resolve_derived(term).expect("Cohort 10 audit ruling must resolve in derived.rs");
             assert_eq!(
                 concept.term, expected_term,
                 "{term} resolves to {expected_term}"

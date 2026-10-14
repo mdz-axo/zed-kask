@@ -10,7 +10,7 @@ Socratic interrogation skill. Tests deep understanding through escalating diffic
 
 ## Reference model
 
-Socratic questioning, with a difficulty ladder (Recall → Mechanism → Rationale → Edge cases → Synthesis) in the manner of Bloom's taxonomy (Bloom et al., 1956) — `onto_anchor` → core 5w1h (coarse anchor; an operator ruling could derive a finer one). Initial condition: calibrate mode's baseline. Target condition: level-5 completion or round 5, then an assessment built only from actual answers.
+Socratic questioning (Paul & Elder, *The Art of Socratic Questioning*, 2006 → `onto_anchor` `derived:socratic_method`), with a 5-level cognitive difficulty ladder (Recall → Mechanism → Rationale → Edge Cases → Synthesis) grounded in Bloom's taxonomy (Bloom et al., 1956; Krathwohl, 2002 `doi:10.1207/s15430421tip4104_2` → `onto_anchor` `derived:bloom_taxonomy`) and adaptive difficulty scaffolding across the Zone of Proximal Development (Vygotsky, 1978 → `onto_anchor` `derived:zone_of_proximal_development`). Initial condition: calibrate mode's baseline. Target condition: level-5 completion or round 5, then an assessment built only from actual answers.
 
 ## D/P labelling
 
@@ -48,7 +48,7 @@ reported as unassessed.
 5. Track attempts per question across rounds: each question carries a stable `id`; the round output's `attempt_counts` accumulates failed attempts per question id across rounds (`[[id, count], ...]`); the Feedback gate retires a question at 3 failed attempts, and the next render explains its answer instead of re-asking it. The agent constructs `previous_answers` by joining the prior round's `questions` and `evaluations` by position: each entry carries `{question, answer, rating, note}` — the question text, the answer text, the prior rating when already graded, and the note.
 6. Maintain a direct, sharp tone akin to a demanding technical interviewer, using specific challenging phrases without being mean-spirited.
 7. Give minimal hints if requested, without solving the questions for the user.
-8. Output a JSON object containing questions, evaluations, current level, and the updated running assessment (each area's Solid/Partial/Gap rating accumulated across rounds); each evaluation carries its Solid/Partial/Gap rating.
+8. Output a JSON object containing questions, evaluations, and the updated running assessment (each area's Solid/Partial/Gap rating accumulated across rounds); each evaluation carries its Solid/Partial/Gap rating. Verify question count (`2..3`) and non-reasking of retired IDs via `lisp_eval` (`GM-1`): `(and (>= questions_count 2) (<= questions_count 3) (= reasked_retired_count 0))`.
 
 ### grill-me-assess
 
@@ -68,7 +68,7 @@ Grading each answer Solid / Partial / Gap is P (the round render's judgment, cri
    - env: `{ "level": <current level 1–5>, "solid_ratio": <ratio>, "answered": <answered questions this round>, "round": <round number> }`
    Wait for the answer before counting it; rendering a question is not evaluation. The first interrogate round's level comes from the calibrate render's `calibrated_level` output (P — stated as such); the gate governs every level thereafter.
 2. Retire questions after 3 failed attempts with `lisp_eval` over the accumulated `attempt_counts` from the round outputs: `(begin (define retire (lambda (a) (if (is_null a) (quote ()) (if (>= (car (cdr (car a))) 3) (cons (car (car a)) (retire (cdr a))) (retire (cdr a)))))) (retire attempts))`, env `{ "attempts": <the accumulated attempt_counts> }`. Pass the retired ids and the gate's direction to the next round render (`retired_ids`, `gate_direction`) so they are explained, not re-asked.
-3. Stop at level-5 completion or round 5, whichever comes first, and run `grill-me-assess` on actual answers. Never invent a rating for unanswered questions; report gaps as unassessed where evidence is absent.
+3. Stop at level-5 completion or round 5, whichever comes first, and run `grill-me-assess` on actual answers. Never invent a rating for unanswered questions; report gaps as unassessed where evidence is absent, and verify via `lisp_eval` (`GM-2`): `(and (= unanswered_graded_count 0) (> areas_assessed_count 0))`.
 
 ## Registry Templates
 
@@ -89,8 +89,8 @@ All receipts executed live through `lisp_eval` (2026-10-01, backfill pass):
 - Round 5 → `[3, "complete"]`.
 - Solid ratio 0.2 → `[3, "reprobe"]`.
 - Retirement form, attempts `[["q1", 3], ["q2", 2], ["q3", 4]]` →
-  `["q1", "q3"]` — only questions answered solidly at least three
-  times retire.
+  `["q1", "q3"]` — only questions with at least three failed (Gap)
+  attempts retire.
 
 The skill's forms are executed at use time, never anchored in code.
 

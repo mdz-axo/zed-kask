@@ -11,7 +11,7 @@ description: Classify a task's steps into the syntax-semantic x deterministic-pr
   decomposition), the available oracles (agent tools, MCP tools, the
   operator, the curator), and the region model — SD (syntactic x
   deterministic), SP (syntactic x probabilistic), Sem-D (semantic x
-  deterministic), Sem-P (semantic x probabilistic) — as defined in
+  deterministic), Sem-P (semantic x probabilistic) — grounded in Morris (1938) / Carnap (1942) semiotics (`onto_anchor` → `derived:semiotics`) and Turing (1936/1937 `doi:10.1112/plms/s2-42.1.230`; 1939 `doi:10.1112/plms/s2-45.1.161` → `derived:deterministic_computation` / `derived:verification_oracle`), as defined in
   `kask/docs/research/syntax-semantic-probabilistic-deterministic-space.md`.
 - **Target condition:** a consumed routing plan in which every step carries a
   region, at least one named tool, a named deterministic gate for every
@@ -76,7 +76,7 @@ Every Sem-P step that changes scope (spec, priorities, acceptance) carries
 an operator-confirm checkpoint question. Every cross-region dependency — a
 step whose output feeds a step in a different region — carries its gate
 before the handoff. Operator checkpoints are asked questions, never assumed
-consent.
+consent. Verify step-model size (`3..7` when derived), cross-region handoff gates, and scope-changing Sem-P checkpoints in `lisp_eval` (`RR-1`): `(and (>= steps_count 3) (<= steps_count 7) (= ungated_cross_region_handoffs 0) (= scope_changing_sem_p_without_checkpoint 0))`.
 
 ### Step 5: Deliver the plan (Act)
 
@@ -118,7 +118,7 @@ from observed outcomes, never from the model scoring its own plan.
 
 | Template | Purpose |
 |----------|---------|
-| `region-routing/route` | Classify task steps into the 2x2 regions and emit the routing plan: region, tools, gate, and role per step. |
+| `route.j2` | Classify task steps into the 2x2 regions and emit the routing plan: region, tools, gate, and role per step. |
 
 Template context variables (from the template's [inference] contract):
 - `route.j2`: `task_description`, `steps`, `available_oracles`

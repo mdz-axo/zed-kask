@@ -39,13 +39,11 @@ Respond with a JSON object:
 ```json
 {
   "summary": [
-    {"area": "topic area name", "rating": "solid|partial|gap", "notes": "specific observations"},
-    ...
+    {"area": "topic area name", "rating": "solid|partial|gap", "notes": "specific observations"}
   ],
   "recommendations": [
     "Study recommendation 1",
-    "Study recommendation 2",
-    ...
+    "Study recommendation 2"
   ],
   "overall_assessment": "Brief narrative summary of knowledge depth and breadth"
 }
@@ -56,7 +54,4 @@ Respond with a JSON object:
 - Be specific in recommendations — point to exact areas to study.
 - Don't sugarcoat gaps, but don't be demoralizing.
 - Prioritize recommendations by impact (most critical gaps first).
-- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
-- Preserve the original prompt structure and formatting.
-- Handle missing variables gracefully (leave as-is or use default if specified).
 

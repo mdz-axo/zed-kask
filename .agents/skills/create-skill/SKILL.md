@@ -291,7 +291,7 @@ Generate the skill artifacts:
      scaffold carrying either defect is a scaffold defect: fix before
      Phase 4.
    - The expected JSON output shape.
-3. **Pre-check before handing over:** write the templates, then run
+3. **Pre-check before handing over:** verify naming rules and Registry Templates row parity in `lisp_eval` (`CS-1`: `(and (>= name_len 2) (<= name_len 40) (not (starts-with "hkask-" sk_name)) (not (starts-with "regulation-" sk_name)) (not (starts-with "mcp-" sk_name)) (= templates_count registry_rows_count))`), write the templates, then run
    `bash kask/scripts/audit/skill-corpus-prescreen.sh` and
    `bash kask/scripts/audit/skill-corpus-contract-audit.sh` via `terminal`.
    A new template that either script flags is a scaffold defect: fix it and

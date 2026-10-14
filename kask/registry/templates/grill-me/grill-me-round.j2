@@ -13,7 +13,6 @@ contract:
   output:
     questions: array
     evaluations: array
-    current_level: integer
     assessment: object
     attempt_counts: array
     calibrated_level: integer|null
@@ -80,7 +79,7 @@ Generate 2-3 questions at level {{ current_level }}.
 
 ## Output Requirements
 
-Respond with a JSON object containing `questions`, `evaluations`, `current_level`, and the updated running `assessment`:
+Respond with a JSON object containing `questions`, `evaluations`, and the updated running `assessment`:
 
 ```json
 {
@@ -91,7 +90,6 @@ Respond with a JSON object containing `questions`, `evaluations`, `current_level
   "evaluations": [
     {"answer": "...", "rating": "solid|partial|gap", "note": "..."}
   ],
-  "current_level": 1,
   "assessment": {"<area>": "solid|partial|gap"},
   "attempt_counts": [["q1", 0], ["q2", 1]],
   "calibrated_level": null
@@ -104,7 +102,4 @@ Respond with a JSON object containing `questions`, `evaluations`, `current_level
 
 - Stay within the declared topic domain: **{{ topic }}**
 - If the user asks for a hint, give a minimal one — don't solve it for them.
-- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
-- Preserve the original prompt structure and formatting.
-- Handle missing variables gracefully (leave as-is or use default if specified).
 

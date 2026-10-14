@@ -58,9 +58,12 @@ The no-fabrication invariant is enforced by the process, not by the prompt:
 The model never "writes" a quote — it "finds" one and points to where it found
 it. The verification is mechanical (substring match), not model-mediated.
 
-5. **Count** (D — `lisp_eval`) — after verification, compute
+5. **Count & Target Gate** (D — `lisp_eval`) — after verification, compute
    `(list verified total (- total verified) sections_without_verified_evidence)`
-   from the step 4 results — env: `{ "verified": <citations that passed>, "total": <citations made>, "sections_without_verified_evidence": <count> }`. Every check is against the citation's OWN chunk:
+   from the step 4 results — env: `{ "verified": <citations that passed>, "total": <citations made>, "sections_without_verified_evidence": <count> }`, and enforce the Target Condition (`LIS-1`) and certainty-tier threshold mapping (`LIS-2`) in `lisp_eval`:
+   - `LIS-1`: `(and (= unverified_delivered_count 0) (= unbacked_non_neutral_sections 0) (= total_sections 7))`
+   - `LIS-2`: `(cond ((>= prob 0.67) "proximate") ((>= prob 0.33) "probable") (t "possible"))`
+   Every check is against the citation's OWN chunk:
    a quote found in some other chunk is a misattribution, not a pass.
 
 **Target condition (T2):** every emitted verdict carries at least one
@@ -78,7 +81,7 @@ template (`onto_anchor` → derived `maia_listening`, operator ruling
 2026-09-25): the seven sections, horizon model and admissibility rule are
 copied from that template, which this SKILL.md deliberately does not restate.
 The retrieve-cite-verify discipline is part of the `maia_listening`
-definition itself; `grounding-verify` reuses it from here — not the reverse.
+definition itself (and grounds extractive RAG attribution per Lewis et al. 2020, `arXiv:2005.11401` → `onto_anchor` `derived:retrieval_augmented_generation`); `grounding-verify` reuses it from here — not the reverse.
 Certainty tiers: `hkask_forecast::certainty_tier` is the single source of
 truth on drift (the template's "guidebook verbatim" label names the text it
 quotes, not a competing authority). The chunk-boundary rule and the count

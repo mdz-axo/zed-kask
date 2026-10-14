@@ -179,10 +179,10 @@ Transcript chunks (search these for evidence):
 {% endfor %}
 
 {% if prior_transcript_chunks and prior_transcript_chunks | length > 0 %}
-Prior-quarter transcript chunks (for management_consistency checkpoint drift):
+Prior-quarter transcript chunks (for management_consistency checkpoint drift — indexed starting after current chunks so `chunk_id` never collides):
 {% for chunk in prior_transcript_chunks %}
 ---
-[chunk_id: {{ loop.index0 }}]
+[chunk_id: {{ (transcript_chunks | length) + loop.index0 }}]
 {{ chunk }}
 {% endfor %}
 {% endif %}
