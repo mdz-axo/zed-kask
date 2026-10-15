@@ -1768,44 +1768,6 @@ pub const DERIVED_CONCEPTS: &[DerivedConcept] = &[
         authority: "operator ruling 2026-10-14 (Cohort 11 skill-corpus audit); Berthouzoz, Li & Agrawala, ACM TOG 31(4):67 (2012), doi:10.1145/2185520.2185563; SMPTE 258M",
     },
     DerivedConcept {
-        term: "scientific_method",
-        aliases: &[
-            "scientific inquiry",
-            "hypothetico-deductive method",
-            "ai scientist workflow",
-        ],
-        identity: "observation and literature grounding -> falsifiable hypothesis formulation -> controlled experimental test and ablation -> peer-reviewed critique and archive update",
-        definition: "The hypothetico-deductive method of empirical inquiry (Popper, The Logic of Scientific Discovery, 1959; Platt, Strong Inference, Science 146, 1964), operationalized for autonomous agent workflows by Lu et al., 'The AI Scientist: Towards Fully Automated Open-Ended Scientific Discovery', arXiv:2408.06292 (2024): ground novelty in published literature, state a falsifiable hypothesis (SEPIO:0000432), execute controlled experiments and ablations (mls:Experiment), and subject claims to independent verification before archiving.",
-        constituents: &[
-            "falsifiability",
-            "hypothesis",
-            "experiment",
-            "audit_evidence",
-        ],
-        authority: "operator ruling 2026-10-14 (experimentation server extension); Popper (1959); Platt, Science 146 (1964); Lu et al., arXiv:2408.06292 (2024)",
-    },
-    DerivedConcept {
-        term: "evolution",
-        aliases: &[
-            "evolutionary search",
-            "darwinian evolution",
-            "declare vary test select",
-            "skill evolution",
-        ],
-        identity: "declare -> vary (mutation and recombination over genotypes) -> test (grounded fitness evaluation under a resource budget) -> select (non-dominated or threshold selection retaining lineage fossils)",
-        definition: "Population-based adaptation by variation, heredity, and differential selection (Darwin, On the Origin of Species, 1859; Holland, Adaptation in Natural and Artificial Systems, 1975), operationalized for agentic prompts and skills by Agrawal et al. (GEPA, arXiv:2507.19457, 2025) and Lyu et al. (EvoScientist, arXiv:2603.08127, 2026). In zed-kask it grounds hkask-mcp-experimentation's four-step protocol (experiment_propose -> variant_register -> fitness_record -> selection_record), pareto_frontier_query, and lineage_read fossil retention.",
-        constituents: &["reflective_prompt_evolution", "experiment", "reification"],
-        authority: "operator ruling 2026-10-14 (experimentation server extension); Holland, Adaptation in Natural and Artificial Systems (1975); Agrawal et al., arXiv:2507.19457 (2025); Lyu et al., arXiv:2603.08127 (2026)",
-    },
-    DerivedConcept {
-        term: "ablation_study",
-        aliases: &["ablation", "ablation experiment", "component ablation"],
-        identity: "surgically removing or disabling one constituent mechanism of a composite system while holding the evaluation split and hyperparameters fixed to measure its marginal causal contribution",
-        definition: "The experimental application of Pearl's interventional do(not X) operator and Ousterhout's deletion test to machine-learning and scientific systems (Meyes et al., 'Ablation Studies in Artificial Neural Networks', arXiv:1901.08644, 2019; Lu et al., arXiv:2408.06292, 2024): a proposed component earns its complexity only if ablating it degrades measured fitness beyond the declared noise band.",
-        constituents: &["counterfactual", "deletion_test", "experiment"],
-        authority: "operator ruling 2026-10-14 (experimentation server extension); Meyes et al., arXiv:1901.08644 (2019); Lu et al., arXiv:2408.06292 (2024)",
-    },
-    DerivedConcept {
         term: "time_weighted_return",
         aliases: &["twr", "time weighted rate of return", "geometric linking"],
         identity: "the compound rate of growth of one unit of capital over a measurement period computed by geometrically linking sub-period holding returns bounded by external cash flows",
@@ -2819,42 +2781,6 @@ mod tests {
         ] {
             let concept =
                 resolve_derived(term).expect("Cohort 11 audit ruling must resolve in derived.rs");
-            assert_eq!(
-                concept.term, expected_term,
-                "{term} resolves to {expected_term}"
-            );
-            assert!(
-                concept.authority.contains(marker),
-                "{term}: {}",
-                concept.authority
-            );
-            assert!(
-                concept.authority.starts_with("operator ruling 2026-10-14"),
-                "{term} cites the 2026-10-14 ruling"
-            );
-        }
-    }
-
-    /// expect: [P5] The scientific-discovery and experimentation extension
-    /// rulings (2026-10-14) resolve to their published authorities (Lu et al.
-    /// 2024, Holland 1975, Agrawal et al. 2025, Lyu et al. 2026, Meyes et al.
-    /// 2019) and never fall back to the coarse 5W1H core anchor.
-    #[test]
-    fn scientific_experimentation_rulings_resolve_with_authority() {
-        for (term, expected_term, marker) in [
-            ("scientific method", "scientific_method", "2408.06292"),
-            (
-                "hypothetico-deductive method",
-                "scientific_method",
-                "Popper",
-            ),
-            ("evolution", "evolution", "Holland"),
-            ("skill evolution", "evolution", "2603.08127"),
-            ("ablation study", "ablation_study", "1901.08644"),
-            ("ablation", "ablation_study", "2408.06292"),
-        ] {
-            let concept = resolve_derived(term)
-                .expect("scientific experimentation ruling must resolve in derived.rs");
             assert_eq!(
                 concept.term, expected_term,
                 "{term} resolves to {expected_term}"

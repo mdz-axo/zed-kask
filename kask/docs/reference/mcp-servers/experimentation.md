@@ -11,7 +11,7 @@ mds_categories: [domain, composition, lifecycle, trust]
 # Experimentation MCP Server Reference
 
 **Crate:** `kask/mcp-servers/hkask-mcp-experimentation`
-**Tools:** 7 — `experiment_propose`, `variant_register`, `fitness_record`, `selection_record`, `pareto_frontier_query`, `lineage_read`, `population_query`
+**Tools:** 6 — `experiment_propose`, `variant_register`, `fitness_record`, `selection_record`, `lineage_read`, `population_query`
 **Auto-start:** Yes by default with the full built-in set; `kask.mcp.load_default=false` disables the fleet and `kask.mcp.overrides.experimentation=false` disables this server (server id `experimentation`, `kask/crates/kask_bridge/src/mcp_servers.rs:550`).
 
 The experimentation server is the **experiment registry** for the sharded
@@ -30,30 +30,19 @@ ONLY — never simulated").
    function, noise band, a **pre-registered prediction with confidence
    in [0,1]**, and energy budget. Optional `experiment_key` converges
    retried calls onto the existing record.
-2. **Vary** — `variant_register`: genotype
-   configurations (arbitrary JSON) with optional parent lineage, stage
-   `role` (`baseline | tuning | candidate | ablation`, defaulting to
-   `baseline` for root variants and `candidate` for derived variants),
-   and `ablated_component` (required when `role == "ablation"`); the
+2. **Vary** — `variant_register` (`server.rs:211`): genotype
+   configurations (arbitrary JSON) with optional parent lineage; the
    first variant moves the experiment to running; a resolved experiment
    accepts no further variants.
-3. **Test** — `fitness_record`: grounded fitness —
+3. **Test** — `fitness_record` (`server.rs:239`): grounded fitness —
    report references plus per-objective scores computed from those
-   runs; immutable once written. `pareto_frontier_query` computes the
-   deterministic NSGA-II non-dominated Pareto frontier over recorded
-   variant fitnesses with per-objective relative noise-band tie handling,
-   crowding-distance pruning, and convergence tracking against
-   `previous_frontier_ids`.
-4. **Select** — `selection_record`: the verdict —
-   selected (naming the winning variant; when `budget.require_ablation`
-   is `true`, requires recorded fitness on at least one child `ablation`
-   variant) or rejected (with at least one reason and typed IVE
-   `failure_class`: `no_headroom | measurement_void |
-   implementation_defect | hypothesis_refuted | ablation_unjustified`).
-   Both outcomes persist as fossils; the first selection resolves the
-   experiment; a further selection is a `failed_precondition` conflict.
-   `algedonic_reference` names the review record that chaired the
-   selection.
+   runs; immutable once written.
+4. **Select** — `selection_record` (`server.rs:266`): the verdict —
+   selected (naming the winning variant) or rejected (with at least
+   one reason). Both outcomes persist as fossils; the first selection
+   resolves the experiment; a further selection is a
+   `failed_precondition` conflict. `algedonic_reference` names the
+   review record that chaired the selection.
 
 Readback: `lineage_read` (`server.rs:301`) returns the ancestry chain
 with fitness and selection events — rejected variants and their

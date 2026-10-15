@@ -55,7 +55,6 @@ pub(crate) struct RunSourceRecord {
     pub published: Option<String>,
     pub source: Option<String>,
     pub excerpt: Option<String>,
-    pub corpus_ref: Option<String>,
 }
 
 /// Append server-observed sources (`recorded_by='server'`). First
@@ -84,7 +83,7 @@ pub(crate) fn append_run_sources(
             "INSERT OR IGNORE INTO run_sources \
              (run_id, url, provider, title, published, source, excerpt, \
               corpus_ref, recorded_by, verification_state, verification_basis, recorded_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'server', NULL, NULL, ?9)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, 'server', NULL, NULL, ?8)",
             rusqlite::params![
                 run_id,
                 record.url,
@@ -93,7 +92,6 @@ pub(crate) fn append_run_sources(
                 record.published,
                 record.source,
                 excerpt,
-                record.corpus_ref,
                 recorded_at
             ],
         )?;
@@ -258,7 +256,6 @@ pub(crate) fn get_research_run(
             published: row.3.clone(),
             source: row.4.clone(),
             content: row.5.clone(),
-            is_retracted: None,
         })
         .collect();
     let scored = if artifacts.is_empty() {

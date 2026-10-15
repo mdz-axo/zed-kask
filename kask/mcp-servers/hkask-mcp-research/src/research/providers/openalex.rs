@@ -62,11 +62,7 @@ impl OpenAlexProvider {
 
     /// Resolve a typed identifier to its OpenAlex work record. Ok(None)
     /// when there is no lookup path for the kind or no record exists (404).
-    pub(crate) async fn resolve(
-        &self,
-        id: &PaperId,
-        include_citations: bool,
-    ) -> Result<Option<PaperMetadata>, WebError> {
+    pub(crate) async fn resolve(&self, id: &PaperId) -> Result<Option<PaperMetadata>, WebError> {
         let Some(path) = Self::work_path(id) else {
             return Ok(None);
         };
@@ -83,51 +79,14 @@ impl OpenAlexProvider {
                 )),
             });
         }
-        let Some((mut metadata, ref_ids)) = parse_openalex_work_with_refs(&body) else {
-            return Ok(None);
-        };
-        if include_citations {
-            let mut edges = Vec::new();
-            if !ref_ids.is_empty() {
-                let filter_ids: Vec<&str> = ref_ids.iter().take(10).map(String::as_str).collect();
-                let filter = format!("ids.openalex:{}", filter_ids.join("|"));
-                if let Ok((st, ref_body)) = self
-                    .send_read(
-                        self.client
-                            .get(format!("{OPENALEX_API_BASE}/works"))
-                            .query(&[("filter", filter.as_str()), ("per_page", "10")]),
-                    )
-                    .await
-                    && st.is_success()
-                {
-                    edges.extend(parse_openalex_citation_edges(&ref_body, "references"));
-                }
-            }
-            let cites_filter = format!("cites:{}", metadata.openalex_id);
-            if let Ok((st, cited_body)) = self
-                .send_read(
-                    self.client
-                        .get(format!("{OPENALEX_API_BASE}/works"))
-                        .query(&[
-                            ("filter", cites_filter.as_str()),
-                            ("sort", "cited_by_count:desc"),
-                            ("per_page", "10"),
-                        ]),
-                )
-                .await
-                && st.is_success()
-            {
-                edges.extend(parse_openalex_citation_edges(&cited_body, "cited_by"));
-            }
-            metadata.citations = edges;
-        }
-        Ok(Some(metadata))
+        Ok(parse_openalex_work(&body))
     }
 }
 
-/// Parse an OpenAlex work record into `PaperMetadata` plus up to 10 short
-/// OpenAlex IDs from `referenced_works`.
-fn parse_openalex_work_with_refs(body: &str) -> Option<(PaperMetadata, Vec<String>)> {
+/// Parse an OpenAlex work record into `PaperMetadata`. None when the record
+/// lacks an id or title, or the body is not JSON — a record without those is
+/// not a work.
+fn parse_openalex_work(body: &str) -> Option<PaperMetadata> {
     let value: serde_json::Value = serde_json::from_str(body).ok()?;
     let openalex_id = value["id"].as_str()?.rsplit('/').next()?.to_string();
     let title = value["title"]
@@ -155,69 +114,15 @@ fn parse_openalex_work_with_refs(body: &str) -> Option<(PaperMetadata, Vec<Strin
         .as_str()
         .map(str::to_string);
     let oa_pdf_url = work_oa_pdf_url(&value);
-    let is_retracted = value["is_retracted"].as_bool().unwrap_or(false);
-    let referenced_ids: Vec<String> = value["referenced_works"]
-        .as_array()
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|item| item.as_str()?.rsplit('/').next().map(str::to_string))
-                .collect()
-        })
-        .unwrap_or_default();
-    let referenced_works_count = referenced_ids.len();
-    let cited_by_count = value["cited_by_count"].as_u64().unwrap_or(0);
-    Some((
-        PaperMetadata {
-            openalex_id,
-            doi,
-            title,
-            publication_year,
-            authors,
-            venue,
-            oa_pdf_url,
-            is_retracted,
-            referenced_works_count,
-            cited_by_count,
-            citations: Vec::new(),
-        },
-        referenced_ids,
-    ))
-}
-
-#[cfg(test)]
-fn parse_openalex_work(body: &str) -> Option<PaperMetadata> {
-    parse_openalex_work_with_refs(body).map(|(meta, _)| meta)
-}
-
-/// Parse an OpenAlex works list response into `CitationEdge` entries.
-pub(crate) fn parse_openalex_citation_edges(body: &str, direction: &str) -> Vec<CitationEdge> {
-    let Ok(value) = serde_json::from_str::<serde_json::Value>(body) else {
-        return Vec::new();
-    };
-    let Some(works) = value["results"].as_array() else {
-        return Vec::new();
-    };
-    works
-        .iter()
-        .filter_map(|work| {
-            let openalex_id = work["id"].as_str()?.rsplit('/').next()?.to_string();
-            let title = work["title"]
-                .as_str()
-                .or_else(|| work["display_name"].as_str())?
-                .to_string();
-            let doi = work["doi"]
-                .as_str()
-                .map(|doi| doi.trim_start_matches("https://doi.org/").to_lowercase());
-            let publication_year = work["publication_year"].as_u64();
-            Some(CitationEdge {
-                openalex_id,
-                doi,
-                title,
-                publication_year,
-                direction: direction.to_string(),
-            })
-        })
-        .collect()
+    Some(PaperMetadata {
+        openalex_id,
+        doi,
+        title,
+        publication_year,
+        authors,
+        venue,
+        oa_pdf_url,
+    })
 }
 
 /// Parse an OpenAlex works-search response into search results. Entries
@@ -490,31 +395,5 @@ mod openalex_tests {
         );
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].title, "Ok");
-    }
-
-    #[test]
-    fn parse_work_reads_retraction_and_citation_counts() {
-        let work = parse_openalex_work(
-            r#"{
-                "id": "https://openalex.org/W999",
-                "title": "Retracted study",
-                "is_retracted": true,
-                "cited_by_count": 42,
-                "referenced_works": [
-                    "https://openalex.org/W10",
-                    "https://openalex.org/W20"
-                ]
-            }"#,
-        )
-        .expect("retracted work parses");
-        assert!(work.is_retracted);
-        assert_eq!(work.cited_by_count, 42);
-        assert_eq!(work.referenced_works_count, 2);
-
-        let edges = parse_openalex_citation_edges(SEARCH_FIXTURE, "references");
-        assert_eq!(edges.len(), 2);
-        assert_eq!(edges[0].openalex_id, "W1");
-        assert_eq!(edges[0].publication_year, Some(2023));
-        assert_eq!(edges[0].direction, "references");
     }
 }

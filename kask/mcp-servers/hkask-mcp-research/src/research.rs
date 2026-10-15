@@ -6,7 +6,6 @@
 
 pub mod cache;
 pub mod db;
-pub mod domain_records;
 pub(crate) mod evidence;
 pub(crate) mod feed;
 pub mod paper_id;

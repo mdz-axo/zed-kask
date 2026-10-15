@@ -94,10 +94,6 @@ pub(crate) struct ArtifactScore {
     /// no source, no corroboration).
     pub(crate) corroboration_count: usize,
     pub(crate) published_age_days: Option<i64>,
-    /// Whether this artifact is flagged as retracted (`F3`).
-    pub(crate) is_retracted: bool,
-    /// Deterministic warnings (e.g. `retracted_source` hard confidence cap).
-    pub(crate) warnings: Vec<String>,
 }
 
 /// Sensitivity of the artifact ordering to the weight model, measured by
@@ -164,19 +160,6 @@ struct RawAchievements {
     /// Recency basis — profile-independent (only the earned weight varies).
     recency_basis: String,
     content: bool,
-    is_retracted: bool,
-}
-
-fn is_artifact_retracted(artifact: &EvaluateArtifact) -> bool {
-    artifact.is_retracted == Some(true)
-        || artifact
-            .title
-            .as_deref()
-            .is_some_and(|t| t.contains("[RETRACTED]"))
-        || artifact
-            .content
-            .as_deref()
-            .is_some_and(|c| c.contains("[RETRACTED]"))
 }
 
 fn raw_achievements(artifact: &EvaluateArtifact) -> RawAchievements {
@@ -187,7 +170,6 @@ fn raw_achievements(artifact: &EvaluateArtifact) -> RawAchievements {
         published_age_days: age,
         recency_basis: basis,
         content: artifact.content.is_some(),
-        is_retracted: is_artifact_retracted(artifact),
     }
 }
 
@@ -295,9 +277,6 @@ fn confidence_of(
     corroboration_count: usize,
     profile: &[(EvidenceComponent, f64); 4],
 ) -> f64 {
-    if raw.is_retracted {
-        return 0.0;
-    }
     artifact_signals(raw, corroboration_count, profile)
         .iter()
         .map(|signal| signal.earned)
@@ -332,37 +311,18 @@ pub(crate) fn score_evidence_set(
     let scored = raws
         .iter()
         .map(|raw| {
-            let corroboration_count = if raw.is_retracted {
-                0
-            } else {
-                corroboration_count_of(raw, units)
-            };
+            let corroboration_count = corroboration_count_of(raw, units);
             let signals = artifact_signals(raw, corroboration_count, profile);
-            let (confidence, warnings) = if raw.is_retracted {
-                (
-                    0.0,
-                    vec![
-                        "retracted_source: source is flagged as retracted — confidence hard-capped at 0.0"
-                            .to_string(),
-                    ],
-                )
-            } else {
-                (
-                    signals
-                        .iter()
-                        .map(|signal| signal.earned)
-                        .sum::<f64>()
-                        .min(1.0),
-                    Vec::new(),
-                )
-            };
+            let confidence = signals
+                .iter()
+                .map(|signal| signal.earned)
+                .sum::<f64>()
+                .min(1.0);
             ArtifactScore {
                 confidence,
                 signals,
                 corroboration_count,
                 published_age_days: raw.published_age_days,
-                is_retracted: raw.is_retracted,
-                warnings,
             }
         })
         .collect();
@@ -521,16 +481,12 @@ fn corroboration_units(artifacts: &[EvaluateArtifact], clusters: &[Vec<usize>]) 
     let mut cluster_domains: std::collections::HashSet<&str> = std::collections::HashSet::new();
     let mut units = 0usize;
     for group in clusters {
-        let has_sourced = group.iter().any(|&index| {
-            artifacts[index].source.is_some() && !is_artifact_retracted(&artifacts[index])
-        });
+        let has_sourced = group.iter().any(|&index| artifacts[index].source.is_some());
         if has_sourced {
             units += 1;
         }
         for &index in group {
-            if !is_artifact_retracted(&artifacts[index])
-                && let Some(domain) = artifacts[index].source.as_deref()
-            {
+            if let Some(domain) = artifacts[index].source.as_deref() {
                 cluster_domains.insert(domain);
             }
         }
@@ -538,7 +494,6 @@ fn corroboration_units(artifacts: &[EvaluateArtifact], clusters: &[Vec<usize>]) 
     let mut uncovered_domains: std::collections::HashSet<&str> = std::collections::HashSet::new();
     for artifact in artifacts {
         if artifact.content.is_none()
-            && !is_artifact_retracted(artifact)
             && let Some(domain) = artifact.source.as_deref()
             && !cluster_domains.contains(domain)
         {
@@ -682,7 +637,6 @@ mod evidence_scoring_tests {
             source: source.map(str::to_string),
             published: published.map(str::to_string),
             content: content.map(str::to_string),
-            is_retracted: None,
         }
     }
 
@@ -1193,36 +1147,6 @@ mod evidence_scoring_tests {
             .map(|signal| signal.earned)
             .unwrap_or_default();
         assert!((base - 0.3).abs() < 1e-9);
-    }
-
-    #[test]
-    fn retracted_artifact_is_hard_capped_at_zero_and_adds_no_corroboration() {
-        let mut retracted = artifact(
-            "https://retracted.example/1",
-            Some("retracted.example"),
-            Some(&today()),
-            Some("alpha one two three four"),
-        );
-        retracted.is_retracted = Some(true);
-        let valid = artifact(
-            "https://valid.example/1",
-            Some("valid.example"),
-            Some(&today()),
-            Some("beta five six seven eight"),
-        );
-        let report = score_evidence_set(&[retracted, valid], &DEFAULT_PROFILE, None);
-        assert_eq!(report.artifacts[0].confidence, 0.0);
-        assert!(report.artifacts[0].is_retracted);
-        assert_eq!(report.artifacts[0].corroboration_count, 0);
-        assert!(
-            report.artifacts[0]
-                .warnings
-                .iter()
-                .any(|w| w.contains("retracted_source"))
-        );
-        // The valid artifact gets only 1 corroboration unit (itself), never 2.
-        assert_eq!(report.artifacts[1].corroboration_count, 1);
-        assert!(!report.artifacts[1].is_retracted);
     }
 }
 
