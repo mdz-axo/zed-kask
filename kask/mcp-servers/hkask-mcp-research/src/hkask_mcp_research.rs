@@ -801,6 +801,7 @@ impl ResearchServer {
                     published: None,
                     source: None,
                     excerpt: Some(extract_output.content.clone()),
+                    corpus_ref: None,
                 };
                 let note = self.append_run_ledger(run_id, vec![record]).await;
                 output["run_ledger"] = note;
@@ -1612,7 +1613,7 @@ impl ResearchServer {
     }
 
     #[tool(
-        description = "Resolve a paper reference to a typed identity. Two modes: (1) identifier — pass `query` with any supported form (DOI, arXiv ID, PMID, PMCID, OpenAlex work ID — bare, prefixed, or registry URL) to parse, normalize, and enrich it; (2) bibliographic — pass `title` with a work's title for Crossref's bibliographic search: up to 3 candidates (DOI, title, year, venue, first author) are surfaced, ranked with exact-title matches first (Crossref relevance within ties), and the top candidate is resolved to the typed identity and enriched via OpenAlex — check the candidates before trusting the resolution (a title search can hit a different work than intended). Both modes return the identifier kind/value, canonical URL, stable ledger key, and OpenAlex metadata (title, authors, year, venue, and the candidate open-access copy URL `oa_pdf_url` when the record holds one — a candidate, not a verified document) — the identity is always returned even when the metadata lookup degrades. Pass run_id to record the resolution into a research run's ledger. Every rejection names what was expected."
+        description = "Resolve a paper reference or scientific domain record to a typed identity. Three modes: (1) identifier — pass `query` with any supported form (DOI, arXiv ID, PMID, PMCID, OpenAlex work ID — bare, prefixed, or registry URL) to parse, normalize, and enrich it; (2) bibliographic — pass `title` with a work's title for Crossref's bibliographic search: up to 3 candidates (DOI, title, year, venue, first author) are surfaced, ranked with exact-title matches first (Crossref relevance within ties), and the top candidate is resolved to the typed identity and enriched via OpenAlex — check the candidates before trusting the resolution; (3) domain_record — pass `domain_record: {db, accession}` for structured scientific records across `pubmed`, `ncbi_gene`, `clinvar`, `uniprotkb`, `chembl_molecule`, `chembl_target`, and `rcsb_pdb` (payloads <= 32 KiB return inline JSON; larger payloads spill to `corpus-mcp/cache/` and populate `corpus_ref`). Pass `include_citations: true` on paper modes to fetch up to 20 top cited/referencing works with publication years, and check `openalex.is_retracted` for retraction status. Pass `run_id` to record the resolution into a research run's ledger."
     )]
     pub async fn resolve_paper(
         &self,
@@ -1620,9 +1621,86 @@ impl ResearchServer {
             query,
             title,
             run_id,
+            include_citations,
+            domain_record,
         }): Parameters<ResolvePaperRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "resolve_paper", async {
+            let include_citations = include_citations.unwrap_or(false);
+            if let Some(spec) = domain_record {
+                if query.is_some() || title.is_some() {
+                    return Err(McpToolError::invalid_argument(
+                        "pass only one of query (an identifier), title (a bibliographic lookup), or domain_record (a scientific database lookup)",
+                    ));
+                }
+                let fetched = self.pool.resolve_domain_record(&spec).await?;
+                let cache_dir = crate::research::domain_records::default_corpus_cache_dir();
+                let disposition = crate::research::domain_records::apply_spill_policy(
+                    &fetched.db,
+                    &fetched.accession,
+                    &fetched.raw_json,
+                    &cache_dir,
+                )?;
+                let stable_key = format!("{}:{}", fetched.db, fetched.accession);
+                let (mut result, excerpt, corpus_ref) = match disposition {
+                    crate::research::domain_records::DomainRecordDisposition::Inline {
+                        record,
+                        byte_len,
+                        excerpt,
+                    } => (
+                        serde_json::json!({
+                            "mode": "domain_record",
+                            "identifier": {
+                                "kind": fetched.db,
+                                "value": fetched.accession,
+                            },
+                            "canonical_url": fetched.canonical_url,
+                            "stable_key": stable_key,
+                            "title": fetched.title,
+                            "spilled": false,
+                            "byte_len": byte_len,
+                            "record": record,
+                        }),
+                        excerpt,
+                        None,
+                    ),
+                    crate::research::domain_records::DomainRecordDisposition::Spilled {
+                        corpus_ref,
+                        byte_len,
+                        excerpt,
+                    } => (
+                        serde_json::json!({
+                            "mode": "domain_record",
+                            "identifier": {
+                                "kind": fetched.db,
+                                "value": fetched.accession,
+                            },
+                            "canonical_url": fetched.canonical_url,
+                            "stable_key": stable_key,
+                            "title": fetched.title,
+                            "spilled": true,
+                            "byte_len": byte_len,
+                            "corpus_ref": corpus_ref,
+                        }),
+                        excerpt,
+                        Some(corpus_ref),
+                    ),
+                };
+                if let Some(run_id) = run_id.as_deref() {
+                    let record = RunSourceRecord {
+                        url: fetched.canonical_url,
+                        provider: Some(fetched.db.clone()),
+                        title: fetched.title,
+                        published: None,
+                        source: Some(fetched.db),
+                        excerpt: Some(excerpt),
+                        corpus_ref,
+                    };
+                    result["run_ledger"] = self.append_run_ledger(run_id, vec![record]).await;
+                }
+                return Ok(result);
+            }
+
             // Exactly one of query (identifier) / title (bibliographic) —
             // passing both is ambiguous, neither is empty input. Both
             // rejections name what was expected.
@@ -1643,18 +1721,6 @@ impl ResearchServer {
                             "title must not be empty (pass either query — an identifier — or title — a bibliographic lookup)",
                         ));
                     }
-                    // Crossref bibliographic resolution: candidates are
-                    // surfaced in full so the caller can verify the match
-                    // (the no-substitution rule) before trusting the top
-                    // candidate's resolution. P1 (2026-10-01): exact-title
-                    // matches rank first — Crossref's relevance can put a
-                    // superstring title above the exact work (observed:
-                    // "Computing Machinery and Intelligence Amplification"
-                    // outranked Turing's "Computing Machinery and
-                    // Intelligence"); the stable sort keeps Crossref's order
-                    // within each group, so equally-exact candidates (a
-                    // preprint and the published version of the same work)
-                    // stay consumer-verifiable via the surfaced list.
                     let mut candidates = self.pool.resolve_title(&title, 3).await.map_err(|e| {
                         McpToolError::failed_precondition(format!(
                             "Crossref bibliographic search failed: {e}"
@@ -1680,7 +1746,7 @@ impl ResearchServer {
                 }
                 (None, None) => {
                     return Err(McpToolError::invalid_argument(
-                        "pass either query (an identifier: DOI, arXiv ID, PMID, PMCID, or OpenAlex work ID) or title (a bibliographic lookup)",
+                        "pass either query (an identifier: DOI, arXiv ID, PMID, PMCID, or OpenAlex work ID), title (a bibliographic lookup), or domain_record",
                     ));
                 }
             };
@@ -1702,9 +1768,13 @@ impl ResearchServer {
             // identity is the deterministic floor and never blocked by the
             // metadata tier. Ok(None) = no record (or no lookup path for the
             // kind); Err = the lookup failed — both surface as notes.
-            let metadata = match self.pool.resolve_paper_id(&parsed).await {
+            let metadata = match self
+                .pool
+                .resolve_paper_id_with_options(&parsed, include_citations)
+                .await
+            {
                 Ok(Some(metadata)) => {
-                    result["openalex"] = serde_json::json!({
+                    let mut openalex_block = serde_json::json!({
                         "openalex_id": metadata.openalex_id,
                         "doi": metadata.doi,
                         "title": metadata.title,
@@ -1712,7 +1782,15 @@ impl ResearchServer {
                         "authors": metadata.authors,
                         "venue": metadata.venue,
                         "oa_pdf_url": metadata.oa_pdf_url,
+                        "is_retracted": metadata.is_retracted,
+                        "referenced_works_count": metadata.referenced_works_count,
+                        "cited_by_count": metadata.cited_by_count,
                     });
+                    if include_citations {
+                        openalex_block["citations"] =
+                            serde_json::to_value(&metadata.citations).unwrap_or_default();
+                    }
+                    result["openalex"] = openalex_block;
                     Some(metadata)
                 }
                 Ok(None) => {
@@ -1736,7 +1814,13 @@ impl ResearchServer {
                 let record = RunSourceRecord {
                     url: parsed.canonical_url(),
                     provider: Some("openalex".to_string()),
-                    title: metadata.as_ref().map(|metadata| metadata.title.clone()),
+                    title: metadata.as_ref().map(|metadata| {
+                        if metadata.is_retracted {
+                            format!("[RETRACTED] {}", metadata.title)
+                        } else {
+                            metadata.title.clone()
+                        }
+                    }),
                     published: metadata.as_ref().and_then(|metadata| {
                         metadata.publication_year.map(|year| year.to_string())
                     }),
@@ -1744,8 +1828,13 @@ impl ResearchServer {
                         .as_ref()
                         .and_then(|metadata| metadata.venue.clone()),
                     excerpt: metadata.as_ref().map(|metadata| {
+                        let prefix = if metadata.is_retracted {
+                            "[RETRACTED] "
+                        } else {
+                            ""
+                        };
                         format!(
-                            "openalex {} — {} ({})",
+                            "{prefix}openalex {} — {} ({})",
                             metadata.openalex_id,
                             metadata.authors.join(", "),
                             metadata
@@ -1754,6 +1843,7 @@ impl ResearchServer {
                                 .unwrap_or_else(|| "no year".to_string())
                         )
                     }),
+                    corpus_ref: None,
                 };
                 result["run_ledger"] = self.append_run_ledger(run_id, vec![record]).await;
             }
@@ -1917,6 +2007,13 @@ impl ResearchServer {
                         "published_age_days".to_string(),
                         serde_json::json!(score.published_age_days),
                     );
+                    report.insert(
+                        "is_retracted".to_string(),
+                        serde_json::json!(score.is_retracted),
+                    );
+                    if !score.warnings.is_empty() {
+                        report.insert("warnings".to_string(), serde_json::json!(score.warnings));
+                    }
                     // Ontology-concept keys (the fixture-guarded labeling
                     // contract), routed through the bridge constants.
                     report.insert(

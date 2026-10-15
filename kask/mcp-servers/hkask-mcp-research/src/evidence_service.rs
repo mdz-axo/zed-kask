@@ -58,6 +58,7 @@ pub(crate) fn run_source_record(
         published: published.map(str::to_string),
         source: source.map(str::to_string),
         excerpt: content_preview.or(description).map(str::to_string),
+        corpus_ref: None,
     }
 }
 

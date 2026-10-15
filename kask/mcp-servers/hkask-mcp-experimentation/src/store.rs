@@ -18,9 +18,11 @@ use hkask_storage::database::types::DbError;
 use hkask_storage::database::value::{DbRow, DbValue};
 
 use crate::types::{
-    ExperimentHealth, ExperimentRecord, ExperimentationError, ExperimentationHealthSnapshot,
-    FitnessRecord, Prediction, STATUS_PROPOSED, STATUS_RESOLVED, STATUS_RUNNING, SelectionRecord,
-    VERDICT_REJECTED, VERDICT_SELECTED, VariantRecord,
+    DominatedVariant, ExperimentHealth, ExperimentRecord, ExperimentationError,
+    ExperimentationHealthSnapshot, FailureClass, FitnessRecord, ObjectiveSpec,
+    ParetoFrontierMember, ParetoFrontierResult, Prediction, ROLE_ABLATION, ROLE_BASELINE,
+    ROLE_CANDIDATE, STATUS_PROPOSED, STATUS_RESOLVED, STATUS_RUNNING, SelectionRecord,
+    VARIANT_ROLES, VERDICT_REJECTED, VERDICT_SELECTED, VariantRecord,
 };
 
 /// Serialize a column value as canonical JSON text.
@@ -69,11 +71,22 @@ fn experiment_from_row(row: &DbRow) -> Result<ExperimentRecord, ExperimentationE
 }
 
 fn variant_from_row(row: &DbRow) -> Result<VariantRecord, ExperimentationError> {
+    let parent_variant_id = optional_text(row, 3);
+    let default_role = if parent_variant_id.is_none() {
+        ROLE_BASELINE
+    } else {
+        ROLE_CANDIDATE
+    };
+    let role = optional_text(row, 5)
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| default_role.to_string());
     Ok(VariantRecord {
         id: row.get_str(0)?.to_string(),
         experiment_id: row.get_str(1)?.to_string(),
         genotype_config: row.get_json(2)?,
-        parent_variant_id: optional_text(row, 3),
+        parent_variant_id,
+        role,
+        ablated_component: optional_text(row, 6),
         created_at: row.get_str(4)?.to_string(),
     })
 }
@@ -91,12 +104,22 @@ fn fitness_from_row(row: &DbRow) -> Result<FitnessRecord, ExperimentationError> 
 }
 
 fn selection_from_row(row: &DbRow) -> Result<SelectionRecord, ExperimentationError> {
+    let verdict = row.get_str(2)?.to_string();
+    let reject_reasons: Vec<String> = row.get_json(4)?;
+    let failure_class = match optional_text(row, 7) {
+        Some(raw) => Some(FailureClass::parse(&raw)?),
+        None if verdict == VERDICT_REJECTED => {
+            Some(FailureClass::infer_from_reject_reasons(&reject_reasons))
+        }
+        None => None,
+    };
     Ok(SelectionRecord {
         id: row.get_str(0)?.to_string(),
         experiment_id: row.get_str(1)?.to_string(),
-        verdict: row.get_str(2)?.to_string(),
+        verdict,
         selected_variant_id: optional_text(row, 3),
-        reject_reasons: row.get_json(4)?,
+        reject_reasons,
+        failure_class,
         algedonic_reference: optional_text(row, 5),
         created_at: row.get_str(6)?.to_string(),
     })
@@ -134,6 +157,8 @@ impl ExperimentationStore {
                  variant_key TEXT, \
                  genotype_config TEXT NOT NULL, \
                  parent_variant_id TEXT, \
+                 role TEXT NOT NULL DEFAULT 'candidate', \
+                 ablated_component TEXT, \
                  created_at TEXT NOT NULL, \
                  UNIQUE (experiment_id, variant_key) \
              ); \
@@ -153,17 +178,16 @@ impl ExperimentationStore {
                  selected_variant_id TEXT, \
                  reject_reasons TEXT NOT NULL, \
                  algedonic_reference TEXT, \
+                 failure_class TEXT, \
                  created_at TEXT NOT NULL \
              ); \
              CREATE INDEX IF NOT EXISTS variants_by_experiment ON variants(experiment_id); \
              CREATE INDEX IF NOT EXISTS fitness_by_variant ON fitness_records(variant_id); \
              CREATE INDEX IF NOT EXISTS selection_by_experiment ON selection_records(experiment_id)",
         )?;
-        // Additive migrations for pre-§P8.9 databases (§P8.7-Q5: no
-        // compatibility surface — these columns are the record's own
-        // evolution). Existing rows keep NULL `max_runs` (declared before
-        // the rule; all such experiments are resolved, so the budget check
-        // never applies to them) and run_count 0.
+        // Additive migrations for pre-§P8.9 and pre-IVE databases (§P8.7-Q5:
+        // no compatibility surface — these columns are the record's own
+        // evolution).
         let has_column = |table: &str, column: &str| -> Result<bool, DbError> {
             let rows = driver.query(&format!("PRAGMA table_info({table})"), &[])?;
             Ok(rows
@@ -185,6 +209,21 @@ impl ExperimentationStore {
                 "fitness_records",
                 "run_count",
                 "ALTER TABLE fitness_records ADD COLUMN run_count INTEGER NOT NULL DEFAULT 0",
+            ),
+            (
+                "variants",
+                "role",
+                "ALTER TABLE variants ADD COLUMN role TEXT NOT NULL DEFAULT 'candidate'",
+            ),
+            (
+                "variants",
+                "ablated_component",
+                "ALTER TABLE variants ADD COLUMN ablated_component TEXT",
+            ),
+            (
+                "selection_records",
+                "failure_class",
+                "ALTER TABLE selection_records ADD COLUMN failure_class TEXT",
             ),
         ] {
             if !has_column(table, column)? {
@@ -289,6 +328,63 @@ impl ExperimentationStore {
         parent_variant_id: Option<&str>,
         variant_key: Option<&str>,
     ) -> Result<VariantRecord, ExperimentationError> {
+        self.register_variant_with_role(
+            experiment_id,
+            genotype_config,
+            parent_variant_id,
+            variant_key,
+            None,
+            None,
+        )
+    }
+
+    /// Register a variant with explicit stage role (`baseline | tuning |
+    /// candidate | ablation`) and optional `ablated_component`. When `role` is
+    /// omitted, defaults to `"baseline"` for root variants (`parent_variant_id`
+    /// absent) and `"candidate"` for derived variants.
+    pub fn register_variant_with_role(
+        &self,
+        experiment_id: &str,
+        genotype_config: &serde_json::Value,
+        parent_variant_id: Option<&str>,
+        variant_key: Option<&str>,
+        role: Option<&str>,
+        ablated_component: Option<&str>,
+    ) -> Result<VariantRecord, ExperimentationError> {
+        let resolved_role = match role {
+            Some(value) => {
+                let trimmed = value.trim();
+                if !VARIANT_ROLES.contains(&trimmed) {
+                    return Err(ExperimentationError::UnknownVariantRole(value.to_string()));
+                }
+                trimmed
+            }
+            None if parent_variant_id.is_none() => ROLE_BASELINE,
+            None => ROLE_CANDIDATE,
+        };
+        let resolved_component = match ablated_component {
+            Some(comp) => {
+                let trimmed = comp.trim();
+                if trimmed.is_empty() {
+                    return Err(ExperimentationError::Empty("ablated_component"));
+                }
+                Some(trimmed)
+            }
+            None => None,
+        };
+        if resolved_role == ROLE_ABLATION {
+            if parent_variant_id.is_none() {
+                return Err(ExperimentationError::AblationRequiresParent);
+            }
+            if resolved_component.is_none() {
+                return Err(ExperimentationError::AblationRequiresComponent);
+            }
+        } else if resolved_component.is_some() {
+            return Err(ExperimentationError::AblatedComponentOnNonAblation(
+                resolved_role.to_string(),
+            ));
+        }
+
         let experiment = self.experiment_by_id(experiment_id)?;
         if experiment.status == STATUS_RESOLVED {
             return Err(ExperimentationError::ExperimentResolved(
@@ -308,14 +404,17 @@ impl ExperimentationStore {
         let created_at = chrono::Utc::now().to_rfc3339();
         let inserted = self.driver.execute(
             "INSERT OR IGNORE INTO variants \
-             (id, experiment_id, variant_key, genotype_config, parent_variant_id, created_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+             (id, experiment_id, variant_key, genotype_config, parent_variant_id, \
+              role, ablated_component, created_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             &[
                 DbValue::Text(id.clone()),
                 DbValue::Text(experiment_id.to_string()),
                 text_or_null(variant_key),
                 DbValue::Text(value_column(genotype_config)?),
                 text_or_null(parent_variant_id),
+                DbValue::Text(resolved_role.to_string()),
+                text_or_null(resolved_component),
                 DbValue::Text(created_at.clone()),
             ],
         )?;
@@ -343,13 +442,16 @@ impl ExperimentationStore {
             experiment_id: experiment_id.to_string(),
             genotype_config: genotype_config.clone(),
             parent_variant_id: parent_variant_id.map(str::to_string),
+            role: resolved_role.to_string(),
+            ablated_component: resolved_component.map(str::to_string),
             created_at,
         })
     }
 
     pub fn variant_by_id(&self, id: &str) -> Result<VariantRecord, ExperimentationError> {
         let row = self.driver.query_optional(
-            "SELECT id, experiment_id, genotype_config, parent_variant_id, created_at \
+            "SELECT id, experiment_id, genotype_config, parent_variant_id, created_at, \
+             role, ablated_component \
              FROM variants WHERE id = ?1",
             &[DbValue::Text(id.to_string())],
         )?;
@@ -364,7 +466,8 @@ impl ExperimentationStore {
         key: &str,
     ) -> Result<VariantRecord, ExperimentationError> {
         let row = self.driver.query_optional(
-            "SELECT id, experiment_id, genotype_config, parent_variant_id, created_at \
+            "SELECT id, experiment_id, genotype_config, parent_variant_id, created_at, \
+             role, ablated_component \
              FROM variants WHERE experiment_id = ?1 AND variant_key = ?2",
             &[
                 DbValue::Text(experiment_id.to_string()),
@@ -381,7 +484,8 @@ impl ExperimentationStore {
         experiment_id: &str,
     ) -> Result<Vec<VariantRecord>, ExperimentationError> {
         let rows = self.driver.query(
-            "SELECT id, experiment_id, genotype_config, parent_variant_id, created_at \
+            "SELECT id, experiment_id, genotype_config, parent_variant_id, created_at, \
+             role, ablated_component \
              FROM variants WHERE experiment_id = ?1 ORDER BY created_at",
             &[DbValue::Text(experiment_id.to_string())],
         )?;
@@ -537,14 +641,38 @@ impl ExperimentationStore {
         reject_reasons: &[String],
         algedonic_reference: Option<&str>,
     ) -> Result<(SelectionRecord, ExperimentRecord), ExperimentationError> {
+        self.record_selection_with_class(
+            experiment_id,
+            verdict,
+            selected_variant_id,
+            reject_reasons,
+            None,
+            algedonic_reference,
+        )
+    }
+
+    /// Record the selection verdict with optional explicit [`FailureClass`]
+    /// and mandatory ablation gate check when `experiment.budget.require_ablation == true`.
+    pub fn record_selection_with_class(
+        &self,
+        experiment_id: &str,
+        verdict: &str,
+        selected_variant_id: Option<&str>,
+        reject_reasons: &[String],
+        failure_class: Option<FailureClass>,
+        algedonic_reference: Option<&str>,
+    ) -> Result<(SelectionRecord, ExperimentRecord), ExperimentationError> {
         let experiment = self.experiment_by_id(experiment_id)?;
         if experiment.status == STATUS_RESOLVED {
             return Err(ExperimentationError::ExperimentResolved(
                 experiment_id.to_string(),
             ));
         }
-        match verdict {
+        let resolved_failure_class = match verdict {
             VERDICT_SELECTED => {
+                if failure_class.is_some() {
+                    return Err(ExperimentationError::SelectedWithFailureClass);
+                }
                 let Some(selected) = selected_variant_id else {
                     return Err(ExperimentationError::SelectedWithoutVariant);
                 };
@@ -555,19 +683,54 @@ impl ExperimentationStore {
                         experiment_id.to_string(),
                     ));
                 }
+                let require_ablation = experiment
+                    .budget
+                    .get("require_ablation")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false);
+                if require_ablation {
+                    let row = self.driver.query_optional(
+                        "SELECT EXISTS(\
+                             SELECT 1 FROM variants v \
+                             JOIN fitness_records f ON f.variant_id = v.id \
+                             WHERE v.experiment_id = ?1 \
+                               AND v.parent_variant_id = ?2 \
+                               AND v.role = ?3\
+                         )",
+                        &[
+                            DbValue::Text(experiment_id.to_string()),
+                            DbValue::Text(selected.to_string()),
+                            DbValue::Text(ROLE_ABLATION.to_string()),
+                        ],
+                    )?;
+                    let has_ablation_fitness =
+                        row.and_then(|r| r.get_int(0).ok()).unwrap_or(0) != 0;
+                    if !has_ablation_fitness {
+                        return Err(ExperimentationError::MissingAblationEvidence(
+                            experiment_id.to_string(),
+                            selected.to_string(),
+                        ));
+                    }
+                }
+                None
             }
             VERDICT_REJECTED => {
                 if reject_reasons.is_empty() {
                     return Err(ExperimentationError::RejectedWithoutReasons);
                 }
+                Some(
+                    failure_class
+                        .unwrap_or_else(|| FailureClass::infer_from_reject_reasons(reject_reasons)),
+                )
             }
             other => return Err(ExperimentationError::UnknownVerdict(other.to_string())),
-        }
+        };
         let id = format!("sel_{}", uuid::Uuid::new_v4().simple());
         let created_at = chrono::Utc::now().to_rfc3339();
         // Serialized before the closure: the closure's error type is DbError,
         // so the ExperimentationError-producing column serialization happens here.
         let reject_reasons_column = value_column(&reject_reasons)?;
+        let failure_class_str = resolved_failure_class.map(FailureClass::as_str);
         // The insert and the resolve flip are ONE transaction (§P8.9 follow-up,
         // 2026-10-01): the conditional UPDATE is the authoritative
         // first-selection gate — a concurrent selection that committed first
@@ -580,8 +743,8 @@ impl ExperimentationStore {
             tx.execute(
                 "INSERT INTO selection_records \
                  (id, experiment_id, verdict, selected_variant_id, reject_reasons, \
-                  algedonic_reference, created_at) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                  algedonic_reference, failure_class, created_at) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                 &[
                     DbValue::Text(id.clone()),
                     DbValue::Text(experiment_id.to_string()),
@@ -589,6 +752,7 @@ impl ExperimentationStore {
                     text_or_null(selected_variant_id),
                     DbValue::Text(reject_reasons_column.clone()),
                     text_or_null(algedonic_reference),
+                    text_or_null(failure_class_str),
                     DbValue::Text(created_at.clone()),
                 ],
             )?;
@@ -624,6 +788,7 @@ impl ExperimentationStore {
             verdict: verdict.to_string(),
             selected_variant_id: selected_variant_id.map(str::to_string),
             reject_reasons: reject_reasons.to_vec(),
+            failure_class: resolved_failure_class,
             algedonic_reference: algedonic_reference.map(str::to_string),
             created_at,
         };
@@ -636,11 +801,247 @@ impl ExperimentationStore {
     ) -> Result<Vec<SelectionRecord>, ExperimentationError> {
         let rows = self.driver.query(
             "SELECT id, experiment_id, verdict, selected_variant_id, reject_reasons, \
-             algedonic_reference, created_at \
+             algedonic_reference, created_at, failure_class \
              FROM selection_records WHERE experiment_id = ?1 ORDER BY created_at",
             &[DbValue::Text(experiment_id.to_string())],
         )?;
         rows.iter().map(selection_from_row).collect()
+    }
+
+    // ── Pareto frontier (NSGA-II + noise-band ties, F14) ────────────────
+
+    /// Compute the deterministic multi-objective non-dominated Pareto frontier
+    /// over an experiment's recorded variant fitnesses, with per-objective
+    /// relative noise-band tie handling, NSGA-II crowding-distance pruning,
+    /// and convergence tracking against `previous_frontier_ids`.
+    pub fn pareto_frontier(
+        &self,
+        experiment_id: &str,
+        objectives: &[ObjectiveSpec],
+        max_frontier_size: Option<u32>,
+        previous_frontier_ids: &[String],
+    ) -> Result<ParetoFrontierResult, ExperimentationError> {
+        if objectives.is_empty() {
+            return Err(ExperimentationError::Empty("objectives"));
+        }
+        let experiment = self.experiment_by_id(experiment_id)?;
+        let default_cost_band = experiment
+            .noise_band
+            .get("cost_band_pct")
+            .and_then(serde_json::Value::as_f64)
+            .map(|pct| (pct / 100.0).clamp(0.0, 0.999_999));
+
+        #[derive(Clone, Copy, PartialEq, Eq)]
+        enum Direction {
+            Maximize,
+            Minimize,
+        }
+
+        struct ValidatedObjective {
+            metric: String,
+            direction: Direction,
+            noise_band: f64,
+        }
+
+        let mut parsed_objectives = Vec::with_capacity(objectives.len());
+        for spec in objectives {
+            let metric = spec.metric.trim();
+            if metric.is_empty() {
+                return Err(ExperimentationError::Empty("objectives[].metric"));
+            }
+            let direction = match spec.direction.trim() {
+                "maximize" => Direction::Maximize,
+                "minimize" => Direction::Minimize,
+                other => {
+                    return Err(ExperimentationError::UnknownObjectiveDirection(
+                        other.to_string(),
+                    ));
+                }
+            };
+            let noise_band = match spec.relative_noise_band {
+                Some(band) => {
+                    if !(0.0..1.0).contains(&band) || !band.is_finite() {
+                        return Err(ExperimentationError::NoiseBandOutOfRange(band));
+                    }
+                    band
+                }
+                None if direction == Direction::Minimize => default_cost_band.unwrap_or(0.0),
+                None => 0.0,
+            };
+            parsed_objectives.push(ValidatedObjective {
+                metric: metric.to_string(),
+                direction,
+                noise_band,
+            });
+        }
+
+        let variants = self.variants_for_experiment(experiment_id)?;
+        let fitness_records = self.fitness_for_experiment(experiment_id)?;
+
+        #[derive(Clone)]
+        struct Candidate {
+            variant_id: String,
+            role: String,
+            values: Vec<f64>,
+            scores_map: serde_json::Map<String, serde_json::Value>,
+        }
+
+        let mut candidates: Vec<Candidate> = Vec::new();
+        for variant in &variants {
+            let Some(latest_fitness) = fitness_records
+                .iter()
+                .rev()
+                .find(|record| record.variant_id == variant.id)
+            else {
+                continue;
+            };
+            let mut values = Vec::with_capacity(parsed_objectives.len());
+            let mut scores_map = serde_json::Map::new();
+            let mut complete = true;
+            for obj in &parsed_objectives {
+                if let Some(val) = latest_fitness
+                    .scores
+                    .get(&obj.metric)
+                    .and_then(serde_json::Value::as_f64)
+                    .filter(|v| v.is_finite())
+                {
+                    values.push(val);
+                    if let Some(num) = serde_json::Number::from_f64(val) {
+                        scores_map.insert(obj.metric.clone(), serde_json::Value::Number(num));
+                    }
+                } else {
+                    complete = false;
+                    break;
+                }
+            }
+            if complete {
+                candidates.push(Candidate {
+                    variant_id: variant.id.clone(),
+                    role: variant.role.clone(),
+                    values,
+                    scores_map,
+                });
+            }
+        }
+
+        let strictly_better = |a: f64, b: f64, obj: &ValidatedObjective| -> bool {
+            match obj.direction {
+                Direction::Maximize => a - b > b.abs() * obj.noise_band,
+                Direction::Minimize => a < b * (1.0 - obj.noise_band),
+            }
+        };
+
+        let dominates = |a: &Candidate, b: &Candidate| -> bool {
+            let mut any_strictly_better = false;
+            for (idx, obj) in parsed_objectives.iter().enumerate() {
+                let va = a.values[idx];
+                let vb = b.values[idx];
+                if strictly_better(vb, va, obj) {
+                    return false;
+                }
+                if strictly_better(va, vb, obj) {
+                    any_strictly_better = true;
+                }
+            }
+            any_strictly_better
+        };
+
+        let mut non_dominated: Vec<Candidate> = Vec::new();
+        let mut dominated: Vec<DominatedVariant> = Vec::new();
+        for candidate in &candidates {
+            let dominator = candidates.iter().find(|other| {
+                other.variant_id != candidate.variant_id && dominates(other, candidate)
+            });
+            if let Some(dom) = dominator {
+                dominated.push(DominatedVariant {
+                    variant_id: candidate.variant_id.clone(),
+                    dominated_by: dom.variant_id.clone(),
+                });
+            } else {
+                non_dominated.push(candidate.clone());
+            }
+        }
+
+        // Compute NSGA-II crowding distance across the non-dominated set.
+        let n = non_dominated.len();
+        let mut crowding: Vec<f64> = vec![0.0; n];
+        if n <= 2 {
+            crowding.fill(f64::INFINITY);
+        } else {
+            for (m, _obj) in parsed_objectives.iter().enumerate() {
+                let mut order: Vec<usize> = (0..n).collect();
+                order.sort_by(|&i, &j| {
+                    non_dominated[i].values[m]
+                        .partial_cmp(&non_dominated[j].values[m])
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                        .then_with(|| {
+                            non_dominated[i]
+                                .variant_id
+                                .cmp(&non_dominated[j].variant_id)
+                        })
+                });
+                let min_v = non_dominated[order[0]].values[m];
+                let max_v = non_dominated[order[n - 1]].values[m];
+                crowding[order[0]] = f64::INFINITY;
+                crowding[order[n - 1]] = f64::INFINITY;
+                let span = max_v - min_v;
+                if span > f64::EPSILON {
+                    for k in 1..(n - 1) {
+                        if crowding[order[k]].is_finite() {
+                            let prev_v = non_dominated[order[k - 1]].values[m];
+                            let next_v = non_dominated[order[k + 1]].values[m];
+                            crowding[order[k]] += (next_v - prev_v) / span;
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut indexed: Vec<(Candidate, f64)> = non_dominated.into_iter().zip(crowding).collect();
+        let mut pruned_by_crowding = Vec::new();
+        if let Some(cap) = max_frontier_size.map(|c| c.max(1) as usize) {
+            if indexed.len() > cap {
+                indexed.sort_by(|a, b| {
+                    b.1.partial_cmp(&a.1)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                        .then_with(|| a.0.variant_id.cmp(&b.0.variant_id))
+                });
+                let pruned = indexed.split_off(cap);
+                for (cand, _) in pruned {
+                    pruned_by_crowding.push(cand.variant_id);
+                }
+            }
+        }
+
+        let frontier: Vec<ParetoFrontierMember> = indexed
+            .into_iter()
+            .map(|(cand, dist)| ParetoFrontierMember {
+                variant_id: cand.variant_id,
+                role: cand.role,
+                scores: cand.scores_map,
+                crowding_distance: if dist.is_finite() { Some(dist) } else { None },
+            })
+            .collect();
+        let frontier_variant_ids: Vec<String> =
+            frontier.iter().map(|m| m.variant_id.clone()).collect();
+        let new_members_count = frontier_variant_ids
+            .iter()
+            .filter(|id| !previous_frontier_ids.iter().any(|prev| prev == *id))
+            .count();
+        let converged = !previous_frontier_ids.is_empty()
+            && !frontier_variant_ids.is_empty()
+            && new_members_count == 0;
+
+        Ok(ParetoFrontierResult {
+            experiment_id: experiment_id.to_string(),
+            evaluated_variants: candidates.len(),
+            frontier,
+            frontier_variant_ids,
+            pruned_by_crowding,
+            dominated,
+            new_members_count,
+            converged,
+        })
     }
 
     // ── Population ──────────────────────────────────────────────────────
@@ -697,7 +1098,9 @@ impl ExperimentationStore {
              (SELECT s.verdict FROM selection_records s WHERE s.experiment_id = e.id \
                ORDER BY s.created_at LIMIT 1) AS verdict, \
              (SELECT s.reject_reasons FROM selection_records s WHERE s.experiment_id = e.id \
-               ORDER BY s.created_at LIMIT 1) AS reject_reasons \
+               ORDER BY s.created_at LIMIT 1) AS reject_reasons, \
+             (SELECT s.failure_class FROM selection_records s WHERE s.experiment_id = e.id \
+               ORDER BY s.created_at LIMIT 1) AS failure_class \
              FROM experiments e ORDER BY e.created_at DESC",
             &[],
         )?;
@@ -705,6 +1108,15 @@ impl ExperimentationStore {
             .iter()
             .map(|row| {
                 let prediction: Prediction = row.get_json(5)?;
+                let verdict = optional_text(row, 7);
+                let reject_reasons = row.get_json::<Vec<String>>(8).ok().unwrap_or_default();
+                let failure_class = match optional_text(row, 9) {
+                    Some(raw) => FailureClass::parse(&raw).ok(),
+                    None if verdict.as_deref() == Some(VERDICT_REJECTED) => {
+                        Some(FailureClass::infer_from_reject_reasons(&reject_reasons))
+                    }
+                    None => None,
+                };
                 Ok(ExperimentHealth {
                     id: row.get_str(0)?.to_string(),
                     layer: row.get_str(1)?.to_string(),
@@ -713,8 +1125,9 @@ impl ExperimentationStore {
                     max_runs: optional_int(row, 4),
                     prediction_confidence: Some(prediction.confidence),
                     recorded_runs: row.get_int(6).unwrap_or(0).max(0) as u64,
-                    verdict: optional_text(row, 7),
-                    reject_reasons: row.get_json::<Vec<String>>(8).ok().unwrap_or_default(),
+                    verdict,
+                    reject_reasons,
+                    failure_class,
                 })
             })
             .collect::<Result<Vec<_>, ExperimentationError>>()?;
@@ -1063,6 +1476,7 @@ mod tests {
                     prediction_confidence: Some(0.5),
                     verdict: None,
                     reject_reasons: Vec::new(),
+                    failure_class: None,
                 },
                 // Running, fresh, but the whole budget is recorded with no
                 // verdict → stuck on spend.
@@ -1076,6 +1490,7 @@ mod tests {
                     prediction_confidence: Some(0.5),
                     verdict: None,
                     reject_reasons: Vec::new(),
+                    failure_class: None,
                 },
                 // Running, fresh, budget unspent → healthy.
                 ExperimentHealth {
@@ -1088,8 +1503,9 @@ mod tests {
                     prediction_confidence: Some(0.5),
                     verdict: None,
                     reject_reasons: Vec::new(),
+                    failure_class: None,
                 },
-                // Rejected at 0.5 confidence → Brier 0.25.
+                // Rejected at 0.5 confidence (HypothesisRefuted) → Brier 0.25.
                 ExperimentHealth {
                     id: "exp_refuted".to_string(),
                     layer: "skill".to_string(),
@@ -1100,6 +1516,7 @@ mod tests {
                     prediction_confidence: Some(0.5),
                     verdict: Some(VERDICT_REJECTED.to_string()),
                     reject_reasons: vec!["claim refuted".to_string()],
+                    failure_class: Some(FailureClass::HypothesisRefuted),
                 },
                 // No-headroom void → excluded from the calibration record.
                 ExperimentHealth {
@@ -1112,6 +1529,7 @@ mod tests {
                     prediction_confidence: Some(0.9),
                     verdict: Some(VERDICT_REJECTED.to_string()),
                     reject_reasons: vec!["no-headroom: baseline saturated at 1.0".to_string()],
+                    failure_class: Some(FailureClass::NoHeadroom),
                 },
                 // Measurement-void (infrastructure failure) → also excluded:
                 // the claim was never tested, so scoring it as refuted would
@@ -1120,7 +1538,7 @@ mod tests {
                     id: "exp_meas_void".to_string(),
                     layer: "skill".to_string(),
                     status: STATUS_RESOLVED.to_string(),
-                    created_at: fresh,
+                    created_at: fresh.clone(),
                     max_runs: Some(18),
                     recorded_runs: 18,
                     prediction_confidence: Some(0.5),
@@ -1129,6 +1547,21 @@ mod tests {
                         "measurement-void: 7/9 rollouts errored at the provider (0 tokens)"
                             .to_string(),
                     ],
+                    failure_class: Some(FailureClass::MeasurementVoid),
+                },
+                // ImplementationDefect (EvoSkills IVE) → local syntax/setup bug,
+                // excluded from claim-refutation Brier.
+                ExperimentHealth {
+                    id: "exp_impl_defect".to_string(),
+                    layer: "skill".to_string(),
+                    status: STATUS_RESOLVED.to_string(),
+                    created_at: fresh,
+                    max_runs: Some(18),
+                    recorded_runs: 3,
+                    prediction_confidence: Some(0.8),
+                    verdict: Some(VERDICT_REJECTED.to_string()),
+                    reject_reasons: vec!["template syntax error in candidate".to_string()],
+                    failure_class: Some(FailureClass::ImplementationDefect),
                 },
             ],
         };
@@ -1137,11 +1570,186 @@ mod tests {
             stuck,
             vec!["exp_stale".to_string(), "exp_spent".to_string()]
         );
-        // Only the refuted claim counts: both voids (no-headroom and
-        // measurement-void) are excluded — mean Brier 0.25 over 1 claim.
+        // Only the refuted claim counts: NoHeadroom, MeasurementVoid, and
+        // ImplementationDefect are excluded — mean Brier 0.25 over 1 claim.
         let (brier, claims) = snapshot.resolved_claim_brier().expect("brier");
         assert!((brier - 0.25).abs() < 1e-9, "brier: {brier}");
         assert_eq!(claims, 1);
+    }
+
+    #[test]
+    fn stage_roles_ablation_gate_and_pareto_frontier() {
+        let store = store();
+        let experiment = store
+            .propose_experiment(
+                "Candidate C beats baseline and survives ablation",
+                "skill",
+                &[".agents/skills/self-improvement/SKILL.md".to_string()],
+                &serde_json::json!({"task_set": "fixed-5"}),
+                "pass_rate and total_tokens",
+                &serde_json::json!({"cost_band_pct": 10}),
+                &Prediction {
+                    claim: "candidate C wins".to_string(),
+                    confidence: 0.8,
+                },
+                &serde_json::json!({"max_runs": 30, "require_ablation": true}),
+                30,
+                None,
+                None,
+            )
+            .expect("propose with require_ablation");
+
+        // Root variant defaults to role = "baseline".
+        let baseline = store
+            .register_variant(
+                &experiment.id,
+                &serde_json::json!({"name": "base"}),
+                None,
+                None,
+            )
+            .expect("baseline");
+        assert_eq!(baseline.role, "baseline");
+        assert_eq!(baseline.ablated_component, None);
+
+        // Child variant defaults to role = "candidate".
+        let candidate = store
+            .register_variant(
+                &experiment.id,
+                &serde_json::json!({"name": "cand"}),
+                Some(&baseline.id),
+                None,
+            )
+            .expect("candidate");
+        assert_eq!(candidate.role, "candidate");
+
+        // Ablation without parent or without ablated_component is rejected.
+        let err = store
+            .register_variant_with_role(
+                &experiment.id,
+                &serde_json::json!({}),
+                None,
+                None,
+                Some("ablation"),
+                Some("step_3"),
+            )
+            .expect_err("ablation requires parent");
+        assert!(matches!(err, ExperimentationError::AblationRequiresParent));
+        let err = store
+            .register_variant_with_role(
+                &experiment.id,
+                &serde_json::json!({}),
+                Some(&candidate.id),
+                None,
+                Some("ablation"),
+                None,
+            )
+            .expect_err("ablation requires component");
+        assert!(matches!(
+            err,
+            ExperimentationError::AblationRequiresComponent
+        ));
+
+        // Record fitness on baseline and candidate.
+        store
+            .record_fitness(
+                &experiment.id,
+                &baseline.id,
+                &["run-base".to_string()],
+                5,
+                &serde_json::json!({"pass_rate": 0.6, "total_tokens": 1000.0}),
+            )
+            .expect("base fitness");
+        store
+            .record_fitness(
+                &experiment.id,
+                &candidate.id,
+                &["run-cand".to_string()],
+                5,
+                &serde_json::json!({"pass_rate": 0.85, "total_tokens": 1050.0}),
+            )
+            .expect("cand fitness");
+
+        // Selecting candidate before recording ablation fitness fails the require_ablation gate.
+        let err = store
+            .record_selection(
+                &experiment.id,
+                VERDICT_SELECTED,
+                Some(&candidate.id),
+                &[],
+                None,
+            )
+            .expect_err("require_ablation gate must block selection without ablation fitness");
+        assert!(matches!(
+            err,
+            ExperimentationError::MissingAblationEvidence(_, _)
+        ));
+
+        // Register an ablation child and record its fitness.
+        let ablation = store
+            .register_variant_with_role(
+                &experiment.id,
+                &serde_json::json!({"name": "cand-minus-gate"}),
+                Some(&candidate.id),
+                None,
+                Some("ablation"),
+                Some("convergence_gate"),
+            )
+            .expect("ablation variant");
+        assert_eq!(ablation.role, "ablation");
+        assert_eq!(
+            ablation.ablated_component.as_deref(),
+            Some("convergence_gate")
+        );
+        store
+            .record_fitness(
+                &experiment.id,
+                &ablation.id,
+                &["run-abl".to_string()],
+                5,
+                &serde_json::json!({"pass_rate": 0.70, "total_tokens": 1020.0}),
+            )
+            .expect("ablation fitness");
+
+        // Pareto frontier: candidate (0.85, 1050) dominates baseline (0.60, 1000)
+        // and ablation (0.70, 1020) because 1000 and 1020 are NOT strictly < 0.9 * 1050 = 945
+        // under the 10% cost noise band, while 0.85 > 0.60 and 0.85 > 0.70.
+        let pareto = store
+            .pareto_frontier(
+                &experiment.id,
+                &[
+                    ObjectiveSpec {
+                        metric: "pass_rate".to_string(),
+                        direction: "maximize".to_string(),
+                        relative_noise_band: Some(0.0),
+                    },
+                    ObjectiveSpec {
+                        metric: "total_tokens".to_string(),
+                        direction: "minimize".to_string(),
+                        relative_noise_band: None, // inherits 10% from experiment.noise_band.cost_band_pct
+                    },
+                ],
+                None,
+                std::slice::from_ref(&candidate.id),
+            )
+            .expect("pareto frontier");
+        assert_eq!(pareto.evaluated_variants, 3);
+        assert_eq!(pareto.frontier_variant_ids, vec![candidate.id.clone()]);
+        assert_eq!(pareto.dominated.len(), 2);
+        assert_eq!(pareto.new_members_count, 0);
+        assert!(pareto.converged);
+
+        // Now selection succeeds because ablation fitness is recorded.
+        let (sel, _) = store
+            .record_selection(
+                &experiment.id,
+                VERDICT_SELECTED,
+                Some(&candidate.id),
+                &[],
+                Some("algedonic-card-99"),
+            )
+            .expect("selection succeeds after ablation fitness");
+        assert_eq!(sel.verdict, VERDICT_SELECTED);
+        assert_eq!(sel.failure_class, None);
     }
 
     /// The §P8.9 follow-up (2026-10-01): concurrent selections on one

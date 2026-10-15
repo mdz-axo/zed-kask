@@ -235,6 +235,23 @@ pub trait WebSearchPort: Send + Sync {
     ) -> Result<Option<PaperMetadata>, WebError> {
         Err(WebError::NoProvider)
     }
+    /// Resolve a typed paper identifier with optional citation-graph
+    /// expansion (`include_citations`).
+    async fn resolve_paper_id_with_options(
+        &self,
+        id: &crate::research::paper_id::PaperId,
+        _include_citations: bool,
+    ) -> Result<Option<PaperMetadata>, WebError> {
+        self.resolve_paper_id(id).await
+    }
+    /// Resolve a structured scientific domain record (`pubmed`, `ncbi_gene`,
+    /// `clinvar`, `uniprotkb`, `chembl_molecule`, `chembl_target`, `rcsb_pdb`).
+    async fn resolve_domain_record(
+        &self,
+        _spec: &DomainRecordSpec,
+    ) -> Result<crate::research::domain_records::FetchedDomainRecord, WebError> {
+        Err(WebError::NoProvider)
+    }
     /// Bibliographic title resolution: Crossref's `query.bibliographic`
     /// search returns up to `rows` candidate works (DOI, title, year,
     /// venue, first author), most relevant first. Default: this port does
@@ -1116,10 +1133,86 @@ impl WebSearchPort for ProviderPool {
         &self,
         id: &crate::research::paper_id::PaperId,
     ) -> Result<Option<PaperMetadata>, WebError> {
+        self.resolve_paper_id_with_options(id, false).await
+    }
+
+    async fn resolve_paper_id_with_options(
+        &self,
+        id: &crate::research::paper_id::PaperId,
+        include_citations: bool,
+    ) -> Result<Option<PaperMetadata>, WebError> {
         match &self.openalex {
-            Some(provider) => provider.resolve(id).await,
+            Some(provider) => provider.resolve(id, include_citations).await,
             None => Err(WebError::NoProvider),
         }
+    }
+
+    async fn resolve_domain_record(
+        &self,
+        spec: &DomainRecordSpec,
+    ) -> Result<crate::research::domain_records::FetchedDomainRecord, WebError> {
+        let (db, accession) = crate::research::domain_records::validate_domain_record_spec(spec)?;
+        let client = provider_http_client()?;
+        let api_url = db.api_url(&accession);
+        let response = client
+            .get(&api_url)
+            .header(reqwest::header::ACCEPT, "application/json")
+            .send()
+            .await
+            .map_err(|error| {
+                WebError::ProviderUnavailable(format!(
+                    "domain_record {}:{} request failed: {}",
+                    db.as_str(),
+                    accession,
+                    reqwest_error_detail(&error)
+                ))
+            })?;
+        let status = response.status();
+        let body = response.text().await.map_err(|error| {
+            WebError::ProviderUnavailable(format!(
+                "domain_record {}:{} body read failed: {}",
+                db.as_str(),
+                accession,
+                reqwest_error_detail(&error)
+            ))
+        })?;
+        if status.as_u16() == 404 {
+            return Err(WebError::BadArgs(format!(
+                "domain_record {}:{} not found (HTTP 404)",
+                db.as_str(),
+                accession
+            )));
+        }
+        if !status.is_success() {
+            return Err(match status.as_u16() {
+                429 => WebError::RateLimited(format!(
+                    "domain_record {}:{} rate limited: {status}",
+                    db.as_str(),
+                    accession
+                )),
+                _ => WebError::ProviderError(format!(
+                    "domain_record {}:{} error {status}: {}",
+                    db.as_str(),
+                    accession,
+                    hkask_inference::openai_compat::sanitize_error_body(&body)
+                )),
+            });
+        }
+        let parsed: serde_json::Value = serde_json::from_str(&body).map_err(|e| {
+            WebError::ProviderError(format!(
+                "domain_record {}:{} returned invalid JSON: {e}",
+                db.as_str(),
+                accession
+            ))
+        })?;
+        let title = crate::research::domain_records::extract_record_title(db, &parsed, &accession);
+        Ok(crate::research::domain_records::FetchedDomainRecord {
+            db: db.as_str().to_string(),
+            canonical_url: db.canonical_url(&accession),
+            accession,
+            title,
+            raw_json: body,
+        })
     }
 
     /// Bibliographic title resolution: Crossref's `query.bibliographic`

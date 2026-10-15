@@ -374,12 +374,24 @@ pub struct AnnotateResearchRunRequest {
     pub basis: Option<String>,
 }
 
+/// Typed scientific database lookup request (`F9` — `pubmed`, `ncbi_gene`,
+/// `clinvar`, `uniprotkb`, `chembl_molecule`, `chembl_target`, `rcsb_pdb`).
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+pub struct DomainRecordSpec {
+    /// Scientific database: `"pubmed"`, `"ncbi_gene"`, `"clinvar"`,
+    /// `"uniprotkb"`, `"chembl_molecule"`, `"chembl_target"`, or `"rcsb_pdb"`.
+    pub db: String,
+    /// Record accession or identifier (e.g. `"P00533"`, `"CHEMBL25"`, `"4HHB"`).
+    pub accession: String,
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ResolvePaperRequest {
     /// A paper reference in any supported form: DOI (bare, `doi:`, or
     /// doi.org URL), arXiv ID, PMID, PMCID, or OpenAlex work ID. Provide
-    /// EITHER `query` (an identifier) OR `title` (bibliographic lookup) —
-    /// passing both is rejected.
+    /// exactly one of `query` (an identifier), `title` (bibliographic lookup),
+    /// or `domain_record` (scientific database record).
+    #[serde(default)]
     pub query: Option<String>,
     /// A bibliographic title to resolve: Crossref's bibliographic search
     /// returns up to 3 candidate works (DOI, title, year, venue); the top
@@ -387,11 +399,33 @@ pub struct ResolvePaperRequest {
     /// OpenAlex, and every candidate is surfaced so the caller can verify
     /// the match (a title search can hit a different work than intended —
     /// check the candidates before trusting the resolution).
+    #[serde(default)]
     pub title: Option<String>,
     /// Optional research-run identifier: when set, the resolved canonical
     /// URL is recorded into that run's ledger (recorded_by='server') with
-    /// the OpenAlex metadata as the audit copy.
+    /// the OpenAlex or domain-record metadata as the audit copy.
+    #[serde(default)]
     pub run_id: Option<String>,
+    /// When `true`, fetches up to 20 top cited/referencing works from OpenAlex
+    /// (`referenced_works` and `cited_by`) with publication years (`F2`).
+    #[serde(default)]
+    pub include_citations: Option<bool>,
+    /// Optional structured scientific database record lookup (`pubmed`,
+    /// `ncbi_gene`, `clinvar`, `uniprotkb`, `chembl_molecule`,
+    /// `chembl_target`, `rcsb_pdb`) with 32 KiB inline-vs-corpus-cache spill (`F9`).
+    #[serde(default)]
+    pub domain_record: Option<DomainRecordSpec>,
+}
+
+/// One directed citation edge in an OpenAlex citation graph (`F2`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CitationEdge {
+    pub openalex_id: String,
+    pub doi: Option<String>,
+    pub title: String,
+    pub publication_year: Option<u64>,
+    /// `"references"` (cited by the focal work) or `"cited_by"` (citing the focal work).
+    pub direction: String,
 }
 
 /// Metadata for a resolved paper, from the OpenAlex work record.
@@ -410,6 +444,14 @@ pub struct PaperMetadata {
     /// A candidate, not a verified document — the copy can be a different
     /// version than the cited work, so the consumer verifies identity.
     pub oa_pdf_url: Option<String>,
+    /// Whether the OpenAlex work record flags this paper as retracted (`F3`).
+    pub is_retracted: bool,
+    /// Number of works referenced by this paper (`referenced_works.len()`).
+    pub referenced_works_count: usize,
+    /// Number of works citing this paper (`cited_by_count`).
+    pub cited_by_count: u64,
+    /// Populated when `include_citations: Some(true)` is requested.
+    pub citations: Vec<CitationEdge>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -456,6 +498,12 @@ pub struct EvaluateArtifact {
     pub source: Option<String>,
     /// Extracted content (from web_extract).
     pub content: Option<String>,
+    /// Optional retraction flag (from `resolve_paper` `openalex.is_retracted`).
+    /// When `true` (or when `title`/`content` carries `[RETRACTED]`),
+    /// deterministic scoring caps confidence at `0.0` and emits a
+    /// `retracted_source` warning (`F3`).
+    #[serde(default)]
+    pub is_retracted: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

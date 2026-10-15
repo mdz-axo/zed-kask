@@ -9,10 +9,11 @@
 
 use hkask_mcp_experimentation::server::{
     ExperimentProposeRequest, ExperimentationServer, FitnessRecordRequest, LineageReadRequest,
-    PopulationQueryRequest, SelectionRecordRequest, VariantRegisterRequest,
+    ParetoFrontierQueryRequest, PopulationQueryRequest, SelectionRecordRequest,
+    VariantRegisterRequest,
 };
 use hkask_mcp_experimentation::store::ExperimentationStore;
-use hkask_mcp_experimentation::types::Prediction;
+use hkask_mcp_experimentation::types::{FailureClass, ObjectiveSpec, Prediction};
 use hkask_storage::database::sqlite::SqliteDriver;
 use hkask_types::AnyJsonValue;
 use hkask_types::WebID;
@@ -71,6 +72,8 @@ async fn register_variant(
             genotype_config: AnyJsonValue(serde_json::json!({"name": name})),
             parent_variant_id: parent.map(str::to_string),
             variant_key: None,
+            role: None,
+            ablated_component: None,
         }))
         .await
         .expect("variant_register succeeds");
@@ -147,6 +150,7 @@ async fn full_protocol_runs_through_the_tool_seam() {
             verdict: "selected".to_string(),
             selected_variant_id: Some(challenger_id.clone()),
             reject_reasons: Vec::new(),
+            failure_class: None,
             algedonic_reference: Some("algedonic 2026-09-30#1".to_string()),
         }))
         .await
@@ -260,6 +264,8 @@ async fn unknown_records_are_not_found_and_resolved_experiments_refuse_work() {
             genotype_config: AnyJsonValue(serde_json::json!({})),
             parent_variant_id: None,
             variant_key: None,
+            role: None,
+            ablated_component: None,
         }))
         .await
         .expect_err("unknown experiment is not found");
@@ -273,6 +279,7 @@ async fn unknown_records_are_not_found_and_resolved_experiments_refuse_work() {
             verdict: "selected".to_string(),
             selected_variant_id: Some(variant_id),
             reject_reasons: Vec::new(),
+            failure_class: None,
             algedonic_reference: None,
         }))
         .await
@@ -283,6 +290,8 @@ async fn unknown_records_are_not_found_and_resolved_experiments_refuse_work() {
             genotype_config: AnyJsonValue(serde_json::json!({})),
             parent_variant_id: None,
             variant_key: None,
+            role: None,
+            ablated_component: None,
         }))
         .await
         .expect_err("resolved experiment refuses new variants");
@@ -300,6 +309,7 @@ async fn unknown_records_are_not_found_and_resolved_experiments_refuse_work() {
             verdict: "selected".to_string(),
             selected_variant_id: None,
             reject_reasons: Vec::new(),
+            failure_class: None,
             algedonic_reference: None,
         }))
         .await
@@ -311,6 +321,7 @@ async fn unknown_records_are_not_found_and_resolved_experiments_refuse_work() {
             verdict: "rejected".to_string(),
             selected_variant_id: None,
             reject_reasons: Vec::new(),
+            failure_class: None,
             algedonic_reference: None,
         }))
         .await
@@ -459,5 +470,179 @@ fn experimentation_declares_its_db_passphrase_as_required() {
     assert!(
         source.contains(&declaration),
         "the experimentation server must declare HKASK_DB_PASSPHRASE required — its run() \n         refuses to start without it, so an undeclared (vec![]) or optional form \n         misdescribes the startup contract"
+    );
+}
+
+/// Stage-aware variants (`role`, `ablated_component`), mandatory ablation gate
+/// (`budget.require_ablation`), IVE `failure_class` attribution, and
+/// `pareto_frontier_query` through the public `Parameters<T>` tool seam.
+#[tokio::test]
+async fn stage_roles_ablation_gate_failure_class_and_pareto_frontier_through_tool_seam() {
+    let server = make_server();
+
+    let mut req = proposal("prompt_template");
+    req.budget = AnyJsonValue(serde_json::json!({
+        "max_runs": 30,
+        "require_ablation": true
+    }));
+    let proposed = server
+        .experiment_propose(Parameters(req))
+        .await
+        .expect("propose with require_ablation");
+    let proposed = envelope(&proposed);
+    let experiment_id = proposed["experiment"]["id"]
+        .as_str()
+        .expect("id")
+        .to_string();
+
+    // Baseline (role defaults to "baseline" when parent_variant_id is None).
+    let baseline = register_variant(&server, &experiment_id, "baseline", None).await;
+    assert_eq!(baseline["variant"]["role"], "baseline");
+    let baseline_id = baseline["variant"]["id"].as_str().expect("id").to_string();
+
+    // Candidate (role defaults to "candidate" when parent_variant_id is Some).
+    let candidate =
+        register_variant(&server, &experiment_id, "candidate", Some(&baseline_id)).await;
+    assert_eq!(candidate["variant"]["role"], "candidate");
+    let candidate_id = candidate["variant"]["id"].as_str().expect("id").to_string();
+
+    // Record fitness on baseline and candidate.
+    server
+        .fitness_record(Parameters(FitnessRecordRequest {
+            experiment_id: experiment_id.clone(),
+            variant_id: baseline_id.clone(),
+            runs: vec!["eval-base".to_string()],
+            run_count: 5,
+            scores: AnyJsonValue(
+                serde_json::json!({"pass_rate": 0.6, "total_tokens": 1000.0, "mean_latency_ms": 400.0}),
+            ),
+        }))
+        .await
+        .expect("base fitness");
+    server
+        .fitness_record(Parameters(FitnessRecordRequest {
+            experiment_id: experiment_id.clone(),
+            variant_id: candidate_id.clone(),
+            runs: vec!["eval-cand".to_string()],
+            run_count: 5,
+            scores: AnyJsonValue(
+                serde_json::json!({"pass_rate": 0.9, "total_tokens": 1050.0, "mean_latency_ms": 410.0}),
+            ),
+        }))
+        .await
+        .expect("cand fitness");
+
+    // Selection before ablation fitness is refused with failed_precondition.
+    let error = server
+        .selection_record(Parameters(SelectionRecordRequest {
+            experiment_id: experiment_id.clone(),
+            verdict: "selected".to_string(),
+            selected_variant_id: Some(candidate_id.clone()),
+            reject_reasons: Vec::new(),
+            failure_class: None,
+            algedonic_reference: None,
+        }))
+        .await
+        .expect_err("require_ablation blocks selection without ablation child fitness");
+    assert!(
+        error.to_string().contains("requires ablation evidence"),
+        "{error}"
+    );
+
+    // Register an ablation child and record its fitness.
+    let ablation = server
+        .variant_register(Parameters(VariantRegisterRequest {
+            experiment_id: experiment_id.clone(),
+            genotype_config: AnyJsonValue(serde_json::json!({"name": "cand-no-cot"})),
+            parent_variant_id: Some(candidate_id.clone()),
+            variant_key: Some("abl-1".to_string()),
+            role: Some("ablation".to_string()),
+            ablated_component: Some("cot_reflection_block".to_string()),
+        }))
+        .await
+        .expect("ablation variant");
+    let ablation = envelope(&ablation);
+    assert_eq!(ablation["variant"]["role"], "ablation");
+    assert_eq!(
+        ablation["variant"]["ablated_component"],
+        "cot_reflection_block"
+    );
+    let ablation_id = ablation["variant"]["id"].as_str().expect("id").to_string();
+
+    server
+        .fitness_record(Parameters(FitnessRecordRequest {
+            experiment_id: experiment_id.clone(),
+            variant_id: ablation_id.clone(),
+            runs: vec!["eval-abl".to_string()],
+            run_count: 5,
+            scores: AnyJsonValue(
+                serde_json::json!({"pass_rate": 0.72, "total_tokens": 1010.0, "mean_latency_ms": 395.0}),
+            ),
+        }))
+        .await
+        .expect("ablation fitness");
+
+    // Query Pareto frontier via pareto_frontier_query tool.
+    let pareto = server
+        .pareto_frontier_query(Parameters(ParetoFrontierQueryRequest {
+            experiment_id: experiment_id.clone(),
+            objectives: vec![
+                ObjectiveSpec {
+                    metric: "pass_rate".to_string(),
+                    direction: "maximize".to_string(),
+                    relative_noise_band: Some(0.0),
+                },
+                ObjectiveSpec {
+                    metric: "total_tokens".to_string(),
+                    direction: "minimize".to_string(),
+                    relative_noise_band: None,
+                },
+            ],
+            max_frontier_size: Some(2),
+            previous_frontier_ids: vec![candidate_id.clone()],
+        }))
+        .await
+        .expect("pareto_frontier_query succeeds");
+    let pareto = envelope(&pareto);
+    assert_eq!(pareto["evaluated_variants"], 3);
+    assert_eq!(
+        pareto["frontier_variant_ids"],
+        serde_json::json!([candidate_id.clone()])
+    );
+    assert_eq!(pareto["new_members_count"], 0);
+    assert_eq!(pareto["converged"], true);
+
+    // Selection now succeeds.
+    let selected = server
+        .selection_record(Parameters(SelectionRecordRequest {
+            experiment_id: experiment_id.clone(),
+            verdict: "selected".to_string(),
+            selected_variant_id: Some(candidate_id),
+            reject_reasons: Vec::new(),
+            failure_class: None,
+            algedonic_reference: Some("card-abl-pass".to_string()),
+        }))
+        .await
+        .expect("selection succeeds after ablation fitness");
+    let selected = envelope(&selected);
+    assert_eq!(selected["status"], "resolved");
+
+    // Verify rejected selection with explicit IVE FailureClass::ImplementationDefect.
+    let (exp2, _) = propose_with_variant(&server, "skill", "base2").await;
+    let rejected = server
+        .selection_record(Parameters(SelectionRecordRequest {
+            experiment_id: exp2,
+            verdict: "rejected".to_string(),
+            selected_variant_id: None,
+            reject_reasons: vec!["candidate template had a missing closing tag".to_string()],
+            failure_class: Some(FailureClass::ImplementationDefect),
+            algedonic_reference: None,
+        }))
+        .await
+        .expect("rejected with ImplementationDefect");
+    let rejected = envelope(&rejected);
+    assert_eq!(
+        rejected["selection"]["failure_class"],
+        "implementation_defect"
     );
 }

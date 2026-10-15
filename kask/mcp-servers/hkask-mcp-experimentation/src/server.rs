@@ -18,7 +18,9 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 
 use crate::store::ExperimentationStore;
-use crate::types::{ExperimentationError, LAYERS, Prediction, STATUSES};
+use crate::types::{
+    ExperimentationError, FailureClass, LAYERS, ObjectiveSpec, Prediction, STATUSES,
+};
 
 hkask_mcp_server::mcp_server!(
     pub struct ExperimentationServer {
@@ -35,11 +37,20 @@ pub fn map_experimentation_error(error: ExperimentationError) -> McpToolError {
         ExperimentationError::ExperimentNotFound(_) | ExperimentationError::VariantNotFound(_) => {
             McpToolError::not_found(error.to_string())
         }
-        ExperimentationError::ExperimentResolved(_) => {
+        ExperimentationError::ExperimentResolved(_)
+        | ExperimentationError::MissingAblationEvidence(..) => {
             McpToolError::new(McpErrorKind::FailedPrecondition, error.to_string())
         }
         ExperimentationError::VariantNotInExperiment(..)
         | ExperimentationError::UnknownLayer(_)
+        | ExperimentationError::UnknownVariantRole(_)
+        | ExperimentationError::AblationRequiresParent
+        | ExperimentationError::AblationRequiresComponent
+        | ExperimentationError::AblatedComponentOnNonAblation(_)
+        | ExperimentationError::UnknownFailureClass(_)
+        | ExperimentationError::SelectedWithFailureClass
+        | ExperimentationError::UnknownObjectiveDirection(_)
+        | ExperimentationError::NoiseBandOutOfRange(_)
         | ExperimentationError::ConfidenceOutOfRange(_)
         | ExperimentationError::BudgetMissingMaxRuns(_)
         | ExperimentationError::RunCountInvalid(_)
@@ -115,9 +126,21 @@ pub struct VariantRegisterRequest {
     /// composite (SKILL.md, templates) pair or the agent-card config).
     pub genotype_config: AnyJsonValue,
     /// The parent variant this one derives from — lineage (§P8.1).
+    #[serde(default)]
     pub parent_variant_id: Option<String>,
     /// Optional replay-convergence key, unique within the experiment.
+    #[serde(default)]
     pub variant_key: Option<String>,
+    /// Optional stage role (`baseline | tuning | candidate | ablation`).
+    /// Defaults to `"baseline"` when `parent_variant_id` is absent and
+    /// `"candidate"` when a parent is present.
+    #[serde(default)]
+    pub role: Option<String>,
+    /// Required when `role == "ablation"`: names the specific component
+    /// surgically removed from `parent_variant_id` (Pearl `do(not X)` /
+    /// Ousterhout deletion test).
+    #[serde(default)]
+    pub ablated_component: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -143,12 +166,39 @@ pub struct SelectionRecordRequest {
     /// "selected" or "rejected".
     pub verdict: String,
     /// Required when verdict is selected: the winning variant.
+    #[serde(default)]
     pub selected_variant_id: Option<String>,
     /// Required when verdict is rejected: why it was rejected — the
     /// fossil's reasons.
+    #[serde(default)]
     pub reject_reasons: Vec<String>,
+    /// Optional explicit IVE failure attribution when verdict is `"rejected"`:
+    /// `no_headroom | measurement_void | implementation_defect |
+    /// hypothesis_refuted | ablation_unjustified`. When omitted on a rejected
+    /// verdict, inferred from `reject_reasons`.
+    #[serde(default)]
+    pub failure_class: Option<FailureClass>,
     /// The algedonic review record that chaired the selection (§P8.7-Q4).
+    #[serde(default)]
     pub algedonic_reference: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ParetoFrontierQueryRequest {
+    /// Experiment ID whose recorded variant fitnesses are sorted.
+    pub experiment_id: String,
+    /// Objectives for NSGA-II non-dominated sorting (`maximize` or `minimize`),
+    /// with optional per-objective relative noise band in `[0.0, 1.0)`.
+    pub objectives: Vec<ObjectiveSpec>,
+    /// Optional cap on the non-dominated frontier size; when exceeded, prunes
+    /// by NSGA-II crowding distance.
+    #[serde(default)]
+    pub max_frontier_size: Option<u32>,
+    /// Optional list of prior frontier variant IDs to compute `new_members_count`
+    /// and `converged` (true when `previous_frontier_ids` is non-empty and
+    /// `new_members_count == 0`).
+    #[serde(default)]
+    pub previous_frontier_ids: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -243,7 +293,7 @@ impl ExperimentationServer {
     }
 
     #[tool(
-        description = "Register a variant inside an experiment (protocol step 2, Vary): the genotype configuration (arbitrary JSON — e.g. the composite (SKILL.md, templates) pair or the agent-card config), an optional parent variant for lineage, and an optional variant_key for replay convergence. The first variant moves the experiment to running. A resolved experiment no longer accepts variants."
+        description = "Register a variant inside an experiment (protocol step 2, Vary): the genotype configuration (arbitrary JSON — e.g. the composite (SKILL.md, templates) pair or the agent-card config), an optional parent variant for lineage, an optional stage role (baseline | tuning | candidate | ablation; defaults to baseline for root variants and candidate for derived variants), an optional ablated_component (required when role is ablation), and an optional variant_key for replay convergence. The first variant moves the experiment to running. A resolved experiment no longer accepts variants."
     )]
     pub async fn variant_register(
         &self,
@@ -252,17 +302,21 @@ impl ExperimentationServer {
             genotype_config,
             parent_variant_id,
             variant_key,
+            role,
+            ablated_component,
         }): Parameters<VariantRegisterRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "variant_register", async {
             require_non_empty("experiment_id", &experiment_id)?;
             let record = self
                 .store
-                .register_variant(
+                .register_variant_with_role(
                     &experiment_id,
                     &genotype_config,
                     parent_variant_id.as_deref(),
                     variant_key.as_deref(),
+                    role.as_deref(),
+                    ablated_component.as_deref(),
                 )
                 .map_err(map_experimentation_error)?;
             Ok(serde_json::json!({ "status": "registered", "variant": record }))
@@ -306,7 +360,7 @@ impl ExperimentationServer {
     }
 
     #[tool(
-        description = "Record the selection verdict for an experiment (protocol step 4, Select): verdict selected (naming the winning variant) or rejected (with at least one reject reason). Both outcomes persist as fossils — selected and rejected are both retained. The first selection resolves the experiment; a further selection is a failed_precondition conflict. algedonic_reference names the review record that chaired the selection."
+        description = "Record the selection verdict for an experiment (protocol step 4, Select): verdict selected (naming the winning variant; when budget.require_ablation is true, requires recorded fitness on at least one child ablation variant) or rejected (with at least one reject reason and optional typed failure_class: no_headroom | measurement_void | implementation_defect | hypothesis_refuted | ablation_unjustified). Both outcomes persist as fossils — selected and rejected are both retained. The first selection resolves the experiment; a further selection is a failed_precondition conflict. algedonic_reference names the review record that chaired the selection."
     )]
     pub async fn selection_record(
         &self,
@@ -315,6 +369,7 @@ impl ExperimentationServer {
             verdict,
             selected_variant_id,
             reject_reasons,
+            failure_class,
             algedonic_reference,
         }): Parameters<SelectionRecordRequest>,
     ) -> Result<String, McpToolError> {
@@ -323,11 +378,12 @@ impl ExperimentationServer {
             require_non_empty("verdict", &verdict)?;
             let (record, experiment) = self
                 .store
-                .record_selection(
+                .record_selection_with_class(
                     &experiment_id,
                     &verdict,
                     selected_variant_id.as_deref(),
                     &reject_reasons,
+                    failure_class,
                     algedonic_reference.as_deref(),
                 )
                 .map_err(map_experimentation_error)?;
@@ -336,6 +392,34 @@ impl ExperimentationServer {
                 "selection": record,
                 "experiment": experiment,
             }))
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Compute the deterministic multi-objective Pareto frontier (NSGA-II non-dominated sort with relative noise-band tie handling and optional crowding-distance pruning) over an experiment's recorded variant fitnesses, plus new_members_count and converged status against previous_frontier_ids."
+    )]
+    pub async fn pareto_frontier_query(
+        &self,
+        Parameters(ParetoFrontierQueryRequest {
+            experiment_id,
+            objectives,
+            max_frontier_size,
+            previous_frontier_ids,
+        }): Parameters<ParetoFrontierQueryRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "pareto_frontier_query", async {
+            require_non_empty("experiment_id", &experiment_id)?;
+            let result = self
+                .store
+                .pareto_frontier(
+                    &experiment_id,
+                    &objectives,
+                    max_frontier_size,
+                    &previous_frontier_ids,
+                )
+                .map_err(map_experimentation_error)?;
+            serde_json::to_value(result).map_err(|e| McpToolError::internal(e.to_string()))
         })
         .await
     }

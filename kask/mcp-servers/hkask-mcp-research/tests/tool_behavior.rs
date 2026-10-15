@@ -32,12 +32,12 @@ use hkask_mcp_research::research::rss_types::{
     SynthesizeRequest, UnreadCountRequest, UnsubscribeRequest,
 };
 use hkask_mcp_research::research::types::{
-    AnnotateResearchRunRequest, BeginResearchRunRequest, BrowseRequest, BrowseResult, CiteSource,
-    CiteSourcesRequest, CompoundSearchResult, EvaluateArtifact, EvaluateEvidenceRequest,
-    ExtractOptions, ExtractRequest, ExtractedContent, FindSimilarRequest, FinishResearchRunRequest,
-    GetResearchRunRequest, LatencyTier, ProviderFailureRecord, ProviderHealthEntry, ProviderInfo,
-    ProviderRecommendation, RankedResult, RateLimiter, ResolvePaperRequest, SearchQuery,
-    SearchRequest, SearchStrategy, WebError,
+    AnnotateResearchRunRequest, BeginResearchRunRequest, BrowseRequest, BrowseResult, CitationEdge,
+    CiteSource, CiteSourcesRequest, CompoundSearchResult, DomainRecordSpec, EvaluateArtifact,
+    EvaluateEvidenceRequest, ExtractOptions, ExtractRequest, ExtractedContent, FindSimilarRequest,
+    FinishResearchRunRequest, GetResearchRunRequest, LatencyTier, PaperMetadata,
+    ProviderFailureRecord, ProviderHealthEntry, ProviderInfo, ProviderRecommendation, RankedResult,
+    RateLimiter, ResolvePaperRequest, SearchQuery, SearchRequest, SearchStrategy, WebError,
 };
 use hkask_mcp_server::server::McpToolError;
 use hkask_types::InferenceError;
@@ -1821,6 +1821,7 @@ fn evidence_artifact(
         source: source.map(str::to_string),
         published: published.map(str::to_string),
         content: content.map(str::to_string),
+        is_retracted: None,
     }
 }
 
@@ -2686,6 +2687,8 @@ async fn resolve_paper_canonicalizes_any_identifier_form() {
             query: Some("https://doi.org/10.1038/s41586-024-00000-x".to_string()),
             title: None,
             run_id: None,
+            include_citations: None,
+            domain_record: None,
         }))
         .await);
     let json = parse(&out);
@@ -2712,6 +2715,8 @@ async fn resolve_paper_rejects_garbage_with_typed_error() {
             query: Some("not a paper".to_string()),
             title: None,
             run_id: None,
+            include_citations: None,
+            domain_record: None,
         }))
         .await);
     assert_error_kind(&error, McpErrorKind::InvalidArgument);
@@ -2741,6 +2746,8 @@ async fn resolve_paper_with_run_id_records_the_canonical_url() {
             query: Some("doi:10.1038/s41586-024-00000-x".to_string()),
             title: None,
             run_id: Some(run_id.clone()),
+            include_citations: None,
+            domain_record: None,
         }))
         .await));
     assert_eq!(json["identifier"]["kind"].as_str(), Some("doi"));
@@ -2787,6 +2794,8 @@ async fn resolve_paper_title_mode_surfaces_candidates_and_resolves_the_top() {
                 "A Recipe For Arbitrary Text Style Transfer with Large Language Models".to_string(),
             ),
             run_id: None,
+            include_citations: None,
+            domain_record: None,
         }))
         .await));
     assert_eq!(json["mode"].as_str(), Some("bibliographic"));
@@ -2828,6 +2837,8 @@ async fn resolve_paper_title_mode_ranks_exact_title_matches_first() {
             query: None,
             title: Some("Computing Machinery and Intelligence".to_string()),
             run_id: None,
+            include_citations: None,
+            domain_record: None,
         }))
         .await));
     let candidates = json["candidates"].as_array().expect("candidates surfaced");
@@ -2863,6 +2874,8 @@ async fn resolve_paper_title_mode_rejects_both_and_neither_with_typed_errors() {
             query: Some("doi:10.1/x".to_string()),
             title: Some("A Title".to_string()),
             run_id: None,
+            include_citations: None,
+            domain_record: None,
         }))
         .await);
     assert_error_kind(&error, McpErrorKind::InvalidArgument);
@@ -2877,6 +2890,8 @@ async fn resolve_paper_title_mode_rejects_both_and_neither_with_typed_errors() {
             query: None,
             title: None,
             run_id: None,
+            include_citations: None,
+            domain_record: None,
         }))
         .await);
     assert_error_kind(&error, McpErrorKind::InvalidArgument);
@@ -3230,5 +3245,245 @@ async fn finish_research_run_rejects_unknown_run_and_nonterminal_status() {
             .contains("completed, partial, blocked, failed"),
         "message names the terminal vocabulary: {}",
         nonterminal.message
+    );
+}
+
+// ── Retraction, citation graph, and scientific domain_record tests ─────────
+
+struct ScientificResolvePool;
+
+#[async_trait]
+impl WebSearchPort for ScientificResolvePool {
+    async fn search(
+        &self,
+        _query: &SearchQuery,
+        _strategy: SearchStrategy,
+        _provider: Option<&str>,
+    ) -> Result<CompoundSearchResult, WebError> {
+        no_provider!("No search provider configured.")
+    }
+    async fn find_similar(
+        &self,
+        _url: &str,
+        _num_results: u32,
+    ) -> Result<ProviderSearchOutput, WebError> {
+        no_provider!("No find_similar provider.")
+    }
+    async fn extract(
+        &self,
+        _url: &str,
+        _opts: &ExtractOptions,
+    ) -> Result<ExtractedContent, WebError> {
+        no_provider!("No extract provider.")
+    }
+    async fn browse(
+        &self,
+        _url: &str,
+        _instruction: &str,
+        _timeout: Duration,
+    ) -> Result<BrowseResult, WebError> {
+        no_provider!("No browse provider.")
+    }
+    async fn health_check(&self) -> Vec<ProviderHealthEntry> {
+        Vec::new()
+    }
+    fn provider_fingerprint(&self) -> String {
+        "scientific-resolve-pool".to_string()
+    }
+    fn provider_kinds(&self) -> Vec<String> {
+        Vec::new()
+    }
+    fn score_providers(&self, _query: &str, _intent: Option<&str>) -> Vec<ProviderRecommendation> {
+        Vec::new()
+    }
+    async fn resolve_paper_id_with_options(
+        &self,
+        _id: &hkask_mcp_research::research::paper_id::PaperId,
+        include_citations: bool,
+    ) -> Result<Option<PaperMetadata>, WebError> {
+        let citations = if include_citations {
+            vec![
+                CitationEdge {
+                    openalex_id: "W100".to_string(),
+                    doi: Some("10.1000/prior".to_string()),
+                    title: "Prior Foundational Work".to_string(),
+                    publication_year: Some(2020),
+                    direction: "references".to_string(),
+                },
+                CitationEdge {
+                    openalex_id: "W200".to_string(),
+                    doi: Some("10.1000/followup".to_string()),
+                    title: "Follow-up Study".to_string(),
+                    publication_year: Some(2025),
+                    direction: "cited_by".to_string(),
+                },
+            ]
+        } else {
+            Vec::new()
+        };
+        Ok(Some(PaperMetadata {
+            openalex_id: "W999".to_string(),
+            doi: Some("10.1038/retracted-2024".to_string()),
+            title: "Retracted Superconductor Claim".to_string(),
+            publication_year: Some(2024),
+            authors: vec!["J. Doe".to_string()],
+            venue: Some("Nature".to_string()),
+            oa_pdf_url: None,
+            is_retracted: true,
+            referenced_works_count: 1,
+            cited_by_count: 15,
+            citations,
+        }))
+    }
+    async fn resolve_domain_record(
+        &self,
+        spec: &DomainRecordSpec,
+    ) -> Result<hkask_mcp_research::research::domain_records::FetchedDomainRecord, WebError> {
+        let (db, accession) =
+            hkask_mcp_research::research::domain_records::validate_domain_record_spec(spec)?;
+        let raw_json = if accession == "LARGE01" {
+            format!(
+                r#"{{"uniProtkbId":"LARGE01","sequence":"{}"}}"#,
+                "M".repeat(34 * 1024)
+            )
+        } else {
+            r#"{"rcsb_id":"4HHB","struct":{"title":"Deoxy human hemoglobin"}}"#.to_string()
+        };
+        Ok(
+            hkask_mcp_research::research::domain_records::FetchedDomainRecord {
+                db: db.as_str().to_string(),
+                canonical_url: db.canonical_url(&accession),
+                accession,
+                title: Some("Deoxy human hemoglobin".to_string()),
+                raw_json,
+            },
+        )
+    }
+}
+
+#[tokio::test]
+async fn resolve_paper_citations_retraction_and_domain_record_spill_through_tool_seam() {
+    let server = test_server(
+        Arc::new(ScientificResolvePool),
+        10,
+        Some(research_db_pool()),
+        None,
+        None,
+        None,
+    );
+
+    let begun = parse(&ok(server
+        .begin_research_run(Parameters(BeginResearchRunRequest {
+            question: "retraction and domain record test".to_string(),
+        }))
+        .await));
+    let run_id = begun["run_id"].as_str().expect("run_id").to_string();
+
+    // 1. Resolve a retracted paper with include_citations = true.
+    let paper = parse(&ok(server
+        .resolve_paper(Parameters(ResolvePaperRequest {
+            query: Some("doi:10.1038/retracted-2024".to_string()),
+            title: None,
+            run_id: Some(run_id.clone()),
+            include_citations: Some(true),
+            domain_record: None,
+        }))
+        .await));
+    assert_eq!(paper["openalex"]["is_retracted"].as_bool(), Some(true));
+    assert_eq!(paper["openalex"]["cited_by_count"].as_u64(), Some(15));
+    let citations = paper["openalex"]["citations"]
+        .as_array()
+        .expect("citations");
+    assert_eq!(citations.len(), 2);
+    assert_eq!(citations[0]["direction"], "references");
+    assert_eq!(citations[1]["direction"], "cited_by");
+
+    // 2. Resolve an inline domain record (<= 32 KiB).
+    let pdb = parse(&ok(server
+        .resolve_paper(Parameters(ResolvePaperRequest {
+            query: None,
+            title: None,
+            run_id: Some(run_id.clone()),
+            include_citations: None,
+            domain_record: Some(DomainRecordSpec {
+                db: "rcsb_pdb".to_string(),
+                accession: "4hhb".to_string(),
+            }),
+        }))
+        .await));
+    assert_eq!(pdb["mode"], "domain_record");
+    assert_eq!(pdb["identifier"]["kind"], "rcsb_pdb");
+    assert_eq!(pdb["identifier"]["value"], "4HHB");
+    assert_eq!(pdb["spilled"], false);
+    assert_eq!(pdb["record"]["rcsb_id"], "4HHB");
+
+    // 3. Resolve an oversized domain record (> 32 KiB) and verify corpus_ref spill.
+    let spilled = parse(&ok(server
+        .resolve_paper(Parameters(ResolvePaperRequest {
+            query: None,
+            title: None,
+            run_id: Some(run_id.clone()),
+            include_citations: None,
+            domain_record: Some(DomainRecordSpec {
+                db: "uniprotkb".to_string(),
+                accession: "large01".to_string(),
+            }),
+        }))
+        .await));
+    assert_eq!(spilled["mode"], "domain_record");
+    assert_eq!(spilled["spilled"], true);
+    assert_eq!(spilled["corpus_ref"], "domain_uniprotkb_large01");
+
+    // 4. Verify get_research_run recomputes retracted paper confidence as 0.0
+    // and preserves corpus_ref on the spilled domain record.
+    let manifest = parse(&ok(server
+        .get_research_run(Parameters(GetResearchRunRequest { run_id }))
+        .await));
+    let sources = manifest["sources"].as_array().expect("sources");
+    assert_eq!(sources.len(), 3);
+    let retracted_src = sources
+        .iter()
+        .find(|s| s["url"] == "https://doi.org/10.1038/retracted-2024")
+        .expect("retracted source in manifest");
+    assert_eq!(
+        retracted_src["confidence"].as_f64(),
+        Some(0.0),
+        "retracted work must be hard-capped at 0.0 confidence in the run manifest"
+    );
+    let spilled_src = sources
+        .iter()
+        .find(|s| s["url"] == "https://www.uniprot.org/uniprotkb/LARGE01/entry")
+        .expect("spilled source in manifest");
+    assert_eq!(spilled_src["corpus_ref"], "domain_uniprotkb_large01");
+
+    // Clean up the spilled test file from default_corpus_cache_dir().
+    let spilled_file = hkask_mcp_research::research::domain_records::default_corpus_cache_dir()
+        .join("domain_uniprotkb_large01.json");
+    let _ = std::fs::remove_file(spilled_file);
+
+    // 5. Verify evaluate_evidence surfaces is_retracted = true and warnings.
+    let eval = parse(&ok(server
+        .evaluate_evidence(Parameters(EvaluateEvidenceRequest {
+            question: "does room-temperature superconductivity hold?".to_string(),
+            presentation: None,
+            duplication: None,
+            artifacts: vec![EvaluateArtifact {
+                url: "https://doi.org/10.1038/retracted-2024".to_string(),
+                title: Some("Retracted Superconductor Claim".to_string()),
+                published: Some("2024-01-01".to_string()),
+                source: Some("nature.com".to_string()),
+                content: Some(
+                    "superconducting transition observed at ambient pressure".to_string(),
+                ),
+                is_retracted: Some(true),
+            }],
+        }))
+        .await));
+    assert_eq!(eval["artifacts"][0]["confidence"].as_f64(), Some(0.0));
+    assert_eq!(eval["artifacts"][0]["is_retracted"].as_bool(), Some(true));
+    assert!(
+        eval["artifacts"][0]["warnings"][0]
+            .as_str()
+            .is_some_and(|w| w.contains("retracted_source"))
     );
 }
