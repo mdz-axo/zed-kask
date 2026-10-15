@@ -90,6 +90,7 @@ async fn register_variant(
             experiment_id: experiment_id.to_string(),
             genotype_config: AnyJsonValue(serde_json::json!({"name": name})),
             parent_variant_id: parent.map(str::to_string),
+            role: None,
             variant_key: None,
         }))
         .await
@@ -241,6 +242,81 @@ async fn declarations_require_a_valid_rubric_bundle() {
     );
 }
 
+/// P4: variant roles are enforced through the tool seam — exactly one
+/// baseline per experiment; an ablation names its parent; unknown roles
+/// are refused; the default role is challenger.
+#[tokio::test]
+async fn variant_roles_are_enforced_through_the_tool_seam() {
+    let server = make_server();
+    let proposed = propose(&server, "skill").await;
+    let experiment_id = proposed["experiment"]["id"]
+        .as_str()
+        .expect("id")
+        .to_string();
+
+    let baseline = server
+        .variant_register(Parameters(VariantRegisterRequest {
+            experiment_id: experiment_id.clone(),
+            genotype_config: AnyJsonValue(serde_json::json!({"name": "baseline"})),
+            parent_variant_id: None,
+            role: Some("baseline".to_string()),
+            variant_key: None,
+        }))
+        .await
+        .expect("baseline registers");
+    let baseline = envelope(&baseline);
+    assert_eq!(baseline["variant"]["role"], "baseline");
+
+    // A second baseline is a typed refusal naming the existing one.
+    let error = server
+        .variant_register(Parameters(VariantRegisterRequest {
+            experiment_id: experiment_id.clone(),
+            genotype_config: AnyJsonValue(serde_json::json!({"name": "second baseline"})),
+            parent_variant_id: None,
+            role: Some("baseline".to_string()),
+            variant_key: None,
+        }))
+        .await
+        .expect_err("second baseline refused");
+    assert!(
+        error.to_string().contains("exactly one baseline"),
+        "{error}"
+    );
+
+    // An ablation without a parent is refused.
+    let error = server
+        .variant_register(Parameters(VariantRegisterRequest {
+            experiment_id: experiment_id.clone(),
+            genotype_config: AnyJsonValue(serde_json::json!({"name": "orphan"})),
+            parent_variant_id: None,
+            role: Some("ablation".to_string()),
+            variant_key: None,
+        }))
+        .await
+        .expect_err("unparented ablation refused");
+    assert!(error.to_string().contains("parent_variant_id"), "{error}");
+
+    // Unknown roles are refused with the valid values.
+    let error = server
+        .variant_register(Parameters(VariantRegisterRequest {
+            experiment_id: experiment_id.clone(),
+            genotype_config: AnyJsonValue(serde_json::json!({"name": "vibe"})),
+            parent_variant_id: None,
+            role: Some("vibe".to_string()),
+            variant_key: None,
+        }))
+        .await
+        .expect_err("unknown role refused");
+    assert!(
+        error.to_string().contains("baseline, challenger, ablation"),
+        "{error}"
+    );
+
+    // The default role is challenger.
+    let challenger = register_variant(&server, &experiment_id, "challenger", None).await;
+    assert_eq!(challenger["variant"]["role"], "challenger");
+}
+
 /// Invalid input is rejected with errors that name the offending field —
 /// the error-specificity half of the contract (an error that does not teach
 /// produces identical retries).
@@ -319,6 +395,7 @@ async fn unknown_records_are_not_found_and_resolved_experiments_refuse_work() {
             experiment_id: "exp_missing".to_string(),
             genotype_config: AnyJsonValue(serde_json::json!({})),
             parent_variant_id: None,
+            role: None,
             variant_key: None,
         }))
         .await
@@ -342,6 +419,7 @@ async fn unknown_records_are_not_found_and_resolved_experiments_refuse_work() {
             experiment_id: experiment_id.clone(),
             genotype_config: AnyJsonValue(serde_json::json!({})),
             parent_variant_id: None,
+            role: None,
             variant_key: None,
         }))
         .await

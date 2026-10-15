@@ -156,6 +156,21 @@ pub struct ExperimentRecord {
     pub created_at: String,
 }
 
+/// Variant roles (P4): the baseline is the pre-registered comparison
+/// point — exactly one per experiment; a challenger is a candidate
+/// replacement; an ablation derives from a parent variant to isolate one
+/// component's contribution (the derived-registry `ablation` ruling,
+/// operator 2026-10-15).
+pub const VARIANT_ROLE_BASELINE: &str = "baseline";
+pub const VARIANT_ROLE_CHALLENGER: &str = "challenger";
+pub const VARIANT_ROLE_ABLATION: &str = "ablation";
+
+pub const VARIANT_ROLES: &[&str] = &[
+    VARIANT_ROLE_BASELINE,
+    VARIANT_ROLE_CHALLENGER,
+    VARIANT_ROLE_ABLATION,
+];
+
 /// A registered variant — one genotype configuration inside an experiment,
 /// with its parent for lineage (§P8.1).
 #[derive(Debug, Clone, Serialize)]
@@ -164,6 +179,8 @@ pub struct VariantRecord {
     pub experiment_id: String,
     pub genotype_config: serde_json::Value,
     pub parent_variant_id: Option<String>,
+    /// baseline | challenger | ablation (P4). Empty on pre-rule rows.
+    pub role: String,
     pub created_at: String,
 }
 
@@ -356,6 +373,16 @@ pub enum ExperimentationError {
         "rubric id {0:?} must be stable snake_case (lowercase, digits, underscores; not digit-led)"
     )]
     RubricIdInvalid(String),
+    #[error("role must be one of baseline, challenger, ablation; got {0:?}")]
+    UnknownVariantRole(String),
+    #[error(
+        "experiment {0} already has its baseline variant {1} — exactly one baseline is allowed (P4)"
+    )]
+    DuplicateBaseline(String, String),
+    #[error(
+        "an ablation-role variant must name its parent_variant_id — the variant whose component it ablates (P4)"
+    )]
+    AblationWithoutParent,
     #[error("database error: {0}")]
     Database(#[from] hkask_storage::database::types::DbError),
     #[error("serialization error: {0}")]

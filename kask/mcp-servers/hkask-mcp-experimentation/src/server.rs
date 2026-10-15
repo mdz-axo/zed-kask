@@ -18,7 +18,10 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 
 use crate::store::ExperimentationStore;
-use crate::types::{ExperimentationError, LAYERS, Prediction, Rubric, STATUSES, validate_rubrics};
+use crate::types::{
+    ExperimentationError, LAYERS, Prediction, Rubric, STATUSES, VARIANT_ROLE_CHALLENGER,
+    validate_rubrics,
+};
 
 hkask_mcp_server::mcp_server!(
     pub struct ExperimentationServer {
@@ -53,8 +56,13 @@ pub fn map_experimentation_error(error: ExperimentationError) -> McpToolError {
         | ExperimentationError::RubricsMissingKind(_)
         | ExperimentationError::UnknownRubricKind(_)
         | ExperimentationError::DuplicateRubricId(_)
-        | ExperimentationError::RubricIdInvalid(_) => {
+        | ExperimentationError::RubricIdInvalid(_)
+        | ExperimentationError::UnknownVariantRole(_)
+        | ExperimentationError::AblationWithoutParent => {
             McpToolError::invalid_argument(error.to_string())
+        }
+        ExperimentationError::DuplicateBaseline(..) => {
+            McpToolError::new(McpErrorKind::FailedPrecondition, error.to_string())
         }
         ExperimentationError::BudgetExhausted(..) => {
             McpToolError::new(McpErrorKind::FailedPrecondition, error.to_string())
@@ -128,6 +136,10 @@ pub struct VariantRegisterRequest {
     pub genotype_config: AnyJsonValue,
     /// The parent variant this one derives from — lineage (§P8.1).
     pub parent_variant_id: Option<String>,
+    /// baseline | challenger | ablation (P4). Defaults to challenger.
+    /// Exactly one baseline is allowed per experiment; an ablation must
+    /// name its parent_variant_id — the variant whose component it ablates.
+    pub role: Option<String>,
     /// Optional replay-convergence key, unique within the experiment.
     pub variant_key: Option<String>,
 }
@@ -261,7 +273,7 @@ impl ExperimentationServer {
     }
 
     #[tool(
-        description = "Register a variant inside an experiment (protocol step 2, Vary): the genotype configuration (arbitrary JSON — e.g. the composite (SKILL.md, templates) pair or the agent-card config), an optional parent variant for lineage, and an optional variant_key for replay convergence. The first variant moves the experiment to running. A resolved experiment no longer accepts variants."
+        description = "Register a variant inside an experiment (protocol step 2, Vary): the genotype configuration (arbitrary JSON — e.g. the composite (SKILL.md, templates) pair or the agent-card config), an optional role (baseline | challenger | ablation, default challenger — exactly one baseline per experiment; an ablation names its parent variant), an optional parent variant for lineage, and an optional variant_key for replay convergence. The first variant moves the experiment to running. A resolved experiment no longer accepts variants."
     )]
     pub async fn variant_register(
         &self,
@@ -269,17 +281,20 @@ impl ExperimentationServer {
             experiment_id,
             genotype_config,
             parent_variant_id,
+            role,
             variant_key,
         }): Parameters<VariantRegisterRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "variant_register", async {
             require_non_empty("experiment_id", &experiment_id)?;
+            let role = role.unwrap_or_else(|| VARIANT_ROLE_CHALLENGER.to_string());
             let record = self
                 .store
                 .register_variant(
                     &experiment_id,
                     &genotype_config,
                     parent_variant_id.as_deref(),
+                    &role,
                     variant_key.as_deref(),
                 )
                 .map_err(map_experimentation_error)?;

@@ -20,7 +20,8 @@ use hkask_storage::database::value::{DbRow, DbValue};
 use crate::types::{
     ExperimentHealth, ExperimentRecord, ExperimentationError, ExperimentationHealthSnapshot,
     FitnessRecord, Prediction, Rubric, STATUS_PROPOSED, STATUS_RESOLVED, STATUS_RUNNING,
-    SelectionRecord, VERDICT_REJECTED, VERDICT_SELECTED, VariantRecord,
+    SelectionRecord, VARIANT_ROLE_ABLATION, VARIANT_ROLE_BASELINE, VARIANT_ROLES, VERDICT_REJECTED,
+    VERDICT_SELECTED, VariantRecord,
 };
 
 /// Serialize a column value as canonical JSON text. `?Sized` admits slice
@@ -82,6 +83,7 @@ fn variant_from_row(row: &DbRow) -> Result<VariantRecord, ExperimentationError> 
         genotype_config: row.get_json(2)?,
         parent_variant_id: optional_text(row, 3),
         created_at: row.get_str(4)?.to_string(),
+        role: optional_text(row, 5).unwrap_or_default(),
     })
 }
 
@@ -194,6 +196,11 @@ impl ExperimentationStore {
                 "ALTER TABLE experiments ADD COLUMN rubrics TEXT",
             ),
             (
+                "variants",
+                "role",
+                "ALTER TABLE variants ADD COLUMN role TEXT",
+            ),
+            (
                 "fitness_records",
                 "run_count",
                 "ALTER TABLE fitness_records ADD COLUMN run_count INTEGER NOT NULL DEFAULT 0",
@@ -301,6 +308,7 @@ impl ExperimentationStore {
         experiment_id: &str,
         genotype_config: &serde_json::Value,
         parent_variant_id: Option<&str>,
+        role: &str,
         variant_key: Option<&str>,
     ) -> Result<VariantRecord, ExperimentationError> {
         let experiment = self.experiment_by_id(experiment_id)?;
@@ -308,6 +316,33 @@ impl ExperimentationStore {
             return Err(ExperimentationError::ExperimentResolved(
                 experiment_id.to_string(),
             ));
+        }
+        if !VARIANT_ROLES.contains(&role) {
+            return Err(ExperimentationError::UnknownVariantRole(role.to_string()));
+        }
+        if role == VARIANT_ROLE_BASELINE {
+            // Exactly one baseline per experiment (P4) — the pre-registered
+            // comparison point the seal attests. The check-then-insert shape
+            // matches the parent validation below (the same TOCTOU class);
+            // the seal names its baseline explicitly, so a raced duplicate
+            // cannot corrupt the attestation.
+            let rows = self.driver.query(
+                "SELECT id FROM variants WHERE experiment_id = ?1 AND role = ?2",
+                &[
+                    DbValue::Text(experiment_id.to_string()),
+                    DbValue::Text(VARIANT_ROLE_BASELINE.to_string()),
+                ],
+            )?;
+            if let Some(existing) = rows.first() {
+                let existing_id = existing.get_str(0)?.to_string();
+                return Err(ExperimentationError::DuplicateBaseline(
+                    experiment_id.to_string(),
+                    existing_id,
+                ));
+            }
+        }
+        if role == VARIANT_ROLE_ABLATION && parent_variant_id.is_none() {
+            return Err(ExperimentationError::AblationWithoutParent);
         }
         if let Some(parent) = parent_variant_id {
             let parent_record = self.variant_by_id(parent)?;
@@ -322,14 +357,15 @@ impl ExperimentationStore {
         let created_at = chrono::Utc::now().to_rfc3339();
         let inserted = self.driver.execute(
             "INSERT OR IGNORE INTO variants \
-             (id, experiment_id, variant_key, genotype_config, parent_variant_id, created_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+             (id, experiment_id, variant_key, genotype_config, parent_variant_id, role, created_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             &[
                 DbValue::Text(id.clone()),
                 DbValue::Text(experiment_id.to_string()),
                 text_or_null(variant_key),
                 DbValue::Text(value_column(genotype_config)?),
                 text_or_null(parent_variant_id),
+                DbValue::Text(role.to_string()),
                 DbValue::Text(created_at.clone()),
             ],
         )?;
@@ -357,13 +393,14 @@ impl ExperimentationStore {
             experiment_id: experiment_id.to_string(),
             genotype_config: genotype_config.clone(),
             parent_variant_id: parent_variant_id.map(str::to_string),
+            role: role.to_string(),
             created_at,
         })
     }
 
     pub fn variant_by_id(&self, id: &str) -> Result<VariantRecord, ExperimentationError> {
         let row = self.driver.query_optional(
-            "SELECT id, experiment_id, genotype_config, parent_variant_id, created_at \
+            "SELECT id, experiment_id, genotype_config, parent_variant_id, created_at, role \
              FROM variants WHERE id = ?1",
             &[DbValue::Text(id.to_string())],
         )?;
@@ -378,7 +415,7 @@ impl ExperimentationStore {
         key: &str,
     ) -> Result<VariantRecord, ExperimentationError> {
         let row = self.driver.query_optional(
-            "SELECT id, experiment_id, genotype_config, parent_variant_id, created_at \
+            "SELECT id, experiment_id, genotype_config, parent_variant_id, created_at, role \
              FROM variants WHERE experiment_id = ?1 AND variant_key = ?2",
             &[
                 DbValue::Text(experiment_id.to_string()),
@@ -395,7 +432,7 @@ impl ExperimentationStore {
         experiment_id: &str,
     ) -> Result<Vec<VariantRecord>, ExperimentationError> {
         let rows = self.driver.query(
-            "SELECT id, experiment_id, genotype_config, parent_variant_id, created_at \
+            "SELECT id, experiment_id, genotype_config, parent_variant_id, created_at, role \
              FROM variants WHERE experiment_id = ?1 ORDER BY created_at",
             &[DbValue::Text(experiment_id.to_string())],
         )?;
@@ -741,7 +778,8 @@ mod tests {
     use super::*;
     use crate::types::{
         Prediction, RUBRIC_KIND_GROUNDED_REPORT, RUBRIC_KIND_IMPLEMENTATION, RUBRIC_KIND_METRIC,
-        Rubric, RubricVerification, validate_rubrics,
+        Rubric, RubricVerification, VARIANT_ROLE_ABLATION, VARIANT_ROLE_BASELINE,
+        VARIANT_ROLE_CHALLENGER, validate_rubrics,
     };
     use hkask_storage::database::sqlite::SqliteDriver;
 
@@ -803,11 +841,32 @@ mod tests {
         parent: Option<&str>,
         key: Option<&str>,
     ) -> VariantRecord {
+        variant_role(
+            store,
+            experiment_id,
+            name,
+            parent,
+            key,
+            VARIANT_ROLE_CHALLENGER,
+        )
+    }
+
+    /// Register a variant with an explicit role (P4) — the default helper
+    /// above registers challengers, matching the server's default.
+    fn variant_role(
+        store: &ExperimentationStore,
+        experiment_id: &str,
+        name: &str,
+        parent: Option<&str>,
+        key: Option<&str>,
+        role: &str,
+    ) -> VariantRecord {
         store
             .register_variant(
                 experiment_id,
                 &serde_json::json!({"name": name}),
                 parent,
+                role,
                 key,
             )
             .expect("variant")
@@ -871,7 +930,13 @@ mod tests {
 
         // Resolved experiments refuse further work.
         let error = store
-            .register_variant(&experiment.id, &serde_json::json!({}), None, None)
+            .register_variant(
+                &experiment.id,
+                &serde_json::json!({}),
+                None,
+                VARIANT_ROLE_CHALLENGER,
+                None,
+            )
             .expect_err("resolved refuses variants");
         assert!(matches!(error, ExperimentationError::ExperimentResolved(_)));
         let error = store
@@ -920,6 +985,7 @@ mod tests {
                 &second.id,
                 &serde_json::json!({"name": "orphan"}),
                 Some(&parent.id),
+                VARIANT_ROLE_CHALLENGER,
                 None,
             )
             .expect_err("cross-experiment parent");
@@ -1385,5 +1451,77 @@ mod tests {
         ));
         // A valid bundle passes.
         assert!(validate_rubrics(&[metric(), implementation()]).is_ok());
+    }
+
+    #[test]
+    fn variant_roles_are_enforced_one_baseline_and_parented_ablations() {
+        let store = store();
+        let experiment = propose(&store, "skill", None);
+        let baseline = variant_role(
+            &store,
+            &experiment.id,
+            "baseline",
+            None,
+            None,
+            VARIANT_ROLE_BASELINE,
+        );
+        assert_eq!(baseline.role, VARIANT_ROLE_BASELINE);
+
+        // Exactly one baseline — the refusal names the existing one.
+        let error = store
+            .register_variant(
+                &experiment.id,
+                &serde_json::json!({"name": "second baseline"}),
+                None,
+                VARIANT_ROLE_BASELINE,
+                None,
+            )
+            .expect_err("second baseline refused");
+        assert!(matches!(
+            &error,
+            ExperimentationError::DuplicateBaseline(id, existing)
+                if id == &experiment.id && existing == &baseline.id
+        ));
+
+        // An ablation names its parent — the component it ablates.
+        let error = store
+            .register_variant(
+                &experiment.id,
+                &serde_json::json!({"name": "orphan ablation"}),
+                None,
+                VARIANT_ROLE_ABLATION,
+                None,
+            )
+            .expect_err("unparented ablation refused");
+        assert!(matches!(error, ExperimentationError::AblationWithoutParent));
+        let ablation = variant_role(
+            &store,
+            &experiment.id,
+            "no gate",
+            Some(&baseline.id),
+            None,
+            VARIANT_ROLE_ABLATION,
+        );
+        assert_eq!(ablation.role, VARIANT_ROLE_ABLATION);
+        assert_eq!(
+            ablation.parent_variant_id.as_deref(),
+            Some(baseline.id.as_str())
+        );
+
+        // Unknown roles are refused.
+        let error = store
+            .register_variant(
+                &experiment.id,
+                &serde_json::json!({"name": "vibe"}),
+                None,
+                "vibe",
+                None,
+            )
+            .expect_err("unknown role refused");
+        assert!(matches!(error, ExperimentationError::UnknownVariantRole(_)));
+
+        // The default path registers a challenger.
+        let challenger = variant(&store, &experiment.id, "challenger", None, None);
+        assert_eq!(challenger.role, VARIANT_ROLE_CHALLENGER);
     }
 }
