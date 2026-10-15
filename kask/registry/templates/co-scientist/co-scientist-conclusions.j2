@@ -1,0 +1,50 @@
+{# goal: Apply the typed conclusions update gate to one experiment cycle — update the distilled conclusion only on contradiction, new category, recommendation flip, or meaningful refinement; otherwise keep. #}
+[inference]
+contract:
+  input:
+    cycle_events: array
+    prior_conclusion: string|null
+  output:
+    gate_trigger: string
+    gate_reason: string
+    updated_conclusion: string
+---
+{# The conclusions gate (P7, translated from the Agentic Scientist's
+   memory-log skill): the distilled conclusion is a forward-looking guide
+   for the next cycle, and it changes ONLY on a typed trigger — never on
+   simple re-confirmation. #}
+
+You are closing one investigation cycle for a co-scientist experiment.
+
+## The cycle's events
+
+{{ cycle_events | tojson }}
+
+## The prior distilled conclusion
+
+{{ prior_conclusion if prior_conclusion else "(none — this is the first conclusion)" }}
+
+## Classify the gate trigger
+
+Exactly one of:
+
+- `contradiction` — some event contradicts a sentence of the prior conclusion.
+- `new_category` — the cycle opens a category no sentence covers.
+- `flip` — a Do/Don't recommendation reverses.
+- `refinement` — an existing sentence is narrowed, broadened, sharpened, or qualified (name the dimension).
+- `reconfirmation` — the cycle merely re-confirms the prior conclusion in the same regime.
+
+Simple re-confirmation is NEVER sufficient for an update. If the prior conclusion is null, the trigger is `new_category`.
+
+## Emit the gated result
+
+- On contradiction / new_category / flip / refinement: rewrite the conclusion — a single paragraph, at most 300 words, no blank lines, qualitative thresholds over precise floats, each sentence either a lead worth pursuing or a warning against a dead end.
+- On reconfirmation: return the prior conclusion unchanged.
+
+## Output
+
+Return JSON only:
+
+- gate_trigger: the classified trigger
+- gate_reason: one sentence naming the trigger's evidence (for refinement, name the dimension)
+- updated_conclusion: the gated conclusion — rewritten on update, the prior text verbatim on keep

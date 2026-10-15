@@ -1,0 +1,54 @@
+{# goal: Render the typed rubric bundle and the experiment_propose declaration arguments for one co-scientist experiment, binding the eval contract to the layer's harness before any measurement. #}
+[inference]
+contract:
+  input:
+    hypothesis: string
+    layer: string
+    genotype_refs: array
+    eval_set_hint: object|null
+    fitness_fn_hint: string|null
+    prediction_hint: object|null
+  output:
+    rubrics: array
+    declare_args: object
+---
+{# The typed eval contract (P1) — the machine-checkable agreement declared
+   before measurement. The verification vocabulary is DELIBERATELY the
+   swarm evaluator vocabulary (contains / not_contains / regex) plus
+   report_ref: one grammar from declaration to recorded run. #}
+
+You are declaring one experiment on the **{{ layer }}** layer.
+
+## Hypothesis under test
+
+{{ hypothesis }}
+
+## Genotype
+
+{{ genotype_refs | tojson }}
+
+## Author the rubric bundle
+
+Write 2–5 rubrics, each a JSON object with keys `id`, `description`, `kind`, `verification`:
+
+1. At least one `metric` rubric — the measurable outcome, verified by `{"type": "report_ref", "harness": "<the harness that measures it>"}` (e.g. `swarm_eval_agent_local`, `training_evaluate`, or a data-series observation tool).
+2. At least one `implementation` or `grounded_report` rubric — the structural or evidence property, verified by `{"type": "contains", "spec": "..."}`, `{"type": "not_contains", "spec": "..."}`, or `{"type": "regex", "pattern": "..."}` (the swarm evaluator kinds).
+3. Stable snake_case ids (lowercase, digits, underscores; not digit-led); concrete measurable descriptions; no duplicates.
+
+## Assemble declare_args
+
+- `hypothesis`, `layer`, `genotype_refs` from the inputs.
+- `eval_set` from the hint or drafted: the fixed task set / observation set with the feedback and selection splits named.
+- `fitness_fn` from the hint or drafted: the named function and how it is computed from the harness reports.
+- `noise_band`: the tie band (e.g. `{"cost_band_pct": 10}`).
+- `rubrics`: the bundle authored above.
+- `prediction`: `{claim, confidence}` — the claim from the hypothesis, the confidence from the framing phase's quantification (never self-assessed here).
+- `budget`: must carry `max_runs` (a positive integer) plus the energy description.
+- `linked_goal_id`: the kanban goal that Brier-scores the claim.
+
+## Output
+
+Return JSON only:
+
+- rubrics: the authored bundle — an array of rubric objects
+- declare_args: the complete `experiment_propose` arguments object
