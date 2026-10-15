@@ -87,8 +87,32 @@ impl ExperimentationHealthSource for BridgeExperimentationHealthSource {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hkask_mcp_experimentation::types::Prediction;
+    use hkask_mcp_experimentation::types::{
+        Prediction, RUBRIC_KIND_IMPLEMENTATION, RUBRIC_KIND_METRIC, Rubric, RubricVerification,
+        VARIANT_ROLE_BASELINE,
+    };
     use hkask_storage::database::sqlite::SqliteDriver;
+
+    fn rubrics() -> Vec<Rubric> {
+        vec![
+            Rubric {
+                id: "pass_rate_threshold".to_string(),
+                description: "evaluator pass rate on the fixed set reaches 0.8".to_string(),
+                kind: RUBRIC_KIND_METRIC.to_string(),
+                verification: RubricVerification::ReportRef {
+                    harness: "swarm_eval_agent_local".to_string(),
+                },
+            },
+            Rubric {
+                id: "uses_lisp_gate".to_string(),
+                description: "the skill routes its gate through lisp_eval".to_string(),
+                kind: RUBRIC_KIND_IMPLEMENTATION.to_string(),
+                verification: RubricVerification::Contains {
+                    spec: "lisp_eval".to_string(),
+                },
+            },
+        ]
+    }
 
     /// §P8.9 step 1 through the bridge: a running experiment whose whole
     /// declared budget is recorded with no verdict is stuck; a fresh
@@ -105,6 +129,7 @@ mod tests {
                 &serde_json::json!({"task_set": "fixed"}),
                 "pass rate",
                 &serde_json::json!({"cost_band_pct": 10}),
+                &rubrics(),
                 &Prediction {
                     claim: "variant B wins".to_string(),
                     confidence: 0.5,
@@ -115,11 +140,13 @@ mod tests {
                 None,
             )
             .expect("propose");
+        // The baseline measures pre-seal (P2) — 9 runs at the ceiling.
         let variant = store
             .register_variant(
                 &experiment.id,
                 &serde_json::json!({"name": "baseline"}),
                 None,
+                VARIANT_ROLE_BASELINE,
                 None,
             )
             .expect("variant");
@@ -130,6 +157,7 @@ mod tests {
                 &["harness report".to_string()],
                 9,
                 &serde_json::json!({"pass_rate": 0.5}),
+                None,
             )
             .expect("fitness at the ceiling");
 

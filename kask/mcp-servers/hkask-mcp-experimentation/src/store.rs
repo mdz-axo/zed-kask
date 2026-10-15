@@ -46,11 +46,13 @@ fn optional_text(row: &DbRow, idx: usize) -> Option<String> {
     row.get_str(idx).ok().map(str::to_string)
 }
 
-/// Read an optional INTEGER column (NULL or missing value → None).
-fn optional_int(row: &DbRow, idx: usize) -> Option<u64> {
-    row.get_int(idx)
-        .ok()
-        .and_then(|value| u64::try_from(value).ok())
+/// Read a required INTEGER column as u64 — a negative value is impossible
+/// by construction and surfaces as a serialization error, never silent.
+fn required_int(row: &DbRow, idx: usize) -> Result<u64, ExperimentationError> {
+    let value = row.get_int(idx).map_err(ExperimentationError::from)?;
+    u64::try_from(value).map_err(|_| {
+        ExperimentationError::Serialization(format!("negative integer at column {idx}"))
+    })
 }
 
 fn experiment_from_row(row: &DbRow) -> Result<ExperimentRecord, ExperimentationError> {
@@ -64,14 +66,9 @@ fn experiment_from_row(row: &DbRow) -> Result<ExperimentRecord, ExperimentationE
         noise_band: row.get_json(6)?,
         prediction: row.get_json(7)?,
         budget: row.get_json(8)?,
-        max_runs: optional_int(row, 11),
+        max_runs: required_int(row, 11)?,
         linked_goal_id: optional_text(row, 12),
-        rubrics: match optional_text(row, 13) {
-            Some(text) => serde_json::from_str(&text).map_err(|error| {
-                ExperimentationError::Serialization(format!("rubrics column: {error}"))
-            })?,
-            None => Vec::new(),
-        },
+        rubrics: row.get_json(13)?,
         status: row.get_str(9)?.to_string(),
         created_at: row.get_str(10)?.to_string(),
     })
@@ -84,7 +81,7 @@ fn variant_from_row(row: &DbRow) -> Result<VariantRecord, ExperimentationError> 
         genotype_config: row.get_json(2)?,
         parent_variant_id: optional_text(row, 3),
         created_at: row.get_str(4)?.to_string(),
-        role: optional_text(row, 5).unwrap_or_default(),
+        role: row.get_str(5)?.to_string(),
     })
 }
 
@@ -162,8 +159,9 @@ impl ExperimentationStore {
                  noise_band TEXT NOT NULL, \
                  prediction TEXT NOT NULL, \
                  budget TEXT NOT NULL, \
-                 max_runs INTEGER, \
+                 max_runs INTEGER NOT NULL, \
                  linked_goal_id TEXT, \
+                 rubrics TEXT NOT NULL, \
                  status TEXT NOT NULL, \
                  created_at TEXT NOT NULL \
              ); \
@@ -173,6 +171,7 @@ impl ExperimentationStore {
                  variant_key TEXT, \
                  genotype_config TEXT NOT NULL, \
                  parent_variant_id TEXT, \
+                 role TEXT NOT NULL, \
                  created_at TEXT NOT NULL, \
                  UNIQUE (experiment_id, variant_key) \
              ); \
@@ -182,7 +181,8 @@ impl ExperimentationStore {
                  variant_id TEXT NOT NULL, \
                  runs TEXT NOT NULL, \
                  scores TEXT NOT NULL, \
-                 run_count INTEGER NOT NULL DEFAULT 0, \
+                 run_count INTEGER NOT NULL, \
+                 seal_id TEXT, \
                  created_at TEXT NOT NULL \
              ); \
              CREATE TABLE IF NOT EXISTS selection_records (\
@@ -217,53 +217,12 @@ impl ExperimentationStore {
              CREATE INDEX IF NOT EXISTS fitness_by_variant ON fitness_records(variant_id); \
              CREATE INDEX IF NOT EXISTS selection_by_experiment ON selection_records(experiment_id)",
         )?;
-        // Additive migrations for pre-§P8.9 databases (§P8.7-Q5: no
-        // compatibility surface — these columns are the record's own
-        // evolution). Existing rows keep NULL `max_runs` (declared before
-        // the rule; all such experiments are resolved, so the budget check
-        // never applies to them) and run_count 0.
-        let has_column = |table: &str, column: &str| -> Result<bool, DbError> {
-            let rows = driver.query(&format!("PRAGMA table_info({table})"), &[])?;
-            Ok(rows
-                .iter()
-                .any(|row| row.get_str(1).map(|name| name == column).unwrap_or(false)))
-        };
-        for (table, column, definition) in [
-            (
-                "experiments",
-                "max_runs",
-                "ALTER TABLE experiments ADD COLUMN max_runs INTEGER",
-            ),
-            (
-                "experiments",
-                "linked_goal_id",
-                "ALTER TABLE experiments ADD COLUMN linked_goal_id TEXT",
-            ),
-            (
-                "experiments",
-                "rubrics",
-                "ALTER TABLE experiments ADD COLUMN rubrics TEXT",
-            ),
-            (
-                "variants",
-                "role",
-                "ALTER TABLE variants ADD COLUMN role TEXT",
-            ),
-            (
-                "fitness_records",
-                "seal_id",
-                "ALTER TABLE fitness_records ADD COLUMN seal_id TEXT",
-            ),
-            (
-                "fitness_records",
-                "run_count",
-                "ALTER TABLE fitness_records ADD COLUMN run_count INTEGER NOT NULL DEFAULT 0",
-            ),
-        ] {
-            if !has_column(table, column)? {
-                driver.execute(definition, &[])?;
-            }
-        }
+        // Full schema at creation — there is no migration surface: the
+        // pre-contract accommodations (nullable max_runs, roleless
+        // variants, rubric-less declarations, the ALTER machinery) were
+        // removed 2026-10-15 under the operator's no-backward-compatibility
+        // ruling (§P8.7-Q5), so every database is created by this batch
+        // alone.
         Ok(Self { driver })
     }
 
@@ -527,9 +486,6 @@ impl ExperimentationStore {
     /// referenced reports cover; the store sums recorded run counts against
     /// the experiment's declared `max_runs` ceiling and refuses the record
     /// with a typed `BudgetExhausted` error — never a silent overshoot.
-    /// Pre-rule rows carry NULL `max_runs`; every such experiment is already
-    /// resolved (the `ExperimentResolved` check above fires first), so the
-    /// no-ceiling branch is unreachable in practice and documented here.
     pub fn record_fitness(
         &self,
         experiment_id: &str,
@@ -588,9 +544,7 @@ impl ExperimentationStore {
         };
         let id = format!("fit_{}", uuid::Uuid::new_v4().simple());
         let created_at = chrono::Utc::now().to_rfc3339();
-        let ceiling = experiment.max_runs.ok_or_else(|| {
-            ExperimentationError::BudgetExhausted(experiment_id.to_string(), run_count, 0)
-        })?;
+        let ceiling = experiment.max_runs;
         // Single-statement atomicity (the crate's INSERT OR IGNORE shape):
         // the budget condition and the write are ONE statement, so two
         // concurrent fitness_record calls cannot both pass the check —
@@ -839,9 +793,7 @@ impl ExperimentationStore {
         }
         let id = format!("fev_{}", uuid::Uuid::new_v4().simple());
         let created_at = chrono::Utc::now().to_rfc3339();
-        let ceiling = experiment.max_runs.ok_or_else(|| {
-            ExperimentationError::BudgetExhausted(experiment_id.to_string(), run_count, 0)
-        })?;
+        let ceiling = experiment.max_runs;
         let params = [
             DbValue::Text(id.clone()),
             DbValue::Text(experiment_id.to_string()),
@@ -1090,7 +1042,7 @@ impl ExperimentationStore {
                     layer: row.get_str(1)?.to_string(),
                     status: row.get_str(2)?.to_string(),
                     created_at: row.get_str(3)?.to_string(),
-                    max_runs: optional_int(row, 4),
+                    max_runs: required_int(row, 4)?,
                     prediction_confidence: Some(prediction.confidence),
                     recorded_runs: row.get_int(6).unwrap_or(0).max(0) as u64,
                     verdict: optional_text(row, 7),
@@ -1513,7 +1465,7 @@ mod tests {
         let row = &snapshot.experiments[0];
         assert_eq!(row.id, experiment.id);
         assert_eq!(row.status, STATUS_RESOLVED);
-        assert_eq!(row.max_runs, Some(18));
+        assert_eq!(row.max_runs, 18);
         assert_eq!(row.recorded_runs, 9);
         assert_eq!(row.verdict.as_deref(), Some(VERDICT_SELECTED));
         // selected at confidence 0.7 → Brier (0.7-1)^2 = 0.09
@@ -1537,7 +1489,7 @@ mod tests {
                     layer: "skill".to_string(),
                     status: STATUS_RUNNING.to_string(),
                     created_at: old,
-                    max_runs: Some(18),
+                    max_runs: 18,
                     recorded_runs: 3,
                     prediction_confidence: Some(0.5),
                     verdict: None,
@@ -1550,7 +1502,7 @@ mod tests {
                     layer: "skill".to_string(),
                     status: STATUS_RUNNING.to_string(),
                     created_at: fresh.clone(),
-                    max_runs: Some(9),
+                    max_runs: 9,
                     recorded_runs: 9,
                     prediction_confidence: Some(0.5),
                     verdict: None,
@@ -1562,7 +1514,7 @@ mod tests {
                     layer: "skill".to_string(),
                     status: STATUS_RUNNING.to_string(),
                     created_at: fresh.clone(),
-                    max_runs: Some(18),
+                    max_runs: 18,
                     recorded_runs: 3,
                     prediction_confidence: Some(0.5),
                     verdict: None,
@@ -1574,7 +1526,7 @@ mod tests {
                     layer: "skill".to_string(),
                     status: STATUS_RESOLVED.to_string(),
                     created_at: fresh.clone(),
-                    max_runs: Some(18),
+                    max_runs: 18,
                     recorded_runs: 18,
                     prediction_confidence: Some(0.5),
                     verdict: Some(VERDICT_REJECTED.to_string()),
@@ -1586,7 +1538,7 @@ mod tests {
                     layer: "skill".to_string(),
                     status: STATUS_RESOLVED.to_string(),
                     created_at: fresh.clone(),
-                    max_runs: Some(9),
+                    max_runs: 9,
                     recorded_runs: 9,
                     prediction_confidence: Some(0.9),
                     verdict: Some(VERDICT_REJECTED.to_string()),
@@ -1600,7 +1552,7 @@ mod tests {
                     layer: "skill".to_string(),
                     status: STATUS_RESOLVED.to_string(),
                     created_at: fresh,
-                    max_runs: Some(18),
+                    max_runs: 18,
                     recorded_runs: 18,
                     prediction_confidence: Some(0.5),
                     verdict: Some(VERDICT_REJECTED.to_string()),
@@ -1684,53 +1636,6 @@ mod tests {
                 .status,
             STATUS_RESOLVED
         );
-    }
-
-    #[test]
-    fn migration_adds_columns_to_pre_rule_database() {
-        // A pre-§P8.9 experiments table (no max_runs, no linked_goal_id)
-        // with one resolved row — the production registry's shape before
-        // this change. with_driver must add the columns and keep the row.
-        let driver = SqliteDriver::in_memory_driver();
-        driver
-            .execute_batch(
-                "CREATE TABLE experiments (\
-                     id TEXT PRIMARY KEY, \
-                     experiment_key TEXT UNIQUE, \
-                     hypothesis TEXT NOT NULL, \
-                     layer TEXT NOT NULL, \
-                     genotype_refs TEXT NOT NULL, \
-                     eval_set TEXT NOT NULL, \
-                     fitness_fn TEXT NOT NULL, \
-                     noise_band TEXT NOT NULL, \
-                     prediction TEXT NOT NULL, \
-                     budget TEXT NOT NULL, \
-                     status TEXT NOT NULL, \
-                     created_at TEXT NOT NULL\
-                 );",
-            )
-            .expect("old schema");
-        driver
-            .execute(
-                "INSERT INTO experiments \
-                 (id, hypothesis, layer, genotype_refs, eval_set, fitness_fn, noise_band, \
-                  prediction, budget, status, created_at) \
-                 VALUES ('exp_old', 'h', 'skill', '[]', '{}', 'f', '{}', \
-                  '{\"claim\":\"c\",\"confidence\":0.5}', '{}', 'resolved', \
-                  '2026-09-30T00:00:00+00:00')",
-                &[],
-            )
-            .expect("old row");
-        let store = ExperimentationStore::with_driver(driver).expect("migrated store");
-        let record = store.experiment_by_id("exp_old").expect("old row readable");
-        assert_eq!(record.status, STATUS_RESOLVED);
-        assert_eq!(record.max_runs, None);
-        assert_eq!(record.linked_goal_id, None);
-        assert!(record.rubrics.is_empty());
-        let snapshot = store.health_snapshot().expect("snapshot");
-        assert_eq!(snapshot.experiments.len(), 1);
-        assert_eq!(snapshot.experiments[0].recorded_runs, 0);
-        assert_eq!(snapshot.experiments[0].verdict, None);
     }
 
     #[test]

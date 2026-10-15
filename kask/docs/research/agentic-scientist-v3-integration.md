@@ -423,10 +423,16 @@ through `map_experimentation_error` (the per-variant contract, `types.rs:209`). 
 `mod.rs`. Arbitrary-JSON payloads (`genotype_config`, rubric bodies) stay
 `AnyJsonValue`-shaped at the boundary. `McpToolError` contract: a missing
 experiment/variant/seal id classifies `not_found` naming the thing; closed-set fields
-(`role`, `RubricKind`) classify `invalid_argument` naming the valid values. Migrations
-are additive PRAGMA-checked ALTERs in the D87 shape. New identity-minting tools
-(`experiment_seal`, `final_evaluation_record`) take optional caller keys for replay
-convergence (the kata-kanban/D86 shape). `final_evaluation_record` joins the `max_runs`
+(`role`, `RubricKind`) classify `invalid_argument` naming the valid values. The schema
+is declared in full at creation — no migration surface (the pre-contract
+accommodations were removed 2026-10-15 under the operator's
+no-backward-compatibility ruling; §P8.7-Q5). Replay convergence:
+`experiment_seal` converges structurally (UNIQUE(experiment_id) plus args
+equality — identical retries return the existing seal);
+`final_evaluation_record` is replay-safe through its own disjointness gate
+(a retried record whose predecessor landed is refused on the overlap, naming
+it — the refusal is the convergence signal; the caller re-reads
+`lineage_read`). `final_evaluation_record` joins the `max_runs`
 budget enforcement. D-seam: the work extends D86 in place — the DIVERGENCE.md entry
 gains the new tools in the same change; no upstream edits are required, so no new
 D-seam. No new crate (the server exists), so the `[lib]` path rule does not trigger.
@@ -584,9 +590,15 @@ receipt: `decision = "proceed_to_refactor"` → `["proceed_to_refactor", "ra-aud
 Nothing is deleted by the proposal itself (no code changes yet). When implemented, the
 additions supersede: the free-form `fitness_fn`-only declaration path for new
 experiments (P1 replaces it for all new declarations — no dual path, per §P8.7-Q5), the
-skill-level headroom prose in `experiment-protocol.j2` step 3 (the seal enforces it; the
+the skill-level headroom prose in `experiment-protocol.j2` step 3 (the seal enforces it; the
 template text is updated in the same change), and the ad-hoc baseline/ablation
-descriptions in consumer skill text (P4 makes them registry fields). Net surface: +2
+descriptions in consumer skill text (P4 makes them registry fields). The pre-contract
+accommodation surface in the server (nullable `max_runs`, roleless variants,
+rubric-less declarations, the migration machinery) and the pre-contract report
+artifacts on disk (`zk-data/evolution-mcp/`, `zk-data/experimentation-mcp/reports/` —
+the E-cycle genotype cards) were deleted 2026-10-15 per the operator's ruling that
+the no-backward-compatibility posture applies to data as well as code; no
+pre-contract registry rows ever persisted in a database. Net surface: +2
 tools, +2 schema extensions, +1 layer value, +1 skill with 3 templates, +1 reference
 doc; the replaced prose shrinks correspondingly.
 

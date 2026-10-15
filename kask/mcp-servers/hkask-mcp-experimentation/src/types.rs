@@ -147,16 +147,14 @@ pub struct ExperimentRecord {
     pub budget: serde_json::Value,
     /// The machine-readable run ceiling parsed from `budget.max_runs` at
     /// declaration (§P8.9 step 2, D-1 enforce) — the Layer-A set point the
-    /// store enforces at `fitness_record`. NULL only on pre-rule records
-    /// (all resolved; the branch is unreachable for new experiments).
-    pub max_runs: Option<u64>,
+    /// store enforces at `fitness_record` and `final_evaluation_record`.
+    pub max_runs: u64,
     /// The linked kanban goal (§P8.9 step 5) — the goal loop Brier-scores
     /// the pre-registered claim against the measured outcome; this field is
     /// the explicit registry ↔ goal-loop join.
     pub linked_goal_id: Option<String>,
     /// The typed rubric bundle (P1, the agentic-scientist-v3 integration) —
     /// the machine-checkable eval contract declared before measurement.
-    /// Empty on pre-rule rows (all resolved; the seal refuses them).
     pub rubrics: Vec<Rubric>,
     pub status: String,
     pub created_at: String,
@@ -185,7 +183,7 @@ pub struct VariantRecord {
     pub experiment_id: String,
     pub genotype_config: serde_json::Value,
     pub parent_variant_id: Option<String>,
-    /// baseline | challenger | ablation (P4). Empty on pre-rule rows.
+    /// baseline | challenger | ablation (P4).
     pub role: String,
     pub created_at: String,
 }
@@ -268,7 +266,7 @@ pub struct ExperimentHealth {
     pub layer: String,
     pub status: String,
     pub created_at: String,
-    pub max_runs: Option<u64>,
+    pub max_runs: u64,
     pub recorded_runs: u64,
     pub prediction_confidence: Option<f64>,
     pub verdict: Option<String>,
@@ -296,9 +294,7 @@ impl ExperimentationHealthSnapshot {
                 let stale = chrono::DateTime::parse_from_rfc3339(&experiment.created_at)
                     .map(|stamp| stamp.with_timezone(&chrono::Utc) < cutoff)
                     .unwrap_or(true);
-                let spent = experiment
-                    .max_runs
-                    .is_some_and(|ceiling| experiment.recorded_runs >= ceiling);
+                let spent = experiment.recorded_runs >= experiment.max_runs;
                 stale || spent
             })
             .map(|experiment| experiment.id.clone())
