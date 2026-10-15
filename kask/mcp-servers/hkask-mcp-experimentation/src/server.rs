@@ -90,7 +90,8 @@ pub struct ExperimentProposeRequest {
     /// The falsifiable hypothesis the experiment tests.
     pub hypothesis: String,
     /// The artifact layer: skill, agent_card, prompt_template, tool_schema,
-    /// regulation_scalar, or lora_adapter.
+    /// regulation_scalar, lora_adapter, or scientific_hypothesis (the
+    /// general lab notebook — D2, operator ruling 2026-10-15).
     pub layer: String,
     /// References to the genotype artifacts — for the composite skill
     /// genotype, the SKILL.md and its template paths together (§P8.7-Q2).
@@ -198,7 +199,7 @@ pub struct PopulationQueryRequest {
 #[tool_router(router = experimentation_router, vis = "pub")]
 impl ExperimentationServer {
     #[tool(
-        description = "Register an experiment (protocol step 1, Declare): hypothesis, artifact layer (skill | agent_card | prompt_template | tool_schema | regulation_scalar | lora_adapter), genotype refs, eval set, fitness function, noise band, a typed rubric bundle (the machine-checkable eval contract: non-empty, at least one metric rubric and one implementation or grounded_report rubric, stable snake_case ids, verification in the swarm evaluator vocabulary — contains / not_contains / regex / report_ref), pre-registered prediction with confidence in [0,1], and an energy budget that MUST carry max_runs (a positive integer the server enforces at fitness_record — recording past the ceiling is a typed budget_exhausted refusal, §P8.9 step 2). Optional linked_goal_id joins the experiment to the kanban goal that Brier-scores its claim. Returns the experiment record with status proposed. Optional experiment_key converges retried calls onto the existing record instead of duplicating it."
+        description = "Register an experiment (protocol step 1, Declare): hypothesis, artifact layer (skill | agent_card | prompt_template | tool_schema | regulation_scalar | lora_adapter | scientific_hypothesis), genotype refs, eval set, fitness function, noise band, a typed rubric bundle (the machine-checkable eval contract: non-empty, at least one metric rubric and one implementation or grounded_report rubric, stable snake_case ids, verification in the swarm evaluator vocabulary — contains / not_contains / regex / report_ref), pre-registered prediction with confidence in [0,1], and an energy budget that MUST carry max_runs (a positive integer the server enforces at fitness_record — recording past the ceiling is a typed budget_exhausted refusal, §P8.9 step 2). Optional linked_goal_id joins the experiment to the kanban goal that Brier-scores its claim. Returns the experiment record with status proposed. Optional experiment_key converges retried calls onto the existing record instead of duplicating it."
     )]
     pub async fn experiment_propose(
         &self,

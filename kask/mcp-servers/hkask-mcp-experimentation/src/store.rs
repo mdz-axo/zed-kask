@@ -1524,4 +1524,19 @@ mod tests {
         let challenger = variant(&store, &experiment.id, "challenger", None, None);
         assert_eq!(challenger.role, VARIANT_ROLE_CHALLENGER);
     }
+
+    #[test]
+    fn scientific_hypothesis_layer_round_trips() {
+        // D2 (operator ruling 2026-10-15): the registry is the general lab
+        // notebook — a scientific-hypothesis experiment declares and
+        // queries like any other layer.
+        let store = store();
+        let experiment = propose(&store, "scientific_hypothesis", None);
+        assert_eq!(experiment.layer, "scientific_hypothesis");
+        let hypotheses = store
+            .population(Some("scientific_hypothesis"), None, None, 50)
+            .expect("population");
+        assert_eq!(hypotheses.len(), 1);
+        assert_eq!(hypotheses[0].id, experiment.id);
+    }
 }
