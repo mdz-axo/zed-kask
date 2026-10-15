@@ -8,8 +8,8 @@
 //! lifecycle — the in-process rehearsal of the §P8.5 run-one-through.
 
 use hkask_mcp_experimentation::server::{
-    ExperimentProposeRequest, ExperimentationServer, FitnessRecordRequest, LineageReadRequest,
-    PopulationQueryRequest, SelectionRecordRequest, VariantRegisterRequest,
+    ExperimentProposeRequest, ExperimentSealRequest, ExperimentationServer, FitnessRecordRequest,
+    LineageReadRequest, PopulationQueryRequest, SelectionRecordRequest, VariantRegisterRequest,
 };
 use hkask_mcp_experimentation::store::ExperimentationStore;
 use hkask_mcp_experimentation::types::{
@@ -85,12 +85,24 @@ async fn register_variant(
     name: &str,
     parent: Option<&str>,
 ) -> serde_json::Value {
+    register_variant_with_role(server, experiment_id, name, parent, None).await
+}
+
+/// Register a variant with an explicit role (P4) — the default helper
+/// above registers challengers, matching the server's default.
+async fn register_variant_with_role(
+    server: &ExperimentationServer,
+    experiment_id: &str,
+    name: &str,
+    parent: Option<&str>,
+    role: Option<&str>,
+) -> serde_json::Value {
     let response = server
         .variant_register(Parameters(VariantRegisterRequest {
             experiment_id: experiment_id.to_string(),
             genotype_config: AnyJsonValue(serde_json::json!({"name": name})),
             parent_variant_id: parent.map(str::to_string),
-            role: None,
+            role: role.map(str::to_string),
             variant_key: None,
         }))
         .await
@@ -132,7 +144,9 @@ async fn full_protocol_runs_through_the_tool_seam() {
         .to_string();
 
     // Vary — a baseline, then a challenger with lineage.
-    let baseline = register_variant(&server, &experiment_id, "baseline", None).await;
+    let baseline =
+        register_variant_with_role(&server, &experiment_id, "baseline", None, Some("baseline"))
+            .await;
     assert_eq!(baseline["status"], "registered");
     let baseline_id = baseline["variant"]["id"].as_str().expect("id").to_string();
     let challenger =
@@ -142,7 +156,38 @@ async fn full_protocol_runs_through_the_tool_seam() {
         .expect("id")
         .to_string();
 
-    // Test — recorded report refs only.
+    // Test — the baseline measures, the seal freezes the contract (P2),
+    // then the challenger's recorded report refs cite the seal.
+    server
+        .fitness_record(Parameters(FitnessRecordRequest {
+            experiment_id: experiment_id.clone(),
+            variant_id: baseline_id.clone(),
+            runs: vec!["baseline harness report".to_string()],
+            run_count: 3,
+            scores: AnyJsonValue(serde_json::json!({"pass_rate": 0.6})),
+            seal_id: None,
+        }))
+        .await
+        .expect("baseline fitness_record succeeds");
+    let sealed = server
+        .experiment_seal(Parameters(ExperimentSealRequest {
+            experiment_id: experiment_id.clone(),
+            baseline_variant_id: baseline_id.clone(),
+            baseline_pass_rate: 0.6,
+        }))
+        .await
+        .expect("experiment_seal succeeds");
+    let sealed = envelope(&sealed);
+    assert_eq!(sealed["status"], "sealed");
+    let seal_id = sealed["seal"]["id"].as_str().expect("seal id").to_string();
+    assert_eq!(
+        sealed["seal"]["fingerprint"]
+            .as_str()
+            .expect("fingerprint")
+            .len(),
+        64
+    );
+
     let fitness = server
         .fitness_record(Parameters(FitnessRecordRequest {
             experiment_id: experiment_id.clone(),
@@ -150,12 +195,14 @@ async fn full_protocol_runs_through_the_tool_seam() {
             runs: vec!["swarm_eval_agent_local run 42".to_string()],
             run_count: 3,
             scores: AnyJsonValue(serde_json::json!({"pass_rate": 0.8, "total_tokens": 1200})),
+            seal_id: Some(seal_id.clone()),
         }))
         .await
         .expect("fitness_record succeeds");
     let fitness = envelope(&fitness);
     assert_eq!(fitness["fitness"]["variant_id"], challenger_id.as_str());
     assert_eq!(fitness["fitness"]["run_count"], 3);
+    assert_eq!(fitness["fitness"]["seal_id"], seal_id.as_str());
     assert_eq!(
         fitness["fitness"]["runs"][0],
         "swarm_eval_agent_local run 42"
@@ -317,6 +364,125 @@ async fn variant_roles_are_enforced_through_the_tool_seam() {
     assert_eq!(challenger["variant"]["role"], "challenger");
 }
 
+/// P2: the seal through the tool seam — the baseline measures, the seal
+/// freezes the contract (fingerprint + headroom attestation), post-seal
+/// challenger fitness must cite the seal, and a saturated baseline is
+/// the no-headroom void condition.
+#[tokio::test]
+async fn experiment_seal_freezes_the_contract_through_the_tool_seam() {
+    let server = make_server();
+    let proposed = propose(&server, "skill").await;
+    let experiment_id = proposed["experiment"]["id"]
+        .as_str()
+        .expect("id")
+        .to_string();
+
+    // Baseline with role + measured fitness.
+    let baseline =
+        register_variant_with_role(&server, &experiment_id, "baseline", None, Some("baseline"))
+            .await;
+    let baseline_id = baseline["variant"]["id"].as_str().expect("id").to_string();
+    server
+        .fitness_record(Parameters(FitnessRecordRequest {
+            experiment_id: experiment_id.clone(),
+            variant_id: baseline_id.clone(),
+            runs: vec!["baseline harness report".to_string()],
+            run_count: 3,
+            scores: AnyJsonValue(serde_json::json!({"pass_rate": 0.6})),
+            seal_id: None,
+        }))
+        .await
+        .expect("baseline fitness");
+
+    // Seal.
+    let sealed = server
+        .experiment_seal(Parameters(ExperimentSealRequest {
+            experiment_id: experiment_id.clone(),
+            baseline_variant_id: baseline_id.clone(),
+            baseline_pass_rate: 0.6,
+        }))
+        .await
+        .expect("seal succeeds");
+    let sealed = envelope(&sealed);
+    assert_eq!(sealed["status"], "sealed");
+    assert_eq!(sealed["seal"]["baseline_pass_rate"], 0.6);
+    let seal_id = sealed["seal"]["id"].as_str().expect("seal id").to_string();
+
+    // Post-seal challenger fitness cites the seal; without the citation,
+    // a typed refusal.
+    let challenger = register_variant(&server, &experiment_id, "challenger", None).await;
+    let challenger_id = challenger["variant"]["id"]
+        .as_str()
+        .expect("id")
+        .to_string();
+    let error = server
+        .fitness_record(Parameters(FitnessRecordRequest {
+            experiment_id: experiment_id.clone(),
+            variant_id: challenger_id.clone(),
+            runs: vec!["r".to_string()],
+            run_count: 1,
+            scores: AnyJsonValue(serde_json::json!({})),
+            seal_id: None,
+        }))
+        .await
+        .expect_err("missing citation refused");
+    assert!(error.to_string().contains("seal_id"), "{error}");
+    let fitness = server
+        .fitness_record(Parameters(FitnessRecordRequest {
+            experiment_id: experiment_id.clone(),
+            variant_id: challenger_id,
+            runs: vec!["challenger harness report".to_string()],
+            run_count: 3,
+            scores: AnyJsonValue(serde_json::json!({"pass_rate": 0.8})),
+            seal_id: Some(seal_id.clone()),
+        }))
+        .await
+        .expect("cited fitness succeeds");
+    let fitness = envelope(&fitness);
+    assert_eq!(fitness["fitness"]["seal_id"], seal_id.as_str());
+
+    // A second, different seal is refused.
+    let error = server
+        .experiment_seal(Parameters(ExperimentSealRequest {
+            experiment_id: experiment_id.clone(),
+            baseline_variant_id: baseline_id.clone(),
+            baseline_pass_rate: 0.7,
+        }))
+        .await
+        .expect_err("different seal refused");
+    assert!(error.to_string().contains("already sealed"), "{error}");
+
+    // A saturated baseline is the no-headroom void condition.
+    let fresh = propose(&server, "skill").await;
+    let fresh_id = fresh["experiment"]["id"].as_str().expect("id").to_string();
+    let fresh_baseline =
+        register_variant_with_role(&server, &fresh_id, "baseline", None, Some("baseline")).await;
+    let fresh_baseline_id = fresh_baseline["variant"]["id"]
+        .as_str()
+        .expect("id")
+        .to_string();
+    server
+        .fitness_record(Parameters(FitnessRecordRequest {
+            experiment_id: fresh_id.clone(),
+            variant_id: fresh_baseline_id.clone(),
+            runs: vec!["saturated baseline".to_string()],
+            run_count: 1,
+            scores: AnyJsonValue(serde_json::json!({"pass_rate": 1.0})),
+            seal_id: None,
+        }))
+        .await
+        .expect("saturated baseline fitness");
+    let error = server
+        .experiment_seal(Parameters(ExperimentSealRequest {
+            experiment_id: fresh_id,
+            baseline_variant_id: fresh_baseline_id,
+            baseline_pass_rate: 1.0,
+        }))
+        .await
+        .expect_err("saturation refused");
+    assert!(error.to_string().contains("headroom"), "{error}");
+}
+
 /// Invalid input is rejected with errors that name the offending field —
 /// the error-specificity half of the contract (an error that does not teach
 /// produces identical retries).
@@ -363,6 +529,7 @@ async fn invalid_inputs_are_rejected_with_named_errors() {
             runs: Vec::new(),
             run_count: 1,
             scores: AnyJsonValue(serde_json::json!({})),
+            seal_id: None,
         }))
         .await
         .expect_err("empty runs rejected");
@@ -378,6 +545,7 @@ async fn invalid_inputs_are_rejected_with_named_errors() {
             runs: vec!["r".to_string()],
             run_count: 0,
             scores: AnyJsonValue(serde_json::json!({})),
+            seal_id: None,
         }))
         .await
         .expect_err("zero run_count rejected");
@@ -518,7 +686,9 @@ async fn budget_max_runs_is_enforced_through_the_tool_seam() {
         .expect("id")
         .to_string();
     assert_eq!(proposed["experiment"]["max_runs"], 18);
-    let variant = register_variant(&server, &experiment_id, "baseline", None).await;
+    let variant =
+        register_variant_with_role(&server, &experiment_id, "baseline", None, Some("baseline"))
+            .await;
     let variant_id = variant["variant"]["id"].as_str().expect("id").to_string();
     for _ in 0..2 {
         server
@@ -528,6 +698,7 @@ async fn budget_max_runs_is_enforced_through_the_tool_seam() {
                 runs: vec!["harness report".to_string()],
                 run_count: 9,
                 scores: AnyJsonValue(serde_json::json!({})),
+                seal_id: None,
             }))
             .await
             .expect("records up to the ceiling are allowed");
@@ -539,6 +710,7 @@ async fn budget_max_runs_is_enforced_through_the_tool_seam() {
             runs: vec!["one run too many".to_string()],
             run_count: 1,
             scores: AnyJsonValue(serde_json::json!({})),
+            seal_id: None,
         }))
         .await
         .expect_err("over-ceiling record refused");

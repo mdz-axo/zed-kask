@@ -203,6 +203,9 @@ pub struct FitnessRecord {
     /// caller states; the store sums these against `max_runs`.
     pub run_count: u64,
     pub scores: serde_json::Value,
+    /// The seal this record cites (P2) — required for post-seal records;
+    /// NULL for the baseline's own pre-seal measurement.
+    pub seal_id: Option<String>,
     pub created_at: String,
 }
 
@@ -215,6 +218,27 @@ pub struct SelectionRecord {
     pub selected_variant_id: Option<String>,
     pub reject_reasons: Vec<String>,
     pub algedonic_reference: Option<String>,
+    pub created_at: String,
+}
+
+/// A sealed eval contract (P2) — the frozen measurement agreement: the
+/// SHA-256 fingerprint over the declaration's (eval_set, rubrics,
+/// fitness_fn, noise_band), plus the headroom attestation (the baseline
+/// variant, its fitness evidence, and its measured non-saturation).
+#[derive(Debug, Clone, Serialize)]
+pub struct SealRecord {
+    pub id: String,
+    pub experiment_id: String,
+    /// SHA-256 (hex) over the canonical JSON of the sealed contract
+    /// fields — identical declarations seal to identical fingerprints.
+    pub fingerprint: String,
+    /// The baseline variant the seal attests (P4 role).
+    pub baseline_variant_id: String,
+    /// The fitness-record ids that evidence the baseline measurement.
+    pub baseline_fitness_ids: Vec<String>,
+    /// The measured baseline pass rate — validated < 1.0 at seal time
+    /// (the headroom pre-check, §5 Q6).
+    pub baseline_pass_rate: f64,
     pub created_at: String,
 }
 
@@ -389,6 +413,30 @@ pub enum ExperimentationError {
         "an ablation-role variant must name its parent_variant_id — the variant whose component it ablates (P4)"
     )]
     AblationWithoutParent,
+    #[error(
+        "experiment {0} is already sealed by {1} — the eval contract is frozen; re-declaring sealed fields is a new experiment, never an edit (P2)"
+    )]
+    AlreadySealed(String, String),
+    #[error(
+        "experiment {0} has no seal — measure the baseline variant and seal before any challenger work (P2)"
+    )]
+    ExperimentNotSealed(String),
+    #[error(
+        "experiment {0} is sealed by {1} — every post-seal fitness record must cite that seal_id (P2)"
+    )]
+    SealCitationMissing(String, String),
+    #[error(
+        "baseline saturation at pass rate {0}: the eval set cannot discriminate (no headroom) — void the experiment via selection_record with a no-headroom reject reason, redesign the eval set, and re-declare (§5 Q6)"
+    )]
+    NoHeadroom(f64),
+    #[error("the seal's baseline variant {0} must carry the baseline role; got role {1:?} (P2)")]
+    SealBaselineMismatch(String, String),
+    #[error("the baseline variant has no recorded fitness — measure it before sealing (P2)")]
+    SealFitnessMissing,
+    #[error("cited seal_id {0} does not match the experiment's active seal {1} (P2)")]
+    SealMismatch(String, String),
+    #[error("baseline_pass_rate must be in [0, 1], got {0}")]
+    SealPassRateInvalid(f64),
     #[error("database error: {0}")]
     Database(#[from] hkask_storage::database::types::DbError),
     #[error("serialization error: {0}")]

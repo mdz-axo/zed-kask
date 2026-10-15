@@ -67,6 +67,18 @@ pub fn map_experimentation_error(error: ExperimentationError) -> McpToolError {
         ExperimentationError::BudgetExhausted(..) => {
             McpToolError::new(McpErrorKind::FailedPrecondition, error.to_string())
         }
+        ExperimentationError::AlreadySealed(..)
+        | ExperimentationError::ExperimentNotSealed(_)
+        | ExperimentationError::SealCitationMissing(..)
+        | ExperimentationError::NoHeadroom(_)
+        | ExperimentationError::SealFitnessMissing => {
+            McpToolError::new(McpErrorKind::FailedPrecondition, error.to_string())
+        }
+        ExperimentationError::SealBaselineMismatch(..)
+        | ExperimentationError::SealMismatch(..)
+        | ExperimentationError::SealPassRateInvalid(_) => {
+            McpToolError::invalid_argument(error.to_string())
+        }
         ExperimentationError::Database(_) | ExperimentationError::Serialization(_) => {
             McpToolError::internal(error.to_string())
         }
@@ -146,6 +158,20 @@ pub struct VariantRegisterRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct ExperimentSealRequest {
+    pub experiment_id: String,
+    /// The baseline variant the seal attests (must carry the baseline
+    /// role, P4).
+    pub baseline_variant_id: String,
+    /// The measured baseline pass rate from the recorded baseline
+    /// fitness — must be < 1.0 (the headroom pre-check, §5 Q6). A
+    /// saturated baseline (1.0) is a typed no-headroom refusal: void the
+    /// experiment via selection_record with a no-headroom reject reason,
+    /// redesign the eval set, and re-declare.
+    pub baseline_pass_rate: f64,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct FitnessRecordRequest {
     pub experiment_id: String,
     pub variant_id: String,
@@ -160,6 +186,9 @@ pub struct FitnessRecordRequest {
     pub run_count: u64,
     /// Per-objective scores computed from those runs (arbitrary JSON).
     pub scores: AnyJsonValue,
+    /// The seal this record cites (P2) — required once the experiment is
+    /// sealed; NULL only for the baseline's own pre-seal measurement.
+    pub seal_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -305,7 +334,30 @@ impl ExperimentationServer {
     }
 
     #[tool(
-        description = "Record grounded fitness for a variant (protocol step 3, Test): runs are recorded report references ONLY — never simulated; each entry names a real harness or evaluator report (e.g. a swarm_eval_agent_local run) — plus run_count (the number of rollouts those reports cover; the server sums run counts against the experiment's declared budget.max_runs and refuses with a typed budget_exhausted error when the record would exceed the ceiling, §P8.9 step 2) and per-objective scores computed from those runs. Immutable once written. A resolved experiment no longer accepts fitness."
+        description = "Seal the experiment's eval contract (P2 — the headroom pre-check made mechanical): freezes the declaration's (eval_set, rubrics, fitness_fn, noise_band) under a SHA-256 fingerprint and records the headroom attestation — the baseline variant, its recorded fitness evidence, and its measured pass rate (must be < 1.0; saturation is a typed no-headroom refusal that voids via selection_record, §5 Q6). Pre-seal, only the baseline records fitness; post-seal, every fitness record cites the seal. An identical retried seal converges on the existing record; a different attempt is a typed refusal."
+    )]
+    pub async fn experiment_seal(
+        &self,
+        Parameters(ExperimentSealRequest {
+            experiment_id,
+            baseline_variant_id,
+            baseline_pass_rate,
+        }): Parameters<ExperimentSealRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "experiment_seal", async {
+            require_non_empty("experiment_id", &experiment_id)?;
+            require_non_empty("baseline_variant_id", &baseline_variant_id)?;
+            let record = self
+                .store
+                .seal_experiment(&experiment_id, &baseline_variant_id, baseline_pass_rate)
+                .map_err(map_experimentation_error)?;
+            Ok(serde_json::json!({ "status": "sealed", "seal": record }))
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Record grounded fitness for a variant (protocol step 3, Test): runs are recorded report references ONLY — never simulated; each entry names a real harness or evaluator report (e.g. a swarm_eval_agent_local run) — plus run_count (the number of rollouts those reports cover; the server sums run counts against the experiment's declared budget.max_runs ceiling and refuses the record with a typed budget_exhausted error when it would exceed it, §P8.9 step 2) and per-objective scores computed from those runs. P2: pre-seal, only the baseline variant records fitness; post-seal, every record cites the active seal via seal_id. Immutable once written. A resolved experiment no longer accepts fitness."
     )]
     pub async fn fitness_record(
         &self,
@@ -315,6 +367,7 @@ impl ExperimentationServer {
             runs,
             run_count,
             scores,
+            seal_id,
         }): Parameters<FitnessRecordRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "fitness_record", async {
@@ -332,7 +385,14 @@ impl ExperimentationServer {
             }
             let record = self
                 .store
-                .record_fitness(&experiment_id, &variant_id, &runs, run_count, &scores)
+                .record_fitness(
+                    &experiment_id,
+                    &variant_id,
+                    &runs,
+                    run_count,
+                    &scores,
+                    seal_id.as_deref(),
+                )
                 .map_err(map_experimentation_error)?;
             Ok(serde_json::json!({ "status": "recorded", "fitness": record }))
         })

@@ -16,12 +16,13 @@ use std::sync::Arc;
 use hkask_storage::database::driver::DatabaseDriver;
 use hkask_storage::database::types::DbError;
 use hkask_storage::database::value::{DbRow, DbValue};
+use sha2::{Digest, Sha256};
 
 use crate::types::{
     ExperimentHealth, ExperimentRecord, ExperimentationError, ExperimentationHealthSnapshot,
     FitnessRecord, Prediction, Rubric, STATUS_PROPOSED, STATUS_RESOLVED, STATUS_RUNNING,
-    SelectionRecord, VARIANT_ROLE_ABLATION, VARIANT_ROLE_BASELINE, VARIANT_ROLES, VERDICT_REJECTED,
-    VERDICT_SELECTED, VariantRecord,
+    SealRecord, SelectionRecord, VARIANT_ROLE_ABLATION, VARIANT_ROLE_BASELINE, VARIANT_ROLES,
+    VERDICT_REJECTED, VERDICT_SELECTED, VariantRecord,
 };
 
 /// Serialize a column value as canonical JSON text. `?Sized` admits slice
@@ -95,6 +96,7 @@ fn fitness_from_row(row: &DbRow) -> Result<FitnessRecord, ExperimentationError> 
         runs: row.get_json(3)?,
         run_count: row.get_int(5).unwrap_or(0).max(0) as u64,
         scores: row.get_json(4)?,
+        seal_id: optional_text(row, 7),
         created_at: row.get_str(6)?.to_string(),
     })
 }
@@ -107,6 +109,21 @@ fn selection_from_row(row: &DbRow) -> Result<SelectionRecord, ExperimentationErr
         selected_variant_id: optional_text(row, 3),
         reject_reasons: row.get_json(4)?,
         algedonic_reference: optional_text(row, 5),
+        created_at: row.get_str(6)?.to_string(),
+    })
+}
+
+fn seal_from_row(row: &DbRow) -> Result<SealRecord, ExperimentationError> {
+    let pass_rate = row.get_str(5)?.parse::<f64>().map_err(|error| {
+        ExperimentationError::Serialization(format!("baseline_pass_rate column: {error}"))
+    })?;
+    Ok(SealRecord {
+        id: row.get_str(0)?.to_string(),
+        experiment_id: row.get_str(1)?.to_string(),
+        fingerprint: row.get_str(2)?.to_string(),
+        baseline_variant_id: row.get_str(3)?.to_string(),
+        baseline_fitness_ids: row.get_json(4)?,
+        baseline_pass_rate: pass_rate,
         created_at: row.get_str(6)?.to_string(),
     })
 }
@@ -164,6 +181,15 @@ impl ExperimentationStore {
                  algedonic_reference TEXT, \
                  created_at TEXT NOT NULL \
              ); \
+            CREATE TABLE IF NOT EXISTS seals (\
+                 id TEXT PRIMARY KEY, \
+                 experiment_id TEXT NOT NULL UNIQUE, \
+                 fingerprint TEXT NOT NULL, \
+                 baseline_variant_id TEXT NOT NULL, \
+                 baseline_fitness_ids TEXT NOT NULL, \
+                 baseline_pass_rate TEXT NOT NULL, \
+                 created_at TEXT NOT NULL \
+             ); \
              CREATE INDEX IF NOT EXISTS variants_by_experiment ON variants(experiment_id); \
              CREATE INDEX IF NOT EXISTS fitness_by_variant ON fitness_records(variant_id); \
              CREATE INDEX IF NOT EXISTS selection_by_experiment ON selection_records(experiment_id)",
@@ -199,6 +225,11 @@ impl ExperimentationStore {
                 "variants",
                 "role",
                 "ALTER TABLE variants ADD COLUMN role TEXT",
+            ),
+            (
+                "fitness_records",
+                "seal_id",
+                "ALTER TABLE fitness_records ADD COLUMN seal_id TEXT",
             ),
             (
                 "fitness_records",
@@ -483,6 +514,7 @@ impl ExperimentationStore {
         runs: &[String],
         run_count: u64,
         scores: &serde_json::Value,
+        seal_id: Option<&str>,
     ) -> Result<FitnessRecord, ExperimentationError> {
         let experiment = self.experiment_by_id(experiment_id)?;
         if experiment.status == STATUS_RESOLVED {
@@ -497,6 +529,40 @@ impl ExperimentationStore {
                 experiment_id.to_string(),
             ));
         }
+        // P2: the seal gates challenger measurement. Pre-seal, only the
+        // baseline variant records fitness; post-seal, every record cites
+        // the active seal.
+        let active_seal = self.seal_for_experiment(experiment_id)?;
+        let seal_column = match (active_seal.as_ref(), seal_id) {
+            (Some(active), Some(cited)) => {
+                if cited != active.id {
+                    return Err(ExperimentationError::SealMismatch(
+                        cited.to_string(),
+                        active.id.clone(),
+                    ));
+                }
+                Some(active.id.clone())
+            }
+            (Some(active), None) => {
+                return Err(ExperimentationError::SealCitationMissing(
+                    experiment_id.to_string(),
+                    active.id.clone(),
+                ));
+            }
+            (None, Some(_)) => {
+                return Err(ExperimentationError::ExperimentNotSealed(
+                    experiment_id.to_string(),
+                ));
+            }
+            (None, None) => {
+                if variant.role != VARIANT_ROLE_BASELINE {
+                    return Err(ExperimentationError::ExperimentNotSealed(
+                        experiment_id.to_string(),
+                    ));
+                }
+                None
+            }
+        };
         let id = format!("fit_{}", uuid::Uuid::new_v4().simple());
         let created_at = chrono::Utc::now().to_rfc3339();
         let ceiling = experiment.max_runs.ok_or_else(|| {
@@ -514,15 +580,16 @@ impl ExperimentationStore {
             DbValue::Text(value_column(&runs)?),
             DbValue::Integer(run_count as i64),
             DbValue::Text(value_column(scores)?),
+            text_or_null(seal_column.as_deref()),
             DbValue::Text(created_at.clone()),
             DbValue::Integer(ceiling as i64),
         ];
         let inserted = self.driver.execute(
             "INSERT INTO fitness_records \
-             (id, experiment_id, variant_id, runs, run_count, scores, created_at) \
-             SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7 \
+             (id, experiment_id, variant_id, runs, run_count, scores, seal_id, created_at) \
+             SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8 \
              WHERE ?5 + COALESCE((SELECT SUM(run_count) FROM fitness_records \
-               WHERE experiment_id = ?2), 0) <= ?8",
+               WHERE experiment_id = ?2), 0) <= ?9",
             &params,
         )?;
         if inserted == 0 {
@@ -545,6 +612,7 @@ impl ExperimentationStore {
             runs: runs.to_vec(),
             run_count,
             scores: scores.clone(),
+            seal_id: seal_column,
             created_at,
         })
     }
@@ -554,7 +622,7 @@ impl ExperimentationStore {
         variant_id: &str,
     ) -> Result<Vec<FitnessRecord>, ExperimentationError> {
         let rows = self.driver.query(
-            "SELECT id, experiment_id, variant_id, runs, scores, run_count, created_at \
+            "SELECT id, experiment_id, variant_id, runs, scores, run_count, created_at, seal_id \
              FROM fitness_records WHERE variant_id = ?1 ORDER BY created_at",
             &[DbValue::Text(variant_id.to_string())],
         )?;
@@ -566,11 +634,135 @@ impl ExperimentationStore {
         experiment_id: &str,
     ) -> Result<Vec<FitnessRecord>, ExperimentationError> {
         let rows = self.driver.query(
-            "SELECT id, experiment_id, variant_id, runs, scores, run_count, created_at \
+            "SELECT id, experiment_id, variant_id, runs, scores, run_count, created_at, seal_id \
              FROM fitness_records WHERE experiment_id = ?1 ORDER BY created_at",
             &[DbValue::Text(experiment_id.to_string())],
         )?;
         rows.iter().map(fitness_from_row).collect()
+    }
+
+    // ── Seals (P2) ─────────────────────────────────────────────────
+
+    /// Seal the experiment's eval contract (P2): freeze the declaration's
+    /// (eval_set, rubrics, fitness_fn, noise_band) under a SHA-256
+    /// fingerprint and record the headroom attestation — the baseline
+    /// variant, its recorded fitness evidence, and its measured pass rate
+    /// (§5 Q6: a saturated baseline is the no-headroom void condition).
+    /// UNIQUE(experiment_id) makes the insert race-safe: an identical
+    /// retried seal converges on the existing record; a different attempt
+    /// is a typed `AlreadySealed` refusal.
+    pub fn seal_experiment(
+        &self,
+        experiment_id: &str,
+        baseline_variant_id: &str,
+        baseline_pass_rate: f64,
+    ) -> Result<SealRecord, ExperimentationError> {
+        let experiment = self.experiment_by_id(experiment_id)?;
+        if experiment.status == STATUS_RESOLVED {
+            return Err(ExperimentationError::ExperimentResolved(
+                experiment_id.to_string(),
+            ));
+        }
+        if !(0.0..=1.0).contains(&baseline_pass_rate) {
+            return Err(ExperimentationError::SealPassRateInvalid(
+                baseline_pass_rate,
+            ));
+        }
+        if baseline_pass_rate >= 1.0 {
+            return Err(ExperimentationError::NoHeadroom(baseline_pass_rate));
+        }
+        let variant = self.variant_by_id(baseline_variant_id)?;
+        if variant.experiment_id != experiment_id {
+            return Err(ExperimentationError::VariantNotInExperiment(
+                baseline_variant_id.to_string(),
+                experiment_id.to_string(),
+            ));
+        }
+        if variant.role != VARIANT_ROLE_BASELINE {
+            return Err(ExperimentationError::SealBaselineMismatch(
+                baseline_variant_id.to_string(),
+                variant.role,
+            ));
+        }
+        let baseline_fitness = self.fitness_for_variant(baseline_variant_id)?;
+        if baseline_fitness.is_empty() {
+            return Err(ExperimentationError::SealFitnessMissing);
+        }
+        // The fingerprint freezes the eval contract: SHA-256 over the
+        // canonical JSON of the sealed declaration fields (serde_json's
+        // object map is key-sorted, so the serialization is canonical).
+        let sealed_contract = serde_json::json!({
+            "eval_set": experiment.eval_set,
+            "fitness_fn": experiment.fitness_fn,
+            "noise_band": experiment.noise_band,
+            "rubrics": experiment.rubrics,
+        });
+        let mut hasher = Sha256::new();
+        hasher.update(value_column(&sealed_contract)?.as_bytes());
+        let fingerprint = format!("{:x}", hasher.finalize());
+        let id = format!("seal_{}", uuid::Uuid::new_v4().simple());
+        let created_at = chrono::Utc::now().to_rfc3339();
+        let baseline_fitness_ids: Vec<String> = baseline_fitness
+            .iter()
+            .map(|record| record.id.clone())
+            .collect();
+        let inserted = self.driver.execute(
+            "INSERT OR IGNORE INTO seals \
+             (id, experiment_id, fingerprint, baseline_variant_id, baseline_fitness_ids, \
+              baseline_pass_rate, created_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            &[
+                DbValue::Text(id.clone()),
+                DbValue::Text(experiment_id.to_string()),
+                DbValue::Text(fingerprint.clone()),
+                DbValue::Text(baseline_variant_id.to_string()),
+                DbValue::Text(value_column(&baseline_fitness_ids)?),
+                DbValue::Text(baseline_pass_rate.to_string()),
+                DbValue::Text(created_at.clone()),
+            ],
+        )?;
+        if inserted == 0 {
+            let existing = self.seal_for_experiment(experiment_id)?.ok_or_else(|| {
+                ExperimentationError::Serialization(
+                    "seal INSERT was ignored but no seal exists — an unexpected \
+                     constraint was violated"
+                        .to_string(),
+                )
+            })?;
+            if existing.baseline_variant_id == baseline_variant_id
+                && existing.fingerprint == fingerprint
+                && (existing.baseline_pass_rate - baseline_pass_rate).abs() < f64::EPSILON
+            {
+                return Ok(existing);
+            }
+            return Err(ExperimentationError::AlreadySealed(
+                experiment_id.to_string(),
+                existing.id,
+            ));
+        }
+        Ok(SealRecord {
+            id,
+            experiment_id: experiment_id.to_string(),
+            fingerprint,
+            baseline_variant_id: baseline_variant_id.to_string(),
+            baseline_fitness_ids,
+            baseline_pass_rate,
+            created_at,
+        })
+    }
+
+    /// The experiment's active seal, if any (P2).
+    pub fn seal_for_experiment(
+        &self,
+        experiment_id: &str,
+    ) -> Result<Option<SealRecord>, ExperimentationError> {
+        let row = self.driver.query_optional(
+            "SELECT id, experiment_id, fingerprint, baseline_variant_id, \
+             baseline_fitness_ids, baseline_pass_rate, created_at \
+             FROM seals WHERE experiment_id = ?1",
+            &[DbValue::Text(experiment_id.to_string())],
+        )?;
+        row.map(|row| seal_from_row(&row)).transpose()
     }
 
     // ── Selection ──────────────────────────────────────────────────────
@@ -878,7 +1070,14 @@ mod tests {
         let experiment = propose(&store, "skill", None);
         assert_eq!(experiment.status, STATUS_PROPOSED);
 
-        let baseline = variant(&store, &experiment.id, "baseline", None, Some("baseline"));
+        let baseline = variant_role(
+            &store,
+            &experiment.id,
+            "baseline",
+            None,
+            Some("baseline"),
+            VARIANT_ROLE_BASELINE,
+        );
         assert_eq!(baseline.experiment_id, experiment.id);
         // First variant moves the experiment to running.
         assert_eq!(
@@ -896,6 +1095,21 @@ mod tests {
             Some(&baseline.id),
             None,
         );
+        // The baseline measures, then the seal freezes the contract (P2) —
+        // the challenger's fitness cites the seal.
+        store
+            .record_fitness(
+                &experiment.id,
+                &baseline.id,
+                &["baseline harness report".to_string()],
+                3,
+                &serde_json::json!({"pass_rate": 0.6}),
+                None,
+            )
+            .expect("baseline fitness");
+        let seal = store
+            .seal_experiment(&experiment.id, &baseline.id, 0.6)
+            .expect("seal");
         let fitness = store
             .record_fitness(
                 &experiment.id,
@@ -903,10 +1117,12 @@ mod tests {
                 &["swarm_eval_agent_local run 42".to_string()],
                 3,
                 &serde_json::json!({"pass_rate": 0.8, "total_tokens": 1200}),
+                Some(&seal.id),
             )
             .expect("fitness");
         assert_eq!(fitness.variant_id, challenger.id);
         assert_eq!(fitness.run_count, 3);
+        assert_eq!(fitness.seal_id.as_deref(), Some(seal.id.as_str()));
         assert_eq!(
             fitness.runs,
             vec!["swarm_eval_agent_local run 42".to_string()]
@@ -1074,7 +1290,14 @@ mod tests {
     fn budget_refusal_at_the_boundary() {
         let store = store();
         let experiment = propose(&store, "skill", None); // max_runs = 18
-        let baseline = variant(&store, &experiment.id, "baseline", None, Some("baseline"));
+        let baseline = variant_role(
+            &store,
+            &experiment.id,
+            "baseline",
+            None,
+            Some("baseline"),
+            VARIANT_ROLE_BASELINE,
+        );
         // 9 recorded: 9/18 — fine.
         store
             .record_fitness(
@@ -1083,6 +1306,7 @@ mod tests {
                 &["r1".to_string()],
                 9,
                 &serde_json::json!({}),
+                None,
             )
             .expect("first half");
         // 9 more: exactly at the ceiling (18) — allowed (§P8.9 step 2: the
@@ -1094,6 +1318,7 @@ mod tests {
                 &["r2".to_string()],
                 9,
                 &serde_json::json!({}),
+                None,
             )
             .expect("at ceiling");
         // One more run would make 19 > 18 — typed refusal naming the
@@ -1105,6 +1330,7 @@ mod tests {
                 &["r3".to_string()],
                 1,
                 &serde_json::json!({}),
+                None,
             )
             .expect_err("over ceiling");
         assert!(
@@ -1118,7 +1344,14 @@ mod tests {
     fn health_snapshot_reports_recorded_runs_verdict_and_brier() {
         let store = store();
         let experiment = propose(&store, "skill", None); // confidence 0.7
-        let baseline = variant(&store, &experiment.id, "baseline", None, Some("baseline"));
+        let baseline = variant_role(
+            &store,
+            &experiment.id,
+            "baseline",
+            None,
+            Some("baseline"),
+            VARIANT_ROLE_BASELINE,
+        );
         store
             .record_fitness(
                 &experiment.id,
@@ -1126,6 +1359,7 @@ mod tests {
                 &["r1".to_string()],
                 9,
                 &serde_json::json!({}),
+                None,
             )
             .expect("fitness");
         store
@@ -1538,5 +1772,232 @@ mod tests {
             .expect("population");
         assert_eq!(hypotheses.len(), 1);
         assert_eq!(hypotheses[0].id, experiment.id);
+    }
+
+    #[test]
+    fn seal_freezes_the_contract_and_gates_challengers() {
+        let store = store();
+        let experiment = propose(&store, "skill", None);
+        let baseline = variant_role(
+            &store,
+            &experiment.id,
+            "baseline",
+            None,
+            None,
+            VARIANT_ROLE_BASELINE,
+        );
+
+        // Pre-seal, a challenger cannot record fitness.
+        let challenger = variant(&store, &experiment.id, "challenger", None, None);
+        let error = store
+            .record_fitness(
+                &experiment.id,
+                &challenger.id,
+                &["r".to_string()],
+                1,
+                &serde_json::json!({}),
+                None,
+            )
+            .expect_err("pre-seal challenger fitness refused");
+        assert!(matches!(
+            error,
+            ExperimentationError::ExperimentNotSealed(_)
+        ));
+
+        // The baseline measures, then the seal freezes the contract.
+        store
+            .record_fitness(
+                &experiment.id,
+                &baseline.id,
+                &["baseline run".to_string()],
+                3,
+                &serde_json::json!({"pass_rate": 0.6}),
+                None,
+            )
+            .expect("baseline fitness");
+        let seal = store
+            .seal_experiment(&experiment.id, &baseline.id, 0.6)
+            .expect("seal");
+        assert_eq!(seal.baseline_variant_id, baseline.id);
+        assert_eq!(seal.baseline_fitness_ids.len(), 1);
+        assert_eq!(seal.fingerprint.len(), 64, "SHA-256 hex");
+
+        // An identical retried seal converges on the existing record.
+        let retried = store
+            .seal_experiment(&experiment.id, &baseline.id, 0.6)
+            .expect("replay converges");
+        assert_eq!(retried.id, seal.id);
+
+        // A different seal attempt is a typed refusal.
+        let error = store
+            .seal_experiment(&experiment.id, &baseline.id, 0.7)
+            .expect_err("different seal refused");
+        assert!(matches!(error, ExperimentationError::AlreadySealed(_, _)));
+
+        // Post-seal, challenger fitness cites the seal.
+        let fitness = store
+            .record_fitness(
+                &experiment.id,
+                &challenger.id,
+                &["challenger run".to_string()],
+                3,
+                &serde_json::json!({"pass_rate": 0.8}),
+                Some(&seal.id),
+            )
+            .expect("post-seal challenger fitness");
+        assert_eq!(fitness.seal_id.as_deref(), Some(seal.id.as_str()));
+
+        // Without the citation, post-seal fitness is refused.
+        let error = store
+            .record_fitness(
+                &experiment.id,
+                &challenger.id,
+                &["r".to_string()],
+                1,
+                &serde_json::json!({}),
+                None,
+            )
+            .expect_err("missing citation refused");
+        assert!(matches!(
+            error,
+            ExperimentationError::SealCitationMissing(_, _)
+        ));
+
+        // A wrong citation is refused.
+        let error = store
+            .record_fitness(
+                &experiment.id,
+                &challenger.id,
+                &["r".to_string()],
+                1,
+                &serde_json::json!({}),
+                Some("seal_other"),
+            )
+            .expect_err("wrong seal refused");
+        assert!(matches!(error, ExperimentationError::SealMismatch(_, _)));
+    }
+
+    #[test]
+    fn seal_headroom_and_baseline_role_are_enforced() {
+        let store = store();
+        let experiment = propose(&store, "skill", None);
+        let baseline = variant_role(
+            &store,
+            &experiment.id,
+            "baseline",
+            None,
+            None,
+            VARIANT_ROLE_BASELINE,
+        );
+        store
+            .record_fitness(
+                &experiment.id,
+                &baseline.id,
+                &["r".to_string()],
+                1,
+                &serde_json::json!({"pass_rate": 1.0}),
+                None,
+            )
+            .expect("saturated baseline fitness");
+
+        // A saturated baseline is the no-headroom void condition (§5 Q6).
+        let error = store
+            .seal_experiment(&experiment.id, &baseline.id, 1.0)
+            .expect_err("saturation refused");
+        assert!(matches!(
+            error,
+            ExperimentationError::NoHeadroom(rate) if rate == 1.0
+        ));
+
+        // An out-of-range rate is invalid input.
+        let error = store
+            .seal_experiment(&experiment.id, &baseline.id, 1.5)
+            .expect_err("out-of-range rate refused");
+        assert!(matches!(
+            error,
+            ExperimentationError::SealPassRateInvalid(_)
+        ));
+
+        // The seal's variant must carry the baseline role.
+        let challenger = variant(&store, &experiment.id, "challenger", None, None);
+        let error = store
+            .seal_experiment(&experiment.id, &challenger.id, 0.6)
+            .expect_err("non-baseline seal refused");
+        assert!(matches!(
+            error,
+            ExperimentationError::SealBaselineMismatch(_, _)
+        ));
+
+        // An unmeasured baseline cannot seal.
+        let fresh = propose(&store, "skill", None);
+        let fresh_baseline = variant_role(
+            &store,
+            &fresh.id,
+            "baseline",
+            None,
+            None,
+            VARIANT_ROLE_BASELINE,
+        );
+        let error = store
+            .seal_experiment(&fresh.id, &fresh_baseline.id, 0.6)
+            .expect_err("unmeasured baseline refused");
+        assert!(matches!(error, ExperimentationError::SealFitnessMissing));
+    }
+
+    #[test]
+    fn seal_fingerprint_is_deterministic_over_the_contract() {
+        let store = store();
+        let seal_baseline = |experiment: &ExperimentRecord| -> SealRecord {
+            let baseline = variant_role(
+                &store,
+                &experiment.id,
+                "baseline",
+                None,
+                None,
+                VARIANT_ROLE_BASELINE,
+            );
+            store
+                .record_fitness(
+                    &experiment.id,
+                    &baseline.id,
+                    &["r".to_string()],
+                    1,
+                    &serde_json::json!({"pass_rate": 0.5}),
+                    None,
+                )
+                .expect("baseline fitness");
+            store
+                .seal_experiment(&experiment.id, &baseline.id, 0.5)
+                .expect("seal")
+        };
+        // Identical declarations seal to identical fingerprints.
+        let first = propose(&store, "skill", None);
+        let second = propose(&store, "skill", None);
+        let first_seal = seal_baseline(&first);
+        let second_seal = seal_baseline(&second);
+        assert_eq!(first_seal.fingerprint, second_seal.fingerprint);
+
+        // A different contract seals to a different fingerprint.
+        let third = store
+            .propose_experiment(
+                "Different contract",
+                "skill",
+                &[".agents/skills/self-improvement/SKILL.md".to_string()],
+                &serde_json::json!({"task_set": "fixed-5"}),
+                "evaluator pass rate on the fixed set",
+                &serde_json::json!({"cost_band_pct": 20}),
+                &rubrics(),
+                &Prediction {
+                    claim: "c".to_string(),
+                    confidence: 0.7,
+                },
+                &serde_json::json!({"max_runs": 18}),
+                18,
+                None,
+                None,
+            )
+            .expect("propose");
+        let third_seal = seal_baseline(&third);
+        assert_ne!(first_seal.fingerprint, third_seal.fingerprint);
     }
 }
