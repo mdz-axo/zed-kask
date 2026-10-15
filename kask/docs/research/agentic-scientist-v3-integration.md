@@ -227,7 +227,9 @@ The surrounding affordances the protocol already assumes but does not join:
   (`scenario_calibrate`, `scenario_quantify`, Brier scoring).
 - **Learning memory**: curator `memory_insert` requires an evidence h_mem citation
   (`kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.rs:1082`); `therapy`
-  reifies lessons.
+  reifies lessons. `memory_insert` is the curator's reflective-loop instrument
+  with the operator in the loop — not an automation write path (operator ruling
+  2026-10-15; see §6 D5).
 - **Research provenance**: the research server (run-scoped non-repudiation ledger,
   `resolve_paper`, `cite_sources`) — stronger than v3's fetchers.
 - **External ground truth**: FRED / World Bank / DBnomics series tools and
@@ -260,7 +262,7 @@ flowchart TD
 | M3 typed idea bundles | **Covered by composition** — hypothesis-framer/falsifiability produce the hypothesis; the rubric block carries the typed rubrics; `experiment_propose` is the bundle record | P1 + P6 step 2 |
 | M4 investigation loop | **Compose** — swarm fanout + registry + memory; the skill is the loop | P6 steps 3-4 |
 | M5 rubric verification (`source_contains` etc.) | **Already covered** — `swarm_eval_agent_local`'s evaluator vocabulary; P1 makes declaration and execution share it | P1 (join only) |
-| M6 optimizer memory + conclusions gate | **Compose** — curator `memory_insert` (evidence-cited) + a conclusions-gate template; no new server state | P6 step 4 + P7 template |
+| M6 optimizer memory + conclusions gate | **Compose** — the study report carries the typed conclusions gate; durable memory flows through the human-gated reflective loop (algedonic review → curator), never a direct insert; no new server state | P6 step 4 + P7 template |
 | M7 baselines + ablations | **Extend + compose** — `role` on `variant_register`; ablation construction is agent work | P4 + P6 step 4 |
 | M8 sealed final evaluation | **Extend** — `final_evaluation_record` with server-enforced run-ref disjointness | P3 |
 | M9 post-hoc analysis | **Compose** — `grounding-verify` + `evaluate_evidence` over the experiment's artifacts | P6 step 6 |
@@ -383,12 +385,7 @@ arXiv:2607.18970) — the same unit v3 itself adopted for its agents:
 | 5. Final evaluation | `final_evaluation_record` on the disjoint selection set |
 | 6. Select & report (paper) | algedonic review → `selection_record` → `grounding-verify` over the study's claims → study report with `cite_sources` → durable artifact + `lineage_read` mermaid render |
 
-**P7 — `co-scientist-conclusions.j2` template**: v3's M6 typed update gate translated to
-curator memory — append the cycle's memory event (evidence-cited `memory_insert`), then
-update the distilled conclusion only on (a) contradiction, (b) new category, (c)
-recommendation flip, (d) meaningful refinement; otherwise keep. The gate taxonomy is
-v3's; the record is zed-kask's curator memory, so conclusions feed `therapy`'s
-reification channel rather than a parallel file.
+**P7 — `co-scientist-conclusions.j2` template**: v3's M6 typed update gate translated to the study report — the registry is the cycle's durable record; the distilled conclusion is a report section that updates only on (a) contradiction, (b) new category, (c) recommendation flip, (d) meaningful refinement; otherwise keep. The gate taxonomy is v3's; the record is zed-kask's experiment registry plus the report, and conclusions worth carrying beyond the experiment are proposed as memory candidates for the human-gated reflective loop (the algedonic review chairs what becomes curator memory, feeding `therapy`'s reification channel) — never inserted directly (§6 D5).
 
 ### 4.2.1 Dependency order, D/P labels, verification oracles
 
@@ -482,7 +479,7 @@ experiments (`self-improvement` owns those — delegate); forecasting without me
 4. **Investigate** — `variant_register` (challengers; `role=ablation` with parent) →
    `swarm_fanout_local` / `swarm_execute_plan_local` with rubric-mapped evaluators →
    `fitness_record` (report refs + seal fingerprint) → conclusions gate
-   (`co-scientist-conclusions.j2` + `memory_insert` with evidence) → iterate within
+   (`co-scientist-conclusions.j2`, the report's conclusions section) → iterate within
    `max_runs`.
 5. **Final evaluation** — `final_evaluation_record` on the disjoint selection set.
 6. **Select & report** — algedonic review → `selection_record` → `grounding-verify`
@@ -584,6 +581,7 @@ receipt: `decision = "proceed_to_refactor"` → `["proceed_to_refactor", "ra-aud
 | D2 — generalize the registry | **Yes** — `scientific_hypothesis` joins `LAYERS` | The registry is the general lab notebook; self-improvement becomes the special case; external measurable questions get the full pre-registration discipline |
 | D3 — pin the terms | **Both pinned** in the derived ontology registry (operator ruling 2026-10-15) | `rubric` and `ablation` resolve deterministically ever after; no private definitions |
 | D4 — scope cuts | **All four confirmed** | No sandbox substrate; no venue-formatted paper generation; no run-inspector web app; cost rollups deferred |
+| D5 — curator memory is human-gated (ruled 2026-10-15, on implementation review) | **`memory_insert` is the curator's reflective-loop instrument with the operator in the loop — not an automation write path** | The co-scientist skill's cycle memory lives in the registry and the study report; durable lessons are proposed as memory candidates at the algedonic review, never inserted directly by a skill. The initial skill draft drifted here (per-cycle direct `memory_insert` calls) and was corrected in the same review |
 
 ## 7. What this proposal replaces
 
