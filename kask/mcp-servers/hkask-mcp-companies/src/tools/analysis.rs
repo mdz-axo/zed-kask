@@ -1270,17 +1270,25 @@ const MIXED_CURRENCY_EXCHANGES: &[&str] = &["LSE"];
 /// degradation.
 const SERVER_BOUNDS_UNRELIABLE_EXCHANGES: &[&str] = &["ST", "MX"];
 
-/// Venues whose EODHD data is unreliable for screening — excluded loudly
-/// with a named receipt, never silently. Live 2026-10-14: the MX venue
-/// served 314 rows that are US-market lines mechanically re-denominated at
-/// the MXN rate (NVDA $221.30 → ₱4088.57 = ×18.4815; 100 rows probed: US
-/// and foreign issuers via their US lines, one Mexican issuer — Grupo
-/// México — via its US OTC line, zero Bolsa lines). Screening this venue
-/// fabricates Mexican coverage, so it is dropped with a named error;
-/// screen Mexico through a reliable venue source instead.
+/// Venues excluded from issuer-domicile screening — loudly, with a named
+/// receipt, never silently. Live 2026-10-14/15 (MX): the venue carries
+/// Mexican-market lines of foreign (mostly US) shares — peso-priced, on
+/// the Mexican calendar (no 2026-09-16 row, Mexican Independence Day,
+/// while the US traded — a US-data mirror would carry it), with its own
+/// thin volumes (NVDA 8-52K shares/day vs 118M in New York) and price
+/// discovery within ~1% of the US close at the daily FX rate (MX/US ratio
+/// 17.07-18.48 over the month vs DEXMXUS 17.11-18.40) — consistent with
+/// the BMV's international segment (SIC), NOT a fabricated mirror (the
+/// earlier "exactly × 18.4815" reading was tested and refuted 2026-10-15).
+/// But the major Bolsa-only issuers (FEMSA, Walmex, Banorte, Cemex) are
+/// absent from its top rows by cap, so it is not a Mexican-issuer
+/// screening surface: screening "Mexico" through it returns foreign
+/// shares traded in Mexico. Dropped with a named error for
+/// issuer-domicile screens; screen Mexican issuers through a Bolsa
+/// issuer source.
 const UNRELIABLE_VENUES: &[(&str, &str)] = &[(
     "MX",
-    "venue data unreliable: served US-market rows re-denominated at the MXN rate (zero Bolsa lines; live 2026-10-14) — excluded; screen Mexico through a reliable venue source",
+    "venue is not a Mexican-issuer screening surface: it carries Mexican-market lines of foreign (mostly US) shares — own calendar (closed 2026-09-16, Mexican Independence Day, while the US traded), peso pricing, price discovery within ~1% of the US close at FX (consistent with the BMV international segment) — while the major Bolsa-only issuers (FEMSA, Walmex, Banorte, Cemex) are absent from its top rows by cap (live 2026-10-14/15). Excluded for Mexican-issuer screening; screen Mexican issuers through a Bolsa issuer source",
 )];
 
 fn remove_market_cap_filters(filters: &[serde_json::Value]) -> Vec<serde_json::Value> {

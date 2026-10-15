@@ -92,9 +92,10 @@ pub(crate) const EXCHANGE_REGISTRY: &[ExchangeVenue] = &[
         quotation_currency: "MXN",
         quotation_symbols: &["₱"],
         expected_domicile: "Mexico",
-        // No Mexican issuer is near MXN 1T; the venue is excluded as
-        // unreliable upstream (analysis::UNRELIABLE_VENUES) — this ceiling
-        // catches mirror rows on leak paths (no-exchange fetches).
+        // The venue is excluded upstream for Mexican-issuer screening
+        // (analysis::UNRELIABLE_VENUES — Mexican-market lines of foreign
+        // shares, Bolsa-only issuers absent); this ceiling catches
+        // foreign-share lines on leak paths (no-exchange fetches).
         cap_ceiling: Some(2.0e12),
     },
     ExchangeVenue {

@@ -2644,10 +2644,10 @@ async fn screener_data_quality_flags_name_inconsistent_rows() {
     assert!(names.contains(&"volume_series_inconsistent"));
 }
 
-/// expect: [P9] The MX venue — unreliable per the live 2026-10-14 receipt
-/// (US-market rows mechanically re-denominated at the MXN rate, zero Bolsa
-/// lines) — is excluded loudly: named error, no MX rows, the US exchange
-/// still screened.
+/// expect: [P9] The MX venue — not a Mexican-issuer screening surface per
+/// the live 2026-10-14/15 receipt (Mexican-market lines of foreign shares;
+/// Bolsa-only issuers absent) — is excluded loudly: named error, no MX
+/// rows, the US exchange still screened.
 #[tokio::test]
 async fn screener_unreliable_venue_excluded_loudly() {
     let (output, _fixture) = screener_tool(
@@ -2684,8 +2684,8 @@ async fn screener_unreliable_venue_excluded_loudly() {
     let mx_error = output["exchange_errors"]["MX"]
         .as_str()
         .expect("MX exclusion error");
-    assert!(mx_error.contains("venue data unreliable"));
-    assert!(mx_error.contains("zero Bolsa lines"));
+    assert!(mx_error.contains("not a Mexican-issuer screening surface"));
+    assert!(mx_error.contains("FEMSA"));
     assert!(
         output["warnings"]
             .as_array()
