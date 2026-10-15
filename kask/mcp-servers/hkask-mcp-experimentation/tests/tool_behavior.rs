@@ -8,8 +8,9 @@
 //! lifecycle — the in-process rehearsal of the §P8.5 run-one-through.
 
 use hkask_mcp_experimentation::server::{
-    ExperimentProposeRequest, ExperimentSealRequest, ExperimentationServer, FitnessRecordRequest,
-    LineageReadRequest, PopulationQueryRequest, SelectionRecordRequest, VariantRegisterRequest,
+    ExperimentProposeRequest, ExperimentSealRequest, ExperimentationServer,
+    FinalEvaluationRecordRequest, FitnessRecordRequest, LineageReadRequest, PopulationQueryRequest,
+    SelectionRecordRequest, VariantRegisterRequest,
 };
 use hkask_mcp_experimentation::store::ExperimentationStore;
 use hkask_mcp_experimentation::types::{
@@ -481,6 +482,106 @@ async fn experiment_seal_freezes_the_contract_through_the_tool_seam() {
         .await
         .expect_err("saturation refused");
     assert!(error.to_string().contains("headroom"), "{error}");
+}
+
+/// P3: the final evaluation through the tool seam — requires the seal,
+/// enforces run-ref disjointness, and counts against the budget.
+#[tokio::test]
+async fn final_evaluation_record_enforces_disjointness_through_the_tool_seam() {
+    let server = make_server();
+    let proposed = propose(&server, "skill").await;
+    let experiment_id = proposed["experiment"]["id"]
+        .as_str()
+        .expect("id")
+        .to_string();
+
+    // The sealed flow: baseline + fitness + seal + challenger fitness.
+    let baseline =
+        register_variant_with_role(&server, &experiment_id, "baseline", None, Some("baseline"))
+            .await;
+    let baseline_id = baseline["variant"]["id"].as_str().expect("id").to_string();
+    server
+        .fitness_record(Parameters(FitnessRecordRequest {
+            experiment_id: experiment_id.clone(),
+            variant_id: baseline_id.clone(),
+            runs: vec!["b1".to_string()],
+            run_count: 3,
+            scores: AnyJsonValue(serde_json::json!({"pass_rate": 0.6})),
+            seal_id: None,
+        }))
+        .await
+        .expect("baseline fitness");
+    let sealed = server
+        .experiment_seal(Parameters(ExperimentSealRequest {
+            experiment_id: experiment_id.clone(),
+            baseline_variant_id: baseline_id,
+            baseline_pass_rate: 0.6,
+        }))
+        .await
+        .expect("seal");
+    let seal_id = envelope(&sealed)["seal"]["id"]
+        .as_str()
+        .expect("id")
+        .to_string();
+    let challenger = register_variant(&server, &experiment_id, "challenger", None).await;
+    let challenger_id = challenger["variant"]["id"]
+        .as_str()
+        .expect("id")
+        .to_string();
+    server
+        .fitness_record(Parameters(FitnessRecordRequest {
+            experiment_id: experiment_id.clone(),
+            variant_id: challenger_id.clone(),
+            runs: vec!["c1".to_string()],
+            run_count: 3,
+            scores: AnyJsonValue(serde_json::json!({"pass_rate": 0.8})),
+            seal_id: Some(seal_id.clone()),
+        }))
+        .await
+        .expect("challenger fitness");
+
+    // A reused run ref is refused naming the overlap.
+    let error = server
+        .final_evaluation_record(Parameters(FinalEvaluationRecordRequest {
+            experiment_id: experiment_id.clone(),
+            variant_id: challenger_id.clone(),
+            runs: vec!["c1".to_string()],
+            run_count: 3,
+            scores: AnyJsonValue(serde_json::json!({})),
+        }))
+        .await
+        .expect_err("overlap refused");
+    assert!(error.to_string().contains("c1"), "{error}");
+
+    // A disjoint selection set records; the lineage reads it back.
+    let final_eval = server
+        .final_evaluation_record(Parameters(FinalEvaluationRecordRequest {
+            experiment_id: experiment_id.clone(),
+            variant_id: challenger_id.clone(),
+            runs: vec!["f1".to_string()],
+            run_count: 3,
+            scores: AnyJsonValue(serde_json::json!({"pass_rate": 0.85})),
+        }))
+        .await
+        .expect("final evaluation succeeds");
+    let final_eval = envelope(&final_eval);
+    assert_eq!(final_eval["final_evaluation"]["seal_id"], seal_id.as_str());
+
+    let lineage = server
+        .lineage_read(Parameters(LineageReadRequest {
+            artifact_ref: experiment_id.clone(),
+        }))
+        .await
+        .expect("lineage_read succeeds");
+    let lineage = envelope(&lineage);
+    assert_eq!(
+        lineage["final_evaluations"].as_array().expect("list").len(),
+        1
+    );
+    assert!(
+        lineage["seal"]["fingerprint"].is_string(),
+        "the seal rides the experiment lineage"
+    );
 }
 
 /// Invalid input is rejected with errors that name the offending field —

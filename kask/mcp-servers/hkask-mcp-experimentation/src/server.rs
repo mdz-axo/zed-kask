@@ -76,7 +76,8 @@ pub fn map_experimentation_error(error: ExperimentationError) -> McpToolError {
         }
         ExperimentationError::SealBaselineMismatch(..)
         | ExperimentationError::SealMismatch(..)
-        | ExperimentationError::SealPassRateInvalid(_) => {
+        | ExperimentationError::SealPassRateInvalid(_)
+        | ExperimentationError::RunRefsNotDisjoint(_) => {
             McpToolError::invalid_argument(error.to_string())
         }
         ExperimentationError::Database(_) | ExperimentationError::Serialization(_) => {
@@ -189,6 +190,22 @@ pub struct FitnessRecordRequest {
     /// The seal this record cites (P2) — required once the experiment is
     /// sealed; NULL only for the baseline's own pre-seal measurement.
     pub seal_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct FinalEvaluationRecordRequest {
+    pub experiment_id: String,
+    pub variant_id: String,
+    /// Recorded report references for the selection set — must be disjoint
+    /// from every run ref the experiment has already recorded (the server
+    /// enforces this; overlaps are a typed refusal naming them).
+    pub runs: Vec<String>,
+    /// The number of rollouts the referenced reports cover — counts
+    /// against the declared budget.max_runs together with all fitness
+    /// records.
+    pub run_count: u64,
+    /// Per-objective scores computed from those runs (arbitrary JSON).
+    pub scores: AnyJsonValue,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -400,6 +417,41 @@ impl ExperimentationServer {
     }
 
     #[tool(
+        description = "Record the sealed final evaluation (P3): the leading variant re-scored on the selection set. Requires the experiment sealed (P2); run refs must be DISJOINT from every prior fitness record and final evaluation for the experiment — the server enforces the disjointness (the GEPA feedback/selection split made mechanical) and refuses overlaps naming them; run_count counts against budget.max_runs together with all fitness records. Selection-grade evidence for the algedonic review."
+    )]
+    pub async fn final_evaluation_record(
+        &self,
+        Parameters(FinalEvaluationRecordRequest {
+            experiment_id,
+            variant_id,
+            runs,
+            run_count,
+            scores,
+        }): Parameters<FinalEvaluationRecordRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "final_evaluation_record", async {
+            require_non_empty("experiment_id", &experiment_id)?;
+            require_non_empty("variant_id", &variant_id)?;
+            if runs.is_empty() || runs.iter().any(|r| r.trim().is_empty()) {
+                return Err(map_experimentation_error(ExperimentationError::Empty(
+                    "runs",
+                )));
+            }
+            if run_count == 0 {
+                return Err(map_experimentation_error(
+                    ExperimentationError::RunCountInvalid(run_count),
+                ));
+            }
+            let record = self
+                .store
+                .record_final_evaluation(&experiment_id, &variant_id, &runs, run_count, &scores)
+                .map_err(map_experimentation_error)?;
+            Ok(serde_json::json!({ "status": "recorded", "final_evaluation": record }))
+        })
+        .await
+    }
+
+    #[tool(
         description = "Record the selection verdict for an experiment (protocol step 4, Select): verdict selected (naming the winning variant) or rejected (with at least one reject reason). Both outcomes persist as fossils — selected and rejected are both retained. The first selection resolves the experiment; a further selection is a failed_precondition conflict. algedonic_reference names the review record that chaired the selection."
     )]
     pub async fn selection_record(
@@ -461,12 +513,17 @@ impl ExperimentationServer {
                         .store
                         .selections_for_experiment(&variant.experiment_id)
                         .map_err(map_experimentation_error)?;
+                    let final_evaluations = self
+                        .store
+                        .final_evaluations_for_experiment(&variant.experiment_id)
+                        .map_err(map_experimentation_error)?;
                     Ok(serde_json::json!({
                         "kind": "variant",
                         "ancestry": ancestry,
                         "experiment": experiment,
                         "fitness": fitness,
                         "selections": selections,
+                        "final_evaluations": final_evaluations,
                     }))
                 }
                 Err(ExperimentationError::VariantNotFound(_)) => {
@@ -486,12 +543,22 @@ impl ExperimentationServer {
                         .store
                         .selections_for_experiment(&artifact_ref)
                         .map_err(map_experimentation_error)?;
+                    let seal = self
+                        .store
+                        .seal_for_experiment(&artifact_ref)
+                        .map_err(map_experimentation_error)?;
+                    let final_evaluations = self
+                        .store
+                        .final_evaluations_for_experiment(&artifact_ref)
+                        .map_err(map_experimentation_error)?;
                     Ok(serde_json::json!({
                         "kind": "experiment",
                         "experiment": experiment,
                         "variants": variants,
                         "fitness": fitness,
                         "selections": selections,
+                        "seal": seal,
+                        "final_evaluations": final_evaluations,
                     }))
                 }
                 Err(error) => Err(map_experimentation_error(error)),

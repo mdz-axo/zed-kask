@@ -20,9 +20,9 @@ use sha2::{Digest, Sha256};
 
 use crate::types::{
     ExperimentHealth, ExperimentRecord, ExperimentationError, ExperimentationHealthSnapshot,
-    FitnessRecord, Prediction, Rubric, STATUS_PROPOSED, STATUS_RESOLVED, STATUS_RUNNING,
-    SealRecord, SelectionRecord, VARIANT_ROLE_ABLATION, VARIANT_ROLE_BASELINE, VARIANT_ROLES,
-    VERDICT_REJECTED, VERDICT_SELECTED, VariantRecord,
+    FinalEvaluationRecord, FitnessRecord, Prediction, Rubric, STATUS_PROPOSED, STATUS_RESOLVED,
+    STATUS_RUNNING, SealRecord, SelectionRecord, VARIANT_ROLE_ABLATION, VARIANT_ROLE_BASELINE,
+    VARIANT_ROLES, VERDICT_REJECTED, VERDICT_SELECTED, VariantRecord,
 };
 
 /// Serialize a column value as canonical JSON text. `?Sized` admits slice
@@ -128,6 +128,19 @@ fn seal_from_row(row: &DbRow) -> Result<SealRecord, ExperimentationError> {
     })
 }
 
+fn final_eval_from_row(row: &DbRow) -> Result<FinalEvaluationRecord, ExperimentationError> {
+    Ok(FinalEvaluationRecord {
+        id: row.get_str(0)?.to_string(),
+        experiment_id: row.get_str(1)?.to_string(),
+        variant_id: row.get_str(2)?.to_string(),
+        seal_id: row.get_str(3)?.to_string(),
+        runs: row.get_json(4)?,
+        run_count: row.get_int(5).unwrap_or(0).max(0) as u64,
+        scores: row.get_json(6)?,
+        created_at: row.get_str(7)?.to_string(),
+    })
+}
+
 pub struct ExperimentationStore {
     driver: Arc<dyn DatabaseDriver>,
 }
@@ -188,6 +201,16 @@ impl ExperimentationStore {
                  baseline_variant_id TEXT NOT NULL, \
                  baseline_fitness_ids TEXT NOT NULL, \
                  baseline_pass_rate TEXT NOT NULL, \
+                 created_at TEXT NOT NULL \
+             ); \
+            CREATE TABLE IF NOT EXISTS final_evaluations (\
+                 id TEXT PRIMARY KEY, \
+                 experiment_id TEXT NOT NULL, \
+                 variant_id TEXT NOT NULL, \
+                 seal_id TEXT NOT NULL, \
+                 runs TEXT NOT NULL, \
+                 run_count INTEGER NOT NULL, \
+                 scores TEXT NOT NULL, \
                  created_at TEXT NOT NULL \
              ); \
              CREATE INDEX IF NOT EXISTS variants_by_experiment ON variants(experiment_id); \
@@ -763,6 +786,120 @@ impl ExperimentationStore {
             &[DbValue::Text(experiment_id.to_string())],
         )?;
         row.map(|row| seal_from_row(&row)).transpose()
+    }
+
+    // ── Final evaluations (P3) ─────────────────────────────────────
+
+    /// Record the sealed final evaluation (P3): the leading variant
+    /// re-scored on the selection set. The server enforces run-ref
+    /// disjointness — no ref may appear in any prior fitness record or
+    /// final evaluation for the experiment (the GEPA feedback/selection
+    /// split made mechanical) — and the run count joins the declared
+    /// budget ceiling atomically (fitness + final evaluations).
+    pub fn record_final_evaluation(
+        &self,
+        experiment_id: &str,
+        variant_id: &str,
+        runs: &[String],
+        run_count: u64,
+        scores: &serde_json::Value,
+    ) -> Result<FinalEvaluationRecord, ExperimentationError> {
+        let experiment = self.experiment_by_id(experiment_id)?;
+        if experiment.status == STATUS_RESOLVED {
+            return Err(ExperimentationError::ExperimentResolved(
+                experiment_id.to_string(),
+            ));
+        }
+        let seal = self
+            .seal_for_experiment(experiment_id)?
+            .ok_or_else(|| ExperimentationError::ExperimentNotSealed(experiment_id.to_string()))?;
+        let variant = self.variant_by_id(variant_id)?;
+        if variant.experiment_id != experiment_id {
+            return Err(ExperimentationError::VariantNotInExperiment(
+                variant_id.to_string(),
+                experiment_id.to_string(),
+            ));
+        }
+        // Disjointness (P3): the selection set must not reuse any run ref
+        // the experiment has already recorded.
+        let mut seen_refs = std::collections::HashSet::new();
+        for record in self.fitness_for_experiment(experiment_id)? {
+            seen_refs.extend(record.runs.iter().cloned());
+        }
+        for record in self.final_evaluations_for_experiment(experiment_id)? {
+            seen_refs.extend(record.runs.iter().cloned());
+        }
+        let overlap: Vec<String> = runs
+            .iter()
+            .filter(|run| seen_refs.contains(*run))
+            .cloned()
+            .collect();
+        if !overlap.is_empty() {
+            return Err(ExperimentationError::RunRefsNotDisjoint(overlap));
+        }
+        let id = format!("fev_{}", uuid::Uuid::new_v4().simple());
+        let created_at = chrono::Utc::now().to_rfc3339();
+        let ceiling = experiment.max_runs.ok_or_else(|| {
+            ExperimentationError::BudgetExhausted(experiment_id.to_string(), run_count, 0)
+        })?;
+        let params = [
+            DbValue::Text(id.clone()),
+            DbValue::Text(experiment_id.to_string()),
+            DbValue::Text(variant_id.to_string()),
+            DbValue::Text(seal.id.clone()),
+            DbValue::Text(value_column(&runs)?),
+            DbValue::Integer(run_count as i64),
+            DbValue::Text(value_column(scores)?),
+            DbValue::Text(created_at.clone()),
+            DbValue::Integer(ceiling as i64),
+        ];
+        let inserted = self.driver.execute(
+            "INSERT INTO final_evaluations \
+             (id, experiment_id, variant_id, seal_id, runs, run_count, scores, created_at) \
+             SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8 \
+             WHERE ?6 + COALESCE((SELECT SUM(run_count) FROM fitness_records \
+               WHERE experiment_id = ?2), 0) \
+                 + COALESCE((SELECT SUM(run_count) FROM final_evaluations \
+               WHERE experiment_id = ?2), 0) <= ?9",
+            &params,
+        )?;
+        if inserted == 0 {
+            let row = self.driver.query_optional(
+                "SELECT COALESCE((SELECT SUM(run_count) FROM fitness_records \
+                   WHERE experiment_id = ?1), 0) + COALESCE((SELECT SUM(run_count) \
+                   FROM final_evaluations WHERE experiment_id = ?1), 0)",
+                &[DbValue::Text(experiment_id.to_string())],
+            )?;
+            let recorded = row.and_then(|row| row.get_int(0).ok()).unwrap_or(0).max(0) as u64;
+            return Err(ExperimentationError::BudgetExhausted(
+                experiment_id.to_string(),
+                recorded + run_count,
+                ceiling,
+            ));
+        }
+        Ok(FinalEvaluationRecord {
+            id,
+            experiment_id: experiment_id.to_string(),
+            variant_id: variant_id.to_string(),
+            seal_id: seal.id,
+            runs: runs.to_vec(),
+            run_count,
+            scores: scores.clone(),
+            created_at,
+        })
+    }
+
+    /// The experiment's final evaluations, oldest first (P3).
+    pub fn final_evaluations_for_experiment(
+        &self,
+        experiment_id: &str,
+    ) -> Result<Vec<FinalEvaluationRecord>, ExperimentationError> {
+        let rows = self.driver.query(
+            "SELECT id, experiment_id, variant_id, seal_id, runs, run_count, scores, created_at \
+             FROM final_evaluations WHERE experiment_id = ?1 ORDER BY created_at",
+            &[DbValue::Text(experiment_id.to_string())],
+        )?;
+        rows.iter().map(|row| final_eval_from_row(row)).collect()
     }
 
     // ── Selection ──────────────────────────────────────────────────────
@@ -1999,5 +2136,110 @@ mod tests {
             .expect("propose");
         let third_seal = seal_baseline(&third);
         assert_ne!(first_seal.fingerprint, third_seal.fingerprint);
+    }
+
+    #[test]
+    fn final_evaluation_requires_seal_disjointness_and_budget() {
+        let store = store();
+        let experiment = propose(&store, "skill", None); // max_runs = 18
+
+        // No seal — the final evaluation requires one (P3).
+        let baseline = variant_role(
+            &store,
+            &experiment.id,
+            "baseline",
+            None,
+            None,
+            VARIANT_ROLE_BASELINE,
+        );
+        let error = store
+            .record_final_evaluation(
+                &experiment.id,
+                &baseline.id,
+                &["r".to_string()],
+                1,
+                &serde_json::json!({}),
+            )
+            .expect_err("unsealed final evaluation refused");
+        assert!(matches!(
+            error,
+            ExperimentationError::ExperimentNotSealed(_)
+        ));
+
+        // The sealed flow: baseline (3 runs) + seal + challenger (3 runs).
+        store
+            .record_fitness(
+                &experiment.id,
+                &baseline.id,
+                &["b1".to_string()],
+                3,
+                &serde_json::json!({"pass_rate": 0.6}),
+                None,
+            )
+            .expect("baseline fitness");
+        let seal = store
+            .seal_experiment(&experiment.id, &baseline.id, 0.6)
+            .expect("seal");
+        let challenger = variant(&store, &experiment.id, "challenger", None, None);
+        store
+            .record_fitness(
+                &experiment.id,
+                &challenger.id,
+                &["c1".to_string()],
+                3,
+                &serde_json::json!({"pass_rate": 0.8}),
+                Some(&seal.id),
+            )
+            .expect("challenger fitness");
+
+        // A reused run ref is a typed refusal naming the overlap.
+        let error = store
+            .record_final_evaluation(
+                &experiment.id,
+                &challenger.id,
+                &["c1".to_string()],
+                3,
+                &serde_json::json!({}),
+            )
+            .expect_err("overlapping refs refused");
+        assert!(matches!(
+            error,
+            ExperimentationError::RunRefsNotDisjoint(overlap) if overlap == vec!["c1".to_string()]
+        ));
+
+        // A disjoint selection set records under the seal and the budget.
+        let final_eval = store
+            .record_final_evaluation(
+                &experiment.id,
+                &challenger.id,
+                &["f1".to_string()],
+                3,
+                &serde_json::json!({"pass_rate": 0.85}),
+            )
+            .expect("final evaluation");
+        assert_eq!(final_eval.seal_id, seal.id);
+        assert_eq!(final_eval.variant_id, challenger.id);
+        let readback = store
+            .final_evaluations_for_experiment(&experiment.id)
+            .expect("readback");
+        assert_eq!(readback.len(), 1);
+        assert_eq!(readback[0].id, final_eval.id);
+
+        // The budget counts fitness + final evaluations: 9 recorded, a
+        // 10-run final evaluation would make 19 > 18 — typed refusal.
+        let error = store
+            .record_final_evaluation(
+                &experiment.id,
+                &challenger.id,
+                &["f2".to_string()],
+                10,
+                &serde_json::json!({}),
+            )
+            .expect_err("over ceiling refused");
+        assert!(matches!(
+            error,
+            ExperimentationError::BudgetExhausted(id, would, ceiling)
+                if id == experiment.id && would == 19 && ceiling == 18
+        ));
     }
 }

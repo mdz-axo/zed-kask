@@ -242,6 +242,23 @@ pub struct SealRecord {
     pub created_at: String,
 }
 
+/// A sealed final evaluation (P3) — the leading variant re-scored on the
+/// selection set: run refs disjoint from every prior fitness record and
+/// final evaluation for the experiment (the GEPA feedback/selection split
+/// made mechanical), counted against the declared budget.
+#[derive(Debug, Clone, Serialize)]
+pub struct FinalEvaluationRecord {
+    pub id: String,
+    pub experiment_id: String,
+    pub variant_id: String,
+    /// The seal whose frozen contract this evaluation runs under.
+    pub seal_id: String,
+    pub runs: Vec<String>,
+    pub run_count: u64,
+    pub scores: serde_json::Value,
+    pub created_at: String,
+}
+
 /// Per-experiment health row for the regulation snapshot (§P8.9 step 1) —
 /// the Layer-A afferent view the bridge feeds to the cybernetics loop's
 /// `ExperimentationHealthSensor`.
@@ -437,6 +454,10 @@ pub enum ExperimentationError {
     SealMismatch(String, String),
     #[error("baseline_pass_rate must be in [0, 1], got {0}")]
     SealPassRateInvalid(f64),
+    #[error(
+        "final-evaluation run refs must be disjoint from the experiment's prior records — overlapping refs: {0:?}"
+    )]
+    RunRefsNotDisjoint(Vec<String>),
     #[error("database error: {0}")]
     Database(#[from] hkask_storage::database::types::DbError),
     #[error("serialization error: {0}")]
