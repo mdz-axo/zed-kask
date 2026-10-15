@@ -37,6 +37,96 @@ pub struct Prediction {
     pub confidence: f64,
 }
 
+/// Rubric kinds (the v3 create-idea rules): every declaration carries at
+/// least one `metric` rubric and at least one `implementation` or
+/// `grounded_report` rubric.
+pub const RUBRIC_KIND_METRIC: &str = "metric";
+pub const RUBRIC_KIND_IMPLEMENTATION: &str = "implementation";
+pub const RUBRIC_KIND_GROUNDED_REPORT: &str = "grounded_report";
+
+pub const RUBRIC_KINDS: &[&str] = &[
+    RUBRIC_KIND_METRIC,
+    RUBRIC_KIND_IMPLEMENTATION,
+    RUBRIC_KIND_GROUNDED_REPORT,
+];
+
+/// A rubric's verification — deliberately the same vocabulary as
+/// `swarm_evaluate_local`'s evaluator kinds (contains / not_contains /
+/// regex) plus the recorded-report form: one grammar from declaration
+/// (P1) to recorded run.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum RubricVerification {
+    /// The evidence must contain the spec string (== swarm "contains").
+    Contains { spec: String },
+    /// The evidence must not contain the spec string (== swarm "not_contains").
+    NotContains { spec: String },
+    /// The evidence must match the regex pattern (== swarm "regex").
+    Regex { pattern: String },
+    /// A recorded harness report names the evidence (grounded fitness).
+    ReportRef { harness: String },
+}
+
+/// One typed pass/fail criterion, declared before measurement (P1 — the
+/// machine-checkable eval contract; the derived-registry `rubric` ruling,
+/// operator 2026-10-15).
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct Rubric {
+    /// Stable snake_case identifier (e.g. `pass_rate_threshold`).
+    pub id: String,
+    /// A concrete, measurable description of what passing means.
+    pub description: String,
+    /// metric | implementation | grounded_report.
+    pub kind: String,
+    /// The typed deterministic check that adjudicates the rubric.
+    pub verification: RubricVerification,
+}
+
+/// Validate a declaration's rubric bundle (the v3 create-idea rules):
+/// non-empty; at least one `metric` rubric; at least one `implementation`
+/// or `grounded_report` rubric; known kinds; unique stable snake_case
+/// ids; non-empty descriptions.
+pub fn validate_rubrics(rubrics: &[Rubric]) -> Result<(), ExperimentationError> {
+    if rubrics.is_empty() {
+        return Err(ExperimentationError::RubricsRequired);
+    }
+    let mut seen_ids = std::collections::HashSet::new();
+    for rubric in rubrics {
+        if rubric.id.trim().is_empty() {
+            return Err(ExperimentationError::Empty("rubric id"));
+        }
+        if !rubric
+            .id
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+            || rubric.id.starts_with(|c: char| c.is_ascii_digit())
+        {
+            return Err(ExperimentationError::RubricIdInvalid(rubric.id.clone()));
+        }
+        if !seen_ids.insert(rubric.id.clone()) {
+            return Err(ExperimentationError::DuplicateRubricId(rubric.id.clone()));
+        }
+        if rubric.description.trim().is_empty() {
+            return Err(ExperimentationError::Empty("rubric description"));
+        }
+        if !RUBRIC_KINDS.contains(&rubric.kind.as_str()) {
+            return Err(ExperimentationError::UnknownRubricKind(rubric.kind.clone()));
+        }
+    }
+    if !rubrics.iter().any(|r| r.kind == RUBRIC_KIND_METRIC) {
+        return Err(ExperimentationError::RubricsMissingKind(RUBRIC_KIND_METRIC));
+    }
+    if !rubrics
+        .iter()
+        .any(|r| r.kind == RUBRIC_KIND_IMPLEMENTATION || r.kind == RUBRIC_KIND_GROUNDED_REPORT)
+    {
+        return Err(ExperimentationError::RubricsMissingKind(
+            "implementation or grounded_report",
+        ));
+    }
+    Ok(())
+}
+
 /// A registered experiment (§P8.4 `experiment_propose`).
 #[derive(Debug, Clone, Serialize)]
 pub struct ExperimentRecord {
@@ -58,6 +148,10 @@ pub struct ExperimentRecord {
     /// the pre-registered claim against the measured outcome; this field is
     /// the explicit registry ↔ goal-loop join.
     pub linked_goal_id: Option<String>,
+    /// The typed rubric bundle (P1, the agentic-scientist-v3 integration) —
+    /// the machine-checkable eval contract declared before measurement.
+    /// Empty on pre-rule rows (all resolved; the seal refuses them).
+    pub rubrics: Vec<Rubric>,
     pub status: String,
     pub created_at: String,
 }
@@ -248,6 +342,20 @@ pub enum ExperimentationError {
     Empty(&'static str),
     #[error("created_since must be an RFC 3339 timestamp, got {0:?}")]
     BadTimestamp(String),
+    #[error(
+        "new declarations must carry a non-empty rubric bundle — the typed eval contract (P1): at least one metric rubric and one implementation or grounded_report rubric"
+    )]
+    RubricsRequired,
+    #[error("the rubric bundle must include at least one {0} rubric")]
+    RubricsMissingKind(&'static str),
+    #[error("rubric kind must be one of metric, implementation, grounded_report; got {0:?}")]
+    UnknownRubricKind(String),
+    #[error("duplicate rubric id {0:?} — rubric ids must be unique and stable")]
+    DuplicateRubricId(String),
+    #[error(
+        "rubric id {0:?} must be stable snake_case (lowercase, digits, underscores; not digit-led)"
+    )]
+    RubricIdInvalid(String),
     #[error("database error: {0}")]
     Database(#[from] hkask_storage::database::types::DbError),
     #[error("serialization error: {0}")]

@@ -18,7 +18,7 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 
 use crate::store::ExperimentationStore;
-use crate::types::{ExperimentationError, LAYERS, Prediction, STATUSES};
+use crate::types::{ExperimentationError, LAYERS, Prediction, Rubric, STATUSES, validate_rubrics};
 
 hkask_mcp_server::mcp_server!(
     pub struct ExperimentationServer {
@@ -48,7 +48,12 @@ pub fn map_experimentation_error(error: ExperimentationError) -> McpToolError {
         | ExperimentationError::SelectedWithoutVariant
         | ExperimentationError::RejectedWithoutReasons
         | ExperimentationError::Empty(_)
-        | ExperimentationError::BadTimestamp(_) => {
+        | ExperimentationError::BadTimestamp(_)
+        | ExperimentationError::RubricsRequired
+        | ExperimentationError::RubricsMissingKind(_)
+        | ExperimentationError::UnknownRubricKind(_)
+        | ExperimentationError::DuplicateRubricId(_)
+        | ExperimentationError::RubricIdInvalid(_) => {
             McpToolError::invalid_argument(error.to_string())
         }
         ExperimentationError::BudgetExhausted(..) => {
@@ -90,6 +95,13 @@ pub struct ExperimentProposeRequest {
     /// The noise band within which score differences count as ties (e.g.
     /// {"cost_band_pct": 10}).
     pub noise_band: AnyJsonValue,
+    /// The typed rubric bundle — the machine-checkable eval contract
+    /// (P1). Non-empty; at least one `metric` rubric and at least one
+    /// `implementation` or `grounded_report` rubric; stable snake_case
+    /// ids; verification uses the same vocabulary as
+    /// `swarm_evaluate_local`'s evaluators (contains / not_contains /
+    /// regex) plus `report_ref`.
+    pub rubrics: Vec<Rubric>,
     /// The pre-registered prediction — the tiny controller (§P8.1). Its
     /// confidence must be in [0, 1].
     pub prediction: Prediction,
@@ -174,7 +186,7 @@ pub struct PopulationQueryRequest {
 #[tool_router(router = experimentation_router, vis = "pub")]
 impl ExperimentationServer {
     #[tool(
-        description = "Register an experiment (protocol step 1, Declare): hypothesis, artifact layer (skill | agent_card | prompt_template | tool_schema | regulation_scalar | lora_adapter), genotype refs, eval set, fitness function, noise band, pre-registered prediction with confidence in [0,1], and an energy budget that MUST carry max_runs (a positive integer the server enforces at fitness_record — recording past the ceiling is a typed budget_exhausted refusal, §P8.9 step 2). Optional linked_goal_id joins the experiment to the kanban goal that Brier-scores its claim. Returns the experiment record with status proposed. Optional experiment_key converges retried calls onto the existing record instead of duplicating it."
+        description = "Register an experiment (protocol step 1, Declare): hypothesis, artifact layer (skill | agent_card | prompt_template | tool_schema | regulation_scalar | lora_adapter), genotype refs, eval set, fitness function, noise band, a typed rubric bundle (the machine-checkable eval contract: non-empty, at least one metric rubric and one implementation or grounded_report rubric, stable snake_case ids, verification in the swarm evaluator vocabulary — contains / not_contains / regex / report_ref), pre-registered prediction with confidence in [0,1], and an energy budget that MUST carry max_runs (a positive integer the server enforces at fitness_record — recording past the ceiling is a typed budget_exhausted refusal, §P8.9 step 2). Optional linked_goal_id joins the experiment to the kanban goal that Brier-scores its claim. Returns the experiment record with status proposed. Optional experiment_key converges retried calls onto the existing record instead of duplicating it."
     )]
     pub async fn experiment_propose(
         &self,
@@ -185,6 +197,7 @@ impl ExperimentationServer {
             eval_set,
             fitness_fn,
             noise_band,
+            rubrics,
             prediction,
             budget,
             linked_goal_id,
@@ -210,6 +223,10 @@ impl ExperimentationServer {
                     ExperimentationError::ConfidenceOutOfRange(prediction.confidence),
                 ));
             }
+            // P1: the declaration carries a typed, machine-checkable eval
+            // contract — the same grammar the execution harnesses verify
+            // against (the swarm evaluator vocabulary).
+            validate_rubrics(&rubrics).map_err(map_experimentation_error)?;
             // §P8.9 step 2 (D-1: enforce): the declared budget must carry a
             // machine-readable run ceiling — the Layer-A set point.
             let max_runs = budget
@@ -230,6 +247,7 @@ impl ExperimentationServer {
                     &eval_set,
                     &fitness_fn,
                     &noise_band,
+                    &rubrics,
                     &prediction,
                     &budget,
                     max_runs,

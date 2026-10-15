@@ -12,7 +12,9 @@ use hkask_mcp_experimentation::server::{
     PopulationQueryRequest, SelectionRecordRequest, VariantRegisterRequest,
 };
 use hkask_mcp_experimentation::store::ExperimentationStore;
-use hkask_mcp_experimentation::types::Prediction;
+use hkask_mcp_experimentation::types::{
+    Prediction, RUBRIC_KIND_IMPLEMENTATION, RUBRIC_KIND_METRIC, Rubric, RubricVerification,
+};
 use hkask_storage::database::sqlite::SqliteDriver;
 use hkask_types::AnyJsonValue;
 use hkask_types::WebID;
@@ -41,6 +43,24 @@ fn proposal(layer: &str) -> ExperimentProposeRequest {
         eval_set: AnyJsonValue(serde_json::json!({"task_set": "fixed-5"})),
         fitness_fn: "evaluator pass rate on the fixed set".to_string(),
         noise_band: AnyJsonValue(serde_json::json!({"cost_band_pct": 10})),
+        rubrics: vec![
+            Rubric {
+                id: "pass_rate_threshold".to_string(),
+                description: "evaluator pass rate on the fixed set reaches 0.8".to_string(),
+                kind: RUBRIC_KIND_METRIC.to_string(),
+                verification: RubricVerification::ReportRef {
+                    harness: "swarm_eval_agent_local".to_string(),
+                },
+            },
+            Rubric {
+                id: "uses_lisp_gate".to_string(),
+                description: "the skill routes its gate through lisp_eval".to_string(),
+                kind: RUBRIC_KIND_IMPLEMENTATION.to_string(),
+                verification: RubricVerification::Contains {
+                    spec: "lisp_eval".to_string(),
+                },
+            },
+        ],
         prediction: Prediction {
             claim: "variant B wins".to_string(),
             confidence: 0.7,
@@ -179,6 +199,46 @@ async fn full_protocol_runs_through_the_tool_seam() {
         .expect("population_query succeeds");
     let population = envelope(&population);
     assert_eq!(population["count"], 1);
+}
+
+/// P1: the declaration requires a valid typed rubric bundle — the
+/// machine-checkable eval contract. Empty bundles and bundles missing a
+/// required kind are typed invalid_argument refusals; a valid bundle
+/// round-trips on the experiment record.
+#[tokio::test]
+async fn declarations_require_a_valid_rubric_bundle() {
+    let server = make_server();
+
+    let mut request = proposal("skill");
+    request.rubrics = Vec::new();
+    let error = server
+        .experiment_propose(Parameters(request))
+        .await
+        .expect_err("empty rubric bundle refused");
+    assert!(error.to_string().contains("rubric"), "{error}");
+
+    let mut request = proposal("skill");
+    request.rubrics.truncate(1); // only the metric rubric remains
+    let error = server
+        .experiment_propose(Parameters(request))
+        .await
+        .expect_err("missing implementation rubric refused");
+    assert!(
+        error
+            .to_string()
+            .contains("implementation or grounded_report"),
+        "{error}"
+    );
+
+    let proposed = propose(&server, "skill").await;
+    assert_eq!(
+        proposed["experiment"]["rubrics"][0]["id"],
+        "pass_rate_threshold"
+    );
+    assert_eq!(
+        proposed["experiment"]["rubrics"][1]["verification"]["type"],
+        "contains"
+    );
 }
 
 /// Invalid input is rejected with errors that name the offending field —

@@ -19,12 +19,13 @@ use hkask_storage::database::value::{DbRow, DbValue};
 
 use crate::types::{
     ExperimentHealth, ExperimentRecord, ExperimentationError, ExperimentationHealthSnapshot,
-    FitnessRecord, Prediction, STATUS_PROPOSED, STATUS_RESOLVED, STATUS_RUNNING, SelectionRecord,
-    VERDICT_REJECTED, VERDICT_SELECTED, VariantRecord,
+    FitnessRecord, Prediction, Rubric, STATUS_PROPOSED, STATUS_RESOLVED, STATUS_RUNNING,
+    SelectionRecord, VERDICT_REJECTED, VERDICT_SELECTED, VariantRecord,
 };
 
-/// Serialize a column value as canonical JSON text.
-fn value_column<T: serde::Serialize>(value: &T) -> Result<String, ExperimentationError> {
+/// Serialize a column value as canonical JSON text. `?Sized` admits slice
+/// references (`&[Rubric]`) alongside owned values.
+fn value_column<T: serde::Serialize + ?Sized>(value: &T) -> Result<String, ExperimentationError> {
     serde_json::to_string(value)
         .map_err(|error| ExperimentationError::Serialization(error.to_string()))
 }
@@ -63,6 +64,12 @@ fn experiment_from_row(row: &DbRow) -> Result<ExperimentRecord, ExperimentationE
         budget: row.get_json(8)?,
         max_runs: optional_int(row, 11),
         linked_goal_id: optional_text(row, 12),
+        rubrics: match optional_text(row, 13) {
+            Some(text) => serde_json::from_str(&text).map_err(|error| {
+                ExperimentationError::Serialization(format!("rubrics column: {error}"))
+            })?,
+            None => Vec::new(),
+        },
         status: row.get_str(9)?.to_string(),
         created_at: row.get_str(10)?.to_string(),
     })
@@ -182,6 +189,11 @@ impl ExperimentationStore {
                 "ALTER TABLE experiments ADD COLUMN linked_goal_id TEXT",
             ),
             (
+                "experiments",
+                "rubrics",
+                "ALTER TABLE experiments ADD COLUMN rubrics TEXT",
+            ),
+            (
                 "fitness_records",
                 "run_count",
                 "ALTER TABLE fitness_records ADD COLUMN run_count INTEGER NOT NULL DEFAULT 0",
@@ -207,6 +219,7 @@ impl ExperimentationStore {
         eval_set: &serde_json::Value,
         fitness_fn: &str,
         noise_band: &serde_json::Value,
+        rubrics: &[Rubric],
         prediction: &Prediction,
         budget: &serde_json::Value,
         max_runs: u64,
@@ -219,8 +232,8 @@ impl ExperimentationStore {
             "INSERT OR IGNORE INTO experiments \
              (id, experiment_key, hypothesis, layer, genotype_refs, eval_set, \
               fitness_fn, noise_band, prediction, budget, max_runs, linked_goal_id, \
-              status, created_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+              rubrics, status, created_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
             &[
                 DbValue::Text(id.clone()),
                 text_or_null(experiment_key),
@@ -234,6 +247,7 @@ impl ExperimentationStore {
                 DbValue::Text(value_column(budget)?),
                 DbValue::Integer(max_runs as i64),
                 text_or_null(linked_goal_id),
+                DbValue::Text(value_column(rubrics)?),
                 DbValue::Text(STATUS_PROPOSED.to_string()),
                 DbValue::Text(created_at),
             ],
@@ -255,7 +269,7 @@ impl ExperimentationStore {
     pub fn experiment_by_id(&self, id: &str) -> Result<ExperimentRecord, ExperimentationError> {
         let row = self.driver.query_optional(
             "SELECT id, hypothesis, layer, genotype_refs, eval_set, fitness_fn, \
-             noise_band, prediction, budget, status, created_at, max_runs, linked_goal_id \
+             noise_band, prediction, budget, status, created_at, max_runs, linked_goal_id, rubrics \
              FROM experiments WHERE id = ?1",
             &[DbValue::Text(id.to_string())],
         )?;
@@ -267,7 +281,7 @@ impl ExperimentationStore {
     fn experiment_by_key(&self, key: &str) -> Result<ExperimentRecord, ExperimentationError> {
         let row = self.driver.query_optional(
             "SELECT id, hypothesis, layer, genotype_refs, eval_set, fitness_fn, \
-             noise_band, prediction, budget, status, created_at, max_runs, linked_goal_id \
+             noise_band, prediction, budget, status, created_at, max_runs, linked_goal_id, rubrics \
              FROM experiments WHERE experiment_key = ?1",
             &[DbValue::Text(key.to_string())],
         )?;
@@ -676,8 +690,8 @@ impl ExperimentationStore {
         let rows = self.driver.query(
             &format!(
                 "SELECT id, hypothesis, layer, genotype_refs, eval_set, fitness_fn, \
-                 noise_band, prediction, budget, status, created_at, max_runs, linked_goal_id \
-                 FROM experiments WHERE {where_clause} ORDER BY created_at DESC LIMIT {limit}"
+                 noise_band, prediction, budget, status, created_at, max_runs, linked_goal_id, rubrics \
+                 FROM experiments WHERE {where_clause} ORDER BY created_at DESC LIMIT {limit}",
             ),
             &params,
         )?;
@@ -725,12 +739,39 @@ impl ExperimentationStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::Prediction;
+    use crate::types::{
+        Prediction, RUBRIC_KIND_GROUNDED_REPORT, RUBRIC_KIND_IMPLEMENTATION, RUBRIC_KIND_METRIC,
+        Rubric, RubricVerification, validate_rubrics,
+    };
     use hkask_storage::database::sqlite::SqliteDriver;
 
     fn store() -> ExperimentationStore {
         ExperimentationStore::with_driver(SqliteDriver::in_memory_driver())
             .expect("in-memory driver store")
+    }
+
+    /// A valid rubric bundle (P1): one metric rubric verified by a recorded
+    /// harness report, one implementation rubric verified by a contains
+    /// check — the swarm evaluator vocabulary.
+    fn rubrics() -> Vec<Rubric> {
+        vec![
+            Rubric {
+                id: "pass_rate_threshold".to_string(),
+                description: "evaluator pass rate on the fixed set reaches 0.8".to_string(),
+                kind: RUBRIC_KIND_METRIC.to_string(),
+                verification: RubricVerification::ReportRef {
+                    harness: "swarm_eval_agent_local".to_string(),
+                },
+            },
+            Rubric {
+                id: "uses_lisp_gate".to_string(),
+                description: "the skill routes its gate through lisp_eval".to_string(),
+                kind: RUBRIC_KIND_IMPLEMENTATION.to_string(),
+                verification: RubricVerification::Contains {
+                    spec: "lisp_eval".to_string(),
+                },
+            },
+        ]
     }
 
     fn propose(store: &ExperimentationStore, layer: &str, key: Option<&str>) -> ExperimentRecord {
@@ -742,6 +783,7 @@ mod tests {
                 &serde_json::json!({"task_set": "fixed-5", "pin_suites": ["lisp_eval_tool"]}),
                 "evaluator pass rate on the fixed set",
                 &serde_json::json!({"cost_band_pct": 10}),
+                &rubrics(),
                 &Prediction {
                     claim: "variant B wins".to_string(),
                     confidence: 0.7,
@@ -1247,9 +1289,101 @@ mod tests {
         assert_eq!(record.status, STATUS_RESOLVED);
         assert_eq!(record.max_runs, None);
         assert_eq!(record.linked_goal_id, None);
+        assert!(record.rubrics.is_empty());
         let snapshot = store.health_snapshot().expect("snapshot");
         assert_eq!(snapshot.experiments.len(), 1);
         assert_eq!(snapshot.experiments[0].recorded_runs, 0);
         assert_eq!(snapshot.experiments[0].verdict, None);
+    }
+
+    #[test]
+    fn rubric_bundle_round_trips_on_the_declaration() {
+        let store = store();
+        let experiment = propose(&store, "skill", None);
+        assert_eq!(experiment.rubrics.len(), 2);
+        assert_eq!(experiment.rubrics[0].id, "pass_rate_threshold");
+        assert_eq!(experiment.rubrics[0].kind, RUBRIC_KIND_METRIC);
+        assert_eq!(experiment.rubrics[1].kind, RUBRIC_KIND_IMPLEMENTATION);
+    }
+
+    #[test]
+    fn rubric_validation_rejects_missing_kinds_duplicates_and_bad_ids() {
+        let metric = || Rubric {
+            id: "pass_rate".to_string(),
+            description: "pass rate reaches threshold".to_string(),
+            kind: RUBRIC_KIND_METRIC.to_string(),
+            verification: RubricVerification::ReportRef {
+                harness: "swarm_eval_agent_local".to_string(),
+            },
+        };
+        let implementation = || Rubric {
+            id: "uses_gate".to_string(),
+            description: "routes the gate through lisp_eval".to_string(),
+            kind: RUBRIC_KIND_IMPLEMENTATION.to_string(),
+            verification: RubricVerification::Contains {
+                spec: "lisp_eval".to_string(),
+            },
+        };
+        // Empty bundle.
+        assert!(matches!(
+            validate_rubrics(&[]),
+            Err(ExperimentationError::RubricsRequired)
+        ));
+        // Missing the metric rubric.
+        assert!(matches!(
+            validate_rubrics(&[implementation()]),
+            Err(ExperimentationError::RubricsMissingKind(kind)) if kind == "metric"
+        ));
+        // Missing the implementation/grounded_report rubric.
+        assert!(matches!(
+            validate_rubrics(&[metric()]),
+            Err(ExperimentationError::RubricsMissingKind(_))
+        ));
+        // Duplicate ids.
+        let duplicate = vec![
+            metric(),
+            Rubric {
+                id: "pass_rate".to_string(),
+                description: "duplicate id".to_string(),
+                kind: RUBRIC_KIND_GROUNDED_REPORT.to_string(),
+                verification: RubricVerification::ReportRef {
+                    harness: "training_evaluate".to_string(),
+                },
+            },
+        ];
+        assert!(matches!(
+            validate_rubrics(&duplicate),
+            Err(ExperimentationError::DuplicateRubricId(_))
+        ));
+        // Unknown kind.
+        let unknown = vec![
+            Rubric {
+                id: "a".to_string(),
+                description: "d".to_string(),
+                kind: "vibe".to_string(),
+                verification: RubricVerification::Contains {
+                    spec: "x".to_string(),
+                },
+            },
+            implementation(),
+        ];
+        assert!(matches!(
+            validate_rubrics(&unknown),
+            Err(ExperimentationError::UnknownRubricKind(_))
+        ));
+        // Non-snake-case id.
+        let bad_id = vec![
+            Rubric {
+                id: "PassRate".to_string(),
+                ..metric()
+            },
+            implementation(),
+        ];
+        assert!(matches!(
+            validate_rubrics(&bad_id),
+            Err(ExperimentationError::RubricIdInvalid(_))
+        ));
+        // A valid bundle passes.
+        assert!(validate_rubrics(&[metric(), implementation()]).is_ok());
     }
 }
