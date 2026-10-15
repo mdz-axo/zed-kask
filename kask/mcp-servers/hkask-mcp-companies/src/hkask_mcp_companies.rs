@@ -69,6 +69,7 @@ mod scenarios;
 mod screener;
 pub(crate) mod superforecast;
 mod transcript;
+mod validation;
 mod valuation_service;
 pub(crate) use forecast::{
     StoredForecast, current_price_from_multiple, projected_terminal_multiple, resolve_current_price,

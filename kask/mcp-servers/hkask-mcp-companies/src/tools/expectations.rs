@@ -352,6 +352,17 @@ impl CompaniesServer {
 
 /// The solved expectations analysis: demonstrated DuPont capability plus
 /// the price-implied drivers and their gaps.
+/// Revenue multiple over the window above which the window is an episode
+/// (regime change, commodity cycle, hypergrowth off a small base): the
+/// full-period CAGR describes the episode, not a repeatable capability,
+/// so the growth leg and the demonstrated-growth-anchored margin leg are
+/// unsolved with the reason named. Receipts 2026-10-14: NVDA 27.0→215.9B
+/// = 8.0x (its 68.3%/yr trailing CAGR was read as "capability" — the
+/// screen's NVDA inversion); MU 15.5→133.2B = 8.6x (the cycle-peak
+/// increment artifact). Clean windows for contrast: MSFT 1.57x, META
+/// 1.72x, TSM 1.78x.
+pub(crate) const EPISODE_WINDOW_REVENUE_MULTIPLE: f64 = 4.0;
+
 pub(crate) struct ExpectationsSolve {
     pub capability: financial_model::DuPontAnalysis,
     /// "roe" for financial-sector companies, "net_margin" otherwise.
@@ -373,6 +384,11 @@ pub(crate) struct ExpectationsSolve {
     /// Net-margin space for non-financials; ROE percentage points for
     /// financials — the profitability leg of the gap.
     pub profitability_gap_pp: Option<f64>,
+    /// Named reason the growth benchmark is unsolved for this window
+    /// ("episode_window": revenue grew more than
+    /// [`EPISODE_WINDOW_REVENUE_MULTIPLE`] over the window — the trailing
+    /// CAGR describes the episode, not a repeatable capability).
+    pub growth_benchmark_unsolved_reason: Option<&'static str>,
     pub book_value_per_share: Option<f64>,
     /// The demonstrated self-funding growth rate (ROE × retention) — the
     /// capability anchor the growth leg compares the price against. Not
@@ -460,6 +476,7 @@ pub(crate) fn solve_expectations(
             growth_gap_pp: None,
             financing_growth_gap_pp: None,
             profitability_gap_pp,
+            growth_benchmark_unsolved_reason: None,
             book_value_per_share: Some(book_value_per_share),
             sustainable_growth_rate,
             investor_target_return,
@@ -483,14 +500,25 @@ pub(crate) fn solve_expectations(
                 .ok()?;
         let sustainable_growth_rate = capability.sustainable_growth_rate;
         let demonstrated_revenue_growth = hist.demonstrated_revenue_cagr()?;
+        // Episode-window guard: a window where revenue grew more than
+        // EPISODE_WINDOW_REVENUE_MULTIPLE is an episode (regime change,
+        // cycle, hypergrowth off a small base) — its full-period CAGR is
+        // not a repeatable-capability benchmark, so the growth leg and
+        // the demonstrated-growth-anchored margin leg are unsolved with
+        // the reason named (the financing diagnostic survives: SGR is
+        // median-based, not episode-contaminated).
+        let episode_window = hist
+            .revenue_window_multiple()
+            .is_some_and(|multiple| multiple > EPISODE_WINDOW_REVENUE_MULTIPLE);
         let demonstrated_net_margin = capability.net_profit_margin;
         let implied_growth = financial_model::implied_growth(&hist, &assumptions, current_price)
             .filter(|growth| {
                 *growth > financial_model::IMPLIED_GROWTH_LO + 0.01
                     && *growth < financial_model::IMPLIED_GROWTH_HI - 0.01
             });
-        let implied_net_margin_at_demonstrated_growth = if demonstrated_revenue_growth
-            > financial_model::IMPLIED_GROWTH_LO
+        let implied_net_margin_at_demonstrated_growth = if episode_window {
+            None
+        } else if demonstrated_revenue_growth > financial_model::IMPLIED_GROWTH_LO
             && demonstrated_revenue_growth < financial_model::IMPLIED_GROWTH_HI
         {
             financial_model::implied_net_margin_at_growth(
@@ -502,8 +530,11 @@ pub(crate) fn solve_expectations(
         } else {
             None
         };
-        let growth_gap_pp =
-            implied_growth.map(|growth| (growth - demonstrated_revenue_growth) * 100.0);
+        let growth_gap_pp = if episode_window {
+            None
+        } else {
+            implied_growth.map(|growth| (growth - demonstrated_revenue_growth) * 100.0)
+        };
         let financing_growth_gap_pp =
             implied_growth.map(|growth| (growth - sustainable_growth_rate) * 100.0);
         let profitability_gap_pp = implied_net_margin_at_demonstrated_growth
@@ -518,6 +549,7 @@ pub(crate) fn solve_expectations(
             growth_gap_pp,
             financing_growth_gap_pp,
             profitability_gap_pp,
+            growth_benchmark_unsolved_reason: episode_window.then_some("episode_window"),
             book_value_per_share: None,
             sustainable_growth_rate,
             investor_target_return,
@@ -627,7 +659,15 @@ pub(crate) fn build_gap_report(
     price_source: &str,
 ) -> serde_json::Value {
     let mgmt_median = median(management_growth);
-    let capability_flags = capability_quality_flags(analysis);
+    let mut capability_flags = capability_quality_flags(analysis);
+    // The episode-window flag rides the model_sensitive path: an episode
+    // window's growth/margin legs are unsolved and must not rank.
+    if analysis
+        .as_ref()
+        .is_some_and(|solve| solve.growth_benchmark_unsolved_reason.is_some())
+    {
+        capability_flags.push("episode_window");
+    }
 
     let (signal, interpretation) = match analysis {
         None => (
@@ -776,10 +816,17 @@ pub(crate) fn build_gap_report(
             "demonstrated_revenue_growth": solve.demonstrated_revenue_growth,
             "sustainable_growth_rate": solve.sustainable_growth_rate,
             "growth_gap_pp": solve.growth_gap_pp,
-            "growth_gap_basis": if solve.growth_gap_pp.is_some() {
-                serde_json::json!("implied revenue growth − demonstrated full-period revenue CAGR")
-            } else {
-                serde_json::Value::Null
+            "growth_gap_basis": match (
+                solve.growth_gap_pp,
+                solve.growth_benchmark_unsolved_reason,
+            ) {
+                (Some(_), _) => serde_json::json!(
+                    "implied revenue growth − demonstrated full-period revenue CAGR"
+                ),
+                (None, Some("episode_window")) => serde_json::json!(
+                    "unsolved — episode_window: revenue grew more than 4x over the window; the trailing CAGR describes the episode (regime change, cycle, hypergrowth off a small base), not a repeatable capability. The implied growth is still shown; weigh it against the financing gap and a normalized-capability benchmark."
+                ),
+                _ => serde_json::Value::Null,
             },
             "financing_growth_gap_pp": solve.financing_growth_gap_pp,
             "financing_growth_gap_basis": if solve.financing_growth_gap_pp.is_some() {
@@ -789,7 +836,14 @@ pub(crate) fn build_gap_report(
             },
             "profitability_gap_pp": solve.profitability_gap_pp,
             "profitability_gap_basis": if solve.headline == "roe" {
-                serde_json::json!("implied ROE − demonstrated ROE (percentage points)")
+                serde_json::json!(format!(
+                    "implied ROE (justified P/B at the investor target return of {:.1}%) − demonstrated ROE (percentage points). Hurdle-dependent: a lower target return lowers the implied ROE and the gap — set target_return explicitly when ranking financials.",
+                    solve.investor_target_return * 100.0
+                ))
+            } else if solve.growth_benchmark_unsolved_reason.is_some() {
+                serde_json::json!(
+                    "unsolved — anchored to the demonstrated revenue CAGR, which is episode-inflated in this window (episode_window)"
+                )
             } else {
                 serde_json::json!("implied net margin at demonstrated revenue CAGR − demonstrated net margin (median actual net income / revenue), percentage points")
             },
@@ -799,7 +853,7 @@ pub(crate) fn build_gap_report(
 
     serde_json::json!({
         "symbol": symbol,
-        "framework": "Expectations gap = price-implied expectations vs demonstrated like-for-like financial performance. Discounting uses MAIA's investor perspective: the investor target return is the equity component of modified WACC, not CAPM cost of equity. For non-financials, the primary growth gap compares implied revenue growth with demonstrated full-period revenue CAGR; Higgins sustainable growth remains a separately labeled financing-capacity diagnostic. Profitability compares implied net margin at demonstrated growth with demonstrated net margin. Financial-sector companies use the equity-based implied-ROE solve. Operator ruling 2026-09-14; Mauboussin & Rappaport (2001), DuPont analysis, and Higgins (1977).",
+        "framework": "Expectations gap = price-implied expectations vs demonstrated like-for-like financial performance. Discounting uses MAIA's investor perspective: the investor target return is the equity component of modified WACC, not CAPM cost of equity. For non-financials, the primary growth gap compares implied revenue growth with demonstrated full-period revenue CAGR; Higgins sustainable growth remains a separately labeled financing-capacity diagnostic. Windows where revenue grew more than 4x are episode windows: the growth and margin legs are unsolved with the reason named (the trailing CAGR describes the episode, not a repeatable capability). Profitability compares implied net margin at demonstrated growth with demonstrated net margin. Financial-sector companies use the equity-based implied-ROE solve. Operator ruling 2026-09-14; Mauboussin & Rappaport (2001), DuPont analysis, and Higgins (1977).",
         "capability": capability_json,
         "discounting": analysis.as_ref().map(|solve| serde_json::json!({
             "investor_target_return": solve.investor_target_return,
@@ -831,4 +885,129 @@ pub(crate) fn build_gap_report(
             "capability_flags": capability_flags,
         },
     })
+}
+
+#[cfg(test)]
+mod gap_report_tests {
+    use super::*;
+    use serde_json::json;
+
+    /// A minimal constructed solve — the report layer is what's under
+    /// test, not the solve math (pinned separately in
+    /// financial_model::test_history).
+    fn solve(episode: bool, headline: &'static str) -> Option<ExpectationsSolve> {
+        Some(ExpectationsSolve {
+            capability: financial_model::DuPontAnalysis {
+                net_profit_margin: 0.10,
+                asset_turnover: 0.5,
+                equity_multiplier: 2.0,
+                roe: 0.10,
+                retention: 0.6,
+                sustainable_growth_rate: 0.06,
+                years: 4,
+            },
+            headline,
+            implied_growth: Some(0.44),
+            implied_net_margin_at_demonstrated_growth: None,
+            implied_roe: None,
+            demonstrated_revenue_growth: Some(0.68),
+            growth_gap_pp: None,
+            financing_growth_gap_pp: Some(-24.0),
+            profitability_gap_pp: None,
+            growth_benchmark_unsolved_reason: episode.then_some("episode_window"),
+            book_value_per_share: None,
+            sustainable_growth_rate: 0.06,
+            investor_target_return: 0.15,
+            modified_wacc: 0.12,
+            equity_weight: 0.9,
+            debt_weight: 0.1,
+        })
+    }
+
+    /// Receipt: the NVDA shape (2026-10-14) — an 8.0x revenue window. The
+    /// history-anchored legs are unsolved with the reason named in the
+    /// basis, the flag in capability_flags, the model_sensitive signal
+    /// (unavailable for ranking); the financing diagnostic survives.
+    #[test]
+    fn episode_window_names_reason_and_does_not_rank() {
+        let report = build_gap_report(
+            "NVDA",
+            &solve(true, "net_margin"),
+            &[],
+            0.05,
+            &[],
+            "compact",
+            0,
+            "test",
+        );
+        assert_eq!(report["signal"], json!("model_sensitive"));
+        let flags = report["data_quality"]["capability_flags"]
+            .as_array()
+            .expect("flags");
+        assert!(
+            flags
+                .iter()
+                .any(|flag| flag.as_str() == Some("episode_window"))
+        );
+        let basis = report["gaps"]["growth_gap_basis"]
+            .as_str()
+            .expect("episode basis");
+        assert!(basis.contains("episode_window"));
+        assert!(basis.contains("not a repeatable capability"));
+        assert!(report["gaps"]["growth_gap_pp"].is_null());
+        let margin_basis = report["gaps"]["profitability_gap_basis"]
+            .as_str()
+            .expect("margin basis");
+        assert!(margin_basis.contains("episode-inflated"));
+        // The financing diagnostic survives — SGR is median-based, not
+        // episode-contaminated.
+        assert!(report["gaps"]["financing_growth_gap_pp"].is_number());
+    }
+
+    /// Receipt: the financial-sector leg (2026-10-14 operator finding) —
+    /// the basis names the hurdle it depends on and its direction of
+    /// sensitivity, instead of presenting a hurdle-dependent number as
+    /// hurdle-free.
+    #[test]
+    fn financial_leg_basis_discloses_hurdle() {
+        let report = build_gap_report(
+            "BAC",
+            &solve(false, "roe"),
+            &[],
+            0.05,
+            &[],
+            "compact",
+            0,
+            "test",
+        );
+        let basis = report["gaps"]["profitability_gap_basis"]
+            .as_str()
+            .expect("basis");
+        assert!(basis.contains("15.0%"));
+        assert!(basis.contains("Hurdle-dependent"));
+    }
+
+    /// Clean window: no episode flag, the standard bases stand.
+    #[test]
+    fn clean_window_keeps_standard_bases() {
+        let report = build_gap_report(
+            "MSFT",
+            &solve(false, "net_margin"),
+            &[],
+            0.05,
+            &[],
+            "compact",
+            0,
+            "test",
+        );
+        let flags = report["data_quality"]["capability_flags"]
+            .as_array()
+            .expect("flags");
+        assert!(
+            !flags
+                .iter()
+                .any(|flag| flag.as_str() == Some("episode_window"))
+        );
+        assert!(report["gaps"]["growth_gap_basis"].is_null());
+    }
 }

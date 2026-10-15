@@ -282,6 +282,7 @@ impl CompaniesServer {
             // exchange code. Filter triples never carry the exchange
             // dimension.
             let exchange_codes = screener::extract_exchange_codes(&criteria);
+            let lse_requested = exchange_codes.iter().any(|code| code == "LSE");
             let mut filter_criteria = criteria.clone();
             if let Some(filter_object) = filter_criteria.as_object_mut() {
                 filter_object.remove("exchange");
@@ -345,6 +346,7 @@ impl CompaniesServer {
 
             let mut exchange_errors = serde_json::Map::new();
             let mut row_stats = RowFilterStats::default();
+            let mut data_quality_flags: Vec<serde_json::Value> = Vec::new();
             let mut extra_rates = serde_json::Map::new();
             let (merged_rows, exchange_counts) = if exchange_codes.is_empty() {
                 let mut rows = providers::fetch_eodhd_screener(
@@ -354,6 +356,7 @@ impl CompaniesServer {
                 )
                 .await?;
                 filter_non_common(&mut rows, &mut row_stats);
+                collect_screener_row_flags(&rows, &mut data_quality_flags);
                 (rows, serde_json::Map::new())
             } else {
                 // Build per-exchange queries. Convert USD cap bounds into the
@@ -365,6 +368,18 @@ impl CompaniesServer {
                 match &fx {
                     Some(Ok(context)) => {
                         for code in &exchange_codes {
+                            // Unreliable venues are excluded loudly (named
+                            // receipt), never silently.
+                            if let Some((_, receipt)) = UNRELIABLE_VENUES
+                                .iter()
+                                .find(|(unreliable, _)| unreliable == code)
+                            {
+                                exchange_errors.insert(
+                                    code.clone(),
+                                    serde_json::Value::String(receipt.to_string()),
+                                );
+                                continue;
+                            }
                             match context.rate_for(code) {
                                 Ok(rate) => {
                                     // Mixed-currency exchanges (London's IOB
@@ -403,6 +418,16 @@ impl CompaniesServer {
                     }
                     _ => {
                         for code in &exchange_codes {
+                            if let Some((_, receipt)) = UNRELIABLE_VENUES
+                                .iter()
+                                .find(|(unreliable, _)| unreliable == code)
+                            {
+                                exchange_errors.insert(
+                                    code.clone(),
+                                    serde_json::Value::String(receipt.to_string()),
+                                );
+                                continue;
+                            }
                             let mut filters = remove_market_cap_filters(&screener_filters);
                             filters.push(serde_json::json!(["exchange", "=", code]));
                             queries.push((code.clone(), 1.0, filters));
@@ -465,6 +490,7 @@ impl CompaniesServer {
                         Ok(rows) => {
                             let mut rows = rows;
                             filter_non_common(&mut rows, &mut row_stats);
+                            collect_screener_row_flags(&rows, &mut data_quality_flags);
                             buckets.push((code, rate, rows));
                         }
                         Err(error) => {
@@ -494,6 +520,7 @@ impl CompaniesServer {
                         row_stats.out_of_band_dropped += stats.out_of_band_dropped;
                         row_stats.unconverted_rows += stats.unconverted_rows;
                         row_stats.non_common_dropped += stats.non_common_dropped;
+                        row_stats.jpy_lines_kept += stats.jpy_lines_kept;
                         extra_rates = rates;
                         kept
                     } else {
@@ -594,6 +621,21 @@ impl CompaniesServer {
                     "Post-screen criteria require per-company fundamentals. Use key_metrics for each result to apply these filters.".to_string(),
                 );
             }
+            // Japan coverage is named, never silent: Japanese issuers enter
+            // via LSE ¥ lines (EODHD has no Japanese screener exchange), so
+            // when LSE was screened and the row-currency pass surfaced zero
+            // ¥ lines, the absence is a named fact. (Live 2026-10-14: ¥ lines
+            // exist — TYT Toyota ¥35.4T ≈ $224B — and rank below mega-cap
+            // truncation; the jpy_lines_kept counter documents them when
+            // present.)
+            if lse_requested
+                && matches!(&fx, Some(Ok(_)))
+                && row_stats.jpy_lines_kept == 0
+            {
+                warnings.push(
+                    "Japan coverage: 0 ¥-quoted lines surfaced on LSE in this pull — Japanese issuers enter via LSE ¥ lines (EODHD has no Japanese screener exchange); none appeared in the fetched universe.".to_string(),
+                );
+            }
 
             // Enforce the advertised `limit` — an upper bound on the returned
             // row count, not a page size (the fetch exhausts the universe
@@ -613,10 +655,13 @@ impl CompaniesServer {
                 "screener_filters": screener_filters,
                 "exchange_match_counts": serde_json::Value::Object(exchange_counts),
                 "exchange_errors": serde_json::Value::Object(exchange_errors),
+                "venues": serde_json::Value::Object(venue_registry_echo(&exchange_codes)),
                 "foreign_lines_dropped": row_stats.foreign_lines_dropped,
                 "out_of_band_dropped": row_stats.out_of_band_dropped,
                 "unconverted_rows": row_stats.unconverted_rows,
                 "non_common_dropped": row_stats.non_common_dropped,
+                "jpy_lines_kept": row_stats.jpy_lines_kept,
+                "data_quality_flags": data_quality_flags,
                 "post_screen_filters": post_screen_filters,
                 "warnings": warnings,
                 "count": count,
@@ -997,10 +1042,16 @@ impl CompaniesServer {
                         continue;
                     }
                     annotate_usd(&mut entry.row, usd);
+                    if currency == "JPY" {
+                        stats.jpy_lines_kept += 1;
+                    }
                     kept.push(entry);
                 }
                 None => {
                     stats.unconverted_rows += 1;
+                    if currency == "JPY" {
+                        stats.jpy_lines_kept += 1;
+                    }
                     kept.push(entry);
                 }
             }
@@ -1219,6 +1270,19 @@ const MIXED_CURRENCY_EXCHANGES: &[&str] = &["LSE"];
 /// degradation.
 const SERVER_BOUNDS_UNRELIABLE_EXCHANGES: &[&str] = &["ST", "MX"];
 
+/// Venues whose EODHD data is unreliable for screening — excluded loudly
+/// with a named receipt, never silently. Live 2026-10-14: the MX venue
+/// served 314 rows that are US-market lines mechanically re-denominated at
+/// the MXN rate (NVDA $221.30 → ₱4088.57 = ×18.4815; 100 rows probed: US
+/// and foreign issuers via their US lines, one Mexican issuer — Grupo
+/// México — via its US OTC line, zero Bolsa lines). Screening this venue
+/// fabricates Mexican coverage, so it is dropped with a named error;
+/// screen Mexico through a reliable venue source instead.
+const UNRELIABLE_VENUES: &[(&str, &str)] = &[(
+    "MX",
+    "venue data unreliable: served US-market rows re-denominated at the MXN rate (zero Bolsa lines; live 2026-10-14) — excluded; screen Mexico through a reliable venue source",
+)];
+
 fn remove_market_cap_filters(filters: &[serde_json::Value]) -> Vec<serde_json::Value> {
     filters
         .iter()
@@ -1262,6 +1326,7 @@ struct RowFilterStats {
     out_of_band_dropped: u64,
     unconverted_rows: u64,
     non_common_dropped: u64,
+    jpy_lines_kept: u64,
 }
 
 /// Stamp a row with its USD market cap.
@@ -1294,7 +1359,46 @@ fn filter_non_common(rows: &mut Vec<serde_json::Value>, stats: &mut RowFilterSta
             stats.non_common_dropped += 1;
         }
         common
-    });
+    })
+}
+
+/// Echo the exchange registry contract for the screened venues — code →
+/// venue, quotation currency, expected issuer domicile (the
+/// reconciliation contract; gates in `crate::validation`). Excluded
+/// unreliable venues still echo their registry entry next to their named
+/// exclusion error.
+fn venue_registry_echo(exchange_codes: &[String]) -> serde_json::Map<String, serde_json::Value> {
+    let mut venues = serde_json::Map::new();
+    for code in exchange_codes {
+        if let Some(venue) = crate::validation::venue_for(code) {
+            venues.insert(
+                code.clone(),
+                serde_json::json!({
+                    "venue": venue.venue,
+                    "quotation_currency": venue.quotation_currency,
+                    "expected_domicile": venue.expected_domicile,
+                }),
+            );
+        }
+    }
+    venues
+}
+
+/// Collect named data-quality flags for a fetched screener row set into the
+/// output's `data_quality_flags` array (gates in `crate::validation`).
+/// Flagged rows are kept — the gate names, it does not drop.
+fn collect_screener_row_flags(rows: &[serde_json::Value], flags: &mut Vec<serde_json::Value>) {
+    for row in rows {
+        let row_flags = crate::validation::screener_row_flags(row);
+        if row_flags.is_empty() {
+            continue;
+        }
+        flags.push(serde_json::json!({
+            "code": row.get("code").cloned().unwrap_or(serde_json::Value::Null),
+            "exchange": row.get("exchange").cloned().unwrap_or(serde_json::Value::Null),
+            "flags": row_flags,
+        }));
+    }
 }
 
 /// Non-common-stock instruments the EODHD screener cannot exclude

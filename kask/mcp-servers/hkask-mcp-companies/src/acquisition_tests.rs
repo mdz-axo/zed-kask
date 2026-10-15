@@ -2571,6 +2571,165 @@ async fn screener_fx_failure_drops_exchange_loudly() {
     assert_eq!(fixture.count(), 3);
 }
 
+/// expect: [P9] Internally inconsistent screener rows are flagged by name in
+/// `data_quality_flags` — kept, never silently dropped. Receipts: 2026-10-14
+/// live pulls (CICHF dividend "yield" 0.3513; SPCX avgvol_1d 68.8M /
+/// avgvol_200d 0).
+#[tokio::test]
+async fn screener_data_quality_flags_name_inconsistent_rows() {
+    let (output, _fixture) = screener_tool(
+        |path| {
+            if path.starts_with("/eodhd/exchanges-list") {
+                return (500, json!({ "error": "fixture exchanges-list outage" }));
+            }
+            if path.starts_with("/eodhd/screener") {
+                return (
+                    200,
+                    json!({ "data": [
+                        {
+                            "code": "CLEAN1",
+                            "name": "Clean Company",
+                            "exchange": "US",
+                            "currency_symbol": "$",
+                            "market_capitalization": 5_000_000_000.0,
+                            "dividend_yield": 0.0231,
+                            "avgvol_1d": 1_000_000.0,
+                            "avgvol_200d": 900_000.0
+                        },
+                        {
+                            "code": "GARB1",
+                            "name": "Garbled Company",
+                            "exchange": "US",
+                            "currency_symbol": "$",
+                            "market_capitalization": 6_000_000_000.0,
+                            "dividend_yield": 0.3513,
+                            "avgvol_1d": 68_780_976.0,
+                            "avgvol_200d": 0.0
+                        }
+                    ]}),
+                );
+            }
+            (404, json!({ "error": "unexpected endpoint", "path": path }))
+        },
+        json!({
+            "prompt": "US listed companies with market capitalization above 2 billion",
+            "limit": 10,
+            "criteria_overrides": { "exchanges": ["US"] }
+        }),
+    )
+    .await;
+    // Both rows survive — the gate flags, it does not drop.
+    assert_eq!(output["count"], json!(2));
+    let results = output["results"].as_array().expect("results");
+    let codes: Vec<&str> = results
+        .iter()
+        .map(|row| row["code"].as_str().expect("code"))
+        .collect();
+    assert!(codes.contains(&"CLEAN1"));
+    assert!(codes.contains(&"GARB1"));
+    // Exactly the garbled row is named, with both receipt flags.
+    let flags = output["data_quality_flags"]
+        .as_array()
+        .expect("data_quality_flags");
+    assert_eq!(flags.len(), 1);
+    assert_eq!(flags[0]["code"], json!("GARB1"));
+    assert_eq!(flags[0]["exchange"], json!("US"));
+    let names: Vec<&str> = flags[0]["flags"]
+        .as_array()
+        .expect("flags")
+        .iter()
+        .map(|flag| flag.as_str().expect("flag name"))
+        .collect();
+    assert!(names.contains(&"dividend_yield_implausible"));
+    assert!(names.contains(&"volume_series_inconsistent"));
+}
+
+/// expect: [P9] The MX venue — unreliable per the live 2026-10-14 receipt
+/// (US-market rows mechanically re-denominated at the MXN rate, zero Bolsa
+/// lines) — is excluded loudly: named error, no MX rows, the US exchange
+/// still screened.
+#[tokio::test]
+async fn screener_unreliable_venue_excluded_loudly() {
+    let (output, _fixture) = screener_tool(
+        screener_fx_responder(
+            &[("US", "USD"), ("MX", "MXN")],
+            &[("MXN", "2026-10-14", 18.4815)],
+            vec![
+                (
+                    "US",
+                    screener_row("US0", "US Zero", "US", "$", 8_000_000_000.0),
+                ),
+                (
+                    "MX",
+                    json!({
+                        "code": "NVDA", "name": "NVIDIA Corporation", "exchange": "MX",
+                        "currency_symbol": "₱", "market_capitalization": 101_112_422_072_320.0
+                    }),
+                ),
+            ],
+        ),
+        json!({
+            "prompt": "US and Mexico listed companies with market capitalization above 2 billion",
+            "limit": 10,
+            "criteria_overrides": { "exchanges": ["US", "MX"] }
+        }),
+    )
+    .await;
+    // Only the US row survives; the MX mirror row is never fetched.
+    assert_eq!(output["count"], json!(1));
+    let codes = result_codes(output["results"].as_array().expect("results"));
+    assert_eq!(codes, ["US0"]);
+    // The exclusion is loud: a named error carrying the receipt, and the
+    // dropped-exchanges warning.
+    let mx_error = output["exchange_errors"]["MX"]
+        .as_str()
+        .expect("MX exclusion error");
+    assert!(mx_error.contains("venue data unreliable"));
+    assert!(mx_error.contains("zero Bolsa lines"));
+    assert!(
+        output["warnings"]
+            .as_array()
+            .expect("warnings")
+            .iter()
+            .any(|warning| warning
+                .as_str()
+                .unwrap_or("")
+                .contains("dropped from results"))
+    );
+}
+
+/// expect: [P9] When LSE is screened and no ¥-quoted lines surface, the
+/// Japan coverage fact is named — never silent. (Live 2026-10-14: ¥ lines
+/// exist — TYT Toyota ¥35.4T ≈ $224B — so jpy_lines_kept documents them
+/// when present; this test pins the zero case.)
+#[tokio::test]
+async fn screener_zero_jpy_lines_names_japan_coverage() {
+    let (output, _fixture) = screener_tool(
+        screener_fx_responder(
+            &[("LSE", "GBP")],
+            &[("GBP", "2026-10-14", 0.75466)],
+            vec![(
+                "LSE",
+                screener_row("HSBA", "HSBC Holdings PLC", "LSE", "p", 243_157_303_296.0),
+            )],
+        ),
+        json!({
+            "prompt": "UK and Japan listed companies with market capitalization above 2 billion",
+            "limit": 10,
+            "criteria_overrides": { "exchanges": ["LSE"] }
+        }),
+    )
+    .await;
+    assert_eq!(output["jpy_lines_kept"], json!(0));
+    assert!(
+        output["warnings"]
+            .as_array()
+            .expect("warnings")
+            .iter()
+            .any(|warning| warning.as_str().unwrap_or("").contains("Japan coverage: 0"))
+    );
+}
+
 /// expect: [P9] A fan-out exchange code absent from the EODHD exchange list
 /// is dropped and named — the runtime check on the geography table's codes.
 #[tokio::test]
@@ -3816,6 +3975,7 @@ fn extreme_sustainable_growth_is_model_sensitive() {
         growth_gap_pp: Some(-5.0),
         financing_growth_gap_pp: Some(-96.0),
         profitability_gap_pp: None,
+        growth_benchmark_unsolved_reason: None,
         book_value_per_share: None,
         sustainable_growth_rate: financial_model::IMPLIED_GROWTH_HI + 0.01,
         investor_target_return: 0.15,
@@ -3863,6 +4023,7 @@ fn expectations_gap_separates_revenue_performance_from_financing_capacity() {
         growth_gap_pp: Some((0.12 - 0.08) * 100.0),
         financing_growth_gap_pp: Some((0.12 - 0.06864) * 100.0),
         profitability_gap_pp: Some(1.5),
+        growth_benchmark_unsolved_reason: None,
         book_value_per_share: None,
         sustainable_growth_rate: 0.06864,
         investor_target_return: 0.15,
@@ -3951,6 +4112,7 @@ fn expectations_gap_separates_revenue_performance_from_financing_capacity() {
         growth_gap_pp: None,
         financing_growth_gap_pp: None,
         profitability_gap_pp: Some((0.16 - 0.1056) * 100.0),
+        growth_benchmark_unsolved_reason: None,
         book_value_per_share: Some(242.0),
         sustainable_growth_rate: 0.06864,
         investor_target_return: 0.15,
@@ -4020,6 +4182,7 @@ fn expectations_gap_signal_classifier_is_sign_aware() {
         growth_gap_pp: Some(growth),
         financing_growth_gap_pp: Some(growth),
         profitability_gap_pp: Some(profitability),
+        growth_benchmark_unsolved_reason: None,
         book_value_per_share: None,
         sustainable_growth_rate: 0.06864,
         investor_target_return: 0.15,

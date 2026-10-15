@@ -46,8 +46,22 @@ impl CompaniesServer {
         execute_tool(self, "income_statement", async {
             validate_symbol(&symbol)?;
             let limit_str = limit.unwrap_or(5).to_string();
-            self.fetch("income_statement", &symbol, &[("limit", &limit_str)])
-                .await
+            let mut rows = self
+                .fetch("income_statement", &symbol, &[("limit", &limit_str)])
+                .await?;
+            // Data-validation gate (crate::validation; receipts 2026-10-14):
+            // internally inconsistent rows are flagged in place — never
+            // silently dropped.
+            let flagged = crate::validation::annotate_income_statement_rows(&mut rows);
+            if flagged > 0 {
+                tracing::warn!(
+                    target: "hkask.mcp.companies.validation",
+                    symbol = %symbol,
+                    flagged,
+                    "income statement rows flagged by data-validation gates"
+                );
+            }
+            Ok(rows)
         })
         .await
     }

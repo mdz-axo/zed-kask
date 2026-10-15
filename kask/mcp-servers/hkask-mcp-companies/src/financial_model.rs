@@ -412,7 +412,19 @@ impl HistoricalSnapshot {
             }
             let cap = parse_financial_field(entry, "capitalExpenditure");
             capex.push((year.to_string(), cap.abs()));
-            let div = parse_financial_field(entry, "dividendsPaid");
+            // Dividends field name differs by provider (live receipts
+            // 2026-10-14): EODHD-normalized rows carry `dividendsPaid`
+            // (positive); FMP rows carry `commonDividendsPaid` /
+            // `netDividendsPaid` and NO `dividendsPaid` field (NVDA cash
+            // flow: commonDividendsPaid −974,000,000, dividendsPaid
+            // absent) — reading only `dividendsPaid` silently zeroed
+            // every FMP-routed dividend payer's payout, solving
+            // retention = 1.0 for ~40%-payout banks.
+            let div = parse_optional_financial_field(
+                entry,
+                &["dividendsPaid", "commonDividendsPaid", "netDividendsPaid"],
+            )
+            .unwrap_or(0.0);
             dividends_paid.push((year.to_string(), div.abs()));
         }
 
@@ -736,6 +748,28 @@ impl HistoricalSnapshot {
     /// Latest interest expense.
     pub fn interest_expense(&self) -> f64 {
         self.interest_expense.last().map(|(_, v)| *v).unwrap_or(0.0)
+    }
+
+    /// Revenue multiple over the window (latest / first positive reported
+    /// observation) — the episode-window signal for the expectations gap:
+    /// a window where revenue grew more than ~4x is an episode (regime
+    /// change, commodity cycle, hypergrowth off a small base) whose
+    /// full-period CAGR describes the episode, not a repeatable
+    /// capability. Receipts 2026-10-14: NVDA 8.0x, MU 8.6x (episode);
+    /// MSFT 1.57x, META 1.72x, TSM 1.78x (clean).
+    pub fn revenue_window_multiple(&self) -> Option<f64> {
+        let first = self
+            .revenue
+            .iter()
+            .find(|(_, value)| *value > 0.0)
+            .map(|(_, value)| value)?;
+        let last = self
+            .revenue
+            .iter()
+            .rev()
+            .find(|(_, value)| *value > 0.0)
+            .map(|(_, value)| value)?;
+        Some(last / first)
     }
 
     /// Latest dividends paid.
