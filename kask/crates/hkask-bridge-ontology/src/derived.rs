@@ -501,6 +501,27 @@ pub const DERIVED_CONCEPTS: &[DerivedConcept] = &[
         authority: "operator ruling 2026-09-25; Richardson, Wilson, Nishikawa & Hayward, The well-built clinical question, ACP Journal Club 123(3) (1995)",
     },
     DerivedConcept {
+        term: "rubric",
+        aliases: &["rubrics", "evaluation rubric", "target rubrics"],
+        identity: "a named, typed pass/fail criterion declared before measurement and verified by a deterministic check",
+        definition: "The Agentic Scientist's machine-checkable experiment criterion (Lange, Grillotti, Yamada, Charakorn & Ha, The Agentic Scientist: Orchestrating Coding Agents for Automated Scientific (Co-)Discovery, arXiv:2610.18933, 2026): each declared experiment carries a rubric bundle — at least one metric rubric and at least one implementation rubric, with stable snake_case ids and concrete measurable descriptions — and each rubric's verification is a typed check (source_contains / not_contains / regex patterns, or a recorded harness report), assessed as passed / failed / not_assessed. In zed-kask it grounds the experimentation server's typed rubric block on experiment_propose and shares its verification vocabulary with swarm_eval_agent_local's evaluator kinds — one grammar from declaration to recorded run.",
+        constituents: &[
+            "metric rubric",
+            "implementation rubric",
+            "verification",
+            "assessment",
+        ],
+        authority: "operator ruling 2026-10-15 (agentic-scientist-v3 integration, decision D3); Lange, Grillotti, Yamada, Charakorn & Ha, The Agentic Scientist, arXiv:2610.18933 (2026)",
+    },
+    DerivedConcept {
+        term: "ablation",
+        aliases: &["ablation study", "ablated variant"],
+        identity: "a variant derived from a parent that removes or disables exactly one component, evaluated under the same sealed contract to isolate that component's contribution",
+        definition: "The controlled-removal study from The Agentic Scientist's variants pipeline (Lange, Grillotti, Yamada, Charakorn & Ha, arXiv:2610.18933, 2026): the winning program is compared against baselines and ablated variants — each derived from the parent and differing in exactly the ablated component — under the same sealed evaluator, with cross-task generalization checks. In zed-kask it grounds the experimentation server's variant role: an ablation-role variant requires a parent_variant_id and is evaluated under the experiment's sealed contract.",
+        constituents: &["baseline", "ablated component", "sealed evaluation"],
+        authority: "operator ruling 2026-10-15 (agentic-scientist-v3 integration, decision D3); Lange, Grillotti, Yamada, Charakorn & Ha, The Agentic Scientist, arXiv:2610.18933 (2026)",
+    },
+    DerivedConcept {
         term: "multi_criteria_decision_analysis",
         aliases: &[
             "mcda",
