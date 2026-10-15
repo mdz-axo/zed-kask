@@ -3,7 +3,7 @@ title: "The Agentic Scientist (AI-Scientist-v3) Integration Proposal — sealed 
 audience: [operators, architects, developers, agents]
 last_updated: 2026-10-15
 version: "0.3.0"
-status: "Accepted — operator rulings D1–D4 (2026-10-15); implementation in progress"
+status: "Implemented — operator rulings D1–D4 (2026-10-15); commits 24142877df (P1), b75492fecc (P4), dfa438e9ae (P5), b0cc12c83b (P2), c2334b4c1c (P3)"
 domain: "Cross-cutting"
 mds_categories: [domain, trust, lifecycle, composition]
 ---
@@ -414,8 +414,7 @@ flowchart TD
 | P6 `co-scientist` skill | P1–P4 | P (composition) with D gates in-skill | pin suite on a fixed task set; the route-does-not-reimplement check (every step names an existing or proposed tool; no step re-implements a delegated skill's method); `skill-discovery` evaluate ≥ 24/32 |
 | P7 conclusions template | ships with P6 | D form / P application | the four update triggers (a)–(d) plus the keep case, receipts through `lisp_eval` |
 
-Every oracle above is **proposed** — none has been executed. This report is the
-proposal; the oracles are the acceptance criteria for the follow-on implementation pass.
+Every oracle above was the acceptance criteria for the implementation pass — all executed green at their commits (2026-10-15): the typed-refusal suites, the fingerprint determinism test, the disjointness refusals, the budget boundaries, and the tool-surface pins live in the crate's test modules; the CS-1 conclusions-gate receipt executed live through `lisp_eval`.
 
 ### 4.2.2 Implementation constraints for the follow-on pass (project rules)
 

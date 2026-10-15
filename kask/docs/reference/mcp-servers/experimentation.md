@@ -1,8 +1,8 @@
 ---
 title: "Experimentation MCP Server Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-09-30
-version: "0.41.0"
+last_updated: 2026-10-15
+version: "0.42.0"
 status: "Active"
 domain: "Composition"
 mds_categories: [domain, composition, lifecycle, trust]
@@ -11,97 +11,111 @@ mds_categories: [domain, composition, lifecycle, trust]
 # Experimentation MCP Server Reference
 
 **Crate:** `kask/mcp-servers/hkask-mcp-experimentation`
-**Tools:** 6 — `experiment_propose`, `variant_register`, `fitness_record`, `selection_record`, `lineage_read`, `population_query`
-**Auto-start:** Yes by default with the full built-in set; `kask.mcp.load_default=false` disables the fleet and `kask.mcp.overrides.experimentation=false` disables this server (server id `experimentation`, `kask/crates/kask_bridge/src/mcp_servers.rs:550`).
+**Tools:** 8 — `experiment_propose`, `variant_register`, `experiment_seal`, `fitness_record`, `final_evaluation_record`, `selection_record`, `lineage_read`, `population_query`
+**Auto-start:** Yes by default with the full built-in set; `kask.mcp.load_default=false` disables the fleet and `kask.mcp.overrides.experimentation=false` disables this server (server id `experimentation`, `kask/crates/kask_bridge/src/mcp_servers.rs`).
 
 The experimentation server is the **experiment registry** for the sharded
-experimentation program (the repair plan §P8): the durable record of declared
-experiments, their variant lineages, grounded fitness, and selection
-verdicts. It is a registry, not an executor — fitness entries are
-recorded report references to real harness runs, never simulated
-(`server.rs:239`, `fitness_record`: "runs are recorded report references
-ONLY — never simulated").
+experimentation program (the repair plan §P8, extended by the
+agentic-scientist-v3 integration, 2026-10-15): the durable record of declared
+experiments, their variant lineages with roles, sealed eval contracts, grounded
+fitness, final evaluations, and selection verdicts. It is a registry, not an
+executor — fitness entries are recorded report references to real harness
+runs, never simulated.
 
-## The protocol (§P8's four steps)
+## The protocol
 
-1. **Declare** — `experiment_propose` (`server.rs:160`): hypothesis,
-   artifact layer (skill | agent_card | prompt_template | tool_schema |
-   regulation_scalar | lora_adapter), genotype refs, eval set, fitness
-   function, noise band, a **pre-registered prediction with confidence
-   in [0,1]**, and energy budget. Optional `experiment_key` converges
-   retried calls onto the existing record.
-2. **Vary** — `variant_register` (`server.rs:211`): genotype
-   configurations (arbitrary JSON) with optional parent lineage; the
-   first variant moves the experiment to running; a resolved experiment
-   accepts no further variants.
-3. **Test** — `fitness_record` (`server.rs:239`): grounded fitness —
-   report references plus per-objective scores computed from those
-   runs; immutable once written.
-4. **Select** — `selection_record` (`server.rs:266`): the verdict —
-   selected (naming the winning variant) or rejected (with at least
-   one reason). Both outcomes persist as fossils; the first selection
-   resolves the experiment; a further selection is a
-   `failed_precondition` conflict. `algedonic_reference` names the
-   review record that chaired the selection.
+1. **Declare** — `experiment_propose`: hypothesis, artifact layer (skill |
+   agent_card | prompt_template | tool_schema | regulation_scalar |
+   lora_adapter | scientific_hypothesis — the general lab notebook, operator
+   ruling D2 2026-10-15), genotype refs, eval set, fitness function, noise
+   band, **a typed rubric bundle** (P1: non-empty; at least one `metric`
+   rubric and one `implementation` or `grounded_report` rubric; stable
+   snake_case ids; verification in the swarm evaluator vocabulary —
+   contains / not_contains / regex / report_ref), a pre-registered
+   prediction with confidence in [0,1], and an energy budget carrying
+   `max_runs`. Optional `experiment_key` converges retried calls.
+2. **Vary** — `variant_register`: genotype configurations with an optional
+   **role** (P4: baseline | challenger | ablation — exactly one baseline per
+   experiment; an ablation names its parent variant) and optional parent
+   lineage. The first variant moves the experiment to running.
+3. **Seal** — `experiment_seal` (P2): freezes the declaration's (eval_set,
+   rubrics, fitness_fn, noise_band) under a SHA-256 fingerprint and records
+   the headroom attestation — the baseline variant, its recorded fitness
+   evidence, and its measured pass rate (must be < 1.0; saturation is the
+   typed no-headroom void condition, §5 Q6). Pre-seal, only the baseline
+   records fitness; post-seal, every fitness record cites the seal.
+   An identical retried seal converges; a different attempt is a typed
+   refusal.
+4. **Test** — `fitness_record`: grounded fitness — report references plus
+   run_count (summed against `budget.max_runs`, typed `budget_exhausted`
+   refusal past the ceiling) and per-objective scores. Immutable once
+   written.
+5. **Final evaluation** — `final_evaluation_record` (P3): the leading
+   variant re-scored on the selection set. Run refs must be disjoint from
+   every prior fitness record and final evaluation for the experiment (the
+   GEPA feedback/selection split made mechanical); run_count joins the
+   budget ceiling atomically.
+6. **Select** — `selection_record`: the verdict — selected (naming the
+   winning variant) or rejected (with at least one reason). Both outcomes
+   persist as fossils; the first selection resolves the experiment.
+   `algedonic_reference` names the review record that chaired the selection.
 
-Readback: `lineage_read` (`server.rs:301`) returns the ancestry chain
-with fitness and selection events — rejected variants and their
-reasons are retained "so a rejected mutation is never blindly retried".
-`population_query` (`server.rs:367`) is the registry's population view
-for the algedonic agenda and the curator's ORIENT (optional layer,
-status, created-since, limit; newest first).
+Readback: `lineage_read` returns the ancestry chain (variant kind) or the
+full experiment record (experiment kind — variants, fitness, selections, the
+seal, and final evaluations). `population_query` is the registry's population
+view for the algedonic agenda and the curator's ORIENT.
 
 ## The expectation signal
 
-The `Prediction` type (`types.rs:28-38`) is a pre-registered claim with
-the experiment's own confidence — "the tiny controller (§P8.1). The
-claim is scored against the experiment's measured outcome by the linked
-kanban goal" — the goal loop's Brier scoring (loop-register L9) closes
-the expectation loop. This makes the experimentation registry the fleet's
-second INV2-exemplary surface after the regulation loop: the
-expectation is stored at declaration time and scored against the
-observation.
+The `Prediction` type is a pre-registered claim with the experiment's own
+confidence — "the tiny controller (§P8.1)". The claim is scored against the
+experiment's measured outcome by the linked kanban goal (`linked_goal_id` —
+the goal loop's Brier scoring closes the expectation loop). The seal adds a
+second expectation carriage: the eval contract is fingerprinted before the
+challengers run, so the measurement that resolves the claim is provably the
+measurement that was declared.
 
 ## Architecture
 
-- **Store**: `ExperimentationStore` (`store.rs:93`) over the
-  `hkask_storage::database::driver::DatabaseDriver` trait — SQLCipher
-  in production (`hkask_storage::open_or_repair`), the in-memory driver
-  in tests (`store.rs:572`). One database per server (the per-agent
-  default under the hKask data dir, overridable via
-  `HKASK_EXPERIMENTATION_DB`); "the registry is the record of record from
-  day one — there is no legacy-import path (§P8.7-Q5)"
-  (`store.rs:1-6`).
-- **Replay convergence**: `experiment_propose` and `variant_register`
-  mint server-side identity, so an interrupted-then-retried call could
-  duplicate a registry row; optional caller-supplied keys converge
-  those replays onto the existing record (a `UNIQUE` index plus
-  `INSERT OR IGNORE` — the kata-kanban replay-store shape,
-  `store.rs:8-12`).
-- **Errors**: `ExperimentationError` (`types.rs:94`) classified per-variant
-  for MCP dispatch via `map_experimentation_error` (`server.rs:33`) — never a
-  blanket internal.
-- **Credentials**: `HKASK_DB_PASSPHRASE` declared **required** — the
-  server refuses to start without it (the canonical 2-tier chain,
-  `server.rs:446-456`; startup failures map to Infrastructure,
-  visible and named, never a silent empty-key open). Pinned by
-  `experimentation_declares_its_db_passphrase_as_required`
-  (`tests/tool_behavior.rs`).
+- **Store**: `ExperimentationStore` over the `hkask_storage` database driver
+  trait — SQLCipher in production, the in-memory driver in tests. One
+  database per server (`HKASK_EXPERIMENTATION_DB` overrides the per-agent
+  default). Tables: experiments (with rubrics, max_runs, linked_goal_id),
+  variants (with role), fitness_records (with run_count, seal_id), seals
+  (UNIQUE experiment_id — one seal per experiment), final_evaluations,
+  selection_records. Additive PRAGMA-checked migrations in the D87 shape.
+- **Seal fingerprint**: SHA-256 (workspace `sha2`) over the canonical JSON of
+  (eval_set, fitness_fn, noise_band, rubrics) — identical declarations seal
+  to identical fingerprints; the pass rate round-trips through TEXT
+  (Rust's shortest-round-trip f64 Display).
+- **Replay convergence**: `experiment_propose` and `variant_register` take
+  optional caller keys (UNIQUE + INSERT OR IGNORE); `experiment_seal`
+  converges structurally — UNIQUE(experiment_id) plus an args-equality check
+  (identical retries return the existing seal; different attempts are typed
+  `AlreadySealed` refusals).
+- **Errors**: `ExperimentationError` classified per-variant for MCP dispatch
+  via `map_experimentation_error` — never a blanket internal. Seal-state
+  errors (not sealed / already sealed / citation missing / no headroom) are
+  failed_precondition; wrong ids and non-disjoint refs are invalid_argument.
+- **Credentials**: `HKASK_DB_PASSPHRASE` declared required — the canonical
+  2-tier chain; startup failures map to Infrastructure.
 
 ## Testing
 
-The tool count is pinned by `tool_names_match_live_router` (the
-build-generated `TOOL_NAMES` set against the live `experimentation_router`
-surface); the tool-behavior suite drives all six tools through their
-`Parameters` seams, including the replay-convergence contract and the
-credential declaration pin (`tests/tool_behavior.rs`); the store suite
-drives the full registry lifecycle on the in-memory driver
-(`store.rs:572`).
+The tool count is pinned by `tool_surface_is_exactly_8_registered_tools`
+(build-generated TOOL_NAMES against the live router); the tool-behavior
+suite drives all eight tools through their `Parameters` seams (rubric
+validation, role enforcement, the sealed lifecycle, disjointness, budget
+boundaries, replay convergence, the credential pin); the store suite drives
+the full registry lifecycle on the in-memory driver, including the seal
+fingerprint determinism and the concurrent-selection race.
 
 ## Reference models
 
-The repair plan §P8
-(`kask/docs/plans/hkask-core-mcp-repair-improvement-plan.md`) records
-the experimentation reference model and program with its locked operator
-decisions (2026-09-30). The loop-register's L24 row classifies the
-registry cycle (primary Layer B, secondary C; INV2 held by design).
+The repair plan §P8 and the experimentation reference model
+(`kask/docs/research/experimentation-reference-model.md` — design authority);
+the agentic-scientist-v3 integration record
+(`kask/docs/research/agentic-scientist-v3-integration.md` — the proposal and
+the D1–D4 operator rulings, 2026-10-15). The loop-register's L24 row
+classifies the registry cycle (primary Layer B, secondary C; INV2 held by
+design).
