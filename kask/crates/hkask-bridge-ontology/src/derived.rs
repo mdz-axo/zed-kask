@@ -1767,6 +1767,98 @@ pub const DERIVED_CONCEPTS: &[DerivedConcept] = &[
         ],
         authority: "operator ruling 2026-10-14 (Cohort 11 skill-corpus audit); Berthouzoz, Li & Agrawala, ACM TOG 31(4):67 (2012), doi:10.1145/2185520.2185563; SMPTE 258M",
     },
+    DerivedConcept {
+        term: "time_weighted_return",
+        aliases: &["twr", "time weighted rate of return", "geometric linking"],
+        identity: "the compound rate of growth of one unit of capital over a measurement period computed by geometrically linking sub-period holding returns bounded by external cash flows",
+        definition: "CFA Institute, Global Investment Performance Standards (GIPS) (2020), and Peter O. Dietz, Pension Funds: Measuring Investment Performance (Free Press, 1966): eliminates the distorting effect of external cash inflows and outflows by valuing the portfolio at each external flow boundary and geometrically linking the sub-period returns, measuring investment strategy performance independently of client cash-flow timing. In zed-kask it grounds portfolio_returns and portfolio-review.",
+        constituents: &[
+            "sub-period return",
+            "external cash flow",
+            "geometric linking",
+        ],
+        authority: "operator ruling 2026-10-14 (Cohort 12 skill-corpus audit); CFA Institute, Global Investment Performance Standards (GIPS) (2020); Dietz (1966)",
+    },
+    DerivedConcept {
+        term: "modified_dietz_return",
+        aliases: &[
+            "modified dietz",
+            "mwr",
+            "money-weighted return",
+            "money weighted return",
+        ],
+        identity: "(V1 - V0 - sum(F_i)) / (V0 + sum(W_i * F_i)), weighting each external cash flow F_i by the fraction of the measurement period W_i = (T - t_i) / T it was present in the portfolio",
+        definition: "Peter O. Dietz, Pension Funds: Measuring Investment Performance (Free Press, 1966), and CFA Institute, GIPS Standards (2020): a first-order money-weighted holding-period return approximation that accounts for the timing and magnitude of external cash flows without requiring daily portfolio valuations at every flow date. In zed-kask it grounds portfolio_returns's modified_dietz output and portfolio-review.",
+        constituents: &[
+            "time_weighted_return",
+            "external cash flow",
+            "time weighting factor",
+        ],
+        authority: "operator ruling 2026-10-14 (Cohort 12 skill-corpus audit); Dietz, Pension Funds: Measuring Investment Performance (1966); CFA Institute, GIPS Standards (2020)",
+    },
+    DerivedConcept {
+        term: "brinson_attribution",
+        aliases: &[
+            "brinson-fachler attribution",
+            "brinson fachler",
+            "brinson-hood-beebower",
+            "performance attribution",
+        ],
+        identity: "decomposing benchmark-relative active return (R_p - R_b) across groups into allocation effect (w_pi - w_bi)*(R_bi - R_b), selection effect w_bi*(R_pi - R_bi), and interaction effect (w_pi - w_bi)*(R_pi - R_bi)",
+        definition: "Gary P. Brinson & Nimrod Fachler, 'Measuring Non-U.S. Equity Portfolio Performance', Journal of Portfolio Management 11(3):73-76 (1985), doi:10.2469/faj.v41.n3.43, and Gary P. Brinson, L. Randolph Hood & Gilbert L. Beebower, 'Determinants of Portfolio Performance', Financial Analysts Journal 42(4):39-44 (1986), doi:10.2469/faj.v42.n4.39: partitions active portfolio return relative to a benchmark into asset/sector weight decisions (allocation), within-group security picking (selection), and their cross-product (interaction). In zed-kask it grounds portfolio_attribution and portfolio-review.",
+        constituents: &[
+            "allocation effect",
+            "selection effect",
+            "interaction effect",
+        ],
+        authority: "operator ruling 2026-10-14 (Cohort 12 skill-corpus audit); Brinson & Fachler (1985), doi:10.2469/faj.v41.n3.43; Brinson, Hood & Beebower, FAJ 42(4):39-44 (1986), doi:10.2469/faj.v42.n4.39",
+    },
+    DerivedConcept {
+        term: "frame_budget",
+        aliases: &["frame rate", "vsync budget", "frame time budget"],
+        identity: "the maximum wall-clock duration available on the UI foreground and renderer threads to process input, layout, paint, and submit one display frame without dropping a VSync deadline (8.33 ms at 120 FPS; 16.67 ms at 60 FPS)",
+        definition: "GPUI Renderer Architecture (crates/gpui) and Display VSync Refresh Standards: the reciprocal of the display refresh rate (1 / 120 Hz = 8.33 ms; 1 / 60 Hz = 16.67 ms). Foreground tasks or layout/paint passes that exceed the frame budget starve input handling and cause visible frame drops or hitches even when aggregate throughput is high. In zed-kask it grounds gpui-bench's responsiveness target.",
+        constituents: &["latency", "throughput", "responsiveness"],
+        authority: "operator ruling 2026-10-14 (Cohort 12 skill-corpus audit); GPUI Renderer Architecture (crates/gpui); Display VSync Refresh Standards (120 Hz / 60 Hz)",
+    },
+    DerivedConcept {
+        term: "instructions_per_cycle",
+        aliases: &["ipc", "retired instructions per cycle", "cpu ipc"],
+        identity: "retired CPU instructions divided by elapsed processor clock cycles (IPC = Instructions / Cycles), reported alongside total instruction count and wall-clock time",
+        definition: "John L. Hennessy & David A. Patterson, Computer Architecture: A Quantitative Approach, 6th ed. (Morgan Kaufmann, 2017), and Andy Georges, Dries Buytaert & Lieven Eeckhout, 'Statistically rigorous Java performance evaluation', OOPSLA (2007), doi:10.1145/1297027.1297033: distinguishes algorithmic work reductions (fewer retired instructions) from microarchitectural stall changes (cache misses, branch mispredictions) and CPU frequency scaling. In zed-kask it grounds gpui-bench's hardware-counter reporting rules.",
+        constituents: &["retired instructions", "clock cycles", "wall-clock time"],
+        authority: "operator ruling 2026-10-14 (Cohort 12 skill-corpus audit); Hennessy & Patterson, Computer Architecture (2017); Georges, Buytaert & Eeckhout, OOPSLA (2007), doi:10.1145/1297027.1297033",
+    },
+    DerivedConcept {
+        term: "equity_duration",
+        aliases: &["cash flow duration", "macaulay equity duration"],
+        identity: "sum(t * PV(FCF_t)) / sum(PV(FCF_t)), the present-value-weighted average maturity in years of an equity's projected free cash flows and terminal value",
+        definition: "Patricia M. Dechow, Richard G. Sloan & Mark T. Soliman, 'Implied Equity Duration: A New Measure of Equity Risk', Review of Accounting Studies 9(2-3):197-228 (2004), doi:10.1023/b:rast.0000028186.44328.3f, extending Frederick R. Macaulay, Some Theoretical Problems Suggested by the Movements of Interest Rates, Bond Yields and Stock Prices in the United States Since 1856 (NBER, 1938): measures the cash-flow horizon and discount-rate sensitivity of an equity by weighting each future free cash flow (plus terminal value at the horizon year) by its time to receipt divided by total enterprise value. In zed-kask it grounds the companies server's equity_duration tool and cmp-term-structure's Phase 4 duration matching.",
+        constituents: &[
+            "discounted_cash_flow",
+            "free_cash_flow",
+            "constant_maturity_prediction",
+        ],
+        authority: "operator ruling 2026-10-14 (Cohort 13 skill-corpus audit); Dechow, Sloan & Soliman, Review of Accounting Studies 9(2-3):197-228 (2004), doi:10.1023/b:rast.0000028186.44328.3f; Macaulay (1938)",
+    },
+    DerivedConcept {
+        term: "log_odds",
+        aliases: &[
+            "logit",
+            "log-odds",
+            "log odds",
+            "log-odds space",
+            "log-odds pooling",
+        ],
+        identity: "ln(p / (1 - p)), the canonical link function mapping open probabilities p in (0, 1) bijectively onto the unconstrained real line (-inf, +inf) with inverse sigmoid sigma(x) = 1 / (1 + e^-x)",
+        definition: "Joseph Berkson, 'Application of the Logistic Function to Bio-Assay', Journal of the American Statistical Association 39(227):357-365 (1944), doi:10.2307/2280041, and Ville A. Satopaa et al., 'Combining Multiple Probability Predictions Using a Simple Logit Model', International Journal of Forecasting 30(2):344-356 (2014), doi:10.1016/j.ijforecast.2013.09.009: transforms bounded probabilities into additive log-odds units so linear tenor interpolation, extremity-adjusted forecast aggregation, and Bayesian log-odds evidence pooling never violate the [0, 1] boundary. In zed-kask it grounds cmp-term-structure's log-odds tenor interpolation, superforecasting's extremized log-odds pooling, and memory_update's Bayesian confidence combination.",
+        constituents: &[
+            "calibrated_forecast",
+            "constant_maturity_prediction",
+            "bayesian_inference",
+        ],
+        authority: "operator ruling 2026-10-14 (Cohort 13 skill-corpus audit); Berkson, JASA 39(227):357-365 (1944), doi:10.2307/2280041; Satopaa et al., Int. J. Forecasting 30(2):344-356 (2014), doi:10.1016/j.ijforecast.2013.09.009",
+    },
 ];
 /// Normalization matches the onto_anchor tool's: lowercase alphanumeric
 /// characters only, separators and case folded away.
@@ -2689,6 +2781,96 @@ mod tests {
         ] {
             let concept =
                 resolve_derived(term).expect("Cohort 11 audit ruling must resolve in derived.rs");
+            assert_eq!(
+                concept.term, expected_term,
+                "{term} resolves to {expected_term}"
+            );
+            assert!(
+                concept.authority.contains(marker),
+                "{term}: {}",
+                concept.authority
+            );
+            assert!(
+                concept.authority.starts_with("operator ruling 2026-10-14"),
+                "{term} cites the 2026-10-14 ruling"
+            );
+        }
+    }
+
+    /// expect: [P5] The Cohort 12 skill-corpus audit rulings (2026-10-14)
+    /// resolve to their published authorities and never fall back to the
+    /// coarse 5W1H core anchor.
+    #[test]
+    fn cohort_12_audit_rulings_resolve_with_authority() {
+        for (term, expected_term, marker) in [
+            ("time-weighted return", "time_weighted_return", "GIPS"),
+            ("TWR", "time_weighted_return", "Dietz"),
+            ("Modified Dietz return", "modified_dietz_return", "Dietz"),
+            ("MWR", "modified_dietz_return", "GIPS"),
+            (
+                "Brinson attribution",
+                "brinson_attribution",
+                "Brinson & Fachler",
+            ),
+            (
+                "Brinson-Fachler attribution",
+                "brinson_attribution",
+                "10.2469/faj.v42.n4.39",
+            ),
+            ("frame budget", "frame_budget", "VSync"),
+            ("frame rate", "frame_budget", "120 Hz"),
+            (
+                "instructions per cycle",
+                "instructions_per_cycle",
+                "Hennessy & Patterson",
+            ),
+            ("IPC", "instructions_per_cycle", "10.1145/1297027.1297033"),
+        ] {
+            let concept =
+                resolve_derived(term).expect("Cohort 12 audit ruling must resolve in derived.rs");
+            assert_eq!(
+                concept.term, expected_term,
+                "{term} resolves to {expected_term}"
+            );
+            assert!(
+                concept.authority.contains(marker),
+                "{term}: {}",
+                concept.authority
+            );
+            assert!(
+                concept.authority.starts_with("operator ruling 2026-10-14"),
+                "{term} cites the 2026-10-14 ruling"
+            );
+        }
+    }
+
+    /// expect: [P5] The Cohort 13 skill-corpus audit rulings (2026-10-14)
+    /// resolve to their published authorities and never fall back to the
+    /// coarse 5W1H core anchor.
+    #[test]
+    fn cohort_13_audit_rulings_resolve_with_authority() {
+        for (term, expected_term, marker) in [
+            (
+                "equity duration",
+                "equity_duration",
+                "Dechow, Sloan & Soliman",
+            ),
+            (
+                "Macaulay equity duration",
+                "equity_duration",
+                "10.1023/b:rast.0000028186.44328.3f",
+            ),
+            ("cash flow duration", "equity_duration", "Macaulay"),
+            ("log-odds", "log_odds", "Berkson"),
+            ("logit", "log_odds", "10.2307/2280041"),
+            (
+                "log-odds pooling",
+                "log_odds",
+                "10.1016/j.ijforecast.2013.09.009",
+            ),
+        ] {
+            let concept =
+                resolve_derived(term).expect("Cohort 13 audit ruling must resolve in derived.rs");
             assert_eq!(
                 concept.term, expected_term,
                 "{term} resolves to {expected_term}"

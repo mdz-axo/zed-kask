@@ -13,9 +13,19 @@ publishes 7d/30d/90d/180d/1y/2y (`cmp::INDEX_TENORS_DAYS`), while duration
 matching compares against 1m/3m/6m (`hkask_forecast::CMP_TENORS_YEARS`).
 
 **Reference model.** The U.S. Treasury constant-maturity yield curve
-(interpolation to fixed tenors) applied to prediction-market contracts,
-with log-odds interpolation; the short-end/horizon-effects rationale
-behind the tenor grid is arXiv:2602.19520 (carried at `cmp.rs:150`).
+(Federal Reserve H.15 interpolation to fixed tenors; `onto_anchor` →
+derived `constant_maturity_prediction`) applied to prediction-market
+contracts (Wolfers & Zitzewitz, *Journal of Economic Perspectives*
+18(2):107–126, 2004, `doi:10.1257/0895330041371321`) with logit /
+log-odds interpolation (`onto_anchor` → derived `log_odds`, Berkson
+1944; Satopää et al. 2014); the short-end/horizon-effects rationale
+behind the tenor grid is Page & Clemen, *Economic Journal*
+123(568):491–520 (2013), and Klingert, "Why Prediction Markets Fail on
+Long-Term Events", arXiv:2602.19520 (2026, carried at `cmp.rs:150`).
+Cash-flow horizon matching is grounded in Dechow, Sloan & Soliman,
+*Review of Accounting Studies* 9(2–3):197–228 (2004),
+`doi:10.1023/b:rast.0000013627.90884.fa` (`onto_anchor` → derived
+`equity_duration`).
 
 ## D/P labelling
 
@@ -70,9 +80,12 @@ ladder → context → indices → tree → coherence → duration matching.
 
 3. Call `market_cmp_indices` with the series, venue ("both" unless the
    operator wants one), and the accepted context fields
-   (reference/volatility/predicted_level/direction_up). It fetches live
-   open markets, classifies each contract, solves the maturity-bucketed
-   portfolios, and returns `indices` — an array of
+   (reference/volatility/predicted_level/direction_up) after gating
+   Phase 1–2 preconditions via `lisp_eval` (`CMP-1`):
+   - form: `(and context_accepted (not venues_pooled) (> ladder_rungs_count 0))`
+   - env: `{"context_accepted": <bool>, "venues_pooled": <bool>, "ladder_rungs_count": <int>}`
+   It fetches live open markets, classifies each contract, solves the
+   maturity-bucketed portfolios, and returns `indices` — an array of
    ProvenancedCmpIndex objects with full provenance.
 4. Read the per-venue report: `withheld_buckets` are buckets with no
    eligible bracket — they are withheld, never fabricated. The report
@@ -109,8 +122,11 @@ ladder → context → indices → tree → coherence → duration matching.
    fields) is the context-faithful persistence path.
 9. For horizon matching against an equity, call `equity_duration`
    (companies server) with the symbol and read `cmp_tenor_gaps` — the
-   maturity-transformation gap against the fixed CMP tenors. Pair
-   the equity's duration with the CMP tenor whose gap is smallest.
+   maturity-transformation gap against the fixed CMP tenors (`1m`, `3m`,
+   `6m`). Pair the equity's duration with the CMP tenor whose absolute
+   gap is smallest, verified deterministically via `lisp_eval` (`CMP-2`):
+   - form: `(and (= selected_gap (min gap_1m (min gap_3m gap_6m))) (>= selected_gap 0))`
+   - env: `{"selected_gap": <abs gap of chosen tenor>, "gap_1m": <abs gap 1m>, "gap_3m": <abs gap 3m>, "gap_6m": <abs gap 6m>}`
 
 ### Convergence
 
@@ -144,6 +160,7 @@ over the Convergence form:
 - Slope contradicts context: `slope: -0.15` with `up: true` →
   `"slope_contradicts_context"` — the numeric comparison, never a judged sign.
 - Flat: `slope: 0` → `"flat"`.
+- Duration-matching argmin (`CMP-2`): `{"selected_gap": 11.75, "gap_1m": 12.17, "gap_3m": 12.00, "gap_6m": 11.75}` → `true`; non-minimal `selected_gap: 12.00` → `false`.
 
 The skill's form is executed at use time, never anchored in code.
 
@@ -155,12 +172,6 @@ This skill owns no registry templates — the pipeline is the MCP servers'
 
 ## Constraints
 
-- Per-venue indices are never pooled — do not average Kalshi and
-  Polymarket indices for the same (family, tenor, orientation).
-- Withheld buckets are the honest outcome. Never fill a withheld
-  tenor from an adjacent one.
-- The economic context is operator-accepted — never silently use the
-  curated default when the operator has rejected it.
 - If any MCP tool call fails, call `curator_report_skill_use_issue`
   with skill_name "cmp-term-structure", the tool name, and the error;
   continue with the best available information.

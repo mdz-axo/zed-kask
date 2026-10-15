@@ -46,7 +46,7 @@ mechanical step.
 ## Reference model — the canonical pattern
 
 The bridge crate is the single source of truth for ontology vocabulary
-(`kask/crates/hkask-bridge-ontology/README.md`). Its published index is
+(`kask/crates/hkask-bridge-ontology/README.md`, grounded in Gruber, "A translation approach to portable ontology specifications", *Knowledge Acquisition* 5(2):199–220, 1993 `doi:10.1006/knac.1993.1008` → `cso:ontology`). Its published index is
 compiled from SHA-256-pinned sources; named constants are only a consumer
 selection. Current coverage includes SUMO, schema.org, DCMI/BIBO/CiTO,
 PKO/P-Plan/PROV, SEPIO, GOLEM/CIDOC-CRM/LRMoo, OMC, ML-Schema, RDF/RDFS,
@@ -170,8 +170,6 @@ All receipts executed live through `onto_anchor` (2026-10-01, batch-13 audit):
   —has_constituent→ net_margin), each edge carrying its authority — only the
   relationship actually stated by the directed path is asserted.
 
-The skill's steps are tool calls, never code-anchored forms.
-
 ## Registry Templates
 
 This skill owns no registry templates — it is the process surface over the
@@ -181,11 +179,6 @@ This skill owns no registry templates — it is the process surface over the
 
 - Use only the anchors and edges `onto_anchor` returns; never invent a URI,
   an intermediate link, or a private definition.
-- A core-rung anchor is real but coarse: surface it with the ruling request;
-  do not upgrade it yourself.
-- `no_supported_path` is not proof a relation is false; `coarse_anchor`
-  cannot be traversed; `max_hops` is 1–4 for a path and exactly 1 for
-    neighbors (`ontology_graph.rs` returns `InvalidQuery` otherwise).
 - Operator-ruling compositions land in the derived registry with tests;
   published-source changes require new pinned files and build verification.
   `all_terms_are_official` checks named constants in the crate's test suite,
@@ -193,9 +186,6 @@ This skill owns no registry templates — it is the process surface over the
 
 ## Verification
 
-Before sending work that names domain terms: every term is either anchored
-(cite the concept) or carries its core anchor with the ruling requested. A
-term silently used with a private meaning is the failure this pattern exists
-to prevent. For relational claims, cite the returned directed edge path and
+Before calling `relation_query`, verify hop bounds and non-coarse source status in `lisp_eval` (`OA-1`): `(and (not is_coarse_source) (if has_to_term (and (>= max_hops 1) (<= max_hops 4)) (= max_hops 1)))`. Before sending work that names domain terms, verify that every term is anchored (or carries its core anchor with a ruling request) and no deprecated term is used without replacement via `lisp_eval` (`OA-2`): `(and (= unanchored_terms 0) (= deprecated_used_without_replacement 0) (= core_terms_without_ruling_request 0))`. For relational claims, cite the returned directed edge path and
 its authority, or state that no supported path was found within the bound;
 labels alone are not graph evidence.

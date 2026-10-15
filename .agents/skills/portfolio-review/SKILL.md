@@ -13,10 +13,10 @@ from live quotes and interpreting the results honestly.
 
 ## Reference models and labels
 
-Time-weighted return and Modified Dietz money-weighted return (CFA Institute GIPS standards); contribution analysis; Brinson-Fachler attribution (Brinson & Fachler, 1985) when a benchmark portfolio exists. Note the server's `total_return` is a flow-adjusted holding-period return — it equals a time-weighted return when external flows fall at period boundaries; `modified_dietz` is the GIPS-recognized money-weighted figure. The computation steps are D: the portfolio server computes returns and contributions from the seeded price cache and refuses to run on missing prices. The P elements are the review window and the benchmark choice (the operator's), the seeding decisions (which quotes to fetch and thread into the cache), and the narrative note.
+Time-weighted return (`onto_anchor` → `derived:time_weighted_return`) and Modified Dietz money-weighted return (`derived:modified_dietz_return`, CFA Institute GIPS standards; Dietz, 1966); contribution analysis; Brinson-Fachler attribution (Brinson & Fachler, 1985 `doi:10.2469/faj.v41.n3.43`; Brinson, Hood & Beebower, 1986 `doi:10.2469/faj.v42.n4.39` → `derived:brinson_attribution`) when a benchmark portfolio exists. Note the server's `total_return` is a flow-adjusted holding-period return — it equals a time-weighted return when external flows fall at period boundaries; `modified_dietz` is the GIPS-recognized money-weighted figure. The computation steps are D: the portfolio server computes returns and contributions from the seeded price cache and refuses to run on missing prices. The P elements are the review window and the benchmark choice (the operator's), the seeding decisions (which quotes to fetch and thread into the cache), and the narrative note.
 
 - **Initial condition:** the ledger (`ledger_read`) and the seeded prices for every symbol held at `from` and `to`.
-- **D/P labelling:** every phase's tool call and its receipt (`ledger_read`, `stock_quote`/`historical_price`, `portfolio_seed_price`, `portfolio_returns`, `portfolio_contribution`, `portfolio_attribution`, `note_add`) is D — the tool is the oracle. The narrative interpretation of what moved the portfolio is P, critiqued by the operator reading the recorded note against the tool figures.
+- **D/P labelling:** every phase's tool call and its receipt (`ledger_read`, `stock_quote`/`historical_price`, `portfolio_seed_price`, `portfolio_returns`, `portfolio_contribution`, `portfolio_attribution`, `note_add`) and the `lisp_eval` gates (`PRV-1`, `PRV-2`) are D — the tool is the oracle. The narrative interpretation of what moved the portfolio is P, critiqued by the operator reading the recorded note against the tool figures.
 - **Target condition:** `portfolio_returns` and `portfolio_contribution` both succeed for the window, and the note is recorded.
 
 ## When to Use
@@ -33,17 +33,6 @@ Time-weighted return and Modified Dietz money-weighted return (CFA Institute GIP
   returns are not computable from prices that do not exist.
 - The operator only wants current holdings — `portfolio_snapshot` alone
   answers that.
-
-## D/P labelling
-
-Seeding prices from live quotes and reading the attribution tables are P over
-D inputs — the valuation/return tools (`portfolio_returns`,
-`portfolio_contribution`, `portfolio_attribution`, TWR/MWR) are server
-oracles whose outputs the model threads, never recomputes. The convergence
-gate is D (`lisp_eval` over the review's completion conditions). A review
-claim without its tool-backed table is narrative, not analysis. The
-attribution-review discipline is P reasoning over D arithmetic — the
-Brinson-Fachler decomposition is computed by the server.
 
 ## Instructions
 
@@ -67,7 +56,7 @@ Brinson-Fachler decomposition is computed by the server.
    seeding. The resolver is as-of: a price seeded on or before a date
    carries forward (weekends use Friday's close), so seeding the
    `from`-date and `to`-date closes is sufficient for `portfolio_returns`.
-5. Call `portfolio_returns` with the window. If it errors naming
+5. Verify endpoint price seeding and non-CMP asset eligibility in `lisp_eval` (`PRV-1`: `(and (= missing_from_prices 0) (= missing_to_prices 0) (not is_cmp_or_prediction_portfolio))`), then call `portfolio_returns` with the window. If it errors naming
    missing prices, that is the honest gate — seed the named
    (symbol, date) pairs and retry. NEVER treat a missing price as zero.
 
@@ -97,9 +86,9 @@ Brinson-Fachler decomposition is computed by the server.
 
 ### Phase 4 — Verify and record
 
-10. Convergence gate — call `lisp_eval` with:
-   - form: `(and (> start_value 0) returns_ok contribution_ok)`
-   - env: `{ "start_value": <returns.start_value>, "returns_ok": <true if portfolio_returns succeeded>, "contribution_ok": <true if portfolio_contribution succeeded> }`
+10. Convergence gate (`PRV-2`) — after recording the review note in step 12, call `lisp_eval` with:
+   - form: `(and (> start_value 0) returns_ok contribution_ok note_recorded)`
+   - env: `{ "start_value": <returns.start_value>, "returns_ok": <true if portfolio_returns succeeded>, "contribution_ok": <true if portfolio_contribution succeeded>, "note_recorded": <true if note_add succeeded> }`
    If false, return to Phase 2 and seed the (symbol, date) pairs the
    failing tool named — unless the error names no pairs (a zero-start
    window is terminal: an empty or windowless portfolio is not a seeding

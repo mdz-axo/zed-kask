@@ -46,6 +46,11 @@ fixed totals, file sizes, or a model's success claim).
   outputs, measured outcomes and unresolved failures.
 - **Dublin Core / PROV-O** anchor source identity and derivation. A citation is
   `QaEvidence { chunk_ref, source, quote }`, not a semantic verdict.
+- **Ontology-anchored dense retrieval** grounds `corpus_embed` and `corpus_query`
+  in Su et al., "One Embedder, Any Task: Instruction-Finetuned Text Embeddings"
+  (INSTRUCTOR, *Findings of ACL* 2023, `doi:10.18653/v1/2023.findings-acl.71`) and
+  Karpukhin et al., "Dense Passage Retrieval for Open-Domain Question Answering"
+  (DPR, *EMNLP* 2020, `arXiv:2004.04906`).
 - **Bloom's taxonomy** informs QA difficulty. The engine's five labels are
   `factual`, `conceptual`, `analyze`, `evaluate`, `create`; labels alone do not
   establish actual cognitive difficulty.
@@ -539,8 +544,18 @@ its output is **directly** the `prepared-qa-adjudication-v2` JSONL, not flat
 passage/conceptual shorthand. Copy `prompt_id` and primary `p0` `chunk_ref`/`source`,
 and emit one passage decision plus ordered decisions for every requested `qa_type`.
 If adjudication is sliced, reconcile the union of slices against the entire
-prepared file before calling generation; do not feed a partial manifest or
-reinterpret legacy rows as v2. Build a source-balanced pilot input with
+prepared file before calling generation via `lisp_eval` (`BCP-1`):
+
+```
+form: "(and (> prompts_prepared 0) (= (+ reviewed_passage_admits reviewed_passage_skips) prompts_prepared) (= (+ reviewed_level_generates reviewed_level_skips) qa_levels_requested) (= duplicate_prompt_ids 0))"
+env:  { "prompts_prepared": <measured PreparedQaPrompt count>,
+        "reviewed_passage_admits": <measured>, "reviewed_passage_skips": <measured>,
+        "reviewed_level_generates": <measured>, "reviewed_level_skips": <measured>,
+        "qa_levels_requested": <measured total requested levels across prompts>,
+        "duplicate_prompt_ids": <measured duplicate prompt_id count in merged manifest> }
+```
+
+Do not feed a partial manifest or reinterpret legacy rows as v2. Build a source-balanced pilot input with
 `kask/scripts/audit/select-position-diverse-chunks.sh <tagged-jsonl> <new-output-jsonl> <chunks-per-source>`;
 it preserves complete classified records and selects deterministic interior quantiles,
 rather than silently treating each source's `:0` chunk as representative. Run Stage 8
@@ -870,12 +885,11 @@ The skill's form is executed at use time, never anchored in code.
 
 ## Registry Templates
 
-This skill owns no registry templates. Stage 7 renders
+This skill owns no registry templates under its own directory. Stage 7 renders
 `docproc/adjudicate-passages.j2` — a registry template under the `docproc/`
-namespace with no owning skill in `.agents/skills/` — to produce reviewer
-adjudication decisions; this skill consumes its output directly as the
-`prepared-qa-adjudication-v2` JSONL without re-specifying its context
-contract.
+namespace — with its 5 required `contract.input` keys (`row_start`, `row_end`,
+`row_count`, `prompts_path`, `decisions_path`) to produce reviewer adjudication
+decisions consumed directly as the `prepared-qa-adjudication-v2` JSONL.
 
 ## Constraints
 

@@ -51,8 +51,9 @@ The skill manages the script fleet at `~/system-maintenance/` (this machine's co
    - **manual-review** — held back by the scripts (HF models, datasets, podman volumes, toolchains, snap revisions, journals). Probe before any deletion (step 4).
    - **sudo-gated** — package updates, SMART, failed-unit resets, `/var/crash`. Handoff only (step 7).
    - **protected** — false positives and live infrastructure. Never delete without an operator ruling.
+   Verify total partition and zero class overlap in `lisp_eval` (`SMN-1`): `(and (= total_dry_run_items (+ disposable_count manual_review_count sudo_gated_count protected_count)) (= overlap_count 0))`.
 3. **Preview (D).** Run `bash ~/system-maintenance/maintenance-clean.sh --dry-run`. Read the full output — never a truncated display.
-4. **Probe-before-delete (P, D gates).** For each manual-review item the operator has asked to delete:
+4. **Probe-before-delete (P, D gates).** For each manual-review item the operator has asked to delete, verify in `lisp_eval` (`SMN-2`: `(and (= recent_atime_files 0) (= open_fd_handles 0) (= active_references 0) (not is_unrecoverable_local))`) before Step 5:
    - **Usage:** `find <dir> -type f -atime -30 | wc -l` (0 = unused recently); open handles via `/proc/*/fd` scan; running services (`systemctl --user`, `ps`).
    - **Recoverability:** public assets re-download anonymously; private ones need the stored token; local-only artifacts (fine-tunes, volumes, audit trails) are **unrecoverable** — say so.
    - **References:** grep configs, clones, and pins before removing any toolchain or volume.
@@ -90,7 +91,7 @@ After step 8, check in `lisp_eval`:
 ## Constraints
 
 - **Sudo is handed off, never asked for.** The agent terminal cannot authenticate; the scripts say "run manually" by design.
-- **Probe before every deletion** — atime, open handles, recoverability, references, false positives. No deletion on a name match alone.
+- **Probe before every deletion** — gate every manual-review deletion on `SMN-2` (`lisp_eval`). No deletion on a name match alone.
 - **Protected classes** stand until an operator ruling: false positives, live infrastructure, unrecoverable local-only artifacts without explicit instruction.
 - **Read full outputs** — truncated sweep/du displays hide results; count matches (`grep -c`) and consume the list.
 - **The scripts stay the executables; this skill is their manager** — the inventory above, verification, execution, and the step-10 update path. It duplicates no script logic. Script changes commit in the scripts repo and update this skill in the same pass — a stale skill or stale fleet doc is active misinformation.

@@ -1,7 +1,4 @@
 {# goal: Core logo generation prompt encoding Bokhua's five design gates: simplicity, monochrome viability, grid discipline, negative space, and scalability. Every logo generation flow delegates to this template. #}
-{# Logo formal prompt — Bokhua-inspired generation. Core generation
-   prompt; every logo flow delegates to this template. Gate system from
-   Bokhua's Principles of Logo Design (2022). #}
 [inference]
 contract:
   input:
@@ -35,8 +32,8 @@ Design a professional logo for a {% if industry %}{{ industry }}{% else %}busine
 - **Logo type:** {{ logo_type }}
 - **Dominant shape language:** {{ dominant_shape | default('derived from style') }}
 - **Density:** {{ density }}
-- {% if typography_class %}**Typography:** {{ typography_class }}{% endif %}
-{% if palette %}**Color palette:** {{ palette }}{% endif %}
+{% if typography_class %}- **Typography:** {{ typography_class }}{% endif %}
+{% if palette %}- **Color palette:** {{ palette }}{% endif %}
 
 ## Formal Requirements (Bokhua's Five Design Gates)
 

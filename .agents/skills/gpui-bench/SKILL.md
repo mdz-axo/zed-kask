@@ -501,25 +501,18 @@ All receipts executed live (2026-10-01, batch-13 audit):
 - Work-count reconciliation, ordering violation: counts green but
   `ordering_violations: 1` → `false`.
 
-The work-count form (executed at report time over the fixture's own
-recorded counters — never over invented timings; the counters arrive as
-one nested object because the tool's advertised env schema types each
-value as an object — a flat bare-number env invites schema-following
-emitters to wrap the values a second time and fail the form):
+The pre-run isolation/timeout gate (`GPB-1`) and post-run work-conservation & frame-budget gate (`GPB-2`, grounded in Georges, Buytaert & Eeckhout, "Statistically rigorous Java performance evaluation", OOPSLA 2007 `doi:10.1145/1297027.1297033` and `derived:frame_budget` / `derived:instructions_per_cycle`) execute over flat scalar bindings in `lisp_eval`:
 
 ```
-form: "(and (= (assoc \"work_enqueued\" counters) (+ (assoc \"work_completed\" counters) (assoc \"work_dropped\" counters))) (= (assoc \"work_dropped\" counters) 0) (= (assoc \"ordering_violations\" counters) 0) (assoc \"final_state_asserted\" counters))"
-env:  { "counters": { "work_enqueued": <fixture counter>, "work_completed": <fixture counter>, "work_dropped": <fixture counter>,
-                      "ordering_violations": <fixture counter>, "final_state_asserted": <the fixture's completion assertion result> } }
+GPB-1 form: "(and (= test_support_occurrences 0) (<= timeout_ms 300000) (= concurrent_bench_runs 0))"
+GPB-1 env:  { "test_support_occurrences": 0, "timeout_ms": 180000, "concurrent_bench_runs": 0 }
+
+GPB-2 form: "(and (= work_enqueued work_completed) (= work_dropped 0) (= ordering_violations 0) (<= candidate_p99_ms frame_budget_ms))"
+GPB-2 env:  { "work_enqueued": <fixture counter>, "work_completed": <fixture counter>, "work_dropped": <fixture counter>,
+              "ordering_violations": <fixture counter>, "candidate_p99_ms": <observed p99 frame ms>, "frame_budget_ms": <predeclared target ms, e.g. 8.33 at 120 FPS> }
 ```
 
 The skill's forms are executed at use time, never anchored in code.
-
-## Registry Templates
-
-This skill owns no registry templates by design — the arithmetic is
-Criterion's and the work is benchmark code (the Step types section says
-the same).
 
 ## References
 

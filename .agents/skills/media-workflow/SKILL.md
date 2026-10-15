@@ -113,14 +113,14 @@ fully removed; reaction GIF — `video_info` confirms duration ≤ 5s at 480px
 width; collage — `describe_image` confirms all selected subjects are present;
 meme — the caption is visible in the rendered video; NFT — the style is
 applied and the caption generated; logo — `describe_image` confirms the name
-is spelled correctly and the icon mark carries no text. Only `video_info` is a deterministic check; every `describe_image` check is a vision model judging generated media, so show the artifact to the operator before reporting it done. If the property fails, re-run the failing
+is spelled correctly and the icon mark carries no text. Only `video_info` is a deterministic check (verified via `lisp_eval` `MWF-1`: `(and (<= gif_duration_sec 5.0) (= gif_width_px 480) (<= retries_used 1))`); every `describe_image` check is a vision model judging generated media, so show the artifact to the operator before reporting it done. If the property fails, re-run the failing
 step once with an adjusted prompt (the Act). Bound: one retry per pipeline;
 a second failure delivers the artifact with the imperfection named — never
 silently.
 
 ## Cleanup (all pipelines)
 
-After the operator accepts the deliverables, delete the run's rejected outputs — unchosen logo candidates, failed-retry artifacts and other variants that are not ancestors of a kept deliverable — with `gallery_delete_image(image_id, delete_file: true)`. Keep every ancestor of a kept deliverable: its lineage and OMC creation graph reference them. File deletion needs a destructive-mode gallery; in read-only or copy-on-write mode, remove only the index entry and list the files left on disk in the report. Confirm with `gallery_list_assets` (storage Cleanup rule).
+After the operator accepts the deliverables, delete the run's rejected outputs — unchosen logo candidates, failed-retry artifacts and other variants that are not ancestors of a kept deliverable — with `gallery_delete_image(image_id, delete_file: true)`. Keep every ancestor of a kept deliverable: its lineage and OMC creation graph reference them. File deletion needs a destructive-mode gallery; in read-only or copy-on-write mode, remove only the index entry and list the files left on disk in the report. Confirm with `gallery_list_assets` and verify in `lisp_eval` (`MWF-2`: `(and (= rejected_orphans_remaining 0) (= deleted_ancestors_of_kept 0))`) (storage Cleanup rule).
 
 ## Regression case
 
@@ -138,10 +138,10 @@ All receipts executed live (2026-10-01, batch-14 audit):
   (G1 simplicity … G5 scalability) — the formal-generation step's D
   output.
 
-The pipelines' verification loop is honest about its oracles: only
-`video_info` is deterministic; every `describe_image` check is a vision
-model judgment shown to the operator. There is no lisp_eval form — the
-D steps are the tool receipts and the template renders.
+The pipelines' verification loop is honest about its oracles: `video_info`
+and post-acceptance OMC cleanup are verified deterministically via `MWF-1`
+and `MWF-2` in `lisp_eval`, while every `describe_image` check is a vision
+model judgment shown to the operator.
 
 ## Registry Templates
 
@@ -151,9 +151,8 @@ D steps are the tool receipts and the template renders.
 | `logo-formal-prompt.j2` | The logo generation prompt encoding Bokhua's five design gates (simplicity, monochrome viability, grid discipline, negative space, scalability). |
 
 Both live under `kask/registry/templates/media/` (the `media/` namespace,
-not `media-workflow/`). Template context variables (formal-prompt: its
-`[inference]` contract; discovery-map: the Jinja body — its `[inference]`
-block is the legacy shape retained for provenance only):
+not `media-workflow/`). Template context variables (from each template's
+`[inference]` contract):
 - `logo-discovery-map.j2`: `name` (required), `industry` (required),
   `audience`, `values` — its output schema adds `style`, `logo_type`,
   `dominant_shape`, `typography_class`, `palette_direction`, `palette_hex`,
@@ -167,4 +166,3 @@ block is the legacy shape retained for provenance only):
 - All pipelines use tools from the `hkask-mcp-media` server. The server must be running and configured with at least one media provider (DeepInfra or OpenRouter).
 - Image generation and video generation are cloud calls — they incur cost and have latency. Local tools (collage, video_clip, video_to_gif, video_add_caption) are free and fast.
 - The agent coordinates execution by calling each tool in sequence. There is no FlowDef executor — the step topology is encoded in this SKILL.md body and the model follows it.
-- `media/logo-discovery-map` and `media/logo-formal-prompt` are the Logo pipeline's templates; render them with `render_template`.
