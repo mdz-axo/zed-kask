@@ -784,13 +784,14 @@ pub fn duration_vs_cmp_tenors(equity_duration_years: f64) -> Option<Vec<Duration
 
 // ── CMP index provenance (shared bridge contract) ─────────────────────
 //
-// The bridge contract between `hkask-mcp-scenarios`'s `scenario_from_cmp_indices`
-// emitter and `hkask-mcp-companies`'s `EventTreeProjection` deserializer. Both
-// crates re-export this struct as their `superforecast::CmpIndexProvenance` so the
-// two sides cannot drift apart at the type level — the pin tests in each crate
-// (`scenario_from_cmp_indices_emits_full_cmp_provenance_inside_tree` in
-// scenarios, `cmp_provenance_round_trips_real_scenarios_emitter` in companies)
-// enforce that the real emitters produce the full 7-field shape.
+// The bridge contract for `hkask-mcp-scenarios`'s `scenario_from_cmp_indices`
+// emitter. Re-exporting crates surface this struct as their
+// `superforecast::CmpIndexProvenance` so the sides cannot drift apart at the
+// type level — the pin test in the scenarios crate
+// (`scenario_from_cmp_indices_emits_full_cmp_provenance_inside_tree`)
+// enforces that the real emitter produces the full 7-field shape. The former
+// companies-side deserializer pin was removed with the companies
+// `scenario_analysis` tool (2026-10-15).
 //
 // `id` is the canonical index identity (`cmp:{family}:{tenor}:{orientation}`);
 // the other 6 fields are the index identity components the companies bridge

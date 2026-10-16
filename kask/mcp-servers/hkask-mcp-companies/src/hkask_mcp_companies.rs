@@ -6,25 +6,26 @@
 //! symbol characteristics, with automatic fallback. EODHD responses are
 //! normalized to match FMP format so analysis functions work transparently.
 //!
-//! ## Tools (40) — portfolio analytics, ledger, CRUD, and returns live in the portfolio MCP server
+//! ## Tools (32) — every tool deepens knowledge of an individual company
+//! (organizing principle, 2026-10-15); portfolio analytics, ledger, CRUD,
+//! and returns live in the portfolio MCP server
 //!
 //! Tools are split across submodules under `src/tools/`, each with its own
 //! `#[tool_router]` block, merged in `combined_router()`:
 //! - `tools/financial_data.rs` — company_profile, stock_quote, income_statement,
-//!   balance_sheet, cash_flow_statement, key_metrics, historical_price, symbol_search
-//! - `tools/analysis.rs` — moat_check, management_scorecard, working_capital_cycle
-//! - `tools/valuation.rs` — dcf_valuation, reverse_dcf, ep_valuation, comparable_analysis,
-//!   scenario_analysis, sensitivity_analysis, monte_carlo_dcf, scenario_impact_valuation,
-//!   calibrate_forecast, forecast_record, forecast_persist
-//! - `tools/analytics.rs` — DCF valuation and scenario analysis
+//!   balance_sheet, cash_flow_statement, key_metrics, historical_price,
+//!   symbol_search, resolve_symbol
+//! - `tools/analysis.rs` — moat_check, management_scorecard,
+//!   working_capital_cycle, company_research_search
+//! - `tools/analytics.rs` — dcf_valuation, reverse_dcf
+//! - `tools/valuation.rs` — comparable_analysis, sensitivity_analysis,
+//!   monte_carlo_dcf, scenario_impact_valuation, equity_duration,
+//!   calibrate_forecast, forecast_persist, forecast_get, forecast_list,
+//!   forecast_record, result_feedback
 //! - `tools/economic_profit.rs` — ep_valuation (economic profit view)
 //! - `tools/expectations.rs` — expectations_gap
-//! - `tools/notes.rs` — note_add, note_list, note_delete,
-//!   file_attach, file_list, file_delete
-//! - `tools/transcript.rs` — earnings-call transcript tools
-//! - `tools/analysis.rs` — company_screener (ad hoc criteria plus saved-screen
-//!   calculate/status/results over immutable columnar result sets),
-//!   company_research_search (multi-provider research claims)
+//! - `tools/notes.rs` — note_add, note_list, note_delete
+//! - `tools/transcript.rs` — company_transcript
 
 //!
 //! The pin test is the source of truth for the count; this list is a map.
@@ -58,7 +59,6 @@ pub(crate) mod screen_store;
 pub(crate) use providers::{CompanyProfile, KeyMetrics, Provider};
 mod forecast;
 pub(crate) mod learning;
-mod screening;
 
 #[cfg(test)]
 mod acquisition_tests;
@@ -66,7 +66,6 @@ mod acquisition_tests;
 mod forecast_loop_tests;
 pub(crate) mod research;
 mod scenarios;
-mod screener;
 pub(crate) mod superforecast;
 mod transcript;
 mod validation;
@@ -320,7 +319,6 @@ impl CompaniesServer {
             + Self::economic_profit_router()
             + Self::expectations_router()
             + Self::transcript_router()
-            + Self::reports_router()
     }
 }
 
@@ -456,7 +454,6 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 fibo_cache,
                 spreadsheet,
             );
-            screening::resume_pending_jobs(&server);
             Ok(server)
         },
         vec![
@@ -542,13 +539,14 @@ mod tool_behavior_tests {
     // removed from this server when the portfolio MCP server took ownership —
     // this pin is what makes a re-introduction (or a silent registration drop,
     // or a same-count rename) fail CI instead of shipping as an undocumented
-    // duplicate.
+    // duplicate. The screening/reports/files/scenario_analysis surface was
+    // removed 2026-10-15 (organizing principle: single-company depth).
     include!(concat!(env!("OUT_DIR"), "/tool_names.gen.rs"));
     hkask_mcp_server::tool_surface_pin!(
         CompaniesServer::combined_router(),
         "combined_router",
-        40,
-        tool_surface_is_exactly_40_registered_tools,
+        32,
+        tool_surface_is_exactly_32_registered_tools,
     );
 
     // Coverage: every registered tool must map to an ontology concept for

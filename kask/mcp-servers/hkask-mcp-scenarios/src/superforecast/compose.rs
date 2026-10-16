@@ -247,8 +247,8 @@ pub(crate) fn convert_cmp_index(
 /// in the initial implementation — the tree is a flat set of CMP priors).
 /// Dependency edges between CMP indices (e.g. "oil price increase → inflation
 /// increase") are a future refinement (coherence analysis); for now the
-/// tree is a flat prior set that downstream tools (scenario_analysis,
-/// scenario_propagate) consume.
+/// tree is a flat prior set that downstream tools (scenario_propagate and
+/// the companies server's scenario_impact_valuation) consume.
 pub fn compose_cmp_tree(
     indices: &[hkask_mcp_prediction_markets::cmp_index_builder::ProvenancedCmpIndex],
     observation_date: chrono::NaiveDate,

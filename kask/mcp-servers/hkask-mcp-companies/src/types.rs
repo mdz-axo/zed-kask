@@ -68,14 +68,12 @@ pub(crate) struct ExpectationsGapRequest {
     /// `management_guidance_median` (mcp-tool-review C-02: the default
     /// response previously embedded ~8 complete research documents).
     pub full_narrative: Option<bool>,
-    /// Skip research-narrative collection entirely — screening workflows
-    /// rank on the gap math, not the context. Returns identical
+    /// Skip research-narrative collection entirely — batch workflows rank
+    /// on the gap math, not the context. Returns identical
     /// capability/price_implied/gaps blocks with `narrative_mode:
     /// "compact"`, `guidance_samples: 0`, and zero research-provider
-    /// calls (the saved-screen job path already builds this report with
-    /// no research — screening::analyze_issuer_group). Default
-    /// (absent/false): research runs and the narrative is excerpt-capped
-    /// per the full_narrative contract.
+    /// calls. Default (absent/false): research runs and the narrative is
+    /// excerpt-capped per the full_narrative contract.
     pub compact: Option<bool>,
 }
 
@@ -102,30 +100,6 @@ pub(crate) struct NoteListRequest {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct NoteDeleteRequest {
     pub note_id: String,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct FileAttachRequest {
-    pub portfolio: String,
-    pub symbol: String,
-    pub date: String,
-    pub filename: String,
-    pub mime_type: String,
-    /// Base64-encoded file content
-    pub data: String,
-    #[serde(default)]
-    pub notes: String,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct FileListRequest {
-    pub portfolio: String,
-    pub symbol: String,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct FileDeleteRequest {
-    pub file_id: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -239,22 +213,6 @@ pub(crate) struct ReverseDcfRequest {
     pub discount_rate: Option<f64>,
     /// Terminal growth rate (0.0–0.10, default 0.025)
     pub terminal_growth: Option<f64>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct ScenarioAnalysisRequest {
-    pub symbol: String,
-    /// Discount rate (default 0.10)
-    pub discount_rate: Option<f64>,
-    /// Terminal growth rate (default 0.025)
-    pub terminal_growth: Option<f64>,
-    /// Optional event tree JSON (from hkask-mcp-scenarios
-    /// `scenario_from_markets_set` / `scenario_propagate` output — the
-    /// `tree` object). When present, the four quadrant probabilities come
-    /// from the tree's root-event marginals (detailed mode); when absent,
-    /// the plain 2×2 range is returned without probabilities (simple mode,
-    /// the default on-ramp).
-    pub event_tree: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -530,7 +488,7 @@ projection_overrides_from_request!(
     discount_rate,
     terminal_growth,
 );
-projection_overrides_from_request!(ScenarioAnalysisRequest, discount_rate, terminal_growth);
+
 projection_overrides_from_request!(
     SensitivityAnalysisRequest,
     stage1_years,
@@ -691,84 +649,6 @@ fn default_transcript_quarters_back() -> u32 {
 
 fn default_corpus_max_results() -> u32 {
     5
-}
-
-#[derive(Debug, Clone, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum ScreenAction {
-    Calculate,
-    Status,
-    Results,
-    Cancel,
-}
-
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct ScreenTemplateContext {
-    /// EODHD exchange codes included in the saved-screen universe.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub exchanges: Option<Vec<String>>,
-
-    /// Minimum issuer market capitalization in reporting currency.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub market_cap_min: Option<f64>,
-    /// Maximum issuer market capitalization in reporting currency.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub market_cap_max: Option<f64>,
-    /// Minimum average daily traded value in reporting currency.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub liquidity_min_usd: Option<f64>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct ScreenerRequest {
-    /// FactSet-shaped saved-screen lifecycle action. Omit for an immediate ad
-    /// hoc screen; calculate/status/results operate on an immutable job.
-    pub action: Option<ScreenAction>,
-    /// Registered server-side Jinja screen template selected for calculate.
-    pub template: Option<String>,
-    /// Typed variables rendered into the selected registered template.
-    pub template_context: Option<ScreenTemplateContext>,
-    /// Direct API representation of the same canonical ScreenDefinition.
-    pub screen_definition: Option<AnyJsonValue>,
-    /// Existing calculated screen job for status/results.
-    pub job_id: Option<String>,
-    /// Result-row offset for paginated results.
-    pub cursor: Option<u32>,
-    /// Natural language screening prompt (e.g., "large cap tech stocks with pe under 20 and dividend over 2%")
-    pub prompt: String,
-    /// Maximum results (default 20). The EODHD screener paginates
-    /// automatically to exhaust the full universe, so this is an upper
-    /// bound on the returned row count, not a page size: the fetch runs to
-    /// completion, then the result is truncated to `limit` (rows are sorted
-    /// by market cap, so the largest-cap matches survive) and the full
-    /// match count is reported as `total_matches`.
-    #[serde(default = "default_screener_limit")]
-    pub limit: u32,
-    /// Override specific criteria directly (merged over the parsed criteria —
-    /// parsed fields not overridden survive).
-    ///
-    /// Keys use EODHD field names: `market_capitalization_min`/`_max`,
-    /// `adjusted_close_min`/`_max`, `avgvol_1d_min`/`_max`,
-    /// `avgvol_200d_min`/`_max`, `earnings_share_min`/`_max`,
-    /// `dividend_yield_min`/`_max`, `refund_1d_p_min`/`_max`,
-    /// `refund_5d_p_min`/`_max`, `sector`, `industry` (single values), and
-    /// `exchanges` (array of EODHD exchange codes, e.g. `["US","JP","TO"]`)
-    /// or `exchange` (single code) — exchange criteria fan out one query per
-    /// code.
-    ///
-    /// Accepts arbitrary JSON. Typed as [`AnyJsonValue`] (not `serde_json::Value`)
-    /// so the generated tool input schema is an object-typed permissive schema
-    /// rather than the bare boolean `true` schemars emits for `Value` — Ollama
-    /// rejects boolean property schemas with `400 cannot unmarshal bool into
-    /// ... api.ToolProperty`, and schema-guided tool-call parsers drop
-    /// untyped parameters (live-observed 2026-09-10).
-    #[serde(default)]
-    pub criteria_overrides: AnyJsonValue,
-}
-
-fn default_screener_limit() -> u32 {
-    20
 }
 
 // ── Economic Profit valuation request ────────────────────────────────

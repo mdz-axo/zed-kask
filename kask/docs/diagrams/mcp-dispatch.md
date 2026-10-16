@@ -136,26 +136,26 @@ calls the tools in sequence: build CMP indices from catalogs, compose them
 into a scenario tree, and feed the tree into tree-weighted valuation. The
 integration seam between the scenarios server and the companies server is
 caller-mediated — the caller pastes the tree JSON from
-`scenario_from_cmp_indices` into the `event_tree` parameter of
-`scenario_analysis`.
+`scenario_from_cmp_indices` into the `scenario_tree` parameter of
+`scenario_impact_valuation`.
 
 **Corrections (2026-08-28):** the falsification tail of the flow (steps 5–7:
 `h2_duration_test`, `h3_coherence_test`, `falsification_log`) was deleted
 from `hkask-forecast` — the flow now ends at `equity_duration`. The
-`EventTreeProjection` contract is unchanged.
+The tree JSON contract is unchanged.
 
 ```mermaid
 flowchart TD
     step1["1. build_cmp_indices<br/>(prediction-markets server)"] -->|"ProvenancedCmpIndex[]"| step2
     step2["2. scenario_from_cmp_indices<br/>(scenarios server)"] -->|"EventTree JSON<br/>+ cmp_provenance"| step3
-    step3["3. scenario_analysis<br/>(companies server)<br/>event_tree = paste tree JSON"] -->|"weighted scenarios<br/>+ expected intrinsic"| step4
+    step3["3. scenario_impact_valuation<br/>(companies server)<br/>scenario_tree = paste tree JSON"] -->|"probability-weighted<br/>valuation distribution"| step4
     step4["4. equity_duration<br/>(companies server)"] -->|"duration_years"| output["Valuation output<br/>weighted scenarios + duration"]
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-CMP-FLOW-001
-verified_date: 2026-09-28
-verified_against: kask/mcp-servers/hkask-mcp-prediction-markets/src/cmp_index_builder.rs (build_cmp_indices_from_lines L580); kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs (scenario_from_cmp_indices L574); kask/mcp-servers/hkask-mcp-companies/src/tools/analytics.rs (scenario_analysis L266); kask/mcp-servers/hkask-mcp-companies/src/tools/valuation.rs (equity_duration L414); falsification tail deleted — h2_duration_test / h3_coherence_test / falsification_log no longer exist in kask/crates/hkask-forecast/src/
+verified_date: 2026-10-15
+verified_against: kask/mcp-servers/hkask-mcp-prediction-markets/src/cmp_index_builder.rs (build_cmp_indices_from_lines L580); kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs (scenario_from_cmp_indices L574); kask/mcp-servers/hkask-mcp-companies/src/tools/valuation.rs (scenario_impact_valuation, equity_duration); falsification tail deleted — h2_duration_test / h3_coherence_test / falsification_log no longer exist in kask/crates/hkask-forecast/src/
 status: VERIFIED
 -->
 
@@ -164,9 +164,9 @@ status: VERIFIED
 The scenarios server and the companies server do not depend on each other
 directly. The integration is caller-mediated: the agent (or panel) takes the
 tree JSON output from `scenario_from_cmp_indices` and pastes it into the
-`event_tree` parameter of `scenario_analysis`. The `EventTreeProjection`
-struct in the companies server is the documented contract of what the bridge
-consumes.
+`scenario_tree` parameter of `scenario_impact_valuation`. The tree JSON
+shape (nodes with marginals, `cmp_provenance` metadata) is the documented
+contract of what the bridge consumes.
 
 ```mermaid
 sequenceDiagram
@@ -181,8 +181,8 @@ sequenceDiagram
     Agent->>Scen: scenario_from_cmp_indices(indices, date, deps)
     Scen-->>Agent: EventTree JSON + cmp_provenance
 
-    Agent->>Comp: scenario_analysis(symbol, event_tree=paste)
-    Comp-->>Agent: weighted scenarios + expected intrinsic
+    Agent->>Comp: scenario_impact_valuation(symbol, scenario_tree=paste)
+    Comp-->>Agent: probability-weighted valuation distribution
 
     Agent->>Comp: equity_duration(symbol)
     Comp-->>Agent: duration_years
@@ -190,8 +190,8 @@ sequenceDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-CMP-FLOW-002
-verified_date: 2026-09-28
-verified_against: kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs (scenario_from_cmp_indices L574-640); kask/mcp-servers/hkask-mcp-companies/src/tools/analytics.rs (scenario_analysis L266); kask/mcp-servers/hkask-mcp-companies/src/superforecast.rs (EventTreeProjection L220); kask/mcp-servers/hkask-mcp-companies/src/tools/valuation.rs (equity_duration L414)
+verified_date: 2026-10-15
+verified_against: kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs (scenario_from_cmp_indices L574-640); kask/mcp-servers/hkask-mcp-companies/src/tools/valuation.rs (scenario_impact_valuation, equity_duration)
 status: VERIFIED
 -->
 

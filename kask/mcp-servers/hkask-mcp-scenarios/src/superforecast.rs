@@ -16,8 +16,8 @@ pub(crate) use forecast::{
     bayesian_update, brier_interpretation, brier_score, brier_score_multi, outside_view_adjustment,
 };
 // Shared CMP-index provenance bridge contract — re-exported so the
-// `scenario_from_cmp_indices` emitter and the companies `EventTreeProjection`
-// deserializer share one type-level source of truth. The pin test
+// `scenario_from_cmp_indices` emitter and any consuming crate share one
+// type-level source of truth. The pin test
 // `scenario_from_cmp_indices_emits_full_cmp_provenance_inside_tree` enforces
 // that this emitter populates the full 7-field shape.
 pub(crate) use forecast::CmpIndexProvenance;

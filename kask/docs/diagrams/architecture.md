@@ -53,9 +53,9 @@ graph TD
         direction TB
         compose["compose_cmp_tree<br/>CMP → EventTree"]
         deps["compose_cmp_tree_with_deps<br/>dependency edges"]
-        tree_weight["EventTreeProjection<br/>CMP provenance in weighting"]
+        tree_out["EventTree JSON<br/>+ cmp_provenance"]
         compose --> deps
-        compose --> tree_weight
+        compose --> tree_out
     end
 
     subgraph phase2["Phase 2 — Risk and Coherence"]
@@ -68,7 +68,7 @@ graph TD
     subgraph mcp_tools["MCP Tool Surface"]
         direction TB
         tool_cmp["scenario_from_cmp_indices<br/>scenarios server"]
-        tool_analysis["scenario_analysis<br/>companies server"]
+        tool_impact["scenario_impact_valuation<br/>companies server"]
         tool_duration["equity_duration<br/>companies server"]
     end
 
@@ -78,16 +78,16 @@ graph TD
     phase0 -->|"ProvenancedCmpIndex"| phase1
     phase0 -->|"ProvenancedCmpIndex"| phase2
     phase1 -->|"EventTree"| phase2
-    phase1 -->|"EventTree"| tool_analysis
+    phase1 -->|"EventTree"| tool_impact
     compose --> tool_cmp
-    tree_weight --> tool_analysis
-    tool_analysis --> tool_duration
+    tree_out --> tool_impact
+    tool_impact --> tool_duration
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-CMP-ARCH-001
-verified_date: 2026-09-28
-verified_against: kask/crates/hkask-forecast/src/hkask_forecast.rs (cmp_scenario_risk_measure L612, contract_price_coherence L681, duration_vs_cmp_tenors L741); kask/mcp-servers/hkask-mcp-prediction-markets/src/cmp_index_builder.rs (build_cmp_indices_from_lines L580); kask/mcp-servers/hkask-mcp-prediction-markets/src/cmp_portfolio.rs (solve_portfolio_cohort L477); kask/mcp-servers/hkask-mcp-prediction-markets/src/hkask_mcp_prediction_markets.rs (market_cmp_indices L1298); kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs (scenario_from_cmp_indices L574); kask/mcp-servers/hkask-mcp-scenarios/src/superforecast/compose.rs (compose_cmp_tree L252, compose_cmp_tree_with_deps L311); kask/mcp-servers/hkask-mcp-companies/src/tools/analytics.rs (scenario_analysis L266); kask/mcp-servers/hkask-mcp-companies/src/tools/valuation.rs (equity_duration L414); kask/mcp-servers/hkask-mcp-companies/src/superforecast.rs (EventTreeProjection L220)
+verified_date: 2026-10-15
+verified_against: kask/crates/hkask-forecast/src/hkask_forecast.rs (cmp_scenario_risk_measure L612, contract_price_coherence L681, duration_vs_cmp_tenors L741); kask/mcp-servers/hkask-mcp-prediction-markets/src/cmp_index_builder.rs (build_cmp_indices_from_lines L580); kask/mcp-servers/hkask-mcp-prediction-markets/src/cmp_portfolio.rs (solve_portfolio_cohort L477); kask/mcp-servers/hkask-mcp-prediction-markets/src/hkask_mcp_prediction_markets.rs (market_cmp_indices L1298); kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs (scenario_from_cmp_indices L574); kask/mcp-servers/hkask-mcp-scenarios/src/superforecast/compose.rs (compose_cmp_tree L252, compose_cmp_tree_with_deps L311); kask/mcp-servers/hkask-mcp-companies/src/tools/valuation.rs (scenario_impact_valuation, equity_duration)
 status: VERIFIED
 -->
 
@@ -179,20 +179,20 @@ The pure-math crate `hkask-forecast` has no MCP dependencies. The three MCP
 servers depend on it for the shared computation engine. The scenarios server
 depends on the prediction-markets server for the `ProvenancedCmpIndex` type.
 The companies server does not depend on the scenarios server (the integration
-seam is caller-mediated paste bridging via `EventTreeProjection`).
+seam is caller-mediated paste bridging via the EventTree JSON contract).
 
 ```mermaid
 graph TD
     forecast["hkask-forecast<br/>pure math: risk, coherence"]
     pm["hkask-mcp-prediction-markets<br/>CMP construction"]
     scenarios["hkask-mcp-scenarios<br/>compose_cmp_tree"]
-    companies["hkask-mcp-companies<br/>tree-weighted valuation"]
+    companies["hkask-mcp-companies<br/>scenario-impact valuation"]
 
     pm -->|"depends on"| forecast
     scenarios -->|"depends on"| forecast
     scenarios -->|"depends on"| pm
     companies -->|"depends on"| forecast
-    companies -.->|"caller-mediated<br/>(EventTreeProjection JSON)"| scenarios
+    companies -.->|"caller-mediated<br/>(EventTree JSON)"| scenarios
 ```
 
 <!-- DIAGRAM_ALIGNMENT

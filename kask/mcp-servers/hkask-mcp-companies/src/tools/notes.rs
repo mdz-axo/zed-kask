@@ -2,10 +2,7 @@
 use crate::{
     CompaniesServer, map_portfolio_error,
     screen_store::{PortfolioError, ResearchStore},
-    types::{
-        FileAttachRequest, FileDeleteRequest, FileListRequest, NoteAddRequest, NoteDeleteRequest,
-        NoteListRequest,
-    },
+    types::{NoteAddRequest, NoteDeleteRequest, NoteListRequest},
 };
 use hkask_mcp_server::server::{McpToolError, execute_tool, map_join_error};
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
@@ -91,62 +88,4 @@ impl CompaniesServer {
         })
         .await
     }
-
-    #[tool(description = "Attach a file (base64-encoded) to a company/security")]
-    pub async fn file_attach(
-        &self,
-        Parameters(FileAttachRequest {
-            portfolio,
-            symbol,
-            date,
-            filename,
-            mime_type,
-            data,
-            notes,
-        }): Parameters<FileAttachRequest>,
-    ) -> Result<String, McpToolError> {
-        execute_tool(self, "file_attach", async {
-            let id = run_store(self.research.clone(), move |manager| {
-                manager.attach_file(
-                    &portfolio, &symbol, &date, &filename, &mime_type, &data, &notes,
-                )
-            })
-            .await?;
-            Ok(serde_json::json!({"status": "attached", "id": id}))
-        })
-        .await
-    }
-
-    #[tool(description = "List attached files for a symbol in a portfolio")]
-    pub async fn file_list(
-        &self,
-        Parameters(FileListRequest { portfolio, symbol }): Parameters<FileListRequest>,
-    ) -> Result<String, McpToolError> {
-        execute_tool(self, "file_list", async {
-            let files = run_store(self.research.clone(), move |manager| {
-                manager.list_files(&portfolio, &symbol)
-            })
-            .await?;
-            Ok(serde_json::json!({"files": files}))
-        })
-        .await
-    }
-
-    #[tool(description = "Delete an attached file by ID — removes record and file from disk")]
-    pub async fn file_delete(
-        &self,
-        Parameters(FileDeleteRequest { file_id }): Parameters<FileDeleteRequest>,
-    ) -> Result<String, McpToolError> {
-        execute_tool(self, "file_delete", async {
-            let response_file_id = file_id.clone();
-            run_store(self.research.clone(), move |manager| {
-                manager.delete_file(&file_id)
-            })
-            .await?;
-            Ok(serde_json::json!({"status": "deleted", "id": response_file_id}))
-        })
-        .await
-    }
-
-    // ── Analysis tools ───────────────────────────────────────
 }

@@ -1,19 +1,18 @@
 # hkask-mcp-companies
 
-Company-finance MCP server for provider-routed market data, fundamental analysis, valuation, research retrieval, and company-scoped research artifacts.
+Company-finance MCP server for provider-routed market data, fundamental analysis, valuation, research retrieval, and company-scoped research artifacts. Every tool is focused on deepening knowledge of an individual company (organizing principle, 2026-10-15) — universe screening, saved report artifacts, file attachments, and the standalone Schwartz 2×2 tool were removed.
 
-## Tools (40)
+## Tools (32)
 
 | Group | Tools |
 |---|---:|
 | Financial data | 9 |
-| Analysis and research | 5 |
-| DCF | 3 |
+| Analysis and research | 4 |
+| DCF | 2 |
 | Valuation and forecasting | 11 |
 | Economic-profit and expectations analysis | 2 |
-| Company notes and files | 6 |
+| Company notes | 3 |
 | Transcript retrieval | 1 |
-| Artifact management | 5 |
 
 ### Financial data
 
@@ -36,7 +35,6 @@ Company-finance MCP server for provider-routed market data, fundamental analysis
 | `moat_check` | Analyze competitive moat through gross-margin stability and working-capital market-power signals. |
 | `management_scorecard` | Score CEO capital allocation against returns on capital and invested capital. |
 | `working_capital_cycle` | Analyze days payable, days sales outstanding, and cash-conversion cycle. |
-| `company_screener` | One universe-screening capability. Immediate mode parses ad hoc criteria; saved-screen mode renders a registered Jinja or direct API `ScreenDefinition`, submits an asynchronous calculate job, exposes status, and pages an immutable columnar result. |
 | `company_research_search` | Search Exa, Tavily, and Brave for company-specific fundamental-research claims. |
 
 ### DCF
@@ -45,7 +43,6 @@ Company-finance MCP server for provider-routed market data, fundamental analysis
 |---|---|
 | `dcf_valuation` | Build a two-stage DCF valuation and return an intrinsic value and forecast ID. |
 | `reverse_dcf` | Solve for the revenue growth implied by the current market price. |
-| `scenario_analysis` | Run four growth-by-margin scenarios and return the intrinsic-value range. |
 
 ### Valuation and forecasting
 
@@ -70,16 +67,13 @@ Company-finance MCP server for provider-routed market data, fundamental analysis
 | `ep_valuation` | Value a company from book value plus discounted future economic profit with competitive fade. |
 | `expectations_gap` | Compare implied revenue growth and profitability with demonstrated capability using the investor's target return as the equity component of modified WACC; surface DuPont ROE and Higgins SGR separately. |
 
-### Company notes and files
+### Company notes
 
 | Tool | Description |
 |---|---|
 | `note_add` | Add a dated note to a company or security. |
 | `note_list` | List notes for a symbol, optionally filtered by date range or tags. |
 | `note_delete` | Delete a note by ID. |
-| `file_attach` | Attach a base64-encoded file to a company or security. |
-| `file_list` | List attached files for a company or security. |
-| `file_delete` | Delete an attached file by ID. |
 
 ### Retained company-research output
 
@@ -121,16 +115,15 @@ src/
 ├── scenarios.rs        fixed growth × gross-margin scenario matrix
 ├── superforecast.rs    Fermi calibration and Brier scoring
 ├── research.rs         Exa, Tavily, and Brave research retrieval
-├── screener.rs         natural-language screening prompt parser (EODHD)
 ├── fibo.rs             FIBO concept identifiers used by derived outputs
-└── screen_store.rs   Company notes, files, forecasts, and saved-screen jobs
+└── screen_store.rs   Company notes and forecasts
 ```
 
 ### Behavioral boundaries
 
-- Financial-data tools route eligible symbol lookups between FMP and EODHD. `company_screener` saved screens use `calculate` → `status`/`cancel` → paginated `results`. Expectations-gap jobs checkpoint the deterministic financial pass set before enrichment, persist one resumable work item per issuer, publish stage/progress/outcome counts plus a two-second heartbeat, rate-limit issuer enrichment, retain failures as explicit `unavailable` rows, and save the terminal JSON report under `companies-mcp/reports/`. Restart recovery requeues durable jobs and skips universe acquisition when the checkpoint exists. The financial pass applies USD capitalization and normalized `adjusted_close × avgvol_200d` liquidity before one fundamentals request per provisional issuer; pagination includes full exclusions only on the first page. `company_research_search` remains downstream and is not a screening stage.
+- Financial-data tools route eligible symbol lookups between FMP and EODHD. `company_research_search` uses its own research providers and bypasses `fetch`.
 - One authoritative driver model serves DCF, reverse DCF, expectations gaps, scenarios, sensitivity, Monte Carlo, equity duration, calibration, and outcome decomposition. Non-financial projections reconcile gross profit, SG&A, D&A, and an explicit other-operating-expense residual to reported operating income before projecting linked statements and FCFF; missing or contradictory reconciliation is unavailable. Financial issuers use residual income. Growth fades to terminal growth, balance differences remain observable rather than being plugged, and terminal value uses Gordon growth.
-- `scenario_analysis` runs a fixed revenue-growth × gross-margin matrix.
+- `calibrate_forecast` distributes calibrated probabilities across the fixed revenue-growth × gross-margin matrix (`scenarios.rs`).
 - DCF and calibrated forecasts persist as owner-scoped structured JSON snapshots. `forecast_get` retrieves one record, `forecast_list` returns a symbol's history, and `revision_of` links a same-symbol revision. `forecast_record` appends outcomes and reloads the stored snapshot for decomposition.
 - Some derived responses include a `fibo` map. Raw provider payloads are returned without a FIBO mapping, and emitted identifiers are compact strings rather than a JSON-LD context.
 
@@ -163,7 +156,7 @@ Operator ruling, superseding both the guidance-gap definition that arrived with 
 - The profitability gap is implied net margin at demonstrated revenue CAGR minus demonstrated net margin (median actual net income / revenue). Financials continue to use implied ROE minus demonstrated ROE.
 - Before either price-implied solve, the selected security's price is converted from its listing currency and unit into the normalized financial-statement currency using cached EODHD USD cross-rates. Minor units are explicit (`GBX` → `GBP` at 0.01); missing currency metadata or rates surface as unavailable rather than entering valuation unconverted.
 - Capability estimates at or beyond the reverse DCF's validated growth range are `model_sensitive` and carry explicit flags. Gap-data completeness is independent of model sensitivity: mixed or positive gaps remain complete when both legs were calculated.
-- The prior square-root composite score is withheld because it has no external calibration. Saved-screen output exposes raw growth, financing-headroom, and profitability dimensions without a synthetic ranking.
+- The prior square-root composite score is withheld because it has no external calibration. Gap output exposes raw growth, financing-headroom, and profitability dimensions without a synthetic ranking.
 - Net margin is net income / revenue. It is never approximated by a pre-interest operating formula: the solve uses GM = NM/(1−tax) + SG&A% + other operating expense% + interest% + D&A%, holding modeled expenses at demonstrated revenue shares, so the solved value satisfies NI = (EBIT − interest) × (1 − tax) by construction. Gross margin is the internal projection parameter only, never a reported expectations quantity.
 
 ## Validation
@@ -175,4 +168,4 @@ env -u HKASK_FMP_API_KEY -u HKASK_EODHD_API_KEY cargo test -p hkask-mcp-companie
 GITHUB_ACTIONS=1 ./script/clippy -p hkask-mcp-companies
 ```
 
-Published numeric oracles include Wall Street Prep's 12.4% reverse-DCF case, AnalystPrep CFA's 8.33% DuPont case, and Wall Street Prep's 12.5% Higgins SGR case. `src/acquisition_tests.rs` covers acquisition order, date joins and supplement failures, EODHD normalization, legacy/warm-cache behavior and provenance, target/peer cache and learning policy, concurrent peers, DCF equivalence/guards, listing-price to statement-currency normalization, and the screener's per-exchange fan-out, unconverted USD bounds, and offset-cap pagination (parser contracts are pinned in `src/screener.rs` tests). The library's live checks skip without provider keys. `tests/fmp_endpoint_schema.rs` calls real FMP endpoints when `HKASK_FMP_API_KEY` is set; it is not an offline fixture suite. These tests call real tool handlers but do not exercise MCP transport framing.
+Published numeric oracles include Wall Street Prep's 12.4% reverse-DCF case, AnalystPrep CFA's 8.33% DuPont case, and Wall Street Prep's 12.5% Higgins SGR case. `src/acquisition_tests.rs` covers acquisition order, date joins and supplement failures, EODHD normalization, legacy/warm-cache behavior and provenance, target/peer cache and learning policy, concurrent peers, DCF equivalence/guards, listing-price to statement-currency normalization, and the EODHD screener endpoint's offset-cap pagination and band-split behavior (the provider fetch `comparable_analysis` uses for peer discovery). The library's live checks skip without provider keys. `tests/fmp_endpoint_schema.rs` calls real FMP endpoints when `HKASK_FMP_API_KEY` is set; it is not an offline fixture suite. These tests call real tool handlers but do not exercise MCP transport framing.

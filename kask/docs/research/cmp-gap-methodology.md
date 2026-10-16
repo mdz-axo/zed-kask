@@ -131,7 +131,7 @@ status: VERIFIED
 
 ### Stage 8 — Record and calibrate
 
-- Persist the run report via `report_save` (companies-mcp reports: `cmp-gap-runN-<family>.json`) carrying: contract identity (verbatim criteria), both legs with data provenance, reconciliation-gate output, wedge, decomposition, verdict, known degradations, followups.
+- Persist the run report by direct write to the companies-mcp reports directory (`~/Documents/zk-data/companies-mcp/reports/cmp-gap-runN-<family>.json`) carrying: contract identity (verbatim criteria), both legs with data provenance, reconciliation-gate output, wedge, decomposition, verdict, known degradations, followups.
 - Accumulate calibration: `market_check_resolutions` (pre-resolution snapshots), `market_subscribe_resolutions` (resolution events), `market_record_resolution` (manual observations). The next run's W2 reads `market_calibration(bucket)`.
 - Judge the run against its goal criteria (`kanban_goal_judge`); score on operator confirmation (`kanban_goal_score`).
 
@@ -141,7 +141,7 @@ status: VERIFIED
 |---|---|
 | prediction-markets | Stage 2: `market_lookup`, `market_match`, `market_ladder`; Stages 2–3: `market_cmp_context_suggest`, `market_cmp_indices`, `market_cmp_index`; Stage 3: `market_volatility` (DR-AS); Stage 8: `market_check_resolutions`, `market_subscribe_resolutions`, `market_record_resolution`, `market_calibration` |
 | scenarios | `scenario_from_markets_set` / `scenario_from_cmp_indices` (event-tree composition), `scenario_quantify`, `scenario_propagate` (Bayesian propagation), `scenario_cross_validate` (estimate cross-validation), `scenario_calibration` (forecast calibration curve), `contract_price_coherence` (Stage 5 cross-venue gate) |
-| companies | Equity legs: `expectations_gap`, `calibrate_forecast`; durable forecast records with Brier scoring: `forecast_persist` / `forecast_record`; `equity_duration` for horizon matching; `report_save` for durable run reports |
+| companies | Equity legs: `expectations_gap`, `calibrate_forecast`; durable forecast records with Brier scoring: `forecast_persist` / `forecast_record`; `equity_duration` for horizon matching; direct file write to the reports directory for durable run reports |
 | FRED / DBnomics / World Bank / web | Traditional-leg data via the observations path (`fred_get_series_info` currently returns empty metadata for several valid series IDs — degradation logged, warn-log fix pending); web reads for off-platform (a)-legs and published models |
 | lisp_eval / awk | Deterministic gate arithmetic and count checks. `lisp_eval` is fragile on large arrays (run 1: 2× max_steps at 500k on ~650-element arrays, 2× type errors; skill-use issue filed); awk for arrays over ~100 elements |
 

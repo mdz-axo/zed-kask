@@ -6,10 +6,7 @@
 //!
 //! Reference: Schwartz, "The Art of the Long View"
 
-use crate::fibo::{METRIC_GROSS_PROFIT_MARGIN, METRIC_REVENUE_GROWTH_RATE};
-use crate::financial_model::{
-    self, HistoricalSnapshot, ProjectedFinancialModel, ProjectionAssumptions,
-};
+use crate::financial_model::{self, HistoricalSnapshot, ProjectionAssumptions};
 
 // ── 2x2 Matrix ────────────────────────────────────────────────────────────
 
@@ -17,7 +14,6 @@ use crate::financial_model::{
 #[derive(Debug, Clone)]
 pub struct Scenario {
     pub name: &'static str,
-    pub description: &'static str,
     /// Multiplier applied to the primary axis (e.g., revenue growth).
     pub axis1_multiplier: f64,
     /// Multiplier applied to the secondary axis (e.g., gross margin).
@@ -27,11 +23,6 @@ pub struct Scenario {
 /// Scenario axis definition.
 #[derive(Debug, Clone)]
 pub(crate) struct ScenarioAxis {
-    /// Human-readable name.
-    pub name: &'static str,
-    /// Internal metric identifier for the axis driver (hKask canonical
-    /// metric name — not an ontology URI).
-    pub metric: &'static str,
     /// Baseline value pulled from company fundamentals.
     pub baseline: f64,
     /// "High" end of the range (multiplier applied to baseline).
@@ -52,15 +43,11 @@ impl ScenarioMatrix {
     /// Build a 2x2 matrix around revenue growth (axis1) and gross margin (axis2).
     pub fn growth_x_margin(hist_revenue_growth: f64, gross_margin: f64) -> Self {
         let axis1 = ScenarioAxis {
-            name: "Revenue Growth",
-            metric: METRIC_REVENUE_GROWTH_RATE,
             baseline: hist_revenue_growth,
             high_multiplier: 1.5,
             low_multiplier: 0.5,
         };
         let axis2 = ScenarioAxis {
-            name: "Gross Margin",
-            metric: METRIC_GROSS_PROFIT_MARGIN,
             baseline: gross_margin,
             high_multiplier: 1.2,
             low_multiplier: 0.8,
@@ -69,25 +56,21 @@ impl ScenarioMatrix {
         let scenarios = [
             Scenario {
                 name: "Bull Case",
-                description: "Strong revenue growth with expanding margins. The company executes well in a favorable environment.",
                 axis1_multiplier: axis1.high_multiplier,
                 axis2_multiplier: axis2.high_multiplier,
             },
             Scenario {
                 name: "Land Grab",
-                description: "Revenue grows fast but margins compress. The company invests aggressively for market share at the expense of profitability.",
                 axis1_multiplier: axis1.high_multiplier,
                 axis2_multiplier: axis2.low_multiplier,
             },
             Scenario {
                 name: "Cash Cow",
-                description: "Slow revenue growth with strong margins. The company harvests its position, generating steady cash flow.",
                 axis1_multiplier: axis1.low_multiplier,
                 axis2_multiplier: axis2.high_multiplier,
             },
             Scenario {
                 name: "Bear Case",
-                description: "Weak revenue and compressed margins. Competitive pressure or macro headwinds erode both top and bottom line.",
                 axis1_multiplier: axis1.low_multiplier,
                 axis2_multiplier: axis2.low_multiplier,
             },
@@ -107,9 +90,6 @@ impl ScenarioMatrix {
 #[derive(Debug, Clone)]
 pub(crate) struct ScenarioResult {
     pub scenario: Scenario,
-    pub model: ProjectedFinancialModel,
-    pub applied_growth: f64,
-    pub applied_margin: f64,
     pub intrinsic_per_share: f64,
 }
 
@@ -134,52 +114,8 @@ pub(crate) fn run_scenario_analysis(
         results.push(ScenarioResult {
             scenario: scenario.clone(),
             intrinsic_per_share: model.intrinsic_per_share,
-            model,
-            applied_growth,
-            applied_margin,
         });
     }
 
     Ok(results)
-}
-
-/// Summarize scenario results with range and dispersion.
-pub(crate) fn scenario_summary(results: &[ScenarioResult]) -> ScenarioSummary {
-    let intrinsics: Vec<f64> = results.iter().map(|r| r.intrinsic_per_share).collect();
-    let min_val = intrinsics.iter().cloned().fold(f64::INFINITY, f64::min);
-    let max_val = intrinsics.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-    let avg_val = intrinsics.iter().sum::<f64>() / intrinsics.len() as f64;
-
-    let upside = if avg_val > 0.0 {
-        (max_val - avg_val) / avg_val
-    } else {
-        0.0
-    };
-    let downside = if avg_val > 0.0 {
-        (avg_val - min_val) / avg_val
-    } else {
-        0.0
-    };
-    let range_spread = if avg_val > 0.0 {
-        (max_val - min_val) / avg_val
-    } else {
-        0.0
-    };
-
-    ScenarioSummary {
-        intrinsic_range: (min_val, max_val),
-        intrinsic_average: avg_val,
-        upside_pct: upside,
-        downside_pct: downside,
-        range_spread_pct: range_spread,
-    }
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct ScenarioSummary {
-    pub intrinsic_range: (f64, f64),
-    pub intrinsic_average: f64,
-    pub upside_pct: f64,
-    pub downside_pct: f64,
-    pub range_spread_pct: f64,
 }

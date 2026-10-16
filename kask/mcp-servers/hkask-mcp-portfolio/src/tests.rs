@@ -964,10 +964,10 @@ fn seed_legacy_portfolio_schema(connection: &rusqlite::Connection) -> rusqlite::
 fn seed_research_schema(connection: &rusqlite::Connection) -> rusqlite::Result<()> {
     // The companies tables from the source of truth (dev-dependency on
     // hkask-mcp-companies): the mixed shared-DB scenario must carry the
-    // schema companies actually creates — the hand-mirrored DDL this
-    // replaces had already drifted (it seeded 3 of the 5 tables, missing
-    // screen_jobs/screen_job_items). The cascading parent relationships
-    // live in the real DDL.
+    // schema companies actually creates — notes and forecasts (the
+    // screen-job and file-attachment tables were removed with their
+    // tools, 2026-10-15). The cascading parent relationships live in the
+    // real DDL.
     connection.execute_batch("PRAGMA foreign_keys = ON;")?;
     connection.execute_batch(hkask_mcp_companies::COMPANIES_SCHEMA_DDL)?;
     connection.execute_batch(
@@ -975,10 +975,7 @@ fn seed_research_schema(connection: &rusqlite::Connection) -> rusqlite::Result<(
              'note-1', 'legacy', 'AAPL', '2026-09-01', 'Thesis', 'Durable research',
              '[\"investment\"]', '2026-09-01T00:00:00Z'
          );
-         INSERT INTO files VALUES (
-             'file-1', 'legacy', 'AAPL', '2026-09-01', 'report.txt', 'text/plain',
-             16, 'attachments/report.txt', 'Supporting evidence', '2026-09-01T00:00:00Z'
-         );
+
          INSERT INTO forecasts VALUES (
              'forecast-1', 'AAPL', NULL, '{\"price_target\":200}',
              '[{\"price\":190,\"date\":\"2026-09-02\"}]', '2026-09-01T00:00:00Z'
@@ -1011,7 +1008,6 @@ fn research_database_snapshot(
         "SELECT * FROM portfolios ORDER BY name",
         "SELECT * FROM transactions ORDER BY id",
         "SELECT * FROM notes ORDER BY id",
-        "SELECT * FROM files ORDER BY id",
         "SELECT * FROM forecasts ORDER BY id",
     ]
     .into_iter()
@@ -1019,7 +1015,7 @@ fn research_database_snapshot(
     .collect()
 }
 
-/// expect: [P1] Research, attachment metadata, and portfolio parents survive a
+/// expect: [P1] Research notes, forecasts, and portfolio parents survive a
 /// refused recovery, including forecast revisions and recorded outcomes.
 /// dcterms:identifier: hkask_mcp_portfolio::store::open_with_schema_recovery
 #[test]

@@ -361,28 +361,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn company_screener_endpoint_works() {
-        let _key = skip_if_no_key();
-        let client = client();
-        let data = fetch_endpoint(
-            &client,
-            "/company-screener",
-            &[("limit", "3"), ("country", "US"), ("sector", "Technology")],
-        )
-        .await;
-        let Some(data) = data else {
-            eprintln!("SKIP: no API key or endpoint unreachable");
-            return;
-        };
-        assert!(data.is_array(), "company-screener should return an array");
-        let missing = missing_fields(&data, &["symbol", "companyName", "marketCap", "sector"]);
-        assert!(
-            missing.is_empty(),
-            "company-screener missing fields: {missing:?}"
-        );
-    }
-
-    #[tokio::test]
     async fn dates_align_across_endpoints() {
         // The enrich_key_metrics function merges by date — this test verifies
         // that key-metrics, ratios, and financial-growth share the same date keys.

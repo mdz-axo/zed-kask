@@ -5,7 +5,5 @@ pub(crate) mod economic_profit;
 pub(crate) mod expectations;
 pub(crate) mod financial_data;
 pub(crate) mod notes;
-
-pub(crate) mod reports;
 pub(crate) mod transcript;
 pub(crate) mod valuation;

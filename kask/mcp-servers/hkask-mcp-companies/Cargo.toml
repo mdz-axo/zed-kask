@@ -18,14 +18,12 @@ hkask-mcp-server.workspace = true
 hkask-mcp-portfolio.workspace = true
 hkask-types.workspace = true
 hkask-bridge-ontology.workspace = true
-hkask-lisp.workspace = true
 rmcp = { workspace = true, features = ["server", "macros", "transport-io"] }
 reqwest.workspace = true
 futures.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 serde.workspace = true
 serde_json.workspace = true
-serde_yaml_neo.workspace = true
 schemars.workspace = true
 anyhow.workspace = true
 tracing.workspace = true
@@ -34,9 +32,7 @@ chrono.workspace = true
 rusqlite.workspace = true
 uuid.workspace = true
 rand.workspace = true
-base64.workspace = true
 regex.workspace = true
-minijinja.workspace = true
 hkask-forecast.workspace = true
 hkask-spreadsheet.workspace = true
 thiserror.workspace = true

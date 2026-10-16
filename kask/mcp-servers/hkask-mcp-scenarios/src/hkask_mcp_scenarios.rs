@@ -426,15 +426,15 @@ impl ScenariosServer {
     /// but never invents conditional probabilities).
     ///
     /// MATURITY NOTE: this is the detailed end of the scenario-modeling
-    /// ladder. The simple path — companies `scenario_analysis` (Schwartz 2x2)
-    /// → `scenario_impact_valuation` on hkask-mcp-companies → single-market
-    /// the companies 2x2 path — is the intended on-ramp; an analyst typically
-    /// arrives at a full tree only after research (company, industry, economy,
-    /// technology, management, domain experts) reveals which events actually
-    /// condition each other. The 2x2 mode is retained as a first-class citizen,
-    /// not a legacy path.
+    /// ladder. The simple path — `scenario_quantify` on this server over a
+    /// small independent event set → `scenario_impact_valuation` on
+    /// hkask-mcp-companies — is the intended on-ramp; an analyst typically
+    /// arrives at a full tree only after research (company, industry,
+    /// economy, technology, management, domain experts) reveals which
+    /// events actually condition each other. The flat-tree mode is retained
+    /// as a first-class citizen, not a legacy path.
     #[tool(
-        description = "Compose a set of prediction-market records (from hkask-mcp-prediction-markets) into a validated EventTree with caller-authored dependency edges. Each record passes the per-record market-bridge gates; question-overlap duplicates are flagged; cycles and CPT-size violations are rejected. Returns the resolved tree (marginals, joint probability) plus composition warnings. Detailed-mode tool: the simpler 2x2 path (companies scenario_analysis → scenario_impact_valuation on hkask-mcp-companies) is the intended on-ramp before wiring full trees."
+        description = "Compose a set of prediction-market records (from hkask-mcp-prediction-markets) into a validated EventTree with caller-authored dependency edges. Each record passes the per-record market-bridge gates; question-overlap duplicates are flagged; cycles and CPT-size violations are rejected. Returns the resolved tree (marginals, joint probability) plus composition warnings. Detailed-mode tool: the simpler path (scenario_quantify → scenario_impact_valuation on hkask-mcp-companies) is the intended on-ramp before wiring full trees."
     )]
     pub async fn scenario_from_markets_set(
         &self,
@@ -555,11 +555,14 @@ impl ScenariosServer {
             // which is the event id the tree builder uses, so the entries line up
             // 1:1 with the tree's root nodes.
             //
-            // The companies `EventTreeProjection`/`CmpIndexProvenance` bridge
-            // contract consumes this shape; the pin test
-            // `cmp_provenance_round_trips_real_scenarios_emitter` in
-            // `hkask_mcp_companies::superforecast::tests` fails if this emitter
-            // and the companies struct drift apart.
+            // Tree consumers (the companies `scenario_impact_valuation`
+            // tree parse) receive this shape as provenance metadata inside
+            // the `tree` object; the pin test
+            // `scenario_from_cmp_indices_emits_full_cmp_provenance_inside_tree`
+            // below fails if this emitter drops a field. The former
+            // companies-side `EventTreeProjection` deserializer and its
+            // round-trip pin were removed with the companies
+            // `scenario_analysis` tool (2026-10-15).
             let cmp_provenance: Vec<serde_json::Value> =
                 emit_cmp_provenance(&indices);
 
@@ -2065,14 +2068,12 @@ fn parse_scenario_type(s: Option<&str>) -> ScenarioType {
 /// the full 7-field index identity per CMP root. Extracted from the async tool
 /// body so the shape is testable without a `ScenariosServer` fixture: the
 /// `scenario_from_cmp_indices_emits_full_cmp_provenance_inside_tree` pin below
-/// asserts the 7-field shape and the `cmp_provenance`-inside-`tree` location,
-/// and the companies crate's `cmp_provenance_round_trips_real_scenarios_emitter`
-/// asserts the same shape round-trips through `EventTreeProjection`.
+/// asserts the 7-field shape and the `cmp_provenance`-inside-`tree` location.
 ///
 /// Constructs the shared `superforecast::CmpIndexProvenance` (re-exported from
-/// `hkask_forecast`) so the emitter and the companies deserializer share one
-/// type-level source of truth — if the shared struct's fields change, both
-/// sides track the change at compile time. `id` matches
+/// `hkask_forecast`) so the emitter and any re-exporting consumer share one
+/// type-level source of truth — if the shared struct's fields change, every
+/// side tracks the change at compile time. `id` matches
 /// `superforecast::convert_cmp_index`'s format
 /// (`cmp:{family}:{tenor}:{orientation}`), which is the event id the tree
 /// builder uses, so entries line up 1:1 with the tree's root nodes.
@@ -2143,8 +2144,8 @@ mod tests {
 
     /// `emit_cmp_provenance` produces the full 7-field CMP index identity per
     /// root: id, family, tenor, orientation, venue, method, maturity_error_days.
-    /// The companies crate's `EventTreeProjection` deserializer consumes this
-    /// shape; if the emitter drops a field the bridge silently degrades.
+    /// Tree consumers receive this shape as provenance metadata; if the
+    /// emitter drops a field the bridge silently degrades.
     #[test]
     fn scenario_from_cmp_indices_emits_full_cmp_provenance_inside_tree() {
         use hkask_mcp_prediction_markets::cmp::CmpMethod;

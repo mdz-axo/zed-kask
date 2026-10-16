@@ -1732,34 +1732,6 @@ async fn fetch_screener_page(
     }
 }
 
-/// Fetch the EODHD Exchanges API list — the authoritative exchange-code →
-/// currency map (each entry carries `Code` and `Currency`). One call; the
-/// inventory changes rarely, so callers cache it.
-///
-/// EODHD Exchanges API: `https://eodhd.com/api/exchanges-list/?api_token=...`
-/// See: https://eodhd.com/financial-apis/exchanges-api/
-pub async fn fetch_eodhd_exchanges(
-    client: &reqwest::Client,
-    eodhd_api_key: &str,
-) -> Result<Value, McpToolError> {
-    eodhd_get(client, "/exchanges-list", eodhd_api_key, "", &[]).await
-}
-
-pub async fn fetch_eodhd_common_stocks(
-    client: &reqwest::Client,
-    eodhd_api_key: &str,
-    exchange: &str,
-) -> Result<Value, McpToolError> {
-    eodhd_get(
-        client,
-        "/exchange-symbol-list",
-        eodhd_api_key,
-        exchange,
-        &[("type", "common_stock")],
-    )
-    .await
-}
-
 pub async fn fetch_eodhd_fundamentals(
     client: &reqwest::Client,
     eodhd_api_key: &str,

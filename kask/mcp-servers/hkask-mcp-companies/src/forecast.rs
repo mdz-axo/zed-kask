@@ -16,6 +16,7 @@
 use crate::{
     CompaniesServer,
     financial_model::{HistoricalSnapshot, ProjectedFinancialModel, ProjectionAssumptions},
+    providers,
 };
 use hkask_mcp_server::server::McpToolError;
 use serde::{Deserialize, Serialize};
@@ -103,6 +104,39 @@ pub(crate) fn resolve_current_price(
 }
 
 impl CompaniesServer {
+    /// The latest USD→currency FOREX close, cached 24h in the acquisition
+    /// cache (endpoint key retained from the screening era for cache-row
+    /// continuity). Serves valuation price normalization — the DCF price
+    /// fallback for EODHD-routed, exchange-qualified symbols.
+    pub(crate) async fn cached_forex_rate(
+        &self,
+        currency: &str,
+    ) -> Result<(String, f64), McpToolError> {
+        const ENDPOINT: &str = "screener_forex_rate";
+        let symbol = format!("USD{currency}.FOREX");
+        if let Some(cache) = self.fibo_cache.as_ref()
+            && let Some(cached) = cache.get_raw(&symbol, ENDPOINT, "none")
+            && let (Some(date), Some(rate)) = (
+                cached.get("date").and_then(|value| value.as_str()),
+                cached.get("close").and_then(|value| value.as_f64()),
+            )
+        {
+            return Ok((date.to_string(), rate));
+        }
+        let (date, rate) =
+            providers::fetch_eodhd_forex_rate(&self.client, &self.eodhd_api_key, currency).await?;
+        if let Some(cache) = self.fibo_cache.as_ref() {
+            cache.store_raw(
+                &symbol,
+                ENDPOINT,
+                "none",
+                &serde_json::json!({"date": date, "close": rate}),
+                "EODHD",
+            );
+        }
+        Ok((date, rate))
+    }
+
     /// Convert a security price into the currency used by its normalized
     /// financial statements. Provider routing can pair a listing-currency
     /// quote with statements reported in another currency (for example, a

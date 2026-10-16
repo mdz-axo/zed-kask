@@ -29,7 +29,7 @@ use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 #[tool_router(router = expectations_router, vis = "pub")]
 impl CompaniesServer {
     #[tool(
-        description = "Expectations gap analysis from the investor perspective. The investor target return (MAIA default 15%, request-overridable) replaces CAPM cost of equity in modified WACC. For non-financials, compare reverse-DCF-implied revenue growth with demonstrated full-period revenue CAGR and compare implied net margin at that demonstrated growth with demonstrated net margin. DuPont ROE and Higgins sustainable growth are surfaced separately as profitability decomposition and financing capacity. Financial-sector companies use the equity-based implied-ROE solve (justified P/B). Management guidance is context only. compact=true skips research-narrative collection for screening workflows — identical capability/gaps blocks, narrative_mode=compact, no research credentials needed."
+        description = "Expectations gap analysis from the investor perspective. The investor target return (MAIA default 15%, request-overridable) replaces CAPM cost of equity in modified WACC. For non-financials, compare reverse-DCF-implied revenue growth with demonstrated full-period revenue CAGR and compare implied net margin at that demonstrated growth with demonstrated net margin. DuPont ROE and Higgins sustainable growth are surfaced separately as profitability decomposition and financing capacity. Financial-sector companies use the equity-based implied-ROE solve (justified P/B). Management guidance is context only. compact=true skips research-narrative collection — identical capability/gaps blocks, narrative_mode=compact, no research credentials needed."
     )]
     pub async fn expectations_gap(
         &self,
@@ -48,9 +48,7 @@ impl CompaniesServer {
             // five multi-MB transfers) for one international symbol —
             // the load driver behind the batch stalls observed 2026-10-05.
             // International (EODHD-routed) symbols fetch fundamentals
-            // once and derive the five views locally — the same pattern
-            // the saved-screen job path uses
-            // (screening::analyze_issuer_group). US (FMP-routed) symbols
+            // once and derive the five views locally. US (FMP-routed) symbols
             // keep the six light per-endpoint FMP fetches — FMP's API is
             // per-statement. The stock quote stays separate on both
             // paths (EODHD /real-time is a light 1-unit endpoint;
@@ -227,12 +225,10 @@ impl CompaniesServer {
                 _ => req.symbol.clone(),
             };
 
-            // compact: skip research entirely — screening workflows rank
-            // on the gap math, not the context. The saved-screen job path
-            // already builds this report with no research
-            // (screening::analyze_issuer_group), so the compact shape is a
-            // proven configuration, and it needs no research credentials
-            // (search_fundamental errors permission_denied without keys).
+            // compact: skip research entirely — batch workflows rank on
+            // the gap math, not the context. The compact shape needs no
+            // research credentials (search_fundamental errors
+            // permission_denied without keys).
             let compact = req.compact.unwrap_or(false);
             let (management_growth, management_narrative, total_claims, narrative_mode) = if compact
             {

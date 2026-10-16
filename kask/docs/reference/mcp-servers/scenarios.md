@@ -80,21 +80,17 @@ status: VERIFIED
 
 ## The three Schwartz surfaces
 
-Three distinct "Schwartz scenario" semantics live across the stack; they
+Two distinct "Schwartz scenario" semantics live across the stack; they
 share the reference model (Schwartz, *The Art of the Long View*, 1991)
 and nothing else — each has its own contract:
 
-1. **Valuation 2×2** — `scenario_analysis` on the companies server
-   (`hkask-mcp-companies`): four growth×margin quadrants (Bull, Land
-   Grab, Cash Cow, Bear), each run through DCF. A valuation instrument;
-   the quadrants are assumption sets, not narratives.
-2. **Divergent-futures narratives** — the `scenario-planning` skill's
+1. **Divergent-futures narratives** — the `scenario-planning` skill's
    Phase 2b templates (`scenario-planning/axes-and-narratives` and
    siblings): Schwartz's steps 5–8 — two critical-uncertainty axes, four
    quadrant stories, implications, early-warning indicators. LLM
    judgment in skill templates; the scenarios server quantifies the
    event-tree backbone underneath them.
-3. **Probability-weighted four-scenario distribution** —
+2. **Probability-weighted four-scenario distribution** —
    `calibrate_forecast` on the companies server: Tetlock-calibrated
    probabilities distributed across four Schwartz scenarios to produce
    a probability-weighted intrinsic value.
