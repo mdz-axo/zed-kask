@@ -2832,7 +2832,7 @@ impl Element for MarkdownElement {
                             // zed-kask: D18 — viz block renderer.
                             // Intercept fenced blocks whose language tag is one of
                             // the viz fence languages the registry composes
-                            // (media, graph, kanban, portfolio, scenarios). The
+                            // (media, graph, kanban, scenarios). The
                             // renderer self-selects on the body content, but we
                             // gate on the fence language so that json blocks with
                             // a kind/viz field are not misinterpreted as viz blocks.
@@ -2844,7 +2844,7 @@ impl Element for MarkdownElement {
                                 let is_viz_block = matches!(
                                     kind,
                                     CodeBlockKind::FencedLang(lang)
-                                        if lang == "media" || lang == "graph" || lang == "kanban" || lang == "portfolio" || lang == "scenarios" || lang == "spreadsheet" || lang == "swarm_delegate_results" || lang == "media"
+                                        if lang == "media" || lang == "graph" || lang == "kanban" || lang == "scenarios" || lang == "spreadsheet" || lang == "swarm_delegate_results" || lang == "media"
                                 );
                                 if is_viz_block {
                                     let block_source = &parsed_markdown.source[range.clone()];
@@ -7982,7 +7982,7 @@ mod tests {
     // zed-kask: D18 — pins the fence-language gate. A ```json block whose
     // body happens to contain a `kind` field must NOT be intercepted by the
     // viz renderer — only the viz fence languages the registry composes
-    // (media, graph, kanban, portfolio, scenarios) are eligible.
+    // (media, graph, kanban, scenarios) are eligible.
     #[gpui::test]
     fn test_media_block_renderer_does_not_intercept_json_blocks(cx: &mut TestAppContext) {
         ensure_theme_initialized(cx);
@@ -8036,7 +8036,7 @@ mod tests {
     }
 
     // zed-kask: D18 - pins the FULL viz fence-language gate. Every fence
-    // language the registry composes (graph, kanban, portfolio, scenarios;
+    // language the registry composes (graph, kanban, scenarios;
     // media is pinned by test_media_block_renderer_intercepts_media_blocks)
     // must reach the renderer when a media_block_renderer is registered.
     // Widening hkask_viz_core::block_renderer without widening the gate in
@@ -8055,9 +8055,6 @@ mod tests {
 ```
 ```kanban
 {"viz":"kanban","marker":"KANBAN_WGT_MARKER"}
-```
-```portfolio
-{"viz":"portfolio","marker":"PORTFOLIO_WGT_MARKER"}
 ```
 ```scenarios
 {"viz":"scenarios","marker":"SCENARIOS_WGT_MARKER"}
@@ -8102,7 +8099,6 @@ mod tests {
         for marker in [
             "GRAPH_WGT_MARKER",
             "KANBAN_WGT_MARKER",
-            "PORTFOLIO_WGT_MARKER",
             "SCENARIOS_WGT_MARKER",
         ] {
             assert!(

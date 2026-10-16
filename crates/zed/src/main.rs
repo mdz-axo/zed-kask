@@ -2885,7 +2885,6 @@ fn main() {
         .detach();
         swarm_panel::init(cx);
         kanban_panel::init(cx);
-        portfolio_panel::init(cx);
         media_panel::init(cx);
         zed::watch_user_agents_md(app_state.fs.clone(), cx);
 

@@ -186,8 +186,6 @@ flowchart TD
     D --> SK[skills/{name}/]
     D --> TH[threads/threads.db]
 
-    A --> CO[companies-mcp/reports and screens]
-    A --> PO[portfolio-mcp/transactions]
     A --> CA[corpus-mcp/cache]
     A --> ME[media-mcp/generated]
     A --> SP[spreadsheet-mcp/workbooks]
@@ -260,16 +258,13 @@ is for, not its format.
 
 ### Binary artifacts
 
-Binary and file artifacts (transaction files, cached corpus text) are owned
+Binary and file artifacts (cached corpus text, generated media) are owned
 by the MCP server that produces them. They are user-facing outputs and live
 under the visible artifacts dir at `{server}-mcp/{artifact-type}/`:
 
 | File artifact | Owner | Path |
 |---|---|---|
-| Portfolio transaction files | portfolio server | `portfolio-mcp/transactions/` (artifacts dir) |
 | Corpus cache files | corpus server | `corpus-mcp/cache/` (artifacts dir) |
-| Company research reports | companies server | `companies-mcp/reports/` (artifacts dir) |
-| Company screens | companies server | `companies-mcp/screens/` (artifacts dir) |
 | Generated media | media server | `media-mcp/generated/` (artifacts dir) |
 
 LoRA adapter weights are hosted on HuggingFace (`AdapterSource::HuggingFace`);

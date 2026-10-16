@@ -291,9 +291,7 @@ members = [
     "crates/hkask-graph-widget",
     "crates/hkask-kanban-widget",
     "crates/hkask-steer",
-    "crates/hkask-portfolio-widget",
     "crates/hkask-spreadsheet-widget",
-    "crates/portfolio_panel",
     "crates/media_panel",
     "crates/hkask-scenarios-widget",
     "crates/hkask-swarm-widget",
@@ -310,7 +308,6 @@ members = [
     "kask/mcp-servers/hkask-mcp-kata-kanban",
     "kask/mcp-servers/hkask-mcp-training",
     "kask/mcp-servers/hkask-mcp-companies",
-    "kask/mcp-servers/hkask-mcp-portfolio",
     "kask/mcp-servers/hkask-mcp-spreadsheet",
     "kask/mcp-servers/hkask-mcp-corpus",
     "kask/mcp-servers/hkask-mcp-swarm",
@@ -392,9 +389,7 @@ hkask_viz_core = { path = "crates/hkask-viz-core", package = "hkask-viz-core" }
 hkask_graph_widget = { path = "crates/hkask-graph-widget", package = "hkask-graph-widget" }
 hkask_kanban_widget = { path = "crates/hkask-kanban-widget", package = "hkask-kanban-widget" }
 hkask_steer = { path = "crates/hkask-steer", package = "hkask-steer" }
-hkask_portfolio_widget = { path = "crates/hkask-portfolio-widget", package = "hkask-portfolio-widget" }
 hkask_spreadsheet_widget = { path = "crates/hkask-spreadsheet-widget", package = "hkask-spreadsheet-widget" }
-portfolio_panel = { path = "crates/portfolio_panel" }
 media_panel = { path = "crates/media_panel" }
 hkask_scenarios_widget = { path = "crates/hkask-scenarios-widget", package = "hkask-scenarios-widget" }
 hkask_swarm_widget = { path = "crates/hkask-swarm-widget", package = "hkask-swarm-widget" }
@@ -943,7 +938,6 @@ hkask-lisp = { path = "kask/crates/hkask-lisp" }
 hkask-memory = { path = "kask/crates/hkask-memory" }
 hkask-email = { path = "kask/crates/hkask-email" }
 hkask-mcp-server = { path = "kask/crates/hkask-mcp-server" }
-hkask-mcp-portfolio = { path = "kask/mcp-servers/hkask-mcp-portfolio" }
 hkask-mcp-companies = { path = "kask/mcp-servers/hkask-mcp-companies" }
 hkask-mcp-spreadsheet = { path = "kask/mcp-servers/hkask-mcp-spreadsheet" }
 hkask-mcp-prediction-markets = { path = "kask/mcp-servers/hkask-mcp-prediction-markets" }

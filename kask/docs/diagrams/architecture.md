@@ -58,7 +58,7 @@ graph TD
         end
     end
 
-    subgraph deps["Dependents — 16 crates"]
+    subgraph deps["Dependents — 14 crates"]
         direction TB
         subgraph kask_crates["kask crates"]
             condenser["hkask-condenser"]
@@ -68,14 +68,12 @@ graph TD
         subgraph zed_crates["zed-side crates"]
             agent["crates/agent"]
             media_widget["hkask-media-widget"]
-            portfolio_widget["hkask-portfolio-widget"]
         end
         subgraph servers["MCP servers"]
             companies["hkask-mcp-companies"]
             corpus["hkask-mcp-corpus"]
             kata_kanban["hkask-mcp-kata-kanban"]
             media["hkask-mcp-media"]
-            portfolio["hkask-mcp-portfolio"]
             pm["hkask-mcp-prediction-markets"]
             research["hkask-mcp-research"]
             scenarios["hkask-mcp-scenarios"]
@@ -89,12 +87,10 @@ graph TD
     bridge -->|"depends on"| shared
     agent -->|"depends on"| shared
     media_widget -->|"depends on"| shared
-    portfolio_widget -->|"depends on"| shared
     companies -->|"depends on"| shared
     corpus -->|"depends on"| shared
     kata_kanban -->|"depends on"| shared
     media -->|"depends on"| shared
-    portfolio -->|"depends on"| shared
     pm -->|"depends on"| shared
     research -->|"depends on"| shared
     scenarios -->|"depends on"| shared
@@ -105,7 +101,7 @@ graph TD
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-ONT-001
 verified_date: 2026-09-28
-verified_against: kask/crates/hkask-bridge-ontology/src/hkask_bridge_ontology.rs (pub mod axis L94, data_cube L95, dc_bibo L96, derived L97, fibo L98, golem L99, ml_schema L100, omc L101, ontology_graph L102, pko L103, published L104, rdf L107, schema_org L108, sepio L110, sumo L111, term_resolution L112); dependent Cargo.tomls — kask/crates/hkask-condenser, kask/crates/hkask-types (L19), kask/crates/kask_bridge (L16), crates/agent (L48), crates/hkask-media-widget, crates/hkask-portfolio-widget, kask/mcp-servers/{companies, corpus, kata-kanban (L22), media, portfolio, prediction-markets, research, scenarios, swarm, training}
+verified_against: kask/crates/hkask-bridge-ontology/src/hkask_bridge_ontology.rs (pub mod axis L94, data_cube L95, dc_bibo L96, derived L97, fibo L98, golem L99, ml_schema L100, omc L101, ontology_graph L102, pko L103, published L104, rdf L107, schema_org L108, sepio L110, sumo L111, term_resolution L112); dependent Cargo.tomls — kask/crates/hkask-condenser, kask/crates/hkask-types (L19), kask/crates/kask_bridge (L16), crates/agent (L48), crates/hkask-media-widget, kask/mcp-servers/{companies, corpus, kata-kanban (L22), media, prediction-markets, research, scenarios, swarm, training}
 status: VERIFIED
 -->
 
@@ -559,7 +555,6 @@ classDiagram
     VizCache o-- CachedWidget : holds strong refs
     VizWidget <|.. GraphWidget : viz event_tree
     VizWidget <|.. KanbanWidget : viz kanban
-    VizWidget <|.. PortfolioWidget : viz portfolio
     VizWidget <|.. ScenariosWidget : viz scenarios
     VizWidget <|.. SpreadsheetWidget : viz spreadsheet
     VizWidget <|.. SwarmWidget : viz swarm_delegate_results
@@ -568,13 +563,13 @@ classDiagram
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-VIZ-CORE
 verified_date: 2026-09-28
-verified_against: crates/hkask-viz-core/src/hkask_viz_core.rs (VizWidget trait L85-96, impls GraphWidget L99 / KanbanWidget L114 / PortfolioWidget L129 / ScenariosWidget L144 / SpreadsheetWidget L159 / SwarmWidget L174, CachedWidget L197, try_create L220, viz_factories L249-257, MAX_CACHE_SIZE L260, VizCache L356, cache_key L395, block_renderer L409); crates/hkask-media-widget/src/hkask_media_widget.rs (create_media_widget L56); crates/agent_ui/src/conversation_view.rs (media_block_renderer wiring L3574)
+verified_against: crates/hkask-viz-core/src/hkask_viz_core.rs (VizWidget trait L85-96, impls GraphWidget L99 / KanbanWidget L114 / ScenariosWidget L144 / SpreadsheetWidget L159 / SwarmWidget L174, CachedWidget L197, try_create L220, viz_factories L249-257, MAX_CACHE_SIZE L260, VizCache L356, cache_key L395, block_renderer L409); crates/hkask-media-widget/src/hkask_media_widget.rs (create_media_widget L56); crates/agent_ui/src/conversation_view.rs (media_block_renderer wiring L3574)
 status: VERIFIED
 -->
 
 **Selection order** (intentional): media (`kind`) first, then graph
-(`viz: "event_tree"`), kanban (`viz: "kanban"`), portfolio
-(`viz: "portfolio"`), scenarios (`viz: "scenarios"`), spreadsheet
+(`viz: "event_tree"`), kanban (`viz: "kanban"`), scenarios
+(`viz: "scenarios"`), spreadsheet
 (`viz: "spreadsheet"`), swarm (`viz: "swarm_delegate_results"`). The viz
 tags are disjoint, so factory order is arbitrary. A body claimed by none
 returns `None` and falls through to the default code-block renderer.

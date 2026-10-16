@@ -64,7 +64,7 @@ queued or running work and releases capacity.
 Toggle which of the built-in kask MCP servers are loaded.[^mcp-spec-settings]
 The 13 servers (`BUILT_IN_MCP_SERVERS` registry in `kask/crates/kask_bridge/src/mcp_servers.rs`,
 IDs via `builtin_mcp_server_ids()`):
-`companies`, `corpus`, `curator`, `kata-kanban`, `media`, `portfolio`, `prediction-markets`,
+`companies`, `corpus`, `curator`, `kata-kanban`, `media`, `prediction-markets`,
 `research`, `scenarios`, `spreadsheet`, `swarm`, `training`. The crates live under `kask/mcp-servers/`
 (12 `hkask-mcp-*` crates).
 
@@ -270,7 +270,7 @@ Step 6 of the settings-flow checklist is **already implemented**, not skipped: S
 | `fermi_defaults` | `String` | `""` | JSON with `growth` + `margin` arrays; empty = hardcoded defaults |
 | `investor_required_return` | `f64` | `0.15` | Investor equity hurdle used in companies-MCP modified WACC; emitted on every managed launch |
 
-No `transactions_dir` field — the portfolio transactions dir is derived from the artifacts dir as `portfolio-mcp/transactions/` by `mcp_env()`. See the Portfolio section below.
+No `transactions_dir` field.
 
 ## Corpus (`KaskCorpusSettings`)
 
@@ -590,7 +590,7 @@ into the editor process env).
 | `HKASK_CHRONIC_STALENESS_DAYS` | companies | `companies.chronic_staleness_days` |
 | `HKASK_FERMI_DEFAULTS` | companies | `companies.fermi_defaults` |
 | `HKASK_INVESTOR_REQUIRED_RETURN` | companies | `companies.investor_required_return` |
-| `HKASK_TRANSACTIONS_DIR` | portfolio | derived from the artifacts dir as `portfolio-mcp/transactions/` |
+
 | `HKASK_TEMPLATE_ROOT` | corpus, swarm | `corpus.template_root` |
 | `HKASK_SCENARIOS_DATA` | scenarios | derived from `data_dir` as `mcp/scenarios/` |
 | `HKASK_PREDICTION_MARKETS_DATA` | prediction-markets | derived from `data_dir` as `mcp/prediction-markets/` |

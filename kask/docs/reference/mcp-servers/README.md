@@ -32,13 +32,13 @@ mds_categories: [composition, domain]
 
 | Server | Crate | Purpose | Tools |
 |--------|-------|---------|------:|
-| [Companies](companies.md) | `kask/mcp-servers/hkask-mcp-companies` | FIBO-anchored financial forecasting, dual-provider routing, research notes and transcripts (portfolio ledger lives in the portfolio server) | 40 |
+| [Companies](companies.md) | `kask/mcp-servers/hkask-mcp-companies` | FIBO-anchored financial forecasting, dual-provider routing, research notes and transcripts | 40 |
 | [Corpus](corpus.md) | `kask/mcp-servers/hkask-mcp-corpus` | Corpus gathering, document processing, QA generation, style replicas | 27 |
 | Curator | `kask/mcp-servers/hkask-mcp-curator` | Curator agent metacognition (memory, regulation query, algedonic signals, skill-use issue reporting) | 15 |
 | [Experimentation](experimentation.md) | `kask/mcp-servers/hkask-mcp-experimentation` | Experiment registry for the sharded experimentation program: registered experiments with pre-registered predictions, variant lineages, grounded fitness records, selection fossils | 6 |
 | Kata Kanban | `kask/mcp-servers/hkask-mcp-kata-kanban` | Toyota Kata task boards and persistent-until-resolved functional goals | 27 |
 | [Media](media.md) | `kask/mcp-servers/hkask-mcp-media` | AI media generation (image, video, audio, gallery, educt transcripts, Reduct cloud) | 102 |
-| [Portfolio](portfolio.md) | `kask/mcp-servers/hkask-mcp-portfolio` | General-purpose transaction-ledger portfolio store (stocks, prediction-event portfolios, CMP indices) with materialized daily holdings and returns views | 18 |
+
 | [Prediction Markets](prediction-markets.md) | `kask/mcp-servers/hkask-mcp-prediction-markets` | Polymarket/Kalshi base rates, calibration, CMP curves and indices, residuals | 32 |
 | [Research](research.md) | `kask/mcp-servers/hkask-mcp-research` | Web search, extraction, browsing, RSS feeds, evidence scoring, research-run ledger, paper identity | 27 |
 | [Scenarios](scenarios.md) | `kask/mcp-servers/hkask-mcp-scenarios` | Event-tree forecasting (Tetlock/Schwartz/Chermack) | 19 |
@@ -48,7 +48,7 @@ mds_categories: [composition, domain]
 
 ### Count verification (unified 2026-10-05; re-verified 2026-10-13)
 
-Every server pins its exact tool surface with the shared `tool_surface_pin!` macro (landed `ede1ba0ca8`, 2026-10-05): one macro call pins the exact tool count and the generated `TOOL_NAMES` set against the live router, so additions, drops, and same-count renames fail CI instead of degrading to tool-not-found. `kask/scripts/check-mcp-registration.sh` gates on the pin's presence for every server in `mcp-servers.txt` (CI: `.github/workflows/kask-invariants.yml`). Live pin sites (generated test names, re-verified 2026-10-13): companies 40 (`hkask_mcp_companies.rs:550`), corpus 27 (`hkask_mcp_corpus.rs:324`), curator 15 (`hkask_mcp_curator.rs:2645`), experimentation 6 (`hkask_mcp_experimentation.rs:85`), kata-kanban 27 (`hkask_mcp_kata_kanban.rs:1766`), media 102 (`hkask_mcp_media.rs:485`), portfolio 18 (`hkask_mcp_portfolio.rs:89`), prediction-markets 32 (`hkask_mcp_prediction_markets.rs:2141`), research 27 (`hkask_mcp_research.rs:2827`), scenarios 19 (`hkask_mcp_scenarios.rs:2141`), spreadsheet 2 (`hkask_mcp_spreadsheet.rs:39`), swarm 91 (`hkask_mcp_swarm.rs:989`), training 9 (`hkask_mcp_training.rs:311`).
+Every server pins its exact tool surface with the shared `tool_surface_pin!` macro (landed `ede1ba0ca8`, 2026-10-05): one macro call pins the exact tool count and the generated `TOOL_NAMES` set against the live router, so additions, drops, and same-count renames fail CI instead of degrading to tool-not-found. `kask/scripts/check-mcp-registration.sh` gates on the pin's presence for every server in `mcp-servers.txt` (CI: `.github/workflows/kask-invariants.yml`). Live pin sites (generated test names, re-verified 2026-10-13): companies 40 (`hkask_mcp_companies.rs:550`), corpus 27 (`hkask_mcp_corpus.rs:324`), curator 15 (`hkask_mcp_curator.rs:2645`), experimentation 6 (`hkask_mcp_experimentation.rs:85`), kata-kanban 27 (`hkask_mcp_kata_kanban.rs:1766`), media 102 (`hkask_mcp_media.rs:485`), prediction-markets 27 (`hkask_mcp_prediction_markets.rs:1348`), research 27 (`hkask_mcp_research.rs:2827`), scenarios 17 (`hkask_mcp_scenarios.rs:1891`), spreadsheet 2 (`hkask_mcp_spreadsheet.rs:39`), swarm 91 (`hkask_mcp_swarm.rs:989`), training 9 (`hkask_mcp_training.rs:311`). The portfolio server (18 tools) was removed 2026-10-15.
 
 Per-server specifics that survive the unification: the curator pin additionally asserts the removed escalation/advice-review tools stay unregistered (`curator_escalations`, `curator_escalation_resolve`, `curator_escalation_dismiss`, `curator_escalation_dismiss_by_pattern`, `curator_advice_mark_applied`, `curator_advice_reviews`); the swarm pin's live partition is 48 cloud plus 43 non-cloud (33 local + 3 A2A + 4 knowledge + 3 swarm-scoped thread tools; `swarm_gate_readings` joined the local set 2026-10-10); the spreadsheet and experimentation tool-behavior suites drive every tool end-to-end over the real engine actor (`tests/tool_behavior.rs` in both crates).
 
@@ -255,7 +255,7 @@ and `scenario_score` (Brier at resolution — the only forecast-journal writer).
 
 ## Cross-links
 
-- [Companies MCP Server Reference](companies.md) — 40 registered tools, dual-provider routing, forecast store (the portfolio ledger lives in the portfolio server; DIAG-RF-004 inline)
+- [Companies MCP Server Reference](companies.md) — 40 registered tools, dual-provider routing, forecast store (DIAG-RF-004 inline)
 - [Corpus MCP Server Reference](corpus.md) — 26 `#[tool]` methods: corpus gathering, document processing, QA generation, style replicas
 - [Prediction Markets MCP Server Reference](prediction-markets.md) — 32 `#[tool]` methods: Polymarket/Kalshi base rates, calibration loop, CMP curves
 - [Scenario Forecasting Pipeline Diagram](scenarios.md) — 19 `#[tool]` methods, scenarios tool flow (DIAG-RF-005 inline)

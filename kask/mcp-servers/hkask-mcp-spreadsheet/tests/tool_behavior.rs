@@ -62,8 +62,8 @@ fn sample_table() -> AnalyticalTable {
 
 fn origin() -> ArtifactOrigin {
     ArtifactOrigin::new(
-        "hkask-mcp-portfolio".into(),
-        "portfolio_what_if".into(),
+        "hkask-mcp-companies".into(),
+        "scenario_impact_valuation".into(),
         serde_json::json!({"portfolio": "main"}),
     )
     .expect("origin is valid")

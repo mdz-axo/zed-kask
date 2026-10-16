@@ -162,7 +162,7 @@ pub fn shared_tool_invoker() -> Option<Arc<dyn ToolInvoker>> {
 // ── reask correlator (T7b) ───────────────────────────────────────────────────
 //
 // A coarse measurement proxy for "the user re-asked after a widget rendered".
-// Provenance-carrying widgets (scenarios, portfolio, kanban) call `record_render`
+// Provenance-carrying widgets (scenarios, kanban) call `record_render`
 // on construction; the memory port calls `correlate_reask` at turn completion.
 // When a user-message turn follows a turn that rendered at least one widget,
 // the correlator emits a `reg.widget.reask` Regulation span. This is an

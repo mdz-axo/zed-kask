@@ -51,8 +51,8 @@ use workspace::{
 };
 
 // Steer mode: a cross-domain ConversationView framed around kanban
-// coordination. The curator can combine kanban operations with portfolio,
-// company, scenario, research, and other MCP tools.
+// coordination. The curator can combine kanban operations with company,
+// scenario, research, and other MCP tools.
 
 mod board_picker;
 mod fetch;

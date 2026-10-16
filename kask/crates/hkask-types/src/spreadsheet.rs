@@ -937,7 +937,7 @@ mod tests {
 
     fn sample_origin() -> ArtifactOrigin {
         ArtifactOrigin::new(
-            "hkask-mcp-portfolio".into(),
+            "hkask-mcp-companies".into(),
             "portfolio_characteristics".into(),
             serde_json::json!({"portfolio": "main"}),
         )

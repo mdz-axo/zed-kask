@@ -9,7 +9,7 @@
 //! `None` to fall through to the default code-block renderer.
 //!
 //! This crate composes the kask viz widgets (the `viz`-tagged widgets:
-//! graph, kanban, portfolio, scenarios, swarm) into one such callback, so
+//! graph, kanban, scenarios, swarm) into one such callback, so
 //! `agent_ui::render_agent_markdown` registers a single renderer that
 //! dispatches across all viz block types. The widgets share
 //! an identical create-and-cache pattern (guard → parse → discriminator check
@@ -49,8 +49,6 @@ use hkask_graph_widget::GraphWidget;
 use hkask_graph_widget::block::{GraphBlockBody, parse_graph_body};
 use hkask_kanban_widget::KanbanWidget;
 use hkask_kanban_widget::block::{KanbanBlockBody, parse_kanban_body};
-use hkask_portfolio_widget::PortfolioWidget;
-use hkask_portfolio_widget::block::{PortfolioBlockBody, parse_portfolio_body};
 use hkask_scenarios_widget::ScenariosWidget;
 use hkask_scenarios_widget::block::{ScenariosBlockBody, parse_scenarios_body};
 use hkask_spreadsheet_widget::SpreadsheetWidget;
@@ -67,7 +65,7 @@ pub type BlockRenderer = Box<dyn Fn(&str, &mut Window, &mut App) -> Option<AnyEl
 /// A viz widget that self-selects on a JSON `viz` discriminator field and is
 /// cached across renders.
 ///
-/// The viz widgets (graph, kanban, portfolio, scenarios, swarm) share
+/// The viz widgets (graph, kanban, scenarios, swarm) share
 /// an identical create-and-cache pattern that differs only in the parsed block
 /// type, the `viz` tag value, the log prefix, and the view constructor. This
 /// trait captures that pattern once; [`try_create`] drives it generically.
@@ -123,21 +121,6 @@ impl VizWidget for KanbanWidget {
     }
     fn new_widget(block: Self::Block, cx: &mut Context<Self>) -> Self {
         KanbanWidget::new(block, cx)
-    }
-}
-
-impl VizWidget for PortfolioWidget {
-    type Block = PortfolioBlockBody;
-    const VIZ_TAG: &str = "portfolio";
-    const LOG_PREFIX: &str = "hkask-portfolio-widget";
-    fn parse_body(body: &str) -> anyhow::Result<Self::Block> {
-        parse_portfolio_body(body)
-    }
-    fn viz_of(block: &Self::Block) -> Option<&str> {
-        block.viz.as_deref()
-    }
-    fn new_widget(block: Self::Block, cx: &mut Context<Self>) -> Self {
-        PortfolioWidget::new(block, cx)
     }
 }
 
@@ -244,13 +227,12 @@ type VizFactory = fn(&str, &mut App) -> Option<CachedWidget>;
 
 /// The ordered registry of `viz`-discriminated widget factories. Order
 /// matters only for bodies whose `viz` tag could match more than one widget;
-/// the tags (`event_tree`, `kanban`, `portfolio`, `scenarios`,
+/// the tags (`event_tree`, `kanban`, `scenarios`,
 /// `spreadsheet`, `swarm_delegate_results`) are disjoint, so order is arbitrary.
 fn viz_factories() -> &'static [VizFactory] {
     &[
         try_create::<GraphWidget>,
         try_create::<KanbanWidget>,
-        try_create::<PortfolioWidget>,
         try_create::<ScenariosWidget>,
         try_create::<SpreadsheetWidget>,
         try_create::<SwarmWidget>,
@@ -562,12 +544,12 @@ mod tests {
         assert_ne!(cache_key("hello"), cache_key("world"));
     }
 
-    // Pins that the registry covers exactly the six `viz`-discriminated
+    // Pins that the registry covers exactly the five `viz`-discriminated
     // widgets and that their tags are disjoint (a body is claimed by at most
     // one factory).
     #[test]
-    fn viz_factories_cover_six_widgets() {
-        assert_eq!(viz_factories().len(), 6);
+    fn viz_factories_cover_five_widgets() {
+        assert_eq!(viz_factories().len(), 5);
     }
 
     // Pins the D18 fence-language gate in `markdown.rs` (`is_viz_block`):
@@ -587,7 +569,6 @@ mod tests {
         let mut admitted: Vec<&str> = vec![
             "graph",
             "kanban",
-            "portfolio",
             "scenarios",
             "spreadsheet",
             "swarm_delegate_results",
@@ -600,7 +581,6 @@ mod tests {
                 "graph",
                 "kanban",
                 "media",
-                "portfolio",
                 "scenarios",
                 "spreadsheet",
                 "swarm_delegate_results"
@@ -640,11 +620,6 @@ mod tests {
         )
         .expect("kanban body parses");
         assert_eq!(kanban.tasks[0].ontology.as_deref(), Some("pko:Step"));
-
-        // Portfolio widget
-        let portfolio = parse_portfolio_body(r#"{"viz":"portfolio","ontology":"fibo:Portfolio"}"#)
-            .expect("portfolio body parses");
-        assert_eq!(portfolio.ontology.as_deref(), Some("fibo:Portfolio"));
 
         // Scenarios widget
         let scenarios = parse_scenarios_body(r#"{"viz":"scenarios","ontology":"pko:Procedure"}"#)

@@ -19,7 +19,7 @@ Equity research flash pipeline converted from EFRA-AI (Replicant-Partners). Gove
 
 - Deep initiation with the full 8-part company analysis — use `company-research-deep`.
 - No companies/prediction-markets MCP access — the pipeline's substrate is those tools' outputs; without them the early-exit gates fire and nothing downstream runs.
-- Post-thesis monitoring — a published flash note's lifecycle is PERSIST/CONDENSE; monitoring belongs to the portfolio-review loop.
+- Post-thesis monitoring — a published flash note's lifecycle is PERSIST/CONDENSE; monitoring is the operator's periodic re-run of the flash pipeline on the same ticker.
 
 ## Reference models
 

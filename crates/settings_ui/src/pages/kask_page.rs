@@ -461,11 +461,6 @@ pub(crate) fn kask_string_input(
                 ("models", "rerank_model") => {
                     kask.models.get_or_insert_default().rerank_model = Some(parsed);
                 }
-                ("portfolio", "transactions_dir") => {
-                    // No-op — portfolio has no per-server path field.
-                    // The transactions dir is derived from the
-                    // artifacts dir as `portfolio-mcp/transactions/`.
-                }
                 ("corpus", "embedding_dim") => {
                     if let Ok(v) = parsed.parse::<u32>() {
                         kask.corpus.get_or_insert_default().embedding_dim = Some(v);
@@ -754,7 +749,7 @@ pub(crate) fn kask_page() -> SettingsPage {
             r#type: Default::default(),
             json_path: Some("kask.prediction_markets"),
             description: Some(
-                "Configure the prediction-markets MCP server: calibration data directory, cache TTL, base-event registry.".into(),
+                "Configure the prediction-markets MCP server: market-data cache TTL and the calibration data directory.".into(),
             ),
             search_aliases: &["prediction", "markets", "polymarket", "kalshi", "forecasting"],
             in_json: true,

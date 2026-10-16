@@ -322,7 +322,7 @@ If admitted, it would anchor:
    GAP (L1, L3, L7, L8, L11, L12, L14, L15, L21, L23) would gain a
    shared structural anchor; row-specific anchors (L2's
    pragmatic-cybernetics, L9's kanban-board-reference-models, L17's
-   scenario-planning, L19's portfolio-review, L22's spreadsheet plan)
+   scenario-planning, L22's spreadsheet plan)
    remain the finer-grained records this model complements, not replaces.
 3. **The alignment plan's target condition** — "one canonical pathway
    per layer; every actuation carries an expectation; the log carries

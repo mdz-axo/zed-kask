@@ -38,7 +38,7 @@ was made[^nygard-adr]. Prompts are especially prone to this because their
 ## 2. The base prompt and five overlays
 
 Upstream Zed renders one base system prompt. zed-kask keeps that shared file and
-adds five scoped contexts:
+adds four scoped contexts:
 
 | # | Surface | Location | Scope |
 |---|---------|----------|-------|
@@ -46,10 +46,9 @@ adds five scoped contexts:
 | 2 | Curator overlay | `crates/agent/src/curator_agent_server.rs` (`CURATOR_STATIC_CONTEXT`) | Curator threads |
 | 3 | Swarm Steer overlay | `crates/swarm_panel/src/swarm_panel.rs` (`steer_system_prompt`) | Swarm panel |
 | 4 | Kanban Steer overlay | `crates/kanban_panel/src/kanban_panel.rs` (`steer_system_prompt`) | Kanban panel |
-| 5 | Portfolio Steer overlay | `crates/portfolio_panel/src/portfolio_panel.rs` (`steer_system_prompt`) | Portfolio panel |
-| 6 | Media Steer overlay | `crates/media_panel/src/media_panel.rs:235-314` (`ensure_steer`, `steer_system_prompt`) | Media panel |
+| 5 | Media Steer overlay | `crates/media_panel/src/media_panel.rs:235-314` (`ensure_steer`, `steer_system_prompt`) | Media panel |
 
-The four panel overlays all use `hkask_steer::ensure_steer`; their advertised
+The three panel overlays all use `hkask_steer::ensure_steer`; their advertised
 tool names are rendered from each server's generated `TOOL_NAMES` and checked
 before the conversation is created (`crates/hkask-steer/src/hkask_steer.rs:174-184`;
 media coverage pins at `crates/media_panel/src/media_panel.rs:500-541`).

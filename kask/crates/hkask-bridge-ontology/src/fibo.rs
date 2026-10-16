@@ -51,10 +51,6 @@ fibo_terms! {
     /// FIBO: SEC/Securities/SecuritiesIdentification.
     TICKER_SYMBOL = "fibo-sec-sec-id:TickerSymbol",
 
-    /// A portfolio — a collection of holdings treated as a unit.
-    /// FIBO: SEC/Securities/SecurityAssets.
-    PORTFOLIO = "fibo-sec-sec-ast:Portfolio",
-
     /// The market capitalization of a security.
     /// FIBO: IND/MarketIndices/BasketIndices.
     MARKET_CAPITALIZATION = "fibo-ind-mkt-bas:MarketCapitalization",

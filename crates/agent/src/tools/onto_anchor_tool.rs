@@ -15,10 +15,10 @@ use ui::SharedString;
 
 /// Anchor a domain term on a published ontology concept by walking the
 /// fallback ladder (P8.3, `hkask-bridge-ontology` root docs) in
-/// term-resolution form — the same ladder the portfolio widget walks
-/// per metric (`hkask-portfolio-widget/src/view.rs`: IRR has a real FIBO
-/// term, rung 1; a metric with no FIBO term is a `sumo:Quantity`,
-/// rung 3):
+/// term-resolution form — the same ladder corpus chunk tagging and hMem
+/// content tagging walk per term (a metric with a real FIBO term resolves
+/// at rung 1; a term no domain source publishes resolves at the SUMO
+/// rung):
 ///
 /// 1. **Domain supplement** — pinned published sources (FIBO Q2 Release,
 ///    W3C RDF Data Cube, OMC, PKO/P-Plan/PROV, SEPIO,

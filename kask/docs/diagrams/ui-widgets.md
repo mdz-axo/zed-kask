@@ -1,5 +1,5 @@
 ---
-title: "UI Widget Diagrams — Graph, Kanban, Portfolio, Prediction Markets, Scenarios, Spreadsheet, Swarm"
+title: "UI Widget Diagrams — Graph, Kanban, Prediction Markets, Scenarios, Spreadsheet, Swarm"
 audience: [architects, developers]
 last_updated: 2026-09-28
 version: "1.2.0"
@@ -260,113 +260,6 @@ alphabetically (title-cased).
 **Card detail (B3):** `detail_open` holds the task id whose detail panel is
 open. The panel renders the full task (description, criteria, comments,
 verification, latest activity) passively from the block body.
-
-## Portfolio Widget
-
-`hkask-portfolio-widget` renders ```` ```portfolio ```` fenced blocks as a
-portfolio dashboard (summary tiles → returns detail → characteristics table
-→ attribution ranking). The agent picks the portfolio and the body already
-carries its data.
-
-**Correction (2026-08-28):** the widget is no longer purely passive — the
-returns detail carries a **T5 date-range scrub affordance**: two editable
-date chips (`from`/`to`) seeded from the block's returns; Apply re-issues
-`portfolio_returns` (default server `hkask-mcp-companies`) through the
-governed `ToolInvoker`. A missing invoker surfaces a visible
-`INVOKER_NOT_WIRED_MSG` status; partial (non-dispatchable) provenance
-surfaces `PROVENANCE_INCOMPLETE_MSG` — the widget refuses to re-issue the
-wrong tool and asks the user to route through the agent. The selector /
-aggregation controls / auto-loader / comparison mode from the deleted
-standalone `PortfolioDashboardView` remain intentionally omitted.
-
-```mermaid
-classDiagram
-    class PortfolioBlockBody {
-        +viz: Option~String~
-        +portfolio: Option~String~
-        +returns: Option~ReturnsBody~
-        +holdings: Option~HoldingsBody~
-        +characteristics: HashMap~String, CharacteristicField~
-        +attribution: Vec~AttributionRow~
-        +provenance: BlockProvenance
-        +ontology: Option~String~
-    }
-    class ReturnsBody {
-        +portfolio: Option~String~
-        +from: Option~String~
-        +to: Option~String~
-        +total_return: f64
-        +modified_dietz: f64
-        +irr: f64
-        +irr_converged: bool
-        +start_value: f64
-        +end_value: f64
-        +net_cash_flows: f64
-        +cash_flow_count: usize
-        +positions_at_start: usize
-        +positions_at_end: usize
-    }
-    class CharacteristicField {
-        +value: Option~f64~
-        +fibo: Option~String~
-        +method: Option~String~
-        +holdings: Option~usize~
-    }
-    class AttributionRow {
-        +symbol: String
-        +weight_start_pct: f64
-        +weight_end_pct: f64
-        +security_return_pct: f64
-        +contribution_bps: f64
-        +gain_loss: f64
-    }
-    class PortfolioWidget {
-        +body: PortfolioBlockBody
-        +focus_handle: FocusHandle
-        +from_focus: FocusHandle
-        +to_focus: FocusHandle
-        +from_input: String
-        +to_input: String
-        +dispatch_in_flight: Option~String~
-        +new(body, cx) PortfolioWidget
-        +render_summary_tiles()
-        +render_returns_detail()
-        +render_characteristics()
-        +render_attribution()
-    }
-    class create_portfolio_widget {
-        +try_create~PortfolioWidget~ via VizWidget
-    }
-
-    PortfolioBlockBody "1" o-- "0..1" ReturnsBody : returns
-    PortfolioBlockBody "1" o-- "many" CharacteristicField : characteristics
-    PortfolioBlockBody "1" o-- "many" AttributionRow : attribution
-    PortfolioWidget --> PortfolioBlockBody
-    PortfolioWidget ..> portfolio_returns : T5 scrub dispatch via ToolInvoker
-    PortfolioWidget ..|> gpui_Focusable : Focusable
-    PortfolioWidget ..|> gpui_Render : Render
-    create_portfolio_widget ..> PortfolioWidget : viz is portfolio
-```
-
-<!-- DIAGRAM_ALIGNMENT
-id: DIAG-VIZ-PORTFOLIO
-verified_date: 2026-09-28
-verified_against: crates/hkask-portfolio-widget/src/block.rs; crates/hkask-portfolio-widget/src/view.rs (T5 scrub doc L10, DEFAULT_SERVER L44 / DEFAULT_TOOL L46, INVOKER_NOT_WIRED_MSG L49 / PROVENANCE_INCOMPLETE_MSG L53, from_focus/to_focus L63-64, from_input/to_input L67-68)
-status: VERIFIED
--->
-
-**Block shape:** a JSON body with `viz: "portfolio"`. `returns`,
-`characteristics`, and `attribution` are all optional so partial bodies still
-render the present sections. `AttributionRow.symbol` is required; other
-attribution fields default.
-
-**Ontology anchors (fallback ladder, P8.3):** displayed metrics are
-anchored via the scope-broadening ladder — IRR has a real FIBO term
-(`FIBO_INTERNAL_RATE_OF_RETURN`, rung 1); every other metric is a quantity
-with no FIBO term, so it falls past the universal axes (which cover
-artifacts and processes, not quantities) to rung 3, the SUMO upper
-ontology (`sumo:Quantity`). The dashboard header anchors on the real
-`FIBO_PORTFOLIO`. Nothing is ever untagged.
 
 ## Prediction Markets Server
 
@@ -696,7 +589,7 @@ terms for forecast identifiers, Brier scores, or scenario probabilities
 
 `hkask-spreadsheet-widget` renders ```` ```spreadsheet ```` fenced blocks — the
 server-authoritative display hints emitted by `spreadsheet_apply` and by
-analytical publishers such as `portfolio_what_if` (the `SpreadsheetBlock`
+analytical publishers such as `scenario_impact_valuation` (the `SpreadsheetBlock`
 wire contract, `kask/crates/hkask-types/src/spreadsheet.rs`). Since SP-05
 (2026-10-06) the same widget renders inline table blocks
 (`SpreadsheetBlockKind::Inline`, the `InlineTableBlock` wire contract) as a

@@ -46,7 +46,7 @@ const ONTOLOGY_TERM_PATTERN: &str = r"(?i)(pko|pplan|prov|fibo|golem|gc|crm|dlp|
 /// Every entry pins a test's wire contract: the literal independently asserts
 /// what its corresponding server emits. This allowlist enforces routing,
 /// not validity: some historical test wire values (for example
-/// `fibo:Portfolio`) are not published FIBO concept IDs.
+/// `fibo:Corporation` in a media fixture) are not published FIBO concept IDs.
 ///
 /// Production code may NOT add entries here — reference a bridge constant
 /// instead. New entries require a justification naming either a pinned
@@ -73,19 +73,11 @@ const ALLOWED_LITERALS: &[(&str, &str)] = &[
         "crates/hkask-media-widget/src/media_widget.rs",
         "fibo:Corporation",
     ),
-    (
-        "crates/hkask-portfolio-widget/src/block.rs",
-        "fibo:Portfolio",
-    ),
     ("crates/hkask-scenarios-widget/src/view.rs", "pko:Procedure"),
     ("crates/hkask-swarm-widget/src/block.rs", "pko:Procedure"),
     (
         "crates/hkask-viz-core/src/hkask_viz_core.rs",
         "dcterms:Dataset",
-    ),
-    (
-        "crates/hkask-viz-core/src/hkask_viz_core.rs",
-        "fibo:Portfolio",
     ),
     (
         "crates/hkask-viz-core/src/hkask_viz_core.rs",

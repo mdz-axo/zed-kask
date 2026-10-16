@@ -105,10 +105,10 @@ ruling (recorded in the derived registry) improves it.
   (`kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs`).
   Coverage is per server, not fleet-wide; an untagged tool output is not an
   anchor — resolve its terms with `onto_anchor`.
-- **Per-term anchors**: the portfolio widget is the reference
-  implementation (`crates/hkask-portfolio-widget/src/view.rs`) — IRR anchors
-  on its real FIBO term (rung 1); FIBO-less metrics anchor on
-  `sumo:Quantity` (rung 3).
+- **Per-term anchors**: corpus chunk tagging and hMem content tagging are
+  the reference implementations — a term with a real FIBO concept anchors
+  at rung 1; a term no domain source publishes anchors on `sumo:Quantity`
+  (rung 3).
 - **Term resolution and relation traversal for the agent**: `onto_anchor`
   resolves any term as before. An optional `relation_query` asks for outgoing
   neighbors (no `to`; `max_hops` must be 1, its default) or a bounded directed

@@ -8048,30 +8048,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "hkask-mcp-portfolio"
-version = "0.40.2"
-dependencies = [
- "chrono",
- "hkask-bridge-ontology",
- "hkask-mcp-companies",
- "hkask-mcp-server",
- "hkask-spreadsheet",
- "hkask-types",
- "proptest",
- "regex",
- "rmcp",
- "rusqlite",
- "schemars 1.0.4",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.17",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
 name = "hkask-mcp-prediction-markets"
 version = "0.40.2"
 dependencies = [
@@ -8320,22 +8296,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "hkask-portfolio-widget"
-version = "0.40.2"
-dependencies = [
- "anyhow",
- "gpui",
- "gpui_util",
- "hkask-bridge-ontology",
- "hkask-tool-invoker",
- "hkask-types",
- "serde",
- "serde_json",
- "tracing",
- "ui",
-]
-
-[[package]]
 name = "hkask-regulation"
 version = "0.40.2"
 dependencies = [
@@ -8510,7 +8470,6 @@ dependencies = [
  "hkask-graph-widget",
  "hkask-kanban-widget",
  "hkask-media-widget",
- "hkask-portfolio-widget",
  "hkask-scenarios-widget",
  "hkask-spreadsheet-widget",
  "hkask-swarm-widget",
@@ -14348,27 +14307,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d8a2f0d8d040d7848a709caf78912debcc3f33ee4b3cac47d73d1e1069e83507"
 dependencies = [
  "portable-atomic",
-]
-
-[[package]]
-name = "portfolio_panel"
-version = "0.1.0"
-dependencies = [
- "acp_thread",
- "agent-client-protocol",
- "anyhow",
- "fs",
- "gpui",
- "hkask-mcp-portfolio",
- "hkask-steer",
- "hkask-types",
- "marketplace_ui_common",
- "project",
- "serde",
- "serde_json",
- "ui",
- "util",
- "workspace",
 ]
 
 [[package]]
@@ -23190,7 +23128,6 @@ dependencies = [
  "paths",
  "picker",
  "pkg-config",
- "portfolio_panel",
  "pretty_assertions",
  "profiling",
  "project",

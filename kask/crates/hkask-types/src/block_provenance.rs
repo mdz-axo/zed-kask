@@ -140,7 +140,7 @@ mod tests {
     fn provenance_round_trips_exactly() {
         let p = BlockProvenance {
             tool: Some("portfolio_characteristics".into()),
-            server: Some("hkask-mcp-portfolio".into()),
+            server: Some("hkask-mcp-companies".into()),
             args: serde_json::json!({"portfolio": "main", "date": "2026-09-18"}),
             span_id: Some("span-42".into()),
         };

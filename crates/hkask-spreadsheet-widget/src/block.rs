@@ -148,7 +148,7 @@ mod tests {
                 "content_digest": "a".repeat(64),
             },
             "viewport": {"sheet": "Main", "start_row": 0, "start_col": 0, "row_count": 10, "col_count": 4},
-            "origin": {"server": "hkask-mcp-portfolio", "tool": "portfolio_what_if", "arguments": {}},
+            "origin": {"server": "hkask-mcp-companies", "tool": "scenario_impact_valuation", "arguments": {}},
             "mutation": {"tool": "spreadsheet_apply", "server": "spreadsheet", "args": {}},
         })
         .to_string()

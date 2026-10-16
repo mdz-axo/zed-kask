@@ -776,7 +776,6 @@ impl KaskSettings {
         crate::mcp_env::emit_mcp_server_ids_env(&mut env);
         crate::mcp_env::emit_research_env(&self.research, &mut env);
         crate::mcp_env::emit_companies_env(&self.companies, &mut env);
-        crate::mcp_env::emit_portfolio_env(&mut env);
         let effective_embedding = self.effective_embedding_model();
         crate::mcp_env::emit_corpus_embedding_env(&self.corpus, &effective_embedding, &mut env);
         crate::mcp_env::emit_corpus_template_root_env(&self.corpus, &data_dir, &mut env);

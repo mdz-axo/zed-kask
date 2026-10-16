@@ -48,30 +48,6 @@ pub struct BuiltinMcpServer {
 /// Order is stable and meaningful — the kask panel uses index-based selection.
 pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
     BuiltinMcpServer {
-        id: "portfolio",
-        binary: "hkask-mcp-portfolio",
-        description: "Portfolio — general-purpose transaction-ledger portfolio store (stocks, prediction-event portfolios, CMP indices) with materialized daily holdings and returns views",
-        credentials: &[],
-        config_env: &[
-            // Data dir — needed so `resolve_under_data_dir` in `store.rs`
-            // resolves the portfolio DB (databases stay internal) under the
-            // same root as the parent process. Without this, an operator
-            // `HKASK_DATA_DIR` override is silently dropped by
-            // `filter_config_env_for_server`.
-            "HKASK_DATA_DIR",
-            // Artifacts dir — needed so the transactions-dir fallback in
-            // `run()` resolves `portfolio-mcp/transactions/` under the same
-            // visible root as the parent when `HKASK_TRANSACTIONS_DIR` is
-            // unset. Artifact files and outputs live in the artifacts dir;
-            // databases do not.
-            "HKASK_ARTIFACTS_DIR",
-            // Transactions directory — emitted by `emit_portfolio_env` from
-            // the artifacts dir as `portfolio-mcp/transactions/`; read by
-            // the portfolio server's auto-loader (`server.rs:611`).
-            "HKASK_TRANSACTIONS_DIR",
-        ],
-    },
-    BuiltinMcpServer {
         id: "companies",
         binary: "hkask-mcp-companies",
         description: "Companies — company research and filings",
@@ -1152,45 +1128,6 @@ mod tests {
         );
     }
 
-    // The portfolio server is provider-agnostic: no credentials, no config
-    // env. It reads only HKASK_WEBID (identity, injected via config_env by
-    // the runtime, not declared here) and writes to the owner-scoped SQLite
-    // DB under the config dir. This pins the blast-radius reduction — a
-    // future edit that adds a provider key here would leak it to a process
-    // that has no read site for it.
-    #[test]
-    fn portfolio_allowlist_matches_actual_reads() {
-        let s = server_by_id("portfolio");
-        // Read sites: none — the portfolio store is provider-agnostic.
-        assert_eq!(
-            s.credentials.to_vec(),
-            Vec::<&str>::new(),
-            "portfolio credentials allowlist drifted — the portfolio store is \
-             provider-agnostic; add a credential only with a read site in \
-             hkask-mcp-portfolio"
-        );
-        // Canonical storage route — HKASK_TRANSACTIONS_DIR is read in `run()`
-        // to resolve the transactions directory (default
-        // `portfolio-mcp/transactions/` under the artifacts dir).
-        // HKASK_ARTIFACTS_DIR is read transitively via
-        // `resolve_under_artifacts_dir` → `resolve_artifacts_dir` in
-        // hkask-types (the server's fallback when HKASK_TRANSACTIONS_DIR is
-        // unset). HKASK_DATA_DIR is read transitively via
-        // `resolve_under_data_dir` for the portfolio DB in store.rs
-        // (databases stay internal). Allowlisted so operator overrides are
-        // not silently dropped by `filter_config_env_for_server`.
-        assert_eq!(
-            s.config_env.to_vec(),
-            vec![
-                "HKASK_DATA_DIR",
-                "HKASK_ARTIFACTS_DIR",
-                "HKASK_TRANSACTIONS_DIR"
-            ],
-            "portfolio config_env allowlist drifted — add an entry only with \
-             a read site in hkask-mcp-portfolio"
-        );
-    }
-
     // The spreadsheet server is the central mutation owner (LogiSheets plan
     // §4): no credentials, no provider feeds, no database. This pins the
     // blast radius — a future edit that adds a provider key here would leak
@@ -2219,8 +2156,8 @@ mod tests {
     /// regression — the full unfiltered `mcp_env()` map leaked because
     /// `extend` only overwrote allowed keys.
     ///
-    /// We use the `portfolio` server, whose `config_env` allowlist is
-    /// `["HKASK_DATA_DIR", "HKASK_ARTIFACTS_DIR", "HKASK_TRANSACTIONS_DIR"]`
+    /// We use the `spreadsheet` server, whose `config_env` allowlist is
+    /// `["HKASK_ARTIFACTS_DIR"]`
     /// and `credentials` allowlist is `[]` (empty). A config var outside the
     /// allowlist (e.g. `HKASK_MXROUTE_SERVER`,
     /// which only the curator server may receive) must be filtered out by the
@@ -2231,7 +2168,7 @@ mod tests {
         // Build settings whose `mcp_env()` emits a curator-only config var.
         // We can't easily mutate `mcp_env()` directly, so we rely on the
         // real `KaskSettings::default()` — if it emits `HKASK_MXROUTE_SERVER`,
-        // the composed path must filter it out for the portfolio server. If
+        // the composed path must filter it out for the spreadsheet server. If
         // the default does not emit it, the test still pins the invariant:
         // whatever `mcp_env()` emits, only allowlisted keys survive.
         let settings = crate::KaskSettings::default();
@@ -2240,10 +2177,10 @@ mod tests {
         };
 
         let cx = gpui::TestAppContext::single().to_async();
-        let env = build_mcp_server_env("portfolio", &settings, &provider, None, None, &cx).await;
+        let env = build_mcp_server_env("spreadsheet", &settings, &provider, None, None, &cx).await;
 
-        // The portfolio server's allowlist is
-        // `[HKASK_DATA_DIR, HKASK_ARTIFACTS_DIR, HKASK_TRANSACTIONS_DIR]`.
+        // The spreadsheet server's allowlist is
+        // `[HKASK_ARTIFACTS_DIR]`.
         // `HKASK_MXROUTE_SERVER` (curator email config) must not survive —
         // if it does, the config filter was bypassed (Path A regression).
         assert_eq!(
@@ -2255,7 +2192,7 @@ mod tests {
         assert_eq!(
             env.get("HKASK_SMTP_USERNAME"),
             None,
-            "curator email config must not leak into the portfolio server"
+            "curator email config must not leak into the spreadsheet server"
         );
     }
 

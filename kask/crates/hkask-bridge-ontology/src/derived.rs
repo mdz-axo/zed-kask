@@ -1776,52 +1776,6 @@ pub const DERIVED_CONCEPTS: &[DerivedConcept] = &[
         authority: "operator ruling 2026-10-14 (Cohort 11 skill-corpus audit); Berthouzoz, Li & Agrawala, ACM TOG 31(4):67 (2012), doi:10.1145/2185520.2185563; SMPTE 258M",
     },
     DerivedConcept {
-        term: "time_weighted_return",
-        aliases: &["twr", "time weighted rate of return", "geometric linking"],
-        identity: "the compound rate of growth of one unit of capital over a measurement period computed by geometrically linking sub-period holding returns bounded by external cash flows",
-        definition: "CFA Institute, Global Investment Performance Standards (GIPS) (2020), and Peter O. Dietz, Pension Funds: Measuring Investment Performance (Free Press, 1966): eliminates the distorting effect of external cash inflows and outflows by valuing the portfolio at each external flow boundary and geometrically linking the sub-period returns, measuring investment strategy performance independently of client cash-flow timing. In zed-kask it grounds portfolio_returns and portfolio-review.",
-        constituents: &[
-            "sub-period return",
-            "external cash flow",
-            "geometric linking",
-        ],
-        authority: "operator ruling 2026-10-14 (Cohort 12 skill-corpus audit); CFA Institute, Global Investment Performance Standards (GIPS) (2020); Dietz (1966)",
-    },
-    DerivedConcept {
-        term: "modified_dietz_return",
-        aliases: &[
-            "modified dietz",
-            "mwr",
-            "money-weighted return",
-            "money weighted return",
-        ],
-        identity: "(V1 - V0 - sum(F_i)) / (V0 + sum(W_i * F_i)), weighting each external cash flow F_i by the fraction of the measurement period W_i = (T - t_i) / T it was present in the portfolio",
-        definition: "Peter O. Dietz, Pension Funds: Measuring Investment Performance (Free Press, 1966), and CFA Institute, GIPS Standards (2020): a first-order money-weighted holding-period return approximation that accounts for the timing and magnitude of external cash flows without requiring daily portfolio valuations at every flow date. In zed-kask it grounds portfolio_returns's modified_dietz output and portfolio-review.",
-        constituents: &[
-            "time_weighted_return",
-            "external cash flow",
-            "time weighting factor",
-        ],
-        authority: "operator ruling 2026-10-14 (Cohort 12 skill-corpus audit); Dietz, Pension Funds: Measuring Investment Performance (1966); CFA Institute, GIPS Standards (2020)",
-    },
-    DerivedConcept {
-        term: "brinson_attribution",
-        aliases: &[
-            "brinson-fachler attribution",
-            "brinson fachler",
-            "brinson-hood-beebower",
-            "performance attribution",
-        ],
-        identity: "decomposing benchmark-relative active return (R_p - R_b) across groups into allocation effect (w_pi - w_bi)*(R_bi - R_b), selection effect w_bi*(R_pi - R_bi), and interaction effect (w_pi - w_bi)*(R_pi - R_bi)",
-        definition: "Gary P. Brinson & Nimrod Fachler, 'Measuring Non-U.S. Equity Portfolio Performance', Journal of Portfolio Management 11(3):73-76 (1985), doi:10.2469/faj.v41.n3.43, and Gary P. Brinson, L. Randolph Hood & Gilbert L. Beebower, 'Determinants of Portfolio Performance', Financial Analysts Journal 42(4):39-44 (1986), doi:10.2469/faj.v42.n4.39: partitions active portfolio return relative to a benchmark into asset/sector weight decisions (allocation), within-group security picking (selection), and their cross-product (interaction). In zed-kask it grounds portfolio_attribution and portfolio-review.",
-        constituents: &[
-            "allocation effect",
-            "selection effect",
-            "interaction effect",
-        ],
-        authority: "operator ruling 2026-10-14 (Cohort 12 skill-corpus audit); Brinson & Fachler (1985), doi:10.2469/faj.v41.n3.43; Brinson, Hood & Beebower, FAJ 42(4):39-44 (1986), doi:10.2469/faj.v42.n4.39",
-    },
-    DerivedConcept {
         term: "frame_budget",
         aliases: &["frame rate", "vsync budget", "frame time budget"],
         identity: "the maximum wall-clock duration available on the UI foreground and renderer threads to process input, layout, paint, and submit one display frame without dropping a VSync deadline (8.33 ms at 120 FPS; 16.67 ms at 60 FPS)",
@@ -2801,20 +2755,6 @@ mod tests {
     #[test]
     fn cohort_12_audit_rulings_resolve_with_authority() {
         for (term, expected_term, marker) in [
-            ("time-weighted return", "time_weighted_return", "GIPS"),
-            ("TWR", "time_weighted_return", "Dietz"),
-            ("Modified Dietz return", "modified_dietz_return", "Dietz"),
-            ("MWR", "modified_dietz_return", "GIPS"),
-            (
-                "Brinson attribution",
-                "brinson_attribution",
-                "Brinson & Fachler",
-            ),
-            (
-                "Brinson-Fachler attribution",
-                "brinson_attribution",
-                "10.2469/faj.v42.n4.39",
-            ),
             ("frame budget", "frame_budget", "VSync"),
             ("frame rate", "frame_budget", "120 Hz"),
             (

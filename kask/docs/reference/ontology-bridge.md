@@ -125,7 +125,7 @@ Named URIs from the pinned EDM Council FIBO Q2 Release maturity selection
 (6,443 terms). `fibo-release-modules.tsv` records the Release modules and
 namespace bindings; the named constants below are a consumer menu:
 `CORPORATION` (`fibo-be-le-cb:Corporation`), `TICKER_SYMBOL`
-(`fibo-sec-sec-id:TickerSymbol`), `PORTFOLIO` (`fibo-sec-sec-ast:Portfolio`),
+(`fibo-sec-sec-id:TickerSymbol`),
 `MARKET_CAPITALIZATION` (`fibo-ind-mkt-bas:MarketCapitalization`),
 `INTERNAL_RATE_OF_RETURN` (`fibo-fbc-fi-ip:InternalRateOfReturn`), plus the
 economic-indicator terms (`CONSUMER_PRICE_INDEX`, `PRODUCER_PRICE_INDEX`,
@@ -334,7 +334,7 @@ Verified against `select_ontology_anchor` (`kask/crates/hkask-bridge-ontology/sr
 ## Unified ontology tag shape
 
 MCP servers emit a single top-level `"ontology"` key in tool output JSON,
-carrying a concept URI string (e.g. `"pplan:Step"`, `"fibo-sec-sec-ast:Portfolio"`,
+carrying a concept URI string (e.g. `"pplan:Step"`, `"fibo-be-le-cb:Corporation"`,
 `"omc:CreativeWork"`). Verified emitters:
 
 | Server | JSON key | Value example | Evidence |
@@ -342,7 +342,6 @@ carrying a concept URI string (e.g. `"pplan:Step"`, `"fibo-sec-sec-ast:Portfolio
 | companies | `"ontology"` | `"fibo-be-le-cb:Corporation"` | `kask/mcp-servers/hkask-mcp-companies/src/fibo.rs:94-110` |
 | curator | `"ontology"` | per-template | `kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.rs:826-832` |
 | media | `"ontology"` | `"omc:CreativeWork"` | `kask/mcp-servers/hkask-mcp-media/src/media_block.rs:19-25` |
-| portfolio | `"ontology"` | per-tool | `kask/mcp-servers/hkask-mcp-portfolio/src/server.rs:511-515` |
 | scenarios | `"ontology"` | per-tool | `kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs` |
 
 The framework-level tool guard emits outcome tracing only; it does not attach semantic ontology metadata. A server that returns an ontology field does so in its own result construction. The actual tracing and durable MCP outcome paths are documented in [`regulation-spans.md`](regulation-spans.md).
@@ -363,7 +362,7 @@ invoke:
 | others / empty / unknown | `describe_image` (general vision fallback) |
 
 This is OMC-specific dispatch. There is no crate-level fibo/pko/dcterms →
-explain-tool mapping; the portfolio widget's "Explain" uses provenance-based
+explain-tool mapping; widget Explain affordances use provenance-based
 dispatch (server → tool), with the ontology tag carried in the compose-back
 body for agent correlation.
 

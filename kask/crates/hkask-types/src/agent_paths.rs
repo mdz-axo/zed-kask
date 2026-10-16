@@ -27,10 +27,8 @@
 //! under this visible root, NOT under the hidden internal data dir.
 //! Databases are infrastructure — they are the ONE artifact class that
 //! stays in the internal data dir:
-//! - `companies-mcp/reports/` — company research reports
-//! - `companies-mcp/screens/` — company screens
-//! - `portfolio-mcp/transactions/` — transaction files
 //! - `corpus-mcp/cache/` — corpus cache files
+//! - `media-mcp/generated/` — generated media
 
 use std::path::PathBuf;
 
@@ -448,8 +446,8 @@ mod tests {
             PathBuf::from("companies-mcp/reports")
         );
         assert_eq!(
-            mcp_artifacts_subdir("portfolio", "transactions"),
-            PathBuf::from("portfolio-mcp/transactions")
+            mcp_artifacts_subdir("media", "generated"),
+            PathBuf::from("media-mcp/generated")
         );
         assert_eq!(
             mcp_artifacts_subdir("corpus", "cache"),
