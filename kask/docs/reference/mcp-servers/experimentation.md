@@ -117,8 +117,9 @@ fingerprint determinism and the concurrent-selection race.
 
 The repair plan §P8 and the experimentation reference model
 (`kask/docs/research/experimentation-reference-model.md` — design authority);
-the agentic-scientist-v3 integration record
-(`kask/docs/research/agentic-scientist-v3-integration.md` — the proposal and
-the D1–D4 operator rulings, 2026-10-15). The loop-register's L24 row
+the agentic-scientist-v3 integration (landed 2026-10-15 — the D1–D4 operator
+rulings are recorded in the derived ontology registry,
+`kask/crates/hkask-bridge-ontology/src/derived.rs`; the proposal record
+lives in git history). The loop-register's L24 row
 classifies the registry cycle (primary Layer B, secondary C; INV2 held by
 design).

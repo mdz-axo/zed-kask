@@ -30,10 +30,11 @@ yield **four regions**, and the user confirmed the 2×2 as the intended base
 model [U1]. A graded refinement per axis (each axis read as a continuum rather
 than a binary) is carried in §8 as an optional extension, not used here.
 
-**Prior work built on (required).** This report stands on two on-tree reports
-and states what it adds beyond them:
+**Prior work built on (required).** This report stands on one prior report
+and states what it adds beyond it:
 
-- `deterministic-vs-probabilistic-compute-routing.md` [R1] owns the **P-axis**:
+- `deterministic-vs-probabilistic-compute-routing.md` [R1] (deleted
+  2026-10-16 — superseded by this doc; git history) owned the **P-axis**:
   the routing claim (ratified as P8.4), entropy-source/sink framing, the
   correct-by-construction vs correct-in-expectation restatement (which
   resolves the temperature-0 objection), axis independence (compute ×
@@ -459,8 +460,8 @@ extracted tables *before saving*; results embedded as run.
 - **[E1]** H1 micro-test, this session — first-shot and revision batteries via `lisp_eval` (runs 1–2, §1.4).
 - **[E2]** `lean_check` on `kask/lean/dyck_decidable.lean`, this session.
 - **[T1]** On-tree traps: `.rules` — `extract_json_from_response` first-`{` parsing; `string-contains` reversed args (2026-09-28); `unwrap_or(0)` feedback-loop rule.
-- **[R1]** `deterministic-vs-probabilistic-compute-routing.md` (on-tree, v1.0.1, 2026-09-28) — P-axis, entropy, routing, closure; corpus record IDs `5b6efe78`, `b4947fb5`, `49f36d8c` cited secondhand.
-- **[R2]** `artificial-curiosity-capability-space.md` (on-tree, 2026-09-28) — probe discipline, capability-space verdicts.
+- **[R1]** `deterministic-vs-probabilistic-compute-routing.md` (deleted 2026-10-16 — superseded by this doc as the skill's recorded reference model; git history) — P-axis, entropy, routing, closure; corpus record IDs `5b6efe78`, `b4947fb5`, `49f36d8c` cited secondhand.
+- **[R2]** `artificial-curiosity-capability-space.md` (deleted 2026-10-13; git history at `aa7f6ce4eb` and prior) — probe discipline, capability-space verdicts.
 - **[R3]** Research run `b6f6206e00fae965` ledger (begin_research_run; web_search ×7; resolve_paper ×5), 2026-09-28.
 - **[M1]** Session-loaded John Brooks corpus passages (curator memory, 2026-09-28): "it is difficult, if not impossible… to unequivocally decide the semantic equivalence of two syntactically distinct entities"; expert-systems brittleness ("many rules to avoid absurd conclusions… less robust"); Firth's-axiom statistical semantics ("more robust than" formal). Unverified-ID: direct corpus re-query blocked (§6) — honest limit, not silently used as verified.
 - **[S1]** Tarski, "The Semantic Conception of Truth", *Philosophy and Phenomenological Research* 4(3), 1944 — https://sites.ualberta.ca/~francisp/Phil426/TarskiTruth1944.pdf (primary).
