@@ -248,6 +248,59 @@ fn calibrate_goal_prediction(
     Ok(())
 }
 
+/// The goal-event forgetting valve (algedonic card 4cb70cec; therapy
+/// 2026-10-16 growth-audit finding F001): when a scored goal is
+/// acknowledged — removed from the kanban store — its superseded
+/// intermediate judge rows are forgotten. The create + final judge +
+/// score rows carry the durable D58 calibration chain; earlier verdicts
+/// are progress noise that otherwise accumulates without a forgetting
+/// path (measured: 70 superseded rows across 187 scored goals on
+/// 2026-10-16, purged manually by that session's therapy pass). Only
+/// scored goals purge — open goals keep their full chains. Idempotent:
+/// a re-acknowledgment finds nothing left to delete.
+fn purge_superseded_judges_on_acknowledge(
+    curator_store: &hkask_memory::MemoryStore,
+    goal_entity: &str,
+    goal_id: &str,
+) -> Result<(), MemoryError> {
+    let rows = curator_store
+        .h_mems_by_entity_prefix(goal_entity)
+        .map_err(|error| {
+            MemoryError::Ingestion(format!(
+                "failed to query goal {goal_id} rows before the acknowledge purge: {error}"
+            ))
+        })?;
+    if !rows.iter().any(|row| row.attribute == "kanban_goal_score") {
+        return Ok(());
+    }
+    let mut judges: Vec<_> = rows
+        .into_iter()
+        .filter(|row| row.attribute == "kanban_goal_judge")
+        .collect();
+    // Stable sort by observation time: the newest judge (the final
+    // verdict) survives; everything older is a superseded intermediate.
+    judges.sort_by_key(|row| row.observed_at);
+    let Some((_final_verdict, superseded)) = judges.split_last() else {
+        return Ok(());
+    };
+    for row in superseded {
+        curator_store.delete_h_mem(&row.id).map_err(|error| {
+            MemoryError::Ingestion(format!(
+                "failed to forget superseded judge row for goal {goal_id}: {error}"
+            ))
+        })?;
+    }
+    if !superseded.is_empty() {
+        tracing::info!(
+            target: "reg.memory",
+            goal_id,
+            purged = superseded.len(),
+            "Acknowledge forgot superseded goal judge rows"
+        );
+    }
+    Ok(())
+}
+
 /// Publish one goal event end-to-end: score dedup + semantic-publication
 /// verify (or embed + store), Brier calibration for scores, and the shared
 /// h_mem publication with embedding cleanup on failure.
@@ -277,6 +330,15 @@ async fn publish_goal_event(
     // Creates and judges stay publish-always; their outputs carry distinct
     // per-call content.
     let is_acknowledge = event.tool_name == "kanban_goal_memory_acknowledge";
+    // The forgetting valve rides the acknowledge event (algedonic card
+    // 4cb70cec): acknowledgment is the moment a scored goal's chain
+    // becomes terminal, so the superseded intermediate judge rows are
+    // forgotten here — idempotently, before the dedup check, so
+    // re-acknowledgments purge too. Unscored goals keep their full
+    // chains (the helper checks for the score row).
+    if is_acknowledge {
+        purge_superseded_judges_on_acknowledge(curator_store, goal_entity, goal_id)?;
+    }
     let already_stored = if is_score || is_acknowledge {
         curator_store
             .h_mems_by_entity_prefix(goal_entity)

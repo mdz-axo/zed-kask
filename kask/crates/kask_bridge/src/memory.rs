@@ -2136,6 +2136,97 @@ pub(crate) mod tests {
         );
     }
 
+    /// expect: "The acknowledge event is the goal-event forgetting valve: a
+    ///          scored goal's superseded intermediate judge rows are purged,
+    ///          leaving create + final judge + score + acknowledge."
+    /// pre: a turn carrying one goal's full chain — create, three judge
+    ///      events (two continue, one done), score, acknowledge.
+    /// post: exactly one judge h_mem remains (the final verdict), alongside
+    ///       the create, score, and acknowledge rows.
+    #[tokio::test]
+    async fn acknowledge_purges_superseded_judge_rows() {
+        let port = in_memory_port_with_embed_fn(Arc::new(|_text: &str| vec![0.25; 1024]));
+        let record = TurnRecord {
+            thread_id: "goal-ack-purge-thread".to_string(),
+            user_input: String::new(),
+            agent_response: String::new(),
+            model: "test-model".to_string(),
+            thread_title: None,
+            agent_id: Some("zed".to_string()),
+            goal_events: vec![
+                hkask_types::GoalEvent {
+                    tool_name: "kanban_goal_create".to_string(),
+                    output: serde_json::json!({
+                        "content": { "goal_id": "g-ack-purge", "goal_text": "purge test", "prediction": 0.8 }
+                    }),
+                },
+                hkask_types::GoalEvent {
+                    tool_name: "kanban_goal_judge".to_string(),
+                    output: serde_json::json!({
+                        "content": { "goal_id": "g-ack-purge", "verdict": "continue", "confidence": 0.5 }
+                    }),
+                },
+                hkask_types::GoalEvent {
+                    tool_name: "kanban_goal_judge".to_string(),
+                    output: serde_json::json!({
+                        "content": { "goal_id": "g-ack-purge", "verdict": "continue", "confidence": 0.6 }
+                    }),
+                },
+                hkask_types::GoalEvent {
+                    tool_name: "kanban_goal_judge".to_string(),
+                    output: serde_json::json!({
+                        "content": { "goal_id": "g-ack-purge", "verdict": "done", "confidence": 0.9 }
+                    }),
+                },
+                hkask_types::GoalEvent {
+                    tool_name: "kanban_goal_score".to_string(),
+                    output: serde_json::json!({
+                        "content": { "goal_id": "g-ack-purge", "achieved": true, "brier": 0.04 }
+                    }),
+                },
+                hkask_types::GoalEvent {
+                    tool_name: "kanban_goal_memory_acknowledge".to_string(),
+                    output: serde_json::json!({
+                        "content": { "goal_id": "g-ack-purge", "acknowledged": true }
+                    }),
+                },
+            ],
+        };
+
+        port.ingest_turn(record)
+            .await
+            .expect("ingest should succeed");
+        let curator_store = port.curator_store.get().expect("curator store");
+        // Raw prefix read — the recall path's dedup would mask a stored
+        // duplicate, so the pin must count actual rows.
+        let all = curator_store
+            .h_mems_by_entity_prefix("curator:goal:g-ack-purge")
+            .expect("query should succeed");
+        let judges: Vec<_> = all
+            .iter()
+            .filter(|h_mem| h_mem.attribute == "kanban_goal_judge")
+            .collect();
+        assert_eq!(
+            judges.len(),
+            1,
+            "the acknowledge must purge superseded intermediate judge rows"
+        );
+        assert!(
+            judges[0].value.to_string().contains("done"),
+            "the surviving judge must be the final verdict, not an intermediate"
+        );
+        for attribute in [
+            "kanban_goal_create",
+            "kanban_goal_score",
+            "kanban_goal_memory_acknowledge",
+        ] {
+            assert!(
+                all.iter().any(|h_mem| h_mem.attribute == attribute),
+                "the {attribute} row must survive the purge — the D58 calibration chain"
+            );
+        }
+    }
+
     /// expect: "An id-less score event is skipped loudly and never acknowledged —
     ///          the resolved-goal acknowledgment path retries on the empty
     ///          publication set (D58)."
