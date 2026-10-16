@@ -85,8 +85,10 @@ measurement that was declared.
   (UNIQUE experiment_id — one seal per experiment), final_evaluations,
   selection_records. The full schema is declared at creation — there is no migration
   surface (the pre-contract accommodations were removed 2026-10-15 under the
-  operator's no-backward-compatibility ruling; no pre-contract registry rows ever
-  persisted).
+  operator's no-backward-compatibility ruling; the pre-contract registry database
+  at the per-agent default — holding the E-cycle rows — was deleted 2026-10-16
+  under the same ruling, and a fresh full-schema registry is created on the next
+  server open).
 - **Seal fingerprint**: SHA-256 (workspace `sha2`) over the canonical JSON of
   (eval_set, fitness_fn, noise_band, rubrics) — identical declarations seal
   to identical fingerprints; the pass rate round-trips through TEXT
