@@ -16,7 +16,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 
 **Per-crate docs:** [`diataxis/INDEX.md`](diataxis/INDEX.md) lists 19 retained artifacts across 10 cross-cutting sets. Eight tutorials were folded on 2026-09-16; on 2026-09-28 the eight per-crate how-to documents were folded into their set references (each reference gained a Procedures section) and the hkask-tool-port explanation was folded into its reference; `diataxis/hkask-mcp-server/tutorial.md` is the one retained tutorial.
 
-**Corpus size (measured 2026-10-13, end of the doc-update condensation pass):** 81 Markdown documents and one live YAML inventory, 82 files total (`find kask/docs -type f | wc -l`) — **under** the formal **fewer-than-85** count gate. This pass consolidated the media-server redesign set into [`reference/mcp-servers/media.md`](reference/mcp-servers/media.md) § Redesign record (−4) and deleted the point-in-time curiosity study (−1, tombstone below), while the concurrent ontology program added three operator-carded records ([`reference/native-ontologies.md`](reference/native-ontologies.md), [`research/ontology-anchoring-review.md`](research/ontology-anchoring-review.md), [`research/ontology-open-loops-resolution.md`](research/ontology-open-loops-resolution.md)) — net 86 → 82. The working **75-file target** (raised 60 → 75 by operator ruling 2026-10-07) remains the condensation direction; the gap to it is governed by recorded rulings — the 2026-10-05 retain ruling on the eight diataxis explanations alone protects 8 files ("an OUGHT taxonomy change, not condensation"), and the 2026-10-06 reversal restored the media onboarding record verbatim. Cap history: raised 79 → 85 by operator ruling 2026-10-07, justified by the experimentation and spreadsheet MCP servers' reference documentation and the Magnifica Humanitas values charter ([`core/magnifica-humanitas.md`](architecture/core/magnifica-humanitas.md)) grounding P1–P12; first raised 75 → 79 the same day; cap and target set by operator ruling 2026-09-30, [`DOCUMENTATION_STANDARDS.md`](architecture/DOCUMENTATION_STANDARDS.md) §3. [`principle-constraints.yaml`](architecture/principle-constraints.yaml) is a live governance inventory consumed by `kask/scripts/check-principle-constraints.sh`, not a deletion candidate.
+**Corpus size (measured 2026-10-15, after the Tranche S spreadsheet-capability removal):** 78 Markdown documents and one live YAML inventory, 79 files total (`find kask/docs -type f | wc -l`) — **under** the formal **fewer-than-85** count gate. This pass consolidated the media-server redesign set into [`reference/mcp-servers/media.md`](reference/mcp-servers/media.md) § Redesign record (−4) and deleted the point-in-time curiosity study (−1, tombstone below), while the concurrent ontology program added three operator-carded records ([`reference/native-ontologies.md`](reference/native-ontologies.md), [`research/ontology-anchoring-review.md`](research/ontology-anchoring-review.md), [`research/ontology-open-loops-resolution.md`](research/ontology-open-loops-resolution.md)) — net 86 → 82. The working **75-file target** (raised 60 → 75 by operator ruling 2026-10-07) remains the condensation direction; the gap to it is governed by recorded rulings — the 2026-10-05 retain ruling on the eight diataxis explanations alone protects 8 files ("an OUGHT taxonomy change, not condensation"), and the 2026-10-06 reversal restored the media onboarding record verbatim. Cap history: raised 79 → 85 by operator ruling 2026-10-07, justified by the experimentation and spreadsheet MCP servers' reference documentation and the Magnifica Humanitas values charter ([`core/magnifica-humanitas.md`](architecture/core/magnifica-humanitas.md)) grounding P1–P12; first raised 75 → 79 the same day; cap and target set by operator ruling 2026-09-30, [`DOCUMENTATION_STANDARDS.md`](architecture/DOCUMENTATION_STANDARDS.md) §3. [`principle-constraints.yaml`](architecture/principle-constraints.yaml) is a live governance inventory consumed by `kask/scripts/check-principle-constraints.sh`, not a deletion candidate.
 
 ## Repair and improvement plans
 
@@ -24,7 +24,6 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 | --- | --- |
 | [`hKask core and MCP repair plan`](plans/hkask-core-mcp-repair-improvement-plan.md) | Active, operator-authorized repair plan; no backward-compatibility requirements. §9 separates verified training/gallery/packaging slices from unfinished authority, cancellation, containment, attribution and recovery work; P6 separates skill evaluation (algedonic review with operator and Curator) from skill execution; P8 records the experimentation program's execution records — the reference model is promoted to [`research/experimentation-reference-model.md`](research/experimentation-reference-model.md) (2026-10-05) with the locked operator decisions. |
 | [`Cybernetic nervous system alignment plan`](plans/cybernetic-nervous-system-alignment.md) | Active — reference model admitted (operator ruling 2026-09-30); S1–S6 recorded; the §8 legacy/orphan cleanup program (CU-1–CU-8) with CU-1–CU-5/CU-7 complete and CU-6 gated on displacement; register row L25 classified (2026-10-01). Carries the measurable target condition, the executed live-log PDCA experiment, the ranked subtractive steps S1–S6, and the whole-file pricing menu for the 60-file docs target (sixth slice: P1 ruled 2026-10-01, P2 executed 2026-10-05, P3 ruled retain 2026-10-05). |
-| [`LogiSheets spreadsheet capability plan`](plans/logisheets-spreadsheet-capability-plan.md) | Active — ratified architecture for the `hkask-spreadsheet` deep module (design authority cited by the MDS.md crate table, §5.1); Phases 0–5 complete through the portfolio proving slice (2026-09-18, `portfolio_what_if`'s presentation choice per §6); the built server surface is recorded in `reference/mcp-servers/spreadsheet.md`. |
 
 ## Architecture
 
@@ -59,8 +58,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 
 | [`reference/mcp-servers/prediction-markets.md`](reference/mcp-servers/prediction-markets.md) | Prediction-markets server — Polymarket/Kalshi calibration and economic data. |
 | [`reference/mcp-servers/research.md`](reference/mcp-servers/research.md) | Research server — web/RSS retrieval, evidence scoring, run ledger, and paper identity. |
-| [`reference/mcp-servers/scenarios.md`](reference/mcp-servers/scenarios.md) | Scenarios server — Schwartz/Tetlock pipeline (19 tools). |
-| [`reference/mcp-servers/spreadsheet.md`](reference/mcp-servers/spreadsheet.md) | Spreadsheet server — LogiSheets-backed workbook surface (2 tools). |
+| [`reference/mcp-servers/scenarios.md`](reference/mcp-servers/scenarios.md) | Scenarios server — Schwartz/Tetlock pipeline (17 tools). |
 | [`reference/mcp-servers/swarm.md`](reference/mcp-servers/swarm.md) | Swarm server — Agent Bestiary World and local substrate (91 tools). |
 | [`reference/mcp-servers/training.md`](reference/mcp-servers/training.md) | Training server — consent-gated LoRA/QLoRA training jobs, datasets, validation, evaluation (9 tools). |
 | [`reference/skills/README.md`](reference/skills/README.md) | Registry of 63 skills, 58 template namespaces, and 281 `.j2` resources. |
@@ -82,8 +80,6 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 | [`diagrams/swarm.md`](diagrams/swarm.md) | Swarm architecture and control loops. |
 | [`diagrams/ui-widgets.md`](diagrams/ui-widgets.md) | Native UI-widget structures. |
 | [`diagrams/mcp-dispatch.md`](diagrams/mcp-dispatch.md) | MCP runtime and tool-dispatch flows. |
-
-The LogiSheets plan's future-state block converted to a registered implementation diagram (`DIAG-ARCH-SPREADSHEET-001`) when implementation began on 2026-09-18.
 
 ## Research
 
@@ -107,6 +103,13 @@ The LogiSheets plan's future-state block converted to a registered implementatio
 ## Document lifecycle ledger
 
 Git history is the archive of record. Every removed document names its active successor here. The dated Corpus size measurement above, not this lifecycle ledger, applies the document-count gate (all files, per [`DOCUMENTATION_STANDARDS.md`](architecture/DOCUMENTATION_STANDARDS.md) §3) and identifies the live YAML inventory.
+
+### Deleted 2026-10-15 (spreadsheet capability removal — Tranche S)
+
+| Artifact | Successor |
+| --- | --- |
+| `plans/logisheets-spreadsheet-capability-plan.md` | No successor — the capability (server, engine, widget, fenced language, both presentation options) was removed end-to-end by operator ruling; git history holds the plan and its SP-01..SP-12 execution record. |
+| `reference/mcp-servers/spreadsheet.md` | [`reference/mcp-servers/README.md`](reference/mcp-servers/README.md) — the server registry (the spreadsheet row is removed with the server). |
 
 ### Deleted 2026-10-13 (doc-update condensation — the point-in-time curiosity study; no capability, no consumer)
 

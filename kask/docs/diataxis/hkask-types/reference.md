@@ -46,7 +46,6 @@ classDiagram
     class regulation
     class secret
     class server_env
-    class spreadsheet
     class template
     class ports
     class process_global
@@ -77,7 +76,6 @@ classDiagram
     hkask_types o-- regulation
     hkask_types o-- secret
     hkask_types o-- server_env
-    hkask_types o-- spreadsheet
     hkask_types o-- template
     hkask_types o-- ports
     hkask_types o-- process_global
@@ -117,7 +115,6 @@ items are re-exported; `sql_impls` is feature-gated
 | `kanban_status` / `kanban_wire` | task lifecycle and server/tool wire constants | `kask/crates/hkask-types/src/kanban_status.rs:11-71`; `kask/crates/hkask-types/src/kanban_wire.rs:17-36` |
 | `maybe_string` | numeric-string-tolerant serde deserializers for `Option<u64>`, `Option<u32>`, `Option<f64>` | `kask/crates/hkask-types/src/maybe_string.rs:20,47,74` |
 | `secret` | `SecretRef` — declarative env/keychain secret-source reference | `kask/crates/hkask-types/src/secret.rs:14-35` |
-| `spreadsheet` | `AnalyticalTable`, `SpreadsheetArtifactRef`, `CellEdit`, `EditTransaction` — spreadsheet wire contracts | `kask/crates/hkask-types/src/spreadsheet.rs:78-113,338,444-493` |
 | `template` | `LLMParameters` | `kask/crates/hkask-types/src/template.rs:14-85` |
 | `time` | RFC 3339 timestamp helpers | `kask/crates/hkask-types/src/time.rs:18-44` |
 | `tool_response` | tool envelopes, parsing, error classification, display hints | `kask/crates/hkask-types/src/tool_response.rs:30-196` |

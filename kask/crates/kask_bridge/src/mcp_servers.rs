@@ -67,15 +67,9 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
         ],
         config_env: &[
             // Data dir — needed so the companies server resolves its
-            // databases (fibo-cache, portfolio snapshot) under the same
+            // databases (fibo-cache, research store) under the same
             // root as the parent process. Databases stay internal.
             "HKASK_DATA_DIR",
-            // Artifacts dir — needed so the companies server resolves its
-            // `companies-mcp/` artifact files (reports, screens) under the
-            // same visible root as the parent process. Without this, an
-            // operator `HKASK_ARTIFACTS_DIR` override is silently dropped
-            // by `filter_config_env_for_server`.
-            "HKASK_ARTIFACTS_DIR",
             "HKASK_CHRONIC_STALENESS_DAYS",
             "HKASK_FERMI_DEFAULTS",
             "HKASK_INVESTOR_REQUIRED_RETURN",
@@ -284,13 +278,6 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             // time. Without this, an operator override is silently stripped
             // under governed launch.
             "HKASK_RERANK_MODEL",
-            // Artifacts dir — read by the spreadsheet engine actor's
-            // production root (`hkask_spreadsheet::artifact_store::
-            // production_root` → `agent_paths::resolve_under_artifacts_dir`)
-            // for `evaluate_evidence`'s InlineTable presentation (SP-05).
-            // Without this, an operator override of the artifacts tree is
-            // silently dropped under governed launch.
-            "HKASK_ARTIFACTS_DIR",
         ],
     },
     BuiltinMcpServer {
@@ -497,26 +484,6 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             // this entry the per-server filter drops it and media embedding
             // fails with "no embedding model configured".
             "HKASK_EMBEDDING_MODEL",
-        ],
-    },
-    BuiltinMcpServer {
-        id: "spreadsheet",
-        binary: "hkask-mcp-spreadsheet",
-        description: "Spreadsheet — central mutation owner of the LogiSheets-backed spreadsheet capability: persisted spreadsheet edits (spreadsheet_apply) and interrupted-operation reconciliation (spreadsheet_operation_get) over immutable workbook revisions",
-        // The spreadsheet server is the central mutation owner (LogiSheets
-        // plan §4): no credentials, no provider feeds. It reads only
-        // HKASK_ARTIFACTS_DIR — the artifact root for immutable workbook
-        // revisions resolves via `hkask_spreadsheet::artifact_store::
-        // production_root` → `agent_paths::resolve_under_artifacts_dir`.
-        credentials: &[],
-        config_env: &[
-            // Artifacts dir — needed so `production_root` resolves
-            // `spreadsheet-mcp/workbooks/` under the same visible root as the
-            // parent process. Without this, an operator
-            // `HKASK_ARTIFACTS_DIR` override is silently dropped by
-            // `filter_config_env_for_server` (the same trap the portfolio
-            // entry documents).
-            "HKASK_ARTIFACTS_DIR",
         ],
     },
     BuiltinMcpServer {
@@ -1128,32 +1095,17 @@ mod tests {
         );
     }
 
-    // The spreadsheet server is the central mutation owner (LogiSheets plan
-    // §4): no credentials, no provider feeds, no database. This pins the
-    // blast radius — a future edit that adds a provider key here would leak
-    // it to a process that has no read site for it.
+    // The companies server's only artifacts-dir read was the spreadsheet
+    // workbook root (scenario_impact_valuation's removed WorkbookWhatIf
+    // presentation). This pins the removal — re-add HKASK_ARTIFACTS_DIR
+    // only with a read site in hkask-mcp-companies.
     #[test]
-    fn spreadsheet_allowlist_matches_actual_reads() {
-        let s = server_by_id("spreadsheet");
-        // Read sites: none — spreadsheet mutation is provider-agnostic.
-        assert_eq!(
-            s.credentials.to_vec(),
-            Vec::<&str>::new(),
-            "spreadsheet credentials allowlist drifted — the spreadsheet \
-             capability is provider-agnostic; add a credential only with a \
-             read site in hkask-mcp-spreadsheet"
-        );
-        // HKASK_ARTIFACTS_DIR is read in `run()` via
-        // `hkask_spreadsheet::artifact_store::production_root` →
-        // `agent_paths::resolve_under_artifacts_dir` in hkask-types.
-        // Allowlisted so operator overrides are not silently dropped by
-        // `filter_config_env_for_server`.
-        assert_eq!(
-            s.config_env.to_vec(),
-            vec!["HKASK_ARTIFACTS_DIR"],
-            "spreadsheet config_env allowlist drifted — add an entry only \
-             with a read site in hkask-mcp-spreadsheet (transitively \
-             hkask-spreadsheet / hkask-types)"
+    fn companies_config_env_has_no_artifacts_dir_after_spreadsheet_removal() {
+        let s = server_by_id("companies");
+        assert!(
+            !s.config_env.contains(&"HKASK_ARTIFACTS_DIR"),
+            "companies no longer resolves artifact routes — the spreadsheet \
+             workbook root was removed with the capability (2026-10-15)"
         );
     }
 
@@ -1526,11 +1478,11 @@ mod tests {
              would be silently dropped"
         );
         assert!(
-            s.config_env.contains(&"HKASK_ARTIFACTS_DIR"),
-            "research resolves the spreadsheet artifact root via \
-             hkask_spreadsheet::artifact_store::production_root (the InlineTable \
-             presentation, SP-05) but HKASK_ARTIFACTS_DIR is not allowlisted — \
-             an operator override would be silently dropped"
+            !s.config_env.contains(&"HKASK_ARTIFACTS_DIR"),
+            "research no longer resolves the artifacts dir — the InlineTable \
+             presentation was removed with the spreadsheet capability \
+             (2026-10-15); re-add the entry only with a read site in \
+             hkask-mcp-research"
         );
         assert!(
             s.config_env.contains(&"HKASK_RERANK_MODEL"),
@@ -1974,7 +1926,7 @@ mod tests {
     }
 
     #[test]
-    fn all_13_mcp_servers_allowlists_match_source_env_reads() {
+    fn all_mcp_servers_allowlists_match_source_env_reads() {
         fn collect_rs_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
             let entries = std::fs::read_dir(dir)
                 .unwrap_or_else(|e| panic!("failed to read {}: {e}", dir.display()));
@@ -2156,8 +2108,8 @@ mod tests {
     /// regression — the full unfiltered `mcp_env()` map leaked because
     /// `extend` only overwrote allowed keys.
     ///
-    /// We use the `spreadsheet` server, whose `config_env` allowlist is
-    /// `["HKASK_ARTIFACTS_DIR"]`
+    /// We use the `scenarios` server, whose `config_env` allowlist is
+    /// `["HKASK_DATA_DIR", "HKASK_SCENARIOS_DATA"]`
     /// and `credentials` allowlist is `[]` (empty). A config var outside the
     /// allowlist (e.g. `HKASK_MXROUTE_SERVER`,
     /// which only the curator server may receive) must be filtered out by the
@@ -2168,7 +2120,7 @@ mod tests {
         // Build settings whose `mcp_env()` emits a curator-only config var.
         // We can't easily mutate `mcp_env()` directly, so we rely on the
         // real `KaskSettings::default()` — if it emits `HKASK_MXROUTE_SERVER`,
-        // the composed path must filter it out for the spreadsheet server. If
+        // the composed path must filter it out for the scenarios server. If
         // the default does not emit it, the test still pins the invariant:
         // whatever `mcp_env()` emits, only allowlisted keys survive.
         let settings = crate::KaskSettings::default();
@@ -2177,10 +2129,10 @@ mod tests {
         };
 
         let cx = gpui::TestAppContext::single().to_async();
-        let env = build_mcp_server_env("spreadsheet", &settings, &provider, None, None, &cx).await;
+        let env = build_mcp_server_env("scenarios", &settings, &provider, None, None, &cx).await;
 
-        // The spreadsheet server's allowlist is
-        // `[HKASK_ARTIFACTS_DIR]`.
+        // The scenarios server's allowlist is
+        // `[HKASK_DATA_DIR, HKASK_SCENARIOS_DATA]`.
         // `HKASK_MXROUTE_SERVER` (curator email config) must not survive —
         // if it does, the config filter was bypassed (Path A regression).
         assert_eq!(
@@ -2192,7 +2144,7 @@ mod tests {
         assert_eq!(
             env.get("HKASK_SMTP_USERNAME"),
             None,
-            "curator email config must not leak into the spreadsheet server"
+            "curator email config must not leak into the scenarios server"
         );
     }
 

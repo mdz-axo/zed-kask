@@ -28,31 +28,30 @@ mds_categories: [composition, domain]
 
 ## Server Catalog
 
-13 built-in MCP servers, **415 registered tools** fleet-wide (re-reconciled 2026-10-13 against the live `tool_surface_pin!` tests below — every server pins its exact count and generated tool-name set; unified by `ede1ba0ca8`, CI-gated by `kask/scripts/check-mcp-registration.sh`). `KaskMcpSettings::default()` sets `load_default: true`, so all thirteen auto-load unless the operator disables the fleet or an individual server (`kask/crates/kask_bridge/src/settings.rs:140-165`; `kask/crates/kask_bridge/src/mcp_servers.rs`).
+11 built-in MCP servers, **382 registered tools** fleet-wide (re-reconciled 2026-10-15 against the live `tool_surface_pin!` tests below — every server pins its exact count and generated tool-name set; unified by `ede1ba0ca8`, CI-gated by `kask/scripts/check-mcp-registration.sh`). `KaskMcpSettings::default()` sets `load_default: true`, so all eleven auto-load unless the operator disables the fleet or an individual server (`kask/crates/kask_bridge/src/settings.rs:140-165`; `kask/crates/kask_bridge/src/mcp_servers.rs`).
 
 | Server | Crate | Purpose | Tools |
 |--------|-------|---------|------:|
-| [Companies](companies.md) | `kask/mcp-servers/hkask-mcp-companies` | FIBO-anchored financial forecasting, dual-provider routing, research notes and transcripts | 40 |
+| [Companies](companies.md) | `kask/mcp-servers/hkask-mcp-companies` | FIBO-anchored financial forecasting, dual-provider routing, research notes and transcripts | 32 |
 | [Corpus](corpus.md) | `kask/mcp-servers/hkask-mcp-corpus` | Corpus gathering, document processing, QA generation, style replicas | 27 |
 | Curator | `kask/mcp-servers/hkask-mcp-curator` | Curator agent metacognition (memory, regulation query, algedonic signals, skill-use issue reporting) | 15 |
-| [Experimentation](experimentation.md) | `kask/mcp-servers/hkask-mcp-experimentation` | Experiment registry for the sharded experimentation program: registered experiments with pre-registered predictions, variant lineages, grounded fitness records, selection fossils | 6 |
+| [Experimentation](experimentation.md) | `kask/mcp-servers/hkask-mcp-experimentation` | Experiment registry for the sharded experimentation program: registered experiments with pre-registered predictions, variant lineages, grounded fitness records, selection fossils | 8 |
 | Kata Kanban | `kask/mcp-servers/hkask-mcp-kata-kanban` | Toyota Kata task boards and persistent-until-resolved functional goals | 27 |
 | [Media](media.md) | `kask/mcp-servers/hkask-mcp-media` | AI media generation (image, video, audio, gallery, educt transcripts, Reduct cloud) | 102 |
 
-| [Prediction Markets](prediction-markets.md) | `kask/mcp-servers/hkask-mcp-prediction-markets` | Polymarket/Kalshi base rates, calibration, CMP curves and indices, residuals | 32 |
+| [Prediction Markets](prediction-markets.md) | `kask/mcp-servers/hkask-mcp-prediction-markets` | Polymarket/Kalshi base rates, calibration, residuals | 27 |
 | [Research](research.md) | `kask/mcp-servers/hkask-mcp-research` | Web search, extraction, browsing, RSS feeds, evidence scoring, research-run ledger, paper identity | 27 |
-| [Scenarios](scenarios.md) | `kask/mcp-servers/hkask-mcp-scenarios` | Event-tree forecasting (Tetlock/Schwartz/Chermack) | 19 |
-| [Spreadsheet](spreadsheet.md) | `kask/mcp-servers/hkask-mcp-spreadsheet` | Central mutation owner of the LogiSheets-backed spreadsheet capability: persisted spreadsheet edits and interrupted-operation reconciliation over immutable workbook revisions | 2 |
+| [Scenarios](scenarios.md) | `kask/mcp-servers/hkask-mcp-scenarios` | Event-tree forecasting (Tetlock/Schwartz/Chermack) | 17 |
 | [Swarm](swarm.md) | `kask/mcp-servers/hkask-mcp-swarm` | Agent Bestiary World swarms + Xaman Ek curator + local swarm substrate (v2 §15) | 91 |
 | Training | `kask/mcp-servers/hkask-mcp-training` | LoRA training pipeline (dataset, submit, validate, evaluate) | 9 |
 
 ### Count verification (unified 2026-10-05; re-verified 2026-10-13)
 
-Every server pins its exact tool surface with the shared `tool_surface_pin!` macro (landed `ede1ba0ca8`, 2026-10-05): one macro call pins the exact tool count and the generated `TOOL_NAMES` set against the live router, so additions, drops, and same-count renames fail CI instead of degrading to tool-not-found. `kask/scripts/check-mcp-registration.sh` gates on the pin's presence for every server in `mcp-servers.txt` (CI: `.github/workflows/kask-invariants.yml`). Live pin sites (generated test names, re-verified 2026-10-13): companies 40 (`hkask_mcp_companies.rs:550`), corpus 27 (`hkask_mcp_corpus.rs:324`), curator 15 (`hkask_mcp_curator.rs:2645`), experimentation 6 (`hkask_mcp_experimentation.rs:85`), kata-kanban 27 (`hkask_mcp_kata_kanban.rs:1766`), media 102 (`hkask_mcp_media.rs:485`), prediction-markets 27 (`hkask_mcp_prediction_markets.rs:1348`), research 27 (`hkask_mcp_research.rs:2827`), scenarios 17 (`hkask_mcp_scenarios.rs:1891`), spreadsheet 2 (`hkask_mcp_spreadsheet.rs:39`), swarm 91 (`hkask_mcp_swarm.rs:989`), training 9 (`hkask_mcp_training.rs:311`). The portfolio server (18 tools) was removed 2026-10-15.
+Every server pins its exact tool surface with the shared `tool_surface_pin!` macro (landed `ede1ba0ca8`, 2026-10-05): one macro call pins the exact tool count and the generated `TOOL_NAMES` set against the live router, so additions, drops, and same-count renames fail CI instead of degrading to tool-not-found. `kask/scripts/check-mcp-registration.sh` gates on the pin's presence for every server in `mcp-servers.txt` (CI: `.github/workflows/kask-invariants.yml`). Live pin sites (generated test names, re-verified 2026-10-15): companies 32 (`hkask_mcp_companies.rs:543`), corpus 27 (`hkask_mcp_corpus.rs:320`), curator 15 (`hkask_mcp_curator.rs:1766`), experimentation 8 (`hkask_mcp_experimentation.rs:82`), kata-kanban 27 (`hkask_mcp_kata_kanan.rs:1762`), media 102 (`hkask_mcp_media.rs:476`), prediction-markets 27 (`hkask_mcp_prediction_markets.rs:1348`), research 27 (`hkask_mcp_research.rs:2445`), scenarios 17 (`hkask_mcp_scenarios.rs:1891`), swarm 91 (`hkask_mcp_swarm.rs:985`), training 9 (`hkask_mcp_training.rs:340`). The portfolio server (18 tools) and the spreadsheet server (2 tools) were removed 2026-10-15.
 
-Per-server specifics that survive the unification: the curator pin additionally asserts the removed escalation/advice-review tools stay unregistered (`curator_escalations`, `curator_escalation_resolve`, `curator_escalation_dismiss`, `curator_escalation_dismiss_by_pattern`, `curator_advice_mark_applied`, `curator_advice_reviews`); the swarm pin's live partition is 48 cloud plus 43 non-cloud (33 local + 3 A2A + 4 knowledge + 3 swarm-scoped thread tools; `swarm_gate_readings` joined the local set 2026-10-10); the spreadsheet and experimentation tool-behavior suites drive every tool end-to-end over the real engine actor (`tests/tool_behavior.rs` in both crates).
+Per-server specifics that survive the unification: the curator pin additionally asserts the removed escalation/advice-review tools stay unregistered (`curator_escalations`, `curator_escalation_resolve`, `curator_escalation_dismiss`, `curator_escalation_dismiss_by_pattern`, `curator_advice_mark_applied`, `curator_advice_reviews`); the swarm pin's live partition is 48 cloud plus 43 non-cloud (33 local + 3 A2A + 4 knowledge + 3 swarm-scoped thread tools; `swarm_gate_readings` joined the local set 2026-10-10); the experimentation tool-behavior suite drives every tool end-to-end over the real engine actor (`tests/tool_behavior.rs`).
 
-Arithmetic: `40 + 27 + 15 + 6 + 27 + 102 + 18 + 32 + 27 + 19 + 2 + 91 + 9 = 415`.
+Arithmetic: `32 + 27 + 15 + 8 + 27 + 102 + 27 + 27 + 17 + 91 + 9 = 382`.
 
 ## Common Patterns
 

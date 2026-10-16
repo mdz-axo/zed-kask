@@ -1,18 +1,10 @@
 //! Domain filtering, run-ledger append, extraction validation, and evidence helpers.
 
 use hkask_mcp_server::server::McpToolError;
-use hkask_types::spreadsheet::SpreadsheetError;
 
 use crate::ResearchServer;
 use crate::research::{ArtifactScore, EvidenceReport, RunSourceRecord, SensitivityStatus};
 use crate::spawn_db;
-
-/// Dispatch a [`SpreadsheetError`] through the canonical per-variant
-/// classification ([`SpreadsheetError::mcp_kind`] — the single owner of
-/// the taxonomy, SP-01); the delegation keeps the call sites named.
-pub(crate) fn map_spreadsheet_error(error: SpreadsheetError) -> McpToolError {
-    McpToolError::new(error.mcp_kind(), error.to_string())
-}
 
 /// Enforce the caller's domain boundary even when a provider ignores its
 /// domain parameters. A host suffix matches only at a dot boundary, never

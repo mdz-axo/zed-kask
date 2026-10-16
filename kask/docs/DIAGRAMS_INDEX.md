@@ -10,20 +10,20 @@ mds_categories: [curation, composition]
 
 # hKask Diagram Index — Mermaid Verification Registry
 
-This registry is generated from the surviving `DIAGRAM_ALIGNMENT` metadata under `kask/docs/`. As of 2026-10-05 the corpus contains **108 active alignment records representing 108 unique IDs**: 34 records in the five consolidated diagram files and 74 inline records. The 2026-09-28 how-to folds moved eleven inline records from the per-crate how-to documents into their set references' Procedures sections (count unchanged by the folds); the deleted `DIAG-SKILL-CFR` (subject removed with the GSR/CFR skills, commit `5eed0134bf`) reduced the count from 106 to 105.
+This registry is generated from the surviving `DIAGRAM_ALIGNMENT` metadata under `kask/docs/`. As of 2026-10-15 the corpus contains **99 active alignment records representing 99 unique IDs**: 25 records in the five consolidated diagram files and 74 inline records. The 2026-09-28 how-to folds moved eleven inline records from the per-crate how-to documents into their set references' Procedures sections (count unchanged by the folds); the deleted `DIAG-SKILL-CFR` (subject removed with the GSR/CFR skills, commit `5eed0134bf`) reduced the count from 106 to 105.
 
-The corpus contains 102 Mermaid blocks, each carrying one immediately adjacent alignment record (mechanically counted 2026-10-15: 102 `mermaid` fences, 101 `id: DIAG-` records; the CMP program's eight diagrams and the portfolio widget's one were removed with their programs on 2026-10-15). `architecture/DOCUMENTATION_STANDARDS.md` §3's own lifecycle diagram is exempt by the self-illustration rule (DOCUMENTATION_STANDARDS §4.2, added 2026-09-30: the standards document's own illustrative diagrams depict the standard's definitions rather than the tree's structure) yet retains its pre-exemption record `DIAG-STD-001` (verified 2026-09-28). The compaction pipeline spec's diagram (landed 2026-09-29) carried no record until this run registered it as `DIAG-ARCH-COMPACTION-001` (2026-10-05) — the 2026-09-30 prose had misattributed the gap to the standards' exempt diagram. On 2026-09-26 the skill learning loop registered as `DIAG-ARCH-LEARNING-LOOP-001` in `diagrams/architecture.md`. The LogiSheets plan's architecture block registered as `DIAG-ARCH-SPREADSHEET-001` on 2026-09-19 (implementation began 2026-09-18, converting the plan to `Active` per `kask/docs/architecture/DOCUMENTATION_STANDARDS.md` §4.2). On 2026-09-30 the three-layer review registered two model diagrams in `research/cybernetic-nervous-system-reference-model.md`: `DIAG-RES-CNS-001` (the abstract tiered feedback structure, verified against the external canonical sources) and `DIAG-RES-CNS-002` (the A/B/C pathway mapping, verified against the layer pathway code sites).
+The corpus contains 100 Mermaid blocks, each carrying one immediately adjacent alignment record (mechanically counted 2026-10-15: 100 `mermaid` fences, 99 `id: DIAG-` records; the CMP program's eight diagrams and the portfolio widget's one were removed with their programs on 2026-10-15, and the spreadsheet capability's two — the LogiSheets plan's architecture block and the widget's class diagram — were removed with the capability the same day). `architecture/DOCUMENTATION_STANDARDS.md` §3's own lifecycle diagram is exempt by the self-illustration rule (DOCUMENTATION_STANDARDS §4.2, added 2026-09-30: the standards document's own illustrative diagrams depict the standard's definitions rather than the tree's structure) yet retains its pre-exemption record `DIAG-STD-001` (verified 2026-09-28). The compaction pipeline spec's diagram (landed 2026-09-29) carried no record until this run registered it as `DIAG-ARCH-COMPACTION-001` (2026-10-05) — the 2026-09-30 prose had misattributed the gap to the standards' exempt diagram. On 2026-09-26 the skill learning loop registered as `DIAG-ARCH-LEARNING-LOOP-001` in `diagrams/architecture.md`. The LogiSheets plan's architecture block registered as `DIAG-ARCH-SPREADSHEET-001` on 2026-09-19 (implementation began 2026-09-18, converting the plan to `Active` per `kask/docs/architecture/DOCUMENTATION_STANDARDS.md` §4.2). On 2026-09-30 the three-layer review registered two model diagrams in `research/cybernetic-nervous-system-reference-model.md`: `DIAG-RES-CNS-001` (the abstract tiered feedback structure, verified against the external canonical sources) and `DIAG-RES-CNS-002` (the A/B/C pathway mapping, verified against the layer pathway code sites).
 
 ## Consolidated files
 
 | File | Alignment records |
 | --- | ---: |
-| [`diagrams/architecture.md`](./diagrams/architecture.md) | 13 |
+| [`diagrams/architecture.md`](./diagrams/architecture.md) | 8 |
 | [`diagrams/kanban.md`](./diagrams/kanban.md) | 3 |
-| [`diagrams/mcp-dispatch.md`](./diagrams/mcp-dispatch.md) | 4 |
+| [`diagrams/mcp-dispatch.md`](./diagrams/mcp-dispatch.md) | 2 |
 | [`diagrams/swarm.md`](./diagrams/swarm.md) | 6 |
-| [`diagrams/ui-widgets.md`](./diagrams/ui-widgets.md) | 8 |
-| **Total** | **34** |
+| [`diagrams/ui-widgets.md`](./diagrams/ui-widgets.md) | 6 |
+| **Total** | **25** |
 
 ## Current metadata registry
 
@@ -33,7 +33,6 @@ Every row below is an actual `(id, location)` metadata pair. Dates and statuses 
 | --- | --- | --- | --- |
 | `DIAG-ARCH-LEARNING-LOOP-001` | [`diagrams/architecture.md`](./diagrams/architecture.md) | 2026-09-28 | VERIFIED |
 | `DIAG-ARCH-SKILL-MCP-LISP-001` | [`diagrams/architecture.md`](./diagrams/architecture.md) | 2026-09-28 | VERIFIED |
-| `DIAG-ARCH-SPREADSHEET-001` | [`plans/logisheets-spreadsheet-capability-plan.md`](./plans/logisheets-spreadsheet-capability-plan.md) | 2026-09-28 | VERIFIED |
 | `DIAG-ARCH-COMPACTION-001` | [`architecture/compaction-pipeline-spec.md`](./architecture/compaction-pipeline-spec.md) | 2026-10-05 | VERIFIED |
 | `DIAG-ARTIFACT-001` | [`architecture/standardized-artifact-storage.md`](./architecture/standardized-artifact-storage.md) | 2026-09-28 | VERIFIED |
 | `DIAG-BRIDGE-002` | [`diataxis/kask_bridge/reference.md`](./diataxis/kask_bridge/reference.md) | 2026-09-28 | VERIFIED |
@@ -131,11 +130,10 @@ Every row below is an actual `(id, location)` metadata pair. Dates and statuses 
 | `DIAG-VIZ-GRAPH` | [`diagrams/ui-widgets.md`](./diagrams/ui-widgets.md) | 2026-09-28 | VERIFIED |
 | `DIAG-VIZ-KANBAN` | [`diagrams/ui-widgets.md`](./diagrams/ui-widgets.md) | 2026-09-28 | VERIFIED |
 
-| `DIAG-VIZ-SPREADSHEET-001` | [`diagrams/ui-widgets.md`](./diagrams/ui-widgets.md) | 2026-09-28 | VERIFIED |
 | `DIAG-VIZ-SCENARIOS` | [`diagrams/ui-widgets.md`](./diagrams/ui-widgets.md) | 2026-09-28 | VERIFIED |
 | `DIAG-VIZ-SWARM` | [`diagrams/ui-widgets.md`](./diagrams/ui-widgets.md) | 2026-09-28 | VERIFIED |
 
-Metadata-date distribution: 104 records at 2026-09-28, two at 2026-09-30 (the cybernetic-nervous-system model diagrams), and one externally-anchored record at 2026-09-16 (`DIAG-RES-CHUNK-001`, verified against arXiv/Anthropic engineering sources rather than tree files). All 107 active records are `VERIFIED`.
+Metadata-date distribution: 83 records at 2026-09-28, two at 2026-09-30 (the cybernetic-nervous-system model diagrams), one externally-anchored record at 2026-09-16 (`DIAG-RES-CHUNK-001`, verified against arXiv/Anthropic engineering sources rather than tree files), and the remainder at October 2026 verification dates. All active records are `VERIFIED` (one tombstoned ID mention is excluded from the active count).
 
 ## Retired/tombstone IDs (excluded from active registry validation)
 

@@ -489,12 +489,6 @@ fn test_server(
     rerank_model: Option<&str>,
     embedding_model: Option<&str>,
 ) -> ResearchServer {
-    // A per-test spreadsheet actor over a persistent temp root (SP-05):
-    // `keep()` retains the directory — the server outlives this helper's
-    // scope, and the InlineTable presentation never writes anyway.
-    let spreadsheet_dir = tempfile::tempdir().expect("spreadsheet temp root").keep();
-    let spreadsheet = hkask_spreadsheet::WorkbookService::start_with_root(spreadsheet_dir)
-        .expect("spreadsheet engine actor");
     ResearchServer::new(
         WebID::new(),
         pool,
@@ -510,7 +504,6 @@ fn test_server(
         inference_port.unwrap_or_else(|| Arc::new(FailingInferencePort)),
         rerank_model.map(str::to_string),
         embedding_model.map(str::to_string),
-        spreadsheet,
     )
 }
 
@@ -1824,63 +1817,6 @@ fn evidence_artifact(
     }
 }
 
-/// SP-05 (plan §10 Phase 7 — evidence-evaluation matrix): the InlineTable
-/// presentation publishes the per-artifact evaluation matrix as a bounded
-/// inline table block; the default (DataOnly) output carries no display
-/// hint.
-#[tokio::test]
-async fn evaluate_evidence_inline_table_publishes_the_matrix() {
-    let server = make_server_without_db();
-    let inline = parse(&ok(server
-        .evaluate_evidence(Parameters(EvaluateEvidenceRequest {
-            question: "is the claim corroborated?".to_string(),
-            duplication: None,
-            presentation: Some("InlineTable".to_string()),
-            artifacts: vec![
-                evidence_artifact(
-                    "https://a.example/1",
-                    Some("a.example"),
-                    None,
-                    Some("alpha one two three four"),
-                ),
-                evidence_artifact(
-                    "https://b.example/2",
-                    Some("b.example"),
-                    None,
-                    Some("beta five six seven eight"),
-                ),
-            ],
-        }))
-        .await));
-    let hint = inline["display_hint"].as_str().expect("inline hint");
-    let body = hkask_spreadsheet::hint_body(hint).expect("fenced spreadsheet block");
-    let block: hkask_types::spreadsheet::InlineTableBlock =
-        serde_json::from_str(body).expect("inline block body");
-    assert_eq!(block.viz, "spreadsheet");
-    assert_eq!(block.table.rows.len(), 2, "one row per artifact");
-    assert_eq!(block.table.columns.len(), 5);
-    block.validate().expect("the block revalidates");
-
-    // The default (DataOnly) output is unchanged: no display hint key.
-    let plain = parse(&ok(server
-        .evaluate_evidence(Parameters(EvaluateEvidenceRequest {
-            question: "is the claim corroborated?".to_string(),
-            duplication: None,
-            presentation: None,
-            artifacts: vec![evidence_artifact(
-                "https://a.example/1",
-                Some("a.example"),
-                None,
-                Some("alpha one two three four"),
-            )],
-        }))
-        .await));
-    assert!(
-        plain.get("display_hint").is_none(),
-        "the DataOnly default must not grow a hint"
-    );
-}
-
 #[tokio::test]
 async fn evaluate_evidence_rejects_empty_question() {
     let server = make_server_without_db();
@@ -1888,7 +1824,6 @@ async fn evaluate_evidence_rejects_empty_question() {
         .evaluate_evidence(Parameters(EvaluateEvidenceRequest {
             question: "  ".to_string(),
             duplication: None,
-            presentation: None,
             artifacts: vec![evidence_artifact(
                 "https://a.example/1",
                 Some("a.example"),
@@ -1907,7 +1842,6 @@ async fn evaluate_evidence_rejects_empty_artifacts() {
         .evaluate_evidence(Parameters(EvaluateEvidenceRequest {
             question: "what is the evidence?".to_string(),
             duplication: None,
-            presentation: None,
             artifacts: Vec::new(),
         }))
         .await);
@@ -1921,7 +1855,6 @@ async fn evaluate_evidence_emits_signal_model() {
         .evaluate_evidence(Parameters(EvaluateEvidenceRequest {
             question: "is the claim corroborated?".to_string(),
             duplication: None,
-            presentation: None,
             artifacts: vec![
                 evidence_artifact(
                     "https://a.example/1",
@@ -2017,7 +1950,6 @@ async fn evaluate_evidence_syndication_visible_in_clusters() {
         .evaluate_evidence(Parameters(EvaluateEvidenceRequest {
             question: "did the wire story spread?".to_string(),
             duplication: None,
-            presentation: None,
             artifacts: vec![
                 evidence_artifact(
                     "https://a.example/1",
@@ -2502,7 +2434,7 @@ async fn annotate_rejects_unknown_verification_state() {
 // The shared parse contract (normalize_closed_vocab + parse_closed_vocab*)
 // covers every closed-vocabulary field in the server, not just web_search's:
 // finish status, annotate verification_state, cite style, evidence
-// presentation, and the synthetic extractor kind all accept quoted/padded
+// duplication, and the synthetic extractor kind all accept quoted/padded
 // case-variant emissions, and unknown values teach the accepted spellings.
 
 #[tokio::test]
@@ -2598,30 +2530,6 @@ async fn cite_sources_unknown_style_teaches_the_vocabulary() {
         error.message.contains("apa, bibtex, chicago, json"),
         "teaches the accepted styles: {}",
         error.message
-    );
-}
-
-#[tokio::test]
-async fn evaluate_evidence_accepts_quoted_presentation() {
-    let server = make_server_without_db();
-    // A quoted lowercase dataonly must parse to DataOnly and take the
-    // plain-report path.
-    let json = parse(&ok(server
-        .evaluate_evidence(Parameters(EvaluateEvidenceRequest {
-            question: "quoted presentation probe".to_string(),
-            duplication: None,
-            presentation: Some(" \"dataonly\" ".to_string()),
-            artifacts: vec![evidence_artifact(
-                "https://a.example/1",
-                Some("a.example"),
-                None,
-                Some("alpha one two three four"),
-            )],
-        }))
-        .await));
-    assert!(
-        json["artifacts"].as_array().is_some_and(|a| !a.is_empty()),
-        "{json}"
     );
 }
 
@@ -3031,7 +2939,6 @@ fn make_server_with_embedding(
 fn semantic_request(duplication: Option<&str>) -> EvaluateEvidenceRequest {
     EvaluateEvidenceRequest {
         question: "is it duplicated?".to_string(),
-        presentation: None,
         artifacts: vec![
             evidence_artifact(
                 "https://a.example/1",

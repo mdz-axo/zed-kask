@@ -26,7 +26,7 @@ mod tests;
 /// Will be converted into `TableRow<T>` internally
 pub type UncheckedTableRow<T> = Vec<T>;
 
-/// State for independently resizable columns (spreadsheet-style).
+/// State for independently resizable columns (grid-style).
 ///
 /// Each column has its own absolute width; dragging a resize handle changes only
 /// that column's width, growing or shrinking the overall table width.
@@ -235,7 +235,7 @@ pub enum ColumnWidthConfig {
         table_width: Option<DefiniteLength>,
     },
     /// Independently resizable columns — dragging changes absolute column widths
-    /// and thus the overall table width. Like spreadsheets.
+    /// and thus the overall table width. Like a grid.
     Resizable(Entity<ResizableColumnsState>),
 }
 

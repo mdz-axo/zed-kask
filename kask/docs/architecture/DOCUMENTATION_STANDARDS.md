@@ -104,7 +104,7 @@ stateDiagram-v2
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-STD-001
 verified_date: 2026-09-28
-verified_against: kask/docs/architecture/DOCUMENTATION_STANDARDS.md:51-182; kask/docs/README.md:69-119; kask/docs/plans/logisheets-spreadsheet-capability-plan.md:1-17
+verified_against: kask/docs/architecture/DOCUMENTATION_STANDARDS.md:51-182; kask/docs/README.md:69-119
 status: VERIFIED
 -->
 

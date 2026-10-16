@@ -2,13 +2,11 @@
 //! (`kask/docs/reference/testing-protocol.md`). Batch 6 of the propagation
 //! plan (`kask/docs/reference/testing-protocol.md`): the unit pins for these
 //! seams exist (`sanitize_name_blocks_path_traversal`,
-//! `cell_coordinate_round_trips_exactly`,
 //! `equal_versions_retain_the_first_candidate`); the properties generalize
 //! them over generated input domains. A shrunk counterexample is a finding
 //! to report, never a signal to weaken a property.
 
 use crate::agent_paths::{agent_dir, sanitize_name};
-use crate::spreadsheet::{CellCoordinate, MAX_SHEET_COLS, MAX_SHEET_ROWS};
 use crate::ytdlp::{candidate_is_preferred, parse_version};
 use proptest::prelude::*;
 
@@ -39,38 +37,6 @@ proptest! {
             "agent_dir must join the sanitized name, got {:?}",
             dir
         );
-    }
-
-    /// Hypothesis: every in-bounds generated coordinate validates and
-    /// round-trips exactly through serde — sheet, row, and col survive.
-    #[test]
-    fn cell_coordinates_round_trip_within_the_sheet_ceiling(
-        sheet in "[A-Za-z][A-Za-z0-9 ]{0,15}",
-        row in 0usize..MAX_SHEET_ROWS,
-        col in 0usize..MAX_SHEET_COLS,
-    ) {
-        let coordinate =
-            CellCoordinate::new(sheet, row, col).expect("in-bounds coordinate validates");
-        let round: CellCoordinate = serde_json::from_value(
-            serde_json::to_value(&coordinate).expect("coordinate serializes"),
-        )
-        .expect("coordinate deserializes");
-        prop_assert_eq!(round.sheet, coordinate.sheet);
-        prop_assert_eq!(round.row, coordinate.row);
-        prop_assert_eq!(round.col, coordinate.col);
-    }
-
-    /// Hypothesis: the sheet ceiling rejects, never clamps — rows or columns
-    /// at or beyond the bound and blank sheets fail validation for every
-    /// generated overhang.
-    #[test]
-    fn cell_coordinates_reject_beyond_the_sheet_ceiling(
-        sheet in "[A-Za-z][A-Za-z0-9 ]{0,15}",
-        over in 0usize..1000,
-    ) {
-        prop_assert!(CellCoordinate::new(sheet.clone(), MAX_SHEET_ROWS + over, 0).is_err());
-        prop_assert!(CellCoordinate::new(sheet, 0, MAX_SHEET_COLS + over).is_err());
-        prop_assert!(CellCoordinate::new(String::new(), 0, 0).is_err());
     }
 
     /// Hypothesis: version preference is a strict order — irreflexive,

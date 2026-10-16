@@ -188,13 +188,12 @@ flowchart TD
 
     A --> CA[corpus-mcp/cache]
     A --> ME[media-mcp/generated]
-    A --> SP[spreadsheet-mcp/workbooks]
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-ARTIFACT-001
 verified_date: 2026-09-28
-verified_against: kask/crates/hkask-types/src/agent_paths.rs:65-75,101-103,122-156,159-218,277-310; kask/crates/kask_bridge/src/mcp_servers.rs:28-46,55-549; kask/crates/hkask-spreadsheet/src/artifact_store.rs:1-27 (spreadsheet-mcp/workbooks visible-artifact root)
+verified_against: kask/crates/hkask-types/src/agent_paths.rs:65-75,101-103,122-156,159-218,277-310; kask/crates/kask_bridge/src/mcp_servers.rs:28-46,49-513
 status: VERIFIED
 -->
 

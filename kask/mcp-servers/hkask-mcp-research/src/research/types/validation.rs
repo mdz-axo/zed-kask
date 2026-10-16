@@ -57,13 +57,13 @@ mod normalize_closed_vocab_tests {
 /// of accepted spellings mapped to values. The single parse site for
 /// every enum-ish tool parameter — one owner of the tolerance +
 /// teaching-error contract (the scattered match arms — strategy,
-/// freshness, intent, provider, format, duplication, presentation,
-/// style, status, verification_state — collapsed onto this helper and its
+/// freshness, intent, provider, format, duplication, style, status,
+/// verification_state — collapsed onto this helper and its
 /// `parse_closed_vocab_const` sibling). On miss, the error names the
 /// field and the canonical spellings (the first entry of each group);
 /// aliases are accepted but not listed. Case-insensitive so canonical
-/// spellings may be any case (the schema's `DataOnly` matches an emitted
-/// `dataonly`).
+/// spellings may be any case (a PascalCase canonical matches an emitted
+/// lowercase form).
 pub(crate) fn parse_closed_vocab<T: Copy>(
     field: &'static str,
     raw: &str,
@@ -125,20 +125,17 @@ mod parse_closed_vocab_tests {
 
     #[test]
     fn matches_case_insensitively_against_mixed_case_canonicals() {
-        // Canonical spellings may be PascalCase (the schema's DataOnly):
-        // an emitted lowercase/quoted form must still parse, and the miss
-        // error must list the canonical spelling verbatim.
-        let table: &[(&[&str], i32)] = &[(&["DataOnly"], 1), (&["InlineTable"], 2)];
+        // Canonical spellings may be PascalCase: an emitted lowercase/quoted
+        // form must still parse, and the miss error must list the canonical
+        // spelling verbatim.
+        let table: &[(&[&str], i32)] = &[(&["AlphaMode"], 1), (&["BetaMode"], 2)];
+        assert_eq!(parse_closed_vocab("mode", "alphamode", table).unwrap(), 1);
         assert_eq!(
-            parse_closed_vocab("presentation", "dataonly", table).unwrap(),
-            1
-        );
-        assert_eq!(
-            parse_closed_vocab("presentation", " \"inlinetable\" ", table).unwrap(),
+            parse_closed_vocab("mode", " \"betamode\" ", table).unwrap(),
             2
         );
-        let err = parse_closed_vocab("presentation", "bogus", table).expect_err("must miss");
-        assert!(err.to_string().contains("DataOnly, InlineTable"));
+        let err = parse_closed_vocab("mode", "bogus", table).expect_err("must miss");
+        assert!(err.to_string().contains("AlphaMode, BetaMode"));
     }
 
     #[test]

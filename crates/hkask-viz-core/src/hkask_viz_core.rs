@@ -51,8 +51,6 @@ use hkask_kanban_widget::KanbanWidget;
 use hkask_kanban_widget::block::{KanbanBlockBody, parse_kanban_body};
 use hkask_scenarios_widget::ScenariosWidget;
 use hkask_scenarios_widget::block::{ScenariosBlockBody, parse_scenarios_body};
-use hkask_spreadsheet_widget::SpreadsheetWidget;
-use hkask_spreadsheet_widget::block::{SpreadsheetBlockBody, parse_spreadsheet_body};
 use hkask_swarm_widget::SwarmWidget;
 use hkask_swarm_widget::block::{SwarmBlockBody, parse_swarm_body};
 
@@ -139,21 +137,6 @@ impl VizWidget for ScenariosWidget {
     }
 }
 
-impl VizWidget for SpreadsheetWidget {
-    type Block = SpreadsheetBlockBody;
-    const VIZ_TAG: &str = "spreadsheet";
-    const LOG_PREFIX: &str = "hkask-spreadsheet-widget";
-    fn parse_body(body: &str) -> anyhow::Result<Self::Block> {
-        parse_spreadsheet_body(body)
-    }
-    fn viz_of(block: &Self::Block) -> Option<&str> {
-        block.viz.as_deref()
-    }
-    fn new_widget(block: Self::Block, cx: &mut Context<Self>) -> Self {
-        SpreadsheetWidget::new(block, cx)
-    }
-}
-
 impl VizWidget for SwarmWidget {
     type Block = SwarmBlockBody;
     const VIZ_TAG: &str = "swarm_delegate_results";
@@ -228,13 +211,12 @@ type VizFactory = fn(&str, &mut App) -> Option<CachedWidget>;
 /// The ordered registry of `viz`-discriminated widget factories. Order
 /// matters only for bodies whose `viz` tag could match more than one widget;
 /// the tags (`event_tree`, `kanban`, `scenarios`,
-/// `spreadsheet`, `swarm_delegate_results`) are disjoint, so order is arbitrary.
+/// `swarm_delegate_results`) are disjoint, so order is arbitrary.
 fn viz_factories() -> &'static [VizFactory] {
     &[
         try_create::<GraphWidget>,
         try_create::<KanbanWidget>,
         try_create::<ScenariosWidget>,
-        try_create::<SpreadsheetWidget>,
         try_create::<SwarmWidget>,
     ]
 }
@@ -544,12 +526,12 @@ mod tests {
         assert_ne!(cache_key("hello"), cache_key("world"));
     }
 
-    // Pins that the registry covers exactly the five `viz`-discriminated
+    // Pins that the registry covers exactly the four `viz`-discriminated
     // widgets and that their tags are disjoint (a body is claimed by at most
     // one factory).
     #[test]
-    fn viz_factories_cover_five_widgets() {
-        assert_eq!(viz_factories().len(), 5);
+    fn viz_factories_cover_four_widgets() {
+        assert_eq!(viz_factories().len(), 4);
     }
 
     // Pins the D18 fence-language gate in `markdown.rs` (`is_viz_block`):
@@ -570,7 +552,6 @@ mod tests {
             "graph",
             "kanban",
             "scenarios",
-            "spreadsheet",
             "swarm_delegate_results",
             "media",
         ];
@@ -582,7 +563,6 @@ mod tests {
                 "kanban",
                 "media",
                 "scenarios",
-                "spreadsheet",
                 "swarm_delegate_results"
             ],
             "the D18 gate in crates/markdown/src/markdown.rs must admit exactly \

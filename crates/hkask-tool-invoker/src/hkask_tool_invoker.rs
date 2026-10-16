@@ -24,8 +24,8 @@
 //!    must re-ask the agent. Provenance is `#[serde(default)]` and additive on
 //!    each block body, so existing tolerant parsers are unaffected. The
 //!    serializable type itself lives in `hkask_types::block_provenance`
-//!    (LogiSheets plan §5.2: MCP-side block construction could not depend on a
-//!    GPUI crate); consumers import it from `hkask_types` directly.
+//!    (moved out of this GPUI-dependent crate so MCP-side block construction
+//!    stays GPUI-free); consumers import it from `hkask_types` directly.
 //!
 //! ## Why a leaf crate
 //!

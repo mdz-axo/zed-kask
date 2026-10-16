@@ -58,11 +58,11 @@ Offline Cargo metadata reported 299 workspace members, including **19 libraries 
 | Contracts and vocabulary | `hkask-types`, `hkask-bridge-ontology`, `hkask-tool-port` |
 | Persistence and memory | `hkask-storage`, `hkask-event-store`, `hkask-memory`, `hkask-keystore` |
 | Execution infrastructure | `hkask-mcp`, `hkask-mcp-server`, `hkask-inference` (`hkask-services-core` folded into `hkask-mcp-corpus` as its `services_core` module, 2026-10-13, commit `8fb33f8e73`) |
-| Computation and capabilities | `hkask-forecast`, `hkask-lisp`, `hkask-condenser`, `hkask-spreadsheet` |
+| Computation and capabilities | `hkask-forecast`, `hkask-lisp`, `hkask-condenser` |
 | Regulation and interaction support | `hkask-regulation`, `hkask-email`, `hkask-steer-core` |
 | Zed-side integration exception | `kask_bridge` |
 
-Servers: companies, corpus, curator, experimentation, kata-kanban, media, portfolio, prediction-markets, research, scenarios, spreadsheet, swarm, training. Discover the execution-time inventory anew from manifests and `kask/crates/kask_bridge/src/mcp_servers.rs:49–573`; do not hardcode these counts in new tests.
+Servers: companies, corpus, curator, experimentation, kata-kanban, media, prediction-markets, research, scenarios, swarm, training. Discover the execution-time inventory anew from manifests and `kask/crates/kask_bridge/src/mcp_servers.rs:49-513`; do not hardcode these counts in new tests.
 
 ### Observed boundaries and paths
 
@@ -310,6 +310,10 @@ Plan: generate inventory facts, validate links, restore or replace the missing c
 ### O2 — Focus architectural cleanup on behavior, not crate counts
 
 **Class:** optional improvement opportunity. **Severity:** Low unless tied to a defect. **Confidence:** Medium.
+
+> **Superseded 2026-10-15:** the spreadsheet capability — engine actor,
+> server, widget — was removed end-to-end by operator ruling (Tranche S);
+> the actor-preservation guidance below no longer applies.
 
 Keep the spreadsheet actor: deleting it spreads non-Send engine ownership, executor bridging, staging, and revision management across MCP and GPUI. Keep typed uncertain-delivery errors: they encode essential retry information. The unused connectionless transaction facade has been removed in the later R2 slice; preserve connection-owned domain transactions instead.
 

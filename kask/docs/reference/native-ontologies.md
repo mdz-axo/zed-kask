@@ -92,9 +92,7 @@ Namespace IRIs and directory bindings are declared in
   more parties..."). The equity-research derived rulings (DuPont family,
   DCF, expectations gap) resolve above it on the derived rung.
 - **RDF Data Cube** — statistical shapes. `observation` resolves
-  `qb:Observation`; the spreadsheet capability's wire contracts
-  (`analytical_table`, `spreadsheet_viewport`) cite `qb:DataSet`/`qb:Slice`
-  as their published ground.
+  `qb:Observation`.
 - **OMC** — media production. `service` resolves `omc:Service`;
   `character` resolves `omc:Character` ("a sentient entity... whose
   specific identity is consequential to the narrative").
@@ -168,8 +166,7 @@ testing, Fagan inspection, deep module, strangler fig), cybernetics (VSM,
 algedonic signal, feedback loop), the kata system (improvement kata,
 coaching kata, gemba walk, PDCA), documentation (Diataxis, minimalism),
 computation theory (entropy, determinism, syntax/semantics, the D/P
-routing terms), the spreadsheet wire contracts (analytical table,
-viewport, artifact, block, edit transaction, error), maintenance (IEC
+routing terms), maintenance (IEC
 60050-192 preventive/condition-based), media (transcript-linked media),
 and the ontology self-rulings (PKO, GOLEM, OMC, SEPIO as derived concepts
 alongside their published vocabularies).

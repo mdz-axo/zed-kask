@@ -140,10 +140,10 @@ classDiagram
         +config_env: allowlist
     }
     class Registry {
-        portfolio
         companies
         corpus
         curator
+        experimentation
         kata-kanban
         research
         scenarios
@@ -151,28 +151,26 @@ classDiagram
         swarm
         training
         media
-        spreadsheet
     }
-    Registry --> BuiltinMcpServer : 12 entries
+    Registry --> BuiltinMcpServer : 11 entries
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-BRIDGE-004
 verified_date: 2026-09-28
-verified_against: kask/crates/kask_bridge/src/mcp_servers.rs:26-50 (BuiltinMcpServer); kask/crates/kask_bridge/src/mcp_servers.rs:55-549 (12-entry registry)
+verified_against: kask/crates/kask_bridge/src/mcp_servers.rs:26-46 (BuiltinMcpServer); kask/crates/kask_bridge/src/mcp_servers.rs:49-513 (11-entry registry)
 status: VERIFIED
 -->
 
 ### Allowlist sizes
 
 Sizes below are counted directly from each descriptor in
-`kask/crates/kask_bridge/src/mcp_servers.rs:55-549` (method: extraction of the
+`kask/crates/kask_bridge/src/mcp_servers.rs:49-513` (method: extraction of the
 quoted env-var names inside each `credentials` / `config_env` array).
 
 | Server | Credentials | Config |
 | --- | ---: | ---: |
-| `portfolio` | 0 | 3 |
-| `companies` | 6 | 5 |
+| `companies` | 6 | 4 |
 | `corpus` | 1 | 22 |
 | `curator` | 1 | 12 |
 | `kata-kanban` | 1 | 4 |
@@ -182,7 +180,6 @@ quoted env-var names inside each `credentials` / `config_env` array).
 | `swarm` | 2 | 19 |
 | `training` | 3 | 20 |
 | `media` | 4 | 10 |
-| `spreadsheet` | 0 | 1 |
 
 The media server's live router is pinned at 102 tools
 (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:453-456`).

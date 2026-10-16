@@ -1,5 +1,6 @@
 //! Block provenance — the server-authoritative wire contract for widget
-//! dispatch (moved from `hkask-tool-invoker` per the LogiSheets plan §5.2).
+//! dispatch (moved from `hkask-tool-invoker` so server crates stay
+//! GPUI-free).
 //!
 //! Provenance for a rendered widget block: which MCP tool produced this
 //! artifact, with which args, and under which regulation span.
@@ -30,7 +31,7 @@ use serde_json::Value;
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct BlockProvenance {
-    /// The MCP tool name that produced this block (e.g. `"portfolio_returns"`).
+    /// The MCP tool name that produced this block (e.g., `"scenario_quantify"`).
     #[serde(default)]
     pub tool: Option<String>,
     /// The MCP server name that hosts the tool (e.g. `"hkask-mcp-companies"`).
@@ -103,8 +104,8 @@ mod tests {
 
     #[test]
     fn provenance_parses_partial_body() {
-        let p: BlockProvenance = serde_json::from_str(r#"{"tool":"portfolio_returns"}"#).unwrap();
-        assert_eq!(p.tool.as_deref(), Some("portfolio_returns"));
+        let p: BlockProvenance = serde_json::from_str(r#"{"tool":"scenario_quantify"}"#).unwrap();
+        assert_eq!(p.tool.as_deref(), Some("scenario_quantify"));
         assert!(p.server.is_none());
         assert!(!p.is_dispatchable());
         assert!(!p.is_empty());
@@ -139,9 +140,9 @@ mod tests {
     #[test]
     fn provenance_round_trips_exactly() {
         let p = BlockProvenance {
-            tool: Some("portfolio_characteristics".into()),
+            tool: Some("scenario_impact_valuation".into()),
             server: Some("hkask-mcp-companies".into()),
-            args: serde_json::json!({"portfolio": "main", "date": "2026-09-18"}),
+            args: serde_json::json!({"symbol": "ACME"}),
             span_id: Some("span-42".into()),
         };
         let json = serde_json::to_string(&p).expect("serialize");

@@ -28,7 +28,7 @@ The **Curator** is a native in-process agent — an `Agent::Curator` variant sel
 
 ### Steer panels
 
-Four native panels extend the steering surface. The **swarm panel** composes and steers local agent swarms (agent cards, hiring, PSO/ACO/flocking parameters); the **kanban panel** drives kata-kanban task boards; the **portfolio** and **media** panels are Steer-only — chat-driven CRUD over the scoped server's tools instead of hand-written management forms. Any of them can take the steering seat of an agent conversation via a per-context system-prompt overlay scoped to exactly one MCP server, with the advertised tool list mechanically verified against the server's generated tool names — a rename degrades loudly at dispatch, not silently.
+Four native panels extend the steering surface. The **swarm panel** composes and steers local agent swarms (agent cards, hiring, PSO/ACO/flocking parameters); the **kanban panel** drives kata-kanban task boards; the **media** panel is Steer-only — chat-driven CRUD over the scoped server's tools instead of hand-written management forms. Any of them can take the steering seat of an agent conversation via a per-context system-prompt overlay scoped to exactly one MCP server, with the advertised tool list mechanically verified against the server's generated tool names — a rename degrades loudly at dispatch, not silently.
 
 ### Media generation
 
@@ -40,21 +40,19 @@ The `media` MCP server is the fleet's largest (98 tools): image and video genera
 
 | Server               | Surface                                                       | Tools |
 | -------------------- | ------------------------------------------------------------- | ----: |
-| `companies`          | FIBO-anchored financial forecasting, dual-provider routing, research notes, transcripts, screener | 40 |
-| `corpus`             | Gather→process→output document pipeline, QA generation, style replicas | 26 |
+| `companies`          | FIBO-anchored financial forecasting, dual-provider routing, research notes, transcripts | 32 |
+| `corpus`             | Gather→process→output document pipeline, QA generation, style replicas | 27 |
 | `curator`            | Curator memory, regulation query, algedonic signals, skill-use reporting | 15 |
-| `experimentation`   | Experiment registry for the sharded experimentation program: registered experiments with pre-registered predictions, variant lineages, grounded fitness, selection fossils | 6 |
+| `experimentation`   | Experiment registry for the sharded experimentation program: registered experiments with pre-registered predictions, variant lineages, grounded fitness, selection fossils | 8 |
 | `kata-kanban`        | Toyota-Kata task boards and persistent functional goals        | 27 |
-| `media`              | AI media generation (image, video, audio, gallery, educt transcripts, Reduct cloud) | 98 |
-| `portfolio`          | Transaction-ledger portfolio store (stocks, prediction-event portfolios, CMP indices) with holdings/returns views | 18 |
-| `prediction-markets` | Polymarket/Kalshi base rates, calibration, CMP curves and indices, residuals | 32 |
-| `research`           | Web search, extraction, browsing, RSS feeds, evidence scoring, research-run ledger, paper identity | 26 |
-| `scenarios`          | Event-tree forecasting (Tetlock/Schwartz/Chermack)             | 19 |
-| `spreadsheet`        | LogiSheets-backed spreadsheet edits and reconciliation over immutable workbook revisions | 2 |
-| `swarm`              | ABW cloud swarms + local swarm substrate + Xaman Ek curator     | 90 |
+| `media`              | AI media generation (image, video, audio, gallery, educt transcripts, Reduct cloud) | 102 |
+| `prediction-markets` | Polymarket/Kalshi base rates, calibration, residuals | 27 |
+| `research`           | Web search, extraction, browsing, RSS feeds, evidence scoring, research-run ledger, paper identity | 27 |
+| `scenarios`          | Event-tree forecasting (Tetlock/Schwartz/Chermack)             | 17 |
+| `swarm`              | ABW cloud swarms + local swarm substrate + Xaman Ek curator     | 91 |
 | `training`           | LoRA/QLoRA training pipeline (dataset, submit, validate, evaluate) | 9 |
 
-Companies, scenarios, and prediction-markets form a three-layer forecasting stack (see [`kask/docs/reference/mcp-servers/README.md`](./kask/docs/reference/mcp-servers/README.md) for the full registry, architecture, and per-server count pins). All thirteen servers auto-load by default (`load_default: true`) unless the operator disables the fleet or an individual server; the Curator additionally ships as a native in-process agent.
+Companies, scenarios, and prediction-markets form a three-layer forecasting stack (see [`kask/docs/reference/mcp-servers/README.md`](./kask/docs/reference/mcp-servers/README.md) for the full registry, architecture, and per-server count pins). All eleven servers auto-load by default (`load_default: true`) unless the operator disables the fleet or an individual server; the Curator additionally ships as a native in-process agent.
 
 ## Installation
 

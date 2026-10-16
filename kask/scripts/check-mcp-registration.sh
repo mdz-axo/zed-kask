@@ -9,8 +9,8 @@
 # The pin's two tests (count + TOOL_NAMES-vs-router) are the mechanical
 # enforcement of the registration pattern; this gate enforces the pin's
 # PRESENCE so no server can ship without it (the 2026-10-05 audit found
-# portfolio/experimentation/spreadsheet without it and 9 servers with
-# count-only pins that could not catch renames).
+# servers without it and 9 servers with count-only pins that could not
+# catch renames).
 set -euo pipefail
 
 ROOT=$(git rev-parse --show-toplevel)

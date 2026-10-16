@@ -5,6 +5,7 @@
 
 pub mod agent_paths;
 pub mod block_provenance;
+pub mod closed_vocab;
 pub mod corpus;
 
 pub mod curator;
@@ -27,7 +28,6 @@ pub mod ytdlp;
 pub mod regulation;
 pub mod secret;
 pub mod server_env;
-pub mod spreadsheet;
 pub mod template;
 
 pub use server_env::ServerEnv;
@@ -59,7 +59,7 @@ pub use error::{DatabaseErrorKind, DbError, InfrastructureError, McpErrorKind, N
 pub use event::{RegulationRecord, RegulationSink};
 // The canonical closed-vocabulary emission-noise normalizer (operator
 // ruling 2026-10-13) — every closed-vocab MCP field parses through it.
-pub use spreadsheet::normalize_closed_vocab;
+pub use closed_vocab::normalize_closed_vocab;
 
 pub use block_provenance::BlockProvenance;
 pub use id::{

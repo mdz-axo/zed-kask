@@ -203,7 +203,7 @@ architecture-beta
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-ARCH-SKILL-MCP-LISP-001
 verified_date: 2026-09-28
-verified_against: crates/agent/src/tools/skill_tool.rs (SkillTool L127, run L194, render_skill_envelope L48, with_invoker L162); crates/agent_skills/agent_skills.rs (read_skill_body L841); crates/agent/src/tools/lisp_eval_tool.rs (LispEvalTool L190); crates/agent/src/tools/render_template_tool.rs (RenderTemplateTool L94); crates/agent/src/thread.rs (enabled_tools L5156); crates/agent/src/tools/list_mcp_tools_tool.rs (ListMcpToolsTool L58, enumerate_tool_listing L119); kask/crates/hkask-lisp/src/hkask_lisp.rs (eval_sandboxed_with_budget L2008); kask/crates/hkask-tool-port/src/tool_port.rs (ToolPort L89); kask/crates/hkask-mcp/src/runtime.rs (impl ToolPort for McpRuntime L1530); kask/crates/hkask-regulation/src/energy.rs (CallCapManager, DEFAULT_RUNAWAY_CALL_CEILING L26); kask/crates/hkask-types/src/tool_response.rs (unwrap_tool_envelope L61); kask/crates/kask_bridge/src/mcp_servers.rs (BUILT_IN_MCP_SERVERS L55 — 13 servers incl. media and spreadsheet); crates/hkask-tool-invoker/src/hkask_tool_invoker.rs (ToolInvoker trait L121, shared_tool_invoker L148)
+verified_against: crates/agent/src/tools/skill_tool.rs (SkillTool L127, run L194, render_skill_envelope L48, with_invoker L162); crates/agent_skills/agent_skills.rs (read_skill_body L841); crates/agent/src/tools/lisp_eval_tool.rs (LispEvalTool L190); crates/agent/src/tools/render_template_tool.rs (RenderTemplateTool L94); crates/agent/src/thread.rs (enabled_tools L5156); crates/agent/src/tools/list_mcp_tools_tool.rs (ListMcpToolsTool L58, enumerate_tool_listing L119); kask/crates/hkask-lisp/src/hkask_lisp.rs (eval_sandboxed_with_budget L2008); kask/crates/hkask-tool-port/src/tool_port.rs (ToolPort L89); kask/crates/hkask-mcp/src/runtime.rs (impl ToolPort for McpRuntime L1530); kask/crates/hkask-regulation/src/energy.rs (CallCapManager, DEFAULT_RUNAWAY_CALL_CEILING L26); kask/crates/hkask-types/src/tool_response.rs (unwrap_tool_envelope L61); kask/crates/kask_bridge/src/mcp_servers.rs (BUILT_IN_MCP_SERVERS L49 — 11 servers incl. media); crates/hkask-tool-invoker/src/hkask_tool_invoker.rs (ToolInvoker trait L121, shared_tool_invoker L148)
 status: VERIFIED
 -->
 
@@ -212,7 +212,7 @@ The two dispatch paths into `ToolPort::invoke`:
 | Caller | Entry point | Action | Resolves to |
 | --- | --- | --- | --- |
 | Agent tool-use loop (LLM-decided) | `Thread::enabled_tools` (profile + delegation filters, D44 — no per-turn router) | LLM emits a tool_use event | `ToolPort::invoke` under the agent's `WebID` |
-| Widget direct dispatch | `hkask_tool_invoker::ToolInvoker` impls | UI gesture (kanban move, portfolio scrub, scenarios rung, spreadsheet save) | `ToolPort::invoke` under the `swarm-panel` persona |
+| Widget direct dispatch | `hkask_tool_invoker::ToolInvoker` impls | UI gesture (kanban move, scenarios rung) | `ToolPort::invoke` under the `swarm-panel` persona |
 
 Both share the same metering (`CallCapManager::charge_metered`), the same
 `reg.tool.*` span emission, and the same `unwrap_tool_envelope` result seam.
@@ -220,10 +220,10 @@ The only pre-dispatch refusal is `ToolPortError::EnergyBudgetExceeded` (the
 runaway-loop breaker). The model decides every tool call; skills do not
 dispatch MCP tools deterministically.
 
-The 12 on-disk MCP servers are enumerated by `BUILT_IN_MCP_SERVERS` in
-`kask/crates/kask_bridge/src/mcp_servers.rs`: `portfolio`, `companies`,
-`corpus`, `curator`, `kata-kanban`, `research`, `scenarios`,
-`prediction-markets`, `swarm`, `training`, `media`, `spreadsheet`.
+The 11 on-disk MCP servers are enumerated by `BUILT_IN_MCP_SERVERS` in
+`kask/crates/kask_bridge/src/mcp_servers.rs`: `companies`,
+`corpus`, `curator`, `experimentation`, `kata-kanban`, `research`, `scenarios`,
+`prediction-markets`, `swarm`, `training`, `media`.
 
 ## Credential Resolution Chain
 
@@ -497,9 +497,10 @@ re-renders of the streaming chat.
 **Corrections (2026-08-28, updated 2026-09-28):** the per-widget `create_*`
 factory functions were replaced by a `VizWidget` trait (`VIZ_TAG` /
 `LOG_PREFIX` / `parse_body` / `viz_of` / `new_widget`) with a shared
-`try_create` guard and an ordered `viz_factories()` registry — now of **six**
-widgets (graph, kanban, portfolio, scenarios, spreadsheet, swarm; the
-spreadsheet widget was added with the LogiSheets workbook what-if).
+`try_create` guard and an ordered `viz_factories()` registry — now of **four**
+widgets (graph, kanban, scenarios, swarm; the portfolio widget was removed
+with the portfolio server on 2026-10-15, and the spreadsheet widget with
+the spreadsheet capability the same day).
 `block_renderer` tries the media widget
 (`hkask_media_widget::create_media_widget`, discriminates on `kind`, needs
 `Window`) first, then the registered viz widgets (discriminate on `viz`).
@@ -556,21 +557,19 @@ classDiagram
     VizWidget <|.. GraphWidget : viz event_tree
     VizWidget <|.. KanbanWidget : viz kanban
     VizWidget <|.. ScenariosWidget : viz scenarios
-    VizWidget <|.. SpreadsheetWidget : viz spreadsheet
     VizWidget <|.. SwarmWidget : viz swarm_delegate_results
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-VIZ-CORE
 verified_date: 2026-09-28
-verified_against: crates/hkask-viz-core/src/hkask_viz_core.rs (VizWidget trait L85-96, impls GraphWidget L99 / KanbanWidget L114 / ScenariosWidget L144 / SpreadsheetWidget L159 / SwarmWidget L174, CachedWidget L197, try_create L220, viz_factories L249-257, MAX_CACHE_SIZE L260, VizCache L356, cache_key L395, block_renderer L409); crates/hkask-media-widget/src/hkask_media_widget.rs (create_media_widget L56); crates/agent_ui/src/conversation_view.rs (media_block_renderer wiring L3574)
+verified_against: crates/hkask-viz-core/src/hkask_viz_core.rs (VizWidget trait L77-93, impls GraphWidget L95 / KanbanWidget L110 / ScenariosWidget L125 / SwarmWidget L140, CachedWidget L163, try_create L186, viz_factories L215-223, MAX_CACHE_SIZE L224, VizCache L320, cache_key L359, block_renderer L373); crates/hkask-media-widget/src/hkask_media_widget.rs (create_media_widget L56); crates/agent_ui/src/conversation_view.rs (media_block_renderer wiring L3574)
 status: VERIFIED
 -->
 
 **Selection order** (intentional): media (`kind`) first, then graph
 (`viz: "event_tree"`), kanban (`viz: "kanban"`), scenarios
-(`viz: "scenarios"`), spreadsheet
-(`viz: "spreadsheet"`), swarm (`viz: "swarm_delegate_results"`). The viz
+(`viz: "scenarios"`), swarm (`viz: "swarm_delegate_results"`). The viz
 tags are disjoint, so factory order is arbitrary. A body claimed by none
 returns `None` and falls through to the default code-block renderer.
 

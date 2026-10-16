@@ -94,13 +94,13 @@ Inference routing (`crates/language_model`, `language_model_core`, `language_mod
 | `hkask-condenser`                                                                         | In-process thread condensation via `kask_bridge::BridgeThreadCondenser`.                                                                                                                                                                                                                                                  |
 | 13 MCP servers (on-disk set)                                                              | **The tools** — child processes over stdio (D3), governed by the in-process `McpRuntime`.                                                                                                                                                                                                                                                                             |
 
-### 2.3 MCP load set (13 on disk)
+### 2.3 MCP load set (11 on disk)
 
-The original 16 MCP servers were pruned to 10, then the **media** server was recovered (D35, 2026-08-28), the **spreadsheet** server was added (2026-09-18), and the **experimentation** server was added (2026-10-05) — **13 on disk**: `companies`, `corpus`, `curator`, `experimentation`, `kata-kanban`, `media`, `portfolio`, `prediction-markets`, `research`, `scenarios`, `spreadsheet`, `swarm`, `training`. The `BUILT_IN_MCP_SERVERS` constant in `kask/crates/kask_bridge/src/mcp_servers.rs:49-573` enumerates them (media entry at `mcp_servers.rs:487-549`, experimentation entry at `:551-572`); `builtin_mcp_server_ids()` (`mcp_servers.rs:577-579`) derives the ID list.[^anthropic-mcp]
+The original 16 MCP servers were pruned to 10, then the **media** server was recovered (D35, 2026-08-28), the **experimentation** server was added (2026-10-05), the **portfolio** server was removed (2026-10-15), and the **spreadsheet** server (added 2026-09-18) was removed with its capability (2026-10-15) — **11 on disk**: `companies`, `corpus`, `curator`, `experimentation`, `kata-kanban`, `media`, `prediction-markets`, `research`, `scenarios`, `swarm`, `training`. The `BUILT_IN_MCP_SERVERS` constant in `kask/crates/kask_bridge/src/mcp_servers.rs:49-513` enumerates them (media entry at `mcp_servers.rs:446-488`, experimentation entry at `:490-513`); `builtin_mcp_server_ids()` (`mcp_servers.rs:516-518`) derives the ID list.[^anthropic-mcp]
 
-| On disk (13)                                                                                                          |
+| On disk (11)                                                                                                          |
 | --------------------------------------------------------------------------------------------------------------------- |
-| `companies`, `corpus`, `curator`, `experimentation`, `kata-kanban`, `media`, `portfolio`, `prediction-markets`, `research`, `scenarios`, `spreadsheet`, `swarm`, `training` |
+| `companies`, `corpus`, `curator`, `experimentation`, `kata-kanban`, `media`, `prediction-markets`, `research`, `scenarios`, `swarm`, `training` |
 
 > The Curator MCP server is distinct from the native Curator agent and may be disabled by settings. The media server is pinned at exactly 102 registered tools by `tool_surface_is_exactly_102_registered_tools` (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:485`); its OMC mapping is checked across the same registered set at `:492`.
 
@@ -330,7 +330,7 @@ zed-kask's `Cargo.toml` adds `kask/crates/*` + `kask/mcp-servers/*` as workspace
 
 ### 14.3 Documentation home (`kask/docs/`)
 
-All Kask documentation lives **inside zed-kask** under `kask/docs/`. The 2026-08-28 condensation removed the former `explanation/` and `qa/` directories and folded completed plans into their successors; `plans/` remains only for active work such as the Logisheets capability plan. The documentation standard retains a below-70 target, while the current tree count is validated separately rather than asserted here:
+All Kask documentation lives **inside zed-kask** under `kask/docs/`. The 2026-08-28 condensation removed the former `explanation/` and `qa/` directories and folded completed plans into their successors; `plans/` remains only for active work (the core/MCP repair plan, the cybernetic nervous system alignment plan). The documentation standard retains a below-70 target, while the current tree count is validated separately rather than asserted here:
 
 - `kask/docs/architecture/` — this plan (`zed-host-architecture-plan.md`), the memory system ([`memory-system-specification.md`](memory-system-specification.md)), standardized artifact storage, the agent system prompt catalogue, principles, ADRs.
 - `kask/docs/reference/` — reference documentation (MCP servers incl. the forecasting stack, settings, regulation spans, skills).
@@ -339,7 +339,7 @@ All Kask documentation lives **inside zed-kask** under `kask/docs/`. The 2026-08
 - `DIVERGENCE.md` stays at the zed-kask **repo root** (the fork's headline doc, referenced on every sync) and points into `kask/docs/` for detail.
   The `mdz-axo/hKask` repo is archived with a `README.md` pointing to `zed-kask/kask/`.
 
-Completed plan and explanation content was repointed: swarm system docs → `kask/docs/diataxis/swarm_system/`, memory → `kask/docs/architecture/memory-system-specification.md`, forecasting → `kask/docs/reference/mcp-servers/README.md#the-forecasting-stack-three-layer-architecture`, and the implemented inference-Regulation loop → `kask/docs/diataxis/hkask-regulation/{explanation,reference}.md`. The remaining `kask/docs/plans/logisheets-spreadsheet-capability-plan.md` is active plan content.
+Completed plan and explanation content was repointed: swarm system docs → `kask/docs/diataxis/swarm_system/`, memory → `kask/docs/architecture/memory-system-specification.md`, forecasting → `kask/docs/reference/mcp-servers/README.md#the-forecasting-stack-three-layer-architecture`, and the implemented inference-Regulation loop → `kask/docs/diataxis/hkask-regulation/{explanation,reference}.md`.
 
 ### 14.4 Migration (complete)
 

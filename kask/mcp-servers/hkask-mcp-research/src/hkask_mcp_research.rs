@@ -27,32 +27,27 @@ use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 use rusqlite::Connection;
 
 use crate::evidence_service::{
-    map_spreadsheet_error, run_source_record, search_url_in_domains, sensitivity_json,
-    supporting_evidence_note, validate_extraction,
+    run_source_record, search_url_in_domains, sensitivity_json, supporting_evidence_note,
+    validate_extraction,
 };
 use crate::research::db::*;
 use crate::synthetic_service::items_synthetic_feed;
-use hkask_spreadsheet::PublishOptions;
-use hkask_types::spreadsheet::{
-    AnalyticalTable, ArtifactOrigin, ColumnKind, SpreadsheetAccess, TableColumn, TableValue,
-};
 
 use crate::research::{
     AnnotateResearchRunRequest, BeginResearchRunRequest, BrowseOutput, BrowseRequest,
     CiteSourcesRequest, CiteStyle, Continuation, DEFAULT_CACHE_MAX_ENTRIES, DEFAULT_CACHE_TTL_SECS,
     DEFAULT_PROFILE, DeleteSyntheticRequest, DiscoverRequest, EditTagRequest,
-    EvaluateEvidenceRequest, EvidencePresentation, ExtractOptions, ExtractOutput, ExtractRequest,
-    FetchRequest, FindSimilarOutput, FindSimilarRequest, FindSimilarResultOutput,
-    FinishResearchRunRequest, GetEntriesRequest, GetResearchRunRequest, ImportOpmlRequest,
-    ListSubscriptionsRequest, MAX_CACHE_MAX_ENTRIES, MAX_CACHE_TTL_SECS, MAX_INSTRUCTION_LENGTH,
-    MAX_JSON_PROMPT_LENGTH, MAX_JSON_SCHEMA_BYTES, MAX_QUERY_LENGTH, MAX_URL_LENGTH,
-    MarkReadRequest, NewResearchRun, PingOutput, ProviderProfileOutput, ProviderRecommendation,
-    RateLimiter, RerankInfo, RerankOutcome, ResolvePaperRequest, ResponseCache, RunSourceRecord,
-    SearchMetadata, SearchOutput, SearchQuery, SearchRequest, SearchResultOutput, SearchStrategy,
-    SubscribeRequest, SynthesizeRequest, UnreadCountRequest, UnsubscribeRequest, WebSearchPort,
-    build_provider_pool, cache_key, discover_feeds, fetch_feed, llm_rerank, normalize_closed_vocab,
-    parse_closed_vocab, parse_closed_vocab_const, provider_profile, score_evidence_set,
-    validated_fetch_client,
+    EvaluateEvidenceRequest, ExtractOptions, ExtractOutput, ExtractRequest, FetchRequest,
+    FindSimilarOutput, FindSimilarRequest, FindSimilarResultOutput, FinishResearchRunRequest,
+    GetEntriesRequest, GetResearchRunRequest, ImportOpmlRequest, ListSubscriptionsRequest,
+    MAX_CACHE_MAX_ENTRIES, MAX_CACHE_TTL_SECS, MAX_INSTRUCTION_LENGTH, MAX_JSON_PROMPT_LENGTH,
+    MAX_JSON_SCHEMA_BYTES, MAX_QUERY_LENGTH, MAX_URL_LENGTH, MarkReadRequest, NewResearchRun,
+    PingOutput, ProviderProfileOutput, ProviderRecommendation, RateLimiter, RerankInfo,
+    RerankOutcome, ResolvePaperRequest, ResponseCache, RunSourceRecord, SearchMetadata,
+    SearchOutput, SearchQuery, SearchRequest, SearchResultOutput, SearchStrategy, SubscribeRequest,
+    SynthesizeRequest, UnreadCountRequest, UnsubscribeRequest, WebSearchPort, build_provider_pool,
+    cache_key, discover_feeds, fetch_feed, llm_rerank, normalize_closed_vocab, parse_closed_vocab,
+    parse_closed_vocab_const, provider_profile, score_evidence_set, validated_fetch_client,
 };
 
 // ── Constants ──
@@ -101,12 +96,6 @@ hkask_mcp_server::mcp_server!(
         /// with a surfaced reason naming the setting — unset is a legitimate
         /// degraded mode because the floor exists (never a hidden constant).
         pub embedding_model: Option<String>,
-        /// The spreadsheet engine actor for the `InlineTable` presentation
-        /// of `evaluate_evidence` (SP-05, plan §10 Phase 7) — a per-instance
-        /// dependency like the pool, mirroring the portfolio/companies
-        /// producers, so tests run against temp-dir artifact roots instead
-        /// of the production tree.
-        pub spreadsheet: Arc<hkask_spreadsheet::WorkbookService>,
     }
 );
 
@@ -1766,7 +1755,7 @@ impl ResearchServer {
     // ═══════════════════ Evidence evaluation ═══════════════════
 
     #[tool(
-        description = "Evaluate retrieved evidence against a research question. Scores each artifact deterministically into per-component signals (base, corroboration as independent evidence units with syndication-aware content clustering, recency, content) with basis strings, plus a set-level report (content clusters, ordering sensitivity under weight-profile substitution, duplication mode). Emits SEPIO-anchored confidence and corroboration links. Use after web_search/web_extract to assess evidence quality before synthesis. Optional presentation choice: `DataOnly` (default) keeps the plain JSON report; `InlineTable` additionally publishes the per-artifact evaluation matrix as a bounded inline table and appends its ```spreadsheet display hint for inline rendering."
+        description = "Evaluate retrieved evidence against a research question. Scores each artifact deterministically into per-component signals (base, corroboration as independent evidence units with syndication-aware content clustering, recency, content) with basis strings, plus a set-level report (content clusters, ordering sensitivity under weight-profile substitution, duplication mode). Emits SEPIO-anchored confidence and corroboration links. Use after web_search/web_extract to assess evidence quality before synthesis."
     )]
     pub async fn evaluate_evidence(
         &self,
@@ -1774,7 +1763,6 @@ impl ResearchServer {
             question,
             artifacts,
             duplication,
-            presentation,
         }): Parameters<EvaluateEvidenceRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "evaluate_evidence", async {
@@ -1795,22 +1783,6 @@ impl ResearchServer {
                     parse_closed_vocab("duplication", raw, &[(&["semantic"], "semantic")])
                         .map_err(McpToolError::from)?,
                 ),
-            };
-            // Presentation is a closed vocabulary (plan §6: explicit
-            // choice): parse_closed_vocab normalizes emission noise;
-            // absent = DataOnly (the former serde default, now explicit
-            // at the boundary).
-            let presentation = match presentation.as_deref() {
-                None => EvidencePresentation::DataOnly,
-                Some(raw) => parse_closed_vocab(
-                    "presentation",
-                    raw,
-                    &[
-                        (&["DataOnly"], EvidencePresentation::DataOnly),
-                        (&["InlineTable"], EvidencePresentation::InlineTable),
-                    ],
-                )
-                .map_err(McpToolError::from)?,
             };
 
             // Tier-2 duplication (parameter-gated): the caller opts in with
@@ -1957,9 +1929,6 @@ impl ResearchServer {
                 set_block["duplication_reason"] = serde_json::json!(reason);
             }
 
-            // The matrix presentation (below) needs the question after the
-            // result JSON has moved it.
-            let question_for_matrix = question.clone();
             let mut result = serde_json::json!({
                 "question": question,
                 "average_confidence": (average_confidence * 100.0).round() / 100.0,
@@ -1972,84 +1941,6 @@ impl ResearchServer {
             result[hkask_bridge_ontology::pko::STEP_VERIFICATION] =
                 serde_json::json!("evidence_quality_assessed");
 
-            // SP-05 (plan §10 Phase 7 — evidence-evaluation matrix): the
-            // opt-in inline-table presentation. The default (DataOnly)
-            // output is unchanged: no key added.
-            if presentation == EvidencePresentation::InlineTable {
-                let origin = ArtifactOrigin::new(
-                    "hkask-mcp-research".to_string(),
-                    "evaluate_evidence".to_string(),
-                    serde_json::json!({"question": question_for_matrix}),
-                )
-                .map_err(map_spreadsheet_error)?;
-                let matrix_rows: Vec<Vec<TableValue>> = artifacts
-                    .iter()
-                    .zip(scored.artifacts.iter())
-                    .map(|(artifact, score)| {
-                        vec![
-                            artifact
-                                .title
-                                .clone()
-                                .map(TableValue::Text)
-                                .unwrap_or(TableValue::Empty),
-                            TableValue::Text(artifact.url.clone()),
-                            TableValue::Number((score.confidence * 100.0).round() / 100.0),
-                            TableValue::Number(score.corroboration_count as f64),
-                            score
-                                .published_age_days
-                                .map(|days| TableValue::Number(days as f64))
-                                .unwrap_or(TableValue::Empty),
-                        ]
-                    })
-                    .collect();
-                let table = AnalyticalTable::new(
-                    format!("Evidence evaluation — {question_for_matrix}"),
-                    "Evidence".into(),
-                    vec![
-                        TableColumn {
-                            id: "title".into(),
-                            label: "Title".into(),
-                            kind: ColumnKind::Text,
-                        },
-                        TableColumn {
-                            id: "url".into(),
-                            label: "URL".into(),
-                            kind: ColumnKind::Text,
-                        },
-                        TableColumn {
-                            id: "confidence".into(),
-                            label: "Confidence".into(),
-                            kind: ColumnKind::Number,
-                        },
-                        TableColumn {
-                            id: "corroborations".into(),
-                            label: "Corroborations".into(),
-                            kind: ColumnKind::Number,
-                        },
-                        TableColumn {
-                            id: "age_days".into(),
-                            label: "Age (days)".into(),
-                            kind: ColumnKind::Number,
-                        },
-                    ],
-                    matrix_rows,
-                )
-                .map_err(map_spreadsheet_error)?;
-                let publication = self
-                    .spreadsheet
-                    .publish(
-                        origin,
-                        table,
-                        PublishOptions {
-                            access: SpreadsheetAccess::InlineTable,
-                        },
-                    )
-                    .await
-                    .map_err(map_spreadsheet_error)?;
-                result["display_hint"] = serde_json::Value::String(
-                    publication.display_hint().map_err(map_spreadsheet_error)?,
-                );
-            }
             Ok(result)
         })
         .await
@@ -2309,19 +2200,6 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                     detail: e.to_string(),
                 })?;
 
-            // The spreadsheet engine actor for the InlineTable presentation
-            // (SP-05) — per-instance, mirroring the portfolio/companies
-            // producers.
-            let spreadsheet =
-                hkask_spreadsheet::WorkbookService::start_with_root(
-                    hkask_spreadsheet::artifact_store::production_root(),
-                )
-                .map_err(|error| {
-                    hkask_mcp_server::McpError::Infrastructure(
-                        hkask_types::InfrastructureError::Io(error.to_string()),
-                    )
-                })?;
-
             // Strict-policy fetch client for `rss_discover_feeds` — every
             // redirect hop and every connect-time resolution gated.
             let discover_client = validated_fetch_client().map_err(|e| {
@@ -2355,7 +2233,6 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 // same construction-seam resolution; unset is a legitimate
                 // degraded mode (the shingle floor exists).
                 hkask_inference::model_constants::embedding_model(),
-                spreadsheet,
             ))
         },
         credential_requirements(),
@@ -2413,11 +2290,6 @@ mod tool_surface_tests {
                 "evaluate_evidence",
                 "duplication",
                 serde_json::json!(["semantic"]),
-            ),
-            (
-                "evaluate_evidence",
-                "presentation",
-                serde_json::json!(["DataOnly", "InlineTable"]),
             ),
         ] {
             let tool = tools

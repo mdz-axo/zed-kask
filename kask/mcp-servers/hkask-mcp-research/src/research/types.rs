@@ -244,13 +244,6 @@ fn cite_style_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
     json_schema!({"type": "string", "enum": ["apa", "bibtex", "chicago", "json"]})
 }
 
-fn presentation_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
-    json_schema!({"anyOf": [
-        {"type": "string", "enum": ["DataOnly", "InlineTable"]},
-        {"type": "null"}
-    ]})
-}
-
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct SearchRequest {
     pub query: String,
@@ -425,24 +418,6 @@ pub struct EvaluateEvidenceRequest {
     /// the floor with a surfaced reason — never silent.
     #[schemars(schema_with = "duplication_schema")]
     pub duplication: Option<String>,
-    /// The explicit presentation choice (plan §6: callers explicitly
-    /// choose; no hidden mode switches). `DataOnly` (default) keeps the
-    /// plain JSON report; `InlineTable` additionally publishes the
-    /// per-artifact evaluation matrix as a bounded inline table block and
-    /// appends its ```spreadsheet display hint for inline rendering
-    /// (SP-05, plan §10 Phase 7 — evidence-evaluation matrix). Quoted or
-    /// padded values are normalized at the boundary; absent = DataOnly.
-    #[schemars(schema_with = "presentation_schema")]
-    pub presentation: Option<String>,
-}
-
-/// The presentation choice for an evidence evaluation (plan §6).
-/// Constructed by the boundary parse (`parse_closed_vocab`) — nothing
-/// deserializes or schema-generates this enum directly.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EvidencePresentation {
-    DataOnly,
-    InlineTable,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
