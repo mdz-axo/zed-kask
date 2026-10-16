@@ -122,16 +122,76 @@ The counts are probabilistic (P — model-produced, critiqued by the operator wh
 | `inquiry-engine.j2` | Inquiry experiment: branching, revising chain of thought that emits deep-dive delegation requests (routed via `MC-1` to canonical skills) and skill-match queries. |
 | `ellipsis-analysis.j2` | Apply Bloom's five-step method to detect gaps in context, classify them as ellipsis (deliberate) or leak (unintentional), and find what is not inferno (Calvino: the exceptional, supported element worth preserving). Used by the experiment step for ellipsis perspective. |
 
-To render a template, call `render_template` with the template ref and these **top-level** context keys (not nested under `variables`). Pass the prior step's result as the named condition, not as `current_grasp` or `predicted_calibration`:
+To render a template, call the `render_template` tool with the template ref (e.g., `metacognition/meta-grasp-current`) and a context object with the required variables. Context keys are **top-level** (not nested under `variables`). Pass the prior step's result as the named condition (`current_condition` = Step 1 result, `target_condition` = Step 2 result, `prediction` = Step 3 result), not as `current_grasp` or `predicted_calibration`; `gap_before` is the measured Step 2 value (>0), carried unchanged.
 
-| Template ref | Required context keys | Optional context keys |
-|---|---|---|
-| `metacognition/meta-grasp-current` | `goal` | `session_history`, `current_state`, `prior_outcomes`, `prev_grasp`, `prior_calibration` |
-| `metacognition/meta-establish-target` | `goal`, `current_condition` (Step 1 result) | — |
-| `metacognition/meta-predict` | `goal`, `current_condition` (Step 1 result), `target_condition` (Step 2 result), measured `gap_before` (>0) | `prev_prediction` |
-| `metacognition/meta-experiment` | `goal`, `current_condition` (Step 1 result), `prediction` (Step 3 result) | `perspectives`, `context_text`, `prev_experiment` |
-| `metacognition/ellipsis-analysis` | `text`, `expectations`, `biases`, `assumptions`, `domain` | — |
-| `metacognition/inquiry-engine` | `problem`, `domain`, `constraints`, `max_thoughts` | `prior_chain`, `prior_delegation_results`, `prior_skill_match_results` |
+Copyable `render_template` context blocks (variable names from each template's `[inference] contract`):
+
+`metacognition/meta-grasp-current`:
+```json
+{
+  "goal": "<the user's goal>",
+  "session_history": "<prior session turns cited as evidence>",
+  "current_state": { "<regulation counter or bot status>": "<observed value>" },
+  "prior_outcomes": ["<resolved goal outcome>"],
+  "prev_grasp": { "<previous iteration's measured field>": "<measured value>" },
+  "prior_calibration": { "<resolved goal>": { "confidence": 0.5, "outcome": true } }
+}
+```
+
+`metacognition/meta-establish-target`:
+```json
+{
+  "goal": "<the user's goal>",
+  "current_condition": { "<Step 1 grasp result field>": "<measured value>" }
+}
+```
+
+`metacognition/meta-predict`:
+```json
+{
+  "goal": "<the user's goal>",
+  "current_condition": { "<Step 1 grasp result field>": "<measured value>" },
+  "target_condition": { "<Step 2 target field>": "<declared value>" },
+  "gap_before": 0.71,
+  "prev_prediction": { "<previous prediction field>": "<predicted value>" }
+}
+```
+
+`metacognition/meta-experiment`:
+```json
+{
+  "goal": "<the user's goal>",
+  "current_condition": { "<Step 1 grasp result field>": "<measured value>" },
+  "prediction": { "<Step 3 prediction field>": "<predicted value>" },
+  "perspectives": ["falstaffian", "ellipsis"],
+  "context_text": "<about 2000 characters of context for the ellipsis analysis>",
+  "prev_experiment": { "<previous experiment field>": "<result value>" }
+}
+```
+
+`metacognition/ellipsis-analysis`:
+```json
+{
+  "text": "<the context text to analyze>",
+  "expectations": ["<baseline expectation to check>"],
+  "biases": ["<known cognitive bias>"],
+  "assumptions": ["<assumption to question>"],
+  "domain": "<the domain>"
+}
+```
+
+`metacognition/inquiry-engine`:
+```json
+{
+  "problem": "<the problem to reason through>",
+  "domain": "<the domain>",
+  "constraints": ["<constraint>"],
+  "max_thoughts": 12,
+  "prior_chain": [{ "thoughtNumber": 1, "thought": "<prior thought>" }],
+  "prior_delegation_results": { "<delegated skill>": { "invoked": true, "result": "<insight>" } },
+  "prior_skill_match_results": { "<matched skill>": "<insight>" }
+}
+```
 
 A `render_template` call renders the prompt; it does not execute the inference step or produce that step's result. Use the measured result of each step when supplying the next step's condition.
 

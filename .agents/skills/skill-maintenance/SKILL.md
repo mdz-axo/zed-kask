@@ -249,14 +249,79 @@ Validate both directions: render `skill-maintenance/skill-maintenance-validate` 
 
 To render a template, call the `render_template` tool with the template ref (e.g., `skill-maintenance/skill-maintenance-validate`) and a context object with the required variables.
 
-Template context variables (from each template's [inference] contract):
-- `skill-maintenance-audit.j2`: `skill_name`,`workspace_context`
-- `skill-maintenance-optimize.j2`: `skill_name`,`objective`,`baseline`,`tasks`,`candidates`,`observations`
-- `logic-critique-template.j2`: `goal`,`target_path`,`target_content`,`template_type`,`invoking_phase`,`acceptance_cases`
-- `logic-compare-candidates.j2`: `goal`,`invoking_phase`,`acceptance_cases`,`candidates`,`observations`
-- `logic-compose-proposal.j2`: `goal`,`target_path`,`original_content`,`valid_concerns`,`comparison`,`winning_content`,`user_counter_proposal`
-- `skill-maintenance-validate.j2`: `target`,`skill_name`
-- `logic-critique-critique.j2`: `goal`,`prior_critique`
+Copyable `render_template` context blocks (field names and types from each template's `[inference] contract`):
+
+`skill-maintenance/logic-critique-template`:
+```json
+{
+  "goal": "<the target template's {# goal: ... #} annotation text>",
+  "target_path": "<repo-relative path to the .j2 under audit>",
+  "target_content": "<the full current content of the .j2>",
+  "template_type": "<live template or legacy manifest>",
+  "invoking_phase": "<the SKILL.md phase that invokes the template>",
+  "acceptance_cases": ["<fixed acceptance case: representative success, failure, or downstream handoff>"]
+}
+```
+
+`skill-maintenance/logic-critique-critique`:
+```json
+{
+  "goal": "<the target template's {# goal: ... #} annotation text>",
+  "prior_critique": { "flaws": ["<flaw>"], "valid_concerns": ["<goal-anchored concern>"], "spurious_concerns": ["<spurious concern>"], "verdict": "<the prior critique's verdict>" }
+}
+```
+
+`skill-maintenance/logic-compare-candidates`:
+```json
+{
+  "goal": "<the target template's {# goal: ... #} annotation text>",
+  "invoking_phase": "<the SKILL.md phase that invokes the template>",
+  "acceptance_cases": ["<fixed acceptance case: representative success, failure, or downstream handoff>"],
+  "candidates": ["<candidate id and artifact path>"],
+  "observations": ["<recorded observation with evaluator provenance>"]
+}
+```
+
+`skill-maintenance/logic-compose-proposal`:
+```json
+{
+  "goal": "<the target template's {# goal: ... #} annotation text>",
+  "target_path": "<repo-relative path to the .j2 under audit>",
+  "original_content": "<the full current content of the .j2>",
+  "valid_concerns": ["<goal-anchored concern kept by the critique-critique pass>"],
+  "comparison": { "comparisons": ["<per-candidate comparison>"], "proposed_candidate": "<candidate named by the comparison, or null>", "proposal_status": "<status>", "evidence_gaps": ["<missing observation or failed hard gate>"] },
+  "winning_content": "<the simplest passing candidate's full content>",
+  "user_counter_proposal": "<the operator's counter-proposal, or null>"
+}
+```
+
+`skill-maintenance/skill-maintenance-validate`:
+```json
+{
+  "target": "<the target to validate>",
+  "skill_name": "<the skill name being validated, or null>"
+}
+```
+
+`skill-maintenance/skill-maintenance-audit`:
+```json
+{
+  "skill_name": "<the skill name to audit>",
+  "workspace_context": {}
+}
+```
+
+`skill-maintenance/skill-maintenance-optimize`:
+```json
+{
+  "skill_name": "<the skill name being optimized>",
+  "objective": "<the operator's task/outcome for the optimization>",
+  "baseline": {},
+  "tasks": ["<predeclared task with expected result: representative, negative, boundary, or held-out>"],
+  "candidates": ["<candidate design: id and artifact path>"],
+  "observations": ["<recorded observation from running the fixed tasks on a candidate>"]
+}
+```
 
 
 ## Constraints

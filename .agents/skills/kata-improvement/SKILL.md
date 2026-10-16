@@ -127,10 +127,37 @@ Render `kata-improvement/improvement-step4-experiment` with `context`, `learner_
 
 To render a template, call the `render_template` tool with the template ref (e.g., `kata-improvement/beginner-observation-drill`) and a context object with the required variables.
 
-Template context variables (from each template's [inference] contract — the 11 templates share a uniform shape):
-- All templates: `context` (object), `learner_bot` (string), `previous_steps` (array|null)
-- Coaching templates (q1–q5) additionally: `learner_answer` (string — required for the ASSESS render; the ASK phase emits fixed D question text directly)
-- `improvement-step1-direction.j2` additionally: `prior_kanban` (object|null), `prior_boards` (object|null)
+Copyable `render_template` context blocks (field names and types from each template's `[inference] contract` — the 11 templates share a uniform base shape with two exceptions):
+
+`kata-improvement/beginner-observation-drill`, `kata-improvement/beginner-pdca-cycle`, `kata-improvement/improvement-step2-current`, `kata-improvement/improvement-step3-target`, `kata-improvement/improvement-step4-experiment` (base shape):
+```json
+{
+  "context": {},
+  "learner_bot": "<learner name>",
+  "previous_steps": []
+}
+```
+
+`kata-improvement/coaching-q1-target`, `kata-improvement/coaching-q2-actual`, `kata-improvement/coaching-q3-obstacles`, `kata-improvement/coaching-q4-experiment`, `kata-improvement/coaching-q5-learn` (base shape + `learner_answer` — required for the ASSESS render; the ASK phase emits fixed D question text directly):
+```json
+{
+  "context": {},
+  "learner_bot": "<learner name>",
+  "previous_steps": [],
+  "learner_answer": "<the learner's answer to this coach question>"
+}
+```
+
+`kata-improvement/improvement-step1-direction` (base shape + `prior_kanban` (`object|null`) + `prior_boards` (`object|null`)):
+```json
+{
+  "context": {},
+  "prior_kanban": { "tasks": [ { "title": "<prior task title>", "status": "<status>" } ] },
+  "prior_boards": { "boards": [ { "name": "<board name>", "board_id": "<board id>", "column_count": 0 } ] },
+  "learner_bot": "<learner name>",
+  "previous_steps": []
+}
+```
 
 ## Regression case
 

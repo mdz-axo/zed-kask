@@ -256,16 +256,102 @@ when all four scores are >= 0.60; the market-prior gate requires
 
 To render a template, call the `render_template` tool with the template ref (e.g., `superforecasting/stage_0_triage`) and a context object with the required variables.
 
-Template context variables (from each template's [inference] contract):
-- `stage_0_triage.j2`: `forecasting_question`, `domain`, `time_horizon`
-- `stage_1_fermi_decompose.j2`: `forecasting_question`, `triage_output`
-- `stage_2_outside_view.j2`: `forecasting_question`, `sub_questions`, `knowns`, `market_context`, `expert_prior`
-- `stage_3_probability_estimate.j2`: `forecasting_question`, `hypotheses`, `counterfactuals`, `starting_probability`, `outside_view_output`, `sub_question_tree`, `topological_order`, `outcome_node_id`
-- `stage_4_evidence_update.j2`: `forecasting_question`, `prior_probability`, `hypothesis_analysis`, `new_evidence`, `market_context`, `expert_prior`
-- `stage_5_synthesis.j2`: `forecasting_question`, `updated_probability`, `hypothesis_analysis`
-- `stage_6_calibration.j2`: `forecasting_question`, `synthesized_probability`, `synthesis_output`, `server_calibrated_probability`
-- `stage_7_record.j2`: `forecasting_question`, `final_probability`, `confidence_level`, `pipeline_summary`, `resolution_criteria`, `expiration_date`
-- `forecast-quality-gate.j2`: `forecasting_question`, `calibration_result`, `record_result`, `synthesis_output`
+Copyable `render_template` context blocks (variable names from each template's `[inference] contract`):
+
+`superforecasting/stage_0_triage`:
+```json
+{
+  "forecasting_question": "<the question being forecast>",
+  "domain": "<the domain>",
+  "time_horizon": "<tactical|strategic|long_term>"
+}
+```
+
+`superforecasting/stage_1_fermi_decompose`:
+```json
+{
+  "forecasting_question": "<the question being forecast>",
+  "triage_output": { "difficulty_level": "goldilocks", "rationale": "<stage 0 triage rationale>" }
+}
+```
+
+`superforecasting/stage_2_outside_view`:
+```json
+{
+  "forecasting_question": "<the question being forecast>",
+  "sub_questions": ["<tractable sub-question>"],
+  "knowns": ["<established fact>"],
+  "market_context": [{ "market": { "source": "<venue>", "question": "<market question>", "probability": 0.4, "reliability_tier": "<high|low>", "spread": 0.02, "deadline": "<date>" }, "match_confidence": "<high|medium|low>" }],
+  "expert_prior": [{ "wave": "<wave>", "question": "<question>", "median_probability": 0.4, "interquartile_range": "<IQR>", "time_horizon": "<horizon>", "scenario": "<conditioning>" }]
+}
+```
+
+`superforecasting/stage_3_probability_estimate`:
+```json
+{
+  "forecasting_question": "<the question being forecast>",
+  "hypotheses": [{ "<hypothesis field>": "<value>" }],
+  "counterfactuals": [{ "<counterfactual field>": "<value>" }],
+  "starting_probability": 0.35,
+  "outside_view_output": { "reference_classes": [{ "class_name": "<class>", "description": "<description>" }], "anchor_source": { "kind": "<historical|market|expert>", "source": "<source>", "rationale": "<comparability rationale>" } },
+  "sub_question_tree": [{ "id": "sq1", "question": "<sub-question>", "parent_id": null, "role": "<necessary|sufficient|contributing>" }],
+  "topological_order": ["sq1"],
+  "outcome_node_id": "sq1"
+}
+```
+
+`superforecasting/stage_4_evidence_update`:
+```json
+{
+  "forecasting_question": "<the question being forecast>",
+  "prior_probability": 0.35,
+  "hypothesis_analysis": { "primary_hypothesis": "<highest-probability hypothesis>", "primary_probability": 0.4 },
+  "new_evidence": ["<genuinely new evidence item>"],
+  "market_context": [{ "market": { "source": "<venue>", "question": "<market question>", "probability": 0.4, "reliability_tier": "<high|low>", "spread": 0.02, "volume": 1000, "deadline": "<date>" }, "match_confidence": "<high|medium|low>" }],
+  "expert_prior": [{ "wave": "<wave>", "question": "<question>", "scenario": "<conditioning>", "time_horizon": "<horizon>", "rationale_excerpt": "<expert rationale>" }]
+}
+```
+
+`superforecasting/stage_5_synthesis`:
+```json
+{
+  "forecasting_question": "<the question being forecast>",
+  "updated_probability": 0.4,
+  "hypothesis_analysis": { "primary_hypothesis": "<highest-probability hypothesis>" }
+}
+```
+
+`superforecasting/stage_6_calibration`:
+```json
+{
+  "forecasting_question": "<the question being forecast>",
+  "synthesized_probability": 0.42,
+  "synthesis_output": { "causal_models": [{ "model_name": "<model>" }], "dissenting_views": [{ "view": "<view>" }] },
+  "server_calibrated_probability": 0.42
+}
+```
+
+`superforecasting/stage_7_record`:
+```json
+{
+  "forecasting_question": "<the question being forecast>",
+  "final_probability": 0.42,
+  "confidence_level": "<low|medium|high>",
+  "pipeline_summary": { "triage_difficulty": "goldilocks", "sub_question_count": 4, "reference_class_count": 2, "hypothesis_count": 3, "evidence_count": 5 },
+  "resolution_criteria": "<observable rule for yes/no resolution>",
+  "expiration_date": "<ISO date the forecast should be evaluated>"
+}
+```
+
+`superforecasting/forecast-quality-gate`:
+```json
+{
+  "forecasting_question": "<the question being forecast>",
+  "calibration_result": { "final_probability": 0.42, "confidence_level": "<low|medium|high>", "precision_justification": "<justification>", "defensible_range": { "lower": 0.35, "upper": 0.5 } },
+  "record_result": { "forecast_record": { "question": "<question>", "probability": 0.42, "resolution_criteria": "<criteria>", "expiration_date": "<date>" }, "tracking_id": "<id>" },
+  "synthesis_output": { "causal_models": [{ "model_name": "<model>" }], "dissenting_views": [{ "view": "<view>" }] }
+}
+```
 
 
 ## Constraints
