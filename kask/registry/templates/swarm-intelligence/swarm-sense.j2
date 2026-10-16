@@ -14,17 +14,12 @@ contract:
     wallet_state: object|null
     required_transforms: array
     covered_transforms: array
-    variety_coverage: number
-    diversity: number
     alignment: number
-    cohesion: number
-    separation: number
     trivial_task: boolean
     next_focus_hint: string
     delegate_notes: string
     kanban_tasks: array|null
     stigmergy: array
-    redundancy_pairs: array
     per_agent_metrics: array
 ---
 {# Phase 1 — SENSE (CHECK: measure current swarm state against Onto4MAT + backend) #}
@@ -113,7 +108,7 @@ should be pre-populated):
   stamped one.
 - For each task with a `delegate_result`, use the `delegate_result.agent_id`,
   `delegate_result.latency_ms`, and `deterministic_verdict.pass` as the
-  per-agent fitness signal (Step 5b), alongside the stigmergic memory query.
+  as the per-agent fitness signal (Step 4), alongside the stigmergic memory query.
   A task with `deterministic_verdict.pass = false` and `provenance =
   "deterministic"` is a confirmed failure — surface it in `next_focus_hint`.
 - The kanban board is the source of truth for task state; SENSE reads it, it
@@ -129,14 +124,14 @@ Record the kanban task list as `kanban_tasks` in the output.
 For each agent in the swarm roster, call `swarm_search_knowledge_local` with
 `agent_name = <agent_id>` and `query = "delegation"` (limit 10). This reads
 the ACO stigmergic pheromone trail — the persisted latency, task_success, and
-response annotations from prior delegations. The results feed Step 5b's
+response annotations from prior delegations. The results feed Step 4's
 per-agent fitness computation alongside any `delegate_results` from the prior
 iteration.
 
 If the call fails or returns `memory_unconfigured`, record `stigmergy = []`
 for that agent — do NOT fabricate fitness signals from an empty result (the
 `.rules` absence ≠ 0 trap). An agent with no stigmergy trail is a new or
-never-delegated agent; Step 5b will report `energy = null` and
+never-delegated agent; Step 4 will report `energy = null` and
 `distanceToGoal = null` for it.
 
 Record the stigmergy results as `stigmergy: [{ agent_id, fragments: [...] }, ...]`
@@ -173,7 +168,7 @@ optionally the wallet envelope.
 
 Record the raw workspace_roster and wallet_state from the pre-fetched data.
 
-## Step 2 — Derive required_transforms from the task
+## Step 2 — Derive required_transforms and covered_transforms
 
 From the natural-language task, derive the set of input→output transforms the
 swarm must cover. Each transform is a (input_type, output_type) pair. This is
@@ -183,9 +178,19 @@ deterministically.
 If the task implies no transforms (trivial), set required_transforms = [] and
 trivial_task = true.
 
-## Step 3 — Compute Onto4MAT Team Properties
+Derive `covered_transforms` = the set of (input_type, output_type) pairs
+covered by some hired agent's (`accepts[]`, `produces[]`).
 
-Map the ABW roster onto Onto4MAT (Hepworth, Baxter & Abbass, 2022, arXiv:2203.12955) team properties:
+## Step 3 — Compute the alignment team property (Onto4MAT)
+
+Map the ABW roster onto Onto4MAT team properties — Hepworth, Baxter & Abbass
+(2022, arXiv:2203.12955). `alignment` is the one LLM-judged team property
+computed in this template; the deterministic metrics — `variety_coverage`,
+`diversity`, `cohesion`, `separation` — and the Jaccard `redundancy_pairs`
+computation (threshold >= 0.75) are offloaded to the caller's `SWM-1`
+`lisp_eval` gate (SKILL.md, D/P labelling), which the caller runs over this
+render's emitted sets after Step 2. Do NOT emit or LLM-compute those ratios
+here.
 
 - **alignment** (Reynolds alignment rule; Onto4MAT hasAlignmentWithTeam):
   the **task-gated** delegation-graph density (Cybernetic Swarm Plan
@@ -202,62 +207,17 @@ Map the ABW roster onto Onto4MAT (Hepworth, Baxter & Abbass, 2022, arXiv:2203.12
   the uniform delegation-graph density (fraction of agents whose `produces[]`
   overlaps another hired agent's `accepts[]`) — task-gating needs a task to
   gate on.
-- **cohesion** (Reynolds cohesion rule; Onto4MAT hasCohesionWithTeam):
-  fraction of the workspace's declared `dependencies { required[] }` that are
-  satisfied by hired agents. High cohesion = the swarm is self-sufficient.
-- **separation** (Reynolds separation rule; Onto4MAT hasTeamSeparation):
-  distinct `(agent_type, model, temperature)` tuples / agent count. High
-  separation = the swarm is diverse (not a monoculture). This is the
-  anti-premature-convergence signal.
 
-### Step 3a — Redundancy pairs (Cybernetic Swarm Plan C7 input)
+The `SWM-1` gate's env is derived from this output: `req_count` / `cov_count`
+from `required_transforms` / `covered_transforms`, `agent_count`,
+`distinct_type_model_count`, and `distinct_tuple_count` from the roster,
+`dep_count` / `sat_dep_count` from the declared dependencies, and
+`ports_by_agent` from each agent's `accepts ∪ produces` labels. The gate
+enforces the vacuous-truth defaults (empty `required_transforms` →
+`variety_coverage = 1.0` + trivial flag; empty swarm → `diversity = 0.0`,
+`variety_coverage = 0.0`).
 
-For each unordered pair of agents (a, b) in the roster, compute the Jaccard
-similarity of their port labels:
-```
-ports(a) = set(a.accepts ∪ a.produces)
-ports(b) = set(b.accepts ∪ b.produces)
-jaccard = |ports(a) ∩ ports(b)| / |ports(a) ∪ ports(b)|
-```
-A pair with `jaccard >= 0.75` is **redundant** — the two agents are
-substitutable (they accept and produce the same port types). This is the
-signal C7 (influence-weighted rejection) needs to act on: DECIDE can prune a
-redundant agent without losing variety coverage.
-
-This is NOT Shapley attribution — it's a cheap deterministic proxy for
-substitutability based on declared port labels. Full Shapley would require
-running each subset on a benchmark task; this is the minimal signal that
-gives C7 something to act on.
-
-Output: `redundancy_pairs: [{ agent_a, agent_b, jaccard }, ...]` — one entry
-per pair with `jaccard >= 0.75`, sorted by descending jaccard. Empty when no
-pair exceeds the threshold (the swarm has no redundancy).
-
-## Step 4 — Compute variety_coverage
-
-```
-variety_coverage = |required_transforms ∩ covered_transforms| / |required_transforms|
-```
-
-where `covered_transforms` = the set of (input_type, output_type) pairs
-covered by some hired agent's (accepts[], produces[]).
-
-Vacuous-truth defaults (MANDATORY — these prevent 0/0 from breaking the metric):
-- If `required_transforms` is empty: `variety_coverage = 1.0` and
-  `trivial_task = true`.
-- If `required_transforms` is non-empty AND the swarm is empty
-  (`agents = []`): `variety_coverage = 0.0` (nothing is covered).
-
-## Step 5 — Compute diversity
-
-```
-diversity = |distinct (agent_type, model) tuples| / |agents|
-```
-
-Vacuous-truth default: if `agents = []`, `diversity = 0.0` (an empty swarm
-has zero diversity — it fails the floor by definition, driving the first hire).
-
-## Step 5b — Compute per-agent Onto4MAT Agent properties (energy + distanceToGoal)
+## Step 4 — Compute per-agent Onto4MAT Agent properties (energy + distanceToGoal)
 
 For each agent in the filtered roster that has a matching entry in
 `delegate_results` (from the prior iteration's execution telemetry), compute
@@ -278,17 +238,22 @@ Output: `per_agent_metrics: [{ agent_id, energy, distanceToGoal }, ...]` — one
 entry per agent that has delegation telemetry. Agents without telemetry are
 omitted (not fabricated with zeros).
 
-## Step 6 — Record next_focus_hint
+## Step 5 — Record next_focus_hint
 
 If prior_iteration.next_focus is present, echo it. Otherwise, if any axis is
-below target, name the axis with the largest deficit as the hint.
+below target (per the caller's `SWM-1` gate metrics), name the axis with the
+largest deficit as the hint.
 
 ## Output
 
 Produce a JSON object with: workspace_roster, wallet_state,
-required_transforms, covered_transforms, variety_coverage, diversity,
-alignment, cohesion, separation, redundancy_pairs, per_agent_metrics, trivial_task, next_focus_hint,
+required_transforms, covered_transforms, alignment, trivial_task, next_focus_hint,
 delegate_notes.
+
+The caller's `SWM-1` `lisp_eval` gate computes variety_coverage, diversity,
+cohesion, separation, the trivial-task cross-check, and redundancy_pairs
+(Jaccard >= 0.75) deterministically from this output — do not emit those
+computed ratios here.
 
 {% if kanban_board_id and kanban_board_id | length > 0 %}
 When a kanban board was read, also include `kanban_tasks`: the list of tasks

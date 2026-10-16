@@ -9,7 +9,9 @@ contract:
       description: Output of the ACT phase — remedies, revised_layout.
     decide_result:
       type: object
-      description: Prior KSA-1 deterministic gate verdicts to re-check against adversarial probes.
+      description: The `KSA-1` deterministic gate result object (`all_gates_passed`,
+        `failing_gates`, `sum_min_widths`, `overflow_delta`, `text_column_residual`,
+        `fitts_violations`) to re-check against adversarial probes.
   output:
     probes:
       type: array

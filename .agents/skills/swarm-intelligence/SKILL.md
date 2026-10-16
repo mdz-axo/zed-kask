@@ -26,7 +26,7 @@ workspaces. (Verified live 2026-08-01.)
 
 ## Surface ontologies
 
-- **Onto4MAT** (Hepworth, Baxter & Abbass, 2022, arXiv:2203.12955): `Team { hasAlignmentWithTeam,
+- **Onto4MAT** — Hepworth, Baxter & Abbass (2022, arXiv:2203.12955): `Team { hasAlignmentWithTeam,
 hasCohesionWithTeam, hasTeamSeparation, hasInfluence }`, `Agent { hasSpeed,
 hasHeading, hasEnergy, hasDistanceToGoal }`, `Formation`. The measurable
   substrate for swarm state.
@@ -45,13 +45,13 @@ tuning choices) are P — critiqued by the Go See loop (human observation) and
 by the observed receipts in CHECK. The pinned arithmetic is D: the `SWM-1`
 variety_coverage, diversity, cohesion, separation, and per_agent_metrics
 computations in SENSE, the `SWM-2` deficit-classification, latency-outlier
-(>2x median), and C5 fault-attribution priority rule in ORIENT, the `SWM-3`
+(> max(2x median, 1000)), and C5 fault-attribution priority rule in ORIENT, the `SWM-3`
 local steering preflight check, the convergence distance and target gate, the
 receipt-coverage check, the loop_closure ratio, the failed-signature comparison,
 and the C7 influence guard all run in `lisp_eval` over sensed state and actual
 receipts — the model never supplies the convergence score.
-- `SWM-1` (`lisp_eval` SENSE metrics): `(let ((vc (if (= req_count 0) 1.0 (if (= agent_count 0) 0.0 (/ cov_count req_count)))) (div (if (= agent_count 0) 0.0 (/ distinct_type_model_count agent_count))) (coh (if (= dep_count 0) 1.0 (/ sat_dep_count dep_count))) (sep (if (= agent_count 0) 0.0 (/ distinct_tuple_count agent_count)))) (list vc div coh sep (= req_count 0)))`, env `{ "req_count": <|required_transforms|>, "cov_count": <|required_transforms ∩ covered_transforms|>, "agent_count": <|agents|>, "distinct_type_model_count": <|distinct (agent_type, model)|>, "dep_count": <|required dependencies|>, "sat_dep_count": <|satisfied dependencies|>, "distinct_tuple_count": <|distinct (agent_type, model, temperature)|> }`.
-- `SWM-2` (`lisp_eval` ORIENT deficit & latency outlier check): `(let ((deficit (cond ((< lc 1.0) "loop_break") ((< vc 0.9) "variety_deficit") ((or (< div 0.25) (not coherence_non_decreasing)) "coherence_deficit") (t "on_target")))) (begin (define outliers (lambda (xs thr) (if (is_null xs) (list) (if (> (nth 1 (car xs)) thr) (cons (car (car xs)) (outliers (cdr xs) thr)) (outliers (cdr xs) thr))))) (list deficit (outliers agent_latencies (* 2 median_latency)))))`, env `{ "vc": <variety_coverage>, "div": <diversity>, "lc": <loop_closure>, "coherence_non_decreasing": <bool>, "agent_latencies": <[[agent_id, latency_ms], ...]>, "median_latency": <median latency_ms> }`.
+- `SWM-1` (`lisp_eval` SENSE metrics — the caller runs it after the SENSE render's Step 2): `(begin (define inter (lambda (a b) (if (is_null a) 0 (if (member (car a) b) (+ 1 (inter (cdr a) b)) (inter (cdr a) b))))) (define jac (lambda (x y) (let ((i (inter x y)) (u (- (+ (length x) (length y)) (inter x y)))) (if (= u 0) 0.0 (/ i u))))) (define pair-rows (lambda (a bs) (if (is_null bs) (list) (let ((j (jac (nth 1 a) (nth 1 (car bs))))) (if (>= j 0.75) (cons (list (nth 0 a) (nth 0 (car bs)) j) (pair-rows a (cdr bs))) (pair-rows a (cdr bs))))))) (define all-pairs (lambda (as) (if (is_null as) (list) (append (pair-rows (car as) (cdr as)) (all-pairs (cdr as)))))) (let ((vc (if (= req_count 0) 1.0 (if (= agent_count 0) 0.0 (/ cov_count req_count)))) (div (if (= agent_count 0) 0.0 (/ distinct_type_model_count agent_count))) (coh (if (= dep_count 0) 1.0 (/ sat_dep_count dep_count))) (sep (if (= agent_count 0) 0.0 (/ distinct_tuple_count agent_count)))) (list vc div coh sep (= req_count 0) (all-pairs ports_by_agent))))`, env `{ "req_count": <|required_transforms|>, "cov_count": <|required_transforms ∩ covered_transforms|>, "agent_count": <|agents|>, "distinct_type_model_count": <|distinct (agent_type, model)|>, "dep_count": <|required dependencies|>, "sat_dep_count": <|satisfied dependencies|>, "distinct_tuple_count": <|distinct (agent_type, model, temperature)|>, "ports_by_agent": <|per-agent port labels [[agent_id, [accepts ∪ produces]], ...] in roster order|> }` — returns `(variety_coverage diversity cohesion separation trivial_task redundancy_pairs)`; each `redundancy_pairs` entry is `[agent_a, agent_b, jaccard]` for an unordered pair with `jaccard >= 0.75`, in roster order (the C7 substitutability signal).
+- `SWM-2` (`lisp_eval` ORIENT deficit cross-check, latency outliers, and C5 fault attribution — the caller runs it after the ORIENT render): `(begin (define excluded (lambda (r) (or (not (nth 1 r)) (string= (nth 2 r) "invalid") (string= (nth 3 r) "eval") (member (nth 0 r) strips_everything_agents)))) (define adm (lambda (rs) (if (is_null rs) (list) (if (excluded (car rs)) (adm (cdr rs)) (cons (car rs) (adm (cdr rs))))))) (define first-trusted-fail (lambda (rs) (if (is_null rs) (list) (if (nth 4 (car rs)) (car rs) (first-trusted-fail (cdr rs)))))) (define first-exec-fail (lambda (rs) (if (is_null rs) (list) (if (nth 5 (car rs)) (car rs) (first-exec-fail (cdr rs)))))) (define last-of (lambda (rs) (if (is_null (cdr rs)) (car rs) (last-of (cdr rs))))) (define outliers (lambda (xs thr) (if (is_null xs) (list) (if (> (nth 1 (car xs)) thr) (cons (car xs) (outliers (cdr xs) thr)) (outliers (cdr xs) thr))))) (let ((deficit (cond ((< lc 1.0) "loop_break") ((< vc 0.9) "variety_deficit") ((or (< div 0.25) (not coherence_non_decreasing)) "coherence_deficit") (t "on_target"))) (a (adm delegate_records))) (let ((r1 (first-trusted-fail a)) (r3 (first-exec-fail a))) (list deficit (outliers agent_latencies (max (* 2 median_latency) 1000)) (cond ((not (is_null r1)) (list (nth 0 r1) 1)) ((and whole_task_failed (> (length a) 0)) (list (nth 0 (last-of a)) 2)) ((not (is_null r3)) (list (nth 0 r3) 3)) (t (list))))))))`, env `{ "vc": <variety_coverage>, "div": <diversity>, "lc": <loop_closure>, "coherence_non_decreasing": <bool>, "agent_latencies": <[[agent_id, latency_ms], ...]>, "median_latency": <median latency_ms>, "delegate_records": <[[agent_id, bind_matched, input_contract_check, route_reason, trusted_task_failed, exec_failed], ...] in delegate_results array order — trusted_task_failed only for provenance "deterministic_evaluator"/"operator" with pass = false (the Gap S3 guard: llm_judged is never trusted); exec_failed for an explicit per-entry error or any tool_calls[].ok = false>, "strips_everything_agents": <agent ids carrying a strips_everything fault reading from swarm_gate_readings>, "whole_task_failed": <bool — the whole-task task_success input is present with trusted provenance and pass = false> }` — returns `(deficit latency_outliers fault)`: `latency_outliers` flags entries with `latency_ms > max(2 * median_ms, 1000)` (C4); `fault` is `(list)` (no attribution — C5/C6 inert) or `[agent_id, rule]` by the 4-rule priority over the admissible entries (1: earliest trusted per-delegation `task_success.pass = false`; 2: terminal admissible agent on whole-task failure; 3: earliest explicit error / `tool_calls[].ok = false`; 4: array-order tie-break). An entry is inadmissible — routing-attributable, never C6 blame — when `bind_matched = false`, `input_contract_check = "invalid"`, `dispatch.route_reason = "eval"`, or its agent carries a `strips_everything` fault reading.
 ACT renders
 intents, never executed receipts; execution comes only from the live tools
 (consent-gated ABW spend; local no-credit dispatch), and a rendered plan is
@@ -115,8 +115,23 @@ consistently in your reasoning across loop iterations.
 
 When the operator is filling the swarm panel's agent or swarm form, or DECIDE
 proposes an `author_agent` move, render `swarm-intelligence/swarm-compose-guide`
-with the partial fields and the `surface` (agent|swarm), `mode` (abw|local) and
-`action` (suggest|validate) selectors. `suggest` returns field completions;
+with the partial fields and the selectors:
+
+```json
+{
+  "surface": "agent|swarm",
+  "mode": "abw|local",
+  "action": "suggest|validate",
+  "name": "<string> | null",
+  "agent_type": "<string> | null",
+  "description": "<string> | null",
+  "system_prompt": "<string> | null",
+  "mission": "<string> | null",
+  "agents": "<string> | null"
+}
+```
+
+`suggest` returns field completions;
 `validate` returns a verdict over the supplied fields. It is read-only: no
 ledger debit, no consent. "Local" is an execution location, not a model tier —
 leave the card model unset to inherit Settings → Kask → Models; never invent a
@@ -165,8 +180,8 @@ sets/sums must be tracked consistently across loop iterations.
 | **C1** second-order monitor | Inspect actual `reasoning_steps` when enabled and iteration/Go See observations; missing traces stay unavailable | Human/Curator review of recorded evidence; no registered second-order monitor tool. |
 | **C2** Go See cadence | Human review after a task failure, missing oracle or operator-chosen cadence | Surface a Go See request; no automatic `cadence_every` monitor is registered. |
 | **C3** failed-edit memory | Prior failed signatures block an identical repeat | Caller compares proposed signatures to recorded failures with `lisp_eval` before ACT; an absent history is not proof of safety. Pinned form: `(not (member proposed_signature failed_signatures))`, env `{ "proposed_signature": <the proposed move's signature: decision_action + "|" + swarm_state_signature, where swarm_state_signature is deficit_class + "|" + sorted(roster agent_types) — the same key scheme failed_edits records>, "failed_signatures": <derived from failed_edits: each entry's decision_action + "|" + its swarm_state_signature> }` — `false` blocks the move; an empty history returns `true` (not blocked by C3) but is not proof of safety. |
-| **C4** latency `T_q`                | End-to-end delegation latency measurement → ORIENT surfaces latency outliers → DECIDE reconfigures slow agents                                                                                                  | `LocalDelegateResult.latency_ms` → ORIENT `latency_outliers` → DECIDE `reconfigure_agent` (regulated, audit 2026-08-03; previously sensed but not acted on)                                                                                                                                                                                     |
-| **C5** fault attribution            | Deterministic priority rule over the delegate trace — per-delegation `task_success` (highest fidelity) → whole-task terminal failure → `tool_calls[].ok`; fault-count aggregation | ORIENT template (rules 1–3 plus array-order tie-break) plus fault counts reconciled from actual receipts or `swarm_task_board`; no accumulator tool. `task_success` is the Loop B fidelity fix (audit 2026-08-03); `llm_judged` provenance is downgraded (Gap S3). Fires only when `delegate_results` execution telemetry is supplied (the planning process emits intents, not executed results). See Steering modes below. |
+| **C4** latency `T_q`                | End-to-end delegation latency measurement → ORIENT surfaces latency outliers → DECIDE reconfigures slow agents                                                                                                  | `LocalDelegateResult.latency_ms` → the `SWM-2` gate's `latency_outliers` (ORIENT phase) → DECIDE `reconfigure_agent` (regulated, audit 2026-08-03; previously sensed but not acted on)                                                                                                                                                                                     |
+| **C5** fault attribution            | Deterministic priority rule over the delegate trace — per-delegation `task_success` (highest fidelity) → whole-task terminal failure → `tool_calls[].ok`; fault-count aggregation | the caller's `SWM-2` gate (rules 1–3 plus array-order tie-break, with the routing-attributability exclusions) plus fault counts reconciled from actual receipts or `swarm_task_board`; no accumulator tool. `task_success` is the Loop B fidelity fix (audit 2026-08-03); `llm_judged` provenance is downgraded (Gap S3). Fires only when `delegate_results` execution telemetry is supplied (the planning process emits intents, not executed results). See Steering modes below. |
 | **C6** reconfigure_agent            | Re-prompt a blamed agent in place (Modify-Block / MASS prompt axis)                                                                                                                                             | `swarm_reconfigure_local_agent` tool + DECIDE move type. Active only when C5 has fault telemetry (steering mode).                                                                                                                                                                                                                               |
 | **C7** influence-weighted rejection | Reject re-hire only when observed outcomes establish negative influence | Caller checks measured influence with `lisp_eval` before ACT. Pinned form: `(or (not (assoc agent_type influence_scores)) (> (assoc agent_type influence_scores) 0))`, env `{ "agent_type": <the proposed hire's agent_type>, "influence_scores": <the measured influence scores keyed by agent_type> }` — `false` rejects the hire (measured negative influence); an absent score returns `true` (unknown history is not deterministic rejection). |
 | **C8** task-gated alignment         | Task-conditional edge relevance in SENSE (OFA-MAS TAGSE port)                                                                                                                                                   | SENSE template `alignment` definition                                                                                                                                                                                                                                                                                                           |
@@ -273,7 +288,7 @@ output contract was declared (`bind_matched`, `rollout_id`, `reasoning_steps`,
 `reliance`, `memory`), plus `dispatch` — the dispatch-provenance stamp
 (`{route_reason, question_source}`, fermi `stamp_invocation` port: which
 surface dispatched and where the task came from; carries no quality
-judgment). ORIENT attributes fault from
+judgment). The caller's `SWM-2` gate (ORIENT phase) attributes fault from
 `delegate_results[].task_success.pass` (highest fidelity, when present) and
 `delegate_results[].tool_calls[].ok`; `fault_count` accumulates; C6
 reconfigures the most-blamed agent — **but only on agent-attributable
@@ -391,14 +406,74 @@ the surviving record).
 
 | Template | Purpose |
 |----------|---------|
-| `swarm-sense.j2` | Measure the current swarm state. In `abw` mode, fetch the ABW workspace roster and wallet; in `local` mode, read the member roster and local agent registry. Optionally probe an agent's consolidated knowledge graph via `swarm_search_knowledge` (fermi v0.10.26 — the embedder was broken platform-wide for 6 weeks and is now fixed) when the roster's accepts/produces is ambiguous about whether an agent covers a required transform. Compute Onto4MAT team properties: alignment (delegation-graph density from produces/accepts overlap), cohesion (fraction of required dependencies satisfied), separation (distinct (agent_type, model, temperature) tuples / agent count). Derive required_transforms from the task. Consumes prior_iteration.next_focus when present (feedback loop closure). Vacuous-truth defaults: empty required_transforms → variety_coverage 1.0 + trivial_task flag; empty swarm → diversity 0.0, variety 0.0. |
+| `swarm-sense.j2` | Measure the current swarm state. In `abw` mode, fetch the ABW workspace roster and wallet; in `local` mode, read the member roster and local agent registry. Optionally probe an agent's consolidated knowledge graph via `swarm_search_knowledge` (fermi v0.10.26 — the embedder was broken platform-wide for 6 weeks and is now fixed) when the roster's accepts/produces is ambiguous about whether an agent covers a required transform. Compute the alignment team property (task-gated delegation-graph density from produces/accepts overlap); variety_coverage, diversity, cohesion, separation, and redundancy_pairs route through the caller's `SWM-1` gate. Derive required_transforms and covered_transforms from the task and roster. Consumes prior_iteration.next_focus when present (feedback loop closure). Vacuous-truth defaults (enforced in the `SWM-1` gate): empty required_transforms → variety_coverage 1.0 + trivial_task flag; empty swarm → diversity 0.0, variety_coverage 0.0. |
 | `swarm-orient.j2` | Classify the gap between sensed state and target condition into one of three deficit classes (or on-target): (a) variety deficit — required_transforms not covered; (b) coherence deficit — Thagard coherence flat/declining OR diversity below floor (premature convergence, the PSO/ACO failure mode); (c) loop-break — un-reconciled dispatches or un-acknowledged curator data-sharing. Mode-agnostic: operates on the state shape from SENSE, not the data source. Delegates to pragmatic-cybernetics for the 5-property assessment (polarity, delay, gain, closure, fidelity) when the deficit is a loop-break. Classifies the coordination problem (Axelrod): cooperation (repeated, shadow of the future) vs division-of-labor (one-shot, complementary capabilities). |
 | `swarm-decide.j2` | Propose measured-deficit responses using PSO/ACO/Reynolds as analogies, not executed numerical algorithms. Local composition uses named-swarm roster add/remove without deleting saved cards; ABW removal uses `swarm_fire` under the workspace contract. The one-level delegation invariant still applies. |
 | `swarm-act.j2` | Prepare ABW consent-gated or local no-credit action intents (`decisions`, `swarm_id`, `task`, `mode`, `steering_mode`) and emit `steering_directive` for local (`swarm_execute_plan_local`, gated by `SWM-3`) or cloud (`swarm_xaman`) steering. Rendering emits a plan, never an executed-call receipt; the invoking Curator/human runs the selected live tools and retains their results. |
 | `swarm-check.j2` | Re-read post-Act state and observed receipts (`pre_act_state`, `act_result`, `swarm_id`, `mode`, `target_condition`, `task_success`, `fetched_post_act_state`); local `loop_closure` covers both successful and explicit error entries in order, while a dispatch error remains an independent alert. Supply measured axes for the caller's `lisp_eval` distance/target gate. Zero actual delegations are vacuously receipted, but unexecuted plans are not. |
 | `swarm-compose-guide.j2` | Reference/authoring template for agent and swarm composition. Given a composition request (surface: agent|swarm, mode: abw|local, action: suggest|validate, plus partial fields), it produces either suggested completions for unfilled fields (action=suggest) or a validation verdict over the supplied fields (action=validate). Encodes the canonical field definitions (name, agent_type, description, system_prompt, mission, agents) and the ABW/local backend considerations (credit-cost consent-gated catalogue vs local filesystem registry without credits). Mirrors the inline prompt used by the `swarm_ai_assist` MCP tool — this template is the single source of truth the panel and the process share. Consumed by the DECIDE phase when it proposes an `author_agent` move (no catalogue agent covers a required transform); also available for standalone invocation from the swarm panel. |
 
-To render a template, call the `render_template` tool with the template ref (e.g., `swarm-intelligence/swarm-sense`) and a context object with the required variables.
+To render a template, call the `render_template` tool with the template ref and a context object naming every contract input field. The deterministic gates (`SWM-1` after SENSE, `SWM-2` after ORIENT, `SWM-3` before local steering) run in the caller's `lisp_eval` — never in a rendered template.
+
+`swarm-intelligence/swarm-sense` (Phase 1 — SENSE):
+```json
+{
+  "swarm_id": "<string>",
+  "task": "<string>",
+  "mode": "abw|local",
+  "target_condition": { "variety_coverage": 0.9, "diversity": 0.25, "loop_closure": 1.0 } | null,
+  "prior_iteration": { "next_focus": "<string>", "lessons_learned": [] } | null,
+  "kanban_board_id": "<string> | null",
+  "fetched_swarm_state": { "<the pre-fetched roster/wallet read — required object>" }
+}
+```
+
+`swarm-intelligence/swarm-orient` (Phase 2 — ORIENT):
+```json
+{
+  "swarm_state": { "<the SENSE output with the caller's SWM-1 gate metrics merged>" },
+  "task": "<string>",
+  "target_condition": { "variety_coverage": 0.9, "diversity": 0.25, "loop_closure": 1.0 } | null,
+  "delegate_results": [ { "<LocalDelegateResult entries — observed receipts only>" } ] | null
+}
+```
+
+`swarm-intelligence/swarm-decide` (Phase 3 — DECIDE):
+```json
+{
+  "swarm_state": { "<the SENSE output with the SWM-1 gate metrics merged>" },
+  "orientation": { "<the ORIENT output with the caller's SWM-2 gate outputs (latency_outliers, agent_at_fault) merged>" },
+  "task": "<string>",
+  "mode": "abw|local",
+  "failed_edits": [ { "decision_action": "<string>", "swarm_state_signature": "<string>", "d_delta": 0.0 } ],
+  "influence_scores": { "<agent_type>": 0.0 },
+  "second_order": { "recommendation": "go_see|diversify_action" }
+}
+```
+
+`swarm-intelligence/swarm-act` (Phase 5 — ACT):
+```json
+{
+  "decisions": { "<the DECIDE output>" },
+  "swarm_id": "<string>",
+  "task": "<string>",
+  "mode": "abw|local",
+  "steering_mode": "advisory|steering"
+}
+```
+
+`swarm-intelligence/swarm-check` (Phase 6 — CHECK):
+```json
+{
+  "pre_act_state": { "<the SENSE output with the SWM-1 gate metrics merged>" },
+  "act_result": { "<the ACT output>" },
+  "swarm_id": "<string>",
+  "mode": "abw|local",
+  "target_condition": { "variety_coverage": 0.9, "diversity": 0.25, "loop_closure": 1.0 } | null,
+  "task_success": { "pass": true, "score": 1.0, "provenance": "deterministic_evaluator" } | null,
+  "fetched_post_act_state": { "<the post-Act roster re-read — required object>" }
+}
+```
 
 ## Regression case
 

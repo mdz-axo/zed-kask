@@ -11,8 +11,6 @@ contract:
     deficit_details: object
     coordination_problem: string
     cybernetic_assessment: object|null
-    agent_at_fault: object|null
-    latency_outliers: array
     task_success_warning: string|null
     on_target: boolean
     delegate_notes: string
@@ -36,10 +34,11 @@ You are a swarm-orientation analyst. Classify the gap between the sensed swarm s
 `swarm_execute_plan_local` (`LocalDelegateResult`: `agent_id`, `response`,
 `model`, `tokens_used`, `latency_ms`, `tool_calls[]` and optional
 `task_success`). These are executed outcomes, not emitted intents.
-Fault attribution uses deterministic `task_success.pass` first, then explicit
-error entries from failed attempts and `tool_calls[].ok` failures when present. The terminal agent (fallback rule) is the `agent_id` of the LAST
-entry (the last delegation produced the terminal output the task metric
-scored).
+Fault attribution (Step 4) runs in the caller's `SWM-2` gate over this
+telemetry — deterministic `task_success.pass` first, then explicit error
+entries and `tool_calls[].ok` failures; the terminal-agent fallback is the
+LAST entry's `agent_id` (the last delegation produced the terminal output the
+task metric scored).
 {% else %}
 ## Delegate Results — Execution Telemetry
 No `delegate_results` supplied. The planning process's ACT emits dispatch
@@ -130,7 +129,7 @@ If the deficit is (c) loop-break, delegate to `pragmatic-cybernetics` for the
 Record the assessment in cybernetic_assessment. For other deficit classes,
 set cybernetic_assessment = null.
 
-## Step 4 — Deterministic fault attribution (Cybernetic Swarm Plan C5)
+## Step 4 — Deterministic fault attribution (Cybernetic Swarm Plan C5) — the caller's `SWM-2` gate
 
 Attribute fault ONLY when `delegate_results` execution telemetry is present
 (an array of `LocalDelegateResult`-shaped objects, each with `agent_id`,
@@ -142,52 +141,42 @@ so they are not attribution inputs. Do not fabricate outcomes from intents.
 **Determinism guard (audit Gap S3).** If any `delegate_results[].task_success`
 carries `provenance: "llm_judged"`, do NOT use it for attribution — an LLM
 judge violates the C0 determinism constraint. Set `task_success_warning` to a
-short note naming the agent and the provenance, and treat that entry's
-`task_success` as absent. Trust the actual wire values `provenance: "deterministic_evaluator"` or `provenance: "operator"` with an actual operator receipt. An absent or unknown provenance is unverified, not a trusted deterministic result.
+short note naming the agent and the provenance, and prepare that entry's
+`SWM-2` gate record with `trusted_task_failed = false` (treat its
+`task_success` as absent). Trust the actual wire values
+`provenance: "deterministic_evaluator"` or `provenance: "operator"` with an
+actual operator receipt. An absent or unknown provenance is unverified, not a
+trusted deterministic result.
 
-When `delegate_results` IS present, attribute fault to exactly one agent by
-this deterministic priority rule (JudgeFlow with the LLM Judge replaced by a
-rule — the divergence IS the point: a deterministic judge is what hKask
-builds):
-
-1. **Per-delegation task failure (highest fidelity).** If any
-   `delegate_results[]` entry has a trusted `task_success` with `pass = false`,
-   attribute to the **earliest such agent** (by `delegate_results` array
-   order). This names the specific agent whose output the deterministic
-   evaluator judged a task failure — the signal Loop B previously lacked
-   (binary `ok` could not detect "executed but wrong").
-2. **Whole-task terminal failure.** Else if the top-level `task_success` input
-   (the whole-task oracle, separate from the per-delegation verdicts) is
-   present with `pass = false`, attribute to the **terminal agent** — the
-   `agent_id` of the LAST entry in `delegate_results` (the last delegation
-   produced the terminal output the metric scored; the delegation order is
-   the deterministic ground the plan's tie-break relies on).
-3. **Execution failure.** Else attribute to the earliest entry with an
-   explicit `error` (failed delegation) or `tool_calls[].ok = false`.
-   A failed attempt can lack a `LocalDelegateResult` and tool trace.
-4. **Tie-break** by `delegate_results` array order (deterministic).
+The 4-rule priority attribution itself is deterministic and runs in the
+caller's `SWM-2` `lisp_eval` gate (SKILL.md, D/P labelling) over the
+per-entry records — this template does NOT emit `agent_at_fault`. The gate
+applies the priority rule (1: earliest admissible entry with a trusted
+per-delegation `task_success.pass = false` — the highest-fidelity signal;
+2: else the terminal admissible agent when the whole-task oracle failed;
+3: else the earliest admissible explicit error / `tool_calls[].ok = false`;
+4: tie-break by `delegate_results` array order) with the MANDATORY
+agent-attributability exclusions — an entry is inadmissible for attribution
+when its `bind_matched` is `false`, its `input_contract_check` is `"invalid"`,
+its `dispatch.route_reason` is `"eval"` (rollout-harness measurements feed
+agent stats, never C6 blame), or its agent carries a `strips_everything`
+fault reading from `swarm_gate_readings` (the suspect is the card's grounding
+map or the composition, never a C6 reconfigure). An excluded failure is
+routing-attributable: the fix is the composition (the plan entry, the roster,
+the router), not the agent's prompt.
 
 If no `delegate_results` telemetry is present (the default in the planning
-phase), OR no failure is present, set `agent_at_fault = null`. When
-non-null, `agent_at_fault = { agent_name, reason, rule_matched (1-3),
-failure_detail }`. Never fabricate a verdict from the plan's `emitted_calls`.
+phase), or no admissible failure is present, the gate returns no attribution
+and C5/C6 are inert. Never fabricate a verdict from the plan's
+`emitted_calls`.
 
-## Step 5 — Latency outliers (Cybernetic Swarm Plan C4, regulated)
+## Step 5 — Latency outliers (Cybernetic Swarm Plan C4, regulated) — the caller's `SWM-2` gate
 
-Compute `latency_outliers` from `delegate_results[].latency_ms` so DECIDE can
-reconfigure slow agents (the audit C4 fix: latency was sensed but not
-regulated; ORIENT now surfaces it for DECIDE to act on).
-
-- If fewer than 3 `delegate_results` entries carry `latency_ms`, set
-  `latency_outliers = []` (too few points for a meaningful median).
-- Else compute `median_ms` = median of the `latency_ms` values and
-  `threshold_ms = max(2 * median_ms, latency_floor_ms)` where
-  `latency_floor_ms = 1000` (avoid flagging fast agents). An agent is a
-  latency outlier if its `latency_ms > threshold_ms`.
-- `latency_outliers = [{ agent_id, latency_ms, threshold_ms }, ...]` in
-  `delegate_results` array order. Empty when none exceed the threshold.
-
-Latency outliers are a fault *signal*, not a deficit class — they coexist with
+`latency_outliers` is computed in the caller's `SWM-2` `lisp_eval` gate from
+`delegate_results[].latency_ms` — this template does NOT emit it. The gate
+flags an agent when its `latency_ms > max(2 * median_ms, 1000)` (the floor
+avoids flagging fast agents); fewer than 3 carrying entries yields the empty
+list. Outliers are a fault *signal*, not a deficit class — they coexist with
 the deficit classification and feed DECIDE's `reconfigure_agent` move (C6).
 
 ## Output
@@ -195,7 +184,7 @@ the deficit classification and feed DECIDE's `reconfigure_agent` move (C6).
 Produce a JSON object with: deficit_class (one of "variety_deficit",
 "coherence_deficit", "loop_break", "on_target"), deficit_details,
 coordination_problem (one of "cooperation", "division_of_labor", "n/a"),
-cybernetic_assessment (object or null), agent_at_fault (object or null),
-latency_outliers (array — empty when no delegate_results or no outliers),
-task_success_warning (string or null — non-null only when an llm_judged
-task_success was detected and downgraded), on_target (boolean), delegate_notes.
+cybernetic_assessment (object or null), task_success_warning (string or null —
+non-null only when an llm_judged task_success was detected and downgraded),
+on_target (boolean), delegate_notes. The caller's `SWM-2` gate emits
+`agent_at_fault` and `latency_outliers` — never LLM-compute them here.

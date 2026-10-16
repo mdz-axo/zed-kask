@@ -11,8 +11,6 @@ contract:
     fetched_post_act_state: object
   output:
     post_act_state: object
-    variety_coverage: number
-    diversity: number
     loop_closure: number|null
     next_focus: string
     algedonic_signal: object|null
@@ -73,8 +71,11 @@ Optionally call `swarm_run_status` for recent workspace messages
 a dedicated execute step.
 {% endif %}
 
-Recompute variety_coverage, diversity, alignment, cohesion, separation
-exactly as in SENSE, against the post-Act roster.
+Recompute the team properties against the post-Act roster exactly as in
+SENSE: `alignment` here (the one LLM-judged team property); `variety_coverage`,
+`diversity`, `cohesion`, `separation`, and `redundancy_pairs` via the caller's
+`SWM-1` gate over this post-Act roster (SKILL.md, D/P labelling) — do not emit
+those ratios here.
 
 ## Step 2 — Compute loop_closure
 
@@ -193,8 +194,9 @@ function of these findings).
 
 ## Output
 
-Produce a JSON object with: post_act_state, variety_coverage, diversity,
-loop_closure (or null when unmeasured), next_focus (a hypothesis, not a
-convergence decision), algedonic_signal (object or null), lessons_learned
-(array), delegate_notes, and task_success (echo the observed input verdict
-or null). The invoking agent computes the numeric distance.
+Produce a JSON object with: post_act_state, loop_closure (or null when
+unmeasured), next_focus (a hypothesis, not a convergence decision),
+algedonic_signal (object or null), lessons_learned (array), delegate_notes,
+and task_success (echo the observed input verdict or null). The caller's
+`SWM-1` gate over the post-Act roster supplies variety_coverage and diversity;
+the invoking agent computes the numeric distance with `lisp_eval`.

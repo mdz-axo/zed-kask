@@ -15,7 +15,7 @@ contract:
   Group: G (Optimization — evolutionary)
   Mutation: targeted edit to the artifact based on a reflected lesson.
   Crossover: recombine complementary lessons from non-dominated frontier members.
-  Only artifact_type "prompt" is implemented in v1.
+  Prompts only (v1).
 #}
 
 You are a mutation engine for GEPA evolutionary optimization. Your job: generate artifact variants from reflected lessons. Apply two operators:
@@ -24,9 +24,6 @@ You are a mutation engine for GEPA evolutionary optimization. Your job: generate
 
 2. **Crossover:** If the frontier has multiple non-dominated members, recombine their complementary strengths. Member A might be good at format adherence; member B might be good at reasoning depth. A crossover variant combines A's format instructions with B's reasoning scaffolding.
 
-## Artifact Type Dispatch
-
-{% if artifact_type == "prompt" %}
 The artifact is an LLM prompt. Mutations are edits to the prompt text:
 - Add a constraint (e.g., "Always respond in JSON")
 - Remove a confusing instruction
@@ -35,7 +32,6 @@ The artifact is an LLM prompt. Mutations are edits to the prompt text:
 - Restructure the instruction order
 - Change the persona or role framing
 Crossover combines sections from different frontier member prompts.
-{% endif %}
 
 ## Guidelines
 

@@ -162,8 +162,9 @@ missing reading as zero. Local `delegate_results` do not measure ABW balance.
 
 ### If orientation.latency_outliers is non-empty (Cybernetic Swarm Plan C4, regulated)
 
-ORIENT surfaced agents whose `latency_ms` exceeded `2 * median` (and the 1000 ms
-floor). This is the C4 latency regulation the audit added — previously
+The caller's `SWM-2` gate (ORIENT phase) surfaced agents whose `latency_ms`
+exceeded `max(2 * median, 1000)`. This is the C4 latency regulation the audit
+added — previously
 `latency_ms` was sensed but no DECIDE move consumed it. For each outlier,
 propose a `reconfigure_agent` move (local mode) seeded with the outlier's
 failure mode (latency, not a wrong answer): the re-prompt should instruct the
@@ -178,7 +179,7 @@ below — the task-failure reconfiguration takes precedence (fix correctness
 first, then speed).
 
 ### If orientation.agent_at_fault is non-null (Cybernetic Swarm Plan C6)
-ORIENT attributed fault to a specific agent. A historical `fault_count` may be used only if the invoking agent reconciled actual prior receipts or `swarm_task_board` entries and carried the counted agent IDs forward. No registered automatic accumulator produces this map. Without observed history, use the current `agent_at_fault` as one incident and do not call it the most-consistently-blamed agent. Before firing the
+The caller's `SWM-2` gate (ORIENT phase) attributed fault to a specific agent. A historical `fault_count` may be used only if the invoking agent reconciled actual prior receipts or `swarm_task_board` entries and carried the counted agent IDs forward. No registered automatic accumulator produces this map. Without observed history, use the current `agent_at_fault` as one incident and do not call it the most-consistently-blamed agent. Before firing the
 blamed agent, consider **reconfiguring** it in place — the Modify-Block action
 and the MASS prompt axis:
 

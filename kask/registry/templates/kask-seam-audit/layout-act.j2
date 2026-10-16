@@ -6,7 +6,10 @@ contract:
       type: object
     decide_result:
       type: object
-      description: Output of the deterministic KSA-1 layout gate — failing_gates and layout_health.
+      description: The `KSA-1` deterministic gate result object (the `lisp_eval`
+        form in `gates.md`, run over `layout-sense`'s primitive measurements) —
+        `all_gates_passed`, `failing_gates`, `sum_min_widths`, `overflow_delta`,
+        `text_column_residual`, `fitts_violations`.
   output:
     remedies:
       type: array
@@ -78,6 +81,12 @@ Replace any off-grid gap/padding with the nearest on-grid value:
 - 3px → 4px (gap_1)
 - 5px → 4px (gap_1) or 6px (gap_1p5)
 - 7px → 8px (gap_2)
+
+### For Fitts violations (`fitts_violations` in the KSA-1 result):
+Widen every flagged `fixed` child to ≥ `fitts_min_target` (32px mouse / 44px
+touch) — an `IconButton` below the floor needs an explicit min-width (`.w_8()`
+for 32px) — or move the action into the `PopoverMenu` (a menu entry is not a
+Fitts target).
 
 ## Output
 

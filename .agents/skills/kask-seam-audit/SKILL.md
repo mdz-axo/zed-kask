@@ -65,14 +65,20 @@ Converge: lisp open count (uncited/unadjudicated -> 0) within the batch; max 2 r
 Final: commit the ledger per completed batch; report remaining rows explicitly as pending
 ```
 
-The Gate A, B, C, FA, Converge, `KSA-1` (5-gate layout check), `KSA-2` (MCDA
-weighted score), and `KSA-3` (track/severity/defense-layer counts) forms live in
+The Gate A, B, C, FA, Converge, `KSA-1` (measured-layout derived quantities +
+5-gate check), `KSA-2` (MCDA weighted totals, top-3, and ±20% perturbation
+stability), and `KSA-3` (track/severity/defense-layer counts) forms live in
 `kask/registry/templates/kask-seam-audit/gates.md` (read it with `read_file`);
-the measured-layout gate form `KSA-1` is also shown in this SKILL.md (the layout loop,
-step 2). Run them with `lisp_eval` over the template outputs. The Converge count is
-passed to `final-report` as `convergence_score`, and `KSA-3` computes the per-track,
-per-severity, and defense-layer counts directly rather than asking `final-report` to
-count them; the model never supplies them.
+each `KSA-*` form is also shown copyable with its env block at its call site in
+this SKILL.md (`KSA-1` in the layout loop step 2; `KSA-2` and `KSA-3` in the
+Registry Templates section). Run them with `lisp_eval` over the template
+outputs. The Converge count is passed to `final-report` as
+`convergence_score`; `KSA-1` derives `sum_min_widths`, `overflow_delta`,
+`text_column_residual`, and `fitts_violations` from `layout-sense`'s primitives
+(the model never computes them); `KSA-2` computes the weighted totals, top-3
+ranking, and perturbation stability; and `KSA-3` computes the per-track,
+per-severity, and defense-layer counts (Jinja-rendered into `final-report`'s
+prompt over its own inputs) — the model never supplies them.
 
 - **Initial condition:** the live and retired seams in `DIVERGENCE.md`, the operator's `prior_rules`, the audited commit, and `kask/docs/research/d-seam-audit.md` (if present).
 - **Target condition per batch:** every selected behavior has an evidence-backed advisory verdict and a pin status, the ledger is committed, and unresolved decisions have an owner. Pending rows are not audited rows. Gate C applies to remediations, not record-only updates.
@@ -125,11 +131,11 @@ container, or when a layout looks cramped — not for logic-only or test-only
 changes. Measurements are D when taken from the code (widths, counts); the
 remedy choice is P, critiqued by the adversarial probes.
 
-1. **Measure & Orient** (`kask-seam-audit/layout-sense`) — render with `target`, `container_width` (dock ~300–400px, center ~600px+), and optional `codebase_context` to measure each child's minimum width, the text column's residual width, `action_count` against `action_budget` (≤5 primary per Hick's Law), `sibling_patterns`, `consistency_violation`, `primary_action_visible`, and `on_grid_spacing`.
-2. **Gate (`KSA-1`, D)** — evaluate the five yes/no Fagan gates deterministically with `lisp_eval` over `layout-sense`'s outputs (no LLM gate-decider template):
-   - form: `(let ((g1 (and (<= overflow_delta 0) (= (length fitts_violations) 0))) (g2 primary_action_visible) (g3 (or (not has_text_column) (>= text_column_residual 160))) (g4 on_grid_spacing) (g5 (<= action_count action_budget))) (let ((failed (append (if g1 (list) (list "no_overflow")) (append (if g2 (list) (list "primary_action_visible")) (append (if g3 (list) (list "text_column_min_width")) (append (if g4 (list) (list "on_grid_spacing")) (if g5 (list) (list "action_count_budget")))))))) (list (= (length failed) 0) failed)))`
-   - env: `{ "overflow_delta": <from layout-sense>, "fitts_violations": <from layout-sense>, "primary_action_visible": <from layout-sense>, "has_text_column": <true|false>, "text_column_residual": <from layout-sense>, "on_grid_spacing": <from layout-sense>, "action_count": <from layout-sense>, "action_budget": 5 }`
-   After running `layout-review`, verify overall completion with `lisp_eval` form `(and (= (length failed_gates) 0) (= (length probe_failures) 0))`, env `{ "failed_gates": <KSA-1 failed list>, "probe_failures": <layout-review's failing_gates> }`.
+1. **Measure & Orient** (`kask-seam-audit/layout-sense`) — render with `target`, `container_width` (dock ~300–400px, center ~600px+), and optional `codebase_context` to measure each child's minimum width (`child_min_widths`, each entry `{element, min_width_px, kind}` with kind fixed | text_column | flex), `container_available_width`, `total_gap_width`, `fitts_min_target` (32px mouse / 44px touch), `action_count` against `action_budget` (≤5 primary per Hick's Law), `sibling_patterns`, `consistency_violation`, `primary_action_visible`, and `on_grid_spacing`. The derived quantities (`sum_min_widths`, `overflow_delta`, `text_column_residual`, `fitts_violations`) are computed by the `KSA-1` gate, never by the model.
+2. **Gate (`KSA-1`, D)** — derive the layout quantities and evaluate the five yes/no Fagan gates deterministically with `lisp_eval` over `layout-sense`'s primitive outputs (no LLM gate-decider template):
+   - form: `(begin (define sum-all (lambda (cs) (if (is_null cs) 0 (+ (assoc "min_width_px" (car cs)) (sum-all (cdr cs)))))) (define sum-fixed (lambda (cs) (if (is_null cs) 0 (+ (if (string= (assoc "kind" (car cs)) "fixed") (assoc "min_width_px" (car cs)) 0) (sum-fixed (cdr cs)))))) (define fitts-bad (lambda (cs) (if (is_null cs) (list) (append (if (and (string= (assoc "kind" (car cs)) "fixed") (< (assoc "min_width_px" (car cs)) fitts_min_target)) (list (assoc "element" (car cs))) (list)) (fitts-bad (cdr cs)))))) (let ((sum_min_widths (+ (sum-all child_min_widths) total_gap_width))) (let ((overflow_delta (- sum_min_widths container_available_width))) (let ((text_column_residual (- (- container_available_width (sum-fixed child_min_widths)) total_gap_width))) (let ((fitts_violations (fitts-bad child_min_widths))) (let ((failed (append (if (<= overflow_delta 0) (list) (list "no_overflow")) (append (if primary_action_visible (list) (list "primary_action_visible")) (append (if (>= text_column_residual 160) (list) (list "text_column_min_width")) (append (if on_grid_spacing (list) (list "on_grid_spacing")) (if (<= action_count action_budget) (list) (list "action_count_budget")))))))) (list (list "all_gates_passed" (= (length failed) 0)) (list "failing_gates" failed) (list "sum_min_widths" sum_min_widths) (list "overflow_delta" overflow_delta) (list "text_column_residual" text_column_residual) (list "fitts_violations" fitts_violations)))))))))`
+   - env: `{ "container_available_width": <from layout-sense>, "child_min_widths": <from layout-sense, each {element, min_width_px, kind}>, "total_gap_width": <from layout-sense>, "fitts_min_target": <from layout-sense, 32 mouse / 44 touch>, "action_count": <from layout-sense>, "action_budget": <from layout-sense, 5 per Hick's Law>, "primary_action_visible": <from layout-sense>, "on_grid_spacing": <from layout-sense> }`
+   The result object (`all_gates_passed`, `failing_gates`, `sum_min_widths`, `overflow_delta`, `text_column_residual`, `fitts_violations`) binds `decide_result` for steps 3–4. After running `layout-review`, verify overall completion with `lisp_eval` form `(and (= (length failed_gates) 0) (= (length probe_failures) 0))`, env `{ "failed_gates": <KSA-1 failing_gates>, "probe_failures": <layout-review's failing_gates> }`.
 3. **Remedy** (`kask-seam-audit/layout-act`) — render with `target` and `decide_result` (the `KSA-1` gate result); for each failing gate, prescribe the canonical GPUI remedy: secondary actions behind `PopoverMenu` with an `IconName::Ellipsis` trigger, `.truncate()` on labels, `flex_shrink_0()` on fixed elements, `min_w_0()` on flexible text columns, or hide-secondary.
 4. **Probe** (`kask-seam-audit/layout-review`) — render with `target`, `act_result`, and `decide_result`: a 40-character button label, a German string (~30% longer), a 300px container (the agent panel's minimum dock width, `MIN_PANEL_WIDTH` at `crates/agent_ui/src/agent_panel.rs:108`), 7 actions, and an empty description. Any broken probe rejects the layout and re-enters step 3. Bound: max 2 remedy rounds; a third failing gate set rejects the change — hide the secondary actions or defer, and say so.
 
@@ -143,19 +149,133 @@ Patterns checked: `min_w_0()` on flexible text columns; `flex_shrink_0()` on fix
 | `audit-security.j2` | DO — self-contained security review of the 10 priority surfaces (OWASP LLM Top-10, MITRE ATLAS, NIST SSDF, defense-layer coverage). Every finding cites file:line. |
 | `audit-architecture.j2` | DO — find dead surface (trait-with-one-impl, helper-test-only, folded re-exports) and deepening candidates; apply the essentialist deletion test with grep-verified caller counts. |
 | `audit-ui.j2` | DO — measured-layout discipline + Zed interaction-language gaps across kask-owned GPUI widgets; Toggle-vs-ToggleFocus and deploy-and-focus traps. |
-| `layout-sense.j2` | Layout loop step 1: measure container and child minimum widths, count primary interactive elements against the ≤5 Hick's Law budget, compare sibling conventions, and record primary-action and grid-alignment observations for KSA-1. |
-| `layout-act.j2` | Layout loop step 3: the canonical GPUI remedy per failing gate from KSA-1. |
+| `layout-sense.j2` | Layout loop step 1: measure container and child minimum widths (`child_min_widths`, each entry with `kind`: fixed | text_column | flex), `total_gap_width`, `fitts_min_target`, count primary interactive elements against the ≤5 Hick's Law budget, compare sibling conventions, and record primary-action and grid-alignment observations — the primitives `KSA-1` derives the gate quantities from. |
+| `layout-act.j2` | Layout loop step 3: the canonical GPUI remedy per failing gate (and per Fitts violation) from the `KSA-1` result object (`decide_result`). |
 | `layout-review.j2` | Layout loop step 4: adversarial probes that reject a layout that breaks a gate. |
 | `adjudicate.j2` | CHECK — classify each finding by constraint force, run the deletion test, and check the feedback loop. Produces annotated_findings (`task`, `security_findings`, `arch_findings`, `ui_findings`, `prior_verdicts`). |
-| `mcda.j2` | CHECK — rank remediation candidates against four weighted criteria (`KSA-2` `lisp_eval` score verification) and run a ±20% sensitivity analysis (`task`, `annotated_findings`, `operator_priority`). Each score traces to a finding. |
+| `mcda.j2` | CHECK — score remediation candidates on four weighted criteria plus `deepens_module`, and run the essentialist gate (`task`, `annotated_findings`, `operator_priority`). Each score traces to a finding; `KSA-2` (`lisp_eval`) computes the weighted totals, top-3 ranking, and the four ±20% perturbation top-3 stability sets — never the model. |
 | `remediate.j2` | ACT — apply only mcda top-ranked remediations surviving essentialist (`task`, `top3`, `ranked_remediations`, `seam_map`); pin each with a test; declare within_kask per touched file; set hard_stop if any touch requires an upstream non-D-seam edit. |
-| `final-report.j2` | Consolidate the three tracks, MCDA, applied remediations, hard-stop decision, and convergence score (`task`, `seam_map`, `security_track`, `arch_track`, `ui_track`, `annotated_findings`, `mcda`, `applied_remediations`, `hard_stop`, `convergence_score`, `iterations`); per-track/severity/defense-layer counts are computed via `KSA-3` in `gates.md`. Cite file:line. |
+| `final-report.j2` | Consolidate the three tracks, MCDA, applied remediations, hard-stop decision, and convergence score (`task`, `seam_map`, `security_track`, `arch_track`, `ui_track`, `annotated_findings`, `mcda`, `applied_remediations`, `hard_stop`, `convergence_score`, `iterations`); per-track/severity/defense-layer counts are Jinja-computed (`| length`/`selectattr`) over its own inputs and verified via `KSA-3` in `gates.md`. Cite file:line. |
 
 Gate-defect repair is handled inline: if Gate A/B/C finds defects, re-run the
 parent template (`seam-map.j2`, the audit template, or `remediate.j2`) with
 `gate_defects` in context; there are no separate repair templates.
 
 To render a template, call the `render_template` tool with the template ref (e.g., `kask-seam-audit/seam-map`) and a context object with the required variables.
+
+Copyable `render_template` context blocks (variable names from each template's `[inference]` contract):
+
+`kask-seam-audit/seam-map`:
+```json
+{
+  "task": "<the audit task>",
+  "divergence_doc": "DIVERGENCE.md",
+  "seam_scope": "kask/",
+  "prior_rules": [ { "prior": "<.rules trap name>", "artifact": "<symbol/path>", "expected": "live" } ]
+}
+```
+
+`kask-seam-audit/audit-security`:
+```json
+{
+  "task": "<the audit task>",
+  "seam_scope": "kask/",
+  "prior_verdicts": [ { "prior": "...", "artifact": "...", "verdict": "live|phantom", "evidence": "..." } ]
+}
+```
+
+`kask-seam-audit/audit-architecture`:
+```json
+{ "task": "<the audit task>", "seam_scope": "kask/" }
+```
+
+`kask-seam-audit/audit-ui`:
+```json
+{ "task": "<the audit task>" }
+```
+
+`kask-seam-audit/layout-sense`:
+```json
+{
+  "target": { "file": "crates/<widget>/src/<file>.rs", "function": "render_card", "element_tree": "<the child element tree>" },
+  "container_width": "dock",
+  "codebase_context": { "siblings": [ { "component": "...", "action_count": 3, "layout_approach": "..." } ] }
+}
+```
+
+`kask-seam-audit/layout-act`:
+```json
+{
+  "target": { "file": "...", "function": "render_card", "element_tree": "..." },
+  "decide_result": { "all_gates_passed": false, "failing_gates": ["no_overflow"], "sum_min_widths": 0, "overflow_delta": 0, "text_column_residual": 0, "fitts_violations": [] }
+}
+```
+
+`kask-seam-audit/layout-review`:
+```json
+{
+  "target": { "file": "...", "function": "render_card", "element_tree": "..." },
+  "act_result": { "remedies": [], "revised_layout": "...", "codebase_pattern_reference": "agent_panel.rs render_panel_options_menu" },
+  "decide_result": { "all_gates_passed": false, "failing_gates": [], "sum_min_widths": 0, "overflow_delta": 0, "text_column_residual": 0, "fitts_violations": [] }
+}
+```
+
+`kask-seam-audit/adjudicate`:
+```json
+{
+  "task": "<the audit task>",
+  "security_findings": [ { "id": "KS-01", "severity": "high", "file_line": "path:line", "evidence": "..." } ],
+  "arch_findings": [ { "id": "RA-01", "severity": "medium", "file_line": "path:line", "evidence": "..." } ],
+  "ui_findings": [ { "id": "UI-01", "severity": "low", "file_line": "path:line", "evidence": "..." } ],
+  "defense_layer_coverage": { "layers": [ { "id": 1, "name": "...", "status": "...", "enforcement_point": "path:line" } ], "verdict": "Pass|Conditional|Fail" }
+}
+```
+
+`kask-seam-audit/mcda`:
+```json
+{
+  "task": "<the audit task>",
+  "annotated_findings": [ { "id": "KS-01", "track": "security", "severity": "high", "deletion_test": "n/a", "remediation": "..." } ],
+  "operator_priority": "security|codebase|ui"
+}
+```
+
+`kask-seam-audit/remediate`:
+```json
+{
+  "task": "<the audit task>",
+  "ranked_remediations": [ { "id": "KS-01", "remediation": "...", "scores": [0.8, 0.2, 0.0, 0.5], "deepens_module": false, "essentialist_survives": true } ],
+  "divergence_surface": [ "<D-seam file path>" ],
+  "seam_scope": "kask/"
+}
+```
+
+`kask-seam-audit/final-report`:
+```json
+{
+  "task": "<the audit task>",
+  "seam_map": { "divergence_surface": [], "prior_verdicts": [], "slices": [] },
+  "security_track": { "findings": [], "defense_layer_coverage": { "layers": [], "verdict": "Pass" } },
+  "arch_track": { "findings": [], "dead_surface_summary": {} },
+  "ui_track": { "findings": [], "pattern_gap_summary": {} },
+  "annotated_findings": [],
+  "mcda": { "weight_vector": {}, "ranked_remediations": [], "weighted_totals": [], "baseline_top3": [], "perturbations": [], "stable_under_perturbation": true },
+  "applied_remediations": [],
+  "hard_stop": { "triggered": false },
+  "convergence_score": 0,
+  "iterations": 1
+}
+```
+
+### `KSA-2` — run over `mcda`'s output (computes what the model never does)
+
+- form: `(begin (define wt (lambda (s w) (+ (* (nth 0 s) (nth 0 w)) (* (nth 1 s) (nth 1 w)) (* (nth 2 s) (nth 2 w)) (* (nth 3 s) (nth 3 w))))) (define totals (lambda (cs w) (if (is_null cs) (list) (cons (wt (assoc "scores" (car cs)) w) (totals (cdr cs) w))))) (define find-max (lambda (cs w) (if (= (length cs) 1) (list (assoc "id" (car cs)) (wt (assoc "scores" (car cs)) w)) (let ((hd (list (assoc "id" (car cs)) (wt (assoc "scores" (car cs)) w))) (tl (find-max (cdr cs) w))) (if (>= (nth 1 tl) (nth 1 hd)) tl hd))))) (define remove-id (lambda (cs id) (if (is_null cs) (list) (if (string= (assoc "id" (car cs)) id) (remove-id (cdr cs) id) (cons (car cs) (remove-id (cdr cs) id)))))) (define top3 (lambda (cs w n) (if (or (= n 0) (is_null cs)) (list) (let ((m (find-max cs w))) (cons (nth 0 m) (top3 (remove-id cs (nth 0 m)) w (- n 1))))))) (define pert-w (lambda (w a i) (if (= i 4) (list) (cons (if (= i a) (* (nth i w) 1.2) (nth i w)) (pert-w w a (+ i 1)))))) (define pert-top3 (lambda (a) (top3 candidates (pert-w weights a 0) 3))) (define subset (lambda (xs ys) (if (is_null xs) t (and (member (car xs) ys) (subset (cdr xs) ys))))) (define same-set (lambda (a b) (and (= (length a) (length b)) (subset a b)))) (let ((base (top3 candidates weights 3))) (let ((p0 (pert-top3 0)) (p1 (pert-top3 1)) (p2 (pert-top3 2)) (p3 (pert-top3 3))) (list (list "weighted_totals" (totals candidates weights)) (list "baseline_top3" base) (list "perturbations" (list (list "security" p0 (not (same-set base p0))) (list "codebase" p1 (not (same-set base p1))) (list "ui" p2 (not (same-set base p2))) (list "cost" p3 (not (same-set base p3))))) (list "stable_under_perturbation" (and (same-set base p0) (same-set base p1) (same-set base p2) (same-set base p3)))))))`
+- env: `{ "candidates": [ { "id": "KS-01", "scores": [0.8, 0.2, 0.0, 0.5] } ], "weights": [0.35, 0.25, 0.25, 0.15] }` — `candidates` from `mcda`'s `ranked_remediations` (`scores` in the order `[security, codebase, ui, cost_inverted]`), `weights` from `mcda`'s `weight_vector` in the same order. Merge the result into the `mcda` context for `remediate` (`top3`) and `final-report`.
+
+### `KSA-3` — run over the three tracks' findings (binds the counts `final-report` never asks the model to count)
+
+- form: `(begin (define count-sev (lambda (fs s) (if (is_null fs) 0 (+ (if (string= (assoc "severity" (car fs)) s) 1 0) (count-sev (cdr fs) s))))) (let ((all (append sec_findings (append arch_findings ui_findings)))) (list (list (length sec_findings) (length arch_findings) (length ui_findings)) (list (count-sev all "critical") (count-sev all "high") (count-sev all "medium") (count-sev all "low") (count-sev all "info")) (list (- total_layers (length missing_layers)) (length missing_layers)))))`
+- env: `{ "sec_findings": <security_track.findings>, "arch_findings": <arch_track.findings>, "ui_findings": <ui_track.findings>, "total_layers": <security_track.defense_layer_coverage.layers | length>, "missing_layers": [<declared layers with no live enforcement point>] }`
 
 ## Regression case
 
