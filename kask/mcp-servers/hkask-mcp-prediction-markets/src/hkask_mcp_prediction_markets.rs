@@ -10,18 +10,13 @@
 
 use std::collections::HashSet;
 
-use hkask_mcp_portfolio::map_portfolio_error;
-use hkask_mcp_server::server::{CredentialRequirement, McpToolError, execute_tool, map_join_error};
+use hkask_mcp_server::server::{CredentialRequirement, McpToolError, execute_tool};
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::{tool, tool_handler, tool_router};
 
-pub mod base_event;
 pub mod cache;
 pub mod calibration;
-pub mod cmp;
-pub mod cmp_index_builder;
-pub mod cmp_portfolio;
 pub mod economic_data;
 mod economic_data_tools;
 pub mod economic_object;
@@ -42,11 +37,10 @@ pub mod volatility;
 
 mod requests;
 pub use requests::{
-    MarketCalibrationRequest, MarketCheckResolutionsRequest, MarketCmpContextSuggestRequest,
-    MarketCmpIndexRequest, MarketCmpIndexStoreRequest, MarketCmpIndicesRequest,
-    MarketCmpPortfolioStoreRequest, MarketHistoryRequest, MarketLadderRequest, MarketLookupRequest,
-    MarketMatchRequest, MarketOntologyMapRequest, MarketRecordResolutionRequest,
-    MarketResidualRequest, MarketSubscribeRequest, MarketVolatilityRequest, StatusRequest,
+    MarketCalibrationRequest, MarketCheckResolutionsRequest, MarketHistoryRequest,
+    MarketLadderRequest, MarketLookupRequest, MarketMatchRequest, MarketOntologyMapRequest,
+    MarketRecordResolutionRequest, MarketResidualRequest, MarketSubscribeRequest,
+    MarketVolatilityRequest, StatusRequest,
 };
 
 // ── Server struct ──────────────────────────────────────────────────────────
@@ -58,14 +52,10 @@ hkask_mcp_server::mcp_server!(
         pub calibration_store: std::sync::Arc<std::sync::Mutex<calibration::CalibrationStore>>,
         pub response_cache: cache::TtlCache,
         pub calibration_path: Option<String>,
-        pub base_events: Vec<(String, String)>,
         pub called_tools: std::sync::Mutex<HashSet<String>>,
-        /// General-purpose portfolio store (from `hkask-mcp-portfolio`) for
-        /// persisting CMP indices as transaction ledgers with materialized
-        /// daily holdings and returns views.
-        pub portfolio_store: hkask_mcp_portfolio::PortfolioStore,
-        /// Optional FRED API key for live reference-level fetches. When absent,
-        /// `market_cmp_context_suggest` uses curated static defaults.
+        /// Optional FRED API key for the FRED economic-data tools
+        /// (`fred_search_series` and siblings). Required for live FRED series
+        /// fetches.
         pub fred_api_key: Option<String>,
         /// Inference port for LLM-based EQM (Explanation Quality Marker)
         /// scoring of forecast rationales. Resolved once in `run()` before
@@ -545,43 +535,6 @@ impl PredictionMarketsServer {
         .await
     }
 
-    /// Refuse unregistered series — base events come only from
-    /// HKASK_PREDICTION_MARKETS_BASE_EVENTS; an unregistered series is never
-    /// silently treated as one.
-    fn require_registered_base_event(&self, series: &str) -> Result<(), McpToolError> {
-        if self.base_events.iter().any(|(_, s)| s == series) {
-            Ok(())
-        } else {
-            Err(McpToolError::invalid_argument(format!(
-                "series '{}' is not a registered base event (HKASK_PREDICTION_MARKETS_BASE_EVENTS)",
-                series
-            )))
-        }
-    }
-
-    /// Extract (days-to-resolution, yes-midpoint) tenor points from open
-    /// Kalshi markets — shared by the CMP curve tools (previously copy-pasted
-    /// per tool). Markets without a parseable midpoint or a future deadline
-    /// are dropped; an empty result is the caller's not-found case.
-    fn kalshi_tenor_points(
-        markets: &[provider_kalshi::KalshiMarket],
-        now: chrono::DateTime<chrono::Utc>,
-    ) -> Vec<cmp::TenorPoint> {
-        markets
-            .iter()
-            .filter_map(|m| {
-                let mid = m.yes_midpoint()?;
-                let deadline = chrono::DateTime::parse_from_rfc3339(&m.close_time).ok()?;
-                let days =
-                    (deadline.with_timezone(&chrono::Utc) - now).num_seconds() as f64 / 86_400.0;
-                (days > 0.0).then_some(cmp::TenorPoint {
-                    days_to_resolution: days,
-                    price: mid,
-                })
-            })
-            .collect()
-    }
-
     fn scan_and_record_provider(
         &self,
         observations: Vec<(String, calibration::ResolvedObservation)>,
@@ -853,38 +806,6 @@ impl PredictionMarketsServer {
         .await
     }
 
-    /// The full CMP index curve for a registered base event.
-    #[tool(
-        description = "Compute the full Constant Maturity Prediction index for a registered base event: the curve of probabilities across the standard tenor grid (7d/30d/90d/180d/1y/2y), interpolated in log-odds space. Tenors without cohort coverage return null probability, never a fabricated extrapolation. Includes curve slope (log-odds/year) as the term-structure signal."
-    )]
-    pub async fn market_cmp_index(
-        &self,
-        Parameters(req): Parameters<MarketCmpIndexRequest>,
-    ) -> Result<String, McpToolError> {
-        execute_tool(self, "market_cmp_index", async {
-            self.record_call("market_cmp_index");
-            self.require_registered_base_event(&req.series)?;
-            let markets =
-                provider_kalshi::fetch_markets(&self.http, Some(&req.series), 200).await?;
-            let now = chrono::Utc::now();
-            let points = Self::kalshi_tenor_points(&markets, now);
-            if points.is_empty() {
-                return Err(hkask_mcp_server::server::McpToolError::not_found(format!(
-                    "no live markets with future deadlines for series '{}'",
-                    req.series
-                )));
-            }
-            let index = cmp::compute_index(&req.series, &points, &now.to_rfc3339());
-            let slope_30_365 = cmp::curve_slope(&index, 30, 365);
-            serde_json::to_value(serde_json::json!({
-                "index": index,
-                "slope_30d_1y_logodds_per_year": slope_30_365,
-            }))
-            .map_err(|e| McpToolError::internal(format!("index serialization failed: {e}")))
-        })
-        .await
-    }
-
     /// Compute the DR-AS structural volatility forecast for a single
     /// prediction-market contract (arXiv:2607.08199). Returns the conditional
     /// variance, its deadline-resolution and adverse-selection decomposition,
@@ -950,694 +871,6 @@ impl PredictionMarketsServer {
                 }))
                 .map_err(|e| {
                     McpToolError::internal(format!("volatility serialization failed: {e}"))
-                })
-            },
-        )
-        .await
-    }
-
-    /// Store the CMP index curves for a registered base event as
-    /// transaction-ledger portfolios, one per orientation. §8 followup:
-    /// the store-side curve was orientation-blind — blending hike/hold/cut
-    /// marginals into one curve is meaningless for decision families; the
-    /// marginals are the real content. Each orientation's tenor points feed
-    /// its own constant-maturity curve (log-odds interpolation across the
-    /// standard tenor grid), persisted as `cmp:{series}:{orientation}`
-    /// with one constituent per grid tenor (weight = probability).
-    #[tool(
-        description = "Store the CMP index curves for a registered base event as transaction-ledger portfolios, one per orientation (increase/decline/stable): the decision-family marginals never blend into one curve. Contracts classify through the same catalog path as market_cmp_indices (decision contracts orient categorically; open tails are withheld with reasons). Each orientation persists as cmp:{series}:{orientation} with tenor constituents (weight = probability) and materialized daily holdings."
-    )]
-    pub async fn market_cmp_index_store(
-        &self,
-        Parameters(MarketCmpIndexStoreRequest { series, date }): Parameters<
-            MarketCmpIndexStoreRequest,
-        >,
-    ) -> Result<String, McpToolError> {
-        execute_tool(self, "market_cmp_index_store", async {
-            self.record_call("market_cmp_index_store");
-            self.require_registered_base_event(&series)?;
-            let (family, context) = self.resolve_family_and_context(&series, None, None, None, None)?;
-            let markets = provider_kalshi::fetch_markets(&self.http, Some(&series), 200).await?;
-            let now = chrono::Utc::now();
-            let lines = Self::kalshi_catalog_lines(&markets);
-            let config = cmp_portfolio::CmpConfig::default();
-            let (oriented, _market_ids, rejections, n_records_read) =
-                cmp_index_builder::oriented_constituents_from_lines(
-                    &lines,
-                    family,
-                    cmp_index_builder::Venue::Kalshi,
-                    &context,
-                    &config,
-                    &now,
-                )
-                .map_err(|e| {
-                    McpToolError::internal(format!("cmp classification failed: {e}"))
-                })?;
-            if oriented.is_empty() {
-                return Err(hkask_mcp_server::server::McpToolError::not_found(format!(
-                    "no eligible oriented contracts for series '{}' ({} records read; rejections: {})",
-                    series,
-                    n_records_read,
-                    rejections.iter().take(5).cloned().collect::<Vec<_>>().join("; ")
-                )));
-            }
-            let computed_at = date
-                .clone()
-                .unwrap_or_else(|| now.format("%Y-%m-%d").to_string());
-
-            // One constant-maturity curve per orientation — the marginals.
-            let mut curves: Vec<(cmp_portfolio::Orientation, cmp::CmpIndex)> = Vec::new();
-            let mut withheld_orientations: Vec<&'static str> = Vec::new();
-            for orientation in [
-                cmp_portfolio::Orientation::Increase,
-                cmp_portfolio::Orientation::Decline,
-                cmp_portfolio::Orientation::Stable,
-            ] {
-                let points: Vec<cmp::TenorPoint> = oriented
-                    .iter()
-                    .filter(|oc| oc.orientation == orientation)
-                    .map(|oc| cmp::TenorPoint {
-                        days_to_resolution: oc.constituent.days_to_expiration,
-                        price: oc.constituent.probability,
-                    })
-                    .collect();
-                if points.is_empty() {
-                    withheld_orientations.push(match orientation {
-                        cmp_portfolio::Orientation::Increase => "increase",
-                        cmp_portfolio::Orientation::Decline => "decline",
-                        cmp_portfolio::Orientation::Stable => "stable",
-                    });
-                    continue;
-                }
-                let index = cmp::compute_index(
-                    &format!("{series}:{orientation}"),
-                    &points,
-                    &now.to_rfc3339(),
-                );
-                curves.push((orientation, index));
-            }
-            if curves.is_empty() {
-                return Err(hkask_mcp_server::server::McpToolError::not_found(format!(
-                    "no orientation curves could be built for series '{}'",
-                    series
-                )));
-            }
-
-            // Response carries the curve points (serialized before the
-            // blocking task takes ownership of the curves).
-            let response_curves: Vec<serde_json::Value> = curves
-                .iter()
-                .map(|(orientation, index)| {
-                    serde_json::json!({
-                        "orientation": orientation.to_string(),
-                        "points": index.points,
-                    })
-                })
-                .collect();
-
-            // Persist each orientation as its own portfolio.
-            let store = self.portfolio_store.clone();
-            let created_at = now.to_rfc3339();
-            let series_owned = series.clone();
-            let date_owned = computed_at.clone();
-            let stored = tokio::task::spawn_blocking(move || {
-                use hkask_mcp_portfolio::{AssetType, PortfolioError, Transaction, TxType};
-                let mut portfolios_stored: Vec<(String, usize, usize)> = Vec::new();
-                for (orientation, index) in &curves {
-                    let portfolio_name = format!("cmp:{series_owned}:{orientation}");
-                    // `create` uses INSERT OR IGNORE — already-exists is Ok.
-                    store.create(&portfolio_name, AssetType::PredictionContract)?;
-                    let mut applied = 0usize;
-                    let mut withheld = 0usize;
-                    for point in &index.points {
-                        let Some(prob) = point.probability else {
-                            withheld += 1;
-                            continue;
-                        };
-                        let symbol =
-                            format!("cmp:{series_owned}:{orientation}:{}d", point.tenor_days);
-                        let tx = Transaction {
-                            id: uuid::Uuid::new_v4().to_string(),
-                            date: date_owned.clone(),
-                            tx_type: TxType::Buy,
-                            asset_type: AssetType::PredictionContract,
-                            symbol: Some(symbol),
-                            quantity: Some(1.0),
-                            price: Some(prob),
-                            commission: Some(0.0),
-                            amount: None,
-                            weight: Some(prob),
-                            currency: "USD".to_string(),
-                            notes: format!(
-                                "CMP curve constituent: orientation={orientation} tenor={}d method={:?} cohorts={} bracket={}",
-                                point.tenor_days, point.method, point.cohorts, point.bracket_days
-                            ),
-                            created_at: created_at.clone(),
-                        };
-                        store.apply(&portfolio_name, &tx)?;
-                        applied += 1;
-                    }
-                    portfolios_stored.push((portfolio_name, applied, withheld));
-                }
-                Ok::<_, PortfolioError>(portfolios_stored)
-            })
-            .await
-            .map_err(|e| map_join_error(e, "portfolio store task failed"))?;
-            let portfolios_stored = stored.map_err(map_portfolio_error)?;
-            serde_json::to_value(serde_json::json!({
-                "status": "stored",
-                "series": series,
-                "family": family.label(),
-                "observation_date": computed_at,
-                "orientation_curves": portfolios_stored.iter().map(|(name, applied, withheld)| {
-                    serde_json::json!({
-                        "portfolio": name,
-                        "constituents_applied": applied,
-                        "constituents_withheld": withheld,
-                    })
-                }).collect::<Vec<_>>(),
-                "withheld_orientations": withheld_orientations,
-                "n_records_read": n_records_read,
-                "rejection_sample": rejections.into_iter().take(5).collect::<Vec<_>>(),
-                "curves": response_curves,
-            }))
-            .map_err(|e| {
-                McpToolError::internal(format!("store response serialization failed: {e}"))
-            })
-        })
-        .await
-    }
-
-    /// The shared family + economic-context resolution for the CMP tools —
-    /// one classification source of truth (§8 followup): the same catalog
-    /// path `market_cmp_indices` uses, with the family's curated default
-    /// context and caller overrides. Refuses a series that does not resolve
-    /// to a base-event family — never fabricates a family or a context.
-    fn resolve_family_and_context(
-        &self,
-        series: &str,
-        reference: Option<f64>,
-        volatility: Option<f64>,
-        predicted_level: Option<f64>,
-        direction_up: Option<bool>,
-    ) -> Result<
-        (
-            economic_object::BaseEconomicObject,
-            base_event::EconomicContext,
-        ),
-        McpToolError,
-    > {
-        let family =
-            semantic_mapping::classify_base_object_from_catalog("kalshi", series, "")
-                .ok_or_else(|| {
-                    McpToolError::invalid_argument(format!(
-                        "series '{}' does not resolve to a base-event family — cannot build CMP indices",
-                        series
-                    ))
-                })?;
-        // RealGdpGrowth has no BaseEvent materiality setting; the builder
-        // withholds all its buckets with an explicit reason — surfaced
-        // through the context's rationale, never fabricated.
-        let default_ctx = cmp_index_builder::base_event_for(family)
-            .map(|be| be.default_economic_context())
-            .unwrap_or_else(|| base_event::EconomicContext {
-                reference: 0.0,
-                volatility: None,
-                predicted_level: 0.0,
-                direction_up: false,
-                rationale: "no BaseEvent materiality setting for this family — \
-                            all buckets will be withheld"
-                    .into(),
-            });
-        let context = base_event::EconomicContext {
-            reference: reference.unwrap_or(default_ctx.reference),
-            volatility: volatility.or(default_ctx.volatility),
-            predicted_level: predicted_level.unwrap_or(default_ctx.predicted_level),
-            direction_up: direction_up.unwrap_or(default_ctx.direction_up),
-            rationale: default_ctx.rationale,
-        };
-        Ok((family, context))
-    }
-
-    /// Kalshi markets → catalog-record JSON lines (the builder's input
-    /// shape) — shared by the CMP tools so the classification layer sees
-    /// one record shape everywhere.
-    fn kalshi_catalog_lines(markets: &[provider_kalshi::KalshiMarket]) -> Vec<String> {
-        markets
-            .iter()
-            .filter_map(|m| {
-                let record = cmp_index_builder::KalshiCatalogRecord {
-                    source: "kalshi".into(),
-                    event_ticker: m.event_ticker.clone(),
-                    base_object: String::new(),
-                    market_ticker: m.ticker.clone(),
-                    title: m.title.clone(),
-                    status: m.status.clone(),
-                    close_time: m.close_time.clone(),
-                    expiration_time: m.expiration_time.clone(),
-                    yes_bid: m.yes_bid_dollars.clone(),
-                    yes_ask: m.yes_ask_dollars.clone(),
-                    volume_fp: m.volume_fp.clone(),
-                    liquidity_dollars: m.liquidity_dollars.clone(),
-                    result: m.result.clone(),
-                    rules_primary: m.rules_primary.clone(),
-                };
-                serde_json::to_string(&record).ok()
-            })
-            .collect()
-    }
-
-    async fn persist_cmp_portfolio(
-        &self,
-        oriented: Vec<cmp_portfolio::OrientedConstituent>,
-        market_ids: Vec<String>,
-        series: &str,
-        observation_date: &str,
-        family: &str,
-        ctx: &base_event::EconomicContext,
-        now: chrono::DateTime<chrono::Utc>,
-    ) -> Result<serde_json::Value, McpToolError> {
-        if oriented.is_empty() {
-            return Err(McpToolError::not_found(format!(
-                "no eligible markets for series '{}' with the supplied economic context",
-                series
-            )));
-        }
-
-        let config = cmp_portfolio::CmpConfig::default();
-        let index_set = cmp_portfolio::construct_cmp_index_set(&oriented, &config);
-
-        let store = self.portfolio_store.clone();
-        let created_at = now.to_rfc3339();
-        let series_owned = series.to_string();
-        let observation_date_owned = observation_date.to_string();
-        let stored = tokio::task::spawn_blocking(move || {
-            use hkask_mcp_portfolio::{AssetType, PortfolioError, Transaction, TxType};
-            let mut stored_indices: Vec<(String, usize)> = Vec::new();
-            for index in &index_set.indices {
-                let portfolio_name = format!(
-                    "cmp:{series_owned}:{}:{}",
-                    index.bucket.label(),
-                    index.orientation
-                );
-                // `create` uses INSERT OR IGNORE — already-exists is Ok, not an error.
-                // Any error here (invalid name, DB failure) must propagate.
-                store.create(&portfolio_name, AssetType::PredictionContract)?;
-                for constituent in &index.portfolio.constituents {
-                    let symbol = market_ids
-                        .get(constituent.market_index)
-                        .cloned()
-                        .unwrap_or_else(|| format!("market_{}", constituent.market_index));
-                    let tx = Transaction {
-                        id: uuid::Uuid::new_v4().to_string(),
-                        date: observation_date_owned.clone(),
-                        tx_type: TxType::Buy,
-                        asset_type: AssetType::PredictionContract,
-                        symbol: Some(symbol),
-                        quantity: Some(1.0),
-                        price: Some(constituent.probability),
-                        commission: Some(0.0),
-                        amount: None,
-                        weight: Some(constituent.weight),
-                        currency: "USD".to_string(),
-                        notes: format!(
-                            "CMP portfolio constituent: bucket={} orientation={} weight={:.4} dte={:.1}",
-                            index.bucket.label(),
-                            index.orientation,
-                            constituent.weight,
-                            constituent.days_to_expiration
-                        ),
-                        created_at: created_at.clone(),
-                    };
-                    store.apply(&portfolio_name, &tx)?;
-                }
-                let snap = store.snapshot(&portfolio_name, &observation_date_owned)?;
-                stored_indices.push((portfolio_name, snap.holdings.len()));
-            }
-            Ok::<_, PortfolioError>((stored_indices, index_set.withheld_buckets.len()))
-        })
-        .await
-        .map_err(|e| map_join_error(e, "portfolio store task failed"))?
-        .map_err(map_portfolio_error)?;
-        let (stored_indices, withheld) = stored;
-        serde_json::to_value(serde_json::json!({
-            "status": "stored",
-            "series": series,
-            "family": family,
-            "observation_date": observation_date,
-            "economic_context": {
-                "reference": ctx.reference,
-                "volatility": ctx.volatility,
-                "predicted_level": ctx.predicted_level,
-                "direction_up": ctx.direction_up,
-                "rationale": ctx.rationale,
-            },
-            "indices_stored": stored_indices.len(),
-            "withheld_buckets": withheld,
-            "indices": stored_indices.iter().map(|(name, holdings)| serde_json::json!({
-                "portfolio": name,
-                "holdings": holdings,
-            })).collect::<Vec<_>>(),
-        }))
-        .map_err(|e| McpToolError::internal(format!("store response serialization failed: {e}")))
-    }
-
-    /// Read the materialized holdings for a stored CMP index portfolio.
-    /// Compute the solved-portfolio CMP index set for a registered base event
-    /// and persist each (bucket, orientation) index as a transaction-ledger
-    /// portfolio of contracts with maturity-matched weights. This is the
-    /// contract-portfolio CMP index (from `cmp_portfolio`), distinct from the
-    /// curve-based `market_cmp_index_store`.
-    #[tool(
-        description = "Compute the solved-portfolio CMP index set (maturity-bucketed, orientation-tagged portfolios of contracts with maturity-matched weights) for a registered base event and persist each (bucket, orientation) index as a transaction-ledger portfolio. All economic-context fields are optional — when omitted, the tool uses the curated default for the base-event family (see market_cmp_context_suggest)."
-    )]
-    pub async fn market_cmp_portfolio_store(
-        &self,
-        Parameters(MarketCmpPortfolioStoreRequest {
-            series,
-            reference,
-            volatility,
-            predicted_level,
-            direction_up,
-            date,
-        }): Parameters<MarketCmpPortfolioStoreRequest>,
-    ) -> Result<String, McpToolError> {
-        execute_tool(self, "market_cmp_portfolio_store", async {
-            self.record_call("market_cmp_portfolio_store");
-            self.require_registered_base_event(&series)?;
-            let (family, ctx) = self.resolve_family_and_context(
-                &series,
-                reference,
-                volatility,
-                predicted_level,
-                direction_up,
-            )?;
-            let markets = provider_kalshi::fetch_markets(&self.http, Some(&series), 200).await?;
-            let now = chrono::Utc::now();
-            let observation_date = date
-                .clone()
-                .unwrap_or_else(|| now.format("%Y-%m-%d").to_string());
-            // §8 followup: the solved portfolios orient through the same
-            // classification source of truth as market_cmp_indices — the
-            // decision-categorical branch — not the band fallback that
-            // mislabeled every decision contract as Stable.
-            let lines = Self::kalshi_catalog_lines(&markets);
-            let config = cmp_portfolio::CmpConfig::default();
-            let (oriented, market_ids, rejections, n_records_read) =
-                cmp_index_builder::oriented_constituents_from_lines(
-                    &lines,
-                    family,
-                    cmp_index_builder::Venue::Kalshi,
-                    &ctx,
-                    &config,
-                    &now,
-                )
-                .map_err(|e| {
-                    McpToolError::internal(format!("cmp classification failed: {e}"))
-                })?;
-            if oriented.is_empty() {
-                return Err(McpToolError::not_found(format!(
-                    "no eligible oriented markets for series '{}' ({} records read; rejections: {})",
-                    series,
-                    n_records_read,
-                    rejections.iter().take(5).cloned().collect::<Vec<_>>().join("; ")
-                )));
-            }
-            self.persist_cmp_portfolio(
-                oriented,
-                market_ids,
-                &series,
-                &observation_date,
-                family.label(),
-                &ctx,
-                now,
-            )
-            .await
-        })
-        .await
-    }
-
-    /// Build provenance-carrying CMP indices for the scenarios seam.
-    #[tool(
-        description = "Build provenance-carrying CMP indices (ProvenancedCmpIndex objects) for a registered base-event series from live open markets on Kalshi and/or Polymarket. This is the producer for scenario_from_cmp_indices (hkask-mcp-scenarios): pass the returned indices array verbatim as its cmp_indices input to compose an EventTree for coherence testing. Per-venue indices are never pooled; buckets without an eligible maturity bracket are withheld and surfaced in withheld_buckets with rejection reasons — never fabricated. All economic-context fields are optional; when omitted, the curated default for the classified family applies (see market_cmp_context_suggest)."
-    )]
-    pub async fn market_cmp_indices(
-        &self,
-        Parameters(MarketCmpIndicesRequest {
-            series,
-            venue,
-            limit,
-            reference,
-            volatility,
-            predicted_level,
-            direction_up,
-        }): Parameters<MarketCmpIndicesRequest>,
-    ) -> Result<String, McpToolError> {
-        execute_tool(self, "market_cmp_indices", async {
-            self.record_call("market_cmp_indices");
-            self.require_registered_base_event(&series)?;
-            // One classification source of truth (§8 followup): the same
-            // catalog path + curated-family context resolution the store
-            // tools use.
-            let (family, context) = self.resolve_family_and_context(
-                &series,
-                reference,
-                volatility,
-                predicted_level,
-                direction_up,
-            )?;
-
-            let venue_filter = venue.as_deref().unwrap_or("both");
-            if !matches!(venue_filter, "kalshi" | "polymarket" | "both") {
-                return Err(McpToolError::invalid_argument(format!(
-                    "venue must be 'kalshi', 'polymarket', or 'both', got '{venue_filter}'"
-                )));
-            }
-            let limit = limit.unwrap_or(200).min(500);
-            let now = chrono::Utc::now();
-            let config = cmp_portfolio::CmpConfig::default();
-            let mut indices: Vec<serde_json::Value> = Vec::new();
-            let mut venue_reports: Vec<serde_json::Value> = Vec::new();
-            let mut warnings: Vec<String> = Vec::new();
-
-            if matches!(venue_filter, "kalshi" | "both") {
-                match provider_kalshi::fetch_markets(&self.http, Some(&series), limit).await {
-                    Ok(markets) => {
-                        let lines = Self::kalshi_catalog_lines(&markets);
-                        Self::absorb_venue_set(
-                            "kalshi",
-                            cmp_index_builder::build_cmp_indices_from_lines(
-                                &lines,
-                                family,
-                                cmp_index_builder::Venue::Kalshi,
-                                &context,
-                                &config,
-                                &now,
-                            ),
-                            &mut indices,
-                            &mut warnings,
-                            &mut venue_reports,
-                        );
-                    }
-                    Err(e) => warnings.push(format!("kalshi fetch failed: {e}")),
-                }
-            }
-
-            if matches!(venue_filter, "polymarket" | "both") {
-                // Gamma has no series-scoped fetch; the per-record semantic
-                // classification inside the builder rejects non-family
-                // markets with surfaced reasons (never silently dropped).
-                match provider_polymarket::fetch_markets(&self.http, limit, false).await {
-                    Ok(markets) => {
-                        let lines: Vec<String> = markets
-                            .iter()
-                            .filter_map(|m| {
-                                let record = cmp_index_builder::GammaCatalogRecord {
-                                    source: "gamma".into(),
-                                    event_id: m.id.clone(),
-                                    base_object: String::new(),
-                                    market_id: m.id.clone(),
-                                    question: m.question.clone(),
-                                    condition_id: m.condition_id.clone(),
-                                    end_date: m.end_date.clone(),
-                                    closed: m.closed,
-                                    volume_num: m.volume_num,
-                                    best_bid: m.best_bid,
-                                    best_ask: m.best_ask,
-                                    last_trade_price: m.last_trade_price,
-                                    spread: m.spread,
-                                    uma_resolution_status: m.uma_resolution_status.clone(),
-                                };
-                                serde_json::to_string(&record).ok()
-                            })
-                            .collect();
-                        Self::absorb_venue_set(
-                            "polymarket",
-                            cmp_index_builder::build_cmp_indices_from_lines(
-                                &lines,
-                                family,
-                                cmp_index_builder::Venue::Polymarket,
-                                &context,
-                                &config,
-                                &now,
-                            ),
-                            &mut indices,
-                            &mut warnings,
-                            &mut venue_reports,
-                        );
-                    }
-                    Err(e) => warnings.push(format!("polymarket fetch failed: {e}")),
-                }
-            }
-
-            serde_json::to_value(serde_json::json!({
-                "series": series,
-                "family": family,
-                "observation_date": now.format("%Y-%m-%d").to_string(),
-                "indices": indices,
-                "indices_count": venue_reports.iter()
-                    .filter_map(|r| r.get("indices").and_then(|n| n.as_u64()))
-                    .sum::<u64>(),
-                "venues": venue_reports,
-                "warnings": warnings,
-                "note": "Pass indices to scenario_from_cmp_indices (hkask-mcp-scenarios) as cmp_indices to compose an EventTree; optionally persist curves with market_cmp_index_store.",
-            }))
-            .map_err(|e| {
-                McpToolError::internal(format!("cmp indices serialization failed: {e}"))
-            })
-        })
-        .await
-    }
-
-    /// Absorb one venue's index-set build into the cmp-indices accumulators —
-    /// the tail both venue arms of `market_cmp_indices` share: a built set
-    /// serializes its indices (a serialization failure warns, never aborts)
-    /// and reports its counts; a build failure warns with the venue named.
-    /// The venue label is the only thing that varies between the arms; the
-    /// accumulators are passed `&mut` (the fetch-failure arms warn too, so a
-    /// capturing closure would hold the borrow).
-    fn absorb_venue_set(
-        venue: &str,
-        result: Result<cmp_index_builder::ProvenancedCmpIndexSet, cmp_index_builder::CmpError>,
-        indices: &mut Vec<serde_json::Value>,
-        warnings: &mut Vec<String>,
-        venue_reports: &mut Vec<serde_json::Value>,
-    ) {
-        match result {
-            Ok(set) => {
-                let n = set.indices.len();
-                for index in &set.indices {
-                    match serde_json::to_value(index) {
-                        Ok(v) => indices.push(v),
-                        Err(e) => warnings.push(format!("{venue} index serialization failed: {e}")),
-                    }
-                }
-                venue_reports.push(serde_json::json!({
-                    "venue": venue,
-                    "indices": n,
-                    "withheld_buckets": set.withheld_buckets,
-                    "n_records_read": set.n_records_read,
-                    "n_eligible": set.n_eligible,
-                    "rejection_sample": set.rejection_sample,
-                }));
-            }
-            Err(e) => warnings.push(format!("{venue} index construction: {e}")),
-        }
-    }
-
-    /// Propose a curated economic context for a base-event family, with
-    /// reasoning. Read-only aid — the operator accepts, overrides, or rejects
-    /// the proposal before calling `market_cmp_portfolio_store`. This follows
-    /// the zed-kask design pattern: never present a blank field — always
-    /// provide a reasonable default with reasoning the user can accept or
-    /// override.
-    #[tool(
-        description = "Propose a curated economic context (reference level, volatility, predicted level, direction) for a base-event family, with reasoning. Read-only aid for the market_cmp_portfolio_store tool — the operator accepts, overrides, or rejects the proposal."
-    )]
-    pub async fn market_cmp_context_suggest(
-        &self,
-        Parameters(MarketCmpContextSuggestRequest { series }): Parameters<
-            MarketCmpContextSuggestRequest,
-        >,
-    ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "market_cmp_context_suggest",
-            async {
-                self.record_call("market_cmp_context_suggest");
-                self.require_registered_base_event(&series)?;
-                // §8 followup: classify through the same catalog path
-                // market_cmp_indices uses — the series-prefix semantic
-                // mapping — with the text-signature classifier as the
-                // fallback for series the catalog does not cover. The
-                // proposal side and the build side must not disagree about
-                // the family.
-                let catalog_family =
-                    semantic_mapping::classify_base_object_from_catalog("kalshi", &series, "");
-                let (context, family, classification_source) = match catalog_family {
-                    Some(family_object) => match cmp_index_builder::base_event_for(family_object) {
-                        Some(be) => {
-                            let ctx = be
-                                .live_economic_context(&self.http, self.fred_api_key.as_deref())
-                                .await;
-                            (ctx, family_object.label().to_string(), "catalog")
-                        }
-                        None => (
-                            base_event::EconomicContext {
-                                reference: 0.0,
-                                volatility: None,
-                                predicted_level: 0.0,
-                                direction_up: false,
-                                rationale: format!(
-                                    "family '{}' has no BaseEvent materiality setting — \
-                                     all buckets will be withheld. Override with live \
-                                     data before storing an index.",
-                                    family_object.label()
-                                ),
-                            },
-                            family_object.label().to_string(),
-                            "catalog",
-                        ),
-                    },
-                    None => match base_event::classify_base_event_text(&series, "", &series, "") {
-                        Some(be) => {
-                            let ctx = be
-                                .live_economic_context(&self.http, self.fred_api_key.as_deref())
-                                .await;
-                            (ctx, be.factor().to_string(), "text-signature")
-                        }
-                        None => (
-                            base_event::EconomicContext {
-                                reference: 0.0,
-                                volatility: None,
-                                predicted_level: 0.0,
-                                direction_up: false,
-                                rationale: format!(
-                                    "series '{series}' did not match a known base-event family \
-                                     signature; returning a generic stable default. Override with \
-                                     live data before storing an index."
-                                ),
-                            },
-                            "unknown".to_string(),
-                            "none",
-                        ),
-                    },
-                };
-                serde_json::to_value(serde_json::json!({
-                    "series": series,
-                    "family": family,
-                    "classification_source": classification_source,
-                    "proposed_context": {
-                        "reference": context.reference,
-                        "volatility": context.volatility,
-                        "predicted_level": context.predicted_level,
-                        "direction_up": context.direction_up,
-                    },
-                    "rationale": context.rationale,
-                    "usage": "Pass these values to market_cmp_portfolio_store, or override with live data. All fields are optional in market_cmp_portfolio_store — omitting them uses these curated defaults.",
-                }))
-                .map_err(|e| {
-                    McpToolError::internal(format!("context suggest serialization failed: {e}"))
                 })
             },
         )
@@ -1797,34 +1030,10 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
         }
     };
 
-    let base_events = match std::env::var("HKASK_PREDICTION_MARKETS_BASE_EVENTS") {
-        Ok(raw) => {
-            let parsed = cmp::parse_base_events(&raw);
-            let declared = raw.split(',').filter(|s| !s.trim().is_empty()).count();
-            if parsed.len() < declared {
-                tracing::warn!(
-                    "HKASK_PREDICTION_MARKETS_BASE_EVENTS: {} of {} entries malformed \
-                     (need domain:series pairs, comma-separated) — dropped",
-                    declared - parsed.len(),
-                    declared
-                );
-            }
-            parsed
-        }
-        Err(_) => Vec::new(),
-    };
-
     hkask_mcp_server::run_server(
         "hkask-mcp-prediction-markets",
         SERVER_VERSION,
         |ctx| {
-            let portfolio_store =
-                hkask_mcp_portfolio::PortfolioStore::new(ctx.webid).map_err(|e| {
-                    hkask_mcp_server::McpError::UnexpectedResponse {
-                        context: "portfolio".to_string(),
-                        detail: format!("failed to initialize CMP index portfolio store: {e}"),
-                    }
-                })?;
             let fred_api_key = ctx.credentials.get("HKASK_FRED_API_KEY").cloned();
             // zed-kask: HTTP client with explicit connect+request timeouts.
             // Without these, a stalled upstream (Kalshi, Polymarket, FRED)
@@ -1851,16 +1060,14 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 std::sync::Arc::new(std::sync::Mutex::new(store)),
                 cache::TtlCache::new(cache_ttl_secs),
                 Some(calibration_path.clone()),
-                base_events.clone(),
                 std::sync::Mutex::new(HashSet::new()),
-                portfolio_store,
                 fred_api_key,
                 inference_port.clone(),
             ))
         },
         vec![CredentialRequirement::optional(
             "HKASK_FRED_API_KEY",
-            "FRED API key for live reference-level fetches (curated static defaults used when absent)",
+            "FRED API key for the FRED economic-data tools",
         )],
     )
     .await
@@ -1912,16 +1119,12 @@ mod smoke {
         }
     }
 
-    /// Construct a server with minimal/test backends: a no-op inference port, an
-    /// empty calibration store, no FRED key, and a portfolio DB isolated in a
-    /// unique temp subdir so parallel runs never collide and no real data dir is
+    /// Construct a server with minimal/test backends: a no-op inference port,
+    /// an empty calibration store, and no FRED key — no real data dir is
     /// touched.
     fn make_server() -> PredictionMarketsServer {
         let cache_ttl_secs: u64 = DEFAULT_CACHE_TTL_SECS;
         let inference_port: Arc<dyn InferencePort> = Arc::new(NoopInferencePort);
-        let portfolio_dir =
-            std::env::temp_dir().join(format!("hkask-pm-smoke-{}", uuid::Uuid::new_v4()));
-        let portfolio_store = hkask_mcp_portfolio::PortfolioStore::with_dir(portfolio_dir);
         PredictionMarketsServer::new(
             WebID::new(),
             reqwest::Client::new(),
@@ -1929,9 +1132,7 @@ mod smoke {
             Arc::new(Mutex::new(calibration::CalibrationStore::new())),
             cache::TtlCache::new(cache_ttl_secs),
             None,
-            Vec::new(),
             Mutex::new(HashSet::new()),
-            portfolio_store,
             None,
             inference_port,
         )
@@ -2147,7 +1348,7 @@ mod tool_surface_tests {
     hkask_mcp_server::tool_surface_pin!(
         PredictionMarketsServer::combined_router(),
         "combined_router",
-        32,
-        tool_surface_is_exactly_32_registered_tools,
+        27,
+        tool_surface_is_exactly_27_registered_tools,
     );
 }

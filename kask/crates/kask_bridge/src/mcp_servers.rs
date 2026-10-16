@@ -345,7 +345,6 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             "HKASK_DATA_DIR",
             "HKASK_PREDICTION_MARKETS_CACHE_TTL_SECS",
             "HKASK_PREDICTION_MARKETS_DATA",
-            "HKASK_PREDICTION_MARKETS_BASE_EVENTS",
         ],
     },
     BuiltinMcpServer {
@@ -1146,7 +1145,6 @@ mod tests {
                 "HKASK_DATA_DIR",
                 "HKASK_PREDICTION_MARKETS_CACHE_TTL_SECS",
                 "HKASK_PREDICTION_MARKETS_DATA",
-                "HKASK_PREDICTION_MARKETS_BASE_EVENTS",
             ],
             "prediction-markets config_env allowlist drifted — every entry must \
              have a read site in hkask-mcp-prediction-markets (HKASK_DATA_DIR is \

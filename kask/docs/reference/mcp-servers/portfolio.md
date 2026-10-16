@@ -118,8 +118,6 @@ materialize-then-seed never serves stale rows.
 ## Consumers
 
 - **`hkask-mcp-companies`** — shares the database for owner-scoped company research artifacts, but does not register portfolio analytics or ledger tools; the 40-tool pin keeps ownership with this server (`kask/mcp-servers/hkask-mcp-companies/src/hkask_mcp_companies.rs:499-501`).
-- **`hkask-mcp-prediction-markets`** — stores CMP indices as transaction-ledger
-  portfolios via `market_cmp_index_store` and `market_cmp_portfolio_store`.
 - **`portfolio_panel`** — observes the active or resumed Steer thread and renders server-authored investor report display hints in its upper viewer.
 - **`hkask-portfolio-widget`** — preserves existing inline holdings + returns rendering for any portfolio type (stock, prediction-event, CMP index).
 

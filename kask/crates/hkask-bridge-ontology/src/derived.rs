@@ -819,19 +819,6 @@ pub const DERIVED_CONCEPTS: &[DerivedConcept] = &[
         authority: "operator ruling 2026-10-02; Damodaran, Investment Valuation, Wiley (2012); Williams, The Theory of Investment Value, Harvard University Press (1938)",
     },
     DerivedConcept {
-        term: "constant_maturity_prediction",
-        aliases: &["cmp", "constant-maturity prediction index"],
-        identity: "the probability of a base event at a fixed maturity, interpolated in log-odds space across a tenor grid of contract cohorts",
-        definition: "The prediction-market analog of constant-maturity Treasury yields (Federal Reserve H.15 methodology): instead of holding a decaying contract, hold a synthetic fixed-maturity point on a curve interpolated across cohorts at each tenor. Interpolation is in log-odds space — probability is bounded, so linear interpolation would fabricate values near the bounds. Tenors without cohort coverage are withheld, never extrapolated. The nameable violation: a 'constant-maturity' index built from a single decaying contract, or interpolated linearly in probability space.",
-        constituents: &[
-            "probability",
-            "tenor",
-            "yield curve",
-            "log-odds interpolation",
-        ],
-        authority: "operator ruling 2026-10-02; Federal Reserve H.15 constant-maturity Treasury methodology; reified by the platform's cmp-term-structure skill",
-    },
-    DerivedConcept {
         term: "arbitrage",
         aliases: &["arb", "riskless profit"],
         identity: "a price divergence between equivalent claims permitting riskless profit; divergences within the transaction-cost band are not actionable",
@@ -1854,12 +1841,8 @@ pub const DERIVED_CONCEPTS: &[DerivedConcept] = &[
         term: "equity_duration",
         aliases: &["cash flow duration", "macaulay equity duration"],
         identity: "sum(t * PV(FCF_t)) / sum(PV(FCF_t)), the present-value-weighted average maturity in years of an equity's projected free cash flows and terminal value",
-        definition: "Patricia M. Dechow, Richard G. Sloan & Mark T. Soliman, 'Implied Equity Duration: A New Measure of Equity Risk', Review of Accounting Studies 9(2-3):197-228 (2004), doi:10.1023/b:rast.0000028186.44328.3f, extending Frederick R. Macaulay, Some Theoretical Problems Suggested by the Movements of Interest Rates, Bond Yields and Stock Prices in the United States Since 1856 (NBER, 1938): measures the cash-flow horizon and discount-rate sensitivity of an equity by weighting each future free cash flow (plus terminal value at the horizon year) by its time to receipt divided by total enterprise value. In zed-kask it grounds the companies server's equity_duration tool and cmp-term-structure's Phase 4 duration matching.",
-        constituents: &[
-            "discounted_cash_flow",
-            "free_cash_flow",
-            "constant_maturity_prediction",
-        ],
+        definition: "Patricia M. Dechow, Richard G. Sloan & Mark T. Soliman, 'Implied Equity Duration: A New Measure of Equity Risk', Review of Accounting Studies 9(2-3):197-228 (2004), doi:10.1023/b:rast.0000028186.44328.3f, extending Frederick R. Macaulay, Some Theoretical Problems Suggested by the Movements of Interest Rates, Bond Yields and Stock Prices in the United States Since 1856 (NBER, 1938): measures the cash-flow horizon and discount-rate sensitivity of an equity by weighting each future free cash flow (plus terminal value at the horizon year) by its time to receipt divided by total enterprise value. In zed-kask it grounds the companies server's equity_duration tool.",
+        constituents: &["discounted_cash_flow", "free_cash_flow"],
         authority: "operator ruling 2026-10-14 (Cohort 13 skill-corpus audit); Dechow, Sloan & Soliman, Review of Accounting Studies 9(2-3):197-228 (2004), doi:10.1023/b:rast.0000028186.44328.3f; Macaulay (1938)",
     },
     DerivedConcept {
@@ -1872,12 +1855,8 @@ pub const DERIVED_CONCEPTS: &[DerivedConcept] = &[
             "log-odds pooling",
         ],
         identity: "ln(p / (1 - p)), the canonical link function mapping open probabilities p in (0, 1) bijectively onto the unconstrained real line (-inf, +inf) with inverse sigmoid sigma(x) = 1 / (1 + e^-x)",
-        definition: "Joseph Berkson, 'Application of the Logistic Function to Bio-Assay', Journal of the American Statistical Association 39(227):357-365 (1944), doi:10.2307/2280041, and Ville A. Satopaa et al., 'Combining Multiple Probability Predictions Using a Simple Logit Model', International Journal of Forecasting 30(2):344-356 (2014), doi:10.1016/j.ijforecast.2013.09.009: transforms bounded probabilities into additive log-odds units so linear tenor interpolation, extremity-adjusted forecast aggregation, and Bayesian log-odds evidence pooling never violate the [0, 1] boundary. In zed-kask it grounds cmp-term-structure's log-odds tenor interpolation, superforecasting's extremized log-odds pooling, and memory_update's Bayesian confidence combination.",
-        constituents: &[
-            "calibrated_forecast",
-            "constant_maturity_prediction",
-            "bayesian_inference",
-        ],
+        definition: "Joseph Berkson, 'Application of the Logistic Function to Bio-Assay', Journal of the American Statistical Association 39(227):357-365 (1944), doi:10.2307/2280041, and Ville A. Satopaa et al., 'Combining Multiple Probability Predictions Using a Simple Logit Model', International Journal of Forecasting 30(2):344-356 (2014), doi:10.1016/j.ijforecast.2013.09.009: transforms bounded probabilities into additive log-odds units so linear tenor interpolation, extremity-adjusted forecast aggregation, and Bayesian log-odds evidence pooling never violate the [0, 1] boundary. In zed-kask it grounds superforecasting's extremized log-odds pooling and memory_update's Bayesian confidence combination.",
+        constituents: &["calibrated_forecast", "bayesian_inference"],
         authority: "operator ruling 2026-10-14 (Cohort 13 skill-corpus audit); Berkson, JASA 39(227):357-365 (1944), doi:10.2307/2280041; Satopaa et al., Int. J. Forecasting 30(2):344-356 (2014), doi:10.1016/j.ijforecast.2013.09.009",
     },
 ];
@@ -2163,8 +2142,6 @@ mod tests {
             ("Bayes network", "Pearl"),
             ("discounted cash flow", "Damodaran"),
             ("DCF", "Williams"),
-            ("constant-maturity prediction", "H.15"),
-            ("CMP", "H.15"),
             ("arbitrage", "law of one price"),
         ] {
             let concept = resolve_derived(term).expect("mcp-tool-review anchor is defined");

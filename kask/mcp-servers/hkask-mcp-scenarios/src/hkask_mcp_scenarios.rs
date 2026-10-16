@@ -32,8 +32,6 @@
 //! - `scenario_cross_validate` — LLM vs computation cross-validation
 //! - `scenario_assess` — Chermack five-phase project evaluation, anchored on the project record
 //! - `scenario_from_markets_set` — Bridge from prediction-markets (multi-record EventTree)
-//! - `scenario_from_cmp_indices` — Bridge from prediction-markets CMP indices (EventTree)
-//! - `contract_price_coherence` — coherence: tree-implied joint vs contract price
 
 use std::collections::HashSet;
 
@@ -63,10 +61,7 @@ use types::*;
 /// Caller-input defects (bad probabilities, cycles, unknown parents, empty
 /// input) map to `InvalidArgument`; missing entities map to `NotFound`;
 /// missing-state conditions the caller can remedy (empty store, no cached
-/// tree) map to `FailedPrecondition` — unified with
-/// `contract_price_coherence`'s no-cached-tree classification
-/// (mcp-tool-review S-02: the split between `Internal` here and
-/// `FailedPrecondition` there was inter-server drift). `Forecast`
+/// tree) map to `FailedPrecondition`. `Forecast`
 /// computation errors are classified per variant (all current
 /// `ForecastError` variants are caller-input defects).
 fn map_scenario_error(error: ScenarioError) -> McpToolError {
@@ -131,9 +126,9 @@ impl ScenariosServer {
     /// answers `scenario_frame_document` consumes come from the framing
     /// conversation (`scenario_frame`'s 7-turn protocol, or its
     /// `prior_answers` re-supply). Every other tool accepts caller-supplied
-    /// inputs from multiple legitimate entries — the market bridges
-    /// (`scenario_from_markets_set` / `scenario_from_cmp_indices`),
-    /// superforecasting's own tree, manual construction, or a store
+    /// inputs from multiple legitimate entries — the market bridge
+    /// (`scenario_from_markets_set`), superforecasting's own tree, manual
+    /// construction, or a store
     /// populated by a previous session — and an advisory that warns on
     /// those entries is a broken feedback signal (PR-12: the former
     /// frame → brainstorm → build → quantify → … chain warned on every
@@ -287,14 +282,12 @@ fn decode_json_param(
     }
 }
 
-/// Serialize an EventTree's nodes to the standard JSON shape. `include_basis`
-/// controls whether the `basis` field appears (CMP-index trees cite it;
-/// market-set trees don't).
-fn tree_nodes_json(tree: &EventTree, include_basis: bool) -> Vec<serde_json::Value> {
+/// Serialize an EventTree's nodes to the standard JSON shape.
+fn tree_nodes_json(tree: &EventTree) -> Vec<serde_json::Value> {
     tree.nodes
         .iter()
         .map(|n| {
-            let mut node = serde_json::json!({
+            let node = serde_json::json!({
                 "id": n.event.id,
                 "question": n.event.question,
                 "marginal_probability": n.marginal_probability,
@@ -305,9 +298,6 @@ fn tree_nodes_json(tree: &EventTree, include_basis: bool) -> Vec<serde_json::Val
                 "base_rate": n.event.base_rate,
                 "certainty_distance": n.certainty_distance,
             });
-            if include_basis {
-                node["basis"] = n.event.basis.clone().into();
-            }
             node
         })
         .collect()
@@ -464,7 +454,7 @@ impl ScenariosServer {
             }
             .map_err(map_scenario_error)?;
 
-            let nodes = tree_nodes_json(&tree, false);
+            let nodes = tree_nodes_json(&tree);
 
             let output = serde_json::json!({
                 "tree": {
@@ -485,183 +475,6 @@ impl ScenariosServer {
                 "ontology": dc_bibo::DATASET
             });
 
-            Ok(output)
-        })
-        .await
-    }
-
-    /// Bridge: compose CMP indices into an EventTree.
-    ///
-    /// Takes CMP index probabilities (from hkask-mcp-prediction-markets
-    /// build_cmp_indices) and composes them into a validated EventTree. Each
-    /// CMP index becomes a root ScenarioEvent with its index probability as the
-    /// prior. The tree cites the index (family, orientation, tenor, venue) in
-    /// the provenance — not a decaying contract.
-    ///
-    /// Optional dependency edges between CMP indices (e.g. "oil price increase
-    /// → inflation increase") enable the joint coherence test.
-    #[tool(
-        description = "Compose CMP (Constant-Maturity Prediction) indices into a validated EventTree. Each CMP index becomes a root event with its index probability as the prior. Optional dependency edges between CMP indices (e.g. oil→inflation) enable joint probability computation for coherence testing. The tree cites the CMP index identity (family, tenor, orientation, venue) in the provenance — not a decaying contract. Input: an array of ProvenancedCmpIndex objects (from market_cmp_indices on hkask-mcp-prediction-markets), observation date, optional dependency specs. The composed tree is cached for contract_price_coherence's tree_implied default."
-    )]
-    pub async fn scenario_from_cmp_indices(
-        &self,
-        Parameters(req): Parameters<CmpBridgeRequest>,
-    ) -> Result<String, McpToolError> {
-        execute_tool(self, "scenario_from_cmp_indices", async {
-            let indices: Vec<hkask_mcp_prediction_markets::cmp_index_builder::ProvenancedCmpIndex> =
-                serde_json::from_value(req.cmp_indices.into())
-                    .map_err(|e| McpToolError::invalid_argument(format!("invalid cmp_indices JSON array: {e}")))?;
-
-            let observation_date = chrono::NaiveDate::parse_from_str(&req.observation_date, "%Y-%m-%d")
-                .map_err(|e| McpToolError::invalid_argument(format!(
-                    "invalid observation_date '{}': {e} — expected YYYY-MM-DD",
-                    req.observation_date
-                )))?;
-
-            let deps: Vec<superforecast::CmpDependencySpec> = req
-                .dependency_specs
-                .unwrap_or_default()
-                .into_iter()
-                .map(|s| superforecast::CmpDependencySpec {
-                    child_id: s.child_id,
-                    parent_ids: s.parent_ids,
-                    conditionals: s.conditionals,
-                })
-                .collect();
-
-            let tree = if deps.is_empty() {
-                superforecast::compose_cmp_tree(&indices, observation_date)
-            } else {
-                superforecast::compose_cmp_tree_with_deps(&indices, observation_date, &deps)
-            }
-            .map_err(map_scenario_error)?;
-
-            // Cache the composed tree so contract_price_coherence's
-            // tree_implied default (documented to read the cached joint
-            // probability) works after this tool — pre-fix only
-            // scenario_quantify wrote the cache. Persisted into the
-            // project record (PR-07: the durable tree cache).
-            *self.tree_cache.lock().unwrap_or_else(|e| e.into_inner()) = Some(tree.clone());
-            self.persist_tree(&tree)?;
-
-            let nodes = tree_nodes_json(&tree, true);
-
-            // CMP provenance — the full 7-field index identity per CMP root.
-            // Emitted from the `ProvenancedCmpIndex` list (the pre-composition
-            // source) because `tree.nodes` has lost the venue / method /
-            // maturity_error_days by the time the index is folded into a
-            // `ScenarioEvent`. The `id` is reconstructed to match
-            // `convert_cmp_index`'s format (`cmp:{family}:{tenor}:{orientation}`),
-            // which is the event id the tree builder uses, so the entries line up
-            // 1:1 with the tree's root nodes.
-            //
-            // Tree consumers (the companies `scenario_impact_valuation`
-            // tree parse) receive this shape as provenance metadata inside
-            // the `tree` object; the pin test
-            // `scenario_from_cmp_indices_emits_full_cmp_provenance_inside_tree`
-            // below fails if this emitter drops a field. The former
-            // companies-side `EventTreeProjection` deserializer and its
-            // round-trip pin were removed with the companies
-            // `scenario_analysis` tool (2026-10-15).
-            let cmp_provenance: Vec<serde_json::Value> =
-                emit_cmp_provenance(&indices);
-
-            let output = serde_json::json!({
-                "tree": {
-                    "subject": tree.subject,
-                    "root_ids": tree.root_ids,
-                    "topo_order": tree.topo_order,
-                    "joint_probability": tree.joint_probability,
-                    "nodes": nodes,
-                    "cmp_provenance": cmp_provenance,
-                },
-                "provenance": provenance("scenario_from_cmp_indices", {
-                    let mut m = serde_json::Map::new();
-                    m.insert("cmp_index_count".into(), indices.len().into());
-                    m.insert("dependency_edge_count".into(), deps.len().into());
-                    m.insert("observation_date".into(), req.observation_date.clone().into());
-                    m
-                }),
-                "bridge_note": "CMP indices are constant-maturity, constant-orientation synthetic portfolios. The tree cites the index identity, not a decaying contract. Dependency edges and their conditionals are caller-authored; the server validates structure and computes marginals/joints but never invents conditional probabilities.",
-                "ontology": dc_bibo::DATASET
-            });
-
-            Ok(output)
-        })
-        .await
-    }
-
-    /// Coherence between the tree-implied joint
-    /// probability and an observed contract price. The arbitrage analysis
-    /// lives on the contracts — never on equity returns.
-    #[tool(
-        description = "Measure contract-price coherence: the divergence between a tree-implied joint probability and an observed market price (parlay/joint contract, or a single contract for a marginal comparison). Divergence within the transaction-cost band is coherent (not actionable); beyond it, the gap is the arbitrage signal. tree_implied defaults to the cached tree's joint_probability (from scenario_quantify / scenario_from_cmp_indices / scenario_propagate). Inputs outside [0, 1] are rejected — a coherence measure over an invalid probability is never fabricated."
-    )]
-    pub async fn contract_price_coherence(
-        &self,
-        Parameters(req): Parameters<ContractCoherenceRequest>,
-    ) -> Result<String, McpToolError> {
-        execute_tool(self, "contract_price_coherence", async {
-            if !(0.0..=1.0).contains(&req.market_price) {
-                return Err(McpToolError::invalid_argument("market_price must be in [0, 1]"));
-            }
-            if req.cost_band < 0.0 {
-                return Err(McpToolError::invalid_argument("cost_band must be >= 0"));
-            }
-            let tree_implied = match req.tree_implied {
-                Some(p) => p,
-                None => {
-                    let tree = self
-                        .tree_cache
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .clone()
-                        // PR-07: the durable tree cache — after a restart
-                        // the memory cache is empty and the last-updated
-                        // project's tree is the documented default.
-                        .or_else(|| {
-                            self.project_store
-                                .lock()
-                                .unwrap_or_else(|e| e.into_inner())
-                                .last_tree()
-                        });
-                    match tree {
-                        Some(t) => t.joint_probability,
-                        None => {
-                            return Err(McpToolError::failed_precondition(
-                                "no tree_implied supplied and no cached event tree — run scenario_quantify / scenario_from_cmp_indices / scenario_propagate first",
-                            ));
-                        }
-                    }
-                }
-            };
-            let Some(measure) =
-                hkask_forecast::contract_price_coherence(tree_implied, req.market_price, req.cost_band)
-            else {
-                return Err(McpToolError::invalid_argument(
-                    "tree_implied must be in [0, 1] — a coherence measure over an invalid probability is undefined (never fabricated)",
-                ));
-            };
-            let output = serde_json::json!({
-                "tree_implied": measure.tree_implied,
-                "market_price": measure.market_price,
-                "divergence": measure.divergence,
-                "cost_band": measure.cost_band,
-                "coherent": measure.coherent,
-                "interpretation": if measure.coherent {
-                    format!(
-                        "Coherent — divergence {:.4} is within the transaction-cost band {:.4}: the tree and the market agree beyond what transaction costs explain.",
-                        measure.divergence, measure.cost_band
-                    )
-                } else {
-                    format!(
-                        "Divergent — divergence {:.4} exceeds the transaction-cost band {:.4}: the tree and the market disagree beyond what transaction costs explain; the gap is the arbitrage signal.",
-                        measure.divergence, measure.cost_band
-                    )
-                },
-                "framework": "Contract-price coherence: the arbitrage analysis applies to the contracts — tree-implied joint probability vs observed contract price — never to equity returns. Systematic divergence on CMP-controlled trees refutes the composition algebra's pricing coherence; coherence on CMP trees but divergence on raw-snapshot trees corroborates CMP as the active ingredient.",
-                "ontology": dc_bibo::DATASET,
-            });
             Ok(output)
         })
         .await
@@ -1175,9 +988,8 @@ impl ScenariosServer {
             let result = superforecast::propagate_prior_update(&req.events, &req.event_id, req.new_prior)
                 .map_err(map_scenario_error)?;
 
-            // Cache the propagated tree so contract_price_coherence's
-            // tree_implied default (documented to read the cached joint
-            // probability) reflects the post-update tree — pre-fix only
+            // Cache the propagated tree so the status snapshot and future
+            // tree-consuming tools read the post-update tree — pre-fix only
             // scenario_quantify wrote the cache. Persisted into the
             // project record (PR-07: the durable tree cache).
             *self.tree_cache.lock().unwrap_or_else(|e| e.into_inner()) =
@@ -2064,73 +1876,14 @@ fn parse_scenario_type(s: Option<&str>) -> ScenarioType {
     }
 }
 
-/// Emit the CMP provenance array for `scenario_from_cmp_indices`'s `tree` object —
-/// the full 7-field index identity per CMP root. Extracted from the async tool
-/// body so the shape is testable without a `ScenariosServer` fixture: the
-/// `scenario_from_cmp_indices_emits_full_cmp_provenance_inside_tree` pin below
-/// asserts the 7-field shape and the `cmp_provenance`-inside-`tree` location.
-///
-/// Constructs the shared `superforecast::CmpIndexProvenance` (re-exported from
-/// `hkask_forecast`) so the emitter and any re-exporting consumer share one
-/// type-level source of truth — if the shared struct's fields change, every
-/// side tracks the change at compile time. `id` matches
-/// `superforecast::convert_cmp_index`'s format
-/// (`cmp:{family}:{tenor}:{orientation}`), which is the event id the tree
-/// builder uses, so entries line up 1:1 with the tree's root nodes.
-fn emit_cmp_provenance(
-    indices: &[hkask_mcp_prediction_markets::cmp_index_builder::ProvenancedCmpIndex],
-) -> Vec<serde_json::Value> {
-    use hkask_mcp_prediction_markets::cmp::CmpMethod;
-    indices
-        .iter()
-        .map(|idx| {
-            let family_label = idx.family.label();
-            let tenor = idx.index.bucket.label();
-            let orientation = idx.index.orientation.to_string();
-            let venue = idx.venue.to_string();
-            let method = match idx.index.portfolio.method {
-                CmpMethod::Interpolated => "interpolated",
-                CmpMethod::BucketedSparse => "bucketed_sparse",
-            };
-            let id = format!("cmp:{family_label}:{tenor}:{orientation}");
-            let provenance = superforecast::CmpIndexProvenance {
-                id: id.clone(),
-                family: family_label.to_string(),
-                tenor: tenor.to_string(),
-                orientation,
-                venue,
-                method: method.to_string(),
-                maturity_error_days: idx.index.portfolio.maturity_error_days,
-            };
-            // `serde_json::to_value` on a plain struct with `String`/`f64`
-            // fields cannot fail except on a non-finite `maturity_error_days`
-            // (NaN/inf). Fall back to the manual JSON in that case so a
-            // degenerate portfolio never loses the other 6 fields.
-            serde_json::to_value(provenance).unwrap_or_else(|_| {
-                serde_json::json!({
-                    "id": id,
-                    "family": family_label,
-                    "tenor": tenor,
-                    "orientation": idx.index.orientation.to_string(),
-                    "venue": idx.venue.to_string(),
-                    "method": method,
-                    "maturity_error_days": idx.index.portfolio.maturity_error_days,
-                })
-            })
-        })
-        .collect()
-}
-
 // ── Pin tests ───────────────────────────────────────────────────────────────
-// The two pin tests referenced in the crate doc and `emit_cmp_provenance`'s
-// doc comment. They enforce the advertised invariants: the tool surface
-// count (19) and the 7-field CMP provenance shape emitted inside `tree`.
+// The pin test enforces the advertised invariant: the tool surface count.
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    // The scenarios server registers exactly 19 tools. Adding, removing,
+    // The scenarios server registers exactly 17 tools. Adding, removing,
     // or renaming a tool is an intentional surface change — the pin catches
     // accidental drift. One macro call: the count test plus the
     // build.rs-generated TOOL_NAMES set against the live router.
@@ -2138,71 +1891,9 @@ mod tests {
     hkask_mcp_server::tool_surface_pin!(
         ScenariosServer::scenario_router(),
         "scenario_router",
-        19,
-        tool_surface_is_exactly_19_registered_tools,
+        17,
+        tool_surface_is_exactly_17_registered_tools,
     );
-
-    /// `emit_cmp_provenance` produces the full 7-field CMP index identity per
-    /// root: id, family, tenor, orientation, venue, method, maturity_error_days.
-    /// Tree consumers receive this shape as provenance metadata; if the
-    /// emitter drops a field the bridge silently degrades.
-    #[test]
-    fn scenario_from_cmp_indices_emits_full_cmp_provenance_inside_tree() {
-        use hkask_mcp_prediction_markets::cmp::CmpMethod;
-        use hkask_mcp_prediction_markets::cmp_index_builder::{ProvenancedCmpIndex, Venue};
-        use hkask_mcp_prediction_markets::cmp_portfolio::{
-            CmpIndex, IndexPortfolio, MaturityBucket, Orientation,
-        };
-        use hkask_mcp_prediction_markets::economic_object::BaseEconomicObject;
-
-        let index = ProvenancedCmpIndex {
-            family: BaseEconomicObject::PolicyInterestRate,
-            venue: Venue::Kalshi,
-            index: CmpIndex {
-                bucket: MaturityBucket::OneMonth,
-                orientation: Orientation::Increase,
-                portfolio: IndexPortfolio {
-                    constituents: vec![],
-                    weighted_maturity_days: 30.0,
-                    maturity_error_days: 0.5,
-                    index_probability: 0.55,
-                    method: CmpMethod::Interpolated,
-                },
-            },
-        };
-
-        let provenance = emit_cmp_provenance(&[index]);
-        assert_eq!(
-            provenance.len(),
-            1,
-            "one CMP index in → one provenance entry out"
-        );
-        let entry = &provenance[0];
-        for field in [
-            "id",
-            "family",
-            "tenor",
-            "orientation",
-            "venue",
-            "method",
-            "maturity_error_days",
-        ] {
-            assert!(
-                entry.get(field).is_some(),
-                "cmp_provenance entry must have field '{field}', got: {entry}"
-            );
-        }
-        assert_eq!(
-            entry["id"].as_str(),
-            Some("cmp:policy_interest_rate:1m:increase")
-        );
-        assert_eq!(entry["family"].as_str(), Some("policy_interest_rate"));
-        assert_eq!(entry["tenor"].as_str(), Some("1m"));
-        assert_eq!(entry["orientation"].as_str(), Some("increase"));
-        assert_eq!(entry["venue"].as_str(), Some("kalshi"));
-        assert_eq!(entry["method"].as_str(), Some("interpolated"));
-        assert_eq!(entry["maturity_error_days"].as_f64(), Some(0.5));
-    }
 }
 
 // ── Entry point ────────────────────────────────────────────────────────────

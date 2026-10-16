@@ -12,7 +12,7 @@ mds_categories: [curation, composition]
 
 This registry is generated from the surviving `DIAGRAM_ALIGNMENT` metadata under `kask/docs/`. As of 2026-10-05 the corpus contains **108 active alignment records representing 108 unique IDs**: 34 records in the five consolidated diagram files and 74 inline records. The 2026-09-28 how-to folds moved eleven inline records from the per-crate how-to documents into their set references' Procedures sections (count unchanged by the folds); the deleted `DIAG-SKILL-CFR` (subject removed with the GSR/CFR skills, commit `5eed0134bf`) reduced the count from 106 to 105.
 
-The corpus contains 108 Mermaid blocks, each carrying one immediately adjacent alignment record (mechanically counted 2026-10-05: 108 `mermaid` fences, 108 `id: DIAG-` records). `architecture/DOCUMENTATION_STANDARDS.md` §3's own lifecycle diagram is exempt by the self-illustration rule (DOCUMENTATION_STANDARDS §4.2, added 2026-09-30: the standards document's own illustrative diagrams depict the standard's definitions rather than the tree's structure) yet retains its pre-exemption record `DIAG-STD-001` (verified 2026-09-28). The compaction pipeline spec's diagram (landed 2026-09-29) carried no record until this run registered it as `DIAG-ARCH-COMPACTION-001` (2026-10-05) — the 2026-09-30 prose had misattributed the gap to the standards' exempt diagram. On 2026-09-26 the skill learning loop registered as `DIAG-ARCH-LEARNING-LOOP-001` in `diagrams/architecture.md`. The last two conversions landed 2026-09-19: the LogiSheets plan's architecture block registered as `DIAG-ARCH-SPREADSHEET-001` (implementation began 2026-09-18, converting the plan to `Active` per `kask/docs/architecture/DOCUMENTATION_STANDARDS.md` §4.2), and `research/cmp-gap-methodology.md`'s Stage-7 routing block registered as `DIAG-RES-CMP-001` together with the file's frontmatter. On 2026-09-30 the three-layer review registered two model diagrams in `research/cybernetic-nervous-system-reference-model.md`: `DIAG-RES-CNS-001` (the abstract tiered feedback structure, verified against the external canonical sources) and `DIAG-RES-CNS-002` (the A/B/C pathway mapping, verified against the layer pathway code sites).
+The corpus contains 103 Mermaid blocks, each carrying one immediately adjacent alignment record (mechanically counted 2026-10-15: 103 `mermaid` fences, 102 `id: DIAG-` records; the CMP program's eight diagrams — five ARCH, two FLOW, one RES-CMP — were removed with the program on 2026-10-15). `architecture/DOCUMENTATION_STANDARDS.md` §3's own lifecycle diagram is exempt by the self-illustration rule (DOCUMENTATION_STANDARDS §4.2, added 2026-09-30: the standards document's own illustrative diagrams depict the standard's definitions rather than the tree's structure) yet retains its pre-exemption record `DIAG-STD-001` (verified 2026-09-28). The compaction pipeline spec's diagram (landed 2026-09-29) carried no record until this run registered it as `DIAG-ARCH-COMPACTION-001` (2026-10-05) — the 2026-09-30 prose had misattributed the gap to the standards' exempt diagram. On 2026-09-26 the skill learning loop registered as `DIAG-ARCH-LEARNING-LOOP-001` in `diagrams/architecture.md`. The LogiSheets plan's architecture block registered as `DIAG-ARCH-SPREADSHEET-001` on 2026-09-19 (implementation began 2026-09-18, converting the plan to `Active` per `kask/docs/architecture/DOCUMENTATION_STANDARDS.md` §4.2). On 2026-09-30 the three-layer review registered two model diagrams in `research/cybernetic-nervous-system-reference-model.md`: `DIAG-RES-CNS-001` (the abstract tiered feedback structure, verified against the external canonical sources) and `DIAG-RES-CNS-002` (the A/B/C pathway mapping, verified against the layer pathway code sites).
 
 ## Consolidated files
 
@@ -47,13 +47,7 @@ Every row below is an actual `(id, location)` metadata pair. Dates and statuses 
 | `DIAG-CAP-004` | [`diataxis/hkask-tool-port/reference.md`](./diataxis/hkask-tool-port/reference.md) | 2026-09-28 | VERIFIED |
 | `DIAG-CAP-005` | [`diataxis/hkask-tool-port/reference.md`](./diataxis/hkask-tool-port/reference.md) | 2026-09-28 | VERIFIED |
 | `DIAG-CAP-006` | [`diataxis/hkask-tool-port/reference.md`](./diataxis/hkask-tool-port/reference.md) | 2026-09-28 | VERIFIED |
-| `DIAG-CMP-ARCH-001` | [`diagrams/architecture.md`](./diagrams/architecture.md) | 2026-09-28 | VERIFIED |
-| `DIAG-CMP-ARCH-002` | [`diagrams/architecture.md`](./diagrams/architecture.md) | 2026-09-28 | VERIFIED |
-| `DIAG-CMP-ARCH-003` | [`diagrams/architecture.md`](./diagrams/architecture.md) | 2026-09-28 | VERIFIED |
-| `DIAG-CMP-ARCH-004` | [`diagrams/architecture.md`](./diagrams/architecture.md) | 2026-09-28 | VERIFIED |
-| `DIAG-CMP-ARCH-005` | [`diagrams/architecture.md`](./diagrams/architecture.md) | 2026-09-28 | VERIFIED |
-| `DIAG-CMP-FLOW-001` | [`diagrams/mcp-dispatch.md`](./diagrams/mcp-dispatch.md) | 2026-09-28 | VERIFIED |
-| `DIAG-CMP-FLOW-002` | [`diagrams/mcp-dispatch.md`](./diagrams/mcp-dispatch.md) | 2026-09-28 | VERIFIED |
+
 | `DIAG-COND-002` | [`diataxis/hkask-condenser/reference.md`](./diataxis/hkask-condenser/reference.md) | 2026-09-28 | VERIFIED |
 | `DIAG-COND-003` | [`diataxis/hkask-condenser/reference.md`](./diataxis/hkask-condenser/reference.md) | 2026-09-28 | VERIFIED |
 | `DIAG-COND-004` | [`diataxis/hkask-condenser/explanation.md`](./diataxis/hkask-condenser/explanation.md) | 2026-09-28 | VERIFIED |
@@ -97,7 +91,7 @@ Every row below is an actual `(id, location)` metadata pair. Dates and statuses 
 | `DIAG-REG-007` | [`diataxis/hkask-regulation/explanation.md`](./diataxis/hkask-regulation/explanation.md) | 2026-09-28 | VERIFIED |
 | `DIAG-RES-CHUNK-001` | [`research/chunking-for-rag-research.md`](./research/chunking-for-rag-research.md) | 2026-09-16 | VERIFIED |
 | `DIAG-RES-CHUNK-002` | [`research/chunking-for-rag-research.md`](./research/chunking-for-rag-research.md) | 2026-09-28 | VERIFIED |
-| `DIAG-RES-CMP-001` | [`research/cmp-gap-methodology.md`](./research/cmp-gap-methodology.md) | 2026-09-28 | VERIFIED |
+
 | `DIAG-RES-CNS-001` | [`research/cybernetic-nervous-system-reference-model.md`](./research/cybernetic-nervous-system-reference-model.md) | 2026-09-30 | VERIFIED |
 | `DIAG-RES-CNS-002` | [`research/cybernetic-nervous-system-reference-model.md`](./research/cybernetic-nervous-system-reference-model.md) | 2026-09-30 | VERIFIED |
 | `DIAG-RF-003` | [`reference/mcp-servers/README.md`](./reference/mcp-servers/README.md) | 2026-09-28 | VERIFIED |

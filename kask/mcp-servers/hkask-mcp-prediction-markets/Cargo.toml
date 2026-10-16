@@ -15,7 +15,6 @@ path = "src/main.rs"
 
 [dependencies]
 hkask-mcp-server.workspace = true
-hkask-mcp-portfolio.workspace = true
 hkask-types.workspace = true
 hkask-forecast.workspace = true
 hkask-inference.workspace = true
@@ -27,7 +26,6 @@ schemars = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 chrono = { workspace = true }
-uuid.workspace = true
 reqwest.workspace = true
 thiserror.workspace = true
 async-tungstenite = { workspace = true, features = ["tokio", "tokio-rustls-manual-roots", "tokio-runtime"] }

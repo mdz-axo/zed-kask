@@ -3,8 +3,8 @@
 //!
 //! The expectation contract: the venue APIs (Polymarket Gamma/CLOB, Kalshi)
 //! evolve independently of this server; a drifted response must never
-//! fabricate a probability into the calibration store, a market record, a
-//! CMP cohort, or the realized-variance window. Deserialization either
+//! fabricate a probability into the calibration store, a market record, or
+//! the realized-variance window. Deserialization either
 //! errors (surfaced as a typed `unavailable` by the provider boundary) or
 //! yields records whose derived probabilities are honest: `None`, or a
 //! value in [0, 1]. The `.rules` degradation rule is the authority: a

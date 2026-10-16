@@ -1852,8 +1852,6 @@ pub struct KaskScenariosSettingsContent {}
 pub struct KaskPredictionMarketsSettingsContent {
     /// Cache TTL in seconds for market-data responses.
     pub cache_ttl_secs: Option<u64>,
-    /// Base-event registry: "domain:series,..." pairs for CMP construction.
-    pub base_events: Option<String>,
 }
 
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]

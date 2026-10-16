@@ -90,23 +90,6 @@ pub(crate) struct PropagateRequest {
     pub new_prior: f64,
 }
 
-/// Request for contract_price_coherence.
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct ContractCoherenceRequest {
-    /// Observed market price of the contract on the same events — a
-    /// parlay/joint contract for a joint comparison, or a single contract's
-    /// price for a marginal comparison. Must be in [0, 1].
-    pub market_price: f64,
-    /// Transaction-cost band: the sum of bid-ask spreads, fees, and slippage
-    /// for both legs of the arbitrage. Divergences within the band are not
-    /// actionable.
-    pub cost_band: f64,
-    /// Tree-implied joint probability in [0, 1]. When omitted, the cached
-    /// tree's joint_probability is used (from scenario_quantify,
-    /// scenario_from_cmp_indices, or scenario_propagate).
-    pub tree_implied: Option<f64>,
-}
-
 /// Request for `scenario_from_markets_set`: compose N market records into a
 /// dependent event tree.
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -120,36 +103,6 @@ pub(crate) struct MarketsSetBridgeRequest {
     pub match_confidences: Option<Vec<Option<String>>>,
     /// Caller-authored dependency edges. Omit for a flat (independent) tree.
     pub dependency_specs: Option<Vec<DependencySpecRequest>>,
-}
-
-/// One dependency edge for `scenario_from_cmp_indices`. Uses CMP index IDs
-/// (`cmp:{family}:{tenor}:{orientation}`) instead of market IDs.
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct CmpDependencySpecRequest {
-    /// The child CMP index ID: `cmp:{family}:{tenor}:{orientation}`.
-    pub child_id: String,
-    /// The parent CMP index IDs.
-    pub parent_ids: Vec<String>,
-    /// P(child | parent truth assignment), bitmap-ordered; length must be
-    /// 2^parent_ids.len(). Caller-authored.
-    pub conditionals: Vec<f64>,
-}
-
-/// Request for `scenario_from_cmp_indices`: compose CMP indices into an
-/// EventTree with optional dependency edges.
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct CmpBridgeRequest {
-    /// ProvenancedCmpIndex objects from hkask-mcp-prediction-markets
-    /// (market_cmp_indices output). Typed as [`AnyJsonValue`] because
-    /// `ProvenancedCmpIndex` is defined in the prediction-markets crate and
-    /// does not derive `JsonSchema`.
-    pub cmp_indices: AnyJsonValue,
-    /// The observation date (YYYY-MM-DD) the CMP indices were built. The event
-    /// deadlines are observation_date + target_maturity_days.
-    pub observation_date: String,
-    /// Optional caller-authored dependency edges between CMP index IDs. Omit
-    /// for a flat (independent) tree.
-    pub dependency_specs: Option<Vec<CmpDependencySpecRequest>>,
 }
 
 /// Request for `scenario_recompute_posteriors`: recompute the event tree's

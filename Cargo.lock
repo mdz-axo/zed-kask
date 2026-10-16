@@ -7783,7 +7783,6 @@ name = "hkask-forecast"
 version = "0.40.2"
 dependencies = [
  "proptest",
- "serde",
  "thiserror 2.0.17",
  "tracing",
 ]
@@ -8083,7 +8082,6 @@ dependencies = [
  "hkask-bridge-ontology",
  "hkask-forecast",
  "hkask-inference",
- "hkask-mcp-portfolio",
  "hkask-mcp-server",
  "hkask-types",
  "proptest",
@@ -8096,7 +8094,6 @@ dependencies = [
  "thiserror 2.0.17",
  "tokio",
  "tracing",
- "uuid",
  "zed-reqwest",
 ]
 

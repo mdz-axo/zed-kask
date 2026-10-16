@@ -21,8 +21,8 @@ pub struct ProjectStore {
     projects: HashMap<String, ScenarioProject>,
     snapshot_path: Option<PathBuf>,
     /// The most recently updated project — the durable tree cache's key
-    /// (PR-07): `contract_price_coherence`'s `tree_implied` default reads
-    /// the last-updated project's tree after a restart.
+    /// (PR-07): `ProjectStore::last_tree()` is the documented default a
+    /// restarted server reads.
     last_project_id: Option<String>,
 }
 

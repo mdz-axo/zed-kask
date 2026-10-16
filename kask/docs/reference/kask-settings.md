@@ -319,12 +319,11 @@ No fields — the scenarios data dir is derived from the global `data_dir` as `m
 
 ## Prediction Markets (`KaskPredictionMarketsSettings`)
 
-Prediction-markets data-service configuration (`kask/crates/kask_bridge/src/settings.rs:395-406`). Its data directory is derived from the top-level `data_dir`; there is no subsection `data_dir` field.
+Prediction-markets data-service configuration (`kask/crates/kask_bridge/src/settings.rs:397-407`). Its data directory is derived from the top-level `data_dir`; there is no subsection `data_dir` field.
 
 | Field | Type | Default | Env var injected | Notes |
 |-------|------|---------|-------------------|-------|
 | `cache_ttl_secs` | `u64` | `0` | `HKASK_PREDICTION_MARKETS_CACHE_TTL_SECS` | Market-data cache TTL; 0 = server default |
-| `base_events` | `String` | `""` | `HKASK_PREDICTION_MARKETS_BASE_EVENTS` | Base-event registry: `"domain:series,..."` pairs for CMP construction |
 
 ## Swarm (`KaskSwarmSettings`)
 
@@ -596,7 +595,6 @@ into the editor process env).
 | `HKASK_SCENARIOS_DATA` | scenarios | derived from `data_dir` as `mcp/scenarios/` |
 | `HKASK_PREDICTION_MARKETS_DATA` | prediction-markets | derived from `data_dir` as `mcp/prediction-markets/` |
 | `HKASK_PREDICTION_MARKETS_CACHE_TTL_SECS` | prediction-markets | `prediction_markets.cache_ttl_secs` |
-| `HKASK_PREDICTION_MARKETS_BASE_EVENTS` | prediction-markets | `prediction_markets.base_events` |
 | `HKASK_SWARM_MODE` | swarm | `swarm.mode` |
 | `HKASK_ABW_API_URL` | swarm | `swarm.api_url` |
 | `HKASK_ABW_MAX_CREDITS` | swarm | `swarm.max_credits_per_dispatch` |

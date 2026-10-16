@@ -11,14 +11,14 @@ mds_categories: [composition, lifecycle]
 # Scenarios MCP Server Reference
 
 **Crate:** `kask/mcp-servers/hkask-mcp-scenarios`
-**Tools:** 19 — `scenario_frame`, `scenario_frame_document`, `scenario_brainstorm`, `scenario_build`, `scenario_quantify`, `scenario_propagate`, `scenario_recompute_posteriors`, `scenario_calibrate`, `scenario_update`, `scenario_synthesize`, `scenario_cross_validate`, `scenario_score`, `scenario_calibration`, `scenario_assess`, `scenario_triage`, `scenario_status`, `scenario_from_markets_set`, `scenario_from_cmp_indices`, `contract_price_coherence`. The direct market-record bridge is `scenario_from_markets_set`; a single record is passed as a set of one.
+**Tools:** 17 — `scenario_frame`, `scenario_frame_document`, `scenario_brainstorm`, `scenario_build`, `scenario_quantify`, `scenario_propagate`, `scenario_recompute_posteriors`, `scenario_calibrate`, `scenario_update`, `scenario_synthesize`, `scenario_cross_validate`, `scenario_score`, `scenario_calibration`, `scenario_assess`, `scenario_triage`, `scenario_status`, `scenario_from_markets_set`. The direct market-record bridge is `scenario_from_markets_set`; a single record is passed as a set of one.
 **Auto-start:** Yes by default with the full built-in set; operators can disable the fleet or this server through `kask.mcp` (`kask/crates/kask_bridge/src/settings.rs:140-165`; `kask/crates/kask_bridge/src/mcp_servers.rs:327-340,704`).
 
-Tool count is pinned against the live `scenario_router()` by `tool_surface_is_exactly_19_registered_tools` (the `mod tests` pin in `kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs`).
+Tool count is pinned against the live `scenario_router()` by `tool_surface_is_exactly_17_registered_tools` (the `mod tests` pin in `kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs`).
 
 ## Pipeline Architecture (DIAG-RF-005)
 
-This diagram shows the control flow between the 19 MCP tools in the scenarios server, grouped by pipeline phase. Solid arrows indicate the expected predecessor relationship enforced by the pipeline conventions. Dashed arrows indicate optional or independent paths.[^tetlock-scenarios-ref][^schwartz-scenarios-ref]
+This diagram shows the control flow between the 17 MCP tools in the scenarios server, grouped by pipeline phase. Solid arrows indicate the expected predecessor relationship enforced by the pipeline conventions. Dashed arrows indicate optional or independent paths.[^tetlock-scenarios-ref][^schwartz-scenarios-ref]
 
 ```mermaid
 flowchart TD
@@ -29,8 +29,6 @@ flowchart TD
 
     subgraph Bridges["Prediction-market bridges"]
         markets["scenario_from_markets_set"]
-        cmp["scenario_from_cmp_indices"]
-        coherence["contract_price_coherence"]
     end
 
     subgraph Computation["Quantification and updating"]
@@ -56,7 +54,6 @@ flowchart TD
 
     build --> quantify
     markets --> quantify
-    cmp --> quantify
     quantify --> propagate
     quantify -.-> posteriors
     quantify --> calibrate
@@ -66,15 +63,13 @@ flowchart TD
     quantify --> score --> calibration
     synthesize --> assess
     triage -.-> build
-    markets -.-> coherence
-    quantify -.-> coherence
     status -.-> calibration
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-RF-005
 verified_date: 2026-10-06
-verified_against: kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs (the 19 #[tool] handlers; tool_surface_is_exactly_19_registered_tools pin); kask/mcp-servers/hkask-mcp-scenarios/src/superforecast.rs; kask/mcp-servers/hkask-mcp-scenarios/src/types.rs
+verified_against: kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs (the 17 #[tool] handlers; tool_surface_is_exactly_17_registered_tools pin); kask/mcp-servers/hkask-mcp-scenarios/src/superforecast.rs; kask/mcp-servers/hkask-mcp-scenarios/src/types.rs
 status: VERIFIED
 -->
 
@@ -121,7 +116,7 @@ full derivation is in git history — see the Redesign record):
 | ScenarioProject | the spine: framing document, trees, assessment history, journal linkage | Chermack's unit of assessment | `ProjectStore` (see Project persistence) |
 | Narrative / Implications / Indicators | quadrant stories, strategies, early-warning indicators | Schwartz steps 5–8 | the skill layer (`scenario-planning` templates) — a ruled contract, not a server primitive |
 | ImpactMapping | per-node yes/no DCF deltas; 2^N paths weighted by probability | MAIA "events drive the financial forecast" | `scenario_impact_valuation` (companies server) |
-| MarketBridge | market records / CMP indices → root events with provenance and gates | the CMP term-structure program | `scenario_from_markets_set` / `scenario_from_cmp_indices` |
+| MarketBridge | market records → root events with provenance and gates | prediction-market base rates as priors | `scenario_from_markets_set` |
 | CertaintyTier | proximate ≥67% / probable 33–66% / possible <33% | MAIA three-level tier | `hkask_forecast` |
 
 ## Tool reference
@@ -145,13 +140,11 @@ full derivation is in git history — see the Redesign record):
 |------|-------------|------------|
 | `scenario_build` | Build a scenario event-tree scaffold from web research: returns an extraction template (event schema, dependency format, certainty tiers, Tetlock's 10 commandments) the LLM fills against `research_text`. | `frame`, `research_text` |
 
-### Market bridges (3)
+### Market bridges (1)
 
 | Tool | Description | Key params |
 |------|-------------|------------|
 | `scenario_from_markets_set` | Compose a set of prediction-market records into a validated `EventTree` with caller-authored dependency edges; per-record gates, duplicate-question flags, cycle and CPT-size rejection; returns resolved tree (marginals, joint probability) plus warnings. | `market_records`, `match_confidences`, `dependency_specs` |
-| `scenario_from_cmp_indices` | Compose provenance-carrying constant-maturity prediction indices into an `EventTree`, optionally with caller-authored dependencies. | `cmp_indices`, `observation_date`, `dependency_specs` |
-| `contract_price_coherence` | Compare a tree-implied joint or marginal probability with an observed contract price and cost band. | `market_price`, `cost_band`, `tree_implied` |
 
 ### Computation (5)
 
@@ -256,12 +249,11 @@ journal (projects are low-volume by design).
 - `scenario_frame_document` creates/updates the project (id defaults
   to the subject; a re-run updates in place) and persists the framing
   document — Chermack Phase 1 evidence.
-- The tree-caching tools (`scenario_quantify`, `scenario_propagate`,
-  `scenario_from_cmp_indices`) persist the tree into the project record
-  — the durable tree cache. `contract_price_coherence`'s `tree_implied`
-  default falls back to it when the in-memory cache is empty, so the
-  documented default survives a server restart (pinned by
-  `quantified_tree_survives_a_server_restart_for_coherence`).
+- The tree-caching tools (`scenario_quantify`, `scenario_propagate`)
+  persist the tree into the project record — the durable tree cache.
+  `ProjectStore::last_tree()` is the documented default a restarted server
+  reads when its in-memory cache is empty, so the tree survives a server
+  restart (pinned by `quantified_tree_survives_a_server_restart`).
 - `scenario_assess` is anchored on the project record: an unknown
   project id is `not_found` naming it; event/dependency counts derive
   from the stored tree, Preparation from the framing document, and the
@@ -357,7 +349,7 @@ is this section plus the commits (the curator-memory batch record
 
 ## Cross-links
 
-- [Prediction Markets MCP Server Reference](prediction-markets.md) — market records consumed by `scenario_from_markets_set`; CMP indices consumed by `scenario_from_cmp_indices`
+- [Prediction Markets MCP Server Reference](prediction-markets.md) — market records consumed by `scenario_from_markets_set`
 - [The Forecasting Stack: Three-Layer Architecture](README.md#the-forecasting-stack-three-layer-architecture) — three-layer model (skill, math, servers)
 - [MCP Server Registry](README.md) — built-in server index
 - [Diagram Index](../../DIAGRAMS_INDEX.md) — DIAG-RF-005 registration

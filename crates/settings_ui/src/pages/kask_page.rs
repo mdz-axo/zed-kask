@@ -422,9 +422,6 @@ pub(crate) fn kask_string_input(
                             .cache_ttl_secs = Some(v);
                     }
                 }
-                ("prediction_markets", "base_events") => {
-                    kask.prediction_markets.get_or_insert_default().base_events = Some(parsed);
-                }
                 ("training", "host") => {
                     kask.training.get_or_insert_default().host = Some(parsed);
                 }

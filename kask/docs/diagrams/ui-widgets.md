@@ -377,15 +377,14 @@ spread / volume / calibration / volatility / reliability tier / dual-axis
 ontology, and never returns a bare probability. All calibration math is
 reused from `hkask-forecast` — never reimplemented here.
 
-**Corrections (2026-08-28, updated 2026-09-28):** the tool surface is now
-**32 tools** — 17 market/CMP tools on the `prediction_markets_router`
+**Corrections (2026-08-28, updated 2026-10-15):** the tool surface is now
+**27 tools** — 12 market tools on the `prediction_markets_router`
 (including `prediction_markets_status`), plus the **economic-data/EQM
 router** with 15 tools in `economic_data_tools.rs` (`fred_*` × 5,
 `dbnomics_*` × 4, `wb_*` × 5, and `market_score_rationale` — the EQM
 rationale scorer, which needs the server's `inference_port`);
 `combined_router = prediction_markets_router + economic_data_tools_router`.
-The server struct also gained `portfolio_store` (CMP indices as transaction
-ledgers), `fred_api_key`, and `inference_port`.
+The server struct also carries `fred_api_key` and `inference_port`.
 
 ```mermaid
 classDiagram
@@ -396,9 +395,7 @@ classDiagram
         +calibration_store: Arc~Mutex~CalibrationStore~~
         +response_cache: TtlCache
         +calibration_path: Option~String~
-        +base_events: Vec~(String,String)~
         +called_tools: Mutex~HashSet~String~~
-        +portfolio_store: PortfolioStore
         +fred_api_key: Option~String~
         +inference_port: Arc~InferencePort~
         +combined_router() ToolRouter
@@ -503,7 +500,7 @@ classDiagram
     MarketRecord "1" o-- "1" Volatility : volatility
     MarketRecord "1" o-- "1" OntologyBlock : ontology
 
-    note for PredictionMarketsServer "32 tools = 17 market/CMP + 15 economic-data/EQM\ncombined_router = prediction_markets_router\n+ economic_data_tools_router"
+    note for PredictionMarketsServer "27 tools = 12 market + 15 economic-data/EQM\ncombined_router = prediction_markets_router\n+ economic_data_tools_router"
     note for CalibrationStore "Brier math reused from hkask-forecast.\nMissing/empty bucket is Err — mapped to\nstale: true, never a synthetic brier: 0\n(the .rules unwrap_or(0) trap generalized)."
     note for MarketRecord "Every probability carries spread, volume grain,\ncalibration, volatility, reliability tier,\nand a PKO + Dublin Core ontology block.\nBase events come only from config — a market\ncan never auto-promote to benchmark status."
 ```
@@ -511,7 +508,7 @@ classDiagram
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-RF-PM
 verified_date: 2026-09-28
-verified_against: kask/mcp-servers/hkask-mcp-prediction-markets/src/hkask_mcp_prediction_markets.rs (PredictionMarketsServer L55-73 — incl. portfolio_store, fred_api_key, inference_port; combined_router L80-84 = prediction_markets_router + economic_data_tools_router; 17 #[tool] fns incl. prediction_markets_status L105); kask/mcp-servers/hkask-mcp-prediction-markets/src/economic_data_tools.rs (15 #[tool] fns — 14 economic-data + market_score_rationale L316); kask/mcp-servers/hkask-mcp-prediction-markets/src/types.rs (MarketRecord L136-180, calibration_for L184); kask/mcp-servers/hkask-mcp-prediction-markets/src/calibration.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/cmp.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/residual.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/matcher.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/provider_polymarket.rs (GammaMarket L15); kask/mcp-servers/hkask-mcp-prediction-markets/src/provider_kalshi.rs (KalshiMarket L25); kask/mcp-servers/hkask-mcp-prediction-markets/src/cache.rs (TtlCache L16); kask/mcp-servers/hkask-mcp-prediction-markets/src/ontology.rs
+verified_against: kask/mcp-servers/hkask-mcp-prediction-markets/src/hkask_mcp_prediction_markets.rs (PredictionMarketsServer L49-64 — incl. fred_api_key, inference_port; combined_router L70 = prediction_markets_router + economic_data_tools_router; 12 #[tool] fns incl. prediction_markets_status L95); kask/mcp-servers/hkask-mcp-prediction-markets/src/economic_data_tools.rs (15 #[tool] fns — 14 economic-data + market_score_rationale L316); kask/mcp-servers/hkask-mcp-prediction-markets/src/types.rs (MarketRecord L136-180, calibration_for L184); kask/mcp-servers/hkask-mcp-prediction-markets/src/calibration.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/residual.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/matcher.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/provider_polymarket.rs (GammaMarket L15); kask/mcp-servers/hkask-mcp-prediction-markets/src/provider_kalshi.rs (KalshiMarket L25); kask/mcp-servers/hkask-mcp-prediction-markets/src/cache.rs (TtlCache L16); kask/mcp-servers/hkask-mcp-prediction-markets/src/ontology.rs
 status: VERIFIED
 -->
 
@@ -554,7 +551,7 @@ flowchart LR
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-RF-PM-PIPELINE-001
 verified_date: 2026-09-28
-verified_against: kask/mcp-servers/hkask-mcp-prediction-markets/src/hkask_mcp_prediction_markets.rs (combined_router L80-84); kask/mcp-servers/hkask-mcp-prediction-markets/src/economic_data_tools.rs (15 tools incl. market_score_rationale L316); kask/mcp-servers/hkask-mcp-prediction-markets/src/types.rs (MarketRecord L136); kask/mcp-servers/hkask-mcp-prediction-markets/src/calibration.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/cmp.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/residual.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/matcher.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/provider_polymarket.rs (GammaMarket L15); kask/mcp-servers/hkask-mcp-prediction-markets/src/provider_kalshi.rs (KalshiMarket L25); kask/crates/hkask-bridge-ontology/src/axis.rs:219-222 (economic statistics fall through to SUMO; only cube-shaped output takes the DataCube anchor — grounds the ECON node label)
+verified_against: kask/mcp-servers/hkask-mcp-prediction-markets/src/hkask_mcp_prediction_markets.rs (combined_router L70); kask/mcp-servers/hkask-mcp-prediction-markets/src/economic_data_tools.rs (15 tools incl. market_score_rationale L316); kask/mcp-servers/hkask-mcp-prediction-markets/src/types.rs (MarketRecord L136); kask/mcp-servers/hkask-mcp-prediction-markets/src/calibration.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/residual.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/matcher.rs; kask/mcp-servers/hkask-mcp-prediction-markets/src/provider_polymarket.rs (GammaMarket L15); kask/mcp-servers/hkask-mcp-prediction-markets/src/provider_kalshi.rs (KalshiMarket L25); kask/crates/hkask-bridge-ontology/src/axis.rs:219-222 (economic statistics fall through to SUMO; only cube-shaped output takes the DataCube anchor — grounds the ECON node label)
 status: VERIFIED
 -->
 

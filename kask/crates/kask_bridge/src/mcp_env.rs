@@ -262,12 +262,6 @@ pub(crate) fn emit_prediction_markets_env(
             prediction_markets.cache_ttl_secs.to_string(),
         );
     }
-    if !prediction_markets.base_events.is_empty() {
-        env.insert(
-            "HKASK_PREDICTION_MARKETS_BASE_EVENTS".to_string(),
-            prediction_markets.base_events.clone(),
-        );
-    }
 }
 
 pub(crate) fn emit_swarm_env(
@@ -409,7 +403,6 @@ const SETTINGS_BACKED_CONFIG_ENV_VARS: &[&str] = &[
     "HKASK_SCENARIOS_DATA",
     "HKASK_PREDICTION_MARKETS_DATA",
     "HKASK_PREDICTION_MARKETS_CACHE_TTL_SECS",
-    "HKASK_PREDICTION_MARKETS_BASE_EVENTS",
     "HKASK_SWARM_MODE",
     "HKASK_ABW_API_URL",
     "HKASK_ABW_MAX_CREDITS",

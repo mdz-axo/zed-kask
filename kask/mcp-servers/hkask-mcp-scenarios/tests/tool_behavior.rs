@@ -11,9 +11,9 @@
 #![cfg(test)]
 
 use hkask_mcp_scenarios::requests::{
-    AssessRequest, BrainstormRequest, CalibrateRequest, ContractCoherenceRequest,
-    FrameDocumentRequest, OutcomeEntry, PosteriorEvidenceEntry, PosteriorsRequest, QuantifyRequest,
-    ScoreRequest, StatusRequest, TriageRequest,
+    AssessRequest, BrainstormRequest, CalibrateRequest, FrameDocumentRequest, OutcomeEntry,
+    PosteriorEvidenceEntry, PosteriorsRequest, QuantifyRequest, ScoreRequest, StatusRequest,
+    TriageRequest,
 };
 use hkask_mcp_scenarios::types::{
     EventDependency, ScenarioEvent, ScenarioType, SubQuestion, TimeHorizon,
@@ -701,126 +701,6 @@ async fn scenario_quantify_rejects_out_of_range_probability_as_invalid_argument(
     );
 }
 
-// ── contract_price_coherence ───────────────────────────────
-
-/// Happy path: an explicit `tree_implied` within the transaction-cost band is
-/// reported coherent, with the divergence and both inputs echoed back.
-#[tokio::test]
-async fn contract_price_coherence_within_band_is_coherent() {
-    let server = make_server();
-    let output = server
-        .contract_price_coherence(Parameters(ContractCoherenceRequest {
-            market_price: 0.50,
-            cost_band: 0.03,
-            tree_implied: Some(0.52),
-        }))
-        .await
-        .expect("tool ok");
-    let parsed = parse(&output);
-    assert_eq!(parsed["tree_implied"].as_f64(), Some(0.52));
-    assert_eq!(parsed["market_price"].as_f64(), Some(0.50));
-    assert!((parsed["divergence"].as_f64().unwrap_or(f64::NAN) - 0.02).abs() < 1e-9);
-    assert_eq!(parsed["coherent"].as_bool(), Some(true));
-}
-
-/// Happy path: divergence beyond the cost band is the arbitrage signal —
-/// `coherent` is false and the interpretation names the signal.
-#[tokio::test]
-async fn contract_price_coherence_beyond_band_is_divergent() {
-    let server = make_server();
-    let output = server
-        .contract_price_coherence(Parameters(ContractCoherenceRequest {
-            market_price: 0.40,
-            cost_band: 0.03,
-            tree_implied: Some(0.52),
-        }))
-        .await
-        .expect("tool ok");
-    let parsed = parse(&output);
-    assert_eq!(parsed["coherent"].as_bool(), Some(false));
-    assert_eq!(parsed["divergence"].as_f64(), Some(0.12));
-    let interpretation = parsed["interpretation"]
-        .as_str()
-        .expect("interpretation is a string");
-    assert!(
-        interpretation.contains("arbitrage signal"),
-        "a divergent measure must name the signal, got: {interpretation}"
-    );
-}
-
-/// Cached-tree path: after `scenario_quantify` populates the tree cache, the
-/// tool uses the tree's joint probability without an explicit `tree_implied`.
-/// Two independent roots at 0.6 and 0.5 → joint 0.30.
-#[tokio::test]
-async fn contract_price_coherence_defaults_to_cached_tree_joint() {
-    let server = make_server();
-    let events = vec![
-        independent_event("evt-a", "event a", 0.6),
-        independent_event("evt-b", "event b", 0.5),
-    ];
-    server
-        .scenario_quantify(Parameters(QuantifyRequest { events }))
-        .await
-        .expect("quantify ok");
-    let output = server
-        .contract_price_coherence(Parameters(ContractCoherenceRequest {
-            market_price: 0.31,
-            cost_band: 0.05,
-            tree_implied: None,
-        }))
-        .await
-        .expect("tool ok");
-    let parsed = parse(&output);
-    assert_eq!(parsed["tree_implied"].as_f64(), Some(0.30));
-    assert_eq!(parsed["coherent"].as_bool(), Some(true));
-}
-
-/// No explicit `tree_implied` and no cached tree is a `failed_precondition` —
-/// the error names the tools that populate the cache, not a generic failure.
-#[tokio::test]
-async fn contract_price_coherence_without_tree_is_failed_precondition() {
-    let server = make_server();
-    let error = server
-        .contract_price_coherence(Parameters(ContractCoherenceRequest {
-            market_price: 0.5,
-            cost_band: 0.03,
-            tree_implied: None,
-        }))
-        .await
-        .expect_err("no tree and no explicit input must fail");
-    assert!(
-        matches!(error.kind, hkask_types::McpErrorKind::FailedPrecondition),
-        "a missing cached tree is a precondition failure, got: {error:?}"
-    );
-    assert!(
-        error.message.contains("scenario_quantify"),
-        "the error must name the populating tools, got: {error:?}"
-    );
-}
-
-/// A `market_price` outside [0, 1] is an `invalid_argument` — a coherence
-/// measure over an invalid probability is never fabricated.
-#[tokio::test]
-async fn contract_price_coherence_rejects_invalid_market_price() {
-    let server = make_server();
-    let error = server
-        .contract_price_coherence(Parameters(ContractCoherenceRequest {
-            market_price: 1.2,
-            cost_band: 0.03,
-            tree_implied: Some(0.5),
-        }))
-        .await
-        .expect_err("an out-of-range market price must be rejected");
-    assert!(
-        matches!(error.kind, hkask_types::McpErrorKind::InvalidArgument),
-        "an invalid market price is a caller-input defect, got: {error:?}"
-    );
-    assert!(
-        error.message.contains("market_price must be in [0, 1]"),
-        "the error must state the constraint, got: {error:?}"
-    );
-}
-
 // ── scenario_calibrate isotonic channel (arXiv:2604.20421 §6.1) ───────────────
 
 /// Seed the store with resolved forecasts via the real `scenario_score` path
@@ -934,69 +814,6 @@ async fn scenario_calibrate_withholds_isotonic_without_resolved_pairs() {
     assert!(
         note.contains("fewer than 2 resolved"),
         "the note must name the reason, got: {note}"
-    );
-}
-
-/// The CMP seam end-to-end: `scenario_from_cmp_indices` composes
-/// ProvenancedCmpIndex objects (produced by market_cmp_indices on
-/// hkask-mcp-prediction-markets) into an EventTree AND caches it, so
-/// `contract_price_coherence`'s `tree_implied` default resolves. Pre-fix,
-/// from_cmp_indices never wrote the cache and coherence failed with
-/// failed_precondition despite its documented default.
-#[tokio::test]
-async fn from_cmp_indices_caches_tree_for_coherence_default() {
-    use hkask_mcp_scenarios::requests::CmpBridgeRequest;
-
-    let server = make_server();
-
-    // One ProvenancedCmpIndex in its serialized shape (family, venue, and
-    // the flattened CmpIndex: bucket, orientation, solved portfolio).
-    let cmp_indices = serde_json::json!([{
-        "family": "policy_interest_rate",
-        "venue": "kalshi",
-        "bucket": "one_month",
-        "orientation": "increase",
-        "portfolio": {
-            "constituents": [],
-            "weighted_maturity_days": 30.0,
-            "maturity_error_days": 0.5,
-            "index_probability": 0.55,
-            "method": "interpolated",
-        }
-    }]);
-    let request = CmpBridgeRequest {
-        cmp_indices: hkask_types::AnyJsonValue(cmp_indices),
-        observation_date: "2026-09-03".to_string(),
-        dependency_specs: None,
-    };
-
-    let output = server
-        .scenario_from_cmp_indices(Parameters(request))
-        .await
-        .expect("composition ok");
-    let parsed = parse(&output);
-    let joint = parsed["tree"]["joint_probability"]
-        .as_f64()
-        .expect("joint probability is a number");
-    assert!(
-        (joint - 0.55).abs() < 1e-9,
-        "one root at 0.55 → joint 0.55, got {joint}"
-    );
-
-    // The cached tree now feeds contract_price_coherence's default — no
-    // explicit tree_implied, no failed_precondition.
-    let coherence = server
-        .contract_price_coherence(Parameters(ContractCoherenceRequest {
-            market_price: 0.70,
-            cost_band: 0.02,
-            tree_implied: None,
-        }))
-        .await
-        .expect("coherence must resolve the cached tree");
-    let coherence_parsed = parse(&coherence);
-    assert!(
-        coherence_parsed.get("divergence").is_some(),
-        "coherence must compute against the cached joint, got: {coherence_parsed}"
     );
 }
 
@@ -1485,10 +1302,10 @@ async fn scenario_assess_derives_counts_and_preparation_from_the_project() {
 }
 
 /// PR-07: the durable tree cache — the last-quantified tree persists with
-/// the project record, and `contract_price_coherence`'s `tree_implied`
-/// default reads it after a server restart.
+/// the project record; `ProjectStore::last_tree()` is the documented default
+/// a restarted server reads when its memory cache is empty.
 #[tokio::test]
-async fn quantified_tree_survives_a_server_restart_for_coherence() {
+async fn quantified_tree_survives_a_server_restart() {
     let directory = tempfile::tempdir().expect("tempdir");
     let projects_path = directory.path().join("projects.json");
     let events = vec![
@@ -1502,22 +1319,15 @@ async fn quantified_tree_survives_a_server_restart_for_coherence() {
             .await
             .expect("quantify ok");
     }
-    // A fresh server on the same project store: the memory cache is
-    // empty, the persisted tree is the documented default.
-    let restarted = project_backed_server(&projects_path);
-    let output = restarted
-        .contract_price_coherence(Parameters(ContractCoherenceRequest {
-            market_price: 0.31,
-            cost_band: 0.05,
-            tree_implied: None,
-        }))
-        .await
-        .expect("tool ok");
-    let parsed = parse(&output);
-    assert_eq!(
-        parsed["tree_implied"].as_f64(),
-        Some(0.30),
-        "the persisted tree's joint (0.6 × 0.5 = 0.30) is the default after restart, got: {parsed}"
+    // A fresh store on the same path: the persisted tree is the documented
+    // default a restarted server reads.
+    let restarted_store = ProjectStore::new(Some(projects_path));
+    let tree = restarted_store
+        .last_tree()
+        .expect("the quantified tree persists with the project record");
+    assert!(
+        (tree.joint_probability - 0.30).abs() < 1e-9,
+        "the persisted tree's joint (0.6 × 0.5 = 0.30) survives the restart, got {}",
+        tree.joint_probability
     );
-    assert_eq!(parsed["coherent"].as_bool(), Some(true));
 }

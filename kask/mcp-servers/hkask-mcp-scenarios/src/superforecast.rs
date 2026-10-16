@@ -15,12 +15,6 @@ use hkask_forecast as forecast;
 pub(crate) use forecast::{
     bayesian_update, brier_interpretation, brier_score, brier_score_multi, outside_view_adjustment,
 };
-// Shared CMP-index provenance bridge contract — re-exported so the
-// `scenario_from_cmp_indices` emitter and any consuming crate share one
-// type-level source of truth. The pin test
-// `scenario_from_cmp_indices_emits_full_cmp_provenance_inside_tree` enforces
-// that this emitter populates the full 7-field shape.
-pub(crate) use forecast::CmpIndexProvenance;
 // ── Forecast math (pure deterministic functions) ───────────────────────────
 // Extracted to `superforecast/math.rs` (deep-module split: the pure math — Fermi
 // decomposition, event-tree propagation, Brier scoring, sensitivity ranking — is
@@ -59,11 +53,8 @@ pub use project::ProjectStore;
 mod bridge;
 pub(crate) use bridge::{convert_market_record, cross_validate};
 
-// ── Composition: market/CMP tree composition + Bayesian propagation ───────
+// ── Composition: market tree composition + Bayesian propagation ───────────
 // Extracted to `superforecast/compose.rs` (deep-module split: building event
-// trees from market/CMP inputs and propagating prior updates).
+// trees from market inputs and propagating prior updates).
 mod compose;
-pub(crate) use compose::{
-    CmpDependencySpec, DependencySpec, compose_cmp_tree, compose_cmp_tree_with_deps,
-    compose_market_tree, propagate_prior_update,
-};
+pub(crate) use compose::{DependencySpec, compose_market_tree, propagate_prior_update};

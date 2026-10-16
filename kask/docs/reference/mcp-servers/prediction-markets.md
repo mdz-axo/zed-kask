@@ -11,14 +11,14 @@ mds_categories: [domain, composition, lifecycle]
 # Prediction Markets MCP Server Reference
 
 **Crate:** `kask/mcp-servers/hkask-mcp-prediction-markets`
-**Tools:** 32 — 17 market tools (`market_lookup`, `market_match`, `market_ontology_map`, `market_calibration`, `market_record_resolution`, `market_subscribe_resolutions`, `market_ladder`, `market_cmp_index`, `market_cmp_indices`, `market_cmp_index_store`, `market_cmp_portfolio_store`, `market_cmp_context_suggest`, `market_volatility`, `market_residual`, `market_check_resolutions`, `market_history`, `prediction_markets_status`) plus 15 economic-data tools in `kask/mcp-servers/hkask-mcp-prediction-markets/src/economic_data_tools.rs` (`fred_search_series`, `fred_get_observations`, `fred_get_series_info`, `fred_list_categories`, `fred_get_release`, `wb_search_indicators`, `wb_get_observations`, `wb_list_countries`, `wb_list_topics`, `wb_get_indicator_info`, `dbnomics_search`, `dbnomics_list_providers`, `dbnomics_get_dataset`, `dbnomics_get_series`, `market_score_rationale`)
+**Tools:** 27 — 12 market tools (`market_lookup`, `market_match`, `market_ontology_map`, `market_calibration`, `market_record_resolution`, `market_subscribe_resolutions`, `market_ladder`, `market_volatility`, `market_residual`, `market_check_resolutions`, `market_history`, `prediction_markets_status`) plus 15 economic-data tools in `kask/mcp-servers/hkask-mcp-prediction-markets/src/economic_data_tools.rs` (`fred_search_series`, `fred_get_observations`, `fred_get_series_info`, `fred_list_categories`, `fred_get_release`, `wb_search_indicators`, `wb_get_observations`, `wb_list_countries`, `wb_list_topics`, `wb_get_indicator_info`, `dbnomics_search`, `dbnomics_list_providers`, `dbnomics_get_dataset`, `dbnomics_get_series`, `market_score_rationale`)
 **Auto-start:** Yes by default with the full built-in set; operators can disable the fleet or this server through `kask.mcp` (`kask/crates/kask_bridge/src/settings.rs:140-165`; `kask/crates/kask_bridge/src/mcp_servers.rs:341-356,704`).
 
-> **Tool count note:** the server registers **32 `#[tool]` methods** — 17 in
+> **Tool count note:** the server registers **27 `#[tool]` methods** — 12 in
 > `kask/mcp-servers/hkask-mcp-prediction-markets/src/hkask_mcp_prediction_markets.rs` + 15 in `kask/mcp-servers/hkask-mcp-prediction-markets/src/economic_data_tools.rs`, both
-> merged into `combined_router()` at `kask/mcp-servers/hkask-mcp-prediction-markets/src/hkask_mcp_prediction_markets.rs:80-88`.
-> The count is pinned end-to-end by `tool_surface_is_exactly_32_registered_tools`
-> (`kask/mcp-servers/hkask-mcp-prediction-markets/src/hkask_mcp_prediction_markets.rs:2070-2084`). The
+> merged into `combined_router()` at `kask/mcp-servers/hkask-mcp-prediction-markets/src/hkask_mcp_prediction_markets.rs:70`.
+> The count is pinned end-to-end by `tool_surface_is_exactly_27_registered_tools`
+> (`kask/mcp-servers/hkask-mcp-prediction-markets/src/hkask_mcp_prediction_markets.rs:1348`). The
 > operational surface is the set of market tools; the status tool is listed under
 > Independent.
 
@@ -37,10 +37,7 @@ server is the outside-view sense arm for the scenarios server:
 | `provider_polymarket.rs` | Polymarket CLOB + Gamma API provider |
 | `provider_kalshi.rs` | Kalshi REST + candlestick provider |
 | `calibration.rs` | Per-bucket Brier scoring and reliability tiers (via `hkask-forecast`) |
-| `cmp.rs` | Constant Maturity Prediction curve construction (log-odds interpolation) |
-| `cmp_portfolio.rs` | Solved-portfolio CMP index set (maturity-bucketed, orientation-tagged) |
 | `volatility.rs` | DR-AS structural volatility model (arXiv:2607.08199) |
-| `base_event.rs` | Base-event registry + curated economic context + strike extraction |
 | `residual.rs` | Niche-market decomposition into base-event beta + idiosyncratic residual |
 | `streaming.rs` | Polymarket websocket subscription for resolution events |
 | `matcher.rs` | Question → market candidate matching (token overlap + deadline alignment) |
@@ -112,11 +109,6 @@ feed the loop.
 | Tool | Description | Key params |
 |------|-------------|------------|
 | `market_ladder` | Ladder of contracts in a series ordered by deadline, each annotated with `time_to_maturity` in fractional years measured from observation time (now) — never stale quote timestamps. Kalshi series ticker or Polymarket event slug; unparsable deadlines sort last with null maturity — never fabricated. | `series` |
-| `market_cmp_index` | Full CMP index for a registered base event: probability curve across the standard tenor grid (7d/30d/90d/180d/1y/2y), log-odds interpolated, with curve slope (log-odds/year) as the term-structure signal. Uncovered tenors return null. | `series` |
-| `market_cmp_indices` | Build provenance-carrying CMP indices (ProvenancedCmpIndex objects) from live open markets per (family, venue) — the producer for `scenario_from_cmp_indices` (hkask-mcp-scenarios). Withheld buckets and rejection reasons are surfaced; never fabricated. | `series`, `venue`, `limit`, `reference`, `volatility`, `predicted_level`, `direction_up` |
-| `market_cmp_index_store` | Store per-orientation CMP index curves for a registered base event as transaction-ledger portfolios, one per orientation (`cmp:{series}:{orientation}`) — decision-family marginals never blend into one curve. Tenor constituents (weight = probability) with materialized daily holdings; withheld orientations and rejection reasons are surfaced. | `series`, `date` |
-| `market_cmp_portfolio_store` | Compute the solved-portfolio CMP index set (maturity-bucketed, orientation-tagged portfolios of contracts with maturity-matched weights) and persist each `(bucket, orientation)` index as a transaction-ledger portfolio `cmp:{series}:{bucket}:{orientation}` — the contract-portfolio CMP, distinct from the curve-based `market_cmp_index_store`. Economic-context fields optional; omitted fields use the curated family default. | `series`, `reference`, `volatility`, `predicted_level`, `direction_up`, `date` |
-| `market_cmp_context_suggest` | Propose a curated economic context (reference, volatility, predicted level, direction) for a base-event family, with reasoning. Classifies catalog-first — the same path `market_cmp_indices` uses — with a text-signature fallback and a `classification_source` field in the response; proposes live context. Read-only aid: the operator accepts, overrides, or rejects before storing. | `series` |
 | `market_residual` | Decompose a niche market's movement into base-event exposure (log-odds beta) plus idiosyncratic residual. Refuses with `insufficient_overlap` below 10 shared observations; output carries `r_squared` and `observations`. | `market_ticker`, `base_ticker`, `window_days` |
 
 ### History
@@ -200,7 +192,7 @@ uses the server's inference port for LLM scoring, not an external HTTP API.
 ## Configuration
 
 Settings live in the `kask.prediction_markets` subsection
-(`kask/crates/kask_bridge/src/settings.rs:396-405`,
+(`kask/crates/kask_bridge/src/settings.rs:397-407`,
 `KaskPredictionMarketsSettings` — no path fields; the data dir is derived from
 the global `KaskSettings::data_dir` as `mcp/prediction-markets/` and read via
 `HKASK_PREDICTION_MARKETS_DATA`):
@@ -208,10 +200,6 @@ the global `KaskSettings::data_dir` as `mcp/prediction-markets/` and read via
 | Setting | Description |
 |---------|-------------|
 | `cache_ttl_secs` | Cache TTL in seconds for market-data responses (0 = server default). |
-| `base_events` | Base-event registry: `"domain:series,..."` pairs for CMP construction. |
-
-At runtime the base-event registry is read from
-`HKASK_PREDICTION_MARKETS_BASE_EVENTS` (see `market_cmp_index` and `market_cmp_indices`).
 
 ## Testing
 
@@ -233,15 +221,11 @@ The FRED missing-credential path is pinned at the tool seam
 - **`hkask-mcp-scenarios`** — `scenario_from_markets_set` converts `market_lookup` / `market_match` records
   into scenario events and event trees (see
   [Scenarios MCP Server Reference](scenarios.md)).
-- **`hkask-mcp-companies`** — `equity_duration` pairs a company's cash-flow
-  maturity profile with prediction-market `time_to_maturity` for
-  duration-matching across horizons.
 
 
 ## Cross-links
 
 - [Scenarios MCP Server Reference](scenarios.md) — event-tree forecasting that consumes market base rates
-- [Companies MCP Server Reference](companies.md) — equity duration pairing
 - [The Forecasting Stack: Three-Layer Architecture](README.md#the-forecasting-stack-three-layer-architecture) — how this server feeds the scenarios/companies forecasting layers
 - [MCP Server Registry](README.md) — built-in server index
 

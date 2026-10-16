@@ -30,12 +30,11 @@ Ruled (verify with `onto_anchor` → tier `derived`):
 - `Brier score` — Brier (1950); ruling 2026-09-18
 - `Bayesian network` — Pearl, Probabilistic Reasoning in Intelligent Systems (1988); ruling 2026-10-02
 - `discounted cash flow` — Damodaran, Investment Valuation (2012); origin Williams (1938); ruling 2026-10-02
-- `constant-maturity prediction` — Federal Reserve H.15 CMT methodology + the platform's `cmp-term-structure` reification; ruling 2026-10-02
 - `arbitrage` — Hull, Options, Futures and Other Derivatives; law of one price / no-arbitrage; ruling 2026-10-02
 
 Unruled anchors discovered during a server sweep must be surfaced in a batched ask (NEVER assign a private definition while pending — gate the checks that rely on them and mark them `pending-rulings` in the artifact).
 
-Fidelity labels: **functional** = check WHAT the model evaluates (purpose, outcomes); **technical** = check HOW the model works (mechanism ported faithfully); **both** = both check families. Labels are operator decisions (ask-first, batched). Recommended starting labels: `both` for the scenario-planning, superforecasting, and Brier groups; `technical` for the Bayesian-network composition group; `functional` for `contract_price_coherence` and `scenario_assess`. When the operator is unavailable, proceed on the stated recommendation and flag every default — never decide silently, and never run checks written for a recommendation the operator has flipped.
+Fidelity labels: **functional** = check WHAT the model evaluates (purpose, outcomes); **technical** = check HOW the model works (mechanism ported faithfully); **both** = both check families. Labels are operator decisions (ask-first, batched). Recommended starting labels: `both` for the scenario-planning, superforecasting, and Brier groups; `technical` for the Bayesian-network composition group; `functional` for `scenario_assess`. When the operator is unavailable, proceed on the stated recommendation and flag every default — never decide silently, and never run checks written for a recommendation the operator has flipped.
 
 Utility tools (`scenario_status` and the `*_status` / `ping` family) have no published reference model; proposed anchor class = platform observability convention (the review checks cross-server consistency, not fidelity to a published model) — operator decision point.
 

@@ -49,8 +49,6 @@ Nineteen registered tools (pinned against the live `scenario_router()` by
 | Tool | Description |
 |---|---|
 | `scenario_from_markets_set` | Compose prediction-market records into a validated event tree. |
-| `scenario_from_cmp_indices` | Compose CMP indices into a validated event tree. |
-| `contract_price_coherence` | Compare a tree-implied probability with an observed contract price. |
 
 ## Operational boundaries
 

@@ -128,20 +128,20 @@ flowchart TD
     Math["hkask-forecast<br/>deterministic forecasting primitives"]
     Scenarios["hkask-mcp-scenarios<br/>event trees and calibration"]
     Companies["hkask-mcp-companies<br/>financial valuation"]
-    Markets["hkask-mcp-prediction-markets<br/>market base rates and CMP indices"]
+    Markets["hkask-mcp-prediction-markets<br/>market base rates and economic data"]
 
     Skill -->|"conformance contract"| Math
     Math --> Scenarios
     Math --> Companies
     Math --> Markets
-    Markets -->|"scenario_from_markets_set<br/>scenario_from_cmp_indices"| Scenarios
+    Markets -->|"scenario_from_markets_set"| Scenarios
     Scenarios -->|"scenario_impact_valuation inputs"| Companies
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-RF-003
 verified_date: 2026-09-28
-verified_against: kask/crates/hkask-forecast/src/hkask_forecast.rs; kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs:17-36,507-660; kask/mcp-servers/hkask-mcp-companies/src/tools/valuation.rs:626; kask/mcp-servers/hkask-mcp-prediction-markets/src/hkask_mcp_prediction_markets.rs:80-88
+verified_against: kask/crates/hkask-forecast/src/hkask_forecast.rs; kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs:17-36,429-492; kask/mcp-servers/hkask-mcp-companies/src/tools/valuation.rs:591; kask/mcp-servers/hkask-mcp-prediction-markets/src/hkask_mcp_prediction_markets.rs:70
 status: VERIFIED
 -->
 
@@ -165,9 +165,8 @@ NLP, no I/O. The MCP servers consume it via `hkask_forecast::*`.
 primitives with domain-specific types and I/O. Domain logic stays here, not in
 `hkask-forecast`, because it is entangled with domain types and I/O — moving it up would
 violate the deep-module discipline. The prediction-markets server is the outside-view sense
-arm: its `MarketRecord`s feed `scenario_from_markets_set` in the scenarios server,
-its CMP outputs feed `scenario_from_cmp_indices`, and `equity_duration` in the companies server pairs cash-flow maturity
-profiles with prediction-market `time_to_maturity`.
+arm: its `MarketRecord`s feed `scenario_from_markets_set` in the scenarios server, and
+its economic-data tools (FRED, World Bank, DBnomics) supply the macro context.
 
 ### Why `SubQuestion` survives in scenarios but not in companies
 

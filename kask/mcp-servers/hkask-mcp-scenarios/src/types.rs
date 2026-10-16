@@ -609,9 +609,9 @@ pub(crate) struct ScenarioProject {
     /// The structured framing document (Chermack Phase 1 evidence).
     #[serde(default)]
     pub framing_document: Option<FramingDocument>,
-    /// The last quantified/propagated tree — the durable tree cache
-    /// (`contract_price_coherence`'s `tree_implied` default survives a
-    /// server restart through it).
+    /// The last quantified/propagated tree — the durable tree cache (the
+    /// documented default a restarted server reads via
+    /// `ProjectStore::last_tree()`).
     #[serde(default)]
     pub last_tree: Option<EventTree>,
     /// One record per `scenario_assess` call (Phase 5 history).

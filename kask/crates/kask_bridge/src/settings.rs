@@ -403,8 +403,6 @@ fn default_embedding_model() -> String {
 pub struct KaskPredictionMarketsSettings {
     /// Cache TTL in seconds for market-data responses (0 = server default).
     pub cache_ttl_secs: u64,
-    /// Base-event registry: "domain:series,..." pairs for CMP construction.
-    pub base_events: String,
 }
 
 /// Scenarios MCP server configuration.
@@ -1002,7 +1000,6 @@ impl From<KaskPredictionMarketsSettingsContent> for KaskPredictionMarketsSetting
         let default = Self::default();
         Self {
             cache_ttl_secs: c.cache_ttl_secs.unwrap_or(default.cache_ttl_secs),
-            base_events: c.base_events.unwrap_or(default.base_events),
         }
     }
 }

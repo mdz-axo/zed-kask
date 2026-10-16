@@ -1,5 +1,5 @@
-//! Prediction-markets sub-page — cache TTL, base-event registry for the
-//! prediction-markets data service.
+//! Prediction-markets sub-page — cache TTL for the prediction-markets data
+//! service.
 
 use super::*;
 
@@ -28,14 +28,6 @@ pub(crate) fn render_prediction_markets_page(
         "prediction_markets",
         "cache_ttl_secs",
     );
-    let base_events_input = kask_string_input(
-        "kask-prediction-markets-base-events",
-        "Base Events",
-        "economics:KXFEDDECISION,politics:KXPREZ-28",
-        prediction_markets.base_events,
-        "prediction_markets",
-        "base_events",
-    );
 
     v_flex()
         .id("kask-prediction-markets-page")
@@ -53,12 +45,12 @@ pub(crate) fn render_prediction_markets_page(
                 .child(
                     Label::new(
                         "The prediction-markets server is a read-only data service for \
-                         Polymarket and Kalshi market-implied probabilities, with calibration, \
-                         volatility, and constant-maturity-prediction analytics. No trading \
-                         credentials are used or accepted. Calibration data persists to \
-                         mcp/prediction-markets/ under the shared kask data directory (set on \
-                         the General page). There are no per-server path settings — all MCP \
-                         servers share the single data directory.",
+                         Polymarket and Kalshi market-implied probabilities, with calibration \
+                         and volatility analytics. No trading credentials are used or accepted. \
+                         Calibration data persists to mcp/prediction-markets/ under the shared \
+                         kask data directory (set on the General page). There are no \
+                         per-server path settings — all MCP servers share the single data \
+                         directory.",
                     )
                     .size(LabelSize::Small)
                     .color(Color::Muted),
@@ -75,22 +67,6 @@ pub(crate) fn render_prediction_markets_page(
                         .color(Color::Muted),
                 )
                 .child(cache_ttl_input),
-        )
-        .child(Divider::horizontal())
-        .child(
-            v_flex()
-                .gap_1()
-                .child(Label::new("Base-Event Registry"))
-                .child(
-                    Label::new(
-                        "Benchmark events for constant-maturity predictions, as \
-                         \"domain:series\" pairs separated by commas. Only registered series \
-                         can serve as CMP base events.",
-                    )
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
-                )
-                .child(base_events_input),
         )
         .into_any_element()
 }
