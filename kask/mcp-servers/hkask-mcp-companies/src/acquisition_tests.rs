@@ -1672,9 +1672,6 @@ fn decode_screener_cap_bounds(path: &str) -> Vec<(String, f64)> {
         .collect()
 }
 
-/// expect: [P5] The expectations-gap template reduces an immutable universe as
-/// a set: liquidity filters rows before fundamentals, issuer projection emits
-/// one result row, and every candidate reconciles to result or exclusion.
 /// expect: [P5] A provider Ok-with-zero-rows result surfaces a warning
 /// naming the symbol and pointing at resolve_symbol — live-observed
 /// 2026-10-05: bare "ATD" returned data:[] with warnings:[], leaving

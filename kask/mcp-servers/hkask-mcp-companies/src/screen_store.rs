@@ -1,11 +1,11 @@
 //! hKask MCP Companies — research store (companies-specific layer).
 //!
-//! Research notes, file attachments, and DCF forecast snapshots, keyed by
-//! stock symbol. The general-purpose transaction ledger, holdings, and
-//! returns live in the `hkask-mcp-portfolio` server; this store opens the
-//! same owner database (`mcp/portfolio/{owner}`) only as the storage location
-//! for companies-specific notes, files, forecasts, and screen jobs. It exposes
-//! no portfolio ledger or analytics reads.
+//! Research notes and DCF forecast snapshots, keyed by stock symbol. The
+//! general-purpose transaction ledger, holdings, and returns live in the
+//! `hkask-mcp-portfolio` server; this store opens the same owner database
+//! (`mcp/portfolio/{owner}`) only as the storage location for
+//! companies-specific notes and forecasts. It exposes no portfolio ledger or
+//! analytics reads.
 
 use hkask_mcp_portfolio::{PortfolioStore, push_optional_filter, query_all_rows};
 // Re-exported for the tool layer's imports.
