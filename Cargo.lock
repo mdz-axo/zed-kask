@@ -7886,7 +7886,6 @@ dependencies = [
  "futures 0.3.34",
  "hkask-bridge-ontology",
  "hkask-forecast",
- "hkask-mcp-portfolio",
  "hkask-mcp-server",
  "hkask-spreadsheet",
  "hkask-types",

@@ -1,33 +1,94 @@
 //! hKask MCP Companies — research store (companies-specific layer).
 //!
-//! Research notes and DCF forecast snapshots, keyed by stock symbol. The
-//! general-purpose transaction ledger, holdings, and returns live in the
-//! `hkask-mcp-portfolio` server; this store opens the same owner database
-//! (`mcp/portfolio/{owner}`) only as the storage location for
-//! companies-specific notes and forecasts. It exposes no portfolio ledger or
+//! Research notes and DCF forecast snapshots, keyed by stock symbol, in the
+//! companies server's own owner-scoped SQLite database
+//! (`mcp/companies/{owner}/master.db`). It exposes no portfolio ledger or
 //! analytics reads.
 
-use hkask_mcp_portfolio::{PortfolioStore, push_optional_filter, query_all_rows};
-// Re-exported for the tool layer's imports.
-pub(crate) use hkask_mcp_portfolio::PortfolioError;
+use hkask_mcp_server::server::McpToolError;
 use hkask_types::{WebID, agent_paths::sanitize_name, time::now_rfc3339};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::path::PathBuf;
 
-/// DDL for the companies-specific tables (notes, files, forecasts) that
-/// live alongside the portfolio crate's schema in the same SQLite DB.
-/// The portfolio crate owns the `portfolios`, `transactions`, `price_cache`,
-/// `daily_holdings`, and `daily_returns` tables; this module owns the rest.
+/// Store-layer error. Each variant maps to a distinct `McpToolError` kind in
+/// [`map_research_error`]:
+/// - `InvalidArgument` → `invalid_argument` (caller input defect)
+/// - `NotFound` → `not_found` (note or forecast does not exist)
+/// - `Database` → `internal` (SQLite error — system failure)
+/// - `Serialize` → `internal` (serialization failure — system bug)
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum ResearchError {
+    #[error("{0}")]
+    InvalidArgument(String),
+    #[error("{0}")]
+    NotFound(String),
+    #[error("database error: {0}")]
+    Database(String),
+    #[error("serialize error: {0}")]
+    Serialize(String),
+}
+
+impl From<rusqlite::Error> for ResearchError {
+    fn from(e: rusqlite::Error) -> Self {
+        Self::Database(e.to_string())
+    }
+}
+
+impl From<serde_json::Error> for ResearchError {
+    fn from(e: serde_json::Error) -> Self {
+        Self::Serialize(e.to_string())
+    }
+}
+
+impl From<String> for ResearchError {
+    fn from(s: String) -> Self {
+        Self::InvalidArgument(s)
+    }
+}
+
+impl From<&str> for ResearchError {
+    fn from(s: &str) -> Self {
+        Self::InvalidArgument(s.to_string())
+    }
+}
+
+impl From<ResearchError> for hkask_mcp_server::McpError {
+    fn from(e: ResearchError) -> Self {
+        hkask_mcp_server::McpError::UnexpectedResponse {
+            context: "companies research store".to_string(),
+            detail: e.to_string(),
+        }
+    }
+}
+
+/// Classify [`ResearchError`] for MCP dispatch: each variant maps to a
+/// distinct `McpToolError` kind so callers can distinguish "record does not
+/// exist" from "database is broken" from "bad input".
+pub(crate) fn map_research_error(e: ResearchError) -> McpToolError {
+    match e {
+        ResearchError::InvalidArgument(_) => McpToolError::invalid_argument(e.to_string()),
+        ResearchError::NotFound(_) => McpToolError::not_found(e.to_string()),
+        ResearchError::Database(_) | ResearchError::Serialize(_) => {
+            McpToolError::internal(e.to_string())
+        }
+    }
+}
+
+/// DDL for the companies research tables (notes, forecasts) in the companies
+/// server's own database. The `portfolio_name` column on notes is the
+/// caller-supplied grouping key from the note tools' `portfolio` parameter —
+/// a free-form label, not a reference to any portfolio entity.
 ///
-/// Public because the DB is genuinely shared: portfolio's schema-recovery
-/// tests seed the mixed-database scenario from this exact DDL (via a
-/// dev-dependency) so the fixture cannot drift from the real schema. The
+/// Public because the portfolio crate's schema-recovery tests
+/// (dev-dependency) seed the mixed-database scenario from this exact DDL so
+/// the fixture cannot drift from the real schema; that crate's removal —
+/// the companion change in this same change-set — retires this export. The
 /// screening and file-attachment tables were removed with their tools
-/// (2026-10-15); the DDL now creates notes and forecasts.
+/// (2026-10-15); the DDL creates notes and forecasts.
 pub const COMPANIES_SCHEMA_DDL: &str = "CREATE TABLE IF NOT EXISTS notes (
                     id TEXT PRIMARY KEY,
-                    portfolio_name TEXT NOT NULL REFERENCES portfolios(name) ON DELETE CASCADE,
+                    portfolio_name TEXT NOT NULL,
                     symbol TEXT NOT NULL,
                     date TEXT NOT NULL,
                     title TEXT NOT NULL,
@@ -48,24 +109,21 @@ pub const COMPANIES_SCHEMA_DDL: &str = "CREATE TABLE IF NOT EXISTS notes (
                 );
                 CREATE INDEX IF NOT EXISTS idx_forecasts_symbol ON forecasts(symbol);";
 
-/// Resolve the SQLite DB path for an owner, mirroring the portfolio crate's
-/// `PortfolioStore::new` path resolution. The companies module opens its
-/// own connection to the same DB for notes/forecasts tables.
+/// Resolve the SQLite DB path for an owner.
 ///
 /// Databases live in the internal data dir. Path is
-/// `{kask_data_dir}/mcp/portfolio/{owner}/master.db`.
-fn resolve_db_path(owner: &WebID) -> Result<PathBuf, PortfolioError> {
+/// `{kask_data_dir}/mcp/companies/{owner}/master.db`.
+fn resolve_db_path(owner: &WebID) -> Result<PathBuf, ResearchError> {
     let mut path = hkask_types::agent_paths::resolve_under_data_dir(std::path::Path::new(
         hkask_types::agent_paths::MCP_DIR,
     ))
-    .join("portfolio");
+    .join("companies");
     path.push(sanitize_name(&owner.to_string()));
     // A read-only data dir, a full disk, or a permissions error must surface
     // as an error the server can report, not abort the process at startup.
-    // Mirrors `PortfolioStore::new`, which already propagates.
     std::fs::create_dir_all(&path).map_err(|e| {
-        PortfolioError::from(format!(
-            "failed to create portfolio directory {}: {e}",
+        ResearchError::from(format!(
+            "failed to create companies store directory {}: {e}",
             path.display()
         ))
     })?;
@@ -107,29 +165,25 @@ fn row_to_persisted_forecast(row: &rusqlite::Row<'_>) -> rusqlite::Result<Persis
     })
 }
 
-/// Companies-side research store. Holds a [`PortfolioStore`] (which owns
-/// the shared SQLite DB and its general schema) and adds the
-/// companies-specific research artifacts: notes, files, and DCF forecast
-/// snapshots.
+/// Companies-side research store: research notes and DCF forecast snapshots
+/// in the companies server's own owner-scoped database.
 ///
-/// The shared DB is plaintext by recorded design decision (operator
+/// The DB is plaintext by recorded design decision (operator
 /// ruling 2026-09-29, F-P1): MCP-server data stays unencrypted so this
 /// server runs in an independent MCP-server pattern without the zed
 /// keychain or HKASK_DB_PASSPHRASE. Same rationale as the media gallery
 /// DB's site note.
 #[derive(Clone)]
 pub(crate) struct ResearchStore {
-    /// Path to the shared owner database for companies-specific research artifacts.
+    /// Path to the owner-scoped research database.
     db_path: PathBuf,
 }
 
 impl ResearchStore {
-    /// Creates storage scoped to the authenticated server owner. The
-    /// portfolio crate creates the DB and the general schema; this module
-    /// adds the companies-specific tables (notes, forecasts) on top.
-    pub fn new(owner: WebID) -> Result<Self, PortfolioError> {
-        let portfolio_schema = PortfolioStore::new(owner)?;
-        drop(portfolio_schema);
+    /// Creates storage scoped to the authenticated server owner: the
+    /// database directory, the file, and the companies research schema
+    /// (notes, forecasts).
+    pub fn new(owner: WebID) -> Result<Self, ResearchError> {
         let db_path = resolve_db_path(&owner)?;
         let manager = Self { db_path };
         manager.ensure_companies_schema()?;
@@ -137,9 +191,13 @@ impl ResearchStore {
     }
 
     #[cfg(test)]
-    pub(crate) fn with_dir(directory: PathBuf) -> Result<Self, PortfolioError> {
-        let portfolio_schema = PortfolioStore::with_dir(directory.clone());
-        drop(portfolio_schema);
+    pub(crate) fn with_dir(directory: PathBuf) -> Result<Self, ResearchError> {
+        std::fs::create_dir_all(&directory).map_err(|e| {
+            ResearchError::from(format!(
+                "failed to create store directory {}: {e}",
+                directory.display()
+            ))
+        })?;
         let manager = Self {
             db_path: directory.join("master.db"),
         };
@@ -147,16 +205,15 @@ impl ResearchStore {
         Ok(manager)
     }
 
-    /// Open a connection to the same DB the store uses, for companies-specific
-    /// tables (notes, forecasts).
-    fn open(&self) -> Result<Connection, PortfolioError> {
+    /// Open a connection to the research database.
+    fn open(&self) -> Result<Connection, ResearchError> {
         let conn = Connection::open(&self.db_path).map_err(|e| format!("db open: {e}"))?;
         conn.execute_batch("PRAGMA foreign_keys = ON;")
             .map_err(|e| format!("enable foreign keys: {e}"))?;
         Ok(conn)
     }
 
-    fn ensure_companies_schema(&self) -> Result<(), PortfolioError> {
+    fn ensure_companies_schema(&self) -> Result<(), ResearchError> {
         let conn = self.open()?;
         conn.execute_batch(COMPANIES_SCHEMA_DDL)
             .map_err(|e| format!("failed to initialize companies schema: {e}"))?;
@@ -165,7 +222,7 @@ impl ResearchStore {
 
     // ── Companies-specific: forecasts ──────────────────────────────
 
-    pub fn save_forecast(&self, forecast: &PersistedForecast) -> Result<(), PortfolioError> {
+    pub fn save_forecast(&self, forecast: &PersistedForecast) -> Result<(), ResearchError> {
         let conn = self.open()?;
         let snapshot = serde_json::to_string(&forecast.snapshot)
             .map_err(|e| format!("serialize forecast snapshot: {e}"))?;
@@ -187,7 +244,7 @@ impl ResearchStore {
         Ok(())
     }
 
-    pub fn get_forecast(&self, id: &str) -> Result<Option<PersistedForecast>, PortfolioError> {
+    pub fn get_forecast(&self, id: &str) -> Result<Option<PersistedForecast>, ResearchError> {
         let conn = self.open()?;
         conn.query_row(
             "SELECT id, symbol, revision_of, snapshot, outcomes, created_at FROM forecasts WHERE id = ?1",
@@ -198,7 +255,7 @@ impl ResearchStore {
         .map_err(|e| format!("get forecast: {e}").into())
     }
 
-    pub fn list_forecasts(&self, symbol: &str) -> Result<Vec<PersistedForecast>, PortfolioError> {
+    pub fn list_forecasts(&self, symbol: &str) -> Result<Vec<PersistedForecast>, ResearchError> {
         let conn = self.open()?;
         let mut stmt = conn
             .prepare(
@@ -213,9 +270,11 @@ impl ResearchStore {
             .collect()
     }
 
-    pub fn validate_forecast_revision(&self, id: &str, symbol: &str) -> Result<(), PortfolioError> {
+    pub fn validate_forecast_revision(&self, id: &str, symbol: &str) -> Result<(), ResearchError> {
         let Some(parent) = self.get_forecast(id)? else {
-            return Err(format!("forecast '{id}' not found for this owner").into());
+            return Err(ResearchError::NotFound(format!(
+                "forecast '{id}' not found for this owner"
+            )));
         };
         if parent.symbol != symbol {
             return Err(format!(
@@ -231,10 +290,10 @@ impl ResearchStore {
         &self,
         id: &str,
         outcome: serde_json::Value,
-    ) -> Result<(), PortfolioError> {
-        let mut forecast = self
-            .get_forecast(id)?
-            .ok_or_else(|| format!("forecast '{id}' not found for this owner"))?;
+    ) -> Result<(), ResearchError> {
+        let mut forecast = self.get_forecast(id)?.ok_or_else(|| {
+            ResearchError::NotFound(format!("forecast '{id}' not found for this owner"))
+        })?;
         forecast.outcomes.push(outcome);
         let outcomes = serde_json::to_string(&forecast.outcomes)
             .map_err(|e| format!("serialize forecast outcomes: {e}"))?;
@@ -257,7 +316,7 @@ impl ResearchStore {
         title: &str,
         body: &str,
         tags: &[String],
-    ) -> Result<String, PortfolioError> {
+    ) -> Result<String, ResearchError> {
         let conn = self.open()?;
         let id = uuid::Uuid::new_v4().to_string();
         let tags_json = serde_json::to_string(tags).unwrap_or_else(|_| "[]".to_string());
@@ -277,7 +336,7 @@ impl ResearchStore {
         date_from: Option<&str>,
         date_to: Option<&str>,
         tags: Option<&[String]>,
-    ) -> Result<Vec<serde_json::Value>, PortfolioError> {
+    ) -> Result<Vec<serde_json::Value>, ResearchError> {
         let conn = self.open()?;
         let mut sql = "SELECT id, symbol, date, title, body, tags, created_at FROM notes WHERE portfolio_name = ?1 AND symbol = ?2".to_string();
         let mut bind_values: Vec<Box<dyn rusqlite::types::ToSql>> = vec![
@@ -324,14 +383,52 @@ impl ResearchStore {
         Ok(notes)
     }
 
-    pub fn delete_note(&self, note_id: &str) -> Result<(), PortfolioError> {
+    pub fn delete_note(&self, note_id: &str) -> Result<(), ResearchError> {
         let conn = self.open()?;
         let rows = conn
             .execute("DELETE FROM notes WHERE id = ?1", params![note_id])
             .map_err(|e| format!("delete_note: {e}"))?;
         if rows == 0 {
-            return Err(format!("note '{note_id}' not found").into());
+            return Err(ResearchError::NotFound(format!(
+                "note '{note_id}' not found"
+            )));
         }
         Ok(())
     }
+}
+
+/// Push an optional bind value and its SQL fragment onto a dynamically
+/// filtered query under construction.
+fn push_optional_filter<T: rusqlite::types::ToSql + 'static>(
+    bind_values: &mut Vec<Box<dyn rusqlite::types::ToSql>>,
+    sql: &mut String,
+    fragment: &str,
+    value: Option<T>,
+) {
+    let Some(value) = value else { return };
+    bind_values.push(Box::new(value));
+    sql.push_str(&format!(" {fragment} ?{}", bind_values.len()));
+}
+
+/// Run a dynamically-filtered query built with [`push_optional_filter`]:
+/// bind the boxed values, prepare, map every row through `map_row`, and
+/// collect. Prepare and row-mapping failures surface as the same
+/// `"query: …"` / `"row: …"` messages the store has always emitted.
+fn query_all_rows<T>(
+    conn: &rusqlite::Connection,
+    sql: &str,
+    bind_values: &[Box<dyn rusqlite::types::ToSql>],
+    map_row: impl Fn(&rusqlite::Row<'_>) -> rusqlite::Result<T>,
+) -> Result<Vec<T>, ResearchError> {
+    let params_refs: Vec<&dyn rusqlite::types::ToSql> =
+        bind_values.iter().map(|b| b.as_ref()).collect();
+    let mut stmt = conn.prepare(sql).map_err(|e| format!("query: {e}"))?;
+    let rows = stmt
+        .query_map(params_refs.as_slice(), map_row)
+        .map_err(|e| format!("query: {e}"))?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row.map_err(|e| format!("row: {e}"))?);
+    }
+    Ok(out)
 }

@@ -76,7 +76,7 @@ pub(crate) use forecast::{
 
 pub(crate) mod types;
 
-use screen_store::{PersistedForecast, ResearchStore};
+use screen_store::{PersistedForecast, ResearchStore, map_research_error};
 
 // The shared-DB schema, re-exported for portfolio's schema-recovery tests
 // (dev-dependency) so their mixed-database fixture seeds the real tables
@@ -137,8 +137,6 @@ hkask_mcp_server::mcp_server!(
         pub spreadsheet: std::sync::Arc<hkask_spreadsheet::WorkbookService>,
     }
 );
-
-use hkask_mcp_portfolio::map_portfolio_error;
 
 // v3 excludes pre-coercion envelopes: EODHD numeric-string values and
 // untruncated histories normalized before 2026-09-10 are a different
@@ -269,7 +267,7 @@ impl CompaniesServer {
         tokio::task::spawn_blocking(move || research.save_forecast(&forecast))
             .await
             .map_err(|error| map_join_error(error, "forecast task failed"))?
-            .map_err(map_portfolio_error)
+            .map_err(map_research_error)
     }
 
     async fn get_persisted_forecast(
@@ -280,7 +278,7 @@ impl CompaniesServer {
         tokio::task::spawn_blocking(move || research.get_forecast(&forecast_id))
             .await
             .map_err(|error| map_join_error(error, "forecast task failed"))?
-            .map_err(map_portfolio_error)
+            .map_err(map_research_error)
     }
 
     async fn list_persisted_forecasts(
@@ -291,7 +289,7 @@ impl CompaniesServer {
         tokio::task::spawn_blocking(move || research.list_forecasts(&symbol))
             .await
             .map_err(|error| map_join_error(error, "forecast task failed"))?
-            .map_err(map_portfolio_error)
+            .map_err(map_research_error)
     }
 
     async fn record_persisted_forecast_outcome(
@@ -303,7 +301,7 @@ impl CompaniesServer {
         tokio::task::spawn_blocking(move || research.record_forecast_outcome(&forecast_id, outcome))
             .await
             .map_err(|error| map_join_error(error, "forecast task failed"))?
-            .map_err(map_portfolio_error)
+            .map_err(map_research_error)
     }
 }
 

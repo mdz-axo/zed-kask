@@ -1,7 +1,7 @@
-//! Company-research notes and file attachments.
+//! Company-research notes.
 use crate::{
-    CompaniesServer, map_portfolio_error,
-    screen_store::{PortfolioError, ResearchStore},
+    CompaniesServer, map_research_error,
+    screen_store::{ResearchError, ResearchStore},
     types::{NoteAddRequest, NoteDeleteRequest, NoteListRequest},
 };
 use hkask_mcp_server::server::{McpToolError, execute_tool, map_join_error};
@@ -9,7 +9,7 @@ use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 
 pub(crate) async fn run_store<T>(
     store: ResearchStore,
-    operation: impl FnOnce(ResearchStore) -> Result<T, PortfolioError> + Send + 'static,
+    operation: impl FnOnce(ResearchStore) -> Result<T, ResearchError> + Send + 'static,
 ) -> Result<T, McpToolError>
 where
     T: Send + 'static,
@@ -17,12 +17,12 @@ where
     tokio::task::spawn_blocking(move || operation(store))
         .await
         .map_err(|error| map_join_error(error, "research store task failed"))?
-        .map_err(map_portfolio_error)
+        .map_err(map_research_error)
 }
 
 #[tool_router(router = notes_router, vis = "pub")]
 impl CompaniesServer {
-    // ── Notes & Files tools ─────────────────────────────────────
+    // ── Notes tools ─────────────────────────────────────────────
 
     #[tool(description = "Add a note to a company/security as of a date")]
     pub async fn note_add(
