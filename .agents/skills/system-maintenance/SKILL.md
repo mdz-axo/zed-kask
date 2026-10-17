@@ -96,6 +96,7 @@ After step 8, check in `lisp_eval`:
 - **Read full outputs** — truncated sweep/du displays hide results; count matches (`grep -c`) and consume the list.
 - **The scripts stay the executables; this skill is their manager** — the inventory above, verification, execution, and the step-10 update path. It duplicates no script logic. Script changes commit in the scripts repo and update this skill in the same pass — a stale skill or stale fleet doc is active misinformation.
 - **Timers are reminders, not executors** — the weekly timer reminds; the update runs in your terminal.
+- **The exec bit is load-bearing under systemd** — `ExecStart` invokes scripts directly; `bash script.sh` works without `+x`, so a fleet script can pass manual runs while its timer unit fails daily with `203/EXEC Permission denied`. `setup-maintenance-timers.sh` sets the bits on install (added 2026-10-17 after the healthcheck timer had failed daily since Oct 13).
 
 ## Regression case
 
