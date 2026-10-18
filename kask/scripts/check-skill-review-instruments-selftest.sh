@@ -78,3 +78,46 @@ if bash "$fixture/kask/scripts/audit/skill-review-doc-cites.sh" >/dev/null 2>&1;
 fi
 
 echo 'OK: the skill-review audit instruments pass the live corpus, reject dangling citations, reject missing docs, and do not over-match prose.'
+
+# ── The retirement-record instruments ──
+# derive-retired-skill-gap.sh re-derives the retirement set by the record's own
+# stated method and diffs it against the curated array; a record missing a
+# retired-and-shipped name must be reported as a gap, and a complete record must
+# report none. check-retired-shipped-status.sh reports whether a named retired
+# skill ever shipped (and so needs a sweep entry).
+GAP="$repo_root/kask/scripts/audit/derive-retired-skill-gap.sh"
+SHIPPED="$repo_root/kask/scripts/audit/check-retired-shipped-status.sh"
+for inst in "$GAP" "$SHIPPED"; do
+  [ -f "$inst" ] || { echo "FAIL: missing instrument $inst" >&2; exit 1; }
+  bash -n "$inst" || { echo "FAIL: $inst has a syntax error" >&2; exit 1; }
+done
+
+# Positive: the live record reconciles — no name retired-and-shipped is absent
+# from the curated array.
+gap_out="$(bash "$GAP" 2>&1)"
+printf '%s\n' "$gap_out" | grep -q 'curated:' || {
+  echo "FAIL: gap instrument did not report counts: $gap_out" >&2
+  exit 1
+}
+printf '%s\n' "$gap_out" | sed -n '/MISSING from the curated record/,$p' \
+  | tail -n +2 | grep -qE '^[a-z0-9-]+$' && {
+  echo "FAIL: the live retirement record still has a gap: $gap_out" >&2
+  exit 1
+}
+
+# Negative: a name that never shipped is reported as needing no sweep entry,
+# and one that shipped is reported as requiring one.
+never="$(bash "$SHIPPED" lora-training 2>&1 || true)"
+printf '%s\n' "$never" | grep -q 'sweep entry REQUIRED' || {
+  echo "FAIL: shipped-status instrument did not flag a shipped retired skill: $never" >&2
+  exit 1
+}
+
+# Negative: a name with no deletion commit is reported, not silently passed.
+missing="$(bash "$SHIPPED" no-such-skill-ever 2>&1 || true)"
+printf '%s\n' "$missing" | grep -q 'no deletion commit found' || {
+  echo "FAIL: shipped-status instrument did not report an unknown name: $missing" >&2
+  exit 1
+}
+
+echo 'OK: the retirement-record instruments reconcile the live record and flag a shipped retired name.'
