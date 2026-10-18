@@ -15,13 +15,9 @@ contract:
   output:
     probes:
       type: array
-      description: Array of {probe_name, input, gate_result, passed} for each
-        adversarial probe.
-    all_probes_passed:
-      type: boolean
-    failing_gates:
-      type: array
-      description: Gates that failed under any probe (empty if all passed).
+      description: Array of {probe_name, input, gate_results, overall_passed} for
+        each adversarial probe. `overall_passed` and the probe-level aggregates
+        are computed by the `KSA-4` gate, never typed here.
     squint_test_result:
       type: object
       description: Result of the mechanical squint test — {dominant_element, hierarchy_present}.
@@ -76,9 +72,11 @@ Strip all color and weight from the layout — reduce every element to size-only
 ## Output
 
 Produce a JSON object with:
-- `probes`: array of {probe_name, input, gate_results: {gate_name, passed}, overall_passed}
-- `all_probes_passed`: boolean
-- `failing_gates`: array of gate names that failed under any probe (empty if all passed)
+- `probes`: array of {probe_name, input, gate_results: {gate_name, passed}}
 - `squint_test_result`: {dominant_element, hierarchy_present: boolean}
+
+Do NOT emit `all_probes_passed` or `failing_gates` — the `KSA-4` `lisp_eval`
+gate folds the `probes` array and set-differences the `gate_results`; the
+model cannot restate an aggregate it did not compute.
 
 If any probe fails, the layout is NOT ready to accept. The failing gates route back to the ACT phase for further remedy.
