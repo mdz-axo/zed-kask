@@ -1,14 +1,14 @@
-{# goal: Rendering template — surfaces the finalized Sankey markdown (containing the fenced ```mermaid block) as the process's final output string. Flattens the adapt step's JSON object to a raw markdown string. Deterministic (no LLM call). #}
-{# Format and surface the finalized Sankey as the process's final output.
+{# goal: Deterministically serialize the validated sourced edge array into Mermaid Sankey CSV and surface it as the process's final markdown output. #}
+{# Format and surface the validated Sankey edge array as the process's final output.
    This is a pure Jinja2 template (the [inference] header carries only the render contract; no LLM call) rendered by
    the `render_template` tool from the SKILL.md body's final step. It wraps the
-   adapt step's mermaid source in a titled, annotated document with:
+   adapt step's notes and the original sourced edges in a titled, annotated document with:
    - A title derived from domain + subject
    - A description paragraph (domain, weight unit, conservation mode, ontology)
-   - The Mermaid sankey-beta diagram in a fenced code block
+   - A Mermaid sankey-beta diagram serialized directly from edges
    - A flow annotation table (source → target, weight, provenance)
    - A conservation check line
-   - A notes section (abbreviations, placeholders, structural deviations)
+   - A notes section (CSV-unsafe IDs, placeholders, structural deviations)
    - An output path for file save
 
    Deterministic — no LLM call. All formatting is Jinja2 template logic. #}
@@ -22,9 +22,6 @@ contract:
     conservation_check: string
     nodes: array
     edges: array
-    mermaid_source:
-      type: string
-      non_blank: true
     adapt_notes:
       type: string
       required: false
@@ -48,7 +45,19 @@ This diagram visualizes a {{ domain | replace("-", " ") }} flow with {{ nodes | 
 {# ── Mermaid diagram ── #}
 
 ```mermaid
-{{ mermaid_source }}
+---
+config:
+  sankey:
+    showValues: true
+    width: 900
+    height: 500
+    linkColor: source
+---
+sankey-beta
+%% source,target,value
+{%- for edge in edges %}
+{{ edge.source }},{{ edge.target }},{{ edge.weight }}
+{%- endfor %}
 ```
 
 {# ── Flow annotations ── #}

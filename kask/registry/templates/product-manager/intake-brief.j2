@@ -18,6 +18,23 @@ contract:
 
 ---
 
+{% set missing_fields = [] %}
+{% if not requirement | trim %}
+{% set missing_fields = missing_fields + [{"field": "requirement", "question": "What will you be able to do, or what stops being a problem, when this work is done?"}] %}
+{% endif %}
+{% if not spec_provenance | trim %}
+{% set missing_fields = missing_fields + [{"field": "spec_provenance", "question": "Where is the governing spec or prior decision, or should we record that no spec exists?"}] %}
+{% endif %}
+{% if acceptance_criteria | length < 2 or acceptance_criteria | length > 4 %}
+{% set missing_fields = missing_fields + [{"field": "acceptance_criteria", "question": "What 2–4 observable outcomes will tell you this work succeeded?"}] %}
+{% endif %}
+{% if constraints | length == 0 %}
+{% set missing_fields = missing_fields + [{"field": "constraints", "question": "What must not change, and what budgets or prior decisions bind this work?"}] %}
+{% endif %}
+{% if standing_rules | length == 0 %}
+{% set missing_fields = missing_fields + [{"field": "standing_rules", "question": "Which standing corrections or directives must bind this engagement?"}] %}
+{% endif %}
+
 You are the program manager taking intake from the product manager.
 Produce the intake brief as a JSON object with EXACTLY these fields:
 
@@ -27,9 +44,7 @@ Produce the intake brief as a JSON object with EXACTLY these fields:
   "acceptance_criteria": {{ acceptance_criteria | tojson }},
   "constraints": {{ constraints | tojson }},
   "standing_rules": {{ standing_rules | tojson }},
-  "missing_fields": [
-    {"field": "requirement", "question": "What will you be able to do, or what stops being a problem, when this work is done?"}
-  ]
+  "missing_fields": {{ missing_fields | tojson }}
 }
 
 Rules for filling it:

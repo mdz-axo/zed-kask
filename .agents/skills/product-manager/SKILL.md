@@ -173,14 +173,14 @@ All receipts executed live (2026-10-01, batch-13 audit):
 - Intake-brief render, complete context: `render_template`
   `product-manager/intake-brief` with all five contract fields provided
   (requirement, spec provenance "no spec exists — design with the operator",
-  two observable criteria, one constraint, two standing rules) renders the
-  brief with every field carried verbatim and the missing-fields question
-  round present — the empty fields are the questions, and none were.
-- Intake-brief render, sparse context: the same render with empty
-  criteria/constraints arrays still renders the question round — the
-  template's refusal rule ("an empty missing_fields with empty required
-  fields is an improvised requirement — refuse it") is enforced by `PMB-2`
-  in `lisp_eval` (`{missing_count: 0, requirement: "", spec_provenance: "", criteria_count: 0}` → `false`), while `PMB-1` gates intake completion and the 2-round cap.
+  two observable criteria, one constraint, two standing rules) renders every
+  field verbatim and `missing_fields: []`.
+- Intake-brief render, sparse context: empty requirement/spec, one criterion,
+  and empty constraints/standing rules produce exactly five ordered questions
+  (requirement → spec provenance → criteria → constraints → standing rules).
+  The template computes this list from its inputs; it never hardcodes a
+  requirement question into a complete brief. `PMB-2` remains the refusal
+  floor if a malformed caller supplies inconsistent counts.
 
 ## Registry Templates
 

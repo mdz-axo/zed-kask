@@ -1,5 +1,5 @@
 {# goal: Guide the report phase. #}
-{# Variables: target (string), findings (list), proposals (list, each with its approved flag), executions (list, each with its success flag), values_pass (object, optional — the Phase-2f values pass) #}
+{# Variables: target (string), findings (list), proposals (list, each with its approved flag), executions (list, each with finding_id, strategy, success and outcome), values_pass (object, optional — the Phase-2f values pass) #}
 {# Output: a therapy session report #}
 [inference]
 contract:
@@ -26,9 +26,8 @@ contract:
 You are producing the therapy session report for "{{ target }}".
 
 {% set approved_proposals = proposals | selectattr("approved", "equalto", true) | list %}
-{% set contradiction_ids = findings | selectattr("issue_type", "equalto", "contradiction") | map(attribute="id") | list %}
-{% set fragmentation_ids = findings | selectattr("issue_type", "equalto", "fragmentation") | map(attribute="id") | list %}
-{% set confidence_ids = findings | selectattr("issue_type", "equalto", "miscalibrated_confidence") | map(attribute="id") | list %}
+{% set successful_executions = executions | selectattr("success", "equalto", true) | list %}
+{% set successful_finding_ids = successful_executions | map(attribute="finding_id") | list %}
 {% set values_pass_rec = values_pass or {} %}
 {% set values_pass_ran = values_pass is defined and values_pass is not none and values_pass_rec["charter_version"] | default("", true) != "" %}
 {% set value_states = values_pass_rec["value_states"] | default([], true) %}
@@ -66,21 +65,21 @@ You are producing the therapy session report for "{{ target }}".
 ### Memory hygiene summary (forgetting — not learning)
 
 - Contradictions found: {{ findings | selectattr("issue_type", "equalto", "contradiction") | list | length }}
-- Contradictions resolved: {{ approved_proposals | selectattr("finding_id", "in", contradiction_ids) | list | length }}
+- Contradictions resolved: {{ findings | selectattr("issue_type", "equalto", "contradiction") | selectattr("id", "in", successful_finding_ids) | list | length }}
 - Fragmented memories found: {{ findings | selectattr("issue_type", "equalto", "fragmentation") | list | length }}
-- Fragmented memories resolved: {{ approved_proposals | selectattr("finding_id", "in", fragmentation_ids) | list | length }}
+- Fragmented memories resolved: {{ findings | selectattr("issue_type", "equalto", "fragmentation") | selectattr("id", "in", successful_finding_ids) | list | length }}
 - Miscalibrated confidence found: {{ findings | selectattr("issue_type", "equalto", "miscalibrated_confidence") | list | length }}
-- Confidence recalibrated: {{ approved_proposals | selectattr("finding_id", "in", confidence_ids) | list | length }}
-- Source memories purged (post-reification): {{ approved_proposals | selectattr("strategy", "equalto", "purge") | list | length }}
-- Source memories condensed (post-reification): {{ approved_proposals | selectattr("strategy", "equalto", "condense") | list | length }}
-- Executions succeeded: {{ executions | selectattr("success", "equalto", true) | list | length }} of {{ executions | list | length }}
+- Confidence recalibrated: {{ findings | selectattr("issue_type", "equalto", "miscalibrated_confidence") | selectattr("id", "in", successful_finding_ids) | list | length }}
+- Source memories purged (post-reification): {{ successful_executions | selectattr("strategy", "equalto", "purge") | list | length }}
+- Source memories condensed (post-reification): {{ successful_executions | selectattr("strategy", "equalto", "condense") | list | length }}
+- Executions succeeded: {{ successful_executions | length }} of {{ executions | list | length }}
 
 ### Reification summary (learning — closes the learning loop)
 
 - Reification candidates found: {{ findings | selectattr("issue_type", "equalto", "reification_candidate") | list | length }}
-- Skills created: {{ approved_proposals | selectattr("strategy", "equalto", "create_skill") | list | length }}
-- Templates created: {{ approved_proposals | selectattr("strategy", "equalto", "create_template") | list | length }}
-- Rules created: {{ approved_proposals | selectattr("strategy", "equalto", "create_rule") | list | length }}
+- Skills created: {{ successful_executions | selectattr("strategy", "equalto", "create_skill") | list | length }}
+- Templates created: {{ successful_executions | selectattr("strategy", "equalto", "create_template") | list | length }}
+- Rules created: {{ successful_executions | selectattr("strategy", "equalto", "create_rule") | list | length }}
 
 ### Values alignment summary (when the values pass ran)
 

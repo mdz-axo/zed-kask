@@ -1,4 +1,4 @@
-{# goal: Render only the user's sourced flow edges as Mermaid Sankey CSV; on one observed mapping error, accept explicit verification feedback and correct the mapping without changing user data. #}
+{# goal: Analyze structural deviations, long labels and placeholder weights in the user's sourced flow edges without changing those edges; deterministic present-sankey renders the Mermaid CSV. #}
 [inference]
 contract:
   input:
@@ -11,14 +11,12 @@ contract:
     nodes: array
     edges: array
     match_notes: string
-    verification_gap: string
   output:
-    mermaid_source: string
     adapt_notes: string
 ---
-{# First-pass rendering is one-shot; only a measured edge-mapping error warrants one correction. #}
+{# This probabilistic leaf emits notes only; rendering and edge serialization are deterministic downstream. #}
 
-You are a Sankey diagram adapter. Render the user's sourced nodes, edges and weights as Mermaid `sankey-beta` CSV. The matched example guides layout only; it never supplies missing user data. A correct first pass stops; a measured mapping error may trigger one correction.
+You are a Sankey structure analyst. Compare the user's sourced graph with the matched example only to identify structural deviations, long labels and placeholders. You never serialize, replace or correct an edge; the deterministic render step owns Mermaid CSV.
 
 ## Matched Example Structure
 
@@ -41,10 +39,7 @@ You are a Sankey diagram adapter. Render the user's sourced nodes, edges and wei
 {% if match_notes %}
 **Match notes:** {{ match_notes }}
 {% endif %}
-{% if verification_gap %}
-**One-time correction:** {{ verification_gap }}
-Correct this edge-mapping error without changing the user's sourced edges or adding a branch.
-{% endif %}
+
 
 ## Your Task
 
@@ -55,41 +50,23 @@ Compare the user's nodes/edges to the matched example's `node_pattern` and `edge
 - Does the edge pattern match (sources → internal → sinks)?
 - If the structure differs from the example, that's fine — the example is a guide, not a straitjacket. Note any structural deviations.
 
-### Step 2: Note structural deviations, abbreviations, and placeholders
+### Step 2: Note structural deviations, CSV hazards, and placeholders
 
-Record any structural deviations from the matched example, label abbreviations (labels ≤ 30 characters), or unitless `value=1` placeholders in `adapt_notes`. The invoking agent checks conservation deterministically per internal node via `lisp_eval` (`SFW-1`) and verifies the Mermaid CSV (`SFW-2`).
+Record any structural deviations from the matched example, comma/newline-bearing node IDs, or unitless `value=1` placeholders in `adapt_notes`. Do not rewrite edge labels or weights: the invoking agent validates serialization preconditions with `SFW-2`, and the pure `present-sankey` template serializes the original edge array directly.
 - **mandatory**: do NOT silently add a loss branch if inflow ≠ outflow.
 - **asserted**: do NOT invent balancing edges.
 - **none**: do not enforce conservation. A reported income-statement loss may flow in as a source only when its amount and relationship are sourced; never derive an extra edge from an example.
 
-### Step 3: Render the Mermaid sankey-beta CSV
+### Step 3: Return notes only
 
-Apply these conventions:
-1. Front-matter config block (adjust width/height for node count):
-   ```
-   ---
-   config:
-     sankey:
-       showValues: true
-       width: 900
-       height: 500
-       linkColor: source
-   ---
-   ```
-2. `sankey-beta` keyword on its own line, followed by `%% source,target,value` comment.
-3. One row per edge: `source,target,value` — no spaces around commas required but permitted.
-4. Node labels: title case, ≤ 30 characters. Abbreviate longer labels and note abbreviations.
-5. Edge ordering: sources before targets. Group related stages with blank lines.
-6. Weights: numeric value only (no units in CSV). Placeholder weights use `1`.
-7. No `%%{init}%%`, no `classDef`, no inline colors — Zed doesn't support them.
+Do not render Mermaid, CSV rows, or a replacement edge list. `present-sankey.j2` owns serialization so sourced endpoints and weights cannot be dropped or changed by this probabilistic step.
 
 ## Output
 
-Return a JSON object. The render step (`present-sankey`, step 4) handles all formatting — title, node/edge counts, description, annotation table, deterministic conservation check display, and output path. You only produce the raw Mermaid source and adaptation notes.
+Return a JSON object:
 
 ```json
 {
-  "mermaid_source": "---\nconfig:\n  sankey:\n    showValues: true\n    width: 900\n    height: 500\n    linkColor: source\n---\nsankey-beta\n%% source,target,value\n...",
-  "adapt_notes": "Any structural deviations from the example, abbreviations, placeholder weights."
+  "adapt_notes": "Structural deviations from the example, CSV-unsafe node IDs, and placeholder weights. Empty string when none."
 }
 ```

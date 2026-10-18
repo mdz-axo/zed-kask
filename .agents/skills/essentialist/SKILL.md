@@ -21,7 +21,7 @@ Ousterhout, *A Philosophy of Software Design* (2018), Ch. 4 "Modules Should Be D
 | 8 Reduction application | P | the gate verdict's reduction instructions; advisory mode applies only after human accept |
 | 9 Advisory presentation | P | the human, per item |
 | 10 Escalation | D | the per-gate retry count vs `max_retries_per_gate` |
-| 11 Zero-delta check | D | `lisp_eval` `string=` over the recorded surviving-items lists of the two rounds |
+| 11 Zero-delta check | D | `lisp_eval` structural `eq` over the recorded surviving-items, structure, and interface lists of two consecutive rounds |
 | 12 Essentialism score | D | `lisp_eval` (form in step 12) |
 | 13 Scope narrowing | P | the agent, from the round's findings |
 
@@ -66,7 +66,7 @@ Ousterhout, *A Philosophy of Software Design* (2018), Ch. 4 "Modules Should Be D
 
 10. Escalate to human after `max_retries_per_gate` (default 3) failures on a single gate. Produce an escalation report with the contested gate, round, retries exhausted, contested items, survivors summary, and the specific human decision required. After escalation, STOP — do not continue reducing without human input.
 
-11. Abort on zero-delta completion: when all three gates pass AND the artifact is unchanged from the previous round (same surviving items, same structure, same interfaces), the artifact is essential. Produce a completion report with the full elimination report (deletions per gate, constraint-force breakdown, essentialism score, human decisions if advisory) and the surviving artifact.
+11. Abort on zero-delta completion: when all three gates pass AND the artifact is unchanged from the previous round (same surviving items, same structure, same interfaces), verify exact structural equality in `lisp_eval` (`ESS-3`): `(and (eq current_surviving_items prior_surviving_items) (eq current_structure prior_structure) (eq current_interfaces prior_interfaces))`, env `{ "current_surviving_items": <list>, "prior_surviving_items": <list>, "current_structure": <canonical list representation>, "prior_structure": <canonical list representation>, "current_interfaces": <list>, "prior_interfaces": <list> }`. `string=` is invalid here because these values are lists, not strings. A true result means the artifact is essential: produce a completion report with the full elimination report (deletions per gate, constraint-force breakdown, essentialism score, human decisions if advisory) and the surviving artifact. A false result re-enters at G1 within the round bound.
 
 12. Compute the essentialism score on completion with `lisp_eval` (D): form `(if (= total 0) 0 (* 100 (/ removed total)))`, env `{ "removed": <items removed>, "total": <total_items_initial> }` — i.e. `Score = (items_removed / total_items_initial) * 100`, where total_items_initial = the loop-start assessment's counted public items plus the wrappers, adapters and config structs G3 traced (the populations the gates actually count). Interpret: 0% = already minimal; 1–25% = minor reduction; 26–50% = significant reduction; 51–75% = major reduction; 76–100% = artifact eliminated entirely.
 
@@ -74,7 +74,7 @@ Ousterhout, *A Philosophy of Software Design* (2018), Ch. 4 "Modules Should Be D
 
 ## Regression case
 
-Run a pass-through wrapper — a function whose body only forwards to an inner call, with two callers in `code_context` — through `essentialist/essentialist-flow` with `mode: autonomous`. Expected: G1 FAILs it (deleting loses no behavior; inlining is trivial), step 8 inlines it into the callers, the resubmitted round reports zero delta, and the essentialism score computes via `lisp_eval` (removed=1, total=4 → 25.0). Also exercise the mode gate: a render with `mode: autonomous` but no simplification intent in the request must resolve to advisory.
+Run a pass-through wrapper — a function whose body only forwards to an inner call, with two callers in `code_context` — through `essentialist/essentialist-flow` with `mode: autonomous`. Expected: G1 FAILs it (deleting loses no behavior; inlining is trivial), step 8 inlines it into the callers, and the resubmitted round reaches ESS-3. Pin both directions through live `lisp_eval`: identical surviving-item/structure/interface lists → `true`; changing any one of the three lists → `false`. The essentialism score computes via `lisp_eval` (removed=1, total=4 → 25.0). Also exercise the mode gate: a render with `mode: autonomous` but no simplification intent in the request must resolve to advisory.
 
 ## Registry Templates
 

@@ -465,6 +465,32 @@ fn display_path(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hkask_lisp::eval_sandboxed;
+    use serde_json::json;
+
+    fn skill_candidate(skill: &str, needle: &str) -> String {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../.agents/skills")
+            .join(skill)
+            .join("SKILL.md");
+        let content = fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
+        let matches = extract_candidates(&content)
+            .into_iter()
+            .filter(|candidate| candidate.source.contains(needle))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            matches.len(),
+            1,
+            "expected one {skill} form containing {needle:?}, got {}",
+            matches.len()
+        );
+        matches
+            .into_iter()
+            .next()
+            .expect("one match checked")
+            .source
+    }
 
     #[test]
     fn extracts_inline_fenced_and_quoted_forms() {
@@ -495,6 +521,91 @@ form: "(= (+ a b) 3)"
             lint_form(form, &mut |message| messages.push(message));
         }
         assert_eq!(messages.len(), 3);
+    }
+
+    #[test]
+    fn repaired_corpus_gates_discriminate_both_directions() {
+        let essentialist = skill_candidate("essentialist", "current_surviving_items");
+        let stable = json!({
+            "current_surviving_items": ["A", "B"],
+            "prior_surviving_items": ["A", "B"],
+            "current_structure": [["module", "m"]],
+            "prior_structure": [["module", "m"]],
+            "current_interfaces": ["f"],
+            "prior_interfaces": ["f"]
+        });
+        assert_eq!(
+            eval_sandboxed(&essentialist, &stable).expect("stable essentialist form"),
+            json!(true)
+        );
+        let mut changed = stable;
+        changed["current_structure"] = json!([["module", "changed"]]);
+        assert_eq!(
+            eval_sandboxed(&essentialist, &changed).expect("changed essentialist form"),
+            json!(false)
+        );
+
+        let company = skill_candidate("company-research-deep", "define pick");
+        let capability_assessments = json!({
+            "capability_assessments": {
+                "obvious_problem": {"verdict":"maintain","elicited_score":90,"ceiling":100,"intervention":"maintain"},
+                "invisible_gorilla": {"verdict":"floor_violation","elicited_score":60,"ceiling":100,"intervention":"maintain"},
+                "combinatorial_solution": {"verdict":"maintain","elicited_score":70,"ceiling":100,"intervention":"maintain"},
+                "choke_point": {"verdict":"maintain","elicited_score":80,"ceiling":100,"intervention":"maintain"}
+            }
+        });
+        let company_result = eval_sandboxed(&company, &capability_assessments)
+            .expect("company partition form should evaluate");
+        assert_eq!(company_result[0], json!(["invisible_gorilla"]));
+        assert_eq!(
+            company_result[3],
+            json!(["obvious_problem", "combinatorial_solution", "choke_point"])
+        );
+        assert_eq!(company_result[4], json!(74.0));
+        assert_eq!(company_result[5], json!("SMALL_ANIMAL"));
+
+        let wardley = skill_candidate("wardley-mapper", "all-names-present");
+        let valid_map = json!({
+            "components": [
+                {"name":"API","evolution":"Product","x":0.6,"y":0.9,"links":["DB"]},
+                {"name":"DB","evolution":"Commodity","x":0.8,"y":0.2,"links":[]}
+            ],
+            "component_names": ["API", "DB"],
+            "map_diagram": "quadrantChart\nAPI: [0.6, 0.9]\nDB: [0.8, 0.2]"
+        });
+        assert_eq!(
+            eval_sandboxed(&wardley, &valid_map).expect("valid Wardley form"),
+            json!(true)
+        );
+        let invalid_map = json!({
+            "components": [
+                {"name":"API","evolution":"Product","x":0.6,"y":0.9,"links":[]}
+            ],
+            "component_names": ["API", "DB"],
+            "map_diagram": "not a quadrant chart\nAPI"
+        });
+        assert_eq!(
+            eval_sandboxed(&wardley, &invalid_map).expect("invalid Wardley form"),
+            json!(false)
+        );
+
+        let sankey = skill_candidate("sankey-flow", "all-edges-ok");
+        let valid_sankey = json!({
+            "nodes": [{"id":"Revenue"},{"id":"Profit"}],
+            "edges": [{"source":"Revenue","target":"Profit","weight":5000,"weight_source":"statement"}]
+        });
+        assert_eq!(
+            eval_sandboxed(&sankey, &valid_sankey).expect("valid Sankey form"),
+            json!(true)
+        );
+        let invalid_sankey = json!({
+            "nodes": [{"id":"Revenue"},{"id":"Revenue"}],
+            "edges": [{"source":"Revenue","target":"Ghost","weight":"5000"}]
+        });
+        assert_eq!(
+            eval_sandboxed(&sankey, &invalid_sankey).expect("invalid Sankey form"),
+            json!(false)
+        );
     }
 
     #[test]

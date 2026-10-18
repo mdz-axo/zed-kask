@@ -4,8 +4,13 @@ contract:
     task_description: string
     task_context: string
     skill_catalog: array
-    max_recommendations: number
-    epistemic_state: object
+    max_recommendations:
+      type: number
+      required: false
+      default: 3
+    epistemic_state:
+      type: object
+      required: false
   output:
     recommendations: array
     uncovered_capabilities: array

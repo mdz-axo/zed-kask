@@ -420,6 +420,231 @@ mod tests {
         base
     }
 
+    fn render_template_for_test(
+        template_ref: &str,
+        context: serde_json::Value,
+    ) -> Result<String, String> {
+        let base = registry_template_base();
+        let content = read_template_file(&base, template_ref)?;
+        let context: std::collections::HashMap<String, hkask_types::AnyJsonValue> =
+            serde_json::from_value(context).map_err(|error| error.to_string())?;
+        validate_contract_inputs(&content, &context)?;
+        let body = strip_frontmatter(&content);
+        let mut environment = minijinja::Environment::new();
+        bind_registry_loader(&mut environment, &base);
+        environment
+            .render_str(&body, &context)
+            .map_err(|error| error.to_string())
+    }
+
+    #[test]
+    fn corpus_audit_repairs_are_pinned_at_template_handoffs() {
+        let complete_intake = render_template_for_test(
+            "product-manager/intake-brief",
+            serde_json::json!({
+                "requirement": "Prevent broken gates",
+                "spec_provenance": "operator provided 2026-10-17",
+                "acceptance_criteria": ["Malformed gates fail", "Valid gates pass"],
+                "constraints": ["Do not touch concurrent streams"],
+                "standing_rules": ["Fix the tool"]
+            }),
+        )
+        .expect("complete intake renders");
+        assert!(complete_intake.contains("\"missing_fields\": []"));
+
+        let sparse_intake = render_template_for_test(
+            "product-manager/intake-brief",
+            serde_json::json!({
+                "requirement": "",
+                "spec_provenance": "",
+                "acceptance_criteria": [],
+                "constraints": [],
+                "standing_rules": []
+            }),
+        )
+        .expect("sparse intake renders");
+        for field in [
+            "requirement",
+            "spec_provenance",
+            "acceptance_criteria",
+            "constraints",
+            "standing_rules",
+        ] {
+            assert!(
+                sparse_intake.contains(&format!("\"field\":\"{field}\"")),
+                "missing question for {field}: {sparse_intake}"
+            );
+        }
+
+        let excessive_criteria = render_template_for_test(
+            "product-manager/intake-brief",
+            serde_json::json!({
+                "requirement": "Prevent broken gates",
+                "spec_provenance": "operator provided 2026-10-17",
+                "acceptance_criteria": ["a", "b", "c", "d", "e"],
+                "constraints": ["bounded"],
+                "standing_rules": ["fix the tool"]
+            }),
+        )
+        .expect("excessive criteria intake renders");
+        assert!(excessive_criteria.contains("\"field\":\"acceptance_criteria\""));
+
+        let design = render_template_for_test(
+            "program-manager/design-review",
+            serde_json::json!({
+                "requirement": "Prevent recurrence",
+                "spec_provenance": "operator provided 2026-10-17",
+                "design_pattern": "parser-backed gate",
+                "invariants": ["one parser", "positive controls"],
+                "lazy_version": "grep only",
+                "premortem_failure_modes": ["misses multiline forms"],
+                "is_replacement_task": true,
+                "deleted_targets": ["ad-hoc parser"],
+                "unmapped_requirements": []
+            }),
+        )
+        .expect("design review renders");
+        assert!(design.contains("\"invariants\": [\"one parser\",\"positive controls\"]"));
+        assert!(!design.contains("\"invariants\": [["));
+        assert!(design.contains("\"premortem_failure_modes\": [\"misses multiline forms\"]"));
+        assert!(design.contains("\"deleted_targets\": [\"ad-hoc parser\"]"));
+        assert!(design.contains("\"unmapped_requirements\": []"));
+
+        let verified_closeout = render_template_for_test(
+            "program-manager/closeout-report",
+            serde_json::json!({
+                "goal_text": "Prevent broken gates",
+                "functional_outcome": "Broken gates now fail CI.",
+                "open_items": [],
+                "validation": [{
+                    "command": "bash gate.sh",
+                    "observed_output": "OK: 324 forms",
+                    "verdict": "pass"
+                }],
+                "learning": "Use the production parser."
+            }),
+        )
+        .expect("verified closeout renders");
+        assert!(verified_closeout.contains("`bash gate.sh`"));
+        assert!(verified_closeout.contains("OK: 324 forms"));
+        assert!(verified_closeout.contains("| pass |"));
+
+        let unverified_closeout = render_template_for_test(
+            "program-manager/closeout-report",
+            serde_json::json!({
+                "goal_text": "Prevent broken gates",
+                "functional_outcome": "Not verified.",
+                "open_items": [],
+                "validation": [],
+                "learning": "Missing evidence stays visible."
+            }),
+        )
+        .expect("unverified closeout renders");
+        assert!(unverified_closeout.contains("verification is **not run**, not passed"));
+
+        let sankey = render_template_for_test(
+            "sankey-flow/present-sankey",
+            serde_json::json!({
+                "subject": "fixture",
+                "domain": "resource-allocation",
+                "weight_unit": "USD",
+                "conservation_mode": "mandatory",
+                "conservation_check": "observed_balanced",
+                "nodes": [{"id":"Revenue"},{"id":"Profit"},{"id":"Costs"},{"id":"Payroll"}],
+                "edges": [
+                    {"source":"Revenue","target":"Profit","weight":5000,"weight_source":"statement"},
+                    {"source":"Revenue","target":"Costs","weight":3000,"weight_source":"statement"},
+                    {"source":"Costs","target":"Payroll","weight":2000,"weight_source":"ledger"}
+                ]
+            }),
+        )
+        .expect("Sankey render succeeds");
+        for row in [
+            "Revenue,Profit,5000",
+            "Revenue,Costs,3000",
+            "Costs,Payroll,2000",
+        ] {
+            assert_eq!(sankey.matches(row).count(), 1, "row drift: {row}\n{sankey}");
+        }
+
+        let approved_only = render_template_for_test(
+            "therapy/report",
+            serde_json::json!({
+                "target": "fixture",
+                "findings": [
+                    {"id":"F001","issue_type":"contradiction"},
+                    {"id":"F002","issue_type":"reification_candidate"}
+                ],
+                "proposals": [
+                    {"approved":true,"finding_id":"F001","strategy":"forget"},
+                    {"approved":true,"finding_id":"F002","strategy":"create_skill"}
+                ],
+                "executions": [],
+                "values_pass": {}
+            }),
+        )
+        .expect("approved-only therapy report renders");
+        assert!(approved_only.contains("Contradictions resolved: 0"));
+        assert!(approved_only.contains("Skills created: 0"));
+
+        let executed = render_template_for_test(
+            "therapy/report",
+            serde_json::json!({
+                "target": "fixture",
+                "findings": [
+                    {"id":"F001","issue_type":"contradiction"},
+                    {"id":"F002","issue_type":"reification_candidate"}
+                ],
+                "proposals": [
+                    {"approved":true,"finding_id":"F001","strategy":"forget"},
+                    {"approved":true,"finding_id":"F002","strategy":"create_skill"}
+                ],
+                "executions": [
+                    {"finding_id":"F001","strategy":"forget","success":true,"outcome":"deleted"},
+                    {"finding_id":"F001","strategy":"forget","success":true,"outcome":"duplicate receipt"},
+                    {"finding_id":"F002","strategy":"create_skill","success":true,"outcome":"created"}
+                ],
+                "values_pass": {}
+            }),
+        )
+        .expect("executed therapy report renders");
+        assert!(executed.contains("Contradictions resolved: 1"));
+        assert!(!executed.contains("Contradictions resolved: 2"));
+        assert!(executed.contains("Skills created: 1"));
+    }
+
+    #[test]
+    fn optional_cross_skill_inputs_are_actually_optional() {
+        for (template_ref, context) in [
+            (
+                "falsifiability/falsifiability-admit",
+                serde_json::json!({"target": "A treatment reduces p95 latency"}),
+            ),
+            (
+                "task-breakdown/task-breakdown-decompose",
+                serde_json::json!({
+                    "context_summary": "Implement a parser guard",
+                    "dependency_graph": [],
+                    "risks": [],
+                    "refinement_directives": [],
+                    "parallelization_hint": "sequential"
+                }),
+            ),
+            (
+                "skill-discovery/skill-discovery-route",
+                serde_json::json!({
+                    "task_description": "debug a performance regression",
+                    "task_context": "Rust workspace",
+                    "skill_catalog": []
+                }),
+            ),
+        ] {
+            render_template_for_test(template_ref, context).unwrap_or_else(|error| {
+                panic!("{template_ref} should accept omitted optional inputs: {error}")
+            });
+        }
+    }
+
     #[test]
     fn test_strip_frontmatter_preserves_content_without_header() {
         let input = "Hello {{ name }}!";

@@ -5,6 +5,7 @@ contract:
     goal_text: string
     functional_outcome: string
     open_items: array
+    validation: array
     learning: string
   output:
     report: string
@@ -24,8 +25,15 @@ Technical summary, each item tied to the part of the goal it serves.
 Files by project-relative path.
 
 ## Validation
-The commands that were run and their observed results (from the DoD
-checklist). Failures and not-runs stated as such.
+{% if validation %}
+| Command | Observed output | Verdict |
+|---|---|---|
+{% for item in validation %}
+| `{{ item.command }}` | {{ item.observed_output | replace("\n", " ") }} | {{ item.verdict }} |
+{% endfor %}
+{% else %}
+No validation records were supplied; verification is **not run**, not passed.
+{% endif %}
 
 ## Open items
 {% if open_items %}

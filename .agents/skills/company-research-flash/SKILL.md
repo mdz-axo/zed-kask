@@ -140,7 +140,19 @@ After INTEL collection, read the company once through the `listening` skill's lo
 
 ### kata-calibration
 
-1. Set the direction first: render `kata-improvement/improvement-step1-direction` with `task_description`, `context`, and `constraints` for this note's scope (knowledge gaps, untested assumptions, the next PDCA experiment). If the direction step cannot run, its absent prediction is recorded as a calibration signal, never silently skipped.
+1. Set the direction first by rendering `kata-improvement/improvement-step1-direction` with the canonical contract below. Put this note's knowledge gaps, untested assumptions, and next PDCA experiment inside `context`; do not pass ignored `task_description`/`constraints` fields. If the direction step cannot run, its absent prediction is recorded as a calibration signal, never silently skipped.
+   ```json
+   {
+     "context": {
+       "task_description": "Calibrate the current research note",
+       "constraints": ["Name knowledge gaps", "Name untested assumptions", "Define the next PDCA experiment"]
+     },
+     "prior_kanban": null,
+     "prior_boards": null,
+     "learner_bot": "company-research-flash analyst",
+     "previous_steps": []
+   }
+   ```
 2. (D) Measure the analyst's own calibration, not the market's: read the analyst's resolved price-target forecasts for this symbol with `forecast_list` (stated `forecast_probability`, outcome in band 1/0), then compute `calibration_gap` (`[gap, direction]`) directly with `lisp_eval`:
    - form: `(begin (define sum (lambda (l) (if (is_null l) 0 (+ (car l) (sum (cdr l)))))) (define mean (lambda (l) (/ (sum l) (length l)))) (cond ((is_null ps) (list 1.0 "no_prediction")) ((< (length ps) 5) (list nil "undetermined")) (t (let ((d (- (mean ps) (mean os)))) (list (abs d) (if (> d 0) "overconfident" (if (< d 0) "underconfident" "calibrated")))))))`
    - env: `{ "ps": <stated probabilities>, "os": <outcomes 1/0> }`

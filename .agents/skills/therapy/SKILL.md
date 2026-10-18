@@ -284,7 +284,7 @@ The scan's counts, the approved-proposal count, the execution check and the post
 2. For corpus memory targets, use the corpus-specific tools to modify the chunk database.
 3. For swarm memory targets, use the swarm-specific tools to modify the swarm database.
 
-4. Record the outcome of each execution (success/failure).
+4. For each approved proposal, record one aggregate execution result with `finding_id`, `strategy`, `success` and `outcome` copied from the proposal and tool receipts. If a proposal requires several tool calls, summarize their receipts in that one outcome and set `success: true` only when every required call succeeded. These join keys let the report distinguish approval from actual resolution; a result without them cannot count as resolved.
 
 5. Call `lisp_eval` to verify all executions succeeded:
    - form: "(define count-failed (lambda (lst) (if (is_null lst) 0 (if (not (eq (assoc \"success\" (car lst)) t)) (+ 1 (count-failed (cdr lst))) (count-failed (cdr lst)))))) (count-failed results)"
@@ -316,7 +316,7 @@ the operator approved only partial merges is expected, not a failure.
    The gap is the session's calibration signal about this memory store, carried into the report's hygiene summary.
 1. Call `render_template` to render the report template:
    - template: `therapy/report.j2`
-   - variables: { "target": "<target name>", "findings": <scan findings>, "proposals": <all proposals, each with its Phase-4 approved flag>, "executions": <execution results, each with its success flag>, "values_pass": <the Phase-2f values-pass record, or omitted when the pass did not run> }
+   - variables: { "target": "<target name>", "findings": <scan findings>, "proposals": <all proposals, each with its Phase-4 approved flag>, "executions": <execution results, each with finding_id, strategy, success and outcome>, "values_pass": <the Phase-2f values-pass record, or omitted when the pass did not run> }
 
    Copyable context shape:
    ```json
@@ -324,7 +324,9 @@ the operator approved only partial merges is expected, not a failure.
      "target": "<target name>",
      "findings": [],
      "proposals": [],
-     "executions": [],
+     "executions": [
+       { "finding_id": "F001", "strategy": "forget", "success": true, "outcome": "<tool receipt summary>" }
+     ],
      "values_pass": {
        "charter_version": "<the version: field reviewed>",
        "value_states": [
@@ -344,7 +346,7 @@ the operator approved only partial merges is expected, not a failure.
    template then states that explicitly instead of rendering empty counts.
 
 2. Following the template's guidance, produce a therapy session report:
-   - **Memory hygiene summary**: how many contradictions resolved, how many fragmented memories merged/linked, how many confidence values recalibrated — every count over the render variables is computed by the template (approved proposals joined to finding classes; executions by success); compose prose around the rendered numbers, never re-type a count.
+   - **Memory hygiene summary**: how many contradictions resolved, how many fragmented memories merged/linked, how many confidence values recalibrated — every resolved count is computed by the template from successful execution records joined to the finding IDs; approved-but-unexecuted proposals never count as resolved. Compose prose around the rendered numbers, never re-type a count.
    - **Reification summary**: how many skills/templates/rules created, how many source memories purged or condensed, the cognitive load shed (estimated reduction in memory database size or retrieval noise).
    - **Values alignment summary** (when the values pass ran): the charter version reviewed and the practiced/thin/conflicted counts are computed by the template from `values_pass.value_states` — compose prose around the rendered numbers, never re-type a count. Report the conflicts with their lesson + value citations, and the practice gaps carded.
    - **Per-issue detail**: what was found, what was proposed, what was approved, what was executed, what was the outcome.

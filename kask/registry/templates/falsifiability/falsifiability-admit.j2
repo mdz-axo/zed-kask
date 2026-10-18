@@ -3,8 +3,12 @@
 contract:
   input:
     target: string
-    domain: string
-    context: object
+    domain:
+      type: string
+      required: false
+    context:
+      type: object
+      required: false
   output:
     admissible: boolean
     ontological_mode: string

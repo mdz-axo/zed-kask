@@ -10,6 +10,10 @@ contract:
     design_pattern: string
     invariants: array
     lazy_version: string
+    premortem_failure_modes: array
+    is_replacement_task: boolean
+    deleted_targets: array
+    unmapped_requirements: array
   output:
     requirement: string
     spec_provenance: string
@@ -18,6 +22,10 @@ contract:
     touch_boundary: object
     experience_changing_choices: array
     lazy_version_premortem: string
+    premortem_failure_modes: array
+    is_replacement_task: boolean
+    deleted_targets: array
+    unmapped_requirements: array
 ---
 
 {# Phase 2 — Design review: the pre-code gate. Render before the first edit.
@@ -30,7 +38,7 @@ record as a JSON object with EXACTLY these fields:
   "requirement": "{{ requirement }}",
   "spec_provenance": "{{ spec_provenance }}",
   "design_pattern": "{{ design_pattern }}",
-  "invariants": [{{ invariants }}],
+  "invariants": {{ invariants | tojson }},
   "touch_boundary": {
     "files_to_touch": [/* surgical list; nothing else */],
     "files_explicitly_not_touched": [/* neighboring scopes, other streams' write scopes */]
@@ -39,7 +47,11 @@ record as a JSON object with EXACTLY these fields:
     /* choices that change what the operator sees — surfaced as decisions,
        never embedded silently */
   ],
-  "lazy_version_premortem": "{{ lazy_version }}"
+  "lazy_version_premortem": "{{ lazy_version }}",
+  "premortem_failure_modes": {{ premortem_failure_modes | tojson }},
+  "is_replacement_task": {{ is_replacement_task | tojson }},
+  "deleted_targets": {{ deleted_targets | tojson }},
+  "unmapped_requirements": {{ unmapped_requirements | tojson }}
 }
 
 Rules for filling it:

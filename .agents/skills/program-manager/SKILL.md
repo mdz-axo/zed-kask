@@ -157,7 +157,9 @@ insert is D — the returned h_mem id.
 
 1. Render the design review (`render_template`,
    `program-manager/design-review`, context keys: `requirement`,
-   `spec_provenance`, `design_pattern`, `invariants`, `lazy_version`) and
+   `spec_provenance`, `design_pattern`, `invariants`, `lazy_version`,
+   `premortem_failure_modes`, `is_replacement_task`, `deleted_targets`,
+   `unmapped_requirements`) and
    produce the design record:
    requirement, spec provenance (where the spec was recovered from),
    the chosen design pattern and why, the invariants that constrain the
@@ -253,7 +255,7 @@ insert is D — the returned h_mem id.
 
 1. Render the closeout report (`render_template`,
    `program-manager/closeout-report`, context keys: `goal_text`,
-   `functional_outcome`, `open_items`, `learning`) and produce it: functional
+   `functional_outcome`, `open_items`, `validation`, `learning`) and produce it: functional
    outcome first — what the operator can now do, or what no longer
    breaks.
 2. If a goal was recorded, judge it (`kanban_goal_judge`) with a result
@@ -302,15 +304,15 @@ insert is D — the returned h_mem id.
 
 | Template | Purpose | Context |
 |---|---|---|
-| `design-review.j2` | Produce Phase 2's design record. | `requirement`, `spec_provenance`, `design_pattern`, `invariants`, `lazy_version` (the pre-mortem: the hack the lazy version would embed) |
-| `dod-checklist.j2` | Phase 4's Definition of Done checklist. | `change_summary`, `residue_targets` |
-| `closeout-report.j2` | Phase 5's closeout report (including the open-items closure ledger table). | `goal_text`, `functional_outcome`, `open_items`, `learning` |
+| `design-review.j2` | Produce Phase 2's design record and the arrays PM-1 consumes. | `requirement`, `spec_provenance`, `design_pattern`, `invariants`, `lazy_version`, `premortem_failure_modes`, `is_replacement_task`, `deleted_targets`, `unmapped_requirements` |
+| `dod-checklist.j2` | Produce the evidence-bearing Definition of Done record. | `change_summary`, `residue_targets` |
+| `closeout-report.j2` | Produce the closeout report (including observed validation and the open-items closure ledger table). | `goal_text`, `functional_outcome`, `open_items`, `validation`, `learning` |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `program-manager/design-review`) and a context object with the required variables.
 
 ## Regression case
 
-Run a small governed change (one file, one behavior) through the loop with a two-item open-items ledger: (i) render `program-manager/design-review` with the design record's five inputs and check gate `PM-1`; (ii) render `program-manager/dod-checklist` with the change summary and residue targets; (iii) render `program-manager/closeout-report` with goal, outcome, the open-items ledger table, and the learning; (iv) run the closure-ledger form three ways — a green flat ledger (both items owned and closed) → green; a red flat ledger (one `reported-abandoned`, one `owner:none`) → red; and a ledger with one object-shaped entry → red (the shape guard). The three-way form check is executed live through `lisp_eval` (receipts above).
+Run a small governed change (one file, one behavior) through the loop with a two-item open-items ledger: (i) render `program-manager/design-review` with all nine contract inputs and check gate `PM-1`; assert `invariants` is a flat array (never `[invariants]`) and the rendered PM-1 arrays exactly equal the supplied arrays; (ii) render `program-manager/dod-checklist` with the change summary and residue targets; (iii) render `program-manager/closeout-report` with goal, outcome, the DoD's `validation` array, the open-items ledger table, and the learning; assert the exact command/output/verdict appears, and an empty validation array renders `not run`; (iv) run the closure-ledger form three ways — a green flat ledger (both items owned and closed) → green; a red flat ledger (one `reported-abandoned`, one `owner:none`) → red; and a ledger with one object-shaped entry → red (the shape guard). The three-way form check is executed live through `lisp_eval` (receipts above).
 
 ## Convergence
 
