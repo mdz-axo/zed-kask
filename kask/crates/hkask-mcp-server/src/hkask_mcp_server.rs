@@ -248,7 +248,7 @@ macro_rules! mcp_server {
             /// Agent identity for capability tokens and ownership.
             pub webid: hkask_types::WebID,
             $(
-                $(#[$field_meta:meta])*
+                $(#[$field_meta])*
                 $field_vis $field : $ty
             ),*
         }
