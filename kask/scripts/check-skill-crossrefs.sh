@@ -16,6 +16,13 @@
 #      names resolve against .agents/skills/ or are in the allowlist.
 #   2. Backticked `.j2`/`.yaml` paths resolve against the template registry
 #      or, for style configuration YAML, the style registry.
+#   2b. Extensionless backtick refs whose first component IS a registry
+#      directory (`render_template`'s documented extensionless form, e.g.
+#      `therapy/scan`) resolve too. A bare `a/b` backtick is prose or a git
+#      ref unless a registry dir exists for its first component — that
+#      scoping keeps false positives out while closing the blind spot the
+#      2026-10-18 independent review found (the gate passed while
+#      extensionless refs pointed at nothing).
 #
 # Exit codes:
 #   0 — all refs resolve or are allowlisted
@@ -115,6 +122,28 @@ for skill_md in "$SKILLS_DIR"/*/SKILL.md; do
       FAIL=1
     fi
   done < <(grep -noE '`[a-z0-9-]+/[a-z0-9._-]+\.(j2|yaml)`' "$skill_md" || true)
+
+  # Check 2b: extensionless refs scoped to registry dirs. Only a backtick
+  # token `dir/leaf` whose `dir` exists in a registry is checked — the ref
+  # reads as a registry citation in that context, so it must resolve.
+  # Everything else (git refs, file paths, prose) stays out of scope. A token
+  # may carry its own extension (`therapy/scan.j2` and `therapy/scan` are the
+  # same citation); strip it the same way check 2 does before resolving.
+  while IFS=: read -r line_no match; do
+    ref="${match//\`/}"
+    first="${ref%%/*}"
+    is_allowed "$ref" && continue
+    # Normalize: strip a known extension so `a/b.j2` and `a/b` resolve alike.
+    base="${ref%.j2}"
+    base="${base%.yaml}"
+    if [ -d "$TEMPLATES_DIR/$first" ] || [ -d "kask/registry/styles/$first" ]; then
+      if [ ! -f "$TEMPLATES_DIR/$base.j2" ] && [ ! -f "$TEMPLATES_DIR/$base.yaml" ] &&
+         [ ! -f "kask/registry/styles/$base.yaml" ]; then
+        echo "UNRESOLVED: $skill_md:$line_no extensionless registry ref \`$ref\` has no template or style file"
+        FAIL=1
+      fi
+    fi
+  done < <(grep -noE '`[a-z0-9-]+/[a-z0-9._-]+`' "$skill_md" || true)
 done
 
 if [ "$FAIL" -ne 0 ]; then

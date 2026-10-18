@@ -69,4 +69,44 @@ if [[ "$output" != *'retired-skill record not found'* ]]; then
     exit 1
 fi
 
-echo 'OK: existing paths resolve; missing paths, retired-skill references, and a missing retirement record all fail the gate.'
+# Restore the retirement record for the extensionless cases below.
+mkdir -p "$fixture/crates/agent_skills"
+cat > "$fixture/crates/agent_skills/agent_skills.rs" <<'EOF2'
+const RETIRED_SKILL_NAMES: &[&str] = &[
+    "retired-example",
+];
+EOF2
+
+# Check 2b positive: an extensionless registry ref whose target exists passes
+# (`example/prompt` is `example/prompt.j2` without its extension — the
+# documented render_template form). Before check 2b this class was invisible.
+printf '%s\n' 'Render `example/prompt` then continue.' > "$fixture/.agents/skills/example/SKILL.md"
+if output="$(bash "$fixture/kask/scripts/check-skill-crossrefs.sh")"; then
+    :
+else
+    echo "Existing extensionless registry ref was rejected: $output" >&2
+    exit 1
+fi
+
+# Check 2b negative: an extensionless registry ref pointing at nothing fails.
+printf '%s\n' 'See `example/missing-template` for the shape.' > "$fixture/.agents/skills/example/SKILL.md"
+if output="$(bash "$fixture/kask/scripts/check-skill-crossrefs.sh")"; then
+    echo "Missing extensionless registry ref was accepted: $output" >&2
+    exit 1
+fi
+if [[ "$output" != *'extensionless registry ref'* ]]; then
+    echo "Missing extensionless ref was not identified: $output" >&2
+    exit 1
+fi
+
+# Check 2b scoping negative: a bare `dir/leaf` whose first component is NOT a
+# registry dir stays out of scope (git refs, file paths, prose).
+printf '%s\n' 'Compare against `some-org/some-repo` before merging.' > "$fixture/.agents/skills/example/SKILL.md"
+if output="$(bash "$fixture/kask/scripts/check-skill-crossrefs.sh")"; then
+    :
+else
+    echo "Non-registry backtick pair was falsely rejected: $output" >&2
+    exit 1
+fi
+
+echo 'OK: existing paths resolve; missing paths, retired-skill references, a missing retirement record, and missing extensionless registry refs all fail the gate.'
