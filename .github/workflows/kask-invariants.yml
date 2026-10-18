@@ -297,10 +297,10 @@ jobs:
           default output device eagerly; the null sink keeps the
           audio-master clock exercised with samples flowing to nowhere)
         run: printf 'pcm.!default { type null }\n' | sudo tee /etc/asound.conf
-      - name: Kask subtree — cargo test (hkask-* + kask_bridge)
-        run: cargo test --tests --no-fail-fast -p 'hkask-*' -p kask_bridge -- --test-threads=1
-      - name: MCP reconnect — isolated fixture processes (serial)
-        run: cargo test --locked -p hkask-mcp --features test-fixture --test reconnect_integration -- --test-threads=1
+      - name: Kask subtree — cargo test (hkask-* + kask_bridge; fails if zero tests ran)
+        run: bash kask/scripts/cargo-test-nonzero.sh --tests --no-fail-fast -p 'hkask-*' -p kask_bridge -- --test-threads=1
+      - name: MCP reconnect — isolated fixture processes (serial; fails if zero tests ran)
+        run: bash kask/scripts/cargo-test-nonzero.sh --locked -p hkask-mcp --features test-fixture --test reconnect_integration -- --test-threads=1
       - name: Test evidence — real failure, correction, and rejection controls
         run: |
           cargo build --locked -p hkask-regulation --bin check_test_evidence

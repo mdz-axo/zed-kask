@@ -17,10 +17,18 @@
 # documented bidirectional seam and is exempt by construction because this
 # scan only visits `hkask-*` paths.
 #
-# This gate detects two inversion signals in hKask Cargo.toml files:
-#   1. a `path = "..."` dependency that points into the zed-kask tree; and
+# This gate detects three inversion signals in hKask Cargo.toml files:
+#   1. a `path = "..."` dependency that points into the zed-kask tree;
 #   2. a dependency (in a `[dependencies]`/`[dev-dependencies]`/`[build-dependencies]`
-#      section) whose key is a zed-kask-only crate (denylist below).
+#      section) whose key is a zed-kask-only crate (denylist below); and
+#   3. a dependency RENAMED via `package = "<zed crate>"`, where the key is
+#      arbitrary but the resolved package is a zed-kask crate.
+# Signal 3 exists because signals 1-2 match the dependency *key*, and Cargo's
+# rename syntax (`render_core = { package = "gpui", path = ... }`) produces
+# exactly the same inverted dependency under a key the denylist cannot see.
+# A path-dep rename is caught by signal 1, but a workspace or registry rename
+# (`render_core = { package = "gpui", workspace = true }`) is not — signal 3
+# is what closes that. Pinned by check-hkask-no-zed-deps-selftest.sh.
 # hKask crates are `hkask-*` prefixed, so a bare dep on `gpui`/`editor`/`ui`/
 # `workspace`/`settings` etc. can only be a zed-kask crate (never an hKask one).
 # Only dependency *sections* are scanned (via awk), so `[package] workspace = true`
@@ -62,22 +70,67 @@ while IFS= read -r manifest; do
     fi
 done <<< "$manifests"
 
-# 2. Any dependency whose key is a zed-kask-only crate name, within dependency
-#    sections only. awk tracks section membership (`[dependencies]` /
-#    `[dev-dependencies]` / `[build-dependencies]` / `[target.'...'.dependencies]`)
-#    and matches a denylist key at the start of a dependency line. `[.]` is a
-#    literal dot (no escaping). Emits `file:FNR:line` only on a match.
-echo "Checking hKask Cargo.toml dependency sections for zed-kask crate names..."
+# 2+3. Dependency-section signals, in one pass over each manifest.
+#
+#    TOML spells a dependency two ways, and the two put denylisted names in
+#    different positions:
+#      [dependencies]            -> keys ARE dependency names
+#      [dependencies.render_core]-> keys are dependency FIELDS (version, path,
+#                                   workspace, package, features)
+#    Conflating them is a live defect: inside `[dependencies.serde]`, the
+#    field line `workspace = true` matches the denylisted crate name
+#    `workspace` and reports a legitimate manifest as a violation. No hKask
+#    manifest uses the subtable form today, so this was latent — it would have
+#    fired on the first one. The header classification below types each
+#    section before matching, so a field name is never read as a crate name.
+#
+#    Emitted reasons:
+#      KEY    — a dependency whose name is a zed-kask crate (either as a key
+#               in a bare dependency table, or as a `[dependencies.<name>]`
+#               subtable name).
+#      RENAME — a dependency renamed via `package = "<zed crate>"`, where the
+#               key is arbitrary but the resolved package is zed-kask. Covers
+#               both the inline-table and subtable spellings.
+echo "Checking hKask Cargo.toml dependency sections for zed-kask crate names (direct and renamed)..."
 while IFS= read -r manifest; do
     awk -v file="$manifest" -v deny="$ZED_CRATES" '
-        /^\[/ { in_dep = ($0 ~ /\[[^]]*dependencies/) ? 1 : 0 }
-        in_dep && !/^\[/ && $0 ~ "^(" deny ")([[:space:]]*=|[.]workspace)" {
-            print file ":" FNR ":" $0
+        /^[[:space:]]*\[/ {
+            hdr = $0
+            sub(/^[[:space:]]*\[/, "", hdr)
+            sub(/\].*$/, "", hdr)
+            in_table = 0; in_sub = 0; sub_name = ""
+            # Bare dependency table, incl. [target.<cfg>.dependencies].
+            if (hdr ~ /(^|\.)(dependencies|dev-dependencies|build-dependencies)$/) {
+                in_table = 1
+            # Per-dependency subtable: [dependencies.<name>].
+            } else if (hdr ~ /(^|\.)(dependencies|dev-dependencies|build-dependencies)\.[A-Za-z0-9_-]+$/) {
+                in_sub = 1
+                sub_name = hdr
+                sub(/^.*\./, "", sub_name)
+                if (sub_name ~ "^(" deny ")$") {
+                    print "KEY|" file ":" FNR ":" $0
+                }
+            }
+            next
+        }
+        # In a bare table the key is the dependency name.
+        in_table && $0 ~ "^(" deny ")([[:space:]]*=|[.]workspace)" {
+            print "KEY|" file ":" FNR ":" $0
+        }
+        # In either spelling, `package = "<zed crate>"` resolves to a zed crate.
+        (in_table || in_sub) && $0 ~ "package[[:space:]]*=[[:space:]]*\"(" deny ")\"" {
+            print "RENAME|" file ":" FNR ":" $0
         }
     ' "$manifest" > "$TMPFILE"
     if [ -s "$TMPFILE" ]; then
-        echo "VIOLATION: $manifest depends on a zed-kask crate (inverted direction):" >&2
-        cat "$TMPFILE" >&2
+        if grep -q '^KEY|' "$TMPFILE"; then
+            echo "VIOLATION: $manifest depends on a zed-kask crate (inverted direction):" >&2
+            sed -n 's/^KEY|//p' "$TMPFILE" >&2
+        fi
+        if grep -q '^RENAME|' "$TMPFILE"; then
+            echo "VIOLATION: $manifest renames a zed-kask crate via package = (inverted direction):" >&2
+            sed -n 's/^RENAME|//p' "$TMPFILE" >&2
+        fi
         FAIL=1
     fi
 done <<< "$manifests"
