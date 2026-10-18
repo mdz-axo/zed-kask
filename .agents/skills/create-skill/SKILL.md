@@ -222,7 +222,9 @@ Run once, before any research or writing. A new skill that duplicates or belongs
      or domain-specific ontology that formalizes this domain?
 2. Record the ontological anchors: for each anchor, cite the source
    (author, year, paper/standard) and describe how it shapes the skill.
-3. Call `onto_anchor` for each domain term the skill will name, classify or compute (its process, entity types and quality criteria). Record each resolved anchor and its rung; a coarse (core-rung) anchor carries its ruling path, never a private definition. Count the terms that resolved only to the core rung.
+3. Call `onto_anchor` for each domain term the skill will name, classify or compute (its process, entity types and quality criteria). Record each resolved anchor and its rung; a coarse (core-rung) anchor carries its ruling path, never a private definition. Compute the core-rung count deterministically via `lisp_eval` gate **`CS-3`** over the recorded anchor list — never by hand:
+   - form: `(begin (define count-core (lambda (as) (if (is_null as) 0 (+ (if (string= "core" (assoc "rung" (car as))) 1 0) (count-core (cdr as)))))) (define count-unruled-core (lambda (as) (if (is_null as) 0 (+ (if (and (string= "core" (assoc "rung" (car as))) (or (is_null (assoc "ruling" (car as))) (string= "" (assoc "ruling" (car as))))) 1 0) (count-unruled-core (cdr as)))))) (define count-no-anchor (lambda (ps) (if (is_null ps) 0 (+ (if (or (is_null (assoc "cited_anchor" (car ps))) (string= "" (assoc "cited_anchor" (car ps)))) 1 0) (count-no-anchor (cdr ps)))))) (list (count-core anchors) (count-unruled-core anchors) (count-no-anchor spec_rows) (+ (count-no-anchor spec_rows) (count-unruled-core anchors))))`
+   - env: `{ "anchors": [ {"term": "...", "rung": "core|derived|upper|domain_supplement", "ruling": "..."|null} ], "spec_rows": [ {"phase": "P|D|C|A", "cited_anchor": "..."|null} ] }` — `anchors` is the recorded `onto_anchor` result list (a `ruling` is present only when the operator has ruled the coarse term); `spec_rows` is the Phase-2 spec table's PDCA rows. Returns `[core_rung_count, unruled_core_count, phases_without_anchor, research_findings]`.
 4. Select the ontology reference set.
 5. Derive the PDCA shape from the anchors.
 6. Write the functional trial now, before any scaffolding: one representative task for the new skill and its expected result, stated so a tool, test or the operator can check it (e.g. a deterministic contains/regex evaluator, an expected output field, or a named operator judgment). The trial is fixed before the artifact exists so the artifact cannot be fitted to it.
@@ -443,9 +445,7 @@ is checkably wrong.
    `functional` to 1 if it met the expectation, else 0. If the trial cannot
    run (a required tool, key or spend is unavailable), set `functional` to 0
    and record the blocker; the skill is not done.
-4. Set `research_findings` to the number of Phase 5-relevant research gaps:
-   PDCA phases with no cited anchor, plus required domain terms that
-   `onto_anchor` could not resolve beyond the core rung without a ruling.
+4. Set `research_findings` to the `CS-3` gate's fourth output — the number of Phase 5-relevant research gaps: PDCA phases with no cited anchor, plus required domain terms that `onto_anchor` could not resolve beyond the core rung without a ruling. Never sum these by hand; the Phase 5 gate's `research` input is `CS-3`'s output, so a model-asserted scalar never branches the loop.
 
 ### Phase 5 — Converge
 
