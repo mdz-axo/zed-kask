@@ -109,3 +109,38 @@ tree, so no skill is marked `aligned` on the strength of having read its book.
 Two skills (gpui-bench, lean-prover) whose oracle is an external toolchain rather
 than a published model are marked `unverified-external` for the model itself while
 their deterministic gates are green.
+
+## Composition
+
+101 skill-to-skill references resolve to a live skill. Eighteen mutual pairs exist
+(create-skill/skill-maintenance/skill-discovery, pragmatic-semantics/
+pragmatic-cybernetics, grounding-verify/structured-extraction, diataxis-diagram/
+doc-update/sankey-flow, idiomatic-rust/lean-prover); every one was read and is a
+`When NOT to Use` boundary note or a named-consumer reference, not an invocation
+cycle. No self-loops. The invocation graph is acyclic.
+
+## Findings
+
+Verified defects, both repaired in this review:
+
+1. **GV-1 (grounding-verify) had no env block.** The form referenced
+   `corrected_count`, `e_count`, `w_count`, `n_count` and `min_why_len`, none
+   bound by anything — the step could not run as written. Env added from the
+   producer's own contract (`compile-error-log.j2` emits
+   `totals: {corrected, data_notes, warnings}`).
+2. **Pragmatic-semantics modifier drift.** Two companion templates stated
+   FIBO +0.10 / SUMO +0.05 against the PS-1 gate's +0.05 / +0.03 — residue the
+   earlier fix missed in the Tier-5 table and the provenance layer table. Both
+   now state the gate's values, and a pin derives the expected spelling from the
+   live gate so a future gate edit cannot leave the prose behind.
+
+Concerns requiring further evidence (not defects):
+
+- The primary sources are not vendored, so reference-model verdicts rest on the
+  in-tree derived-registry encoding rather than the source text.
+- The S13 anatomy sweep's narrow pattern flagged 28 skills whose bounds and
+  re-entry points are stated in other words; each was read and cleared, but the
+  sweep is a lead generator, not a gate.
+- `falstaffian-rotation.j2` is referenced extensionlessly (`metacognition/
+  falstaffian-rotation`) rather than with the `.j2` suffix; it resolves, but a
+  suffix-matching instrument would miss it.

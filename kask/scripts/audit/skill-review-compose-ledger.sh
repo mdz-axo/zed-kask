@@ -142,5 +142,40 @@ echo "tree, so no skill is marked \`aligned\` on the strength of having read its
 echo "Two skills (gpui-bench, lean-prover) whose oracle is an external toolchain rather"
 echo "than a published model are marked \`unverified-external\` for the model itself while"
 echo "their deterministic gates are green."
+echo
+echo "## Composition"
+echo
+echo "101 skill-to-skill references resolve to a live skill. Eighteen mutual pairs exist"
+echo "(create-skill/skill-maintenance/skill-discovery, pragmatic-semantics/"
+echo "pragmatic-cybernetics, grounding-verify/structured-extraction, diataxis-diagram/"
+echo "doc-update/sankey-flow, idiomatic-rust/lean-prover); every one was read and is a"
+echo "\`When NOT to Use\` boundary note or a named-consumer reference, not an invocation"
+echo "cycle. No self-loops. The invocation graph is acyclic."
+echo
+echo "## Findings"
+echo
+echo "Verified defects, both repaired in this review:"
+echo
+echo "1. **GV-1 (grounding-verify) had no env block.** The form referenced"
+echo "   \`corrected_count\`, \`e_count\`, \`w_count\`, \`n_count\` and \`min_why_len\`, none"
+echo "   bound by anything — the step could not run as written. Env added from the"
+echo "   producer's own contract (\`compile-error-log.j2\` emits"
+echo "   \`totals: {corrected, data_notes, warnings}\`)."
+echo "2. **Pragmatic-semantics modifier drift.** Two companion templates stated"
+echo "   FIBO +0.10 / SUMO +0.05 against the PS-1 gate's +0.05 / +0.03 — residue the"
+echo "   earlier fix missed in the Tier-5 table and the provenance layer table. Both"
+echo "   now state the gate's values, and a pin derives the expected spelling from the"
+echo "   live gate so a future gate edit cannot leave the prose behind."
+echo
+echo "Concerns requiring further evidence (not defects):"
+echo
+echo "- The primary sources are not vendored, so reference-model verdicts rest on the"
+echo "  in-tree derived-registry encoding rather than the source text."
+echo "- The S13 anatomy sweep's narrow pattern flagged 28 skills whose bounds and"
+echo "  re-entry points are stated in other words; each was read and cleared, but the"
+echo "  sweep is a lead generator, not a gate."
+echo "- \`falstaffian-rotation.j2\` is referenced extensionlessly (\`metacognition/"
+echo "  falstaffian-rotation\`) rather than with the \`.j2\` suffix; it resolves, but a"
+echo "  suffix-matching instrument would miss it."
 } > "$ROOT/kask/docs/research/skill-semantic-review-2026-10-18.md"
 echo "wrote $(wc -l < "$ROOT/kask/docs/research/skill-semantic-review-2026-10-18.md") lines"
