@@ -134,9 +134,10 @@ Array-valued context fields are plain JSON arrays — never stringified JSON. A 
    ```
    `round` is 1 at medium, 1–3 escalating at high. Produce `ratings`, `findings` (the failed-gap list that feeds a corrective Act), and `verdict` (`pass`, `rewrite_needed`, or `fail`). Challenge whether each proposed check actually establishes its claim and whether unrun checks are mislabeled as verified.
 5. Preserve the critic's specific failed checks and verdict. Skip this stage at low effort and set `grill_verdict = "skipped"`, `grill_ratings = []`; a skipped critic is not a `pass`.
-6. Run deterministic `lisp_eval` gate `PE-2` after the critique step to enforce the escalation bound:
-   - form: `(and (<= rounds_executed 3) (<= pdca_corrections 1) (if (string= verdict "pass") (= blocking_defects 0) true))`
-   - env: `{ "rounds_executed": <1..3>, "pdca_corrections": <0..1>, "verdict": "<pass|rewrite_needed|fail|skipped>", "blocking_defects": <count of unresolved Prohibition-tier defects> }`
+6. Run deterministic `lisp_eval` gate `PE-2` after the critique step to enforce the escalation bound. `blocking_defects` is **computed from the critic's structured `findings`**, never typed as a count — `enhance-verify.j2` emits a `severity` field (`Prohibition|Guardrail|Guideline`) per finding, so the count is deterministic and a `pass` cannot be self-certified over an unresolved Prohibition:
+   - form: `(let ((count-prohibitions (lambda (items) (if (= 0 (length items)) 0 (+ (if (string= "Prohibition" (assoc "severity" (car items))) 1 0) (count-prohibitions (cdr items))))))) (let ((blocking_defects (count-prohibitions findings))) (list blocking_defects (and (<= rounds_executed 3) (<= pdca_corrections 1) (if (string= verdict "pass") (= blocking_defects 0) true)))))`
+   - env: `{ "rounds_executed": <1..3>, "pdca_corrections": <0..1>, "verdict": "<pass|rewrite_needed|fail|skipped>", "findings": <the critic's findings array verbatim from enhance-verify, each with its severity field> }`
+   - Returns `[blocking_defects, gate_result]`. A `false` gate result on a `pass` verdict means the critic passed a prompt carrying an unresolved Prohibition-tier defect — the verdict does not stand; carry the failed verdict and the remaining gap into the output.
 
 ### Local PDCA — Check and Act before output
 

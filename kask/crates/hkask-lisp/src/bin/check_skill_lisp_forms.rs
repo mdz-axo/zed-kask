@@ -606,6 +606,83 @@ form: "(= (+ a b) 3)"
             eval_sandboxed(&sankey, &invalid_sankey).expect("invalid Sankey form"),
             json!(false)
         );
+
+        // PE-2 counts Prohibition-tier findings from the critic's structured
+        // output. Before the repair the count was a model-typed env value, so
+        // a `pass` verdict could be self-certified over a blocking defect.
+        let prompt_enhance = skill_candidate("prompt-enhance", "count-prohibitions");
+        let pass_over_blocking = json!({
+            "rounds_executed": 1,
+            "pdca_corrections": 0,
+            "verdict": "pass",
+            "findings": [
+                {"area":"Recall","gap":"g1","severity":"Prohibition"},
+                {"area":"Mechanism","gap":"g2","severity":"Guideline"}
+            ]
+        });
+        assert_eq!(
+            eval_sandboxed(&prompt_enhance, &pass_over_blocking).expect("PE-2 blocking case"),
+            json!([1, false]),
+            "a pass verdict carrying a Prohibition finding must fail PE-2"
+        );
+        let clean_pass = json!({
+            "rounds_executed": 1,
+            "pdca_corrections": 0,
+            "verdict": "pass",
+            "findings": [{"area":"Mechanism","gap":"g2","severity":"Guardrail"}]
+        });
+        assert_eq!(
+            eval_sandboxed(&prompt_enhance, &clean_pass).expect("PE-2 clean case"),
+            json!([0, true])
+        );
+        let no_findings = json!({
+            "rounds_executed": 1,
+            "pdca_corrections": 0,
+            "verdict": "pass",
+            "findings": []
+        });
+        assert_eq!(
+            eval_sandboxed(&prompt_enhance, &no_findings).expect("PE-2 empty findings"),
+            json!([0, true])
+        );
+        let non_pass_with_defect = json!({
+            "rounds_executed": 3,
+            "pdca_corrections": 1,
+            "verdict": "rewrite_needed",
+            "findings": [{"area":"Recall","gap":"g1","severity":"Prohibition"}]
+        });
+        assert_eq!(
+            eval_sandboxed(&prompt_enhance, &non_pass_with_defect).expect("PE-2 non-pass case"),
+            json!([1, true]),
+            "a non-pass verdict carries its defect without breaching the escalation bound"
+        );
+
+        // PS-1 applies the ontology/spec modifiers exactly once. The prose
+        // receipt (base 0.7, FIBO + spec-checked -> 0.8) is pinned here so a
+        // modifier edit cannot silently diverge from the documented value.
+        let pragmatic_semantics = skill_candidate("pragmatic-semantics", "fibo_anchored");
+        let fibo_spec_checked = json!({
+            "base_confidence": 0.7,
+            "fibo_anchored": true,
+            "sumo_anchored": false,
+            "spec_checked": true,
+            "unanchored": false
+        });
+        assert_eq!(
+            eval_sandboxed(&pragmatic_semantics, &fibo_spec_checked).expect("PS-1 anchored case"),
+            json!(0.8)
+        );
+        let unanchored = json!({
+            "base_confidence": 0.7,
+            "fibo_anchored": false,
+            "sumo_anchored": false,
+            "spec_checked": false,
+            "unanchored": true
+        });
+        assert_eq!(
+            eval_sandboxed(&pragmatic_semantics, &unanchored).expect("PS-1 unanchored case"),
+            json!(0.6)
+        );
     }
 
     #[test]

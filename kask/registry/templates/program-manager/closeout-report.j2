@@ -4,6 +4,8 @@ contract:
   input:
     goal_text: string
     functional_outcome: string
+    change_summary: string
+    decisions: array
     open_items: array
     validation: array
     learning: string
@@ -21,6 +23,7 @@ What the operator can now do, or what no longer breaks — in the
 operator's terms, tied to the goal: "{{ goal_text }}"
 
 ## What changed
+{{ change_summary }}
 Technical summary, each item tied to the part of the goal it serves.
 Files by project-relative path.
 
@@ -52,8 +55,19 @@ and `owner` in `{self, sub-agent:<label>, operator, none}`.
 An empty list must mean "none exist", not "none looked for".
 
 ## Decisions recorded
+{% if decisions %}
+| Decision | Where persisted |
+|---|---|
+{% for d in decisions %}
+| {{ d[0] }} | {{ d[1] }} |
+{% endfor %}
+{% else %}
+None were recorded this cycle.
+{% endif %}
 Ratifications, supersessions, spec recoveries — with where they were
-persisted (curator memory id / doc path).
+persisted (curator memory id / doc path). Each entry is a flat list
+`["<decision>", "<curator memory id | doc path>"]`. An empty list must
+mean "none were recorded", not "none were looked for".
 
 ## Learning banked
 {{ learning }}

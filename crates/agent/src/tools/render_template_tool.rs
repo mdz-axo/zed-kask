@@ -515,6 +515,8 @@ mod tests {
             serde_json::json!({
                 "goal_text": "Prevent broken gates",
                 "functional_outcome": "Broken gates now fail CI.",
+                "change_summary": "Added a parser-backed gate over skill Lisp forms.",
+                "decisions": [["Parser-backed, not grep", "curator:h_mem:d1"]],
                 "open_items": [],
                 "validation": [{
                     "command": "bash gate.sh",
@@ -528,12 +530,25 @@ mod tests {
         assert!(verified_closeout.contains("`bash gate.sh`"));
         assert!(verified_closeout.contains("OK: 324 forms"));
         assert!(verified_closeout.contains("| pass |"));
+        // The DoD-verified change summary must reach the report, not be
+        // re-narrated by the model: the section had no producer field before
+        // the corpus-audit repair.
+        assert!(
+            verified_closeout.contains("Added a parser-backed gate over skill Lisp forms."),
+            "change_summary did not reach the report: {verified_closeout}"
+        );
+        assert!(
+            verified_closeout.contains("| Parser-backed, not grep | curator:h_mem:d1 |"),
+            "decisions ledger did not render: {verified_closeout}"
+        );
 
         let unverified_closeout = render_template_for_test(
             "program-manager/closeout-report",
             serde_json::json!({
                 "goal_text": "Prevent broken gates",
                 "functional_outcome": "Not verified.",
+                "change_summary": "No change landed.",
+                "decisions": [],
                 "open_items": [],
                 "validation": [],
                 "learning": "Missing evidence stays visible."
@@ -541,6 +556,10 @@ mod tests {
         )
         .expect("unverified closeout renders");
         assert!(unverified_closeout.contains("verification is **not run**, not passed"));
+        assert!(
+            unverified_closeout.contains("None were recorded this cycle."),
+            "empty decisions must read as none-recorded: {unverified_closeout}"
+        );
 
         let sankey = render_template_for_test(
             "sankey-flow/present-sankey",

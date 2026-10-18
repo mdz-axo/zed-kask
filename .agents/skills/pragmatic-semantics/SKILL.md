@@ -122,8 +122,9 @@ Template context variables (from each template's [inference] contract):
 
 All receipts executed live through `lisp_eval` (2026-10-01, backfill pass):
 
-- Classify form, spec-checked FIBO anchor at base 0.7 → `0.8` (the
-  +0.10 tier bonus, floored at 0.8).
+- Classify form, spec-checked FIBO anchor at base 0.7 → `0.8` (FIBO
+  +0.05 and spec_checked +0.05; the checked-specification floor of 0.8
+  also holds it at 0.8).
 - Classify form, unknown provenance → `0.3` (the cap — unchecked
   spec-as-unknown enforced).
 - Gate form, zero unverifiable gaps at chain confidence 0.85 → `true`;
@@ -133,7 +134,7 @@ The skill's forms are executed at use time, never anchored in code.
 
 ## Constraints
 
-- `semantics-classify-statement.j2`: IS-statements are never Prohibitions. Declarative OUGHT-statements map to Prohibition or Guardrail. Unknown provenance → confidence ≤ 0.3. Specification provenance → confidence ≥ 0.8 (verify spec is current). FIBO +0.10, SUMO +0.05, unanchored -0.15.
+- `semantics-classify-statement.j2`: IS-statements are never Prohibitions. Declarative OUGHT-statements map to Prohibition or Guardrail. Unknown provenance → confidence ≤ 0.3. Specification provenance → confidence ≥ 0.8 (verify spec is current). Ontology and spec modifiers are applied once, by gate `PS-1` only (FIBO +0.05, SUMO +0.03, spec_checked +0.05, unanchored -0.10); this template emits the unadjusted `base_confidence` and never applies them itself.
 - `semantics-provenance-trace.j2`: Every step must identify a concrete location. Unknown source → confidence ≤ 0.2. Direct spec quotes → confidence ≥ 0.9. Inference steps reduce confidence by ≥ 0.1.
 - `semantics-conflict-resolve.j2`: OUGHT never loses to IS. Two Prohibitions conflicting → escalate. Resolution enum: override, scope, defer, escalate, confirm.
 - `semantics-route-step.j2`: Every D tag names a real oracle; every P tag names its collapse path. A step tagged D where the answer has genuine multiplicity, or P where a deterministic checker exists, is flagged as a mismatch disease, never silently relabelled.
