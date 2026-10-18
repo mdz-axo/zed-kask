@@ -60,5 +60,5 @@ Nineteen registered tools (pinned against the live `scenario_router()` by
 
 - [`docs/architecture/core/PRINCIPLES.md`](../../docs/architecture/core/PRINCIPLES.md) — P2, P4, and P9 constraints
 - Forecasting stack (Schwartz, Tetlock, and Chermack integration) — `kask/docs/reference/mcp-servers/README.md` § The Forecasting Stack
-- Companies-server bridge status — `kask/docs/reference/mcp-servers/companies.md` § Scenarios ↔ Companies Bridge
+- Equity forecast loop (ported from the retired companies server) — `forecast_persist`, `forecast_record`, `forecast_list`, and `scenario_risk_measure` over caller-supplied branches
 - [`docs/reference/mcp-servers/README.md`](../../docs/reference/mcp-servers/README.md) — built-in server registry

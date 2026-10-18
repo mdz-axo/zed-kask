@@ -4,7 +4,7 @@ Shared superforecasting computation engine implementing Tetlock's Good Judgment 
 
 ## Purpose
 
-Pure-math superforecasting pipeline with no MCP or server dependencies. Canonical implementations used by both `hkask-mcp-scenarios` and `hkask-mcp-companies`.
+Pure-math superforecasting pipeline with no MCP or server dependencies. Canonical implementations used by the domain MCP servers (`hkask-mcp-scenarios`, `hkask-mcp-prediction-markets`).
 
 ## Pipeline
 

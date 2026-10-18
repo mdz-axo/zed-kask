@@ -27,7 +27,7 @@ being called there.
 
 | Fact | Measurement | Site |
 |---|---|---|
-| Companies tool surface | 32 tools, 8 modules | `tool_surface_is_exactly_32_registered_tools`, `hkask_mcp_companies.rs:528` |
+| Companies tool surface | 32 tools, 8 modules | `tool_surface_is_exactly_32_registered_tools` (companies `hkask_mcp_companies.rs` — deleted 2026-10-18; the pin line is the measurement record) |
 | Companies size | 19,703 LOC total / 15,750 production | `find ... -name '*.rs'` |
 | `hkask-forecast` ownership | SHARED crate — scenarios, prediction-markets, kata-kanban, hkask-graph-widget | `Cargo.toml` deps |
 | FIBO consumers outside companies | prediction-markets 29 refs, corpus 8 refs | `semantic_mapping.rs`, `economic_object.rs`, `hkask_mcp_corpus.rs`, `ontology_io.rs` |
@@ -73,15 +73,15 @@ not.
 `forecast_persist`, `forecast_get`, `forecast_list`, `forecast_record`,
 `result_feedback`.
 Verified portable: `forecast_record` takes `forecast_price_change` and
-`actual_price_change` as caller parameters (`valuation.rs:1062+`);
+`actual_price_change` as caller parameters (companies `valuation.rs`);
 `resolve_current_price` is a pure function over already-fetched JSON
-(`forecast.rs:90`). The Brier math already lives in the shared
+(companies `forecast.rs`). The Brier math already lives in the shared
 `hkask-forecast` crate. Consumers: `superforecasting` (4 hits),
 `company-research-flash`.
 Design note: scenarios owns a file-backed journal+snapshot `ForecastStore`
 (`superforecast/store.rs`); companies uses SQLite `screen_store`. Unify on
 the scenarios store; migrate the `StoredForecast` snapshot shape
-(`forecast.rs:35-45`) into it. Drop the DCF-model decomposition fields that
+(companies `forecast.rs` snapshot shape) into it. Drop the DCF-model decomposition fields that
 have no non-provider source — `forecast_record` must degrade visibly
 (a named note), never silently.
 
