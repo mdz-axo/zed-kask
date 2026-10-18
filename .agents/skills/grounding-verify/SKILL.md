@@ -136,9 +136,10 @@ cited.
 | 4 narrative scan | D render feeding P | `render_template` (D); leak-rule interpretation P — critiqued by the operator |
 | 4 item 1 (block marking) | D | `lisp_eval` (the any-verified/mark pair) |
 | 4.5 omission materiality | P | the operator; the record of what was examined and what was not |
-| 5 counts | D | computed from the run's own records — never a composite score |
+| 5 counts | D | `lisp_eval` (`GV-3`) over the run's own claim and finding lists — never a composite score, never a hand tally |
 | 6 provenance floor + confidence band | D | `lisp_eval` (the floor form); the band derives from floor + conflicts + decoupling, never from the model |
 | 7 item 0 (reconciliation) | D | `lisp_eval` (the gap form) |
+| 7 item 3 (error-log reconciliation) | D | `lisp_eval` (`GV-3b` tallies the E/W/N classes and the shortest `why`; `GV-1` reconciles them against the log's `totals`) |
 | 7 severity + emission | P | the operator; graduated sanctions; high/critical findings surface immediately |
 
 `render_template` renders are D (deterministic render) feeding P (the
@@ -484,6 +485,12 @@ does not have; the counts and findings are the working-paper record
 (ISA 230). A zero-claim run reports zero claims checked — zero mismatches
 over zero rows is unknown, not clean.
 
+Every one of those counts is computed by `lisp_eval` gate **`GV-3`** over the
+run's own bound lists, never tallied by hand:
+
+- form: `(begin (define tier-count (lambda (cs t) (if (is_null cs) 0 (+ (if (string= t (assoc "provenance" (car cs))) 1 0) (tier-count (cdr cs) t))))) (list (length claims) (tier-count claims "tool_verified") (tier-count claims "platform_derived") (tier-count claims "model_inference") (tier-count claims "unavailable") (tier-count claims "rejected") (length rounding_notes) (length narrative_leaks) (length source_conflicts) (length material_omissions)))`
+- env: `{ "claims": [ {"provenance": "tool_verified"} ], "rounding_notes": [], "narrative_leaks": [], "source_conflicts": [], "material_omissions": [] }` — `claims` is the run's own claim list (each entry carrying its assigned `provenance`); the four remaining lists are the Step 4/4.5 finding lists. Returns `[claims_extracted, tool_verified, platform_derived, model_inference, unavailable, rejected, rounding_notes, narrative_leaks, source_conflicts, material_omissions]`. Report those ten values; do not restate them from memory.
+
 ### Step 6 — Report the provenance floor
 
 Compute the provenance floor — the minimum strength across all GRADED
@@ -539,7 +546,8 @@ floor.
 0. **Reconcile the prediction (D).** Report `predicted_load_bearing` / `found_load_bearing` and `predicted_failures` / `found_failures` from Step 1 item 0, gaps computed by `lisp_eval` `(list (- found_load_bearing predicted_load_bearing) (- found_failures predicted_failures))`. A large gap on the failure count means the verifier's prior about this source mix is miscalibrated — report it; it is not a finding against the text.
 1. Emit the verification report with:
    - `counts`: claims extracted, load-bearing claims, claims checked, claims
-     at each provenance tier, claims rejected — the raw counts from Step 5
+     at each provenance tier, claims rejected — the raw counts from Step 5,
+     read from `GV-3`'s output
    - `provenance_floor`: the minimum strength over GRADED claims (null
      when nothing is graded — unknown, not clean), `pending_count`: the
      claims not yet graded, carrying the Step 6 caveat when they could
@@ -589,7 +597,9 @@ floor.
    The log is append-only within the run — a correction records both
    the prior and the corrected value; it never erases the original. Verify that `totals` reconcile with class E/W/N counts and all `why` justifications are at least 40 characters via `lisp_eval` (`GV-1`):
    - form: `(and (= corrected_count e_count) (= warnings_count w_count) (= data_notes_count n_count) (>= min_why_len 40))`
-   - env: `{ "corrected_count": <the log's totals.corrected — class E>, "warnings_count": <totals.warnings — class W>, "data_notes_count": <totals.data_notes — class N>, "e_count": <class E entries actually in error_log>, "w_count": <class W entries in error_log>, "n_count": <class N entries in error_log>, "min_why_len": <length of the shortest why string in error_log> }`. The three totals fields come from the rendered log; the three class counts are tallied from `error_log` entries, so a `totals` line that disagrees with the entries it summarizes fails here rather than passing silently.
+   - env: `{ "corrected_count": <the log's totals.corrected — class E>, "warnings_count": <totals.warnings — class W>, "data_notes_count": <totals.data_notes — class N>, "e_count": <class E entries actually in error_log>, "w_count": <class W entries in error_log>, "n_count": <class N entries in error_log>, "min_why_len": <length of the shortest why string in error_log> }`. The three totals fields come from the rendered log; the three class counts and `min_why_len` are computed by `lisp_eval` gate **`GV-3b`** over `error_log` — never tallied by hand:
+   - `GV-3b` form: `(begin (define cls-count (lambda (es c) (if (is_null es) 0 (+ (if (string= c (assoc "class" (car es))) 1 0) (cls-count (cdr es) c))))) (define min-why (lambda (es) (if (is_null (cdr es)) (length (assoc "why" (car es))) (min (length (assoc "why" (car es))) (min-why (cdr es)))))) (list (cls-count error_log "E") (cls-count error_log "W") (cls-count error_log "N") (min-why error_log)))`
+   - `GV-3b` env: `{ "error_log": [ {"class": "E", "why": "..."} ] }` — returns `[e_count, w_count, n_count, min_why_len]`, bound directly into the `GV-1` env. A `totals` line that disagrees with the entries it summarizes fails `GV-1` rather than passing silently.
 
 4. The `verified_claims` registry is append-only within a verification
    run. A claim verified as `tool_verified` stays `tool_verified`. A
