@@ -36,10 +36,17 @@
 #   scope: the D8 seam crosses the GPUI/tokio boundary where String
 #   errors are accepted. See zed-host-architecture-plan.md §13.1.
 # - Exclusions preserved from the line-based pass: tests/ and examples/
-#   directories, main.rs binaries, build target/ directories, and
+#   directories, binary targets, build target/ directories, and
 #   `string-error-ok` marker lines (the justification lives in the
 #   surrounding doc comment — the same reviewable-suppression pattern
 #   as the dead-code baseline).
+#   Binary targets are `main.rs` AND `src/bin/*.rs`: Cargo treats both as
+#   binaries, and the exclusion exists because binaries legitimately use
+#   String/anyhow errors rather than library error enums. Matching only
+#   the filename `main.rs` misclassified every `[[bin]]` target declared
+#   under `src/bin/` as library code (found 2026-10-18: the gate failed on
+#   `hkask-lisp`'s own `src/bin/check_skill_lisp_forms.rs`, a declared
+#   `[[bin]]` with `fn main()`).
 # - The rule matches `Result<T, String>` exactly: `Box<String>` and
 #   `&str` error slots are not matched (the same scope the line-based
 #   pass had).
@@ -80,7 +87,8 @@ trap 'rm -f "$TMPFILE"' EXIT
 "$AST_GREP" scan --rule "$RULE_FILE" --json=stream "${SCAN_DIRS[@]}" 2>/dev/null \
   | jq -r 'select(.ruleId == "no-string-errors")
            | select(.file | test("/(tests|examples|target)/") | not)
-           | select(.file | test("main\\.rs$") | not)
+           | select(.file | test("(^|/)main\\.rs$") | not)
+           | select(.file | test("/src/bin/[^/]+\\.rs$") | not)
            | select(.lines | contains("string-error-ok") | not)
            | "\(.file):\(.range.start.line + 1):\(.text)"' > "$TMPFILE" || true
 

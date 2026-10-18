@@ -120,7 +120,7 @@ Every artifact in hKask has both a state identity and a process identity — it 
 | **companies** | PKO | DC+BIBO | FIBO (financial concepts) |
 | **corpus** | PKO | DC+BIBO | GOLEM (narrative structure, for the replica sub-system) |
 | **curator** | PKO | DC+BIBO | — (the curator IS the 5W1H core applied as Socratic inquiry) |
-| **experimentation** | PKO | DC+BIBO | — (experiment registry and scientific-hypothesis records) |
+| **experimentation** | PKO | DC+BIBO | — (experiment registry and scientific-hypothesis records; dual-axis dispatch at `kask/mcp-servers/hkask-mcp-experimentation/src/ontology.rs`, stamped on every tool response) |
 | **kata-kanban** | PKO | DC+BIBO | — |
 | **research** | PKO | DC+BIBO | — |
 | **scenarios** | PKO | DC+BIBO | — |
@@ -134,7 +134,7 @@ Every artifact in hKask has both a state identity and a process identity — it 
 **Bridge locations (v0.33.0 — single shared crate):**
 - Universal axes (DC+BIBO+CiTO state, PKO process) and published domain vocabularies (FIBO Release, SEPIO, GOLEM, ML-Schema, OMC, W3C RDF Data Cube, SUMO, schema.org) live in the shared crate `kask/crates/hkask-bridge-ontology/`. The domain-selection logic (`OntologyAxis`, `OntologyNamespace`, `OntologyAnchor`, `select_ontology_anchor`) lives in the same crate.
 - Architectural invariant (user directive 2026-08-05): ontologies are domain maps; MCP servers are functional-area maps; these are orthogonal. No ontology vocabulary lives inside an MCP server. Every server that does tagging depends on `hkask-bridge-ontology`.
-- The former `crates/hkask-bridge-dublincore/` was absorbed into `hkask-bridge-ontology` (rename, not a wrapper — the single-crate design avoids pass-through re-exports). The former server-local *vocabulary-bearing* bridge modules were deleted; their vocabulary moved to the shared crate (whose `eso.rs` was replaced by `sepio.rs` on 2026-08-29). The server-local files that remain (`companies/src/fibo.rs`, `media/src/omc.rs`, `kata-kanban/src/pko.rs`) are dispatch-only — they re-export the shared crate's verified terms and define zero local ontology constants (verified 2026-09-04).
+- The former `crates/hkask-bridge-dublincore/` was absorbed into `hkask-bridge-ontology` (rename, not a wrapper — the single-crate design avoids pass-through re-exports). The former server-local *vocabulary-bearing* bridge modules were deleted; their vocabulary moved to the shared crate (whose `eso.rs` was replaced by `sepio.rs` on 2026-08-29). The server-local files that remain (`media/src/omc.rs`, `kata-kanban/src/pko.rs`, `experimentation/src/ontology.rs`) are dispatch-only — they re-export the shared crate's verified terms and define zero local ontology constants (verified 2026-10-18; `companies/src/fibo.rs` went with the companies server).
 - The former condenser-local `OntologyNamespace`/`OntologyAxis`/`OntologyAnchor`/`derive_ontology_anchor` moved to the shared crate's `axis` module; the condenser re-exports them. `derive_ontology_anchor`'s substring-on-tool-names classifier was replaced by `select_ontology_anchor(domain)`, which centralizes the domain-selection logic in one place.
 
 #### P6 — Space for Per-User Data Directories

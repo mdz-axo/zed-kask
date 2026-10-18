@@ -12,6 +12,7 @@
 //! the only record path from day one (§P8.7-Q5 — no backward compatibility,
 //! no legacy-import surface).
 
+pub mod ontology;
 pub mod server;
 pub mod store;
 pub mod types;

@@ -8,14 +8,19 @@
 # condition would silently vacate it. This self-test injects synthetic
 # fixtures and asserts the gate's verdict on each.
 #
-# Four cases (cases 3-4 pin the structural pass's two wins over the former
-# line-based grep — both were its documented blind spots):
+# Six cases (cases 3-4 pin the structural pass's two wins over the former
+# line-based grep — both were its documented blind spots; cases 5-6 pin the
+# binary-target exclusion and its scope):
 #   1. Violation: a .rs file with `-> Result<(), String>` → gate must exit 1.
 #   2. Clean: a .rs file with `-> Result<(), MyError>` → gate must exit 0.
 #   3. Multi-line violation: `Result<\n (),\n String\n>` split across
 #      lines → gate must exit 1 (the line-based pass could not see it).
 #   4. Nested-String Ok type: `Result<(String, String), MyError>` → gate
 #      must exit 0 (the line-based pass false-positived here).
+#   5. Binary target under `src/bin/` → gate must exit 0 (binaries may use
+#      String/anyhow errors, the same reason `main.rs` is excluded).
+#   6. Library code beside a binary → gate must exit 1 (the binary
+#      exclusion is path-scoped; it must not vacate the whole crate).
 #
 # Exit codes:
 #   0 — all cases passed (gate is alive)
@@ -154,6 +159,76 @@ if [ "$CASE4_RC" -ne 0 ]; then
   failures=$((failures + 1))
 else
   echo "OK (case 4 — nested-String Ok type): no false positive on the Ok-side String"
+fi
+
+# ──────────────────────────────────────────────────────────────────────
+# Case 5: binary target under src/bin/ — a declared `[[bin]]` may use
+# String errors (the gate's binary exclusion; binaries use anyhow/String,
+# not library error enums). The gate must exit 0.
+#
+# Regression (2026-10-18): the exclusion tested the filename `main.rs`,
+# so every `[[bin]]` declared under `src/bin/` was scanned as library
+# code. The gate failed on hkask-lisp's own `src/bin/check_skill_lisp_forms.rs`
+# — a declared binary with `fn main()`. Nothing pinned the binary
+# exclusion, so the blind spot shipped.
+# ──────────────────────────────────────────────────────────────────────
+mkdir -p "$TMPDIR/case5/crates/hkask-selftest/src/bin"
+cat > "$TMPDIR/case5/crates/hkask-selftest/src/bin/a_tool.rs" <<'EOF'
+// selftest: a declared [[bin]] target. Binaries may use String errors.
+fn helper() -> Result<(), String> {
+    Err("binary-local error".to_string())
+}
+
+fn main() {
+    let _ = helper();
+}
+EOF
+
+set +e
+CASE5_OUT=$(SCAN_DIRS="$TMPDIR/case5/crates/hkask-*" bash "$GATE" 2>&1)
+CASE5_RC=$?
+set -e
+
+if [ "$CASE5_RC" -ne 0 ]; then
+  echo "FAIL (case 5 — src/bin binary): expected exit 0, got $CASE5_RC"
+  printf '%s\n' "$CASE5_OUT" | sed 's/^/    /'
+  failures=$((failures + 1))
+else
+  echo "OK (case 5 — src/bin binary): declared binary target excluded like main.rs"
+fi
+
+# ──────────────────────────────────────────────────────────────────────
+# Case 6: library code is still scanned when a sibling binary exists.
+# The binary exclusion must be path-scoped, not crate-scoped — widening
+# it to the whole crate would vacate the gate for every crate shipping
+# a binary.
+# ──────────────────────────────────────────────────────────────────────
+mkdir -p "$TMPDIR/case6/crates/hkask-selftest/src/bin"
+cat > "$TMPDIR/case6/crates/hkask-selftest/src/bin/a_tool.rs" <<'EOF'
+fn main() {}
+EOF
+cat > "$TMPDIR/case6/crates/hkask-selftest/src/lib.rs" <<'EOF'
+// selftest: library code in a crate that also ships a binary.
+pub fn library_violation() -> Result<(), String> {
+    Err("this must still be caught".to_string())
+}
+EOF
+
+set +e
+CASE6_OUT=$(SCAN_DIRS="$TMPDIR/case6/crates/hkask-*" bash "$GATE" 2>&1)
+CASE6_RC=$?
+set -e
+
+if [ "$CASE6_RC" -ne 1 ]; then
+  echo "FAIL (case 6 — lib beside a binary): expected exit 1, got $CASE6_RC"
+  printf '%s\n' "$CASE6_OUT" | sed 's/^/    /'
+  failures=$((failures + 1))
+elif ! printf '%s\n' "$CASE6_OUT" | grep -q "library_violation\|lib.rs"; then
+  echo "FAIL (case 6 — lib beside a binary): exit 1 but the lib violation was not named"
+  printf '%s\n' "$CASE6_OUT" | sed 's/^/    /'
+  failures=$((failures + 1))
+else
+  echo "OK (case 6 — lib beside a binary): binary exclusion is path-scoped, not crate-wide"
 fi
 
 if [ "$failures" -eq 0 ]; then

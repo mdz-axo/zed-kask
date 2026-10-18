@@ -314,7 +314,10 @@ impl ExperimentationServer {
                     experiment_key.as_deref(),
                 )
                 .map_err(map_experimentation_error)?;
-            Ok(serde_json::json!({ "status": "proposed", "experiment": record }))
+            Ok(crate::ontology::annotate(
+                "experiment_propose",
+                serde_json::json!({ "status": "proposed", "experiment": record }),
+            ))
         })
         .await
     }
@@ -345,7 +348,10 @@ impl ExperimentationServer {
                     variant_key.as_deref(),
                 )
                 .map_err(map_experimentation_error)?;
-            Ok(serde_json::json!({ "status": "registered", "variant": record }))
+            Ok(crate::ontology::annotate(
+                "variant_register",
+                serde_json::json!({ "status": "registered", "variant": record }),
+            ))
         })
         .await
     }
@@ -368,7 +374,10 @@ impl ExperimentationServer {
                 .store
                 .seal_experiment(&experiment_id, &baseline_variant_id, baseline_pass_rate)
                 .map_err(map_experimentation_error)?;
-            Ok(serde_json::json!({ "status": "sealed", "seal": record }))
+            Ok(crate::ontology::annotate(
+                "experiment_seal",
+                serde_json::json!({ "status": "sealed", "seal": record }),
+            ))
         })
         .await
     }
@@ -411,7 +420,10 @@ impl ExperimentationServer {
                     seal_id.as_deref(),
                 )
                 .map_err(map_experimentation_error)?;
-            Ok(serde_json::json!({ "status": "recorded", "fitness": record }))
+            Ok(crate::ontology::annotate(
+                "fitness_record",
+                serde_json::json!({ "status": "recorded", "fitness": record }),
+            ))
         })
         .await
     }
@@ -446,7 +458,10 @@ impl ExperimentationServer {
                 .store
                 .record_final_evaluation(&experiment_id, &variant_id, &runs, run_count, &scores)
                 .map_err(map_experimentation_error)?;
-            Ok(serde_json::json!({ "status": "recorded", "final_evaluation": record }))
+            Ok(crate::ontology::annotate(
+                "final_evaluation_record",
+                serde_json::json!({ "status": "recorded", "final_evaluation": record }),
+            ))
         })
         .await
     }
@@ -477,11 +492,14 @@ impl ExperimentationServer {
                     algedonic_reference.as_deref(),
                 )
                 .map_err(map_experimentation_error)?;
-            Ok(serde_json::json!({
-                "status": "resolved",
-                "selection": record,
-                "experiment": experiment,
-            }))
+            Ok(crate::ontology::annotate(
+                "selection_record",
+                serde_json::json!({
+                    "status": "resolved",
+                    "selection": record,
+                    "experiment": experiment,
+                }),
+            ))
         })
         .await
     }
@@ -517,14 +535,17 @@ impl ExperimentationServer {
                         .store
                         .final_evaluations_for_experiment(&variant.experiment_id)
                         .map_err(map_experimentation_error)?;
-                    Ok(serde_json::json!({
-                        "kind": "variant",
-                        "ancestry": ancestry,
-                        "experiment": experiment,
-                        "fitness": fitness,
-                        "selections": selections,
-                        "final_evaluations": final_evaluations,
-                    }))
+                    Ok(crate::ontology::annotate(
+                        "lineage_read",
+                        serde_json::json!({
+                            "kind": "variant",
+                            "ancestry": ancestry,
+                            "experiment": experiment,
+                            "fitness": fitness,
+                            "selections": selections,
+                            "final_evaluations": final_evaluations,
+                        }),
+                    ))
                 }
                 Err(ExperimentationError::VariantNotFound(_)) => {
                     let experiment = self
@@ -551,15 +572,18 @@ impl ExperimentationServer {
                         .store
                         .final_evaluations_for_experiment(&artifact_ref)
                         .map_err(map_experimentation_error)?;
-                    Ok(serde_json::json!({
-                        "kind": "experiment",
-                        "experiment": experiment,
-                        "variants": variants,
-                        "fitness": fitness,
-                        "selections": selections,
-                        "seal": seal,
-                        "final_evaluations": final_evaluations,
-                    }))
+                    Ok(crate::ontology::annotate(
+                        "lineage_read",
+                        serde_json::json!({
+                            "kind": "experiment",
+                            "experiment": experiment,
+                            "variants": variants,
+                            "fitness": fitness,
+                            "selections": selections,
+                            "seal": seal,
+                            "final_evaluations": final_evaluations,
+                        }),
+                    ))
                 }
                 Err(error) => Err(map_experimentation_error(error)),
             }
@@ -609,10 +633,13 @@ impl ExperimentationServer {
                     limit,
                 )
                 .map_err(map_experimentation_error)?;
-            Ok(serde_json::json!({
-                "count": experiments.len(),
-                "experiments": experiments,
-            }))
+            Ok(crate::ontology::annotate(
+                "population_query",
+                serde_json::json!({
+                    "count": experiments.len(),
+                    "experiments": experiments,
+                }),
+            ))
         })
         .await
     }

@@ -55,11 +55,11 @@ How-to quadrant alone.
 
 ### MCP server crates — complete 12-server inventory
 
-The 11 managed server crates are documented cross-cuttingly under
+The managed server crates are documented cross-cuttingly under
 [`kask/docs/reference/mcp-servers/`](../reference/mcp-servers/README.md) rather
 than receiving another per-crate set:
 
-`hkask-mcp-companies`, `hkask-mcp-corpus`, `hkask-mcp-curator`,
+`hkask-mcp-corpus`, `hkask-mcp-curator`,
 `hkask-mcp-experimentation`, `hkask-mcp-kata-kanban`, `hkask-mcp-media`,
 `hkask-mcp-prediction-markets`, `hkask-mcp-research`, `hkask-mcp-scenarios`,
 and `hkask-mcp-swarm`.
@@ -67,14 +67,14 @@ and `hkask-mcp-swarm`.
 The authoritative managed registry contains the same 10 IDs at
 `kask/crates/kask_bridge/src/mcp_servers.rs`.
 
-### hKask library and composition crates — complete 18-crate inventory
+### hKask library and composition crates — complete 17-crate inventory
 
 The composition-root inventory under `kask/crates/` is:
 
 `hkask-bridge-ontology`, `hkask-condenser`, `hkask-email`,
 `hkask-event-store`, `hkask-forecast`, `hkask-inference`, `hkask-keystore`,
 `hkask-lisp`, `hkask-mcp`, `hkask-mcp-server`, `hkask-memory`,
-`hkask-regulation`, `hkask-services-core`,
+`hkask-regulation`,
 `hkask-steer-core`, `hkask-storage`, `hkask-tool-port`, `hkask-types`, and
 `kask_bridge`.
 

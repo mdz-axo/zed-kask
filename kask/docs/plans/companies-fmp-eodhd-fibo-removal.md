@@ -1,3 +1,13 @@
+---
+title: "Plan: Remove the companies MCP server, FMP/EODHD, and FIBO"
+audience: [architects, developers, agents]
+last_updated: 2026-10-18
+version: "1.0.0"
+status: "Proposed"
+domain: "Cross-cutting"
+mds_categories: [domain, composition, lifecycle]
+---
+
 # Plan: Remove the companies MCP server, FMP/EODHD, and FIBO
 
 Status: approved design record, not yet executed.
