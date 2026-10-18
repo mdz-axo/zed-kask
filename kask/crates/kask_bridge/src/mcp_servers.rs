@@ -510,10 +510,13 @@ pub fn filter_credentials_for_server(
 /// Tracks `(server_id, env_var)` pairs already warned about being missing.
 /// `build_mcp_server_env` is called on every `SettingsStore` observer fire
 /// (for env-diffing, not just launching), so without deduplication a missing
-/// credential spams the log every time any unrelated setting changes. A pair
-/// is warned at most once per process lifetime; restarting Zed resets the set.
+/// credential spams the log every time any unrelated setting changes. A
+/// (server, env var, read-state) triple is warned at most once per process
+/// lifetime — the state in the key lets a CHANGED state re-warn (Missing
+/// later flipping to ProviderError stays visible) while the same state
+/// repeated stays quiet. Restarting Zed resets the set.
 static WARNED_MISSING_CREDENTIALS: std::sync::OnceLock<
-    std::sync::Mutex<std::collections::HashSet<(String, String)>>,
+    std::sync::Mutex<std::collections::HashSet<(String, String, String)>>,
 > = std::sync::OnceLock::new();
 
 /// The single canonical env-construction path for a kask MCP server child
@@ -607,12 +610,75 @@ pub async fn build_mcp_server_env(
             env.insert(env_var, value);
             continue;
         }
-        if let Some(value) =
-            read_non_empty_keychain_credential(credentials_provider, server_id, &env_var, &url, cx)
-                .await
-        {
-            env.insert(env_var, value);
-            continue;
+        match read_keychain_credential(credentials_provider, server_id, &env_var, &url, cx).await {
+            KeychainCredentialRead::Loaded(value) => {
+                env.insert(env_var, value);
+                continue;
+            }
+            // The four distinguishable failure states fall through to the
+            // per-state warnings below — never a single "not set or empty"
+            // message, so the operator can tell "not configured" (Missing)
+            // from "configured but broken" (ProviderError, InvalidUtf8,
+            // Empty). Each state carries its own remediation.
+            other => {
+                // Dedup per (server, env var, STATE): `build_mcp_server_env`
+                // runs on every SettingsStore observer fire, and a state
+                // CHANGE must re-warn (a key fixed after an error flips the
+                // message back through Empty→Loaded silently otherwise).
+                // Same state twice stays quiet.
+                let warned_set = WARNED_MISSING_CREDENTIALS
+                    .get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()));
+                let state_key = match &other {
+                    KeychainCredentialRead::Missing => "missing",
+                    KeychainCredentialRead::Empty => "empty",
+                    KeychainCredentialRead::InvalidUtf8 => "invalid-utf8",
+                    KeychainCredentialRead::ProviderError(_) => "provider-error",
+                    KeychainCredentialRead::Loaded(_) => unreachable!("handled above"),
+                };
+                let is_new = warned_set
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert((
+                        server_id.to_string(),
+                        env_var.clone(),
+                        state_key.to_string(),
+                    ));
+                if is_new {
+                    let message = match &other {
+                        KeychainCredentialRead::Missing => format!(
+                            "Credential {env_var} for server {server_id} has no keychain entry \
+                             at {url} — the server will fail with permission_denied when it \
+                             tries to use it. Set the key via the kask settings UI to fix this."
+                        ),
+                        KeychainCredentialRead::Empty => format!(
+                            "Credential {env_var} for server {server_id} is set but empty \
+                             (or whitespace-only) at {url} — the server will fail with \
+                             permission_denied when it tries to use it. Re-set a non-empty \
+                             key via the kask settings UI."
+                        ),
+                        KeychainCredentialRead::InvalidUtf8 => format!(
+                            "Credential {env_var} for server {server_id} at {url} holds \
+                             non-UTF-8 bytes — the server will fail with permission_denied \
+                             when it tries to use it. The keychain entry is corrupt; \
+                             re-enter the key via the kask settings UI."
+                        ),
+                        KeychainCredentialRead::ProviderError(error) => format!(
+                            "Reading credential {env_var} for server {server_id} from \
+                             {url} failed: {error} — the keychain may be locked or \
+                             unavailable. The server will fail with permission_denied when \
+                             it tries to use the credential; retry after unlocking the \
+                             keychain."
+                        ),
+                        KeychainCredentialRead::Loaded(_) => unreachable!("handled above"),
+                    };
+                    tracing::warn!(
+                        target: "reg.mcp",
+                        server_id = %server_id,
+                        env_var = %env_var,
+                        "{message}"
+                    );
+                }
+            }
         }
         // Startup-default passphrases: provision the required "allostery"
         // default before falling through to the missing-credential warning.
@@ -643,33 +709,14 @@ pub async fn build_mcp_server_env(
             env.insert(env_var, passphrase);
             continue;
         }
-        // Neither the parent shell nor the keychain provided a non-empty
-        // value. The MCP server will surface `permission_denied` when it
-        // tries to use this credential (see `.rules` — "Missing credentials
-        // must surface as `McpToolError::permission_denied`"). Warn here so
-        // the operator can distinguish "not configured" from "configured
-        // but broken" — without this, a missing keychain entry looks
-        // identical to a server that ran but returned no results.
-        //
-        // Dedup: `build_mcp_server_env` is called on every `SettingsStore`
-        // observer fire (for env-diffing), so without this guard the same
-        // missing credential would spam the log dozens of times during
-        // startup. `HashSet::insert` returns `true` only on first insertion.
-        let warned_set = WARNED_MISSING_CREDENTIALS
-            .get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()));
-        let is_new = warned_set
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert((server_id.to_string(), env_var.clone()));
-        if is_new {
-            tracing::warn!(
-                target: "reg.mcp",
-                server_id = %server_id,
-                env_var = %env_var,
-                "Credential {env_var} for server {server_id} is not set or empty — \
-                 the server will fail with permission_denied when it tries to use it"
-            );
-        }
+        // Neither the parent shell, the keychain, nor a startup-default
+        // passphrase tier provided a value. The per-state warning already
+        // fired inside the keychain-read match above (Missing, Empty,
+        // InvalidUtf8, ProviderError — each with its own remediation); this
+        // fall-through carries no separate message. The MCP server will
+        // surface `permission_denied` when it tries to use the credential
+        // (see `.rules` — "Missing credentials must surface as
+        // `McpToolError::permission_denied`").
     }
 
     // 3. Inference IPC socket — not in any allowlist; every server may route
@@ -713,19 +760,57 @@ pub async fn build_mcp_server_env(
 /// configured" stays visible to the operator.
 const DEFAULT_PASSPHRASE_ENV_VARS: [&str; 1] = ["HKASK_DB_PASSPHRASE"];
 
-async fn read_non_empty_keychain_credential(
+/// The outcome of reading one MCP-server credential from the keychain —
+/// four failure states kept distinguishable (the `.ok()??` collapse this
+/// replaces made them indistinguishable: a locked keychain, a missing
+/// entry, an empty value, and non-UTF-8 bytes all read as "not set",
+/// so the operator could not tell "not configured" from "configured but
+/// broken" — the broken-feedback-loop class). Modeled on the distinguishable
+/// reads in `inference_providers.rs` and `crates/language_model/src/api_key.rs`.
+#[derive(Debug, PartialEq, Eq)]
+enum KeychainCredentialRead {
+    /// A non-empty value, trimmed for injection where trimming applies.
+    Loaded(String),
+    /// The keychain holds no entry for this URL (`Ok(None)`).
+    Missing,
+    /// The entry exists but its value is empty — including a value that is
+    /// only whitespace, which previously survived the emptiness filter and
+    /// was injected as an EMPTY env value after trimming.
+    Empty,
+    /// The entry exists but its bytes are not valid UTF-8.
+    InvalidUtf8,
+    /// The keychain provider itself failed (locked, unavailable, I/O) —
+    /// carries the error text.
+    ProviderError(String),
+}
+
+async fn read_keychain_credential(
     credentials_provider: &dyn credentials_provider::CredentialsProvider,
     server_id: &str,
     env_var: &str,
     url: &str,
     cx: &gpui::AsyncApp,
-) -> Option<String> {
-    let (_username, password) = credentials_provider
-        .read_credentials(url, cx)
-        .await
-        .ok()??;
-    let value = String::from_utf8(password).ok().filter(|v| !v.is_empty())?;
-    Some(trim_credential_for_injection(server_id, env_var, value))
+) -> KeychainCredentialRead {
+    let (_username, password) = match credentials_provider.read_credentials(url, cx).await {
+        Ok(Some((username, password))) => (username, password),
+        Ok(None) => return KeychainCredentialRead::Missing,
+        Err(error) => {
+            return KeychainCredentialRead::ProviderError(error.to_string());
+        }
+    };
+    let value = match String::from_utf8(password) {
+        Ok(value) => value,
+        Err(_) => return KeychainCredentialRead::InvalidUtf8,
+    };
+    // The emptiness check is PRE-trim, deliberately: the DB passphrase is
+    // exempt from trimming (its exact bytes key the databases) — a
+    // post-trim check would classify a whitespace-only passphrase as
+    // Loaded, injecting an empty env value. A value that is empty or
+    // whitespace-only at the source is empty, whichever credential it is.
+    if value.trim().is_empty() {
+        return KeychainCredentialRead::Empty;
+    }
+    KeychainCredentialRead::Loaded(trim_credential_for_injection(server_id, env_var, value))
 }
 
 /// Trim surrounding whitespace from a keychain-read credential before env
@@ -1657,12 +1742,12 @@ mod tests {
     #[tokio::test]
     async fn delegated_grants_follow_settings_and_launch_lifecycle() {
         let _guard = ENV_TEST_LOCK.lock().await;
-        let provider = MockCredentialsProvider {
-            secrets: crate::credential_urls_for_mcp()
+        let provider = MockCredentialsProvider::new(
+            crate::credential_urls_for_mcp()
                 .into_iter()
                 .map(|(_, url)| (url, b"disposable-test-secret".to_vec()))
                 .collect(),
-        };
+        );
         let context = gpui::TestAppContext::single();
         let cx = context.to_async();
         let content: settings_content::KaskSettingsContent = serde_json::from_value(
@@ -1748,7 +1833,7 @@ mod tests {
             .into_iter()
             .map(|(_, url)| (url, b"disposable-test-secret".to_vec()))
             .collect();
-        let provider = MockCredentialsProvider { secrets };
+        let provider = MockCredentialsProvider::new(secrets);
         unsafe {
             std::env::set_var("HKASK_CURATOR_DB", "/tmp/test-curator-override.db");
         }
@@ -1770,6 +1855,126 @@ mod tests {
                 .get("HKASK_SWARM_MEMORY_DB")
                 .map(String::as_str),
             "HKASK_SWARM_MEMORY_DB must reach curator for swarm backfill sweep"
+        );
+    }
+
+    /// A-4: the four keychain-read failure states are distinguishable —
+    /// Loaded / Missing / Empty / InvalidUtf8 / ProviderError each classify
+    /// distinctly (the `.ok()??` collapse this replaces made them read as
+    /// "not set"), and a whitespace-only value classifies as Empty rather
+    /// than injecting an empty env value. The mock's `failures` injection is
+    /// what makes ProviderError testable at all — the prior mock always
+    /// returned `Ok`.
+    #[tokio::test]
+    async fn keychain_credential_failure_states_are_distinguishable() {
+        let _guard = ENV_TEST_LOCK.lock().await;
+        let cx = gpui::TestAppContext::single().to_async();
+        let (_, passphrase_url) = crate::credential_urls_for_mcp()
+            .into_iter()
+            .find(|(env_var, _)| env_var == "HKASK_DB_PASSPHRASE")
+            .expect("HKASK_DB_PASSPHRASE has a credential URL");
+
+        // SAFETY: clear the shell tier so every case exercises the keychain
+        // branch. Single-threaded test under ENV_TEST_LOCK.
+        unsafe { std::env::remove_var("HKASK_DB_PASSPHRASE") };
+
+        // Missing: no keychain entry at all.
+        let provider = MockCredentialsProvider::new(std::collections::HashMap::new());
+        let read = read_keychain_credential(
+            &provider,
+            "curator",
+            "HKASK_DB_PASSPHRASE",
+            &passphrase_url,
+            &cx,
+        )
+        .await;
+        assert_eq!(read, KeychainCredentialRead::Missing, "{read:?}");
+
+        // Loaded: a real non-empty value.
+        let mut secrets = std::collections::HashMap::new();
+        secrets.insert(
+            passphrase_url.clone(),
+            b"keychain-secret-passphrase".to_vec(),
+        );
+        let provider = MockCredentialsProvider::new(secrets);
+        let read = read_keychain_credential(
+            &provider,
+            "curator",
+            "HKASK_DB_PASSPHRASE",
+            &passphrase_url,
+            &cx,
+        )
+        .await;
+        assert_eq!(
+            read,
+            KeychainCredentialRead::Loaded("keychain-secret-passphrase".to_string()),
+            "{read:?}"
+        );
+
+        // Empty: an entry whose value is the empty string.
+        let mut secrets = std::collections::HashMap::new();
+        secrets.insert(passphrase_url.clone(), Vec::new());
+        let provider = MockCredentialsProvider::new(secrets);
+        let read = read_keychain_credential(
+            &provider,
+            "curator",
+            "HKASK_DB_PASSPHRASE",
+            &passphrase_url,
+            &cx,
+        )
+        .await;
+        assert_eq!(read, KeychainCredentialRead::Empty, "{read:?}");
+
+        // Empty (whitespace-only): a value that survives the emptiness filter
+        // but trims to nothing — previously injected as an EMPTY env value.
+        let mut secrets = std::collections::HashMap::new();
+        secrets.insert(passphrase_url.clone(), b"  \t \n".to_vec());
+        let provider = MockCredentialsProvider::new(secrets);
+        let read = read_keychain_credential(
+            &provider,
+            "curator",
+            "HKASK_DB_PASSPHRASE",
+            &passphrase_url,
+            &cx,
+        )
+        .await;
+        assert_eq!(read, KeychainCredentialRead::Empty, "{read:?}");
+
+        // InvalidUtf8: an entry with corrupt bytes. The passphrase is exempt
+        // from trimming but not from UTF-8 validation — a non-UTF-8 value can
+        // never be injected as a credential.
+        let mut secrets = std::collections::HashMap::new();
+        secrets.insert(passphrase_url.clone(), vec![0xff_u8, 0xfe, 0xfd]);
+        let provider = MockCredentialsProvider::new(secrets);
+        let read = read_keychain_credential(
+            &provider,
+            "curator",
+            "HKASK_DB_PASSPHRASE",
+            &passphrase_url,
+            &cx,
+        )
+        .await;
+        assert_eq!(read, KeychainCredentialRead::InvalidUtf8, "{read:?}");
+
+        // ProviderError: the keychain itself fails (locked, unavailable).
+        let mut failures = std::collections::HashMap::new();
+        failures.insert(passphrase_url.clone(), "keychain locked".to_string());
+        let provider = MockCredentialsProvider {
+            secrets: std::collections::HashMap::new(),
+            failures,
+        };
+        let read = read_keychain_credential(
+            &provider,
+            "curator",
+            "HKASK_DB_PASSPHRASE",
+            &passphrase_url,
+            &cx,
+        )
+        .await;
+        assert_eq!(
+            read,
+            KeychainCredentialRead::ProviderError("keychain locked".to_string()),
+            "{read:?}"
         );
     }
 
@@ -1901,7 +2106,7 @@ mod tests {
             passphrase_url.clone(),
             b"keychain-secret-passphrase".to_vec(),
         );
-        let provider = MockCredentialsProvider { secrets };
+        let provider = MockCredentialsProvider::new(secrets);
 
         // SAFETY: Ensure no shell env var leaks into the test — the keychain
         // branch must be the one that injects the value. Single-threaded test.
@@ -1974,6 +2179,7 @@ mod tests {
         let settings = crate::KaskSettings::default();
         let provider = MockCredentialsProvider {
             secrets: std::collections::HashMap::new(),
+            failures: std::collections::HashMap::new(),
         };
 
         let cx = gpui::TestAppContext::single().to_async();

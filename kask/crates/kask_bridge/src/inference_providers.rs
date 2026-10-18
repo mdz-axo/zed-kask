@@ -658,7 +658,7 @@ mod tests {
                 )
             })
             .collect();
-        let credentials = MockCredentialsProvider { secrets };
+        let credentials = MockCredentialsProvider::new(secrets);
         let async_cx = cx.to_async();
 
         // Ineligible routes: keys ARE present at their slots, so these

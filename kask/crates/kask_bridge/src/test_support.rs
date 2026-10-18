@@ -7,8 +7,29 @@ use credentials_provider::CredentialsProvider;
 /// A mock `CredentialsProvider` that returns a canned secret for a specific
 /// URL and `None` for everything else — the composed env-building and
 /// credential-resolution tests run against it instead of the real keychain.
+///
+/// `failures` injects the failure states a real keychain can produce, so
+/// tests can pin the distinguishable classification: `Err` for a locked or
+/// unavailable keychain, and a non-UTF-8 byte value for a corrupt entry —
+/// the two states the previous `MockCredentialsProvider` could never
+/// produce (it always returned `Ok`), leaving them untestable. Construct
+/// with `MockCredentialsProvider::new(secrets)` for the old always-Ok shape;
+/// add failures via `MockCredentialsProvider::with_failure`.
 pub(crate) struct MockCredentialsProvider {
     pub(crate) secrets: std::collections::HashMap<String, Vec<u8>>,
+    /// URLs whose reads fail with `Err` (a locked/unavailable keychain).
+    pub(crate) failures: std::collections::HashMap<String, String>,
+}
+
+impl MockCredentialsProvider {
+    /// The always-`Ok` shape tests previously constructed by struct literal —
+    /// same behavior, `failures` empty.
+    pub(crate) fn new(secrets: std::collections::HashMap<String, Vec<u8>>) -> Self {
+        Self {
+            secrets,
+            failures: std::collections::HashMap::new(),
+        }
+    }
 }
 
 impl CredentialsProvider for MockCredentialsProvider {
@@ -19,6 +40,10 @@ impl CredentialsProvider for MockCredentialsProvider {
     ) -> std::pin::Pin<
         Box<dyn std::future::Future<Output = anyhow::Result<Option<(String, Vec<u8>)>>> + 'a>,
     > {
+        if let Some(error) = self.failures.get(url) {
+            let error = error.clone();
+            return Box::pin(async move { Err(anyhow::anyhow!(error)) });
+        }
         let result = self
             .secrets
             .get(url)
