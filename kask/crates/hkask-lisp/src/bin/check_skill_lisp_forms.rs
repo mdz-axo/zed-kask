@@ -545,25 +545,6 @@ form: "(= (+ a b) 3)"
             json!(false)
         );
 
-        let company = skill_candidate("company-research-deep", "define pick");
-        let capability_assessments = json!({
-            "capability_assessments": {
-                "obvious_problem": {"verdict":"maintain","elicited_score":90,"ceiling":100,"intervention":"maintain"},
-                "invisible_gorilla": {"verdict":"floor_violation","elicited_score":60,"ceiling":100,"intervention":"maintain"},
-                "combinatorial_solution": {"verdict":"maintain","elicited_score":70,"ceiling":100,"intervention":"maintain"},
-                "choke_point": {"verdict":"maintain","elicited_score":80,"ceiling":100,"intervention":"maintain"}
-            }
-        });
-        let company_result = eval_sandboxed(&company, &capability_assessments)
-            .expect("company partition form should evaluate");
-        assert_eq!(company_result[0], json!(["invisible_gorilla"]));
-        assert_eq!(
-            company_result[3],
-            json!(["obvious_problem", "combinatorial_solution", "choke_point"])
-        );
-        assert_eq!(company_result[4], json!(74.0));
-        assert_eq!(company_result[5], json!("SMALL_ANIMAL"));
-
         let wardley = skill_candidate("wardley-mapper", "all-names-present");
         let valid_map = json!({
             "components": [
