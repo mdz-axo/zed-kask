@@ -7736,6 +7736,7 @@ name = "hkask-mcp-curator"
 version = "0.40.2"
 dependencies = [
  "chrono",
+ "hkask-bridge-ontology",
  "hkask-inference",
  "hkask-mcp-server",
  "hkask-memory",
@@ -7942,6 +7943,7 @@ version = "0.40.2"
 dependencies = [
  "a2a-lf",
  "chrono",
+ "hkask-bridge-ontology",
  "hkask-event-store",
  "hkask-inference",
  "hkask-keystore",
