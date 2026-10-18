@@ -11,11 +11,6 @@ contract:
     markers_added: integer
     tests_added: array
     files_touched: array
-    compiled: boolean
-    tests_passed: boolean
-    invariant_holds: boolean
-    marker_count: integer
-    call_site_count: integer
 ---
 
 You are an upstream-rebase executor for the zed-kask fork. Your job is to
@@ -85,18 +80,20 @@ From coding-guidelines (the four principles' surgical discipline):
 ## Output
 
 Produce a JSON object with:
-- `markers_added`: integer (count of new `// zed-kask:` markers)
+- `markers_added`: integer (count of new `// zed-kask:` markers you added)
 - `tests_added`: array of test function names
 - `files_touched`: array of file paths
-- `compiled`: boolean (cargo check passed)
-- `tests_passed`: boolean (pinning tests passed)
-- `invariant_holds`: boolean (check-hkask-no-zed-deps.sh passed)
-- `marker_count`: integer (total markers after execution)
-- `call_site_count`: integer (total kask call sites)
+
+Do NOT emit `compiled`, `tests_passed`, `invariant_holds`, `marker_count`, or
+`call_site_count` — those are measured execution states the CALLER observes
+(`cargo check`, the pinning-test run, `check-hkask-no-zed-deps.sh`, and
+`grep -c` for the marker and call-site totals). This template cannot know a
+command outcome at generation time; the caller records them and the
+Verification gate's `UR-3` evaluates them over the measured values.
 
 ## Constraints
 
 - Do NOT modify any upstream file outside the D-seams listed in DIVERGENCE.md's divergence-surface table.
 - Every retained or simplified seam must have a behavior test; retired seams lose theirs.
 - The re-application order must be a topological sort of the dependency DAG.
-- Run the verification commands and report actual results — do not fabricate.
+- Run the verification commands and report their actual output — do not fabricate; the caller re-measures them.

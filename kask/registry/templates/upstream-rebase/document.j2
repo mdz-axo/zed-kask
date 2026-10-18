@@ -9,7 +9,6 @@ contract:
     verification_result: object
     task: string
   output:
-    divergence_md_updated: boolean
     report: string
     summary: string
 ---
@@ -59,12 +58,13 @@ Summarize:
 ## Output
 
 Produce a JSON object with:
-- `divergence_md_updated`: boolean
 - `report`: string (the full markdown report)
 - `summary`: string (one-paragraph executive summary)
+
+Do NOT emit `divergence_md_updated` — that is the caller's own write state
+(whether the DIVERGENCE.md edit landed), which this template cannot observe.
 
 ## Constraints
 
 - Do NOT modify any upstream files outside the D-seams.
-- If DIVERGENCE.md was updated, set `divergence_md_updated` to true.
 - The report should be suitable for a PR description.

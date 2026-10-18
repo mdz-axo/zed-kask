@@ -10,7 +10,6 @@ contract:
   output:
     seam_decisions: array
     strategy: string
-    full_reapplication: boolean
     rationale: string
     cruft_identified: array
 ---
@@ -94,10 +93,12 @@ Apply Ousterhout's deletion test in both directions:
 Produce a JSON object with:
 - `seam_decisions`: array of {d_number, purpose, decision: "retire"|"simplify"|"retain"|"needs-operator-decision", upstream_evidence, counterexample} — one entry per D-row the file carries
 - `strategy`: "take-upstream", "surgical", or "full-reapplication"
-- `full_reapplication`: boolean (true if full re-application needed)
 - `rationale`: string (one paragraph explaining the decision)
 - `cruft_identified`: array of {type, location, description} for any cruft found
   (use-before-def, duplicate definitions, dead code, stale refactor artifacts)
+
+Do NOT emit a `full_reapplication` boolean — it is `(strategy == "full-reapplication")`,
+a value the caller derives from the `strategy` you return.
 
 ## Constraints
 

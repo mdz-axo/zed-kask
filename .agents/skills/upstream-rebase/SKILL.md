@@ -222,7 +222,7 @@ by checking them. A lesson that no case can falsify is not an amendment.
 3. `bash kask/scripts/check-hkask-no-zed-deps.sh` — §13.1 invariant holds.
 4. `grep -c "// zed-kask:" <file>` — marker count matches the functional unit count.
 5. `git diff upstream/main -- <file>` — no upstream line is modified except under a live D-row (retire/simplify work may remove fork lines).
-6. Run `lisp_eval` gate `UR-3` over the execution and verification results (`verification_result`):
+6. Run `lisp_eval` gate `UR-3` over the execution and verification results (`verification_result`). `compiled`, `tests_passed`, `invariant_holds`, `marker_count`, and `call_site_count` are MEASURED by the caller — `cargo check -p <crate>`'s exit, the pinning-test run's exit, `bash kask/scripts/check-hkask-no-zed-deps.sh`'s exit, `grep -c "// zed-kask:" <file>`, and the call-site count — and passed into the gate as inputs; `execute.j2` never types them:
    - form: `(and compiled tests_passed invariant_holds (= marker_count unit_count))`
    - env: `{ "compiled": <bool>, "tests_passed": <bool>, "invariant_holds": <bool>, "marker_count": <int>, "unit_count": <length of functional_units> }`
 
@@ -286,7 +286,7 @@ To render a template, call the `render_template` tool with the template ref (e.g
 - `document.j2`: `target_file`, `inventory_result`, `decision_result`, `execution_result`, `verification_result`, `task`
 - `reflect.j2`: `merge_commit`, `seam_decisions`, `execution_log`, `prior_held_out_cases`, `task`
 
-Run verification gates (cargo check/test, isolation script) with `terminal` and deterministic checks (`UR-1`, `UR-2`, `UR-3`) with `lisp_eval`. Template order: Step 0's all-rows survival review (`survival_records`), `UR-1`'s per-file shell metrics + `lisp_eval` strategy rule (`assessment_result`), and Step 4's insertion-point mapping are direct agent work; then, per surviving seam file, `map` (`inventory_result`, checked by `UR-2`) → `decide` (`decision_result`) → `execute` (`execution_result`, checked by the Verification gate + `UR-3` producing `verification_result`) → `document`, then `reflect` after the merge commit.
+Run verification gates (cargo check/test, isolation script) with `terminal` and deterministic checks (`UR-1`, `UR-2`, `UR-3`) with `lisp_eval`. Template order: Step 0's all-rows survival review (`survival_records`), `UR-1`'s per-file shell metrics + `lisp_eval` strategy rule (`assessment_result`), and Step 4's insertion-point mapping are direct agent work; then, per surviving seam file, `map` (`inventory_result`, checked by `UR-2`) → `decide` (`decision_result`) → `execute` (`execution_result`; the caller then MEASURES `compiled`/`tests_passed`/`invariant_holds`/`marker_count`/`call_site_count` from the commands above and feeds them to the Verification gate + `UR-3`, which produce `verification_result`) → `document`, then `reflect` after the merge commit. `decide.j2` returns `strategy`; the caller derives `full_reapplication` as `(strategy == "full-reapplication")`.
 
 ## Regression case
 
