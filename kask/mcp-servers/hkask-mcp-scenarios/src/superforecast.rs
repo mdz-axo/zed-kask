@@ -39,7 +39,7 @@ pub(crate) use assess::{
 // concern — journal + snapshot compaction — is independent of the forecast
 // math and composition concerns that remain in this file).
 mod store;
-pub use store::ForecastStore;
+pub use store::{ForecastStore, JournalStore};
 
 // ── Project records ──────────────────────────────────────────────────────
 // Extracted to `superforecast/project.rs` (the scenario project record's

@@ -1,4 +1,4 @@
-//! File-backed persistence for forecasts — append-only journal + periodic
+//! File-backed persistence for records — append-only journal + periodic
 //! snapshot compaction.
 //!
 //! Extracted from `superforecast.rs` (deep-module split). Each mutation appends
@@ -6,29 +6,33 @@
 //! first, then journal entries are replayed on top (last write wins). After
 //! `JOURNAL_COMPACT_THRESHOLD` entries, the journal is compacted into a full
 //! snapshot.
-
+//!
+//! The generic `JournalStore<T>` core (Phase A P1 of the
+//! companies/FMP/EODHD/FIBO removal plan) is the one implementation of the
+//! journal+snapshot machinery — the equity forecast store (from the retired
+//! companies server) is the second instantiation, not a copied module.
+//! `ForecastStore` stays as the `StoredForecastRecord`-typed instantiation
+//! with its record-specific accessors (`resolved`, `resolved_by_category`,
+//! `filtered_by_subject`) so the calibration and composition callers keep
+//! their exact shapes.
 use std::collections::HashMap;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-use crate::types::StoredForecastRecord;
-
 const JOURNAL_COMPACT_THRESHOLD: usize = 100;
-
 /// File-backed persistence using append-only journal + periodic snapshot compaction.
 /// Each mutation appends one JSON line to the journal (O(1) write). On load, the
 /// snapshot is loaded first, then journal entries are replayed on top (last write wins).
 /// After JOURNAL_COMPACT_THRESHOLD entries, the journal is compacted into a full snapshot.
 #[derive(Debug, Default)]
-pub struct ForecastStore {
-    pub(crate) records: HashMap<String, StoredForecastRecord>,
+pub struct JournalStore<T> {
+    pub(crate) records: HashMap<String, T>,
     pub(crate) data_path: Option<PathBuf>,
     journal_path: Option<PathBuf>,
     journal_count: usize,
 }
-
-impl ForecastStore {
+impl<T: for<'de> serde::Deserialize<'de> + serde::Serialize> JournalStore<T> {
     /// Create a new store, loading snapshot + journal replay from disk.
     pub fn new(data_path: Option<PathBuf>) -> Self {
         let journal_path = data_path.as_ref().map(|p| {
@@ -45,7 +49,6 @@ impl ForecastStore {
         store.load();
         store
     }
-
     /// Load: snapshot first, then replay journal on top (last write wins).
     /// Every failure arm is surfaced: a corrupt snapshot otherwise presents as
     /// an empty store, and the calibration feedback loop reads "no history"
@@ -55,17 +58,15 @@ impl ForecastStore {
             && path.exists()
         {
             match fs::read_to_string(path) {
-                Ok(data) => {
-                    match serde_json::from_str::<HashMap<String, StoredForecastRecord>>(&data) {
-                        Ok(records) => self.records = records,
-                        Err(error) => tracing::warn!(
-                            target: "hkask.mcp.scenarios",
-                            %error,
-                            "Forecast snapshot is corrupt — replaying the journal only; \
-                             calibration history is degraded this session"
-                        ),
-                    }
-                }
+                Ok(data) => match serde_json::from_str::<HashMap<String, T>>(&data) {
+                    Ok(records) => self.records = records,
+                    Err(error) => tracing::warn!(
+                        target: "hkask.mcp.scenarios",
+                        %error,
+                        "Forecast snapshot is corrupt — replaying the journal only; \
+                         calibration history is degraded this session"
+                    ),
+                },
                 Err(error) => tracing::warn!(
                     target: "hkask.mcp.scenarios",
                     %error,
@@ -90,8 +91,7 @@ impl ForecastStore {
                                 entry.get("key").and_then(|v| v.as_str()),
                                 entry.get("record"),
                             )
-                            && let Ok(rec) =
-                                serde_json::from_value::<StoredForecastRecord>(record.clone())
+                            && let Ok(rec) = serde_json::from_value::<T>(record.clone())
                         {
                             self.records.insert(key.to_string(), rec);
                             self.journal_count += 1;
@@ -117,10 +117,9 @@ impl ForecastStore {
             }
         }
     }
-
     /// Append a single record entry to the journal (O(1) write per mutation).
     /// Only writes the changed record, not the full dataset.
-    fn save_entry(&self, key: &str, record: &StoredForecastRecord) -> io::Result<()> {
+    fn save_entry(&self, key: &str, record: &T) -> io::Result<()> {
         if let Some(journal_path) = &self.journal_path {
             if let Some(parent) = journal_path
                 .parent()
@@ -142,9 +141,8 @@ impl ForecastStore {
         }
         Ok(())
     }
-
     /// Insert a record and persist via single-entry journal append.
-    pub(crate) fn insert(&mut self, key: String, record: StoredForecastRecord) -> io::Result<()> {
+    pub fn insert(&mut self, key: String, record: T) -> io::Result<()> {
         self.save_entry(&key, &record)?;
         self.records.insert(key, record);
         self.journal_count += 1;
@@ -153,11 +151,9 @@ impl ForecastStore {
         }
         Ok(())
     }
-
-    pub(crate) fn get(&self, key: &str) -> Option<&StoredForecastRecord> {
+    pub fn get(&self, key: &str) -> Option<&T> {
         self.records.get(key)
     }
-
     /// expect: "A snapshot failure must not destroy my recovery journal." [P1]
     /// pre: this store exclusively owns writes to its snapshot and journal.
     /// post: the journal is cleared only after a complete snapshot is published;
@@ -165,7 +161,6 @@ impl ForecastStore {
     pub fn persist(&mut self) -> io::Result<()> {
         self.compact()
     }
-
     fn compact(&mut self) -> io::Result<()> {
         if let Some(snapshot_path) = &self.data_path {
             let parent = snapshot_path
@@ -198,50 +193,58 @@ impl ForecastStore {
         self.journal_count = 0;
         Ok(())
     }
-
     pub fn len(&self) -> usize {
         self.records.len()
     }
-
-    pub(crate) fn values(&self) -> impl Iterator<Item = &StoredForecastRecord> {
+    pub fn values(&self) -> impl Iterator<Item = &T> {
         self.records.values()
     }
-
-    pub(crate) fn resolved(&self) -> Vec<&StoredForecastRecord> {
-        self.records
-            .values()
-            .filter(|r| r.outcome.is_some())
-            .collect()
-    }
-
-    /// Resolved forecasts matching a domain category (case-insensitive
-    /// substring match, mirroring the old `domain_bias_delta` matcher).
-    /// Used by per-domain calibration: the bias for a category is computed
-    /// only from resolved forecasts in that category.
-    pub(crate) fn resolved_by_category(&self, category: &str) -> Vec<&StoredForecastRecord> {
-        let normalized = category.to_ascii_lowercase();
-        self.records
-            .values()
-            .filter(|r| r.outcome.is_some())
-            .filter(|r| {
-                r.category
-                    .as_deref()
-                    .is_some_and(|c| c.to_ascii_lowercase().contains(&normalized))
-            })
-            .collect()
-    }
-
-    pub(crate) fn filtered_by_subject(&self, subject: &str) -> Self {
-        Self {
-            records: self
-                .records
-                .iter()
-                .filter(|(_, record)| record.subject == subject)
-                .map(|(key, record)| (key.clone(), record.clone()))
-                .collect(),
-            data_path: None,
-            journal_path: None,
-            journal_count: 0,
+}
+/// The scenario `StoredForecastRecord` store — the journal machinery with the
+/// record-specific accessors the calibration and composition callers use.
+/// Type alias rather than a newtype so `Debug`/`Default` and the existing
+/// `store.get(...)` call sites keep their shapes.
+pub type ForecastStore = JournalStore<crate::types::StoredForecastRecord>;
+/// Record-specific accessors (kept out of the generic core: they read
+/// `StoredForecastRecord` fields).
+mod forecast_accessors {
+    use super::ForecastStore;
+    use crate::types::StoredForecastRecord;
+    impl ForecastStore {
+        pub(crate) fn resolved(&self) -> Vec<&StoredForecastRecord> {
+            self.records
+                .values()
+                .filter(|r| r.outcome.is_some())
+                .collect()
+        }
+        /// Resolved forecasts matching a domain category (case-insensitive
+        /// substring match, mirroring the old `domain_bias_delta` matcher).
+        /// Used by per-domain calibration: the bias for a category is computed
+        /// only from resolved forecasts in that category.
+        pub(crate) fn resolved_by_category(&self, category: &str) -> Vec<&StoredForecastRecord> {
+            let normalized = category.to_ascii_lowercase();
+            self.records
+                .values()
+                .filter(|r| r.outcome.is_some())
+                .filter(|r| {
+                    r.category
+                        .as_deref()
+                        .is_some_and(|c| c.to_ascii_lowercase().contains(&normalized))
+                })
+                .collect()
+        }
+        pub(crate) fn filtered_by_subject(&self, subject: &str) -> Self {
+            Self {
+                records: self
+                    .records
+                    .iter()
+                    .filter(|(_, record)| record.subject == subject)
+                    .map(|(key, record)| (key.clone(), record.clone()))
+                    .collect(),
+                data_path: None,
+                journal_path: None,
+                journal_count: 0,
+            }
         }
     }
 }

@@ -7,14 +7,11 @@
 //! hKask MCP Scenarios — domain-agnostic scenario planning server.
 //!
 //! Event-tree forecasting with conditional dependencies (MAIA methodology).
-//! The Schwartz 2x2 axis-driven mode lives in `hkask-mcp-companies`
-//! (see the Scenarios ↔ Companies Bridge section of
-//! `kask/docs/reference/mcp-servers/companies.md` for the connection path).
 //!
 //! Shared engine: Fermi decomposition, outside/inside view, Bayesian updating,
 //! Brier scoring, dragonfly-eye synthesis, calibration tracking, cross-validation.
 //!
-//! ## Tools (19) — pinned by `tool_surface_is_exactly_19_registered_tools`
+//! ## Tools (21) — pinned by `tool_surface_is_exactly_21_registered_tools`
 //! - `scenario_status` — Server state: pipeline overview, calibration curve, cached tree
 //! - `scenario_frame_document` — Structure framing answers into FramingDocument, persisted under the project record
 //! - `scenario_frame` — 7-turn conversational framing interview
@@ -32,6 +29,10 @@
 //! - `scenario_cross_validate` — LLM vs computation cross-validation
 //! - `scenario_assess` — Chermack five-phase project evaluation, anchored on the project record
 //! - `scenario_from_markets_set` — Bridge from prediction-markets (multi-record EventTree)
+//! - `forecast_persist` — Persist a pre-computed equity price target for later Brier scoring (ported from the companies server)
+//! - `forecast_record` — Record a forecast outcome and close the Brier loop (ported from the companies server)
+//! - `forecast_list` — List durable equity forecasts for a symbol (ported from the companies server)
+//! - `scenario_risk_measure` — Probability-weighted risk measure over caller-supplied scenario branches
 
 use std::collections::HashSet;
 
@@ -39,6 +40,10 @@ use hkask_bridge_ontology::dc_bibo;
 use hkask_mcp_server::server::{McpToolError, execute_tool};
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 
+pub mod equity_forecast;
+// `#[tool_router(..., vis = "pub")]` in equity_forecast.rs makes
+// `equity_forecast_router()` an inherent method on ScenariosServer — no
+// re-export needed; `combined_router()` below merges it.
 #[cfg(test)]
 mod property_tests;
 pub(crate) mod superforecast;
@@ -50,6 +55,7 @@ pub mod types;
 // `Parameters<T>` tool seam — the testing standard
 // (docs/reference/mcp-servers/README.md §Testing standard) requires this.
 pub use superforecast::ForecastStore;
+pub use superforecast::JournalStore;
 pub use superforecast::ProjectStore;
 
 use types::*;
@@ -99,6 +105,13 @@ pub(crate) use requests::*;
 hkask_mcp_server::mcp_server!(
     pub struct ScenariosServer {
         pub forecast_store: std::sync::Arc<std::sync::Mutex<superforecast::ForecastStore>>,
+        /// Equity forecast persistence (ported from the companies server,
+        /// plan Phase A P1) — the same journal+snapshot machinery, typed to
+        /// the pre-computed price-target record. Separate snapshot file so
+        /// the two stores' histories never mix.
+        pub equity_forecast_store: std::sync::Arc<
+            std::sync::Mutex<superforecast::JournalStore<equity_forecast::StoredEquityForecast>>,
+        >,
         pub tree_cache: std::sync::Mutex<Option<types::EventTree>>,
         pub called_tools: std::sync::Mutex<HashSet<String>>,
         pub project_store: std::sync::Mutex<superforecast::ProjectStore>,
@@ -417,14 +430,14 @@ impl ScenariosServer {
     ///
     /// MATURITY NOTE: this is the detailed end of the scenario-modeling
     /// ladder. The simple path — `scenario_quantify` on this server over a
-    /// small independent event set → `scenario_impact_valuation` on
-    /// hkask-mcp-companies — is the intended on-ramp; an analyst typically
-    /// arrives at a full tree only after research (company, industry,
-    /// economy, technology, management, domain experts) reveals which
-    /// events actually condition each other. The flat-tree mode is retained
-    /// as a first-class citizen, not a legacy path.
+    /// small independent event set → `scenario_risk_measure` over
+    /// caller-supplied branch returns — is the intended on-ramp; an analyst
+    /// typically arrives at a full tree only after research (company,
+    /// industry, economy, technology, management, domain experts) reveals
+    /// which events actually condition each other. The flat-tree mode is
+    /// retained as a first-class citizen, not a legacy path.
     #[tool(
-        description = "Compose a set of prediction-market records (from hkask-mcp-prediction-markets) into a validated EventTree with caller-authored dependency edges. Each record passes the per-record market-bridge gates; question-overlap duplicates are flagged; cycles and CPT-size violations are rejected. Returns the resolved tree (marginals, joint probability) plus composition warnings. Detailed-mode tool: the simpler path (scenario_quantify → scenario_impact_valuation on hkask-mcp-companies) is the intended on-ramp before wiring full trees."
+        description = "Compose a set of prediction-market records (from hkask-mcp-prediction-markets) into a validated EventTree with caller-authored dependency edges. Each record passes the per-record market-bridge gates; question-overlap duplicates are flagged; cycles and CPT-size violations are rejected. Returns the resolved tree (marginals, joint probability) plus composition warnings. Detailed-mode tool: the simpler path (scenario_quantify, then scenario_risk_measure over caller-supplied branch returns) is the intended on-ramp before wiring full trees."
     )]
     pub async fn scenario_from_markets_set(
         &self,
@@ -1852,7 +1865,17 @@ impl ScenariosServer {
 }
 // ── Tool handler registration ──────────────────────────────────────────────
 
-#[rmcp::tool_handler(router = Self::scenario_router())]
+impl ScenariosServer {
+    /// The full registered tool surface: the scenario pipeline router plus
+    /// the equity forecast router (ported from the companies server,
+    /// Phase A P1). Merged with `+` per the rmcp router-composition
+    /// pattern (the companies server's `combined_router()`).
+    pub fn combined_router() -> rmcp::handler::server::router::tool::ToolRouter<Self> {
+        Self::scenario_router() + Self::equity_forecast_router()
+    }
+}
+
+#[rmcp::tool_handler(router = Self::combined_router())]
 impl rmcp::ServerHandler for ScenariosServer {}
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -1883,16 +1906,16 @@ fn parse_scenario_type(s: Option<&str>) -> ScenarioType {
 mod tests {
     use super::*;
 
-    // The scenarios server registers exactly 17 tools. Adding, removing,
+    // The scenarios server registers exactly 21 tools. Adding, removing,
     // or renaming a tool is an intentional surface change — the pin catches
     // accidental drift. One macro call: the count test plus the
     // build.rs-generated TOOL_NAMES set against the live router.
     include!(concat!(env!("OUT_DIR"), "/tool_names.gen.rs"));
     hkask_mcp_server::tool_surface_pin!(
-        ScenariosServer::scenario_router(),
-        "scenario_router",
-        17,
-        tool_surface_is_exactly_17_registered_tools,
+        ScenariosServer::combined_router(),
+        "combined_router",
+        21,
+        tool_surface_is_exactly_21_registered_tools,
     );
 }
 
@@ -1925,6 +1948,14 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                     // directory (failing past the journal threshold) and
                     // dropped the journal outside the D28 scenarios dir.
                     Some(scenarios_data_dir.join("forecasts.json")),
+                ))),
+                std::sync::Arc::new(std::sync::Mutex::new(superforecast::JournalStore::new(
+                    // Equity forecasts (ported from the companies server,
+                    // Phase A P1): separate snapshot file, same D28 data dir
+                    // and journal discipline. Never share the snapshot file
+                    // with the scenario forecast store — the two record
+                    // histories never mix.
+                    Some(scenarios_data_dir.join("equity_forecasts.json")),
                 ))),
                 std::sync::Mutex::new(None),
                 std::sync::Mutex::new(HashSet::new()),

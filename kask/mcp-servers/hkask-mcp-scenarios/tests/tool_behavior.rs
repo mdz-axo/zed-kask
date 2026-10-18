@@ -10,6 +10,7 @@
 
 #![cfg(test)]
 
+use hkask_mcp_scenarios::equity_forecast::StoredEquityForecast;
 use hkask_mcp_scenarios::requests::{
     AssessRequest, BrainstormRequest, CalibrateRequest, FrameDocumentRequest, OutcomeEntry,
     PosteriorEvidenceEntry, PosteriorsRequest, QuantifyRequest, ScoreRequest, StatusRequest,
@@ -18,11 +19,18 @@ use hkask_mcp_scenarios::requests::{
 use hkask_mcp_scenarios::types::{
     EventDependency, ScenarioEvent, ScenarioType, SubQuestion, TimeHorizon,
 };
-use hkask_mcp_scenarios::{ForecastStore, ProjectStore, ScenariosServer};
+use hkask_mcp_scenarios::{ForecastStore, JournalStore, ProjectStore, ScenariosServer};
 use hkask_types::WebID;
 use rmcp::handler::server::wrapper::Parameters;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
+
+// The equity forecast store (ported from the companies server, Phase A P1)
+// is in-memory in every behavior test: no test asserts on-disk equity
+// persistence yet; None keeps the clean-slate state every test starts from.
+fn equity_forecast_store() -> Arc<Mutex<JournalStore<StoredEquityForecast>>> {
+    Arc::new(Mutex::new(JournalStore::new(None)))
+}
 
 /// Build a server backed by an empty in-memory store and empty caches — the
 /// clean-slate state every test starts from.
@@ -34,6 +42,7 @@ fn make_server() -> ScenariosServer {
     ScenariosServer::new(
         WebID::new(),
         forecast_store,
+        equity_forecast_store(),
         tree_cache,
         called_tools,
         project_store,
@@ -44,6 +53,7 @@ fn file_backed_server(path: &std::path::Path) -> ScenariosServer {
     ScenariosServer::new(
         WebID::new(),
         Arc::new(Mutex::new(ForecastStore::new(Some(path.to_path_buf())))),
+        equity_forecast_store(),
         Mutex::new(None),
         Mutex::new(HashSet::new()),
         Mutex::new(ProjectStore::new(None)),
@@ -56,6 +66,7 @@ fn project_backed_server(path: &std::path::Path) -> ScenariosServer {
     ScenariosServer::new(
         WebID::new(),
         Arc::new(Mutex::new(ForecastStore::new(None))),
+        equity_forecast_store(),
         Mutex::new(None),
         Mutex::new(HashSet::new()),
         Mutex::new(ProjectStore::new(Some(path.to_path_buf()))),

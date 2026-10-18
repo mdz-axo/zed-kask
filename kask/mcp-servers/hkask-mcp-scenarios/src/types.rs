@@ -343,7 +343,7 @@ pub(crate) struct DragonflySynthesis {
 
 /// A single stored forecast awaiting or having received an outcome.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct StoredForecastRecord {
+pub struct StoredForecastRecord {
     /// Schema version for forward-compatible deserialization (current: 3).
     /// Old files without this field default to 0.
     /// v2 adds `category` for per-domain calibration.

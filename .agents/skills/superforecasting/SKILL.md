@@ -140,7 +140,7 @@ The former single inside-view step is split into three steps. Generation and cou
 4. Define what would count as resolution and what evidence will determine the outcome.
 5. Set an expiration date for when the forecast should be evaluated.
 
-> **No scoring at record time.** `scenario_score` requires outcomes; it runs only after the deadline, when the event has resolved (D — Brier computed by the server). Keep the record's tracking ID so the resolution can be scored then. For equity-price questions only, `forecast_persist` (companies server) stores a price target for later Brier scoring.
+> **No scoring at record time.** `scenario_score` requires outcomes; it runs only after the deadline, when the event has resolved (D — Brier computed by the server). Keep the record's tracking ID so the resolution can be scored then. For equity-price questions only, `forecast_persist` (scenarios server) stores a price target for later Brier scoring.
 
 ### forecast-quality-gate (P — decoupled critic: a separate render that evaluates, never generates; pass rule D)
 
