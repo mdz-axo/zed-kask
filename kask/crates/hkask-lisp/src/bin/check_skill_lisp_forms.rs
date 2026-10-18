@@ -742,8 +742,10 @@ form: "(= (+ a b) 3)"
         };
 
         let body = read(".agents/skills/pragmatic-semantics/SKILL.md");
+        // The carrier names the flag as the gate's env key does (`domain_anchored`),
+        // so a flag rename must be carried into both the gate and this spelling.
         let expected_constraint_line = format!(
-            "domain {domain_text}, SUMO {sumo_text}, spec_checked {spec_text}, unanchored -{unanchored_magnitude}"
+            "domain_anchored {domain_text}, SUMO {sumo_text}, spec_checked {spec_text}, unanchored -{unanchored_magnitude}"
         );
         assert!(
             body.contains(&expected_constraint_line),
@@ -765,15 +767,20 @@ form: "(= (+ a b) 3)"
         let provenance =
             read("kask/registry/templates/pragmatic-semantics/semantics-provenance-trace.j2");
         assert!(
-            provenance.contains(&format!("domain ({domain_text}), SUMO ({sumo_text})")),
+            provenance.contains(&format!(
+                "domain supplement ({domain_text}), SUMO ({sumo_text})"
+            )),
             "semantics-provenance-trace.j2 must carry the gate's modifiers \
-             (domain {domain_text}, SUMO {sumo_text})"
+             (domain supplement {domain_text}, SUMO {sumo_text})"
         );
 
         let classify =
             read("kask/registry/templates/pragmatic-semantics/semantics-classify-statement.j2");
+        // The domain-supplement modifier is stated at the rung level (the
+        // template's Constraints prose), not as a per-namespace table row: the
+        // rung carries the +0.05, so no single supplement owns it.
         assert!(
-            classify.contains(&format!("| **domain supplement** | {domain_text} |")),
+            classify.contains(&format!("domain-supplement ({domain_text})")),
             "semantics-classify-statement.j2 must carry the gate's domain modifier ({domain_text})"
         );
         assert!(
