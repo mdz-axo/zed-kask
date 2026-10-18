@@ -109,15 +109,12 @@ The former single inside-view step is split into three steps. Generation and cou
 2. Identify clashing causal forces pushing toward YES vs. NO.
 3. Steelman the strongest opposing arguments, making them as persuasive as possible — the book's Commandment 9 perspective-taking discipline ("understanding the arguments of the other side so well that you can reproduce them to the other's satisfaction"). The team-management halves of Commandment 9 (precision questioning, constructive confrontation) are DEFERRED, not dismissed: the book's finding is that teams were 23% more accurate than individuals, a superforecaster on a superteam became 50% more accurate, and superteams beat prediction markets by 15-30% — a single-agent pipeline cannot capture the interpersonal half; the platform's swarm machinery is the future path.
 4. Generate 3-5 distinct causal models, each with an implied probability.
-5. Apply MCDA-style weighted aggregation: score each model against evidence alignment, reference class stability, causal mechanism clarity, and model confidence criteria. Compute composite scores and detect compensation masking.
-6. Synthesize an integrated probability using the MCDA-weighted average of model probabilities via `lisp_eval` — one `(* m_i c_i)` term per model, normalized by the composite-score sum. Each `c_i` is the sum of that model's four criterion scores from the template output. The result is the `synthesized_probability` passed to stage 6; the template's `synthesized_probability_judgment` is a cross-check only:
-   - form: "(/ (+ (* m1 c1) (* m2 c2) (* m3 c3)) (+ c1 c2 c3))"
-   - env: `{ "m1": <model 1 probability>, "c1": <model 1 composite score>, "m2": ..., "c2": ..., "m3": ..., "c3": ... }`
-
-   The pinned form is the 3-model case; a 4- or 5-model synthesis (step 4's
-   3-5 range) extends both sums with the additional `(* mN cN)` numerator term
-   and its `cN` denominator term, and the env gains the matching `mN`/`cN`
-   bindings.
+5. Apply MCDA-style weighted aggregation: score each model against evidence alignment, reference class stability, causal mechanism clarity, and model confidence criteria. Keep only the four raw criterion scores and `implied_probability` in each causal-model row; `compensation_warning` remains the model's semantic warning.
+6. Synthesize an integrated probability with `lisp_eval` directly over the raw `causal_models` array. The form validates 3–5 models, implied probabilities in [0,1], and every criterion score in [1,10]; it derives each composite, the normalized model weights, and the weighted probability. No caller- or model-typed `c_i`/weight is accepted:
+   - form: `(begin (define score-ok (lambda (x) (and (numberp x) (>= x 1) (<= x 10)))) (define composite (lambda (m) (let ((s (assoc "mcda_criteria_scores" m))) (+ (assoc "evidence_alignment" s) (assoc "reference_class_stability" s) (assoc "causal_mechanism_clarity" s) (assoc "model_confidence" s))))) (define valid (lambda (m) (let ((s (assoc "mcda_criteria_scores" m)) (p (assoc "implied_probability" m))) (and (listp m) (listp s) (stringp (assoc "model_name" m)) (> (length (assoc "model_name" m)) 0) (numberp p) (>= p 0) (<= p 1) (score-ok (assoc "evidence_alignment" s)) (score-ok (assoc "reference_class_stability" s)) (score-ok (assoc "causal_mechanism_clarity" s)) (score-ok (assoc "model_confidence" s)))))) (define all-valid (lambda (ms) (if (is_null ms) true (and (valid (car ms)) (all-valid (cdr ms)))))) (define weighted (lambda (ms) (if (is_null ms) 0 (+ (* (assoc "implied_probability" (car ms)) (composite (car ms))) (weighted (cdr ms)))))) (define total (lambda (ms) (if (is_null ms) 0 (+ (composite (car ms)) (total (cdr ms)))))) (define collect (lambda (ms den) (if (is_null ms) (list) (cons (list (assoc "model_name" (car ms)) (composite (car ms)) (/ (composite (car ms)) den) (assoc "compensation_warning" (car ms))) (collect (cdr ms) den))))) (if (and (>= (length causal_models) 3) (<= (length causal_models) 5) (all-valid causal_models)) (let ((den (total causal_models))) (list (/ (weighted causal_models) den) (collect causal_models den))) (list nil "invalid_models")))`
+   - env: `{ "causal_models": <stage_5_synthesis.causal_models verbatim> }`
+   - returns `[synthesized_probability, [[model_name, composite, normalized_weight, compensation_warning], ...]]`; `[null, "invalid_models"]` blocks stage 6 and names a stage-5 repair.
+   The template's `synthesized_probability_judgment` is a non-authoritative holistic cross-check only; compare it with the computed value and report the disagreement, never average them.
 7. Aggregate the judgments of different models, noting where they agree and diverge.
 
 ### stage_6_calibration (P — calibration: `scenario_calibrate`, which applies the learned overconfidence bias when ≥5 resolved forecasts exist)
@@ -235,8 +232,10 @@ once with the deadline omitted (the triage must refuse to proceed rather
 than invent one). Run the eight pinned `lisp_eval` forms with representative
 envs: `SF-1` passes only when `triage_zone` is `"goldilocks"`, `scenario_triage_class` is `"well_specified"` or `"goldilocks"`, and `resolution_criteria`/`resolution_deadline` are non-empty; the stage-2 rate check returns `invalid` on a zero sample and the
 computed rate otherwise; the anchor check bounds `p` to [0, 1]; the stage-4
-posterior form updates a prior; the stage-5 weighted average synthesizes the
-3-model case (extend the sums for more models); `SF-2` flags compensation masking and verifies `range_low <= final_probability <= range_high` with `range_low < range_high`; the gate form passes only
+posterior form updates a prior; the stage-5 raw-model form derives composites,
+normalized weights and synthesized probability for valid 3-, 4- and 5-model
+arrays, and returns `[null, "invalid_models"]` for an out-of-range score,
+probability, blank model name or wrong model count; `SF-2` flags compensation masking and verifies `range_low <= final_probability <= range_high` with `range_low < range_high`; the gate form passes only
 when all four scores are >= 0.60; the market-prior gate requires
 `stale_buckets = 0` and `without_snapshot_rate < 0.2`.
 

@@ -1,6 +1,6 @@
 ---
 name: verification-compression
-description: "Compress and accelerate a software verification workflow without losing expectation coverage, falsifiers, failure visibility, provenance strength, or fault-detection signal. Builds a typed verification graph, composes kata-improvement, falsifiability, refactor-architecture, essentialist, and lean-prover, proves graph-preservation obligations in Lean, and accepts reductions only after fixed-oracle before/after experiments."
+description: "Compress and accelerate a software verification workflow without losing current expectation coverage, falsifiers, failure visibility, provenance strength, or fault-detection signal. First retires historical tombstones that lack a live disturbance channel; then builds a typed verification graph, composes kata-improvement, falsifiability, refactor-architecture, essentialist, and lean-prover, proves graph-preservation obligations in Lean, and accepts reductions only after fixed-oracle before/after experiments."
 ---
 
 # Verification Compression
@@ -12,7 +12,9 @@ count or coverage percentage. It is a **signal key**:
 `(expectation_id, falsifier_id, oracle_kind, failure_class, provenance_tier)`.
 
 A check is redundant only when every signal key it carries is supplied by a
-retained check and representative harmful changes remain detectable.
+retained check and representative harmful changes remain detectable. Before
+that preservation analysis, a relevance gate separates current signals from
+historical tombstones: an existing test is not automatically a requirement.
 
 ## Grounding
 
@@ -38,16 +40,27 @@ retained check and representative harmful changes remain detectable.
 
 ## D/P labelling
 
-Typing the verification graph (expectations, falsifiers, oracle kinds,
-signal keys) and proposing reductions are P — judgment over the workflow's
-structure, critiqued by the composed skills (falsifiability's admissibility
-gate, essentialist's deletion test, refactor-architecture's ranking). The
-acceptance evidence is D: the Lean graph-preservation obligations compile or
-fail (the pinned toolchain — Lean proves the finite graph relation only,
-never that a test is a good oracle), and a reduction is accepted only after
-the fixed-oracle before/after experiment shows the retained checks still
-detect the representative harmful changes. A reduction without the
-experiment is a proposal, not an accepted compression.
+Typing relevance status, verification graphs, expectations, falsifiers, oracle
+kinds and signal keys is P — judgment over the workflow's structure, critiqued
+by the authorized contract, falsifiability and essentialist deletion tests. The
+VC-0 arithmetic and execution evidence are D. A tombstone retirement is accepted
+only when the decision record/authority are present, the artifact and stale
+references are gone, and the owning build plus retained tests pass. For current-
+signal compression, the stronger existing path remains: Lean graph-preservation
+obligations compile or fail, and the fixed-oracle before/after experiment must
+show representative harmful changes remain detectable. A current-signal
+reduction without that experiment is a proposal, not accepted compression.
+
+## Initial and target condition
+
+- **Initial condition:** the selected executable verification artifacts, their
+  authorized expectation contracts (if current), candidate retirement rulings
+  (if historical), live disturbance channels, oracle boundaries, invocation
+  graph, and measured cost only for dimensions the caller intends to claim.
+- **Target condition:** every artifact is classified; every current signal
+  retains authorized expectation/falsifier/oracle/channel/action/return-path
+  coverage; every tombstone's authority survives outside the executable suite;
+  and the cycle terminates in one named Convergence state within `max_cycles`.
 
 ## Composed skills
 
@@ -65,13 +78,17 @@ experiment is a proposal, not an accepted compression.
 - Verification commands repeat the same oracle or compile graph.
 - The user asks to minimize, compress, simplify, prioritize, or accelerate
   verification without lowering quality.
+- A historical tombstone test has no current expectation signal but still
+  executes or links on every check; retire it through the VC-0 fast path below,
+  preserving its decision authority outside the executable suite.
 - A proposed refactor needs evidence that removed checks carried no unique
   signal.
 
 ## When NOT to Use
 
 - The product behavior is currently broken or undiagnosed; use `diagnose`.
-- No expectation contract or harmful counterexample exists.
+- No expectation contract or harmful counterexample exists **and** the artifact
+  is not a classified historical tombstone with a durable removal ruling.
 - The only proposed metric is test count, annotation count, or code coverage.
 - A formal claim concerns I/O, timing, floating point, or external effects that
   the Lean model does not represent; retain empirical tests for those claims.
@@ -86,9 +103,11 @@ Record before starting:
 - `mode`: `analyze` or `execute`;
 - `authorized_contract`: user decision or canonical specification;
 - `required_expectations`: expectation IDs and falsifiers;
-- `sample_count`: at least 2 comparable timed runs per claimed timing state; 3 is preferred;
-- `timing_scope`: `cold`, `warm`, or `both`; select before measuring;
-  unselected states are `not_run` and earn no speedup claim;
+- `sample_count`: at least 2 comparable timed runs per **claimed** timing state;
+  3 is preferred. Tombstone retirement needs no timing experiment unless the
+  report claims speed/resource improvement;
+- `timing_scope`: `cold`, `warm`, `both`, or `not_run`; select before measuring.
+  `not_run` earns no speedup claim;
 - `compression_target` and `speed_target`: caller-selected, never hidden;
 - `max_cycles`: 1–3, default 2.
 
@@ -99,7 +118,90 @@ verification code.
 
 ### PLAN — Direction and current condition
 
-1. Call `skill` for `kata-improvement`. Execute its direction and current-
+0. Run the semantic/cybernetic relevance classification from
+   `kask/docs/reference/testing-protocol.md` before treating existing artifacts
+   as required signals. First read and render
+   `kask/registry/templates/verification-compression/inventory.j2` with the
+   selected artifacts, authorized contract, known expectations, and any timing
+   observations (an empty timing array is valid when no speed claim is made).
+   Its `relevance_classification` rows are the evidence input to VC-0; no
+   separately model-authored counters or disposition are accepted. For every
+   test/check/proof classify:
+   - the current authorized expectation and falsifier;
+   - the independently observed product boundary;
+   - the live disturbance channel that can still produce the harmful state;
+   - the corrective action and return path;
+   - the retirement trigger and its observed status (`pending` or `fired`); and
+   - for a tombstone, the durable non-executing decision record and retirement
+     authority.
+
+   Keep negative tests whose disturbance channel is mutable registry/config,
+   stale or persisted input, untrusted input, generated output, provider or
+   transport behavior, migration/cleanup, or upstream/rebase. A source-text
+   absence check with no **supported or automated** producer beyond deliberately
+   typing a retired name is not a current signal. Source-structure tests remain
+   current when upstream/rebase, code generation, or a repeated production
+   pattern is the live disturbance channel. A current signal whose retirement
+   trigger has fired must be reclassified in this same run: retain it only if
+   another live channel/current expectation remains; otherwise classify it as a
+   tombstone. Classify only the unsupported case as `tombstone` and retire it
+   after the ruling is preserved outside the executable suite. If any artifact
+   is unclassified, or a claimed current signal lacks a live
+   expectation/falsifier/channel/oracle/action/return path/retirement trigger,
+   stop; do not launder it into the required set.
+
+   Derive the branch mechanically from the rows and the exact selected artifact
+   inventory with VC-0. Every reference-bearing value uses a typed, machine-safe
+   nonblank string (`artifact:`, `expectation:`, `authority:`, `falsifier:`,
+   `boundary:`, `channel:`, `correction:`, `return:`, `trigger:`, `record:`).
+   The suffix starts immediately after the prefix (no leading whitespace) and
+   contains no template angle brackets, so an unfilled placeholder, whitespace,
+   or wrong JSON type cannot masquerade as evidence:
+
+   ```lisp
+   (begin
+     (define typed (lambda (prefix value) (and (stringp value) (starts-with prefix value) (> (length value) (length prefix)) (not (starts-with (concat prefix " ") value)) (not (starts-with (concat prefix "\t") value)) (not (starts-with (concat prefix "\n") value)) (not (string-contains "<" value)) (not (string-contains ">" value)))))
+     (define blank (lambda (value) (or (is_null value) (and (stringp value) (= (length value) 0)))))
+     (define status-is (lambda (row status) (and (stringp (assoc "status" row)) (string= (assoc "status" row) status))))
+     (define current-row (lambda (row) (and (status-is row "current_signal") (typed "artifact:" (assoc "artifact_id" row)) (typed "expectation:" (assoc "expectation_id" row)) (typed "authority:" (assoc "expectation_authority" row)) (typed "falsifier:" (assoc "falsifier_id" row)) (typed "boundary:" (assoc "observed_boundary" row)) (typed "channel:" (assoc "live_disturbance_channel" row)) (typed "correction:" (assoc "corrective_action" row)) (typed "return:" (assoc "return_path" row)) (typed "trigger:" (assoc "retirement_trigger" row)) (string= (assoc "retirement_trigger_status" row) "pending") (blank (assoc "decision_record" row)) (blank (assoc "retirement_authority" row)))))
+     (define tombstone-row (lambda (row) (and (status-is row "tombstone") (typed "artifact:" (assoc "artifact_id" row)) (blank (assoc "expectation_id" row)) (blank (assoc "expectation_authority" row)) (blank (assoc "falsifier_id" row)) (blank (assoc "observed_boundary" row)) (blank (assoc "live_disturbance_channel" row)) (blank (assoc "corrective_action" row)) (blank (assoc "return_path" row)) (typed "trigger:" (assoc "retirement_trigger" row)) (string= (assoc "retirement_trigger_status" row) "fired") (typed "record:" (assoc "decision_record" row)) (typed "authority:" (assoc "retirement_authority" row)))))
+     (define valid-row (lambda (row) (or (current-row row) (tombstone-row row))))
+     (define count-invalid (lambda (rows) (if (is_null rows) 0 (+ (if (valid-row (car rows)) 0 1) (count-invalid (cdr rows))))))
+     (define count-status (lambda (rows status) (if (is_null rows) 0 (+ (if (status-is (car rows) status) 1 0) (count-status (cdr rows) status)))))
+     (define ids (lambda (rows) (if (is_null rows) nil (cons (assoc "artifact_id" (car rows)) (ids (cdr rows))))))
+     (define unique (lambda (xs) (if (is_null xs) t (and (not (member (car xs) (cdr xs))) (unique (cdr xs))))))
+     (define all-in (lambda (xs ys) (if (is_null xs) t (and (member (car xs) ys) (all-in (cdr xs) ys)))))
+     (let ((expected (ids artifact_inventory)) (actual (ids relevance_classification)) (invalid (count-invalid relevance_classification)) (current (count-status relevance_classification "current_signal")) (tombstones (count-status relevance_classification "tombstone")))
+       (let ((bijection (and (> (length expected) 0) (= (length expected) (length actual)) (unique expected) (unique actual) (all-in expected actual) (all-in actual expected))))
+         (let ((gate (and bijection (= invalid 0))))
+           (list (list "gate_passed" gate) (list "row_bijection" bijection) (list "invalid_rows" invalid) (list "disposition" (if gate (cond ((= current 0) "tombstone_fast_path") ((= tombstones 0) "full_preservation") (t "partition_required")) "blocked")))))))
+   ```
+
+   Env: `{ "artifact_inventory": <selected artifact rows>,
+   "relevance_classification": <inventory output rows> }`; call `lisp_eval`
+   with `max_steps: 1000000` and default `max_depth`. `blocked` returns to
+   classification. `partition_required` splits the selection into tombstone and
+   current-signal inventories and reruns step 0 on each; it never sends
+   zero-signal tombstones through the current-signal proof path.
+   `full_preservation` admits only current signals to `required_expectations`;
+   `tombstone_fast_path` admits no invented signal keys.
+
+     **Tombstone fast path:** when every selected artifact is a tombstone and each
+     has a durable decision record, do not manufacture a harmful mutation, signal
+     mapping, Lean proof, or before/after oracle for an empty current-signal set.
+     Preserve/move the ruling, delete the executable artifact plus stale
+     references/fixtures/dependencies, run the owning package's build and relevant
+     retained suite, and sweep the repository for deleted identifiers/paths. Record
+     removed test binaries and workflow nodes/edges. Report speed/resource change
+     only from observed comparable samples; otherwise mark it `not_measured`.
+     Converge as `tombstone_retired`. Mixed selections are partitioned by VC-0;
+     only the current-signal partition executes the full steps 1–15. For a
+     tombstone-only selection, execute this fast path and jump directly to
+     Convergence/reporting; steps 1–13's graph proof, mutation and timing
+     experiment are not applicable.
+
+1. Call `skill` for `kata-improvement` only on the `full_preservation` path.
+   Execute its direction and current-
    condition steps over the target. Measure rather than estimate:
    - verification-workflow command/test/script/fixture/proof/checker nodes;
    - production code crate/module/function/type nodes in the chosen scope;
@@ -107,11 +209,13 @@ verification code.
      production `calls` / `uses` edges, with file:line evidence;
    - wall time, toolchain, cache state, environment, and sample count;
    - every signal key and its producing artifact.
-2. Call `read_file` for
-   `kask/registry/templates/verification-compression/inventory.j2` and produce
-   its JSON shape. Keep observations separate from interpretations. Populate
-   `measurement_context` with toolchain, environment/cache identity, source and
-   oracle hashes, sample count, and raw evidence paths.
+2. Reuse the inventory rendered in step 0. On `full_preservation`, enrich its
+   `measurement_context`, verification graph and timing observations after
+   measurement; re-render if those inputs changed. On `tombstone_fast_path`,
+   the step-0 classification receipt is the inventory receipt and no graph
+   proof rows are invented. Only `current_signal` rows enter `signal_keys`; every
+   `tombstone` row names its durable decision record, retirement authority,
+   retirement trigger and fired status.
 3. Call `lisp_eval` to ensure every required expectation has at least one
    baseline signal:
    - form: `(and (= (assoc "missing_expectations" gate) 0) (= (assoc "unfalsifiable_expectations" gate) 0))`
@@ -120,18 +224,22 @@ verification code.
 
 ### DO — Falsify, architect, and eliminate
 
-4. Call `skill` for `falsifiability`. Test the claim “artifact X carries unique
-   verification signal.” Generate at least these alternatives: unique signal,
-   duplicate signal, weak/oracle-substitution signal, and orchestration-only
-   overhead. Design discriminating harmful changes or fault injections; plain
-   coverage does not discriminate.
+4. Call `skill` for `falsifiability`. For `current_signal` artifacts, test the
+   claim “artifact X carries unique verification signal.” Generate at least
+   these alternatives: unique signal, duplicate signal, weak/oracle-substitution
+   signal, and orchestration-only overhead. Design discriminating harmful
+   changes or fault injections; plain coverage does not discriminate. A VC-0
+   tombstone has no current falsifier by definition and uses the fast path; do
+   not invent a mutation solely to justify deleting it.
 5. Call `skill` for `refactor-architecture`. Explore the verification graph,
    rank deepening candidates, audit duplicated operations, and select one
    candidate only. Do not refactor multiple domains in one cycle.
 6. Call `skill` for `essentialist`. Run Exist → Surface → Contract in advisory
    mode unless the operator explicitly authorized autonomous simplification.
-   A removal candidate survives only when its signal-key set is a subset of
-   retained signal and its discriminating faults are still detected.
+   A current-signal removal candidate survives only when its signal-key set is a
+   subset of retained signal and its discriminating faults are still detected.
+   A tombstone fails EXIST because no current behavior is lost; its historical
+   rationale must already survive in the named decision record.
 7. Call `read_file` for
    `kask/registry/templates/verification-compression/elimination.j2` and produce
    a candidate graph plus an explicit removed→retained signal mapping.
@@ -256,6 +364,9 @@ verification code.
 
 A cycle converges as one of:
 
+- `tombstone_retired`: VC-0 classified the selected artifacts as tombstones,
+  every ruling is preserved outside the executable suite, deletion/reference
+  sweeps are clean, and the owning build/retained tests pass;
 - `compressed_preserved`: preservation gate true and a target met;
 - `retained_targets_missed`: preservation passed but no target met; retained
   only with operator approval;
@@ -270,7 +381,14 @@ measured remainder to the operator.
 
 ## Constraints
 
-- Signal preservation is a hard gate; speed and graph size cannot compensate.
+- Existing verification artifacts are candidates, not authority. Run VC-0
+  before preservation; a historical tombstone with no live disturbance channel
+  never becomes a required signal merely because it is already a test. Do not
+  route an empty current-signal set through proof or fault injection—the
+  tombstone fast path verifies decision-record transfer, cleanup, and retained
+  suite health instead.
+- Signal preservation is a hard gate for current signals; speed and graph size
+  cannot compensate.
 - Lean proves only the declared finite graph model. Empirical tests remain the
   authority for runtime behavior, failures, I/O, timing, and integration.
 - No `sorry`, axioms introduced for convenience, or uncompiled proof text.
@@ -309,9 +427,24 @@ Template context variables (from each template's [inference] contract):
 
 ## Regression case
 
-Run the four pinned `lisp_eval` forms through the live tool with representative
+Run the five pinned `lisp_eval` forms through the live tool with representative
 stub envs, BOTH directions per gate:
 
+- **Relevance/classification form**: run VC-0 with `max_steps: 1000000` over
+  at least these branches: exact one-to-one complete current rows →
+  `gate_passed=true` + `full_preservation`; exact one-to-one fired tombstone
+  rows → `gate_passed=true` + `tombstone_fast_path`; mixed complete rows →
+  `partition_required`; missing/duplicate/extra IDs, whitespace or wrong-typed
+  references, an unsubstituted `<placeholder>`, missing authority/channel/trigger,
+  a current signal with a fired trigger, or a tombstone whose trigger is not
+  fired → `blocked`.
+
+- **Tombstone branch**: a source-text absence test with no current expectation
+  or live disturbance channel, plus a durable decision record, enters the fast
+  path; deleting it and sweeping its path/identifier can reach
+  `tombstone_retired` without invented signal mappings or a vacuous Lean proof.
+  The paired control is a negative test over stale persisted input or a mutable
+  registry: it remains `current_signal` and cannot enter the fast path.
 - **Inventory gate**: true when `missing_expectations` and
   `unfalsifiable_expectations` are both 0; FALSE when either is nonzero.
 - **Preservation gate**: true when all seven count fields are 0 and

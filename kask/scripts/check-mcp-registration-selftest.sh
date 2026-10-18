@@ -10,9 +10,11 @@
 # pin, so "mentions the name" was never equivalent to "carries the pin".
 #
 # Cases below are a matched set: every bypass shape must FAIL, and every real
-# invocation shape in-tree must PASS. A detector that rejects bypasses by
-# rejecting everything is not hardened, it is broken — cases 5-8 are the
-# control half that catches that.
+# invocation shape accepted by Rust must PASS. A detector that rejects bypasses
+# by rejecting everything is not hardened, it is broken — the positive cases
+# are the control half that catches that. The gate must use the repository's
+# pinned Rust parser: legal whitespace before `!` and all three macro
+# delimiters are syntax, while comments and strings are not macro invocations.
 #
 # Design: a synthetic server tree under a temp dir, with LIST and SERVERS_DIR
 # pointed at it. Each case writes one source shape and asserts the gate's exit
@@ -79,22 +81,36 @@ run_case "case 4 — prose mention only (no invocation)" 1 \
 '// Mirrors the shared tool_surface_pin! macro every built-in server carries.
 fn main() {}'
 
-# ── Real shapes: each occurs in-tree today; the gate must exit 0. ──────────
+run_case "case 5 — pin nested in an unconditionally disabled module" 1 \
+'#[cfg(any())]
+mod disabled {
+    tool_surface_pin!(SERVER, TOOL_NAMES);
+}'
 
-run_case "case 5 — qualified multi-line invocation" 0 \
+# ── Real shapes: Rust accepts each one; the gate must exit 0. ─────────────
+
+run_case "case 6 — qualified multi-line invocation" 0 \
 '    hkask_mcp_server::tool_surface_pin!(
         SERVER, TOOL_NAMES
     );'
 
-run_case "case 6 — bare unqualified invocation" 0 \
+run_case "case 7 — bare unqualified invocation" 0 \
 'tool_surface_pin!(SERVER, TOOL_NAMES);'
 
-run_case "case 7 — brace-delimited invocation" 0 \
+run_case "case 8 — brace-delimited invocation" 0 \
 'hkask_mcp_server::tool_surface_pin! {
     SERVER
 }'
 
-run_case "case 8 — real pin below a prose mention" 0 \
+run_case "case 9 — qualified invocation with legal whitespace before bang" 0 \
+'hkask_mcp_server::tool_surface_pin ! (
+    SERVER, TOOL_NAMES
+);'
+
+run_case "case 10 — bracket-delimited invocation" 0 \
+'tool_surface_pin![SERVER, TOOL_NAMES]'
+
+run_case "case 11 — real pin below a prose mention" 0 \
 '// the shared `tool_surface_pin!` macro every built-in server carries.
     hkask_mcp_server::tool_surface_pin!(
         SERVER, TOOL_NAMES
@@ -108,11 +124,11 @@ MISSING_OUT=$(LIST="$TMPDIR/mcp-servers.txt" SERVERS_DIR="$TMPDIR/servers" bash 
 MISSING_RC=$?
 set -e
 if [ "$MISSING_RC" -ne 1 ]; then
-  echo "FAIL (case 9 — listed server absent from disk): expected exit 1, got $MISSING_RC"
+  echo "FAIL (case 12 — listed server absent from disk): expected exit 1, got $MISSING_RC"
   printf '%s\n' "$MISSING_OUT" | sed 's/^/    /'
   failures=$((failures + 1))
 else
-  echo "OK (case 9 — listed server absent from disk): exit 1 as expected"
+  echo "OK (case 12 — listed server absent from disk): exit 1 as expected"
 fi
 
 if [ "$failures" -eq 0 ]; then

@@ -23,6 +23,15 @@
 #   6. Clean control: all three sets agreeing must still exit 0.
 #   7. Residue tolerance: a directory with no Cargo.toml is not a crate and
 #      must not trip the gate.
+#   8. Multiplicity: duplicate entries in either declared inventory must fail;
+#      sorting must not erase evidence of a duplicated registration.
+#   9. Syntax: `binary:` text in Rust comments or strings is not a registry
+#      entry and must not create a phantom server.
+#  10. Disk identity: each manifest contributes its Cargo package name, and
+#      that package must agree with the enclosing server directory name.
+#  11. Registry vocabulary: every canonical entry must carry an
+#      `hkask-mcp-*` string literal; malformed binaries cannot be filtered out
+#      before reconciliation.
 #
 # Design: temp LIST_FILE, REGISTRY_FILE, OLD_REGISTRY_FILE and SERVERS_DIR are
 # populated
@@ -65,7 +74,7 @@ EOF
 
 cat > "$TMPDIR/mcp_servers.rs" <<'EOF'
 // selftest: registry contains a DIFFERENT server than the list.
-pub static BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
+pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
     BuiltinMcpServer { id: "selftest-only-in-registry", binary: "hkask-mcp-selftest-only-in-registry" },
 ];
 EOF
@@ -107,7 +116,7 @@ EOF
 
 cat > "$TMPDIR/mcp_servers-empty.rs" <<'EOF'
 // selftest: no BUILT_IN_MCP_SERVERS entries with a binary: field
-pub static BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[];
+pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[];
 EOF
 
 set +e
@@ -144,7 +153,7 @@ AGREED_LIST="$TMPDIR/agreed-list.txt"
 AGREED_REG="$TMPDIR/agreed-registry.rs"
 printf '%s\n' "hkask-mcp-alpha" > "$AGREED_LIST"
 {
-  printf 'pub static BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[\n'
+  printf 'pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[\n'
   printf '    BuiltinMcpServer { id: "alpha", binary: "hkask-mcp-alpha" },\n'
   printf '];\n'
 } > "$AGREED_REG"
@@ -157,7 +166,8 @@ run_disk_case() {
   sd="$(mktemp -d "$TMPDIR/servers-XXXXXX")"
   for d in "$@"; do
     mkdir -p "$sd/$d/src"
-    printf '[package]\nname = "%s"\n' "$d" > "$sd/$d/Cargo.toml"
+    printf '[package]\nname = "%s"\nversion = "0.0.0"\n' "$d" > "$sd/$d/Cargo.toml"
+    printf '%s\n' '// synthetic server crate' > "$sd/$d/src/lib.rs"
   done
   set +e
   out=$(LIST_FILE="$AGREED_LIST" REGISTRY_FILE="$AGREED_REG" \
@@ -190,7 +200,8 @@ run_disk_case "case 6 — clean three-way match" 0 hkask-mcp-alpha
 # must not trip the gate — otherwise an already-correct cleanup fails CI.
 RESIDUE_DIR="$TMPDIR/servers-residue"
 mkdir -p "$RESIDUE_DIR/hkask-mcp-alpha/src" "$RESIDUE_DIR/hkask-mcp-leftover"
-printf '[package]\nname = "hkask-mcp-alpha"\n' > "$RESIDUE_DIR/hkask-mcp-alpha/Cargo.toml"
+printf '[package]\nname = "hkask-mcp-alpha"\nversion = "0.0.0"\n' > "$RESIDUE_DIR/hkask-mcp-alpha/Cargo.toml"
+printf '%s\n' '// synthetic server crate' > "$RESIDUE_DIR/hkask-mcp-alpha/src/lib.rs"
 set +e
 CASE7_OUT=$(LIST_FILE="$AGREED_LIST" REGISTRY_FILE="$AGREED_REG" \
   OLD_REGISTRY_FILE="$TMPDIR/hkask_mcp_server.rs" \
@@ -204,9 +215,131 @@ if [ "$CASE7_RC" -ne 0 ]; then
 else
   echo "OK (case 7 — manifest-less residue dir): gate counted crates, not bare dirs"
 fi
+# Case 8: duplicate installer entry. The set is unchanged, but the inventory
+# has two declarations; normalizing with `sort -u` must not hide that defect.
+DUP_LIST="$TMPDIR/duplicate-list.txt"
+printf '%s\n%s\n' "hkask-mcp-alpha" "hkask-mcp-alpha" > "$DUP_LIST"
+set +e
+CASE8_OUT=$(LIST_FILE="$DUP_LIST" REGISTRY_FILE="$AGREED_REG" \
+  OLD_REGISTRY_FILE="$TMPDIR/hkask_mcp_server.rs" \
+  SERVERS_DIR="$RESIDUE_DIR" bash "$GATE" 2>&1)
+CASE8_RC=$?
+set -e
+if [ "$CASE8_RC" -ne 1 ]; then
+  echo "FAIL (case 8 — duplicate installer entry): expected exit 1, got $CASE8_RC"
+  printf '%s\n' "$CASE8_OUT" | sed 's/^/    /'
+  failures=$((failures + 1))
+else
+  echo "OK (case 8 — duplicate installer entry): multiplicity preserved"
+fi
+
+# Case 9: duplicate runtime binary. One binary registered twice is likewise
+# not a one-to-one inventory even though the normalized set equals the list.
+DUP_REG="$TMPDIR/duplicate-registry.rs"
+{
+  printf 'pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[\n'
+  printf '    BuiltinMcpServer { id: "alpha", binary: "hkask-mcp-alpha" },\n'
+  printf '    BuiltinMcpServer { id: "alpha-copy", binary: "hkask-mcp-alpha" },\n'
+  printf '];\n'
+} > "$DUP_REG"
+set +e
+CASE9_OUT=$(LIST_FILE="$AGREED_LIST" REGISTRY_FILE="$DUP_REG" \
+  OLD_REGISTRY_FILE="$TMPDIR/hkask_mcp_server.rs" \
+  SERVERS_DIR="$RESIDUE_DIR" bash "$GATE" 2>&1)
+CASE9_RC=$?
+set -e
+if [ "$CASE9_RC" -ne 1 ]; then
+  echo "FAIL (case 9 — duplicate runtime binary): expected exit 1, got $CASE9_RC"
+  printf '%s\n' "$CASE9_OUT" | sed 's/^/    /'
+  failures=$((failures + 1))
+else
+  echo "OK (case 9 — duplicate runtime binary): multiplicity preserved"
+fi
+
+# Case 10: registry comment/string decoys. A textual `binary:` extractor sees
+# two phantom servers here; the Rust AST must see exactly one struct literal.
+DECOY_REG="$TMPDIR/decoy-registry.rs"
+cat > "$DECOY_REG" <<'EOF'
+// BuiltinMcpServer { id: "ghost", binary: "hkask-mcp-ghost" },
+const DOC: &str = r#"BuiltinMcpServer { id: "phantom", binary: "hkask-mcp-phantom" }"#;
+const OTHER_SERVER: BuiltinMcpServer = BuiltinMcpServer {
+    id: "other",
+    binary: "hkask-mcp-other",
+};
+pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
+    BuiltinMcpServer { id: "alpha", binary: "hkask-mcp-alpha" },
+];
+EOF
+set +e
+CASE10_OUT=$(LIST_FILE="$AGREED_LIST" REGISTRY_FILE="$DECOY_REG" \
+  OLD_REGISTRY_FILE="$TMPDIR/hkask_mcp_server.rs" \
+  SERVERS_DIR="$RESIDUE_DIR" bash "$GATE" 2>&1)
+CASE10_RC=$?
+set -e
+if [ "$CASE10_RC" -ne 0 ]; then
+  echo "FAIL (case 10 — registry comment/string decoys): expected exit 0, got $CASE10_RC"
+  printf '%s\n' "$CASE10_OUT" | sed 's/^/    /'
+  failures=$((failures + 1))
+else
+  echo "OK (case 10 — registry comment/string decoys): only Rust struct literals counted"
+fi
+
+# Case 11: manifest package identity agrees with list/registry but differs
+# from its directory. The review requires both independently derived sets, so
+# Cargo identity must not erase the directory inventory.
+MISMATCH_DIR="$TMPDIR/servers-package-mismatch"
+mkdir -p "$MISMATCH_DIR/hkask-mcp-alpha/src"
+printf '[package]\nname = "hkask-mcp-other"\nversion = "0.0.0"\n' \
+  > "$MISMATCH_DIR/hkask-mcp-alpha/Cargo.toml"
+printf '%s\n' '// target' > "$MISMATCH_DIR/hkask-mcp-alpha/src/lib.rs"
+MISMATCH_LIST="$TMPDIR/mismatch-list.txt"
+MISMATCH_REG="$TMPDIR/mismatch-registry.rs"
+printf '%s\n' "hkask-mcp-other" > "$MISMATCH_LIST"
+{
+  printf 'pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[\n'
+  printf '    BuiltinMcpServer { id: "other", binary: "hkask-mcp-other" },\n'
+  printf '];\n'
+} > "$MISMATCH_REG"
+set +e
+CASE11_OUT=$(LIST_FILE="$MISMATCH_LIST" REGISTRY_FILE="$MISMATCH_REG" \
+  OLD_REGISTRY_FILE="$TMPDIR/hkask_mcp_server.rs" \
+  SERVERS_DIR="$MISMATCH_DIR" bash "$GATE" 2>&1)
+CASE11_RC=$?
+set -e
+if [ "$CASE11_RC" -ne 1 ]; then
+  echo "FAIL (case 11 — directory/package mismatch): expected exit 1, got $CASE11_RC"
+  printf '%s\n' "$CASE11_OUT" | sed 's/^/    /'
+  failures=$((failures + 1))
+else
+  echo "OK (case 11 — directory/package mismatch): both disk identities preserved"
+fi
+
+# Case 12: malformed binary in an otherwise valid canonical registry. The
+# extractor must surface it, not filter it away before list comparison.
+MALFORMED_REG="$TMPDIR/malformed-registry.rs"
+cat > "$MALFORMED_REG" <<'EOF'
+pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
+    BuiltinMcpServer { id: "alpha", binary: "hkask-mcp-alpha" },
+    BuiltinMcpServer { id: "malformed", binary: "custom-server" },
+];
+EOF
+set +e
+CASE12_OUT=$(LIST_FILE="$AGREED_LIST" REGISTRY_FILE="$MALFORMED_REG" \
+  OLD_REGISTRY_FILE="$TMPDIR/hkask_mcp_server.rs" \
+  SERVERS_DIR="$RESIDUE_DIR" bash "$GATE" 2>&1)
+CASE12_RC=$?
+set -e
+if [ "$CASE12_RC" -ne 1 ]; then
+  echo "FAIL (case 12 — malformed registry binary): expected exit 1, got $CASE12_RC"
+  printf '%s\n' "$CASE12_OUT" | sed 's/^/    /'
+  failures=$((failures + 1))
+else
+  echo "OK (case 12 — malformed registry binary): invalid canonical entry surfaced"
+fi
+
 if [ "$failures" -eq 0 ]; then
   echo ""
-  echo "SELFTEST OK: mcp-servers gate is alive (list/registry drift, empty guard, and all disk-reconciliation directions detected)"
+  echo "SELFTEST OK: mcp-servers reconciles directory, manifest, installer, and Rust registry identities with multiplicity and residue controls"
   exit 0
 else
   echo ""

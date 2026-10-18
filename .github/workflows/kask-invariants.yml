@@ -302,6 +302,15 @@ jobs:
         run: printf 'pcm.!default { type null }\n' | sudo tee /etc/asound.conf
       - name: Kask subtree — cargo test (hkask-* + kask_bridge; fails if zero tests ran)
         run: bash kask/scripts/cargo-test-nonzero.sh --tests --no-fail-fast -p 'hkask-*' -p kask_bridge -- --test-threads=1
+      - name: MCP registration pins — every server's exact-name pin executes
+        run: |
+          while IFS= read -r server; do
+            case "$server" in
+              ''|'#'*) continue ;;
+            esac
+            bash kask/scripts/cargo-test-nonzero.sh \
+              -p "$server" tool_names_match_live_router -- --test-threads=1
+          done < kask/scripts/build/mcp-servers.txt
       - name: MCP reconnect — isolated fixture processes (serial; fails if zero tests ran)
         run: bash kask/scripts/cargo-test-nonzero.sh --locked -p hkask-mcp --features test-fixture --test reconnect_integration -- --test-threads=1
       - name: Test evidence — real failure, correction, and rejection controls

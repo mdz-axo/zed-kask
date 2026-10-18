@@ -52,17 +52,22 @@ Emit one JSON object with exactly this shape:
   "routing_plan": [
     {
       "step": 1,
+      "depends_on": ["<earlier numeric step ids this step consumes; [] when none>"],
       "region": "SD | SP | Sem-D | Sem-P",
       "tools": ["<named tool(s) from the available set>"],
-      "gate": "<named deterministic oracle that collapses this step's output; null only for Sem-P steps with no cheap oracle, and then the verification state is named in the plan>",
+      "gate": "<named deterministic oracle for this step AND any cross-region input handoff; null only for Sem-P with no cheap oracle and no cross-region dependency>",
+      "verification_state": "<required when a Sem-P step has no cheap gate; null otherwise>",
       "role": "operator | curator | agent",
-      "checkpoint": "<operator-confirm question at scope-changing Sem-P steps, or the gate that must pass at a cross-region handoff; null when neither applies>"
+      "changes_scope": false,
+      "checkpoint": "<operator-confirm question when changes_scope=true on Sem-P; otherwise a useful handoff note or null>"
     }
   ]
 }
 
-Every generating step (SP, Sem-P) names its gate or carries null together
-with the named verification state; every scope-changing semantic step names
-the operator checkpoint question. Deriving the plan from the region
-definitions rather than habit is the point of the exercise. Produce only
-the JSON object.
+Every step lists its prior-step dependencies. Every non-Sem-P step names a gate;
+a Sem-P step may carry a null gate only when it has no cheap oracle and then it
+names `verification_state`. A cross-region dependency always names the consuming
+step's handoff gate. Every scope-changing Sem-P step sets `changes_scope: true`
+and names the operator checkpoint question. Deriving the plan from the region
+definitions rather than habit is the point of the exercise. Produce only the
+JSON object.

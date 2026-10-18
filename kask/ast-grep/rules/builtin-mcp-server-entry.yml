@@ -1,0 +1,19 @@
+# Extract only the `binary` field initializer inside concrete
+# BuiltinMcpServer literals belonging to the canonical registry constant.
+# Field order is irrelevant; comments, strings, and other constants cannot
+# match this scoped AST node.
+id: builtin-mcp-server-entry
+language: Rust
+severity: hint
+message: "built-in MCP server registry entry"
+rule:
+  pattern:
+    context: 'BuiltinMcpServer { binary: $BINARY }'
+    selector: field_initializer
+  inside:
+    stopBy: end
+    kind: const_item
+    has:
+      field: name
+      kind: identifier
+      regex: '^BUILT_IN_MCP_SERVERS$'

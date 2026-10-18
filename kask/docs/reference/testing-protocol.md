@@ -1,8 +1,8 @@
 ---
 title: "kask Testing Protocol: Expectation Contracts and Evidence"
 audience: [developers, architects, agents, operators]
-last_updated: 2026-09-28
-version: "1.5.0"
+last_updated: 2026-10-17
+version: "1.6.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [composition, trust]
@@ -42,6 +42,7 @@ domain plan; no new manifest or framework is required:
 | Relevant variables | Which inputs, states, identities, timing, and failures can change the outcome? |
 | Allowed variation | Which names, representations, algorithms, private calls, or ordering are incidental and may change? |
 | Falsifier and oracle | What observation contradicts the expectation, and how is it measured independently of the implementation? |
+| Live disturbance and retirement trigger | Which reachable producer can create the harmful state, and what event makes this check obsolete? |
 | Authority | Which user decision establishes the contract, and is any curator delegation explicitly scoped? |
 
 Only the user, or a curator explicitly delegated that responsibility by the
@@ -57,6 +58,57 @@ Challenge both sides: would a harmful outcome fail, and would an equivalent or
 better implementation still pass? Vary irrelevant inputs in metamorphic tests
 where possible. Do not equate a copied production algorithm with an independent
 oracle, or weaken generators/assumptions to hide counterexamples.
+
+### Semantic and cybernetic relevance
+
+An executable check belongs only while it regulates a **current authorized
+expectation** through a **live disturbance channel**:
+
+1. **Sense:** the oracle observes a product boundary or state independently of
+   the implementation detail it judges.
+2. **Compare:** an authorized expectation and falsifier define good versus bad.
+3. **Disturbance:** a reachable producer can still create the bad state. Live
+   producers include mutable registries/configuration, untrusted or stale
+   persisted input, generated code/data, provider or transport behavior,
+   upstream/rebase changes, and migration/cleanup paths.
+4. **Act and return:** failure identifies corrective work, and the correction is
+   observable through the same boundary.
+
+A source-text absence check whose only disturbance is an unaided, deliberate
+source edit recreating a retired name is a historical **tombstone**, not a
+feedback loop. A rebase, code generator, migration, deserializer, provider,
+external input, or mutable registry is a live producer; a developer can always
+type arbitrary code, but that alone does not justify an executable check. A
+tombstone must not run on every check or contribute to passing-test counts.
+Retire it when:
+
+- no current product expectation depends on the removed artifact;
+- no live producer can recreate the harmful state through a supported boundary;
+- no stale data, external input, generated output, upstream/rebase, or migration
+  path still needs rejection or cleanup; and
+- the removal authority and rationale live in a durable decision record outside
+  the executable suite.
+
+Negative tests remain relevant when they exercise those live channels. Examples:
+legacy settings that must deserialize but be filtered from runtime state; retired
+skills that installed copies must remove; rejected ontology terms arriving from
+untrusted/model output; exact live registry/tool/config sets; and upstream
+surfaces that can return during rebases. A source-structure oracle is therefore
+not automatically a tombstone: it remains relevant when a generator, upstream
+merge/rebase, or repeated production pattern can recreate the defect. The
+classification turns on the live channel and current expectation, not whether
+the oracle reads source text. Prefer one exact-set or boundary test for a
+mutable surface over one dedicated test per historical name. Never report
+test-count reduction or a higher pass rate as quality improvement: report
+retired test binaries, removed verification nodes/edges, observed wall/resource
+change, and preserved expectation/falsifier signals separately.
+
+Re-evaluate relevance when the expectation authority changes, a removal lands,
+a migration/backward-compatibility window closes, a producer is deleted, or a
+test fails only because implementation vocabulary changed. Review finds
+candidates; it does not bulk-delete by name. Each retirement names the durable
+decision record and the surviving live oracle, or states that no current signal
+remains.
 
 ## Assignment procedure
 

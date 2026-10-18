@@ -6,8 +6,8 @@ contract:
     current_condition: object
   output:
     target_outcome: object
-    target_artifacts: object
-    target_procedure: object
+    target_artifacts: array
+    target_procedure: array
     rationale: string
 ---
 {# Task-specific target is a judgment to confirm, not generic Kata completion. #}
@@ -41,4 +41,4 @@ The target should be **one step beyond the current knowledge threshold** — cha
 - The target should be achievable in a few PDCA cycles, not a long-term vision.
 - The gap between current_condition and target should be real but bridgeable.
 
-Return JSON with `target_outcome` (`user_goal`, observable `success_evidence`, `falsifier`), `target_artifacts` (task-relevant artifact IDs with `required` and `must_be_grounded`), `target_procedure` (only steps the task requires, each with an observable completion condition), and `rationale`. Do not fill a five-artifact/four-step default unrelated to the user goal. If task outcome evidence is unavailable, mark the target unconfirmed and ask; it cannot be used for a numeric convergence claim.
+Return JSON with `target_outcome` (`user_goal`, observable `success_evidence`, `falsifier`), `target_artifacts` (task-relevant rows `{id, required, must_be_grounded}`), `target_procedure` (only required task steps, each `{name, required, completion_condition}`), and `rationale`. IDs/names are nonblank and unique so the deterministic gap form can join them to the current rows. Do not fill a five-artifact/four-step default unrelated to the user goal. If task outcome evidence is unavailable, mark the target unconfirmed and ask; it cannot be used for a numeric convergence claim.

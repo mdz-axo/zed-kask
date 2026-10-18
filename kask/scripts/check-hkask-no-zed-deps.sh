@@ -17,123 +17,145 @@
 # documented bidirectional seam and is exempt by construction because this
 # scan only visits `hkask-*` paths.
 #
-# This gate detects three inversion signals in hKask Cargo.toml files:
-#   1. a `path = "..."` dependency that points into the zed-kask tree;
-#   2. a dependency (in a `[dependencies]`/`[dev-dependencies]`/`[build-dependencies]`
-#      section) whose key is a zed-kask-only crate (denylist below); and
-#   3. a dependency RENAMED via `package = "<zed crate>"`, where the key is
-#      arbitrary but the resolved package is a zed-kask crate.
-# Signal 3 exists because signals 1-2 match the dependency *key*, and Cargo's
-# rename syntax (`render_core = { package = "gpui", path = ... }`) produces
-# exactly the same inverted dependency under a key the denylist cannot see.
-# A path-dep rename is caught by signal 1, but a workspace or registry rename
-# (`render_core = { package = "gpui", workspace = true }`) is not — signal 3
-# is what closes that. Pinned by check-hkask-no-zed-deps-selftest.sh.
-# hKask crates are `hkask-*` prefixed, so a bare dep on `gpui`/`editor`/`ui`/
-# `workspace`/`settings` etc. can only be a zed-kask crate (never an hKask one).
-# Only dependency *sections* are scanned (via awk), so `[package] workspace = true`
-# and other non-dependency fields do not false-positive.
+# This gate asks Cargo for the resolved dependency package identity; it does
+# not parse dependency keys itself. That single model covers direct keys,
+# renamed packages (`alias = { package = "gpui", ... }`), quoted keys,
+# target-specific tables, workspace inheritance, multiline inline tables, and
+# comments. A hand-written TOML parser had both false negatives (quoted keys)
+# and false positives (`# package = "gpui"` in a comment).
+#
+# Cargo metadata also reports each path dependency's resolved absolute path.
+# Any hKask dependency entering the zed-side `crates/` tree, or the explicit
+# `kask_bridge` seam, is an inversion even if its package name is new and not
+# yet present in the denylist. This keeps the gate future-complete for local
+# zed crates while the name check covers registry/workspace dependencies whose
+# path is unavailable.
 #
 # Enabled in CI via the §13.1 step of the `check` job in
 # `.github/workflows/kask-invariants.yml`. Run locally: `scripts/check-hkask-no-zed-deps.sh`
 
 set -euo pipefail
-cd "$(dirname "$0")/.."
+KASK_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+REPO_ROOT="${REPO_ROOT:-$(git -C "$KASK_ROOT" rev-parse --show-toplevel)}"
+cd "$KASK_ROOT"
 
 FAIL=0
-TMPFILE=$(mktemp)
-trap 'rm -f "$TMPFILE"' EXIT
+TMPDIR=$(mktemp -d)
+trap 'rm -rf "$TMPDIR"' EXIT
 
-# zed-kask-only crate names. hKask uses `hkask-` prefixes, so none of these
-# names can be a legitimate hKask-internal or crates.io dependency here.
+command -v cargo >/dev/null 2>&1 || {
+    echo "FAIL: cargo is required to resolve manifest dependency identity." >&2
+    exit 1
+}
+command -v jq >/dev/null 2>&1 || {
+    echo "FAIL: jq is required to read cargo metadata." >&2
+    exit 1
+}
+
+# zed-kask-only package names. Cargo metadata reports the real package name in
+# `.dependencies[].name` and the local alias (when any) in `.rename`.
 ZED_CRATES='gpui|gpui_tokio|gpui_platform|gpui_macros|language_model|language_model_core|language_models|language_models_cloud|context_server|agent|agent_skills|agent_ui|agent_servers|agent_settings|acp_tools|credentials_provider|zed_credentials_provider|release_channel|paths|editor|workspace|theme|settings|ui|kask_bridge'
 
-# hKask crates only — those under kask/crates/hkask-* and kask/mcp-servers/hkask-*.
-# The bridge (kask_bridge) lives under kask/crates/ but is zed-kask-side
-# (D8), not hKask — scanning it would false-positive on the very
-# bidirectional seam §13.1 exempts (zed-host-architecture-plan.md §13.1).
-# Overridable via env var so the self-test can point at a temp tree; the
-# default preserves the production behavior exactly.
+# hKask crates only — those under kask/crates/hkask-* and
+# kask/mcp-servers/hkask-*. kask_bridge is zed-kask-side and excluded.
+# MANIFEST_PATHS remains overridable for the public selftest seam.
 if [ -n "${MANIFEST_PATHS+x}" ]; then
-  manifests=$(find $MANIFEST_PATHS -name Cargo.toml -not -path './target/*' 2>/dev/null || true)
+    # shellcheck disable=SC2206 # fixture API: space-separated find roots
+    roots=($MANIFEST_PATHS)
 else
-  manifests=$(find ./crates/hkask-* ./mcp-servers/hkask-* -name Cargo.toml -not -path './target/*' 2>/dev/null || true)
+    roots=(./crates/hkask-* ./mcp-servers/hkask-*)
 fi
 
-# 1. Any path-dep into the zed-kask tree (e.g. path = "../../Clones/zed-kask/...").
-echo "Checking hKask Cargo.toml for zed-kask path-deps..."
-while IFS= read -r manifest; do
-    if grep -Eq 'path[[:space:]]*=[[:space:]]*"[^"]*zed-kask' "$manifest"; then
-        echo "VIOLATION: $manifest references zed-kask via a path-dep:" >&2
-        grep -En 'path[[:space:]]*=[[:space:]]*"[^"]*zed-kask' "$manifest" >&2
-        FAIL=1
-    fi
-done <<< "$manifests"
+manifests=()
+while IFS= read -r -d '' manifest; do
+    manifests+=("$manifest")
+done < <(find "${roots[@]}" -name Cargo.toml -not -path '*/target/*' -print0 2>/dev/null || true)
 
-# 2+3. Dependency-section signals, in one pass over each manifest.
-#
-#    TOML spells a dependency two ways, and the two put denylisted names in
-#    different positions:
-#      [dependencies]            -> keys ARE dependency names
-#      [dependencies.render_core]-> keys are dependency FIELDS (version, path,
-#                                   workspace, package, features)
-#    Conflating them is a live defect: inside `[dependencies.serde]`, the
-#    field line `workspace = true` matches the denylisted crate name
-#    `workspace` and reports a legitimate manifest as a violation. No hKask
-#    manifest uses the subtable form today, so this was latent — it would have
-#    fired on the first one. The header classification below types each
-#    section before matching, so a field name is never read as a crate name.
-#
-#    Emitted reasons:
-#      KEY    — a dependency whose name is a zed-kask crate (either as a key
-#               in a bare dependency table, or as a `[dependencies.<name>]`
-#               subtable name).
-#      RENAME — a dependency renamed via `package = "<zed crate>"`, where the
-#               key is arbitrary but the resolved package is zed-kask. Covers
-#               both the inline-table and subtable spellings.
-echo "Checking hKask Cargo.toml dependency sections for zed-kask crate names (direct and renamed)..."
-while IFS= read -r manifest; do
-    awk -v file="$manifest" -v deny="$ZED_CRATES" '
-        /^[[:space:]]*\[/ {
-            hdr = $0
-            sub(/^[[:space:]]*\[/, "", hdr)
-            sub(/\].*$/, "", hdr)
-            in_table = 0; in_sub = 0; sub_name = ""
-            # Bare dependency table, incl. [target.<cfg>.dependencies].
-            if (hdr ~ /(^|\.)(dependencies|dev-dependencies|build-dependencies)$/) {
-                in_table = 1
-            # Per-dependency subtable: [dependencies.<name>].
-            } else if (hdr ~ /(^|\.)(dependencies|dev-dependencies|build-dependencies)\.[A-Za-z0-9_-]+$/) {
-                in_sub = 1
-                sub_name = hdr
-                sub(/^.*\./, "", sub_name)
-                if (sub_name ~ "^(" deny ")$") {
-                    print "KEY|" file ":" FNR ":" $0
-                }
-            }
-            next
-        }
-        # In a bare table the key is the dependency name.
-        in_table && $0 ~ "^(" deny ")([[:space:]]*=|[.]workspace)" {
-            print "KEY|" file ":" FNR ":" $0
-        }
-        # In either spelling, `package = "<zed crate>"` resolves to a zed crate.
-        (in_table || in_sub) && $0 ~ "package[[:space:]]*=[[:space:]]*\"(" deny ")\"" {
-            print "RENAME|" file ":" FNR ":" $0
-        }
-    ' "$manifest" > "$TMPFILE"
-    if [ -s "$TMPFILE" ]; then
-        if grep -q '^KEY|' "$TMPFILE"; then
-            echo "VIOLATION: $manifest depends on a zed-kask crate (inverted direction):" >&2
-            sed -n 's/^KEY|//p' "$TMPFILE" >&2
-        fi
-        if grep -q '^RENAME|' "$TMPFILE"; then
-            echo "VIOLATION: $manifest renames a zed-kask crate via package = (inverted direction):" >&2
-            sed -n 's/^RENAME|//p' "$TMPFILE" >&2
-        fi
-        FAIL=1
+if [ "${#manifests[@]}" -eq 0 ]; then
+    echo "OK: no hKask manifests matched — no inverted dependencies to report."
+    exit 0
+fi
+
+# The production path resolves the workspace once. Fixture paths may each be
+# independent workspaces, so they are resolved one manifest at a time below.
+workspace_metadata="$TMPDIR/workspace-metadata.json"
+if [ -z "${MANIFEST_PATHS+x}" ]; then
+    if ! cargo metadata --manifest-path "$REPO_ROOT/Cargo.toml" \
+        --format-version 1 --no-deps >"$workspace_metadata" 2>"$TMPDIR/metadata.err"; then
+        echo "FAIL: cargo metadata could not resolve the workspace:" >&2
+        cat "$TMPDIR/metadata.err" >&2
+        exit 1
     fi
-done <<< "$manifests"
+fi
+
+echo "Checking hKask Cargo.toml resolved dependency package identities..."
+for manifest in "${manifests[@]}"; do
+    manifest_abs=$(realpath "$manifest")
+    metadata_file="$workspace_metadata"
+    if [ -n "${MANIFEST_PATHS+x}" ]; then
+        metadata_file="$TMPDIR/metadata.json"
+        if ! cargo metadata --manifest-path "$manifest_abs" \
+            --format-version 1 --no-deps >"$metadata_file" 2>"$TMPDIR/metadata.err"; then
+            echo "FAIL: cargo metadata could not resolve $manifest:" >&2
+            cat "$TMPDIR/metadata.err" >&2
+            FAIL=1
+            continue
+        fi
+    fi
+
+    if ! package_count=$(jq -r --arg manifest "$manifest_abs" \
+        '[.packages[] | select(.manifest_path == $manifest)] | length' "$metadata_file"); then
+        echo "FAIL: could not read package identity from cargo metadata for $manifest." >&2
+        FAIL=1
+        continue
+    fi
+    if [ "$package_count" -ne 1 ]; then
+        echo "FAIL: expected exactly one package for $manifest, cargo metadata reported $package_count." >&2
+        FAIL=1
+        continue
+    fi
+
+    dependencies_file="$TMPDIR/dependencies.tsv"
+    if ! jq -r --arg manifest "$manifest_abs" '
+        .packages[]
+        | select(.manifest_path == $manifest)
+        | .dependencies[]
+        | [.name, (.rename // "-"), (.kind // "normal"), (.target // "-"), (.path // "-")]
+        | @tsv
+    ' "$metadata_file" >"$dependencies_file"; then
+        echo "FAIL: could not read dependencies from cargo metadata for $manifest." >&2
+        FAIL=1
+        continue
+    fi
+
+    while IFS=$'\t' read -r package_name local_alias dependency_kind target dependency_path; do
+        [ -n "$package_name" ] || continue
+        path_inversion=false
+        if [ "$dependency_path" != "-" ]; then
+            case "$dependency_path" in
+                "$REPO_ROOT"/crates/*|"$REPO_ROOT"/kask/crates/kask_bridge)
+                    path_inversion=true
+                    ;;
+            esac
+        fi
+        if [[ "$package_name" =~ ^($ZED_CRATES)$ ]] || [ "$path_inversion" = true ]; then
+            alias_note=""
+            if [ "$local_alias" != "-" ]; then
+                alias_note=" (renamed locally as '$local_alias')"
+            fi
+            target_note=""
+            if [ "$target" != "-" ]; then
+                target_note=" for target '$target'"
+            fi
+            path_note=""
+            if [ "$path_inversion" = true ]; then
+                path_note=" at zed-side path '$dependency_path'"
+            fi
+            echo "VIOLATION: $manifest depends on zed-kask package '$package_name'$alias_note [$dependency_kind]$target_note$path_note" >&2
+            FAIL=1
+        fi
+    done < "$dependencies_file"
+done
 
 if [ "$FAIL" -ne 0 ]; then
     echo "FAIL: hKask must not depend on zed-kask (plan §13.1 / DIVERGENCE.md)." >&2

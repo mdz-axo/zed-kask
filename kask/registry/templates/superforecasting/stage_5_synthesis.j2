@@ -8,7 +8,6 @@ contract:
     causal_models: array
     synthesized_probability_judgment: float
     dissenting_views: array
-    model_weights: array
 ---
 {# goal: Synthesize a dragonfly-eye view by integrating multiple causal models and perspectives. Applies MCDA-style weighted scoring to aggregate model judgments, steel-man dissenting views, and produce a synthesized probability. #}
 You are a synthesis analyst. Your task is to integrate multiple causal models and perspectives, practicing the "dragonfly eye" view that aggregates diverse viewpoints.
@@ -67,21 +66,19 @@ Apply Multi-Criteria Decision Analysis to weight and score each causal model. Ea
 
 **Scoring** (1-10 per criterion per model):
 - Score each model on each criterion (these scores are your judgment)
-- Do NOT compute the composite or the weighted average here — report the criterion scores; the composite and `synthesized_probability` are computed by `lisp_eval` in the SKILL.md stage_5 step
-- Check for **compensation masking**: if a model scores high on one criterion but very low on another, flag it — high composite may mask a critical weakness
+- Do NOT compute the composite, weights or weighted average here — report the criterion scores; all three are computed by `lisp_eval` in the SKILL.md stage_5 step
+- Flag compensation masking semantically in each causal model's `compensation_warning`; a high aggregate may mask one critically weak criterion
 
 **Weighted synthesis** (computed downstream by `lisp_eval`, shown for reference):
-- composite = sum of the four criterion scores; weights = composite / sum of composites
-- synthesized_probability = sum(model.implied_probability × model.weight)
-- If compensation masking is detected, flag it in `compensation_warning` — do NOT re-weight: the SKILL.md's `lisp_eval` form is authoritative and its `c_i` is the sum of that model's four criterion scores; a masked critical criterion is REPORTED (the warning), not compensated by weight adjustment
+- composite = sum of the four criterion scores; normalized weights and `synthesized_probability` are computed together from the raw `causal_models` array
+- If compensation masking is detected, set that model's `compensation_warning: true` — do NOT re-weight: the SKILL.md's `lisp_eval` form is authoritative and derives the composite from `mcda_criteria_scores`; a masked critical criterion is REPORTED, not compensated by weight adjustment
 
 ### Step 5: Synthesize
-Integrate the perspectives:
+Interpret the deterministic aggregation after the caller runs it:
 - Where do models agree?
 - Where do they diverge, and why?
-- What is the integrated probability after MCDA weighting?
-- Which models were weighted highest, and why?
-- Were any compensation masking warnings triggered?
+- Which raw criteria created compensation warnings?
+- Does the holistic `synthesized_probability_judgment` materially disagree with the computed probability, and what evidence explains the discrepancy?
 
 ## Output
 
@@ -92,15 +89,12 @@ Respond with a JSON object containing:
     implied_probability: float,
     confidence: string,
 
-    mcda_criteria_scores: object with {evidence_alignment: int, reference_class_stability: int, causal_mechanism_clarity: int, model_confidence: int}
+    mcda_criteria_scores: object with {evidence_alignment: int, reference_class_stability: int, causal_mechanism_clarity: int, model_confidence: int},
+    compensation_warning: boolean
   }
 - synthesized_probability_judgment: float (0.0-1.0, your holistic read, for cross-validation against the lisp_eval weighted average — not the authoritative value)
 - dissenting_views: Array of objects with {
     view: string,
     steelmanned_argument: string,
     weight_considered: float
-  }
-- model_weights: Array of objects with {
-    model_name: string,
-    compensation_warning: boolean
   }

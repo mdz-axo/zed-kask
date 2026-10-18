@@ -76,7 +76,10 @@ is the knowledge needed to see it).
 1. Declare the user's task-specific observable outcome and how it will be checked, then the metacognitive state needed to reach it. Completing the generic Kata steps is not itself the user's outcome.
 2. Produce target_artifacts and target_procedure that the gap computation measures toward. If the user task has no observable success evidence, ask for it before predicting an improvement.
 3. The target should be one step beyond the current knowledge threshold — challenging but achievable. Require `target_outcome.success_evidence` and `falsifier` tied to the user's task. Do not proceed from a generic list of Kata artifacts/steps.
-4. Reconcile every current `exists`/`grounded`/`complete` status with its cited receipt, then count required and missing target artifacts/steps. Call `lisp_eval` with `(if (and (> required_artifacts 0) (> required_steps 0) (<= 0 missing_artifacts) (<= missing_artifacts required_artifacts) (<= 0 incomplete_steps) (<= incomplete_steps required_steps)) (list (/ missing_artifacts required_artifacts) (/ incomplete_steps required_steps)) (quote unmeasured))`. On `unmeasured`, ask for evidence and do not call `meta-predict`. Otherwise compute `gap_before` with `(sqrt (+ (* og og) (* pg pg)))`, using those two normalized outputs. If zero, check the task outcome before declaring the target met; never invent a prediction about closing an already zero gap.
+4. Reconcile every current `exists`/`grounded`/`complete` status with its cited receipt, then call `lisp_eval` over the four structured collections themselves — never model-count the required/missing rows. The form requires unique nonblank ids/names, at least one required artifact and step, valid booleans on target rows, current measured statuses in the closed vocabularies, and nonblank `evidence_ref` for every current state counted as present/grounded/complete:
+   - form: `(begin (define blank (lambda (v) (or (is_null v) (and (stringp v) (= (length v) 0))))) (define get (lambda (k row) (assoc k row))) (define ids (lambda (rows key) (if (is_null rows) (list) (cons (get key (car rows)) (ids (cdr rows) key))))) (define unique (lambda (xs) (if (is_null xs) true (and (stringp (car xs)) (> (length (car xs)) 0) (not (member (car xs) (cdr xs))) (unique (cdr xs)))))) (define find (lambda (id rows key) (if (is_null rows) nil (if (and (stringp (get key (car rows))) (string= id (get key (car rows)))) (car rows) (find id (cdr rows) key))))) (define boolp (lambda (x) (or (eq x true) (eq x false)))) (define target-art-ok (lambda (rows) (if (is_null rows) true (and (boolp (get "required" (car rows))) (boolp (get "must_be_grounded" (car rows))) (target-art-ok (cdr rows)))))) (define target-step-ok (lambda (rows) (if (is_null rows) true (and (boolp (get "required" (car rows))) (target-step-ok (cdr rows)))))) (define current-art-ok (lambda (rows) (if (is_null rows) true (let ((r (car rows))) (and (or (eq (get "exists" r) true) (eq (get "exists" r) false) (string= (get "exists" r) "unmeasured")) (or (eq (get "grounded" r) true) (eq (get "grounded" r) false) (string= (get "grounded" r) "unmeasured")) (if (or (eq (get "exists" r) true) (eq (get "grounded" r) true)) (not (blank (get "evidence_ref" r))) true) (current-art-ok (cdr rows))))))) (define current-step-ok (lambda (rows) (if (is_null rows) true (let ((r (car rows)) (s (get "status" (car rows)))) (and (stringp s) (or (string= s "complete") (string= s "in_progress") (string= s "not_started") (string= s "unmeasured")) (if (string= s "complete") (not (blank (get "evidence_ref" r))) true) (current-step-ok (cdr rows))))))) (define count-required-art (lambda (rows) (if (is_null rows) 0 (+ (if (eq (get "required" (car rows)) true) 1 0) (count-required-art (cdr rows)))))) (define count-required-step (lambda (rows) (if (is_null rows) 0 (+ (if (eq (get "required" (car rows)) true) 1 0) (count-required-step (cdr rows)))))) (define count-missing-art (lambda (rows current) (if (is_null rows) 0 (let ((r (car rows))) (if (eq (get "required" r) true) (let ((c (find (get "id" r) current "id"))) (+ (if (and (not (is_null c)) (eq (get "exists" c) true) (if (eq (get "must_be_grounded" r) true) (eq (get "grounded" c) true) true)) 0 1) (count-missing-art (cdr rows) current))) (count-missing-art (cdr rows) current)))))) (define count-incomplete (lambda (rows current) (if (is_null rows) 0 (let ((r (car rows))) (if (eq (get "required" r) true) (let ((c (find (get "name" r) current "name"))) (+ (if (and (not (is_null c)) (string= (get "status" c) "complete")) 0 1) (count-incomplete (cdr rows) current))) (count-incomplete (cdr rows) current)))))) (let ((ra (count-required-art target_artifacts)) (rs (count-required-step target_procedure)) (ma (count-missing-art target_artifacts current_artifacts)) (is (count-incomplete target_procedure current_procedure))) (if (and (unique (ids target_artifacts "id")) (unique (ids current_artifacts "id")) (unique (ids target_procedure "name")) (unique (ids current_procedure "name")) (target-art-ok target_artifacts) (target-step-ok target_procedure) (current-art-ok current_artifacts) (current-step-ok current_procedure) (> ra 0) (> rs 0)) (list (/ ma ra) (/ is rs) ra ma rs is) (quote unmeasured))))`
+   - env: `{ "current_artifacts": <Step 1 rows [{id, exists, grounded, evidence_ref}]>, "current_procedure": <Step 1 rows [{name, status, evidence_ref}]>, "target_artifacts": <Step 2 rows [{id, required, must_be_grounded}]>, "target_procedure": <Step 2 rows [{name, required, completion_condition}]> }`
+   - returns `[object_gap, process_gap, required_artifacts, missing_artifacts, required_steps, incomplete_steps]` or `unmeasured`. On `unmeasured`, ask for evidence and do not call `meta-predict`. Otherwise compute `gap_before` with `(sqrt (+ (* og og) (* pg pg)))`, using the first two outputs. If zero, check the task outcome before declaring the target met; never invent a prediction about closing an already zero gap.
 
 ### meta-predict (Kata Step 3: Make a Prediction)
 
@@ -103,7 +106,7 @@ Use when the gap is in understanding a problem that needs several dependent reas
 
 ### Convergence (Steps 5-9: Check + Act)
 
-The counts are probabilistic (P — model-produced, critiqued by the operator when the recorded goal is scored); the arithmetic over them is deterministic (D — `lisp_eval`).
+Status classification (`exists`/`grounded`/`complete`) is P — model-proposed and accepted only with a cited receipt. Counts and all arithmetic over the accepted structured rows are D (`lisp_eval`); no model-produced scalar count enters the gap.
 
 1. (P→D handoff) Recheck the cited artifact/step receipts against the *same* target after the experiment and use Step 2's guarded `lisp_eval` normalization. An uncited model status leaves the after-gap `unmeasured`, not zero.
 2. (D) Compute the hypotenuse with `lisp_eval`, form `(sqrt (+ (* og og) (* pg pg)))`, env `{ "og": <object gap>, "pg": <process gap> }`. Never estimate the gap in prose.
@@ -115,7 +118,7 @@ The counts are probabilistic (P — model-produced, critiqued by the operator wh
 
 | Template | Purpose |
 |----------|---------|
-| `meta-grasp-current.j2` | Measure the agent's actual metacognitive state right now. Identify obstacles, surface assumptions, count grounded claims, enumerate options. Produces current_artifacts and current_procedure for gap computation. |
+- `meta-grasp-current.j2` | Measure the agent's actual metacognitive state right now. Identify obstacles, surface assumptions, enumerate grounded claims and options. Produces stable-id `current_artifacts` and stable-name `current_procedure` row arrays for deterministic gap computation. |
 | `meta-establish-target.j2` | Declare the target metacognitive state — what sufficient meta-knowledge looks like for this goal. Produces target_artifacts and target_procedure for gap computation. |
 | `meta-predict.j2` | Predict a task-specific calibration and gap reduction, with confidence in [0,1]; Brier calibration waits for the operator's goal resolution. |
 | `meta-experiment.j2` | Apply the predicted calibration — Falstaffian perspective rotation, ellipsis analysis, or strategy adjustment. Re-measure the current condition after the experiment. Produces new current_artifacts and current_procedure. |
@@ -160,8 +163,8 @@ Copyable `render_template` context blocks (variable names from each template's `
 `metacognition/meta-experiment`:
 ```json
 {
-  "goal": "<the user's goal>",
-  "current_condition": { "<Step 1 grasp result field>": "<measured value>" },
+  "goal": "<the user's task-specific goal>",
+  "current_condition": { "current_artifacts": [{ "id": "artifact-1", "exists": true, "grounded": true, "evidence_ref": "<receipt>" }], "current_procedure": [{ "name": "step-1", "status": "complete", "evidence_ref": "<receipt>" }] },
   "prediction": { "<Step 3 prediction field>": "<predicted value>" },
   "perspectives": ["falstaffian", "ellipsis"],
   "context_text": "<about 2000 characters of context for the ellipsis analysis>",
@@ -197,7 +200,7 @@ A `render_template` call renders the prompt; it does not execute the inference s
 
 ## Constraints
 
-- The gap arithmetic is D only over cited receipts — an uncited model status leaves the after-gap `unmeasured`, never zero. Feed the normalization form ONLY counts whose exists/grounded/complete statuses each carry a cited receipt; the form guards degenerate counts but cannot detect an uncited status — the citation gate is upstream of the form. The guarded normalization, the hypotenuse, and the reduction run in `lisp_eval`; the convergence threshold check is `(>= (- gap_before gap_after) (* gap_before expected_gap_reduction))`.
+- The gap arithmetic is D only over source-reconciled rows — an uncited model status leaves the after-gap `unmeasured`, never zero. Feed the structured normalization form the four declared row arrays verbatim; it derives required/missing counts and rejects duplicate/blank identities, invalid statuses, zero required targets and measured-complete rows without evidence. The hypotenuse and reduction run in `lisp_eval`; the convergence threshold check is `(>= (- gap_before gap_after) (* gap_before expected_gap_reduction))`.
 - This skill never scores its own prediction (the Dunning double curse: the knowledge needed to close the gap is the knowledge needed to see it). The Brier score arrives only from the operator's `kanban_goal_score`.
 - `gap_before` is carried unchanged from Step 2 through the experiment and the convergence check — never recomputed from post-experiment data.
 - A zero after-gap with observed target-outcome evidence meets the local target; with missing evidence report `unmeasured`, not success.
@@ -210,22 +213,13 @@ A `render_template` call renders the prompt; it does not execute the inference s
 
 ## Regression case
 
-Run the four `lisp_eval` forms through the live tool with representative
-values: the guarded normalization (env `{required_artifacts: 4, required_steps: 3,
-missing_artifacts: 1, incomplete_steps: 2}` → `[0.25, 0.6666666666666666]`
-— the artifact gap and the process gap); the hypotenuse (env `{og: 0.25,
-pg: 0.6666666666666666}` → `0.7120003121097942`); the reduction (env
-`{gap_before: 0.7120003121097942, gap_after: 0.3}` → `0.4120003121097942`;
-the gap_before chains from the hypotenuse receipt — the pre-repair case
-claimed 0.7123124314512559, which is the ROUNDED-pg (0.667) result, not the
-stated env's); and the convergence threshold (env `{gap_before:
-0.7120003121097942, gap_after: 0.3, expected_gap_reduction: 0.5}` → true:
-0.412 ≥ 0.356). Verify the normalization returns
-`unmeasured` when required_artifacts or required_steps is 0 (the guard fires
-before the division — without it `(/ 1 0)` errors). Verify the hypotenuse
-is 0 when both gaps are 0 (target met). Verify the reduction is negative
-when gap_after > gap_before (a regression — the threshold check fails it,
-which is the correct interpretation). All four forms verified
-through the live tool 2026-09-30 (receipts in the audit's steps
-record; the forms are executed at audit and use time, never
-anchored in code).
+Run the structured normalization form through the live tool with: (i) two
+required artifacts, one present-and-grounded and one absent, plus two required
+steps, one complete and one in-progress → `[0.5, 0.5, 2, 1, 2, 1]`; (ii) the same
+rows with a duplicate id, a missing evidence_ref on a measured-complete state,
+or zero required target rows → `unmeasured`. Then run the hypotenuse (env `{og:
+0.5, pg: 0.5}` → `0.7071067811865476`), the reduction (env `{gap_before:
+0.7071067811865476, gap_after: 0.3}` → `0.4071067811865476`), and the convergence
+threshold. Verify a zero after-gap with no task-outcome evidence stays
+`unmeasured` at the semantic target check. All forms are executed through the
+live tool at audit and use time, never anchored in code.
