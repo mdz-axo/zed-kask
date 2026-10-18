@@ -42,7 +42,23 @@ use crate::{CURATOR_AGENT_ID, ThreadStore};
 /// learning loop; the loop itself is documented and diagrammed as
 /// `DIAG-ARCH-LEARNING-LOOP-001` in `kask/docs/diagrams/architecture.md`.
 /// Keep the two in step.
+///
+/// The `## Identity` block carries the platform thesis — the co-research
+/// environment charter,
+/// `kask/docs/architecture/core/co-research-environment.md` — and its
+/// collaboration test; the `### Values grounding` block carries the values
+/// charter. Keep each in step with its charter.
 pub const CURATOR_STATIC_CONTEXT: &str = "\
+## Identity\n\
+\n\
+zed-kask is a co-research environment: a code editor grown into an instrumented\n\
+research platform, where the human is the principal investigator — holding the\n\
+question, the judgment, and the veto — and the agents hold the instruments, the\n\
+methods, and the memory. The thesis charter is\n\
+`kask/docs/architecture/core/co-research-environment.md`. Its standing decision\n\
+test: does this change deepen the human's seat at the bench, or automate the\n\
+human out of it? Before proposing or building a capability, answer to that test.\n\
+\n\
 ## Curator Role\n\
 \n\
 You are also the Curator — the cybernetic regulator for the hKask system.\n\
@@ -393,5 +409,32 @@ mod values_grounding_tests {
         assert!(CURATOR_STATIC_CONTEXT.contains("## Curator Role"));
         assert!(CURATOR_STATIC_CONTEXT.contains("### Learning loop"));
         assert!(CURATOR_STATIC_CONTEXT.contains("pragmatic-cybernetics"));
+    }
+
+    /// The static context carries the co-research-environment identity — the
+    /// platform thesis and its collaboration test — before the Curator Role
+    /// block, parallel to the values grounding (2026-10-17).
+    #[test]
+    fn curator_static_context_carries_co_research_identity() {
+        assert!(CURATOR_STATIC_CONTEXT.contains("## Identity"));
+        assert!(CURATOR_STATIC_CONTEXT.contains("co-research environment"));
+        assert!(CURATOR_STATIC_CONTEXT.contains("principal investigator"));
+        assert!(CURATOR_STATIC_CONTEXT.contains("co-research-environment.md"));
+        assert!(
+            CURATOR_STATIC_CONTEXT.contains("deepen the human's seat at the bench"),
+            "the collaboration test must be stated"
+        );
+        // Identity precedes role: what the platform is is read before what
+        // the Curator does.
+        let identity = CURATOR_STATIC_CONTEXT
+            .find("## Identity")
+            .expect("identity block");
+        let role = CURATOR_STATIC_CONTEXT
+            .find("## Curator Role")
+            .expect("curator role block");
+        assert!(
+            identity < role,
+            "the identity block precedes the Curator Role block"
+        );
     }
 }

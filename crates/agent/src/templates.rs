@@ -418,6 +418,48 @@ mod tests {
         );
     }
 
+    // zed-kask: co-research-environment identity frame (2026-10-17). The
+    // opening carries the platform thesis — the human is the principal
+    // investigator, the agent holds the instruments, the methods, and the
+    // memory — and nests the two-role division as the operating contract
+    // within the co-research environment. The identity ADDS to the opening;
+    // it must not replace the program-manager role language (the division
+    // is the contract; the role is a method — see
+    // kask/docs/architecture/core/co-research-environment.md).
+    #[test]
+    fn test_system_prompt_opening_carries_co_research_identity() {
+        let project = prompt_store::ProjectContext::default();
+        let template = SystemPromptTemplate {
+            project: &project,
+            available_tools: vec!["echo".into()],
+            model_name: None,
+            date: "2026-01-01".to_string(),
+            user_agents_md: None,
+            static_context: None,
+            sandboxing: false,
+            is_linux: false,
+            is_windows: false,
+            mcp_tools_hidden: 0,
+        };
+        let rendered = template.render(&Templates::new()).unwrap();
+        assert!(
+            rendered.contains("co-research environment"),
+            "the opening names the platform's identity"
+        );
+        assert!(
+            rendered.contains("principal investigator"),
+            "the opening fixes the human's seat: question, judgment, veto"
+        );
+        assert!(
+            rendered.contains("kask/docs/architecture/core/co-research-environment.md"),
+            "the opening points at the thesis charter"
+        );
+        assert!(
+            rendered.contains("technical program manager"),
+            "the identity nests the division; it does not replace it"
+        );
+    }
+
     #[test]
     fn test_division_skill_references_resolve_on_disk() {
         // The Division of Responsibilities names two skills as the operational
