@@ -1292,7 +1292,8 @@ exactly that lag), not evidence of absence.)
   screener's no-criteria remediation and FX honesty, the SERPAPI
   spelling fix, and the credential mix (2 required + 4 optional).
   F-P1 extent confirmed for companies (shared portfolio master.db +
-  fibo_cache, both plaintext rusqlite). Anchor gaps recorded: `listening`
+  fibo_cache, both plaintext rusqlite — both retired with the companies
+  server, 2026-10-18). Anchor gaps recorded: `listening`
   skill lacks a `## Reference models` section.
 - 2026-09-28 — v0.23.9 closed S9 (prediction-markets server review,
   review-only). 32/32 tools mapped; 163 production fns inventorized, deep

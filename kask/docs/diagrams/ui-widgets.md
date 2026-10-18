@@ -581,9 +581,11 @@ suggests `scenario_frame`, pending forecasts suggest `scenario_quantify`,
 and resolved forecasts with a calibration suggest `scenario_assess`.
 
 **Methodology anchors:** the scenarios widget anchors displayed metrics on
-hKask-internal methodology labels, not ontology URIs — FIBO publishes no
-terms for forecast identifiers, Brier scores, or scenario probabilities
-(verified 2026-08-29).
+hKask-internal methodology labels (`calibrated_forecast`, `brier_score`,
+`scenario_planning` — the derived rung of the ontology ladder), not
+fabricated ontology URIs. The `fibo-fbc-fct-ra:*` URIs they formerly
+carried were never in the FIBO release and were removed with the FIBO rung
+(2026-10-18).
 
 ## Swarm Widget
 

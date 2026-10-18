@@ -40,14 +40,14 @@ listed in `alternatives` — never dropped.
 
 | Tier | What it is | What resolving here lets you do |
 |---|---|---|
-| `domain_supplement` | A pinned published domain vocabulary (FIBO, RDF Data Cube, OMC, PKO, P-Plan, PROV, SEPIO, GOLEM, CIDOC-CRM, LRMoo, ML-Schema, RDF, RDFS, DPV, CSO) | Cite the published source's own definition — the claim is checkable against sha256-pinned bytes, and the resolution names the source file and version |
+| `domain_supplement` | A pinned published domain vocabulary (RDF Data Cube, OMC, PKO, P-Plan, PROV, SEPIO, GOLEM, CIDOC-CRM, LRMoo, ML-Schema, RDF, RDFS, DPV, CSO) | Cite the published source's own definition — the claim is checkable against sha256-pinned bytes, and the resolution names the source file and version |
 | `derived` | A recorded composition over ladder-resolved constituents, with identity and authority (`kask/crates/hkask-bridge-ontology/src/derived.rs:47-913`) | Use an operator ruling or a published standard as the term's authority; the identity is machine-checkable and the violation nameable |
 | `upper` | The full SUMO distribution (65 pinned files) | Fall back on a formal upper-ontology category with SUMO's own documentation text |
 | `general_vocabulary` | The full schema.org 30.1 release | Fall back on the general web vocabulary with its definitions |
 | `state_axis` | Dublin Core, BIBO, CiTO | Artifact-typing senses stay visible as alternatives but never outrank a formal category |
 | `core` | `5w1h_core`, the interrogative ground | A guaranteed real but coarse anchor carrying a ruling-request note — never a private definition |
 
-Domain order within `domain_supplement` is fixed (FIBO first, DPV and CSO
+Domain order within `domain_supplement` is fixed (DPV and CSO
 last so no earlier resolution shifts); DPV and CSO claim only terms no
 earlier vocabulary already anchors.
 
@@ -57,7 +57,6 @@ earlier vocabulary already anchors.
 |---|---|---|---|---|
 | SUMO | `sumo` | `ontologyportal/sumo@77f8fdd2` | GPL (README); IEEE file headers | Formal upper ontology |
 | schema.org | `schema` | 30.1 (2026-09-16) | CC BY-SA 3.0 | General web vocabulary |
-| FIBO | `fibo-*` (159 modules) | Q2 Release | MIT | Finance |
 | RDF Data Cube | `qb` | 2014 Recommendation | PDDL 1.0 | Statistical data |
 | OMC | `omc`, `omcT`, `cw` | 2.8 | Apache-2.0 | Media production |
 | PKO | `pko` | 2.0.0 | CC BY 4.0 | Procedural knowledge |
@@ -87,10 +86,10 @@ Namespace IRIs and directory bindings are declared in
   `schema:citation` as primary — a good illustration that the general
   vocabulary outranks the state axis (CiTO's sense appears as the
   alternative).
-- **FIBO** — finance. `agreement` resolves
-  `fibo-fnd-agr-agr:Agreement` ("negotiated understanding between two or
-  more parties..."). The equity-research derived rulings (DuPont family,
-  DCF, expectations gap) resolve above it on the derived rung.
+- **SUMO** — formal upper ontology. `corporation` resolves
+  `sumo:Corporation` ("An Organization that has a special legal status..."),
+  the anchor for corporation terms since the FIBO rung was removed
+  (2026-10-18). `quantity` resolves `sumo:Quantity`.
 - **RDF Data Cube** — statistical shapes. `observation` resolves
   `qb:Observation`.
 - **OMC** — media production. `service` resolves `omc:Service`;

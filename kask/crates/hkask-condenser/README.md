@@ -9,7 +9,7 @@ no HTTP, no async.
 | Module | Role |
 |--------|------|
 | `algorithms` | Three compression algorithms (`rtk_style`, `word_rank`, `flashrank`) with domain-aware scoring |
-| `ontology_graph` | Cross-domain concept relationship index (FIBO, SUMO, GOLEM, ML-Schema, PKO, DC+BIBO) |
+| `ontology_graph` | Cross-domain concept relationship index (SUMO, GOLEM, ML-Schema, PKO, DC+BIBO) |
 | `types` | `OntologyAnchor`, `Profile`, `ContextCategory`, `CompressedOutput`, health signals |
 | `engine` | `CondenserEngine` — compression dispatch and profile management |
 | `saliency` | Word-frequency computation shared with `WordRankAlgorithm` |
@@ -28,7 +28,7 @@ no HTTP, no async.
 ### rtk_style
 Head/tail ellipsis truncation. Keeps the first N% and last M% of lines with
 a `...` separator. Default for ShellCommand, TestOutput, BuildOutput.
-Uses ontology density factor to adjust head/tail ratio (FIBO gets more tail).
+Uses ontology density factor to adjust head/tail ratio (denser anchors get more tail).
 
 ### word_rank
 TF-IDF bag-of-words compression with structural bonus and ontology anchoring.
@@ -56,7 +56,7 @@ are needed.
 
 | Tool prefix | Ontology tier | Domain bridge |
 |-------------|--------------|---------------|
-| `company_*`, `stock_*`, `dcf_*`, `portfolio_*` | Domain supplement | FIBO |
+| `corpus_*`, `media_*` | Domain supplement | GOLEM / OMC |
 | `memory_*` | Domain supplement | SUMO |
 | `replica_*`, `author_*` | Domain supplement | GOLEM |
 | `training_*`, `adapter_*`, `sweep_*` | Domain supplement | ML-Schema |
@@ -64,8 +64,8 @@ are needed.
 | `file_*`, `web_*`, `registry_*`, `wallet_*` | Dual-axis (DC+BIBO) | — |
 | Everything else | Core (5W1H) | — |
 
-The ontology graph encodes concept relationships (e.g., `fibo:Corporation` →
-`HasProperty` → `fibo:MarketCapitalization`) and serves as a saliency
+The ontology graph encodes concept relationships (e.g., `sumo:encoding` →
+`Precedes` → `sumo:recall`) and serves as a saliency
 multiplier — lines containing graph-adjacent concepts get bonus scores.
 
 ## Telemetry

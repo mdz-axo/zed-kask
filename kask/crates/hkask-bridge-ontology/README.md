@@ -15,7 +15,7 @@ that does tagging depends on this crate.
   noun dimension. Always available.
 - **Process axis** — PKO (`pko`): the "how did this come to be" verb dimension.
   Always available.
-- **Domain supplements** — FIBO, RDF Data Cube, SEPIO, GOLEM, ML-Schema
+- **Domain supplements** — RDF Data Cube, SEPIO, GOLEM, ML-Schema
   and OMC: layered on top where the universal axes aren't specific enough.
   Only explicitly cube-shaped output selects the `data_cube` artifact anchor;
   a statistical provider hint alone does not establish an RDF cube.
@@ -29,7 +29,6 @@ common mapping in process or state space regardless of domain.
 |--------|----------|------|
 | `dc_bibo` | Dublin Core + BIBO + CiTO | State (universal) |
 | `pko` | Procedural Knowledge Ontology | Process (universal) |
-| `fibo` | Named FIBO constants; the full pinned Q2 **Release** selection resolves through `published` | Domain supplement (financial) |
 | `sepio` | Scientific Evidence and Provenance Information Ontology | Domain supplement (scientific evidence) |
 | `golem` | GOLEM narrative ontology | Domain supplement (narrative) |
 | `ml_schema` | ML-Schema | Domain supplement (ML training) |
@@ -45,15 +44,15 @@ common mapping in process or state space regardless of domain.
 ## Usage
 
 ```rust
-use hkask_bridge_ontology::{dc_bibo, pko, fibo, axis};
+use hkask_bridge_ontology::{dc_bibo, pko, sumo, axis};
 
 // Universal vocabulary.
 let title = dc_bibo::TITLE;            // "dcterms:title"
 let step = pko::STEP_EXECUTION;        // "pko:StepExecution"
 
-// Named FIBO constants (Release-backed; the full Release resolves through published).
-let corp = fibo::CORPORATION;             // "fibo-be-le-cb:Corporation"
-let mcap = fibo::MARKET_CAPITALIZATION;   // "fibo-ind-mkt-bas:MarketCapitalization"
+// Named upper-ontology constants (the full distribution resolves through published).
+let corp = sumo::CORPORATION;          // "sumo:Corporation"
+let quantity = sumo::QUANTITY;         // "sumo:Quantity"
 
 // Domain selection.
 let anchor = axis::select_ontology_anchor("prediction-markets");
@@ -63,7 +62,7 @@ let terms = hkask_bridge_ontology::term_resolution::canonicalize_terms([
     "corporation",
     "quantity",
 ]);
-assert_eq!(terms.ontology_tags["fibo"], [fibo::CORPORATION]);
+assert_eq!(terms.ontology_tags["sumo"], [sumo::CORPORATION, sumo::QUANTITY]);
 ```
 
 ## Full published vocabularies (`sources/`)
@@ -82,11 +81,7 @@ Current indexed coverage: the complete pinned SUMO distribution (excluding
 BIBO, CiTO, PKO with P-Plan and PROV, SEPIO, GOLEM with CIDOC-CRM and LRMoo,
 OMC, ML-Schema, RDF/RDFS and W3C RDF Data Cube from their pinned published
 sources. The RDF Data Cube `cube.ttl` is pinned in `sources/SOURCES.lock`
-(2014 Recommendation, publisher-asserted PDDL 1.0 license). FIBO is the
-pinned Q2 **Release** maturity selection: 157 modules and 6,443 indexed terms;
-its Provisional modules are **not** indexed. `fibo-release-modules.tsv`
-selects Release modules and namespace bindings, reconciled by `build.rs`
-against pinned sources — it is not a tiny term-only substitute.
+(2014 Recommendation, publisher-asserted PDDL 1.0 license).
 For source versions and individual license terms, consult `sources/SOURCES.lock`
 (SUMO's `Merge.kif` carries the IEEE notice).
 
@@ -97,7 +92,7 @@ DOLCE-Lite-Plus is not pinned or indexed: the five unlicensed `dlp:` constants
 were removed from `golem`, and the corpus rejects retired `dlp:` predicates.
 A pinned source may omit a definition; do not supply one on its behalf.
 
-`resolve_term` walks: pinned domain sources (FIBO Release first, then RDF
+`resolve_term` walks: pinned domain sources (RDF
 Data Cube and the other domain vocabularies) → derived concepts → full SUMO (`upper`) → full
 schema.org (`general_vocabulary`) → published Dublin Core/BIBO/CiTO
 (`state_axis`) → 5W1H core. The first sense is the resolution; other found

@@ -39,7 +39,6 @@ graph TD
             direction TB
             data_cube["data_cube.rs<br/>RDF Data Cube"]
             dc_bibo["dc_bibo.rs<br/>DC + BIBO + CiTO"]
-            fibo["fibo.rs<br/>FIBO"]
             golem["golem.rs<br/>GOLEM"]
             ml_schema["ml_schema.rs<br/>ML-Schema"]
             omc["omc.rs<br/>OMC"]
@@ -97,7 +96,7 @@ graph TD
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-ONT-001
 verified_date: 2026-10-17
-verified_against: kask/crates/hkask-bridge-ontology/src/hkask_bridge_ontology.rs (pub mod axis L94, data_cube L95, dc_bibo L96, derived L97, fibo L98, golem L99, ml_schema L100, omc L101, ontology_graph L102, pko L103, published L104, rdf L107, schema_org L108, sepio L110, sumo L111, term_resolution L112); dependent Cargo.tomls — kask/crates/hkask-condenser, kask/crates/hkask-types (L19), kask/crates/kask_bridge (L16), crates/agent (L48), crates/hkask-media-widget, kask/mcp-servers/{corpus, kata-kanban (L22), media, prediction-markets, research, scenarios, swarm}
+verified_against: kask/crates/hkask-bridge-ontology/src/hkask_bridge_ontology.rs (pub mod axis L94, data_cube L95, dc_bibo L96, derived L97, golem L98, ml_schema L99, omc L100, ontology_graph L101, pko L102, published L103, rdf L106, schema_org L107, sepio L109, sumo L110, term_resolution L111); dependent Cargo.tomls — kask/crates/hkask-condenser, kask/crates/hkask-types (L19), kask/crates/kask_bridge (L16), crates/agent (L48), crates/hkask-media-widget, kask/mcp-servers/{corpus, kata-kanban (L22), media, prediction-markets, research, scenarios, swarm}
 status: VERIFIED
 -->
 
@@ -106,16 +105,18 @@ status: VERIFIED
 `select_ontology_anchor` matches the domain hint by keyword token (exact,
 prefix, or `_`/space-delimited token — no substring false positives) and
 returns a `DualAxis` anchor (DC+BIBO or PKO), a `DomainSupplement` anchor
-(DataCube, FIBO, SEPIO, GOLEM, ML-Schema, OMC), the `Core` interrogative
+(DataCube, SEPIO, GOLEM, ML-Schema, OMC), the `Core` interrogative
 ground for an empty hint, or SUMO for unknown domains.
 
-**Regenerated (2026-09-28):** the SDMX anchor is gone — only explicitly
+**Regenerated (2026-10-18):** the FIBO branch is gone with the FIBO rung
+(operator ruling — the platform is a general co-researcher); financial
+domain hints now fall through to the generalist rungs like any other
+unknown domain. Earlier: the SDMX anchor is gone — only explicitly
 cube-shaped output (`data_cube` / `data-cube` / `statistical_cube`) takes
 the RDF Data Cube anchor, and other statistics fall through to SUMO; an OMC
 branch (media tool-name tokens) was added; prediction markets route to
-DC+BIBO (a market is a general entity, not a FIBO financial instrument);
-forecast/scenario moved from FIBO to PKO (processes); the FIBO keyword list
-narrowed to FIBO's actual data space; `wallet` was dropped from the
+DC+BIBO (a market is a general entity, not a financial instrument);
+`wallet` was dropped from the
 file/web/registry arm (operator decision 2026-08-29, pinned in `axis.rs`
 tests).
 
@@ -125,8 +126,7 @@ flowchart LR
     select["select_ontology_anchor<br/>keyword-token match"]
     domain --> select
     select -->|"data_cube / data-cube /<br/>statistical_cube"| dcube_anchor["DataCube<br/>data_cube::DATA_SET"]
-    select -->|"finance / financial / company /<br/>companies / stock / portfolio /<br/>dcf / screener"| fibo_anchor["FIBO + DC dataset"]
-    select -->|"science / scientific / research /<br/>hypothesis / evidence"| sepio_anchor["SEPIO + DC text"]
+    select -->|science / scientific / research /<br/>hypothesis / evidence"| sepio_anchor["SEPIO + DC text"]
     select -->|"narrative / literature / persona /<br/>author / corpus"| golem_anchor["GOLEM + DC text"]
     select -->|"training / ml / adapter /<br/>sweep / lora"| ml_anchor["ML-Schema + DC dataset"]
     select -->|"media / image / video / audio / gallery /<br/>face / speech / voice / transcribe / meme /<br/>collage / album / gif / upscale"| omc_anchor["OMC<br/>omc::CREATIVE_WORK"]
@@ -140,7 +140,7 @@ flowchart LR
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-ONT-002
 verified_date: 2026-09-28
-verified_against: kask/crates/hkask-bridge-ontology/src/axis.rs (select_ontology_anchor L207-381, matches_kw token matching L213-221, DataCube branch L222-230, FIBO branch L237-254, SEPIO branch L256-270, GOLEM branch L272-287, ML-Schema branch L288-297, OMC branch L298-327, PKO DualAxis branch L328-349, prediction-markets DC+BIBO branch L350-366, file/web/registry DC+BIBO branch L367-372, empty-hint Core L373-377, SUMO universal fallback L378-381)
+verified_against: kask/crates/hkask-bridge-ontology/src/axis.rs (select_ontology_anchor L207-381, matches_kw token matching L213-221, DataCube branch L222-230, SEPIO branch L237-250, GOLEM branch L252-268, ML-Schema branch L270-279, OMC branch L280-310, PKO DualAxis branch L311-332, prediction-markets DC+BIBO branch L333-349, file/web/registry DC+BIBO branch L350-355, empty-hint Core L356-360, SUMO universal fallback L361-364)
 status: VERIFIED
 -->
 

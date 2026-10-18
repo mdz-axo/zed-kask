@@ -36,22 +36,21 @@ The `media` MCP server is the fleet's largest (98 tools): image and video genera
 
 ### MCP servers
 
-**13 built-in MCP servers** (**408 registered tools** fleet-wide, every count pinned by a test) are launched by the in-process governed `McpRuntime` (D3 — single spawn authority) as child processes over stdio and exposed as agent tools through `rmcp`. Each is a thin surface over in-process domain crates — the binary entrypoint is a one-line wrapper around a library `run()`. The fleet:
+**9 built-in MCP servers** (**343 registered tools** fleet-wide, every count pinned by a test) are launched by the in-process governed `McpRuntime` (D3 — single spawn authority) as child processes over stdio and exposed as agent tools through `rmcp`. Each is a thin surface over in-process domain crates — the binary entrypoint is a one-line wrapper around a library `run()`. The fleet:
 
 | Server               | Surface                                                       | Tools |
 | -------------------- | ------------------------------------------------------------- | ----: |
-| `companies`          | FIBO-anchored financial forecasting, dual-provider routing, research notes, transcripts | 32 |
-| `corpus`             | Gather→process→output document pipeline, QA generation, style replicas | 27 |
+| `corpus`             | Gather→process→output document pipeline, QA generation, style replicas | 25 |
 | `curator`            | Curator memory, regulation query, algedonic signals, skill-use reporting | 15 |
 | `experimentation`   | Experiment registry for the sharded experimentation program: registered experiments with pre-registered predictions, variant lineages, grounded fitness, selection fossils | 8 |
 | `kata-kanban`        | Toyota-Kata task boards and persistent functional goals        | 27 |
 | `media`              | AI media generation (image, video, audio, gallery, educt transcripts, Reduct cloud) | 102 |
 | `prediction-markets` | Polymarket/Kalshi base rates, calibration, residuals | 27 |
 | `research`           | Web search, extraction, browsing, RSS feeds, evidence scoring, research-run ledger, paper identity | 27 |
-| `scenarios`          | Event-tree forecasting (Tetlock/Schwartz/Chermack)             | 17 |
+| `scenarios`          | Event-tree forecasting (Tetlock/Schwartz/Chermack), equity forecast loop | 21 |
 | `swarm`              | ABW cloud swarms + local swarm substrate + Xaman Ek curator     | 91 |
 
-Companies, scenarios, and prediction-markets form a three-layer forecasting stack (see [`kask/docs/reference/mcp-servers/README.md`](./kask/docs/reference/mcp-servers/README.md) for the full registry, architecture, and per-server count pins). All ten servers auto-load by default (`load_default: true`) unless the operator disables the fleet or an individual server; the Curator additionally ships as a native in-process agent.
+Companies, scenarios, and prediction-markets formed a three-layer forecasting stack; the companies layer was removed 2026-10-18 with the companies/FMP/EODHD/FIBO retirement (see [`kask/docs/reference/mcp-servers/README.md`](./kask/docs/reference/mcp-servers/README.md) for the full registry, architecture, and per-server count pins). All nine servers auto-load by default (`load_default: true`) unless the operator disables the fleet or an individual server; the Curator additionally ships as a native in-process agent.
 
 ## Installation
 

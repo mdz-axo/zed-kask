@@ -69,7 +69,7 @@ resolver owns all authority (`kask/crates/hkask-types/src/corpus.rs:265-267,325-
 
 `axis::select_ontology_anchor(domain_hint)` picks **one** anchor for an
 artifact or tool-derived context by keyword-matching the hint: a domain
-supplement (FIBO, SEPIO, GOLEM, ML-Schema, Data Cube, OMC), a dual-axis
+supplement (RDF Data Cube, SEPIO, GOLEM, ML-Schema, OMC), a dual-axis
 anchor (PKO process or DC+BIBO state), SUMO fallback, or the core
 (`kask/crates/hkask-bridge-ontology/src/axis.rs:207-390`). The dual-axis
 invariant (P5.4): one axis is always Dublin Core or PKO, so every artifact
@@ -91,8 +91,8 @@ over.
 
 **Finding B — the axis selector's namespace set predates the rung-1 pins
 (live via the condenser).** `OntologyNamespace`
-(`kask/crates/hkask-bridge-ontology/src/axis.rs:49-68`) carries FIBO,
-SEPIO, GOLEM, ML-Schema, Data Cube, OMC, SUMO — **no DPV, no CSO**. The
+(`kask/crates/hkask-bridge-ontology/src/axis.rs:49-68`) carries SEPIO,
+GOLEM, ML-Schema, Data Cube, OMC, SUMO — **no DPV, no CSO**. The
 condenser routes every tool name through this enum, so a tool name hinting
 at privacy or research-topic vocabulary falls to the SUMO arm instead of
 the vocabularies that now own those domains. Practical impact today is
@@ -108,7 +108,6 @@ Which tier serves which domain, and why — the hierarchy's working map:
 
 | Domain space | Primary tier | Vocabulary | Why this tier |
 |---|---|---|---|
-| Finance | domain_supplement + derived | FIBO Q2 Release; the DuPont/valuation derived rulings | FIBO owns the financial concept vocabulary; the derived registry owns the composed identities (ROE decomposition, DCF, expectations gap) FIBO does not state |
 | Machine learning | domain_supplement + derived | ML-Schema; CSO topics; the fine_tuning ruling | ML-Schema owns the experiment/process vocabulary; CSO owns the research-area taxonomy; composed rulings (bayesian network, entropy) sit derived |
 | Computer-science research topics | domain_supplement | CSO 3.5 | The Klink-2 taxonomy of CS research areas — `inference`, `fine-tuning learning` |
 | Data governance / privacy | domain_supplement | DPV 2.3 | `dpv:StorageDuration`, `dpv:Audit`, `dpv:ServiceLevelAgreement` — the personal-data processing vocabulary |
@@ -185,7 +184,7 @@ how many domain positions one chunk can record.
 **Finding F — the two mechanisms do not compose.** The artifact-level
 selector picks one ontology per artifact; the term-level resolver picks one
 primary sense per term across many ontologies. There is no path today that
-says "this artifact is a FIBO artifact, and this chunk within it also holds
+says "this artifact is an OMC artifact, and this chunk within it also holds
 a DPV position" — the artifact anchor (the condenser's tool-name-derived
 pick) and the chunk's term anchors live on separate surfaces. This is a
 design observation, not a live loss: no consumer today needs both on one

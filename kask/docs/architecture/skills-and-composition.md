@@ -363,8 +363,7 @@ local SDMX aliases and unlicensed DLP constants are removed) — domain
 supplements → derived concepts → full SUMO
 upper → full schema.org → published Dublin Core/BIBO/CiTO state-axis senses
 → 5W1H core — and always terminates on a real anchor: nothing is ever
-untagged; published definitions are returned when supplied, FIBO is Q2
-Release-only (not Provisional), and a coarse core-rung anchor carries the
+untagged; published definitions are returned when supplied, and a coarse core-rung anchor carries the
 ruling path), and the identity clause in the opening ("no
 professional works in a private language"). Pinned by the rewritten
 `test_system_prompt_contains_ontology_anchored_reasoning`, which asserts
