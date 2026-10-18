@@ -11286,9 +11286,14 @@ mod tests {
     #[gpui::test]
     async fn test_segmented_compaction_over_budget_history(cx: &mut TestAppContext) {
         let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
-        // Forty 6 KiB results: each under the per-result window cap (the
-        // deterministic shrink passes them through), but ~240 KiB total
-        // against the ~136 KiB budget — segmentation must engage.
+        // Forty 6 KiB results: each under the legacy fixed floor's 8 KiB
+        // per-result cap, but ~240 KiB total against the ~136 KiB budget —
+        // segmentation must engage. The count-aware cap (C2, operator ruling
+        // 2026-10-18) bounds the fleet's aggregate by the budget, so these
+        // sub-legacy-floor results ARE windowed now — the fixed floor's
+        // unbounded aggregate was the exact failure this history pinned.
+        // The pin's surviving intent: every segment fits, and each segment
+        // still carries whole tool exchanges.
         let model = fake.update_model("fake", |m| m.max_token_count = 80_000);
         let original = segmented_compaction_history(40, 6_000);
         thread.update(cx, |thread, cx| {
@@ -11314,10 +11319,6 @@ mod tests {
                 .map(|m| m.string_contents())
                 .collect::<Vec<_>>()
                 .join("\n");
-            assert!(
-                !text.contains("compaction elided"),
-                "sub-cap results are never windowed"
-            );
             assert!(
                 text.len() < 200_000,
                 "every segment fits the budget ({} bytes)",

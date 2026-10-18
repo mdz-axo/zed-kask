@@ -353,6 +353,7 @@ dependencies = [
  "sha2",
  "shell_command_parser",
  "smallvec",
+ "smol",
  "sqlez",
  "streaming_diff",
  "strsim",

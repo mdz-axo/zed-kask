@@ -68,7 +68,7 @@ flowchart TD
     B --> C[Calibrate byte budget<br/>capacity x last-reported-tokens ratio]
     C --> D[Deterministic pre-shrink<br/>on the request COPY only]
     D --> D1[Pass 1: run-length collapse<br/>3+ identical adjacent lines -> 1 + count]
-    D1 --> D2[Pass 2: head+tail windowing<br/>any tool-result text over cap -> head + marker + tail]
+    D1 --> D2[Pass 2: head+tail windowing<br/>count-aware cap: clamp(budget/2/k, 2 KiB, 64 KiB)]
     D2 --> E{Shrunk history<br/>fits budget?}
     E -->|yes| F[Two-half plan<br/>ratified split, 2 concurrent calls]
     E -->|no, splittable| G[Balanced N segments<br/>batches of 8, each fits budget]
@@ -130,7 +130,50 @@ system prefix and the instruction:
 | Pass | Transform | Policy | Marker |
 |------|-----------|--------|--------|
 | 1. Run-length collapse | 3+ identical adjacent non-blank lines → one line + exact count | threshold 3; blank runs and unique lines verbatim | `[preceding line repeated N more times]` |
-| 2. Head+tail windowing | text over the per-result cap → head half + marker + tail half | cap = `clamp(budget/32, 8 KiB, 64 KiB)`; **no exemptions** — tool name, JSON shape, error state, and position do not change the policy | `[… compaction elided N bytes to fit the context budget; the full text remains in the thread history …]` |
+| 2. Head+tail windowing | text over the per-result cap → head half + marker + tail half | cap = **count-aware**: `clamp(budget/2/k, 2 KiB, 64 KiB)` capped by `clamp(budget/32, 8 KiB, 64 KiB)`, where `k` is the history's tool-result count — so the pass's aggregate is bounded by the budget; **no exemptions** — tool name, JSON shape, error state, and position do not change the policy | `[… compaction elided N bytes to fit the context budget; the full text remains in the thread history …]` |
+
+**Anchoring (2026-10-18 grounding pass, verified sources).** The windowing
+pass — the pipeline's measured most-effective pass (86% of bytes removed in
+the 2026-10-18 log sample) — is anchored to Liu et al., *Lost in the Middle*
+(arXiv:2307.03172, TACL 2023; abstract retrieved and verified 2026-10-18):
+model performance on long inputs "is often highest when relevant information
+occurs at the beginning or end of the input context, and significantly
+degrades when models must access relevant information in the middle" — so
+keeping head+tail is attention-justified, and cutting the middle costs the
+least. The same finding justifies the aggressive 2 KiB floor: the windowed
+middle is the weak-attention region. The pipeline's tiering — stored history
+as the slow tier, summary as the fast tier — follows virtual context
+management (Packer et al., *MemGPT*, arXiv:2310.08560: hierarchical memory
+tiers with data movement between fast and slow memory). Pass 1 (RLE) is a
+**compression** citation only (Salomon), not a context-management claim; the
+2026-10-18 census measured it at 0.0% median on real threads — it stays as a
+cheap lossless guard, not a load-bearing pass.
+
+**C2 count-aware cap (operator ruling 2026-10-18).** The fixed 8 KiB
+per-result floor left the pass's aggregate unbounded in the result count
+(`k × 8 KiB`): a thread with 40 results at 6–8 KiB each carried 240–320 KiB
+through untouched, forcing multi-segment plans. The cap is now also bounded
+by the count — each result gets at most `budget/(2k)` bytes, floored at
+2 KiB — so the fleet's aggregate is bounded by the budget. The floor dropped
+from 8 KiB to 2 KiB because the summarization prompt extracts
+Goal/Constraints/Progress/Decisions/Next Steps/Critical Context/Relevant
+Files, which live at a result's head and tail; ~50 lines of boundary
+survive.
+
+**C1/C3 and C4 not built — the census gate (operator ruling 2026-10-18).**
+Cross-result block dedup and tool-use↔result dedup (C1/C3) were proposed and
+gated on a dry-run census: build only if duplicate-block bytes ≥ 5% of
+history bytes on the median real thread. The 2026-10-18 census over 12
+real threads read **2.5% median** (range 0.4–26.6%) — below the gate, so
+both arms are dropped, not built. The parameterized-run collapse (C4)
+measured **0.0% median** (max 652 bytes in the richest thread) on the same
+census — measurably inert on this workload — and no context-management or
+compression source governs it, so it is dropped as well: a proposed pass
+must be anchored to a reference model *or* measured effective, and C4 is
+neither. The census instrument is retained (test-only, `live_thread_census`)
+to re-measure if the workload changes: a thread mix that produces version-
+counter or progress spam would show up in the next census run and can
+re-open the question with evidence.
 
 Why windowing and not the condenser's line-selection algorithms: the
 flashrank-style mid-content `...` elision corrupts structured output (the
@@ -183,11 +226,23 @@ rejects the summary; empty/failed/cancelled phases never commit a marker.
 
 ## Observability
 
-`stream_compaction` logs the shrink outcome when it reduced anything:
+`stream_compaction` logs the shrink outcome when it reduced anything, with
+per-pass byte attribution so an inert pass is visible as a zero:
 
 ```
-Compaction deterministic pre-shrink: 6_412_331 -> 1_204_882 bytes (81% reduction; 23 results windowed, 4 repeat runs collapsed)
+Compaction deterministic pre-shrink: 6_412_331 -> 1_204_882 bytes (81% reduction; 23 results, cap 10485 bytes, 41 result texts; windowed: 23 results / 5_207_449 bytes; runs collapsed: 4 runs / 331 bytes)
 ```
+
+The segmented path logs the merge call's cost:
+
+```
+Compaction merge call: 3 summaries merged; merge-call input tokens: 4_812
+```
+
+The merge-call token count comes from the same per-call usage accounting
+the summary calls already run (`collect_compaction_summary_with_usage`),
+so the bytes-vs-tokens trade of a segment plan is measurable from the log
+without new machinery (operator ruling 2026-10-18).
 
 A near-zero reduction on a large history is a policy smell an operator
 can see directly — the failure mode that hid the previous no-op stage.
@@ -234,12 +289,35 @@ its analytical basis:
 - **Run-length encoding (RLE)** — the adjacent-repeat collapse is RLE over
   lines: a run of identical symbols becomes one symbol plus a count. The
   count marker preserves the exact repetition magnitude, unlike lossy
-  deduplication.
+  deduplication. **A compression citation, not a context-management
+  claim** — the 2026-10-18 census measured this pass at 0.0% median on
+  real coding threads; it stays as a cheap lossless guard, not a
+  load-bearing pass.
+- **Parameterized-run collapse: dropped (2026-10-18).** Proposed as
+  value-abstracted RLE (lines identical except a trailing numeric field →
+  first/last + range marker); measured 0.0% median on the real-thread census
+  and governed by no source — dropped under the same falsifier rule that
+  dropped C1/C3. The census instrument retains its measurement arm so the
+  question re-opens with evidence if the workload changes.
 - **Head/tail windowing (bounded-display truncation)** — the per-result
   cap is the standard `head`/`tail` composition used for bounded display
   of bulk text (logs, streams). Chosen over mid-content extractive
   selection because it cannot corrupt structure; the marker carries the
-  provenance.
+  provenance. The count-aware cap (C2) bounds the pass's aggregate, not
+  just each result: `k` results × per-result cap ≤ budget/2. **Anchored to
+  Liu et al., *Lost in the Middle* (arXiv:2307.03172, TACL 2023; abstract
+  retrieved and verified 2026-10-18):** model performance on long inputs
+  is highest when relevant information occurs at the beginning or end of
+  the context and degrades in the middle — so retaining head+tail is
+  attention-justified and the elided middle is the weak-attention region.
+- **Virtual context management / memory tiering (Packer et al., *MemGPT*,
+  arXiv:2310.08560; abstract retrieved and verified 2026-10-18)** — the
+  pipeline's architecture is a two-tier memory system: the stored thread
+  history is the slow tier (never modified, the ground truth the markers
+  point back to), the inserted summary is the fast tier, and compaction is
+  the data movement between them. This anchors the map-reduce staging and
+  the marker's "the full text remains in the thread history" provenance
+  contract.
 - **Extractive-before-abstractive staging** — the deterministic passes are
   lossy-extractive (they select what the summarizer will see); the LLM
   pass is abstractive (it writes the summary). The staging principle —
@@ -285,6 +363,15 @@ compressor — a separate consumer with its own protected-tools policy,
   `oversized_indivisible_prose_elides_for_summarizer_only`,
   `balanced_packing_keeps_the_largest_segment_small`,
   `merge_request_lists_summaries_in_chronological_order`.
+- `kask_compaction.rs` C2 count-aware cap (2026-10-18):
+  `count_aware_cap_windows_a_fleet_of_subcap_results`,
+  `count_aware_cap_bounds_the_windowed_fleet_by_budget_half`.
+- `kask_compaction.rs` instrumentation + census (2026-10-18):
+  `per_pass_byte_attribution_is_reported`,
+  `census_counts_duplicate_blocks_and_parameterized_runs`; the live-thread
+  census `live_thread_census` (test-only, `#[ignore]`d — the measurement
+  gate that read C1/C3 at 2.5% median below the 5% build threshold and C4
+  at 0.0% median — the falsifier that dropped all three).
 - `thread.rs` integration (real `Thread::compact` path):
   `test_compaction_pre_shrinks_oversized_tool_results`,
   `test_segmented_compaction_over_budget_history`,

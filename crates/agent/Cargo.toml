@@ -126,6 +126,7 @@ proptest.workspace = true
 reqwest_client.workspace = true
 serde_json_lenient.workspace = true
 settings = { workspace = true, "features" = ["test-support"] }
+smol.workspace = true
 
 # Feature-propagation-only dev-dep: not `use`d in source. `project`'s
 # `test-support` above pulls in `remote/test-support`, which exposes
