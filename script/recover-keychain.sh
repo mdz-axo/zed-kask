@@ -80,8 +80,9 @@ declare -a CONFLICTS=(
 )
 
 # Keys that were never in either namespace — genuinely need regeneration.
+# (The `eodhd:HKASK_EODHD_API_KEY` entry retired with the companies server and
+# the FMP/EODHD providers, 2026-10-18 — nothing consumes it.)
 declare -a LOST=(
-  "eodhd:HKASK_EODHD_API_KEY"
   "fred:HKASK_FRED_API_KEY"
   "hkask_abw_api_key:HKASK_ABW_API_KEY"
   "hkask_smtp_password:HKASK_SMTP_PASSWORD"

@@ -30,11 +30,11 @@ Source identity and derivation use [Dublin Core](https://www.dublincore.org/spec
 and [PROV-O](https://www.w3.org/TR/prov-o/); procedure metadata uses PKO. These
 anchors do not turn generated assertions or exact citations into verified prose.
 
-## Tools (26)
+## Tools (25)
 
 | Group | Registered tools |
 |---|---|
-| Gather (3) | `corpus_discover`, `corpus_cache_work`, `corpus_discover_company` |
+| Gather (2) | `corpus_discover`, `corpus_cache_work` |
 | Process (11) | `corpus_convert`, `corpus_ocr`, `corpus_is_complex`, `corpus_chunk`, `corpus_build_chunk_representations`, `corpus_embedding_inventory`, `corpus_tag_chunks`, `corpus_embed`, `corpus_extract_assertions`, `corpus_dedup_chunks`, `corpus_consolidate_chunks` |
 | QA output (4) | `corpus_build_prompts`, `corpus_generate_qa_batch`, `corpus_ground_generated_qa`, `corpus_ingest_qa` |
 | Compose (3) | `corpus_compose`, `corpus_rewrite`, `corpus_centroid` |
