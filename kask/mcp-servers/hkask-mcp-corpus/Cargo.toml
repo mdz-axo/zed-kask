@@ -3,7 +3,7 @@ name = "hkask-mcp-corpus"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Unified corpus MCP server — gather, process, and output: document conversion, OCR, chunking, tagging, embedding, QA generation, training data, style exemplar composition"
+description = "Unified corpus MCP server — gather, process, and output: document conversion, OCR, chunking, tagging, embedding, evidence-carrying QA exports, style exemplar composition"
 
 [dependencies]
 tempfile.workspace = true

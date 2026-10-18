@@ -24,7 +24,7 @@ mds_categories: [composition, domain]
 >
 > **Hosting note (v0.32.2):** hKask runs in-process inside zed-kask. The standalone `kask mcp start
 > <id>` and `kask serve` CLI surfaces have been **deleted**. The `BUILT_IN_MCP_SERVERS` constant in
-> `kask/crates/kask_bridge/src/mcp_servers.rs` enumerates the 13 on-disk servers.
+> `kask/crates/kask_bridge/src/mcp_servers.rs` enumerates the 10 on-disk servers.
 
 ## Server Catalog
 
@@ -44,13 +44,13 @@ mds_categories: [composition, domain]
 | [Scenarios](scenarios.md) | `kask/mcp-servers/hkask-mcp-scenarios` | Event-tree forecasting (Tetlock/Schwartz/Chermack) | 17 |
 | [Swarm](swarm.md) | `kask/mcp-servers/hkask-mcp-swarm` | Agent Bestiary World swarms + Xaman Ek curator + local swarm substrate (v2 §15) | 91 |
 
-### Count verification (unified 2026-10-05; re-verified 2026-10-13)
+### Count verification (unified 2026-10-05; re-verified 2026-10-17)
 
-Every server pins its exact tool surface with the shared `tool_surface_pin!` macro (landed `ede1ba0ca8`, 2026-10-05): one macro call pins the exact tool count and the generated `TOOL_NAMES` set against the live router, so additions, drops, and same-count renames fail CI instead of degrading to tool-not-found. `kask/scripts/check-mcp-registration.sh` gates on the pin's presence for every server in `mcp-servers.txt` (CI: `.github/workflows/kask-invariants.yml`). Live pin sites (generated test names, re-verified 2026-10-17): companies 32 (`hkask_mcp_companies.rs:543`), corpus 26 (`hkask_mcp_corpus.rs:321`), curator 15 (`hkask_mcp_curator.rs:1766`), experimentation 8 (`hkask_mcp_experimentation.rs:82`), kata-kanban 27 (`hkask_mcp_kata_kanban.rs:1762`), media 102 (`hkask_mcp_media.rs:476`), prediction-markets 27 (`hkask_mcp_prediction_markets.rs:1348`), research 27 (`hkask_mcp_research.rs:2445`), scenarios 17 (`hkask_mcp_scenarios.rs:1891`), swarm 91 (`hkask_mcp_swarm.rs:985`). The portfolio server (18 tools) and the spreadsheet server (2 tools) were removed 2026-10-15; the training server (9 tools) and the corpus `corpus_prepare_training_dataset` bridge tool were removed 2026-10-17 — model training is out of scope for the co-researcher mandate.
+Every server pins its exact tool surface with the shared `tool_surface_pin!` macro (landed `ede1ba0ca8`, 2026-10-05): one macro call pins the exact tool count and the generated `TOOL_NAMES` set against the live router, so additions, drops, and same-count renames fail CI instead of degrading to tool-not-found. `kask/scripts/check-mcp-registration.sh` gates on the pin's presence for every server in `mcp-servers.txt` (CI: `.github/workflows/kask-invariants.yml`). Live pin sites (generated test names, re-verified 2026-10-17): companies 32 (`hkask_mcp_companies.rs:524`), corpus 26 (`hkask_mcp_corpus.rs:321`), curator 15 (`hkask_mcp_curator.rs:1766`), experimentation 8 (`hkask_mcp_experimentation.rs:82`), kata-kanban 27 (`hkask_mcp_kata_kanban.rs:1762`), media 102 (`hkask_mcp_media.rs:476`), prediction-markets 27 (`hkask_mcp_prediction_markets.rs:1348`), research 27 (`hkask_mcp_research.rs:2317`), scenarios 17 (`hkask_mcp_scenarios.rs:1891`), swarm 91 (`hkask_mcp_swarm.rs:985`). The portfolio server (18 tools) and the spreadsheet server (2 tools) were removed 2026-10-15; the training server (9 tools) and the corpus `corpus_prepare_training_dataset` bridge tool were removed 2026-10-17 — model training is out of scope for the co-researcher mandate.
 
 Per-server specifics that survive the unification: the curator pin additionally asserts the removed escalation/advice-review tools stay unregistered (`curator_escalations`, `curator_escalation_resolve`, `curator_escalation_dismiss`, `curator_escalation_dismiss_by_pattern`, `curator_advice_mark_applied`, `curator_advice_reviews`); the swarm pin's live partition is 48 cloud plus 43 non-cloud (33 local + 3 A2A + 4 knowledge + 3 swarm-scoped thread tools; `swarm_gate_readings` joined the local set 2026-10-10); the experimentation tool-behavior suite drives every tool end-to-end over the real engine actor (`tests/tool_behavior.rs`).
 
-Arithmetic: `32 + 27 + 15 + 8 + 27 + 102 + 27 + 27 + 17 + 91 + 9 = 382`.
+Arithmetic: `32 + 26 + 15 + 8 + 27 + 102 + 27 + 27 + 17 + 91 = 372`.
 
 ## Common Patterns
 

@@ -34,7 +34,7 @@ fn request(directory: &Path, dry_run: bool) -> IngestQaRequest {
             .to_string_lossy()
             .into(),
         source_chunks_jsonl: directory.join("chunks.jsonl").to_string_lossy().into(),
-        output: directory.join("training.jsonl").to_string_lossy().into(),
+        output: directory.join("qa-export.jsonl").to_string_lossy().into(),
         db_path: directory.join("memory.db").to_string_lossy().into(),
         dry_run,
         dataset: "brooks-test".into(),
@@ -206,6 +206,11 @@ fn reconciles(value: &Value) {
     );
     assert_eq!(count("filtered"), count("duplicates") + count("retained"));
     assert_eq!(count("deduped"), count("retained"));
+    if value["dry_run"] == true {
+        assert_eq!(count("qa_export_rows"), 0);
+    } else {
+        assert_eq!(count("qa_export_rows"), count("retained"));
+    }
     assert_eq!(count("stored_h_mems"), count("stored"));
     if value["dry_run"] == true {
         assert_eq!(count("stored") + count("failed"), 0);
@@ -302,7 +307,7 @@ async fn mixed_qa_dispositions_project_to_grounded_candidates() -> anyhow::Resul
     assert_eq!(summary["status"], "dry_run");
     assert!(
         !Path::new(&output_path).exists(),
-        "audit must not construct a training dataset"
+        "audit must not construct a QA export"
     );
     assert_eq!(std::fs::read_to_string(original_path)?.lines().count(), 2);
     Ok(())
@@ -335,7 +340,7 @@ async fn ingest_concise_metadata_counts_and_dry_run() -> anyhow::Result<()> {
             .is_some_and(|sha| !sha.is_empty())
     );
     assert_eq!(dry["grounding_rows"], 4);
-    assert!(!directory.path().join("training.jsonl").exists());
+    assert!(!directory.path().join("qa-export.jsonl").exists());
     assert!(!directory.path().join("memory.db").exists());
 
     let written = content(
@@ -347,7 +352,7 @@ async fn ingest_concise_metadata_counts_and_dry_run() -> anyhow::Result<()> {
     assert_eq!(written["stored"], 4);
     assert_eq!(written["failed"], 0);
     assert_eq!(written["status"], "complete");
-    let output = std::fs::read_to_string(directory.path().join("training.jsonl"))?;
+    let output = std::fs::read_to_string(directory.path().join("qa-export.jsonl"))?;
     let training = output
         .lines()
         .map(serde_json::from_str)
@@ -377,7 +382,7 @@ async fn ingest_rejects_partial_generated_input() -> anyhow::Result<()> {
         .await
         .expect_err("partial input must fail closed");
     assert!(error.to_string().contains("rejects partial input"));
-    assert!(!directory.path().join("training.jsonl").exists());
+    assert!(!directory.path().join("qa-export.jsonl").exists());
     assert!(!directory.path().join("memory.db").exists());
     Ok(())
 }
@@ -429,7 +434,7 @@ async fn ingest_rejects_invalid_requests_and_unsafe_inputs() -> anyhow::Result<(
             .await
             .is_err()
     );
-    assert!(!directory.path().join("training.jsonl").exists());
+    assert!(!directory.path().join("qa-export.jsonl").exists());
     assert!(!directory.path().join("memory.db").exists());
     Ok(())
 }
@@ -459,7 +464,7 @@ async fn ingest_surfaces_output_and_db_open_errors() -> anyhow::Result<()> {
     assert!(server.corpus_ingest_qa(Parameters(req)).await.is_err());
     // File output is deliberately not advertised as atomic with DB writes.
     assert_eq!(
-        std::fs::read_to_string(directory.path().join("training.jsonl"))?
+        std::fs::read_to_string(directory.path().join("qa-export.jsonl"))?
             .lines()
             .count(),
         1
@@ -542,7 +547,7 @@ async fn ingest_requires_grounding_manifest_before_any_write() -> anyhow::Result
         error.to_string().contains("does-not-exist"),
         "the error must name the missing manifest: {error}"
     );
-    assert!(!directory.path().join("training.jsonl").exists());
+    assert!(!directory.path().join("qa-export.jsonl").exists());
     assert!(!directory.path().join("memory.db").exists());
 
     // The superseded prepared-qa-grounding-verification-v1 report is not a
@@ -566,7 +571,7 @@ async fn ingest_requires_grounding_manifest_before_any_write() -> anyhow::Result
         error.to_string().contains("corpus-qa-grounding-v1"),
         "{error}"
     );
-    assert!(!directory.path().join("training.jsonl").exists());
+    assert!(!directory.path().join("qa-export.jsonl").exists());
     assert!(!directory.path().join("memory.db").exists());
     Ok(())
 }
@@ -610,7 +615,7 @@ async fn self_reported_verification_cannot_open_ingestion_gate() -> anyhow::Resu
         error.to_string().contains("does not match re-execution"),
         "{error}"
     );
-    assert!(!directory.path().join("training.jsonl").exists());
+    assert!(!directory.path().join("qa-export.jsonl").exists());
     assert!(!directory.path().join("memory.db").exists());
     Ok(())
 }
@@ -631,7 +636,7 @@ async fn grounding_manifest_hash_mismatch_fails_closed() -> anyhow::Result<()> {
         .await
         .expect_err("modified rows file fails closed");
     assert!(error.to_string().contains("manifest SHA-256"), "{error}");
-    assert!(!directory.path().join("training.jsonl").exists());
+    assert!(!directory.path().join("qa-export.jsonl").exists());
     assert!(!directory.path().join("memory.db").exists());
     Ok(())
 }
@@ -662,7 +667,7 @@ async fn grounding_manifest_requires_bijective_row_coverage() -> anyhow::Result<
         .await
         .expect_err("duplicate row keys fail closed");
     assert!(error.to_string().contains("repeats row key"), "{error}");
-    assert!(!directory.path().join("training.jsonl").exists());
+    assert!(!directory.path().join("qa-export.jsonl").exists());
     assert!(!directory.path().join("memory.db").exists());
     Ok(())
 }
@@ -733,7 +738,7 @@ async fn model_inference_answer_is_admitted_and_persisted_as_model_mediated() ->
     assert_eq!(answer["strength"], 1);
 
     // The row is admitted on its citation, and the answer provenance persists as
-    // model-mediated in the training JSONL.
+    // model-mediated in the QA export JSONL.
     let summary = content(
         server
             .corpus_ingest_qa(Parameters(request(directory.path(), false)))
@@ -741,7 +746,7 @@ async fn model_inference_answer_is_admitted_and_persisted_as_model_mediated() ->
     )?;
     reconciles(&summary);
     assert_eq!(summary["stored"], 1);
-    let training = std::fs::read_to_string(directory.path().join("training.jsonl"))?;
+    let training = std::fs::read_to_string(directory.path().join("qa-export.jsonl"))?;
     let record: Value = serde_json::from_str(training.lines().next().expect("stored row"))?;
     assert_eq!(record["grounding"]["answer_provenance"], "model_inference");
     Ok(())
@@ -772,7 +777,7 @@ async fn grounding_gate_runs_before_output_and_db_open() -> anyhow::Result<()> {
             "gate failure must not be masked by dry_run={dry_run}"
         );
     }
-    assert!(!directory.path().join("training.jsonl").exists());
+    assert!(!directory.path().join("qa-export.jsonl").exists());
     assert!(!directory.path().join("memory.db").exists());
     Ok(())
 }
@@ -796,7 +801,7 @@ async fn later_ungrounded_citation_blocks_every_batch_write() -> anyhow::Result<
             .await
             .expect_err("a later ungrounded citation must reject the entire batch");
         assert!(error.to_string().contains("citation claim"), "{error}");
-        assert!(!directory.path().join("training.jsonl").exists());
+        assert!(!directory.path().join("qa-export.jsonl").exists());
         assert!(!directory.path().join("memory.db").exists());
     }
     Ok(())
@@ -821,7 +826,7 @@ async fn citation_not_byte_exact_fails_closed_despite_paraphrase_answer() -> any
         .await
         .expect_err("an unverifiable citation fails closed");
     assert!(error.to_string().contains("citation claim"), "{error}");
-    assert!(!directory.path().join("training.jsonl").exists());
+    assert!(!directory.path().join("qa-export.jsonl").exists());
     Ok(())
 }
 
@@ -852,7 +857,7 @@ async fn row_without_evidence_cannot_be_ingested() -> anyhow::Result<()> {
         error.to_string().contains("cites no strength-2 evidence"),
         "{error}"
     );
-    assert!(!directory.path().join("training.jsonl").exists());
+    assert!(!directory.path().join("qa-export.jsonl").exists());
     Ok(())
 }
 

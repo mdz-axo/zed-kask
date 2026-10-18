@@ -1,9 +1,9 @@
 # hkask-mcp-corpus
 
 Corpus processing, retrieval, evidence-carrying QA and style composition over
-MCP. The server has **25 registered tools**; parameters extend existing tools,
-not the tool count. The router and count test are in
-`src/hkask_mcp_corpus.rs:252–307`.
+MCP. The server has **26 registered tools**; parameters extend existing tools,
+not the tool count. The live router and exact-surface pin are in
+`src/hkask_mcp_corpus.rs:264–326`.
 
 Use the [tool reference](../../docs/reference/mcp-servers/corpus.md) for parameters
 and the [build-corpus-pipeline skill](../../../.agents/skills/build-corpus-pipeline/SKILL.md)
@@ -313,7 +313,7 @@ synthesized answer that is not byte-exact inside that evidence is a
 answer is persisted as model-mediated, never relabelled verified. A
 model-mediated oracle judging entailment is *not* an admission path (see the
 architecture note below). Manifest identity, the re-executed answer provenance
-and the canonical ontology persist into the training JSONL and QA h_mems.
+and the canonical ontology persist into the QA export JSONL and QA h_mems.
 Nothing generated before this gate is ingestible; historical pilot artifacts
 (v2–v8) are immutable evidence only.
 
@@ -333,7 +333,7 @@ primary identity, requested `qa_type`, `status:"skipped"`, its closed reason and
 protocol provenance, with no response. A failed prompt writes primary `prompt_id`,
 `chunk_ref`, `source`, `error`, provider `completion_tokens`, and provider
 `finish_reason`, with no response; unavailable provider telemetry is null rather
-than fabricated. Skips and failed prompts are never training data.
+than fabricated. Skips and failed prompts are never admitted QA rows.
 
 ### Grounding-gate architecture references
 
@@ -451,7 +451,7 @@ case-insensitive exact instructions win in file order; there is no semantic
 dedup or existing-DB dedup (`src/tools/corpus/qa_parsing.rs:53–112`;
 `src/tools/corpus.rs`).
 
-Training JSONL retains `instruction`, empty `input`, `output`, `qa_type`, `type`,
+QA export JSONL retains `instruction`, empty `input`, `output`, `qa_type`, `type`,
 `source`, `chunk_ref`, `evidence_quotes`, `prompt_id`, `provenance`, `difficulty`,
 `concepts`, and the `grounding` identity object (protocol, manifest SHA-256,
 `row_key`, and the re-executed `answer_provenance` — `tool_verified` when the
@@ -475,12 +475,15 @@ output contains all retained QA even when DB storage fails. File writing precede
 DB opening; output and per-row inserts are not one transaction. A tool error or
 partial status may leave output/earlier inserts intact.
 
-Before re-ingestion, inspect and explicitly purge only the verified
-`training:qa:{dataset}:` prefix in the named DB. Ingest does not replace or purge a
-prior run. Its entity format is `training:qa:{dataset}:{source}:{retained_index}`;
-indices restart per call, so independent input partitions do not provide a
-whole-dataset idempotency guarantee. Reconcile the complete dataset rather than
-silently colliding or leaving stale records.
+Before re-ingestion, inspect and explicitly purge only the verified legacy
+`training:qa:{dataset}:` prefix in the named DB. The prefix and the
+`training_qa_pair` attribute are durable storage identities retained for existing
+corpora; no training executor consumes them. Ingest does not replace or purge a
+prior run. Its entity format remains
+`training:qa:{dataset}:{source}:{retained_index}`; indices restart per call, so
+independent input partitions do not provide a whole-dataset idempotency guarantee.
+Reconcile the complete dataset rather than silently colliding or leaving stale
+records.
 
 ## Audit gates
 

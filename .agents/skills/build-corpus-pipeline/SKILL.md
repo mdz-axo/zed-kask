@@ -15,7 +15,7 @@ completed capability are different claims.
 ## When to Use
 
 Build or refresh a corpus from a user-selected folder, optionally producing
-classified passages, evidence-carrying QA, training exports, style centroids,
+classified passages, evidence-carrying QA exports, style centroids,
 or a shippable distribution bundle from a sealed calibration run. The source
 set need not be literary, single-author or related to a previous run.
 
@@ -93,7 +93,7 @@ duplicate sources or synthetic fixtures in an extraction input directory.
 | `context_k` | Default **0** for primary-only factual/conceptual QA; positive KNN context requires the corpus DB (the passphrase resolves server-side) |
 | `type_distribution` | Five nonnegative integer weights in canonical label order; default `1,1,1,1,1` |
 | `max_pairs` | Explicit pair cap, or `0` for all `classified_count × qa_pairs_per_chunk`; not a small fixed cap |
-| `dataset`, `owner`, `train_split` | Explicit dataset/owner identity and agreed training split for QA exports; never inherit another corpus's defaults |
+| `dataset`, `owner` | Explicit dataset/owner identity for QA exports; never inherit another corpus's defaults |
 | execution record | Caller-selected record of source identities/hashes, stage paths, parameters, counts, verification and unresolved issues; keep credentials out |
 | pilot and spend bounds | Measured input scope, selected models, request/time/retry limits and approved cost ceiling; changed source/model/volume invalidates old estimates |
 
@@ -103,7 +103,7 @@ injected as `HKASK_QA_GENERATION_MODEL`). The setting defaults empty. Missing,
 malformed or unresolved configuration must fail visibly. No chat, classifier,
 `HKASK_QA_MODEL`, or training-base fallback. Tagging independently requires the
 configured classifier; OCR requires the configured image-capable OCR model.
-The training base model and LoRA configuration still require operator approval.
+No training base model or LoRA configuration is part of this pipeline.
 
 Use tool concurrency by default. Additional agent threads require explicit
 operator approval and disjoint stage output paths. File partitioning changes
@@ -613,7 +613,7 @@ ambiguous, wrong-level or evidence-bearing skips reject the whole prompt.
 Generated envelopes retain primary identity, candidate terms, QA type, canonical
 evidence and protocol/model provenance. Skip envelopes retain primary identity,
 requested QA type, closed reason and provenance but no response, and are never
-training data. Usage and cost totals include every returned disposition-plan,
+admitted QA rows. Usage and cost totals include every returned disposition-plan,
 mandate-correction, QA-writing and writer-schema-correction provider response and are not repeated per pair. Matching quotation bytes
 still does not validate answer synthesis or cognitive difficulty.
 
@@ -625,7 +625,7 @@ inspect `skip_reason_counts`; for reviewed runs also reconcile
 `reviewed_level_generates + reviewed_level_skips = qa_levels_requested`. Require every
 physical row to be either an accepted QA envelope, explicit skip, or identified prompt failure. A prompt may
 yield multiple pairs and/or skips; QA row count is neither prompt nor requested-level
-coverage. Failure and skip rows are never training data. Before expansion, audit
+coverage. Failure and skip rows are never admitted QA rows. Before expansion, audit
 both retained QA and skip decisions: a model that generates factual recall under a
 conceptual label or skips substantive support has failed the semantic gate.
 Writes/flushes can fail and leave explicit partial output. Cancellation warns;
@@ -696,7 +696,7 @@ review leaves process approval incomplete; the ingestion tool itself enforces
 the mechanical gate, not operator approval. Retain current verification
 evidence and correction findings, not duplicate corpus versions.
 
-## Stage 9 — Ground, ingest, assemble and seek training approval
+## Stage 9 — Ground, ingest, and export the QA corpus
 
 1. Stage 7's immutable generated JSONL contains QA envelopes **and** terminal
    `status="skipped"` rows. Stage 9's grounding tool rejects mixed files. After
@@ -734,8 +734,10 @@ evidence and correction findings, not duplicate corpus versions.
    implied. Stage 8 remains the external semantic audit, advisory only;
    byte-exactness of the citation does not certify answer entailment.
 3. After semantic acceptance, ingest with `dry_run=false`. For re-ingestion,
-   inspect the exact `training:qa:{dataset}:` prefix in the named DB and explicitly
-   purge it before replacement. Do not infer/broaden a purge or retain parallel
+   inspect the exact legacy `training:qa:{dataset}:` prefix in the named DB and
+   explicitly purge it before replacement. The prefix is retained only as durable
+   compatibility for existing QA records; it does not name a training executor.
+   Do not infer/broaden a purge or retain parallel
    datasets. Retained-row indices restart per call; arbitrary partitioned calls
    to the same dataset are not a safe replacement for whole-dataset reconciliation.
 4. Reconcile the **candidate-only** file: `total_nonblank_rows = parsed`
@@ -777,7 +779,7 @@ branch's clause (classification, prompts/pairs, export, style) and record the
 omission in the run record, never bind both sides equal to fake a pass:
 
 ```
-form: "(and (= sources_present sources_expected) (= embeddings_stored chunks_measured) (= classified_count classified_target) (= prompts_written prompts_expected) (= pairs_requested pairs_expected) (= prompts_total (+ prompts_succeeded prompts_failed)) (= unresolved_failed 0) (= candidate_parsed candidate_nonblank) (= candidate_parsed (+ filter_drops duplicates retained)) (= retained (+ stored failed)) (= storage_errors 0) (= (+ train_rows validation_rows) retained) style_ok semantic_gate retrieval_ok)"
+form: "(and (= sources_present sources_expected) (= embeddings_stored chunks_measured) (= classified_count classified_target) (= prompts_written prompts_expected) (= pairs_requested pairs_expected) (= prompts_total (+ prompts_succeeded prompts_failed)) (= unresolved_failed 0) (= candidate_parsed candidate_nonblank) (= candidate_parsed (+ filter_drops duplicates retained)) (= retained (+ stored failed)) (= storage_errors 0) (= qa_export_rows retained) style_ok semantic_gate retrieval_ok)"
 env:  { "sources_present": <measured>, "sources_expected": <inventoried>,
         "embeddings_stored": <measured>, "chunks_measured": <measured>,
         "classified_count": <measured>, "classified_target": <total chunks, when classification is required>,
@@ -788,7 +790,7 @@ env:  { "sources_present": <measured>, "sources_expected": <inventoried>,
         "candidate_parsed": <measured>, "candidate_nonblank": <measured>, "filter_drops": <measured>, "duplicates": <measured>,
         "retained": <measured>, "stored": <measured>, "failed": <measured>,
         "storage_errors": <measured>,
-        "train_rows": <measured assembled total, when export is requested>, "validation_rows": <measured assembled total, when export is requested>,
+        "qa_export_rows": <measured QA export rows, when export is requested>,
         "style_ok": <the Stage 5 measured style criterion, when the style branch is requested>,
         "semantic_gate": <the separately evidenced Stage 8 boolean>,
         "retrieval_ok": <the live query's source/text identity verdict> }
@@ -804,9 +806,9 @@ cleanup, audits and reruns carry the same status/accounting discipline. A blocke
 optional branch is not an overall pass. Name unresolved IDs/errors and the next
 owner/action; three no-progress retries halt for operator attention. Report tool
 failures via `curator_report_skill_use_issue`, never silently bypass the engine.
-No claim of a rebuild, ingestion, centroid or training completion is valid without
+No claim of a rebuild, ingestion, centroid or QA-export completion is valid without
 the corresponding run. Code/doc work cites its commit, or explicitly says
-**uncommitted**; training readiness is not evidence of trained capability.
+**uncommitted**; a valid QA export is evidence of a research corpus, not a trained capability.
 
 ## Stage 11 — Distribute: export and ship the sealed corpus
 
@@ -901,4 +903,5 @@ decisions consumed directly as the `prepared-qa-adjudication-v2` JSONL.
 - Validate generalization with a small independent source set and different run
   parameters as well as the requested corpus. Keep fixtures outside production
   inputs and disclose which branches were actually exercised.
-- No training submission without its separate operator approval.
+- No downstream training submission exists; the evidence-carrying QA export is
+  the terminal artifact.

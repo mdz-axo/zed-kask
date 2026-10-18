@@ -214,7 +214,7 @@ Traceability of each capability to its canonical pattern:
 | Control-character sanitization | `kask/crates/hkask-memory/src/text_chunking.rs:45` | Ingestion hygiene |
 | Corrupted-encoding detection | `kask/crates/hkask-memory/src/text_chunking.rs:20` | Ingestion hygiene |
 | Boilerplate and front/back-matter filter | `kask/crates/hkask-memory/src/text_chunking.rs:404` | Ingestion hygiene |
-| Deduplication and LLM consolidation | `kask/mcp-servers/hkask-mcp-corpus/src/tools/corpus.rs:48` | Post-processing |
+| Deduplication and LLM consolidation | `kask/mcp-servers/hkask-mcp-corpus/src/tools/corpus.rs:69-166` | Post-processing |
 | Ontology-tag prefix on embedding input | `kask/mcp-servers/hkask-mcp-corpus/src/tools/semantic.rs:303` | Metadata-as-text, partial |
 
 The structural splitter, the sentence-end fallback, and the boilerplate

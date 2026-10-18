@@ -61,7 +61,7 @@ The ontology is re-anchored to the **19 surviving hKask crates** (18 `hkask-*` +
 
 ### 1.3 Service and runtime subsystems
 
-**Crate:** the last `hkask-services-*` crate (`hkask-services-core`) was folded into `hkask-mcp-corpus` as its `services_core` module (2026-10-13) — it had exactly one consumer and failed the deletion test. The editor process owns one `McpRuntime`; it spawns the 13 MCP binaries as child processes over stdio, discovers their tools, and governs dispatch (`kask/crates/hkask-mcp/src/runtime.rs:4-12,646-655,749-751`; registry at `kask/crates/kask_bridge/src/mcp_servers.rs:49-573`). There is no daemon or `KaskCore` singleton.
+**Crate:** the last `hkask-services-*` crate (`hkask-services-core`) was folded into `hkask-mcp-corpus` as its `services_core` module (2026-10-13) — it had exactly one consumer and failed the deletion test. The editor process owns one `McpRuntime`; it spawns the 10 MCP binaries as child processes over stdio, discovers their tools, and governs dispatch (`kask/crates/hkask-mcp/src/runtime.rs:4-12,646-655,749-751`; registry at `kask/crates/kask_bridge/src/mcp_servers.rs:49-573`). There is no daemon or `KaskCore` singleton.
 
 The deleted subcrates (`hkask-services-chat`, `hkask-services-onboarding`, `hkask-services-skill`, `hkask-services-wallet`) are **removed**. Their jobs moved to zed-kask surfaces:
 

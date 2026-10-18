@@ -74,8 +74,8 @@ pub(crate) struct CacheWorkRequest {
     /// Originating search provider for search-derived content (e.g. "brave").
     /// Recorded in a `{slug}.origin.json` sidecar next to the cached file so
     /// chunking can stamp it on chunk rows; Brave-derived content is excluded
-    /// from QA/training-bound paths (Brave API ToS clause xiii bans training
-    /// AI models on Search Results).
+    /// from QA export paths that could otherwise become model-training material
+    /// outside this system (Brave API ToS clause xiii).
     #[serde(default)]
     pub origin_provider: Option<String>,
 }

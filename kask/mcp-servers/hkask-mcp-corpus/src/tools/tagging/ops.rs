@@ -42,8 +42,9 @@ struct InputChunk {
     word_count: usize,
     /// Originating search provider stamped by `chunk_directory` (task
     /// c1d65229); carried onto the published `TaggedChunk` so the
-    /// QA/training-bound stages can exclude Brave-derived content (Brave
-    /// API ToS clause xiii bans training AI models on Search Results).
+    /// QA export stages can exclude Brave-derived content; an export could
+    /// otherwise become model-training material outside this system, which
+    /// Brave API ToS clause xiii forbids.
     #[serde(default)]
     origin_provider: Option<String>,
 }

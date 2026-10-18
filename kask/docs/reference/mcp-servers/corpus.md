@@ -75,9 +75,9 @@ the current `ocr_protocol` do not resume; no plain-text compatibility route exis
 ## Pipeline parameters
 
 Schema sources: `kask/mcp-servers/hkask-mcp-corpus/src/tools/document.rs:994-1097`,
-`kask/mcp-servers/hkask-mcp-corpus/src/tools/tagging/ops.rs:577-594`, `kask/mcp-servers/hkask-mcp-corpus/src/tools/corpus.rs:726-885`,
-`kask/mcp-servers/hkask-mcp-corpus/src/tools/compose_tools.rs:109-154`, `kask/mcp-servers/hkask-mcp-corpus/src/tools/storage.rs:452-464`, and
-`kask/mcp-servers/hkask-mcp-corpus/src/tools/gather.rs:70-81`.
+`kask/mcp-servers/hkask-mcp-corpus/src/tools/tagging/ops.rs:578-594`, `kask/mcp-servers/hkask-mcp-corpus/src/tools/corpus.rs:560-698`,
+`kask/mcp-servers/hkask-mcp-corpus/src/tools/compose_tools.rs:109-154`, `kask/mcp-servers/hkask-mcp-corpus/src/tools/storage.rs:444-470`, and
+`kask/mcp-servers/hkask-mcp-corpus/src/tools/gather.rs:46-81`.
 
 | Tool | Inputs and defaults |
 |---|---|
@@ -94,7 +94,7 @@ Schema sources: `kask/mcp-servers/hkask-mcp-corpus/src/tools/document.rs:994-109
 
 | `corpus_generate_qa_batch` | `prompts_jsonl`, `quality_adjudications_jsonl`, `output`, `concurrency`, optional QA `model` |
 | `corpus_ground_generated_qa` | `generated_jsonl`, `source_chunks_jsonl` (tagged chunks classified under `published-term-resolution-v2`), `output_dir` — must not already exist |
-| `corpus_ingest_qa` | `generated_jsonl`, `grounding_manifest` (path to the bundle's `manifest.json`), `source_chunks_jsonl`, `output`, `db_path`, `passphrase`, `dataset`, `owner`, `dry_run=false`; pass dataset/owner explicitly. Brave-derived candidates are dropped after the structural filter (surfaced as `brave_excluded`, never silent); retained rows and stored h_mems carry their chunk's `origin_provider` when recorded |
+| `corpus_ingest_qa` | `generated_jsonl`, `grounding_manifest` (path to the bundle's `manifest.json`), `source_chunks_jsonl`, `output`, `db_path`, `dataset`, `owner`, `dry_run=false`; pass dataset/owner explicitly. The DB passphrase resolves server-side. Brave-derived candidates are dropped after the structural filter (surfaced as `brave_excluded`, never silent); retained rows and stored research-QA h_mems carry their chunk's `origin_provider` when recorded |
 | `corpus_centroid` | `author`, `db_path`, `passphrase`; optional contained `refs_file`, quality `dimension` |
 | `corpus_compose` | `prompt`, `author`, `db_path`, `passphrase`, optional `config_path`, `no_validate=false` |
 | `corpus_rewrite` | `content`, `author`, `db_path`, `passphrase`, `dimension=composite`, optional `config_path` |
@@ -438,9 +438,11 @@ this tool creates no embeddings
   `partial_failure` with per-entity `storage_errors`. The output includes all
   retained rows even if storage fails; file writing and inserts are not atomic.
 
-Before re-ingestion, inspect and explicitly purge the verified
-`training:qa:{dataset}:` prefix. Indices restart per call; partitioned ingestion
-is not whole-dataset replacement. Never broaden a purge or leave stale datasets.
+Before re-ingestion, inspect and explicitly purge the verified legacy
+`training:qa:{dataset}:` prefix. That prefix and the `training_qa_pair` attribute
+are durable storage identities retained for existing corpora; no training executor
+consumes them. Indices restart per call; partitioned ingestion is not whole-dataset
+replacement. Never broaden a purge or leave stale datasets.
 
 The read-only `kask/scripts/audit-qa-quality.sh` checks each citation's exact
 substring and unique source/chunk identity, reconciles physical rows and reports

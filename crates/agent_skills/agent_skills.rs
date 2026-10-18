@@ -1366,6 +1366,9 @@ fn remove_unshipped_templates<'a>(
                 }
                 continue;
             }
+            // `.jinja` is no longer a shipped category, but remains a retired
+            // category here so startup removes chat templates seeded by the
+            // removed training capability from existing installations.
             let seeded_category = path
                 .extension()
                 .is_some_and(|ext| ext == "j2" || ext == "jinja" || ext == "yaml");
@@ -3638,11 +3641,11 @@ description: A skill with no body content
         )));
     }
 
-    // Template seeding writes the compiled-in .j2 templates to disk so MCP
-    // servers (corpus, training) find them in production where the CWD-relative
-    // default does not exist. Templates have no user-sovereignty exception:
-    // the seeded copy is always brought back to the shipped content — but
-    // only files that actually differ are written.
+    // Template seeding writes the compiled-in .j2 templates and reference
+    // YAML to disk so remaining MCP servers and skills find them in production
+    // where the CWD-relative default does not exist. Templates have no
+    // user-sovereignty exception: the seeded copy is always brought back to
+    // the shipped content — but only files that actually differ are written.
     #[gpui::test]
     async fn test_seed_templates_writes_all_shipped_templates_to_disk(cx: &mut TestAppContext) {
         let fs = FakeFs::new(cx.executor());
@@ -3657,14 +3660,12 @@ description: A skill with no body content
             "shipped_template_seed must not be empty — build.rs scans kask/registry/templates/"
         );
 
-        // Category invariant, not a name list: every .j2/.jinja/.yaml
-        // file in the registry templates tree must be in the seed payload —
-        // the collector's contract is "nothing of a shipped category is
-        // dropped" (chat templates are read by exact path at fine-tune
-        // launch; reference YAMLs are cited by skills from the seeded
-        // tree). File names belong to the skills that cite them, not to
-        // this crate — a name list here breaks on every content rename
-        // and silently misses every addition.
+        // Category invariant, not a name list: every .j2/.yaml file in the
+        // registry templates tree must be in the seed payload — the collector's
+        // contract is "nothing of a shipped category is dropped". Reference
+        // YAMLs are cited by skills from the seeded tree. File names belong to
+        // the skills that cite them, not to this crate — a name list here breaks
+        // on every content rename and silently misses every addition.
         let templates_dir =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../kask/registry/templates");
         let mut shipped_on_disk = Vec::new();
@@ -3682,6 +3683,11 @@ description: A skill with no body content
             );
         }
 
+        assert!(
+            seed.iter().all(|(path, _)| !path.ends_with(".jinja")),
+            "retired training chat templates must not be shipped"
+        );
+
         for (rel_path, expected_content) in seed {
             let full_path = target_dir.join(rel_path);
             assert!(
@@ -3698,19 +3704,18 @@ description: A skill with no body content
         }
     }
 
-    /// Collect .j2/.jinja/.yaml relative paths from the registry templates
-    /// tree — the same category contract `build.rs`'s collector enforces.
-    /// If either side's category list changes, the seed test fails until
-    /// both agree.
+    /// Collect .j2/.yaml relative paths from the registry templates tree —
+    /// the same shipped-category contract `build.rs` enforces. `.jinja` is
+    /// intentionally absent: startup cleanup still recognizes that retired
+    /// category so old installed training chat templates are deleted.
+    /// If either side's category list changes, the seed test fails until both
+    /// agree.
     fn collect_seedable_files(base: &Path, dir: &Path, out: &mut Vec<String>) {
         for entry in std::fs::read_dir(dir).expect("read templates dir") {
             let path = entry.expect("dir entry").path();
             if path.is_dir() {
                 collect_seedable_files(base, &path, out);
-            } else if path
-                .extension()
-                .is_some_and(|e| e == "j2" || e == "jinja" || e == "yaml")
-            {
+            } else if path.extension().is_some_and(|e| e == "j2" || e == "yaml") {
                 out.push(
                     path.strip_prefix(base)
                         .expect("template path under base")
@@ -3761,7 +3766,11 @@ description: A skill with no body content
         fs.insert_tree(
             target_dir,
             serde_json::json!({
-                "retired-skill": { "old.j2": "stale", "ref.yaml": "stale" },
+                "retired-skill": {
+                    "old.j2": "stale",
+                    "old-chat.jinja": "stale",
+                    "ref.yaml": "stale"
+                },
                 "notes.txt": "keep",
             }),
         )
@@ -3770,6 +3779,10 @@ description: A skill with no body content
         seed_templates(fs.as_ref(), target_dir).await;
 
         assert!(!fs.is_file(&target_dir.join("retired-skill/old.j2")).await);
+        assert!(
+            !fs.is_file(&target_dir.join("retired-skill/old-chat.jinja"))
+                .await
+        );
         assert!(!fs.is_file(&target_dir.join("retired-skill/ref.yaml")).await);
         assert!(!fs.is_dir(&target_dir.join("retired-skill")).await);
         assert!(fs.is_file(&target_dir.join("notes.txt")).await);

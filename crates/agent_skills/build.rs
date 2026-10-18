@@ -121,9 +121,9 @@ fn main() {
         .expect("write generated embedded_global_skills.rs");
 
     // ── Template seed payload ──
-    // Scan kask/registry/templates/ recursively for .j2/.jinja templates
-    // and .yaml reference files, and embed them as (relative_path, content)
-    // pairs. Seeded to disk at startup by `agent_skills::seed_templates`.
+    // Scan kask/registry/templates/ recursively for .j2 templates and .yaml
+    // reference files, and embed them as (relative_path, content) pairs.
+    // Seeded to disk at startup by `agent_skills::seed_templates`.
     // Reference YAMLs are cited by skills from the seeded tree; without
     // seeding, production agents (no source checkout) follow those
     // citations into files that were never written.
@@ -172,20 +172,15 @@ fn main() {
     }
 }
 
-/// Recursively collect .j2 and .jinja files from a directory, computing
-/// relative paths from the base directory. `.jinja` covers the training
-/// chat templates (`training/chat-templates/*.jinja`) — runtime-consumed
-/// non-prompt assets the training harness reads from the seeded tree.
+/// Recursively collect `.j2` prompt templates and `.yaml` reference files
+/// from a directory, computing paths relative to the base directory.
 fn collect_template_files(base: &PathBuf, dir: &PathBuf, out: &mut Vec<(String, PathBuf)>) {
     for entry in fs::read_dir(dir).expect("read template directory") {
         let entry = entry.expect("dir entry");
         let path = entry.path();
         if path.is_dir() {
             collect_template_files(base, &path, out);
-        } else if path
-            .extension()
-            .is_some_and(|e| e == "j2" || e == "jinja" || e == "yaml")
-        {
+        } else if path.extension().is_some_and(|e| e == "j2" || e == "yaml") {
             let rel = path
                 .strip_prefix(base)
                 .expect("template path under base")

@@ -11,7 +11,7 @@
 //! Combines document processing and style composition into a single server
 //! organized by corpus flow stage:
 //!
-//!   gather → process (chunk/tag/embed/assertions) → output (QA training | compose)
+//!   gather → process (chunk/tag/embed/assertions) → output (QA export | compose)
 //!
 //! Tools (26):
 //! - Gather:     corpus_discover, corpus_cache_work, corpus_discover_company
@@ -314,7 +314,7 @@ mod tool_surface_tests {
     // impl block WITHOUT `#[tool_router]` silently registers nothing while
     // `cargo check` passes — the former `corpus_prepare_training_dataset`
     // shipped that way (attributed, implemented, unreachable) until this pin
-    // caught the class; it was removed with the training server. One macro
+    // caught the class; it and the training server were retired. One macro
     // call: the count test plus the build.rs-generated TOOL_NAMES set against
     // the live router (same-count renames included).
     include!(concat!(env!("OUT_DIR"), "/tool_names.gen.rs"));
@@ -916,8 +916,8 @@ mod smoke {
 
     /// expect: chunk rows carry the originating search provider recorded at
     /// cache time, so Brave-derived content is identifiable downstream and
-    /// excludable from QA/training paths (Brave API ToS clause xiii bans
-    /// training AI models on Search Results — task c1d65229).
+    /// excluded from QA export paths that could otherwise become model-training
+    /// material outside this system (Brave API ToS clause xiii).
     /// pre: a source directory with one sidecar-stamped file and one unstamped
     /// post: stamped rows carry origin_provider; unstamped rows carry none;
     /// the summary surfaces origin_stamped
@@ -1013,7 +1013,8 @@ mod smoke {
     /// expect: Brave-derived chunks are excluded from QA generation and the
     /// exclusion is surfaced (task c1d65229 — Brave API ToS clause xiii bans
     /// training AI models on Search Results; a silent drop would let
-    /// Brave-sourced text reach QA/training datasets uncounted).
+    /// Brave-sourced text reach an export that could become model-training
+    /// material outside this system).
     /// pre: two classified chunks, one stamped brave
     /// post: prompts exist only for the unstamped chunk; brave_excluded == 1;
     /// an all-brave corpus fails closed naming the clause

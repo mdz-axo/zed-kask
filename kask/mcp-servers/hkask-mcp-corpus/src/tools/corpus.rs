@@ -37,7 +37,7 @@ pub(crate) use qa_types::{QaType, parse_type_distribution, qa_type_instruction};
 /// Derive one gated candidate's grounding metadata: the prompt_id (required
 /// — a gated candidate cannot have lost it), the bundle row key, and the
 /// re-executed answer provenance the gate recorded for that row. The single
-/// derivation for both `corpus_ingest_qa` loops (training rows and h_mem
+/// derivation for both `corpus_ingest_qa` loops (QA export rows and h_mem
 /// values) — previously duplicated verbatim, risking the two views drifting
 /// apart on a shape change.
 fn grounding_fields(
@@ -212,7 +212,7 @@ impl CorpusServer {
     // ── Ingest QA ─────────────────────────────────────────────────────────
 
     #[tool(
-        description = "Ingest generated QA candidates behind the corpus-qa-grounding-v1 gate. Fails closed on partial input (malformed, generator-error, or structurally incomplete rows). Before dedup, output, or DB access, the gate re-hashes the bundle, checks row bijection, requires sources classified under the current published-ontology protocol, recomputes ontology resolutions, re-executes every mechanical check — evidence quotes byte-exact in uniquely identified canonical chunks — requires each artifact row to equal its re-execution, requires every citation claim to be tool-verified or platform-derived and at least one to exist, and admits a synthesized answer that is not byte-exact as a model-mediated observation persisted with answer_provenance=model_inference; a model_inference answer is never relabelled verified. Case-insensitive exact-instruction dedup keeps the first valid row. Preserves evidence, source metadata, grounding manifest identity, and canonical ontology in training JSONL and QA h_mems. Reports reconciled row counts and explicit partial storage failures. Dry-run validates without storing. Dataset and owner must be nonblank. Purge a verified training:qa:{dataset}: prefix before re-ingestion; indexed entity naming is unchanged."
+        description = "Ingest generated QA candidates behind the corpus-qa-grounding-v1 gate. Fails closed on partial input (malformed, generator-error, or structurally incomplete rows). Before dedup, output, or DB access, the gate re-hashes the bundle, checks row bijection, requires sources classified under the current published-ontology protocol, recomputes ontology resolutions, re-executes every mechanical check — evidence quotes byte-exact in uniquely identified canonical chunks — requires each artifact row to equal its re-execution, requires every citation claim to be tool-verified or platform-derived and at least one to exist, and admits a synthesized answer that is not byte-exact as a model-mediated observation persisted with answer_provenance=model_inference; a model_inference answer is never relabelled verified. Case-insensitive exact-instruction dedup keeps the first valid row. Preserves evidence, source metadata, grounding manifest identity, and canonical ontology in QA export JSONL and QA h_mems. Reports reconciled row counts and explicit partial storage failures. Dry-run validates without storing. Dataset and owner must be nonblank. Existing records retain the legacy training:qa:{dataset}: entity prefix and training_qa_pair attribute for storage compatibility only; no training executor consumes them."
     )]
     pub async fn corpus_ingest_qa(
         &self,
@@ -314,12 +314,12 @@ impl CorpusServer {
             )?;
 
             // Brave clause-xiii exclusion (task c1d65229): QA candidates whose
-            // canonical source chunk is Brave-derived never reach
-                        // QA-bound storage — Brave's API ToS bans using Search
-            // Results to train AI models. The provenance map also stamps every
-            // retained row and stored h_mem with its originating provider, so a
-            // downstream reader can exclude any Brave-derived pair
-            // that reaches a DB by another path.
+            // canonical source chunk is Brave-derived never reach QA-bound
+            // storage — Brave's API ToS bans using Search Results to train AI
+            // models. The provenance map also stamps every retained row and
+            // stored h_mem with its originating provider, so an external
+            // downstream reader cannot mistake a Brave-derived pair for
+            // trainable material.
             let (source_chunks, _dropped_source_rows) =
                 crate::helpers::read_jsonl_lenient::<hkask_types::corpus::TaggedChunk>(
                     &req.source_chunks_jsonl,
@@ -398,6 +398,7 @@ impl CorpusServer {
                 "deduped": deduped_count,
                 "brave_excluded": brave_excluded,
                 "retained": deduped_count,
+                "qa_export_rows": 0,
                 "stored": 0,
                 "stored_h_mems": 0,
                 "failed": 0,
@@ -412,8 +413,8 @@ impl CorpusServer {
                 return Ok(result);
             }
 
-            // Keep evidence available for downstream audits, outside the training text.
-            let mut train = String::new();
+            // Keep evidence available for downstream audits in the QA export.
+            let mut qa_export = String::new();
             for (line, qa) in &deduped {
                 let (row_key, answer_provenance) = grounding_fields(qa, *line, &gate)?;
                 let mut row = json!({
@@ -439,17 +440,19 @@ impl CorpusServer {
                 {
                     row[hkask_types::corpus::ORIGIN_PROVIDER_FIELD] = json!(origin);
                 }
-                train.push_str(
+                qa_export.push_str(
                     &serde_json::to_string(&row)
                         .map_err(|e| McpToolError::internal(format!("Serialize QA: {e}")))?,
                 );
-                train.push('\n');
+                qa_export.push('\n');
             }
-            crate::helpers::write_contained(&req.output, &train)?;
+            crate::helpers::write_contained(&req.output, &qa_export)?;
             tracing::info!("  Wrote: {} QAs to {}", deduped_count, req.output);
+            result["qa_export_rows"] = json!(deduped_count);
 
-            // Store h_mems; this path does not generate embeddings. The output
-            // file and individual DB inserts are not one atomic transaction.
+            // Store h_mems as research-corpus records; this path does not
+            // generate embeddings or feed a training executor. The output file
+            // and individual DB inserts are not one atomic transaction.
             let store = crate::helpers::open_memory_store(
                 &req.db_path,
                 &crate::helpers::resolve_corpus_passphrase()?,
@@ -459,7 +462,10 @@ impl CorpusServer {
             let mut storage_errors = Vec::new();
 
             for (i, (line, qa)) in deduped.iter().enumerate() {
-                let entity = format!("training:qa:{}:{}:{}", req.dataset, qa.source, i);
+                // Compatibility-only storage identity: existing corpus QA rows
+                // use this prefix and attribute. Keeping them readable does not
+                // retain a model-training executor or handoff.
+                let entity = format!("{LEGACY_QA_ENTITY_PREFIX}:{}:{}:{i}", req.dataset, qa.source);
                 let (row_key, answer_provenance) = grounding_fields(qa, *line, &gate)?;
                 let v = serde_json::json!({
                     "question": qa.instruction,
@@ -492,27 +498,17 @@ impl CorpusServer {
                 {
                     v[hkask_types::corpus::ORIGIN_PROVIDER_FIELD] = json!(origin);
                 }
-                // Dual-axis anchoring (P5.4) in the first-class `ontology`
-                // column rather than the value blob: a generated QA pair is
-                // both a document (state axis: BIBO type + concepts as
-                // subject) and the product of a procedure (process axis:
-                // `corpus_generate_qa_batch`, with the source chunk as the step).
-                // The value blob's former nested `"ontology"` object was not
-                // queryable — this is.
                 let mut ontology = hkask_types::HMemOntology::state(
                     hkask_bridge_ontology::dc_bibo::DOCUMENT,
                     qa.concepts.clone(),
                     qa.source.clone(),
                 );
-                // Canonical ontology through the shared published-ontology
-                // resolver: candidate terms are re-anchored and the record
-                // carries the current protocol stamp.
                 for term in &qa.concepts {
                     ontology = ontology.with_candidate_term(term.clone());
                 }
                 ontology.pko_procedure = Some("corpus_generate_qa_batch".to_string());
                 ontology.pko_step = qa.chunk_ref.clone();
-                let h_mem = hkask_storage::HMem::new(&entity, "training_qa_pair", v, webid)
+                let h_mem = hkask_storage::HMem::new(&entity, LEGACY_QA_ATTRIBUTE, v, webid)
                     .with_visibility(hkask_types::Visibility::Public)
                     .with_confidence(0.8)
                     .with_ontology(ontology);
@@ -675,17 +671,18 @@ pub struct IngestQaRequest {
     /// Every chunk must be classified under `published-term-resolution-v2` with
     /// reconciling candidate terms.
     pub source_chunks_jsonl: String,
-    /// Output path for training JSONL (instruction/input/output plus QA evidence metadata).
+    /// Output path for QA export JSONL (instruction/input/output plus evidence metadata).
     pub output: String,
-    /// Path to the SQLCipher memory DB for QA h_mem storage (no embeddings generated).
+    /// Path to the SQLCipher memory DB for research QA h_mem storage.
     pub db_path: String,
-    /// If true, validate and dedup without storing.
+    /// If true, validate and dedup without writing output or storage.
     #[serde(default)]
     pub dry_run: bool,
-    /// Dataset name for training_qa_pair h_mems.
+    /// Dataset name for QA h_mems. Stored rows retain the legacy
+    /// `training_qa_pair` attribute for compatibility with existing corpora.
     #[serde(default = "default_dataset")]
     pub dataset: String,
-    /// Owner persona for stored h_mems (e.g. "capabilities-reasoner").
+    /// Owner persona for stored research QA h_mems.
     #[serde(default = "default_owner")]
     pub owner: String,
 }
@@ -693,3 +690,9 @@ pub struct IngestQaRequest {
 fn default_dataset() -> String {
     "capabilities-reasoner".to_string()
 }
+
+// Durable identifiers from the former training handoff. Renaming them would
+// strand existing corpus QA records, so they remain compatibility-only storage
+// schema; no model-training executor consumes them.
+const LEGACY_QA_ENTITY_PREFIX: &str = "training:qa";
+const LEGACY_QA_ATTRIBUTE: &str = "training_qa_pair";

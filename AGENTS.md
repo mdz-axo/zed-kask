@@ -38,7 +38,7 @@ A skill **is** a `SKILL.md` file — the upstream Zed model. The body contains t
 
 ## MCP Servers
 
-hKask ships **11 MCP servers** launched by zed's `context_server` as child processes over stdio. They are the tool surface over the domain crates. (The `McpRuntime` that governs tool calls runs in-process; the servers themselves are child processes.)
+hKask ships **10 MCP servers** launched by zed's `context_server` as child processes over stdio. They are the tool surface over the domain crates. (The `McpRuntime` that governs tool calls runs in-process; the servers themselves are child processes.)
 
 - **Runtime registry (authoritative, always current):** `BUILT_IN_MCP_SERVERS` in `kask/crates/kask_bridge/src/mcp_servers.rs`.
 - **On-disk servers:** `kask/mcp-servers/hkask-mcp-*` — companies, corpus, curator, experimentation, kata-kanban, media, prediction-markets, research, scenarios, swarm.

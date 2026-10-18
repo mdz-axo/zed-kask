@@ -6,7 +6,7 @@
 //! - `document` — convert, OCR, chunk (process stage: text extraction)
 //! - `tagging`  — ontology annotation (process stage: tagging)
 //! - `semantic` — embed, extract assertions, generate QA (process + QA output)
-//! - `corpus`   — dedup, consolidate, build prompts, ingest QA, training data (QA output)
+//! - `corpus`   — dedup, consolidate, build prompts, ingest grounded QA exports
 //! - `storage`  — cache, query, clear index, purge QA (management)
 pub(crate) mod calibration;
 pub(crate) mod compose_tools;

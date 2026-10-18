@@ -1695,7 +1695,7 @@ mod tests {
     }
 
     /// expect: Every requested level receives one explicit terminal disposition;
-    /// unsupported conceptual material is visible and never becomes training data.
+    /// unsupported conceptual material is visible and never becomes an admitted QA row.
     #[test]
     fn quality_skip_is_validated_written_and_accounted() -> Result<(), Box<dyn std::error::Error>> {
         let mut prompt = prepared();

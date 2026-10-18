@@ -64,9 +64,9 @@ impl CorpusServer {
             // Provenance sidecar (task c1d65229): the originating search
             // provider travels with the cached file so `chunk_directory`
             // can stamp it on chunk rows; Brave-derived content is then
-            // excluded from QA/training-bound paths (Brave API ToS
-            // clause xiii bans training AI models on Search Results).
-            // Fail closed — a lost sidecar breaks the downstream
+            // excluded from QA export paths that could otherwise become
+            // model-training material outside this system (Brave API ToS
+            // clause xiii). Fail closed — a lost sidecar breaks the downstream
             // license exclusion.
             let provider = origin_provider
                 .as_deref()
@@ -449,8 +449,8 @@ pub(crate) struct CacheRequest {
     /// Originating search provider for search-derived content (e.g. "brave").
     /// Recorded in a `{stem}.origin.json` sidecar next to the cached file so
     /// chunking can stamp it on chunk rows; Brave-derived content is excluded
-    /// from QA/training-bound paths (Brave API ToS clause xiii bans training
-    /// AI models on Search Results).
+    /// from QA export paths that could otherwise become model-training material
+    /// outside this system (Brave API ToS clause xiii).
     #[serde(default)]
     pub origin_provider: Option<String>,
 }

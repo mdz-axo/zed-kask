@@ -708,4 +708,20 @@ mod tests {
         );
     }
 
+    #[test]
+    fn model_training_alias_remains_research_only_after_capability_removal() {
+        let resolved = resolve_term("model training");
+        assert_eq!(
+            (resolved.tier.as_str(), resolved.namespace.as_str()),
+            ("derived", "derived"),
+            "{resolved:?}"
+        );
+        assert_eq!(resolved.concept, "training");
+        assert!(
+            resolved.definition.as_deref().is_some_and(
+                |definition| definition.contains("the tree performs no model training")
+            ),
+            "the retained ontology term must describe research content, not revive the removed executor: {resolved:?}"
+        );
+    }
 }
