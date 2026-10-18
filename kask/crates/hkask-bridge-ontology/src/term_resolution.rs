@@ -291,6 +291,18 @@ mod tests {
             ("Provenance", "domain_supplement", "OMC", "omc:Provenance"),
             ("State", "domain_supplement", "OMC", "omc:State"),
             ("net margin", "derived", "derived", "net_margin"),
+            (
+                "security vulnerability",
+                "derived",
+                "derived",
+                "security_vulnerability",
+            ),
+            (
+                "software modularity",
+                "derived",
+                "derived",
+                "software_modularity",
+            ),
             ("quantity", "upper", "SUMO", "sumo:Quantity"),
             ("zephyr coefficient", "core", "core", "5w1h_core"),
             // Accepted alias loss (stopgap retired 2026-09-20): the derived

@@ -1809,6 +1809,36 @@ pub const DERIVED_CONCEPTS: &[DerivedConcept] = &[
         constituents: &["context window", "extractive summarization", "map-reduce"],
         authority: "operator ruling 2026-10-18 (compaction-pipeline census session); zed-kask compaction-pipeline-spec.md (ratified 2026-09-29, D8)",
     },
+    DerivedConcept {
+        term: "security_vulnerability",
+        aliases: &[
+            "security vulnerabilities",
+            "software vulnerability",
+            "software vulnerabilities",
+            "vulnerability",
+        ],
+        identity: "a weakness in a system that an attacker can exploit to violate its security properties",
+        definition: "The security sense: a defect or weakness in software or a system that can be exploited to compromise confidentiality, integrity, or availability. The published anchor is CSO 3.5's security vulnerabilities topic (cso:security_vulnerabilities, the super-topic of cso:software_vulnerabilities) — a real CSO concept, but the resolver's exact match does not reach the singular form, so the derived entry records the singular-to-plural mapping rather than adding global singular/plural normalization (which would change resolution for every ontology caller). The nameable violation is applying the term to a non-security weakness (a design smell, an aesthetic defect).",
+        constituents: &["software", "security"],
+        authority: "operator ruling 2026-10-18; CSO 3.5, cso:security_vulnerabilities (vendored pin, sources/cso/CSO.3.5.owl)",
+    },
+    DerivedConcept {
+        term: "software_modularity",
+        aliases: &[
+            "software modularity",
+            "modularity",
+            "modular design",
+            "module decomposition",
+        ],
+        identity: "the degree to which a software system is composed of discrete, independently comprehensible and replaceable units with well-defined boundaries",
+        definition: "The software-design sense: a system's decomposition into discrete units (modules, components) whose boundaries are well-defined, so each unit can be understood, changed, and replaced independently. CSO 3.5 publishes no software-modularity topic (grepped: only modular_exponentiation, modular_multiplication, modular_robotics, submodular, triple_modular_redundancy — none is the software-design sense), so this is a project-authored composition over published CSO constituents: separation of concerns (cso:separation_of_concerns), software design (cso:software_design), and software component (cso:software_component). The composition is OURS, recorded here with its provenance — never a private definition worn as a published anchor. The nameable violation is treating it as a synonym for code size or file count.",
+        constituents: &[
+            "separation of concerns",
+            "software design",
+            "software component",
+        ],
+        authority: "operator ruling 2026-10-18 (B.5b: author the derived entry); composed over CSO 3.5 cso:separation_of_concerns, cso:software_design, cso:software_component (vendored pin, sources/cso/CSO.3.5.owl) — no cso modularity topic exists",
+    },
 ];
 /// Normalization matches the onto_anchor tool's: lowercase alphanumeric
 /// characters only, separators and case folded away.
@@ -1887,6 +1917,11 @@ mod tests {
             "gemba walk",
             "genchi gembutsu",
             "goodhart's law",
+            "security vulnerability",
+            "security vulnerabilities",
+            "software vulnerability",
+            "software modularity",
+            "modular design",
         ] {
             assert!(
                 resolve_derived(term).is_some(),
@@ -2104,6 +2139,65 @@ mod tests {
                 concept.authority.starts_with("operator ruling 2026-"),
                 "{term} cites the ruling"
             );
+        }
+    }
+
+    /// expect: [P8.3, B.5] The 2026-10-18 ontology-item-3 rulings resolve
+    /// with their published anchors and never fall back to the coarse 5W1H
+    /// core: the security-vulnerability singular maps to CSO 3.5's published
+    /// plural topic, and software modularity is the project-authored
+    /// composition over published CSO constituents (no CSO modularity topic
+    /// exists — the composition is ours, recorded with provenance).
+    #[test]
+    fn ontology_item_3_rulings_resolve_with_published_authority() {
+        for (term, expected_term, marker) in [
+            (
+                "security vulnerability",
+                "security_vulnerability",
+                "security_vulnerabilities",
+            ),
+            (
+                "software vulnerability",
+                "security_vulnerability",
+                "CSO 3.5",
+            ),
+            (
+                "software modularity",
+                "software_modularity",
+                "cso:separation_of_concerns",
+            ),
+            (
+                "modularity",
+                "software_modularity",
+                "cso:software_component",
+            ),
+        ] {
+            let concept =
+                resolve_derived(term).expect("the B.5 ontology ruling must resolve in derived.rs");
+            assert_eq!(
+                concept.term, expected_term,
+                "{term} resolves to {expected_term}"
+            );
+            assert!(
+                concept.authority.contains(marker),
+                "{term}: {}",
+                concept.authority
+            );
+            assert!(
+                concept.authority.starts_with("operator ruling 2026-10-18"),
+                "{term} cites the 2026-10-18 ruling"
+            );
+        }
+        // The constituents of the modularity composition each resolve
+        // through the ladder to their published CSO anchors — a derived
+        // entry never fabricates a constituent anchor.
+        for (constituent, concept) in [
+            ("separation of concerns", "cso:separation_of_concerns"),
+            ("software design", "cso:software_design"),
+            ("software component", "cso:software_component"),
+        ] {
+            let resolved = crate::term_resolution::resolve_term(constituent);
+            assert_eq!(resolved.concept, concept, "{constituent}: {resolved:?}");
         }
     }
 
