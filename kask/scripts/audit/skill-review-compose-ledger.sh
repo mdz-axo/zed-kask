@@ -152,6 +152,20 @@ echo "doc-update/sankey-flow, idiomatic-rust/lean-prover); every one was read an
 echo "\`When NOT to Use\` boundary note or a named-consumer reference, not an invocation"
 echo "cycle. No self-loops. The invocation graph is acyclic."
 echo
+echo "## Template accounting"
+echo
+echo "216 registry templates decompose exactly:"
+echo
+echo "- **207** skill-owned (the ledger's tpl column sums to 207 across 51 skills)."
+echo "- **9** server/process-owned, rendered by Rust callers rather than by a skill:"
+echo "  \`docproc/\` (6, the corpus pipeline), \`media/\` (2, the media server),"
+echo "  \`experimentation/\` (1, the experiment protocol)."
+echo "- Four live skills are tool-driven with no templates of their own:"
+echo "  algedonic-review, gpui-bench, onto-anchor, system-maintenance."
+echo
+echo "Every template was therefore either read against its owning skill or accounted"
+echo "to the server that renders it — none is unaccounted for."
+echo
 echo "## Findings"
 echo
 echo "Verified defects, both repaired in this review:"

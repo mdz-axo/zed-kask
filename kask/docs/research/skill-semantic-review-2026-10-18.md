@@ -1,3 +1,13 @@
+---
+title: "Skill semantic review — 2026-10-18"
+audience: [architects, developers, agents, operators]
+last_updated: 2026-10-18
+version: "1.0.0"
+status: "Active"
+domain: "Cross-cutting"
+mds_categories: [composition, curation]
+---
+
 # Skill semantic review — 2026-10-18
 
 Live census: 58 skills, 216 templates.
@@ -118,6 +128,20 @@ pragmatic-cybernetics, grounding-verify/structured-extraction, diataxis-diagram/
 doc-update/sankey-flow, idiomatic-rust/lean-prover); every one was read and is a
 `When NOT to Use` boundary note or a named-consumer reference, not an invocation
 cycle. No self-loops. The invocation graph is acyclic.
+
+## Template accounting
+
+216 registry templates decompose exactly:
+
+- **207** skill-owned (the ledger's tpl column sums to 207 across 51 skills).
+- **9** server/process-owned, rendered by Rust callers rather than by a skill:
+  `docproc/` (6, the corpus pipeline), `media/` (2, the media server),
+  `experimentation/` (1, the experiment protocol).
+- Four live skills are tool-driven with no templates of their own:
+  algedonic-review, gpui-bench, onto-anchor, system-maintenance.
+
+Every template was therefore either read against its owning skill or accounted
+to the server that renders it — none is unaccounted for.
 
 ## Findings
 
