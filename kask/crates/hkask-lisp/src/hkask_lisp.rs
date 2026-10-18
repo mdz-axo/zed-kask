@@ -718,8 +718,8 @@ fn eval_special_form(
         //
         // Form: (cond (test1 body1...) (test2 body2...) ... (t default...))
         // This is the standard Lisp `cond`; it desugars to nested `if` but is
-        // far more readable for multi-branch verdict dispatch (e.g.
-        // company-research convergence checks).
+        // far more readable for multi-branch verdict dispatch (e.g. skill
+        // convergence checks).
         "cond" => {
             for clause in args {
                 let clause_items = match clause {

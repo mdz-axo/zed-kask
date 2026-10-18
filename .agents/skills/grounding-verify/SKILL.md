@@ -23,7 +23,7 @@ liveness, truth, grounding, binding — the rungs' zed-kask homes are
 mapped in `kask/docs/reference/verification-ladder.md`; this skill
 works the grounding, truth, presence and binding rungs over text, and
 liveness belongs to the regulation loop), the retrieve-cite-verify
-process (the technique the former `listening` skill exercised on
+process (the technique the retired listening skill exercised on
 earnings-call transcripts; that skill retired 2026-10-18 with the
 companies research skills — the process lives here and in any
 pipeline that cites a verbatim substring against its source), and the

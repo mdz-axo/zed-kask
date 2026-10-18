@@ -433,8 +433,12 @@ mod tests {
         let driver = hkask_storage::database::sqlite::SqliteDriver::in_memory_driver();
         let archive = hkask_storage::RegulationArchive::from_driver(driver.clone())
             .expect("regulation archive");
-        persist_skill_outcome(&archive, "listening", serde_json::json!({"success": true}))
-            .expect("outcome is durable");
+        persist_skill_outcome(
+            &archive,
+            "code-review",
+            serde_json::json!({"success": true}),
+        )
+        .expect("outcome is durable");
         assert!(persist_skill_outcome(&archive, " ", serde_json::json!({})).is_err());
         drop(archive);
 
@@ -445,7 +449,7 @@ mod tests {
             .query_records(since, Some("reg.skill"), 10)
             .expect("query outcomes");
         assert_eq!(records.len(), 1);
-        assert_eq!(records[0].span.path, "reg.skill.listening.outcome");
+        assert_eq!(records[0].span.path, "reg.skill.code-review.outcome");
         assert_eq!(records[0].observation, serde_json::json!({"success": true}));
     }
 
@@ -461,7 +465,7 @@ mod tests {
             "tool": "web_extract",
             "error": "[unavailable] provider down",
         });
-        persist_skill_tool_failure(&archive, "company-research-flash", payload.clone())
+        persist_skill_tool_failure(&archive, "code-review", payload.clone())
             .expect("tool failure is durable");
         drop(archive);
 
@@ -472,10 +476,7 @@ mod tests {
             .query_records(since, Some("reg.skill"), 10)
             .expect("query failures");
         assert_eq!(records.len(), 1);
-        assert_eq!(
-            records[0].span.path,
-            "reg.skill.company-research-flash.tool_failure"
-        );
+        assert_eq!(records[0].span.path, "reg.skill.code-review.tool_failure");
         assert_eq!(records[0].observation, payload);
     }
 

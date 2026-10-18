@@ -658,7 +658,10 @@ mod tests {
         // The default HARD_CAP (5) would refuse a skill mid-cascade. This test
         // pins the override so a future refactor cannot silently drop it.
         let tracker = ToolRetryTracker::default();
-        let input = serde_json::json!({"name": "company-research-deep"});
+        // The skill name is an opaque tool input here — the override keys on the
+        // tool (`skill`), not on the skill invoked. Use a live skill so the
+        // fixture cannot outlive the corpus it names.
+        let input = serde_json::json!({"name": "deep-module"});
 
         // After HARD_CAP failures, a default tool would be refused — but `skill`
         // is allowed because its effective cap is SKILL_TOOL_HARD_CAP.
@@ -697,7 +700,8 @@ mod tests {
         // The override is per-tool: exhausting the skill cap must not raise the
         // cap for read_file or any other tool.
         let tracker = ToolRetryTracker::default();
-        let skill_input = serde_json::json!({"name": "company-research-deep"});
+        // Live skill name; the cap keys on the tool, not the skill (see above).
+        let skill_input = serde_json::json!({"name": "deep-module"});
         for _ in 0..HARD_CAP {
             tracker.record_failure("skill", &skill_input);
         }

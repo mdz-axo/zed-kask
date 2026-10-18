@@ -198,6 +198,7 @@ pub fn resolve_onto_anchor(input: &OntoAnchorToolInput) -> OntoAnchorToolOutput 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hkask_bridge_ontology::sepio;
 
     #[test]
     fn output_round_trips_through_owned_json() -> Result<()> {
@@ -337,7 +338,12 @@ mod tests {
     #[test]
     fn domain_terms_resolve_on_rung_one() {
         for (term, expected_uri) in [
-            ("assertion", "sepio:0000030"),
+            // `assertion` resolves to SEPIO's Assertion concept, the state-axis
+            // type for extracted assertion h_mems. Bound to the constant rather
+            // than a literal so a constant edit cannot silently drift the pin
+            // (the 2026-10-18 FIBO removal landed `sepio:0000030` here — a
+            // concept the resolver never produces).
+            ("assertion", sepio::ASSERTION),
             ("Provenance", "omc:Provenance"),
             ("omc:Provenance", "omc:Provenance"),
         ] {

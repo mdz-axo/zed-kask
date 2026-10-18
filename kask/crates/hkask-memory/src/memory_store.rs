@@ -1434,7 +1434,7 @@ mod tests {
         // 91ea8f27: `river.txt`'s extension is data, not drift).
         for canonical in [
             "curator:thread:9c8d4a2e-1f2b-4c3d-8e5f-6a7b8c9d0e1f",
-            "company-research-deep",
+            "deep-module",
             "verification-protocol",
             "curator-process",
             "corpus:researcher:consolidated:river.txt:0",
